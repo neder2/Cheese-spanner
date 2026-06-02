@@ -4,8 +4,16 @@
     const RELOAD_KEY_PREFIX = "betterchzzk:vod-chat-reload:";
     const RELOAD_MARK_TTL_MS = 60 * 1000;
     const MIN_RELOAD_DELAY_MS = 12000;
+    const LAYOUT_SETTLE_DELAY_MS = 2500;
     const CHECK_DELAYS_MS = [12000, 16000, 22000];
     const OBSERVER_THROTTLE_MS = 500;
+    const EXPANDED_PLAYER_TERMS = [
+        "\uAE30\uBCF8 \uD654\uBA74",
+        "\uC881\uC740 \uD654\uBA74",
+        "\uC77C\uBC18 \uD654\uBA74",
+        "exit wide",
+        "normal screen",
+    ];
 
     const {
         createThrottledDomSync,
@@ -15,6 +23,8 @@
     } = BetterChzzk.utils;
 
     let lastHref = location.href;
+    let lastVodRouteKey = getVodRouteKey();
+    let lastLayoutMutationAt = 0;
     let checkSeq = 0;
     let observer = null;
     let bodyObserver = null;
@@ -31,6 +41,11 @@
 
     function isVodRoute() {
         return VOD_ROUTE_RE.test(location.pathname);
+    }
+
+    function getVodRouteKey() {
+        const match = location.pathname.match(/^\/video\/\d+/);
+        return match ? match[0] : "";
     }
 
     function getReloadKey() {
@@ -71,6 +86,31 @@
         return Boolean(document.body?.textContent?.includes(CHAT_HEADING_TEXT));
     }
 
+    function compact(value) {
+        return String(value || "").replace(/\s+/g, "").toLowerCase();
+    }
+
+    function getControlText(el) {
+        return compact([
+            el?.getAttribute?.("aria-label"),
+            el?.getAttribute?.("title"),
+            el?.textContent,
+        ].join(" "));
+    }
+
+    function isExpandedPlayerLayout() {
+        for (const button of document.querySelectorAll("button, [role='button']")) {
+            const text = getControlText(button);
+            if (!text) continue;
+            if (EXPANDED_PLAYER_TERMS.some((term) => text.includes(compact(term)))) return true;
+        }
+        return false;
+    }
+
+    function isLayoutSettling() {
+        return lastLayoutMutationAt > 0 && performance.now() - lastLayoutMutationAt < LAYOUT_SETTLE_DELAY_MS;
+    }
+
     function hasPlayableVod() {
         const video = getMainVideoElement?.() || document.querySelector("video");
         return video instanceof HTMLVideoElement && video.isConnected;
@@ -93,9 +133,14 @@
     }
 
     function reloadOnceForReplayChat() {
-        if (!isEnabled() || !routeNeedsReplayChatFix || !isVodRoute() || hasReplayChat() || hasRecentReloadMark() || !hasPlayableVod()) {
+        if (!isEnabled() || !routeNeedsReplayChatFix || !isVodRoute()) {
             return;
         }
+        if (hasReplayChat() || hasRecentReloadMark()) {
+            routeNeedsReplayChatFix = false;
+            return;
+        }
+        if (isExpandedPlayerLayout() || isLayoutSettling() || !hasPlayableVod()) return;
         if (performance.now() - routeStartedAt < MIN_RELOAD_DELAY_MS) return;
 
         setReloadMark();
@@ -119,8 +164,19 @@
 
     function handlePageChange() {
         if (location.href === lastHref) return;
+        const previousVodRouteKey = lastVodRouteKey;
         lastHref = location.href;
-        scheduleChecks({ spaNavigation: true });
+        lastVodRouteKey = getVodRouteKey();
+
+        if (!lastVodRouteKey) {
+            routeNeedsReplayChatFix = false;
+            checkSeq += 1;
+            return;
+        }
+
+        if (lastVodRouteKey !== previousVodRouteKey) {
+            scheduleChecks({ spaNavigation: true });
+        }
     }
 
     function startObserver() {
@@ -132,6 +188,7 @@
         };
 
         observer = new MutationObserver(() => {
+            lastLayoutMutationAt = performance.now();
             handlePageChange();
             if (routeNeedsReplayChatFix && isVodRoute() && !hasReplayChat() && !hasRecentReloadMark()) {
                 scheduleObserverCheck();

@@ -301,6 +301,7 @@
     }
 
     function mutationCouldAffectQuality(mutation) {
+        if (isVodRoute()) return mutationMatchesSelector(mutation, "video");
         return mutationMatchesSelector(mutation, "video, [class*='pzp'], [id*='player'], [class*='player']");
     }
 

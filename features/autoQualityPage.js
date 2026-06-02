@@ -937,7 +937,8 @@
             let shouldRetry = !timeRestoreCancelled;
 
             if (shouldResume && nextVideo.paused) {
-                nextVideo.play?.().catch?.(() => {});
+                const playResult = nextVideo.play?.();
+                playResult?.catch?.(() => {});
                 shouldRetry = shouldRetry || nextVideo.paused;
             }
 
@@ -1109,6 +1110,17 @@
         return !isAutomaticTrack(track) && getTrackHeight(track) === preferredHeight;
     }
 
+    function getSelectableTrackCandidates(tracks) {
+        const candidates = [];
+        for (const track of tracks) {
+            if (isAutomaticTrack(track)) continue;
+            const height = getTrackHeight(track);
+            if (!Number.isFinite(height)) continue;
+            candidates.push({ track, height });
+        }
+        return candidates;
+    }
+
     function getSelectedTrack(tracks, trackList) {
         const selectedTrack = tracks.find((track) => track?.selected);
         if (selectedTrack) return selectedTrack;
@@ -1168,11 +1180,22 @@
     }
 
     function pickTargetTrack(tracks, selectedTrack, preferredHeight) {
-        const candidates = tracks.filter((track) => trackMatchesQuality(track, preferredHeight));
+        const candidates = getSelectableTrackCandidates(tracks);
         if (!candidates.length) return null;
 
-        candidates.sort((a, b) => scoreTrack(b, selectedTrack) - scoreTrack(a, selectedTrack));
-        return candidates[0];
+        const exactCandidates = candidates.filter((candidate) => candidate.height === preferredHeight);
+        if (exactCandidates.length) {
+            exactCandidates.sort((a, b) => scoreTrack(b.track, selectedTrack) - scoreTrack(a.track, selectedTrack));
+            return exactCandidates[0].track;
+        }
+
+        const lowerCandidates = candidates.filter((candidate) => candidate.height < preferredHeight);
+        if (!lowerCandidates.length) return null;
+
+        const fallbackHeight = Math.max(...lowerCandidates.map((candidate) => candidate.height));
+        const fallbackCandidates = lowerCandidates.filter((candidate) => candidate.height === fallbackHeight);
+        fallbackCandidates.sort((a, b) => scoreTrack(b.track, selectedTrack) - scoreTrack(a.track, selectedTrack));
+        return fallbackCandidates[0].track;
     }
 
     function describeTrack(track) {
@@ -1219,19 +1242,20 @@
         }
 
         const selectedTrack = getSelectedTrack(tracks, trackList);
-        if (selectedTrack && trackMatchesQuality(selectedTrack, preferredHeight)) {
+        const targetTrack = pickTargetTrack(tracks, selectedTrack, preferredHeight);
+        if (!targetTrack) {
             return {
-                status: "already",
+                status: "unavailable",
                 selected: describeTrack(selectedTrack),
                 targetType: describeTarget(trackTarget?.target),
                 trackCount: tracks.length,
             };
         }
 
-        const targetTrack = pickTargetTrack(tracks, selectedTrack, preferredHeight);
-        if (!targetTrack) {
+        const targetHeight = getTrackHeight(targetTrack);
+        if (selectedTrack && trackMatchesQuality(selectedTrack, targetHeight)) {
             return {
-                status: "unavailable",
+                status: "already",
                 selected: describeTrack(selectedTrack),
                 targetType: describeTarget(trackTarget?.target),
                 trackCount: tracks.length,
@@ -1359,6 +1383,11 @@
         if (mutation.type !== "childList") return false;
         for (const node of mutation.addedNodes || []) {
             if (!(node instanceof Element)) continue;
+            if (isVodRoute()) {
+                if (node.matches("video")) return true;
+                if (node.querySelector?.("video")) return true;
+                continue;
+            }
             if (node.matches(PLAYER_MUTATION_SELECTOR)) return true;
             if (node.querySelector?.(PLAYER_MUTATION_SELECTOR)) return true;
         }

@@ -19,6 +19,8 @@
     const LIVE_EDGE_PATCHED_ATTR = "data-bctm-text-patched";
     const LIVE_EDGE_BUTTON_TERMS = ["\uC2E4\uC2DC\uAC04", "\uB77C\uC774\uBE0C", "live"];
     const LIVE_FAST_FORWARD_LABEL = "\uBE68\uB9AC \uAC10\uAE30";
+    const LIVE_FAST_FORWARD_BUTTON_TERMS = [LIVE_FAST_FORWARD_LABEL, "fast forward", "fast-forward", "fastforward"];
+    const EXTERNAL_FAST_FORWARD_SIGNATURE_TERMS = ["knifeff", "fastforward", "livefastforward"];
     const LIVE_ROUTE_RE = /^\/live(?:\/|$)/;
     const PLAYBACK_ROUTE_RE = /^\/(?:live|video)(?:\/|$)/;
     const RELEVANT_DOM_SELECTOR = `video, ${TIME_SELECTOR}, ${LIVE_LEFT_BUTTONS_SELECTOR}, ${LIVE_PLAYBACK_SWITCH_SELECTOR}, [${LIVE_EDGE_PATCHED_ATTR}], #${SKIP_PILL_ID}, #${LIVE_FAST_FORWARD_BUTTON_ID}`;
@@ -129,9 +131,31 @@
 
     function getCandidateText(el) {
         return [
+            el?.getAttribute?.("label"),
             el?.getAttribute?.("aria-label"),
+            el?.getAttribute?.("tooltip"),
             el?.getAttribute?.("title"),
             el?.textContent,
+        ].join(" ");
+    }
+
+    function isOwnedLiveControl(el) {
+        return (
+            el instanceof HTMLElement &&
+            (
+                OWNED_LIVE_CONTROL_IDS.has(el.id) ||
+                el.dataset?.betterChzzkLiveFastForward === "1"
+            )
+        );
+    }
+
+    function getElementSignature(el) {
+        return [
+            el?.id,
+            el?.className,
+            el?.getAttribute?.("data-testid"),
+            el?.getAttribute?.("data-test-id"),
+            el?.getAttribute?.("data-name"),
         ].join(" ");
     }
 
@@ -293,7 +317,16 @@
     function looksLikeLiveEdgeButton(button) {
         if (!(button instanceof HTMLElement)) return false;
         if (button.id === LIVE_FAST_FORWARD_BUTTON_ID) return true;
+        if (looksLikeExternalLiveFastForwardButton(button)) return true;
         return button.hasAttribute(LIVE_EDGE_PATCHED_ATTR) || containsAnyTerm(getCandidateText(button), LIVE_EDGE_BUTTON_TERMS);
+    }
+
+    function looksLikeExternalLiveFastForwardButton(button) {
+        if (!(button instanceof HTMLElement) || isOwnedLiveControl(button)) return false;
+        if (containsAnyTerm(getCandidateText(button), LIVE_FAST_FORWARD_BUTTON_TERMS)) return true;
+
+        const signature = compact(getElementSignature(button));
+        return EXTERNAL_FAST_FORWARD_SIGNATURE_TERMS.some((term) => signature.includes(term));
     }
 
     function clearLiveTimeShiftState(video = null) {
@@ -806,58 +839,59 @@
   text-align:left;
 }
 #${LIVE_FAST_FORWARD_BUTTON_ID}{
-  display:inline-flex !important;
-  align-items:center;
-  justify-content:center;
-  width:32px;
-  height:32px;
-  min-width:32px;
-  padding:0;
-  border:0;
-  border-radius:9999px;
-  background-color:transparent !important;
-  appearance:none;
-  -webkit-appearance:none;
-  color:rgba(255,255,255,0.92);
-  font-family:inherit;
-  font-size:14px;
-  font-weight:800;
-  line-height:1;
-  letter-spacing:0;
-  white-space:nowrap;
-  cursor:pointer;
-  user-select:none;
-  pointer-events:auto;
-  flex:0 0 auto;
-  align-self:center;
   position:relative;
-  z-index:2;
-  box-sizing:border-box;
-  transition:opacity 120ms ease, background-color 120ms ease;
-}
-#${LIVE_FAST_FORWARD_BUTTON_ID}:hover{
-  background-color:rgba(255,255,255,0.14) !important;
-  opacity:1;
-}
-#${LIVE_FAST_FORWARD_BUTTON_ID}:active{
-  opacity:0.78;
-  background-color:rgba(255,255,255,0.18) !important;
+  overflow:visible;
 }
 #${LIVE_FAST_FORWARD_BUTTON_ID}:focus-visible{
   outline:none;
-  box-shadow:0 0 0 2px rgba(255,255,255,0.22);
 }
 #${LIVE_FAST_FORWARD_BUTTON_ID}:disabled{
   opacity:0.35;
   cursor:default;
   pointer-events:none;
 }
+#${LIVE_FAST_FORWARD_BUTTON_ID}[tooltip]:not(:disabled)::after{
+  position:absolute;
+  left:50%;
+  bottom:calc(100% + 12px);
+  z-index:2147483647;
+  display:block;
+  padding:9px 15px;
+  border-radius:9999px;
+  background:rgba(18,18,20,0.92);
+  color:#fff;
+  content:attr(tooltip);
+  font-size:14px;
+  font-weight:400;
+  line-height:18px;
+  letter-spacing:0;
+  white-space:nowrap;
+  opacity:0;
+  visibility:hidden;
+  pointer-events:none;
+  transform:translateX(-50%) translateY(4px);
+  transition:opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+}
+#${LIVE_FAST_FORWARD_BUTTON_ID}[tooltip]:not(:disabled):hover::after,
+#${LIVE_FAST_FORWARD_BUTTON_ID}[tooltip]:not(:disabled):focus-visible::after{
+  opacity:1;
+  visibility:visible;
+  transform:translateX(-50%) translateY(0);
+}
 #${LIVE_FAST_FORWARD_BUTTON_ID} .bc-live-ff-icon{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:24px;
+  height:24px;
+  flex:0 0 auto;
+  color:currentColor;
+}
+#${LIVE_FAST_FORWARD_BUTTON_ID} .bc-live-ff-icon svg{
   display:block;
   width:24px;
   height:24px;
   fill:currentColor;
-  flex:0 0 auto;
 }
 `);
     }
@@ -1028,15 +1062,29 @@
         return visibleChildren[0] || children[0] || null;
     }
 
+    function findExternalLiveFastForwardButton(container) {
+        if (!(container instanceof HTMLElement)) return null;
+
+        const candidates = Array.from(container.querySelectorAll(BUTTON_SELECTOR))
+            .filter((button) => (
+                button instanceof HTMLElement &&
+                getVisibleArea(button) > 0 &&
+                looksLikeExternalLiveFastForwardButton(button)
+            ));
+
+        if (!candidates.length) return null;
+        candidates.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+        return candidates[0];
+    }
+
     function syncLiveFastForwardButtonClass(button, container) {
         if (!(button instanceof HTMLElement) || !(container instanceof HTMLElement)) return;
 
         const reference = findLiveFastForwardReference(container);
         button.className = reference?.className || "";
         button.classList.add("knife-ff");
-        button.classList.add("betterchzzk-live-fast-forward-control");
         button.style.order = "";
-        button.style.marginLeft = "4px";
+        button.style.marginLeft = "";
 
         if (!reference) return;
         syncLiveInlineControlVisibility(button, reference);
@@ -1058,7 +1106,7 @@
         button.setAttribute("label", LIVE_FAST_FORWARD_LABEL);
         button.setAttribute("aria-label", LIVE_FAST_FORWARD_LABEL);
         button.setAttribute("tooltip", LIVE_FAST_FORWARD_LABEL);
-        button.title = LIVE_FAST_FORWARD_LABEL;
+        button.removeAttribute("title");
     }
 
     function syncLiveFastForwardButtonState(button = getLiveFastForwardButtonElement()) {
@@ -1115,10 +1163,11 @@
         syncLiveFastForwardButtonLabels(button);
         button.dataset.betterChzzkLiveFastForward = "1";
         button.innerHTML = `
-<svg class="bc-live-ff-icon" viewBox="0 0 30 30" aria-hidden="true" focusable="false">
-  <path d="M9.4 8.1c0-.84.96-1.32 1.63-.82l8.63 6.46c.54.4.54 1.21 0 1.61l-8.63 6.46c-.67.5-1.63.02-1.63-.82V8.1Z"></path>
-  <path d="M21.1 8.4c0-.61.49-1.1 1.1-1.1s1.1.49 1.1 1.1v13.2c0 .61-.49 1.1-1.1 1.1s-1.1-.49-1.1-1.1V8.4Z"></path>
-</svg>
+<ui-next-media-icon class="bc-live-ff-icon" aria-hidden="true">
+  <svg viewBox="0 0 24 24" focusable="false">
+    <path d="M6 18V6l8.5 6L6 18Zm10-12h2v12h-2V6Z"></path>
+  </svg>
+</ui-next-media-icon>
 `;
         button.addEventListener("click", handleLiveFastForwardClick, true);
 
@@ -1352,6 +1401,11 @@
         const container = findLeftButtonsContainer();
         const existing = getLiveFastForwardButtonElement();
         if (!container) {
+            if (existing) removeLiveFastForwardButton();
+            return;
+        }
+
+        if (findExternalLiveFastForwardButton(container)) {
             if (existing) removeLiveFastForwardButton();
             return;
         }

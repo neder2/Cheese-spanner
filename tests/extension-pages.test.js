@@ -130,6 +130,47 @@ function createTimeRanges(ranges) {
     };
 }
 
+function makeVisibleVideo(video) {
+    video.getBoundingClientRect = () => ({
+        width: 640,
+        height: 360,
+        left: 0,
+        top: 0,
+        right: 640,
+        bottom: 360,
+    });
+}
+
+function createVideoTrackList(tracks, selectedIndex = 0) {
+    const trackList = {
+        length: tracks.length,
+        selectedIndex,
+        item(index) {
+            return this[index] || null;
+        },
+        addEventListener() {},
+        removeEventListener() {},
+    };
+
+    tracks.forEach((track, index) => {
+        track.selected = index === selectedIndex;
+        trackList[index] = track;
+    });
+
+    return trackList;
+}
+
+function requestAutoQualityApply(dom, quality = "1080p") {
+    const requestId = `test-${Date.now()}-${Math.random()}`;
+    const { document } = dom.window;
+    document.documentElement.setAttribute(
+        "data-betterchzzk-auto-quality-request",
+        JSON.stringify({ requestId, quality })
+    );
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:auto-quality:apply"));
+    return JSON.parse(document.documentElement.getAttribute("data-betterchzzk-auto-quality-result"));
+}
+
 test("options page renders defaults and dependency-disabled controls without extension storage", () => {
     const dom = createDom("options.html", "options.html");
 
@@ -194,6 +235,138 @@ test("options page loads stored values and writes normalized changes", async () 
     assert.equal(chrome.testState.sync.skipSeconds, 17);
     assert.equal(saveButton.disabled, true);
     assert.equal(document.getElementById("notice").dataset.state, "saved");
+});
+
+test("auto quality falls back to the highest selectable lower track", () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            "<main>",
+            '<video id="video"></video>',
+            "</main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/video/12345",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const tracks = [
+        { id: "auto", label: "auto 1080p", height: 1080 },
+        { id: "480", label: "480p", height: 480, kind: "main" },
+        { id: "720", label: "720p", height: 720, kind: "main" },
+    ];
+    const trackList = createVideoTrackList(tracks, 1);
+
+    video.currentTime = 2;
+    Object.defineProperty(video, "paused", {
+        configurable: true,
+        get: () => false,
+    });
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "videoTracks", {
+        configurable: true,
+        get: () => trackList,
+    });
+
+    evalRepoScript(dom, "features", "autoQualityPage.js");
+
+    const result = requestAutoQualityApply(dom, "1080p");
+
+    assert.equal(result.status, "selected");
+    assert.equal(result.selected.height, 720);
+    assert.equal(result.previous.height, 480);
+    assert.equal(trackList.selectedIndex, 2);
+    assert.equal(tracks[2].selected, true);
+    assert.equal(tracks[1].selected, false);
+});
+
+test("auto quality treats an already selected fallback track as stable", () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            "<main>",
+            '<video id="video"></video>',
+            "</main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/video/12345",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const tracks = [
+        { id: "auto", label: "auto 1080p", height: 1080 },
+        { id: "720", label: "720p", height: 720, kind: "main" },
+        { id: "480", label: "480p", height: 480, kind: "main" },
+    ];
+    const trackList = createVideoTrackList(tracks, 1);
+
+    video.currentTime = 2;
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "videoTracks", {
+        configurable: true,
+        get: () => trackList,
+    });
+
+    evalRepoScript(dom, "features", "autoQualityPage.js");
+
+    const result = requestAutoQualityApply(dom, "1080p");
+
+    assert.equal(result.status, "already");
+    assert.equal(result.selected.height, 720);
+    assert.equal(trackList.selectedIndex, 1);
+    assert.equal(tracks[1].selected, true);
+});
+
+test("VOD replay chat fix ignores currentTime-only URL changes on the same VOD", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            vodReplayChatFixEnabled: true,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            "<main>",
+            '<video id="video"></video>',
+            "</main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/video/12345",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const scheduledTimers = [];
+
+    dom.window.setTimeout = (callback, delay) => {
+        scheduledTimers.push({ callback, delay });
+        return scheduledTimers.length;
+    };
+    dom.window.clearTimeout = () => {};
+    video.currentTime = 20;
+    makeVisibleVideo(video);
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "vodReplayChatFix.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    await waitForAsyncCallbacks();
+
+    scheduledTimers.length = 0;
+    dom.window.history.pushState({}, "", "/video/12345?currentTime=30");
+    document.body.appendChild(document.createElement("div"));
+    await waitForAsyncCallbacks();
+
+    assert.equal(scheduledTimers.length, 0);
+    assert.equal(dom.window.sessionStorage.getItem("betterchzzk:vod-chat-reload:/video/12345"), null);
 });
 
 test("VOD broadcast clock stays hidden when the broadcast start time is unavailable", async () => {
@@ -318,15 +491,93 @@ test("live fast-forward button seeks to the buffered live edge", async () => {
         assert.equal(button.getAttribute("label"), "\uBE68\uB9AC \uAC10\uAE30");
         assert.equal(button.getAttribute("aria-label"), "\uBE68\uB9AC \uAC10\uAE30");
         assert.equal(button.getAttribute("tooltip"), "\uBE68\uB9AC \uAC10\uAE30");
-        assert.equal(button.title, "\uBE68\uB9AC \uAC10\uAE30");
+        assert.equal(button.hasAttribute("title"), false);
         assert.equal(button.classList.contains("knife-ff"), true);
-        assert.ok(button.querySelector("svg.bc-live-ff-icon"));
+        assert.ok(button.querySelector("ui-next-media-icon.bc-live-ff-icon svg"));
         assert.equal(button.textContent.trim(), "");
         assert.equal(button.disabled, false);
 
         button.click();
 
         assert.equal(video.currentTime, 42);
+    } finally {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ skipControlEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    }
+});
+
+test("live fast-forward button does not duplicate an external knife button", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            skipLivePauseResumeEnabled: false,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<video id="video"></video>',
+            '<div class="pzp-pc__bottom-buttons--left" id="controls">',
+            '<button class="pzp-pc__playback-switch" id="play" type="button">Play</button>',
+            '<button class="knife-ff" id="external-ff" type="button" aria-label="\uBE68\uB9AC \uAC10\uAE30"></button>',
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const controls = document.getElementById("controls");
+    const play = document.getElementById("play");
+    const externalButton = document.getElementById("external-ff");
+
+    video.getBoundingClientRect = () => ({
+        width: 640,
+        height: 360,
+        left: 0,
+        top: 0,
+        right: 640,
+        bottom: 360,
+    });
+    controls.getBoundingClientRect = () => ({
+        width: 220,
+        height: 40,
+        left: 16,
+        top: 316,
+        right: 236,
+        bottom: 356,
+    });
+    play.getBoundingClientRect = () => ({
+        width: 36,
+        height: 36,
+        left: 20,
+        top: 318,
+        right: 56,
+        bottom: 354,
+    });
+    externalButton.getBoundingClientRect = () => ({
+        width: 36,
+        height: 36,
+        left: 64,
+        top: 318,
+        right: 100,
+        bottom: 354,
+    });
+
+    try {
+        evalRepoScript(dom, "shared", "settings.js");
+        evalRepoScript(dom, "content.js");
+        evalRepoScript(dom, "features", "skipControl.js");
+        document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+        await waitForAsyncCallbacks();
+        await waitForAsyncCallbacks();
+
+        assert.equal(document.getElementById("betterchzzk-live-fast-forward"), null);
+        assert.equal(document.getElementById("external-ff"), externalButton);
     } finally {
         for (const listener of chrome.testState.storageChangeListeners) {
             listener({ skipControlEnabled: { newValue: false } }, "sync");
