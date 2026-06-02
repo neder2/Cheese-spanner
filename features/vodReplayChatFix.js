@@ -30,14 +30,8 @@
     let bodyObserver = null;
     let routeStartedAt = performance.now();
     let routeNeedsReplayChatFix = false;
-    let featureOptions = BetterChzzkSettings.normalizeOptions();
     let removePageChangeDetection = null;
     let runtimeInstalled = false;
-    let optionsApplied = false;
-
-    function isEnabled() {
-        return featureOptions.vodReplayChatFixEnabled;
-    }
 
     function isVodRoute() {
         return VOD_ROUTE_RE.test(location.pathname);
@@ -133,7 +127,7 @@
     }
 
     function reloadOnceForReplayChat() {
-        if (!isEnabled() || !routeNeedsReplayChatFix || !isVodRoute()) {
+        if (!routeNeedsReplayChatFix || !isVodRoute()) {
             return;
         }
         if (hasReplayChat() || hasRecentReloadMark()) {
@@ -149,7 +143,7 @@
 
     function scheduleChecks({ spaNavigation = false } = {}) {
         routeStartedAt = performance.now();
-        routeNeedsReplayChatFix = isEnabled() && spaNavigation && isVodRoute();
+        routeNeedsReplayChatFix = spaNavigation && isVodRoute();
         checkSeq += 1;
         const seq = checkSeq;
         for (const delay of CHECK_DELAYS_MS) {
@@ -210,17 +204,6 @@
         bodyObserver.observe(document.documentElement, { childList: true, subtree: true });
     }
 
-    function stopObserver() {
-        if (observer) {
-            observer.disconnect();
-            observer = null;
-        }
-        if (bodyObserver) {
-            bodyObserver.disconnect();
-            bodyObserver = null;
-        }
-    }
-
     function installRuntime({ checkCurrentRoute = false } = {}) {
         if (!runtimeInstalled) {
             runtimeInstalled = true;
@@ -232,33 +215,7 @@
         scheduleChecks({ spaNavigation: checkCurrentRoute });
     }
 
-    function teardownRuntime() {
-        runtimeInstalled = false;
-        routeNeedsReplayChatFix = false;
-        checkSeq += 1;
-        stopObserver();
-        if (removePageChangeDetection) {
-            removePageChangeDetection();
-            removePageChangeDetection = null;
-        }
-    }
-
-    function applyOptions(options) {
-        const hadAppliedOptions = optionsApplied;
-        const wasEnabled = isEnabled();
-        featureOptions = options;
-        optionsApplied = true;
-        if (!isEnabled()) {
-            teardownRuntime();
-            return;
-        }
-        installRuntime({ checkCurrentRoute: hadAppliedOptions && !wasEnabled });
-    }
-
-    BetterChzzkSettings.getOptions(applyOptions);
-    BetterChzzkSettings.addOptionsChangeListener(applyOptions);
-
     onReady(() => {
-        if (isEnabled()) installRuntime();
+        installRuntime();
     });
 })();

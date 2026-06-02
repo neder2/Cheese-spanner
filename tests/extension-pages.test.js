@@ -202,6 +202,35 @@ test("options page renders defaults and dependency-disabled controls without ext
     assert.equal(skipKeyboard.closest("[data-depends-on]").classList.contains("is-disabled"), true);
 });
 
+test("options playback controls show live settings before VOD settings", () => {
+    const dom = createDom("options.html", "options.html");
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+
+    const { document } = dom.window;
+    const section = queryOption(document, "skipControlEnabled").closest(".settings-card");
+    const optionOrder = Array.from(section.querySelectorAll("[data-option]")).map((input) => input.dataset.option);
+    const detailOrder = Array.from(section.querySelectorAll("summary")).map((summary) => summary.textContent.trim());
+
+    assert.equal(section.querySelector("h2").textContent.trim(), "라이브/다시보기 조작");
+    assert.deepEqual(detailOrder, ["라이브 위치 유지 설정", "스킵 수치 설정"]);
+    assert.deepEqual(optionOrder, [
+        "skipControlEnabled",
+        "skipKeyboardEnabled",
+        "skipLivePauseResumeEnabled",
+        "skipLivePauseResumeDepthMinutes",
+        "timeMachineLagLabelEnabled",
+        "skipPillEnabled",
+        "skipLivePillEnabled",
+        "skipSeconds",
+        "skipWheelStep",
+        "skipWheelShiftStep",
+        "skipWheelAltStep",
+        "vodBroadcastClockEnabled",
+    ]);
+});
+
 test("options page loads stored values and writes normalized changes", async () => {
     const chrome = createFakeChrome({
         sync: {
@@ -324,11 +353,7 @@ test("auto quality treats an already selected fallback track as stable", () => {
 });
 
 test("VOD replay chat fix ignores currentTime-only URL changes on the same VOD", async () => {
-    const chrome = createFakeChrome({
-        sync: {
-            vodReplayChatFixEnabled: true,
-        },
-    });
+    const chrome = createFakeChrome();
     const dom = createPageDom(
         [
             "<!doctype html>",
@@ -367,6 +392,55 @@ test("VOD replay chat fix ignores currentTime-only URL changes on the same VOD",
 
     assert.equal(scheduledTimers.length, 0);
     assert.equal(dom.window.sessionStorage.getItem("betterchzzk:vod-chat-reload:/video/12345"), null);
+});
+
+test("VOD replay chat fix runs even when the old stored option is disabled", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            vodReplayChatFixEnabled: false,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            "<main>",
+            '<video id="video"></video>',
+            "</main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/video/12345",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const scheduledTimers = [];
+
+    dom.window.setTimeout = (callback, delay) => {
+        scheduledTimers.push({ callback, delay });
+        return scheduledTimers.length;
+    };
+    dom.window.clearTimeout = () => {};
+    makeVisibleVideo(video);
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "vodReplayChatFix.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    await waitForAsyncCallbacks();
+
+    scheduledTimers.length = 0;
+    dom.window.history.pushState({}, "", "/video/67890");
+    document.body.appendChild(document.createElement("div"));
+    await waitForAsyncCallbacks();
+
+    assert.deepEqual(
+        scheduledTimers
+            .map(({ delay }) => delay)
+            .filter((delay) => delay >= 12000),
+        [12000, 16000, 22000]
+    );
 });
 
 test("VOD broadcast clock stays hidden when the broadcast start time is unavailable", async () => {

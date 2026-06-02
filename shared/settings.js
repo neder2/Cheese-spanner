@@ -32,7 +32,6 @@
         skipWheelAltStep: { kind: "int", default: 10, min: 1, max: 600 },
         vodBroadcastClockEnabled: { kind: "bool", default: false, feature: true },
         timeMachineLagLabelEnabled: { kind: "bool", default: true, feature: true },
-        vodReplayChatFixEnabled: { kind: "bool", default: true, feature: true },
         adblockPopupEnabled: { kind: "bool", default: true, feature: true },
         monthlyBroadcastTimeEnabled: { kind: "bool", default: true, feature: true },
         monthlyBroadcastTimeWindowDays: { kind: "int", default: 30, min: 1, max: 365 },
