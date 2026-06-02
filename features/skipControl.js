@@ -33,6 +33,12 @@
     const LIVE_RESUME_RESTORE_MAX_ATTEMPTS = 45;
     const LIVE_RESUME_ALLOWED_DRIFT_SECONDS = 1.5;
     const LIVE_PAUSE_CACHE_SYNC_INTERVAL_MS = 1000;
+    const LIVE_TIMESHIFT_ARM_LAG_SECONDS = 4;
+    const LIVE_TIMESHIFT_SNAP_AHEAD_SECONDS = 2;
+    const LIVE_TIMESHIFT_NEAR_EDGE_SECONDS = 2;
+    const LIVE_TIMESHIFT_RESTORE_COOLDOWN_MS = 120;
+    const LIVE_TIMESHIFT_SYNC_INTERVAL_MS = 500;
+    const OWNED_LIVE_CONTROL_IDS = new Set([SKIP_PILL_ID, LIVE_FAST_FORWARD_BUTTON_ID]);
     const { DEFAULT_SKIP_SECONDS, normalizeSkipSeconds, normalizeOptions } = BetterChzzkSettings;
     const {
         bindFeatureOptions,
@@ -61,8 +67,11 @@
     let pauseCacheSyncTimer = null;
     let resumeRestoreState = null;
     let resumeRestoreTimer = null;
-    let lastLiveEdgeIntentAt = 0;
-    let lastPausedControlIntentAt = 0;
+    let liveTimeShiftState = null;
+    let liveTimeShiftSyncTimer = null;
+    let liveTimeShiftRestoring = false;
+    let lastLiveEdgeIntentAt = Number.NEGATIVE_INFINITY;
+    let lastPausedControlIntentAt = Number.NEGATIVE_INFINITY;
     let domObserver = null;
     let domObserverMode = "";
     let bodyObserver = null;
@@ -203,6 +212,14 @@
         pill.style.pointerEvents = state.pointerEvents;
     }
 
+    function syncLiveInlineControlVisibility(control, reference) {
+        if (!(control instanceof HTMLElement) || !(reference instanceof HTMLElement)) return;
+        const state = getEffectiveControlState(reference);
+        control.style.opacity = state.opacity;
+        control.style.visibility = state.visibility;
+        control.style.pointerEvents = state.pointerEvents;
+    }
+
     function getSeekableRange(video) {
         if (!(video instanceof HTMLVideoElement) || !video.seekable?.length) return null;
         try {
@@ -229,6 +246,19 @@
         }
     }
 
+    function getLiveEdge(video) {
+        const bufferedRange = getBufferedRange(video);
+        const seekableRange = getSeekableRange(video);
+        const bufferedEnd = bufferedRange?.end;
+        const seekableEnd = seekableRange?.end;
+
+        if (Number.isFinite(bufferedEnd) && Number.isFinite(seekableEnd)) return Math.max(bufferedEnd, seekableEnd);
+        if (Number.isFinite(bufferedEnd)) return bufferedEnd;
+        if (Number.isFinite(seekableEnd)) return seekableEnd;
+
+        return NaN;
+    }
+
     function getSeekBounds(video) {
         const seekableRange = getSeekableRange(video);
         if (seekableRange && (isLiveRoute() || !Number.isFinite(video.duration))) {
@@ -253,8 +283,26 @@
         return button.hasAttribute(LIVE_EDGE_PATCHED_ATTR) || containsAnyTerm(getCandidateText(button), LIVE_EDGE_BUTTON_TERMS);
     }
 
+    function clearLiveTimeShiftState(video = null) {
+        if (!video || liveTimeShiftState?.video === video) liveTimeShiftState = null;
+    }
+
+    function startLiveTimeShiftSync(video = attachedVideo) {
+        if (!(video instanceof HTMLVideoElement) || liveTimeShiftSyncTimer) return;
+        liveTimeShiftSyncTimer = setInterval(() => {
+            if (attachedVideo) syncLiveTimeShiftGuard(attachedVideo);
+        }, LIVE_TIMESHIFT_SYNC_INTERVAL_MS);
+    }
+
+    function stopLiveTimeShiftSync() {
+        if (!liveTimeShiftSyncTimer) return;
+        clearInterval(liveTimeShiftSyncTimer);
+        liveTimeShiftSyncTimer = null;
+    }
+
     function markLiveEdgeIntent() {
         lastLiveEdgeIntentAt = performance.now();
+        clearLiveTimeShiftState();
         cancelResumeRestore({ clearSnapshot: true });
     }
 
@@ -307,6 +355,106 @@
         );
     }
 
+    function getExpectedLiveTimeShiftTime(state) {
+        const elapsedSeconds = Math.max(0, (performance.now() - state.updatedAt) / 1000);
+        const rate = Number(state.video?.playbackRate);
+        const playbackRate = Number.isFinite(rate) && rate > 0 ? rate : 1;
+        return state.video?.paused ? state.time : state.time + elapsedSeconds * playbackRate;
+    }
+
+    function rememberLiveTimeShiftPosition(video, edge, lag) {
+        const currentTime = Number(video?.currentTime);
+        if (!Number.isFinite(currentTime) || !Number.isFinite(edge) || lag < LIVE_TIMESHIFT_ARM_LAG_SECONDS) {
+            if (Number.isFinite(lag) && lag <= LIVE_TIMESHIFT_NEAR_EDGE_SECONDS) clearLiveTimeShiftState(video);
+            return;
+        }
+
+        const routeKey = getLiveRouteKey();
+        const previous = liveTimeShiftState?.routeKey === routeKey && liveTimeShiftState?.video === video ? liveTimeShiftState : null;
+        liveTimeShiftState = {
+            video,
+            routeKey,
+            time: currentTime,
+            edge,
+            lag,
+            storedAt: previous?.storedAt || performance.now(),
+            updatedAt: performance.now(),
+            restores: previous?.restores || 0,
+            lastRestoreAt: previous?.lastRestoreAt ?? Number.NEGATIVE_INFINITY,
+        };
+    }
+
+    function restoreLiveTimeShiftPosition(video, state, expectedTime, edge) {
+        const bounds = getSeekBounds(video);
+        if (!Number.isFinite(expectedTime) || expectedTime < bounds.min) {
+            clearLiveTimeShiftState(video);
+            return false;
+        }
+
+        const target = Math.min(Math.max(expectedTime, bounds.min), bounds.max);
+        if (!Number.isFinite(target) || edge - target <= LIVE_TIMESHIFT_NEAR_EDGE_SECONDS) {
+            clearLiveTimeShiftState(video);
+            return false;
+        }
+
+        const now = performance.now();
+        if (now - (state.lastRestoreAt || 0) < LIVE_TIMESHIFT_RESTORE_COOLDOWN_MS) return false;
+
+        try {
+            liveTimeShiftRestoring = true;
+            video.currentTime = target;
+        } catch {
+            clearLiveTimeShiftState(video);
+            return false;
+        } finally {
+            setTimeout(() => {
+                liveTimeShiftRestoring = false;
+            }, 0);
+        }
+
+        liveTimeShiftState = {
+            ...state,
+            time: target,
+            edge,
+            lag: Math.max(0, edge - target),
+            updatedAt: now,
+            restores: (state.restores || 0) + 1,
+            lastRestoreAt: now,
+        };
+        return true;
+    }
+
+    function syncLiveTimeShiftGuard(video, { allowCurrent = false } = {}) {
+        if (!canUseLiveResumeGuard(video) || isRecentLiveEdgeIntent()) {
+            clearLiveTimeShiftState(video);
+            return;
+        }
+
+        const currentTime = Number(video.currentTime);
+        const edge = getLiveEdge(video);
+        if (!Number.isFinite(currentTime) || !Number.isFinite(edge)) {
+            clearLiveTimeShiftState(video);
+            return;
+        }
+
+        const lag = edge - currentTime;
+        const state = liveTimeShiftState;
+        const canRestore =
+            state?.video === video &&
+            state.routeKey === getLiveRouteKey() &&
+            !liveTimeShiftRestoring &&
+            !allowCurrent;
+
+        if (canRestore) {
+            const expectedTime = getExpectedLiveTimeShiftTime(state);
+            const jumpedAhead = currentTime > expectedTime + LIVE_TIMESHIFT_SNAP_AHEAD_SECONDS;
+            const collapsedLag = lag <= LIVE_TIMESHIFT_NEAR_EDGE_SECONDS || lag < state.lag - LIVE_TIMESHIFT_SNAP_AHEAD_SECONDS;
+            if (jumpedAhead && collapsedLag && restoreLiveTimeShiftPosition(video, state, expectedTime, edge)) return;
+        }
+
+        rememberLiveTimeShiftPosition(video, edge, lag);
+    }
+
     function rememberPausedPosition(video, { preserveCachedTime = false } = {}) {
         if (!canUseLiveResumeGuard(video) || isRecentLiveEdgeIntent()) {
             if (pauseSnapshot?.video === video) pauseSnapshot = null;
@@ -321,7 +469,7 @@
             preserveCachedTime && isPauseSnapshotForCurrentRoute()
                 ? pauseSnapshot.time
                 : video.currentTime;
-        const time = clampSeekTime(video, existingTime);
+        const time = Number(existingTime);
         if (!Number.isFinite(time)) return;
 
         pauseSnapshot = {
@@ -423,7 +571,10 @@
             return;
         }
 
-        const target = clampSeekTime(video, pauseSnapshot.time);
+        const rawTarget = Number(pauseSnapshot.time);
+        if (!Number.isFinite(rawTarget)) return;
+
+        const target = clampSeekTime(video, rawTarget);
         if (!Number.isFinite(target)) return;
         pauseSnapshot.video = video;
         pauseSnapshot.time = target;
@@ -440,9 +591,10 @@
     }
 
     function onVideoPause(event) {
+        const video = event.currentTarget;
         cancelResumeRestore();
-        rememberPausedPosition(event.currentTarget);
-        startPauseCacheSync(event.currentTarget);
+        rememberPausedPosition(video);
+        startPauseCacheSync(video);
     }
 
     function onVideoPlay(event) {
@@ -454,8 +606,13 @@
         refreshPauseCacheSnapshot(event.currentTarget);
     }
 
+    function onVideoTimeShiftChange(event) {
+        syncLiveTimeShiftGuard(event.currentTarget);
+    }
+
     function onVideoSeeked(event) {
         const video = event.currentTarget;
+        syncLiveTimeShiftGuard(video);
         if (
             !video?.paused ||
             resumeRestoreState?.video === video ||
@@ -471,18 +628,23 @@
     function detachLiveResumeGuard({ clearSnapshot = true } = {}) {
         if (!attachedVideo) {
             stopPauseCacheSync();
+            stopLiveTimeShiftSync();
             cancelResumeRestore({ clearSnapshot });
             return;
         }
         attachedVideo.removeEventListener("pause", onVideoPause, true);
         attachedVideo.removeEventListener("play", onVideoPlay, true);
         attachedVideo.removeEventListener("playing", onVideoPlay, true);
+        attachedVideo.removeEventListener("seeking", onVideoTimeShiftChange, true);
         attachedVideo.removeEventListener("seeked", onVideoSeeked, true);
+        attachedVideo.removeEventListener("timeupdate", onVideoTimeShiftChange, true);
         attachedVideo.removeEventListener("progress", onVideoProgress, true);
         attachedVideo.removeEventListener("durationchange", onVideoProgress, true);
         attachedVideo.removeEventListener("loadedmetadata", onVideoProgress, true);
+        clearLiveTimeShiftState(attachedVideo);
         attachedVideo = null;
         stopPauseCacheSync();
+        stopLiveTimeShiftSync();
         cancelResumeRestore({ clearSnapshot });
     }
 
@@ -502,10 +664,13 @@
         attachedVideo.addEventListener("pause", onVideoPause, true);
         attachedVideo.addEventListener("play", onVideoPlay, true);
         attachedVideo.addEventListener("playing", onVideoPlay, true);
+        attachedVideo.addEventListener("seeking", onVideoTimeShiftChange, true);
         attachedVideo.addEventListener("seeked", onVideoSeeked, true);
+        attachedVideo.addEventListener("timeupdate", onVideoTimeShiftChange, true);
         attachedVideo.addEventListener("progress", onVideoProgress, true);
         attachedVideo.addEventListener("durationchange", onVideoProgress, true);
         attachedVideo.addEventListener("loadedmetadata", onVideoProgress, true);
+        startLiveTimeShiftSync(video);
 
         if (video.paused) {
             refreshPauseCacheSnapshot(video);
@@ -534,16 +699,17 @@
 
         const step = normalizeSkipSeconds(skipSeconds);
         const current = Number.isFinite(video.currentTime) ? video.currentTime : 0;
-        let next = current + (event.key === "ArrowRight" ? step : -step);
+        const rawNext = current + (event.key === "ArrowRight" ? step : -step);
 
         const bounds = getSeekBounds(video);
-        next = Math.min(Math.max(next, bounds.min), bounds.max);
 
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
 
+        const next = Math.min(Math.max(rawNext, bounds.min), bounds.max);
         video.currentTime = next;
+        syncLiveTimeShiftGuard(video, { allowCurrent: true });
         if (video.paused) rememberPausedPosition(video);
     }
 
@@ -722,7 +888,13 @@
         if (!pill) return;
 
         pill.style.display = "";
-        if (["live-inline", "vod-inline"].includes(pill.getAttribute("data-bc-placement"))) return;
+        if (["live-inline", "vod-inline"].includes(pill.getAttribute("data-bc-placement"))) {
+            const reference = pill.parentElement?.matches?.(LIVE_LEFT_BUTTONS_SELECTOR)
+                ? findLiveButtonBoxReference(pill.parentElement)
+                : null;
+            if (reference) syncLiveInlineControlVisibility(pill, reference);
+            return;
+        }
 
         const anchorEl = findAnchorElementForPill(pill);
         if (anchorEl) {
@@ -746,19 +918,41 @@
         pill.className = "";
     }
 
+    function pickVisibleControls(elements) {
+        const candidates = [];
+        for (const el of elements) {
+            if (!(el instanceof HTMLElement) || getVisibleArea(el) <= 0) continue;
+            const rect = el.getBoundingClientRect();
+            candidates.push({ el, width: rect.width, left: rect.left });
+        }
+        return candidates;
+    }
+
+    function pickFirstVisibleControl(elements) {
+        const candidates = pickVisibleControls(elements);
+        if (!candidates.length) return null;
+        candidates.sort((a, b) => a.left - b.left || a.width - b.width);
+        return candidates[0].el;
+    }
+
     function findLiveButtonBoxReference(container) {
         if (!(container instanceof HTMLElement)) return null;
 
         const children = Array.from(container.children || []).filter((child) => {
-            return child instanceof HTMLElement && child.id !== SKIP_PILL_ID && child.id !== LIVE_FAST_FORWARD_BUTTON_ID;
+            return child instanceof HTMLElement && !OWNED_LIVE_CONTROL_IDS.has(child.id);
         });
+        const playbackReference = pickFirstVisibleControl(
+            children.filter((child) => child.matches?.(LIVE_PLAYBACK_SWITCH_SELECTOR))
+        );
+        if (playbackReference) return playbackReference;
 
-        const visibleChildren = children.filter((child) => getVisibleArea(child) > 0);
-        const candidates = visibleChildren.length ? visibleChildren : children;
-        if (!candidates.length) return null;
+        const buttonReference = pickFirstVisibleControl(
+            children.filter((child) => child.matches?.(BUTTON_SELECTOR))
+        );
+        if (buttonReference) return buttonReference;
 
-        candidates.sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
-        return candidates[0];
+        const fallbackReference = pickFirstVisibleControl(children);
+        return fallbackReference || children[0] || null;
     }
 
     function syncLivePillButtonBoxClass(pill, container) {
@@ -770,9 +964,7 @@
         pill.style.marginLeft = "8px";
 
         if (!reference) return;
-        pill.style.opacity = reference.style.opacity || "";
-        pill.style.visibility = reference.style.visibility || "";
-        pill.style.pointerEvents = reference.style.pointerEvents || "";
+        syncLiveInlineControlVisibility(pill, reference);
         pill.style.transition = reference.style.transition || "";
     }
 
@@ -807,7 +999,7 @@
         }
 
         const children = Array.from(container.children || []).filter((child) => {
-            return child instanceof HTMLElement && child.id !== SKIP_PILL_ID && child.id !== LIVE_FAST_FORWARD_BUTTON_ID;
+            return child instanceof HTMLElement && !OWNED_LIVE_CONTROL_IDS.has(child.id);
         });
         const visibleChildren = children.filter((child) => getVisibleArea(child) > 0);
         return visibleChildren[0] || children[0] || null;
@@ -824,9 +1016,7 @@
         button.style.marginLeft = "4px";
 
         if (!reference) return;
-        button.style.opacity = reference.style.opacity || "";
-        button.style.visibility = reference.style.visibility || "";
-        button.style.pointerEvents = reference.style.pointerEvents || "";
+        syncLiveInlineControlVisibility(button, reference);
         button.style.transition = reference.style.transition || "";
     }
 
@@ -1295,10 +1485,8 @@
         const button = event.target?.closest?.(BUTTON_SELECTOR);
         if (!(button instanceof HTMLElement)) return;
 
-        const now = performance.now();
         if (looksLikeLiveEdgeButton(button)) {
-            lastLiveEdgeIntentAt = now;
-            cancelResumeRestore({ clearSnapshot: true });
+            markLiveEdgeIntent();
             return;
         }
 
@@ -1308,7 +1496,7 @@
             canUseLiveResumeGuard(attachedVideo) &&
             isInLikelyVideoControlArea(button, attachedVideo)
         ) {
-            lastPausedControlIntentAt = now;
+            lastPausedControlIntentAt = performance.now();
         }
     }
 
