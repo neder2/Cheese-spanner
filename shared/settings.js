@@ -9,6 +9,9 @@
     const FILTER_PRESET_MAX = 10000000;
     const LIVE_WATCH_HISTORY_MIN_MINUTES_MIN = 1;
     const LIVE_WATCH_HISTORY_MIN_MINUTES_MAX = 1440;
+    const LIVE_PAUSE_CACHE_DEPTH_MINUTES_MIN = 1;
+    const LIVE_PAUSE_CACHE_DEPTH_MINUTES_MAX = 360;
+    const LIVE_PAUSE_CACHE_DEPTH_MINUTES_DEFAULT = 120;
 
     const OPTION_SCHEMA = Object.freeze({
         autoQualityEnabled: { kind: "bool", default: true, feature: true },
@@ -17,6 +20,12 @@
         skipPillEnabled: { kind: "bool", default: true },
         skipLivePillEnabled: { kind: "bool", default: true },
         skipLivePauseResumeEnabled: { kind: "bool", default: true },
+        skipLivePauseResumeDepthMinutes: {
+            kind: "int",
+            default: LIVE_PAUSE_CACHE_DEPTH_MINUTES_DEFAULT,
+            min: LIVE_PAUSE_CACHE_DEPTH_MINUTES_MIN,
+            max: LIVE_PAUSE_CACHE_DEPTH_MINUTES_MAX,
+        },
         skipSeconds: { kind: "skipSeconds", default: DEFAULT_SKIP_SECONDS },
         skipWheelStep: { kind: "int", default: 1, min: 1, max: 60 },
         skipWheelShiftStep: { kind: "int", default: 5, min: 1, max: 300 },
@@ -222,6 +231,9 @@
         MONTHLY_CALENDAR_MAX_PAGES,
         LIVE_WATCH_HISTORY_MIN_MINUTES_MIN,
         LIVE_WATCH_HISTORY_MIN_MINUTES_MAX,
+        LIVE_PAUSE_CACHE_DEPTH_MINUTES_MIN,
+        LIVE_PAUSE_CACHE_DEPTH_MINUTES_MAX,
+        LIVE_PAUSE_CACHE_DEPTH_MINUTES_DEFAULT,
         OPTION_SPEC,
         DEFAULT_OPTIONS,
         OPTION_KEYS,

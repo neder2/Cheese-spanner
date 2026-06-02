@@ -1,0 +1,22 @@
+export default {
+    ignoreFiles: [
+        "tests",
+        "tests/**",
+        "docs",
+        "docs/**",
+        "store-assets",
+        "store-assets/**",
+        "dist",
+        "dist/**",
+        "web-ext-artifacts",
+        "web-ext-artifacts/**",
+        "*.md",
+        "AGENTS.md",
+        "package.json",
+        "package-lock.json",
+        "eslint.config.js",
+        ".prettierrc.json",
+        "web-ext-config.mjs",
+        ".claude/**",
+    ],
+};

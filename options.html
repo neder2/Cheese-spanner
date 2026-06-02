@@ -107,6 +107,14 @@
                         <label><span>Alt+휠</span><input type="number" min="1" max="600" step="1" data-option="skipWheelAltStep"><em>초</em></label>
                     </div>
                 </details>
+
+                <details class="advanced-settings">
+                    <summary>라이브 위치 유지 설정</summary>
+                    <div class="number-grid" data-depends-on="skipControlEnabled skipLivePauseResumeEnabled">
+                        <label><span class="has-tip">라이브 캐시 용량<span class="help-tip" tabindex="0" role="button" aria-label="라이브 캐시가 저장되는 방식 설명"><span class="help-tip__mark" aria-hidden="true">?</span><span class="help-tip__bubble" role="tooltip">실시간 끝에서 설정한 시간 이내로 떨어진 위치만 기억해 되돌립니다. 위치 값은 이 탭의 메모리에만 잠깐 저장되고, Chrome 동기화에 올라가지 않으며 페이지를 벗어나면 사라집니다. 실제 되감기 범위는 플레이어가 버퍼링한 만큼으로 제한됩니다.</span></span></span><input type="number" min="1" max="360" step="5" data-option="skipLivePauseResumeDepthMinutes"><em>분</em></label>
+                    </div>
+                    <p class="setting-note">‘라이브 위치 유지’가 켜져 있을 때만 적용됩니다. 실시간에서 설정한 시간보다 더 뒤로 가면 위치를 기억하지 않고 치지직 기본 동작을 따릅니다.</p>
+                </details>
             </section>
 
             <section class="settings-card">

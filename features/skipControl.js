@@ -277,6 +277,19 @@
         return Math.min(Math.max(value, bounds.min), bounds.max);
     }
 
+    function getLiveCacheDepthSeconds() {
+        const minutes = Number(featureOptions.skipLivePauseResumeDepthMinutes);
+        if (!Number.isFinite(minutes) || minutes <= 0) return Infinity;
+        return minutes * 60;
+    }
+
+    function isWithinLiveCacheDepth(behindSeconds) {
+        const behind = Number(behindSeconds);
+        if (!Number.isFinite(behind)) return false;
+        if (behind <= 0) return true;
+        return behind <= getLiveCacheDepthSeconds();
+    }
+
     function looksLikeLiveEdgeButton(button) {
         if (!(button instanceof HTMLElement)) return false;
         if (button.id === LIVE_FAST_FORWARD_BUTTON_ID) return true;
@@ -366,6 +379,11 @@
         const currentTime = Number(video?.currentTime);
         if (!Number.isFinite(currentTime) || !Number.isFinite(edge) || lag < LIVE_TIMESHIFT_ARM_LAG_SECONDS) {
             if (Number.isFinite(lag) && lag <= LIVE_TIMESHIFT_NEAR_EDGE_SECONDS) clearLiveTimeShiftState(video);
+            return;
+        }
+
+        if (!isWithinLiveCacheDepth(lag)) {
+            clearLiveTimeShiftState(video);
             return;
         }
 
@@ -471,6 +489,11 @@
                 : video.currentTime;
         const time = Number(existingTime);
         if (!Number.isFinite(time)) return;
+
+        if (!isWithinLiveCacheDepth(seekableRange.end - time)) {
+            if (pauseSnapshot?.video === video) pauseSnapshot = null;
+            return;
+        }
 
         pauseSnapshot = {
             video,

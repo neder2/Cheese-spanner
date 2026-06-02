@@ -14,6 +14,7 @@ const expectedDefaults = {
     skipPillEnabled: true,
     skipLivePillEnabled: true,
     skipLivePauseResumeEnabled: true,
+    skipLivePauseResumeDepthMinutes: 120,
     skipSeconds: 5,
     skipWheelStep: 1,
     skipWheelShiftStep: 5,

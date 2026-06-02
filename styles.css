@@ -458,6 +458,77 @@ h1 {
     white-space: nowrap;
 }
 
+.number-grid span.has-tip {
+    overflow: visible;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.help-tip {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    border: 1px solid var(--border-strong);
+    border-radius: 50%;
+    color: var(--text-muted);
+    background: var(--surface-3);
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+    cursor: help;
+}
+
+.help-tip:hover,
+.help-tip:focus-visible {
+    color: var(--accent);
+    border-color: var(--accent);
+    outline: none;
+}
+
+.help-tip__mark {
+    pointer-events: none;
+}
+
+.help-tip__bubble {
+    position: absolute;
+    left: -8px;
+    top: calc(100% + 7px);
+    z-index: 60;
+    width: max-content;
+    max-width: 230px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    color: var(--text);
+    background: var(--surface-3);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.5;
+    white-space: normal;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+    text-align: left;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-3px);
+    transition: opacity 120ms ease, transform 120ms ease, visibility 120ms;
+    pointer-events: none;
+}
+
+.help-tip:hover .help-tip__bubble,
+.help-tip:focus .help-tip__bubble,
+.help-tip:focus-visible .help-tip__bubble {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
 .setting-note {
     margin-top: 8px;
     color: var(--text-dim);

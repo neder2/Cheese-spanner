@@ -2084,7 +2084,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
 
         const totalEl = document.createElement("span");
         totalEl.className = "bcmb-calendar-watch-total";
-        totalEl.textContent = `내 채널 누적 ${formatDuration(getChannelWatchSeconds(currentChannelId))}`;
+        totalEl.textContent = `내 시청 시간 ${formatDuration(getChannelWatchSeconds(currentChannelId))}`;
 
         footEl.replaceChildren(noteEl, totalEl);
     }
