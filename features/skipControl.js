@@ -40,6 +40,8 @@
     const LIVE_TIMESHIFT_NEAR_EDGE_SECONDS = 2;
     const LIVE_TIMESHIFT_RESTORE_COOLDOWN_MS = 120;
     const LIVE_TIMESHIFT_SYNC_INTERVAL_MS = 500;
+    // 치지직 플레이어는 프레임레이트를 노출하지 않으므로 주류인 1080p60 기준(60fps)으로 이동한다.
+    const FRAME_STEP_SECONDS = 1 / 60;
     const OWNED_LIVE_CONTROL_IDS = new Set([SKIP_PILL_ID, LIVE_FAST_FORWARD_BUTTON_ID]);
     const { DEFAULT_SKIP_SECONDS, normalizeSkipSeconds, normalizeOptions } = BetterChzzkSettings;
     const {
@@ -744,29 +746,49 @@
         attachLiveResumeGuard(getMainVideoElement());
     }
 
-    function onKeyDownSeek(event) {
-        if (!isKeyboardEnabled()) return;
-        if (event.ctrlKey || event.altKey || event.metaKey) return;
-        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-        if (isEditableTarget(event.target)) return;
-
-        const video = getMainVideoElement();
-        if (!video) return;
-
-        const step = normalizeSkipSeconds(skipSeconds);
+    function seekVideoBy(video, deltaSeconds) {
         const current = Number.isFinite(video.currentTime) ? video.currentTime : 0;
-        const rawNext = current + (event.key === "ArrowRight" ? step : -step);
-
         const bounds = getSeekBounds(video);
-
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-
-        const next = Math.min(Math.max(rawNext, bounds.min), bounds.max);
+        const next = Math.min(Math.max(current + deltaSeconds, bounds.min), bounds.max);
         video.currentTime = next;
         syncLiveTimeShiftGuard(video, { allowCurrent: true });
         if (video.paused) rememberPausedPosition(video);
+    }
+
+    function isFrameStepKey(event) {
+        if (event.shiftKey) return false;
+        return event.key === "," || event.key === "." || event.code === "Comma" || event.code === "Period";
+    }
+
+    function onKeyDownSeek(event) {
+        if (!isKeyboardEnabled()) return;
+        if (event.ctrlKey || event.altKey || event.metaKey) return;
+        if (isEditableTarget(event.target)) return;
+
+        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+            const video = getMainVideoElement();
+            if (!video) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+
+            const step = normalizeSkipSeconds(skipSeconds);
+            seekVideoBy(video, event.key === "ArrowRight" ? step : -step);
+            return;
+        }
+
+        if (isFrameStepKey(event)) {
+            const video = getMainVideoElement();
+            if (!video || !video.paused) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+
+            const forward = event.key === "." || event.code === "Period";
+            seekVideoBy(video, forward ? FRAME_STEP_SECONDS : -FRAME_STEP_SECONDS);
+        }
     }
 
     function injectSkipStyleOnce() {
