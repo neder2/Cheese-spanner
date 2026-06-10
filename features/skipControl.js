@@ -1172,7 +1172,10 @@
         event.stopPropagation();
         event.stopImmediatePropagation();
 
-        seekLiveToBufferedEnd();
+        const video = getMainVideoElement();
+        if (seekLiveToBufferedEnd(video) && video?.paused) {
+            video.play()?.catch?.(() => {});
+        }
         syncLiveFastForwardButtonState(button);
     }
 
