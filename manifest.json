@@ -50,7 +50,8 @@
                                            "features/videoSearch.js",
                                            "features/categoryTools.js",
                                            "features/titleTooltip.js",
-                                           "features/volumeWheel.js"
+                                           "features/volumeWheel.js",
+                                           "features/followingRefresh.js"
                                        ],
                                 "run_at":  "document_start"
                             }

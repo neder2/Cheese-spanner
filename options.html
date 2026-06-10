@@ -42,6 +42,22 @@
                     </span>
                     <input type="checkbox" data-option="autoQualityEnabled">
                 </label>
+
+                <label class="toggle-row">
+                    <span>
+                        <strong>팔로잉 목록 자동 새로고침</strong>
+                        <small>사이드바 팔로잉 채널의 라이브 상태를 주기적으로 갱신합니다.</small>
+                    </span>
+                    <input type="checkbox" data-option="followingRefreshEnabled">
+                </label>
+
+                <details class="advanced-settings">
+                    <summary>새로고침 설정</summary>
+                    <div class="number-grid" data-depends-on="followingRefreshEnabled">
+                        <label><span>갱신 주기</span><input type="number" min="10" max="600" step="1" data-option="followingRefreshSeconds"><em>초</em></label>
+                    </div>
+                    <p class="setting-note">설정한 주기마다 팔로잉 목록을 갱신합니다. 주기를 줄이면 라이브 시작이 더 빨리 반영됩니다.</p>
+                </details>
             </section>
 
             <section class="settings-card">

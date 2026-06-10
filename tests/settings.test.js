@@ -59,6 +59,8 @@ const expectedDefaults = {
     categoryToolsFollowerFetchMaxPerPass: 6,
     categoryToolsFollowerFetchConcurrency: 2,
     categoryToolsFollowerFetchDelayMs: 700,
+    followingRefreshEnabled: true,
+    followingRefreshSeconds: 30,
 };
 
 test("settings exports the expected option defaults and key order", () => {
@@ -79,6 +81,7 @@ test("feature count keys are derived from feature toggles only", () => {
         "videoSearchEnabled",
         "categoryToolsEnabled",
         "titleTooltipEnabled",
+        "followingRefreshEnabled",
     ]);
 });
 

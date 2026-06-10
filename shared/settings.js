@@ -110,6 +110,8 @@
         categoryToolsFollowerFetchMaxPerPass: { kind: "int", default: 6, min: 1, max: 50 },
         categoryToolsFollowerFetchConcurrency: { kind: "int", default: 2, min: 1, max: 10 },
         categoryToolsFollowerFetchDelayMs: { kind: "int", default: 700, min: 0, max: 5000 },
+        followingRefreshEnabled: { kind: "bool", default: true, feature: true },
+        followingRefreshSeconds: { kind: "int", default: 30, min: 10, max: 600 },
     });
 
     const OPTION_SPEC = OPTION_SCHEMA;
