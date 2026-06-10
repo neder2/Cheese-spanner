@@ -236,6 +236,7 @@ test("options playback controls show live settings before VOD settings", () => {
         "skipWheelAltStep",
         "volumeWheelEnabled",
         "volumeWheelStep",
+        "volumeTooltipEnabled",
         "vodBroadcastClockEnabled",
     ]);
 });

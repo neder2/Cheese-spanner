@@ -51,6 +51,7 @@
                                            "features/categoryTools.js",
                                            "features/titleTooltip.js",
                                            "features/volumeWheel.js",
+                                           "features/volumeTooltip.js",
                                            "features/followingRefresh.js"
                                        ],
                                 "run_at":  "document_start"
