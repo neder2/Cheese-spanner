@@ -1,15 +1,10 @@
 (() => {
     const TOOLTIP_ID = "betterchzzk-volume-tooltip";
     const STYLE_ID = "betterchzzk-volume-tooltip-style";
-    const VOLUME_CONTROL_SELECTOR = [
-        "[class*='pzp'][class*='volume']",
-        ".pzp-pc__volume",
-        ".pzp-pc__volume-control",
-        ".pzp-pc__volume-button",
+    // 스피커 아이콘이 아니라 볼륨 바(슬라이더) 위에서만 툴팁을 띄운다.
+    const VOLUME_SLIDER_SELECTOR = [
+        "[class*='pzp'][class*='volume'][class*='slider']",
         ".pzp-pc__volume-slider",
-        ".pzp-pc-volume",
-        ".pzp-pc-volume-control",
-        ".pzp-pc-volume-button",
         ".pzp-pc-volume-slider",
     ].join(", ");
     const MUTED_LABEL = "음소거";
@@ -127,7 +122,7 @@
 
     function handleMouseOver(event) {
         if (!isEnabled()) return;
-        const control = event.target?.closest?.(VOLUME_CONTROL_SELECTOR);
+        const control = event.target?.closest?.(VOLUME_SLIDER_SELECTOR);
         if (!(control instanceof HTMLElement)) return;
         showTooltip(control);
     }
@@ -135,7 +130,7 @@
     function handleMouseOut(event) {
         if (!hoverControl) return;
         const next = event.relatedTarget;
-        if (next instanceof Element && next.closest?.(VOLUME_CONTROL_SELECTOR)) return;
+        if (next instanceof Element && next.closest?.(VOLUME_SLIDER_SELECTOR)) return;
         hideTooltip();
     }
 
