@@ -171,6 +171,13 @@ function requestAutoQualityApply(dom, quality = "1080p") {
     return JSON.parse(document.documentElement.getAttribute("data-betterchzzk-auto-quality-result"));
 }
 
+function evalVolumeWheelScripts(dom) {
+    evalRepoScript(dom, "features", "volumeWheelPage.js");
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "volumeWheel.js");
+}
+
 test("options page renders defaults and dependency-disabled controls without extension storage", () => {
     const dom = createDom("options.html", "options.html");
 
@@ -214,7 +221,7 @@ test("options playback controls show live settings before VOD settings", () => {
     const detailOrder = Array.from(section.querySelectorAll("summary")).map((summary) => summary.textContent.trim());
 
     assert.equal(section.querySelector("h2").textContent.trim(), "라이브/다시보기 조작");
-    assert.deepEqual(detailOrder, ["라이브 위치 유지 설정", "스킵 수치 설정"]);
+    assert.deepEqual(detailOrder, ["라이브 위치 유지 설정", "스킵 수치 설정", "볼륨 휠 설정"]);
     assert.deepEqual(optionOrder, [
         "skipControlEnabled",
         "skipKeyboardEnabled",
@@ -227,8 +234,23 @@ test("options playback controls show live settings before VOD settings", () => {
         "skipWheelStep",
         "skipWheelShiftStep",
         "skipWheelAltStep",
+        "volumeWheelEnabled",
+        "volumeWheelStep",
         "vodBroadcastClockEnabled",
     ]);
+});
+
+test("manifest loads volume wheel page script in the main world", () => {
+    const manifest = JSON.parse(readRepoFile("manifest.json"));
+    const mainScript = manifest.content_scripts.find((entry) => entry.world === "MAIN");
+    const isolatedScript = manifest.content_scripts.find((entry) => !entry.world);
+
+    assert.ok(mainScript);
+    assert.ok(isolatedScript);
+    assert.ok(mainScript.js.includes("features/volumeWheelPage.js"));
+    assert.ok(mainScript.js.indexOf("features/volumeWheelPage.js") > mainScript.js.indexOf("features/autoQualityPage.js"));
+    assert.ok(isolatedScript.js.includes("features/volumeWheel.js"));
+    assert.ok(isolatedScript.js.indexOf("features/volumeWheel.js") > isolatedScript.js.indexOf("content.js"));
 });
 
 test("options page loads stored values and writes normalized changes", async () => {
@@ -264,6 +286,786 @@ test("options page loads stored values and writes normalized changes", async () 
     assert.equal(chrome.testState.sync.skipSeconds, 17);
     assert.equal(saveButton.disabled, true);
     assert.equal(document.getElementById("notice").dataset.state, "saved");
+});
+
+test("title tooltip shows full text when a card title is truncated", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<main><article class="card">',
+            '<a class="card_title" href="/live/abc">아주 길어서 잘리는 방송 제목 전체 내용</a>',
+            "</article></main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/lives",
+        chrome
+    );
+    const { document } = dom.window;
+    const title = document.querySelector(".card_title");
+
+    Object.defineProperty(title, "scrollWidth", { configurable: true, get: () => 600 });
+    Object.defineProperty(title, "clientWidth", { configurable: true, get: () => 200 });
+    Object.defineProperty(title, "scrollHeight", { configurable: true, get: () => 20 });
+    Object.defineProperty(title, "clientHeight", { configurable: true, get: () => 20 });
+    title.getBoundingClientRect = () => ({
+        left: 40,
+        top: 120,
+        right: 240,
+        bottom: 140,
+        width: 200,
+        height: 20,
+    });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "titleTooltip.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 450));
+
+    const tip = document.querySelector(".bctt-tooltip[data-show='1']");
+    assert.ok(tip, "툴팁이 표시되어야 한다");
+    assert.equal(tip.textContent, "아주 길어서 잘리는 방송 제목 전체 내용");
+    assert.equal(title.getAttribute("data-bctt-active"), "1");
+});
+
+test("title tooltip excludes hidden navigation text from the full title", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<main><article class="card">',
+            '<a class="card_title" href="/live/abc">',
+            "JDG vs BLG | LPL Split 2 Playoff BO5 패자조 노코인 징비록 지면 끝",
+            '<span class="blind">라이브 엔드로 이동</span>',
+            "</a>",
+            "</article></main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/lives",
+        chrome
+    );
+    const { document } = dom.window;
+    const title = document.querySelector(".card_title");
+
+    Object.defineProperty(title, "scrollWidth", { configurable: true, get: () => 600 });
+    Object.defineProperty(title, "clientWidth", { configurable: true, get: () => 200 });
+    Object.defineProperty(title, "scrollHeight", { configurable: true, get: () => 20 });
+    Object.defineProperty(title, "clientHeight", { configurable: true, get: () => 20 });
+    title.getBoundingClientRect = () => ({
+        left: 40,
+        top: 120,
+        right: 240,
+        bottom: 140,
+        width: 200,
+        height: 20,
+    });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "titleTooltip.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 450));
+
+    const tip = document.querySelector(".bctt-tooltip[data-show='1']");
+    assert.ok(tip);
+    assert.equal(tip.textContent, "JDG vs BLG | LPL Split 2 Playoff BO5 패자조 노코인 징비록 지면 끝");
+    assert.equal(tip.textContent.includes("라이브 엔드로 이동"), false);
+});
+
+test("title tooltip ignores titles that fit", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<main><article class="card">',
+            '<a class="card_title" href="/live/abc">짧은 제목</a>',
+            "</article></main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/lives",
+        chrome
+    );
+    const { document } = dom.window;
+    const title = document.querySelector(".card_title");
+
+    Object.defineProperty(title, "scrollWidth", { configurable: true, get: () => 100 });
+    Object.defineProperty(title, "clientWidth", { configurable: true, get: () => 200 });
+    Object.defineProperty(title, "scrollHeight", { configurable: true, get: () => 20 });
+    Object.defineProperty(title, "clientHeight", { configurable: true, get: () => 20 });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "titleTooltip.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 450));
+
+    assert.equal(document.querySelector(".bctt-tooltip[data-show='1']"), null);
+    assert.equal(title.hasAttribute("data-bctt-active"), false);
+});
+
+test("title tooltip keeps pending hover when moving inside the same title", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<main><article class="card">',
+            '<a class="card_title" href="/live/abc"><span>자식 이동 중에도 유지되는 긴 방송 제목</span></a>',
+            "</article></main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/lives",
+        chrome
+    );
+    const { document } = dom.window;
+    const title = document.querySelector(".card_title");
+    const child = title.querySelector("span");
+
+    Object.defineProperty(title, "scrollWidth", { configurable: true, get: () => 600 });
+    Object.defineProperty(title, "clientWidth", { configurable: true, get: () => 200 });
+    Object.defineProperty(title, "scrollHeight", { configurable: true, get: () => 20 });
+    Object.defineProperty(title, "clientHeight", { configurable: true, get: () => 20 });
+    title.getBoundingClientRect = () => ({
+        left: 40,
+        top: 120,
+        right: 240,
+        bottom: 140,
+        width: 200,
+        height: 20,
+    });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "titleTooltip.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    title.dispatchEvent(new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: child }));
+    await new Promise((resolve) => setTimeout(resolve, 450));
+
+    const tip = document.querySelector(".bctt-tooltip[data-show='1']");
+    assert.ok(tip);
+    assert.equal(tip.textContent, "자식 이동 중에도 유지되는 긴 방송 제목");
+    assert.equal(title.getAttribute("data-bctt-active"), "1");
+});
+
+test("title tooltip stays disabled when the option is off", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            titleTooltipEnabled: false,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<main><article class="card">',
+            '<a class="card_title" href="/live/abc">잘려야 하는 긴 방송 제목</a>',
+            "</article></main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/lives",
+        chrome
+    );
+    const { document } = dom.window;
+    const title = document.querySelector(".card_title");
+
+    Object.defineProperty(title, "scrollWidth", { configurable: true, get: () => 600 });
+    Object.defineProperty(title, "clientWidth", { configurable: true, get: () => 200 });
+    Object.defineProperty(title, "scrollHeight", { configurable: true, get: () => 20 });
+    Object.defineProperty(title, "clientHeight", { configurable: true, get: () => 20 });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "titleTooltip.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 450));
+
+    assert.equal(document.querySelector(".bctt-tooltip[data-show='1']"), null);
+    assert.equal(title.hasAttribute("data-bctt-active"), false);
+});
+
+test("title tooltip reacts to option changes without leaving stale UI", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<main><article class="card">',
+            '<a class="card_title" href="/live/abc">옵션 변경 중에도 잘리는 방송 제목 전체 내용</a>',
+            "</article></main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/lives",
+        chrome
+    );
+    const { document } = dom.window;
+    const title = document.querySelector(".card_title");
+
+    Object.defineProperty(title, "scrollWidth", { configurable: true, get: () => 600 });
+    Object.defineProperty(title, "clientWidth", { configurable: true, get: () => 200 });
+    Object.defineProperty(title, "scrollHeight", { configurable: true, get: () => 20 });
+    Object.defineProperty(title, "clientHeight", { configurable: true, get: () => 20 });
+    title.getBoundingClientRect = () => ({
+        left: 40,
+        top: 120,
+        right: 240,
+        bottom: 140,
+        width: 200,
+        height: 20,
+    });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "titleTooltip.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    assert.ok(document.querySelector(".bctt-tooltip[data-show='1']"));
+    assert.equal(title.getAttribute("data-bctt-active"), "1");
+
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener({ titleTooltipEnabled: { newValue: false } }, "sync");
+    }
+    await waitForAsyncCallbacks();
+    assert.equal(document.querySelector(".bctt-tooltip"), null);
+    assert.equal(document.getElementById("betterchzzk-title-tooltip-style"), null);
+    assert.equal(title.hasAttribute("data-bctt-active"), false);
+
+    title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    assert.equal(document.querySelector(".bctt-tooltip[data-show='1']"), null);
+
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener({ titleTooltipEnabled: { newValue: true } }, "sync");
+    }
+    await waitForAsyncCallbacks();
+
+    title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    const tip = document.querySelector(".bctt-tooltip[data-show='1']");
+    assert.ok(tip);
+    assert.equal(tip.textContent, "옵션 변경 중에도 잘리는 방송 제목 전체 내용");
+    assert.equal(title.getAttribute("data-bctt-active"), "1");
+});
+
+test("volume wheel raises and lowers media volume over the volume control", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<video id="video"></video>',
+            '<div class="pzp-pc__volume-control" id="vol">',
+            '<button class="pzp-pc__volume-button" type="button"></button>',
+            '<input id="slider" type="range" min="0" max="100" value="50">',
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const vol = document.getElementById("vol");
+    const slider = document.getElementById("slider");
+
+    video.volume = 0.5;
+    video.getBoundingClientRect = () => ({ width: 640, height: 360, left: 0, top: 0, right: 640, bottom: 360 });
+    vol.getBoundingClientRect = () => ({ width: 40, height: 40, left: 20, top: 320, right: 60, bottom: 360 });
+
+    evalVolumeWheelScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    let nativeWheelCount = 0;
+    dom.window.addEventListener("wheel", () => {
+        nativeWheelCount += 1;
+        video.volume = 1;
+    }, { capture: true });
+
+    const up = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(up, "deltaY", { value: -100 });
+    vol.dispatchEvent(up);
+    assert.ok(Math.abs(video.volume - 0.55) < 1e-6, "휠 업이면 +5%");
+    assert.equal(up.defaultPrevented, true);
+    assert.equal(nativeWheelCount, 0);
+    assert.equal(slider.value, "50");
+
+    const down = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(down, "deltaY", { value: 100 });
+    vol.dispatchEvent(down);
+    assert.ok(Math.abs(video.volume - 0.50) < 1e-6, "휠 다운이면 -5%");
+    assert.equal(down.defaultPrevented, true);
+    assert.equal(slider.value, "50");
+});
+
+test("volume wheel stays inert until settings publish while keeping early listener priority", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<video id="video"></video>',
+            '<div class="pzp-pc__volume-control" id="vol">',
+            '<button class="pzp-pc__volume-button" type="button"></button>',
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const vol = document.getElementById("vol");
+
+    video.volume = 0.5;
+    video.getBoundingClientRect = () => ({ width: 640, height: 360, left: 0, top: 0, right: 640, bottom: 360 });
+    vol.getBoundingClientRect = () => ({ width: 40, height: 40, left: 20, top: 320, right: 60, bottom: 360 });
+
+    evalRepoScript(dom, "features", "volumeWheelPage.js");
+
+    let nativeWheelCount = 0;
+    dom.window.addEventListener("wheel", () => {
+        nativeWheelCount += 1;
+        video.volume = 1;
+    }, { capture: true });
+
+    const beforeSettings = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(beforeSettings, "deltaY", { value: -100 });
+    vol.dispatchEvent(beforeSettings);
+
+    assert.equal(video.volume, 1);
+    assert.equal(beforeSettings.defaultPrevented, false);
+    assert.equal(nativeWheelCount, 1);
+
+    video.volume = 0.5;
+    nativeWheelCount = 0;
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "volumeWheel.js");
+    await waitForAsyncCallbacks();
+
+    const up = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(up, "deltaY", { value: -100 });
+    vol.dispatchEvent(up);
+
+    assert.ok(Math.abs(video.volume - 0.55) < 1e-6);
+    assert.equal(up.defaultPrevented, true);
+    assert.equal(nativeWheelCount, 0);
+});
+
+test("volume wheel respects unit-range native sliders", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<video id="video"></video>',
+            '<div class="pzp-pc__volume-control" id="vol">',
+            '<button class="pzp-pc__volume-button" type="button"></button>',
+            '<input id="slider" type="range" min="0" max="1" step="0.01" value="0.5">',
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const vol = document.getElementById("vol");
+    const slider = document.getElementById("slider");
+
+    video.volume = 0.5;
+    video.getBoundingClientRect = () => ({ width: 640, height: 360, left: 0, top: 0, right: 640, bottom: 360 });
+    vol.getBoundingClientRect = () => ({ width: 40, height: 40, left: 20, top: 320, right: 60, bottom: 360 });
+
+    evalVolumeWheelScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const up = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(up, "deltaY", { value: -100 });
+    vol.dispatchEvent(up);
+
+    assert.ok(Math.abs(video.volume - 0.55) < 1e-6);
+    assert.equal(slider.value, "0.5");
+    assert.notEqual(slider.value, "1");
+
+    const down = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(down, "deltaY", { value: 100 });
+    vol.dispatchEvent(down);
+
+    assert.ok(Math.abs(video.volume - 0.50) < 1e-6);
+    assert.equal(slider.value, "0.5");
+});
+
+test("volume wheel avoids native slider feedback on unit-range aria sliders", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<video id="video"></video>',
+            '<div class="pzp-pc__volume-control" id="vol">',
+            '<button class="pzp-pc__volume-button" type="button"></button>',
+            '<div id="slider" role="slider" aria-label="\uBCFC\uB968" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0.5"></div>',
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const vol = document.getElementById("vol");
+    const slider = document.getElementById("slider");
+
+    video.volume = 0.5;
+    video.getBoundingClientRect = () => ({ width: 640, height: 360, left: 0, top: 0, right: 640, bottom: 360 });
+    vol.getBoundingClientRect = () => ({ width: 40, height: 40, left: 20, top: 320, right: 60, bottom: 360 });
+
+    evalVolumeWheelScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    let syntheticSliderEvents = 0;
+    slider.addEventListener("input", () => {
+        syntheticSliderEvents += 1;
+        video.volume = 1;
+    });
+    slider.addEventListener("change", () => {
+        syntheticSliderEvents += 1;
+        video.volume = 0;
+    });
+
+    const up = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(up, "deltaY", { value: -100 });
+    vol.dispatchEvent(up);
+
+    assert.ok(Math.abs(video.volume - 0.55) < 1e-6);
+    assert.equal(slider.getAttribute("aria-valuenow"), "0.5");
+    assert.notEqual(slider.getAttribute("aria-valuenow"), "1");
+    assert.equal(slider.hasAttribute("aria-valuetext"), false);
+    assert.equal(syntheticSliderEvents, 0);
+
+    const down = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(down, "deltaY", { value: 100 });
+    vol.dispatchEvent(down);
+
+    assert.ok(Math.abs(video.volume - 0.50) < 1e-6);
+    assert.equal(slider.getAttribute("aria-valuenow"), "0.5");
+
+    video.volume = 0.04;
+    video.muted = false;
+    const downToMute = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(downToMute, "deltaY", { value: 100 });
+    vol.dispatchEvent(downToMute);
+
+    assert.equal(video.volume, 0);
+    assert.equal(video.muted, true);
+    assert.equal(slider.getAttribute("aria-valuenow"), "0.5");
+
+    const upFromMute = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(upFromMute, "deltaY", { value: -100 });
+    vol.dispatchEvent(upFromMute);
+
+    assert.ok(Math.abs(video.volume - 0.05) < 1e-6);
+    assert.equal(video.muted, false);
+    assert.equal(slider.getAttribute("aria-valuenow"), "0.5");
+
+    video.volume = 1;
+    video.muted = false;
+    const downFromMax = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(downFromMax, "deltaY", { value: 100 });
+    vol.dispatchEvent(downFromMax);
+
+    assert.ok(Math.abs(video.volume - 0.95) < 1e-6);
+    assert.equal(slider.getAttribute("aria-valuenow"), "0.5");
+    assert.equal(syntheticSliderEvents, 0);
+});
+
+test("volume wheel works on VOD playback routes", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<video id="video"></video>',
+            '<div class="pzp-pc__volume-control" id="vol">',
+            '<button class="pzp-pc__volume-button" type="button"></button>',
+            '<input id="slider" type="range" min="0" max="100" value="40">',
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/video/test-video",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const vol = document.getElementById("vol");
+    const slider = document.getElementById("slider");
+
+    video.volume = 0.4;
+    video.getBoundingClientRect = () => ({ width: 640, height: 360, left: 0, top: 0, right: 640, bottom: 360 });
+    vol.getBoundingClientRect = () => ({ width: 40, height: 40, left: 20, top: 320, right: 60, bottom: 360 });
+
+    evalVolumeWheelScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const up = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(up, "deltaY", { value: -100 });
+    vol.dispatchEvent(up);
+
+    assert.ok(Math.abs(video.volume - 0.45) < 1e-6);
+    assert.equal(up.defaultPrevented, true);
+    assert.equal(slider.value, "40");
+});
+
+test("volume wheel detects aria-labeled native buttons without volume classes", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<video id="video"></video>',
+            '<div class="pzp-pc__bottom-buttons--left" id="controls">',
+            '<button class="pzp-button" id="vol" type="button" aria-label="\uC74C\uC18C\uAC70">',
+            '<span id="icon" aria-hidden="true"></span>',
+            "</button>",
+            '<input id="slider" type="range" min="0" max="1" step="0.01" value="0.5" aria-label="\uBCFC\uB968">',
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const controls = document.getElementById("controls");
+    const button = document.getElementById("vol");
+    const icon = document.getElementById("icon");
+    const slider = document.getElementById("slider");
+
+    video.volume = 0.5;
+    video.getBoundingClientRect = () => ({ width: 640, height: 360, left: 0, top: 0, right: 640, bottom: 360 });
+    controls.getBoundingClientRect = () => ({ width: 160, height: 40, left: 20, top: 320, right: 180, bottom: 360 });
+    button.getBoundingClientRect = () => ({ width: 40, height: 40, left: 20, top: 320, right: 60, bottom: 360 });
+
+    evalVolumeWheelScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const up = new dom.window.Event("wheel", { bubbles: true, cancelable: true, composed: true });
+    Object.defineProperty(up, "deltaY", { value: -100 });
+    icon.dispatchEvent(up);
+
+    assert.ok(Math.abs(video.volume - 0.55) < 1e-6);
+    assert.equal(up.defaultPrevented, true);
+    assert.equal(slider.value, "0.5");
+});
+
+test("volume wheel ignores volume-like controls outside the playback area", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<video id="video"></video>',
+            '<div id="chatSettings">',
+            '<button id="chatVolume" type="button" aria-label="volume notification"></button>',
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const chatVolume = document.getElementById("chatVolume");
+
+    video.volume = 0.5;
+    video.getBoundingClientRect = () => ({ width: 640, height: 360, left: 0, top: 0, right: 640, bottom: 360 });
+    chatVolume.getBoundingClientRect = () => ({ width: 120, height: 32, left: 700, top: 40, right: 820, bottom: 72 });
+
+    evalVolumeWheelScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const up = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(up, "deltaY", { value: -100 });
+    chatVolume.dispatchEvent(up);
+
+    assert.equal(video.volume, 0.5);
+    assert.equal(up.defaultPrevented, false);
+});
+
+test("volume wheel detects a single visible sibling slider without syncing it", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<video id="video"></video>',
+            '<div class="pzp-pc__bottom-buttons--left" id="controls">',
+            '<button class="pzp-button" id="vol" type="button" aria-label="\uC74C\uC18C\uAC70">',
+            '<span id="icon" aria-hidden="true"></span>',
+            "</button>",
+            '<input id="slider" type="range" min="0" max="1" step="0.01" value="0.5">',
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const controls = document.getElementById("controls");
+    const button = document.getElementById("vol");
+    const icon = document.getElementById("icon");
+    const slider = document.getElementById("slider");
+
+    video.volume = 0.5;
+    video.getBoundingClientRect = () => ({ width: 640, height: 360, left: 0, top: 0, right: 640, bottom: 360 });
+    controls.getBoundingClientRect = () => ({ width: 160, height: 40, left: 20, top: 320, right: 180, bottom: 360 });
+    button.getBoundingClientRect = () => ({ width: 40, height: 40, left: 20, top: 320, right: 60, bottom: 360 });
+    slider.getBoundingClientRect = () => ({ width: 80, height: 16, left: 70, top: 332, right: 150, bottom: 348 });
+
+    evalVolumeWheelScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const up = new dom.window.Event("wheel", { bubbles: true, cancelable: true, composed: true });
+    Object.defineProperty(up, "deltaY", { value: -100 });
+    icon.dispatchEvent(up);
+
+    assert.ok(Math.abs(video.volume - 0.55) < 1e-6);
+    assert.equal(up.defaultPrevented, true);
+    assert.equal(slider.value, "0.5");
+});
+
+test("volume wheel ignores hidden volume controls", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<video id="video"></video>',
+            '<div class="pzp-pc__volume-control" id="vol">',
+            '<button class="pzp-pc__volume-button" type="button"></button>',
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const vol = document.getElementById("vol");
+
+    video.volume = 0.5;
+    video.getBoundingClientRect = () => ({ width: 640, height: 360, left: 0, top: 0, right: 640, bottom: 360 });
+    vol.getBoundingClientRect = () => ({ width: 0, height: 0, left: 20, top: 320, right: 20, bottom: 320 });
+
+    evalVolumeWheelScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const up = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(up, "deltaY", { value: -100 });
+    vol.dispatchEvent(up);
+
+    assert.equal(video.volume, 0.5);
+    assert.equal(up.defaultPrevented, false);
+});
+
+test("volume wheel ignores non-volume areas and disabled option", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            volumeWheelEnabled: false,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<video id="video"></video>',
+            '<div class="pzp-pc__volume-control" id="vol"><button class="pzp-pc__volume-button" type="button"></button></div>',
+            '<div id="outside">outside</div>',
+            '<input id="outsideSlider" type="range" min="0" max="100" value="70">',
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const vol = document.getElementById("vol");
+    const outside = document.getElementById("outside");
+    const outsideSlider = document.getElementById("outsideSlider");
+
+    video.volume = 0.5;
+    video.getBoundingClientRect = () => ({ width: 640, height: 360, left: 0, top: 0, right: 640, bottom: 360 });
+    vol.getBoundingClientRect = () => ({ width: 40, height: 40, left: 20, top: 320, right: 60, bottom: 360 });
+    outside.getBoundingClientRect = () => ({ width: 100, height: 20, left: 80, top: 320, right: 180, bottom: 340 });
+
+    evalVolumeWheelScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const disabledWheel = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(disabledWheel, "deltaY", { value: -100 });
+    vol.dispatchEvent(disabledWheel);
+    assert.equal(video.volume, 0.5);
+    assert.equal(disabledWheel.defaultPrevented, false);
+
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener({ volumeWheelEnabled: { newValue: true } }, "sync");
+    }
+    await waitForAsyncCallbacks();
+
+    const outsideWheel = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(outsideWheel, "deltaY", { value: -100 });
+    outside.dispatchEvent(outsideWheel);
+    assert.equal(video.volume, 0.5);
+    assert.equal(outsideWheel.defaultPrevented, false);
+
+    const downToMute = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(downToMute, "deltaY", { value: 100 });
+    video.volume = 0.03;
+    video.muted = false;
+    vol.dispatchEvent(downToMute);
+    assert.equal(video.volume, 0);
+    assert.equal(video.muted, true);
+    assert.equal(outsideSlider.value, "70");
+
+    const upFromMute = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(upFromMute, "deltaY", { value: -100 });
+    vol.dispatchEvent(upFromMute);
+    assert.ok(Math.abs(video.volume - 0.05) < 1e-6);
+    assert.equal(video.muted, false);
+    assert.equal(outsideSlider.value, "70");
 });
 
 test("auto quality falls back to the highest selectable lower track", () => {

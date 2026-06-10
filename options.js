@@ -178,3 +178,21 @@ if (storage) {
 } else {
     renderOptions(DEFAULT_OPTIONS, { markSaved: true });
 }
+
+const tabButtons = Array.from(document.querySelectorAll(".tab"));
+const tabSections = Array.from(form.querySelectorAll(".settings-card"));
+
+function activateTab(index) {
+    tabButtons.forEach((btn, i) => {
+        const active = i === index;
+        btn.classList.toggle("is-active", active);
+        btn.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    tabSections.forEach((sec, i) => sec.classList.toggle("is-active", i === index));
+}
+
+tabButtons.forEach((btn, i) => {
+    btn.addEventListener("click", () => activateTab(i));
+});
+
+if (tabButtons.length) activateTab(0);

@@ -1,7 +1,7 @@
 {
     "manifest_version":  3,
     "name":  "Better Chzzk",
-    "version":  "1.1.4",
+    "version":  "1.1.5",
     "description":  "치지직 자동 화질, 다시보기 스킵/검색, 방송 목록 필터, 채널 방송 시간, 시청 기록, 안내 팝업 정리를 제공합니다.",
     "icons":  {
                   "16":  "icons/icon16.png",
@@ -24,7 +24,8 @@
                                                 "https://chzzk.naver.com/*"
                                             ],
                                 "js":  [
-                                           "features/autoQualityPage.js"
+                                           "features/autoQualityPage.js",
+                                           "features/volumeWheelPage.js"
                                        ],
                                 "run_at":  "document_start",
                                 "world":  "MAIN"
@@ -46,7 +47,9 @@
                                            "features/monthlyBroadcastTime.js",
                                            "features/liveWatchHistory.js",
                                            "features/videoSearch.js",
-                                           "features/categoryTools.js"
+                                           "features/categoryTools.js",
+                                           "features/titleTooltip.js",
+                                           "features/volumeWheel.js"
                                        ],
                                 "run_at":  "document_start"
                             }

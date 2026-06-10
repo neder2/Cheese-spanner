@@ -170,6 +170,45 @@ h1 {
     line-height: 1.45;
 }
 
+.tab-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.tab {
+    flex: 1 1 auto;
+    min-width: 60px;
+    min-height: 36px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    background: var(--surface-2);
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+    transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.tab:hover {
+    color: var(--text);
+}
+
+.tab.is-active {
+    border-color: var(--accent);
+    color: var(--text);
+    background: var(--accent-weak);
+}
+
+.settings-form > .settings-card {
+    display: none;
+}
+
+.settings-form > .settings-card.is-active {
+    display: block;
+}
+
 .settings-card {
     min-width: 0;
     border: 1px solid var(--border);

@@ -19,6 +19,16 @@
         </header>
 
         <form id="optionsForm" class="settings-form" novalidate>
+            <nav class="tab-bar" role="tablist" aria-label="설정 카테고리">
+                <button type="button" class="tab" role="tab" data-tab="0">재생</button>
+                <button type="button" class="tab" role="tab" data-tab="1">시청 기록</button>
+                <button type="button" class="tab" role="tab" data-tab="2">플레이어</button>
+                <button type="button" class="tab" role="tab" data-tab="3">팝업</button>
+                <button type="button" class="tab" role="tab" data-tab="4">방송 시간</button>
+                <button type="button" class="tab" role="tab" data-tab="5">검색</button>
+                <button type="button" class="tab" role="tab" data-tab="6">목록</button>
+            </nav>
+
             <section class="settings-card">
                 <div class="section-heading">
                     <h2>재생 기본값</h2>
@@ -107,6 +117,19 @@
                         <label><span>Shift+휠</span><input type="number" min="1" max="300" step="1" data-option="skipWheelShiftStep"><em>초</em></label>
                         <label><span>Alt+휠</span><input type="number" min="1" max="600" step="1" data-option="skipWheelAltStep"><em>초</em></label>
                     </div>
+                </details>
+
+                <label class="toggle-row">
+                    <span><strong>볼륨 휠 조절</strong><small>볼륨 조절 영역에 마우스를 올리고 휠을 굴리면 볼륨이 조절됩니다.</small></span>
+                    <input type="checkbox" data-option="volumeWheelEnabled">
+                </label>
+
+                <details class="advanced-settings">
+                    <summary>볼륨 휠 설정</summary>
+                    <div class="number-grid" data-depends-on="volumeWheelEnabled">
+                        <label><span>1틱 볼륨</span><input type="number" min="1" max="50" step="1" data-option="volumeWheelStep"><em>%</em></label>
+                    </div>
+                    <p class="setting-note">볼륨 조절 영역(스피커 아이콘/슬라이더) 위에서 휠을 굴릴 때 적용됩니다.</p>
                 </details>
 
                 <label class="toggle-row">
@@ -202,6 +225,10 @@
                 <label class="toggle-row" data-depends-on="categoryToolsEnabled">
                     <span><strong>진행 시간 호버</strong><small>썸네일에 마우스를 올리면 방송 진행 시간을 보여줍니다.</small></span>
                     <input type="checkbox" data-option="categoryToolsLiveElapsedEnabled">
+                </label>
+                <label class="toggle-row">
+                    <span><strong>긴 제목 툴팁</strong><small>잘린 방송 제목에 마우스를 올리면 전체 제목을 보여줍니다.</small></span>
+                    <input type="checkbox" data-option="titleTooltipEnabled">
                 </label>
 
                 <details class="advanced-settings">

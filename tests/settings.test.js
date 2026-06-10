@@ -19,6 +19,8 @@ const expectedDefaults = {
     skipWheelStep: 1,
     skipWheelShiftStep: 5,
     skipWheelAltStep: 10,
+    volumeWheelEnabled: true,
+    volumeWheelStep: 5,
     vodBroadcastClockEnabled: false,
     timeMachineLagLabelEnabled: true,
     adblockPopupEnabled: true,
@@ -37,6 +39,7 @@ const expectedDefaults = {
     videoSearchCommentMaxVideos: 60,
     videoSearchCommentMaxPagesPerVideo: 1,
     categoryToolsEnabled: true,
+    titleTooltipEnabled: true,
     categoryToolsMaxMetadataPages: 12,
     categoryToolsHideGlobalTagSearch: true,
     categoryToolsFollowerBadgesEnabled: true,
@@ -67,6 +70,7 @@ test("feature count keys are derived from feature toggles only", () => {
     assert.deepEqual(settings.FEATURE_KEYS, [
         "autoQualityEnabled",
         "skipControlEnabled",
+        "volumeWheelEnabled",
         "vodBroadcastClockEnabled",
         "timeMachineLagLabelEnabled",
         "adblockPopupEnabled",
@@ -74,6 +78,7 @@ test("feature count keys are derived from feature toggles only", () => {
         "liveWatchHistoryEnabled",
         "videoSearchEnabled",
         "categoryToolsEnabled",
+        "titleTooltipEnabled",
     ]);
 });
 
@@ -83,6 +88,7 @@ test("normalizeOptions preserves boolean parsing and integer bounds", () => {
         skipSeconds: -1,
         skipWheelStep: 999,
         skipWheelShiftStep: "2.4",
+        volumeWheelStep: 999,
         monthlyBroadcastTimeMaxCalendarPages: 9999,
         videoSearchCommentDelayMs: -2,
         categoryToolsFollowerFilterPreset1: "50000000",
@@ -93,6 +99,7 @@ test("normalizeOptions preserves boolean parsing and integer bounds", () => {
     assert.equal(normalized.skipSeconds, settings.DEFAULT_SKIP_SECONDS);
     assert.equal(normalized.skipWheelStep, 60);
     assert.equal(normalized.skipWheelShiftStep, 2);
+    assert.equal(normalized.volumeWheelStep, 50);
     assert.equal(normalized.monthlyBroadcastTimeMaxCalendarPages, settings.MONTHLY_CALENDAR_MAX_PAGES);
     assert.equal(normalized.videoSearchCommentDelayMs, 0);
     assert.equal(normalized.categoryToolsFollowerFilterPreset1, 10000000);
