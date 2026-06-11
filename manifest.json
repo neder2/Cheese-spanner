@@ -24,7 +24,6 @@
                                                 "https://chzzk.naver.com/*"
                                             ],
                                 "js":  [
-                                           "features/telemetryGuardPage.js",
                                            "features/autoQualityPage.js",
                                            "features/volumeWheelPage.js"
                                        ],
