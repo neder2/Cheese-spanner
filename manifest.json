@@ -51,7 +51,8 @@
                                            "features/titleTooltip.js",
                                            "features/volumeWheel.js",
                                            "features/volumeTooltip.js",
-                                           "features/followingRefresh.js"
+                                           "features/followingRefresh.js",
+                                           "features/shortcutRescue.js"
                                        ],
                                 "run_at":  "document_start"
                             }

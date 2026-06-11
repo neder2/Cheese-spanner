@@ -238,6 +238,7 @@ test("options playback controls show live settings before VOD settings", () => {
         "volumeWheelStep",
         "volumeTooltipEnabled",
         "vodBroadcastClockEnabled",
+        "shortcutRescueEnabled",
     ]);
 });
 
@@ -1462,6 +1463,130 @@ test("live fast-forward button does not duplicate an external knife button", asy
         await waitForAsyncCallbacks();
         dom.window.close();
     }
+});
+
+function setupShortcutRescueDom(chrome) {
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<div class="pzp pzp-pc" id="playerRoot">',
+            '<video id="video"></video>',
+            '<div class="pzp-pc__bottom-buttons--left" id="controls">',
+            '<button class="pzp-pc__playback-switch" id="play" type="button"></button>',
+            '<button class="pzp-pc__volume-button" id="mute" type="button" aria-label="음소거"></button>',
+            '<button class="pzp-pc__viewmode-button" id="theater" type="button" aria-label="넓은 화면"></button>',
+            "</div>",
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const state = { paused: true, clicks: { play: 0, mute: 0, theater: 0 } };
+
+    Object.defineProperty(video, "paused", { configurable: true, get: () => state.paused });
+    video.play = () => {
+        state.paused = false;
+        return Promise.resolve();
+    };
+    video.pause = () => {
+        state.paused = true;
+    };
+    makeVisibleVideo(video);
+
+    for (const id of ["play", "mute", "theater"]) {
+        const button = document.getElementById(id);
+        button.getBoundingClientRect = () => ({ width: 36, height: 36, left: 20, top: 318, right: 56, bottom: 354 });
+        button.addEventListener("click", () => {
+            state.clicks[id] += 1;
+            if (id === "play") state.paused = !state.paused;
+        });
+    }
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "shortcutRescue.js");
+
+    return { dom, document, video, state };
+}
+
+function dispatchShortcutKey(dom, code, key) {
+    const event = new dom.window.KeyboardEvent("keydown", {
+        code,
+        key,
+        bubbles: true,
+        cancelable: true,
+    });
+    dom.window.document.body.dispatchEvent(event);
+    return event;
+}
+
+function waitForRescueProbe() {
+    return new Promise((resolve) => setTimeout(resolve, 500));
+}
+
+test("shortcut rescue takes over once the native shortcut pipeline stays unresponsive", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state } = setupShortcutRescueDom(chrome);
+    await waitForAsyncCallbacks();
+
+    dispatchShortcutKey(dom, "Space", " ");
+    await waitForRescueProbe();
+    assert.equal(state.clicks.play, 1, "첫 미반응 키는 프로브 후 소급 실행된다");
+    assert.equal(state.paused, false);
+
+    dispatchShortcutKey(dom, "Space", " ");
+    await waitForRescueProbe();
+    assert.equal(state.clicks.play, 2, "두 번째 미반응으로 사망이 확정된다");
+    assert.equal(state.paused, true);
+
+    const immediate = dispatchShortcutKey(dom, "Space", " ");
+    assert.equal(state.clicks.play, 3, "사망 확정 후에는 지연 없이 즉시 실행된다");
+    assert.equal(immediate.defaultPrevented, true);
+
+    dispatchShortcutKey(dom, "KeyT", "t");
+    assert.equal(state.clicks.theater, 1, "관찰 불가 키도 사망 확정 후에는 버튼 클릭으로 처리된다");
+
+    dispatchShortcutKey(dom, "KeyM", "m");
+    assert.equal(state.clicks.mute, 1);
+});
+
+test("shortcut rescue stays inactive while the native pipeline handles keys", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state } = setupShortcutRescueDom(chrome);
+    await waitForAsyncCallbacks();
+
+    dom.window.addEventListener("keydown", (event) => {
+        if (event.code === "Space") state.paused = !state.paused;
+    });
+
+    dispatchShortcutKey(dom, "Space", " ");
+    await waitForRescueProbe();
+    assert.equal(state.clicks.play, 0, "네이티브가 처리하면 폴백은 개입하지 않는다");
+    assert.equal(state.paused, false);
+
+    dispatchShortcutKey(dom, "Space", " ");
+    await waitForRescueProbe();
+    assert.equal(state.clicks.play, 0, "생존 확정 후에는 프로브도 하지 않는다");
+    assert.equal(state.paused, true);
+});
+
+test("shortcut rescue does nothing when the option is disabled", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            shortcutRescueEnabled: false,
+        },
+    });
+    const { dom, state } = setupShortcutRescueDom(chrome);
+    await waitForAsyncCallbacks();
+
+    dispatchShortcutKey(dom, "Space", " ");
+    await waitForRescueProbe();
+    assert.equal(state.clicks.play, 0);
+    assert.equal(state.paused, true);
 });
 
 test("history page loads local watch history state without crashing", async () => {
