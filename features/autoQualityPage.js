@@ -603,7 +603,6 @@
         }
     }
 
-    // eslint-disable-next-line no-unused-vars -- List-KR 충돌 재검증 시 재활성화할 수 있도록 유지
     function installQualityTargetInterceptor() {
         try {
             Object.defineProperty = function(target, prop, descriptor) {
@@ -648,10 +647,7 @@
         }
     }
 
-    // defineProperty 계열 전역 래핑은 AdGuard List-KR 스크립틀릿과 충돌해
-    // 치지직 플레이어 키보드 명령을 죽이는 정황이 확인되어 비활성화한다(2026-06 진단,
-    // 간헐 재현이라 잠정 조치). videoTracks 추적은 폴백 탐색 경로만으로 동작한다.
-    // installQualityTargetInterceptor();
+    installQualityTargetInterceptor();
     syncAutoQualityState();
     window.addEventListener(STATE_EVENT, syncAutoQualityState);
     window.addEventListener("pageshow", syncAutoQualityState, true);
