@@ -85,6 +85,13 @@
     let removePageChangeDetection = null;
 
     const METADATA_APPLY_INTERVAL_MS = 260;
+    // 검색/필터 자동 탐색은 무한 스크롤처럼 동작한다: 한 번에 이 페이지 수만큼 읽고,
+    // 화면을 채울 만큼 스크롤 여지가 생기면 멈췄다가 바닥 근처에서 이어서 탐색한다.
+    const METADATA_BATCH_PAGES = 2;
+    const AUTO_LOAD_BOTTOM_MARGIN_PX = 600;
+    const AUTO_LOAD_APPLY_SETTLE_MS = 250;
+    const AUTO_LOAD_SCROLL_THROTTLE_MS = 200;
+    const BADGE_SCROLL_THROTTLE_MS = 700;
     const UI_YIELD_EVERY_ITEMS = 24;
 
     const followerCache = new Map();
@@ -3045,10 +3052,20 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         });
     }
 
+    function hasPendingScrollRoom() {
+        const grid = cachedGrid?.isConnected ? cachedGrid : null;
+        if (grid) {
+            return grid.getBoundingClientRect().bottom > window.innerHeight + AUTO_LOAD_BOTTOM_MARGIN_PX;
+        }
+        const doc = document.documentElement;
+        return doc.scrollHeight - (window.scrollY + window.innerHeight) > AUTO_LOAD_BOTTOM_MARGIN_PX;
+    }
+
     async function runMetadataSearch(route, token) {
         setLoading(true, "metadata");
         try {
             await ensureMetadata(route);
+            let pagesThisRun = 0;
             while (
                 token === metadataSearchToken &&
                 routeKey(route) === routeKey(getRoute()) &&
@@ -3056,9 +3073,16 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
                 !metadataComplete &&
                 metadataPagesLoaded < getMaxMetadataPages()
             ) {
+                if (pagesThisRun >= METADATA_BATCH_PAGES) {
+                    scheduleApply();
+                    await sleep(AUTO_LOAD_APPLY_SETTLE_MS);
+                    if (token !== metadataSearchToken) break;
+                    if (hasPendingScrollRoom()) break;
+                }
                 const cursor = metadataNext;
                 if (!cursor) break;
                 await loadMetadataPage(route, cursor);
+                pagesThisRun += 1;
                 const now = performance.now();
                 if (now - lastMetadataApplyAt >= METADATA_APPLY_INTERVAL_MS) {
                     lastMetadataApplyAt = now;
@@ -3070,6 +3094,32 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         } finally {
             if (token === metadataSearchToken) setLoading(false, "metadata");
         }
+    }
+
+    let lastAutoLoadScrollCheckAt = 0;
+    let lastBadgeScrollCheckAt = 0;
+
+    function handleAutoLoadScroll() {
+        const now = performance.now();
+        if (now - lastAutoLoadScrollCheckAt < AUTO_LOAD_SCROLL_THROTTLE_MS) return;
+        lastAutoLoadScrollCheckAt = now;
+
+        if (!isFeatureEnabled()) return;
+
+        if (!isAutoLoadActive()) {
+            // 필터 미적용: 스크롤로 화면에 새로 들어온 카드의 팔로워 배지만 보충한다.
+            if (!areFollowerBadgesEnabled() || !getRoute()) return;
+            if (now - lastBadgeScrollCheckAt < BADGE_SCROLL_THROTTLE_MS) return;
+            lastBadgeScrollCheckAt = now;
+            scheduleApply();
+            return;
+        }
+
+        if (metadataSearchRunning || metadataComplete || metadataPagesLoaded >= getMaxMetadataPages()) return;
+        if (hasPendingScrollRoom()) return;
+
+        const route = getRoute();
+        if (route) queueMetadataSearch(route);
     }
 
     async function applyTools() {
@@ -3393,6 +3443,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         removePageChangeDetection = startPageChangeDetection(scheduleApply);
         window.addEventListener("resize", handleViewportChange, true);
         window.addEventListener("scroll", handleScrollPositionMenu, true);
+        window.addEventListener("scroll", handleAutoLoadScroll, { capture: true, passive: true });
     }
 
     function uninstallGlobalListeners() {
@@ -3406,6 +3457,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         }
         window.removeEventListener("resize", handleViewportChange, true);
         window.removeEventListener("scroll", handleScrollPositionMenu, true);
+        window.removeEventListener("scroll", handleAutoLoadScroll, true);
     }
 
     function installRuntime() {
