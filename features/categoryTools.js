@@ -659,11 +659,10 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
 `);
     }
 
-    function findTabLine(route = getRoute()) {
-        if (route?.scope === "global-lives") return null;
+    function findTabLineByLabels(labels, minCount, minWidth) {
         const controls = Array.from(document.querySelectorAll("button, a"))
-            .filter((el) => ["라이브", "동영상", "클립"].includes(normSpace(el.textContent)));
-        if (controls.length < 3) return null;
+            .filter((el) => labels.includes(normSpace(el.textContent)));
+        if (controls.length < minCount) return null;
 
         const counts = new Map();
         for (const control of controls) {
@@ -679,9 +678,9 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         let best = null;
         let bestScore = Number.NEGATIVE_INFINITY;
         for (const [node, count] of counts) {
-            if (count < 3) continue;
+            if (count < minCount) continue;
             const rect = node.getBoundingClientRect();
-            if (rect.width < 180 || rect.height < 24) continue;
+            if (rect.width < minWidth || rect.height < 24) continue;
             const score = count * 10000 - Math.round(rect.width * rect.height);
             if (score > bestScore) {
                 best = node;
@@ -689,6 +688,15 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             }
         }
         return best;
+    }
+
+    function findTabLine(route = getRoute()) {
+        if (route?.scope === "global-lives") return null;
+        return findTabLineByLabels(["라이브", "동영상", "클립"], 3, 180);
+    }
+
+    function findGlobalTabLine() {
+        return findTabLineByLabels(["라이브", "동영상"], 2, 100);
     }
 
     function findGlobalSortLine() {
@@ -2907,38 +2915,55 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         ensureMenu();
 
         if (route.scope === "global-lives") {
-            const sortLine = findGlobalNavigationFilterHost() ||
-                findGlobalSortLine() ||
-                (
-                    bar.parentElement?.isConnected &&
-                    bar.parentElement?.getAttribute?.(GLOBAL_SORT_ATTR) === "1"
-                        ? bar.parentElement
-                        : null
-                );
-            const host = sortLine || ensureGlobalFallbackHost(route);
-            if (!host) return false;
             const hideTagSearch = shouldHideGlobalTagSearch();
-            host.setAttribute(GLOBAL_SORT_ATTR, "1");
-            bar.setAttribute("data-mode", "global-inline");
-            bar.setAttribute("data-tag-search-hidden", hideTagSearch ? "1" : "0");
-            bar.style.left = "";
-            bar.style.top = "";
-            bar.style.width = "";
-            if (hideTagSearch) {
-                if (bar.parentElement !== host) host.appendChild(bar);
-                hideGlobalTagSearch();
+            const tabLine = findGlobalTabLine();
+            if (tabLine) {
+                // 카테고리 페이지와 동일한 모습이 되도록 콘텐츠 탭(라이브/동영상) 줄 오른쪽에 붙인다.
+                if (hideTagSearch) hideGlobalTagSearch();
+                else restoreHiddenGlobalTagSearch();
+                tabLine.setAttribute(TABS_ATTR, "1");
+                bar.setAttribute("data-mode", "category-inline");
+                bar.removeAttribute("data-tag-search-hidden");
+                bar.style.left = "";
+                bar.style.top = "";
+                bar.style.width = "";
+                if (bar.parentElement !== tabLine) tabLine.appendChild(bar);
+                cleanupUnusedGlobalFallback(null);
+                document.querySelectorAll(`[${GLOBAL_SORT_ATTR}="1"]`).forEach((el) => el.removeAttribute(GLOBAL_SORT_ATTR));
+                syncFontWithHostUi(bar, tabLine);
             } else {
-                restoreHiddenGlobalTagSearch();
-                const tagAnchor = getGlobalTagSearchAnchor(host);
-                if (tagAnchor && tagAnchor !== bar) {
-                    tagAnchor.setAttribute(TAG_SEARCH_ANCHOR_ATTR, "1");
-                    host.insertBefore(bar, tagAnchor);
+                const sortLine = findGlobalNavigationFilterHost() ||
+                    findGlobalSortLine() ||
+                    (
+                        bar.parentElement?.isConnected &&
+                        bar.parentElement?.getAttribute?.(GLOBAL_SORT_ATTR) === "1"
+                            ? bar.parentElement
+                            : null
+                    );
+                const host = sortLine || ensureGlobalFallbackHost(route);
+                if (!host) return false;
+                host.setAttribute(GLOBAL_SORT_ATTR, "1");
+                bar.setAttribute("data-mode", "global-inline");
+                bar.setAttribute("data-tag-search-hidden", hideTagSearch ? "1" : "0");
+                bar.style.left = "";
+                bar.style.top = "";
+                bar.style.width = "";
+                if (hideTagSearch) {
+                    if (bar.parentElement !== host) host.appendChild(bar);
+                    hideGlobalTagSearch();
+                } else {
+                    restoreHiddenGlobalTagSearch();
+                    const tagAnchor = getGlobalTagSearchAnchor(host);
+                    if (tagAnchor && tagAnchor !== bar) {
+                        tagAnchor.setAttribute(TAG_SEARCH_ANCHOR_ATTR, "1");
+                        host.insertBefore(bar, tagAnchor);
+                    }
+                    else if (bar.parentElement !== host) host.appendChild(bar);
                 }
-                else if (bar.parentElement !== host) host.appendChild(bar);
+                cleanupUnusedGlobalFallback(host);
+                syncFontWithHostUi(bar, host);
+                rescueInvisibleGlobalToolbar(route, host, bar);
             }
-            cleanupUnusedGlobalFallback(host);
-            syncFontWithHostUi(bar, host);
-            rescueInvisibleGlobalToolbar(route, host, bar);
         } else {
             restoreHiddenGlobalTagSearch();
             const tabLine = findTabLine(route);
