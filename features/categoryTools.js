@@ -1524,6 +1524,20 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         return hydrateFollowerIds(rows.map((row) => row.meta?.channelId), clearWhenDone, force);
     }
 
+    // 필터가 없을 때 팔로워 배지는 화면 근처 카드만 채운다.
+    // 멀리 있는 카드는 스크롤로 가까워질 때 보충 조회한다.
+    function getRowsNearViewport(rows) {
+        const viewTop = -window.innerHeight * 0.5;
+        const viewBottom = window.innerHeight * 2;
+        return rows.filter((row) => {
+            const card = row.entry?.card;
+            if (!(card instanceof HTMLElement)) return false;
+            const rect = card.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return false;
+            return rect.bottom >= viewTop && rect.top <= viewBottom;
+        });
+    }
+
     async function hydrateMetadataFollowers(metas, clearWhenDone = true, force = false) {
         return hydrateFollowerIds(metas.map((meta) => meta?.channelId), clearWhenDone, force);
     }
@@ -3170,7 +3184,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             }));
             syncLiveElapsedBadges(route, visibleRows);
             syncFollowerBadges(route, visibleRows);
-            await hydrateFollowers(visibleRows, true, true);
+            await hydrateFollowers(getRowsNearViewport(visibleRows), true, true);
             syncFollowerBadges(route, visibleRows);
             for (const entry of entries) entry.card.removeAttribute(HIDE_ATTR);
             removeEmptyMessage(grid);
