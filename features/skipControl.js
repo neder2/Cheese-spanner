@@ -40,6 +40,7 @@
     const LIVE_TIMESHIFT_NEAR_EDGE_SECONDS = 2;
     const LIVE_TIMESHIFT_RESTORE_COOLDOWN_MS = 120;
     const LIVE_TIMESHIFT_SYNC_INTERVAL_MS = 500;
+    const LIVE_TIMESHIFT_USER_SEEK_GRACE_MS = LIVE_EDGE_INTENT_GRACE_MS;
     // 치지직 플레이어는 프레임레이트를 노출하지 않으므로 주류인 1080p60 기준(60fps)으로 이동한다.
     const FRAME_STEP_SECONDS = 1 / 60;
     const OWNED_LIVE_CONTROL_IDS = new Set([SKIP_PILL_ID, LIVE_FAST_FORWARD_BUTTON_ID]);
@@ -75,6 +76,8 @@
     let liveTimeShiftSyncTimer = null;
     let liveTimeShiftRestoring = false;
     let lastLiveEdgeIntentAt = Number.NEGATIVE_INFINITY;
+    let lastUserSeekGestureAt = Number.NEGATIVE_INFINITY;
+    let userSeekGestureDragging = false;
     let lastPausedControlIntentAt = Number.NEGATIVE_INFINITY;
     let domObserver = null;
     let domObserverMode = "";
@@ -381,6 +384,15 @@
         return performance.now() - lastLiveEdgeIntentAt <= LIVE_EDGE_INTENT_GRACE_MS;
     }
 
+    function markUserSeekGesture() {
+        lastUserSeekGestureAt = performance.now();
+    }
+
+    function isRecentUserSeekGesture() {
+        // 시크바를 잡고 있는 동안은 드래그가 유예 시간보다 길어져도 보호를 유지한다.
+        return userSeekGestureDragging || performance.now() - lastUserSeekGestureAt <= LIVE_TIMESHIFT_USER_SEEK_GRACE_MS;
+    }
+
     function isRecentPausedControlIntent() {
         return performance.now() - lastPausedControlIntentAt <= PAUSED_CONTROL_INTENT_GRACE_MS;
     }
@@ -492,17 +504,24 @@
 
         const lag = edge - currentTime;
         const state = liveTimeShiftState;
+        const recentUserSeekGesture = isRecentUserSeekGesture();
         const canRestore =
             state?.video === video &&
             state.routeKey === getLiveRouteKey() &&
             !liveTimeShiftRestoring &&
-            !allowCurrent;
+            !allowCurrent &&
+            !recentUserSeekGesture;
 
         if (canRestore) {
             const expectedTime = getExpectedLiveTimeShiftTime(state);
             const jumpedAhead = currentTime > expectedTime + LIVE_TIMESHIFT_SNAP_AHEAD_SECONDS;
             const collapsedLag = lag <= LIVE_TIMESHIFT_NEAR_EDGE_SECONDS || lag < state.lag - LIVE_TIMESHIFT_SNAP_AHEAD_SECONDS;
             if (jumpedAhead && collapsedLag && restoreLiveTimeShiftPosition(video, state, expectedTime, edge)) return;
+        }
+
+        if ((allowCurrent || recentUserSeekGesture) && lag < LIVE_TIMESHIFT_ARM_LAG_SECONDS) {
+            clearLiveTimeShiftState(video);
+            return;
         }
 
         rememberLiveTimeShiftPosition(video, edge, lag);
@@ -1582,8 +1601,60 @@
         window.removeEventListener("keydown", onKeyDownSeek, true);
     }
 
+    function getEventElementTarget(target) {
+        if (target instanceof HTMLElement) return target;
+        if (target?.parentElement instanceof HTMLElement) return target.parentElement;
+        return null;
+    }
+
+    function looksLikeSeekGestureElement(el) {
+        if (!(el instanceof HTMLElement)) return false;
+        if (el.matches?.("input[type='range'], [role='slider'], [aria-valuenow]")) return true;
+
+        const signature = compact([
+            getElementSignature(el),
+            getCandidateText(el),
+            el.getAttribute("role"),
+            el.getAttribute("type"),
+        ].join(" "));
+        return ["progress", "seek", "slider", "scrub", "timeline", "timebar", "playbackbar"].some((term) =>
+            signature.includes(term)
+        );
+    }
+
+    function findLikelySeekGestureElement(target) {
+        const el = getEventElementTarget(target);
+        if (!(el instanceof HTMLElement)) return null;
+
+        const explicit = el.closest?.("input[type='range'], [role='slider'], [aria-valuenow]");
+        if (explicit instanceof HTMLElement) return explicit;
+
+        let node = el;
+        for (let depth = 0; node instanceof HTMLElement && depth < 6; depth += 1, node = node.parentElement) {
+            if (looksLikeSeekGestureElement(node)) return node;
+        }
+        return null;
+    }
+
+    function isLikelyUserSeekGestureTarget(target) {
+        if (!canUseLiveResumeGuard(attachedVideo)) return false;
+        const seekEl = findLikelySeekGestureElement(target);
+        return seekEl instanceof HTMLElement && isInLikelyVideoControlArea(seekEl, attachedVideo);
+    }
+
+    function handleUserSeekGestureRelease() {
+        if (!userSeekGestureDragging) return;
+        userSeekGestureDragging = false;
+        markUserSeekGesture();
+    }
+
     function handleLiveControlIntent(event) {
         if (!isLiveRoute()) return;
+        if (event.type === "pointerdown" && isLikelyUserSeekGestureTarget(event.target)) {
+            userSeekGestureDragging = true;
+            markUserSeekGesture();
+        }
+
         const button = event.target?.closest?.(BUTTON_SELECTOR);
         if (!(button instanceof HTMLElement)) return;
 
@@ -1607,13 +1678,18 @@
         liveResumeHandlersInstalled = true;
         window.addEventListener("pointerdown", handleLiveControlIntent, true);
         window.addEventListener("click", handleLiveControlIntent, true);
+        window.addEventListener("pointerup", handleUserSeekGestureRelease, true);
+        window.addEventListener("pointercancel", handleUserSeekGestureRelease, true);
     }
 
     function uninstallLiveResumeGlobalHandlers() {
         if (!liveResumeHandlersInstalled) return;
         liveResumeHandlersInstalled = false;
+        userSeekGestureDragging = false;
         window.removeEventListener("pointerdown", handleLiveControlIntent, true);
         window.removeEventListener("click", handleLiveControlIntent, true);
+        window.removeEventListener("pointerup", handleUserSeekGestureRelease, true);
+        window.removeEventListener("pointercancel", handleUserSeekGestureRelease, true);
     }
 
     function clearRuntimeTimers() {

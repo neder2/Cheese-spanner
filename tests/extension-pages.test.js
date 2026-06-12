@@ -1302,6 +1302,218 @@ test("VOD broadcast clock stays hidden when the broadcast start time is unavaila
     assert.equal(document.getElementById("betterchzzk-vod-broadcast-clock"), null);
 });
 
+function createLiveTimeShiftGuardDom(chrome) {
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<div class="pzp pzp-pc" id="playerRoot">',
+            '<video id="video"></video>',
+            '<div class="pzp-pc__progress-slider" id="seekbar" role="slider" aria-valuenow="0"></div>',
+            '<div class="pzp-pc__bottom-buttons--left" id="controls">',
+            '<button class="pzp-pc__playback-switch" id="play" type="button">Play</button>',
+            "</div>",
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const seekbar = document.getElementById("seekbar");
+    const controls = document.getElementById("controls");
+    const play = document.getElementById("play");
+    const state = {
+        bufferedEnd: 40,
+        currentTime: 32,
+        paused: false,
+        seekableEnd: 40,
+    };
+
+    Object.defineProperty(video, "currentTime", {
+        configurable: true,
+        get: () => state.currentTime,
+        set: (value) => {
+            state.currentTime = Number(value);
+        },
+    });
+    Object.defineProperty(video, "paused", {
+        configurable: true,
+        get: () => state.paused,
+    });
+    Object.defineProperty(video, "buffered", {
+        configurable: true,
+        get: () => createTimeRanges([[0, state.bufferedEnd]]),
+    });
+    Object.defineProperty(video, "seekable", {
+        configurable: true,
+        get: () => createTimeRanges([[0, state.seekableEnd]]),
+    });
+    makeVisibleVideo(video);
+    seekbar.getBoundingClientRect = () => ({
+        width: 560,
+        height: 12,
+        left: 40,
+        top: 302,
+        right: 600,
+        bottom: 314,
+    });
+    controls.getBoundingClientRect = () => ({
+        width: 180,
+        height: 40,
+        left: 16,
+        top: 316,
+        right: 196,
+        bottom: 356,
+    });
+    play.getBoundingClientRect = () => ({
+        width: 36,
+        height: 36,
+        left: 20,
+        top: 318,
+        right: 56,
+        bottom: 354,
+    });
+
+    return { controls, document, dom, play, seekbar, state, video };
+}
+
+async function loadSkipControlPage(dom) {
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "skipControl.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    await waitForAsyncCallbacks();
+}
+
+function dispatchVideoEvent(dom, video, type) {
+    video.dispatchEvent(new dom.window.Event(type, { bubbles: true }));
+}
+
+function armLiveTimeShiftGuard(dom, video, state, currentTime = 32) {
+    state.currentTime = currentTime;
+    dispatchVideoEvent(dom, video, "timeupdate");
+}
+
+function waitForLiveTimeShiftSync() {
+    return new Promise((resolve) => setTimeout(resolve, 650));
+}
+
+async function closeSkipControlPage(dom, chrome) {
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener({ skipControlEnabled: { newValue: false } }, "sync");
+    }
+    await waitForAsyncCallbacks();
+    dom.window.close();
+}
+
+test("live timeshift guard does not roll back keyboard seeks into the near-live gray zone", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            skipSeconds: 5,
+        },
+    });
+    const { document, dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        await loadSkipControlPage(dom);
+        armLiveTimeShiftGuard(dom, video, state, 32);
+
+        const event = new dom.window.KeyboardEvent("keydown", {
+            key: "ArrowRight",
+            code: "ArrowRight",
+            bubbles: true,
+            cancelable: true,
+        });
+        document.body.dispatchEvent(event);
+
+        assert.equal(event.defaultPrevented, true);
+        assert.equal(video.currentTime, 37);
+
+        await waitForLiveTimeShiftSync();
+
+        assert.equal(video.currentTime, 37);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live timeshift guard accepts seekbar pointer seeks as user intent", async () => {
+    const chrome = createFakeChrome();
+    const { dom, seekbar, state, video } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        await loadSkipControlPage(dom);
+        armLiveTimeShiftGuard(dom, video, state, 32);
+
+        seekbar.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true, cancelable: true }));
+        video.currentTime = 35;
+        dispatchVideoEvent(dom, video, "seeking");
+        dispatchVideoEvent(dom, video, "seeked");
+
+        assert.equal(video.currentTime, 35);
+
+        await waitForLiveTimeShiftSync();
+
+        assert.equal(video.currentTime, 35);
+
+        seekbar.dispatchEvent(new dom.window.Event("pointerup", { bubbles: true, cancelable: true }));
+        await new Promise((resolve) => setTimeout(resolve, 1300));
+        video.currentTime = 39;
+        dispatchVideoEvent(dom, video, "seeking");
+
+        assert.ok(video.currentTime >= 35 && video.currentTime < 37.5);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live timeshift guard keeps protection while a long seekbar drag is held", async () => {
+    const chrome = createFakeChrome();
+    const { dom, seekbar, state, video } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        await loadSkipControlPage(dom);
+        armLiveTimeShiftGuard(dom, video, state, 32);
+
+        seekbar.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true, cancelable: true }));
+        await new Promise((resolve) => setTimeout(resolve, 1300));
+
+        video.currentTime = 35.5;
+        dispatchVideoEvent(dom, video, "seeking");
+        dispatchVideoEvent(dom, video, "seeked");
+
+        assert.equal(video.currentTime, 35.5, "유예보다 길게 잡고 있어도 드래그 중에는 롤백하지 않는다");
+
+        seekbar.dispatchEvent(new dom.window.Event("pointerup", { bubbles: true, cancelable: true }));
+        video.currentTime = 38;
+        dispatchVideoEvent(dom, video, "seeking");
+
+        assert.equal(video.currentTime, 38, "드래그를 놓은 직후 커밋된 시크도 사용자 의도로 수용한다");
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live timeshift guard still restores forced live-edge jumps without a user gesture", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        await loadSkipControlPage(dom);
+        armLiveTimeShiftGuard(dom, video, state, 32);
+
+        video.currentTime = 39;
+        dispatchVideoEvent(dom, video, "seeking");
+
+        assert.ok(video.currentTime >= 32 && video.currentTime < 34);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
 test("live fast-forward button seeks to the buffered live edge", async () => {
     const chrome = createFakeChrome({
         sync: {
