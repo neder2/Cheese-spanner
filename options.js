@@ -1,7 +1,6 @@
 const form = document.getElementById("optionsForm");
 const optionInputs = Array.from(document.querySelectorAll("[data-option]"));
 const dependencyGroups = Array.from(document.querySelectorAll("[data-depends-on]"));
-const saveButton = document.getElementById("save");
 const resetButton = document.getElementById("reset");
 const noticeEl = document.getElementById("notice");
 const messageEl = document.getElementById("message");
@@ -14,10 +13,18 @@ const {
 } = BetterChzzkSettings;
 
 const storage = globalThis.chrome?.storage?.sync;
+const AUTOSAVE_DEBOUNCE_MS = 400;
+const NOTICE_STATE_LABELS = {
+    loading: "불러오는 중",
+    saving: "저장 중",
+    saved: "저장됨",
+    error: "저장 실패",
+};
 
 let hideMessageTimer = 0;
 let savedOptions = null;
-let saving = false;
+let autosaveTimer = 0;
+let saveToken = 0;
 
 function setInputValue(input, value) {
     if (input.type === "checkbox") {
@@ -35,7 +42,13 @@ function readOptionsFromForm() {
     const raw = {};
 
     for (const input of optionInputs) {
-        raw[input.dataset.option] = getInputValue(input);
+        const key = input.dataset.option;
+        // 입력 중 잠깐 비워진 숫자 칸은 기본값 대신 마지막 저장값을 유지한다.
+        if (input.type !== "checkbox" && String(input.value).trim() === "" && savedOptions) {
+            raw[key] = savedOptions[key];
+            continue;
+        }
+        raw[key] = getInputValue(input);
     }
 
     return normalizeOptions(raw);
@@ -44,10 +57,6 @@ function readOptionsFromForm() {
 function areOptionsEqual(a, b) {
     if (!a || !b) return false;
     return OPTION_KEYS.every((key) => a[key] === b[key]);
-}
-
-function isDirty(options) {
-    return Boolean(savedOptions) && !areOptionsEqual(options, savedOptions);
 }
 
 function getEnabledFeatureCount(options) {
@@ -76,41 +85,29 @@ function isDisabledByDependency(control, options) {
 
 function applyControlStates(options) {
     for (const control of optionInputs) {
-        control.disabled = saving || isDisabledByDependency(control, options);
+        control.disabled = isDisabledByDependency(control, options);
     }
 }
 
-function renderNotice(options) {
-    const dirty = isDirty(options);
-    const state = !savedOptions ? "loading" : dirty ? "dirty" : "saved";
-    const stateText = !savedOptions ? "불러오는 중" : dirty ? "저장 필요" : "저장됨";
-    const enabledCount = getEnabledFeatureCount(options);
-
+function renderNotice(options, state) {
+    const label = NOTICE_STATE_LABELS[state] || NOTICE_STATE_LABELS.saved;
     noticeEl.dataset.state = state;
-    noticeEl.textContent = `${stateText} · 1080p · 기능 ${enabledCount}개`;
+    noticeEl.textContent = options ? `${label} · 기능 ${getEnabledFeatureCount(options)}개` : label;
 }
 
-function updateButtons(options) {
-    const dirty = isDirty(options);
-    saveButton.disabled = saving || !dirty;
-    resetButton.disabled = saving;
-    saveButton.textContent = saving ? "저장 중" : dirty ? "설정 저장" : "저장됨";
-}
-
-function renderPageState(options) {
+function renderPageState(options, state = "saved") {
     applyDependencies(options);
     applyControlStates(options);
-    renderNotice(options);
-    updateButtons(options);
+    renderNotice(options, state);
 }
 
-function renderOptions(options, { markSaved = false } = {}) {
+function renderOptions(options, { state = "saved" } = {}) {
     const normalized = normalizeOptions(options);
     for (const input of optionInputs) {
         setInputValue(input, normalized[input.dataset.option]);
     }
-    if (markSaved) savedOptions = normalized;
-    renderPageState(normalized);
+    renderPageState(normalized, state);
+    return normalized;
 }
 
 function showMessage(text, type = "success") {
@@ -126,23 +123,27 @@ function showMessage(text, type = "success") {
     }, 1800);
 }
 
-function setSaving(isSaving) {
-    saving = isSaving;
-    renderPageState(readOptionsFromForm());
-}
+function commitSave(message) {
+    const normalized = readOptionsFromForm();
+    if (savedOptions && areOptionsEqual(normalized, savedOptions)) {
+        renderPageState(normalized, "saved");
+        if (message) showMessage(message);
+        return;
+    }
 
-function saveOptions(options, message = "설정이 저장되었습니다.") {
-    const normalized = normalizeOptions(options);
-    setSaving(true);
+    renderPageState(normalized, "saving");
+    const token = ++saveToken;
 
     const finish = (error) => {
-        setSaving(false);
+        if (token !== saveToken) return;
         if (error) {
+            renderPageState(normalized, "error");
             showMessage("설정을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.", "error");
             return;
         }
-        renderOptions(normalized, { markSaved: true });
-        showMessage(message);
+        savedOptions = normalized;
+        renderPageState(normalized, "saved");
+        if (message) showMessage(message);
     };
 
     if (!storage) {
@@ -155,28 +156,70 @@ function saveOptions(options, message = "설정이 저장되었습니다.") {
     });
 }
 
-function handleFormChange() {
-    renderPageState(readOptionsFromForm());
+function cancelAutosave() {
+    if (!autosaveTimer) return;
+    clearTimeout(autosaveTimer);
+    autosaveTimer = 0;
 }
 
-saveButton.addEventListener("click", () => {
-    if (saveButton.disabled) return;
-    saveOptions(readOptionsFromForm());
+function scheduleAutosave() {
+    cancelAutosave();
+    autosaveTimer = setTimeout(() => {
+        autosaveTimer = 0;
+        commitSave();
+    }, AUTOSAVE_DEBOUNCE_MS);
+}
+
+function flushPendingAutosave() {
+    if (!autosaveTimer) return;
+    cancelAutosave();
+    commitSave();
+}
+
+function getOptionInput(target) {
+    const input = target instanceof Element ? target.closest("[data-option]") : null;
+    return input && optionInputs.includes(input) ? input : null;
+}
+
+form.addEventListener("input", (event) => {
+    const input = getOptionInput(event.target);
+    // 체크박스는 change에서 한 번만 저장하고, 숫자 입력은 타이핑이 멎은 뒤 저장한다.
+    if (!input || input.type === "checkbox") return;
+    renderPageState(readOptionsFromForm(), "saving");
+    scheduleAutosave();
+});
+
+form.addEventListener("change", (event) => {
+    const input = getOptionInput(event.target);
+    if (!input) return;
+    cancelAutosave();
+    if (input.type !== "checkbox") {
+        // 범위를 벗어난 값은 입력을 마친 시점에 보정값을 되돌려 보여준다.
+        const normalized = readOptionsFromForm();
+        setInputValue(input, normalized[input.dataset.option]);
+    }
+    commitSave();
 });
 
 resetButton.addEventListener("click", () => {
-    saveOptions(DEFAULT_OPTIONS, "기본값으로 복원했습니다.");
+    if (!window.confirm("모든 설정을 기본값으로 되돌릴까요? 직접 입력한 수치도 함께 초기화됩니다.")) return;
+    cancelAutosave();
+    renderOptions(DEFAULT_OPTIONS);
+    commitSave("기본값으로 복원했습니다.");
 });
 
-form.addEventListener("input", handleFormChange);
-form.addEventListener("change", handleFormChange);
+window.addEventListener("pagehide", flushPendingAutosave);
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushPendingAutosave();
+});
 
 if (storage) {
+    renderNotice(null, "loading");
     storage.get(OPTION_KEYS, (data) => {
-        renderOptions(data, { markSaved: true });
+        savedOptions = renderOptions(data);
     });
 } else {
-    renderOptions(DEFAULT_OPTIONS, { markSaved: true });
+    savedOptions = renderOptions(DEFAULT_OPTIONS);
 }
 
 const tabButtons = Array.from(document.querySelectorAll(".tab"));

@@ -108,7 +108,7 @@ button {
 .options-page {
     width: min(760px, 100%);
     margin: 0 auto;
-    padding-bottom: 74px;
+    padding-bottom: 16px;
 }
 
 .history-page {
@@ -249,9 +249,9 @@ h1 {
     text-overflow: ellipsis;
 }
 
-.status-pill[data-state="dirty"] {
-    color: var(--warning);
-    background: var(--warning-bg);
+.status-pill[data-state="error"] {
+    color: var(--danger);
+    background: var(--danger-bg);
 }
 
 .status-pill[data-state="saved"] {
@@ -576,24 +576,6 @@ h1 {
     line-height: 1.45;
 }
 
-.action-bar {
-    position: fixed;
-    left: 50%;
-    bottom: max(12px, env(safe-area-inset-bottom));
-    z-index: 50;
-    width: min(760px, calc(100vw - 32px));
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 8px;
-    padding: 8px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--bg);
-    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.22);
-    transform: translateX(-50%);
-    backdrop-filter: blur(12px);
-}
-
 .reset-row {
     display: grid;
     grid-template-columns: minmax(0, 220px);
@@ -661,7 +643,7 @@ h1 {
 .message {
     position: fixed;
     left: 50%;
-    bottom: calc(max(12px, env(safe-area-inset-bottom)) + 58px);
+    bottom: max(12px, env(safe-area-inset-bottom));
     z-index: 51;
     width: min(760px, calc(100vw - 32px));
     padding: 10px 12px;

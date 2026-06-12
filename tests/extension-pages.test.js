@@ -186,15 +186,14 @@ test("options page renders defaults and dependency-disabled controls without ext
 
     const { document, BetterChzzkSettings } = dom.window;
     const optionInputs = Array.from(document.querySelectorAll("[data-option]"));
-    const saveButton = document.getElementById("save");
     const notice = document.getElementById("notice");
 
     assert.equal(optionInputs.length, BetterChzzkSettings.OPTION_KEYS.length);
     assert.equal(queryOption(document, "skipSeconds").value, String(BetterChzzkSettings.DEFAULT_OPTIONS.skipSeconds));
     assert.equal(queryOption(document, "vodBroadcastClockEnabled").checked, false);
-    assert.equal(saveButton.disabled, true);
+    assert.equal(document.getElementById("save"), null, "자동 저장 전환 후 저장 버튼은 없어야 한다");
     assert.equal(notice.dataset.state, "saved");
-    assert.match(notice.textContent, /1080p/);
+    assert.match(notice.textContent, /기능 \d+개/);
 
     const skipControl = queryOption(document, "skipControlEnabled");
     const skipKeyboard = queryOption(document, "skipKeyboardEnabled");
@@ -203,7 +202,6 @@ test("options page renders defaults and dependency-disabled controls without ext
     skipControl.checked = false;
     dispatch(dom, skipControl, "change");
 
-    assert.equal(saveButton.disabled, false);
     assert.equal(skipKeyboard.disabled, true);
     assert.equal(skipSeconds.disabled, true);
     assert.equal(skipKeyboard.closest("[data-depends-on]").classList.contains("is-disabled"), true);
@@ -255,7 +253,7 @@ test("manifest loads volume wheel page script in the main world", () => {
     assert.ok(isolatedScript.js.indexOf("features/volumeWheel.js") > isolatedScript.js.indexOf("content.js"));
 });
 
-test("options page loads stored values and writes normalized changes", async () => {
+test("options page autosaves toggles immediately and number inputs after a debounce", async () => {
     const chrome = createFakeChrome({
         sync: {
             skipSeconds: 15,
@@ -271,23 +269,87 @@ test("options page loads stored values and writes normalized changes", async () 
     const { document } = dom.window;
     const skipSeconds = queryOption(document, "skipSeconds");
     const videoComment = queryOption(document, "videoSearchCommentEnabled");
-    const saveButton = document.getElementById("save");
+    const autoQuality = queryOption(document, "autoQualityEnabled");
 
     assert.equal(skipSeconds.value, "15");
     assert.equal(videoComment.disabled, true);
-    assert.equal(saveButton.disabled, true);
+
+    autoQuality.checked = false;
+    dispatch(dom, autoQuality, "change");
+    await waitForAsyncCallbacks();
+
+    assert.equal(chrome.testState.sync.autoQualityEnabled, false, "체크박스는 변경 즉시 저장된다");
 
     skipSeconds.value = "17";
     dispatch(dom, skipSeconds, "input");
-
-    assert.equal(saveButton.disabled, false);
-
-    saveButton.click();
     await waitForAsyncCallbacks();
 
-    assert.equal(chrome.testState.sync.skipSeconds, 17);
-    assert.equal(saveButton.disabled, true);
+    assert.equal(chrome.testState.sync.skipSeconds, 15, "숫자 입력은 디바운스 전에는 저장되지 않는다");
+    assert.equal(document.getElementById("notice").dataset.state, "saving");
+
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    assert.equal(chrome.testState.sync.skipSeconds, 17, "타이핑이 멎으면 자동 저장된다");
     assert.equal(document.getElementById("notice").dataset.state, "saved");
+});
+
+test("options page snaps out-of-range numbers back on change and saves the clamped value", async () => {
+    const chrome = createFakeChrome();
+    const dom = createDom("options.html", "options.html", chrome);
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+
+    const { document } = dom.window;
+    const skipSeconds = queryOption(document, "skipSeconds");
+
+    skipSeconds.value = "9999";
+    dispatch(dom, skipSeconds, "input");
+    dispatch(dom, skipSeconds, "change");
+    await waitForAsyncCallbacks();
+
+    assert.equal(skipSeconds.value, "600", "범위 밖 값은 입력을 마치면 보정값으로 되돌려 보여준다");
+    assert.equal(chrome.testState.sync.skipSeconds, 600);
+
+    skipSeconds.value = "";
+    dispatch(dom, skipSeconds, "input");
+    dispatch(dom, skipSeconds, "change");
+    await waitForAsyncCallbacks();
+
+    assert.equal(skipSeconds.value, "600", "빈 칸은 마지막 저장값으로 복원된다");
+    assert.equal(chrome.testState.sync.skipSeconds, 600);
+});
+
+test("options reset asks for confirmation before restoring defaults", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            skipSeconds: 15,
+        },
+    });
+    const dom = createDom("options.html", "options.html", chrome);
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+
+    const { document } = dom.window;
+    const skipSeconds = queryOption(document, "skipSeconds");
+    const resetButton = document.getElementById("reset");
+
+    dom.window.confirm = () => false;
+    resetButton.click();
+    await waitForAsyncCallbacks();
+
+    assert.equal(skipSeconds.value, "15", "확인을 거부하면 아무것도 바뀌지 않는다");
+    assert.equal(chrome.testState.sync.skipSeconds, 15);
+
+    dom.window.confirm = () => true;
+    resetButton.click();
+    await waitForAsyncCallbacks();
+
+    assert.equal(skipSeconds.value, "5");
+    assert.equal(chrome.testState.sync.skipSeconds, 5);
 });
 
 test("title tooltip shows full text when a card title is truncated", async () => {
