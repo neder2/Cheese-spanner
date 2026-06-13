@@ -967,39 +967,33 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         return null;
     }
 
-    function containsGlobalSortChip(node) {
-        if (!(node instanceof HTMLElement)) return false;
-        for (const el of node.querySelectorAll("button, a")) {
-            if (["인기", "최신", "추천"].includes(normSpace(el.textContent))) return true;
-        }
-        return false;
-    }
-
     function getGlobalTagSearchHost(input) {
         if (!(input instanceof HTMLElement)) return null;
-
-        // 태그 검색 input을 감싸는 가장 바깥 '전용' 컨테이너를 찾는다. 정렬 칩(인기/최신/추천)이나
-        // 확장 UI를 포함하는 부모를 만나면 그 직전에서 멈춘다. 컨테이너 높이에 의존하지 않으므로,
-        // 치지직이 같은 줄에 기간제 이벤트 팝업을 끼워 높이가 바뀌어도 숨김 대상이 흔들리지 않는다.
-        // 팝업이 이 컨테이너 안에 들어오면 컨테이너를 통째로 숨기며 함께 가려지고(빈 공간 없음),
-        // 바깥 형제로 들어오면 컨테이너만 숨겨 팝업은 그대로 남는다.
+        const inputRect = input.getBoundingClientRect();
         let best = input;
         let node = input.parentElement;
         let depth = 0;
 
-        while (node instanceof HTMLElement && depth < 6) {
+        while (node instanceof HTMLElement && depth < 5) {
             if (
                 node.id === BAR_ID ||
                 node.id === MENU_ID ||
                 node.id === GLOBAL_FALLBACK_ID ||
-                node.getAttribute(GLOBAL_SORT_ATTR) === "1" ||
-                node.tagName === "SECTION" ||
-                containsGlobalSortChip(node)
+                node.getAttribute(GLOBAL_SORT_ATTR) === "1"
             ) {
                 break;
             }
 
-            best = node;
+            const rect = node.getBoundingClientRect();
+            const className = String(node.className || "");
+            const looksLikeSearchBox =
+                rect.width >= inputRect.width &&
+                rect.width <= 520 &&
+                rect.height >= inputRect.height &&
+                rect.height <= 80;
+            if (looksLikeSearchBox) best = node;
+            if (looksLikeSearchBox && /search/i.test(className)) break;
+
             node = node.parentElement;
             depth++;
         }
@@ -1022,24 +1016,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         return getDirectChildWithin(host, tagHost);
     }
 
-    function isValidHiddenTagSearchHost(el) {
-        if (!(el instanceof HTMLElement) || !el.isConnected) return false;
-        for (const input of el.querySelectorAll("input")) {
-            const label = [
-                input.getAttribute("placeholder"),
-                input.getAttribute("aria-label"),
-                input.getAttribute("title"),
-            ].join(" ");
-            if (/태그/.test(label)) return true;
-        }
-        return false;
-    }
-
     function hideGlobalTagSearch() {
-        // 이미 태그 검색을 담은 요소를 숨기고 있으면 그대로 둔다. 매번 다시 고르면
-        // 주변 DOM 변화(이벤트 팝업 등)에 따라 숨김 대상이 바뀌며 레이아웃이 출렁인다.
-        const existing = document.querySelector(`[${HIDDEN_TAG_SEARCH_ATTR}="1"]`);
-        if (isValidHiddenTagSearchHost(existing)) return;
         restoreHiddenGlobalTagSearch();
         const input = findGlobalTagSearchInput() || findGlobalTagSearch();
         const host = getGlobalTagSearchHost(input);
