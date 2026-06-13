@@ -236,7 +236,6 @@ test("options playback controls show live settings before VOD settings", () => {
         "volumeWheelStep",
         "volumeTooltipEnabled",
         "vodBroadcastClockEnabled",
-        "shortcutRescueEnabled",
     ]);
 });
 
@@ -1373,6 +1372,7 @@ function createLiveTimeShiftGuardDom(chrome) {
             '<video id="video"></video>',
             '<div class="pzp-pc__progress-slider" id="seekbar" role="slider" aria-valuenow="0"></div>',
             '<div class="pzp-pc__bottom-buttons--left" id="controls">',
+            '<div class="pzp-pc__volume-slider" id="volumeSlider" role="slider" aria-valuenow="50" aria-label="\uC74C\uB7C9"></div>',
             '<button class="pzp-pc__playback-switch" id="play" type="button">Play</button>',
             "</div>",
             "</div>",
@@ -1384,6 +1384,7 @@ function createLiveTimeShiftGuardDom(chrome) {
     const { document } = dom.window;
     const video = document.getElementById("video");
     const seekbar = document.getElementById("seekbar");
+    const volumeSlider = document.getElementById("volumeSlider");
     const controls = document.getElementById("controls");
     const play = document.getElementById("play");
     const state = {
@@ -1429,6 +1430,14 @@ function createLiveTimeShiftGuardDom(chrome) {
         right: 196,
         bottom: 356,
     });
+    volumeSlider.getBoundingClientRect = () => ({
+        width: 80,
+        height: 20,
+        left: 64,
+        top: 326,
+        right: 144,
+        bottom: 346,
+    });
     play.getBoundingClientRect = () => ({
         width: 36,
         height: 36,
@@ -1438,7 +1447,7 @@ function createLiveTimeShiftGuardDom(chrome) {
         bottom: 354,
     });
 
-    return { controls, document, dom, play, seekbar, state, video };
+    return { controls, document, dom, play, seekbar, state, video, volumeSlider };
 }
 
 async function loadSkipControlPage(dom) {
@@ -1461,6 +1470,19 @@ function armLiveTimeShiftGuard(dom, video, state, currentTime = 32) {
 
 function waitForLiveTimeShiftSync() {
     return new Promise((resolve) => setTimeout(resolve, 650));
+}
+
+function useFakePerformanceNow(dom, initialNow = 1000) {
+    let now = initialNow;
+    Object.defineProperty(dom.window.performance, "now", {
+        configurable: true,
+        value: () => now,
+    });
+    return {
+        advance(milliseconds) {
+            now += milliseconds;
+        },
+    };
 }
 
 async function closeSkipControlPage(dom, chrome) {
@@ -1554,6 +1576,45 @@ test("live timeshift guard keeps protection while a long seekbar drag is held", 
         dispatchVideoEvent(dom, video, "seeking");
 
         assert.equal(video.currentTime, 38, "드래그를 놓은 직후 커밋된 시크도 사용자 의도로 수용한다");
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live timeshift guard ignores non-seek slider gestures for forced live-edge jumps", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state, video, volumeSlider } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        await loadSkipControlPage(dom);
+        armLiveTimeShiftGuard(dom, video, state, 32);
+
+        volumeSlider.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true, cancelable: true }));
+        video.currentTime = 39;
+        dispatchVideoEvent(dom, video, "seeking");
+
+        assert.ok(video.currentTime >= 32 && video.currentTime < 34);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live timeshift guard expires a held seekbar gesture when pointerup is missed", async () => {
+    const chrome = createFakeChrome();
+    const { dom, seekbar, state, video } = createLiveTimeShiftGuardDom(chrome);
+    const clock = useFakePerformanceNow(dom);
+
+    try {
+        state.paused = true;
+        await loadSkipControlPage(dom);
+        armLiveTimeShiftGuard(dom, video, state, 32);
+
+        seekbar.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true, cancelable: true }));
+        clock.advance(8100);
+        video.currentTime = 39;
+        dispatchVideoEvent(dom, video, "seeking");
+
+        assert.ok(video.currentTime >= 32 && video.currentTime < 34);
     } finally {
         await closeSkipControlPage(dom, chrome);
     }
@@ -1737,130 +1798,6 @@ test("live fast-forward button does not duplicate an external knife button", asy
         await waitForAsyncCallbacks();
         dom.window.close();
     }
-});
-
-function setupShortcutRescueDom(chrome) {
-    const dom = createPageDom(
-        [
-            "<!doctype html>",
-            "<body>",
-            '<div class="pzp pzp-pc" id="playerRoot">',
-            '<video id="video"></video>',
-            '<div class="pzp-pc__bottom-buttons--left" id="controls">',
-            '<button class="pzp-pc__playback-switch" id="play" type="button"></button>',
-            '<button class="pzp-pc__volume-button" id="mute" type="button" aria-label="음소거"></button>',
-            '<button class="pzp-pc__viewmode-button" id="theater" type="button" aria-label="넓은 화면"></button>',
-            "</div>",
-            "</div>",
-            "</body>",
-        ].join(""),
-        "https://chzzk.naver.com/live/test-channel",
-        chrome
-    );
-    const { document } = dom.window;
-    const video = document.getElementById("video");
-    const state = { paused: true, clicks: { play: 0, mute: 0, theater: 0 } };
-
-    Object.defineProperty(video, "paused", { configurable: true, get: () => state.paused });
-    video.play = () => {
-        state.paused = false;
-        return Promise.resolve();
-    };
-    video.pause = () => {
-        state.paused = true;
-    };
-    makeVisibleVideo(video);
-
-    for (const id of ["play", "mute", "theater"]) {
-        const button = document.getElementById(id);
-        button.getBoundingClientRect = () => ({ width: 36, height: 36, left: 20, top: 318, right: 56, bottom: 354 });
-        button.addEventListener("click", () => {
-            state.clicks[id] += 1;
-            if (id === "play") state.paused = !state.paused;
-        });
-    }
-
-    evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
-    evalRepoScript(dom, "features", "shortcutRescue.js");
-
-    return { dom, document, video, state };
-}
-
-function dispatchShortcutKey(dom, code, key) {
-    const event = new dom.window.KeyboardEvent("keydown", {
-        code,
-        key,
-        bubbles: true,
-        cancelable: true,
-    });
-    dom.window.document.body.dispatchEvent(event);
-    return event;
-}
-
-function waitForRescueProbe() {
-    return new Promise((resolve) => setTimeout(resolve, 500));
-}
-
-test("shortcut rescue takes over once the native shortcut pipeline stays unresponsive", async () => {
-    const chrome = createFakeChrome();
-    const { dom, state } = setupShortcutRescueDom(chrome);
-    await waitForAsyncCallbacks();
-
-    dispatchShortcutKey(dom, "Space", " ");
-    await waitForRescueProbe();
-    assert.equal(state.clicks.play, 1, "첫 미반응 키는 프로브 후 소급 실행된다");
-    assert.equal(state.paused, false);
-
-    dispatchShortcutKey(dom, "Space", " ");
-    await waitForRescueProbe();
-    assert.equal(state.clicks.play, 2, "두 번째 미반응으로 사망이 확정된다");
-    assert.equal(state.paused, true);
-
-    const immediate = dispatchShortcutKey(dom, "Space", " ");
-    assert.equal(state.clicks.play, 3, "사망 확정 후에는 지연 없이 즉시 실행된다");
-    assert.equal(immediate.defaultPrevented, true);
-
-    dispatchShortcutKey(dom, "KeyT", "t");
-    assert.equal(state.clicks.theater, 1, "관찰 불가 키도 사망 확정 후에는 버튼 클릭으로 처리된다");
-
-    dispatchShortcutKey(dom, "KeyM", "m");
-    assert.equal(state.clicks.mute, 1);
-});
-
-test("shortcut rescue stays inactive while the native pipeline handles keys", async () => {
-    const chrome = createFakeChrome();
-    const { dom, state } = setupShortcutRescueDom(chrome);
-    await waitForAsyncCallbacks();
-
-    dom.window.addEventListener("keydown", (event) => {
-        if (event.code === "Space") state.paused = !state.paused;
-    });
-
-    dispatchShortcutKey(dom, "Space", " ");
-    await waitForRescueProbe();
-    assert.equal(state.clicks.play, 0, "네이티브가 처리하면 폴백은 개입하지 않는다");
-    assert.equal(state.paused, false);
-
-    dispatchShortcutKey(dom, "Space", " ");
-    await waitForRescueProbe();
-    assert.equal(state.clicks.play, 0, "생존 확정 후에는 프로브도 하지 않는다");
-    assert.equal(state.paused, true);
-});
-
-test("shortcut rescue does nothing when the option is disabled", async () => {
-    const chrome = createFakeChrome({
-        sync: {
-            shortcutRescueEnabled: false,
-        },
-    });
-    const { dom, state } = setupShortcutRescueDom(chrome);
-    await waitForAsyncCallbacks();
-
-    dispatchShortcutKey(dom, "Space", " ");
-    await waitForRescueProbe();
-    assert.equal(state.clicks.play, 0);
-    assert.equal(state.paused, true);
 });
 
 test("history page loads local watch history state without crashing", async () => {

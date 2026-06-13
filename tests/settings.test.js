@@ -21,7 +21,7 @@ const expectedDefaults = {
     skipWheelAltStep: 10,
     volumeWheelEnabled: true,
     volumeWheelStep: 5,
-    volumeTooltipEnabled: true,
+    volumeTooltipEnabled: false,
     vodBroadcastClockEnabled: false,
     timeMachineLagLabelEnabled: true,
     adblockPopupEnabled: true,
@@ -62,7 +62,6 @@ const expectedDefaults = {
     categoryToolsFollowerFetchDelayMs: 700,
     followingRefreshEnabled: true,
     followingRefreshSeconds: 30,
-    shortcutRescueEnabled: true,
 };
 
 test("settings exports the expected option defaults and key order", () => {
@@ -85,7 +84,6 @@ test("feature count keys are derived from feature toggles only", () => {
         "categoryToolsEnabled",
         "titleTooltipEnabled",
         "followingRefreshEnabled",
-        "shortcutRescueEnabled",
     ]);
 });
 

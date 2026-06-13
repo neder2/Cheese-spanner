@@ -41,6 +41,9 @@
     const LIVE_TIMESHIFT_RESTORE_COOLDOWN_MS = 120;
     const LIVE_TIMESHIFT_SYNC_INTERVAL_MS = 500;
     const LIVE_TIMESHIFT_USER_SEEK_GRACE_MS = LIVE_EDGE_INTENT_GRACE_MS;
+    const LIVE_TIMESHIFT_USER_SEEK_DRAG_MAX_MS = LIVE_RESUME_RESTORE_WINDOW_MS;
+    const SEEK_GESTURE_SIGNATURE_TERMS = ["progress", "seek", "scrub", "timeline", "timebar", "playbackbar"];
+    const NON_SEEK_GESTURE_SIGNATURE_TERMS = ["volume", "mute", "sound", "audio", "\uC74C\uB7C9", "\uC74C\uC18C\uAC70"];
     // 치지직 플레이어는 프레임레이트를 노출하지 않으므로 주류인 1080p60 기준(60fps)으로 이동한다.
     const FRAME_STEP_SECONDS = 1 / 60;
     const OWNED_LIVE_CONTROL_IDS = new Set([SKIP_PILL_ID, LIVE_FAST_FORWARD_BUTTON_ID]);
@@ -388,9 +391,19 @@
         lastUserSeekGestureAt = performance.now();
     }
 
+    function clearUserSeekGestureIntent() {
+        userSeekGestureDragging = false;
+        lastUserSeekGestureAt = Number.NEGATIVE_INFINITY;
+    }
+
     function isRecentUserSeekGesture() {
-        // 시크바를 잡고 있는 동안은 드래그가 유예 시간보다 길어져도 보호를 유지한다.
-        return userSeekGestureDragging || performance.now() - lastUserSeekGestureAt <= LIVE_TIMESHIFT_USER_SEEK_GRACE_MS;
+        const now = performance.now();
+        if (userSeekGestureDragging) {
+            if (now - lastUserSeekGestureAt <= LIVE_TIMESHIFT_USER_SEEK_DRAG_MAX_MS) return true;
+            userSeekGestureDragging = false;
+        }
+
+        return now - lastUserSeekGestureAt <= LIVE_TIMESHIFT_USER_SEEK_GRACE_MS;
     }
 
     function isRecentPausedControlIntent() {
@@ -703,6 +716,7 @@
     }
 
     function detachLiveResumeGuard({ clearSnapshot = true } = {}) {
+        clearUserSeekGestureIntent();
         if (!attachedVideo) {
             stopPauseCacheSync();
             stopLiveTimeShiftSync();
@@ -1479,6 +1493,7 @@
         if (location.href === lastUrl) return;
         lastUrl = location.href;
         skipPillAnchorEl = null;
+        clearUserSeekGestureIntent();
         cancelResumeRestore({ clearSnapshot: true });
         if (pageChangeTimer) {
             clearTimeout(pageChangeTimer);
@@ -1609,7 +1624,6 @@
 
     function looksLikeSeekGestureElement(el) {
         if (!(el instanceof HTMLElement)) return false;
-        if (el.matches?.("input[type='range'], [role='slider'], [aria-valuenow]")) return true;
 
         const signature = compact([
             getElementSignature(el),
@@ -1617,17 +1631,14 @@
             el.getAttribute("role"),
             el.getAttribute("type"),
         ].join(" "));
-        return ["progress", "seek", "slider", "scrub", "timeline", "timebar", "playbackbar"].some((term) =>
-            signature.includes(term)
-        );
+        if (NON_SEEK_GESTURE_SIGNATURE_TERMS.some((term) => signature.includes(compact(term)))) return false;
+
+        return SEEK_GESTURE_SIGNATURE_TERMS.some((term) => signature.includes(term));
     }
 
     function findLikelySeekGestureElement(target) {
         const el = getEventElementTarget(target);
         if (!(el instanceof HTMLElement)) return null;
-
-        const explicit = el.closest?.("input[type='range'], [role='slider'], [aria-valuenow]");
-        if (explicit instanceof HTMLElement) return explicit;
 
         let node = el;
         for (let depth = 0; node instanceof HTMLElement && depth < 6; depth += 1, node = node.parentElement) {
@@ -1646,6 +1657,14 @@
         if (!userSeekGestureDragging) return;
         userSeekGestureDragging = false;
         markUserSeekGesture();
+    }
+
+    function handleUserSeekGestureCancel() {
+        clearUserSeekGestureIntent();
+    }
+
+    function handleUserSeekVisibilityChange() {
+        if (document.hidden) clearUserSeekGestureIntent();
     }
 
     function handleLiveControlIntent(event) {
@@ -1680,16 +1699,20 @@
         window.addEventListener("click", handleLiveControlIntent, true);
         window.addEventListener("pointerup", handleUserSeekGestureRelease, true);
         window.addEventListener("pointercancel", handleUserSeekGestureRelease, true);
+        window.addEventListener("blur", handleUserSeekGestureCancel, true);
+        document.addEventListener("visibilitychange", handleUserSeekVisibilityChange, true);
     }
 
     function uninstallLiveResumeGlobalHandlers() {
         if (!liveResumeHandlersInstalled) return;
         liveResumeHandlersInstalled = false;
-        userSeekGestureDragging = false;
+        clearUserSeekGestureIntent();
         window.removeEventListener("pointerdown", handleLiveControlIntent, true);
         window.removeEventListener("click", handleLiveControlIntent, true);
         window.removeEventListener("pointerup", handleUserSeekGestureRelease, true);
         window.removeEventListener("pointercancel", handleUserSeekGestureRelease, true);
+        window.removeEventListener("blur", handleUserSeekGestureCancel, true);
+        document.removeEventListener("visibilitychange", handleUserSeekVisibilityChange, true);
     }
 
     function clearRuntimeTimers() {

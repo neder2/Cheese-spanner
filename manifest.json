@@ -1,7 +1,7 @@
 {
     "manifest_version":  3,
     "name":  "Better Chzzk",
-    "version":  "1.1.5",
+    "version":  "1.1.6",
     "description":  "치지직 자동 화질, 다시보기 스킵/검색, 방송 목록 필터, 채널 방송 시간, 시청 기록, 안내 팝업 정리를 제공합니다.",
     "icons":  {
                   "16":  "icons/icon16.png",
@@ -51,8 +51,7 @@
                                            "features/titleTooltip.js",
                                            "features/volumeWheel.js",
                                            "features/volumeTooltip.js",
-                                           "features/followingRefresh.js",
-                                           "features/shortcutRescue.js"
+                                           "features/followingRefresh.js"
                                        ],
                                 "run_at":  "document_start"
                             }
