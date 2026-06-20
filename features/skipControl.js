@@ -1147,13 +1147,9 @@
     }
 
     function getLiveFastForwardTarget(video) {
-        const bufferedRange = getBufferedRange(video);
-        if (bufferedRange) return bufferedRange.end;
-
-        const seekableRange = getSeekableRange(video);
-        if (seekableRange) return seekableRange.end;
-
-        return NaN;
+        // 타임머신 채널에서는 buffered.end가 현재 위치 기준 forward 버퍼 끝(수십 초)일 뿐이라
+        // 라이브 엣지에 한참 못 미친다. seekable.end까지 반영한 실제 라이브 엣지로 점프한다.
+        return getLiveEdge(video);
     }
 
     function syncLiveFastForwardButtonLabels(button) {

@@ -1,6 +1,18 @@
 (() => {
-    const AD_POPUP_SELECTOR = ".popup_container__Aqx-3";
-    const AD_DIMMED_SELECTOR = ".popup_dimmed__zs78t";
+    const LEGACY_AD_POPUP_SELECTOR = ".popup_container__Aqx-3";
+    const LEGACY_AD_DIMMED_SELECTOR = ".popup_dimmed__zs78t";
+    const POPUP_CANDIDATE_SELECTOR = [
+        LEGACY_AD_POPUP_SELECTOR,
+        '[role="alertdialog"]',
+        '[role="dialog"]',
+        '[aria-modal="true"]',
+    ].join(",");
+    const POPUP_BACKDROP_SELECTOR = [
+        LEGACY_AD_DIMMED_SELECTOR,
+        '[class*="dimmed"]',
+        '[class*="backdrop"]',
+        '[class*="overlay"]',
+    ].join(",");
     const AD_SUPPRESS_ATTR = "data-betterchzzk-suppress-adblock-popup";
     const AD_STYLE_ID = "betterchzzk-adblock-popup-style";
     const READY_EVENT = "betterchzzk:adblock-popup:ready";
@@ -8,7 +20,6 @@
     const SCROLL_UNLOCK_DELAYS_MS = [0, 80, 250, 800];
     const {
         bindFeatureOptions,
-        createThrottledDomSync,
         mutationMatchesSelector,
         normalizeCompact,
         onReady,
@@ -23,7 +34,6 @@
     let bodyObserver = null;
     let removePageChangeDetection = null;
     let runtimeInstalled = false;
-    const scheduleDomSync = createThrottledDomSync(removeAdsPopup);
 
     function isEnabled() {
         return featureOptions.adblockPopupEnabled;
@@ -39,13 +49,22 @@
 
     function injectAdblockPopupStyleOnce() {
         BetterChzzk.utils.injectStyleOnce(AD_STYLE_ID, `
-${AD_DIMMED_SELECTOR}[${AD_SUPPRESS_ATTR}="1"],
-${AD_POPUP_SELECTOR}[${AD_SUPPRESS_ATTR}="1"]{
+[${AD_SUPPRESS_ATTR}="1"]{
   display:none !important;
   pointer-events:none !important;
   visibility:hidden !important;
 }
 `);
+    }
+
+    function getClassText(el) {
+        const raw = el?.getAttribute?.("class") || el?.className || "";
+        return typeof raw === "string" ? raw.toLowerCase() : "";
+    }
+
+    function isBackdropLike(el) {
+        const classText = getClassText(el);
+        return classText.includes("dimmed") || classText.includes("backdrop") || classText.includes("overlay");
     }
 
     function isAdblockPopupLike(el) {
@@ -56,13 +75,48 @@ ${AD_POPUP_SELECTOR}[${AD_SUPPRESS_ATTR}="1"]{
             t.includes("adblock") ||
             t.includes("adblocker") ||
             t.includes("\uAD11\uACE0\uCC28\uB2E8") ||
-            t.includes("\uD655\uC7A5\uD504\uB85C\uADF8\uB7A8") ||
-            (t.includes("\uD655\uC7A5") && t.includes("\uAE30\uB2A5") && t.includes("\uC885\uB8CC"))
+            (t.includes("\uAD11\uACE0") && t.includes("\uCC28\uB2E8")) ||
+            (t.includes("\uD655\uC7A5") &&
+                t.includes("\uAE30\uB2A5") &&
+                t.includes("\uC885\uB8CC") &&
+                t.includes("\uAD11\uACE0"))
         );
     }
 
-    function getPopupDimmed(popup) {
-        return popup?.closest?.(AD_DIMMED_SELECTOR) || null;
+    function getPopupCandidates() {
+        return Array.from(document.querySelectorAll(POPUP_CANDIDATE_SELECTOR)).filter(
+            (popup) => popup instanceof HTMLElement
+        );
+    }
+
+    function getPopupBackdrop(popup) {
+        const legacyDimmed = popup?.closest?.(LEGACY_AD_DIMMED_SELECTOR);
+        if (legacyDimmed instanceof HTMLElement) return legacyDimmed;
+
+        for (
+            let parent = popup?.parentElement;
+            parent && parent !== document.body && parent !== document.documentElement;
+            parent = parent.parentElement
+        ) {
+            if (isBackdropLike(parent)) return parent;
+        }
+
+        return null;
+    }
+
+    function getPopupBackdrops() {
+        const backdrops = new Set();
+
+        for (const dimmed of document.querySelectorAll(LEGACY_AD_DIMMED_SELECTOR)) {
+            if (dimmed instanceof HTMLElement) backdrops.add(dimmed);
+        }
+
+        for (const popup of getPopupCandidates()) {
+            const backdrop = getPopupBackdrop(popup);
+            if (backdrop) backdrops.add(backdrop);
+        }
+
+        return Array.from(backdrops);
     }
 
     function isSuppressed(el) {
@@ -78,17 +132,12 @@ ${AD_POPUP_SELECTOR}[${AD_SUPPRESS_ATTR}="1"]{
     }
 
     function hasSuppressedAdblockPopup() {
-        return Boolean(document.querySelector(`${AD_POPUP_SELECTOR}[${AD_SUPPRESS_ATTR}="1"], ${AD_DIMMED_SELECTOR}[${AD_SUPPRESS_ATTR}="1"]`));
+        return Boolean(document.querySelector(`[${AD_SUPPRESS_ATTR}="1"]`));
     }
 
     function hasActiveUnsuppressedPopup() {
-        for (const dimmed of document.querySelectorAll(AD_DIMMED_SELECTOR)) {
-            if (isSuppressed(dimmed)) continue;
-            if (isRendered(dimmed)) return true;
-        }
-
-        for (const popup of document.querySelectorAll(AD_POPUP_SELECTOR)) {
-            if (isSuppressed(popup) || isSuppressed(getPopupDimmed(popup))) continue;
+        for (const popup of getPopupCandidates()) {
+            if (isSuppressed(popup) || isSuppressed(getPopupBackdrop(popup))) continue;
             if (isRendered(popup)) return true;
         }
 
@@ -124,12 +173,14 @@ ${AD_POPUP_SELECTOR}[${AD_SUPPRESS_ATTR}="1"]{
         }, Math.max(...SCROLL_UNLOCK_DELAYS_MS) + 50);
     }
 
-    function syncDimmedSuppression() {
-        for (const dimmed of document.querySelectorAll(AD_DIMMED_SELECTOR)) {
-            const popups = Array.from(dimmed.querySelectorAll(AD_POPUP_SELECTOR));
-            const shouldSuppress = popups.length > 0 && popups.every(isSuppressed);
-            if (shouldSuppress) dimmed.setAttribute(AD_SUPPRESS_ATTR, "1");
-            else dimmed.removeAttribute(AD_SUPPRESS_ATTR);
+    function syncBackdropSuppression() {
+        const popups = getPopupCandidates();
+
+        for (const backdrop of getPopupBackdrops()) {
+            const containedPopups = popups.filter((popup) => backdrop.contains(popup));
+            const shouldSuppress = containedPopups.length > 0 && containedPopups.every(isSuppressed);
+            if (shouldSuppress) backdrop.setAttribute(AD_SUPPRESS_ATTR, "1");
+            else backdrop.removeAttribute(AD_SUPPRESS_ATTR);
         }
     }
 
@@ -139,7 +190,7 @@ ${AD_POPUP_SELECTOR}[${AD_SUPPRESS_ATTR}="1"]{
             return;
         }
 
-        const popups = document.querySelectorAll(AD_POPUP_SELECTOR);
+        const popups = getPopupCandidates();
         if (!popups.length) {
             unlockBodyScrollIfOnlySuppressedPopups();
             return;
@@ -159,7 +210,7 @@ ${AD_POPUP_SELECTOR}[${AD_SUPPRESS_ATTR}="1"]{
             }
         }
 
-        syncDimmedSuppression();
+        syncBackdropSuppression();
         if (suppressedCount > 0) scheduleScrollUnlock();
     }
 
@@ -170,11 +221,8 @@ ${AD_POPUP_SELECTOR}[${AD_SUPPRESS_ATTR}="1"]{
     }
 
     function restoreAdsPopups() {
-        document.querySelectorAll(`${AD_POPUP_SELECTOR}[${AD_SUPPRESS_ATTR}="1"]`).forEach((popup) => {
-            popup.removeAttribute(AD_SUPPRESS_ATTR);
-        });
-        document.querySelectorAll(`${AD_DIMMED_SELECTOR}[${AD_SUPPRESS_ATTR}="1"]`).forEach((dimmed) => {
-            dimmed.removeAttribute(AD_SUPPRESS_ATTR);
+        document.querySelectorAll(`[${AD_SUPPRESS_ATTR}="1"]`).forEach((el) => {
+            el.removeAttribute(AD_SUPPRESS_ATTR);
         });
     }
 
@@ -183,7 +231,11 @@ ${AD_POPUP_SELECTOR}[${AD_SUPPRESS_ATTR}="1"]{
             return hasSuppressedAdblockPopup();
         }
 
-        return mutationMatchesSelector(mutation, `${AD_POPUP_SELECTOR}, ${AD_DIMMED_SELECTOR}`);
+        if (mutation.target instanceof Element) {
+            if (mutation.target.closest?.(POPUP_CANDIDATE_SELECTOR) || isBackdropLike(mutation.target)) return true;
+        }
+
+        return mutationMatchesSelector(mutation, `${POPUP_CANDIDATE_SELECTOR}, ${POPUP_BACKDROP_SELECTOR}`);
     }
 
     function handlePageChange() {
@@ -207,12 +259,12 @@ ${AD_POPUP_SELECTOR}[${AD_SUPPRESS_ATTR}="1"]{
 
         domObserver = new MutationObserver((mutations) => {
             handlePageChange();
-            if (mutations.some(mutationCouldAffectPopup)) scheduleDomSync();
+            if (mutations.some(mutationCouldAffectPopup)) removeAdsPopup();
         });
 
         const config = {
             attributes: true,
-            attributeFilter: ["class", "style"],
+            attributeFilter: ["aria-modal", "class", "role", "style"],
             childList: true,
             subtree: true,
         };
@@ -227,7 +279,7 @@ ${AD_POPUP_SELECTOR}[${AD_SUPPRESS_ATTR}="1"]{
             bodyObserver.disconnect();
             bodyObserver = null;
             domObserver.observe(document.body, config);
-            scheduleDomSync();
+            removeAdsPopup();
         });
 
         bodyObserver.observe(document.documentElement, { childList: true, subtree: true });
@@ -272,14 +324,20 @@ ${AD_POPUP_SELECTOR}[${AD_SUPPRESS_ATTR}="1"]{
         publishReady();
     }
 
+    function syncRuntimeFromOptions() {
+        if (isEnabled()) installRuntime();
+        else teardownRuntime();
+    }
+
     bindFeatureOptions((options) => {
         featureOptions = options;
-        if (isEnabled()) installRuntime();
-        else teardownRuntime();
+        syncRuntimeFromOptions();
     });
 
+    syncRuntimeFromOptions();
+
     onReady(() => {
-        if (isEnabled()) installRuntime();
-        else teardownRuntime();
+        if (runtimeInstalled) runPopupPass();
+        else syncRuntimeFromOptions();
     });
 })();

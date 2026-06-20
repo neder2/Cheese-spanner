@@ -178,6 +178,158 @@ function evalVolumeWheelScripts(dom) {
     evalRepoScript(dom, "features", "volumeWheel.js");
 }
 
+const AD_SUPPRESS_ATTR = "data-betterchzzk-suppress-adblock-popup";
+const ADBLOCK_POPUP_TITLE =
+    "\uAD11\uACE0 \uCC28\uB2E8 \uD504\uB85C\uADF8\uB7A8\uC744 \uC0AC\uC6A9 \uC911\uC774\uC2E0\uAC00\uC694?";
+
+function makeVisibleElement(el, width = 450, height = 260) {
+    el.getBoundingClientRect = () => ({
+        width,
+        height,
+        left: 0,
+        top: 0,
+        right: width,
+        bottom: height,
+    });
+}
+
+function evalAdblockPopupScripts(dom) {
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "adblockPopup.js");
+}
+
+async function loadAdblockPopupPage(dom) {
+    evalAdblockPopupScripts(dom);
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+}
+
+function getAdblockSuppressAttr(el) {
+    return el.getAttribute(AD_SUPPRESS_ATTR);
+}
+
+test("adblock popup runs an initial pass before DOMContentLoaded", () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<div class="_dimmed_10ysp_2" id="dimmed">',
+            '<div class="_container_10ysp_20 _modal_10ysp_27" id="modal" role="alertdialog" aria-modal="true">',
+            ADBLOCK_POPUP_TITLE,
+            "</div>",
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const dimmed = document.getElementById("dimmed");
+    const modal = document.getElementById("modal");
+    makeVisibleElement(dimmed, 1000, 800);
+    makeVisibleElement(modal);
+
+    evalAdblockPopupScripts(dom);
+
+    assert.equal(getAdblockSuppressAttr(modal), "1");
+    assert.equal(getAdblockSuppressAttr(dimmed), "1");
+});
+
+test("adblock popup keeps suppressing the legacy chzzk popup classes", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<div class="popup_dimmed__zs78t" id="dimmed">',
+            '<div class="popup_container__Aqx-3" id="popup">',
+            ADBLOCK_POPUP_TITLE,
+            "</div>",
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const dimmed = document.getElementById("dimmed");
+    const popup = document.getElementById("popup");
+    document.body.style.overflow = "hidden";
+    document.body.style.paddingRight = "15px";
+    makeVisibleElement(dimmed, 1000, 800);
+    makeVisibleElement(popup);
+
+    await loadAdblockPopupPage(dom);
+    await waitForAsyncCallbacks();
+
+    assert.equal(getAdblockSuppressAttr(popup), "1");
+    assert.equal(getAdblockSuppressAttr(dimmed), "1");
+    assert.match(document.getElementById("betterchzzk-adblock-popup-style").textContent, /\[data-betterchzzk-suppress-adblock-popup="1"\]/);
+    assert.equal(document.body.style.overflow, "");
+    assert.equal(document.body.style.paddingRight, "");
+});
+
+test("adblock popup suppresses the current chzzk alertdialog modal after it appears", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/live/test-channel", chrome);
+    const { document } = dom.window;
+    document.body.style.overflow = "hidden";
+    document.body.style.paddingRight = "15px";
+
+    await loadAdblockPopupPage(dom);
+
+    const dimmed = document.createElement("div");
+    dimmed.id = "dimmed";
+    dimmed.className = "_dimmed_10ysp_2";
+    const modal = document.createElement("div");
+    modal.id = "modal";
+    modal.className = "_container_10ysp_20 _modal_10ysp_27";
+    modal.setAttribute("role", "alertdialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.innerHTML = `<strong>${ADBLOCK_POPUP_TITLE}</strong><p>\uAD11\uACE0 \uCC28\uB2E8 \uD504\uB85C\uADF8\uB7A8 \uC0AC\uC6A9 \uC2DC \uC7AC\uC0DD \uD658\uACBD\uC5D0 \uC601\uD5A5\uC744 \uBBF8\uCE60 \uC218 \uC788\uC2B5\uB2C8\uB2E4.</p>`;
+    dimmed.appendChild(modal);
+    makeVisibleElement(dimmed, 1000, 800);
+    makeVisibleElement(modal);
+    document.body.appendChild(dimmed);
+
+    await waitForAsyncCallbacks();
+
+    assert.equal(getAdblockSuppressAttr(modal), "1");
+    assert.equal(getAdblockSuppressAttr(dimmed), "1");
+    assert.equal(document.body.style.overflow, "");
+    assert.equal(document.body.style.paddingRight, "");
+});
+
+test("adblock popup does not suppress unrelated extension alertdialogs", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<div class="_dimmed_10ysp_2" id="dimmed">',
+            '<div class="_container_10ysp_20 _modal_10ysp_27" id="modal" role="alertdialog" aria-modal="true">',
+            "\uD655\uC7A5 \uD504\uB85C\uADF8\uB7A8 \uC124\uCE58 \uC548\uB0B4",
+            "</div>",
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const dimmed = document.getElementById("dimmed");
+    const modal = document.getElementById("modal");
+    makeVisibleElement(dimmed, 1000, 800);
+    makeVisibleElement(modal);
+
+    await loadAdblockPopupPage(dom);
+
+    assert.equal(getAdblockSuppressAttr(modal), null);
+    assert.equal(getAdblockSuppressAttr(dimmed), null);
+});
+
 test("options page renders defaults and dependency-disabled controls without extension storage", () => {
     const dom = createDom("options.html", "options.html");
 
@@ -236,10 +388,11 @@ test("options playback controls show live settings before VOD settings", () => {
         "volumeWheelStep",
         "volumeTooltipEnabled",
         "vodBroadcastClockEnabled",
+        "shortcutRescueEnabled",
     ]);
 });
 
-test("manifest loads volume wheel page script in the main world", () => {
+test("manifest loads playback scripts in the expected worlds", () => {
     const manifest = JSON.parse(readRepoFile("manifest.json"));
     const mainScript = manifest.content_scripts.find((entry) => entry.world === "MAIN");
     const isolatedScript = manifest.content_scripts.find((entry) => !entry.world);
@@ -250,6 +403,10 @@ test("manifest loads volume wheel page script in the main world", () => {
     assert.ok(mainScript.js.indexOf("features/volumeWheelPage.js") > mainScript.js.indexOf("features/autoQualityPage.js"));
     assert.ok(isolatedScript.js.includes("features/volumeWheel.js"));
     assert.ok(isolatedScript.js.indexOf("features/volumeWheel.js") > isolatedScript.js.indexOf("content.js"));
+    assert.ok(isolatedScript.js.includes("features/shortcutRescue.js"));
+    assert.ok(
+        isolatedScript.js.indexOf("features/shortcutRescue.js") > isolatedScript.js.indexOf("features/followingRefresh.js")
+    );
 });
 
 test("options page autosaves toggles immediately and number inputs after a debounce", async () => {
@@ -1177,6 +1334,47 @@ test("auto quality falls back to the highest selectable lower track", () => {
     assert.equal(tracks[1].selected, false);
 });
 
+test("auto quality retries by directly discovering videoTracks after they appear", () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            "<main>",
+            '<video id="video"></video>',
+            "</main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/video/12345",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const tracks = [
+        { id: "auto", label: "auto 1080p", height: 1080 },
+        { id: "480", label: "480p", height: 480, kind: "main" },
+        { id: "720", label: "720p", height: 720, kind: "main" },
+    ];
+    const trackList = createVideoTrackList(tracks, 1);
+
+    video.currentTime = 2;
+    makeVisibleVideo(video);
+    evalRepoScript(dom, "features", "autoQualityPage.js");
+
+    const pending = requestAutoQualityApply(dom, "1080p");
+    assert.equal(pending.status, "pending");
+
+    Object.defineProperty(video, "videoTracks", {
+        configurable: true,
+        get: () => trackList,
+    });
+
+    const result = requestAutoQualityApply(dom, "1080p");
+    assert.equal(result.status, "selected");
+    assert.equal(result.selected.height, 720);
+    assert.equal(trackList.selectedIndex, 2);
+});
+
 test("auto quality treats an already selected fallback track as stable", () => {
     const chrome = createFakeChrome();
     const dom = createPageDom(
@@ -1722,6 +1920,89 @@ test("live fast-forward button seeks to the buffered live edge", async () => {
     }
 });
 
+test("live fast-forward button jumps to the seekable live edge on a time-machine channel", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            skipLivePauseResumeEnabled: false,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<video id="video"></video>',
+            '<div class="pzp-pc__bottom-buttons--left" id="controls">',
+            '<button class="pzp-pc__playback-switch" id="play" type="button">Play</button>',
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const controls = document.getElementById("controls");
+    const play = document.getElementById("play");
+
+    video.currentTime = 12;
+    video.getBoundingClientRect = () => ({
+        width: 640,
+        height: 360,
+        left: 0,
+        top: 0,
+        right: 640,
+        bottom: 360,
+    });
+    controls.getBoundingClientRect = () => ({
+        width: 180,
+        height: 40,
+        left: 16,
+        top: 316,
+        right: 196,
+        bottom: 356,
+    });
+    play.getBoundingClientRect = () => ({
+        width: 36,
+        height: 36,
+        left: 20,
+        top: 318,
+        right: 56,
+        bottom: 354,
+    });
+    // 타임머신 채널: forward 버퍼 끝(42)은 라이브 엣지(seekable.end=200)보다 한참 뒤.
+    Object.defineProperty(video, "buffered", {
+        configurable: true,
+        get: () => createTimeRanges([[0, 42]]),
+    });
+    Object.defineProperty(video, "seekable", {
+        configurable: true,
+        get: () => createTimeRanges([[0, 200]]),
+    });
+
+    try {
+        evalRepoScript(dom, "shared", "settings.js");
+        evalRepoScript(dom, "content.js");
+        evalRepoScript(dom, "features", "skipControl.js");
+        document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+        await waitForAsyncCallbacks();
+        await waitForAsyncCallbacks();
+
+        const button = document.getElementById("betterchzzk-live-fast-forward");
+        assert.ok(button);
+        assert.equal(button.disabled, false);
+
+        button.click();
+
+        assert.equal(video.currentTime, 200);
+    } finally {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ skipControlEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    }
+});
+
 test("live fast-forward button does not duplicate an external knife button", async () => {
     const chrome = createFakeChrome({
         sync: {
@@ -1798,6 +2079,141 @@ test("live fast-forward button does not duplicate an external knife button", asy
         await waitForAsyncCallbacks();
         dom.window.close();
     }
+});
+
+function setupShortcutRescueDom(chrome) {
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<div class="pzp pzp-pc" id="playerRoot">',
+            '<video id="video"></video>',
+            '<div class="pzp-pc__bottom-buttons--left" id="controls">',
+            '<button class="pzp-pc__playback-switch" id="play" type="button"></button>',
+            '<button class="pzp-pc__volume-button" id="mute" type="button" aria-label="음소거"></button>',
+            '<button class="pzp-pc__viewmode-button" id="theater" type="button" aria-label="넓은 화면"></button>',
+            "</div>",
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const state = { paused: true, clicks: { play: 0, mute: 0, theater: 0 } };
+
+    Object.defineProperty(video, "paused", { configurable: true, get: () => state.paused });
+    video.play = () => {
+        state.paused = false;
+        return Promise.resolve();
+    };
+    video.pause = () => {
+        state.paused = true;
+    };
+    makeVisibleVideo(video);
+
+    for (const id of ["play", "mute", "theater"]) {
+        const button = document.getElementById(id);
+        button.getBoundingClientRect = () => ({ width: 36, height: 36, left: 20, top: 318, right: 56, bottom: 354 });
+        button.addEventListener("click", () => {
+            state.clicks[id] += 1;
+            if (id === "play") state.paused = !state.paused;
+        });
+    }
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "shortcutRescue.js");
+
+    return { dom, document, video, state };
+}
+
+function dispatchShortcutKey(dom, code, key) {
+    const event = new dom.window.KeyboardEvent("keydown", {
+        code,
+        key,
+        bubbles: true,
+        cancelable: true,
+    });
+    dom.window.document.body.dispatchEvent(event);
+    return event;
+}
+
+function waitForRescueProbe() {
+    return new Promise((resolve) => setTimeout(resolve, 150));
+}
+
+test("shortcut rescue takes over once the native shortcut pipeline stays unresponsive", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state } = setupShortcutRescueDom(chrome);
+    await waitForAsyncCallbacks();
+
+    const firstTheater = dispatchShortcutKey(dom, "KeyT", "t");
+    assert.equal(state.clicks.theater, 1, "관찰할 수 없는 화면 전환 키도 첫 입력에서 버튼 클릭으로 처리된다");
+    assert.equal(firstTheater.defaultPrevented, true);
+
+    dispatchShortcutKey(dom, "Space", " ");
+    await waitForRescueProbe();
+    assert.equal(state.clicks.play, 1, "첫 미반응 키는 짧은 프로브 후 소급 실행된다");
+    assert.equal(state.paused, false);
+
+    const immediate = dispatchShortcutKey(dom, "Space", " ");
+    assert.equal(state.clicks.play, 2, "첫 미반응 확정 후에는 지연 없이 즉시 실행된다");
+    assert.equal(state.paused, true);
+    assert.equal(immediate.defaultPrevented, true);
+
+    dispatchShortcutKey(dom, "KeyM", "m");
+    assert.equal(state.clicks.mute, 1);
+});
+
+test("shortcut rescue keeps a pending observable probe when view mode is rescued first", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state } = setupShortcutRescueDom(chrome);
+    await waitForAsyncCallbacks();
+
+    dispatchShortcutKey(dom, "Space", " ");
+    dispatchShortcutKey(dom, "KeyT", "t");
+    assert.equal(state.clicks.theater, 1);
+
+    await waitForRescueProbe();
+    assert.equal(state.clicks.play, 1);
+    assert.equal(state.paused, false);
+});
+
+test("shortcut rescue stays inactive while the native pipeline handles keys", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state } = setupShortcutRescueDom(chrome);
+    await waitForAsyncCallbacks();
+
+    dom.window.addEventListener("keydown", (event) => {
+        if (event.code === "Space") state.paused = !state.paused;
+    });
+
+    dispatchShortcutKey(dom, "Space", " ");
+    await waitForRescueProbe();
+    assert.equal(state.clicks.play, 0, "네이티브가 처리하면 폴백은 개입하지 않는다");
+    assert.equal(state.paused, false);
+
+    dispatchShortcutKey(dom, "Space", " ");
+    await waitForRescueProbe();
+    assert.equal(state.clicks.play, 0, "생존 확정 후에는 프로브도 하지 않는다");
+    assert.equal(state.paused, true);
+});
+
+test("shortcut rescue does nothing when the option is disabled", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            shortcutRescueEnabled: false,
+        },
+    });
+    const { dom, state } = setupShortcutRescueDom(chrome);
+    await waitForAsyncCallbacks();
+
+    dispatchShortcutKey(dom, "Space", " ");
+    await waitForRescueProbe();
+    assert.equal(state.clicks.play, 0);
+    assert.equal(state.paused, true);
 });
 
 test("history page loads local watch history state without crashing", async () => {
