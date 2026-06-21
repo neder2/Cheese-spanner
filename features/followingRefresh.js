@@ -1,13 +1,17 @@
 (() => {
-    // 치지직은 탭이 다시 보이거나 창이 포커스를 받을 때 사이드바 팔로잉 목록을
-    // 스스로 다시 불러온다(react-query/SWR 계열의 refetch-on-focus 동작).
-    // 그 복귀 신호를 주기적으로 합성해 치지직이 자기 코드로 목록을 갱신하게 한다.
-    // 사이드바 DOM을 직접 수정하지 않으므로 React와 충돌할 여지가 없다.
+    // CHZZK owns the actual sidebar refetch. Keep a cached handle to its native
+    // refresh button instead of synthesizing global focus events every tick.
     const { normalizeOptions } = BetterChzzkSettings;
-    const { bindFeatureOptions } = BetterChzzk.utils;
+    const { bindFeatureOptions, normSpace } = BetterChzzk.utils;
+
+    const REFRESH_BUTTON_SELECTOR = "button[aria-label], [role=\"button\"][aria-label]";
+    const REFRESH_LABEL_RE = /새로고침|refresh/i;
+    const FOLLOWING_SECTION_RE = /팔로(잉|우)|following|follow/i;
+    const FOLLOWING_HREF_RE = /(^|\/)following(?:[/?#]|$)/i;
 
     let featureOptions = normalizeOptions();
     let refreshTimer = null;
+    let cachedRefreshButton = null;
 
     function isEnabled() {
         return featureOptions.followingRefreshEnabled;
@@ -18,13 +22,65 @@
         return (Number.isFinite(seconds) && seconds > 0 ? seconds : 30) * 1000;
     }
 
+    function isRefreshButton(el) {
+        return REFRESH_LABEL_RE.test(normSpace(el.getAttribute("aria-label")));
+    }
+
+    function isUsableRefreshButton(button) {
+        return Boolean(
+            button &&
+                button.isConnected &&
+                isRefreshButton(button) &&
+                !button.disabled &&
+                button.getAttribute("aria-disabled") !== "true"
+        );
+    }
+
+    function hasFollowingSignal(root) {
+        if (FOLLOWING_SECTION_RE.test(normSpace(root.textContent))) return true;
+
+        return Array.from(root.querySelectorAll("a[href]")).some((anchor) => {
+            const href = anchor.getAttribute("href") || "";
+            return FOLLOWING_HREF_RE.test(href);
+        });
+    }
+
+    function findFollowingRefreshButton() {
+        if (isUsableRefreshButton(cachedRefreshButton)) return cachedRefreshButton;
+        cachedRefreshButton = null;
+
+        const buttons = Array.from(document.querySelectorAll(REFRESH_BUTTON_SELECTOR)).filter(isRefreshButton);
+
+        for (const button of buttons) {
+            let node = button.parentElement;
+
+            for (let depth = 0; node && node !== document.body && depth < 7; depth += 1, node = node.parentElement) {
+                if (hasFollowingSignal(node)) {
+                    cachedRefreshButton = button;
+                    return button;
+                }
+
+                const refreshButtons = Array.from(node.querySelectorAll(REFRESH_BUTTON_SELECTOR)).filter(isRefreshButton);
+                if (refreshButtons.length > 1) break;
+            }
+        }
+
+        return null;
+    }
+
+    function clickFollowingRefreshButton() {
+        const button = findFollowingRefreshButton();
+        if (!isUsableRefreshButton(button)) return false;
+
+        button.click();
+        return true;
+    }
+
     function triggerSidebarRefresh() {
-        // 백그라운드 탭은 건드리지 않는다 — 실제 복귀 시 치지직이 알아서 갱신한다.
         if (document.visibilityState !== "visible") return;
         if (navigator.onLine === false) return;
 
-        document.dispatchEvent(new Event("visibilitychange", { bubbles: true }));
-        window.dispatchEvent(new Event("focus"));
+        clickFollowingRefreshButton();
     }
 
     function startRefreshTimer() {

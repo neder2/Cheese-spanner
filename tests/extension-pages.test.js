@@ -118,6 +118,22 @@ function waitForAsyncCallbacks() {
     return new Promise((resolve) => setTimeout(resolve, 20));
 }
 
+function captureIntervals(dom) {
+    const intervals = [];
+
+    dom.window.setInterval = (fn, ms) => {
+        const id = intervals.length + 1;
+        intervals.push({ id, fn, ms, cleared: false });
+        return id;
+    };
+    dom.window.clearInterval = (id) => {
+        const entry = intervals.find((interval) => interval.id === id);
+        if (entry) entry.cleared = true;
+    };
+
+    return intervals;
+}
+
 function createTimeRanges(ranges) {
     return {
         length: ranges.length,
@@ -197,6 +213,12 @@ function evalAdblockPopupScripts(dom) {
     evalRepoScript(dom, "shared", "settings.js");
     evalRepoScript(dom, "content.js");
     evalRepoScript(dom, "features", "adblockPopup.js");
+}
+
+function evalFollowingRefreshScripts(dom) {
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "followingRefresh.js");
 }
 
 async function loadAdblockPopupPage(dom) {
@@ -407,6 +429,119 @@ test("manifest loads playback scripts in the expected worlds", () => {
     assert.ok(
         isolatedScript.js.indexOf("features/shortcutRescue.js") > isolatedScript.js.indexOf("features/followingRefresh.js")
     );
+});
+
+test("following refresh clicks the native following sidebar refresh button", async () => {
+    const chrome = createFakeChrome({ sync: { followingRefreshSeconds: 10 } });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            "<nav>",
+            '<section id="following">',
+            "<header>",
+            "<strong>\uD314\uB85C\uC789 \uCC44\uB110</strong>",
+            '<button id="followingRefresh" type="button" aria-label="\uC0C8\uB85C\uACE0\uCE68"></button>',
+            '<button type="button" aria-label="\uC811\uAE30"></button>',
+            "</header>",
+            '<a href="/following?tab=LIVE">\uC804\uCCB4\uBCF4\uAE30</a>',
+            "</section>",
+            '<section id="categories">',
+            "<header>",
+            "<strong>\uC778\uAE30 \uCE74\uD14C\uACE0\uB9AC</strong>",
+            '<button id="categoryRefresh" type="button" aria-label="\uC0C8\uB85C\uACE0\uCE68"></button>',
+            "</header>",
+            "</section>",
+            "</nav>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const { document } = dom.window;
+    const clicks = { following: 0, categories: 0 };
+    const originalQuerySelectorAll = document.querySelectorAll.bind(document);
+    let refreshButtonQueries = 0;
+
+    document.getElementById("followingRefresh").addEventListener("click", () => {
+        clicks.following += 1;
+    });
+    document.getElementById("categoryRefresh").addEventListener("click", () => {
+        clicks.categories += 1;
+    });
+    document.querySelectorAll = (selector) => {
+        if (selector === 'button[aria-label], [role="button"][aria-label]') refreshButtonQueries += 1;
+        return originalQuerySelectorAll(selector);
+    };
+
+    evalFollowingRefreshScripts(dom);
+    await waitForAsyncCallbacks();
+
+    assert.equal(intervals.length, 1);
+    assert.equal(intervals[0].ms, 10000);
+
+    intervals[0].fn();
+
+    assert.equal(clicks.following, 1);
+    assert.equal(clicks.categories, 0);
+    assert.equal(refreshButtonQueries, 1);
+
+    intervals[0].fn();
+
+    assert.equal(clicks.following, 2);
+    assert.equal(clicks.categories, 0);
+    assert.equal(refreshButtonQueries, 1, "캐시된 팔로잉 새로고침 버튼은 다시 탐색하지 않는다");
+});
+
+test("following refresh stays idle when the native following refresh button is unavailable", async () => {
+    const chrome = createFakeChrome({ sync: { followingRefreshSeconds: 10 } });
+    const dom = createPageDom("<!doctype html><body><main></main></body>", "https://chzzk.naver.com/", chrome);
+    const intervals = captureIntervals(dom);
+    const events = { visibility: 0, focus: 0 };
+
+    dom.window.document.addEventListener("visibilitychange", () => {
+        events.visibility += 1;
+    });
+    dom.window.addEventListener("focus", () => {
+        events.focus += 1;
+    });
+
+    evalFollowingRefreshScripts(dom);
+    await waitForAsyncCallbacks();
+
+    assert.equal(intervals.length, 1);
+
+    intervals[0].fn();
+
+    assert.equal(events.visibility, 0);
+    assert.equal(events.focus, 0);
+});
+
+test("following refresh restarts the timer when the custom interval changes", async () => {
+    const chrome = createFakeChrome({ sync: { followingRefreshSeconds: 10 } });
+    const dom = createPageDom("<!doctype html><body><main></main></body>", "https://chzzk.naver.com/", chrome);
+    const intervals = captureIntervals(dom);
+
+    evalFollowingRefreshScripts(dom);
+    await waitForAsyncCallbacks();
+
+    assert.equal(intervals.length, 1);
+    assert.equal(intervals[0].ms, 10000);
+
+    chrome.testState.storageChangeListeners[0](
+        {
+            followingRefreshSeconds: {
+                oldValue: 10,
+                newValue: 45,
+            },
+        },
+        "sync"
+    );
+
+    assert.equal(intervals[0].cleared, true);
+    assert.equal(intervals.length, 2);
+    assert.equal(intervals[1].ms, 45000);
 });
 
 test("options page autosaves toggles immediately and number inputs after a debounce", async () => {
@@ -1413,6 +1548,46 @@ test("auto quality treats an already selected fallback track as stable", () => {
     assert.equal(result.selected.height, 720);
     assert.equal(trackList.selectedIndex, 1);
     assert.equal(tracks[1].selected, true);
+});
+
+test("auto quality treats an active preferred track as already selected", () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            "<main>",
+            '<video id="video"></video>',
+            "</main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const tracks = [
+        { id: "auto", label: "auto 1080p", height: 1080 },
+        { id: "1080", label: "1080p", height: 1080, kind: "main", active: true },
+        { id: "720", label: "720p", height: 720, kind: "main" },
+    ];
+    const trackList = createVideoTrackList(tracks, -1);
+
+    video.currentTime = 2;
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "videoTracks", {
+        configurable: true,
+        get: () => trackList,
+    });
+
+    evalRepoScript(dom, "features", "autoQualityPage.js");
+
+    const result = requestAutoQualityApply(dom, "1080p");
+
+    assert.equal(result.status, "already");
+    assert.equal(result.selected.height, 1080);
+    assert.equal(trackList.selectedIndex, -1);
+    assert.equal(tracks[1].selected, false);
 });
 
 test("VOD replay chat fix ignores currentTime-only URL changes on the same VOD", async () => {

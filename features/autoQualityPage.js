@@ -1121,8 +1121,33 @@
         return candidates;
     }
 
+    function isSelectedTrackValue(value) {
+        if (value === true || value === 1) return true;
+        if (typeof value !== "string") return false;
+
+        const normalized = value.trim().toLowerCase();
+        return ["1", "true", "selected", "active", "current", "enabled", "showing"].includes(normalized);
+    }
+
+    function getSingleSelectedTrackByProps(tracks, props) {
+        for (const prop of props) {
+            const matches = tracks.filter((track) => isSelectedTrackValue(readLooseProp(track, prop)));
+            if (matches.length === 1) return matches[0];
+        }
+
+        return null;
+    }
+
     function getSelectedTrack(tracks, trackList) {
-        const selectedTrack = tracks.find((track) => track?.selected);
+        const selectedTrack = getSingleSelectedTrackByProps(tracks, [
+            "selected",
+            "isSelected",
+            "active",
+            "isActive",
+            "current",
+            "isCurrent",
+            "enabled",
+        ]);
         if (selectedTrack) return selectedTrack;
 
         const selectedIndex = Number(trackList?.selectedIndex);
