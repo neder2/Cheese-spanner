@@ -1192,8 +1192,10 @@ test("options page shows initial storage read failures without overwriting exist
 
     const { document } = dom.window;
     const autoQuality = queryOption(document, "autoQualityEnabled");
+    const message = document.getElementById("message");
 
     assert.equal(document.getElementById("notice").dataset.state, "error");
+    assert.equal(message.textContent, "설정을 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.");
 
     autoQuality.checked = false;
     dispatch(dom, autoQuality, "change");
@@ -1201,6 +1203,45 @@ test("options page shows initial storage read failures without overwriting exist
 
     assert.equal(chrome.testState.sync.autoQualityEnabled, true);
     assert.equal(document.getElementById("notice").dataset.state, "error");
+    assert.equal(
+        message.textContent,
+        "설정을 불러오지 못해 저장하지 않았습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요."
+    );
+});
+
+test("options page shows storage write failures without updating saved options", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            autoQualityEnabled: true,
+        },
+    });
+    const dom = createDom("options.html", "options.html", chrome);
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+
+    chrome.storage.sync.set = (_values, callback) => {
+        setTimeout(() => {
+            chrome.runtime.lastError = { message: "write failed" };
+            callback();
+            chrome.runtime.lastError = null;
+        }, 0);
+    };
+
+    const { document } = dom.window;
+    const autoQuality = queryOption(document, "autoQualityEnabled");
+
+    autoQuality.checked = false;
+    dispatch(dom, autoQuality, "change");
+    await waitForAsyncCallbacks();
+
+    assert.equal(chrome.testState.sync.autoQualityEnabled, true);
+    assert.equal(document.getElementById("notice").dataset.state, "error");
+    assert.equal(
+        document.getElementById("message").textContent,
+        "설정을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."
+    );
 });
 
 test("options page snaps out-of-range numbers back on change and saves the clamped value", async () => {

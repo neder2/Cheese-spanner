@@ -14,6 +14,10 @@ const {
 
 const storage = globalThis.chrome?.storage?.sync;
 const AUTOSAVE_DEBOUNCE_MS = 400;
+const OPTIONS_LOAD_ERROR_MESSAGE = "설정을 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.";
+const OPTIONS_LOAD_BLOCKED_SAVE_MESSAGE =
+    "설정을 불러오지 못해 저장하지 않았습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.";
+const OPTIONS_SAVE_ERROR_MESSAGE = "설정을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.";
 const NOTICE_STATE_LABELS = {
     loading: "불러오는 중",
     saving: "저장 중",
@@ -136,7 +140,7 @@ function commitSave(message) {
     const normalized = readOptionsFromForm();
     if (optionsLoadFailed && !savedOptions) {
         renderPageState(normalized, "error");
-        showMessage("?ㅼ젙???쎌뼱?ㅼ? 紐삵빐 ??ν븯吏 ?딆븯?듬땲?? ?섏씠吏瑜??덈줈怨좎묠 ?? ?ㅼ떆 ?쒕룄??二쇱꽭??", "error");
+        showMessage(OPTIONS_LOAD_BLOCKED_SAVE_MESSAGE, "error");
         return;
     }
 
@@ -154,7 +158,7 @@ function commitSave(message) {
         if (token !== saveToken) return;
         if (error) {
             renderPageState(normalized, "error");
-            showMessage("설정을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.", "error");
+            showMessage(OPTIONS_SAVE_ERROR_MESSAGE, "error");
             return;
         }
         savedOptions = normalized;
@@ -237,7 +241,7 @@ if (storage) {
         if (error) {
             optionsLoadFailed = true;
             renderOptions(DEFAULT_OPTIONS, { state: "error" });
-            showMessage("?ㅼ젙???쎌뼱?ㅼ? 紐삵뻽?듬땲?? ?섏씠吏瑜??덈줈怨좎묠 ???ㅼ떆 ?쒕룄??二쇱꽭??", "error");
+            showMessage(OPTIONS_LOAD_ERROR_MESSAGE, "error");
             return;
         }
         optionsLoadFailed = false;
