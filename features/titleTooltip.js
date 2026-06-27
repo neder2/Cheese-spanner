@@ -4,7 +4,9 @@
     const TOOLTIP_ATTR = "data-bctt-tooltip";
     const ACTIVE_ATTR = "data-bctt-active";
     const TITLE_SELECTOR = "a[class*='title'], [class*='title']";
-    const ITEM_LINK_SELECTOR = "a[href*='/live/'], a[href*='/video/'], a[href*='/clips/']";
+    const ITEM_LINK_SELECTOR = "a[href]";
+    const ITEM_PATH_RE = /^\/(?:live|video|clips)\//;
+    const CHANNEL_PATH_RE = /^\/[a-f0-9]{32}(?:\/|$)/i;
     const CARD_SELECTOR = "article, li, [class*='card'], [class*='item'], [class*='video']";
     const IGNORED_TEXT_SELECTOR = [
         "script",
@@ -15,7 +17,7 @@
         "[aria-hidden='true']",
     ].join(", ");
     const VISUALLY_HIDDEN_TOKEN_RE = /(^|[\s_-])(blind|sr-only|screen-reader|visually-hidden|a11y-hidden)([\s_-]|$)/i;
-    const HOVER_OPEN_DELAY_MS = 400;
+    const HOVER_OPEN_DELAY_MS = 150;
     const TOOLTIP_MAX_WIDTH = 420;
     const STYLE_TEXT = `
 .bctt-tooltip{
@@ -69,6 +71,7 @@ body[theme="dark"] [data-bctt-active="1"],
     let activeTitleEl = null;
     let pendingTitleEl = null;
     let openTimer = 0;
+    let positionRaf = 0;
     let listenersInstalled = false;
     let removePageChangeDetection = null;
 
@@ -90,10 +93,29 @@ body[theme="dark"] [data-bctt-active="1"],
 
     function getCardContext(el) {
         let card = el.closest(CARD_SELECTOR);
-        if (card === el && !el.matches(ITEM_LINK_SELECTOR)) {
+        if (card === el && !hasItemLink(el)) {
             card = el.parentElement?.closest(CARD_SELECTOR) || el.parentElement;
         }
         return card || el.parentElement;
+    }
+
+    function isItemLink(anchor) {
+        if (!(anchor instanceof HTMLAnchorElement)) return false;
+
+        let path = "";
+        try {
+            path = new URL(anchor.getAttribute("href") || "", location.origin).pathname;
+        } catch (_) {
+            return false;
+        }
+
+        return ITEM_PATH_RE.test(path) || CHANNEL_PATH_RE.test(path);
+    }
+
+    function hasItemLink(root) {
+        if (!(root instanceof Element)) return false;
+        if (root instanceof HTMLAnchorElement && isItemLink(root)) return true;
+        return Array.from(root.querySelectorAll(ITEM_LINK_SELECTOR)).some(isItemLink);
     }
 
     function resolveTitleElement(target) {
@@ -104,7 +126,8 @@ body[theme="dark"] [data-bctt-active="1"],
         if (el.closest(`[${TOOLTIP_ATTR}="1"]`)) return null;
 
         const card = getCardContext(el);
-        if (card && !card.querySelector(ITEM_LINK_SELECTOR) && !el.closest(ITEM_LINK_SELECTOR)) return null;
+        const ownLink = el.closest(ITEM_LINK_SELECTOR);
+        if (card && !hasItemLink(card) && !hasItemLink(ownLink)) return null;
         return el;
     }
 
@@ -193,6 +216,23 @@ body[theme="dark"] [data-bctt-active="1"],
         pendingTitleEl = null;
     }
 
+    function requestFrame(callback) {
+        return typeof window.requestAnimationFrame === "function"
+            ? window.requestAnimationFrame(callback)
+            : window.setTimeout(callback, 16);
+    }
+
+    function cancelFrame(id) {
+        if (typeof window.cancelAnimationFrame === "function") window.cancelAnimationFrame(id);
+        else window.clearTimeout(id);
+    }
+
+    function cancelScheduledTooltipPosition() {
+        if (!positionRaf) return;
+        cancelFrame(positionRaf);
+        positionRaf = 0;
+    }
+
     function positionTooltip(anchor) {
         if (!tooltip || !anchor?.isConnected) return;
 
@@ -226,6 +266,7 @@ body[theme="dark"] [data-bctt-active="1"],
         const titleEl = resolveTitleElement(event.target);
         if (!titleEl) return;
         if (titleEl === activeTitleEl) return;
+        if (titleEl === pendingTitleEl) return;
         if (!isTruncated(titleEl)) return;
 
         clearOpenTimer();
@@ -251,13 +292,22 @@ body[theme="dark"] [data-bctt-active="1"],
     }
 
     function handleScroll() {
-        if (activeTitleEl?.isConnected) positionTooltip(activeTitleEl);
-        else hideTooltip();
+        scheduleTooltipPosition();
     }
 
     function handleResize() {
-        if (activeTitleEl?.isConnected) positionTooltip(activeTitleEl);
-        else hideTooltip();
+        scheduleTooltipPosition();
+    }
+
+    function scheduleTooltipPosition() {
+        if (positionRaf) return;
+
+        positionRaf = requestFrame(() => {
+            positionRaf = 0;
+
+            if (activeTitleEl?.isConnected) positionTooltip(activeTitleEl);
+            else hideTooltip();
+        });
     }
 
     function installListeners() {
@@ -280,6 +330,7 @@ body[theme="dark"] [data-bctt-active="1"],
         document.removeEventListener("pointerout", handlePointerOut, true);
         window.removeEventListener("scroll", handleScroll, true);
         window.removeEventListener("resize", handleResize);
+        cancelScheduledTooltipPosition();
 
         if (removePageChangeDetection) {
             removePageChangeDetection();

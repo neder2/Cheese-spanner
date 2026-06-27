@@ -127,6 +127,10 @@ function waitForAsyncCallbacks() {
     return new Promise((resolve) => setTimeout(resolve, 20));
 }
 
+function waitForTitleTooltipDelay() {
+    return new Promise((resolve) => setTimeout(resolve, 190));
+}
+
 async function waitForCondition(predicate, { timeoutMs = 1000, intervalMs = 20 } = {}) {
     const startedAt = Date.now();
     while (Date.now() - startedAt <= timeoutMs) {
@@ -866,12 +870,21 @@ test("options playback controls show live settings before VOD settings", () => {
 test("manifest loads playback scripts in the expected worlds", () => {
     const manifest = JSON.parse(readRepoFile("manifest.json"));
     const mainScript = manifest.content_scripts.find((entry) => entry.world === "MAIN");
-    const isolatedScript = manifest.content_scripts.find((entry) => !entry.world);
+    const isolatedScript = manifest.content_scripts.find((entry) => entry.js?.includes("features/volumeWheel.js"));
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
     assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
+    assert.ok(mainScript.js.includes("features/followingPreviewPage.js"));
     assert.ok(mainScript.js.indexOf("features/routeBridgePage.js") < mainScript.js.indexOf("features/autoQualityPage.js"));
+    assert.ok(
+        mainScript.js.indexOf("features/routeBridgePage.js") <
+            mainScript.js.indexOf("features/followingPreviewPage.js")
+    );
+    assert.ok(
+        mainScript.js.indexOf("features/followingPreviewPage.js") <
+            mainScript.js.indexOf("features/autoQualityPage.js")
+    );
     assert.ok(mainScript.js.includes("features/volumeWheelPage.js"));
     assert.ok(mainScript.js.indexOf("features/volumeWheelPage.js") > mainScript.js.indexOf("features/autoQualityPage.js"));
     assert.ok(isolatedScript.js.includes("features/volumeWheel.js"));
@@ -1340,12 +1353,56 @@ test("title tooltip shows full text when a card title is truncated", async () =>
     await waitForAsyncCallbacks();
 
     title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 450));
+    await waitForTitleTooltipDelay();
 
     const tip = document.querySelector(".bctt-tooltip[data-show='1']");
     assert.ok(tip, "툴팁이 표시되어야 한다");
     assert.equal(tip.textContent, "아주 길어서 잘리는 방송 제목 전체 내용");
     assert.equal(title.getAttribute("data-bctt-active"), "1");
+});
+
+test("title tooltip accepts channel root links as card links", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<main><article class="card">',
+            '<a class="card_title" href="/0123456789abcdef0123456789abcdef">채널 루트 링크의 잘리는 방송 제목</a>',
+            "</article></main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/",
+        chrome
+    );
+    const { document } = dom.window;
+    const title = document.querySelector(".card_title");
+
+    Object.defineProperty(title, "scrollWidth", { configurable: true, get: () => 600 });
+    Object.defineProperty(title, "clientWidth", { configurable: true, get: () => 200 });
+    Object.defineProperty(title, "scrollHeight", { configurable: true, get: () => 20 });
+    Object.defineProperty(title, "clientHeight", { configurable: true, get: () => 20 });
+    title.getBoundingClientRect = () => ({
+        left: 40,
+        top: 120,
+        right: 240,
+        bottom: 140,
+        width: 200,
+        height: 20,
+    });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "titleTooltip.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForTitleTooltipDelay();
+
+    const tip = document.querySelector(".bctt-tooltip[data-show='1']");
+    assert.ok(tip);
+    assert.equal(tip.textContent, "채널 루트 링크의 잘리는 방송 제목");
 });
 
 test("title tooltip excludes hidden navigation text from the full title", async () => {
@@ -1388,7 +1445,7 @@ test("title tooltip excludes hidden navigation text from the full title", async 
     await waitForAsyncCallbacks();
 
     title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 450));
+    await waitForTitleTooltipDelay();
 
     const tip = document.querySelector(".bctt-tooltip[data-show='1']");
     assert.ok(tip);
@@ -1425,7 +1482,7 @@ test("title tooltip ignores titles that fit", async () => {
     await waitForAsyncCallbacks();
 
     title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 450));
+    await waitForTitleTooltipDelay();
 
     assert.equal(document.querySelector(".bctt-tooltip[data-show='1']"), null);
     assert.equal(title.hasAttribute("data-bctt-active"), false);
@@ -1469,8 +1526,10 @@ test("title tooltip keeps pending hover when moving inside the same title", asyn
     await waitForAsyncCallbacks();
 
     title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    child.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
     title.dispatchEvent(new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: child }));
-    await new Promise((resolve) => setTimeout(resolve, 450));
+    await new Promise((resolve) => setTimeout(resolve, 110));
 
     const tip = document.querySelector(".bctt-tooltip[data-show='1']");
     assert.ok(tip);
@@ -1511,7 +1570,7 @@ test("title tooltip stays disabled when the option is off", async () => {
     await waitForAsyncCallbacks();
 
     title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 450));
+    await waitForTitleTooltipDelay();
 
     assert.equal(document.querySelector(".bctt-tooltip[data-show='1']"), null);
     assert.equal(title.hasAttribute("data-bctt-active"), false);
@@ -1554,7 +1613,7 @@ test("title tooltip reacts to option changes without leaving stale UI", async ()
     await waitForAsyncCallbacks();
 
     title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 450));
+    await waitForTitleTooltipDelay();
     assert.ok(document.querySelector(".bctt-tooltip[data-show='1']"));
     assert.equal(title.getAttribute("data-bctt-active"), "1");
 
@@ -1567,7 +1626,7 @@ test("title tooltip reacts to option changes without leaving stale UI", async ()
     assert.equal(title.hasAttribute("data-bctt-active"), false);
 
     title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 450));
+    await waitForTitleTooltipDelay();
     assert.equal(document.querySelector(".bctt-tooltip[data-show='1']"), null);
 
     for (const listener of chrome.testState.storageChangeListeners) {
@@ -1576,7 +1635,7 @@ test("title tooltip reacts to option changes without leaving stale UI", async ()
     await waitForAsyncCallbacks();
 
     title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 450));
+    await waitForTitleTooltipDelay();
     const tip = document.querySelector(".bctt-tooltip[data-show='1']");
     assert.ok(tip);
     assert.equal(tip.textContent, "옵션 변경 중에도 잘리는 방송 제목 전체 내용");

@@ -213,7 +213,7 @@ SPA(페이지 내 이동)로 다시보기에 들어갔을 때 "라이브 채팅 
 | --------------------------------------------------------- | ----------------------------------------- | ------ | --------- |
 | **팔로잉 목록 자동 새로고침** (`followingRefreshEnabled`) | 사이드바 팔로잉 채널의 라이브 상태 갱신  | 켜짐   | —         |
 | 자동 새로고침 주기 (`followingRefreshSeconds`)            | 팔로잉 목록을 다시 갱신하는 초 단위 주기 | 30초   | 10–600초 |
-| 팔로잉 호버 미리보기 (`followingPreviewTooltipEnabled`)   | 사이드바 팔로잉 라이브의 썸네일 미리보기 | 켜짐   | —         |
+| 팔로잉 호버 미리보기 (`followingPreviewTooltipEnabled`)   | 사이드바 팔로잉 라이브의 재생 미리보기   | 켜짐   | —         |
 
 ### 시청 기록
 
@@ -368,6 +368,9 @@ Better Chzzk/
 │  ├─ monthlyBroadcastTime.js
 │  ├─ videoSearch.js
 │  ├─ categoryTools.js
+│  ├─ titleTooltip.js
+│  ├─ followingRefresh.js
+│  ├─ followingPreviewTooltip.js / followingPreviewPage.js
 │  └─ liveWatchHistory.js
 ├─ icons/                   확장 프로그램 아이콘
 ├─ store-assets/            스토어 등록용 이미지

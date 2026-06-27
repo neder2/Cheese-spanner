@@ -27,11 +27,17 @@
     ].join(", ");
     const VISUALLY_HIDDEN_TOKEN_RE = /(^|[\s_-])(blind|sr-only|screen-reader|visually-hidden|a11y-hidden)([\s_-]|$)/i;
     const LIVE_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/channels";
-    const HOVER_OPEN_DELAY_MS = 260;
+    const HOVER_OPEN_DELAY_MS = 0;
     const FETCH_TIMEOUT_MS = 8000;
     const CACHE_TTL_MS = 20000;
     const MAX_CACHE_ENTRIES = 80;
-    const CARD_WIDTH = 392;
+    const CARD_WIDTH = 460;
+    const PLAYER_START_SETTLE_MS = 90;
+    const PLAYER_PLAY_EVENT = "betterchzzk:following-preview:play";
+    const PLAYER_STOP_EVENT = "betterchzzk:following-preview:stop";
+    const PLAYER_MOUNT_ATTR = "data-bcfp-player-mount";
+    const PLAYER_STATE_ATTR = "data-bcfp-player-state";
+    const ELAPSED_REFRESH_MS = 1000;
     const UNKNOWN_TITLE = "\uC81C\uBAA9 \uC5C6\uB294 \uB77C\uC774\uBE0C";
     const LOADING_TITLE = "\uBBF8\uB9AC\uBCF4\uAE30 \uBD88\uB7EC\uC624\uB294 \uC911";
     const ERROR_TITLE = "\uBBF8\uB9AC\uBCF4\uAE30\uB97C \uBD88\uB7EC\uC62C \uC218 \uC5C6\uC2B5\uB2C8\uB2E4";
@@ -53,7 +59,7 @@
   font-size:12px;
   line-height:1.35;
   z-index:2147483647;
-  pointer-events:none;
+  pointer-events:auto;
   box-sizing:border-box;
 }
 #${TOOLTIP_ID}[data-show="1"]{display:block;}
@@ -61,13 +67,33 @@
   position:relative;
   aspect-ratio:16 / 9;
   overflow:hidden;
-  background:#202329;
+  background:#05070A;
 }
-#${TOOLTIP_ID} .bcfp-media img{
+#${TOOLTIP_ID} .bcfp-media img,
+#${TOOLTIP_ID} .bcfp-player{
   display:block;
   width:100%;
   height:100%;
+}
+#${TOOLTIP_ID} .bcfp-media img{
   object-fit:cover;
+}
+#${TOOLTIP_ID} .bcfp-player{
+  position:absolute;
+  inset:0;
+  border:0;
+  background:#05070A;
+}
+#${TOOLTIP_ID} .bcfp-player[${PLAYER_STATE_ATTR}="idle"],
+#${TOOLTIP_ID} .bcfp-player[${PLAYER_STATE_ATTR}="loading"],
+#${TOOLTIP_ID} .bcfp-player[${PLAYER_STATE_ATTR}="error"]{
+  visibility:hidden;
+}
+#${TOOLTIP_ID} .bcfp-player > *{
+  display:block;
+  width:100% !important;
+  height:100% !important;
+  object-fit:cover !important;
 }
 #${TOOLTIP_ID} .bcfp-media-fallback{
   position:absolute;
@@ -95,6 +121,7 @@
   font-size:11px;
   font-weight:900;
   line-height:20px;
+  pointer-events:none;
 }
 #${TOOLTIP_ID} .bcfp-body{
   display:flex;
@@ -197,7 +224,6 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
   }
 }
 `;
-
     const {
         bindFeatureOptions,
         fetchJson: sharedFetchJson,
@@ -214,6 +240,10 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     let pendingInfo = null;
     let openTimer = 0;
     let requestToken = 0;
+    let elapsedTimer = 0;
+    let activeMeta = null;
+    let activeFetchController = null;
+    let playerStartTimer = 0;
     let removePageChangeDetection = null;
 
     const previewCache = new Map();
@@ -253,6 +283,15 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     function pickString(...values) {
         for (const value of values) {
             const text = compactSpaces(value);
+            if (text) return text;
+        }
+        return "";
+    }
+
+    function pickRawString(...values) {
+        for (const value of values) {
+            if (typeof value !== "string") continue;
+            const text = value.trim();
             if (text) return text;
         }
         return "";
@@ -512,11 +551,14 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         };
     }
 
-    function formatElapsed(value) {
+    function getElapsedStartMs(value) {
         const date = value instanceof Date ? value : parseChzzkDate(value);
         const startMs = date?.getTime?.() || 0;
-        if (!startMs) return "";
+        return Number.isFinite(startMs) && startMs > 0 ? startMs : 0;
+    }
 
+    function formatElapsedFromMs(startMs) {
+        if (!startMs) return "";
         const totalSeconds = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
         if (!Number.isFinite(totalSeconds)) return "";
 
@@ -535,6 +577,9 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             channelName
         );
         const openDate = pickString(content.openDate, content.liveOpenDate, content.startedAt, content.startDate);
+        const elapsedStartMs = getElapsedStartMs(openDate) || Number(fallback.elapsedStartMs) || 0;
+        const livePlaybackJson = pickRawString(content.livePlaybackJson);
+        const previewPlaybackJson = pickRawString(content.previewPlaybackJson);
 
         return {
             category: pickString(
@@ -546,7 +591,8 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             ),
             channelId: fallback.channelId,
             channelName,
-            elapsedText: formatElapsed(openDate) || fallback.elapsedText || "",
+            elapsedStartMs,
+            elapsedText: formatElapsedFromMs(elapsedStartMs) || fallback.elapsedText || "",
             thumbnailUrl: normalizeImageUrl(
                 pickString(
                     content.liveImageUrl,
@@ -557,19 +603,27 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
                 )
             ),
             title: title || fallback.title,
+            liveId: pickString(content.liveId, fallback.liveId),
+            playbackJson: pickRawString(livePlaybackJson, previewPlaybackJson, fallback.playbackJson),
+            isPreviewPlayback: !livePlaybackJson && Boolean(previewPlaybackJson || fallback.isPreviewPlayback),
         };
     }
 
-    async function fetchPreviewMeta(channelId, fallback) {
+    async function fetchPreviewMeta(channelId, fallback, { signal } = {}) {
         const url = `${LIVE_DETAIL_API_BASE}/${encodeURIComponent(channelId)}/live-detail`;
-        const json = await fetchJson(url, { timeoutMs: FETCH_TIMEOUT_MS });
+        const json = await fetchJson(url, { signal, timeoutMs: FETCH_TIMEOUT_MS });
         return normalizePreviewMeta(json, fallback);
     }
 
-    async function getPreviewMeta(channelId, fallback) {
+    async function getPreviewMeta(channelId, fallback, { signal } = {}) {
         const now = Date.now();
         const cached = previewCache.get(channelId);
         if (cached && now - cached.cachedAt <= CACHE_TTL_MS) return cached.value;
+
+        if (signal) {
+            const value = await fetchPreviewMeta(channelId, fallback, { signal });
+            return touchMapEntry(previewCache, channelId, { cachedAt: Date.now(), value }, MAX_CACHE_ENTRIES).value;
+        }
 
         if (!pendingRequests.has(channelId)) {
             const request = fetchPreviewMeta(channelId, fallback)
@@ -590,9 +644,67 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         const el = document.createElement("div");
         el.id = TOOLTIP_ID;
         el.setAttribute(TOOLTIP_ATTR, "1");
+        el.addEventListener("pointerleave", handleTooltipPointerLeave);
         document.body.appendChild(el);
         tooltip = el;
         return el;
+    }
+
+    function dispatchPlayerEvent(type, detail) {
+        window.dispatchEvent(new CustomEvent(type, { detail: JSON.stringify(detail || {}) }));
+    }
+
+    let playerRequestSeq = 0;
+    let activePlayerRequestId = "";
+
+    function clearPlayerStartTimer() {
+        if (!playerStartTimer) return;
+        window.clearTimeout(playerStartTimer);
+        playerStartTimer = 0;
+    }
+
+    function stopPreviewPlayer(requestId = activePlayerRequestId) {
+        clearPlayerStartTimer();
+        if (!requestId) return;
+        dispatchPlayerEvent(PLAYER_STOP_EVENT, { requestId });
+        if (requestId === activePlayerRequestId) activePlayerRequestId = "";
+    }
+
+    function queuePlayerRequest(fn) {
+        if (typeof queueMicrotask === "function") {
+            queueMicrotask(fn);
+            return;
+        }
+        Promise.resolve().then(fn);
+    }
+
+    function requestPreviewPlayer(mount, meta) {
+        if (!mount?.isConnected || !meta.playbackJson) return;
+
+        const requestId = `bcfp${Date.now().toString(36)}${(playerRequestSeq += 1).toString(36)}`;
+        activePlayerRequestId = requestId;
+        mount.setAttribute(PLAYER_MOUNT_ATTR, requestId);
+        mount.setAttribute(PLAYER_STATE_ATTR, "loading");
+
+        const startPlayer = () => {
+            playerStartTimer = 0;
+            if (activePlayerRequestId !== requestId || !mount.isConnected) return;
+            dispatchPlayerEvent(PLAYER_PLAY_EVENT, {
+                mountId: requestId,
+                muted: true,
+                playbackJson: meta.playbackJson,
+                requestId,
+                volume: 0,
+            });
+        };
+
+        clearPlayerStartTimer();
+        if (PLAYER_START_SETTLE_MS > 0) {
+            playerStartTimer = window.setTimeout(startPlayer, PLAYER_START_SETTLE_MS);
+            return;
+        }
+
+        queuePlayerRequest(startPlayer);
     }
 
     function createTextEl(className, text) {
@@ -606,9 +718,16 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         const row = document.createElement("div");
         row.className = "bcfp-meta";
 
-        for (const text of [meta.category, meta.elapsedText].filter(Boolean)) {
+        for (const text of [meta.category].filter(Boolean)) {
             const item = document.createElement("span");
             item.textContent = text;
+            row.appendChild(item);
+        }
+
+        if (meta.elapsedText) {
+            const item = document.createElement("span");
+            item.dataset.bcfpElapsed = "1";
+            item.textContent = meta.elapsedText;
             row.appendChild(item);
         }
 
@@ -633,6 +752,17 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             media.appendChild(fallback);
         }
 
+        if (meta.playbackJson) {
+            media.dataset.hasPlayer = "1";
+
+            const playerMount = document.createElement("div");
+            playerMount.className = "bcfp-player";
+            playerMount.title = `${meta.channelName || meta.channelId} \ub77c\uc774\ube0c \ubbf8\ub9ac\ubcf4\uae30`;
+            playerMount.setAttribute(PLAYER_STATE_ATTR, "loading");
+            media.appendChild(playerMount);
+            queuePlayerRequest(() => requestPreviewPlayer(playerMount, meta));
+        }
+
         const badge = document.createElement("div");
         badge.className = "bcfp-live";
         badge.textContent = "LIVE";
@@ -641,28 +771,84 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         return media;
     }
 
+    function updateMedia(tip, meta) {
+        const channelId = meta.channelId || "";
+        const currentChannelId = tip.dataset.channelId || "";
+        const existingMedia = tip.querySelector(".bcfp-media");
+
+        if (existingMedia && channelId && currentChannelId === channelId && existingMedia.querySelector(".bcfp-player")) {
+            return;
+        }
+
+        if (existingMedia?.querySelector(".bcfp-player")) stopPreviewPlayer();
+
+        const media = createMedia(meta);
+        if (existingMedia) existingMedia.replaceWith(media);
+        else tip.prepend(media);
+
+        if (channelId) tip.dataset.channelId = channelId;
+        else delete tip.dataset.channelId;
+    }
+
+    function createBody(meta) {
+        const body = document.createElement("div");
+        body.className = "bcfp-body";
+        body.append(
+            createTextEl("bcfp-channel", meta.channelName),
+            createTextEl("bcfp-title", meta.title),
+            createMetaRow(meta)
+        );
+        return body;
+    }
+
+    function updateBody(tip, meta) {
+        const body = createBody(meta);
+        const existingBody = tip.querySelector(".bcfp-body");
+        if (existingBody) existingBody.replaceWith(body);
+        else tip.appendChild(body);
+    }
+
+    function stopElapsedTimer() {
+        if (elapsedTimer) {
+            window.clearInterval(elapsedTimer);
+            elapsedTimer = 0;
+        }
+        activeMeta = null;
+    }
+
+    function updateElapsedText() {
+        if (!tooltip?.hasAttribute("data-show") || !activeMeta?.elapsedStartMs) return;
+
+        const elapsed = tooltip.querySelector("[data-bcfp-elapsed='1']");
+        if (!elapsed) return;
+
+        const nextText = formatElapsedFromMs(activeMeta.elapsedStartMs);
+        if (nextText && elapsed.textContent !== nextText) elapsed.textContent = nextText;
+    }
+
+    function startElapsedTimer(meta) {
+        stopElapsedTimer();
+        if (!meta.elapsedStartMs) return;
+
+        activeMeta = meta;
+        updateElapsedText();
+        elapsedTimer = window.setInterval(updateElapsedText, ELAPSED_REFRESH_MS);
+    }
+
     function renderPreview(meta, state) {
         const tip = getTooltip();
         const displayMeta = {
             ...meta,
             channelName: meta.channelName || meta.channelId || "",
+            elapsedText: meta.elapsedStartMs ? formatElapsedFromMs(meta.elapsedStartMs) : meta.elapsedText,
             title: meta.title || (state === "loading" ? LOADING_TITLE : UNKNOWN_TITLE),
         };
 
         tip.dataset.state = state;
-        tip.replaceChildren();
-
-        const media = createMedia(displayMeta);
-        const body = document.createElement("div");
-        body.className = "bcfp-body";
-        body.append(
-            createTextEl("bcfp-channel", displayMeta.channelName),
-            createTextEl("bcfp-title", displayMeta.title),
-            createMetaRow(displayMeta)
-        );
-
-        tip.append(media, body);
+        updateMedia(tip, displayMeta);
+        updateBody(tip, displayMeta);
         tip.setAttribute("data-show", "1");
+        startElapsedTimer(displayMeta);
         positionTooltip(activeInfo?.item || activeInfo?.link);
     }
 
@@ -702,25 +888,41 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         pendingInfo = null;
     }
 
+    function abortActiveFetch() {
+        if (!activeFetchController) return;
+        activeFetchController.abort();
+        activeFetchController = null;
+    }
+
+    function isAbortError(error) {
+        return error?.name === "AbortError";
+    }
+
     function setActiveItem(item) {
         if (activeInfo?.item && activeInfo.item !== item) activeInfo.item.removeAttribute(ACTIVE_ATTR);
         if (item) item.setAttribute(ACTIVE_ATTR, "1");
     }
 
     function openPreview(info) {
+        abortActiveFetch();
         requestToken += 1;
         const token = requestToken;
+        const fetchController = new AbortController();
+        activeFetchController = fetchController;
 
         setActiveItem(info.item);
         activeInfo = info;
         renderPreview(info.domMeta, "loading");
 
-        getPreviewMeta(info.channelId, info.domMeta)
+        getPreviewMeta(info.channelId, info.domMeta, { signal: fetchController.signal })
             .then((meta) => {
+                if (activeFetchController === fetchController) activeFetchController = null;
                 if (token !== requestToken || activeInfo?.channelId !== info.channelId) return;
                 renderPreview(meta, "ready");
             })
-            .catch(() => {
+            .catch((error) => {
+                if (activeFetchController === fetchController) activeFetchController = null;
+                if (isAbortError(error)) return;
                 if (token !== requestToken || activeInfo?.channelId !== info.channelId) return;
                 renderPreview({ ...info.domMeta, title: info.domMeta.title || ERROR_TITLE }, "error");
             });
@@ -728,6 +930,9 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
     function hidePreview() {
         clearOpenTimer();
+        abortActiveFetch();
+        stopElapsedTimer();
+        stopPreviewPlayer();
         requestToken += 1;
 
         if (activeInfo?.item) activeInfo.item.removeAttribute(ACTIVE_ATTR);
@@ -736,6 +941,8 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         if (tooltip) {
             tooltip.removeAttribute("data-show");
             tooltip.removeAttribute("data-state");
+            delete tooltip.dataset.channelId;
+            tooltip.replaceChildren();
         }
     }
 
@@ -746,6 +953,12 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         }
 
         clearOpenTimer();
+        if (HOVER_OPEN_DELAY_MS <= 0) {
+            if (!info.item.isConnected || !info.link.isConnected) return;
+            openPreview(info);
+            return;
+        }
+
         pendingInfo = info;
         openTimer = window.setTimeout(() => {
             openTimer = 0;
@@ -767,10 +980,17 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         const current = activeInfo || pendingInfo;
         const related = event.relatedTarget;
         if (related instanceof Node && current.item?.contains(related)) return;
+        if (related instanceof Node && tooltip?.contains(related)) return;
 
         const movedToSameItem = related instanceof Element && resolveHoverInfo(related)?.item === current.item;
         if (movedToSameItem) return;
 
+        hidePreview();
+    }
+
+    function handleTooltipPointerLeave(event) {
+        const related = event.relatedTarget;
+        if (related instanceof Node && activeInfo?.item?.contains(related)) return;
         hidePreview();
     }
 

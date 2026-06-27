@@ -25,6 +25,7 @@
                                             ],
                                 "js":  [
                                            "features/routeBridgePage.js",
+                                           "features/followingPreviewPage.js",
                                            "features/autoQualityPage.js",
                                            "features/volumeWheelPage.js"
                                        ],

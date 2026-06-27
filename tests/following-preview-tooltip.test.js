@@ -78,7 +78,11 @@ function waitForAsyncCallbacks() {
 }
 
 function waitForFollowingPreviewDelay() {
-    return new Promise((resolve) => setTimeout(resolve, 320));
+    return waitForAsyncCallbacks();
+}
+
+function waitForFollowingPlayerSettle() {
+    return new Promise((resolve) => setTimeout(resolve, 120));
 }
 
 function evalFollowingPreviewTooltipScripts(dom) {
@@ -136,8 +140,18 @@ function createFollowingPreviewDom(chrome = createFakeChrome()) {
 
 test("manifest loads following preview after following refresh", () => {
     const manifest = JSON.parse(readRepoFile("manifest.json"));
-    const isolatedScript = manifest.content_scripts.find((entry) => !entry.world);
+    const mainScript = manifest.content_scripts.find((entry) => entry.world === "MAIN");
+    const isolatedScript = manifest.content_scripts.find((entry) =>
+        entry.js?.includes("features/followingPreviewTooltip.js")
+    );
 
+    assert.equal(
+        manifest.content_scripts.some((entry) => entry.js?.includes("features/followingPreviewFrame.js")),
+        false
+    );
+    assert.ok(mainScript.js.includes("features/followingPreviewPage.js"));
+    assert.ok(mainScript.js.indexOf("features/followingPreviewPage.js") > mainScript.js.indexOf("features/routeBridgePage.js"));
+    assert.ok(mainScript.js.indexOf("features/followingPreviewPage.js") < mainScript.js.indexOf("features/autoQualityPage.js"));
     assert.ok(isolatedScript.js.includes("features/followingPreviewTooltip.js"));
     assert.ok(
         isolatedScript.js.indexOf("features/followingPreviewTooltip.js") >
@@ -149,14 +163,135 @@ test("manifest loads following preview after following refresh", () => {
     );
 });
 
-test("following preview tooltip renders a visual card from sidebar hover and reuses cache", async () => {
+test("following preview page bridge reuses the main-world CHZZK player", async () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/");
+    const { document } = dom.window;
+    const players = [];
+    const fromJsonCalls = [];
+
+    class FakeCorePlayer extends dom.window.EventTarget {
+        constructor() {
+            super();
+            this.shadowRoot = document.createElement("div");
+            this.shadowRoot.className = "fake-core-player";
+            this.readyState = 1;
+            this.playCalls = 0;
+            players.push(this);
+        }
+
+        play() {
+            this.playCalls += 1;
+            return Promise.resolve();
+        }
+    }
+
+    const fakePlayerRuntime = {
+        CorePlayer: FakeCorePlayer,
+        LiveProvider: {
+            fromJSON(playback, options) {
+                fromJsonCalls.push({ options, playback });
+                return { options, playback };
+            },
+        },
+    };
+
+    dom.window.webpackChunkglive_fe_pc = [];
+    dom.window.webpackChunkglive_fe_pc.push = (chunk) => {
+        const modules = chunk[1] || {};
+        const runtime = chunk[2];
+        const cache = {
+            49588: { exports: fakePlayerRuntime },
+        };
+        const require = (id) => {
+            if (Object.hasOwn(modules, id)) {
+                const module = { exports: {} };
+                modules[id](module, module.exports, require);
+                cache[id] = module;
+                return module.exports;
+            }
+            return cache[id]?.exports;
+        };
+        require.c = cache;
+        return runtime(require);
+    };
+
+    evalRepoScript(dom, "features", "followingPreviewPage.js");
+
+    const firstMount = document.createElement("div");
+    firstMount.setAttribute("data-bcfp-player-mount", "first");
+    document.body.appendChild(firstMount);
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:following-preview:play", {
+            detail: JSON.stringify({
+                mountId: "first",
+                playbackJson: JSON.stringify({ media: [{ mediaId: "HLS", path: "first.m3u8" }] }),
+                requestId: "first",
+            }),
+        })
+    );
+    await waitForAsyncCallbacks();
+
+    assert.equal(players.length, 1);
+    assert.equal(firstMount.getAttribute("data-bcfp-player-state"), "ready");
+    assert.equal(firstMount.firstElementChild.className, "fake-core-player");
+    assert.equal(fromJsonCalls.length, 1);
+    assert.equal(fromJsonCalls[0].options.serviceId, 2099);
+    assert.equal(fromJsonCalls[0].options.maxLevel, 480);
+    assert.equal(fromJsonCalls[0].options.mediaType, "PREVIEW");
+
+    const secondMount = document.createElement("div");
+    secondMount.setAttribute("data-bcfp-player-mount", "second");
+    document.body.appendChild(secondMount);
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:following-preview:play", {
+            detail: JSON.stringify({
+                mountId: "second",
+                playbackJson: JSON.stringify({ media: [{ mediaId: "HLS", path: "second.m3u8" }] }),
+                requestId: "second",
+            }),
+        })
+    );
+    await waitForAsyncCallbacks();
+
+    assert.equal(players.length, 1);
+    assert.equal(firstMount.childElementCount, 0);
+    assert.equal(firstMount.getAttribute("data-bcfp-player-state"), "idle");
+    assert.equal(secondMount.getAttribute("data-bcfp-player-state"), "ready");
+    assert.equal(secondMount.firstElementChild.className, "fake-core-player");
+    assert.equal(fromJsonCalls.length, 2);
+    assert.equal(players[0].playCalls, 2);
+
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:following-preview:stop", {
+            detail: JSON.stringify({ requestId: "second" }),
+        })
+    );
+    await waitForAsyncCallbacks();
+
+    assert.equal(secondMount.childElementCount, 0);
+    assert.equal(secondMount.getAttribute("data-bcfp-player-state"), "idle");
+    assert.equal(players[0].src, "");
+    assert.equal(players[0].srcObject, null);
+});
+
+test("following preview tooltip plays live in the hover card and reuses cache", async () => {
     const chrome = createFakeChrome();
     const { document, dom, item, link } = createFollowingPreviewDom(chrome);
     const calls = [];
-    const now = Date.parse("2026-06-23T03:02:03Z");
+    let now = Date.parse("2026-06-23T03:02:03Z");
     let resolveFetch;
+    const playbackJson = JSON.stringify({
+        media: [{ mediaId: "HLS", path: "https://example.com/live.m3u8" }],
+    });
+    const playerEvents = [];
 
     dom.window.Date.now = () => now;
+    dom.window.addEventListener("betterchzzk:following-preview:play", (event) => {
+        playerEvents.push({ detail: JSON.parse(event.detail), type: event.type });
+    });
+    dom.window.addEventListener("betterchzzk:following-preview:stop", (event) => {
+        playerEvents.push({ detail: JSON.parse(event.detail), type: event.type });
+    });
     dom.window.fetch = (url, init) => {
         calls.push({ init, url });
         return new Promise((resolve) => {
@@ -169,6 +304,7 @@ test("following preview tooltip renders a visual card from sidebar hover and reu
                         liveCategoryValue: "\uAC8C\uC784",
                         concurrentUserCount: 1234,
                         openDate: new Date(now - (3600 + 120 + 3) * 1000).toISOString(),
+                        livePlaybackJson: playbackJson,
                         channel: {
                             channelName: "API \uCC44\uB110",
                         },
@@ -191,7 +327,20 @@ test("following preview tooltip renders a visual card from sidebar hover and reu
     assert.equal(tip.getAttribute("data-show"), "1");
     assert.equal(tip.dataset.state, "loading");
     assert.equal(tip.querySelector(".bcfp-title").textContent, "DOM \uBC29\uC1A1 \uC81C\uBAA9");
-    assert.match(tip.querySelector("img").getAttribute("src"), /dom-thumb\.jpg$/);
+    assert.equal(tip.querySelector("iframe.bcfp-player"), null);
+    assert.match(tip.querySelector(".bcfp-media img").getAttribute("src"), /dom-thumb\.jpg/);
+    const source = readRepoFile("features", "followingPreviewTooltip.js");
+    const pageSource = readRepoFile("features", "followingPreviewPage.js");
+    assert.match(source, /livePlaybackJson/);
+    assert.match(source, /previewPlaybackJson/);
+    assert.match(source, /HOVER_OPEN_DELAY_MS = 0/);
+    assert.match(source, /PLAYER_START_SETTLE_MS = 90/);
+    assert.match(source, /betterchzzk:following-preview:play/);
+    assert.doesNotMatch(source, /srcdoc/);
+    assert.match(pageSource, /LiveProvider\.fromJSON/);
+    assert.match(pageSource, /webpackChunkglive_fe_pc/);
+    assert.match(pageSource, /serviceId: 2099/);
+    assert.doesNotMatch(source, /betterchzzkPreview/);
     assert.equal(item.getAttribute("data-bcfp-active"), "1");
 
     resolveFetch();
@@ -209,14 +358,37 @@ test("following preview tooltip renders a visual card from sidebar hover and reu
         Array.from(tip.querySelectorAll(".bcfp-meta span"), (span) => span.textContent),
         ["\uAC8C\uC784", "01:02:03"]
     );
-    assert.match(tip.querySelector("img").getAttribute("src"), /live-480\.jpg$/);
+    assert.match(tip.querySelector("[data-bcfp-elapsed='1']").textContent, /^\d{2}:\d{2}:\d{2}$/);
+    const playerMount = tip.querySelector(".bcfp-player");
+    assert.ok(playerMount);
+    assert.equal(playerMount.tagName, "DIV");
+    assert.match(playerMount.getAttribute("data-bcfp-player-mount"), /^bcfp/);
+    assert.equal(playerMount.getAttribute("data-bcfp-player-state"), "loading");
+    assert.equal(tip.querySelector("iframe.bcfp-player"), null);
+    assert.equal(playerEvents.length, 0);
+
+    await waitForFollowingPlayerSettle();
+
+    assert.equal(playerEvents.length, 1);
+    assert.equal(playerEvents[0].type, "betterchzzk:following-preview:play");
+    assert.equal(playerEvents[0].detail.mountId, playerMount.getAttribute("data-bcfp-player-mount"));
+    assert.equal(playerEvents[0].detail.playbackJson, playbackJson);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, "https://api.chzzk.naver.com/service/v2/channels/channel-123/live-detail");
     assert.equal(calls[0].init.credentials, "include");
 
-    link.dispatchEvent(new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
+    now += 2000;
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    assert.equal(tip.querySelector("[data-bcfp-elapsed='1']").textContent, "01:02:05");
+
+    link.dispatchEvent(new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: playerMount }));
+    assert.equal(tip.getAttribute("data-show"), "1");
+
+    tip.dispatchEvent(new dom.window.MouseEvent("pointerleave", { bubbles: false, relatedTarget: document.body }));
     assert.equal(tip.hasAttribute("data-show"), false);
+    assert.equal(tip.querySelector("iframe.bcfp-player"), null);
     assert.equal(item.hasAttribute("data-bcfp-active"), false);
+    assert.equal(playerEvents.at(-1).type, "betterchzzk:following-preview:stop");
 
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
     await waitForFollowingPreviewDelay();
@@ -226,6 +398,76 @@ test("following preview tooltip renders a visual card from sidebar hover and reu
     assert.equal(tip.getAttribute("data-show"), "1");
     assert.equal(tip.dataset.state, "ready");
     assert.equal(calls.length, 1);
+    await waitForFollowingPlayerSettle();
+    assert.equal(playerEvents.filter((event) => event.type === "betterchzzk:following-preview:play").length, 2);
+
+    link.dispatchEvent(new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
+    assert.equal(tip.hasAttribute("data-show"), false);
+    assert.equal(tip.querySelector("iframe.bcfp-player"), null);
+    assert.equal(item.hasAttribute("data-bcfp-active"), false);
+});
+
+test("following preview aborts stale live-detail requests during rapid hover", async () => {
+    const chrome = createFakeChrome();
+    const { document, dom, link } = createFollowingPreviewDom(chrome);
+    const ul = document.querySelector("#following ul");
+    const secondItem = document.createElement("li");
+    secondItem.className = "following_item";
+    secondItem.innerHTML = [
+        '<a id="secondLiveLink" href="/live/channel-456" aria-label="\uB450 \uBC88\uC9F8 \uCC44\uB110">',
+        '<img src="https://example.com/second-thumb.jpg" alt="">',
+        '<span class="name_text">\uB450 \uBC88\uC9F8 \uCC44\uB110</span>',
+        '<span class="live_title">\uB450 \uBC88\uC9F8 \uBC29\uC1A1</span>',
+        "</a>",
+    ].join("");
+    ul.appendChild(secondItem);
+
+    const secondLink = document.getElementById("secondLiveLink");
+    secondItem.getBoundingClientRect = () => ({
+        left: 12,
+        top: 136,
+        right: 196,
+        bottom: 188,
+        width: 184,
+        height: 52,
+    });
+    secondLink.getBoundingClientRect = secondItem.getBoundingClientRect;
+
+    const calls = [];
+    dom.window.fetch = (url, init) => {
+        calls.push({ signal: init.signal, url });
+        return new Promise((resolve, reject) => {
+            init.signal.addEventListener("abort", () => {
+                const error = new Error("aborted");
+                error.name = "AbortError";
+                reject(error);
+            });
+        });
+    };
+
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForFollowingPreviewDelay();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].signal.aborted, false);
+    assert.match(calls[0].url, /channel-123/);
+
+    link.dispatchEvent(new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: secondLink }));
+    secondLink.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForFollowingPreviewDelay();
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].signal.aborted, true);
+    assert.equal(calls[1].signal.aborted, false);
+    assert.match(calls[1].url, /channel-456/);
+    assert.equal(document.querySelector("#betterchzzk-following-preview[data-show='1'] .bcfp-title").textContent, "\uB450 \uBC88\uC9F8 \uBC29\uC1A1");
+
+    secondLink.dispatchEvent(new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
+    await waitForAsyncCallbacks();
+    assert.equal(calls[1].signal.aborted, true);
 });
 
 test("following preview tooltip ignores live links outside the following sidebar", async () => {
