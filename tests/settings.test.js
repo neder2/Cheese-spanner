@@ -62,6 +62,7 @@ const expectedDefaults = {
     categoryToolsFollowerFetchDelayMs: 700,
     followingRefreshEnabled: true,
     followingRefreshSeconds: 30,
+    followingPreviewTooltipEnabled: true,
     shortcutRescueEnabled: true,
 };
 
@@ -85,6 +86,7 @@ test("feature count keys are derived from feature toggles only", () => {
         "categoryToolsEnabled",
         "titleTooltipEnabled",
         "followingRefreshEnabled",
+        "followingPreviewTooltipEnabled",
         "shortcutRescueEnabled",
     ]);
 });
