@@ -24,6 +24,7 @@
                                                 "https://chzzk.naver.com/*"
                                             ],
                                 "js":  [
+                                           "features/routeBridgePage.js",
                                            "features/autoQualityPage.js",
                                            "features/volumeWheelPage.js"
                                        ],

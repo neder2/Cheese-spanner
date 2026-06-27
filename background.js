@@ -1,9 +1,11 @@
 importScripts("shared/settings.js");
 
-const { OPTION_KEYS, normalizeOptions } = BetterChzzkSettings;
+const { OPTION_KEYS, getStorageLastError, normalizeOptions } = BetterChzzkSettings;
 
 chrome.runtime.onInstalled.addListener(() => {
     chrome.storage.sync.get(OPTION_KEYS, (data) => {
+        if (getStorageLastError()) return;
+
         const normalized = normalizeOptions(data);
         const updates = {};
 
@@ -11,6 +13,10 @@ chrome.runtime.onInstalled.addListener(() => {
             if (normalized[key] !== data[key]) updates[key] = normalized[key];
         }
 
-        if (Object.keys(updates).length) chrome.storage.sync.set(updates);
+        if (Object.keys(updates).length) {
+            chrome.storage.sync.set(updates, () => {
+                getStorageLastError();
+            });
+        }
     });
 });

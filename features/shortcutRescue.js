@@ -1,5 +1,4 @@
 (() => {
-    const PLAYBACK_ROUTE_RE = /^\/(?:live|video)(?:\/|$)/;
     // 네이티브 키 핸들러는 정상일 때 같은 이벤트 턴 근처에서 상태를 바꾼다.
     // 오래 기다리면 복구 자체가 입력 지연처럼 보이므로 짧은 유예만 둔다.
     const PROBE_TIMEOUT_MS = 80;
@@ -9,6 +8,7 @@
 
     const {
         getMainVideoElement,
+        isPlaybackRoute,
         isVisible,
         normalizeCompact,
         bindFeatureOptions,
@@ -80,10 +80,6 @@
             buttonTerms: ["넓은 화면", "넓은화면", "기본 화면", "기본화면", "wide", "theater"],
         },
     };
-
-    function isPlaybackRoute() {
-        return PLAYBACK_ROUTE_RE.test(location.pathname);
-    }
 
     function isEditableTarget(target) {
         if (!target) return false;

@@ -21,8 +21,6 @@
     const LIVE_FAST_FORWARD_LABEL = "\uBE68\uB9AC \uAC10\uAE30";
     const LIVE_FAST_FORWARD_BUTTON_TERMS = [LIVE_FAST_FORWARD_LABEL, "fast forward", "fast-forward", "fastforward"];
     const EXTERNAL_FAST_FORWARD_SIGNATURE_TERMS = ["knifeff", "fastforward", "livefastforward"];
-    const LIVE_ROUTE_RE = /^\/live(?:\/|$)/;
-    const PLAYBACK_ROUTE_RE = /^\/(?:live|video)(?:\/|$)/;
     const RELEVANT_DOM_SELECTOR = `video, ${TIME_SELECTOR}, ${LIVE_LEFT_BUTTONS_SELECTOR}, ${LIVE_PLAYBACK_SWITCH_SELECTOR}, [${LIVE_EDGE_PATCHED_ATTR}], #${SKIP_PILL_ID}, #${LIVE_FAST_FORWARD_BUTTON_ID}`;
     const SKIP_VISIBILITY_RESYNC_DELAY_MS = 240;
     const CONTROL_AREA_BEFORE_VIDEO_BOTTOM = 150;
@@ -47,10 +45,13 @@
     // 치지직 플레이어는 프레임레이트를 노출하지 않으므로 주류인 1080p60 기준(60fps)으로 이동한다.
     const FRAME_STEP_SECONDS = 1 / 60;
     const OWNED_LIVE_CONTROL_IDS = new Set([SKIP_PILL_ID, LIVE_FAST_FORWARD_BUTTON_ID]);
-    const { DEFAULT_SKIP_SECONDS, normalizeSkipSeconds, normalizeOptions } = BetterChzzkSettings;
+    const { DEFAULT_SKIP_SECONDS, getStorageLastError, normalizeSkipSeconds, normalizeOptions } = BetterChzzkSettings;
     const {
         bindFeatureOptions,
+        createMutationObserverSync,
         createThrottledDomSync,
+        isLiveRoute,
+        isPlaybackRoute,
         isVisible,
         mutationMatchesSelector,
         normalizeCompact,
@@ -84,7 +85,6 @@
     let lastPausedControlIntentAt = Number.NEGATIVE_INFINITY;
     let domObserver = null;
     let domObserverMode = "";
-    let bodyObserver = null;
     let removePageChangeDetection = null;
     let startupSyncTimer = 0;
     let runtimeInstalled = false;
@@ -117,14 +117,6 @@
 
     function isLiveFastForwardButtonEnabled() {
         return isSkipEnabled() && isLiveRoute();
-    }
-
-    function isLiveRoute() {
-        return LIVE_ROUTE_RE.test(location.pathname);
-    }
-
-    function isPlaybackRoute() {
-        return PLAYBACK_ROUTE_RE.test(location.pathname);
     }
 
     function compact(value) {
@@ -177,7 +169,9 @@
         if (persistTimer) clearTimeout(persistTimer);
         persistTimer = setTimeout(() => {
             persistTimer = null;
-            chrome.storage.sync.set({ skipSeconds });
+            chrome.storage.sync.set({ skipSeconds }, () => {
+                getStorageLastError?.();
+            });
         }, 250);
     }
 
@@ -1528,26 +1522,20 @@
 
     function startDomObserver() {
         if (domObserver) return;
-        domObserver = new MutationObserver((mutations) => {
-            handlePageChange();
-            if (!isSkipEnabled() || !isPlaybackRoute()) return;
-            if (mutations.some(mutationCouldAffectExtension)) scheduleDomSync();
+
+        domObserver = createMutationObserverSync({
+            onMutations(mutations) {
+                handlePageChange();
+                if (!isSkipEnabled() || !isPlaybackRoute()) return;
+                if (mutations.some(mutationCouldAffectExtension)) scheduleDomSync();
+            },
+            onBodyReady() {
+                refreshDomObserverConfig();
+                scheduleDomSync();
+            },
         });
 
-        if (document.body) {
-            refreshDomObserverConfig();
-            return;
-        }
-
-        bodyObserver = new MutationObserver(() => {
-            if (!document.body) return;
-            bodyObserver.disconnect();
-            bodyObserver = null;
-            refreshDomObserverConfig();
-            scheduleDomSync();
-        });
-
-        bodyObserver.observe(document.documentElement, { childList: true, subtree: true });
+        refreshDomObserverConfig();
     }
 
     function getDomObserverConfig(mode) {
@@ -1590,12 +1578,9 @@
 
     function stopDomObserver() {
         if (domObserver) {
+            domObserver.disconnectAll?.();
             domObserver.disconnect();
             domObserver = null;
-        }
-        if (bodyObserver) {
-            bodyObserver.disconnect();
-            bodyObserver = null;
         }
         domObserverMode = "";
     }

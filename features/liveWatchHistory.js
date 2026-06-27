@@ -1,6 +1,5 @@
 (() => {
     const STORAGE_KEY = "betterChzzkLiveWatchHistory";
-    const LIVE_ROUTE_RE = /^\/live\/([^/?#]+)/;
     const LIVE_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/channels";
     const TRACK_TICK_MS = 5000;
     const FLUSH_MS = 15000;
@@ -10,23 +9,31 @@
     const STORAGE_MIN_SESSION_SECONDS = 60;
     const HISTORY_MAX_ENTRIES = 2000;
     const HISTORY_MAX_SESSION_DETAILS_PER_ENTRY = 300;
-    const TITLE_HISTORY_MAX = 20;
-    const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
-    const WATCH_RANGE_MERGE_GAP_MS = 2000;
     const SESSION_MERGE_GAP_MS = 60 * 1000;
 
     const storage = globalThis.chrome?.storage?.local;
     const { normalizeOptions } = BetterChzzkSettings;
     const {
+        addTitleHistory,
         bindFeatureOptions,
+        cleanEntryTitle,
+        compactSpaces,
         createMutationObserverSync,
         createThrottledDomSync,
         fetchJson,
+        getLiveChannelIdFromPath,
+        getKstDateKey,
         getMainVideoElement,
+        getNextKstDayStartMs,
+        mergeDailySeconds,
+        mergeWatchRanges,
         mutationMatchesSelector,
-        normSpace,
+        normalizeTitleHistory,
         onReady,
+        pickString,
         startPageChangeDetection,
+        storageGet,
+        storageSet,
     } = BetterChzzk.utils;
 
     let featureOptions = normalizeOptions();
@@ -38,7 +45,6 @@
     let metadataTimer = 0;
     let metadataRequestSeq = 0;
     let domObserver = null;
-    let bodyObserver = null;
     let removePageChangeDetection = null;
     let runtimeInstalled = false;
     let lifecycleListenersInstalled = false;
@@ -56,8 +62,7 @@
     }
 
     function getLiveChannelIdFromUrl() {
-        const match = location.pathname.match(LIVE_ROUTE_RE);
-        return match ? decodeURIComponent(match[1]) : "";
+        return getLiveChannelIdFromPath();
     }
 
     function isLiveRoute() {
@@ -95,55 +100,6 @@
         return mediaTime > previousMediaTime + 0.05;
     }
 
-    function getKstDateKey(ms = Date.now()) {
-        const date = new Date(Number(ms) + KST_OFFSET_MS);
-        const year = date.getUTCFullYear();
-        const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-        const day = String(date.getUTCDate()).padStart(2, "0");
-        return `${year}-${month}-${day}`;
-    }
-
-    function getNextKstDayStartMs(ms) {
-        const date = new Date(Number(ms) + KST_OFFSET_MS);
-        return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1) - KST_OFFSET_MS;
-    }
-
-    function mergeWatchRanges(ranges) {
-        const normalized = (Array.isArray(ranges) ? ranges : [])
-            .map((range) => {
-                const startAt = Math.round(Number(range?.startAt) || Number(range?.start) || 0);
-                const endAt = Math.round(Number(range?.endAt) || Number(range?.end) || 0);
-                return startAt > 0 && endAt > startAt ? { startAt, endAt } : null;
-            })
-            .filter(Boolean)
-            .sort((a, b) => a.startAt - b.startAt || a.endAt - b.endAt);
-
-        const merged = [];
-        for (const range of normalized) {
-            const last = merged[merged.length - 1];
-            if (last && range.startAt <= last.endAt + WATCH_RANGE_MERGE_GAP_MS) {
-                last.endAt = Math.max(last.endAt, range.endAt);
-            } else {
-                merged.push({ ...range });
-            }
-        }
-        return merged;
-    }
-
-    function normalizeWatchRanges(value) {
-        return mergeWatchRanges(value);
-    }
-
-    function mergeSessionDailySeconds(target, source) {
-        const next = target && typeof target === "object" ? target : {};
-        for (const [dateKey, seconds] of Object.entries(source && typeof source === "object" ? source : {})) {
-            const value = Math.round(Number(seconds) || 0);
-            if (value <= 0) continue;
-            next[dateKey] = Math.max(0, Number(next[dateKey]) || 0) + value;
-        }
-        return next;
-    }
-
     function mergeContinuousSessionDetails(sessionDetails, preferredSessionId = "") {
         const merged = [];
         const rows = (Array.isArray(sessionDetails) ? sessionDetails : [])
@@ -154,7 +110,7 @@
                 leftAt: Number(row.leftAt) || Number(row.enteredAt) || 0,
                 watchedSeconds: Math.max(0, Number(row.watchedSeconds) || 0),
                 dailySeconds: row.dailySeconds && typeof row.dailySeconds === "object" ? { ...row.dailySeconds } : {},
-                watchedRanges: normalizeWatchRanges(row.watchedRanges),
+                watchedRanges: mergeWatchRanges(row.watchedRanges),
             }))
             .filter((row) => row.enteredAt > 0 && row.watchedSeconds > 0)
             .sort((a, b) => a.enteredAt - b.enteredAt || a.leftAt - b.leftAt);
@@ -173,7 +129,7 @@
             if (row.title) last.title = row.title;
             last.leftAt = Math.max(lastLeftAt, Number(row.leftAt) || row.enteredAt);
             last.watchedSeconds = Math.max(0, Number(last.watchedSeconds) || 0) + row.watchedSeconds;
-            last.dailySeconds = mergeSessionDailySeconds(last.dailySeconds, row.dailySeconds);
+            last.dailySeconds = mergeDailySeconds(last.dailySeconds, row.dailySeconds, { round: true });
             last.watchedRanges = mergeWatchRanges([...(last.watchedRanges || []), ...(row.watchedRanges || [])]);
             last.closed = last.closed === true && row.closed === true;
         }
@@ -195,97 +151,6 @@
             }
             cursor = next;
         }
-    }
-
-    function compactSpaces(value) {
-        if (typeof normSpace === "function") return normSpace(value);
-        return String(value || "").replace(/\s+/g, " ").trim();
-    }
-
-    function pickString(...values) {
-        for (const value of values) {
-            const text = compactSpaces(value);
-            if (text) return text;
-        }
-        return "";
-    }
-
-    function cleanTitle(value) {
-        return compactSpaces(value)
-            .replace(/\s*[-|]\s*CHZZK.*$/i, "")
-            .replace(/\s*[-|]\s*치지직.*$/i, "")
-            .trim();
-    }
-
-    function escapeRegExp(value) {
-        return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    }
-
-    function cleanEntryTitle(value, channelName = "") {
-        const title = cleanTitle(value);
-        const channel = cleanTitle(channelName);
-        if (!title || !channel) return title;
-
-        const match = title.match(new RegExp(`^${escapeRegExp(channel)}\\s*[-|:·]\\s*(.+)$`, "i"));
-        return match ? cleanTitle(match[1]) || title : title;
-    }
-
-    function normalizeTitleHistory(value, channelName = "") {
-        const rows = Array.isArray(value) ? value : [];
-        const byTitle = new Map();
-
-        for (const row of rows) {
-            let title = "";
-            let firstSeenAt = 0;
-            let lastSeenAt = 0;
-
-            if (typeof row === "string") {
-                title = cleanEntryTitle(row, channelName);
-            } else if (row && typeof row === "object") {
-                title = cleanEntryTitle(pickString(row.title, row.name, row.value), channelName);
-                firstSeenAt = Number(row.firstSeenAt) || Number(row.seenAt) || Number(row.createdAt) || 0;
-                lastSeenAt = Number(row.lastSeenAt) || Number(row.updatedAt) || firstSeenAt;
-            }
-
-            if (!title || title === "제목 없는 라이브") continue;
-            if (!firstSeenAt) firstSeenAt = lastSeenAt || Date.now();
-            if (!lastSeenAt) lastSeenAt = firstSeenAt;
-
-            const existing = byTitle.get(title);
-            if (existing) {
-                existing.firstSeenAt = Math.min(existing.firstSeenAt, firstSeenAt);
-                existing.lastSeenAt = Math.max(existing.lastSeenAt, lastSeenAt);
-            } else {
-                byTitle.set(title, { title, firstSeenAt, lastSeenAt });
-            }
-        }
-
-        return Array.from(byTitle.values())
-            .sort((a, b) => a.firstSeenAt - b.firstSeenAt || a.lastSeenAt - b.lastSeenAt)
-            .slice(-TITLE_HISTORY_MAX);
-    }
-
-    function addTitleHistory(target, title, firstSeenAt = Date.now(), lastSeenAt = firstSeenAt) {
-        if (!target) return;
-
-        const clean = cleanEntryTitle(title, target.channelName);
-        if (!clean || clean === "제목 없는 라이브") return;
-
-        const first = Number(firstSeenAt) || Date.now();
-        const last = Number(lastSeenAt) || first;
-        const history = normalizeTitleHistory(target.titleHistory, target.channelName);
-        const existing = history.find((row) => row.title === clean);
-
-        if (existing) {
-            existing.firstSeenAt = Math.min(existing.firstSeenAt, first);
-            existing.lastSeenAt = Math.max(existing.lastSeenAt, last);
-        } else {
-            history.push({ title: clean, firstSeenAt: first, lastSeenAt: last });
-        }
-
-        target.titleHistory = history
-            .sort((a, b) => a.firstSeenAt - b.firstSeenAt || a.lastSeenAt - b.lastSeenAt)
-            .slice(-TITLE_HISTORY_MAX);
     }
 
     function mergeTitleHistory(target, sourceHistory) {
@@ -482,7 +347,7 @@
                     leftAt: Number(row.leftAt) || Number(row.endedAt) || Number(row.lastWatchedAt) || 0,
                     watchedSeconds,
                     dailySeconds,
-                    watchedRanges: normalizeWatchRanges(row.watchedRanges),
+                    watchedRanges: mergeWatchRanges(row.watchedRanges),
                     closed: row.closed === true,
                 };
             })
@@ -541,41 +406,13 @@
         history.entries = Object.fromEntries(rows.slice(0, HISTORY_MAX_ENTRIES).map((entry) => [entry.id, entry]));
     }
 
-    function storageGet(key) {
-        return new Promise((resolve, reject) => {
-            if (!storage) {
-                resolve({});
-                return;
-            }
-            storage.get(key, (data) => {
-                const error = globalThis.chrome?.runtime?.lastError;
-                if (error) reject(error);
-                else resolve(data || {});
-            });
-        });
-    }
-
-    function storageSet(value) {
-        return new Promise((resolve, reject) => {
-            if (!storage) {
-                resolve();
-                return;
-            }
-            storage.set(value, () => {
-                const error = globalThis.chrome?.runtime?.lastError;
-                if (error) reject(error);
-                else resolve();
-            });
-        });
-    }
-
     async function mutateHistory(updater) {
-        const data = await storageGet(STORAGE_KEY);
+        const data = await storageGet(storage, STORAGE_KEY);
         const history = normalizeHistory(data[STORAGE_KEY]);
         updater(history);
         history.updatedAt = Date.now();
         pruneHistory(history);
-        await storageSet({ [STORAGE_KEY]: history });
+        await storageSet(storage, { [STORAGE_KEY]: history });
     }
 
     function mergePending(target, pendingByDate) {
@@ -621,7 +458,7 @@
     }
 
     function takePendingRangeSnapshot(current) {
-        const snapshot = normalizeWatchRanges(current.pendingRanges);
+        const snapshot = mergeWatchRanges(current.pendingRanges);
         current.pendingRanges = [];
         return snapshot;
     }
@@ -668,7 +505,7 @@
         if (current.title && !detail.title) detail.title = current.title;
         detail.leftAt = Math.max(Number(detail.leftAt) || 0, current.lastSeenAt || current.lastWatchedAt || Date.now());
         detail.closed = current.closed === true;
-        detail.watchedRanges = normalizeWatchRanges(detail.watchedRanges);
+        detail.watchedRanges = mergeWatchRanges(detail.watchedRanges);
         if (deltaSeconds > 0) {
             detail.watchedSeconds = Math.max(0, Number(detail.watchedSeconds) || 0) + deltaSeconds;
             detail.dailySeconds = detail.dailySeconds && typeof detail.dailySeconds === "object" ? detail.dailySeconds : {};
@@ -916,7 +753,7 @@
 
     function handlePageChange() {
         if (location.href === lastUrl) return;
-        const wasLive = LIVE_ROUTE_RE.test(new URL(lastUrl).pathname);
+        const wasLive = Boolean(getLiveChannelIdFromPath(new URL(lastUrl).pathname));
         lastUrl = location.href;
         const channelChanged = session?.channelId && session.channelId !== getLiveChannelIdFromUrl();
 
@@ -941,12 +778,9 @@
 
     function stopDomObserver() {
         if (domObserver) {
+            domObserver.disconnectAll?.();
             domObserver.disconnect();
             domObserver = null;
-        }
-        if (bodyObserver) {
-            bodyObserver.disconnect();
-            bodyObserver = null;
         }
     }
 

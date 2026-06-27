@@ -25,6 +25,7 @@ let hideMessageTimer = 0;
 let savedOptions = null;
 let autosaveTimer = 0;
 let saveToken = 0;
+let optionsLoadFailed = false;
 
 function setInputValue(input, value) {
     if (input.type === "checkbox") {
@@ -110,6 +111,14 @@ function renderOptions(options, { state = "saved" } = {}) {
     return normalized;
 }
 
+function syncNumberInputs(options) {
+    for (const input of optionInputs) {
+        if (input.type === "checkbox") continue;
+        const normalizedValue = String(options[input.dataset.option]);
+        if (input.value !== normalizedValue) input.value = normalizedValue;
+    }
+}
+
 function showMessage(text, type = "success") {
     clearTimeout(hideMessageTimer);
     messageEl.textContent = text;
@@ -125,7 +134,14 @@ function showMessage(text, type = "success") {
 
 function commitSave(message) {
     const normalized = readOptionsFromForm();
+    if (optionsLoadFailed && !savedOptions) {
+        renderPageState(normalized, "error");
+        showMessage("?ㅼ젙???쎌뼱?ㅼ? 紐삵빐 ??ν븯吏 ?딆븯?듬땲?? ?섏씠吏瑜??덈줈怨좎묠 ?? ?ㅼ떆 ?쒕룄??二쇱꽭??", "error");
+        return;
+    }
+
     if (savedOptions && areOptionsEqual(normalized, savedOptions)) {
+        syncNumberInputs(normalized);
         renderPageState(normalized, "saved");
         if (message) showMessage(message);
         return;
@@ -142,6 +158,7 @@ function commitSave(message) {
             return;
         }
         savedOptions = normalized;
+        syncNumberInputs(normalized);
         renderPageState(normalized, "saved");
         if (message) showMessage(message);
     };
@@ -216,6 +233,14 @@ document.addEventListener("visibilitychange", () => {
 if (storage) {
     renderNotice(null, "loading");
     storage.get(OPTION_KEYS, (data) => {
+        const error = globalThis.chrome?.runtime?.lastError;
+        if (error) {
+            optionsLoadFailed = true;
+            renderOptions(DEFAULT_OPTIONS, { state: "error" });
+            showMessage("?ㅼ젙???쎌뼱?ㅼ? 紐삵뻽?듬땲?? ?섏씠吏瑜??덈줈怨좎묠 ???ㅼ떆 ?쒕룄??二쇱꽭??", "error");
+            return;
+        }
+        optionsLoadFailed = false;
         savedOptions = renderOptions(data);
     });
 } else {

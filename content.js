@@ -1,5 +1,12 @@
 (() => {
     const root = window.BetterChzzk = window.BetterChzzk || {};
+    const existingUtils = root.utils || {};
+    const PAGE_ROUTE_CHANGE_EVENT = "betterchzzk:routechange";
+    const FEATURE_ROUTE_CHANGE_EVENT = "betterchzzk:routechange:detected";
+    const ROUTE_CHECK_DELAYS_MS = [0, 80, 250, 800];
+    let routeDetectionUsers = 0;
+    let routeDetectionInstalled = false;
+    let routeDetectionLastHref = location.href;
 
     function onReady(fn) {
         if (document.readyState === "loading") {
@@ -9,13 +16,10 @@
         fn();
     }
 
-    function normSpace(value) {
-        return String(value || "").replace(/\s+/g, " ").trim();
-    }
+    const normSpace = existingUtils.compactSpaces || ((value) => String(value || "").replace(/\s+/g, " ").trim());
 
-    function normalizeCompact(value) {
-        return String(value || "").toLowerCase().replace(/\s+/g, "");
-    }
+    const normalizeCompact = existingUtils.normalizeCompact ||
+        ((value) => String(value || "").toLowerCase().replace(/\s+/g, ""));
 
     function sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
@@ -95,13 +99,65 @@
         };
     }
 
+    function publishRouteChange(source = "fallback") {
+        const href = location.href;
+        if (href === routeDetectionLastHref) return false;
+        routeDetectionLastHref = href;
+        window.dispatchEvent(new CustomEvent(FEATURE_ROUTE_CHANGE_EVENT, {
+            detail: { href, source },
+        }));
+        return true;
+    }
+
+    function scheduleRouteChecks(source = "scheduled") {
+        for (const delay of ROUTE_CHECK_DELAYS_MS) {
+            window.setTimeout(() => publishRouteChange(source), delay);
+        }
+    }
+
+    function onPageRouteChange(event) {
+        publishRouteChange(event?.detail?.source || "page-bridge");
+    }
+
+    function onRoutePageshow() {
+        scheduleRouteChecks("pageshow");
+    }
+
+    function onRouteClick() {
+        scheduleRouteChecks("click");
+    }
+
+    function installRouteDetection() {
+        if (routeDetectionInstalled) return;
+        routeDetectionInstalled = true;
+        routeDetectionLastHref = location.href;
+        window.addEventListener(PAGE_ROUTE_CHANGE_EVENT, onPageRouteChange, true);
+        window.addEventListener("popstate", onPageRouteChange, true);
+        window.addEventListener("hashchange", onPageRouteChange, true);
+        window.addEventListener("pageshow", onRoutePageshow, true);
+        document.addEventListener("click", onRouteClick, true);
+    }
+
+    function uninstallRouteDetection() {
+        if (!routeDetectionInstalled) return;
+        routeDetectionInstalled = false;
+        window.removeEventListener(PAGE_ROUTE_CHANGE_EVENT, onPageRouteChange, true);
+        window.removeEventListener("popstate", onPageRouteChange, true);
+        window.removeEventListener("hashchange", onPageRouteChange, true);
+        window.removeEventListener("pageshow", onRoutePageshow, true);
+        document.removeEventListener("click", onRouteClick, true);
+    }
+
     // Feature runtimes stay installed while enabled; route-specific handlers decide mount/unmount/no-op.
     function startPageChangeDetection(handlePageChange) {
-        window.addEventListener("popstate", handlePageChange, true);
-        window.addEventListener("hashchange", handlePageChange, true);
+        if (typeof handlePageChange !== "function") return () => {};
+        routeDetectionUsers += 1;
+        installRouteDetection();
+        window.addEventListener(FEATURE_ROUTE_CHANGE_EVENT, handlePageChange, true);
         return () => {
-            window.removeEventListener("popstate", handlePageChange, true);
-            window.removeEventListener("hashchange", handlePageChange, true);
+            window.removeEventListener(FEATURE_ROUTE_CHANGE_EVENT, handlePageChange, true);
+            routeDetectionUsers = Math.max(0, routeDetectionUsers - 1);
+            if (routeDetectionUsers === 0) uninstallRouteDetection();
         };
     }
 
@@ -114,7 +170,7 @@
         return style;
     }
 
-    function isLastPage(json, rows, pageSize) {
+    const isLastPage = existingUtils.isLastPage || ((json, rows, pageSize) => {
         const content = json?.content ?? json;
         if (!content) return true;
         if (typeof content.totalPages === "number" && typeof content.page?.number === "number") {
@@ -122,37 +178,34 @@
         }
         if (typeof content.last === "boolean") return content.last;
         return rows.length < pageSize;
+    });
+
+    function isPlaybackRoute(pathname = location.pathname) {
+        return /^\/(?:live|video)(?:\/|$)/.test(pathname);
+    }
+
+    function isLiveRoute(pathname = location.pathname) {
+        return /^\/live(?:\/|$)/.test(pathname);
+    }
+
+    function getLiveChannelIdFromPath(pathname = location.pathname) {
+        const match = pathname.match(/^\/live\/([^/?#]+)/);
+        return match ? decodeURIComponent(match[1]) : "";
+    }
+
+    function isVodRoute(pathname = location.pathname) {
+        return /^\/video(?:\/|$)/.test(pathname);
+    }
+
+    function getVodVideoNoFromPath(pathname = location.pathname) {
+        const match = pathname.match(/^\/video\/([^/?#]+)/);
+        return match ? match[1] : "";
     }
 
     function setLoadingReason(reasons, on, reason, sync) {
         if (on) reasons.add(reason);
         else reasons.delete(reason);
         sync?.();
-    }
-
-    async function fetchJson(url, { signal, timeoutMs = 12000, ...init } = {}) {
-        const controller = new AbortController();
-        const onExternalAbort = () => controller.abort();
-
-        if (signal) {
-            if (signal.aborted) controller.abort();
-            else signal.addEventListener("abort", onExternalAbort, { once: true });
-        }
-
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-        try {
-            const res = await fetch(url, {
-                credentials: "include",
-                ...init,
-                signal: controller.signal,
-            });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return await res.json();
-        } finally {
-            clearTimeout(timer);
-            if (signal) signal.removeEventListener("abort", onExternalAbort);
-        }
     }
 
     function createMutationObserverSync({
@@ -165,13 +218,29 @@
         onObserved,
         onBodyReady,
     } = {}) {
+        let bodyObserver = null;
+        let disconnectedAll = false;
         const observer = new MutationObserver((mutations) => {
+            if (disconnectedAll) return;
             onMutations?.(mutations);
             if (!schedule) return;
             if (shouldIgnoreMutations?.(mutations)) return;
             if (shouldSchedule && !shouldSchedule(mutations)) return;
             schedule();
         });
+        const disconnectObserver = observer.disconnect.bind(observer);
+
+        observer.disconnect = () => {
+            disconnectObserver();
+            if (bodyObserver) {
+                bodyObserver.disconnect();
+                bodyObserver = null;
+            }
+        };
+        observer.disconnectAll = () => {
+            disconnectedAll = true;
+            observer.disconnect();
+        };
 
         const resolveTarget = () => (typeof target === "function" ? target() : target);
         const resolveOptions = () => (typeof options === "function" ? options() : options);
@@ -186,10 +255,12 @@
             return observer;
         }
 
-        const bodyObserver = new MutationObserver(() => {
+        bodyObserver = new MutationObserver(() => {
+            if (disconnectedAll) return;
             const readyTarget = resolveTarget();
             if (!readyTarget) return;
             bodyObserver.disconnect();
+            bodyObserver = null;
             observeTarget(readyTarget);
             onBodyReady?.(observer, readyTarget);
         });
@@ -218,8 +289,12 @@
         startPageChangeDetection,
         injectStyleOnce,
         isLastPage,
+        getLiveChannelIdFromPath,
+        isLiveRoute,
+        isPlaybackRoute,
+        isVodRoute,
+        getVodVideoNoFromPath,
         setLoadingReason,
-        fetchJson,
         createMutationObserverSync,
         bindFeatureOptions,
     };

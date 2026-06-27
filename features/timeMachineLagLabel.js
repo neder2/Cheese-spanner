@@ -53,8 +53,10 @@
 
     const {
         bindFeatureOptions,
+        createMutationObserverSync,
         createThrottledDomSync,
         getMainVideoElement,
+        isLiveRoute,
         mutationMatchesSelector,
         normalizeCompact,
         onReady,
@@ -77,7 +79,6 @@
     let pageChangeTimer = 0;
     let lastUrl = location.href;
     let domObserver = null;
-    let bodyObserver = null;
     let domObserverMode = "";
     let removePageChangeDetection = null;
     let runtimeInstalled = false;
@@ -89,10 +90,6 @@
 
     function isFeatureEnabled() {
         return featureOptions.timeMachineLagLabelEnabled !== false;
-    }
-
-    function isLiveRoute() {
-        return /^\/live(?:\/|$)/.test(location.pathname);
     }
 
     function compact(value) {
@@ -658,38 +655,29 @@
 
     function startDomObserver() {
         if (domObserver) return;
-        domObserver = new MutationObserver((mutations) => {
-            handlePageChange();
-            if (!isFeatureEnabled() || !isLiveRoute()) return;
-            if (!mutations.some(mutationCouldAffectText)) return;
-            scheduleSync();
+
+        domObserver = createMutationObserverSync({
+            onMutations(mutations) {
+                handlePageChange();
+                if (!isFeatureEnabled() || !isLiveRoute()) return;
+                if (!mutations.some(mutationCouldAffectText)) return;
+                scheduleSync();
+            },
+            onBodyReady() {
+                refreshDomObserverConfig();
+                scheduleSync();
+            },
         });
 
-        if (document.body) {
-            refreshDomObserverConfig();
-            return;
-        }
-
-        bodyObserver = new MutationObserver(() => {
-            if (!document.body) return;
-            bodyObserver.disconnect();
-            bodyObserver = null;
-            refreshDomObserverConfig();
-            scheduleSync();
-        });
-
-        bodyObserver.observe(document.documentElement, { childList: true, subtree: true });
+        refreshDomObserverConfig();
     }
 
     function stopDomObserver() {
         if (domObserver) {
+            domObserver.disconnectAll?.();
             domObserver.disconnect();
             domObserver = null;
             domObserverMode = "";
-        }
-        if (bodyObserver) {
-            bodyObserver.disconnect();
-            bodyObserver = null;
         }
     }
 

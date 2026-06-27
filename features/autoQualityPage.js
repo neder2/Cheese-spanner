@@ -30,8 +30,8 @@
     const REQUEST_ATTR = "data-betterchzzk-auto-quality-request";
     const RESULT_ATTR = "data-betterchzzk-auto-quality-result";
     const STATE_EVENT = "betterchzzk:auto-quality:state";
+    const ROUTE_CHANGE_EVENT = "betterchzzk:routechange";
     const STATE_ATTR = "data-betterchzzk-auto-quality-state";
-    const STATE_CACHE_KEY = "betterchzzk:auto-quality:state-cache";
     const STATUS_ATTR = "data-betterchzzk-auto-quality-status";
     const DEFAULT_QUALITY = "1080p";
     const PLAYBACK_ROUTE_RE = /^\/(?:live|video)(?:\/|$)/;
@@ -127,6 +127,9 @@
     const nativeDefineProperty = Object.defineProperty;
     const nativeDefineProperties = Object.defineProperties;
     const nativeReflectDefineProperty = Reflect?.defineProperty;
+    const DEFINE_PATCH_FLAG = "__betterChzzkAutoQualityDefinePatch";
+    const DEFINE_PATCH_NATIVE = "__betterChzzkAutoQualityDefineNative";
+    let qualityTargetInterceptorInstalled = false;
 
     function isPlaybackRoute() {
         return PLAYBACK_ROUTE_RE.test(location.pathname);
@@ -404,14 +407,7 @@
 
 
     function readAutoQualityState() {
-        let raw = document.documentElement.getAttribute(STATE_ATTR);
-        if (!raw) {
-            try {
-                raw = localStorage.getItem(STATE_CACHE_KEY);
-            } catch (_) {
-                raw = "";
-            }
-        }
+        const raw = document.documentElement.getAttribute(STATE_ATTR);
         if (!raw) return;
 
         try {
@@ -425,6 +421,9 @@
 
     function syncAutoQualityState() {
         readAutoQualityState();
+        if (autoQualityEnabled && isPlaybackRoute()) installQualityTargetInterceptor();
+        else uninstallQualityTargetInterceptor();
+
         if (autoQualityEnabled) {
             syncUrlStartSeekIntent();
             installPageEventListeners();
@@ -603,19 +602,45 @@
         }
     }
 
-    function installQualityTargetInterceptor() {
+    function markDefinePatch(fn, nativeFn) {
         try {
-            Object.defineProperty = function(target, prop, descriptor) {
+            nativeDefineProperty(fn, DEFINE_PATCH_FLAG, { value: true });
+            nativeDefineProperty(fn, DEFINE_PATCH_NATIVE, { value: nativeFn });
+        } catch (_) {
+            fn[DEFINE_PATCH_FLAG] = true;
+            fn[DEFINE_PATCH_NATIVE] = nativeFn;
+        }
+        return fn;
+    }
+
+    function isOwnDefinePatch(fn) {
+        return Boolean(fn?.[DEFINE_PATCH_FLAG]);
+    }
+
+    function canInstallDefinePatch(current, nativeFn) {
+        return current === nativeFn || isOwnDefinePatch(current);
+    }
+
+    function installQualityTargetInterceptor() {
+        if (qualityTargetInterceptorInstalled) return;
+        if (!canInstallDefinePatch(Object.defineProperty, nativeDefineProperty)) return;
+        if (nativeDefineProperties && !canInstallDefinePatch(Object.defineProperties, nativeDefineProperties)) return;
+        if (nativeReflectDefineProperty && !canInstallDefinePatch(Reflect.defineProperty, nativeReflectDefineProperty)) return;
+
+        try {
+            Object.defineProperty = markDefinePatch(function(target, prop, descriptor) {
+                if (!isPlaybackRoute()) return nativeDefineProperty.call(Object, target, prop, descriptor);
                 return nativeDefineProperty.call(Object, target, prop, safeWrapQualityDescriptor(prop, descriptor));
-            };
+            }, nativeDefineProperty);
         } catch (_) {
             // If the runtime blocks patching, the normal videoTracks path still runs.
+            return;
         }
 
         if (nativeDefineProperties) {
             try {
-                Object.defineProperties = function(target, descriptors) {
-                    if (descriptors == null) {
+                Object.defineProperties = markDefinePatch(function(target, descriptors) {
+                    if (descriptors == null || !isPlaybackRoute()) {
                         return nativeDefineProperties.call(Object, target, descriptors);
                     }
 
@@ -630,7 +655,7 @@
                     }
 
                     return nativeDefineProperties.call(Object, target, nextDescriptors);
-                };
+                }, nativeDefineProperties);
             } catch (_) {
                 // Keep Object.defineProperty interception even if defineProperties cannot be patched.
             }
@@ -638,18 +663,51 @@
 
         if (nativeReflectDefineProperty) {
             try {
-                Reflect.defineProperty = function(target, prop, descriptor) {
+                Reflect.defineProperty = markDefinePatch(function(target, prop, descriptor) {
+                    if (!isPlaybackRoute()) return nativeReflectDefineProperty.call(Reflect, target, prop, descriptor);
                     return nativeReflectDefineProperty.call(Reflect, target, prop, safeWrapQualityDescriptor(prop, descriptor));
-                };
+                }, nativeReflectDefineProperty);
             } catch (_) {
                 // Reflect.defineProperty patching is opportunistic.
             }
         }
+
+        qualityTargetInterceptorInstalled = true;
     }
 
-    installQualityTargetInterceptor();
+    function uninstallQualityTargetInterceptor() {
+        if (!qualityTargetInterceptorInstalled) return;
+
+        try {
+            if (isOwnDefinePatch(Object.defineProperty)) {
+                Object.defineProperty = Object.defineProperty[DEFINE_PATCH_NATIVE] || nativeDefineProperty;
+            }
+        } catch (_) {
+            // Leave the current page implementation untouched if restoring is blocked.
+        }
+
+        try {
+            if (nativeDefineProperties && isOwnDefinePatch(Object.defineProperties)) {
+                Object.defineProperties = Object.defineProperties[DEFINE_PATCH_NATIVE] || nativeDefineProperties;
+            }
+        } catch (_) {
+            // Leave the current page implementation untouched if restoring is blocked.
+        }
+
+        try {
+            if (nativeReflectDefineProperty && isOwnDefinePatch(Reflect.defineProperty)) {
+                Reflect.defineProperty = Reflect.defineProperty[DEFINE_PATCH_NATIVE] || nativeReflectDefineProperty;
+            }
+        } catch (_) {
+            // Leave the current page implementation untouched if restoring is blocked.
+        }
+
+        qualityTargetInterceptorInstalled = false;
+    }
+
     syncAutoQualityState();
     window.addEventListener(STATE_EVENT, syncAutoQualityState);
+    window.addEventListener(ROUTE_CHANGE_EVENT, syncAutoQualityState);
     window.addEventListener("pageshow", syncAutoQualityState, true);
 
     function isElement(value) {

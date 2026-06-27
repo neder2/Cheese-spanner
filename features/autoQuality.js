@@ -4,7 +4,6 @@
     const RESULT_ATTR = "data-betterchzzk-auto-quality-result";
     const STATE_EVENT = "betterchzzk:auto-quality:state";
     const STATE_ATTR = "data-betterchzzk-auto-quality-state";
-    const STATE_CACHE_KEY = "betterchzzk:auto-quality:state-cache";
     const ADBLOCK_READY_EVENT = "betterchzzk:adblock-popup:ready";
     const ADBLOCK_READY_ATTR = "data-betterchzzk-adblock-popup-ready";
     const APPLY_BURST_WINDOW_MS = 6000;
@@ -17,9 +16,6 @@
     const VOD_STARTUP_APPLY_DELAY_MS = 1800;
     const VOD_SHARED_TIME_APPLY_DELAY_MS = 3600;
     const ADBLOCK_GATE_TIMEOUT_MS = 1200;
-    const PLAYBACK_ROUTE_RE = /^\/(?:live|video)(?:\/|$)/;
-    const VOD_ROUTE_RE = /^\/video(?:\/|$)/;
-
     let featureOptions = BetterChzzkSettings.normalizeOptions();
     const preferredQuality = BetterChzzkSettings.DEFAULT_QUALITY;
     let lastUrl = location.href;
@@ -35,7 +31,6 @@
     let pendingAdblockGateWindowMs = 0;
     let requestSeq = 0;
     let domObserver = null;
-    let bodyObserver = null;
     let removePageChangeDetection = null;
     let runtimeInstalled = false;
     let adblockReadyListenerInstalled = false;
@@ -44,7 +39,10 @@
 
     const {
         bindFeatureOptions,
+        createMutationObserverSync,
         createThrottledDomSync,
+        isPlaybackRoute,
+        isVodRoute,
         mutationMatchesSelector,
         onReady,
         startPageChangeDetection,
@@ -52,11 +50,7 @@
     const scheduleDomApply = createThrottledDomSync(() => requestQualityApplyBurst(RECOVERY_BURST_WINDOW_MS), DOM_APPLY_THROTTLE_MS);
 
     function isSupportedRoute() {
-        return PLAYBACK_ROUTE_RE.test(location.pathname);
-    }
-
-    function isVodRoute() {
-        return VOD_ROUTE_RE.test(location.pathname);
+        return isPlaybackRoute();
     }
 
     function isEnabled() {
@@ -110,11 +104,6 @@
         const serializedState = JSON.stringify(state);
 
         document.documentElement.setAttribute(STATE_ATTR, serializedState);
-        try {
-            localStorage.setItem(STATE_CACHE_KEY, serializedState);
-        } catch (_) {
-            // The MAIN world hook still receives the DOM event on this page.
-        }
         window.dispatchEvent(new Event(STATE_EVENT));
     }
 
@@ -308,42 +297,22 @@
     function startDomObserver() {
         if (domObserver) return;
 
-        domObserver = new MutationObserver((mutations) => {
-            handlePageChange();
-            if (!isEnabled()) return;
-            if (!mutations.some(mutationCouldAffectQuality)) return;
-            scheduleDomApply();
+        domObserver = createMutationObserverSync({
+            onMutations(mutations) {
+                handlePageChange();
+                if (!isEnabled()) return;
+                if (!mutations.some(mutationCouldAffectQuality)) return;
+                scheduleDomApply();
+            },
+            onBodyReady: requestQualityApplyBurst,
         });
-
-        const config = {
-            childList: true,
-            subtree: true,
-        };
-
-        if (document.body) {
-            domObserver.observe(document.body, config);
-            return;
-        }
-
-        bodyObserver = new MutationObserver(() => {
-            if (!document.body) return;
-            bodyObserver.disconnect();
-            bodyObserver = null;
-            domObserver.observe(document.body, config);
-            requestQualityApplyBurst();
-        });
-
-        bodyObserver.observe(document.documentElement, { childList: true, subtree: true });
     }
 
     function stopDomObserver() {
         if (domObserver) {
+            domObserver.disconnectAll?.();
             domObserver.disconnect();
             domObserver = null;
-        }
-        if (bodyObserver) {
-            bodyObserver.disconnect();
-            bodyObserver = null;
         }
     }
 

@@ -1,7 +1,6 @@
 const STORAGE_KEY = "betterChzzkLiveWatchHistory";
 const API_BASE = "https://api.chzzk.naver.com/service/v1/channels";
 const VIDEO_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/videos";
-const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MIN_WATCH_SECONDS = 60;
 const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
@@ -11,14 +10,43 @@ const FETCH_TIMEOUT_MS = 8000;
 const START_EXACT_TOLERANCE_MS = 20 * 60 * 1000;
 const START_LOOSE_TOLERANCE_MS = 3 * 60 * 60 * 1000;
 const TARGET_WINDOW_MS = 7 * DAY_MS;
-const TITLE_HISTORY_MAX = 20;
 const MAX_REPLAY_LOOKUP_CACHE_ENTRIES = 80;
-const WATCH_RANGE_MERGE_GAP_MS = 2000;
 const DISPLAY_WATCH_RANGE_MERGE_GAP_MS = 5 * 60 * 1000;
 const SESSION_MERGE_GAP_MS = 60 * 1000;
 
 const storage = globalThis.chrome?.storage?.local;
-const pickArray = globalThis.BetterChzzk?.utils?.pickArray || (() => null);
+const {
+    addTitleHistory,
+    addWatchRangeToRangesByDate,
+    cleanEntryTitle,
+    collectWatchSessionRanges,
+    compactSpaces,
+    fetchJson,
+    formatKstDateTime,
+    formatKstMonthKey: formatMonthKey,
+    formatKstTime,
+    getKstDateScopeBounds: getDateScopeBounds,
+    getKstMonthStartMs,
+    getKstParts,
+    isSameKstDate,
+    mergeDailySeconds: mergeSessionDailySeconds,
+    mergeWatchRanges,
+    normalizeDailySeconds,
+    normalizeForMatch,
+    normalizeTitleHistory,
+    parseChzzkDate,
+    pickArray = () => null,
+    pickChzzkVideoNo,
+    pickString,
+    pickVideoEndDateText,
+    pickVideoStartDateText,
+    storageGet,
+    storageRemove,
+    storageSet,
+    sumWatchRanges,
+    sumWatchRangesByDate,
+    touchMapEntry,
+} = globalThis.BetterChzzk?.utils || {};
 
 const noticeEl = document.getElementById("notice");
 const totalWatchTimeEl = document.getElementById("totalWatchTime");
@@ -54,111 +82,6 @@ const expandedEntryIds = new Set();
 const replayLookupCache = new Map();
 const resolvingReplayEntryIds = new Set();
 
-function compactSpaces(value) {
-    return String(value || "").replace(/\s+/g, " ").trim();
-}
-
-function pickString(...values) {
-    for (const value of values) {
-        const text = compactSpaces(value);
-        if (text) return text;
-    }
-    return "";
-}
-
-function cleanTitle(value) {
-    return compactSpaces(value)
-        .replace(/\s*[-|]\s*CHZZK.*$/i, "")
-        .replace(/\s*[-|]\s*치지직.*$/i, "")
-        .trim();
-}
-
-function escapeRegExp(value) {
-    return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function cleanEntryTitle(value, channelName = "") {
-    const title = cleanTitle(value);
-    const channel = cleanTitle(channelName);
-    if (!title || !channel) return title;
-
-    const match = title.match(new RegExp(`^${escapeRegExp(channel)}\\s*[-|:·]\\s*(.+)$`, "i"));
-    return match ? cleanTitle(match[1]) || title : title;
-}
-
-function trimMapToSize(map, maxSize) {
-    while (map.size > maxSize) {
-        const oldestKey = map.keys().next().value;
-        if (oldestKey === undefined) break;
-        map.delete(oldestKey);
-    }
-}
-
-function touchMapEntry(map, key, value, maxSize) {
-    map.delete(key);
-    map.set(key, value);
-    trimMapToSize(map, maxSize);
-    return value;
-}
-
-function normalizeTitleHistory(value, channelName = "") {
-    const rows = Array.isArray(value) ? value : [];
-    const byTitle = new Map();
-
-    for (const row of rows) {
-        let title = "";
-        let firstSeenAt = 0;
-        let lastSeenAt = 0;
-
-        if (typeof row === "string") {
-            title = cleanEntryTitle(row, channelName);
-        } else if (row && typeof row === "object") {
-            title = cleanEntryTitle(pickString(row.title, row.name, row.value), channelName);
-            firstSeenAt = Number(row.firstSeenAt) || Number(row.seenAt) || Number(row.createdAt) || 0;
-            lastSeenAt = Number(row.lastSeenAt) || Number(row.updatedAt) || firstSeenAt;
-        }
-
-        if (!title || title === "제목 없는 라이브") continue;
-        if (!firstSeenAt) firstSeenAt = lastSeenAt || Date.now();
-        if (!lastSeenAt) lastSeenAt = firstSeenAt;
-
-        const existing = byTitle.get(title);
-        if (existing) {
-            existing.firstSeenAt = Math.min(existing.firstSeenAt, firstSeenAt);
-            existing.lastSeenAt = Math.max(existing.lastSeenAt, lastSeenAt);
-        } else {
-            byTitle.set(title, { title, firstSeenAt, lastSeenAt });
-        }
-    }
-
-    return Array.from(byTitle.values())
-        .sort((a, b) => a.firstSeenAt - b.firstSeenAt || a.lastSeenAt - b.lastSeenAt)
-        .slice(-TITLE_HISTORY_MAX);
-}
-
-function addTitleHistory(target, title, firstSeenAt = Date.now(), lastSeenAt = firstSeenAt) {
-    if (!target) return;
-
-    const clean = cleanEntryTitle(title, target.channelName);
-    if (!clean || clean === "제목 없는 라이브") return;
-
-    const first = Number(firstSeenAt) || Date.now();
-    const last = Number(lastSeenAt) || first;
-    const history = normalizeTitleHistory(target.titleHistory, target.channelName);
-    const existing = history.find((row) => row.title === clean);
-
-    if (existing) {
-        existing.firstSeenAt = Math.min(existing.firstSeenAt, first);
-        existing.lastSeenAt = Math.max(existing.lastSeenAt, last);
-    } else {
-        history.push({ title: clean, firstSeenAt: first, lastSeenAt: last });
-    }
-
-    target.titleHistory = history
-        .sort((a, b) => a.firstSeenAt - b.firstSeenAt || a.lastSeenAt - b.lastSeenAt)
-        .slice(-TITLE_HISTORY_MAX);
-}
-
 function getEntryTitleRows(entry) {
     const target = {
         channelName: entry?.channelName || "",
@@ -185,204 +108,10 @@ function getReplayUrl(entry) {
     return videoNo ? `https://chzzk.naver.com/video/${encodeURIComponent(videoNo)}` : "";
 }
 
-function normalizeForMatch(value) {
-    return compactSpaces(value).toLowerCase().replace(/[^\p{Letter}\p{Number}]+/gu, "");
-}
-
-function getKstParts(ms = Date.now()) {
-    const date = new Date(Number(ms) + KST_OFFSET_MS);
-    return {
-        year: date.getUTCFullYear(),
-        month: date.getUTCMonth() + 1,
-        day: date.getUTCDate(),
-    };
-}
-
-function formatDateKey(parts) {
-    return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
-}
-
-function formatMonthKey(year, month) {
-    return `${year}-${String(month).padStart(2, "0")}`;
-}
-
-function parseDateKeyParts(dateKey) {
-    const parts = String(dateKey || "").split("-").map(Number);
-    if (parts.length !== 3 || parts.some((value) => !Number.isFinite(value))) return null;
-    return { year: parts[0], month: parts[1], day: parts[2] };
-}
-
-function getKstDayStartMsFromParts(parts) {
-    if (!parts) return NaN;
-    return Date.UTC(parts.year, parts.month - 1, parts.day) - KST_OFFSET_MS;
-}
-
-function getKstDayStartMs(dateKey) {
-    return getKstDayStartMsFromParts(parseDateKeyParts(dateKey));
-}
-
-function getKstMonthStartMs(year, month) {
-    return Date.UTC(year, month - 1, 1) - KST_OFFSET_MS;
-}
-
-function getNextKstDayStartMs(ms) {
-    const parts = getKstParts(ms);
-    return Date.UTC(parts.year, parts.month - 1, parts.day + 1) - KST_OFFSET_MS;
-}
-
-function mergeWatchRanges(ranges, mergeGapMs = WATCH_RANGE_MERGE_GAP_MS) {
-    const normalized = (Array.isArray(ranges) ? ranges : [])
-        .map((range) => {
-            const startAt = Math.round(Number(range?.startAt) || Number(range?.start) || 0);
-            const endAt = Math.round(Number(range?.endAt) || Number(range?.end) || 0);
-            return startAt > 0 && endAt > startAt ? { startAt, endAt } : null;
-        })
-        .filter(Boolean)
-        .sort((a, b) => a.startAt - b.startAt || a.endAt - b.endAt);
-
-    const merged = [];
-    for (const range of normalized) {
-        const last = merged[merged.length - 1];
-        if (last && range.startAt <= last.endAt + mergeGapMs) {
-            last.endAt = Math.max(last.endAt, range.endAt);
-        } else {
-            merged.push({ ...range });
-        }
-    }
-    return merged;
-}
-
-function normalizeWatchRanges(value, mergeGapMs = WATCH_RANGE_MERGE_GAP_MS) {
-    return mergeWatchRanges(value, mergeGapMs);
-}
-
-function sumWatchRanges(ranges) {
-    return mergeWatchRanges(ranges)
-        .reduce((sum, range) => sum + Math.max(0, range.endAt - range.startAt) / 1000, 0);
-}
-
-function getFallbackSessionWatchRange(session) {
-    const watchedSeconds = Math.max(0, Number(session?.watchedSeconds) || 0);
-    if (watchedSeconds <= 0) return null;
-
-    const durationMs = watchedSeconds * 1000;
-    let startAt = Number(session?.enteredAt) || Number(session?.startedAt) || 0;
-    let endAt = Number(session?.leftAt) || Number(session?.endedAt) || Number(session?.lastWatchedAt) || 0;
-
-    if (!endAt && startAt) endAt = startAt + durationMs;
-    if (!startAt && endAt) startAt = Math.max(0, endAt - durationMs);
-    if (!startAt || !endAt) return null;
-    if (endAt <= startAt) endAt = startAt + durationMs;
-    if (endAt - startAt > durationMs + WATCH_RANGE_MERGE_GAP_MS) {
-        startAt = Math.max(startAt, endAt - durationMs);
-    }
-    return endAt > startAt ? { startAt: Math.round(startAt), endAt: Math.round(endAt) } : null;
-}
-
-function getFallbackSessionWatchRangeForDate(session, dateKey, seconds) {
-    const bounds = getDateScopeBounds(dateKey);
-    const watchedSeconds = Math.max(0, Number(seconds) || 0);
-    if (!bounds || watchedSeconds <= 0) return null;
-
-    const durationMs = watchedSeconds * 1000;
-    const enteredAt = Number(session?.enteredAt) || Number(session?.startedAt) || 0;
-    const leftAt = Number(session?.leftAt) || Number(session?.endedAt) || Number(session?.lastWatchedAt) || 0;
-    let startAt = bounds.startMs;
-    let endAt = Math.min(bounds.endMs, startAt + durationMs);
-
-    if (leftAt >= bounds.startMs && leftAt <= bounds.endMs) {
-        endAt = leftAt;
-        startAt = Math.max(bounds.startMs, endAt - durationMs);
-    } else if (enteredAt >= bounds.startMs && enteredAt < bounds.endMs) {
-        startAt = enteredAt;
-        endAt = Math.min(bounds.endMs, startAt + durationMs);
-    }
-
-    return endAt > startAt ? { startAt: Math.round(startAt), endAt: Math.round(endAt) } : null;
-}
-
-function getFallbackSessionWatchRanges(session) {
-    const dailyEntries = Object.entries(normalizeDailySeconds(session?.dailySeconds));
-    if (dailyEntries.length) {
-        return mergeWatchRanges(
-            dailyEntries
-                .map(([dateKey, seconds]) => getFallbackSessionWatchRangeForDate(session, dateKey, seconds))
-                .filter(Boolean)
-        );
-    }
-
-    const fallback = getFallbackSessionWatchRange(session);
-    return fallback ? [fallback] : [];
-}
-
-function getSessionWatchRanges(session) {
-    const ranges = normalizeWatchRanges(session?.watchedRanges);
-    if (ranges.length) return ranges;
-    return getFallbackSessionWatchRanges(session);
-}
-
-function collectSessionWatchRanges(sessionDetails, scopeStartMs = -Infinity, scopeEndMs = Infinity) {
-    const ranges = [];
-    for (const session of sessionDetails || []) {
-        for (const range of getSessionWatchRanges(session)) {
-            const startAt = Math.max(range.startAt, scopeStartMs);
-            const endAt = Math.min(range.endAt, scopeEndMs);
-            if (endAt > startAt) ranges.push({ startAt, endAt });
-        }
-    }
-    return ranges;
-}
-
-function addRangeToRangesByDate(rangesByDate, range, scopeStartMs = -Infinity, scopeEndMs = Infinity) {
-    let cursor = Math.max(range.startAt, scopeStartMs);
-    const endAt = Math.min(range.endAt, scopeEndMs);
-    while (cursor < endAt) {
-        const dateKey = formatDateKey(getKstParts(cursor));
-        const next = Math.min(endAt, getNextKstDayStartMs(cursor));
-        if (next > cursor) {
-            if (!rangesByDate[dateKey]) rangesByDate[dateKey] = [];
-            rangesByDate[dateKey].push({ startAt: cursor, endAt: next });
-        }
-        cursor = next;
-    }
-}
-
-function sumRangesByDate(rangesByDate) {
-    const dailySeconds = {};
-    for (const [dateKey, ranges] of Object.entries(rangesByDate || {})) {
-        const seconds = sumWatchRanges(ranges);
-        if (seconds > 0) dailySeconds[dateKey] = seconds;
-    }
-    return dailySeconds;
-}
-
 function formatDateLabel(dateKey) {
     const parts = String(dateKey).split("-").map(Number);
     if (parts.length !== 3 || parts.some((value) => !Number.isFinite(value))) return dateKey;
     return `${parts[0]}.${String(parts[1]).padStart(2, "0")}.${String(parts[2]).padStart(2, "0")}`;
-}
-
-function formatKstDateTime(ms, { seconds = false } = {}) {
-    const parts = getKstParts(ms);
-    const date = new Date(Number(ms) + KST_OFFSET_MS);
-    const hours = String(date.getUTCHours()).padStart(2, "0");
-    const minutes = String(date.getUTCMinutes()).padStart(2, "0");
-    const secondText = seconds ? `:${String(date.getUTCSeconds()).padStart(2, "0")}` : "";
-    return `${parts.year}.${String(parts.month).padStart(2, "0")}.${String(parts.day).padStart(2, "0")} ${hours}:${minutes}${secondText}`;
-}
-
-function formatKstTime(ms, { seconds = false } = {}) {
-    const date = new Date(Number(ms) + KST_OFFSET_MS);
-    const hours = String(date.getUTCHours()).padStart(2, "0");
-    const minutes = String(date.getUTCMinutes()).padStart(2, "0");
-    const secondText = seconds ? `:${String(date.getUTCSeconds()).padStart(2, "0")}` : "";
-    return `${hours}:${minutes}${secondText}`;
-}
-
-function isSameKstDate(a, b) {
-    const first = getKstParts(a);
-    const second = getKstParts(b);
-    return first.year === second.year && first.month === second.month && first.day === second.day;
 }
 
 function formatWatchRange(range) {
@@ -393,22 +122,6 @@ function formatWatchRange(range) {
     const formatOptions = { seconds: showSeconds };
     const endText = isSameKstDate(startAt, endAt) ? formatKstTime(endAt, formatOptions) : formatKstDateTime(endAt, formatOptions);
     return `${formatKstDateTime(startAt, formatOptions)} - ${endText}`;
-}
-
-function parseChzzkDate(value) {
-    if (!value) return null;
-    if (typeof value === "number") {
-        const ms = value > 100000000000 ? value : value * 1000;
-        const date = new Date(ms);
-        return Number.isNaN(date.getTime()) ? null : date;
-    }
-
-    const raw = String(value).trim();
-    if (!raw) return null;
-    const isoLike = raw.includes("T") ? raw : raw.replace(" ", "T");
-    const withZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(isoLike) ? isoLike : `${isoLike}+09:00`;
-    const date = new Date(withZone);
-    return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function formatDuration(seconds) {
@@ -432,24 +145,6 @@ function formatCalendarDuration(seconds) {
     return minutes > 0 ? `${hours}h+` : `${hours}h`;
 }
 
-function normalizeDailySeconds(value) {
-    return Object.fromEntries(
-        Object.entries(value && typeof value === "object" ? value : {})
-            .map(([key, seconds]) => [key, Math.max(0, Number(seconds) || 0)])
-            .filter(([, seconds]) => seconds > 0)
-    );
-}
-
-function mergeSessionDailySeconds(target, source) {
-    const next = target && typeof target === "object" ? target : {};
-    for (const [dateKey, seconds] of Object.entries(source && typeof source === "object" ? source : {})) {
-        const value = Math.max(0, Number(seconds) || 0);
-        if (value <= 0) continue;
-        next[dateKey] = Math.max(0, Number(next[dateKey]) || 0) + value;
-    }
-    return next;
-}
-
 function mergeContinuousSessionDetails(sessionDetails) {
     const merged = [];
     const rows = (Array.isArray(sessionDetails) ? sessionDetails : [])
@@ -460,7 +155,7 @@ function mergeContinuousSessionDetails(sessionDetails) {
             leftAt: Number(session.leftAt) || Number(session.enteredAt) || 0,
             watchedSeconds: Math.max(0, Number(session.watchedSeconds) || 0),
             dailySeconds: normalizeDailySeconds(session.dailySeconds),
-            watchedRanges: normalizeWatchRanges(session.watchedRanges),
+            watchedRanges: mergeWatchRanges(session.watchedRanges),
         }))
         .filter((session) => session.id && session.enteredAt > 0 && session.watchedSeconds >= MIN_WATCH_SECONDS)
         .sort((a, b) => a.enteredAt - b.enteredAt || a.leftAt - b.leftAt);
@@ -495,7 +190,7 @@ function normalizeSessionDetails(row, fallbackEntry) {
         .map((session) => {
             const enteredAt = Number(session.enteredAt) || Number(session.startedAt) || 0;
             const leftAt = Number(session.leftAt) || Number(session.endedAt) || Number(session.lastWatchedAt) || 0;
-            const watchedRanges = normalizeWatchRanges(session.watchedRanges);
+            const watchedRanges = mergeWatchRanges(session.watchedRanges);
             const watchedSeconds = Math.max(0, Number(session.watchedSeconds) || sumWatchRanges(watchedRanges));
             return {
                 id: pickString(session.id) || `${enteredAt}:${leftAt}`,
@@ -530,15 +225,15 @@ function normalizeSessionDetails(row, fallbackEntry) {
 }
 
 function sumSessionSeconds(sessionDetails) {
-    return sumWatchRanges(collectSessionWatchRanges(sessionDetails));
+    return sumWatchRanges(collectWatchSessionRanges(sessionDetails));
 }
 
 function buildDailySecondsFromSessions(sessionDetails) {
     const rangesByDate = {};
-    for (const range of collectSessionWatchRanges(sessionDetails)) {
-        addRangeToRangesByDate(rangesByDate, range);
+    for (const range of collectWatchSessionRanges(sessionDetails)) {
+        addWatchRangeToRangesByDate(rangesByDate, range);
     }
-    return sumRangesByDate(rangesByDate);
+    return sumWatchRangesByDate(rangesByDate);
 }
 
 function getSessionFirstWatchedAt(sessionDetails) {
@@ -598,60 +293,6 @@ function normalizeHistory(raw) {
         .sort((a, b) => b.lastWatchedAt - a.lastWatchedAt);
 }
 
-function storageGet(key) {
-    return new Promise((resolve, reject) => {
-        if (!storage) {
-            resolve({});
-            return;
-        }
-        storage.get(key, (data) => {
-            const error = globalThis.chrome?.runtime?.lastError;
-            if (error) reject(error);
-            else resolve(data || {});
-        });
-    });
-}
-
-function storageRemove(key) {
-    return new Promise((resolve, reject) => {
-        if (!storage) {
-            resolve();
-            return;
-        }
-        storage.remove(key, () => {
-            const error = globalThis.chrome?.runtime?.lastError;
-            if (error) reject(error);
-            else resolve();
-        });
-    });
-}
-
-function storageSet(value) {
-    return new Promise((resolve, reject) => {
-        if (!storage) {
-            resolve();
-            return;
-        }
-        storage.set(value, () => {
-            const error = globalThis.chrome?.runtime?.lastError;
-            if (error) reject(error);
-            else resolve();
-        });
-    });
-}
-
-function fetchJsonWithTimeout(url, options = {}) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
-    return fetch(url, { ...options, signal: controller.signal }).then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json();
-    }).finally(() => {
-        clearTimeout(timer);
-    });
-}
-
 function getRawEntryId(row, fallback = "") {
     return pickString(row?.id) || pickString(fallback);
 }
@@ -707,13 +348,13 @@ function extractReplayVideos(json) {
     if (!rows) return [];
 
     return rows.map((row) => {
-        const videoNo = row.videoNo ?? row.videoId ?? row.id;
+        const videoNo = pickChzzkVideoNo(row);
         if (!videoNo) return null;
 
-        const startText = row.liveOpenDate || row.openDate || row.broadcastOpenDate || "";
-        const endText = row.publishDateAt || row.publishDate || row.createdDate || "";
+        const startText = pickVideoStartDateText(row);
+        const endText = pickVideoEndDateText(row);
         return {
-            videoNo: String(videoNo),
+            videoNo,
             liveId: pickString(row.liveId, row.liveNo, row.live?.liveId, row.live?.liveNo),
             type: pickString(row.videoType, row.type),
             title: pickString(row.videoTitle, row.title, row.liveTitle),
@@ -767,17 +408,17 @@ async function fetchVideoPage(channelId, page) {
         size: String(VIDEO_PAGE_SIZE),
     });
     const url = `${API_BASE}/${encodeURIComponent(channelId)}/videos?${params.toString()}`;
-    return fetchJsonWithTimeout(url, {
-        credentials: "include",
+    return fetchJson(url, {
         headers: { Accept: "application/json" },
+        timeoutMs: FETCH_TIMEOUT_MS,
     });
 }
 
 async function fetchVideoDetail(videoNo) {
     const url = `${VIDEO_DETAIL_API_BASE}/${encodeURIComponent(videoNo)}`;
-    const json = await fetchJsonWithTimeout(url, {
-        credentials: "include",
+    const json = await fetchJson(url, {
         headers: { Accept: "application/json" },
+        timeoutMs: FETCH_TIMEOUT_MS,
     });
     return json?.content || null;
 }
@@ -792,8 +433,8 @@ function mergeVideoDetail(video, detail) {
     const duration = Number(detail.duration);
     if (Number.isFinite(duration) && duration > 0) video.duration = duration;
 
-    const startText = detail.liveOpenDate || detail.openDate || detail.broadcastOpenDate || "";
-    const endText = detail.publishDateAt || detail.publishDate || detail.createdDate || "";
+    const startText = pickVideoStartDateText(detail);
+    const endText = pickVideoEndDateText(detail);
     const startedAt = parseChzzkDate(startText);
     const endedAt = parseChzzkDate(endText);
     if (startedAt) video.startedAt = startedAt;
@@ -945,11 +586,6 @@ function getEntrySecondsForDate(entry, dateKey) {
     return Math.max(0, Number(entry.dailySeconds?.[dateKey]) || 0);
 }
 
-function getDateScopeBounds(dateKey) {
-    const startMs = getKstDayStartMs(dateKey);
-    return Number.isFinite(startMs) ? { startMs, endMs: startMs + DAY_MS } : null;
-}
-
 function getMonthScopeBounds(year, month) {
     return {
         startMs: getKstMonthStartMs(year, month),
@@ -959,7 +595,10 @@ function getMonthScopeBounds(year, month) {
 
 function getUniqueWatchSecondsForScope(startMs = -Infinity, endMs = Infinity) {
     return entries.reduce((sum, entry) => {
-        return sum + sumWatchRanges(collectSessionWatchRanges(entry.sessionDetails, startMs, endMs));
+        return sum + sumWatchRanges(collectWatchSessionRanges(entry.sessionDetails, {
+            scopeStartMs: startMs,
+            scopeEndMs: endMs,
+        }));
     }, 0);
 }
 
@@ -976,7 +615,10 @@ function getEntrySessionsForScope(entry) {
     return (entry.sessionDetails || [])
         .map((session) => {
             const scopeRanges = bounds
-                ? mergeWatchRanges(collectSessionWatchRanges([session], bounds.startMs, bounds.endMs))
+                ? mergeWatchRanges(collectWatchSessionRanges([session], {
+                    scopeStartMs: bounds.startMs,
+                    scopeEndMs: bounds.endMs,
+                }))
                 : [];
             return {
                 ...session,
@@ -1043,10 +685,16 @@ function getDayTotals(year, month) {
     const { startMs, endMs } = getMonthScopeBounds(year, month);
     for (const entry of entries) {
         const rangesByDate = {};
-        for (const range of collectSessionWatchRanges(entry.sessionDetails, startMs, endMs)) {
-            addRangeToRangesByDate(rangesByDate, range, startMs, endMs);
+        for (const range of collectWatchSessionRanges(entry.sessionDetails, {
+            scopeStartMs: startMs,
+            scopeEndMs: endMs,
+        })) {
+            addWatchRangeToRangesByDate(rangesByDate, range, {
+                scopeStartMs: startMs,
+                scopeEndMs: endMs,
+            });
         }
-        for (const [dateKey, seconds] of Object.entries(sumRangesByDate(rangesByDate))) {
+        for (const [dateKey, seconds] of Object.entries(sumWatchRangesByDate(rangesByDate))) {
             totals[dateKey] = (Number(totals[dateKey]) || 0) + Math.max(0, Number(seconds) || 0);
         }
     }
@@ -1227,11 +875,11 @@ function toggleEntryExpanded(id) {
 async function persistReplayVideoNo(entry, videoNo) {
     if (!storage || !entry?.id || !videoNo) return;
 
-    const data = await storageGet(STORAGE_KEY);
+    const data = await storageGet(storage, STORAGE_KEY);
     const nextHistory = updateRawHistoryEntry(data[STORAGE_KEY], entry.id, (row) => {
         row.replayVideoNo = videoNo;
     });
-    await storageSet({ [STORAGE_KEY]: nextHistory });
+    await storageSet(storage, { [STORAGE_KEY]: nextHistory });
 
     entry.replayVideoNo = videoNo;
     entries = normalizeHistory(nextHistory);
@@ -1385,7 +1033,7 @@ function buildTitleHistoryList(entry) {
 }
 
 function hasStoredWatchRanges(session) {
-    return normalizeWatchRanges(session?.watchedRanges).length > 0;
+    return mergeWatchRanges(session?.watchedRanges).length > 0;
 }
 
 function buildSessionWatchRangeList(session) {
@@ -1587,7 +1235,7 @@ async function loadHistory({ resetToLatest = false, silent = false } = {}) {
     }
 
     try {
-        const data = await storageGet(STORAGE_KEY);
+        const data = await storageGet(storage, STORAGE_KEY);
         entries = normalizeHistory(data[STORAGE_KEY]);
         pruneSelectedEntryIds();
         if (resetToLatest) {
@@ -1619,7 +1267,7 @@ async function clearHistory() {
 
     try {
         suppressNextStorageChange = true;
-        await storageRemove(STORAGE_KEY);
+        await storageRemove(storage, STORAGE_KEY);
         entries = [];
         selectedDateKey = "";
         selectedEntryIds.clear();
@@ -1643,10 +1291,10 @@ async function deleteEntriesByIds(ids, successMessage) {
     if (!targets.size) return false;
 
     try {
-        const data = await storageGet(STORAGE_KEY);
+        const data = await storageGet(storage, STORAGE_KEY);
         const nextHistory = removeEntryIdsFromRawHistory(data[STORAGE_KEY], targets);
         suppressNextStorageChange = true;
-        await storageSet({ [STORAGE_KEY]: nextHistory });
+        await storageSet(storage, { [STORAGE_KEY]: nextHistory });
         entries = normalizeHistory(nextHistory);
         for (const id of targets) {
             selectedEntryIds.delete(id);

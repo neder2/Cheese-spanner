@@ -1,6 +1,14 @@
 (() => {
-    const LEGACY_AD_POPUP_SELECTOR = ".popup_container__Aqx-3";
-    const LEGACY_AD_DIMMED_SELECTOR = ".popup_dimmed__zs78t";
+    const LEGACY_AD_POPUP_SELECTOR = [
+        ".popup_container__Aqx-3",
+        '[class^="popup_container__"]',
+        '[class*=" popup_container__"]',
+    ].join(",");
+    const LEGACY_AD_DIMMED_SELECTOR = [
+        ".popup_dimmed__zs78t",
+        '[class^="popup_dimmed__"]',
+        '[class*=" popup_dimmed__"]',
+    ].join(",");
     const POPUP_CANDIDATE_SELECTOR = [
         LEGACY_AD_POPUP_SELECTOR,
         '[role="alertdialog"]',
@@ -20,6 +28,7 @@
     const SCROLL_UNLOCK_DELAYS_MS = [0, 80, 250, 800];
     const {
         bindFeatureOptions,
+        createMutationObserverSync,
         mutationMatchesSelector,
         normalizeCompact,
         onReady,
@@ -31,7 +40,6 @@
     let scrollUnlockScheduled = false;
     let featureOptions = BetterChzzkSettings.normalizeOptions();
     let domObserver = null;
-    let bodyObserver = null;
     let removePageChangeDetection = null;
     let runtimeInstalled = false;
 
@@ -257,11 +265,6 @@
     function startDomObserver() {
         if (domObserver) return;
 
-        domObserver = new MutationObserver((mutations) => {
-            handlePageChange();
-            if (mutations.some(mutationCouldAffectPopup)) removeAdsPopup();
-        });
-
         const config = {
             attributes: true,
             attributeFilter: ["aria-modal", "class", "role", "style"],
@@ -269,30 +272,21 @@
             subtree: true,
         };
 
-        if (document.body) {
-            domObserver.observe(document.body, config);
-            return;
-        }
-
-        bodyObserver = new MutationObserver(() => {
-            if (!document.body) return;
-            bodyObserver.disconnect();
-            bodyObserver = null;
-            domObserver.observe(document.body, config);
-            removeAdsPopup();
+        domObserver = createMutationObserverSync({
+            options: config,
+            onMutations(mutations) {
+                handlePageChange();
+                if (mutations.some(mutationCouldAffectPopup)) removeAdsPopup();
+            },
+            onBodyReady: removeAdsPopup,
         });
-
-        bodyObserver.observe(document.documentElement, { childList: true, subtree: true });
     }
 
     function stopDomObserver() {
         if (domObserver) {
+            domObserver.disconnectAll?.();
             domObserver.disconnect();
             domObserver = null;
-        }
-        if (bodyObserver) {
-            bodyObserver.disconnect();
-            bodyObserver = null;
         }
     }
 

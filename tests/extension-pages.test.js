@@ -61,6 +61,10 @@ function createFakeChrome({ sync = {}, local = {} } = {}) {
                 addListener(listener) {
                     storageChangeListeners.push(listener);
                 },
+                removeListener(listener) {
+                    const index = storageChangeListeners.indexOf(listener);
+                    if (index >= 0) storageChangeListeners.splice(index, 1);
+                },
             },
         },
         testState: {
@@ -106,6 +110,11 @@ function evalRepoScript(dom, ...parts) {
     dom.window.eval(readRepoFile(...parts));
 }
 
+function evalContentScripts(dom) {
+    evalRepoScript(dom, "shared", "data.js");
+    evalRepoScript(dom, "content.js");
+}
+
 function dispatch(dom, element, type) {
     element.dispatchEvent(new dom.window.Event(type, { bubbles: true }));
 }
@@ -116,6 +125,15 @@ function queryOption(document, key) {
 
 function waitForAsyncCallbacks() {
     return new Promise((resolve) => setTimeout(resolve, 20));
+}
+
+async function waitForCondition(predicate, { timeoutMs = 1000, intervalMs = 20 } = {}) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt <= timeoutMs) {
+        if (predicate()) return;
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    assert.fail("Timed out waiting for condition");
 }
 
 function captureIntervals(dom) {
@@ -190,9 +208,412 @@ function requestAutoQualityApply(dom, quality = "1080p") {
 function evalVolumeWheelScripts(dom) {
     evalRepoScript(dom, "features", "volumeWheelPage.js");
     evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
+    evalContentScripts(dom);
     evalRepoScript(dom, "features", "volumeWheel.js");
 }
+
+test("createMutationObserverSync observes a deferred target when it appears", async () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
+    evalContentScripts(dom);
+
+    const { BetterChzzk, document } = dom.window;
+    const events = [];
+    let target = null;
+    const observer = BetterChzzk.utils.createMutationObserverSync({
+        target: () => target,
+        schedule: () => events.push("scheduled"),
+        onBodyReady: () => events.push("ready"),
+    });
+
+    target = document.createElement("div");
+    document.body.appendChild(target);
+    await waitForAsyncCallbacks();
+
+    target.appendChild(document.createElement("span"));
+    await waitForAsyncCallbacks();
+
+    assert.deepEqual(events, ["ready", "scheduled"]);
+    observer.disconnect();
+});
+
+test("createMutationObserverSync disconnects a pending deferred-target observer", async () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
+    evalContentScripts(dom);
+
+    const { BetterChzzk, document } = dom.window;
+    const events = [];
+    let target = null;
+    const observer = BetterChzzk.utils.createMutationObserverSync({
+        target: () => target,
+        schedule: () => events.push("scheduled"),
+        onBodyReady: () => events.push("ready"),
+    });
+
+    observer.disconnect();
+    target = document.createElement("div");
+    document.body.appendChild(target);
+    target.appendChild(document.createElement("span"));
+    await waitForAsyncCallbacks();
+
+    assert.deepEqual(events, []);
+});
+
+test("createMutationObserverSync disconnectAll prevents deferred callbacks after teardown", async () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
+    evalContentScripts(dom);
+
+    const { BetterChzzk, document } = dom.window;
+    const events = [];
+    let target = null;
+    const observer = BetterChzzk.utils.createMutationObserverSync({
+        target: () => target,
+        schedule: () => events.push("scheduled"),
+        onBodyReady: () => events.push("ready"),
+    });
+
+    assert.equal(typeof observer.disconnectAll, "function");
+    observer.disconnectAll();
+    target = document.createElement("div");
+    document.body.appendChild(target);
+    target.appendChild(document.createElement("span"));
+    await waitForAsyncCallbacks();
+
+    assert.deepEqual(events, []);
+});
+
+test("startPageChangeDetection detects pushState without a DOM mutation through the page route bridge", async () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
+    evalRepoScript(dom, "features", "routeBridgePage.js");
+    evalContentScripts(dom);
+
+    const hrefs = [];
+    const remove = dom.window.BetterChzzk.utils.startPageChangeDetection((event) => {
+        hrefs.push(event?.detail?.href || dom.window.location.href);
+    });
+
+    dom.window.history.pushState({}, "", "/video/12345");
+    await waitForCondition(() => hrefs.some((href) => href.endsWith("/video/12345")));
+
+    remove();
+    const countAfterRemove = hrefs.length;
+    dom.window.history.pushState({}, "", "/video/67890");
+    await waitForAsyncCallbacks();
+
+    assert.equal(hrefs.length, countAfterRemove);
+});
+
+test("shared fetchJson keeps credentialed JSON requests and HTTP errors", async () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
+    const calls = [];
+    dom.window.fetch = async (url, init) => {
+        calls.push({ init, url });
+        if (calls.length === 1) {
+            return {
+                ok: true,
+                json: async () => ({ done: true }),
+            };
+        }
+        return {
+            ok: false,
+            status: 503,
+            json: async () => ({}),
+        };
+    };
+
+    evalRepoScript(dom, "shared", "data.js");
+
+    const result = await dom.window.BetterChzzk.utils.fetchJson("/ok", {
+        headers: { Accept: "application/json" },
+        timeoutMs: 50,
+    });
+
+    assert.deepEqual(result, { done: true });
+    assert.equal(calls[0].url, "/ok");
+    assert.equal(calls[0].init.credentials, "include");
+    assert.equal(calls[0].init.headers.Accept, "application/json");
+    assert.ok(calls[0].init.signal instanceof dom.window.AbortSignal);
+    await assert.rejects(() => dom.window.BetterChzzk.utils.fetchJson("/fail", { timeoutMs: 50 }), /HTTP 503/);
+});
+
+test("shared storage helpers wrap chrome storage areas", async () => {
+    const chrome = createFakeChrome({ local: { oldKey: "old value" } });
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", chrome);
+    evalRepoScript(dom, "shared", "data.js");
+
+    const { startStorageChangeListener, storageGet, storageRemove, storageSet } = dom.window.BetterChzzk.utils;
+
+    assert.deepEqual(await storageGet(chrome.storage.local, "oldKey"), { oldKey: "old value" });
+
+    await storageSet(chrome.storage.local, { nextKey: "next value" });
+    assert.deepEqual(await storageGet(chrome.storage.local, "nextKey"), { nextKey: "next value" });
+
+    await storageRemove(chrome.storage.local, "oldKey");
+    assert.equal(Object.keys(await storageGet(chrome.storage.local, "oldKey")).length, 0);
+
+    assert.equal(Object.keys(await storageGet(null, "missing")).length, 0);
+    await storageSet(null, { ignored: true });
+    await storageRemove(null, "ignored");
+
+    const listener = () => {};
+    const removeListener = startStorageChangeListener(listener);
+    assert.equal(chrome.testState.storageChangeListeners.includes(listener), true);
+    removeListener();
+    assert.equal(chrome.testState.storageChangeListeners.includes(listener), false);
+    assert.equal(startStorageChangeListener(null), null);
+});
+
+test("shared storage helpers reject chrome lastError", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", chrome);
+    evalRepoScript(dom, "shared", "data.js");
+
+    const failingArea = {
+        get(_key, callback) {
+            chrome.runtime.lastError = { message: "read failed" };
+            callback({});
+            chrome.runtime.lastError = null;
+        },
+        set(_value, callback) {
+            chrome.runtime.lastError = { message: "write failed" };
+            callback();
+            chrome.runtime.lastError = null;
+        },
+        remove(_key, callback) {
+            chrome.runtime.lastError = { message: "remove failed" };
+            callback();
+            chrome.runtime.lastError = null;
+        },
+    };
+    const { storageGet, storageRemove, storageSet } = dom.window.BetterChzzk.utils;
+
+    await assert.rejects(() => storageGet(failingArea, "key"), (error) => error.message === "read failed");
+    await assert.rejects(() => storageSet(failingArea, { key: "value" }), (error) => error.message === "write failed");
+    await assert.rejects(() => storageRemove(failingArea, "key"), (error) => error.message === "remove failed");
+});
+
+test("shared map cache helpers trim oldest entries and refresh touched keys", () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
+    evalRepoScript(dom, "shared", "data.js");
+
+    const { touchMapEntry } = dom.window.BetterChzzk.utils;
+    const map = new Map([["a", 1], ["b", 2], ["c", 3]]);
+
+    touchMapEntry(map, "c", 3, 2);
+    assert.equal(JSON.stringify([...map.entries()]), JSON.stringify([["b", 2], ["c", 3]]));
+
+    assert.equal(touchMapEntry(map, "b", 4, 2), 4);
+    assert.equal(JSON.stringify([...map.entries()]), JSON.stringify([["c", 3], ["b", 4]]));
+
+    touchMapEntry(map, "d", 5, 2);
+    assert.equal(JSON.stringify([...map.entries()]), JSON.stringify([["b", 4], ["d", 5]]));
+});
+
+test("shared string and page helpers are reused by content utilities", () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
+    evalContentScripts(dom);
+
+    const {
+        compactSpaces,
+        getLiveChannelIdFromPath,
+        getVodVideoNoFromPath,
+        isLastPage,
+        isLiveRoute,
+        isPlaybackRoute,
+        isVodRoute,
+        normSpace,
+        normalizeCompact,
+    } = dom.window.BetterChzzk.utils;
+
+    assert.equal(compactSpaces(" a\n  b\tc "), "a b c");
+    assert.equal(normSpace(" a\n  b\tc "), "a b c");
+    assert.equal(normalizeCompact(" A\n  b\tC "), "abc");
+    assert.equal(isLastPage({ content: { totalPages: 3, page: { number: 2 } } }, [], 30), true);
+    assert.equal(isLastPage({ content: { totalPages: 3, page: { number: 1 } } }, [], 30), false);
+    assert.equal(isLastPage({ content: { last: true } }, [], 30), true);
+    assert.equal(isLastPage({}, [1, 2], 3), true);
+    assert.equal(isLastPage({}, [1, 2, 3], 3), false);
+    assert.equal(isPlaybackRoute("/live/abc"), true);
+    assert.equal(isPlaybackRoute("/video/123"), true);
+    assert.equal(isPlaybackRoute("/category/foo"), false);
+    assert.equal(isLiveRoute("/live/abc"), true);
+    assert.equal(isLiveRoute("/video/123"), false);
+    assert.equal(getLiveChannelIdFromPath("/live/abc"), "abc");
+    assert.equal(getLiveChannelIdFromPath("/live/%ED%85%8C%EC%8A%A4%ED%8A%B8"), "\uD14C\uC2A4\uD2B8");
+    assert.equal(getLiveChannelIdFromPath("/live"), "");
+    assert.equal(isVodRoute("/video"), true);
+    assert.equal(isVodRoute("/video/123"), true);
+    assert.equal(getVodVideoNoFromPath("/video/123"), "123");
+    assert.equal(getVodVideoNoFromPath("/video/abc"), "abc");
+    assert.equal(getVodVideoNoFromPath("/video"), "");
+});
+
+test("shared CHZZK video field pickers keep API fallback order", () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
+    evalRepoScript(dom, "shared", "data.js");
+
+    const { pickChzzkVideoNo, pickVideoEndDateText, pickVideoStartDateText } = dom.window.BetterChzzk.utils;
+
+    assert.equal(pickChzzkVideoNo({ videoId: 123, id: 456 }), "123");
+    assert.equal(pickChzzkVideoNo({ id: "  789  " }), "789");
+    assert.equal(pickChzzkVideoNo({}), "");
+    assert.equal(pickVideoStartDateText({ live: { openDate: "2026-06-22 10:00:00" } }), "2026-06-22 10:00:00");
+    assert.equal(
+        pickVideoStartDateText({ openDate: "open", liveOpenDate: "live", broadcastOpenDate: "broadcast" }),
+        "live"
+    );
+    assert.equal(pickVideoEndDateText({ createdDate: "created", publishDate: "published" }), "published");
+    assert.equal(pickVideoEndDateText({ publishDateAt: "at", publishDate: "published" }), "at");
+});
+
+test("shared KST helpers keep date keys and day boundaries consistent", () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
+    evalRepoScript(dom, "shared", "data.js");
+
+    const {
+        formatKstDateKey,
+        formatKstDateTime,
+        formatKstMonthKey,
+        formatKstTime,
+        getKstDateKey,
+        getKstDayStartMs,
+        getKstMonthStartMs,
+        getKstParts,
+        getNextKstDayStartMs,
+        isSameKstDate,
+    } = dom.window.BetterChzzk.utils;
+    const ms = Date.parse("2026-06-21T15:30:05Z");
+
+    assert.equal(JSON.stringify(getKstParts(ms)), JSON.stringify({
+        year: 2026,
+        month: 6,
+        day: 22,
+        weekday: 1,
+        hours: 0,
+        minutes: 30,
+        seconds: 5,
+    }));
+    assert.equal(formatKstDateKey(getKstParts(ms)), "2026-06-22");
+    assert.equal(getKstDateKey(ms), "2026-06-22");
+    assert.equal(formatKstMonthKey(2026, 6), "2026-06");
+    assert.equal(getKstDayStartMs("2026-06-22"), Date.parse("2026-06-21T15:00:00Z"));
+    assert.equal(getKstMonthStartMs(2026, 6), Date.parse("2026-05-31T15:00:00Z"));
+    assert.equal(getNextKstDayStartMs(ms), Date.parse("2026-06-22T15:00:00Z"));
+    assert.equal(isSameKstDate(ms, Date.parse("2026-06-22T14:59:59Z")), true);
+    assert.equal(isSameKstDate(ms, Date.parse("2026-06-22T15:00:00Z")), false);
+    assert.equal(formatKstDateTime(ms, { seconds: true }), "2026.06.22 00:30:05");
+    assert.equal(formatKstTime(ms), "00:30");
+    assert.equal(Number.isNaN(getKstDayStartMs("bad")), true);
+});
+
+test("shared watch-range helpers normalize, merge, and sum ranges", () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
+    evalRepoScript(dom, "shared", "data.js");
+
+    const { mergeWatchRanges, sumWatchRanges } = dom.window.BetterChzzk.utils;
+    const ranges = [
+        { startAt: 5000, endAt: 7000 },
+        { start: 1000.4, end: 2000.6 },
+        { startAt: 3200, endAt: 4500 },
+        { startAt: 9000, endAt: 8500 },
+    ];
+
+    assert.equal(
+        JSON.stringify(mergeWatchRanges(ranges, 1000)),
+        JSON.stringify([
+            { startAt: 1000, endAt: 2001 },
+            { startAt: 3200, endAt: 7000 },
+        ])
+    );
+    assert.equal(JSON.stringify(mergeWatchRanges(ranges, 1500)), JSON.stringify([{ startAt: 1000, endAt: 7000 }]));
+    assert.equal(sumWatchRanges(ranges, 1000), 4.801);
+});
+
+test("shared watch-session helpers derive fallback ranges and daily totals", () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
+    evalRepoScript(dom, "shared", "data.js");
+
+    const {
+        addWatchRangeToRangesByDate,
+        collectWatchSessionRanges,
+        getWatchSessionRanges,
+        mergeDailySeconds,
+        normalizeDailySeconds,
+        sumWatchRangesByDate,
+    } = dom.window.BetterChzzk.utils;
+    const dayStart = Date.parse("2026-06-21T15:00:00Z");
+
+    assert.equal(JSON.stringify(normalizeDailySeconds({ a: "10.5", b: -2, c: "bad", d: 0 })), JSON.stringify({ a: 10.5 }));
+    assert.equal(JSON.stringify(mergeDailySeconds({ a: 2 }, { a: "1.5", b: 3 })), JSON.stringify({ a: 3.5, b: 3 }));
+    assert.equal(JSON.stringify(mergeDailySeconds({}, { a: 1.6, b: 0.4 }, { round: true })), JSON.stringify({ a: 2 }));
+
+    const direct = getWatchSessionRanges({
+        watchedSeconds: 300,
+        dailySeconds: { "2026-06-22": 120 },
+        watchedRanges: [{ startAt: dayStart + 1000, endAt: dayStart + 6000 }],
+    });
+    assert.equal(JSON.stringify(direct), JSON.stringify([{ startAt: dayStart + 1000, endAt: dayStart + 6000 }]));
+
+    const fallback = getWatchSessionRanges({
+        enteredAt: dayStart + 60000,
+        watchedSeconds: 120,
+        dailySeconds: { "2026-06-22": 120 },
+    });
+    assert.equal(JSON.stringify(fallback), JSON.stringify([{ startAt: dayStart + 60000, endAt: dayStart + 180000 }]));
+
+    const clipped = collectWatchSessionRanges([{ watchedRanges: [{ startAt: dayStart, endAt: dayStart + 10000 }] }], {
+        scopeStartMs: dayStart + 3000,
+        scopeEndMs: dayStart + 8000,
+    });
+    assert.equal(JSON.stringify(clipped), JSON.stringify([{ startAt: dayStart + 3000, endAt: dayStart + 8000 }]));
+
+    const rangesByDate = {};
+    addWatchRangeToRangesByDate(rangesByDate, {
+        startAt: dayStart + 24 * 60 * 60 * 1000 - 30000,
+        endAt: dayStart + 24 * 60 * 60 * 1000 + 90000,
+    });
+    assert.equal(JSON.stringify(sumWatchRangesByDate(rangesByDate)), JSON.stringify({
+        "2026-06-22": 30,
+        "2026-06-23": 90,
+    }));
+});
+
+test("shared title-history helpers normalize channel-prefixed titles", () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
+    evalRepoScript(dom, "shared", "data.js");
+
+    const {
+        addTitleHistory,
+        cleanEntryTitle,
+        normalizeForMatch,
+        normalizeTitleHistory,
+        parseChzzkDate,
+        pickString,
+    } = dom.window.BetterChzzk.utils;
+    const channelName = "\uCC44\uB110";
+
+    assert.equal(pickString("", null, "  value  "), "value");
+    assert.equal(cleanEntryTitle("\uCC44\uB110 \u00B7 \uCCAB \uC81C\uBAA9 - CHZZK", channelName), "\uCCAB \uC81C\uBAA9");
+    assert.equal(normalizeForMatch("\uCCAB \uC81C\uBAA9! 123"), "\uCCAB\uC81C\uBAA9123");
+    assert.equal(parseChzzkDate("2026-06-22 10:30:00").toISOString(), "2026-06-22T01:30:00.000Z");
+    assert.equal(parseChzzkDate(1719000000).getTime(), 1719000000000);
+    assert.equal(parseChzzkDate(" "), null);
+
+    const rows = normalizeTitleHistory([
+        { title: "\uCC44\uB110 \u00B7 \uCCAB \uC81C\uBAA9", firstSeenAt: 20, lastSeenAt: 30 },
+        { title: "\uCC44\uB110 - \uCCAB \uC81C\uBAA9", firstSeenAt: 10, lastSeenAt: 40 },
+        { title: "\uC81C\uBAA9 \uC5C6\uB294 \uB77C\uC774\uBE0C", firstSeenAt: 1, lastSeenAt: 2 },
+    ], channelName);
+
+    assert.equal(JSON.stringify(rows), JSON.stringify([{ title: "\uCCAB \uC81C\uBAA9", firstSeenAt: 10, lastSeenAt: 40 }]));
+
+    const target = { channelName, titleHistory: rows };
+    addTitleHistory(target, "\uCC44\uB110: \uB2E4\uC74C \uC81C\uBAA9", 50, 60);
+
+    assert.equal(
+        JSON.stringify(target.titleHistory.map((row) => row.title)),
+        JSON.stringify(["\uCCAB \uC81C\uBAA9", "\uB2E4\uC74C \uC81C\uBAA9"])
+    );
+});
 
 const AD_SUPPRESS_ATTR = "data-betterchzzk-suppress-adblock-popup";
 const ADBLOCK_POPUP_TITLE =
@@ -211,13 +632,13 @@ function makeVisibleElement(el, width = 450, height = 260) {
 
 function evalAdblockPopupScripts(dom) {
     evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
+    evalContentScripts(dom);
     evalRepoScript(dom, "features", "adblockPopup.js");
 }
 
 function evalFollowingRefreshScripts(dom) {
     evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
+    evalContentScripts(dom);
     evalRepoScript(dom, "features", "followingRefresh.js");
 }
 
@@ -291,6 +712,34 @@ test("adblock popup keeps suppressing the legacy chzzk popup classes", async () 
     assert.match(document.getElementById("betterchzzk-adblock-popup-style").textContent, /\[data-betterchzzk-suppress-adblock-popup="1"\]/);
     assert.equal(document.body.style.overflow, "");
     assert.equal(document.body.style.paddingRight, "");
+});
+
+test("adblock popup keeps suppressing legacy popup classes after css module hashes change", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<div class="popup_dimmed__nextHash" id="dimmed">',
+            '<div class="popup_container__nextHash" id="popup">',
+            ADBLOCK_POPUP_TITLE,
+            "</div>",
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const dimmed = document.getElementById("dimmed");
+    const popup = document.getElementById("popup");
+    makeVisibleElement(dimmed, 1000, 800);
+    makeVisibleElement(popup);
+
+    await loadAdblockPopupPage(dom);
+
+    assert.equal(getAdblockSuppressAttr(popup), "1");
+    assert.equal(getAdblockSuppressAttr(dimmed), "1");
 });
 
 test("adblock popup suppresses the current chzzk alertdialog modal after it appears", async () => {
@@ -421,6 +870,8 @@ test("manifest loads playback scripts in the expected worlds", () => {
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
+    assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
+    assert.ok(mainScript.js.indexOf("features/routeBridgePage.js") < mainScript.js.indexOf("features/autoQualityPage.js"));
     assert.ok(mainScript.js.includes("features/volumeWheelPage.js"));
     assert.ok(mainScript.js.indexOf("features/volumeWheelPage.js") > mainScript.js.indexOf("features/autoQualityPage.js"));
     assert.ok(isolatedScript.js.includes("features/volumeWheel.js"));
@@ -431,12 +882,141 @@ test("manifest loads playback scripts in the expected worlds", () => {
     );
 });
 
+async function loadVideoSearchPage(dom) {
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "videoSearch.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    await waitForAsyncCallbacks();
+}
+
+function createVideoSearchDom(chrome) {
+    return createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<main id="app">',
+            '<section id="grid">',
+            '<article><a href="/video/100"><strong>Existing 100</strong><span>1:00</span></a></article>',
+            '<article><a href="/video/101"><strong>Existing 101</strong><span>1:00</span></a></article>',
+            "</section>",
+            "</main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/0123456789abcdef0123456789abcdef/videos",
+        chrome
+    );
+}
+
+function getVideoSearchInput(dom) {
+    return dom.window.document.querySelector("#betterchzzk-video-search-bar input");
+}
+
+function searchVideoSearchInput(dom, value) {
+    const input = getVideoSearchInput(dom);
+    assert.ok(input);
+    input.value = value;
+    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+}
+
+test("video search stores the comment device id in extension storage only", async () => {
+    const chrome = createFakeChrome({ sync: { videoSearchCommentDelayMs: 0 } });
+    const dom = createVideoSearchDom(chrome);
+    const requests = [];
+
+    dom.window.fetch = async (url, init = {}) => {
+        requests.push({ url: String(url), init });
+        if (String(url).includes("/videos?")) {
+            return {
+                ok: true,
+                json: async () => ({
+                    content: {
+                        data: [{ videoNo: "200", videoTitle: "unmatched title" }],
+                        last: true,
+                    },
+                }),
+            };
+        }
+        return {
+            ok: true,
+            json: async () => ({
+                content: {
+                    comments: {
+                        data: [{ comment: { content: "needle comment" } }],
+                    },
+                },
+            }),
+        };
+    };
+
+    await loadVideoSearchPage(dom);
+    await waitForCondition(() => getVideoSearchInput(dom));
+
+    searchVideoSearchInput(dom, "needle");
+    await waitForCondition(() => requests.some((request) => request.init?.headers?.deviceId));
+
+    const commentRequest = requests.find((request) => request.init?.headers?.deviceId);
+    assert.ok(commentRequest.init.headers.deviceId);
+    assert.equal(chrome.testState.local.betterchzzkCommentDeviceId, commentRequest.init.headers.deviceId);
+    assert.equal(dom.window.localStorage.getItem("betterchzzk-comment-device-id"), null);
+});
+
+test("video search retries after an index fetch failure instead of caching partial results as complete", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            videoSearchCommentEnabled: false,
+            videoSearchMaxPages: 2,
+        },
+    });
+    const dom = createVideoSearchDom(chrome);
+    const pageCalls = [];
+    let failSecondPage = true;
+
+    const makeVideos = (count, offset = 0) => Array.from({ length: count }, (_, index) => ({
+        videoNo: String(300 + offset + index),
+        videoTitle: `needle indexed ${offset + index}`,
+    }));
+
+    dom.window.fetch = async (url) => {
+        const parsed = new URL(String(url));
+        const page = parsed.searchParams.get("page") || "0";
+        pageCalls.push(page);
+
+        if (page === "1" && failSecondPage) {
+            failSecondPage = false;
+            throw new Error("temporary index failure");
+        }
+
+        return {
+            ok: true,
+            json: async () => ({
+                content: {
+                    data: page === "0" ? makeVideos(30) : makeVideos(1, 30),
+                    last: page === "1",
+                },
+            }),
+        };
+    };
+
+    await loadVideoSearchPage(dom);
+    await waitForCondition(() => getVideoSearchInput(dom));
+
+    searchVideoSearchInput(dom, "needle");
+    await waitForCondition(() => pageCalls.filter((page) => page === "1").length === 1);
+    await waitForAsyncCallbacks();
+
+    searchVideoSearchInput(dom, "needle");
+    await waitForCondition(() => pageCalls.filter((page) => page === "1").length === 2);
+});
+
 test("following refresh clicks the native following sidebar refresh button", async () => {
     const chrome = createFakeChrome({ sync: { followingRefreshSeconds: 10 } });
     const dom = createPageDom(
         [
             "<!doctype html>",
             "<body>",
+            '<div id="app">',
             "<nav>",
             '<section id="following">',
             "<header>",
@@ -582,6 +1162,45 @@ test("options page autosaves toggles immediately and number inputs after a debou
 
     assert.equal(chrome.testState.sync.skipSeconds, 17, "타이핑이 멎으면 자동 저장된다");
     assert.equal(document.getElementById("notice").dataset.state, "saved");
+
+    skipSeconds.value = "9999";
+    dispatch(dom, skipSeconds, "input");
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    assert.equal(skipSeconds.value, "600", "autosave should show the clamped numeric value");
+    assert.equal(chrome.testState.sync.skipSeconds, 600);
+});
+
+test("options page shows initial storage read failures without overwriting existing sync options", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            autoQualityEnabled: true,
+        },
+    });
+    chrome.storage.sync.get = (_keys, callback) => {
+        setTimeout(() => {
+            chrome.runtime.lastError = { message: "load failed" };
+            callback({});
+            chrome.runtime.lastError = null;
+        }, 0);
+    };
+    const dom = createDom("options.html", "options.html", chrome);
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+
+    const { document } = dom.window;
+    const autoQuality = queryOption(document, "autoQualityEnabled");
+
+    assert.equal(document.getElementById("notice").dataset.state, "error");
+
+    autoQuality.checked = false;
+    dispatch(dom, autoQuality, "change");
+    await waitForAsyncCallbacks();
+
+    assert.equal(chrome.testState.sync.autoQualityEnabled, true);
+    assert.equal(document.getElementById("notice").dataset.state, "error");
 });
 
 test("options page snaps out-of-range numbers back on change and saves the clamped value", async () => {
@@ -674,7 +1293,7 @@ test("title tooltip shows full text when a card title is truncated", async () =>
     });
 
     evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
+    evalContentScripts(dom);
     evalRepoScript(dom, "features", "titleTooltip.js");
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
@@ -722,7 +1341,7 @@ test("title tooltip excludes hidden navigation text from the full title", async 
     });
 
     evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
+    evalContentScripts(dom);
     evalRepoScript(dom, "features", "titleTooltip.js");
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
@@ -759,7 +1378,7 @@ test("title tooltip ignores titles that fit", async () => {
     Object.defineProperty(title, "clientHeight", { configurable: true, get: () => 20 });
 
     evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
+    evalContentScripts(dom);
     evalRepoScript(dom, "features", "titleTooltip.js");
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
@@ -803,7 +1422,7 @@ test("title tooltip keeps pending hover when moving inside the same title", asyn
     });
 
     evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
+    evalContentScripts(dom);
     evalRepoScript(dom, "features", "titleTooltip.js");
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
@@ -845,7 +1464,7 @@ test("title tooltip stays disabled when the option is off", async () => {
     Object.defineProperty(title, "clientHeight", { configurable: true, get: () => 20 });
 
     evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
+    evalContentScripts(dom);
     evalRepoScript(dom, "features", "titleTooltip.js");
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
@@ -888,7 +1507,7 @@ test("title tooltip reacts to option changes without leaving stale UI", async ()
     });
 
     evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
+    evalContentScripts(dom);
     evalRepoScript(dom, "features", "titleTooltip.js");
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
@@ -1017,7 +1636,7 @@ test("volume wheel stays inert until settings publish while keeping early listen
     nativeWheelCount = 0;
 
     evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
+    evalContentScripts(dom);
     evalRepoScript(dom, "features", "volumeWheel.js");
     await waitForAsyncCallbacks();
 
@@ -1590,6 +2209,67 @@ test("auto quality treats an active preferred track as already selected", () => 
     assert.equal(tracks[1].selected, false);
 });
 
+test("auto quality page hook leaves videoTracks descriptors untouched outside playback routes", () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/category/game/lives", chrome);
+    const target = {};
+    const getter = () => createVideoTrackList([{ id: "720", label: "720p", height: 720 }]);
+
+    evalRepoScript(dom, "features", "autoQualityPage.js");
+
+    dom.window.Object.defineProperty(target, "videoTracks", {
+        configurable: true,
+        get: getter,
+    });
+
+    assert.equal(getter.__betterChzzkVideoTracksWrapped, undefined);
+    assert.equal(Object.getOwnPropertyDescriptor(target, "videoTracks").get, getter);
+});
+
+test("auto quality page hook unpatches defineProperty APIs outside playback routes", () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/live/test-channel", chrome);
+    const nativeDefineProperty = dom.window.Object.defineProperty;
+    const nativeDefineProperties = dom.window.Object.defineProperties;
+    const nativeReflectDefineProperty = dom.window.Reflect.defineProperty;
+
+    evalRepoScript(dom, "features", "autoQualityPage.js");
+
+    assert.notEqual(dom.window.Object.defineProperty, nativeDefineProperty);
+    assert.notEqual(dom.window.Object.defineProperties, nativeDefineProperties);
+    assert.notEqual(dom.window.Reflect.defineProperty, nativeReflectDefineProperty);
+
+    dom.window.history.pushState({}, "", "/category/game/lives");
+    dom.window.dispatchEvent(new dom.window.CustomEvent("betterchzzk:routechange", {
+        detail: { href: dom.window.location.href, source: "test" },
+    }));
+
+    assert.equal(dom.window.Object.defineProperty, nativeDefineProperty);
+    assert.equal(dom.window.Object.defineProperties, nativeDefineProperties);
+    assert.equal(dom.window.Reflect.defineProperty, nativeReflectDefineProperty);
+
+    dom.window.history.pushState({}, "", "/video/12345");
+    dom.window.dispatchEvent(new dom.window.CustomEvent("betterchzzk:routechange", {
+        detail: { href: dom.window.location.href, source: "test" },
+    }));
+
+    assert.notEqual(dom.window.Object.defineProperty, nativeDefineProperty);
+});
+
+test("auto quality publishes state without writing a page localStorage cache", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom("<!doctype html><body><video></video></body>", "https://chzzk.naver.com/live/test-channel", chrome);
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "autoQuality.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    assert.ok(dom.window.document.documentElement.getAttribute("data-betterchzzk-auto-quality-state"));
+    assert.equal(dom.window.localStorage.getItem("betterchzzk:auto-quality:state-cache"), null);
+});
+
 test("VOD replay chat fix ignores currentTime-only URL changes on the same VOD", async () => {
     const chrome = createFakeChrome();
     const dom = createPageDom(
@@ -1617,7 +2297,7 @@ test("VOD replay chat fix ignores currentTime-only URL changes on the same VOD",
     makeVisibleVideo(video);
 
     evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
+    evalContentScripts(dom);
     evalRepoScript(dom, "features", "vodReplayChatFix.js");
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
@@ -1662,7 +2342,7 @@ test("VOD replay chat fix runs even when the old stored option is disabled", asy
     makeVisibleVideo(video);
 
     evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
+    evalContentScripts(dom);
     evalRepoScript(dom, "features", "vodReplayChatFix.js");
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
@@ -1727,7 +2407,7 @@ test("VOD broadcast clock stays hidden when the broadcast start time is unavaila
     });
 
     evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
+    evalContentScripts(dom);
     evalRepoScript(dom, "features", "vodBroadcastClock.js");
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
@@ -1825,7 +2505,7 @@ function createLiveTimeShiftGuardDom(chrome) {
 
 async function loadSkipControlPage(dom) {
     evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
+    evalContentScripts(dom);
     evalRepoScript(dom, "features", "skipControl.js");
     dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
@@ -2066,7 +2746,7 @@ test("live fast-forward button seeks to the buffered live edge", async () => {
 
     try {
         evalRepoScript(dom, "shared", "settings.js");
-        evalRepoScript(dom, "content.js");
+        evalContentScripts(dom);
         evalRepoScript(dom, "features", "skipControl.js");
         document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
         await waitForAsyncCallbacks();
@@ -2156,7 +2836,7 @@ test("live fast-forward button jumps to the seekable live edge on a time-machine
 
     try {
         evalRepoScript(dom, "shared", "settings.js");
-        evalRepoScript(dom, "content.js");
+        evalContentScripts(dom);
         evalRepoScript(dom, "features", "skipControl.js");
         document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
         await waitForAsyncCallbacks();
@@ -2239,7 +2919,7 @@ test("live fast-forward button does not duplicate an external knife button", asy
 
     try {
         evalRepoScript(dom, "shared", "settings.js");
-        evalRepoScript(dom, "content.js");
+        evalContentScripts(dom);
         evalRepoScript(dom, "features", "skipControl.js");
         document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
         await waitForAsyncCallbacks();
@@ -2298,7 +2978,7 @@ function setupShortcutRescueDom(chrome) {
     }
 
     evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
+    evalContentScripts(dom);
     evalRepoScript(dom, "features", "shortcutRescue.js");
 
     return { dom, document, video, state };
@@ -2395,6 +3075,7 @@ test("history page loads local watch history state without crashing", async () =
     const chrome = createFakeChrome();
     const dom = createDom("history.html", "history.html", chrome);
 
+    evalRepoScript(dom, "shared", "data.js");
     evalRepoScript(dom, "history.js");
     await waitForAsyncCallbacks();
 

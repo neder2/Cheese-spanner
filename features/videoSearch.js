@@ -16,6 +16,7 @@
     const COMMENT_PAGE_SIZE = 30;
     const COMMENT_FETCH_CONCURRENCY = 3;
     const COMMENT_MATCH_FALLBACK_TEXT = "\uB313\uAE00 \uB0B4\uC6A9\uC5D0\uC11C \uAC80\uC0C9\uC5B4\uAC00 \uBC1C\uACAC\uB410\uC2B5\uB2C8\uB2E4.";
+    const COMMENT_DEVICE_ID_STORAGE_KEY = "betterchzzkCommentDeviceId";
     const INDEX_APPLY_INTERVAL_MS = 260;
     const MAX_INDEX_CACHE_CHANNELS = 8;
 
@@ -51,15 +52,20 @@
         bindFeatureOptions,
         createMutationObserverSync,
         fetchJson,
-        isLastPage: isLastPageResponse,
+        isLastPage,
         normSpace,
         normalizeCompact: normalize,
         onReady,
         pickArray,
+        pickChzzkVideoNo,
         setLoadingReason,
         sleep,
         startPageChangeDetection,
+        storageGet,
+        storageSet,
     } = BetterChzzk.utils;
+    let commentDeviceId = "";
+    let commentDeviceIdPromise = null;
 
     function isFeatureEnabled() {
         return featureOptions.videoSearchEnabled;
@@ -113,17 +119,37 @@
         return m ? m[1] : null;
     }
 
-    function getCommentDeviceId() {
-        const key = "betterchzzk-comment-device-id";
-        try {
-            const existing = localStorage.getItem(key);
-            if (existing) return existing;
-            const next = crypto?.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-            localStorage.setItem(key, next);
-            return next;
-        } catch (_) {
-            return `${Date.now()}-${Math.random()}`;
-        }
+    function createCommentDeviceId() {
+        return globalThis.crypto?.randomUUID
+            ? globalThis.crypto.randomUUID()
+            : `${Date.now()}-${Math.random()}`;
+    }
+
+    async function getCommentDeviceId() {
+        if (commentDeviceId) return commentDeviceId;
+        if (commentDeviceIdPromise) return commentDeviceIdPromise;
+
+        commentDeviceIdPromise = (async () => {
+            const storage = globalThis.chrome?.storage?.local;
+            try {
+                const data = await storageGet(storage, COMMENT_DEVICE_ID_STORAGE_KEY);
+                const existing = normSpace(data?.[COMMENT_DEVICE_ID_STORAGE_KEY]);
+                if (existing) return existing;
+
+                const next = createCommentDeviceId();
+                await storageSet(storage, { [COMMENT_DEVICE_ID_STORAGE_KEY]: next });
+                return next;
+            } catch (_) {
+                return createCommentDeviceId();
+            }
+        })().then((value) => {
+            commentDeviceId = value;
+            return value;
+        }).finally(() => {
+            commentDeviceIdPromise = null;
+        });
+
+        return commentDeviceIdPromise;
     }
 
     function injectStyleOnce() {
@@ -440,7 +466,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         if (!arr) return [];
         return arr
             .map((v) => {
-                const videoNo = v.videoNo ?? v.videoId ?? v.id;
+                const videoNo = pickChzzkVideoNo(v);
                 const title = v.videoTitle ?? v.title ?? v.subject ?? "";
                 if (!videoNo || !title) return null;
                 const readCount = v.readCount ?? v.videoReadCount ?? v.viewCount ?? null;
@@ -452,7 +478,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
                     ? null
                     : Number(livePv);
                 return {
-                    videoNo: String(videoNo),
+                    videoNo,
                     title: String(title),
                     titleNorm: normalize(title),
                     thumb: v.thumbnailImageUrl || v.thumbnailUrl || v.thumbnail || "",
@@ -472,10 +498,6 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
                 };
             })
             .filter(Boolean);
-    }
-
-    function isLastPage(json, pageVideos) {
-        return isLastPageResponse(json, pageVideos, PAGE_SIZE);
     }
 
     function abortController(controller) {
@@ -506,6 +528,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
     }
 
     async function fetchCommentPage(videoNo, offset, signal = undefined) {
+        const deviceId = await getCommentDeviceId();
         const params = new URLSearchParams({
             limit: String(COMMENT_PAGE_SIZE),
             offset: String(offset),
@@ -521,7 +544,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
                 "Front-Client-Product-Type": "web",
                 "If-Modified-Since": "Mon, 26 Jul 1997 05:00:00 GMT",
                 Pragma: "no-cache",
-                deviceId: getCommentDeviceId(),
+                deviceId,
             },
             signal,
         });
@@ -627,6 +650,11 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         const signal = activeIndexAbortController.signal;
         const token = ++activeFetchToken;
         const entry = existing || { videos: [], seen: new Set(), complete: false, error: null, loading: false, loadingToken: 0 };
+        let reachedBoundary = false;
+        let failed = false;
+        entry.complete = false;
+        entry.error = null;
+        entry.failedAt = 0;
         entry.loading = true;
         entry.loadingToken = token;
         touchChannelIndex(channelId, entry);
@@ -642,12 +670,15 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
                 } catch (e) {
                     if (signal.aborted || e?.name === "AbortError") return entry;
                     entry.error = e.message || String(e);
+                    entry.failedAt = Date.now();
+                    failed = true;
                     break;
                 }
                 if (token !== activeFetchToken || !currentQuery) return entry;
                 const videos = extractVideos(json);
                 if (!videos.length && page === 0) {
                     entry.error = "no-data";
+                    reachedBoundary = true;
                     break;
                 }
                 for (const v of videos) {
@@ -656,9 +687,13 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
                     entry.videos.push(v);
                 }
                 applyFilterDuringIndex();
-                if (isLastPage(json, videos)) break;
+                if (isLastPage(json, videos, PAGE_SIZE)) {
+                    reachedBoundary = true;
+                    break;
+                }
+                if (page === getMaxPages() - 1) reachedBoundary = true;
             }
-            entry.complete = true;
+            entry.complete = !failed && reachedBoundary;
         } finally {
             if (entry.loadingToken === token) {
                 entry.loading = false;
@@ -2235,6 +2270,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
 
     function stopObserver() {
         if (!observer) return;
+        observer.disconnectAll?.();
         observer.disconnect();
         observer = null;
     }

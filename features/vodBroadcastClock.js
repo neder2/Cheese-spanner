@@ -6,7 +6,6 @@
     const TITLE_HISTORY_PANEL_ID = "betterchzzk-vod-title-history-panel";
     const WATCH_HISTORY_STORAGE_KEY = "betterChzzkLiveWatchHistory";
     const VIDEO_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/videos";
-    const VOD_ROUTE_RE = /^\/video\/([^/?#]+)/;
     const VOD_TIME_SELECTOR = "div.pzp-vod-time, div.pzp-pc__vod-time, div.pzp-pc-vod-time";
     const LEFT_BUTTONS_SELECTOR = [
         "div.pzp-pc__bottom-buttons--left",
@@ -44,26 +43,41 @@
     const FETCH_TIMEOUT_MS = 8000;
     const DOM_SYNC_THROTTLE_MS = 120;
     const PAGE_CHANGE_DELAY_MS = 500;
-    const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
     const CONTROL_AREA_BEFORE_VIDEO_BOTTOM = 150;
     const CONTROL_AREA_AFTER_VIDEO_BOTTOM = 110;
     const CONTROL_AREA_MAX_HEIGHT = 96;
-    const TITLE_HISTORY_MAX = 20;
     const HISTORY_START_TOLERANCE_MS = 3 * 60 * 60 * 1000;
     const MAX_DETAIL_CACHE_ENTRIES = 100;
     const MAX_HISTORY_INFO_CACHE_ENTRIES = 100;
 
     const {
+        addTitleHistory,
         bindFeatureOptions,
+        cleanEntryTitle,
+        cleanTitle,
+        createMutationObserverSync,
         createThrottledDomSync,
         fetchJson,
+        getKstParts,
         getMainVideoElement,
+        getVodVideoNoFromPath,
         injectStyleOnce,
+        isSameKstDate: sameKstDate,
         isVisible,
         mutationMatchesSelector,
+        normalizeCompact,
+        normalizeForMatch,
+        normalizeTitleHistory,
         onReady,
+        pad2,
+        parseChzzkDate,
+        pickVideoStartDateText,
         pickLargestVisible,
+        pickString,
         startPageChangeDetection,
+        startStorageChangeListener,
+        storageGet,
+        touchMapEntry,
     } = BetterChzzk.utils;
 
     let featureOptions = BetterChzzkSettings.normalizeOptions();
@@ -81,12 +95,11 @@
     let pageChangeTimer = 0;
     let lastUrl = location.href;
     let domObserver = null;
-    let bodyObserver = null;
     let domObserverMode = "";
     let removePageChangeDetection = null;
     let runtimeInstalled = false;
     let pageListenersInstalled = false;
-    let storageChangeListenerInstalled = false;
+    let removeStorageChangeListener = null;
     let startupSyncTimer = 0;
     const detailCache = new Map();
     const historyInfoCache = new Map();
@@ -108,24 +121,8 @@
         return isClockEnabled() || isTitleHistoryEnabled();
     }
 
-    function trimMapToSize(map, maxSize) {
-        while (map.size > maxSize) {
-            const oldestKey = map.keys().next().value;
-            if (oldestKey === undefined) break;
-            map.delete(oldestKey);
-        }
-    }
-
-    function touchMapEntry(map, key, value, maxSize) {
-        map.delete(key);
-        map.set(key, value);
-        trimMapToSize(map, maxSize);
-        return value;
-    }
-
     function getVideoNoFromUrl() {
-        const match = location.pathname.match(VOD_ROUTE_RE);
-        return match ? match[1] : "";
+        return getVodVideoNoFromPath();
     }
 
     function isVodRoute() {
@@ -198,103 +195,9 @@
         return candidates[0].el;
     }
 
-    function normalizeCompact(value) {
-        return String(value || "").toLowerCase().replace(/\s+/g, "");
-    }
-
     function containsAnyTerm(value, terms) {
         const text = normalizeCompact(value);
         return terms.some((term) => text.includes(normalizeCompact(term)));
-    }
-
-    function compactSpaces(value) {
-        return String(value || "").replace(/\s+/g, " ").trim();
-    }
-
-    function pickString(...values) {
-        for (const value of values) {
-            const text = compactSpaces(value);
-            if (text) return text;
-        }
-        return "";
-    }
-
-    function cleanTitle(value) {
-        return compactSpaces(value)
-            .replace(/\s*[-|]\s*CHZZK.*$/i, "")
-            .replace(/\s*[-|]\s*치지직.*$/i, "")
-            .trim();
-    }
-
-    function escapeRegExp(value) {
-        return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    }
-
-    function cleanEntryTitle(value, channelName = "") {
-        const title = cleanTitle(value);
-        const channel = cleanTitle(channelName);
-        if (!title || !channel) return title;
-
-        const match = title.match(new RegExp(`^${escapeRegExp(channel)}\\s*[-|:·]\\s*(.+)$`, "i"));
-        return match ? cleanTitle(match[1]) || title : title;
-    }
-
-    function normalizeTitleHistory(value, channelName = "") {
-        const rows = Array.isArray(value) ? value : [];
-        const byTitle = new Map();
-
-        for (const row of rows) {
-            let title = "";
-            let firstSeenAt = 0;
-            let lastSeenAt = 0;
-
-            if (typeof row === "string") {
-                title = cleanEntryTitle(row, channelName);
-            } else if (row && typeof row === "object") {
-                title = cleanEntryTitle(pickString(row.title, row.name, row.value), channelName);
-                firstSeenAt = Number(row.firstSeenAt) || Number(row.seenAt) || Number(row.createdAt) || 0;
-                lastSeenAt = Number(row.lastSeenAt) || Number(row.updatedAt) || firstSeenAt;
-            }
-
-            if (!title || title === "제목 없는 라이브") continue;
-            if (!firstSeenAt) firstSeenAt = lastSeenAt || Date.now();
-            if (!lastSeenAt) lastSeenAt = firstSeenAt;
-
-            const existing = byTitle.get(title);
-            if (existing) {
-                existing.firstSeenAt = Math.min(existing.firstSeenAt, firstSeenAt);
-                existing.lastSeenAt = Math.max(existing.lastSeenAt, lastSeenAt);
-            } else {
-                byTitle.set(title, { title, firstSeenAt, lastSeenAt });
-            }
-        }
-
-        return Array.from(byTitle.values())
-            .sort((a, b) => a.firstSeenAt - b.firstSeenAt || a.lastSeenAt - b.lastSeenAt)
-            .slice(-TITLE_HISTORY_MAX);
-    }
-
-    function addTitleHistory(target, title, firstSeenAt = Date.now(), lastSeenAt = firstSeenAt) {
-        if (!target) return;
-
-        const clean = cleanEntryTitle(title, target.channelName);
-        if (!clean || clean === "제목 없는 라이브") return;
-
-        const first = Number(firstSeenAt) || Date.now();
-        const last = Number(lastSeenAt) || first;
-        const history = normalizeTitleHistory(target.titleHistory, target.channelName);
-        const existing = history.find((row) => row.title === clean);
-
-        if (existing) {
-            existing.firstSeenAt = Math.min(existing.firstSeenAt, first);
-            existing.lastSeenAt = Math.max(existing.lastSeenAt, last);
-        } else {
-            history.push({ title: clean, firstSeenAt: first, lastSeenAt: last });
-        }
-
-        target.titleHistory = history
-            .sort((a, b) => a.firstSeenAt - b.firstSeenAt || a.lastSeenAt - b.lastSeenAt)
-            .slice(-TITLE_HISTORY_MAX);
     }
 
     function getHistoryEntries(raw) {
@@ -327,26 +230,12 @@
             .filter((entry) => entry.id && entry.titleHistory.length);
     }
 
-    function storageGet(key) {
-        return new Promise((resolve, reject) => {
-            if (!storage) {
-                resolve({});
-                return;
-            }
-            storage.get(key, (data) => {
-                const error = globalThis.chrome?.runtime?.lastError;
-                if (error) reject(error);
-                else resolve(data || {});
-            });
-        });
-    }
-
     function getWatchHistorySnapshot() {
         if (!storage) return Promise.resolve(null);
         if (watchHistorySnapshot) return Promise.resolve(watchHistorySnapshot);
         if (watchHistorySnapshotPromise) return watchHistorySnapshotPromise;
 
-        watchHistorySnapshotPromise = storageGet(WATCH_HISTORY_STORAGE_KEY)
+        watchHistorySnapshotPromise = storageGet(storage, WATCH_HISTORY_STORAGE_KEY)
             .then((data) => {
                 watchHistorySnapshot = data?.[WATCH_HISTORY_STORAGE_KEY] || null;
                 return watchHistorySnapshot;
@@ -371,10 +260,6 @@
         watchHistorySnapshotPromise = null;
         historyInfoCache.clear();
         currentHistoryInfo = null;
-    }
-
-    function normalizeForMatch(value) {
-        return compactSpaces(value).toLowerCase().replace(/[^\p{Letter}\p{Number}]+/gu, "");
     }
 
     function getVideoDetailLiveId(detail) {
@@ -900,26 +785,8 @@
         clockAnchorEl = null;
     }
 
-    function parseChzzkDate(value) {
-        if (!value) return null;
-        if (typeof value === "number") {
-            const ms = value > 100000000000 ? value : value * 1000;
-            const date = new Date(ms);
-            return Number.isNaN(date.getTime()) ? null : date;
-        }
-
-        const raw = String(value).trim();
-        if (!raw) return null;
-
-        const isoLike = raw.includes("T") ? raw : raw.replace(" ", "T");
-        const withZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(isoLike) ? isoLike : `${isoLike}+09:00`;
-        const date = new Date(withZone);
-        return Number.isNaN(date.getTime()) ? null : date;
-    }
-
     function pickStartDateText(detail) {
-        if (!detail || typeof detail !== "object") return "";
-        return detail.liveOpenDate || detail.openDate || detail.broadcastOpenDate || detail.live?.openDate || "";
+        return pickVideoStartDateText(detail);
     }
 
     function getStartMsFromDetail(detail) {
@@ -936,7 +803,6 @@
         }
 
         const promise = fetchJson(`${VIDEO_DETAIL_API_BASE}/${encodeURIComponent(videoNo)}`, {
-            credentials: "include",
             headers: { Accept: "application/json" },
             timeoutMs: FETCH_TIMEOUT_MS,
         }).then((json) => json?.content || null).catch((error) => {
@@ -998,28 +864,6 @@
         removeClock();
         removeTitleHistoryExpander();
         loadMetadata(videoNo);
-    }
-
-    function getKstParts(ms) {
-        const date = new Date(ms + KST_OFFSET_MS);
-        return {
-            year: date.getUTCFullYear(),
-            month: date.getUTCMonth() + 1,
-            day: date.getUTCDate(),
-            hours: date.getUTCHours(),
-            minutes: date.getUTCMinutes(),
-            seconds: date.getUTCSeconds(),
-        };
-    }
-
-    function sameKstDate(aMs, bMs) {
-        const a = getKstParts(aMs);
-        const b = getKstParts(bMs);
-        return a.year === b.year && a.month === b.month && a.day === b.day;
-    }
-
-    function pad2(value) {
-        return String(value).padStart(2, "0");
     }
 
     function formatKstClock(ms, startMs) {
@@ -1470,37 +1314,28 @@
 
     function startDomObserver() {
         if (domObserver) return;
-        domObserver = new MutationObserver((mutations) => {
-            handlePageChange();
-            if (!isVodFeatureEnabled() || !isVodRoute()) return;
-            if (mutations.some(mutationCouldAffectClock)) scheduleSync();
+
+        domObserver = createMutationObserverSync({
+            onMutations(mutations) {
+                handlePageChange();
+                if (!isVodFeatureEnabled() || !isVodRoute()) return;
+                if (mutations.some(mutationCouldAffectClock)) scheduleSync();
+            },
+            onBodyReady() {
+                refreshDomObserverConfig();
+                scheduleSync();
+            },
         });
 
-        if (document.body) {
-            refreshDomObserverConfig();
-            return;
-        }
-
-        bodyObserver = new MutationObserver(() => {
-            if (!document.body) return;
-            bodyObserver.disconnect();
-            bodyObserver = null;
-            refreshDomObserverConfig();
-            scheduleSync();
-        });
-
-        bodyObserver.observe(document.documentElement, { childList: true, subtree: true });
+        refreshDomObserverConfig();
     }
 
     function stopDomObserver() {
         if (domObserver) {
+            domObserver.disconnectAll?.();
             domObserver.disconnect();
             domObserver = null;
             domObserverMode = "";
-        }
-        if (bodyObserver) {
-            bodyObserver.disconnect();
-            bodyObserver = null;
         }
     }
 
@@ -1534,15 +1369,14 @@
     }
 
     function installStorageChangeListener() {
-        if (storageChangeListenerInstalled || !globalThis.chrome?.storage?.onChanged) return;
-        storageChangeListenerInstalled = true;
-        chrome.storage.onChanged.addListener(handleWatchHistoryStorageChange);
+        if (removeStorageChangeListener) return;
+        removeStorageChangeListener = startStorageChangeListener(handleWatchHistoryStorageChange);
     }
 
     function uninstallStorageChangeListener() {
-        if (!storageChangeListenerInstalled || !globalThis.chrome?.storage?.onChanged) return;
-        storageChangeListenerInstalled = false;
-        chrome.storage.onChanged.removeListener(handleWatchHistoryStorageChange);
+        if (!removeStorageChangeListener) return;
+        removeStorageChangeListener();
+        removeStorageChangeListener = null;
     }
 
     function installRuntime() {

@@ -107,6 +107,7 @@
         setLoadingReason,
         sleep,
         startPageChangeDetection,
+        touchMapEntry,
     } = BetterChzzk.utils;
 
     function isFeatureEnabled() {
@@ -139,21 +140,6 @@
 
     function getFollowerFetchDelayMs() {
         return featureOptions.categoryToolsFollowerFetchDelayMs;
-    }
-
-    function trimMapToSize(map, maxSize) {
-        while (map.size > maxSize) {
-            const oldestKey = map.keys().next().value;
-            if (oldestKey === undefined) break;
-            map.delete(oldestKey);
-        }
-    }
-
-    function touchMapEntry(map, key, value, maxSize) {
-        map.delete(key);
-        map.set(key, value);
-        trimMapToSize(map, maxSize);
-        return value;
     }
 
     function getRoute() {
@@ -3433,6 +3419,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
 
     function stopObserver() {
         if (!observer) return;
+        observer.disconnectAll?.();
         observer.disconnect();
         observer = null;
     }

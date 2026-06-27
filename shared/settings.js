@@ -179,6 +179,10 @@
         for (const queued of callbacks) queued(options);
     }
 
+    function getStorageLastError() {
+        return globalThis.chrome?.runtime?.lastError || null;
+    }
+
     function installOptionsChangeListener() {
         if (optionsChangeListenerInstalled || !globalThis.chrome?.storage?.onChanged) return;
         optionsChangeListenerInstalled = true;
@@ -216,6 +220,10 @@
 
         chrome.storage.sync.get(OPTION_KEYS, (data) => {
             optionsLoading = false;
+            if (getStorageLastError()) {
+                flushOptionCallbacks(cachedOptions);
+                return;
+            }
             cachedOptions = normalizeOptions(data);
             optionsLoaded = true;
             flushOptionCallbacks(cachedOptions);
@@ -247,6 +255,7 @@
         FEATURE_KEYS,
         normalizeSkipSeconds,
         normalizeOptions,
+        getStorageLastError,
         getOptions,
         addOptionsChangeListener,
     };

@@ -16,6 +16,7 @@
     ];
 
     const {
+        createMutationObserverSync,
         createThrottledDomSync,
         getMainVideoElement,
         onReady,
@@ -27,7 +28,6 @@
     let lastLayoutMutationAt = 0;
     let checkSeq = 0;
     let observer = null;
-    let bodyObserver = null;
     let routeStartedAt = performance.now();
     let routeNeedsReplayChatFix = false;
     let removePageChangeDetection = null;
@@ -176,32 +176,18 @@
     function startObserver() {
         if (observer) return;
 
-        const config = {
-            childList: true,
-            subtree: true,
-        };
-
-        observer = new MutationObserver(() => {
-            lastLayoutMutationAt = performance.now();
-            handlePageChange();
-            if (routeNeedsReplayChatFix && isVodRoute() && !hasReplayChat() && !hasRecentReloadMark()) {
-                scheduleObserverCheck();
-            }
+        observer = createMutationObserverSync({
+            onMutations() {
+                lastLayoutMutationAt = performance.now();
+                handlePageChange();
+                if (routeNeedsReplayChatFix && isVodRoute() && !hasReplayChat() && !hasRecentReloadMark()) {
+                    scheduleObserverCheck();
+                }
+            },
+            onBodyReady() {
+                scheduleChecks({ spaNavigation: false });
+            },
         });
-
-        if (document.body) {
-            observer.observe(document.body, config);
-            return;
-        }
-
-        bodyObserver = new MutationObserver(() => {
-            if (!document.body) return;
-            bodyObserver.disconnect();
-            bodyObserver = null;
-            observer.observe(document.body, config);
-            scheduleChecks({ spaNavigation: false });
-        });
-        bodyObserver.observe(document.documentElement, { childList: true, subtree: true });
     }
 
     function installRuntime({ checkCurrentRoute = false } = {}) {

@@ -15,7 +15,6 @@
     const WATCH_HISTORY_STORAGE_KEY = "betterChzzkLiveWatchHistory";
     const WATCH_MATCH_START_TOLERANCE_MS = 60 * 60 * 1000;
     const WATCH_MATCH_OVERLAP_GRACE_MS = 10 * 60 * 1000;
-    const WATCH_RANGE_MERGE_GAP_MS = 2000;
     const SESSION_MERGE_GAP_MS = 60 * 1000;
     const MAX_STATS_CACHE_CHANNELS = 8;
     const MAX_MONTH_CACHE_ENTRIES = 36;
@@ -57,18 +56,37 @@
     let runtimeInstalled = false;
     let routeListenersInstalled = false;
     let calendarCloseListenerInstalled = false;
-    let storageListenerInstalled = false;
+    let removeStorageChangeListener = null;
     let removePageChangeDetection = null;
+    const storage = globalThis.chrome?.storage?.local;
     const {
+        addWatchRangeToRangesByDate,
         bindFeatureOptions,
+        collectWatchSessionRanges,
         createMutationObserverSync,
         fetchJson,
-        isLastPage: isLastPageResponse,
+        formatKstDateKey: formatDateKey,
+        formatKstMonthKey: formatMonthKey,
+        formatKstTime: formatKstClock,
+        getKstParts,
+        isLastPage,
         isVisible,
+        mergeDailySeconds: mergeWatchSessionDailySeconds,
+        mergeWatchRanges,
         normSpace,
+        normalizeDailySeconds: normalizeWatchDailySeconds,
         onReady,
         pickArray,
+        pickChzzkVideoNo,
+        pickVideoEndDateText,
+        pickVideoStartDateText,
+        parseChzzkDate,
+        startStorageChangeListener,
         startPageChangeDetection,
+        storageGet,
+        sumWatchRanges,
+        sumWatchRangesByDate,
+        touchMapEntry,
     } = BetterChzzk.utils;
 
     function isFeatureEnabled() {
@@ -97,21 +115,6 @@
 
     function getMaxCalendarPages() {
         return featureOptions.monthlyBroadcastTimeMaxCalendarPages;
-    }
-
-    function trimMapToSize(map, maxSize) {
-        while (map.size > maxSize) {
-            const oldestKey = map.keys().next().value;
-            if (oldestKey === undefined) break;
-            map.delete(oldestKey);
-        }
-    }
-
-    function touchMapEntry(map, key, value, maxSize) {
-        map.delete(key);
-        map.set(key, value);
-        trimMapToSize(map, maxSize);
-        return value;
     }
 
     function getChannelIdFromUrl() {
@@ -843,23 +846,15 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         if (!rows) return [];
 
         return rows.map((row) => {
-            const videoNo = row.videoNo ?? row.videoId ?? row.id;
+            const videoNo = pickChzzkVideoNo(row);
             const type = row.videoType || row.type || "";
             const duration = Number(row.duration);
-            const startDateText =
-                row.liveOpenDate ||
-                row.openDate ||
-                row.broadcastOpenDate ||
-                "";
-            const endDateText =
-                row.publishDateAt ||
-                row.publishDate ||
-                row.createdDate ||
-                "";
+            const startDateText = pickVideoStartDateText(row);
+            const endDateText = pickVideoEndDateText(row);
 
             if (!videoNo || !Number.isFinite(duration) || duration <= 0 || (!startDateText && !endDateText)) return null;
             return {
-                videoNo: String(videoNo),
+                videoNo,
                 type: String(type || ""),
                 title: normSpace(row.videoTitle || row.title || row.liveTitle || ""),
                 duration,
@@ -868,25 +863,6 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
                 endedAt: parseChzzkDate(endDateText),
             };
         }).filter(Boolean);
-    }
-
-    function parseChzzkDate(value) {
-        if (!value) return null;
-        if (typeof value === "number") {
-            const ms = value > 100000000000 ? value : value * 1000;
-            const date = new Date(ms);
-            return Number.isNaN(date.getTime()) ? null : date;
-        }
-
-        const raw = String(value).trim();
-        const isoLike = raw.includes("T") ? raw : raw.replace(" ", "T");
-        const withZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(isoLike) ? isoLike : `${isoLike}+09:00`;
-        const date = new Date(withZone);
-        return Number.isNaN(date.getTime()) ? null : date;
-    }
-
-    function isLastPage(json, videos) {
-        return isLastPageResponse(json, videos, PAGE_SIZE);
     }
 
     function getChannelPageCache(channelId) {
@@ -909,7 +885,6 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         });
         const url = `${API_BASE}/${encodeURIComponent(channelId)}/videos?${params.toString()}`;
         return fetchJson(url, {
-            credentials: "include",
             headers: { Accept: "application/json" },
             timeoutMs: FETCH_TIMEOUT_MS,
         });
@@ -946,157 +921,6 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         return Number.isFinite(number) && number > 0 ? number : 0;
     }
 
-    function normalizeWatchDailySeconds(value) {
-        return Object.fromEntries(
-            Object.entries(value && typeof value === "object" ? value : {})
-                .map(([key, seconds]) => [key, Math.max(0, Number(seconds) || 0)])
-                .filter(([, seconds]) => seconds > 0)
-        );
-    }
-
-    function getNextKstDayStartMs(ms) {
-        const parts = getKstParts(ms);
-        return Date.UTC(parts.year, parts.month - 1, parts.day + 1) - KST_OFFSET_MS;
-    }
-
-    function getWatchDateScopeBounds(dateKey) {
-        const parts = String(dateKey || "").split("-").map(Number);
-        if (parts.length !== 3 || parts.some((value) => !Number.isFinite(value))) return null;
-        const startMs = Date.UTC(parts[0], parts[1] - 1, parts[2]) - KST_OFFSET_MS;
-        return { startMs, endMs: startMs + DAY_MS };
-    }
-
-    function mergeWatchRanges(ranges) {
-        const normalized = (Array.isArray(ranges) ? ranges : [])
-            .map((range) => {
-                const startAt = Math.round(Number(range?.startAt) || Number(range?.start) || 0);
-                const endAt = Math.round(Number(range?.endAt) || Number(range?.end) || 0);
-                return startAt > 0 && endAt > startAt ? { startAt, endAt } : null;
-            })
-            .filter(Boolean)
-            .sort((a, b) => a.startAt - b.startAt || a.endAt - b.endAt);
-
-        const merged = [];
-        for (const range of normalized) {
-            const last = merged[merged.length - 1];
-            if (last && range.startAt <= last.endAt + WATCH_RANGE_MERGE_GAP_MS) {
-                last.endAt = Math.max(last.endAt, range.endAt);
-            } else {
-                merged.push({ ...range });
-            }
-        }
-        return merged;
-    }
-
-    function normalizeWatchRanges(value) {
-        return mergeWatchRanges(value);
-    }
-
-    function sumWatchRanges(ranges) {
-        return mergeWatchRanges(ranges)
-            .reduce((sum, range) => sum + Math.max(0, range.endAt - range.startAt) / 1000, 0);
-    }
-
-    function getFallbackWatchSessionRange(session) {
-        const watchedSeconds = Math.max(0, Number(session?.watchedSeconds) || 0);
-        if (watchedSeconds <= 0) return null;
-
-        const durationMs = watchedSeconds * 1000;
-        let startAt = Number(session?.enteredAt) || Number(session?.startedAt) || 0;
-        let endAt = Number(session?.leftAt) || Number(session?.endedAt) || Number(session?.lastWatchedAt) || 0;
-
-        if (!endAt && startAt) endAt = startAt + durationMs;
-        if (!startAt && endAt) startAt = Math.max(0, endAt - durationMs);
-        if (!startAt || !endAt) return null;
-        if (endAt <= startAt) endAt = startAt + durationMs;
-        if (endAt - startAt > durationMs + WATCH_RANGE_MERGE_GAP_MS) {
-            startAt = Math.max(startAt, endAt - durationMs);
-        }
-        return endAt > startAt ? { startAt: Math.round(startAt), endAt: Math.round(endAt) } : null;
-    }
-
-    function getFallbackWatchSessionRangeForDate(session, dateKey, seconds) {
-        const bounds = getWatchDateScopeBounds(dateKey);
-        const watchedSeconds = Math.max(0, Number(seconds) || 0);
-        if (!bounds || watchedSeconds <= 0) return null;
-
-        const durationMs = watchedSeconds * 1000;
-        const enteredAt = Number(session?.enteredAt) || Number(session?.startedAt) || 0;
-        const leftAt = Number(session?.leftAt) || Number(session?.endedAt) || Number(session?.lastWatchedAt) || 0;
-        let startAt = bounds.startMs;
-        let endAt = Math.min(bounds.endMs, startAt + durationMs);
-
-        if (leftAt >= bounds.startMs && leftAt <= bounds.endMs) {
-            endAt = leftAt;
-            startAt = Math.max(bounds.startMs, endAt - durationMs);
-        } else if (enteredAt >= bounds.startMs && enteredAt < bounds.endMs) {
-            startAt = enteredAt;
-            endAt = Math.min(bounds.endMs, startAt + durationMs);
-        }
-
-        return endAt > startAt ? { startAt: Math.round(startAt), endAt: Math.round(endAt) } : null;
-    }
-
-    function getFallbackWatchSessionRanges(session) {
-        const dailyEntries = Object.entries(normalizeWatchDailySeconds(session?.dailySeconds));
-        if (dailyEntries.length) {
-            return mergeWatchRanges(
-                dailyEntries
-                    .map(([dateKey, seconds]) => getFallbackWatchSessionRangeForDate(session, dateKey, seconds))
-                    .filter(Boolean)
-            );
-        }
-
-        const fallback = getFallbackWatchSessionRange(session);
-        return fallback ? [fallback] : [];
-    }
-
-    function getWatchSessionRanges(session) {
-        const ranges = normalizeWatchRanges(session?.watchedRanges);
-        if (ranges.length) return ranges;
-        return getFallbackWatchSessionRanges(session);
-    }
-
-    function collectWatchSessionRanges(sessionDetails) {
-        const ranges = [];
-        for (const session of sessionDetails || []) {
-            ranges.push(...getWatchSessionRanges(session));
-        }
-        return ranges;
-    }
-
-    function addWatchRangeToRangesByDate(rangesByDate, range) {
-        let cursor = range.startAt;
-        while (cursor < range.endAt) {
-            const dateKey = formatDateKey(getKstParts(cursor));
-            const next = Math.min(range.endAt, getNextKstDayStartMs(cursor));
-            if (next > cursor) {
-                if (!rangesByDate[dateKey]) rangesByDate[dateKey] = [];
-                rangesByDate[dateKey].push({ startAt: cursor, endAt: next });
-            }
-            cursor = next;
-        }
-    }
-
-    function sumWatchRangesByDate(rangesByDate) {
-        const dailySeconds = {};
-        for (const [dateKey, ranges] of Object.entries(rangesByDate || {})) {
-            const seconds = sumWatchRanges(ranges);
-            if (seconds > 0) dailySeconds[dateKey] = seconds;
-        }
-        return dailySeconds;
-    }
-
-    function mergeWatchSessionDailySeconds(target, source) {
-        const next = target && typeof target === "object" ? target : {};
-        for (const [dateKey, seconds] of Object.entries(source && typeof source === "object" ? source : {})) {
-            const value = Math.max(0, Number(seconds) || 0);
-            if (value <= 0) continue;
-            next[dateKey] = Math.max(0, Number(next[dateKey]) || 0) + value;
-        }
-        return next;
-    }
-
     function mergeContinuousWatchSessionDetails(sessionDetails) {
         const merged = [];
         const rows = (Array.isArray(sessionDetails) ? sessionDetails : [])
@@ -1107,7 +931,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
                 leftAt: Number(session.leftAt) || Number(session.enteredAt) || 0,
                 watchedSeconds: Math.max(0, Number(session.watchedSeconds) || 0),
                 dailySeconds: normalizeWatchDailySeconds(session.dailySeconds),
-                watchedRanges: normalizeWatchRanges(session.watchedRanges),
+                watchedRanges: mergeWatchRanges(session.watchedRanges),
             }))
             .filter((session) => session.id && session.enteredAt > 0 && session.watchedSeconds >= MINUTE_SECONDS)
             .sort((a, b) => a.enteredAt - b.enteredAt || a.leftAt - b.leftAt);
@@ -1138,7 +962,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
             .map((session) => {
                 const enteredAt = Number(session.enteredAt) || Number(session.startedAt) || 0;
                 const leftAt = Number(session.leftAt) || Number(session.endedAt) || Number(session.lastWatchedAt) || 0;
-                const watchedRanges = normalizeWatchRanges(session.watchedRanges);
+                const watchedRanges = mergeWatchRanges(session.watchedRanges);
                 return {
                     id: normSpace(session.id) || `${enteredAt}:${leftAt}`,
                     enteredAt,
@@ -1219,15 +1043,17 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
     }
 
     function refreshWatchHistory({ rerender = true, deferWhenVisible = false } = {}) {
-        if (!globalThis.chrome?.storage?.local || watchHistoryLoading) return;
+        if (!storage || watchHistoryLoading) return;
 
         watchHistoryLoading = true;
-        chrome.storage.local.get(WATCH_HISTORY_STORAGE_KEY, (data) => {
-            watchHistoryLoading = false;
-            if (globalThis.chrome?.runtime?.lastError) return;
+        storageGet(storage, WATCH_HISTORY_STORAGE_KEY).then((data) => {
             watchHistoryEntries = normalizeWatchHistory(data?.[WATCH_HISTORY_STORAGE_KEY]);
             watchHistoryLoaded = true;
             if (rerender) rerenderCurrentCalendar({ deferWhenVisible });
+        }).catch(() => {
+            // Preserve the previous behavior: storage read failures only skip watch-history enrichment.
+        }).finally(() => {
+            watchHistoryLoading = false;
         });
     }
 
@@ -1356,7 +1182,6 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         }
 
         const promise = fetchJson(`${VIDEO_DETAIL_API_BASE}/${encodeURIComponent(videoNo)}`, {
-            credentials: "include",
             headers: { Accept: "application/json" },
             timeoutMs: FETCH_TIMEOUT_MS,
         }).then((json) => json?.content || null).catch((error) => {
@@ -1379,8 +1204,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         const title = normSpace(detail.videoTitle || detail.title || detail.liveTitle || "");
         if (title) video.title = title;
 
-        const startText = detail.liveOpenDate || detail.openDate || detail.broadcastOpenDate || "";
-        const endText = detail.publishDateAt || detail.publishDate || detail.createdDate || "";
+        const startText = pickVideoStartDateText(detail);
+        const endText = pickVideoEndDateText(detail);
         const startedAt = parseChzzkDate(startText);
         const endedAt = parseChzzkDate(endText);
 
@@ -1466,16 +1291,6 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         return Math.min(video.duration, Math.round(overlapMs / 1000));
     }
 
-    function getKstParts(ms = Date.now()) {
-        const date = new Date(ms + KST_OFFSET_MS);
-        return {
-            year: date.getUTCFullYear(),
-            month: date.getUTCMonth() + 1,
-            day: date.getUTCDate(),
-            weekday: date.getUTCDay(),
-        };
-    }
-
     function getKstMonthInfo(nowMs = Date.now(), targetYear = null, targetMonth = null) {
         const nowParts = getKstParts(nowMs);
         const year = targetYear || nowParts.year;
@@ -1544,14 +1359,6 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         setWidgetState(widget, state, value, meta, `${getCalendarMonthDisplayName(year, month)} 조회 중`);
     }
 
-    function formatDateKey(parts) {
-        return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
-    }
-
-    function formatMonthKey(year, month) {
-        return `${year}-${String(month).padStart(2, "0")}`;
-    }
-
     function formatChannelMonthKey(channelId, year, month) {
         return `${channelId}:${formatMonthKey(year, month)}`;
     }
@@ -1606,13 +1413,6 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         if (!cached) return null;
         touchMapEntry(channelMonthCache, key, cached, MAX_MONTH_CACHE_ENTRIES);
         return cached.month || null;
-    }
-
-    function formatKstClock(ms) {
-        const date = new Date(ms + KST_OFFSET_MS);
-        const hours = String(date.getUTCHours()).padStart(2, "0");
-        const minutes = String(date.getUTCMinutes()).padStart(2, "0");
-        return `${hours}:${minutes}`;
     }
 
     function formatKstMonthDay(ms) {
@@ -1697,7 +1497,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
                     return endMs !== null && endMs < monthInfo.startMs;
                 });
 
-            if (isLastPage(json, videos) || (page > 0 && reachedOlderThanMonth)) break;
+            if (isLastPage(json, videos, PAGE_SIZE) || (page > 0 && reachedOlderThanMonth)) break;
         }
 
         monthInfo.pagesLoaded = pagesLoaded;
@@ -1748,7 +1548,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
                     const endMs = getVideoEndMs(video);
                     return endMs !== null && endMs < oldestNeededMs;
                 });
-            if (isLastPage(json, videos) || (page > 0 && pageIsOlderThanWindow)) break;
+            if (isLastPage(json, videos, PAGE_SIZE) || (page > 0 && pageIsOlderThanWindow)) break;
         }
 
         finalizeMonthInfo(monthInfo);
@@ -2240,6 +2040,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
 
     function stopObserver() {
         if (!observer) return;
+        observer.disconnectAll?.();
         observer.disconnect();
         observer = null;
     }
@@ -2269,15 +2070,14 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
     }
 
     function installStorageListener() {
-        if (storageListenerInstalled || !globalThis.chrome?.storage?.onChanged) return;
-        storageListenerInstalled = true;
-        chrome.storage.onChanged.addListener(handleWatchHistoryStorageChange);
+        if (removeStorageChangeListener) return;
+        removeStorageChangeListener = startStorageChangeListener(handleWatchHistoryStorageChange);
     }
 
     function uninstallStorageListener() {
-        if (!storageListenerInstalled || !globalThis.chrome?.storage?.onChanged) return;
-        storageListenerInstalled = false;
-        chrome.storage.onChanged.removeListener(handleWatchHistoryStorageChange);
+        if (!removeStorageChangeListener) return;
+        removeStorageChangeListener();
+        removeStorageChangeListener = null;
     }
 
     function clearRuntimeTimers() {
