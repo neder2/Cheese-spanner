@@ -328,6 +328,7 @@ test("following preview tooltip plays live in the hover card and reuses cache", 
     assert.equal(tip.dataset.state, "loading");
     assert.equal(tip.querySelector(".bcfp-title").textContent, "DOM \uBC29\uC1A1 \uC81C\uBAA9");
     assert.equal(tip.querySelector("iframe.bcfp-player"), null);
+    assert.equal(tip.querySelector(".bcfp-live"), null);
     assert.match(tip.querySelector(".bcfp-media img").getAttribute("src"), /dom-thumb\.jpg/);
     const source = readRepoFile("features", "followingPreviewTooltip.js");
     const pageSource = readRepoFile("features", "followingPreviewPage.js");
@@ -337,6 +338,7 @@ test("following preview tooltip plays live in the hover card and reuses cache", 
     assert.match(source, /PLAYER_START_SETTLE_MS = 90/);
     assert.match(source, /betterchzzk:following-preview:play/);
     assert.doesNotMatch(source, /srcdoc/);
+    assert.doesNotMatch(source, /bcfp-live/);
     assert.match(pageSource, /LiveProvider\.fromJSON/);
     assert.match(pageSource, /webpackChunkglive_fe_pc/);
     assert.match(pageSource, /serviceId: 2099/);
@@ -351,6 +353,7 @@ test("following preview tooltip plays live in the hover card and reuses cache", 
     assert.equal(tip.dataset.state, "ready");
     assert.equal(tip.querySelector(".bcfp-channel").textContent, "API \uCC44\uB110");
     assert.equal(tip.querySelector(".bcfp-title").textContent, "API \uBC29\uC1A1 \uC81C\uBAA9");
+    assert.equal(tip.querySelector(".bcfp-live"), null);
     assert.match(tip.textContent, /\uAC8C\uC784/);
     assert.doesNotMatch(tip.textContent, /1,234\uBA85/);
     assert.doesNotMatch(tip.querySelector(".bcfp-meta").textContent, /\uBC29\uC1A1|\uBD84\uC9F8|\uBA85/);

@@ -107,22 +107,6 @@
   font-weight:900;
   letter-spacing:0;
 }
-#${TOOLTIP_ID} .bcfp-live{
-  position:absolute;
-  left:10px;
-  top:10px;
-  display:inline-flex;
-  align-items:center;
-  height:20px;
-  padding:0 7px;
-  border-radius:4px;
-  background:#FF365E;
-  color:#FFFFFF;
-  font-size:11px;
-  font-weight:900;
-  line-height:20px;
-  pointer-events:none;
-}
 #${TOOLTIP_ID} .bcfp-body{
   display:flex;
   flex-direction:column;
@@ -762,11 +746,6 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             media.appendChild(playerMount);
             queuePlayerRequest(() => requestPreviewPlayer(playerMount, meta));
         }
-
-        const badge = document.createElement("div");
-        badge.className = "bcfp-live";
-        badge.textContent = "LIVE";
-        media.appendChild(badge);
 
         return media;
     }
