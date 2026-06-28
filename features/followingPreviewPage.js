@@ -4,9 +4,6 @@
     const STOP_EVENT = "betterchzzk:following-preview:stop";
     const MOUNT_ATTR = "data-bcfp-player-mount";
     const STATE_ATTR = "data-bcfp-player-state";
-    const PLAYER_VENDOR_FALLBACK_URL =
-        "https://ssl.pstatic.net/static/nng/glive/resource/p/static/js/player-vendor-vUWY5TkW.js";
-    const PLAYER_VENDOR_RE = /\/player-vendor-[^/?#]+\.js(?:[?#].*)?$/i;
     const WEBPACK_CHUNK_NAME = "webpackChunkglive_fe_pc";
     const WEBPACK_CAPTURE_ID = "betterchzzk-following-preview";
     const WEBPACK_PLAYER_MODULE_ID = 49588;
@@ -57,25 +54,10 @@
         return `[${MOUNT_ATTR}="${String(mountId || "").replace(/["\\]/g, "\\$&")}"]`;
     }
 
-    function getPlayerVendorUrl() {
-        for (const el of document.querySelectorAll("link[href], script[src]")) {
-            const url = el.href || el.src || "";
-            if (PLAYER_VENDOR_RE.test(url)) return url;
-        }
-        return PLAYER_VENDOR_FALLBACK_URL;
-    }
-
     function unwrapPlayerRuntime(value) {
         if (!value) return null;
 
-        const candidates = [
-            value,
-            value.default,
-            value.x,
-            value.X,
-            value.Player,
-            value.player,
-        ];
+        const candidates = [value, value.default, value.x, value.X, value.Player, value.player];
 
         for (const candidate of candidates) {
             if (candidate?.CorePlayer && candidate?.LiveProvider) return candidate;
@@ -153,26 +135,13 @@
         return null;
     }
 
-    async function importPlayerVendorRuntime() {
-        const module = await import(getPlayerVendorUrl());
-        return unwrapPlayerRuntime(module);
-    }
-
     async function getPlayerRuntime() {
         if (playerRuntime) return playerRuntime;
 
         if (!playerRuntimePromise) {
             playerRuntimePromise = (async () => {
-                if (getAvailableWebpackChunk()) {
-                    const fromWebpack = getRuntimeFromWebpackCache(await getWebpackRequire().catch(() => null));
-                    if (fromWebpack) return fromWebpack;
-                }
-
-                const fromImport = await importPlayerVendorRuntime().catch(() => null);
-                if (fromImport) return fromImport;
-
-                const delayedWebpack = getRuntimeFromWebpackCache(await getWebpackRequire().catch(() => null));
-                if (delayedWebpack) return delayedWebpack;
+                const fromWebpack = getRuntimeFromWebpackCache(await getWebpackRequire().catch(() => null));
+                if (fromWebpack) return fromWebpack;
 
                 throw new Error("following-preview-player-runtime-unavailable");
             })();
@@ -197,6 +166,12 @@
     function markMountState(el, state) {
         if (!el) return;
         el.setAttribute(STATE_ATTR, state);
+    }
+
+    function getPlayerMountNode(previewPlayer) {
+        if (previewPlayer instanceof Node) return previewPlayer;
+        if (previewPlayer?.shadowRoot instanceof Element) return previewPlayer.shadowRoot;
+        return null;
     }
 
     function clearLoadedMetadataListener() {
@@ -282,8 +257,8 @@
             mountedEl = mount;
             markMountState(mount, "loading");
 
-            const root = previewPlayer.shadowRoot || previewPlayer;
-            if (root && root.parentNode !== mount) mount.replaceChildren(root);
+            const playerNode = getPlayerMountNode(previewPlayer);
+            if (playerNode && playerNode.parentNode !== mount) mount.replaceChildren(playerNode);
 
             previewPlayer.volume = Number.isFinite(detail.volume) ? detail.volume : 0;
             previewPlayer.muted = detail.muted !== false;

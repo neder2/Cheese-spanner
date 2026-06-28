@@ -150,8 +150,12 @@ test("manifest loads following preview after following refresh", () => {
         false
     );
     assert.ok(mainScript.js.includes("features/followingPreviewPage.js"));
-    assert.ok(mainScript.js.indexOf("features/followingPreviewPage.js") > mainScript.js.indexOf("features/routeBridgePage.js"));
-    assert.ok(mainScript.js.indexOf("features/followingPreviewPage.js") < mainScript.js.indexOf("features/autoQualityPage.js"));
+    assert.ok(
+        mainScript.js.indexOf("features/followingPreviewPage.js") > mainScript.js.indexOf("features/routeBridgePage.js")
+    );
+    assert.ok(
+        mainScript.js.indexOf("features/followingPreviewPage.js") < mainScript.js.indexOf("features/autoQualityPage.js")
+    );
     assert.ok(isolatedScript.js.includes("features/followingPreviewTooltip.js"));
     assert.ok(
         isolatedScript.js.indexOf("features/followingPreviewTooltip.js") >
@@ -274,6 +278,84 @@ test("following preview page bridge reuses the main-world CHZZK player", async (
     assert.equal(players[0].srcObject, null);
 });
 
+test("following preview page bridge mounts the player host when it owns a native shadow root", async () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/");
+    const { document } = dom.window;
+    const players = [];
+    const fromJsonCalls = [];
+
+    class FakeCorePlayer extends dom.window.HTMLElement {
+        constructor() {
+            super();
+            this.attachShadow({ mode: "open" });
+            this.shadowRoot.appendChild(document.createElement("video"));
+            this.readyState = 1;
+            this.playCalls = 0;
+            players.push(this);
+        }
+
+        play() {
+            this.playCalls += 1;
+            return Promise.resolve();
+        }
+    }
+
+    dom.window.customElements.define("better-chzzk-fake-player", FakeCorePlayer);
+
+    const fakePlayerRuntime = {
+        CorePlayer: FakeCorePlayer,
+        LiveProvider: {
+            fromJSON(playback, options) {
+                fromJsonCalls.push({ options, playback });
+                return { options, playback };
+            },
+        },
+    };
+
+    dom.window.webpackChunkglive_fe_pc = [];
+    dom.window.webpackChunkglive_fe_pc.push = (chunk) => {
+        const modules = chunk[1] || {};
+        const runtime = chunk[2];
+        const cache = {
+            49588: { exports: fakePlayerRuntime },
+        };
+        const require = (id) => {
+            if (Object.hasOwn(modules, id)) {
+                const module = { exports: {} };
+                modules[id](module, module.exports, require);
+                cache[id] = module;
+                return module.exports;
+            }
+            return cache[id]?.exports;
+        };
+        require.c = cache;
+        return runtime(require);
+    };
+
+    evalRepoScript(dom, "features", "followingPreviewPage.js");
+
+    const mount = document.createElement("div");
+    mount.setAttribute("data-bcfp-player-mount", "native-shadow");
+    document.body.appendChild(mount);
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:following-preview:play", {
+            detail: JSON.stringify({
+                mountId: "native-shadow",
+                playbackJson: JSON.stringify({ media: [{ mediaId: "HLS", path: "native-shadow.m3u8" }] }),
+                requestId: "native-shadow",
+            }),
+        })
+    );
+    await waitForAsyncCallbacks();
+
+    assert.equal(players.length, 1);
+    assert.equal(mount.getAttribute("data-bcfp-player-state"), "ready");
+    assert.equal(mount.firstElementChild, players[0]);
+    assert.equal(mount.querySelector("video"), null);
+    assert.equal(fromJsonCalls.length, 1);
+    assert.equal(players[0].playCalls, 1);
+});
+
 test("following preview tooltip plays live in the hover card and reuses cache", async () => {
     const chrome = createFakeChrome();
     const { document, dom, item, link } = createFollowingPreviewDom(chrome);
@@ -295,22 +377,23 @@ test("following preview tooltip plays live in the hover card and reuses cache", 
     dom.window.fetch = (url, init) => {
         calls.push({ init, url });
         return new Promise((resolve) => {
-            resolveFetch = () => resolve({
-                ok: true,
-                json: async () => ({
-                    content: {
-                        liveTitle: "API \uBC29\uC1A1 \uC81C\uBAA9",
-                        liveImageUrl: "https://example.com/live-{type}.jpg",
-                        liveCategoryValue: "\uAC8C\uC784",
-                        concurrentUserCount: 1234,
-                        openDate: new Date(now - (3600 + 120 + 3) * 1000).toISOString(),
-                        livePlaybackJson: playbackJson,
-                        channel: {
-                            channelName: "API \uCC44\uB110",
+            resolveFetch = () =>
+                resolve({
+                    ok: true,
+                    json: async () => ({
+                        content: {
+                            liveTitle: "API \uBC29\uC1A1 \uC81C\uBAA9",
+                            liveImageUrl: "https://example.com/live-{type}.jpg",
+                            liveCategoryValue: "\uAC8C\uC784",
+                            concurrentUserCount: 1234,
+                            openDate: new Date(now - (3600 + 120 + 3) * 1000).toISOString(),
+                            livePlaybackJson: playbackJson,
+                            channel: {
+                                channelName: "API \uCC44\uB110",
+                            },
                         },
-                    },
-                }),
-            });
+                    }),
+                });
         });
     };
 
@@ -344,6 +427,9 @@ test("following preview tooltip plays live in the hover card and reuses cache", 
     assert.match(pageSource, /LiveProvider\.fromJSON/);
     assert.match(pageSource, /webpackChunkglive_fe_pc/);
     assert.match(pageSource, /serviceId: 2099/);
+    assert.doesNotMatch(pageSource, /import\s*\(/);
+    assert.doesNotMatch(pageSource, /player-vendor/i);
+    assert.doesNotMatch(pageSource, /ssl\.pstatic\.net/);
     assert.doesNotMatch(source, /betterchzzkPreview/);
     assert.equal(item.getAttribute("data-bcfp-active"), "1");
 
@@ -468,7 +554,10 @@ test("following preview aborts stale live-detail requests during rapid hover", a
     assert.equal(calls[0].signal.aborted, true);
     assert.equal(calls[1].signal.aborted, false);
     assert.match(calls[1].url, /channel-456/);
-    assert.equal(document.querySelector("#betterchzzk-following-preview[data-show='1'] .bcfp-title").textContent, "\uB450 \uBC88\uC9F8 \uBC29\uC1A1");
+    assert.equal(
+        document.querySelector("#betterchzzk-following-preview[data-show='1'] .bcfp-title").textContent,
+        "\uB450 \uBC88\uC9F8 \uBC29\uC1A1"
+    );
 
     secondLink.dispatchEvent(new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
     await waitForAsyncCallbacks();
