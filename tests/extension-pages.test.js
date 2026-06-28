@@ -2500,6 +2500,129 @@ test("VOD replay chat fix runs even when the old stored option is disabled", asy
     );
 });
 
+async function createVodBroadcastClockFixture(detail, { currentTime = 2, videoNo = "12345" } = {}) {
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: false,
+            vodBroadcastClockEnabled: true,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            "<main>",
+            '<video id="video"></video>',
+            '<div class="pzp-vod-time" id="time">0:00 / 1:00</div>',
+            "</main>",
+            "</body>",
+        ].join(""),
+        `https://chzzk.naver.com/video/${videoNo}`,
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const time = document.getElementById("time");
+
+    video.currentTime = currentTime;
+    makeVisibleVideo(video);
+    time.getBoundingClientRect = () => ({
+        width: 120,
+        height: 24,
+        left: 16,
+        top: 324,
+        right: 136,
+        bottom: 348,
+    });
+    dom.window.fetch = async (url) => {
+        assert.match(String(url), new RegExp(`/service/v2/videos/${videoNo}$`));
+        return {
+            ok: true,
+            json: async () => ({
+                content: {
+                    videoNo,
+                    videoTitle: "Split VOD fixture",
+                    ...detail,
+                },
+            }),
+        };
+    };
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "vodBroadcastClock.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+
+    await waitForCondition(() => {
+        const clock = document.getElementById("betterchzzk-vod-broadcast-clock");
+        return Boolean(clock?.querySelector(".bcbc-time")?.textContent);
+    });
+
+    return {
+        clock: document.getElementById("betterchzzk-vod-broadcast-clock"),
+        dom,
+        video,
+    };
+}
+
+test("VOD broadcast clock keeps normal VOD start time without a split offset", async () => {
+    const originalStart = Date.parse("2026-06-28T00:00:00+09:00");
+    const durationSeconds = 60 * 60;
+    const { clock } = await createVodBroadcastClockFixture({
+        liveOpenDate: "2026-06-28 00:00:00",
+        duration: durationSeconds,
+        publishDate: new Date(originalStart + durationSeconds * 1000).toISOString(),
+    });
+
+    assert.equal(clock.querySelector(".bcbc-time").textContent, "00:00:02");
+    assert.match(clock.title, /2026-06-28 00:00:00 KST/);
+    assert.equal(clock.title.includes("VOD"), false);
+});
+
+test("VOD broadcast clock applies a 17h split offset for the second VOD segment", async () => {
+    const originalStart = Date.parse("2026-06-28T00:00:00+09:00");
+    const durationSeconds = 60 * 60;
+    const secondSegmentStart = originalStart + 17 * 60 * 60 * 1000;
+    const { clock } = await createVodBroadcastClockFixture({
+        liveOpenDate: "2026-06-28 00:00:00",
+        duration: durationSeconds,
+        publishDate: new Date(secondSegmentStart + durationSeconds * 1000).toISOString(),
+    });
+
+    assert.equal(clock.querySelector(".bcbc-time").textContent, "17:00:02");
+    assert.match(clock.title, /2026-06-28 17:00:00 KST/);
+    assert.match(clock.title, /2026-06-28 00:00:00 KST/);
+    assert.match(clock.title, /\+17:00:00/);
+});
+
+test("VOD broadcast clock applies a 34h split offset for the third VOD segment", async () => {
+    const originalStart = Date.parse("2026-06-28T00:00:00+09:00");
+    const durationSeconds = 60 * 60;
+    const thirdSegmentStart = originalStart + 34 * 60 * 60 * 1000;
+    const { clock } = await createVodBroadcastClockFixture({
+        liveOpenDate: "2026-06-28 00:00:00",
+        duration: durationSeconds,
+        liveCloseDate: new Date(thirdSegmentStart + durationSeconds * 1000).toISOString(),
+    });
+
+    assert.equal(clock.querySelector(".bcbc-time").textContent, "10:00:02");
+    assert.match(clock.title, /2026-06-29 10:00:00 KST/);
+    assert.match(clock.title, /\+34:00:00/);
+});
+
+test("VOD broadcast clock ignores small publish delays as normal VOD processing time", async () => {
+    const originalStart = Date.parse("2026-06-28T00:00:00+09:00");
+    const durationSeconds = 60 * 60;
+    const { clock } = await createVodBroadcastClockFixture({
+        liveOpenDate: "2026-06-28 00:00:00",
+        duration: durationSeconds,
+        publishDate: new Date(originalStart + durationSeconds * 1000 + 7 * 60 * 1000).toISOString(),
+    });
+
+    assert.equal(clock.querySelector(".bcbc-time").textContent, "00:00:02");
+    assert.equal(clock.title.includes("VOD"), false);
+});
+
 test("VOD broadcast clock stays hidden when the broadcast start time is unavailable", async () => {
     const chrome = createFakeChrome({
         sync: {

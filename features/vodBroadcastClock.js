@@ -47,6 +47,9 @@
     const CONTROL_AREA_AFTER_VIDEO_BOTTOM = 110;
     const CONTROL_AREA_MAX_HEIGHT = 96;
     const HISTORY_START_TOLERANCE_MS = 3 * 60 * 60 * 1000;
+    const VOD_SPLIT_SEGMENT_MS = 17 * 60 * 60 * 1000;
+    const VOD_SPLIT_OFFSET_TOLERANCE_MS = 45 * 60 * 1000;
+    const VOD_SPLIT_MIN_OFFSET_MS = VOD_SPLIT_SEGMENT_MS - VOD_SPLIT_OFFSET_TOLERANCE_MS;
     const MAX_DETAIL_CACHE_ENTRIES = 100;
     const MAX_HISTORY_INFO_CACHE_ENTRIES = 100;
 
@@ -71,6 +74,7 @@
         onReady,
         pad2,
         parseChzzkDate,
+        pickVideoEndDateText,
         pickVideoStartDateText,
         pickLargestVisible,
         pickString,
@@ -87,6 +91,8 @@
     let clockAnchorEl = null;
     let currentVideoNo = "";
     let currentStartMs = NaN;
+    let currentOriginalStartMs = NaN;
+    let currentSegmentOffsetMs = 0;
     let currentStartSource = "";
     let currentHistoryInfo = null;
     let titleHistoryExpanded = false;
@@ -795,6 +801,60 @@
         return Number.isFinite(startMs) ? startMs : NaN;
     }
 
+    function getEndMsFromDetailForSplit(detail) {
+        const endText = pickString(
+            pickVideoEndDateText?.(detail),
+            detail?.liveCloseDate,
+            detail?.closeDate,
+            detail?.broadcastCloseDate,
+            detail?.live?.closeDate,
+            detail?.live?.liveCloseDate
+        );
+        const endMs = parseChzzkDate(endText)?.getTime();
+        return Number.isFinite(endMs) ? endMs : NaN;
+    }
+
+    function getSplitVodSegmentOffsetMs(detail, originalStartMs) {
+        if (!Number.isFinite(originalStartMs)) return 0;
+
+        const durationSeconds = getVideoDurationSeconds(detail);
+        if (!Number.isFinite(durationSeconds)) return 0;
+
+        const endMs = getEndMsFromDetailForSplit(detail);
+        if (!Number.isFinite(endMs)) return 0;
+
+        const inferredSegmentStartMs = endMs - durationSeconds * 1000;
+        const rawOffsetMs = inferredSegmentStartMs - originalStartMs;
+        if (!Number.isFinite(rawOffsetMs) || rawOffsetMs < VOD_SPLIT_MIN_OFFSET_MS) return 0;
+
+        const segmentIndex = Math.round(rawOffsetMs / VOD_SPLIT_SEGMENT_MS);
+        if (segmentIndex <= 0) return 0;
+
+        const alignedOffsetMs = segmentIndex * VOD_SPLIT_SEGMENT_MS;
+        const driftMs = Math.abs(rawOffsetMs - alignedOffsetMs);
+        if (driftMs > VOD_SPLIT_OFFSET_TOLERANCE_MS) return 0;
+
+        return alignedOffsetMs;
+    }
+
+    function getVodSegmentStartInfo(detail) {
+        const originalStartMs = getStartMsFromDetail(detail);
+        if (!Number.isFinite(originalStartMs)) {
+            return {
+                originalStartMs: NaN,
+                segmentOffsetMs: 0,
+                segmentStartMs: NaN,
+            };
+        }
+
+        const segmentOffsetMs = getSplitVodSegmentOffsetMs(detail, originalStartMs);
+        return {
+            originalStartMs,
+            segmentOffsetMs,
+            segmentStartMs: originalStartMs + segmentOffsetMs,
+        };
+    }
+
     function fetchVideoDetail(videoNo) {
         if (detailCache.has(videoNo)) {
             const cached = detailCache.get(videoNo);
@@ -816,6 +876,8 @@
 
     function resetMetadata() {
         currentStartMs = NaN;
+        currentOriginalStartMs = NaN;
+        currentSegmentOffsetMs = 0;
         currentStartSource = "";
         currentHistoryInfo = null;
         titleHistoryExpanded = false;
@@ -826,6 +888,8 @@
     function loadMetadata(videoNo) {
         const token = ++metadataToken;
         currentStartMs = NaN;
+        currentOriginalStartMs = NaN;
+        currentSegmentOffsetMs = 0;
         currentStartSource = "";
         currentHistoryInfo = null;
         titleHistoryExpanded = false;
@@ -834,13 +898,17 @@
         fetchVideoDetail(videoNo).then((detail) => {
             if (metadataToken !== token || currentVideoNo !== videoNo) return;
 
-            const startMs = getStartMsFromDetail(detail);
-            if (Number.isFinite(startMs)) {
-                currentStartMs = startMs;
+            const startInfo = getVodSegmentStartInfo(detail);
+            if (Number.isFinite(startInfo.segmentStartMs)) {
+                currentStartMs = startInfo.segmentStartMs;
+                currentOriginalStartMs = startInfo.originalStartMs;
+                currentSegmentOffsetMs = startInfo.segmentOffsetMs;
                 currentStartSource = pickStartDateText(detail);
                 metadataState = "ready";
             } else {
                 currentStartMs = NaN;
+                currentOriginalStartMs = NaN;
+                currentSegmentOffsetMs = 0;
                 currentStartSource = "";
                 metadataState = "unavailable";
             }
@@ -849,6 +917,8 @@
         }).catch(() => {
             if (metadataToken !== token || currentVideoNo !== videoNo) return;
             currentStartMs = NaN;
+            currentOriginalStartMs = NaN;
+            currentSegmentOffsetMs = 0;
             currentStartSource = "";
             currentHistoryInfo = null;
             metadataState = "error";
@@ -1159,10 +1229,17 @@
         if (clockTextEl && clockTextEl.textContent !== text) clockTextEl.textContent = text;
 
         const title = [
-            `방송 시작: ${formatFullKst(currentStartMs)}`,
+            `방송 기준 시작: ${formatFullKst(currentStartMs)}`,
             `현재 재생 위치: ${formatDuration(video.currentTime)}`,
             `현재 방송 시각: ${formatFullKst(broadcastMs)}`,
         ];
+        if (currentSegmentOffsetMs > 0) {
+            title.push(`분할 VOD 보정: +${formatDuration(currentSegmentOffsetMs / 1000)}`);
+
+            if (Number.isFinite(currentOriginalStartMs)) {
+                title.push(`원본 방송 시작: ${formatFullKst(currentOriginalStartMs)}`);
+            }
+        }
         if (currentStartSource) title.push(`원본 시작 시간: ${currentStartSource}`);
         applyClockTitle(clock, title);
         clock.setAttribute("aria-label", `현재 방송 시각 ${text}`);
