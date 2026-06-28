@@ -867,6 +867,29 @@ test("options playback controls show live settings before VOD settings", () => {
     ]);
 });
 
+test("options places following hover preview with exploration controls", () => {
+    const dom = createDom("options.html", "options.html");
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+
+    const { document } = dom.window;
+    const previewSection = queryOption(document, "followingPreviewTooltipEnabled").closest(".settings-card");
+    const explorationSection = queryOption(document, "categoryToolsEnabled").closest(".settings-card");
+    const followingRefreshSection = queryOption(document, "followingRefreshEnabled").closest(".settings-card");
+    const optionOrder = Array.from(explorationSection.querySelectorAll("[data-option]")).map(
+        (input) => input.dataset.option
+    );
+
+    assert.equal(previewSection, explorationSection);
+    assert.notEqual(previewSection, followingRefreshSection);
+    assert.ok(
+        optionOrder.indexOf("categoryToolsLiveElapsedEnabled") <
+            optionOrder.indexOf("followingPreviewTooltipEnabled")
+    );
+    assert.ok(optionOrder.indexOf("followingPreviewTooltipEnabled") < optionOrder.indexOf("titleTooltipEnabled"));
+});
+
 test("manifest loads playback scripts in the expected worlds", () => {
     const manifest = JSON.parse(readRepoFile("manifest.json"));
     const mainScript = manifest.content_scripts.find((entry) => entry.world === "MAIN");
