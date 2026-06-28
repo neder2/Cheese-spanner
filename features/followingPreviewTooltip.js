@@ -55,7 +55,7 @@
   background:#FFFFFF;
   color:#111114;
   box-shadow:0 18px 48px rgba(0,0,0,0.26);
-  font-family:inherit;
+  font-family:system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size:12px;
   line-height:1.35;
   z-index:2147483647;

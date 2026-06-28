@@ -337,6 +337,8 @@ test("following preview tooltip plays live in the hover card and reuses cache", 
     assert.match(source, /HOVER_OPEN_DELAY_MS = 0/);
     assert.match(source, /PLAYER_START_SETTLE_MS = 90/);
     assert.match(source, /betterchzzk:following-preview:play/);
+    assert.match(source, /font-family:system-ui/);
+    assert.doesNotMatch(source, /font-family:inherit/);
     assert.doesNotMatch(source, /srcdoc/);
     assert.doesNotMatch(source, /bcfp-live/);
     assert.match(pageSource, /LiveProvider\.fromJSON/);
