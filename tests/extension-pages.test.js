@@ -850,7 +850,14 @@ test("options player controls merge playback defaults", () => {
     const detailOrder = Array.from(section.querySelectorAll("summary")).map((summary) => summary.textContent.trim());
 
     assert.deepEqual(tabLabels, ["플레이어", "시청 기록", "팝업", "방송 시간", "검색", "탐색"]);
-    assert.deepEqual(sectionLabels, ["플레이어", "시청 기록", "안내 팝업", "채널 방송 시간", "다시보기 검색", "방송 목록 필터"]);
+    assert.deepEqual(sectionLabels, [
+        "플레이어",
+        "시청 기록",
+        "광고 차단 안내 팝업",
+        "채널 방송 시간",
+        "다시보기 검색",
+        "방송 목록 필터",
+    ]);
     assert.equal(section.querySelector("h2").textContent.trim(), "플레이어");
     assert.deepEqual(detailOrder, ["라이브 위치 유지 설정", "스킵 수치 설정", "볼륨 휠 설정"]);
     assert.deepEqual(optionOrder, [

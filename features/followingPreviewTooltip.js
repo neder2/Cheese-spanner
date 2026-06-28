@@ -28,6 +28,7 @@
     const VISUALLY_HIDDEN_TOKEN_RE = /(^|[\s_-])(blind|sr-only|screen-reader|visually-hidden|a11y-hidden)([\s_-]|$)/i;
     const LIVE_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/channels";
     const HOVER_OPEN_DELAY_MS = 0;
+    const PREVIEW_FETCH_DELAY_MS = 100;
     const FETCH_TIMEOUT_MS = 8000;
     const CACHE_TTL_MS = 20000;
     const MAX_CACHE_ENTRIES = 80;
@@ -227,6 +228,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     let elapsedTimer = 0;
     let activeMeta = null;
     let activeFetchController = null;
+    let previewFetchTimer = 0;
     let playerStartTimer = 0;
     let removePageChangeDetection = null;
 
@@ -622,6 +624,12 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         return pendingRequests.get(channelId);
     }
 
+    function getCachedPreviewMeta(channelId) {
+        const cached = previewCache.get(channelId);
+        if (!cached || Date.now() - cached.cachedAt > CACHE_TTL_MS) return null;
+        return cached.value;
+    }
+
     function getTooltip() {
         if (tooltip?.isConnected) return tooltip;
 
@@ -867,6 +875,12 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         pendingInfo = null;
     }
 
+    function clearPreviewFetchTimer() {
+        if (!previewFetchTimer) return;
+        window.clearTimeout(previewFetchTimer);
+        previewFetchTimer = 0;
+    }
+
     function abortActiveFetch() {
         if (!activeFetchController) return;
         activeFetchController.abort();
@@ -882,16 +896,11 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         if (item) item.setAttribute(ACTIVE_ATTR, "1");
     }
 
-    function openPreview(info) {
-        abortActiveFetch();
-        requestToken += 1;
-        const token = requestToken;
+    function startPreviewMetaRequest(info, token) {
+        if (token !== requestToken || activeInfo?.channelId !== info.channelId) return;
+
         const fetchController = new AbortController();
         activeFetchController = fetchController;
-
-        setActiveItem(info.item);
-        activeInfo = info;
-        renderPreview(info.domMeta, "loading");
 
         getPreviewMeta(info.channelId, info.domMeta, { signal: fetchController.signal })
             .then((meta) => {
@@ -907,8 +916,31 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             });
     }
 
+    function openPreview(info) {
+        clearPreviewFetchTimer();
+        abortActiveFetch();
+        requestToken += 1;
+        const token = requestToken;
+
+        setActiveItem(info.item);
+        activeInfo = info;
+        renderPreview(info.domMeta, "loading");
+
+        const cachedMeta = getCachedPreviewMeta(info.channelId);
+        if (cachedMeta) {
+            renderPreview(cachedMeta, "ready");
+            return;
+        }
+
+        previewFetchTimer = window.setTimeout(() => {
+            previewFetchTimer = 0;
+            startPreviewMetaRequest(info, token);
+        }, PREVIEW_FETCH_DELAY_MS);
+    }
+
     function hidePreview() {
         clearOpenTimer();
+        clearPreviewFetchTimer();
         abortActiveFetch();
         stopElapsedTimer();
         stopPreviewPlayer();

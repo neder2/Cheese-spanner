@@ -144,7 +144,11 @@
                 if (fromWebpack) return fromWebpack;
 
                 throw new Error("following-preview-player-runtime-unavailable");
-            })();
+            })().catch((error) => {
+                playerRuntimePromise = null;
+                webpackRequirePromise = null;
+                throw error;
+            });
         }
 
         playerRuntime = await playerRuntimePromise;
