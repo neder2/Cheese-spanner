@@ -834,20 +834,27 @@ test("options page renders defaults and dependency-disabled controls without ext
     assert.equal(skipKeyboard.closest("[data-depends-on]").classList.contains("is-disabled"), true);
 });
 
-test("options playback controls show live settings before VOD settings", () => {
+test("options player controls merge playback defaults", () => {
     const dom = createDom("options.html", "options.html");
 
     evalRepoScript(dom, "shared", "settings.js");
     evalRepoScript(dom, "options.js");
 
     const { document } = dom.window;
+    const tabLabels = Array.from(document.querySelectorAll(".tab"), (tab) => tab.textContent.trim());
+    const sectionLabels = Array.from(document.querySelectorAll(".settings-card h2"), (heading) =>
+        heading.textContent.trim()
+    );
     const section = queryOption(document, "skipControlEnabled").closest(".settings-card");
     const optionOrder = Array.from(section.querySelectorAll("[data-option]")).map((input) => input.dataset.option);
     const detailOrder = Array.from(section.querySelectorAll("summary")).map((summary) => summary.textContent.trim());
 
-    assert.equal(section.querySelector("h2").textContent.trim(), "라이브/다시보기 조작");
+    assert.deepEqual(tabLabels, ["플레이어", "시청 기록", "팝업", "방송 시간", "검색", "탐색"]);
+    assert.deepEqual(sectionLabels, ["플레이어", "시청 기록", "안내 팝업", "채널 방송 시간", "다시보기 검색", "방송 목록 필터"]);
+    assert.equal(section.querySelector("h2").textContent.trim(), "플레이어");
     assert.deepEqual(detailOrder, ["라이브 위치 유지 설정", "스킵 수치 설정", "볼륨 휠 설정"]);
     assert.deepEqual(optionOrder, [
+        "autoQualityEnabled",
         "skipControlEnabled",
         "skipKeyboardEnabled",
         "skipLivePauseResumeEnabled",
@@ -867,7 +874,7 @@ test("options playback controls show live settings before VOD settings", () => {
     ]);
 });
 
-test("options places following hover preview with exploration controls", () => {
+test("options places following controls with exploration controls", () => {
     const dom = createDom("options.html", "options.html");
 
     evalRepoScript(dom, "shared", "settings.js");
@@ -882,7 +889,9 @@ test("options places following hover preview with exploration controls", () => {
     );
 
     assert.equal(previewSection, explorationSection);
-    assert.notEqual(previewSection, followingRefreshSection);
+    assert.equal(followingRefreshSection, explorationSection);
+    assert.ok(optionOrder.indexOf("followingRefreshEnabled") < optionOrder.indexOf("followingRefreshSeconds"));
+    assert.ok(optionOrder.indexOf("followingRefreshSeconds") < optionOrder.indexOf("categoryToolsEnabled"));
     assert.ok(
         optionOrder.indexOf("categoryToolsLiveElapsedEnabled") <
             optionOrder.indexOf("followingPreviewTooltipEnabled")

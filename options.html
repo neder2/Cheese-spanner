@@ -20,19 +20,18 @@
 
         <form id="optionsForm" class="settings-form" novalidate>
             <nav class="tab-bar" role="tablist" aria-label="설정 카테고리">
-                <button type="button" class="tab" role="tab" data-tab="0">재생</button>
+                <button type="button" class="tab" role="tab" data-tab="0">플레이어</button>
                 <button type="button" class="tab" role="tab" data-tab="1">시청 기록</button>
-                <button type="button" class="tab" role="tab" data-tab="2">플레이어</button>
-                <button type="button" class="tab" role="tab" data-tab="3">팝업</button>
-                <button type="button" class="tab" role="tab" data-tab="4">방송 시간</button>
-                <button type="button" class="tab" role="tab" data-tab="5">검색</button>
-                <button type="button" class="tab" role="tab" data-tab="6">탐색</button>
+                <button type="button" class="tab" role="tab" data-tab="2">팝업</button>
+                <button type="button" class="tab" role="tab" data-tab="3">방송 시간</button>
+                <button type="button" class="tab" role="tab" data-tab="4">검색</button>
+                <button type="button" class="tab" role="tab" data-tab="5">탐색</button>
             </nav>
 
             <section class="settings-card">
                 <div class="section-heading">
-                    <h2>재생 기본값</h2>
-                    <p>라이브와 다시보기 플레이어 화질을 1080p로 자동 복구합니다.</p>
+                    <h2>플레이어</h2>
+                    <p>화질 복구, 라이브 위치 유지, 방향키 이동, 플레이어 버튼, 다시보기 보조 기능을 조절합니다.</p>
                 </div>
 
                 <label class="toggle-row">
@@ -42,54 +41,6 @@
                     </span>
                     <input type="checkbox" data-option="autoQualityEnabled">
                 </label>
-
-                <label class="toggle-row">
-                    <span>
-                        <strong>팔로잉 목록 자동 새로고침</strong>
-                        <small>사이드바 팔로잉 채널의 라이브 상태를 주기적으로 갱신합니다.</small>
-                    </span>
-                    <input type="checkbox" data-option="followingRefreshEnabled">
-                </label>
-
-                <details class="advanced-settings">
-                    <summary>새로고침 설정</summary>
-                    <div class="number-grid" data-depends-on="followingRefreshEnabled">
-                        <label><span>자동 새로고침 주기</span><input type="number" min="10" max="600" step="1" data-option="followingRefreshSeconds"><em>초</em></label>
-                    </div>
-                    <p class="setting-note">10~600초 사이에서 원하는 주기를 직접 입력할 수 있습니다. 주기를 줄이면 라이브 시작이 더 빨리 반영됩니다.</p>
-                </details>
-            </section>
-
-            <section class="settings-card">
-                <div class="section-heading">
-                    <h2>시청 기록</h2>
-                    <p>라이브 재생 시간을 이 브라우저에 저장하고, 월별 달력과 라이브별 누적 시간을 확인합니다.</p>
-                </div>
-
-                <label class="toggle-row">
-                    <span><strong>라이브 시청 기록 저장</strong><small>라이브 재생 중인 시간만 로컬 저장소에 기록합니다.</small></span>
-                    <input type="checkbox" data-option="liveWatchHistoryEnabled">
-                </label>
-
-                <details class="advanced-settings">
-                    <summary>시청 기록 설정</summary>
-                    <div class="number-grid" data-depends-on="liveWatchHistoryEnabled">
-                        <label><span>최소 저장 시간</span><input type="number" min="1" max="1440" step="1" data-option="liveWatchHistoryMinMinutes"><em>분</em></label>
-                    </div>
-                    <p class="setting-note">설정한 시간보다 짧게 본 라이브는 시청 기록에 저장하지 않습니다.</p>
-                </details>
-
-                <div class="inline-action-row">
-                    <a class="secondary-button" href="history.html" target="_blank" rel="noopener">시청 기록 보기</a>
-                </div>
-                <p class="setting-note">기록은 Chrome 동기화가 아닌 이 브라우저의 로컬 저장소에만 저장됩니다.</p>
-            </section>
-
-            <section class="settings-card">
-                <div class="section-heading">
-                    <h2>라이브/다시보기 조작</h2>
-                    <p>라이브 위치 유지, 방향키 이동, 플레이어 버튼, 다시보기 보조 기능을 조절합니다.</p>
-                </div>
 
                 <label class="toggle-row">
                     <span><strong>스킵 기능</strong><small>다시보기와 라이브 타임머신에서 시간 이동 도구를 사용합니다.</small></span>
@@ -164,6 +115,31 @@
 
             <section class="settings-card">
                 <div class="section-heading">
+                    <h2>시청 기록</h2>
+                    <p>라이브 재생 시간을 이 브라우저에 저장하고, 월별 달력과 라이브별 누적 시간을 확인합니다.</p>
+                </div>
+
+                <label class="toggle-row">
+                    <span><strong>라이브 시청 기록 저장</strong><small>라이브 재생 중인 시간만 로컬 저장소에 기록합니다.</small></span>
+                    <input type="checkbox" data-option="liveWatchHistoryEnabled">
+                </label>
+
+                <details class="advanced-settings">
+                    <summary>시청 기록 설정</summary>
+                    <div class="number-grid" data-depends-on="liveWatchHistoryEnabled">
+                        <label><span>최소 저장 시간</span><input type="number" min="1" max="1440" step="1" data-option="liveWatchHistoryMinMinutes"><em>분</em></label>
+                    </div>
+                    <p class="setting-note">설정한 시간보다 짧게 본 라이브는 시청 기록에 저장하지 않습니다.</p>
+                </details>
+
+                <div class="inline-action-row">
+                    <a class="secondary-button" href="history.html" target="_blank" rel="noopener">시청 기록 보기</a>
+                </div>
+                <p class="setting-note">기록은 Chrome 동기화가 아닌 이 브라우저의 로컬 저장소에만 저장됩니다.</p>
+            </section>
+
+            <section class="settings-card">
+                <div class="section-heading">
                     <h2>안내 팝업</h2>
                     <p>시청 중 뜨는 광고 차단 관련 안내 팝업을 정리합니다.</p>
                 </div>
@@ -233,6 +209,22 @@
                     <h2>방송 목록 필터</h2>
                     <p>전체 방송과 카테고리 목록의 검색, 시청자/팔로워 필터, 배지를 조절합니다.</p>
                 </div>
+
+                <label class="toggle-row">
+                    <span>
+                        <strong>팔로잉 목록 자동 새로고침</strong>
+                        <small>사이드바 팔로잉 채널의 라이브 상태를 주기적으로 갱신합니다.</small>
+                    </span>
+                    <input type="checkbox" data-option="followingRefreshEnabled">
+                </label>
+
+                <details class="advanced-settings">
+                    <summary>새로고침 설정</summary>
+                    <div class="number-grid" data-depends-on="followingRefreshEnabled">
+                        <label><span>자동 새로고침 주기</span><input type="number" min="10" max="600" step="1" data-option="followingRefreshSeconds"><em>초</em></label>
+                    </div>
+                    <p class="setting-note">10~600초 사이에서 원하는 주기를 직접 입력할 수 있습니다. 주기를 줄이면 라이브 시작이 더 빨리 반영됩니다.</p>
+                </details>
 
                 <label class="toggle-row">
                     <span><strong>방송 목록 도구</strong><small>검색창과 필터 메뉴를 추가합니다.</small></span>
