@@ -451,6 +451,46 @@ test("shared string and page helpers are reused by content utilities", () => {
     assert.equal(getVodVideoNoFromPath("/video"), "");
 });
 
+test("shared main video helper ignores following preview player videos", () => {
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<div class="bcfp-player" data-bcfp-player-mount="preview"><video id="previewVideo"></video></div>',
+            '<main><video id="mainVideo"></video></main>',
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test",
+        createFakeChrome()
+    );
+    evalContentScripts(dom);
+
+    const { BetterChzzk, document } = dom.window;
+    const previewVideo = document.getElementById("previewVideo");
+    const mainVideo = document.getElementById("mainVideo");
+
+    previewVideo.getBoundingClientRect = () => ({
+        width: 800,
+        height: 450,
+        left: 0,
+        top: 0,
+        right: 800,
+        bottom: 450,
+    });
+    mainVideo.getBoundingClientRect = () => ({
+        width: 320,
+        height: 180,
+        left: 0,
+        top: 0,
+        right: 320,
+        bottom: 180,
+    });
+
+    assert.equal(BetterChzzk.utils.isExtensionPreviewVideo(previewVideo), true);
+    assert.equal(BetterChzzk.utils.isExtensionPreviewVideo(mainVideo), false);
+    assert.equal(BetterChzzk.utils.getMainVideoElement(), mainVideo);
+});
+
 test("shared CHZZK video field pickers keep API fallback order", () => {
     const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
     evalRepoScript(dom, "shared", "data.js");
@@ -2834,6 +2874,82 @@ test("live timeshift guard does not roll back keyboard seeks into the near-live 
         await waitForLiveTimeShiftSync();
 
         assert.equal(video.currentTime, 37);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("skip controls ignore following preview video when choosing the live player", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            skipSeconds: 5,
+        },
+    });
+    const { document, dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+    const previewMount = document.createElement("div");
+    const previewVideo = document.createElement("video");
+    const previewState = {
+        bufferedEnd: 80,
+        currentTime: 10,
+        paused: false,
+        seekableEnd: 80,
+    };
+
+    previewMount.className = "bcfp-player";
+    previewMount.setAttribute("data-bcfp-player-mount", "preview");
+    previewMount.appendChild(previewVideo);
+    document.body.prepend(previewMount);
+
+    Object.defineProperty(previewVideo, "currentTime", {
+        configurable: true,
+        get: () => previewState.currentTime,
+        set: (value) => {
+            previewState.currentTime = Number(value);
+        },
+    });
+    Object.defineProperty(previewVideo, "paused", {
+        configurable: true,
+        get: () => previewState.paused,
+    });
+    Object.defineProperty(previewVideo, "buffered", {
+        configurable: true,
+        get: () => createTimeRanges([[0, previewState.bufferedEnd]]),
+    });
+    Object.defineProperty(previewVideo, "seekable", {
+        configurable: true,
+        get: () => createTimeRanges([[0, previewState.seekableEnd]]),
+    });
+    previewVideo.getBoundingClientRect = () => ({
+        width: 800,
+        height: 450,
+        left: 0,
+        top: 0,
+        right: 800,
+        bottom: 450,
+    });
+    video.getBoundingClientRect = () => ({
+        width: 320,
+        height: 180,
+        left: 0,
+        top: 0,
+        right: 320,
+        bottom: 180,
+    });
+
+    try {
+        await loadSkipControlPage(dom);
+
+        const event = new dom.window.KeyboardEvent("keydown", {
+            key: "ArrowRight",
+            code: "ArrowRight",
+            bubbles: true,
+            cancelable: true,
+        });
+        document.body.dispatchEvent(event);
+
+        assert.equal(event.defaultPrevented, true);
+        assert.equal(state.currentTime, 37);
+        assert.equal(previewState.currentTime, 10);
     } finally {
         await closeSkipControlPage(dom, chrome);
     }

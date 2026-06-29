@@ -3,6 +3,7 @@
     const existingUtils = root.utils || {};
     const PAGE_ROUTE_CHANGE_EVENT = "betterchzzk:routechange";
     const FEATURE_ROUTE_CHANGE_EVENT = "betterchzzk:routechange:detected";
+    const EXTENSION_PREVIEW_VIDEO_SELECTOR = "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip]";
     const ROUTE_CHECK_DELAYS_MS = [0, 80, 250, 800];
     let routeDetectionUsers = 0;
     let routeDetectionInstalled = false;
@@ -48,8 +49,32 @@
         return best || null;
     }
 
+    function elementOrHostMatches(node, selector) {
+        let current = node;
+        while (current) {
+            if (current instanceof Element && current.matches(selector)) return true;
+            if (current.parentElement) {
+                current = current.parentElement;
+                continue;
+            }
+
+            const rootNode = current.getRootNode?.();
+            if (typeof ShadowRoot !== "undefined" && rootNode instanceof ShadowRoot && rootNode.host && rootNode.host !== current) {
+                current = rootNode.host;
+                continue;
+            }
+
+            break;
+        }
+        return false;
+    }
+
+    function isExtensionPreviewVideo(video) {
+        return video instanceof HTMLVideoElement && elementOrHostMatches(video, EXTENSION_PREVIEW_VIDEO_SELECTOR);
+    }
+
     function getMainVideoElement() {
-        const videos = document.querySelectorAll("video");
+        const videos = Array.from(document.querySelectorAll("video")).filter((video) => !isExtensionPreviewVideo(video));
         return pickLargestVisible(videos) || videos[0] || null;
     }
 
@@ -283,6 +308,7 @@
         isVisible,
         pickLargestVisible,
         getMainVideoElement,
+        isExtensionPreviewVideo,
         elementMatchesOrContains,
         mutationMatchesSelector,
         createThrottledDomSync,

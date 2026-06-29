@@ -53,6 +53,7 @@
         isLiveRoute,
         isPlaybackRoute,
         isVisible,
+        isExtensionPreviewVideo,
         mutationMatchesSelector,
         normalizeCompact,
         onReady,
@@ -185,7 +186,7 @@
     }
 
     function getMainVideoElement() {
-        const videos = document.querySelectorAll("video");
+        const videos = Array.from(document.querySelectorAll("video")).filter((video) => !isExtensionPreviewVideo?.(video));
         return pickLargestVisible(videos) || videos[0] || null;
     }
 
