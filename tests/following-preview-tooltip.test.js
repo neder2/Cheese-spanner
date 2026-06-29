@@ -110,7 +110,7 @@ function createFollowingPreviewDom(chrome = createFakeChrome()) {
             "<ul>",
             '<li class="following_item" id="followingItem">',
             '<a id="liveLink" href="/live/channel-123" aria-label="\uD14C\uC2A4\uD2B8 \uCC44\uB110">',
-            '<img src="https://example.com/dom-thumb.jpg" alt="">',
+            '<img class="live_thumbnail_image" src="https://example.com/dom-thumb.jpg" alt="">',
             '<span class="name_text">\uD14C\uC2A4\uD2B8 \uCC44\uB110</span>',
             '<span class="live_title">DOM \uBC29\uC1A1 \uC81C\uBAA9</span>',
             "</a>",
@@ -779,6 +779,36 @@ test("following preview loading card does not enlarge channel profile images as 
     assert.equal(tip.dataset.state, "loading");
     assert.equal(tip.querySelector(".bcfp-media img"), null);
     assert.equal(tip.querySelector(".bcfp-media-fallback").textContent, "LIVE");
+});
+
+test("following preview loading card does not use verified badges as thumbnails", async () => {
+    const chrome = createFakeChrome();
+    const { document, dom, link } = createFollowingPreviewDom(chrome);
+    const profileImage = link.querySelector("img");
+    const verifiedBadge = document.createElement("img");
+
+    profileImage.className = "channel_profile_image";
+    profileImage.src = "https://example.com/channel-profile.jpg";
+    verifiedBadge.className = "verified_mark_image";
+    verifiedBadge.alt = "\uCE58\uC9C0\uC9C1 \uC778\uC99D";
+    verifiedBadge.src = "https://example.com/verified-badge.svg";
+    link.insertBefore(verifiedBadge, link.querySelector(".live_title"));
+    dom.window.fetch = () => new Promise(() => {});
+
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForFollowingPreviewDelay();
+    await waitForAsyncCallbacks();
+
+    const tip = document.getElementById("betterchzzk-following-preview");
+    assert.ok(tip);
+    assert.equal(tip.dataset.state, "loading");
+    assert.equal(tip.querySelector(".bcfp-media img"), null);
+    assert.equal(tip.querySelector(".bcfp-media-fallback").textContent, "LIVE");
+    assert.doesNotMatch(tip.textContent, /verified-badge/);
 });
 
 test("following preview tooltip plays live in the hover card and reuses cache", async () => {

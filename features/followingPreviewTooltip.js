@@ -36,6 +36,8 @@
     const THUMBNAIL_MARKER_RE = /(^|[\s_-])(thumb|thumbnail|poster|live[_-]?image|live[_-]?thumb)([\s_-]|$)/i;
     const PROFILE_IMAGE_MARKER_RE =
         /(^|[\s_-])(avatar|profile|profile[_-]?image|image[_-]?profile|channel[_-]?image|channel[_-]?img)([\s_-]|$)|(?:avatar|profile|channel)Image/i;
+    const DECORATIVE_IMAGE_MARKER_RE =
+        /(^|[\s_-])(badge|verified|certified|certification|official|icon|mark|emblem|check)([\s_-]|$)|(?:verified|certified|official|badge|icon|mark)Image|\uC778\uC99D/i;
     const LIVE_THUMBNAIL_URL_RE = /(?:livecloud-thumb|\/thumbnail\/image|\/livecloud\/)/i;
     const LIVE_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/channels";
     const HOVER_OPEN_DELAY_MS = 0;
@@ -449,10 +451,12 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         return THUMBNAIL_MARKER_RE.test(getImageCandidateMarker(el));
     }
 
-    function shouldUseImageCandidate(el, url, { requireThumbnail = false } = {}) {
+    function shouldUseImageCandidate(el, url, { requireThumbnail = true } = {}) {
         if (!url) return false;
+        const marker = getImageCandidateMarker(el);
+        if (DECORATIVE_IMAGE_MARKER_RE.test(marker)) return false;
+        if (PROFILE_IMAGE_MARKER_RE.test(marker)) return false;
         if (isLikelyLiveThumbnail(el, url)) return true;
-        if (PROFILE_IMAGE_MARKER_RE.test(getImageCandidateMarker(el))) return false;
         return !requireThumbnail;
     }
 
@@ -466,16 +470,18 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
         for (const img of root.querySelectorAll("img[src], img[data-src], img[data-lazy-src]")) {
             const url = getImageCandidateUrl(img);
-            if (shouldUseImageCandidate(img, url)) return url;
+            if (shouldUseImageCandidate(img, url, { requireThumbnail: true })) return url;
         }
 
-        for (const el of root.querySelectorAll("[style], [class*='thumb'], [class*='image']")) {
+        for (const el of root.querySelectorAll(
+            "[class*='thumb'], [class*='thumbnail'], [class*='live_image'], [class*='liveImage']"
+        )) {
             const url = getBackgroundImageUrl(el);
-            if (shouldUseImageCandidate(el, url)) return url;
+            if (shouldUseImageCandidate(el, url, { requireThumbnail: true })) return url;
         }
 
         const rootImage = getBackgroundImageUrl(root);
-        return shouldUseImageCandidate(root, rootImage) ? rootImage : "";
+        return shouldUseImageCandidate(root, rootImage, { requireThumbnail: true }) ? rootImage : "";
     }
 
     function extractChannelIdFromHref(href) {
