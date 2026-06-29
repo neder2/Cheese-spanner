@@ -9,6 +9,9 @@
     const WEBPACK_PLAYER_MODULE_ID = 49588;
     const WAIT_FOR_WEBPACK_RETRIES = 120;
     const WAIT_FOR_WEBPACK_MS = 50;
+    const PLAYER_VENDOR_RE = /(?:^|\/)player-vendor-[^/?#]+\.js(?:[?#]|$)/i;
+    const INDEX_SCRIPT_RE = /\/glive\/resource\/p\/static\/js\/index-[^/?#]+\.js(?:[?#]|$)/i;
+    const PLAYER_VENDOR_IMPORT_RE = /(?:from\s*|import\s*\()\s*["']([^"']*player-vendor-[^"']+\.js)["']/i;
     const PREVIEW_OPTIONS = {
         countryCode: "kr",
         devt: "HTML5_PC",
@@ -27,12 +30,16 @@
     }
 
     let webpackRequirePromise = null;
+    let esmRuntimePromise = null;
+    let esmRuntimeUrl = "";
     let playerRuntimePromise = null;
     let playerRuntime = null;
     let player = null;
     let mountedEl = null;
     let activeRequestId = "";
     let pendingLoadedMetadata = null;
+    let encryptedPlayer = null;
+    let encryptedHandler = null;
 
     function sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
@@ -72,6 +79,86 @@
         }
 
         return null;
+    }
+
+    function toAbsoluteUrl(url, baseUrl = location.href) {
+        try {
+            return new URL(url, baseUrl).href;
+        } catch (_) {
+            return "";
+        }
+    }
+
+    function collectKnownAssetUrls() {
+        const urls = new Set();
+
+        try {
+            for (const el of document.querySelectorAll("script[src], link[href]")) {
+                const url = toAbsoluteUrl(el.src || el.href || "");
+                if (url) urls.add(url);
+            }
+        } catch (_) {
+            // DOM can be unavailable during early page teardown.
+        }
+
+        try {
+            for (const entry of performance.getEntriesByType?.("resource") || []) {
+                const url = toAbsoluteUrl(entry.name || "");
+                if (url) urls.add(url);
+            }
+        } catch (_) {
+            // Some browsers restrict resource timing entries.
+        }
+
+        return [...urls];
+    }
+
+    function findPlayerVendorUrlFromText(text, baseUrl) {
+        const match = String(text || "").match(PLAYER_VENDOR_IMPORT_RE);
+        return match ? toAbsoluteUrl(match[1], baseUrl) : "";
+    }
+
+    async function findPlayerVendorUrl() {
+        const urls = collectKnownAssetUrls();
+        const knownVendorUrl = urls.find((url) => PLAYER_VENDOR_RE.test(url));
+        if (knownVendorUrl) return knownVendorUrl;
+
+        for (const indexUrl of urls.filter((url) => INDEX_SCRIPT_RE.test(url))) {
+            try {
+                const response = await fetch(indexUrl, { credentials: "omit" });
+                if (!response?.ok) continue;
+                const vendorUrl = findPlayerVendorUrlFromText(await response.text(), indexUrl);
+                if (vendorUrl) return vendorUrl;
+            } catch (_) {
+                // Cross-origin script fetch can be blocked; fall through to webpack.
+            }
+        }
+
+        return "";
+    }
+
+    function importModule(url) {
+        const testLoader = window.__betterChzzkFollowingPreviewImport;
+        if (typeof testLoader === "function") return testLoader(url);
+        return import(url);
+    }
+
+    async function getRuntimeFromEsmChunks() {
+        const vendorUrl = await findPlayerVendorUrl();
+        if (!vendorUrl) return null;
+
+        if (!esmRuntimePromise || esmRuntimeUrl !== vendorUrl) {
+            esmRuntimeUrl = vendorUrl;
+            esmRuntimePromise = importModule(vendorUrl)
+                .then((module) => unwrapPlayerRuntime(module))
+                .catch((error) => {
+                    esmRuntimePromise = null;
+                    esmRuntimeUrl = "";
+                    throw error;
+                });
+        }
+
+        return esmRuntimePromise;
     }
 
     async function waitForWebpackChunk() {
@@ -140,6 +227,9 @@
 
         if (!playerRuntimePromise) {
             playerRuntimePromise = (async () => {
+                const fromEsm = await getRuntimeFromEsmChunks().catch(() => null);
+                if (fromEsm) return fromEsm;
+
                 const fromWebpack = getRuntimeFromWebpackCache(await getWebpackRequire().catch(() => null));
                 if (fromWebpack) return fromWebpack;
 
@@ -167,6 +257,66 @@
         return { Player, player };
     }
 
+    function getKeySystemConfig(initDataType) {
+        if (initDataType !== "aes-encrypted-hls") return null;
+        return [
+            "com.naver.hlsaes",
+            [
+                {
+                    initDataTypes: [initDataType],
+                    videoCapabilities: [{ contentType: "application/x-mpegURL" }],
+                },
+            ],
+        ];
+    }
+
+    async function requestMediaLicense(session, message) {
+        const request = JSON.parse(new TextDecoder().decode(message));
+        const response = await fetch(request.url, {
+            credentials: "include",
+            method: request.method || "GET",
+        });
+        await session.update(await response.arrayBuffer());
+    }
+
+    function clearEncryptedListener() {
+        if (!encryptedPlayer || !encryptedHandler) return;
+        encryptedPlayer.removeEventListener?.("encrypted", encryptedHandler);
+        encryptedPlayer = null;
+        encryptedHandler = null;
+    }
+
+    function attachEncryptedListener(Player, previewPlayer, mount, requestId) {
+        clearEncryptedListener();
+        encryptedPlayer = previewPlayer;
+        const markEncryptedError = () => {
+            if (activeRequestId === requestId && mountedEl === mount) markMountState(mount, "error");
+        };
+        encryptedHandler = async (event) => {
+            try {
+                const keySystemConfig = getKeySystemConfig(event.initDataType);
+                if (!keySystemConfig) return;
+
+                const [keySystem, supportedConfigurations] = keySystemConfig;
+                const mediaKeys = await (
+                    await Player.CorePlayer.requestMediaKeySystemAccess(keySystem, supportedConfigurations)
+                ).createMediaKeys();
+                await previewPlayer.setMediaKeys(mediaKeys);
+
+                const session = mediaKeys.createSession("temporary");
+                session.addEventListener("message", (messageEvent) => {
+                    if (messageEvent.messageType === "license-request") {
+                        requestMediaLicense(session, messageEvent.message).catch(markEncryptedError);
+                    }
+                });
+                await session.generateRequest(event.initDataType, event.initData);
+            } catch (_) {
+                markEncryptedError();
+            }
+        };
+        previewPlayer.addEventListener?.("encrypted", encryptedHandler);
+    }
+
     function markMountState(el, state) {
         if (!el) return;
         el.setAttribute(STATE_ATTR, state);
@@ -186,6 +336,7 @@
 
     function detachPlayer(nextState = "idle") {
         clearLoadedMetadataListener();
+        clearEncryptedListener();
 
         if (player) {
             try {
@@ -266,6 +417,7 @@
 
             previewPlayer.volume = Number.isFinite(detail.volume) ? detail.volume : 0;
             previewPlayer.muted = detail.muted !== false;
+            attachEncryptedListener(Player, previewPlayer, mount, requestId);
             previewPlayer.srcObject = Player.LiveProvider.fromJSON(playback, PREVIEW_OPTIONS);
             revealWhenReady(requestId, mount);
         } catch (_) {

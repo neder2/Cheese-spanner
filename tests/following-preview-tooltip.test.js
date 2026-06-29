@@ -456,6 +456,235 @@ test("following preview page bridge retries after the player runtime becomes ava
     assert.equal(players[0].playCalls, 1);
 });
 
+test("following preview page bridge falls back to the current CHZZK ESM player vendor", async () => {
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<html>",
+            "<head>",
+            '<script type="module" src="https://ssl.pstatic.net/static/nng/glive/resource/p/static/js/index-test.js"></script>',
+            "</head>",
+            "<body></body>",
+            "</html>",
+        ].join(""),
+        "https://chzzk.naver.com/"
+    );
+    const { document } = dom.window;
+    const players = [];
+    const fromJsonCalls = [];
+    const fetchCalls = [];
+    const importCalls = [];
+
+    class FakeCorePlayer extends dom.window.EventTarget {
+        constructor() {
+            super();
+            this.shadowRoot = document.createElement("div");
+            this.shadowRoot.className = "fake-esm-player";
+            this.readyState = 1;
+            this.playCalls = 0;
+            players.push(this);
+        }
+
+        play() {
+            this.playCalls += 1;
+            return Promise.resolve();
+        }
+    }
+
+    const fakePlayerRuntime = {
+        CorePlayer: FakeCorePlayer,
+        LiveProvider: {
+            fromJSON(playback, options) {
+                fromJsonCalls.push({ options, playback });
+                return { options, playback };
+            },
+        },
+    };
+
+    dom.window.fetch = async (url, init) => {
+        fetchCalls.push({ init, url });
+        return {
+            ok: true,
+            text: async () => 'import{x as playerFactory}from"./player-vendor-test.js";',
+        };
+    };
+    dom.window.__betterChzzkFollowingPreviewImport = async (url) => {
+        importCalls.push(url);
+        return { x: () => fakePlayerRuntime };
+    };
+
+    evalRepoScript(dom, "features", "followingPreviewPage.js");
+
+    const mount = document.createElement("div");
+    mount.setAttribute("data-bcfp-player-mount", "esm-runtime");
+    document.body.appendChild(mount);
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:following-preview:play", {
+            detail: JSON.stringify({
+                mountId: "esm-runtime",
+                playbackJson: JSON.stringify({ media: [{ mediaId: "HLS", path: "esm.m3u8" }] }),
+                requestId: "esm-runtime",
+            }),
+        })
+    );
+    await waitForAsyncCallbacks();
+
+    assert.equal(fetchCalls.length, 1);
+    assert.equal(fetchCalls[0].url, "https://ssl.pstatic.net/static/nng/glive/resource/p/static/js/index-test.js");
+    assert.equal(fetchCalls[0].init.credentials, "omit");
+    assert.deepEqual(importCalls, [
+        "https://ssl.pstatic.net/static/nng/glive/resource/p/static/js/player-vendor-test.js",
+    ]);
+    assert.equal(players.length, 1);
+    assert.equal(mount.getAttribute("data-bcfp-player-state"), "ready");
+    assert.equal(mount.firstElementChild.className, "fake-esm-player");
+    assert.equal(fromJsonCalls.length, 1);
+    assert.equal(fromJsonCalls[0].options.mediaType, "PREVIEW");
+    assert.equal(players[0].playCalls, 1);
+});
+
+test("following preview page bridge handles AES HLS license requests", async () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/");
+    const { document } = dom.window;
+    const players = [];
+    const keySystemCalls = [];
+    const setMediaKeysCalls = [];
+    const sessionTypes = [];
+    const generateRequests = [];
+    const licenseFetches = [];
+    const licenseUpdates = [];
+
+    dom.window.TextDecoder = TextDecoder;
+    dom.window.TextEncoder = TextEncoder;
+    dom.window.fetch = async (url, init) => {
+        licenseFetches.push({ init, url });
+        return {
+            arrayBuffer: async () => new ArrayBuffer(4),
+        };
+    };
+
+    const fakeSession = new dom.window.EventTarget();
+    fakeSession.generateRequest = async (initDataType, initData) => {
+        generateRequests.push({ initData, initDataType });
+        const messageEvent = new dom.window.Event("message");
+        Object.defineProperties(messageEvent, {
+            message: {
+                value: new TextEncoder().encode(JSON.stringify({ method: "POST", url: "https://license.example/key" })),
+            },
+            messageType: { value: "license-request" },
+        });
+        fakeSession.dispatchEvent(messageEvent);
+    };
+    fakeSession.update = async (buffer) => {
+        licenseUpdates.push(buffer.byteLength);
+    };
+
+    const fakeMediaKeys = {
+        createSession(type) {
+            sessionTypes.push(type);
+            return fakeSession;
+        },
+    };
+
+    class FakeCorePlayer extends dom.window.EventTarget {
+        static async requestMediaKeySystemAccess(keySystem, supportedConfigurations) {
+            keySystemCalls.push({ keySystem, supportedConfigurations });
+            return {
+                createMediaKeys: async () => fakeMediaKeys,
+            };
+        }
+
+        constructor() {
+            super();
+            this.shadowRoot = document.createElement("div");
+            this.shadowRoot.className = "fake-core-player";
+            this.readyState = 1;
+            this.playCalls = 0;
+            players.push(this);
+        }
+
+        setMediaKeys(mediaKeys) {
+            setMediaKeysCalls.push(mediaKeys);
+            return Promise.resolve();
+        }
+
+        play() {
+            this.playCalls += 1;
+            return Promise.resolve();
+        }
+    }
+
+    const fakePlayerRuntime = {
+        CorePlayer: FakeCorePlayer,
+        LiveProvider: {
+            fromJSON(playback, options) {
+                return { options, playback };
+            },
+        },
+    };
+
+    dom.window.webpackChunkglive_fe_pc = [];
+    dom.window.webpackChunkglive_fe_pc.push = (chunk) => {
+        const modules = chunk[1] || {};
+        const runtime = chunk[2];
+        const cache = {
+            49588: { exports: fakePlayerRuntime },
+        };
+        const require = (id) => {
+            if (Object.hasOwn(modules, id)) {
+                const module = { exports: {} };
+                modules[id](module, module.exports, require);
+                cache[id] = module;
+                return module.exports;
+            }
+            return cache[id]?.exports;
+        };
+        require.c = cache;
+        return runtime(require);
+    };
+
+    evalRepoScript(dom, "features", "followingPreviewPage.js");
+
+    const mount = document.createElement("div");
+    mount.setAttribute("data-bcfp-player-mount", "encrypted");
+    document.body.appendChild(mount);
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:following-preview:play", {
+            detail: JSON.stringify({
+                mountId: "encrypted",
+                playbackJson: JSON.stringify({ media: [{ mediaId: "HLS", path: "encrypted.m3u8" }] }),
+                requestId: "encrypted",
+            }),
+        })
+    );
+    await waitForAsyncCallbacks();
+
+    const encryptedEvent = new dom.window.Event("encrypted");
+    const initData = new Uint8Array([1, 2, 3]).buffer;
+    Object.defineProperties(encryptedEvent, {
+        initData: { value: initData },
+        initDataType: { value: "aes-encrypted-hls" },
+    });
+    players[0].dispatchEvent(encryptedEvent);
+    await waitForAsyncCallbacks();
+
+    assert.equal(keySystemCalls.length, 1);
+    assert.equal(keySystemCalls[0].keySystem, "com.naver.hlsaes");
+    assert.deepEqual(Array.from(keySystemCalls[0].supportedConfigurations[0].initDataTypes), ["aes-encrypted-hls"]);
+    assert.equal(
+        keySystemCalls[0].supportedConfigurations[0].videoCapabilities[0].contentType,
+        "application/x-mpegURL"
+    );
+    assert.equal(setMediaKeysCalls[0], fakeMediaKeys);
+    assert.deepEqual(sessionTypes, ["temporary"]);
+    assert.equal(generateRequests[0].initDataType, "aes-encrypted-hls");
+    assert.deepEqual([...new Uint8Array(generateRequests[0].initData)], [1, 2, 3]);
+    assert.equal(licenseFetches[0].url, "https://license.example/key");
+    assert.equal(licenseFetches[0].init.method, "POST");
+    assert.equal(licenseFetches[0].init.credentials, "include");
+    assert.deepEqual(licenseUpdates, [4]);
+});
+
 test("following preview delays live-detail fetches while opening the DOM fallback immediately", async () => {
     const chrome = createFakeChrome();
     const { document, dom, item, link } = createFollowingPreviewDom(chrome);
@@ -571,9 +800,9 @@ test("following preview tooltip plays live in the hover card and reuses cache", 
     assert.match(source, /PREVIEW_FETCH_DELAY_MS = 100/);
     assert.match(pageSource, /LiveProvider\.fromJSON/);
     assert.match(pageSource, /webpackChunkglive_fe_pc/);
+    assert.match(pageSource, /player-vendor/);
+    assert.match(pageSource, /requestMediaKeySystemAccess/);
     assert.match(pageSource, /serviceId: 2099/);
-    assert.doesNotMatch(pageSource, /import\s*\(/);
-    assert.doesNotMatch(pageSource, /player-vendor/i);
     assert.doesNotMatch(pageSource, /ssl\.pstatic\.net/);
     assert.doesNotMatch(source, /betterchzzkPreview/);
     assert.equal(item.getAttribute("data-bcfp-active"), "1");
