@@ -17,15 +17,26 @@
         "[class*='follow']",
     ].join(", ");
     const ITEM_MARKER_RE = /(^|[\s_-])(item|channel|following|follow|live)([\s_-]|$)/i;
-    const HIDDEN_TEXT_SELECTOR = [
-        "script",
-        "style",
-        "noscript",
-        "svg",
-        "[hidden]",
-        "[aria-hidden='true']",
-    ].join(", ");
+    const HIDDEN_TEXT_SELECTOR = ["script", "style", "noscript", "svg", "[hidden]", "[aria-hidden='true']"].join(", ");
     const VISUALLY_HIDDEN_TOKEN_RE = /(^|[\s_-])(blind|sr-only|screen-reader|visually-hidden|a11y-hidden)([\s_-]|$)/i;
+    const THUMBNAIL_IMAGE_SELECTOR = [
+        "img[src*='livecloud-thumb']",
+        "img[src*='/thumbnail/image']",
+        "img[data-src*='livecloud-thumb']",
+        "img[data-src*='/thumbnail/image']",
+        "[class*='thumb'] img[src], [class*='thumb'] img[data-src]",
+        "[class*='thumbnail'] img[src], [class*='thumbnail'] img[data-src]",
+        "[class*='live_image'] img[src], [class*='live_image'] img[data-src]",
+        "[class*='liveImage'] img[src], [class*='liveImage'] img[data-src]",
+        "img[class*='thumb'][src], img[class*='thumb'][data-src]",
+        "img[class*='thumbnail'][src], img[class*='thumbnail'][data-src]",
+        "img[class*='live_image'][src], img[class*='live_image'][data-src]",
+        "img[class*='liveImage'][src], img[class*='liveImage'][data-src]",
+    ].join(", ");
+    const THUMBNAIL_MARKER_RE = /(^|[\s_-])(thumb|thumbnail|poster|live[_-]?image|live[_-]?thumb)([\s_-]|$)/i;
+    const PROFILE_IMAGE_MARKER_RE =
+        /(^|[\s_-])(avatar|profile|profile[_-]?image|image[_-]?profile|channel[_-]?image|channel[_-]?img)([\s_-]|$)|(?:avatar|profile|channel)Image/i;
+    const LIVE_THUMBNAIL_URL_RE = /(?:livecloud-thumb|\/thumbnail\/image|\/livecloud\/)/i;
     const LIVE_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/channels";
     const HOVER_OPEN_DELAY_MS = 0;
     const PREVIEW_FETCH_DELAY_MS = 100;
@@ -336,7 +347,9 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
     function getElementMarker(el) {
         if (!(el instanceof Element)) return "";
-        return normSpace(`${el.tagName || ""} ${String(el.className || "")} ${el.id || ""} ${el.getAttribute("aria-label") || ""}`);
+        return normSpace(
+            `${el.tagName || ""} ${String(el.className || "")} ${el.id || ""} ${el.getAttribute("aria-label") || ""}`
+        );
     }
 
     function isHiddenTextElement(el) {
@@ -404,25 +417,65 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         return normalizeImageUrl(match?.[2] || "");
     }
 
+    function getImageCandidateUrl(el) {
+        if (!(el instanceof Element)) return "";
+
+        if (el instanceof HTMLImageElement) {
+            return normalizeImageUrl(
+                el.currentSrc ||
+                    el.getAttribute("src") ||
+                    el.getAttribute("data-src") ||
+                    el.getAttribute("data-lazy-src") ||
+                    ""
+            );
+        }
+
+        return getBackgroundImageUrl(el);
+    }
+
+    function getImageCandidateMarker(el) {
+        const parts = [];
+        for (let node = el; node instanceof Element && parts.length < 4; node = node.parentElement) {
+            parts.push(getElementMarker(node));
+        }
+        if (el instanceof HTMLImageElement) {
+            parts.push(el.getAttribute("alt") || "", el.getAttribute("title") || "", el.getAttribute("src") || "");
+        }
+        return normSpace(parts.join(" "));
+    }
+
+    function isLikelyLiveThumbnail(el, url) {
+        if (LIVE_THUMBNAIL_URL_RE.test(url)) return true;
+        return THUMBNAIL_MARKER_RE.test(getImageCandidateMarker(el));
+    }
+
+    function shouldUseImageCandidate(el, url, { requireThumbnail = false } = {}) {
+        if (!url) return false;
+        if (isLikelyLiveThumbnail(el, url)) return true;
+        if (PROFILE_IMAGE_MARKER_RE.test(getImageCandidateMarker(el))) return false;
+        return !requireThumbnail;
+    }
+
     function getImageUrl(root) {
         if (!root) return "";
 
-        const img = root.querySelector("img[src], img[data-src], img[data-lazy-src]");
-        const imageUrl = normalizeImageUrl(
-            img?.currentSrc ||
-                img?.getAttribute("src") ||
-                img?.getAttribute("data-src") ||
-                img?.getAttribute("data-lazy-src") ||
-                ""
-        );
-        if (imageUrl) return imageUrl;
+        for (const el of root.querySelectorAll(THUMBNAIL_IMAGE_SELECTOR)) {
+            const url = getImageCandidateUrl(el);
+            if (shouldUseImageCandidate(el, url, { requireThumbnail: true })) return url;
+        }
+
+        for (const img of root.querySelectorAll("img[src], img[data-src], img[data-lazy-src]")) {
+            const url = getImageCandidateUrl(img);
+            if (shouldUseImageCandidate(img, url)) return url;
+        }
 
         for (const el of root.querySelectorAll("[style], [class*='thumb'], [class*='image']")) {
             const url = getBackgroundImageUrl(el);
-            if (url) return url;
+            if (shouldUseImageCandidate(el, url)) return url;
         }
 
-        return getBackgroundImageUrl(root);
+        const rootImage = getBackgroundImageUrl(root);
+        return shouldUseImageCandidate(root, rootImage) ? rootImage : "";
     }
 
     function extractChannelIdFromHref(href) {
@@ -763,7 +816,12 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         const currentChannelId = tip.dataset.channelId || "";
         const existingMedia = tip.querySelector(".bcfp-media");
 
-        if (existingMedia && channelId && currentChannelId === channelId && existingMedia.querySelector(".bcfp-player")) {
+        if (
+            existingMedia &&
+            channelId &&
+            currentChannelId === channelId &&
+            existingMedia.querySelector(".bcfp-player")
+        ) {
             return;
         }
 

@@ -729,6 +729,58 @@ test("following preview delays live-detail fetches while opening the DOM fallbac
     assert.equal(calls[0].init.signal.aborted, false);
 });
 
+test("following preview loading card prefers live thumbnails over channel profile images", async () => {
+    const chrome = createFakeChrome();
+    const { document, dom, link } = createFollowingPreviewDom(chrome);
+    const profileImage = link.querySelector("img");
+    const liveThumbnail = document.createElement("img");
+
+    profileImage.className = "channel_profile_image";
+    profileImage.src = "https://example.com/channel-profile.jpg";
+    liveThumbnail.className = "live_thumbnail_image";
+    liveThumbnail.src = "https://example.com/live-thumbnail.jpg";
+    link.insertBefore(liveThumbnail, link.querySelector(".name_text"));
+    dom.window.fetch = () => new Promise(() => {});
+
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForFollowingPreviewDelay();
+    await waitForAsyncCallbacks();
+
+    const tip = document.getElementById("betterchzzk-following-preview");
+    assert.ok(tip);
+    assert.equal(tip.dataset.state, "loading");
+    assert.match(tip.querySelector(".bcfp-media img").getAttribute("src"), /live-thumbnail\.jpg/);
+    assert.doesNotMatch(tip.querySelector(".bcfp-media img").getAttribute("src"), /channel-profile\.jpg/);
+});
+
+test("following preview loading card does not enlarge channel profile images as thumbnails", async () => {
+    const chrome = createFakeChrome();
+    const { document, dom, link } = createFollowingPreviewDom(chrome);
+    const profileImage = link.querySelector("img");
+
+    profileImage.className = "channel_profile_image";
+    profileImage.src = "https://example.com/channel-profile.jpg";
+    dom.window.fetch = () => new Promise(() => {});
+
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForFollowingPreviewDelay();
+    await waitForAsyncCallbacks();
+
+    const tip = document.getElementById("betterchzzk-following-preview");
+    assert.ok(tip);
+    assert.equal(tip.dataset.state, "loading");
+    assert.equal(tip.querySelector(".bcfp-media img"), null);
+    assert.equal(tip.querySelector(".bcfp-media-fallback").textContent, "LIVE");
+});
+
 test("following preview tooltip plays live in the hover card and reuses cache", async () => {
     const chrome = createFakeChrome();
     const { document, dom, item, link } = createFollowingPreviewDom(chrome);
