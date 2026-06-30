@@ -2,16 +2,13 @@
     const INSTALL_FLAG = "__betterChzzkFollowingPreviewPageInstalled";
     const PLAY_EVENT = "betterchzzk:following-preview:play";
     const STOP_EVENT = "betterchzzk:following-preview:stop";
+    const STATUS_EVENT = "betterchzzk:following-preview:status";
     const MOUNT_ATTR = "data-bcfp-player-mount";
     const STATE_ATTR = "data-bcfp-player-state";
     const WEBPACK_CHUNK_NAME = "webpackChunkglive_fe_pc";
     const WEBPACK_CAPTURE_ID = "betterchzzk-following-preview";
-    const WEBPACK_PLAYER_MODULE_ID = 49588;
     const WAIT_FOR_WEBPACK_RETRIES = 120;
     const WAIT_FOR_WEBPACK_MS = 50;
-    const PLAYER_VENDOR_RE = /(?:^|\/)player-vendor-[^/?#]+\.js(?:[?#]|$)/i;
-    const INDEX_SCRIPT_RE = /\/glive\/resource\/p\/static\/js\/index-[^/?#]+\.js(?:[?#]|$)/i;
-    const PLAYER_VENDOR_IMPORT_RE = /(?:from\s*|import\s*\()\s*["']([^"']*player-vendor-[^"']+\.js)["']/i;
     const LIVE_PLAYBACK_OPTIONS = {
         countryCode: "kr",
         devt: "HTML5_PC",
@@ -20,6 +17,7 @@
         serviceId: 2099,
     };
     const PREVIEW_AUDIO_VOLUME = 0.2;
+    const EXTENSION_PREVIEW_VIDEO_SELECTOR = "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip]";
 
     if (window[INSTALL_FLAG]) return;
     try {
@@ -29,8 +27,6 @@
     }
 
     let webpackRequirePromise = null;
-    let esmRuntimePromise = null;
-    let esmRuntimeUrl = "";
     let playerRuntimePromise = null;
     let playerRuntime = null;
     let player = null;
@@ -40,9 +36,160 @@
     let pendingLoadedMetadataTargets = [];
     let encryptedPlayer = null;
     let encryptedHandler = null;
+    let lastMainAudioState = null;
+    let watchedMainVideo = null;
+    let mainAudioSyncTimer = 0;
+    let mainVideoObserver = null;
 
     function sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function clamp(value, min, max) {
+        return Math.min(Math.max(value, min), max);
+    }
+
+    function normalizeVolume(value) {
+        const volume = Number(value);
+        return Number.isFinite(volume) ? clamp(volume, 0, 1) : PREVIEW_AUDIO_VOLUME;
+    }
+
+    function isVisible(el) {
+        if (!(el instanceof HTMLElement)) return false;
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return false;
+        const style = getComputedStyle(el);
+        return style.display !== "none" && style.visibility !== "hidden";
+    }
+
+    function pickLargestVisible(nodes) {
+        let best = null;
+        let bestArea = -1;
+        for (const el of nodes || []) {
+            if (!isVisible(el)) continue;
+            const rect = el.getBoundingClientRect();
+            const area = Math.max(0, rect.width) * Math.max(0, rect.height);
+            if (area > bestArea) {
+                best = el;
+                bestArea = area;
+            }
+        }
+        return best || null;
+    }
+
+    function elementOrHostMatches(node, selector) {
+        let current = node;
+        while (current) {
+            if (current instanceof Element && current.matches(selector)) return true;
+
+            if (current.parentElement) {
+                current = current.parentElement;
+                continue;
+            }
+
+            const rootNode = current.getRootNode?.();
+            if (
+                typeof ShadowRoot !== "undefined" &&
+                rootNode instanceof ShadowRoot &&
+                rootNode.host &&
+                rootNode.host !== current
+            ) {
+                current = rootNode.host;
+                continue;
+            }
+
+            break;
+        }
+        return false;
+    }
+
+    function isExtensionPreviewVideo(video) {
+        return video instanceof HTMLVideoElement && elementOrHostMatches(video, EXTENSION_PREVIEW_VIDEO_SELECTOR);
+    }
+
+    function getMainPlaybackVideo() {
+        const videos = Array.from(document.querySelectorAll("video")).filter(
+            (video) => !isExtensionPreviewVideo(video)
+        );
+        return pickLargestVisible(videos) || videos[0] || null;
+    }
+
+    function readAudioState(video) {
+        return {
+            muted: Boolean(video.muted),
+            volume: normalizeVolume(video.volume),
+        };
+    }
+
+    function rememberMainAudioState(video) {
+        if (!(video instanceof HTMLVideoElement) || isExtensionPreviewVideo(video)) return null;
+        lastMainAudioState = readAudioState(video);
+        return lastMainAudioState;
+    }
+
+    function clearWatchedMainVideo() {
+        if (!watchedMainVideo) return;
+        watchedMainVideo.removeEventListener?.("volumechange", onMainVideoVolumeChange, true);
+        watchedMainVideo = null;
+    }
+
+    function watchMainVideo(video) {
+        if (!(video instanceof HTMLVideoElement)) {
+            clearWatchedMainVideo();
+            return null;
+        }
+
+        if (watchedMainVideo !== video) {
+            clearWatchedMainVideo();
+            watchedMainVideo = video;
+            watchedMainVideo.addEventListener?.("volumechange", onMainVideoVolumeChange, true);
+        }
+        return rememberMainAudioState(video);
+    }
+
+    function syncMainAudioState() {
+        const mainVideo = getMainPlaybackVideo();
+        if (mainVideo instanceof HTMLVideoElement) return watchMainVideo(mainVideo);
+        clearWatchedMainVideo();
+        return null;
+    }
+
+    function scheduleMainAudioSync() {
+        if (mainAudioSyncTimer) return;
+        mainAudioSyncTimer = window.setTimeout(() => {
+            mainAudioSyncTimer = 0;
+            syncMainAudioState();
+        }, 0);
+    }
+
+    function onMainVideoVolumeChange(event) {
+        const video = event?.target;
+        if (!(video instanceof HTMLVideoElement) || isExtensionPreviewVideo(video)) return;
+
+        const mainVideo = getMainPlaybackVideo();
+        if (video === mainVideo || video === watchedMainVideo) watchMainVideo(video);
+    }
+
+    function startMainAudioTracking() {
+        syncMainAudioState();
+        document.addEventListener("volumechange", onMainVideoVolumeChange, true);
+        window.addEventListener("pageshow", scheduleMainAudioSync, true);
+        window.addEventListener("popstate", scheduleMainAudioSync, true);
+        window.addEventListener("hashchange", scheduleMainAudioSync, true);
+
+        if (typeof MutationObserver === "undefined" || mainVideoObserver) return;
+        mainVideoObserver = new MutationObserver(scheduleMainAudioSync);
+        mainVideoObserver.observe(document.documentElement || document, { childList: true, subtree: true });
+    }
+
+    function getPreviewAudioState(audioEnabled = true) {
+        const audioState = syncMainAudioState() ||
+            lastMainAudioState || {
+                muted: false,
+                volume: PREVIEW_AUDIO_VOLUME,
+            };
+
+        return audioEnabled === false ? { ...audioState, muted: true } : audioState;
     }
 
     function parseDetail(detail) {
@@ -55,6 +202,10 @@
             }
         }
         return detail;
+    }
+
+    function dispatchStatus(detail) {
+        window.dispatchEvent(new CustomEvent(STATUS_EVENT, { detail: JSON.stringify(detail || {}) }));
     }
 
     function getMountSelector(mountId) {
@@ -79,86 +230,6 @@
         }
 
         return null;
-    }
-
-    function toAbsoluteUrl(url, baseUrl = location.href) {
-        try {
-            return new URL(url, baseUrl).href;
-        } catch (_) {
-            return "";
-        }
-    }
-
-    function collectKnownAssetUrls() {
-        const urls = new Set();
-
-        try {
-            for (const el of document.querySelectorAll("script[src], link[href]")) {
-                const url = toAbsoluteUrl(el.src || el.href || "");
-                if (url) urls.add(url);
-            }
-        } catch (_) {
-            // DOM can be unavailable during early page teardown.
-        }
-
-        try {
-            for (const entry of performance.getEntriesByType?.("resource") || []) {
-                const url = toAbsoluteUrl(entry.name || "");
-                if (url) urls.add(url);
-            }
-        } catch (_) {
-            // Some browsers restrict resource timing entries.
-        }
-
-        return [...urls];
-    }
-
-    function findPlayerVendorUrlFromText(text, baseUrl) {
-        const match = String(text || "").match(PLAYER_VENDOR_IMPORT_RE);
-        return match ? toAbsoluteUrl(match[1], baseUrl) : "";
-    }
-
-    async function findPlayerVendorUrl() {
-        const urls = collectKnownAssetUrls();
-        const knownVendorUrl = urls.find((url) => PLAYER_VENDOR_RE.test(url));
-        if (knownVendorUrl) return knownVendorUrl;
-
-        for (const indexUrl of urls.filter((url) => INDEX_SCRIPT_RE.test(url))) {
-            try {
-                const response = await fetch(indexUrl, { credentials: "omit" });
-                if (!response?.ok) continue;
-                const vendorUrl = findPlayerVendorUrlFromText(await response.text(), indexUrl);
-                if (vendorUrl) return vendorUrl;
-            } catch (_) {
-                // Cross-origin script fetch can be blocked; fall through to webpack.
-            }
-        }
-
-        return "";
-    }
-
-    function importModule(url) {
-        const testLoader = window.__betterChzzkFollowingPreviewImport;
-        if (typeof testLoader === "function") return testLoader(url);
-        return import(url);
-    }
-
-    async function getRuntimeFromEsmChunks() {
-        const vendorUrl = await findPlayerVendorUrl();
-        if (!vendorUrl) return null;
-
-        if (!esmRuntimePromise || esmRuntimeUrl !== vendorUrl) {
-            esmRuntimeUrl = vendorUrl;
-            esmRuntimePromise = importModule(vendorUrl)
-                .then((module) => unwrapPlayerRuntime(module))
-                .catch((error) => {
-                    esmRuntimePromise = null;
-                    esmRuntimeUrl = "";
-                    throw error;
-                });
-        }
-
-        return esmRuntimePromise;
     }
 
     async function waitForWebpackChunk() {
@@ -206,13 +277,6 @@
     function getRuntimeFromWebpackCache(__webpack_require__) {
         if (!__webpack_require__) return null;
 
-        try {
-            const runtime = unwrapPlayerRuntime(__webpack_require__(WEBPACK_PLAYER_MODULE_ID));
-            if (runtime) return runtime;
-        } catch (_) {
-            // The current CHZZK bundle can move the player module id.
-        }
-
         const cache = __webpack_require__.c || {};
         for (const module of Object.values(cache)) {
             const runtime = unwrapPlayerRuntime(module?.exports);
@@ -227,9 +291,6 @@
 
         if (!playerRuntimePromise) {
             playerRuntimePromise = (async () => {
-                const fromEsm = await getRuntimeFromEsmChunks().catch(() => null);
-                if (fromEsm) return fromEsm;
-
                 const fromWebpack = getRuntimeFromWebpackCache(await getWebpackRequire().catch(() => null));
                 if (fromWebpack) return fromWebpack;
 
@@ -446,8 +507,9 @@
             mountedEl = mount;
             markMountState(mount, "loading");
 
-            previewPlayer.volume = PREVIEW_AUDIO_VOLUME;
-            previewPlayer.muted = false;
+            const audioState = getPreviewAudioState(detail.audioEnabled !== false);
+            previewPlayer.volume = audioState.volume;
+            previewPlayer.muted = audioState.muted;
             attachEncryptedListener(Player, previewPlayer, mount, requestId);
             previewPlayer.srcObject = Player.LiveProvider.fromJSON(playback, LIVE_PLAYBACK_OPTIONS);
 
@@ -455,9 +517,16 @@
             if (playerNode && playerNode.parentNode !== mount) mount.replaceChildren(playerNode);
 
             revealWhenReady(requestId, mount);
-        } catch (_) {
+        } catch (error) {
             if (mountedEl === mount) detachPlayer("error");
             else markMountState(mount, "error");
+            if (error?.message === "following-preview-player-runtime-unavailable") {
+                dispatchStatus({
+                    mountId,
+                    requestId,
+                    state: "runtime-unavailable",
+                });
+            }
         }
     }
 
@@ -468,6 +537,7 @@
         detachPlayer();
     }
 
+    startMainAudioTracking();
     window.addEventListener(PLAY_EVENT, handlePlay);
     window.addEventListener(STOP_EVENT, handleStop);
     window.addEventListener("pagehide", () => detachPlayer());

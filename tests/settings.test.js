@@ -77,6 +77,7 @@ const expectedDefaults = {
     followingRefreshEnabled: true,
     followingRefreshSeconds: 30,
     followingPreviewTooltipEnabled: true,
+    followingPreviewAudioEnabled: true,
     shortcutRescueEnabled: true,
 };
 

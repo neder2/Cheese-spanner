@@ -46,10 +46,10 @@
     const CACHE_TTL_MS = 20000;
     const MAX_CACHE_ENTRIES = 80;
     const CARD_WIDTH = 460;
-    const PREVIEW_AUDIO_VOLUME = 0.2;
     const PLAYER_START_SETTLE_MS = 90;
     const PLAYER_PLAY_EVENT = "betterchzzk:following-preview:play";
     const PLAYER_STOP_EVENT = "betterchzzk:following-preview:stop";
+    const PLAYER_STATUS_EVENT = "betterchzzk:following-preview:status";
     const PLAYER_MOUNT_ATTR = "data-bcfp-player-mount";
     const PLAYER_STATE_ATTR = "data-bcfp-player-state";
     const ELAPSED_REFRESH_MS = 1000;
@@ -109,6 +109,12 @@
   width:100% !important;
   height:100% !important;
   object-fit:cover !important;
+}
+#${TOOLTIP_ID} .bcfp-player iframe{
+  display:block;
+  width:100% !important;
+  height:100% !important;
+  border:0;
 }
 #${TOOLTIP_ID} .bcfp-player video{
   display:block;
@@ -256,6 +262,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     let activeFetchController = null;
     let previewFetchTimer = 0;
     let playerStartTimer = 0;
+    let activePlayerMeta = null;
     let removePageChangeDetection = null;
 
     const previewCache = new Map();
@@ -716,6 +723,43 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         window.dispatchEvent(new CustomEvent(type, { detail: JSON.stringify(detail || {}) }));
     }
 
+    function parsePlayerDetail(detail) {
+        if (!detail) return {};
+        if (typeof detail === "string") {
+            try {
+                return JSON.parse(detail) || {};
+            } catch (_) {
+                return {};
+            }
+        }
+        return detail;
+    }
+
+    function getPlayerMountSelector(requestId) {
+        return `[${PLAYER_MOUNT_ATTR}="${String(requestId || "").replace(/["\\]/g, "\\$&")}"]`;
+    }
+
+    function getLivePagePreviewUrl(meta) {
+        const channelId = String(meta?.channelId || "").trim();
+        if (!channelId) return "";
+        return new URL(`/live/${encodeURIComponent(channelId)}`, location.origin).href;
+    }
+
+    function createLivePageFallbackFrame(meta) {
+        const src = getLivePagePreviewUrl(meta);
+        if (!src) return null;
+
+        const frame = document.createElement("iframe");
+        frame.className = "bcfp-player-frame";
+        frame.title = `${meta.channelName || meta.channelId} \ub77c\uc774\ube0c \ubbf8\ub9ac\ubcf4\uae30`;
+        frame.loading = "eager";
+        frame.referrerPolicy = "no-referrer-when-downgrade";
+        frame.setAttribute("allow", "autoplay; encrypted-media; fullscreen; picture-in-picture");
+        frame.setAttribute("allowfullscreen", "true");
+        frame.src = src;
+        return frame;
+    }
+
     let playerRequestSeq = 0;
     let activePlayerRequestId = "";
 
@@ -729,7 +773,30 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         clearPlayerStartTimer();
         if (!requestId) return;
         dispatchPlayerEvent(PLAYER_STOP_EVENT, { requestId });
-        if (requestId === activePlayerRequestId) activePlayerRequestId = "";
+        if (requestId === activePlayerRequestId) {
+            activePlayerRequestId = "";
+            activePlayerMeta = null;
+        }
+    }
+
+    function showLivePageFallback(requestId) {
+        if (!requestId || requestId !== activePlayerRequestId || !activePlayerMeta) return;
+
+        const mount = tooltip?.querySelector(getPlayerMountSelector(requestId));
+        if (!mount?.isConnected) return;
+
+        const frame = createLivePageFallbackFrame(activePlayerMeta);
+        if (!frame) return;
+
+        mount.replaceChildren(frame);
+        mount.setAttribute(PLAYER_STATE_ATTR, "ready");
+    }
+
+    function handlePlayerStatus(event) {
+        const detail = parsePlayerDetail(event.detail);
+        const requestId = String(detail.requestId || "");
+        if (detail.state !== "runtime-unavailable") return;
+        showLivePageFallback(requestId);
     }
 
     function queuePlayerRequest(fn) {
@@ -745,6 +812,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
         const requestId = `bcfp${Date.now().toString(36)}${(playerRequestSeq += 1).toString(36)}`;
         activePlayerRequestId = requestId;
+        activePlayerMeta = meta;
         mount.setAttribute(PLAYER_MOUNT_ATTR, requestId);
         mount.setAttribute(PLAYER_STATE_ATTR, "loading");
 
@@ -752,12 +820,11 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             playerStartTimer = 0;
             if (activePlayerRequestId !== requestId || !mount.isConnected) return;
             dispatchPlayerEvent(PLAYER_PLAY_EVENT, {
+                audioEnabled: featureOptions.followingPreviewAudioEnabled !== false,
                 channelId: meta.channelId,
                 mountId: requestId,
-                muted: false,
                 playbackJson: meta.playbackJson,
                 requestId,
-                volume: PREVIEW_AUDIO_VOLUME,
             });
         };
 
@@ -1100,6 +1167,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         document.addEventListener("pointerout", handlePointerOut, true);
         window.addEventListener("scroll", handleViewportChange, true);
         window.addEventListener("resize", handleViewportChange);
+        window.addEventListener(PLAYER_STATUS_EVENT, handlePlayerStatus);
         removePageChangeDetection = startPageChangeDetection(hidePreview);
     }
 
@@ -1111,6 +1179,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         document.removeEventListener("pointerout", handlePointerOut, true);
         window.removeEventListener("scroll", handleViewportChange, true);
         window.removeEventListener("resize", handleViewportChange);
+        window.removeEventListener(PLAYER_STATUS_EVENT, handlePlayerStatus);
 
         if (removePageChangeDetection) {
             removePageChangeDetection();

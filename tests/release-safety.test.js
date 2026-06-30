@@ -17,8 +17,8 @@ const forbiddenPatterns = [
         pattern: new RegExp(["import", "Player", "Vendor", "Runtime"].join("")),
     },
     {
-        label: "remote dynamic import",
-        pattern: /import\s*\(\s*["'`]https?:/,
+        label: "dynamic import",
+        pattern: /\bimport\s*\(/,
     },
     {
         label: `src${"doc"}`,

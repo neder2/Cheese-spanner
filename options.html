@@ -239,13 +239,9 @@
                             >
                             <label
                                 ><span>무릎</span
-                                ><input
-                                    type="number"
-                                    min="0"
-                                    max="40"
-                                    step="1"
-                                    data-option="audioCompressorKnee"
-                                /><em>dB</em></label
+                                ><input type="number" min="0" max="40" step="1" data-option="audioCompressorKnee" /><em
+                                    >dB</em
+                                ></label
                             >
                             <label
                                 ><span>비율</span
@@ -639,6 +635,16 @@
                             >
                         </span>
                         <input type="checkbox" data-option="followingPreviewTooltipEnabled" />
+                    </label>
+                    <label class="toggle-row" data-depends-on="followingPreviewTooltipEnabled">
+                        <span>
+                            <strong>미리보기 소리</strong>
+                            <small
+                                >켜면 메인 플레이어의 볼륨과 음소거 상태를 따라가고, 끄면 미리보기를 음소거로
+                                재생합니다.</small
+                            >
+                        </span>
+                        <input type="checkbox" data-option="followingPreviewAudioEnabled" />
                     </label>
                     <label class="toggle-row">
                         <span

@@ -1,6 +1,7 @@
 (() => {
     const CONFIG_EVENT = "betterchzzk:volume-wheel-options";
     const CONFIG_ATTR = "data-betterchzzk-volume-wheel-options";
+    const EXTENSION_PREVIEW_VIDEO_SELECTOR = "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip]";
     const VOLUME_CONTROL_SELECTOR = [
         "[class*='pzp'][class*='volume']",
         ".pzp-pc__volume",
@@ -12,12 +13,7 @@
         ".pzp-pc-volume-button",
         ".pzp-pc-volume-slider",
     ].join(", ");
-    const VOLUME_BUTTON_SELECTOR = [
-        "button",
-        "[role='button']",
-        "input[type='range']",
-        "[role='slider']",
-    ].join(", ");
+    const VOLUME_BUTTON_SELECTOR = ["button", "[role='button']", "input[type='range']", "[role='slider']"].join(", ");
     const PLAYER_ROOT_SELECTOR = [
         ".pzp-pc",
         "[class*='pzp-pc']",
@@ -26,15 +22,7 @@
         "[class*='video_player']",
     ].join(", ");
     const PLAYBACK_ROUTE_RE = /^\/(?:live|video)(?:\/|$)/;
-    const VOLUME_TERMS = [
-        "volume",
-        "mute",
-        "muted",
-        "speaker",
-        "\uBCFC\uB968",
-        "\uC74C\uB7C9",
-        "\uC74C\uC18C\uAC70",
-    ];
+    const VOLUME_TERMS = ["volume", "mute", "muted", "speaker", "\uBCFC\uB968", "\uC74C\uB7C9", "\uC74C\uC18C\uAC70"];
     const DESCRIPTOR_ATTRS = [
         "id",
         "class",
@@ -60,7 +48,9 @@
     }
 
     function compact(value) {
-        return String(value || "").toLowerCase().replace(/\s+/g, "");
+        return String(value || "")
+            .toLowerCase()
+            .replace(/\s+/g, "");
     }
 
     function isPlaybackRoute() {
@@ -175,8 +165,40 @@
         return best || null;
     }
 
+    function elementOrHostMatches(node, selector) {
+        let current = node;
+        while (current) {
+            if (current instanceof Element && current.matches(selector)) return true;
+
+            if (current.parentElement) {
+                current = current.parentElement;
+                continue;
+            }
+
+            const rootNode = current.getRootNode?.();
+            if (
+                typeof ShadowRoot !== "undefined" &&
+                rootNode instanceof ShadowRoot &&
+                rootNode.host &&
+                rootNode.host !== current
+            ) {
+                current = rootNode.host;
+                continue;
+            }
+
+            break;
+        }
+        return false;
+    }
+
+    function isExtensionPreviewVideo(video) {
+        return video instanceof HTMLVideoElement && elementOrHostMatches(video, EXTENSION_PREVIEW_VIDEO_SELECTOR);
+    }
+
     function getMainVideoElement() {
-        const videos = document.querySelectorAll("video");
+        const videos = Array.from(document.querySelectorAll("video")).filter(
+            (video) => !isExtensionPreviewVideo(video)
+        );
         return pickLargestVisible(videos) || videos[0] || null;
     }
 
@@ -207,7 +229,7 @@
     function applyVolumeDelta(video, directionSteps) {
         if (!(video instanceof HTMLVideoElement)) return false;
 
-        const current = video.muted ? 0 : (Number.isFinite(video.volume) ? video.volume : 0);
+        const current = video.muted ? 0 : Number.isFinite(video.volume) ? video.volume : 0;
         const next = clamp(current + directionSteps * getStepRatio(), 0, 1);
         const token = ++volumeApplyToken;
 

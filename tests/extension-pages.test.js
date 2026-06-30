@@ -1375,7 +1375,10 @@ test("options places following controls with exploration controls", () => {
     assert.ok(
         optionOrder.indexOf("categoryToolsLiveElapsedEnabled") < optionOrder.indexOf("followingPreviewTooltipEnabled")
     );
-    assert.ok(optionOrder.indexOf("followingPreviewTooltipEnabled") < optionOrder.indexOf("titleTooltipEnabled"));
+    assert.ok(
+        optionOrder.indexOf("followingPreviewTooltipEnabled") < optionOrder.indexOf("followingPreviewAudioEnabled")
+    );
+    assert.ok(optionOrder.indexOf("followingPreviewAudioEnabled") < optionOrder.indexOf("titleTooltipEnabled"));
 });
 
 test("manifest loads playback scripts in the expected worlds", () => {
@@ -2217,6 +2220,57 @@ test("volume wheel raises and lowers media volume over the volume control", asyn
     assert.ok(Math.abs(video.volume - 0.5) < 1e-6, "휠 다운이면 -5%");
     assert.equal(down.defaultPrevented, true);
     assert.equal(slider.value, "50");
+});
+
+test("volume wheel ignores following preview videos when choosing media volume", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<div class="bcfp-player" data-bcfp-player-mount="preview">',
+            '<video id="previewVideo"></video>',
+            "</div>",
+            '<div class="pzp-pc" id="playerRoot">',
+            '<video id="video"></video>',
+            '<div class="pzp-pc__volume-control" id="vol">',
+            '<button class="pzp-pc__volume-button" type="button"></button>',
+            "</div>",
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const previewVideo = document.getElementById("previewVideo");
+    const vol = document.getElementById("vol");
+
+    video.volume = 0.5;
+    previewVideo.volume = 0.1;
+    previewVideo.getBoundingClientRect = () => ({
+        width: 800,
+        height: 450,
+        left: 0,
+        top: 0,
+        right: 800,
+        bottom: 450,
+    });
+    video.getBoundingClientRect = () => ({ width: 320, height: 180, left: 0, top: 0, right: 320, bottom: 180 });
+    vol.getBoundingClientRect = () => ({ width: 40, height: 40, left: 20, top: 320, right: 60, bottom: 360 });
+
+    evalVolumeWheelScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const up = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(up, "deltaY", { value: -100 });
+    vol.dispatchEvent(up);
+
+    assert.ok(Math.abs(video.volume - 0.55) < 1e-6);
+    assert.ok(Math.abs(previewVideo.volume - 0.1) < 1e-6);
+    assert.equal(up.defaultPrevented, true);
 });
 
 test("volume wheel stays inert until settings publish while keeping early listener priority", async () => {
