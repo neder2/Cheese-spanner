@@ -9,6 +9,8 @@ const settings = globalThis.BetterChzzkSettings;
 
 const expectedDefaults = {
     autoQualityEnabled: true,
+    rewardAutoCollectEnabled: false,
+    rewardAutoCollectDelayMs: 800,
     skipControlEnabled: true,
     skipKeyboardEnabled: true,
     skipPillEnabled: true,
@@ -22,6 +24,13 @@ const expectedDefaults = {
     volumeWheelEnabled: true,
     volumeWheelStep: 5,
     volumeTooltipEnabled: false,
+    audioCompressorEnabled: false,
+    audioCompressorThreshold: -24,
+    audioCompressorKnee: 30,
+    audioCompressorRatio: 12,
+    audioCompressorAttack: 0.003,
+    audioCompressorRelease: 0.25,
+    audioCompressorMakeupGain: 1,
     vodBroadcastClockEnabled: false,
     timeMachineLagLabelEnabled: true,
     adblockPopupEnabled: true,
@@ -32,6 +41,11 @@ const expectedDefaults = {
     monthlyBroadcastTimeMaxCalendarPages: 60,
     liveWatchHistoryEnabled: true,
     liveWatchHistoryMinMinutes: 1,
+    chatToolsEnabled: false,
+    chatToolsShowBlindEnabled: false,
+    chatToolsModeratorBoxEnabled: true,
+    chatToolsCacheModeratorMessagesEnabled: false,
+    chatToolsMaxModeratorMessages: 100,
     videoSearchEnabled: true,
     videoSearchCommentEnabled: true,
     videoSearchMaxPages: 80,
@@ -74,14 +88,17 @@ test("settings exports the expected option defaults and key order", () => {
 test("feature count keys are derived from feature toggles only", () => {
     assert.deepEqual(settings.FEATURE_KEYS, [
         "autoQualityEnabled",
+        "rewardAutoCollectEnabled",
         "skipControlEnabled",
         "volumeWheelEnabled",
         "volumeTooltipEnabled",
+        "audioCompressorEnabled",
         "vodBroadcastClockEnabled",
         "timeMachineLagLabelEnabled",
         "adblockPopupEnabled",
         "monthlyBroadcastTimeEnabled",
         "liveWatchHistoryEnabled",
+        "chatToolsEnabled",
         "videoSearchEnabled",
         "categoryToolsEnabled",
         "titleTooltipEnabled",
@@ -98,8 +115,14 @@ test("normalizeOptions preserves boolean parsing and integer bounds", () => {
         skipWheelStep: 999,
         skipWheelShiftStep: "2.4",
         volumeWheelStep: 999,
+        audioCompressorThreshold: -999,
+        audioCompressorRatio: 99,
+        audioCompressorAttack: 0.12345,
+        audioCompressorMakeupGain: 99,
         monthlyBroadcastTimeMaxCalendarPages: 9999,
         videoSearchCommentDelayMs: -2,
+        rewardAutoCollectDelayMs: 9999,
+        chatToolsMaxModeratorMessages: 9999,
         categoryToolsFollowerFilterPreset1: "50000000",
         categoryToolsFollowerFetchConcurrency: "0",
     });
@@ -109,8 +132,14 @@ test("normalizeOptions preserves boolean parsing and integer bounds", () => {
     assert.equal(normalized.skipWheelStep, 60);
     assert.equal(normalized.skipWheelShiftStep, 2);
     assert.equal(normalized.volumeWheelStep, 50);
+    assert.equal(normalized.audioCompressorThreshold, -60);
+    assert.equal(normalized.audioCompressorRatio, 20);
+    assert.equal(normalized.audioCompressorAttack, 0.123);
+    assert.equal(normalized.audioCompressorMakeupGain, 3);
     assert.equal(normalized.monthlyBroadcastTimeMaxCalendarPages, settings.MONTHLY_CALENDAR_MAX_PAGES);
     assert.equal(normalized.videoSearchCommentDelayMs, 0);
+    assert.equal(normalized.rewardAutoCollectDelayMs, settings.REWARD_AUTO_COLLECT_DELAY_MS_MAX);
+    assert.equal(normalized.chatToolsMaxModeratorMessages, settings.CHAT_TOOLS_MAX_MODERATOR_MESSAGES);
     assert.equal(normalized.categoryToolsFollowerFilterPreset1, 10000000);
     assert.equal(normalized.categoryToolsFollowerFetchConcurrency, 1);
 });

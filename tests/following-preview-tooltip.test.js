@@ -89,6 +89,91 @@ function waitForFollowingPlayerSettle() {
     return new Promise((resolve) => setTimeout(resolve, 120));
 }
 
+function createFollowingPreviewPlayerDom({ play } = {}) {
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<script src="https://ssl.pstatic.net/static/nng/glive/resource/p/static/js/player-vendor-test.js"></script>',
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/"
+    );
+    const { document } = dom.window;
+    const state = {
+        createdPlayers: [],
+        fromJSONCalls: [],
+        importUrls: [],
+        playCalls: 0,
+    };
+
+    function CorePlayer() {
+        const video = document.createElement("video");
+        Object.defineProperty(video, "srcObject", { configurable: true, value: null, writable: true });
+        video.play = () => {
+            state.playCalls += 1;
+            if (play) return play({ state, video });
+            return Promise.resolve();
+        };
+        video.setMediaKeys = async () => {};
+        state.createdPlayers.push(video);
+        return video;
+    }
+
+    CorePlayer.requestMediaKeySystemAccess = async () => ({
+        createMediaKeys: async () => ({
+            createSession: () => ({
+                addEventListener() {},
+                generateRequest: async () => {},
+                update: async () => {},
+            }),
+        }),
+    });
+
+    const runtime = {
+        CorePlayer,
+        LiveProvider: {
+            fromJSON(playback, options) {
+                const srcObject = { options, playback };
+                state.fromJSONCalls.push(srcObject);
+                return srcObject;
+            },
+        },
+    };
+
+    dom.window.__betterChzzkFollowingPreviewImport = async (url) => {
+        state.importUrls.push(url);
+        return runtime;
+    };
+
+    return { document, dom, state };
+}
+
+function installWebpackPlayerRuntime(dom, getRuntime) {
+    dom.window.webpackChunkglive_fe_pc = [];
+    dom.window.webpackChunkglive_fe_pc.push = (chunk) => {
+        const modules = chunk[1] || {};
+        const runtime = chunk[2];
+        const playerRuntime = getRuntime();
+        const cache = playerRuntime
+            ? {
+                  49588: { exports: playerRuntime },
+              }
+            : {};
+        const require = (id) => {
+            if (Object.hasOwn(modules, id)) {
+                const module = { exports: {} };
+                modules[id](module, module.exports, require);
+                cache[id] = module;
+                return module.exports;
+            }
+            return cache[id]?.exports;
+        };
+        require.c = cache;
+        return runtime(require);
+    };
+}
+
 function evalFollowingPreviewTooltipScripts(dom) {
     evalRepoScript(dom, "shared", "settings.js");
     evalRepoScript(dom, "content.js");
@@ -171,7 +256,129 @@ test("manifest loads following preview after following refresh", () => {
     );
 });
 
-test("following preview page bridge reuses the main-world CHZZK player", async () => {
+test("following preview page bridge mounts CorePlayer from live playback JSON", async () => {
+    const { document, dom, state } = createFollowingPreviewPlayerDom();
+    const playbackJson = JSON.stringify({
+        media: [{ mediaId: "HLS", path: "https://example.com/live.m3u8" }],
+    });
+
+    evalRepoScript(dom, "features", "followingPreviewPage.js");
+
+    const firstMount = document.createElement("div");
+    firstMount.setAttribute("data-bcfp-player-mount", "first");
+    document.body.appendChild(firstMount);
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:following-preview:play", {
+            detail: JSON.stringify({
+                mountId: "first",
+                muted: false,
+                playbackJson,
+                requestId: "first",
+                volume: 0.3,
+            }),
+        })
+    );
+    await waitForAsyncCallbacks();
+
+    const video = firstMount.querySelector("video");
+    assert.ok(video);
+    assert.equal(firstMount.getAttribute("data-bcfp-player-state"), "loading");
+    assert.equal(video.autoplay, true);
+    assert.equal(video.muted, false);
+    assert.equal(video.playsInline, true);
+    assert.equal(video.controls, false);
+    assert.equal(video.volume, 0.2);
+    assert.deepEqual(state.importUrls, [
+        "https://ssl.pstatic.net/static/nng/glive/resource/p/static/js/player-vendor-test.js",
+    ]);
+    assert.equal(state.fromJSONCalls.length, 1);
+    assert.equal(JSON.stringify(state.fromJSONCalls[0].playback), playbackJson);
+    assert.equal(state.fromJSONCalls[0].options.countryCode, "kr");
+    assert.equal(state.fromJSONCalls[0].options.devt, "HTML5_PC");
+    assert.equal(state.fromJSONCalls[0].options.maxLevel, 480);
+    assert.equal(state.fromJSONCalls[0].options.p2pDisabled, true);
+    assert.equal(state.fromJSONCalls[0].options.serviceId, 2099);
+    assert.equal(Object.hasOwn(state.fromJSONCalls[0].options, "mediaType"), false);
+    assert.equal(Object.hasOwn(state.fromJSONCalls[0].options, "track"), false);
+
+    video.dispatchEvent(new dom.window.Event("loadedmetadata"));
+    await waitForAsyncCallbacks();
+
+    assert.equal(firstMount.getAttribute("data-bcfp-player-state"), "ready");
+    assert.equal(state.playCalls, 1);
+
+    const secondMount = document.createElement("div");
+    secondMount.setAttribute("data-bcfp-player-mount", "second");
+    document.body.appendChild(secondMount);
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:following-preview:play", {
+            detail: JSON.stringify({
+                mountId: "second",
+                muted: true,
+                playbackJson,
+                requestId: "second",
+                volume: 0,
+            }),
+        })
+    );
+    await waitForAsyncCallbacks();
+
+    assert.equal(firstMount.childElementCount, 0);
+    assert.equal(firstMount.getAttribute("data-bcfp-player-state"), "idle");
+    assert.equal(secondMount.getAttribute("data-bcfp-player-state"), "loading");
+    assert.ok(secondMount.querySelector("video"));
+    assert.equal(secondMount.querySelector("video").muted, false);
+    assert.equal(secondMount.querySelector("video").volume, 0.2);
+
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:following-preview:stop", {
+            detail: JSON.stringify({ requestId: "second" }),
+        })
+    );
+    await waitForAsyncCallbacks();
+
+    assert.equal(secondMount.childElementCount, 0);
+    assert.equal(secondMount.getAttribute("data-bcfp-player-state"), "idle");
+});
+
+test("following preview page bridge marks audio autoplay rejection without muted replay", async () => {
+    const rejected = new Error("blocked");
+    rejected.name = "NotAllowedError";
+    const { document, dom, state } = createFollowingPreviewPlayerDom({ play: () => Promise.reject(rejected) });
+    const playbackJson = JSON.stringify({
+        media: [{ mediaId: "HLS", path: "https://example.com/live-audio.m3u8" }],
+    });
+
+    evalRepoScript(dom, "features", "followingPreviewPage.js");
+
+    const mount = document.createElement("div");
+    mount.setAttribute("data-bcfp-player-mount", "audio-blocked");
+    document.body.appendChild(mount);
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:following-preview:play", {
+            detail: JSON.stringify({
+                mountId: "audio-blocked",
+                muted: false,
+                playbackJson,
+                requestId: "audio-blocked",
+                volume: 0.3,
+            }),
+        })
+    );
+    await waitForAsyncCallbacks();
+
+    const video = mount.querySelector("video");
+    assert.ok(video);
+    video.dispatchEvent(new dom.window.Event("loadedmetadata"));
+    await waitForAsyncCallbacks();
+
+    assert.equal(state.playCalls, 1);
+    assert.equal(video.muted, false);
+    assert.equal(video.volume, 0.2);
+    assert.equal(mount.getAttribute("data-bcfp-player-state"), "error");
+});
+
+test("following preview page bridge reuses the main-world CHZZK player from webpack cache", async () => {
     const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/");
     const { document } = dom.window;
     const players = [];
@@ -202,27 +409,7 @@ test("following preview page bridge reuses the main-world CHZZK player", async (
             },
         },
     };
-
-    dom.window.webpackChunkglive_fe_pc = [];
-    dom.window.webpackChunkglive_fe_pc.push = (chunk) => {
-        const modules = chunk[1] || {};
-        const runtime = chunk[2];
-        const cache = {
-            49588: { exports: fakePlayerRuntime },
-        };
-        const require = (id) => {
-            if (Object.hasOwn(modules, id)) {
-                const module = { exports: {} };
-                modules[id](module, module.exports, require);
-                cache[id] = module;
-                return module.exports;
-            }
-            return cache[id]?.exports;
-        };
-        require.c = cache;
-        return runtime(require);
-    };
-
+    installWebpackPlayerRuntime(dom, () => fakePlayerRuntime);
     evalRepoScript(dom, "features", "followingPreviewPage.js");
 
     const firstMount = document.createElement("div");
@@ -232,8 +419,10 @@ test("following preview page bridge reuses the main-world CHZZK player", async (
         new dom.window.CustomEvent("betterchzzk:following-preview:play", {
             detail: JSON.stringify({
                 mountId: "first",
+                muted: false,
                 playbackJson: JSON.stringify({ media: [{ mediaId: "HLS", path: "first.m3u8" }] }),
                 requestId: "first",
+                volume: 0.25,
             }),
         })
     );
@@ -242,10 +431,13 @@ test("following preview page bridge reuses the main-world CHZZK player", async (
     assert.equal(players.length, 1);
     assert.equal(firstMount.getAttribute("data-bcfp-player-state"), "ready");
     assert.equal(firstMount.firstElementChild.className, "fake-core-player");
+    assert.equal(players[0].muted, false);
+    assert.equal(players[0].volume, 0.2);
     assert.equal(fromJsonCalls.length, 1);
     assert.equal(fromJsonCalls[0].options.serviceId, 2099);
     assert.equal(fromJsonCalls[0].options.maxLevel, 480);
-    assert.equal(fromJsonCalls[0].options.mediaType, "PREVIEW");
+    assert.equal(Object.hasOwn(fromJsonCalls[0].options, "mediaType"), false);
+    assert.equal(Object.hasOwn(fromJsonCalls[0].options, "track"), false);
 
     const secondMount = document.createElement("div");
     secondMount.setAttribute("data-bcfp-player-mount", "second");
@@ -254,8 +446,10 @@ test("following preview page bridge reuses the main-world CHZZK player", async (
         new dom.window.CustomEvent("betterchzzk:following-preview:play", {
             detail: JSON.stringify({
                 mountId: "second",
+                muted: true,
                 playbackJson: JSON.stringify({ media: [{ mediaId: "HLS", path: "second.m3u8" }] }),
                 requestId: "second",
+                volume: 0,
             }),
         })
     );
@@ -268,21 +462,9 @@ test("following preview page bridge reuses the main-world CHZZK player", async (
     assert.equal(secondMount.firstElementChild.className, "fake-core-player");
     assert.equal(fromJsonCalls.length, 2);
     assert.equal(players[0].playCalls, 2);
-
-    dom.window.dispatchEvent(
-        new dom.window.CustomEvent("betterchzzk:following-preview:stop", {
-            detail: JSON.stringify({ requestId: "second" }),
-        })
-    );
-    await waitForAsyncCallbacks();
-
-    assert.equal(secondMount.childElementCount, 0);
-    assert.equal(secondMount.getAttribute("data-bcfp-player-state"), "idle");
-    assert.equal(players[0].src, "");
-    assert.equal(players[0].srcObject, null);
 });
 
-test("following preview page bridge mounts the player host when it owns a native shadow root", async () => {
+test("following preview page bridge keeps the native CorePlayer host mounted", async () => {
     const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/");
     const { document } = dom.window;
     const players = [];
@@ -315,27 +497,7 @@ test("following preview page bridge mounts the player host when it owns a native
             },
         },
     };
-
-    dom.window.webpackChunkglive_fe_pc = [];
-    dom.window.webpackChunkglive_fe_pc.push = (chunk) => {
-        const modules = chunk[1] || {};
-        const runtime = chunk[2];
-        const cache = {
-            49588: { exports: fakePlayerRuntime },
-        };
-        const require = (id) => {
-            if (Object.hasOwn(modules, id)) {
-                const module = { exports: {} };
-                modules[id](module, module.exports, require);
-                cache[id] = module;
-                return module.exports;
-            }
-            return cache[id]?.exports;
-        };
-        require.c = cache;
-        return runtime(require);
-    };
-
+    installWebpackPlayerRuntime(dom, () => fakePlayerRuntime);
     evalRepoScript(dom, "features", "followingPreviewPage.js");
 
     const mount = document.createElement("div");
@@ -355,7 +517,7 @@ test("following preview page bridge mounts the player host when it owns a native
     assert.equal(players.length, 1);
     assert.equal(mount.getAttribute("data-bcfp-player-state"), "ready");
     assert.equal(mount.firstElementChild, players[0]);
-    assert.equal(mount.querySelector("video"), null);
+    assert.ok(players[0].shadowRoot.querySelector("video"));
     assert.equal(fromJsonCalls.length, 1);
     assert.equal(players[0].playCalls, 1);
 });
@@ -392,29 +554,7 @@ test("following preview page bridge retries after the player runtime becomes ava
             },
         },
     };
-
-    dom.window.webpackChunkglive_fe_pc = [];
-    dom.window.webpackChunkglive_fe_pc.push = (chunk) => {
-        const modules = chunk[1] || {};
-        const runtime = chunk[2];
-        const cache = runtimeAvailable
-            ? {
-                  49588: { exports: fakePlayerRuntime },
-              }
-            : {};
-        const require = (id) => {
-            if (Object.hasOwn(modules, id)) {
-                const module = { exports: {} };
-                modules[id](module, module.exports, require);
-                cache[id] = module;
-                return module.exports;
-            }
-            return cache[id]?.exports;
-        };
-        require.c = cache;
-        return runtime(require);
-    };
-
+    installWebpackPlayerRuntime(dom, () => (runtimeAvailable ? fakePlayerRuntime : null));
     evalRepoScript(dom, "features", "followingPreviewPage.js");
 
     const failedMount = document.createElement("div");
@@ -456,7 +596,7 @@ test("following preview page bridge retries after the player runtime becomes ava
     assert.equal(players[0].playCalls, 1);
 });
 
-test("following preview page bridge falls back to the current CHZZK ESM player vendor", async () => {
+test("following preview page bridge uses the current CHZZK ESM player vendor", async () => {
     const dom = createPageDom(
         [
             "<!doctype html>",
@@ -539,7 +679,8 @@ test("following preview page bridge falls back to the current CHZZK ESM player v
     assert.equal(mount.getAttribute("data-bcfp-player-state"), "ready");
     assert.equal(mount.firstElementChild.className, "fake-esm-player");
     assert.equal(fromJsonCalls.length, 1);
-    assert.equal(fromJsonCalls[0].options.mediaType, "PREVIEW");
+    assert.equal(Object.hasOwn(fromJsonCalls[0].options, "mediaType"), false);
+    assert.equal(Object.hasOwn(fromJsonCalls[0].options, "track"), false);
     assert.equal(players[0].playCalls, 1);
 });
 
@@ -622,27 +763,7 @@ test("following preview page bridge handles AES HLS license requests", async () 
             },
         },
     };
-
-    dom.window.webpackChunkglive_fe_pc = [];
-    dom.window.webpackChunkglive_fe_pc.push = (chunk) => {
-        const modules = chunk[1] || {};
-        const runtime = chunk[2];
-        const cache = {
-            49588: { exports: fakePlayerRuntime },
-        };
-        const require = (id) => {
-            if (Object.hasOwn(modules, id)) {
-                const module = { exports: {} };
-                modules[id](module, module.exports, require);
-                cache[id] = module;
-                return module.exports;
-            }
-            return cache[id]?.exports;
-        };
-        require.c = cache;
-        return runtime(require);
-    };
-
+    installWebpackPlayerRuntime(dom, () => fakePlayerRuntime);
     evalRepoScript(dom, "features", "followingPreviewPage.js");
 
     const mount = document.createElement("div");
@@ -683,6 +804,67 @@ test("following preview page bridge handles AES HLS license requests", async () 
     assert.equal(licenseFetches[0].init.method, "POST");
     assert.equal(licenseFetches[0].init.credentials, "include");
     assert.deepEqual(licenseUpdates, [4]);
+});
+
+test("following preview page bridge uses CHZZK player runtime instead of a live page frame", () => {
+    const source = readRepoFile("features", "followingPreviewPage.js");
+
+    assert.match(source, /LiveProvider\.fromJSON/);
+    assert.match(source, /CorePlayer/);
+    assert.match(source, /requestMediaKeySystemAccess/);
+    assert.match(source, /player-vendor/i);
+    assert.doesNotMatch(source, /\/live\/\$\{encodeURIComponent\(channelId\)\}\/simple/);
+    assert.doesNotMatch(source, /createElement\("iframe"\)/);
+    assert.doesNotMatch(source, /playMutedPreview/);
+    assert.doesNotMatch(source, new RegExp(`src${"doc"}`));
+    assert.doesNotMatch(source, /\beval\s*\(/);
+    assert.doesNotMatch(source, new RegExp(`\\bnew\\s+${"Function"}\\b`));
+    assert.doesNotMatch(source, /mediaType:\s*["']PREVIEW["']/);
+    assert.doesNotMatch(source, /track:\s*360/);
+});
+
+test("following preview page bridge ignores stale stop requests", async () => {
+    const { document, dom } = createFollowingPreviewPlayerDom();
+    const playbackJson = JSON.stringify({
+        media: [{ mediaId: "HLS", path: "https://example.com/live.m3u8" }],
+    });
+
+    evalRepoScript(dom, "features", "followingPreviewPage.js");
+
+    const mount = document.createElement("div");
+    mount.setAttribute("data-bcfp-player-mount", "active");
+    document.body.appendChild(mount);
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:following-preview:play", {
+            detail: JSON.stringify({
+                mountId: "active",
+                playbackJson,
+                requestId: "active",
+            }),
+        })
+    );
+    await waitForAsyncCallbacks();
+
+    assert.ok(mount.querySelector("video"));
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:following-preview:stop", {
+            detail: JSON.stringify({ requestId: "stale" }),
+        })
+    );
+    await waitForAsyncCallbacks();
+
+    assert.ok(mount.querySelector("video"));
+    assert.equal(mount.getAttribute("data-bcfp-player-state"), "loading");
+
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:following-preview:stop", {
+            detail: JSON.stringify({ requestId: "active" }),
+        })
+    );
+    await waitForAsyncCallbacks();
+
+    assert.equal(mount.childElementCount, 0);
+    assert.equal(mount.getAttribute("data-bcfp-player-state"), "idle");
 });
 
 test("following preview delays live-detail fetches while opening the DOM fallback immediately", async () => {
@@ -755,6 +937,30 @@ test("following preview loading card prefers live thumbnails over channel profil
     assert.equal(tip.dataset.state, "loading");
     assert.match(tip.querySelector(".bcfp-media img").getAttribute("src"), /live-thumbnail\.jpg/);
     assert.doesNotMatch(tip.querySelector(".bcfp-media img").getAttribute("src"), /channel-profile\.jpg/);
+});
+
+test("following preview waits for stored options before handling hover", async () => {
+    const chrome = createFakeChrome();
+    const { document, dom, link } = createFollowingPreviewDom(chrome);
+
+    dom.window.fetch = () => new Promise(() => {});
+
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    assert.equal(document.getElementById("betterchzzk-following-preview"), null);
+
+    await waitForAsyncCallbacks();
+
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForFollowingPreviewDelay();
+
+    const tip = document.getElementById("betterchzzk-following-preview");
+    assert.ok(tip);
+    assert.equal(tip.getAttribute("data-show"), "1");
+
+    link.dispatchEvent(new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
 });
 
 test("following preview loading card does not enlarge channel profile images as thumbnails", async () => {
@@ -871,7 +1077,7 @@ test("following preview tooltip plays live in the hover card and reuses cache", 
     const source = readRepoFile("features", "followingPreviewTooltip.js");
     const pageSource = readRepoFile("features", "followingPreviewPage.js");
     assert.match(source, /livePlaybackJson/);
-    assert.match(source, /previewPlaybackJson/);
+    assert.doesNotMatch(source, /previewPlaybackJson/);
     assert.match(source, /HOVER_OPEN_DELAY_MS = 0/);
     assert.match(source, /PLAYER_START_SETTLE_MS = 90/);
     assert.match(source, /betterchzzk:following-preview:play/);
@@ -881,11 +1087,19 @@ test("following preview tooltip plays live in the hover card and reuses cache", 
     assert.doesNotMatch(source, /bcfp-live/);
     assert.match(source, /PREVIEW_FETCH_DELAY_MS = 100/);
     assert.match(pageSource, /LiveProvider\.fromJSON/);
-    assert.match(pageSource, /webpackChunkglive_fe_pc/);
-    assert.match(pageSource, /player-vendor/);
+    assert.match(pageSource, /CorePlayer/);
     assert.match(pageSource, /requestMediaKeySystemAccess/);
-    assert.match(pageSource, /serviceId: 2099/);
+    assert.match(pageSource, /player-vendor/i);
+    assert.match(pageSource, /\bimport\s*\(/);
+    assert.doesNotMatch(pageSource, /\/live\/\$\{encodeURIComponent\(channelId\)\}\/simple/);
+    assert.doesNotMatch(pageSource, /createElement\("iframe"\)/);
+    assert.doesNotMatch(pageSource, /playMutedPreview/);
+    assert.doesNotMatch(pageSource, /mediaType:\s*["']PREVIEW["']/);
+    assert.doesNotMatch(pageSource, /track:\s*360/);
     assert.doesNotMatch(pageSource, /ssl\.pstatic\.net/);
+    assert.doesNotMatch(pageSource, new RegExp(`src${"doc"}`));
+    assert.doesNotMatch(pageSource, /\beval\s*\(/);
+    assert.doesNotMatch(pageSource, new RegExp(`\\bnew\\s+${"Function"}\\b`));
     assert.doesNotMatch(source, /betterchzzkPreview/);
     assert.equal(item.getAttribute("data-bcfp-active"), "1");
     assert.equal(calls.length, 0);
@@ -915,14 +1129,18 @@ test("following preview tooltip plays live in the hover card and reuses cache", 
     assert.match(playerMount.getAttribute("data-bcfp-player-mount"), /^bcfp/);
     assert.equal(playerMount.getAttribute("data-bcfp-player-state"), "loading");
     assert.equal(tip.querySelector("iframe.bcfp-player"), null);
+    assert.equal(tip.querySelector(".bcfp-sound"), null);
     assert.equal(playerEvents.length, 0);
 
     await waitForFollowingPlayerSettle();
 
     assert.equal(playerEvents.length, 1);
     assert.equal(playerEvents[0].type, "betterchzzk:following-preview:play");
+    assert.equal(playerEvents[0].detail.channelId, "channel-123");
     assert.equal(playerEvents[0].detail.mountId, playerMount.getAttribute("data-bcfp-player-mount"));
+    assert.equal(playerEvents[0].detail.muted, false);
     assert.equal(playerEvents[0].detail.playbackJson, playbackJson);
+    assert.equal(playerEvents[0].detail.volume, 0.2);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, "https://api.chzzk.naver.com/service/v2/channels/channel-123/live-detail");
     assert.equal(calls[0].init.credentials, "include");
@@ -955,6 +1173,159 @@ test("following preview tooltip plays live in the hover card and reuses cache", 
     assert.equal(tip.hasAttribute("data-show"), false);
     assert.equal(tip.querySelector("iframe.bcfp-player"), null);
     assert.equal(item.hasAttribute("data-bcfp-active"), false);
+});
+
+test("following preview tooltip requests audible playback", async () => {
+    const chrome = createFakeChrome();
+    const { document, dom, link } = createFollowingPreviewDom(chrome);
+    const playbackJson = JSON.stringify({
+        media: [{ mediaId: "HLS", path: "https://example.com/live-audio.m3u8" }],
+    });
+    const playerEvents = [];
+
+    dom.window.addEventListener("betterchzzk:following-preview:play", (event) => {
+        playerEvents.push({ detail: JSON.parse(event.detail), type: event.type });
+    });
+    dom.window.fetch = async () => ({
+        ok: true,
+        json: async () => ({
+            content: {
+                liveTitle: "API \uBC29\uC1A1 \uC81C\uBAA9",
+                liveImageUrl: "https://example.com/live-{type}.jpg",
+                liveCategoryValue: "\uAC8C\uC784",
+                openDate: new Date(Date.now() - 60 * 1000).toISOString(),
+                livePlaybackJson: playbackJson,
+                channel: {
+                    channelName: "API \uCC44\uB110",
+                },
+            },
+        }),
+    });
+
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForFollowingPreviewDelay();
+    await waitForFollowingPreviewFetchDelay();
+    await waitForAsyncCallbacks();
+    await waitForAsyncCallbacks();
+
+    const tip = document.getElementById("betterchzzk-following-preview");
+    const playerMount = tip.querySelector(".bcfp-player");
+
+    assert.equal(tip.querySelector(".bcfp-sound"), null);
+    assert.ok(playerMount);
+    assert.doesNotMatch(playerMount.title, /\//);
+    await waitForFollowingPlayerSettle();
+
+    const playEvent = playerEvents.find((event) => event.type === "betterchzzk:following-preview:play");
+    assert.ok(playEvent);
+    assert.equal(playEvent.detail.channelId, "channel-123");
+    assert.equal(playEvent.detail.mountId, playerMount.getAttribute("data-bcfp-player-mount"));
+    assert.equal(playEvent.detail.muted, false);
+    assert.equal(playEvent.detail.playbackJson, playbackJson);
+    assert.equal(playEvent.detail.volume, 0.2);
+
+    tip.dispatchEvent(new dom.window.MouseEvent("pointerleave", { bubbles: false, relatedTarget: document.body }));
+});
+
+test("following preview tooltip ignores stale stored audio off", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            followingPreviewAudioEnabled: false,
+            followingPreviewAudioVolume: 30,
+        },
+    });
+    const { document, dom, link } = createFollowingPreviewDom(chrome);
+    const playbackJson = JSON.stringify({
+        media: [{ mediaId: "HLS", path: "https://example.com/live-muted.m3u8" }],
+    });
+    const playerEvents = [];
+
+    dom.window.addEventListener("betterchzzk:following-preview:play", (event) => {
+        playerEvents.push({ detail: JSON.parse(event.detail), type: event.type });
+    });
+    dom.window.fetch = async () => ({
+        ok: true,
+        json: async () => ({
+            content: {
+                liveTitle: "API \uBC29\uC1A1 \uC81C\uBAA9",
+                liveImageUrl: "https://example.com/live-{type}.jpg",
+                liveCategoryValue: "\uAC8C\uC784",
+                openDate: new Date(Date.now() - 60 * 1000).toISOString(),
+                livePlaybackJson: playbackJson,
+                channel: {
+                    channelName: "API \uCC44\uB110",
+                },
+            },
+        }),
+    });
+
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForFollowingPreviewDelay();
+    await waitForFollowingPreviewFetchDelay();
+    await waitForAsyncCallbacks();
+    await waitForAsyncCallbacks();
+    await waitForFollowingPlayerSettle();
+
+    const playEvent = playerEvents.find((event) => event.type === "betterchzzk:following-preview:play");
+    assert.ok(playEvent);
+    assert.equal(playEvent.detail.muted, false);
+    assert.equal(playEvent.detail.volume, 0.2);
+
+    document
+        .getElementById("betterchzzk-following-preview")
+        ?.dispatchEvent(new dom.window.MouseEvent("pointerleave", { bubbles: false, relatedTarget: document.body }));
+});
+
+test("following preview tooltip does not create a player without live playback json", async () => {
+    const chrome = createFakeChrome();
+    const { document, dom, link } = createFollowingPreviewDom(chrome);
+    const playerEvents = [];
+
+    dom.window.addEventListener("betterchzzk:following-preview:play", (event) => {
+        playerEvents.push({ detail: JSON.parse(event.detail), type: event.type });
+    });
+    dom.window.fetch = async () => ({
+        ok: true,
+        json: async () => ({
+            content: {
+                liveId: "live-123",
+                liveTitle: "API \uBC29\uC1A1 \uC81C\uBAA9",
+                liveImageUrl: "https://example.com/live-{type}.jpg",
+                liveCategoryValue: "\uAC8C\uC784",
+                openDate: new Date(Date.now() - 60 * 1000).toISOString(),
+                channel: {
+                    channelName: "API \uCC44\uB110",
+                },
+            },
+        }),
+    });
+
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForFollowingPreviewDelay();
+    await waitForFollowingPreviewFetchDelay();
+    await waitForAsyncCallbacks();
+    await waitForFollowingPlayerSettle();
+
+    const tip = document.getElementById("betterchzzk-following-preview");
+    const playerMount = tip.querySelector(".bcfp-player");
+    const playEvent = playerEvents.find((event) => event.type === "betterchzzk:following-preview:play");
+
+    tip.dispatchEvent(new dom.window.MouseEvent("pointerleave", { bubbles: false, relatedTarget: document.body }));
+
+    assert.equal(playerMount, null);
+    assert.equal(playEvent, undefined);
 });
 
 test("following preview aborts stale live-detail requests during rapid hover", async () => {

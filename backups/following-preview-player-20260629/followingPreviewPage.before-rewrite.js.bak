@@ -19,7 +19,6 @@
         p2pDisabled: true,
         serviceId: 2099,
     };
-    const PREVIEW_AUDIO_VOLUME = 0.2;
 
     if (window[INSTALL_FLAG]) return;
     try {
@@ -36,8 +35,8 @@
     let player = null;
     let mountedEl = null;
     let activeRequestId = "";
+    let activeVolume = 0;
     let pendingLoadedMetadata = null;
-    let pendingLoadedMetadataTargets = [];
     let encryptedPlayer = null;
     let encryptedHandler = null;
 
@@ -55,6 +54,12 @@
             }
         }
         return detail;
+    }
+
+    function normalizeVolume(value) {
+        const volume = Number(value);
+        if (!Number.isFinite(volume)) return 0;
+        return Math.min(Math.max(volume, 0), 1);
     }
 
     function getMountSelector(mountId) {
@@ -322,34 +327,16 @@
         el.setAttribute(STATE_ATTR, state);
     }
 
-    function findPlayerVideoNode(previewPlayer) {
-        if (previewPlayer instanceof HTMLVideoElement) return previewPlayer;
-
-        const roots = [];
-        if (previewPlayer?.shadowRoot?.querySelector) roots.push(previewPlayer.shadowRoot);
-        if (previewPlayer?.querySelector) roots.push(previewPlayer);
-
-        for (const root of roots) {
-            const video = root.querySelector("video");
-            if (video instanceof HTMLVideoElement) return video;
-        }
-
-        return null;
-    }
-
     function getPlayerMountNode(previewPlayer) {
-        if (previewPlayer?.shadowRoot instanceof Element) return previewPlayer.shadowRoot;
         if (previewPlayer instanceof Node) return previewPlayer;
+        if (previewPlayer?.shadowRoot instanceof Element) return previewPlayer.shadowRoot;
         return null;
     }
 
     function clearLoadedMetadataListener() {
-        if (!pendingLoadedMetadata) return;
-        for (const target of pendingLoadedMetadataTargets) {
-            target?.removeEventListener?.("loadedmetadata", pendingLoadedMetadata);
-        }
+        if (!pendingLoadedMetadata || !player?.removeEventListener) return;
+        player.removeEventListener("loadedmetadata", pendingLoadedMetadata);
         pendingLoadedMetadata = null;
-        pendingLoadedMetadataTargets = [];
     }
 
     function detachPlayer(nextState = "idle") {
@@ -375,11 +362,7 @@
         }
         mountedEl = null;
         activeRequestId = "";
-    }
-
-    function markPlaybackError(requestId) {
-        if (requestId && requestId !== activeRequestId) return;
-        if (mountedEl?.isConnected) markMountState(mountedEl, "error");
+        activeVolume = 0;
     }
 
     function playPreview(requestId = activeRequestId) {
@@ -387,15 +370,60 @@
         try {
             result = player?.play?.();
         } catch (error) {
-            if (error?.name !== "AbortError") markPlaybackError(requestId);
+            if (error?.name !== "AbortError") playMutedPreview(requestId);
             return;
         }
         if (!result?.catch) return;
 
         result.catch((error) => {
             if (error?.name === "AbortError") return;
-            markPlaybackError(requestId);
+            playMutedPreview(requestId);
         });
+    }
+
+    function playMutedPreview(requestId = activeRequestId) {
+        if (requestId && requestId !== activeRequestId) return;
+        try {
+            player.muted = true;
+            const result = player.play?.();
+            result?.catch?.(() => {
+                // Autoplay can still be denied by the browser.
+            });
+        } catch (_) {
+            // Autoplay can still be denied by the browser.
+        }
+    }
+
+    function getContextMenuMount(event) {
+        if (!activeRequestId || !mountedEl) return null;
+
+        const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+        for (const node of path) {
+            if (node === mountedEl) return mountedEl;
+            if (node instanceof Element && node.getAttribute?.(MOUNT_ATTR) === activeRequestId) return node;
+        }
+
+        const target = event.target;
+        if (target?.closest) return target.closest(getMountSelector(activeRequestId));
+        return null;
+    }
+
+    function handlePreviewContextMenu(event) {
+        if (!player || !activeVolume) return;
+
+        const mount = getContextMenuMount(event);
+        if (mount !== mountedEl) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        try {
+            player.volume = activeVolume;
+            player.muted = !player.muted;
+            if (!player.muted) playPreview(activeRequestId);
+        } catch (_) {
+            // Some CorePlayer builds expose media fields lazily.
+        }
     }
 
     function revealWhenReady(requestId, mount) {
@@ -406,23 +434,13 @@
             playPreview(requestId);
         };
 
-        const playerVideo = findPlayerVideoNode(player);
-        if (player?.readyState || playerVideo?.readyState) {
+        if (player?.readyState) {
             reveal();
             return;
         }
 
         pendingLoadedMetadata = reveal;
-        pendingLoadedMetadataTargets = [player, playerVideo].filter((target, index, targets) => {
-            return target?.addEventListener && targets.indexOf(target) === index;
-        });
-        if (!pendingLoadedMetadataTargets.length) {
-            reveal();
-            return;
-        }
-        for (const target of pendingLoadedMetadataTargets) {
-            target.addEventListener("loadedmetadata", reveal, { once: true });
-        }
+        player?.addEventListener?.("loadedmetadata", reveal, { once: true });
     }
 
     async function handlePlay(event) {
@@ -446,14 +464,14 @@
             mountedEl = mount;
             markMountState(mount, "loading");
 
-            previewPlayer.volume = PREVIEW_AUDIO_VOLUME;
-            previewPlayer.muted = false;
-            attachEncryptedListener(Player, previewPlayer, mount, requestId);
-            previewPlayer.srcObject = Player.LiveProvider.fromJSON(playback, LIVE_PLAYBACK_OPTIONS);
-
             const playerNode = getPlayerMountNode(previewPlayer);
             if (playerNode && playerNode.parentNode !== mount) mount.replaceChildren(playerNode);
 
+            activeVolume = normalizeVolume(detail.volume);
+            previewPlayer.volume = activeVolume;
+            previewPlayer.muted = detail.muted !== false;
+            attachEncryptedListener(Player, previewPlayer, mount, requestId);
+            previewPlayer.srcObject = Player.LiveProvider.fromJSON(playback, LIVE_PLAYBACK_OPTIONS);
             revealWhenReady(requestId, mount);
         } catch (_) {
             if (mountedEl === mount) detachPlayer("error");
@@ -470,6 +488,7 @@
 
     window.addEventListener(PLAY_EVENT, handlePlay);
     window.addEventListener(STOP_EVENT, handleStop);
+    document.addEventListener("contextmenu", handlePreviewContextMenu, true);
     window.addEventListener("pagehide", () => detachPlayer());
     document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "hidden") detachPlayer();

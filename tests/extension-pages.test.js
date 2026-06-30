@@ -390,9 +390,18 @@ test("shared storage helpers reject chrome lastError", async () => {
     };
     const { storageGet, storageRemove, storageSet } = dom.window.BetterChzzk.utils;
 
-    await assert.rejects(() => storageGet(failingArea, "key"), (error) => error.message === "read failed");
-    await assert.rejects(() => storageSet(failingArea, { key: "value" }), (error) => error.message === "write failed");
-    await assert.rejects(() => storageRemove(failingArea, "key"), (error) => error.message === "remove failed");
+    await assert.rejects(
+        () => storageGet(failingArea, "key"),
+        (error) => error.message === "read failed"
+    );
+    await assert.rejects(
+        () => storageSet(failingArea, { key: "value" }),
+        (error) => error.message === "write failed"
+    );
+    await assert.rejects(
+        () => storageRemove(failingArea, "key"),
+        (error) => error.message === "remove failed"
+    );
 });
 
 test("shared map cache helpers trim oldest entries and refresh touched keys", () => {
@@ -400,16 +409,38 @@ test("shared map cache helpers trim oldest entries and refresh touched keys", ()
     evalRepoScript(dom, "shared", "data.js");
 
     const { touchMapEntry } = dom.window.BetterChzzk.utils;
-    const map = new Map([["a", 1], ["b", 2], ["c", 3]]);
+    const map = new Map([
+        ["a", 1],
+        ["b", 2],
+        ["c", 3],
+    ]);
 
     touchMapEntry(map, "c", 3, 2);
-    assert.equal(JSON.stringify([...map.entries()]), JSON.stringify([["b", 2], ["c", 3]]));
+    assert.equal(
+        JSON.stringify([...map.entries()]),
+        JSON.stringify([
+            ["b", 2],
+            ["c", 3],
+        ])
+    );
 
     assert.equal(touchMapEntry(map, "b", 4, 2), 4);
-    assert.equal(JSON.stringify([...map.entries()]), JSON.stringify([["c", 3], ["b", 4]]));
+    assert.equal(
+        JSON.stringify([...map.entries()]),
+        JSON.stringify([
+            ["c", 3],
+            ["b", 4],
+        ])
+    );
 
     touchMapEntry(map, "d", 5, 2);
-    assert.equal(JSON.stringify([...map.entries()]), JSON.stringify([["b", 4], ["d", 5]]));
+    assert.equal(
+        JSON.stringify([...map.entries()]),
+        JSON.stringify([
+            ["b", 4],
+            ["d", 5],
+        ])
+    );
 });
 
 test("shared string and page helpers are reused by content utilities", () => {
@@ -502,11 +533,17 @@ test("shared CHZZK video field pickers keep API fallback order", () => {
     assert.equal(pickChzzkVideoNo({}), "");
     assert.equal(pickVideoStartDateText({ live: { openDate: "2026-06-22 10:00:00" } }), "2026-06-22 10:00:00");
     assert.equal(
+        pickVideoStartDateText({ live: { liveOpenDate: "nested-live", openDate: "nested-open" } }),
+        "nested-live"
+    );
+    assert.equal(
         pickVideoStartDateText({ openDate: "open", liveOpenDate: "live", broadcastOpenDate: "broadcast" }),
         "live"
     );
     assert.equal(pickVideoEndDateText({ createdDate: "created", publishDate: "published" }), "published");
     assert.equal(pickVideoEndDateText({ publishDateAt: "at", publishDate: "published" }), "at");
+    assert.equal(pickVideoEndDateText({ liveCloseDate: "closed", publishDateAt: "at" }), "closed");
+    assert.equal(pickVideoEndDateText({ live: { liveCloseDate: "nested-closed" } }), "nested-closed");
 });
 
 test("shared KST helpers keep date keys and day boundaries consistent", () => {
@@ -527,15 +564,18 @@ test("shared KST helpers keep date keys and day boundaries consistent", () => {
     } = dom.window.BetterChzzk.utils;
     const ms = Date.parse("2026-06-21T15:30:05Z");
 
-    assert.equal(JSON.stringify(getKstParts(ms)), JSON.stringify({
-        year: 2026,
-        month: 6,
-        day: 22,
-        weekday: 1,
-        hours: 0,
-        minutes: 30,
-        seconds: 5,
-    }));
+    assert.equal(
+        JSON.stringify(getKstParts(ms)),
+        JSON.stringify({
+            year: 2026,
+            month: 6,
+            day: 22,
+            weekday: 1,
+            hours: 0,
+            minutes: 30,
+            seconds: 5,
+        })
+    );
     assert.equal(formatKstDateKey(getKstParts(ms)), "2026-06-22");
     assert.equal(getKstDateKey(ms), "2026-06-22");
     assert.equal(formatKstMonthKey(2026, 6), "2026-06");
@@ -586,7 +626,10 @@ test("shared watch-session helpers derive fallback ranges and daily totals", () 
     } = dom.window.BetterChzzk.utils;
     const dayStart = Date.parse("2026-06-21T15:00:00Z");
 
-    assert.equal(JSON.stringify(normalizeDailySeconds({ a: "10.5", b: -2, c: "bad", d: 0 })), JSON.stringify({ a: 10.5 }));
+    assert.equal(
+        JSON.stringify(normalizeDailySeconds({ a: "10.5", b: -2, c: "bad", d: 0 })),
+        JSON.stringify({ a: 10.5 })
+    );
     assert.equal(JSON.stringify(mergeDailySeconds({ a: 2 }, { a: "1.5", b: 3 })), JSON.stringify({ a: 3.5, b: 3 }));
     assert.equal(JSON.stringify(mergeDailySeconds({}, { a: 1.6, b: 0.4 }, { round: true })), JSON.stringify({ a: 2 }));
 
@@ -615,40 +658,46 @@ test("shared watch-session helpers derive fallback ranges and daily totals", () 
         startAt: dayStart + 24 * 60 * 60 * 1000 - 30000,
         endAt: dayStart + 24 * 60 * 60 * 1000 + 90000,
     });
-    assert.equal(JSON.stringify(sumWatchRangesByDate(rangesByDate)), JSON.stringify({
-        "2026-06-22": 30,
-        "2026-06-23": 90,
-    }));
+    assert.equal(
+        JSON.stringify(sumWatchRangesByDate(rangesByDate)),
+        JSON.stringify({
+            "2026-06-22": 30,
+            "2026-06-23": 90,
+        })
+    );
 });
 
 test("shared title-history helpers normalize channel-prefixed titles", () => {
     const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
     evalRepoScript(dom, "shared", "data.js");
 
-    const {
-        addTitleHistory,
-        cleanEntryTitle,
-        normalizeForMatch,
-        normalizeTitleHistory,
-        parseChzzkDate,
-        pickString,
-    } = dom.window.BetterChzzk.utils;
+    const { addTitleHistory, cleanEntryTitle, normalizeForMatch, normalizeTitleHistory, parseChzzkDate, pickString } =
+        dom.window.BetterChzzk.utils;
     const channelName = "\uCC44\uB110";
 
     assert.equal(pickString("", null, "  value  "), "value");
-    assert.equal(cleanEntryTitle("\uCC44\uB110 \u00B7 \uCCAB \uC81C\uBAA9 - CHZZK", channelName), "\uCCAB \uC81C\uBAA9");
+    assert.equal(
+        cleanEntryTitle("\uCC44\uB110 \u00B7 \uCCAB \uC81C\uBAA9 - CHZZK", channelName),
+        "\uCCAB \uC81C\uBAA9"
+    );
     assert.equal(normalizeForMatch("\uCCAB \uC81C\uBAA9! 123"), "\uCCAB\uC81C\uBAA9123");
     assert.equal(parseChzzkDate("2026-06-22 10:30:00").toISOString(), "2026-06-22T01:30:00.000Z");
     assert.equal(parseChzzkDate(1719000000).getTime(), 1719000000000);
     assert.equal(parseChzzkDate(" "), null);
 
-    const rows = normalizeTitleHistory([
-        { title: "\uCC44\uB110 \u00B7 \uCCAB \uC81C\uBAA9", firstSeenAt: 20, lastSeenAt: 30 },
-        { title: "\uCC44\uB110 - \uCCAB \uC81C\uBAA9", firstSeenAt: 10, lastSeenAt: 40 },
-        { title: "\uC81C\uBAA9 \uC5C6\uB294 \uB77C\uC774\uBE0C", firstSeenAt: 1, lastSeenAt: 2 },
-    ], channelName);
+    const rows = normalizeTitleHistory(
+        [
+            { title: "\uCC44\uB110 \u00B7 \uCCAB \uC81C\uBAA9", firstSeenAt: 20, lastSeenAt: 30 },
+            { title: "\uCC44\uB110 - \uCCAB \uC81C\uBAA9", firstSeenAt: 10, lastSeenAt: 40 },
+            { title: "\uC81C\uBAA9 \uC5C6\uB294 \uB77C\uC774\uBE0C", firstSeenAt: 1, lastSeenAt: 2 },
+        ],
+        channelName
+    );
 
-    assert.equal(JSON.stringify(rows), JSON.stringify([{ title: "\uCCAB \uC81C\uBAA9", firstSeenAt: 10, lastSeenAt: 40 }]));
+    assert.equal(
+        JSON.stringify(rows),
+        JSON.stringify([{ title: "\uCCAB \uC81C\uBAA9", firstSeenAt: 10, lastSeenAt: 40 }])
+    );
 
     const target = { channelName, titleHistory: rows };
     addTitleHistory(target, "\uCC44\uB110: \uB2E4\uC74C \uC81C\uBAA9", 50, 60);
@@ -673,6 +722,337 @@ function makeVisibleElement(el, width = 450, height = 260) {
         bottom: height,
     });
 }
+
+const MONTHLY_BROADCAST_WIDGET_ID = "betterchzzk-monthly-broadcast-time";
+const MONTHLY_BROADCAST_CHANNEL_ID = "0123456789abcdef0123456789abcdef";
+
+function createDeferred() {
+    let resolve;
+    const promise = new Promise((done) => {
+        resolve = done;
+    });
+    return { promise, resolve };
+}
+
+async function createMonthlyBroadcastFixture({
+    deferList = false,
+    details = {},
+    nowMs = Date.parse("2026-06-29T12:00:00+09:00"),
+    videos = [],
+    watchHistory = [],
+} = {}) {
+    const chrome = createFakeChrome({
+        local: {
+            betterChzzkLiveWatchHistory: { entries: watchHistory },
+        },
+        sync: {
+            monthlyBroadcastTimeEnabled: true,
+            monthlyBroadcastTimeCalendarEnabled: true,
+            monthlyBroadcastTimeMaxCalendarPages: 5,
+            monthlyBroadcastTimeMaxPages: 5,
+            monthlyBroadcastTimeWindowDays: 30,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<main id="channel">',
+            '<section id="profile">',
+            '<div id="actions"><button id="follow" type="button">팔로우</button></div>',
+            "</section>",
+            "</main>",
+            "</body>",
+        ].join(""),
+        `https://chzzk.naver.com/${MONTHLY_BROADCAST_CHANNEL_ID}`,
+        chrome
+    );
+    const { document } = dom.window;
+    const listGate = deferList ? createDeferred() : null;
+    const fetchCalls = [];
+
+    dom.window.Date.now = () => nowMs;
+    document.getElementById("profile").getBoundingClientRect = () => ({
+        width: 640,
+        height: 80,
+        left: 0,
+        top: 0,
+        right: 640,
+        bottom: 80,
+    });
+    document.getElementById("actions").getBoundingClientRect = () => ({
+        width: 280,
+        height: 42,
+        left: 260,
+        top: 24,
+        right: 540,
+        bottom: 66,
+    });
+    document.getElementById("follow").getBoundingClientRect = () => ({
+        width: 90,
+        height: 34,
+        left: 430,
+        top: 28,
+        right: 520,
+        bottom: 62,
+    });
+
+    dom.window.fetch = async (url) => {
+        const href = String(url);
+        fetchCalls.push(href);
+
+        if (href.includes("/service/v1/channels/")) {
+            if (listGate) await listGate.promise;
+            return {
+                ok: true,
+                json: async () => ({
+                    content: {
+                        data: videos,
+                        last: true,
+                        page: { number: 0 },
+                        totalPages: 1,
+                    },
+                }),
+            };
+        }
+
+        if (href.includes("/service/v2/videos/")) {
+            const videoNo = decodeURIComponent(href.split("/").pop());
+            return {
+                ok: true,
+                json: async () => ({
+                    content: {
+                        videoNo,
+                        ...(details[videoNo] || {}),
+                    },
+                }),
+            };
+        }
+
+        throw new Error(`Unexpected monthly broadcast request: ${href}`);
+    };
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "monthlyBroadcastTime.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+
+    await waitForCondition(() => document.getElementById(MONTHLY_BROADCAST_WIDGET_ID));
+
+    return {
+        chrome,
+        document,
+        dom,
+        fetchCalls,
+        resolveList: () => listGate?.resolve(),
+    };
+}
+
+function getMonthlyCalendarDay(document, dateKey) {
+    return document.querySelector(`#${MONTHLY_BROADCAST_WIDGET_ID} .bcmb-day[data-date-key="${dateKey}"]`);
+}
+
+async function closeMonthlyBroadcastFixture(fixture) {
+    for (const listener of fixture.chrome.testState.storageChangeListeners) {
+        listener({ monthlyBroadcastTimeEnabled: { newValue: false } }, "sync");
+    }
+    await waitForAsyncCallbacks();
+    fixture.dom.window.close();
+}
+
+test("monthly broadcast calendar colors KST days after async metadata load", async () => {
+    const firstStartMs = Date.parse("2026-06-28T23:30:00+09:00");
+    const secondStartMs = Date.parse("2026-06-28T00:30:00+09:00");
+    const fixture = await createMonthlyBroadcastFixture({
+        deferList: true,
+        details: {
+            detailStart: {
+                duration: 30 * 60,
+                liveCloseDate: new Date(secondStartMs + 30 * 60 * 1000).toISOString(),
+                liveOpenDate: "2026-06-28T00:30:00+09:00",
+                videoTitle: "Detail start fixture",
+            },
+        },
+        videos: [
+            {
+                duration: 20 * 60,
+                liveCloseDate: new Date(firstStartMs + 20 * 60 * 1000).toISOString(),
+                liveOpenDate: "2026-06-28T23:30:00+09:00",
+                videoNo: "lateStart",
+                videoTitle: "Late start fixture",
+                videoType: "REPLAY",
+            },
+            {
+                duration: 30 * 60,
+                videoNo: "detailStart",
+                videoTitle: "Detail start fixture",
+                videoType: "REPLAY",
+            },
+        ],
+    });
+
+    try {
+        assert.equal(
+            fixture.document.querySelector(`#${MONTHLY_BROADCAST_WIDGET_ID} .bcmb-day[data-has-broadcast="1"]`),
+            null
+        );
+
+        fixture.resolveList();
+
+        await waitForCondition(
+            () => getMonthlyCalendarDay(fixture.document, "2026-06-28")?.getAttribute("data-has-broadcast") === "1",
+            { timeoutMs: 3000 }
+        );
+
+        const day = getMonthlyCalendarDay(fixture.document, "2026-06-28");
+        const tipText = day.querySelector(".bcmb-day-tip").textContent;
+
+        assert.equal(day.getAttribute("data-date-key"), "2026-06-28");
+        assert.equal(day.getAttribute("data-live"), "1");
+        assert.equal(
+            fixture.document.querySelector(`#${MONTHLY_BROADCAST_WIDGET_ID} .bcmb-calendar-count`).textContent,
+            "총 방송 50분"
+        );
+        assert.ok(fixture.fetchCalls.some((href) => href.includes("/service/v2/videos/detailStart")));
+        assert.equal(getMonthlyCalendarDay(fixture.document, "2026-06-27")?.getAttribute("data-has-broadcast"), null);
+        assert.equal(day.querySelectorAll(".bcmb-day-tip-item").length, 2);
+        assert.match(tipText, /00:30/);
+        assert.match(tipText, /01:00/);
+        assert.match(tipText, /23:30/);
+        assert.match(tipText, /23:50/);
+    } finally {
+        await closeMonthlyBroadcastFixture(fixture);
+    }
+});
+
+test("monthly broadcast calendar separates stream and watch rows in dense day tips", async () => {
+    const firstStartMs = Date.parse("2026-06-28T09:00:00+09:00");
+    const secondStartMs = Date.parse("2026-06-28T15:10:00+09:00");
+    const firstDuration = 20 * 60;
+    const secondDuration = 40 * 60;
+    const fixture = await createMonthlyBroadcastFixture({
+        videos: [
+            {
+                duration: firstDuration,
+                liveCloseDate: new Date(firstStartMs + firstDuration * 1000).toISOString(),
+                liveOpenDate: "2026-06-28T09:00:00+09:00",
+                videoNo: "morning",
+                videoTitle: "Morning stream",
+                videoType: "REPLAY",
+            },
+            {
+                duration: secondDuration,
+                liveCloseDate: new Date(secondStartMs + secondDuration * 1000).toISOString(),
+                liveOpenDate: "2026-06-28T15:10:00+09:00",
+                videoNo: "afternoon",
+                videoTitle: "Afternoon stream",
+                videoType: "REPLAY",
+            },
+        ],
+        watchHistory: [
+            {
+                channelId: MONTHLY_BROADCAST_CHANNEL_ID,
+                dailySeconds: { "2026-06-28": firstDuration },
+                firstWatchedAt: firstStartMs,
+                id: "watch-morning",
+                lastWatchedAt: firstStartMs + firstDuration * 1000,
+                liveId: "morning",
+                liveOpenDate: "2026-06-28T09:00:00+09:00",
+                title: "Morning stream",
+                watchedSeconds: firstDuration,
+            },
+            {
+                channelId: MONTHLY_BROADCAST_CHANNEL_ID,
+                dailySeconds: { "2026-06-28": secondDuration },
+                firstWatchedAt: secondStartMs,
+                id: "watch-afternoon",
+                lastWatchedAt: secondStartMs + secondDuration * 1000,
+                liveId: "afternoon",
+                liveOpenDate: "2026-06-28T15:10:00+09:00",
+                title: "Afternoon stream",
+                watchedSeconds: secondDuration,
+            },
+        ],
+    });
+
+    try {
+        await waitForCondition(
+            () => {
+                const watchRows = getMonthlyCalendarDay(fixture.document, "2026-06-28")?.querySelectorAll(
+                    ".bcmb-day-tip-row-watch .bcmb-day-tip-value"
+                );
+                return (
+                    watchRows?.length === 2 && Array.from(watchRows).every((row) => row.textContent.includes("100%"))
+                );
+            },
+            { timeoutMs: 3000 }
+        );
+
+        const day = getMonthlyCalendarDay(fixture.document, "2026-06-28");
+        const items = Array.from(day.querySelectorAll(".bcmb-day-tip-item"));
+        const firstBroadcast = items[0].querySelector('[data-tip-row="broadcast"] .bcmb-day-tip-value');
+        const firstWatch = items[0].querySelector('[data-tip-row="watch"] .bcmb-day-tip-value');
+
+        assert.equal(items.length, 2);
+        assert.equal(
+            fixture.document.querySelector(`#${MONTHLY_BROADCAST_WIDGET_ID} .bcmb-calendar-count`).textContent,
+            "총 방송 1시간"
+        );
+        assert.equal(items[0].querySelectorAll(".bcmb-day-tip-row").length, 2);
+        assert.equal(items[0].querySelector(".bcmb-day-tip-row-broadcast .bcmb-day-tip-label").textContent, "방송");
+        assert.equal(items[0].querySelector(".bcmb-day-tip-row-watch .bcmb-day-tip-label").textContent, "내 시청");
+        assert.match(firstBroadcast.textContent, /09:00/);
+        assert.match(firstBroadcast.textContent, /09:20/);
+        assert.match(firstBroadcast.textContent, /20분/);
+        assert.equal(firstWatch.textContent, "20분 (100%)");
+    } finally {
+        await closeMonthlyBroadcastFixture(fixture);
+    }
+});
+
+test("monthly broadcast calendar keeps colored days when returning to a cached month", async () => {
+    const startMs = Date.parse("2026-06-28T23:30:00+09:00");
+    const fixture = await createMonthlyBroadcastFixture({
+        videos: [
+            {
+                duration: 20 * 60,
+                liveCloseDate: new Date(startMs + 20 * 60 * 1000).toISOString(),
+                liveOpenDate: "2026-06-28T23:30:00+09:00",
+                videoNo: "cachedStart",
+                videoTitle: "Cached start fixture",
+                videoType: "REPLAY",
+            },
+        ],
+    });
+
+    try {
+        await waitForCondition(
+            () => getMonthlyCalendarDay(fixture.document, "2026-06-28")?.getAttribute("data-has-broadcast") === "1",
+            { timeoutMs: 3000 }
+        );
+
+        const widget = fixture.document.getElementById(MONTHLY_BROADCAST_WIDGET_ID);
+        widget.querySelector('[data-bcmb-nav="-1"]').click();
+        await waitForCondition(
+            () =>
+                widget.querySelector(".bcmb-calendar-month")?.textContent === "2026.05" &&
+                widget.querySelector(".bcmb-calendar")?.getAttribute("data-loading") === "0",
+            { timeoutMs: 3000 }
+        );
+
+        widget.querySelector('[data-bcmb-nav="1"]').click();
+        await waitForCondition(
+            () =>
+                widget.querySelector(".bcmb-calendar-month")?.textContent === "2026.06" &&
+                getMonthlyCalendarDay(fixture.document, "2026-06-28")?.getAttribute("data-has-broadcast") === "1",
+            { timeoutMs: 3000 }
+        );
+
+        assert.equal(getMonthlyCalendarDay(fixture.document, "2026-06-28").getAttribute("data-live"), "1");
+    } finally {
+        await closeMonthlyBroadcastFixture(fixture);
+    }
+});
 
 function evalAdblockPopupScripts(dom) {
     evalRepoScript(dom, "shared", "settings.js");
@@ -753,7 +1133,10 @@ test("adblock popup keeps suppressing the legacy chzzk popup classes", async () 
 
     assert.equal(getAdblockSuppressAttr(popup), "1");
     assert.equal(getAdblockSuppressAttr(dimmed), "1");
-    assert.match(document.getElementById("betterchzzk-adblock-popup-style").textContent, /\[data-betterchzzk-suppress-adblock-popup="1"\]/);
+    assert.match(
+        document.getElementById("betterchzzk-adblock-popup-style").textContent,
+        /\[data-betterchzzk-suppress-adblock-popup="1"\]/
+    );
     assert.equal(document.body.style.overflow, "");
     assert.equal(document.body.style.paddingRight, "");
 });
@@ -889,19 +1272,28 @@ test("options player controls merge playback defaults", () => {
     const optionOrder = Array.from(section.querySelectorAll("[data-option]")).map((input) => input.dataset.option);
     const detailOrder = Array.from(section.querySelectorAll("summary")).map((summary) => summary.textContent.trim());
 
-    assert.deepEqual(tabLabels, ["플레이어", "시청 기록", "팝업", "방송 시간", "검색", "탐색"]);
+    assert.deepEqual(tabLabels, ["플레이어", "시청 기록", "채팅", "팝업", "방송 시간", "검색", "탐색"]);
     assert.deepEqual(sectionLabels, [
         "플레이어",
         "시청 기록",
+        "채팅 도구",
         "광고 차단 안내 팝업",
         "채널 방송 시간",
         "다시보기 검색",
         "방송 목록 필터",
     ]);
     assert.equal(section.querySelector("h2").textContent.trim(), "플레이어");
-    assert.deepEqual(detailOrder, ["라이브 위치 유지 설정", "스킵 수치 설정", "볼륨 휠 설정"]);
+    assert.deepEqual(detailOrder, [
+        "통나무 보상 설정",
+        "라이브 위치 유지 설정",
+        "스킵 수치 설정",
+        "볼륨 휠 설정",
+        "오디오 컴프레서 설정",
+    ]);
     assert.deepEqual(optionOrder, [
         "autoQualityEnabled",
+        "rewardAutoCollectEnabled",
+        "rewardAutoCollectDelayMs",
         "skipControlEnabled",
         "skipKeyboardEnabled",
         "skipLivePauseResumeEnabled",
@@ -916,9 +1308,50 @@ test("options player controls merge playback defaults", () => {
         "volumeWheelEnabled",
         "volumeWheelStep",
         "volumeTooltipEnabled",
+        "audioCompressorEnabled",
+        "audioCompressorThreshold",
+        "audioCompressorKnee",
+        "audioCompressorRatio",
+        "audioCompressorAttack",
+        "audioCompressorRelease",
+        "audioCompressorMakeupGain",
         "vodBroadcastClockEnabled",
         "shortcutRescueEnabled",
     ]);
+});
+
+test("options places chat tools controls in a dedicated section", () => {
+    const dom = createDom("options.html", "options.html");
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+
+    const { document } = dom.window;
+    const section = queryOption(document, "chatToolsEnabled").closest(".settings-card");
+    const optionOrder = Array.from(section.querySelectorAll("[data-option]")).map((input) => input.dataset.option);
+    const chatTools = queryOption(document, "chatToolsEnabled");
+    const showBlind = queryOption(document, "chatToolsShowBlindEnabled");
+    const cacheMessages = queryOption(document, "chatToolsCacheModeratorMessagesEnabled");
+    const maxMessages = queryOption(document, "chatToolsMaxModeratorMessages");
+
+    assert.equal(section.querySelector("h2").textContent.trim(), "채팅 도구");
+    assert.deepEqual(optionOrder, [
+        "chatToolsEnabled",
+        "chatToolsShowBlindEnabled",
+        "chatToolsModeratorBoxEnabled",
+        "chatToolsCacheModeratorMessagesEnabled",
+        "chatToolsMaxModeratorMessages",
+    ]);
+    assert.equal(showBlind.disabled, true);
+    assert.equal(cacheMessages.disabled, true);
+    assert.equal(maxMessages.disabled, true);
+
+    chatTools.checked = true;
+    dispatch(dom, chatTools, "change");
+
+    assert.equal(showBlind.disabled, false);
+    assert.equal(cacheMessages.disabled, false);
+    assert.equal(maxMessages.disabled, false);
 });
 
 test("options places following controls with exploration controls", () => {
@@ -940,8 +1373,7 @@ test("options places following controls with exploration controls", () => {
     assert.ok(optionOrder.indexOf("followingRefreshEnabled") < optionOrder.indexOf("followingRefreshSeconds"));
     assert.ok(optionOrder.indexOf("followingRefreshSeconds") < optionOrder.indexOf("categoryToolsEnabled"));
     assert.ok(
-        optionOrder.indexOf("categoryToolsLiveElapsedEnabled") <
-            optionOrder.indexOf("followingPreviewTooltipEnabled")
+        optionOrder.indexOf("categoryToolsLiveElapsedEnabled") < optionOrder.indexOf("followingPreviewTooltipEnabled")
     );
     assert.ok(optionOrder.indexOf("followingPreviewTooltipEnabled") < optionOrder.indexOf("titleTooltipEnabled"));
 });
@@ -955,22 +1387,32 @@ test("manifest loads playback scripts in the expected worlds", () => {
     assert.ok(isolatedScript);
     assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
     assert.ok(mainScript.js.includes("features/followingPreviewPage.js"));
-    assert.ok(mainScript.js.indexOf("features/routeBridgePage.js") < mainScript.js.indexOf("features/autoQualityPage.js"));
     assert.ok(
-        mainScript.js.indexOf("features/routeBridgePage.js") <
-            mainScript.js.indexOf("features/followingPreviewPage.js")
+        mainScript.js.indexOf("features/routeBridgePage.js") < mainScript.js.indexOf("features/autoQualityPage.js")
     );
     assert.ok(
-        mainScript.js.indexOf("features/followingPreviewPage.js") <
-            mainScript.js.indexOf("features/autoQualityPage.js")
+        mainScript.js.indexOf("features/routeBridgePage.js") < mainScript.js.indexOf("features/followingPreviewPage.js")
+    );
+    assert.ok(
+        mainScript.js.indexOf("features/followingPreviewPage.js") < mainScript.js.indexOf("features/autoQualityPage.js")
     );
     assert.ok(mainScript.js.includes("features/volumeWheelPage.js"));
-    assert.ok(mainScript.js.indexOf("features/volumeWheelPage.js") > mainScript.js.indexOf("features/autoQualityPage.js"));
+    assert.ok(
+        mainScript.js.indexOf("features/volumeWheelPage.js") > mainScript.js.indexOf("features/autoQualityPage.js")
+    );
     assert.ok(isolatedScript.js.includes("features/volumeWheel.js"));
     assert.ok(isolatedScript.js.indexOf("features/volumeWheel.js") > isolatedScript.js.indexOf("content.js"));
+    assert.ok(isolatedScript.js.includes("features/chatTools.js"));
+    assert.ok(
+        isolatedScript.js.indexOf("features/chatTools.js") > isolatedScript.js.indexOf("features/rewardAutoCollect.js")
+    );
+    assert.ok(
+        isolatedScript.js.indexOf("features/chatTools.js") < isolatedScript.js.indexOf("features/videoSearch.js")
+    );
     assert.ok(isolatedScript.js.includes("features/shortcutRescue.js"));
     assert.ok(
-        isolatedScript.js.indexOf("features/shortcutRescue.js") > isolatedScript.js.indexOf("features/followingRefresh.js")
+        isolatedScript.js.indexOf("features/shortcutRescue.js") >
+            isolatedScript.js.indexOf("features/followingRefresh.js")
     );
 });
 
@@ -1065,10 +1507,11 @@ test("video search retries after an index fetch failure instead of caching parti
     const pageCalls = [];
     let failSecondPage = true;
 
-    const makeVideos = (count, offset = 0) => Array.from({ length: count }, (_, index) => ({
-        videoNo: String(300 + offset + index),
-        videoTitle: `needle indexed ${offset + index}`,
-    }));
+    const makeVideos = (count, offset = 0) =>
+        Array.from({ length: count }, (_, index) => ({
+            videoNo: String(300 + offset + index),
+            videoTitle: `needle indexed ${offset + index}`,
+        }));
 
     dom.window.fetch = async (url) => {
         const parsed = new URL(String(url));
@@ -1751,10 +2194,14 @@ test("volume wheel raises and lowers media volume over the volume control", asyn
     await waitForAsyncCallbacks();
 
     let nativeWheelCount = 0;
-    dom.window.addEventListener("wheel", () => {
-        nativeWheelCount += 1;
-        video.volume = 1;
-    }, { capture: true });
+    dom.window.addEventListener(
+        "wheel",
+        () => {
+            nativeWheelCount += 1;
+            video.volume = 1;
+        },
+        { capture: true }
+    );
 
     const up = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
     Object.defineProperty(up, "deltaY", { value: -100 });
@@ -1767,7 +2214,7 @@ test("volume wheel raises and lowers media volume over the volume control", asyn
     const down = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
     Object.defineProperty(down, "deltaY", { value: 100 });
     vol.dispatchEvent(down);
-    assert.ok(Math.abs(video.volume - 0.50) < 1e-6, "휠 다운이면 -5%");
+    assert.ok(Math.abs(video.volume - 0.5) < 1e-6, "휠 다운이면 -5%");
     assert.equal(down.defaultPrevented, true);
     assert.equal(slider.value, "50");
 });
@@ -1798,10 +2245,14 @@ test("volume wheel stays inert until settings publish while keeping early listen
     evalRepoScript(dom, "features", "volumeWheelPage.js");
 
     let nativeWheelCount = 0;
-    dom.window.addEventListener("wheel", () => {
-        nativeWheelCount += 1;
-        video.volume = 1;
-    }, { capture: true });
+    dom.window.addEventListener(
+        "wheel",
+        () => {
+            nativeWheelCount += 1;
+            video.volume = 1;
+        },
+        { capture: true }
+    );
 
     const beforeSettings = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
     Object.defineProperty(beforeSettings, "deltaY", { value: -100 });
@@ -1869,7 +2320,7 @@ test("volume wheel respects unit-range native sliders", async () => {
     Object.defineProperty(down, "deltaY", { value: 100 });
     vol.dispatchEvent(down);
 
-    assert.ok(Math.abs(video.volume - 0.50) < 1e-6);
+    assert.ok(Math.abs(video.volume - 0.5) < 1e-6);
     assert.equal(slider.value, "0.5");
 });
 
@@ -1926,7 +2377,7 @@ test("volume wheel avoids native slider feedback on unit-range aria sliders", as
     Object.defineProperty(down, "deltaY", { value: 100 });
     vol.dispatchEvent(down);
 
-    assert.ok(Math.abs(video.volume - 0.50) < 1e-6);
+    assert.ok(Math.abs(video.volume - 0.5) < 1e-6);
     assert.equal(slider.getAttribute("aria-valuenow"), "0.5");
 
     video.volume = 0.04;
@@ -2224,14 +2675,7 @@ test("volume wheel ignores non-volume areas and disabled option", async () => {
 test("auto quality falls back to the highest selectable lower track", () => {
     const chrome = createFakeChrome();
     const dom = createPageDom(
-        [
-            "<!doctype html>",
-            "<body>",
-            "<main>",
-            '<video id="video"></video>',
-            "</main>",
-            "</body>",
-        ].join(""),
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
         "https://chzzk.naver.com/video/12345",
         chrome
     );
@@ -2270,14 +2714,7 @@ test("auto quality falls back to the highest selectable lower track", () => {
 test("auto quality retries by directly discovering videoTracks after they appear", () => {
     const chrome = createFakeChrome();
     const dom = createPageDom(
-        [
-            "<!doctype html>",
-            "<body>",
-            "<main>",
-            '<video id="video"></video>',
-            "</main>",
-            "</body>",
-        ].join(""),
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
         "https://chzzk.naver.com/video/12345",
         chrome
     );
@@ -2311,14 +2748,7 @@ test("auto quality retries by directly discovering videoTracks after they appear
 test("auto quality treats an already selected fallback track as stable", () => {
     const chrome = createFakeChrome();
     const dom = createPageDom(
-        [
-            "<!doctype html>",
-            "<body>",
-            "<main>",
-            '<video id="video"></video>',
-            "</main>",
-            "</body>",
-        ].join(""),
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
         "https://chzzk.naver.com/video/12345",
         chrome
     );
@@ -2351,14 +2781,7 @@ test("auto quality treats an already selected fallback track as stable", () => {
 test("auto quality treats an active preferred track as already selected", () => {
     const chrome = createFakeChrome();
     const dom = createPageDom(
-        [
-            "<!doctype html>",
-            "<body>",
-            "<main>",
-            '<video id="video"></video>',
-            "</main>",
-            "</body>",
-        ].join(""),
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
         "https://chzzk.naver.com/live/test-channel",
         chrome
     );
@@ -2419,25 +2842,33 @@ test("auto quality page hook unpatches defineProperty APIs outside playback rout
     assert.notEqual(dom.window.Reflect.defineProperty, nativeReflectDefineProperty);
 
     dom.window.history.pushState({}, "", "/category/game/lives");
-    dom.window.dispatchEvent(new dom.window.CustomEvent("betterchzzk:routechange", {
-        detail: { href: dom.window.location.href, source: "test" },
-    }));
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:routechange", {
+            detail: { href: dom.window.location.href, source: "test" },
+        })
+    );
 
     assert.equal(dom.window.Object.defineProperty, nativeDefineProperty);
     assert.equal(dom.window.Object.defineProperties, nativeDefineProperties);
     assert.equal(dom.window.Reflect.defineProperty, nativeReflectDefineProperty);
 
     dom.window.history.pushState({}, "", "/video/12345");
-    dom.window.dispatchEvent(new dom.window.CustomEvent("betterchzzk:routechange", {
-        detail: { href: dom.window.location.href, source: "test" },
-    }));
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:routechange", {
+            detail: { href: dom.window.location.href, source: "test" },
+        })
+    );
 
     assert.notEqual(dom.window.Object.defineProperty, nativeDefineProperty);
 });
 
 test("auto quality publishes state without writing a page localStorage cache", async () => {
     const chrome = createFakeChrome();
-    const dom = createPageDom("<!doctype html><body><video></video></body>", "https://chzzk.naver.com/live/test-channel", chrome);
+    const dom = createPageDom(
+        "<!doctype html><body><video></video></body>",
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
 
     evalRepoScript(dom, "shared", "settings.js");
     evalContentScripts(dom);
@@ -2452,14 +2883,7 @@ test("auto quality publishes state without writing a page localStorage cache", a
 test("VOD replay chat fix ignores currentTime-only URL changes on the same VOD", async () => {
     const chrome = createFakeChrome();
     const dom = createPageDom(
-        [
-            "<!doctype html>",
-            "<body>",
-            "<main>",
-            '<video id="video"></video>',
-            "</main>",
-            "</body>",
-        ].join(""),
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
         "https://chzzk.naver.com/video/12345",
         chrome
     );
@@ -2498,14 +2922,7 @@ test("VOD replay chat fix runs even when the old stored option is disabled", asy
         },
     });
     const dom = createPageDom(
-        [
-            "<!doctype html>",
-            "<body>",
-            "<main>",
-            '<video id="video"></video>',
-            "</main>",
-            "</body>",
-        ].join(""),
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
         "https://chzzk.naver.com/video/12345",
         chrome
     );
@@ -2533,9 +2950,7 @@ test("VOD replay chat fix runs even when the old stored option is disabled", asy
     await waitForAsyncCallbacks();
 
     assert.deepEqual(
-        scheduledTimers
-            .map(({ delay }) => delay)
-            .filter((delay) => delay >= 12000),
+        scheduledTimers.map(({ delay }) => delay).filter((delay) => delay >= 12000),
         [12000, 16000, 22000]
     );
 });
@@ -2718,6 +3133,29 @@ test("VOD broadcast clock stays hidden when the broadcast start time is unavaila
     assert.equal(document.getElementById("betterchzzk-vod-broadcast-clock"), null);
 });
 
+function bindLiveTimeShiftVideoState(video, state) {
+    Object.defineProperty(video, "currentTime", {
+        configurable: true,
+        get: () => state.currentTime,
+        set: (value) => {
+            state.currentTime = Number(value);
+        },
+    });
+    Object.defineProperty(video, "paused", {
+        configurable: true,
+        get: () => state.paused,
+    });
+    Object.defineProperty(video, "buffered", {
+        configurable: true,
+        get: () => createTimeRanges([[0, state.bufferedEnd]]),
+    });
+    Object.defineProperty(video, "seekable", {
+        configurable: true,
+        get: () => createTimeRanges([[0, state.seekableEnd]]),
+    });
+    makeVisibleVideo(video);
+}
+
 function createLiveTimeShiftGuardDom(chrome) {
     const dom = createPageDom(
         [
@@ -2749,26 +3187,7 @@ function createLiveTimeShiftGuardDom(chrome) {
         seekableEnd: 40,
     };
 
-    Object.defineProperty(video, "currentTime", {
-        configurable: true,
-        get: () => state.currentTime,
-        set: (value) => {
-            state.currentTime = Number(value);
-        },
-    });
-    Object.defineProperty(video, "paused", {
-        configurable: true,
-        get: () => state.paused,
-    });
-    Object.defineProperty(video, "buffered", {
-        configurable: true,
-        get: () => createTimeRanges([[0, state.bufferedEnd]]),
-    });
-    Object.defineProperty(video, "seekable", {
-        configurable: true,
-        get: () => createTimeRanges([[0, state.seekableEnd]]),
-    });
-    makeVisibleVideo(video);
+    bindLiveTimeShiftVideoState(video, state);
     seekbar.getBoundingClientRect = () => ({
         width: 560,
         height: 12,
@@ -2819,13 +3238,52 @@ function dispatchVideoEvent(dom, video, type) {
 }
 
 function armLiveTimeShiftGuard(dom, video, state, currentTime = 32) {
+    const seekbar = dom.window.document.getElementById("seekbar");
+    seekbar?.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true, cancelable: true }));
     state.currentTime = currentTime;
-    dispatchVideoEvent(dom, video, "timeupdate");
+    dispatchVideoEvent(dom, video, "seeking");
+    dispatchVideoEvent(dom, video, "seeked");
+    seekbar?.dispatchEvent(new dom.window.Event("pointerup", { bubbles: true, cancelable: true }));
 }
 
 function waitForLiveTimeShiftSync() {
     return new Promise((resolve) => setTimeout(resolve, 650));
 }
+
+test("skip pill wheel decrement keeps one second as the minimum step", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            skipSeconds: 1,
+        },
+    });
+    const { document, dom, state } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        await loadSkipControlPage(dom);
+        const pill = document.getElementById("betterchzzk-skip-pill");
+        assert.ok(pill);
+
+        const wheel = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+        Object.defineProperty(wheel, "deltaY", { value: 100 });
+        pill.dispatchEvent(wheel);
+
+        assert.equal(wheel.defaultPrevented, true);
+        assert.equal(pill.querySelector(".bc-value").textContent, "1");
+
+        const key = new dom.window.KeyboardEvent("keydown", {
+            key: "ArrowRight",
+            code: "ArrowRight",
+            bubbles: true,
+            cancelable: true,
+        });
+        document.body.dispatchEvent(key);
+
+        assert.equal(key.defaultPrevented, true);
+        assert.equal(state.currentTime, 33);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
 
 function useFakePerformanceNow(dom, initialNow = 1000) {
     let now = initialNow;
@@ -2874,6 +3332,287 @@ test("live timeshift guard does not roll back keyboard seeks into the near-live 
         await waitForLiveTimeShiftSync();
 
         assert.equal(video.currentTime, 37);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live timeshift guard ignores delayed live startup without user intent", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        state.bufferedEnd = 1000;
+        state.currentTime = 970;
+        state.seekableEnd = 1000;
+        await loadSkipControlPage(dom);
+
+        dispatchVideoEvent(dom, video, "timeupdate");
+
+        assert.equal(video.currentTime, 970);
+
+        state.currentTime = 1000;
+        dispatchVideoEvent(dom, video, "timeupdate");
+
+        assert.equal(video.currentTime, 1000);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live timeshift guard does not re-arm after an explicit live-edge return", async () => {
+    const chrome = createFakeChrome();
+    const { document, dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+    const clock = useFakePerformanceNow(dom);
+
+    try {
+        state.bufferedEnd = 1000;
+        state.currentTime = 970;
+        state.seekableEnd = 1000;
+        await loadSkipControlPage(dom);
+        armLiveTimeShiftGuard(dom, video, state, 970);
+
+        const liveButton = document.getElementById("betterchzzk-live-fast-forward");
+        assert.ok(liveButton);
+        liveButton.dispatchEvent(new dom.window.Event("click", { bubbles: true, cancelable: true }));
+
+        assert.equal(video.currentTime, 1000);
+
+        clock.advance(1300);
+        state.currentTime = 970;
+        dispatchVideoEvent(dom, video, "timeupdate");
+
+        assert.equal(video.currentTime, 970);
+
+        state.currentTime = 1000;
+        dispatchVideoEvent(dom, video, "timeupdate");
+
+        assert.equal(video.currentTime, 1000);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live pause snapshot ignores initial paused attach without user intent", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        state.bufferedEnd = 1000;
+        state.currentTime = 970;
+        state.paused = true;
+        state.seekableEnd = 1000;
+        await loadSkipControlPage(dom);
+
+        dispatchVideoEvent(dom, video, "loadedmetadata");
+        dispatchVideoEvent(dom, video, "durationchange");
+        dispatchVideoEvent(dom, video, "progress");
+
+        state.paused = false;
+        state.currentTime = 1000;
+        dispatchVideoEvent(dom, video, "play");
+        dispatchVideoEvent(dom, video, "playing");
+
+        assert.equal(video.currentTime, 1000);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live pause snapshot restores a user-paused time-shift", async () => {
+    const chrome = createFakeChrome();
+    const { dom, play, state, video } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        state.bufferedEnd = 1000;
+        state.currentTime = 970;
+        state.seekableEnd = 1000;
+        await loadSkipControlPage(dom);
+
+        play.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true, cancelable: true }));
+        state.paused = true;
+        dispatchVideoEvent(dom, video, "pause");
+
+        state.paused = false;
+        state.currentTime = 1000;
+        dispatchVideoEvent(dom, video, "play");
+
+        assert.ok(video.currentTime >= 970 && video.currentTime < 972);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live pause snapshot restores when the user pauses from the video surface", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        state.bufferedEnd = 1000;
+        state.currentTime = 970;
+        state.seekableEnd = 1000;
+        await loadSkipControlPage(dom);
+
+        video.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true, cancelable: true }));
+        state.paused = true;
+        dispatchVideoEvent(dom, video, "pause");
+
+        state.paused = false;
+        state.currentTime = 1000;
+        dispatchVideoEvent(dom, video, "play");
+
+        assert.ok(video.currentTime >= 970 && video.currentTime < 972);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live pause snapshot restores when an overlay inside the video area triggers pause", async () => {
+    const chrome = createFakeChrome();
+    const { document, dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+    const overlay = document.createElement("div");
+
+    overlay.id = "playback-overlay";
+    overlay.getBoundingClientRect = () => ({
+        width: 640,
+        height: 360,
+        left: 0,
+        top: 0,
+        right: 640,
+        bottom: 360,
+    });
+    document.getElementById("playerRoot").appendChild(overlay);
+
+    try {
+        state.bufferedEnd = 1000;
+        state.currentTime = 970;
+        state.seekableEnd = 1000;
+        await loadSkipControlPage(dom);
+
+        const pointer = new dom.window.Event("pointerdown", { bubbles: true, cancelable: true });
+        Object.defineProperty(pointer, "clientX", { value: 320 });
+        Object.defineProperty(pointer, "clientY", { value: 180 });
+        overlay.dispatchEvent(pointer);
+        state.paused = true;
+        dispatchVideoEvent(dom, video, "pause");
+
+        state.paused = false;
+        state.currentTime = 1000;
+        dispatchVideoEvent(dom, video, "play");
+
+        assert.ok(video.currentTime >= 970 && video.currentTime < 972);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live pause snapshot stores a user pause at the live edge", async () => {
+    const chrome = createFakeChrome();
+    const { dom, play, state, video } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        state.bufferedEnd = 1000;
+        state.currentTime = 1000;
+        state.seekableEnd = 1000;
+        await loadSkipControlPage(dom);
+
+        play.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true, cancelable: true }));
+        state.paused = true;
+        dispatchVideoEvent(dom, video, "pause");
+
+        state.bufferedEnd = 1030;
+        state.paused = false;
+        state.currentTime = 1030;
+        state.seekableEnd = 1030;
+        dispatchVideoEvent(dom, video, "play");
+
+        assert.ok(video.currentTime >= 1000 && video.currentTime < 1002);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live pause snapshot restores from a native playback button without a known class", async () => {
+    const chrome = createFakeChrome();
+    const { controls, document, dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+    const nativePlay = document.createElement("button");
+
+    nativePlay.type = "button";
+    nativePlay.textContent = "Pause";
+    nativePlay.getBoundingClientRect = () => ({
+        width: 36,
+        height: 36,
+        left: 20,
+        top: 318,
+        right: 56,
+        bottom: 354,
+    });
+    controls.appendChild(nativePlay);
+
+    try {
+        state.bufferedEnd = 1000;
+        state.currentTime = 970;
+        state.seekableEnd = 1000;
+        await loadSkipControlPage(dom);
+
+        nativePlay.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true, cancelable: true }));
+        state.paused = true;
+        dispatchVideoEvent(dom, video, "pause");
+
+        nativePlay.textContent = "Live Play";
+        nativePlay.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true, cancelable: true }));
+        nativePlay.dispatchEvent(new dom.window.Event("click", { bubbles: true, cancelable: true }));
+
+        state.paused = false;
+        state.currentTime = 1000;
+        dispatchVideoEvent(dom, video, "play");
+
+        assert.ok(video.currentTime >= 970 && video.currentTime < 972);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live pause snapshot is discarded when the video element is replaced on the same live route", async () => {
+    const chrome = createFakeChrome();
+    const { document, dom, play, state, video } = createLiveTimeShiftGuardDom(chrome);
+    const clock = useFakePerformanceNow(dom);
+    const nextVideo = document.createElement("video");
+    const nextState = {
+        bufferedEnd: 1000,
+        currentTime: 1000,
+        paused: false,
+        seekableEnd: 1000,
+    };
+
+    bindLiveTimeShiftVideoState(nextVideo, nextState);
+
+    try {
+        state.bufferedEnd = 1000;
+        state.currentTime = 970;
+        state.seekableEnd = 1000;
+        await loadSkipControlPage(dom);
+
+        play.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true, cancelable: true }));
+        state.paused = true;
+        dispatchVideoEvent(dom, video, "pause");
+
+        video.replaceWith(nextVideo);
+        await waitForAsyncCallbacks();
+        await waitForAsyncCallbacks();
+        await waitForLiveTimeShiftSync();
+
+        dispatchVideoEvent(dom, nextVideo, "play");
+        dispatchVideoEvent(dom, nextVideo, "playing");
+
+        assert.equal(nextVideo.currentTime, 1000);
+
+        armLiveTimeShiftGuard(dom, nextVideo, nextState, 970);
+        clock.advance(1300);
+        nextState.currentTime = 1000;
+        dispatchVideoEvent(dom, nextVideo, "seeking");
+
+        assert.ok(nextVideo.currentTime >= 970 && nextVideo.currentTime < 972);
     } finally {
         await closeSkipControlPage(dom, chrome);
     }
@@ -3015,10 +3754,12 @@ test("live timeshift guard keeps protection while a long seekbar drag is held", 
 test("live timeshift guard ignores non-seek slider gestures for forced live-edge jumps", async () => {
     const chrome = createFakeChrome();
     const { dom, state, video, volumeSlider } = createLiveTimeShiftGuardDom(chrome);
+    const clock = useFakePerformanceNow(dom);
 
     try {
         await loadSkipControlPage(dom);
         armLiveTimeShiftGuard(dom, video, state, 32);
+        clock.advance(1300);
 
         volumeSlider.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true, cancelable: true }));
         video.currentTime = 39;
@@ -3051,13 +3792,15 @@ test("live timeshift guard expires a held seekbar gesture when pointerup is miss
     }
 });
 
-test("live timeshift guard still restores forced live-edge jumps without a user gesture", async () => {
+test("live timeshift guard still restores forced live-edge jumps after the user-established position goes stale", async () => {
     const chrome = createFakeChrome();
     const { dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+    const clock = useFakePerformanceNow(dom);
 
     try {
         await loadSkipControlPage(dom);
         armLiveTimeShiftGuard(dom, video, state, 32);
+        clock.advance(1300);
 
         video.currentTime = 39;
         dispatchVideoEvent(dom, video, "seeking");
@@ -3314,7 +4057,7 @@ test("live fast-forward button does not duplicate an external knife button", asy
     }
 });
 
-function setupShortcutRescueDom(chrome) {
+function setupShortcutRescueDom(chrome, { pageScripts = [] } = {}) {
     const dom = createPageDom(
         [
             "<!doctype html>",
@@ -3355,6 +4098,7 @@ function setupShortcutRescueDom(chrome) {
         });
     }
 
+    for (const pageScript of pageScripts) evalRepoScript(dom, "features", pageScript);
     evalRepoScript(dom, "shared", "settings.js");
     evalContentScripts(dom);
     evalRepoScript(dom, "features", "shortcutRescue.js");

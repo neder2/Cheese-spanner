@@ -68,6 +68,7 @@
         formatKstDateKey: formatDateKey,
         formatKstMonthKey: formatMonthKey,
         formatKstTime: formatKstClock,
+        getKstDateKey,
         getKstParts,
         isLastPage,
         isVisible,
@@ -358,9 +359,9 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   left:50%;
   bottom:calc(100% + 6px);
   width:max-content;
-  min-width:148px;
-  max-width:240px;
-  padding:8px;
+  min-width:176px;
+  max-width:268px;
+  padding:7px;
   border:1px solid rgba(255,255,255,0.08);
   border-radius:8px;
   background:#111114;
@@ -384,13 +385,13 @@ body[theme="dark"] #${WIDGET_ID}:hover,
 }
 #${WIDGET_ID} .bcmb-day-tip-row{
   display:grid;
-  grid-template-columns:42px minmax(0, 1fr);
-  gap:8px;
+  grid-template-columns:48px minmax(0, 1fr);
+  gap:7px;
   align-items:center;
   min-height:16px;
 }
 #${WIDGET_ID} .bcmb-day-tip-row + .bcmb-day-tip-row{
-  margin-top:3px;
+  margin-top:4px;
 }
 #${WIDGET_ID} .bcmb-day-tip-label{
   color:#9da5b6;
@@ -400,11 +401,32 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   color:#fff;
   font-weight:900;
   text-align:right;
+  word-break:keep-all;
+}
+#${WIDGET_ID} .bcmb-day-tip-row-broadcast .bcmb-day-tip-label{
+  color:#b9c2d2;
+}
+#${WIDGET_ID} .bcmb-day-tip-row-watch{
+  padding-top:4px;
+  border-top:1px solid rgba(0,255,163,0.14);
+}
+#${WIDGET_ID} .bcmb-day-tip-row-watch .bcmb-day-tip-label{
+  color:#72f0c7;
+}
+#${WIDGET_ID} .bcmb-day-tip-row-watch .bcmb-day-tip-value{
+  color:#b8ffe8;
+  font-weight:800;
+}
+#${WIDGET_ID} .bcmb-day-tip-item{
+  display:block;
+  position:relative;
+  padding:7px 8px 7px 10px;
+  border-left:2px solid rgba(0,255,163,0.48);
+  border-radius:6px;
+  background:rgba(255,255,255,0.045);
 }
 #${WIDGET_ID} .bcmb-day-tip-item + .bcmb-day-tip-item{
-  margin-top:8px;
-  padding-top:8px;
-  border-top:1px solid rgba(255,255,255,0.12);
+  margin-top:7px;
 }
 #${WIDGET_ID} .bcmb-day-tip::after{
   content:"";
@@ -419,6 +441,7 @@ body[theme="dark"] #${WIDGET_ID}:hover,
 #${WIDGET_ID} .bcmb-day:focus .bcmb-day-tip{
   display:block;
 }
+#${WIDGET_ID} .bcmb-day[data-has-broadcast="1"],
 #${WIDGET_ID} .bcmb-day[data-live="1"]{
   color:#07150f;
   background:rgba(0,255,163,0.24);
@@ -852,7 +875,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
             const startDateText = pickVideoStartDateText(row);
             const endDateText = pickVideoEndDateText(row);
 
-            if (!videoNo || !Number.isFinite(duration) || duration <= 0 || (!startDateText && !endDateText)) return null;
+            if (!videoNo || !Number.isFinite(duration) || duration <= 0) return null;
             return {
                 videoNo,
                 type: String(type || ""),
@@ -1217,11 +1240,11 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
     }
 
     function shouldFetchStartDetail(video, monthInfo) {
-        if (!video || video.startIsExact) return false;
+        if (!video || video.startIsExact || !replayOnly(video)) return false;
 
         const startMs = getVideoStartMs(video);
         const endMs = getVideoEndMs(video);
-        if (startMs === null && endMs === null) return false;
+        if (startMs === null && endMs === null) return true;
 
         const lower = startMs ?? endMs;
         const upper = endMs ?? startMs;
@@ -1337,6 +1360,10 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         return getMonthBroadcastSeconds(month) / broadcastDays;
     }
 
+    function formatMonthBroadcastTotal(month) {
+        return `총 방송 ${formatDuration(getMonthBroadcastSeconds(month))}`;
+    }
+
     function updateWidgetMonthSummary(widget, month, state = null) {
         if (!widget || !month) return;
 
@@ -1426,8 +1453,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
             return;
         }
 
-        const parts = getKstParts(startMs);
-        const key = formatDateKey(parts);
+        const key = getKstDateKey(startMs);
         const startKey = `${key}-${Math.floor(startMs / 60000)}`;
         const duration = Number(video.duration) || 0;
         if (duration <= 0) return;
@@ -1737,10 +1763,30 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
             const item = document.createElement("span");
             item.className = "bcmb-day";
             item.textContent = String(day);
+            item.setAttribute("data-date-key", formatDateKey({ year: month.year, month: month.month, day }));
             item.setAttribute("aria-label", `${month.month}월 ${day}일 조회 중`);
             fragment.appendChild(item);
         }
         daysEl.replaceChildren(fragment);
+    }
+
+    function getCalendarDayInfo(month, key) {
+        const starts = Array.isArray(month.startsByDate?.[key])
+            ? [...month.startsByDate[key]].sort(
+                  (a, b) =>
+                      Number(a.startMs || 0) - Number(b.startMs || 0) || String(a.time).localeCompare(String(b.time))
+              )
+            : [];
+        const seconds = Math.round(
+            Number(month.dailySeconds?.[key]) ||
+                starts.reduce((sum, start) => sum + Math.max(0, Number(start.duration) || 0), 0)
+        );
+
+        return {
+            hasBroadcast: starts.length > 0 || seconds > 0,
+            seconds,
+            starts,
+        };
     }
 
     function buildCalendarRenderKey(month) {
@@ -1817,7 +1863,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         updateWidgetMonthSummary(widget, month);
 
         monthEl.textContent = `${month.year}.${String(month.month).padStart(2, "0")}`;
-        countEl.textContent = `${month.broadcastDayCount || 0}일 방송`;
+        countEl.textContent = formatMonthBroadcastTotal(month);
         updateCalendarNav(widget, month.year, month.month);
 
         if (!weekdaysEl.children.length) {
@@ -1842,31 +1888,35 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         for (let day = 1; day <= month.daysInMonth; day++) {
             const parts = { year: month.year, month: month.month, day };
             const key = formatDateKey(parts);
-            const seconds = Math.round(month.dailySeconds?.[key] || 0);
-            const starts = Array.isArray(month.startsByDate?.[key])
-                ? [...month.startsByDate[key]].sort((a, b) => String(a.time).localeCompare(String(b.time)))
-                : [];
+            const dayInfo = getCalendarDayInfo(month, key);
+            const { hasBroadcast, seconds, starts } = dayInfo;
             const item = document.createElement("span");
             item.className = "bcmb-day";
             item.textContent = String(day);
+            item.setAttribute("data-date-key", key);
 
             if (month.today > 0 && day === month.today) item.setAttribute("data-today", "1");
             if (month.today > 0 && day > month.today) item.setAttribute("data-future", "1");
 
-            if (starts.length) {
+            if (hasBroadcast) {
                 const hasWatchedStart = starts.some((start) => {
                     const watchInfo = getStartWatchInfo(currentChannelId, start);
                     return watchInfo && watchInfo.seconds > 0;
                 });
+                item.setAttribute("data-has-broadcast", "1");
                 item.setAttribute("data-live", "1");
                 item.setAttribute("data-level", getCalendarLevel(seconds));
                 if (hasWatchedStart) item.setAttribute("data-watch", "1");
-                item.tabIndex = 0;
-                const tip = document.createElement("span");
-                tip.className = "bcmb-day-tip";
-                tip.appendChild(buildDayTipContent(month, day, starts));
-                item.appendChild(tip);
-                item.setAttribute("aria-label", `${month.month}월 ${day}일 ${buildDayAriaLabel(starts)}`);
+                if (starts.length) {
+                    item.tabIndex = 0;
+                    const tip = document.createElement("span");
+                    tip.className = "bcmb-day-tip";
+                    tip.appendChild(buildDayTipContent(month, day, starts));
+                    item.appendChild(tip);
+                    item.setAttribute("aria-label", `${month.month}월 ${day}일 ${buildDayAriaLabel(starts)}`);
+                } else {
+                    item.setAttribute("aria-label", `${month.month}월 ${day}일 방송 기록 있음`);
+                }
             } else {
                 item.setAttribute("aria-label", `${month.month}월 ${day}일 방송 없음`);
             }
@@ -1903,23 +1953,23 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
             const startText = `${start.time}${start.exact ? "" : " 추정"}`;
             const endText = start.endMs
                 ? `${formatKstClock(start.endMs)}${formatKstMonthDay(start.endMs) !== `${month.month}/${day}` ? ` (${formatKstMonthDay(start.endMs)})` : ""}`
-                : "-";
+                : "종료 미상";
             const durationText = formatDuration(start.duration);
+            const broadcastText = `${startText} - ${endText} · ${durationText}`;
             const watchInfo = getStartWatchInfo(currentChannelId, start);
 
-            appendTipRow(item, "시작", startText);
-            appendTipRow(item, "종료", endText);
-            appendTipRow(item, "진행", durationText);
-            appendTipRow(item, "내 시청", formatWatchInfo(watchInfo));
+            appendTipRow(item, "방송", broadcastText, "broadcast");
+            appendTipRow(item, "내 시청", formatWatchInfo(watchInfo), "watch");
             fragment.appendChild(item);
         }
 
         return fragment;
     }
 
-    function appendTipRow(parent, label, value) {
+    function appendTipRow(parent, label, value, type = "") {
         const row = document.createElement("span");
-        row.className = "bcmb-day-tip-row";
+        row.className = `bcmb-day-tip-row${type ? ` bcmb-day-tip-row-${type}` : ""}`;
+        if (type) row.setAttribute("data-tip-row", type);
 
         const labelEl = document.createElement("span");
         labelEl.className = "bcmb-day-tip-label";

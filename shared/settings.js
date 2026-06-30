@@ -12,9 +12,21 @@
     const LIVE_PAUSE_CACHE_DEPTH_MINUTES_MIN = 1;
     const LIVE_PAUSE_CACHE_DEPTH_MINUTES_MAX = 360;
     const LIVE_PAUSE_CACHE_DEPTH_MINUTES_DEFAULT = 120;
+    const REWARD_AUTO_COLLECT_DELAY_MS_DEFAULT = 800;
+    const REWARD_AUTO_COLLECT_DELAY_MS_MIN = 0;
+    const REWARD_AUTO_COLLECT_DELAY_MS_MAX = 5000;
+    const CHAT_TOOLS_MIN_MODERATOR_MESSAGES = 20;
+    const CHAT_TOOLS_MAX_MODERATOR_MESSAGES = 200;
 
     const OPTION_SCHEMA = Object.freeze({
         autoQualityEnabled: { kind: "bool", default: true, feature: true },
+        rewardAutoCollectEnabled: { kind: "bool", default: false, feature: true },
+        rewardAutoCollectDelayMs: {
+            kind: "int",
+            default: REWARD_AUTO_COLLECT_DELAY_MS_DEFAULT,
+            min: REWARD_AUTO_COLLECT_DELAY_MS_MIN,
+            max: REWARD_AUTO_COLLECT_DELAY_MS_MAX,
+        },
         skipControlEnabled: { kind: "bool", default: true, feature: true },
         skipKeyboardEnabled: { kind: "bool", default: true },
         skipPillEnabled: { kind: "bool", default: true },
@@ -33,6 +45,13 @@
         volumeWheelEnabled: { kind: "bool", default: true, feature: true },
         volumeWheelStep: { kind: "int", default: 5, min: 1, max: 50 },
         volumeTooltipEnabled: { kind: "bool", default: false, feature: true },
+        audioCompressorEnabled: { kind: "bool", default: false, feature: true },
+        audioCompressorThreshold: { kind: "number", default: -24, min: -60, max: 0, step: 1 },
+        audioCompressorKnee: { kind: "number", default: 30, min: 0, max: 40, step: 1 },
+        audioCompressorRatio: { kind: "number", default: 12, min: 1, max: 20, step: 0.1 },
+        audioCompressorAttack: { kind: "number", default: 0.003, min: 0, max: 1, step: 0.001 },
+        audioCompressorRelease: { kind: "number", default: 0.25, min: 0, max: 1, step: 0.01 },
+        audioCompressorMakeupGain: { kind: "number", default: 1, min: 0.5, max: 3, step: 0.1 },
         vodBroadcastClockEnabled: { kind: "bool", default: false, feature: true },
         timeMachineLagLabelEnabled: { kind: "bool", default: true, feature: true },
         adblockPopupEnabled: { kind: "bool", default: true, feature: true },
@@ -52,6 +71,16 @@
             default: 1,
             min: LIVE_WATCH_HISTORY_MIN_MINUTES_MIN,
             max: LIVE_WATCH_HISTORY_MIN_MINUTES_MAX,
+        },
+        chatToolsEnabled: { kind: "bool", default: false, feature: true },
+        chatToolsShowBlindEnabled: { kind: "bool", default: false },
+        chatToolsModeratorBoxEnabled: { kind: "bool", default: true },
+        chatToolsCacheModeratorMessagesEnabled: { kind: "bool", default: false },
+        chatToolsMaxModeratorMessages: {
+            kind: "int",
+            default: 100,
+            min: CHAT_TOOLS_MIN_MODERATOR_MESSAGES,
+            max: CHAT_TOOLS_MAX_MODERATOR_MESSAGES,
         },
         videoSearchEnabled: { kind: "bool", default: true, feature: true },
         videoSearchCommentEnabled: { kind: "bool", default: true },
@@ -139,6 +168,16 @@
         return Math.min(Math.max(Math.round(parsed), min), max);
     }
 
+    function normalizeNumber(value, fallback, min, max, step) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) return fallback;
+        const clamped = Math.min(Math.max(parsed, min), max);
+        if (!Number.isFinite(step) || step <= 0) return clamped;
+        const rounded = Math.round(clamped / step) * step;
+        const decimals = Math.max(0, String(step).split(".")[1]?.length || 0);
+        return Number(rounded.toFixed(decimals));
+    }
+
     function normalizeBoolean(value, fallback = true) {
         if (typeof value === "boolean") return value;
         if (value === "true") return true;
@@ -158,6 +197,7 @@
 
         if (spec.kind === "bool") return normalizeBoolean(value, fallback);
         if (spec.kind === "int") return normalizeInteger(value, fallback, spec.min, spec.max);
+        if (spec.kind === "number") return normalizeNumber(value, fallback, spec.min, spec.max, spec.step);
         if (spec.kind === "skipSeconds") return normalizeSkipSeconds(value);
         return fallback;
     }
@@ -249,6 +289,11 @@
         LIVE_PAUSE_CACHE_DEPTH_MINUTES_MIN,
         LIVE_PAUSE_CACHE_DEPTH_MINUTES_MAX,
         LIVE_PAUSE_CACHE_DEPTH_MINUTES_DEFAULT,
+        REWARD_AUTO_COLLECT_DELAY_MS_DEFAULT,
+        REWARD_AUTO_COLLECT_DELAY_MS_MIN,
+        REWARD_AUTO_COLLECT_DELAY_MS_MAX,
+        CHAT_TOOLS_MIN_MODERATOR_MESSAGES,
+        CHAT_TOOLS_MAX_MODERATOR_MESSAGES,
         OPTION_SPEC,
         DEFAULT_OPTIONS,
         OPTION_KEYS,

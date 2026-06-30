@@ -164,34 +164,41 @@ h1 {
 
 .tab-bar {
     display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-2);
 }
 
 .tab {
-    flex: 1 1 auto;
-    min-width: 60px;
-    min-height: 36px;
-    padding: 0 10px;
-    border: 1px solid transparent;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 34px;
+    padding: 0 8px;
+    border: 0;
     border-radius: 6px;
     color: var(--text-muted);
     background: transparent;
     font-size: 12px;
     font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     cursor: pointer;
-    transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+    transition: background-color 120ms ease, color 120ms ease;
 }
 
-.tab:hover {
+.tab:hover:not(.is-active) {
     color: var(--text);
-    background: var(--surface-2);
+    background: var(--surface-3);
 }
 
 .tab.is-active {
-    border-color: var(--border);
     color: var(--accent);
     background: var(--surface);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+    font-weight: 600;
 }
 
 .settings-form > .settings-card {
@@ -1245,6 +1252,15 @@ h1 {
 @media (max-width: 480px) {
     body {
         padding: 10px;
+    }
+
+    .tab-bar {
+        flex-wrap: wrap;
+    }
+
+    .tab {
+        flex: 1 1 auto;
+        min-width: 64px;
     }
 
     .options-page {

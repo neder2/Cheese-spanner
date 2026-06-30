@@ -51,11 +51,36 @@
     }
 
     function pickVideoStartDateText(value) {
-        return pickString(value?.liveOpenDate, value?.openDate, value?.broadcastOpenDate, value?.live?.openDate);
+        return pickString(
+            value?.liveOpenDate,
+            value?.openDate,
+            value?.broadcastOpenDate,
+            value?.liveStartDate,
+            value?.startDate,
+            value?.broadcastStartDate,
+            value?.live?.liveOpenDate,
+            value?.live?.openDate,
+            value?.live?.liveStartDate,
+            value?.live?.startDate
+        );
     }
 
     function pickVideoEndDateText(value) {
-        return pickString(value?.publishDateAt, value?.publishDate, value?.createdDate);
+        return pickString(
+            value?.liveCloseDate,
+            value?.closeDate,
+            value?.broadcastCloseDate,
+            value?.liveEndDate,
+            value?.endDate,
+            value?.broadcastEndDate,
+            value?.live?.liveCloseDate,
+            value?.live?.closeDate,
+            value?.live?.liveEndDate,
+            value?.live?.endDate,
+            value?.publishDateAt,
+            value?.publishDate,
+            value?.createdDate
+        );
     }
 
     function cleanTitle(value) {

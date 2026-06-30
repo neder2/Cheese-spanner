@@ -46,7 +46,6 @@
     const CACHE_TTL_MS = 20000;
     const MAX_CACHE_ENTRIES = 80;
     const CARD_WIDTH = 460;
-    const PREVIEW_AUDIO_VOLUME = 0.2;
     const PLAYER_START_SETTLE_MS = 90;
     const PLAYER_PLAY_EVENT = "betterchzzk:following-preview:play";
     const PLAYER_STOP_EVENT = "betterchzzk:following-preview:stop";
@@ -109,17 +108,6 @@
   width:100% !important;
   height:100% !important;
   object-fit:cover !important;
-}
-#${TOOLTIP_ID} .bcfp-player video{
-  display:block;
-  width:100% !important;
-  height:100% !important;
-  object-fit:cover !important;
-}
-#${TOOLTIP_ID} .bcfp-player button,
-#${TOOLTIP_ID} .bcfp-player [role="button"]{
-  display:none !important;
-  pointer-events:none !important;
 }
 #${TOOLTIP_ID} .bcfp-media-fallback{
   position:absolute;
@@ -637,6 +625,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         const openDate = pickString(content.openDate, content.liveOpenDate, content.startedAt, content.startDate);
         const elapsedStartMs = getElapsedStartMs(openDate) || Number(fallback.elapsedStartMs) || 0;
         const livePlaybackJson = pickRawString(content.livePlaybackJson);
+        const previewPlaybackJson = pickRawString(content.previewPlaybackJson);
 
         return {
             category: pickString(
@@ -661,7 +650,8 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             ),
             title: title || fallback.title,
             liveId: pickString(content.liveId, fallback.liveId),
-            playbackJson: pickRawString(livePlaybackJson, fallback.playbackJson),
+            playbackJson: pickRawString(livePlaybackJson, previewPlaybackJson, fallback.playbackJson),
+            isPreviewPlayback: !livePlaybackJson && Boolean(previewPlaybackJson || fallback.isPreviewPlayback),
         };
     }
 
@@ -716,6 +706,16 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         window.dispatchEvent(new CustomEvent(type, { detail: JSON.stringify(detail || {}) }));
     }
 
+    function getPreviewAudioVolume() {
+        const volume = Number(featureOptions.followingPreviewAudioVolume);
+        if (!Number.isFinite(volume)) return 0;
+        return Math.min(Math.max(volume, 0), 100) / 100;
+    }
+
+    function isPreviewAudioEnabled() {
+        return Boolean(featureOptions.followingPreviewAudioEnabled);
+    }
+
     let playerRequestSeq = 0;
     let activePlayerRequestId = "";
 
@@ -744,6 +744,8 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         if (!mount?.isConnected || !meta.playbackJson) return;
 
         const requestId = `bcfp${Date.now().toString(36)}${(playerRequestSeq += 1).toString(36)}`;
+        const audioEnabled = isPreviewAudioEnabled();
+        const volume = audioEnabled ? getPreviewAudioVolume() : 0;
         activePlayerRequestId = requestId;
         mount.setAttribute(PLAYER_MOUNT_ATTR, requestId);
         mount.setAttribute(PLAYER_STATE_ATTR, "loading");
@@ -752,12 +754,11 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             playerStartTimer = 0;
             if (activePlayerRequestId !== requestId || !mount.isConnected) return;
             dispatchPlayerEvent(PLAYER_PLAY_EVENT, {
-                channelId: meta.channelId,
                 mountId: requestId,
-                muted: false,
+                muted: !audioEnabled,
                 playbackJson: meta.playbackJson,
                 requestId,
-                volume: PREVIEW_AUDIO_VOLUME,
+                volume,
             });
         };
 
@@ -768,10 +769,6 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         }
 
         queuePlayerRequest(startPlayer);
-    }
-
-    function shouldCreatePlayer(meta) {
-        return Boolean(meta.playbackJson);
     }
 
     function createTextEl(className, text) {
@@ -819,13 +816,15 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             media.appendChild(fallback);
         }
 
-        if (shouldCreatePlayer(meta)) {
+        if (meta.playbackJson) {
             media.dataset.hasPlayer = "1";
 
             const playerMount = document.createElement("div");
             playerMount.className = "bcfp-player";
             const playerTitle = `${meta.channelName || meta.channelId} \ub77c\uc774\ube0c \ubbf8\ub9ac\ubcf4\uae30`;
-            playerMount.title = playerTitle;
+            playerMount.title = isPreviewAudioEnabled()
+                ? `${playerTitle} - \uc6b0\ud074\ub9ad\uc73c\ub85c \uc18c\ub9ac \ucf1c\uae30/\ub044\uae30`
+                : playerTitle;
             playerMount.setAttribute(PLAYER_STATE_ATTR, "loading");
             media.appendChild(playerMount);
             queuePlayerRequest(() => requestPreviewPlayer(playerMount, meta));

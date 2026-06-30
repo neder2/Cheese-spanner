@@ -21,6 +21,13 @@
     const LIVE_FAST_FORWARD_LABEL = "\uBE68\uB9AC \uAC10\uAE30";
     const LIVE_FAST_FORWARD_BUTTON_TERMS = [LIVE_FAST_FORWARD_LABEL, "fast forward", "fast-forward", "fastforward"];
     const EXTERNAL_FAST_FORWARD_SIGNATURE_TERMS = ["knifeff", "fastforward", "livefastforward"];
+    const PLAYBACK_TOGGLE_BUTTON_TERMS = [
+        "play",
+        "pause",
+        "playback",
+        "\uC7AC\uC0DD",
+        "\uC77C\uC2DC\uC815\uC9C0",
+    ];
     const RELEVANT_DOM_SELECTOR = `video, ${TIME_SELECTOR}, ${LIVE_LEFT_BUTTONS_SELECTOR}, ${LIVE_PLAYBACK_SWITCH_SELECTOR}, [${LIVE_EDGE_PATCHED_ATTR}], #${SKIP_PILL_ID}, #${LIVE_FAST_FORWARD_BUTTON_ID}`;
     const SKIP_VISIBILITY_RESYNC_DELAY_MS = 240;
     const CONTROL_AREA_BEFORE_VIDEO_BOTTOM = 150;
@@ -80,8 +87,10 @@
     let liveTimeShiftState = null;
     let liveTimeShiftSyncTimer = null;
     let liveTimeShiftRestoring = false;
+    let liveVideoGeneration = 0;
     let lastLiveEdgeIntentAt = Number.NEGATIVE_INFINITY;
     let lastUserSeekGestureAt = Number.NEGATIVE_INFINITY;
+    let lastUserPauseIntentAt = Number.NEGATIVE_INFINITY;
     let userSeekGestureDragging = false;
     let lastPausedControlIntentAt = Number.NEGATIVE_INFINITY;
     let domObserver = null;
@@ -321,6 +330,7 @@
         if (!(button instanceof HTMLElement)) return false;
         if (button.id === LIVE_FAST_FORWARD_BUTTON_ID) return true;
         if (looksLikeExternalLiveFastForwardButton(button)) return true;
+        if (looksLikePlaybackToggleButton(button)) return false;
         return button.hasAttribute(LIVE_EDGE_PATCHED_ATTR) || containsAnyTerm(getCandidateText(button), LIVE_EDGE_BUTTON_TERMS);
     }
 
@@ -330,6 +340,27 @@
 
         const signature = compact(getElementSignature(button));
         return EXTERNAL_FAST_FORWARD_SIGNATURE_TERMS.some((term) => signature.includes(term));
+    }
+
+    function looksLikePlaybackToggleButton(button) {
+        if (!(button instanceof HTMLElement)) return false;
+        if (button.matches?.(LIVE_PLAYBACK_SWITCH_SELECTOR)) return true;
+
+        const signature = compact([
+            getElementSignature(button),
+            getCandidateText(button),
+            button.getAttribute("role"),
+            button.getAttribute("type"),
+        ].join(" "));
+        return PLAYBACK_TOGGLE_BUTTON_TERMS.some((term) => signature.includes(compact(term)));
+    }
+
+    function isLikelyPlaybackToggleIntentTarget(target, button) {
+        if (!canUseLiveResumeGuard(attachedVideo) || attachedVideo.paused) return false;
+        if (target === attachedVideo) return true;
+        if (!(button instanceof HTMLElement)) return false;
+        if (button.id === SKIP_PILL_ID || looksLikeLiveEdgeButton(button)) return false;
+        return looksLikePlaybackToggleButton(button) || isInLikelyVideoControlArea(button, attachedVideo);
     }
 
     function clearLiveTimeShiftState(video = null) {
@@ -373,6 +404,21 @@
         return horizontallyInsideVideo && nearVideoBottom && elRect.height <= CONTROL_AREA_MAX_HEIGHT;
     }
 
+    function isPointerEventInVideoArea(event, video) {
+        if (!(video instanceof HTMLVideoElement) || !isVisible?.(video)) return false;
+        const clientX = Number(event?.clientX);
+        const clientY = Number(event?.clientY);
+        if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return false;
+
+        const videoRect = video.getBoundingClientRect();
+        return (
+            clientX >= videoRect.left &&
+            clientX <= videoRect.right &&
+            clientY >= videoRect.top &&
+            clientY <= videoRect.bottom
+        );
+    }
+
     function findPillAnchorElement() {
         if (isLiveRoute()) return findLivePillAnchorElement();
         return findVodPillAnchorElement() || findVodTimeElement() || findTimeElement();
@@ -401,6 +447,14 @@
         return now - lastUserSeekGestureAt <= LIVE_TIMESHIFT_USER_SEEK_GRACE_MS;
     }
 
+    function markUserPauseIntent() {
+        lastUserPauseIntentAt = performance.now();
+    }
+
+    function isRecentUserPauseIntent() {
+        return performance.now() - lastUserPauseIntentAt <= PAUSED_CONTROL_INTENT_GRACE_MS;
+    }
+
     function isRecentPausedControlIntent() {
         return performance.now() - lastPausedControlIntentAt <= PAUSED_CONTROL_INTENT_GRACE_MS;
     }
@@ -409,8 +463,26 @@
         return isLiveRoute() ? location.pathname : "";
     }
 
-    function isPauseSnapshotForCurrentRoute() {
-        return Boolean(pauseSnapshot?.routeKey && pauseSnapshot.routeKey === getLiveRouteKey());
+    function getCurrentVideoGeneration(video = attachedVideo) {
+        return video instanceof HTMLVideoElement && video === attachedVideo ? liveVideoGeneration : 0;
+    }
+
+    function isLiveTimeShiftStateForVideo(video) {
+        return Boolean(
+            liveTimeShiftState?.video === video &&
+                liveTimeShiftState.routeKey === getLiveRouteKey() &&
+                liveTimeShiftState.videoGeneration === getCurrentVideoGeneration(video)
+        );
+    }
+
+    function isPauseSnapshotForCurrentRoute(video = attachedVideo) {
+        return Boolean(
+            pauseSnapshot?.routeKey &&
+                pauseSnapshot.routeKey === getLiveRouteKey() &&
+                pauseSnapshot.video === video &&
+                pauseSnapshot.videoGeneration === getCurrentVideoGeneration(video) &&
+                pauseSnapshot.armedByUser
+        );
     }
 
     function canUseLiveResumeGuard(video) {
@@ -447,6 +519,8 @@
         liveTimeShiftState = {
             video,
             routeKey,
+            videoGeneration: getCurrentVideoGeneration(video),
+            armedByUser: true,
             time: currentTime,
             edge,
             lag,
@@ -455,6 +529,11 @@
             restores: previous?.restores || 0,
             lastRestoreAt: previous?.lastRestoreAt ?? Number.NEGATIVE_INFINITY,
         };
+    }
+
+    function canCreateLiveTimeShiftState(video, { allowCurrent, recentUserSeekGesture }) {
+        if (isLiveTimeShiftStateForVideo(video)) return true;
+        return Boolean(allowCurrent || recentUserSeekGesture);
     }
 
     function restoreLiveTimeShiftPosition(video, state, expectedTime, edge) {
@@ -516,6 +595,7 @@
         const canRestore =
             state?.video === video &&
             state.routeKey === getLiveRouteKey() &&
+            state.videoGeneration === getCurrentVideoGeneration(video) &&
             !liveTimeShiftRestoring &&
             !allowCurrent &&
             !recentUserSeekGesture;
@@ -532,10 +612,12 @@
             return;
         }
 
+        if (!canCreateLiveTimeShiftState(video, { allowCurrent, recentUserSeekGesture })) return;
+
         rememberLiveTimeShiftPosition(video, edge, lag);
     }
 
-    function rememberPausedPosition(video, { preserveCachedTime = false } = {}) {
+    function rememberPausedPosition(video, { preserveCachedTime = false, allowUserIntent = false } = {}) {
         if (!canUseLiveResumeGuard(video) || isRecentLiveEdgeIntent()) {
             if (pauseSnapshot?.video === video) pauseSnapshot = null;
             return;
@@ -545,26 +627,36 @@
         if (!seekableRange) return;
 
         const routeKey = getLiveRouteKey();
-        const existingTime =
-            preserveCachedTime && isPauseSnapshotForCurrentRoute()
-                ? pauseSnapshot.time
-                : video.currentTime;
+        const hasCurrentSnapshot = isPauseSnapshotForCurrentRoute(video);
+        const existingTime = preserveCachedTime && hasCurrentSnapshot ? pauseSnapshot.time : video.currentTime;
         const time = Number(existingTime);
         if (!Number.isFinite(time)) return;
 
-        if (!isWithinLiveCacheDepth(seekableRange.end - time)) {
+        const edge = getLiveEdge(video);
+        const lag = Number.isFinite(edge) ? edge - time : seekableRange.end - time;
+        if (!Number.isFinite(lag) || !isWithinLiveCacheDepth(lag)) {
             if (pauseSnapshot?.video === video) pauseSnapshot = null;
             return;
         }
 
+        const userArmed =
+            allowUserIntent || isRecentUserPauseIntent() || isLiveTimeShiftStateForVideo(video) || hasCurrentSnapshot;
+        if (!userArmed) {
+            if (pauseSnapshot?.video === video) pauseSnapshot = null;
+            return;
+        }
+
+        const now = performance.now();
         pauseSnapshot = {
             video,
             routeKey,
+            videoGeneration: getCurrentVideoGeneration(video),
+            armedByUser: true,
             time,
             seekableStart: seekableRange.start,
             seekableEnd: seekableRange.end,
-            storedAt: pauseSnapshot?.routeKey === routeKey ? pauseSnapshot.storedAt : performance.now(),
-            refreshedAt: performance.now(),
+            storedAt: hasCurrentSnapshot ? pauseSnapshot.storedAt : now,
+            refreshedAt: now,
         };
     }
 
@@ -576,12 +668,7 @@
 
         if (!canUseLiveResumeGuard(video) || isRecentLiveEdgeIntent()) return;
 
-        if (!isPauseSnapshotForCurrentRoute()) {
-            rememberPausedPosition(video);
-            return;
-        }
-
-        rememberPausedPosition(video, { preserveCachedTime: true });
+        if (isPauseSnapshotForCurrentRoute(video)) rememberPausedPosition(video, { preserveCachedTime: true });
     }
 
     function startPauseCacheSync(video = attachedVideo) {
@@ -618,6 +705,7 @@
         resumeRestoreTimer = null;
         if (
             state.video !== attachedVideo ||
+            state.videoGeneration !== getCurrentVideoGeneration(state.video) ||
             !canUseLiveResumeGuard(state.video) ||
             isRecentLiveEdgeIntent() ||
             performance.now() > state.untilAt
@@ -650,7 +738,7 @@
     }
 
     function startResumeRestore(video) {
-        if (!isPauseSnapshotForCurrentRoute()) return;
+        if (!isPauseSnapshotForCurrentRoute(video)) return;
         if (!canUseLiveResumeGuard(video) || isRecentLiveEdgeIntent()) {
             cancelResumeRestore({ clearSnapshot: true });
             return;
@@ -666,6 +754,7 @@
 
         resumeRestoreState = {
             video,
+            videoGeneration: getCurrentVideoGeneration(video),
             target,
             startedAt: performance.now(),
             untilAt: performance.now() + LIVE_RESUME_RESTORE_WINDOW_MS,
@@ -678,8 +767,10 @@
     function onVideoPause(event) {
         const video = event.currentTarget;
         cancelResumeRestore();
-        rememberPausedPosition(video);
-        startPauseCacheSync(video);
+        rememberPausedPosition(video, {
+            allowUserIntent: isRecentUserPauseIntent() || isLiveTimeShiftStateForVideo(video),
+        });
+        if (isPauseSnapshotForCurrentRoute(video)) startPauseCacheSync(video);
     }
 
     function onVideoPlay(event) {
@@ -706,8 +797,10 @@
         ) {
             return;
         }
-        rememberPausedPosition(video);
-        startPauseCacheSync(video);
+        rememberPausedPosition(video, {
+            allowUserIntent: isRecentUserSeekGesture() || isLiveTimeShiftStateForVideo(video),
+        });
+        if (isPauseSnapshotForCurrentRoute(video)) startPauseCacheSync(video);
     }
 
     function detachLiveResumeGuard({ clearSnapshot = true } = {}) {
@@ -736,17 +829,17 @@
 
     function attachLiveResumeGuard(video) {
         if (attachedVideo === video) {
-            if (video instanceof HTMLVideoElement && video.paused) {
+            if (video instanceof HTMLVideoElement && video.paused && isPauseSnapshotForCurrentRoute(video)) {
                 refreshPauseCacheSnapshot(video);
                 startPauseCacheSync(video);
             }
             return;
         }
-        const keepSnapshot = isPauseSnapshotForCurrentRoute();
-        detachLiveResumeGuard({ clearSnapshot: !keepSnapshot });
+        detachLiveResumeGuard({ clearSnapshot: true });
         if (!(video instanceof HTMLVideoElement)) return;
 
         attachedVideo = video;
+        liveVideoGeneration += 1;
         attachedVideo.addEventListener("pause", onVideoPause, true);
         attachedVideo.addEventListener("play", onVideoPlay, true);
         attachedVideo.addEventListener("playing", onVideoPlay, true);
@@ -758,10 +851,10 @@
         attachedVideo.addEventListener("loadedmetadata", onVideoProgress, true);
         startLiveTimeShiftSync(video);
 
-        if (video.paused) {
+        if (video.paused && isPauseSnapshotForCurrentRoute(video)) {
             refreshPauseCacheSnapshot(video);
             startPauseCacheSync(video);
-        } else if (isPauseSnapshotForCurrentRoute()) {
+        } else if (isPauseSnapshotForCurrentRoute(video)) {
             startResumeRestore(video);
         }
     }
@@ -780,7 +873,7 @@
         const next = Math.min(Math.max(current + deltaSeconds, bounds.min), bounds.max);
         video.currentTime = next;
         syncLiveTimeShiftGuard(video, { allowCurrent: true });
-        if (video.paused) rememberPausedPosition(video);
+        if (video.paused) rememberPausedPosition(video, { allowUserIntent: true });
     }
 
     function isFrameStepKey(event) {
@@ -1309,7 +1402,7 @@
 
         const direction = event.deltaY < 0 ? 1 : -1;
         const step = getWheelStep(event);
-        setSkipSeconds(skipSeconds + direction * step);
+        setSkipSeconds(Math.max(1, skipSeconds + direction * step));
     }
 
     function installSkipPillGlobalHandlers() {
@@ -1485,6 +1578,7 @@
         lastUrl = location.href;
         skipPillAnchorEl = null;
         clearUserSeekGestureIntent();
+        clearLiveTimeShiftState();
         cancelResumeRestore({ clearSnapshot: true });
         if (pageChangeTimer) {
             clearTimeout(pageChangeTimer);
@@ -1635,6 +1729,13 @@
         return seekEl instanceof HTMLElement && isInLikelyVideoControlArea(seekEl, attachedVideo);
     }
 
+    function isLikelyPlaybackTogglePointerEvent(event, button) {
+        if (!canUseLiveResumeGuard(attachedVideo) || attachedVideo.paused) return false;
+        if (isLikelyUserSeekGestureTarget(event.target)) return false;
+        if (button instanceof HTMLElement && (button.id === SKIP_PILL_ID || looksLikeLiveEdgeButton(button))) return false;
+        return isPointerEventInVideoArea(event, attachedVideo);
+    }
+
     function handleUserSeekGestureRelease() {
         if (!userSeekGestureDragging) return;
         userSeekGestureDragging = false;
@@ -1643,10 +1744,24 @@
 
     function handleUserSeekGestureCancel() {
         clearUserSeekGestureIntent();
+        lastUserPauseIntentAt = Number.NEGATIVE_INFINITY;
     }
 
     function handleUserSeekVisibilityChange() {
-        if (document.hidden) clearUserSeekGestureIntent();
+        if (document.hidden) {
+            clearUserSeekGestureIntent();
+            lastUserPauseIntentAt = Number.NEGATIVE_INFINITY;
+        }
+    }
+
+    function handleLivePauseKeyIntent(event) {
+        if (!isLiveRoute() || !canUseLiveResumeGuard(attachedVideo)) return;
+        if (event.ctrlKey || event.altKey || event.metaKey || isEditableTarget(event.target)) return;
+
+        const key = String(event.key || "").toLowerCase();
+        if (event.code === "Space" || event.code === "KeyK" || key === " " || key === "k") {
+            markUserPauseIntent();
+        }
     }
 
     function handleLiveControlIntent(event) {
@@ -1657,7 +1772,17 @@
         }
 
         const button = event.target?.closest?.(BUTTON_SELECTOR);
+        if (
+            isLikelyPlaybackToggleIntentTarget(event.target, button) ||
+            (event.type === "pointerdown" && isLikelyPlaybackTogglePointerEvent(event, button))
+        ) {
+            markUserPauseIntent();
+        }
         if (!(button instanceof HTMLElement)) return;
+
+        if (looksLikePlaybackToggleButton(button)) {
+            return;
+        }
 
         if (looksLikeLiveEdgeButton(button)) {
             markLiveEdgeIntent();
@@ -1679,6 +1804,7 @@
         liveResumeHandlersInstalled = true;
         window.addEventListener("pointerdown", handleLiveControlIntent, true);
         window.addEventListener("click", handleLiveControlIntent, true);
+        window.addEventListener("keydown", handleLivePauseKeyIntent, true);
         window.addEventListener("pointerup", handleUserSeekGestureRelease, true);
         window.addEventListener("pointercancel", handleUserSeekGestureRelease, true);
         window.addEventListener("blur", handleUserSeekGestureCancel, true);
@@ -1689,8 +1815,10 @@
         if (!liveResumeHandlersInstalled) return;
         liveResumeHandlersInstalled = false;
         clearUserSeekGestureIntent();
+        lastUserPauseIntentAt = Number.NEGATIVE_INFINITY;
         window.removeEventListener("pointerdown", handleLiveControlIntent, true);
         window.removeEventListener("click", handleLiveControlIntent, true);
+        window.removeEventListener("keydown", handleLivePauseKeyIntent, true);
         window.removeEventListener("pointerup", handleUserSeekGestureRelease, true);
         window.removeEventListener("pointercancel", handleUserSeekGestureRelease, true);
         window.removeEventListener("blur", handleUserSeekGestureCancel, true);
