@@ -10,6 +10,8 @@ export default {
         "dist/**",
         "web-ext-artifacts",
         "web-ext-artifacts/**",
+        "backups",
+        "backups/**",
         "*.md",
         "AGENTS.md",
         "package.json",
