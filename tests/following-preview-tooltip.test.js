@@ -479,8 +479,8 @@ test("following preview plays auto-play-info HLS in the hover card and reuses ca
     assert.ok(video);
     assert.match(video.getAttribute("data-bcfp-player-mount"), /^bcfp/);
     assert.equal(video.getAttribute("data-bcfp-player-state"), "loading");
-    assert.equal(video.muted, true);
-    assert.equal(video.volume, 0);
+    assert.equal(video.muted, false);
+    assert.equal(video.volume, 0.15);
     assert.equal(calls.length, 2);
     assert.equal(calls[0].url, "https://api.chzzk.naver.com/service/v2/channels/channel-123/live-detail");
     assert.equal(calls[0].init.credentials, "include");

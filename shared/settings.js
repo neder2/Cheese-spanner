@@ -20,7 +20,7 @@
 
     const OPTION_SCHEMA = Object.freeze({
         autoQualityEnabled: { kind: "bool", default: true, feature: true },
-        rewardAutoCollectEnabled: { kind: "bool", default: false, feature: true },
+        rewardAutoCollectEnabled: { kind: "bool", default: true, feature: true },
         rewardAutoCollectDelayMs: {
             kind: "int",
             default: REWARD_AUTO_COLLECT_DELAY_MS_DEFAULT,
@@ -143,7 +143,7 @@
         followingRefreshEnabled: { kind: "bool", default: true, feature: true },
         followingRefreshSeconds: { kind: "int", default: 30, min: 10, max: 600 },
         followingPreviewTooltipEnabled: { kind: "bool", default: true, feature: true },
-        followingPreviewSoundEnabled: { kind: "bool", default: false },
+        followingPreviewSoundEnabled: { kind: "bool", default: true },
         shortcutRescueEnabled: { kind: "bool", default: true, feature: true },
     });
 

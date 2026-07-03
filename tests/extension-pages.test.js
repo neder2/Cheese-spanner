@@ -179,6 +179,65 @@ function makeVisibleVideo(video) {
     });
 }
 
+function createAudioCompressorFixture({ withExternalCompressor = false } = {}) {
+    const chrome = createFakeChrome({
+        sync: {
+            audioCompressorEnabled: true,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<video id="video"></video>',
+            '<div class="pzp-pc__volume-control" id="vol">',
+            '<button class="pzp-pc__volume-button" id="mute" type="button"></button>',
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const volumeControl = document.getElementById("vol");
+    const volumeButton = document.getElementById("mute");
+
+    makeVisibleVideo(video);
+    volumeControl.getBoundingClientRect = () => ({
+        width: 96,
+        height: 40,
+        left: 20,
+        top: 320,
+        right: 116,
+        bottom: 360,
+    });
+    volumeButton.getBoundingClientRect = () => ({
+        width: 40,
+        height: 40,
+        left: 20,
+        top: 320,
+        right: 60,
+        bottom: 360,
+    });
+
+    if (withExternalCompressor) {
+        const external = document.createElement("div");
+        external.className = "pzp-pc__volume-control knife-comp";
+        volumeControl.insertAdjacentElement("afterend", external);
+    }
+
+    return { chrome, dom, document, volumeControl, volumeButton };
+}
+
+async function loadAudioCompressorFeature(dom) {
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "volumeTooltip.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+}
+
 function createVideoTrackList(tracks, selectedIndex = 0) {
     const trackList = {
         length: tracks.length,
@@ -2979,6 +3038,67 @@ test("volume wheel ignores non-volume areas and disabled option", async () => {
     assert.ok(Math.abs(video.volume - 0.05) < 1e-6);
     assert.equal(video.muted, false);
     assert.equal(outsideSlider.value, "70");
+});
+
+test("audio compressor button yields to an existing external cheese-knife compressor", async () => {
+    const { dom, document } = createAudioCompressorFixture({ withExternalCompressor: true });
+
+    await loadAudioCompressorFeature(dom);
+
+    assert.equal(document.getElementById("betterchzzk-audio-compressor"), null);
+});
+
+test("audio compressor button mounts next to the volume button when no external compressor exists", async () => {
+    const { dom, document, volumeControl, volumeButton } = createAudioCompressorFixture();
+
+    await loadAudioCompressorFeature(dom);
+
+    await waitForCondition(() => document.getElementById("betterchzzk-audio-compressor"));
+    const button = document.getElementById("betterchzzk-audio-compressor");
+
+    assert.equal(button.parentElement, volumeControl);
+    assert.equal(button.previousElementSibling, volumeButton);
+    assert.equal(button.classList.contains(["knife", "audio", "compressor"].join("-")), false);
+});
+
+test("audio compressor button tooltip reports graph setup failures", async () => {
+    const { dom, document } = createAudioCompressorFixture();
+
+    dom.window.AudioContext = class {
+        constructor() {
+            this.state = "running";
+            this.currentTime = 0;
+        }
+
+        createMediaElementSource() {
+            throw new Error("media source already connected");
+        }
+
+        close() {}
+    };
+
+    await loadAudioCompressorFeature(dom);
+    await waitForCondition(() => document.getElementById("betterchzzk-audio-compressor"));
+
+    const button = document.getElementById("betterchzzk-audio-compressor");
+    button.click();
+
+    assert.equal(button.dataset.betterChzzkReady, "0");
+    assert.equal(button.getAttribute("tooltip"), "오디오 컴프레서(사용할 수 없음)");
+    assert.equal(button.getAttribute("aria-label"), "오디오 컴프레서(사용할 수 없음)");
+});
+
+test("audio compressor button is removed when an external cheese-knife compressor appears later", async () => {
+    const { dom, document } = createAudioCompressorFixture();
+
+    await loadAudioCompressorFeature(dom);
+    await waitForCondition(() => document.getElementById("betterchzzk-audio-compressor"));
+
+    const external = document.createElement("div");
+    external.className = "knife-comp";
+    document.body.appendChild(external);
+
+    await waitForCondition(() => !document.getElementById("betterchzzk-audio-compressor"));
 });
 
 test("auto quality falls back to the highest selectable lower track", () => {

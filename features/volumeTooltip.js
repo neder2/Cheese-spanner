@@ -172,6 +172,12 @@
     bindFeatureOptions(applyOptions);
 })();
 
+/*
+ * The audio compressor below is derived from cheese-knife
+ * (https://github.com/jebibot/cheese-knife) — Copyright (c) 2023- jebibot,
+ * MIT License — and was modified for Better Chzzk.
+ * Full license text: THIRD_PARTY_NOTICES.md
+ */
 (() => {
     const BUTTON_ID = "betterchzzk-audio-compressor";
     const STYLE_ID = "betterchzzk-audio-compressor-style";
@@ -187,6 +193,7 @@
         "[class*='pzp'][class*='volume-button']",
     ].join(", ");
     const BUTTON_LABEL = "오디오 컴프레서";
+    const EXTERNAL_COMPRESSOR_SELECTOR = ".knife-comp";
     const SMOOTHING_SECONDS = 0.01;
 
     const { normalizeOptions } = BetterChzzkSettings;
@@ -456,17 +463,24 @@
         return buttonEl;
     }
 
-    function syncButtonLabels(button) {
-        button.setAttribute("label", BUTTON_LABEL);
-        button.setAttribute("aria-label", BUTTON_LABEL);
-        button.setAttribute("tooltip", BUTTON_LABEL);
+    function findExternalCompressor() {
+        for (const el of document.querySelectorAll(EXTERNAL_COMPRESSOR_SELECTOR)) {
+            if (el instanceof HTMLElement && el.id !== BUTTON_ID && !el.contains(currentButton())) return el;
+        }
+        return null;
+    }
+
+    function syncButtonLabels(button, failed = false) {
+        const label = failed ? `${BUTTON_LABEL}(사용할 수 없음)` : BUTTON_LABEL;
+        button.setAttribute("label", label);
+        button.setAttribute("aria-label", label);
+        button.setAttribute("tooltip", label);
         button.removeAttribute("title");
     }
 
     function syncButtonClass(button, container) {
         const reference = findVolumeButton(container);
         button.className = reference?.className || "";
-        button.classList.add("knife-audio-compressor");
         button.style.order = "";
         button.style.marginLeft = "";
         if (!reference) return;
@@ -486,7 +500,7 @@
         button.setAttribute("aria-pressed", active ? "true" : "false");
         button.dataset.betterChzzkAudioCompressor = active ? "1" : "0";
         button.dataset.betterChzzkReady = failed ? "0" : "1";
-        syncButtonLabels(button);
+        syncButtonLabels(button, failed);
     }
 
     function createButton() {
@@ -533,6 +547,10 @@
             removeButton();
             return;
         }
+        if (findExternalCompressor()) {
+            removeButton();
+            return;
+        }
         const container = findVolumeControl();
         if (!container) {
             removeButton();
@@ -568,6 +586,7 @@
             syncDisabledState();
             return;
         }
+        if (findExternalCompressor()) compressorActive = false;
         ensureButton();
         if (!isPlaybackRoute()) {
             compressorActive = false;
@@ -613,7 +632,8 @@
                         (mutation) =>
                             mutationMatchesSelector(mutation, "video") ||
                             mutationMatchesSelector(mutation, VOLUME_CONTROL_SELECTOR) ||
-                            mutationMatchesSelector(mutation, VOLUME_BUTTON_SELECTOR)
+                            mutationMatchesSelector(mutation, VOLUME_BUTTON_SELECTOR) ||
+                            mutationMatchesSelector(mutation, EXTERNAL_COMPRESSOR_SELECTOR)
                     )
                 ) {
                     scheduleSync();

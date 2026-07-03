@@ -13,6 +13,7 @@ export default {
         "backups",
         "backups/**",
         "*.md",
+        "!THIRD_PARTY_NOTICES.md",
         "AGENTS.md",
         "package.json",
         "package-lock.json",

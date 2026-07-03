@@ -75,6 +75,10 @@ const followingPreviewForbiddenPatterns = [
     },
 ];
 
+function readRepoFile(...parts) {
+    return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
+}
+
 function collectJsFiles(dir) {
     const absoluteDir = path.join(repoRoot, dir);
     const files = [];
@@ -175,4 +179,14 @@ test("optimization guards stay in the hot paths", () => {
     assert.match(liveWatchHistorySource, /const updatedEntry = updater\(history\);/);
     assert.match(liveWatchHistorySource, /pruneHistory\(history, updatedEntry\);/);
     assert.doesNotMatch(liveWatchHistorySource, /for\s*\(\s*const entry of Object\.values\(history\.entries\)/);
+});
+
+test("audio compressor third-party notices stay present", () => {
+    const notices = readRepoFile("THIRD_PARTY_NOTICES.md");
+    const volumeTooltipSource = readRepoFile("features", "volumeTooltip.js");
+
+    assert.match(notices, /jebibot/);
+    assert.match(notices, /MIT License/);
+    assert.match(volumeTooltipSource, /cheese-knife/);
+    assert.match(volumeTooltipSource, /jebibot/);
 });

@@ -9,7 +9,7 @@ const settings = globalThis.BetterChzzkSettings;
 
 const expectedDefaults = {
     autoQualityEnabled: true,
-    rewardAutoCollectEnabled: false,
+    rewardAutoCollectEnabled: true,
     rewardAutoCollectDelayMs: 800,
     skipControlEnabled: true,
     skipKeyboardEnabled: true,
@@ -77,7 +77,7 @@ const expectedDefaults = {
     followingRefreshEnabled: true,
     followingRefreshSeconds: 30,
     followingPreviewTooltipEnabled: true,
-    followingPreviewSoundEnabled: false,
+    followingPreviewSoundEnabled: true,
     shortcutRescueEnabled: true,
 };
 
