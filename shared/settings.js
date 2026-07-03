@@ -143,7 +143,7 @@
         followingRefreshEnabled: { kind: "bool", default: true, feature: true },
         followingRefreshSeconds: { kind: "int", default: 30, min: 10, max: 600 },
         followingPreviewTooltipEnabled: { kind: "bool", default: true, feature: true },
-        followingPreviewAudioEnabled: { kind: "bool", default: true },
+        followingPreviewSoundEnabled: { kind: "bool", default: false },
         shortcutRescueEnabled: { kind: "bool", default: true, feature: true },
     });
 

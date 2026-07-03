@@ -1443,13 +1443,16 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             headers: { Accept: "application/json" },
         })
             .then((json) => {
-                const count = Number(json?.content?.followerCount) || 0;
-                touchMapEntry(followerCache, channelId, count, MAX_FOLLOWER_CACHE_ENTRIES);
-                return count;
+                const rawCount = json?.content?.followerCount;
+                if (rawCount === null || rawCount === undefined || rawCount === "") return null;
+                const count = Number(rawCount);
+                if (!Number.isFinite(count)) return null;
+                const safeCount = Math.max(0, Math.floor(count));
+                touchMapEntry(followerCache, channelId, safeCount, MAX_FOLLOWER_CACHE_ENTRIES);
+                return safeCount;
             })
             .catch(() => {
-                touchMapEntry(followerCache, channelId, 0, MAX_FOLLOWER_CACHE_ENTRIES);
-                return 0;
+                return null;
             })
             .finally(() => {
                 followerInflight.delete(channelId);

@@ -15,7 +15,6 @@
     const PAGE_SIZE = 30;
     const COMMENT_PAGE_SIZE = 30;
     const COMMENT_FETCH_CONCURRENCY = 3;
-    const COMMENT_MATCH_FALLBACK_TEXT = "\uB313\uAE00 \uB0B4\uC6A9\uC5D0\uC11C \uAC80\uC0C9\uC5B4\uAC00 \uBC1C\uACAC\uB410\uC2B5\uB2C8\uB2E4.";
     const COMMENT_DEVICE_ID_STORAGE_KEY = "betterchzzkCommentDeviceId";
     const INDEX_APPLY_INTERVAL_MS = 260;
     const MAX_INDEX_CACHE_CHANNELS = 8;
@@ -748,17 +747,12 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         return Boolean(normalizedQuery && video?.commentNorm && video.commentNorm.includes(normalizedQuery));
     }
 
-    function hasCommentMatch(video, query) {
-        return hasCommentMatchNorm(video, normalize(query));
-    }
-
     function getCommentMatchText(video, query) {
         const q = normalize(query);
         if (!q || !Array.isArray(video?.commentTexts)) return "";
         const text = video.commentTexts.find((item) => normalize(item).includes(q));
         if (text) return cleanCommentText(text);
-        if (!hasCommentMatchNorm(video, q)) return "";
-        return COMMENT_MATCH_FALLBACK_TEXT;
+        return "";
     }
 
     function cancelCommentSearch() {
@@ -1225,62 +1219,16 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         }
     }
 
-    function createFallbackPlaybackProgress(card, ratio) {
-        let thumb = null;
-        for (const a of card.querySelectorAll('a[href*="/video/"]')) {
-            if (!a.querySelector("img")) continue;
-            thumb = a;
-            break;
-        }
-        thumb = thumb || card.querySelector("img")?.parentElement;
-        if (!(thumb instanceof HTMLElement)) return;
-
-        if (getComputedStyle(thumb).position === "static") thumb.style.position = "relative";
-        thumb.style.overflow = "hidden";
-
-        const bar = document.createElement("div");
-        bar.setAttribute("data-bcvs-watch-progress", "1");
-        bar.setAttribute("role", "progressbar");
-        bar.setAttribute("aria-valuemin", "0");
-        bar.setAttribute("aria-valuemax", "100");
-        bar.style.cssText = [
-            "position:absolute",
-            "left:0",
-            "right:0",
-            "bottom:0",
-            "height:3px",
-            "background:rgba(255,255,255,0.35)",
-            "z-index:5",
-            "pointer-events:none",
-        ].join(";");
-
-        const fill = document.createElement("div");
-        fill.style.cssText = [
-            "height:100%",
-            "background:#00FFA3",
-            "width:0%",
-        ].join(";");
-        bar.appendChild(fill);
-        updatePlaybackElementProgress(bar, ratio);
-        thumb.appendChild(bar);
-    }
-
     function applyPlaybackProgress(card, tpl, video) {
         const ratio = getWatchProgressRatio(video.watchTimeline, video.duration) ?? video.progressRatio;
         if (typeof ratio !== "number" || !Number.isFinite(ratio) || ratio <= 0) return;
 
         const template = (tpl.playbackTemplates || [])
             .find((item) => !looksLikePlaybackStateText(normSpace(item.node.textContent || "")));
-        if (!template) {
-            createFallbackPlaybackProgress(card, ratio);
-            return;
-        }
+        if (!template) return;
 
         const parent = applyPath(card, template.parentPath);
-        if (!parent) {
-            createFallbackPlaybackProgress(card, ratio);
-            return;
-        }
+        if (!parent) return;
 
         const node = template.node.cloneNode(true);
         updatePlaybackElementProgress(node, ratio);
@@ -1544,7 +1492,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
     function renderCommentTooltipText(tooltip, text, query) {
         tooltip.replaceChildren();
         const q = normalize(query);
-        const lines = String(text || COMMENT_MATCH_FALLBACK_TEXT)
+        const lines = String(text || "")
             .replace(/\r\n?/g, "\n")
             .split("\n");
 
@@ -1571,6 +1519,10 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
     }
 
     function showCommentTooltip(anchor, text, query) {
+        if (!text) {
+            hideCommentTooltip();
+            return;
+        }
         clearCommentTooltipClose();
         if (activeCommentTooltipIcon && activeCommentTooltipIcon !== anchor) {
             activeCommentTooltipIcon.removeAttribute("data-active");
@@ -1600,7 +1552,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         }
         showCommentTooltip(
             icon,
-            icon.__bcvsCommentText || state.text || COMMENT_MATCH_FALLBACK_TEXT,
+            icon.__bcvsCommentText || state.text || "",
             icon.__bcvsCommentQuery || state.query || currentQuery
         );
     }
@@ -1669,7 +1621,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
     function attachCommentMatch(card, video) {
         if (!isCommentSearchEnabled()) return;
         const commentText = getCommentMatchText(video, currentQuery);
-        if (!commentText && !hasCommentMatch(video, currentQuery)) return;
+        if (!commentText) return;
 
         card.classList.add("bcvs-comment-card");
         const icon = document.createElement("span");
@@ -1686,7 +1638,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
   <path d="M8.45 9.2h7.1M8.45 11.85h4.9" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round"/>
 </svg>
 `;
-        const tooltipText = commentText || COMMENT_MATCH_FALLBACK_TEXT;
+        const tooltipText = commentText;
         icon.__bcvsCommentText = tooltipText;
         icon.__bcvsCommentQuery = currentQuery;
         icon.addEventListener("pointerdown", (e) => {

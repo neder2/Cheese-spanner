@@ -11,36 +11,223 @@
             <header class="hero">
                 <img class="brand-mark" src="icons/icon128.png" alt="" aria-hidden="true" />
                 <div>
-                    <h1>Better Chzzk</h1>
+                    <h1>Better Chzzk <span id="versionBadge" class="version-badge" hidden></span></h1>
                     <p class="subtitle">
-                        치지직 자동 화질, 팔로잉 미리보기, 다시보기 스킵/검색, 방송 목록 필터, 방송 시간, 광고 차단 안내
-                        팝업 숨김을 기능별로 조절합니다.
+                        치지직 시청 기능을 켜고 끄고 세부 수치까지 조절합니다. 변경 사항은 즉시 자동 저장됩니다.
                     </p>
                 </div>
                 <span id="notice" class="status-pill" aria-live="polite">불러오는 중</span>
             </header>
 
             <form id="optionsForm" class="settings-form" novalidate>
-                <nav class="tab-bar" role="tablist" aria-label="설정 카테고리">
-                    <button type="button" class="tab" role="tab" data-tab="0">플레이어</button>
-                    <button type="button" class="tab" role="tab" data-tab="1">시청 기록</button>
-                    <button type="button" class="tab" role="tab" data-tab="2">채팅</button>
-                    <button type="button" class="tab" role="tab" data-tab="3">팝업</button>
-                    <button type="button" class="tab" role="tab" data-tab="4">방송 시간</button>
-                    <button type="button" class="tab" role="tab" data-tab="5">검색</button>
-                    <button type="button" class="tab" role="tab" data-tab="6">탐색</button>
-                </nav>
+                <div class="settings-toolbar">
+                    <div class="search-field">
+                        <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            aria-hidden="true"
+                        >
+                            <circle cx="11" cy="11" r="7" />
+                            <path d="m16.5 16.5 4.5 4.5" />
+                        </svg>
+                        <input
+                            id="settingsSearch"
+                            type="search"
+                            placeholder="설정 검색 (예: 화질, 볼륨, 채팅)"
+                            autocomplete="off"
+                            aria-label="설정 검색"
+                        />
+                        <span id="searchStatus" class="search-status" aria-live="polite" hidden></span>
+                    </div>
+                    <nav class="tab-bar" role="tablist" aria-label="설정 카테고리">
+                        <button
+                            type="button"
+                            class="tab"
+                            id="tab-0"
+                            role="tab"
+                            data-tab="0"
+                            aria-controls="tab-panel-0"
+                            aria-selected="false"
+                            tabindex="-1"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <circle cx="12" cy="12" r="9" />
+                                <path d="m10.2 8.7 5.4 3.3-5.4 3.3z" />
+                            </svg>
+                            <span>플레이어</span>
+                        </button>
+                        <button
+                            type="button"
+                            class="tab"
+                            id="tab-1"
+                            role="tab"
+                            data-tab="1"
+                            aria-controls="tab-panel-1"
+                            aria-selected="false"
+                            tabindex="-1"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <circle cx="12" cy="12" r="9" />
+                                <path d="M12 7.5V12l3 2" />
+                            </svg>
+                            <span>시청 기록</span>
+                        </button>
+                        <button
+                            type="button"
+                            class="tab"
+                            id="tab-2"
+                            role="tab"
+                            data-tab="2"
+                            aria-controls="tab-panel-2"
+                            aria-selected="false"
+                            tabindex="-1"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <path
+                                    d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.6 0-3.1-.4-4.4-1.2L3 20l1.2-5.1A8.5 8.5 0 1 1 21 11.5z"
+                                />
+                            </svg>
+                            <span>채팅</span>
+                        </button>
+                        <button
+                            type="button"
+                            class="tab"
+                            id="tab-3"
+                            role="tab"
+                            data-tab="3"
+                            aria-controls="tab-panel-3"
+                            aria-selected="false"
+                            tabindex="-1"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <rect x="3" y="5" width="18" height="14" rx="2" />
+                                <path d="M3 9h18" />
+                                <path d="m10.5 12.5 3 3m0-3-3 3" />
+                            </svg>
+                            <span>팝업</span>
+                        </button>
+                        <button
+                            type="button"
+                            class="tab"
+                            id="tab-4"
+                            role="tab"
+                            data-tab="4"
+                            aria-controls="tab-panel-4"
+                            aria-selected="false"
+                            tabindex="-1"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <rect x="3" y="5" width="18" height="16" rx="2" />
+                                <path d="M3 9.5h18M8.5 3v4M15.5 3v4" />
+                            </svg>
+                            <span>방송 시간</span>
+                        </button>
+                        <button
+                            type="button"
+                            class="tab"
+                            id="tab-5"
+                            role="tab"
+                            data-tab="5"
+                            aria-controls="tab-panel-5"
+                            aria-selected="false"
+                            tabindex="-1"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <circle cx="11" cy="11" r="7" />
+                                <path d="m16.5 16.5 4.5 4.5" />
+                            </svg>
+                            <span>검색</span>
+                        </button>
+                        <button
+                            type="button"
+                            class="tab"
+                            id="tab-6"
+                            role="tab"
+                            data-tab="6"
+                            aria-controls="tab-panel-6"
+                            aria-selected="false"
+                            tabindex="-1"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <circle cx="12" cy="12" r="9" />
+                                <path d="m14.8 9.2-1.6 4-4 1.6 1.6-4z" />
+                            </svg>
+                            <span>탐색</span>
+                        </button>
+                    </nav>
+                </div>
 
-                <section class="settings-card">
+                <p id="searchEmpty" class="search-empty hidden" role="status"></p>
+
+                <section class="settings-card" id="tab-panel-0" role="tabpanel" aria-labelledby="tab-0">
                     <div class="section-heading">
                         <h2>플레이어</h2>
-                        <p>화질 복구, 라이브 위치 유지, 방향키 이동, 플레이어 버튼, 다시보기 보조 기능을 조절합니다.</p>
+                        <p>화질, 스킵, 볼륨 등 재생 기능을 조절합니다.</p>
                     </div>
 
                     <label class="toggle-row">
                         <span>
                             <strong>자동 화질 복구</strong>
-                            <small>라이브와 다시보기 입장 시 1080p로 맞추고 화질이 내려가면 다시 복구합니다.</small>
                         </span>
                         <input type="checkbox" data-option="autoQualityEnabled" />
                     </label>
@@ -48,10 +235,7 @@
                     <label class="toggle-row">
                         <span>
                             <strong>통나무 보상 자동 받기</strong>
-                            <small
-                                >페이지에 통나무 보상 받기 버튼이 실제로 보일 때만 짧게 기다린 뒤 한 번
-                                클릭합니다.</small
-                            >
+                            <small>보상 버튼이 보이면 자동으로 클릭합니다.</small>
                         </span>
                         <input type="checkbox" data-option="rewardAutoCollectEnabled" />
                     </label>
@@ -70,40 +254,33 @@
                                 /><em>ms</em></label
                             >
                         </div>
-                        <p class="setting-note">
-                            시청 시간이나 서버 확인을 대신하지 않고, 치지직 페이지가 표시한 통나무 보상 버튼만 대상으로
-                            합니다.
-                        </p>
+                        <p class="setting-note">화면에 보이는 보상 버튼만 누릅니다.</p>
                     </details>
 
                     <label class="toggle-row">
                         <span
                             ><strong>스킵 기능</strong
-                            ><small>다시보기와 라이브 타임머신에서 시간 이동 도구를 사용합니다.</small></span
+                            ><small>다시보기와 타임머신에서 시간 이동 기능을 켭니다.</small></span
                         >
                         <input type="checkbox" data-option="skipControlEnabled" />
                     </label>
                     <label class="toggle-row" data-depends-on="skipControlEnabled">
                         <span
                             ><strong>방향키 스킵</strong
-                            ><small
-                                >왼쪽/오른쪽 방향키로 이동하고, 일시정지 중 ,/. 키로 프레임 단위 이동합니다.</small
-                            ></span
+                            ><small>←/→로 이동하고, 일시정지 중 쉼표·마침표 키로 프레임 이동합니다.</small></span
                         >
                         <input type="checkbox" data-option="skipKeyboardEnabled" />
                     </label>
                     <label class="toggle-row" data-depends-on="skipControlEnabled">
                         <span
-                            ><strong>라이브 위치 유지</strong
-                            ><small
-                                >일시정지 또는 타임머신 시청 중 치지직이 실시간 위치로 되돌리는 동작을 줄입니다.</small
-                            ></span
+                            ><strong>보던 위치 유지</strong
+                            ><small>일시정지해도 실시간으로 되돌리지 않습니다.</small></span
                         >
                         <input type="checkbox" data-option="skipLivePauseResumeEnabled" />
                     </label>
 
                     <details class="advanced-settings">
-                        <summary>라이브 위치 유지 설정</summary>
+                        <summary>보던 위치 유지 설정</summary>
                         <div class="number-grid" data-depends-on="skipControlEnabled skipLivePauseResumeEnabled">
                             <label
                                 ><span class="has-tip"
@@ -114,10 +291,8 @@
                                         aria-label="라이브 캐시가 저장되는 방식 설명"
                                         ><span class="help-tip__mark" aria-hidden="true">?</span
                                         ><span class="help-tip__bubble" role="tooltip"
-                                            >실시간 끝에서 설정한 시간 이내로 떨어진 위치만 기억해 되돌립니다. 위치 값은
-                                            이 탭의 메모리에만 잠깐 저장되고, Chrome 동기화에 올라가지 않으며 페이지를
-                                            벗어나면 사라집니다. 실제 되감기 범위는 플레이어가 버퍼링한 만큼으로
-                                            제한됩니다.</span
+                                            >실시간에서 설정한 시간 이내의 위치만 기억합니다. 값은 이 탭에만 잠시
+                                            저장되고 페이지를 벗어나면 사라집니다.</span
                                         ></span
                                     ></span
                                 ><input
@@ -129,30 +304,19 @@
                                 /><em>분</em></label
                             >
                         </div>
-                        <p class="setting-note">
-                            ‘라이브 위치 유지’가 켜져 있을 때만 적용됩니다. 실시간에서 설정한 시간보다 더 뒤로 가면
-                            위치를 기억하지 않고 치지직 기본 동작을 따릅니다.
-                        </p>
+                        <p class="setting-note">설정한 시간보다 더 뒤로 가면 기억하지 않습니다.</p>
                     </details>
 
                     <label class="toggle-row">
-                        <span
-                            ><strong>타임머신 지연 표시</strong
-                            ><small>타임머신 시청 중 실시간 대비 지연 시간을 표시합니다.</small></span
-                        >
+                        <span><strong>타임머신 지연 표시</strong></span>
                         <input type="checkbox" data-option="timeMachineLagLabelEnabled" />
                     </label>
                     <label class="toggle-row" data-depends-on="skipControlEnabled">
-                        <span
-                            ><strong>플레이어 버튼</strong><small>시간 표시 옆에 초 단위 버튼을 붙입니다.</small></span
-                        >
+                        <span><strong>스킵 버튼 표시</strong></span>
                         <input type="checkbox" data-option="skipPillEnabled" />
                     </label>
                     <label class="toggle-row" data-depends-on="skipControlEnabled skipPillEnabled">
-                        <span
-                            ><strong>라이브 플레이어 버튼</strong
-                            ><small>라이브와 타임머신에서도 초 단위 스킵 버튼을 표시합니다.</small></span
-                        >
+                        <span><strong>라이브에도 스킵 버튼 표시</strong></span>
                         <input type="checkbox" data-option="skipLivePillEnabled" />
                     </label>
                     <details class="advanced-settings">
@@ -186,10 +350,7 @@
                     </details>
 
                     <label class="toggle-row">
-                        <span
-                            ><strong>볼륨 휠 조절</strong
-                            ><small>볼륨 조절 영역에 마우스를 올리고 휠을 굴리면 볼륨이 조절됩니다.</small></span
-                        >
+                        <span><strong>휠로 볼륨 조절</strong></span>
                         <input type="checkbox" data-option="volumeWheelEnabled" />
                     </label>
 
@@ -203,24 +364,15 @@
                                 ></label
                             >
                         </div>
-                        <p class="setting-note">
-                            볼륨 조절 영역(스피커 아이콘/슬라이더) 위에서 휠을 굴릴 때 적용됩니다.
-                        </p>
                     </details>
 
                     <label class="toggle-row">
-                        <span
-                            ><strong>볼륨 툴팁</strong
-                            ><small>볼륨 바(슬라이더)에 마우스를 올리면 현재 볼륨을 %로 표시합니다.</small></span
-                        >
+                        <span><strong>볼륨 % 표시</strong></span>
                         <input type="checkbox" data-option="volumeTooltipEnabled" />
                     </label>
 
                     <label class="toggle-row">
-                        <span
-                            ><strong>오디오 컴프레서</strong
-                            ><small>라이브·다시보기 플레이어의 볼륨 컨트롤에 컴프레서 버튼을 표시합니다.</small></span
-                        >
+                        <span><strong>오디오 컴프레서</strong><small>플레이어에 컴프레서 버튼을 답니다.</small></span>
                         <input type="checkbox" data-option="audioCompressorEnabled" />
                     </label>
 
@@ -284,45 +436,31 @@
                                 /><em>x</em></label
                             >
                         </div>
-                        <p class="setting-note">
-                            옵션을 끄면 플레이어 버튼을 제거합니다. 옵션을 켠 뒤 실제 압축 적용 여부는 플레이어 버튼에서
-                            전환합니다.
-                        </p>
+                        <p class="setting-note">실제 적용은 플레이어 버튼에서 켭니다.</p>
                     </details>
 
                     <label class="toggle-row">
-                        <span
-                            ><strong>다시보기 방송시각</strong
-                            ><small
-                                >방송 시작 시간과 현재 재생 위치를 더해 해당 장면의 실제 방송 시각을 표시합니다.</small
-                            ></span
-                        >
+                        <span><strong>다시보기에 당시 시간 표시</strong></span>
                         <input type="checkbox" data-option="vodBroadcastClockEnabled" />
                     </label>
 
                     <label class="toggle-row">
                         <span
                             ><strong>단축키 복구</strong
-                            ><small
-                                >광고 차단 필터(List-KR 등)와 충돌해 스페이스/m/f/t 기본 단축키가 멈추면 자동으로 대신
-                                처리합니다.</small
-                            ></span
+                            ><small>스페이스/m/f/t 단축키가 멈추면 대신 처리합니다.</small></span
                         >
                         <input type="checkbox" data-option="shortcutRescueEnabled" />
                     </label>
                 </section>
 
-                <section class="settings-card">
+                <section class="settings-card" id="tab-panel-1" role="tabpanel" aria-labelledby="tab-1">
                     <div class="section-heading">
                         <h2>시청 기록</h2>
-                        <p>라이브 재생 시간을 이 브라우저에 저장하고, 월별 달력과 라이브별 누적 시간을 확인합니다.</p>
+                        <p>라이브로 본 시간을 이 브라우저에만 기록합니다.</p>
                     </div>
 
                     <label class="toggle-row">
-                        <span
-                            ><strong>라이브 시청 기록 저장</strong
-                            ><small>라이브 재생 중인 시간만 로컬 저장소에 기록합니다.</small></span
-                        >
+                        <span><strong>라이브 시청 기록 저장</strong></span>
                         <input type="checkbox" data-option="liveWatchHistoryEnabled" />
                     </label>
 
@@ -340,7 +478,7 @@
                                 /><em>분</em></label
                             >
                         </div>
-                        <p class="setting-note">설정한 시간보다 짧게 본 라이브는 시청 기록에 저장하지 않습니다.</p>
+                        <p class="setting-note">이보다 짧게 본 라이브는 기록하지 않습니다.</p>
                     </details>
 
                     <div class="inline-action-row">
@@ -348,46 +486,35 @@
                             >시청 기록 보기</a
                         >
                     </div>
-                    <p class="setting-note">기록은 Chrome 동기화가 아닌 이 브라우저의 로컬 저장소에만 저장됩니다.</p>
                 </section>
 
-                <section class="settings-card">
+                <section class="settings-card" id="tab-panel-2" role="tabpanel" aria-labelledby="tab-2">
                     <div class="section-heading">
                         <h2>채팅 도구</h2>
-                        <p>블라인드 채팅 확인과 방송자/매니저 채팅 모아보기를 조절합니다.</p>
+                        <p>라이브 채팅 보조 기능을 조절합니다.</p>
                     </div>
 
                     <label class="toggle-row">
-                        <span
-                            ><strong>채팅 도구</strong
-                            ><small>라이브 채팅에서 이 기능을 사용합니다. 기본값은 꺼짐입니다.</small></span
-                        >
+                        <span><strong>채팅 도구</strong></span>
                         <input type="checkbox" data-option="chatToolsEnabled" />
                     </label>
                     <label class="toggle-row" data-depends-on="chatToolsEnabled">
                         <span
-                            ><strong>블라인드 채팅 원문 표시</strong
-                            ><small
-                                >확인할 수 있는 원문만 채팅 아래에 보여줍니다. 원문이 없으면 안내 문구만
-                                표시합니다.</small
-                            ></span
+                            ><strong>블라인드 채팅 원문 표시</strong><small>확인 가능한 원문만 보여줍니다.</small></span
                         >
                         <input type="checkbox" data-option="chatToolsShowBlindEnabled" />
                     </label>
                     <label class="toggle-row" data-depends-on="chatToolsEnabled">
                         <span
                             ><strong>방송자/매니저 채팅 모아보기</strong
-                            ><small>채팅창 우측 상단 아이콘에서 방송자와 매니저 채팅만 따로 보여줍니다.</small></span
+                            ><small>채팅창 우측 상단 아이콘에서 봅니다.</small></span
                         >
                         <input type="checkbox" data-option="chatToolsModeratorBoxEnabled" />
                     </label>
                     <label class="toggle-row" data-depends-on="chatToolsEnabled chatToolsModeratorBoxEnabled">
                         <span
                             ><strong>방송 중 모아보기 유지</strong
-                            ><small
-                                >보고 있는 동안 모은 채팅만 같은 방송에 다시 들어와도 보여줍니다. 기본값은
-                                꺼짐입니다.</small
-                            ></span
+                            ><small>다시 들어와도 모은 채팅을 유지합니다.</small></span
                         >
                         <input type="checkbox" data-option="chatToolsCacheModeratorMessagesEnabled" />
                     </label>
@@ -406,45 +533,32 @@
                                 /><em>개</em></label
                             >
                         </div>
-                        <p class="setting-note">모아 둔 채팅은 현재 페이지에서만 유지됩니다.</p>
                     </details>
                 </section>
 
-                <section class="settings-card">
+                <section class="settings-card" id="tab-panel-3" role="tabpanel" aria-labelledby="tab-3">
                     <div class="section-heading">
                         <h2>광고 차단 안내 팝업</h2>
-                        <p>시청 중 뜨는 광고 차단 안내 팝업과 배경 잠금을 정리합니다.</p>
                     </div>
 
                     <label class="toggle-row">
-                        <span
-                            ><strong>광고 차단 안내 팝업 숨김</strong
-                            ><small>해당 안내 팝업을 닫고 화면에서 숨깁니다.</small></span
-                        >
+                        <span><strong>광고 차단 안내 팝업 숨김</strong></span>
                         <input type="checkbox" data-option="adblockPopupEnabled" />
                     </label>
                 </section>
 
-                <section class="settings-card">
+                <section class="settings-card" id="tab-panel-4" role="tabpanel" aria-labelledby="tab-4">
                     <div class="section-heading">
                         <h2>채널 방송 시간</h2>
-                        <p>다시보기의 방송 시작/종료 시간을 기준으로 최근 평균과 월별 방송일을 표시합니다.</p>
+                        <p>채널의 평균 방송 시간과 방송 달력을 보여줍니다.</p>
                     </div>
 
                     <label class="toggle-row">
-                        <span
-                            ><strong>방송 시간 스티커</strong
-                            ><small>채널 액션 영역에 최근 평균 방송 시간을 붙입니다.</small></span
-                        >
+                        <span><strong>평균 방송 시간 표시</strong></span>
                         <input type="checkbox" data-option="monthlyBroadcastTimeEnabled" />
                     </label>
                     <label class="toggle-row" data-depends-on="monthlyBroadcastTimeEnabled">
-                        <span
-                            ><strong>월간 달력</strong
-                            ><small
-                                >시작 날짜 기준으로 색을 칠하고, 날짜 호버 시 시작/종료/진행 시간을 보여줍니다.</small
-                            ></span
-                        >
+                        <span><strong>월간 달력</strong><small>방송한 날을 달력에 표시합니다.</small></span>
                         <input type="checkbox" data-option="monthlyBroadcastTimeCalendarEnabled" />
                     </label>
 
@@ -482,30 +596,22 @@
                                 /><em>쪽</em></label
                             >
                         </div>
-                        <p class="setting-note">
-                            달력은 읽은 페이지를 잠시 캐시하며, 조회 상한을 낮출수록 채널 페이지 반응이 빨라집니다.
-                        </p>
+                        <p class="setting-note">조회 상한을 낮추면 채널 페이지가 빨라집니다.</p>
                     </details>
                 </section>
 
-                <section class="settings-card">
+                <section class="settings-card" id="tab-panel-5" role="tabpanel" aria-labelledby="tab-5">
                     <div class="section-heading">
                         <h2>다시보기 검색</h2>
-                        <p>채널 다시보기 탭에서 제목 검색을 보강하고, 필요하면 댓글 일부까지 확인합니다.</p>
+                        <p>채널 다시보기 목록의 검색을 보강합니다.</p>
                     </div>
 
                     <label class="toggle-row">
-                        <span
-                            ><strong>다시보기 검색</strong
-                            ><small>채널 다시보기 목록에 검색창을 추가합니다.</small></span
-                        >
+                        <span><strong>다시보기 검색</strong></span>
                         <input type="checkbox" data-option="videoSearchEnabled" />
                     </label>
                     <label class="toggle-row" data-depends-on="videoSearchEnabled">
-                        <span
-                            ><strong>댓글 검색</strong
-                            ><small>제목 검색 결과가 부족할 때 댓글을 순차 조회합니다.</small></span
-                        >
+                        <span><strong>댓글 검색</strong><small>제목으로 못 찾으면 댓글도 검색합니다.</small></span>
                         <input type="checkbox" data-option="videoSearchCommentEnabled" />
                     </label>
 
@@ -559,22 +665,19 @@
                                 /><em>쪽</em></label
                             >
                         </div>
-                        <p class="setting-note">
-                            댓글 검색은 요청량이 커서 지연값과 영상 수를 낮출수록 페이지 반응이 빨라집니다.
-                        </p>
+                        <p class="setting-note">값을 낮추면 페이지 반응이 빨라집니다.</p>
                     </details>
                 </section>
 
-                <section class="settings-card">
+                <section class="settings-card" id="tab-panel-6" role="tabpanel" aria-labelledby="tab-6">
                     <div class="section-heading">
                         <h2>방송 목록 필터</h2>
-                        <p>전체 방송과 카테고리 목록의 검색, 시청자/팔로워 필터, 배지를 조절합니다.</p>
+                        <p>방송 목록의 검색과 필터를 보강합니다.</p>
                     </div>
 
                     <label class="toggle-row">
                         <span>
                             <strong>팔로잉 목록 자동 새로고침</strong>
-                            <small>사이드바 팔로잉 채널의 라이브 상태를 주기적으로 갱신합니다.</small>
                         </span>
                         <input type="checkbox" data-option="followingRefreshEnabled" />
                     </label>
@@ -593,10 +696,6 @@
                                 /><em>초</em></label
                             >
                         </div>
-                        <p class="setting-note">
-                            10~600초 사이에서 원하는 주기를 직접 입력할 수 있습니다. 주기를 줄이면 라이브 시작이 더 빨리
-                            반영됩니다.
-                        </p>
                     </details>
 
                     <label class="toggle-row">
@@ -605,52 +704,34 @@
                     </label>
                     <label class="toggle-row" data-depends-on="categoryToolsEnabled">
                         <span
-                            ><strong>전체 방송 태그 검색 숨김</strong
-                            ><small
-                                >전체 방송 목록에서 기본 태그 검색창을 숨기고 확장 검색/필터만 표시합니다.</small
-                            ></span
+                            ><strong>전체 방송 태그 검색 숨김</strong><small>기본 태그 검색창을 숨깁니다.</small></span
                         >
                         <input type="checkbox" data-option="categoryToolsHideGlobalTagSearch" />
                     </label>
                     <label class="toggle-row" data-depends-on="categoryToolsEnabled">
-                        <span
-                            ><strong>팔로워 수 스티커</strong
-                            ><small>프로필 아래에 팔로워 수를 작게 표시합니다.</small></span
-                        >
+                        <span><strong>팔로워 수 표시</strong></span>
                         <input type="checkbox" data-option="categoryToolsFollowerBadgesEnabled" />
                     </label>
                     <label class="toggle-row" data-depends-on="categoryToolsEnabled">
-                        <span
-                            ><strong>진행 시간 호버</strong
-                            ><small>썸네일에 마우스를 올리면 방송 진행 시간을 보여줍니다.</small></span
-                        >
+                        <span><strong>호버로 진행 시간 표시</strong></span>
                         <input type="checkbox" data-option="categoryToolsLiveElapsedEnabled" />
                     </label>
                     <label class="toggle-row">
                         <span>
                             <strong>팔로잉 호버 미리보기</strong>
-                            <small
-                                >사이드바 팔로잉 라이브에 마우스를 올리면 썸네일 중심의 방송 미리보기 카드를
-                                표시합니다.</small
-                            >
+                            <small>마우스를 올리면 방송 미리보기를 띄웁니다.</small>
                         </span>
                         <input type="checkbox" data-option="followingPreviewTooltipEnabled" />
                     </label>
                     <label class="toggle-row" data-depends-on="followingPreviewTooltipEnabled">
                         <span>
-                            <strong>미리보기 소리</strong>
-                            <small
-                                >켜면 메인 플레이어의 볼륨과 음소거 상태를 따라가고, 끄면 미리보기를 음소거로
-                                재생합니다.</small
-                            >
+                            <strong>호버 미리보기 소리</strong>
+                            <small>플레이어에서 쓰던 볼륨으로 미리보기를 재생합니다.</small>
                         </span>
-                        <input type="checkbox" data-option="followingPreviewAudioEnabled" />
+                        <input type="checkbox" data-option="followingPreviewSoundEnabled" />
                     </label>
                     <label class="toggle-row">
-                        <span
-                            ><strong>긴 제목 툴팁</strong
-                            ><small>잘린 방송 제목에 마우스를 올리면 전체 제목을 보여줍니다.</small></span
-                        >
+                        <span><strong>긴 제목 툴팁</strong></span>
                         <input type="checkbox" data-option="titleTooltipEnabled" />
                     </label>
 
@@ -778,9 +859,7 @@
                                 /><em>명/회</em></label
                             >
                         </div>
-                        <p class="setting-note">
-                            각 필터의 1번 값은 “이하” 버튼 기준이고, 이후 값은 구간 버튼의 경계값으로 사용됩니다.
-                        </p>
+                        <p class="setting-note">1번 값은 ‘이하’ 기준, 나머지는 구간 경계입니다.</p>
                     </details>
 
                     <details class="advanced-settings">
@@ -827,10 +906,7 @@
                                 /><em>ms</em></label
                             >
                         </div>
-                        <p class="setting-note">
-                            추가 조회 페이지를 낮추면 목록 필터 반응이 빨라지고, 높이면 더 멀리 있는 방송까지
-                            필터링합니다.
-                        </p>
+                        <p class="setting-note">높일수록 더 많은 방송까지 필터링합니다.</p>
                     </details>
                 </section>
 

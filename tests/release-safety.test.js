@@ -6,7 +6,14 @@ const test = require("node:test");
 const repoRoot = path.join(__dirname, "..");
 
 const runtimeFiles = ["manifest.json", "background.js", "content.js", "history.js", "options.js"];
-const runtimeDirs = ["shared", "features"];
+const runtimeDirs = ["shared", "features", "vendor"];
+const followingPreviewFiles = ["features/followingPreviewTooltip.js"];
+const followingPreviewMuxedMasterManifest = [
+    "#EXTM3U",
+    "#EXT-X-VERSION:3",
+    '#EXT-X-STREAM-INF:BANDWIDTH=1800000,RESOLUTION=854x480,CODECS="avc1.64001f,mp4a.40.2"',
+    "chunklist_480p.m3u8",
+].join("\n");
 const forbiddenPatterns = [
     {
         label: ["PLAYER", "VENDOR", "FALLBACK", "URL"].join("_"),
@@ -23,6 +30,40 @@ const forbiddenPatterns = [
     {
         label: `src${"doc"}`,
         pattern: new RegExp(`\\bsrc${"doc"}\\b`),
+    },
+    {
+        label: "eval(",
+        pattern: /\beval\s*\(/,
+    },
+    {
+        label: ["new", "Function"].join(" "),
+        pattern: new RegExp(`\\bnew\\s+${"Function"}\\b`),
+    },
+];
+const followingPreviewForbiddenPatterns = [
+    {
+        label: "window.open",
+        pattern: /window\.open/,
+    },
+    {
+        label: "chrome.tabs.create",
+        pattern: /chrome\.tabs\.create/,
+    },
+    {
+        label: "chrome.windows.create",
+        pattern: /chrome\.windows\.create/,
+    },
+    {
+        label: "blank target fallback",
+        pattern: /target\s*=\s*["']_blank["']/,
+    },
+    {
+        label: "iframe fallback",
+        pattern: /createElement\(["']iframe["']\)|bcfp-player-frame|srcdoc/i,
+    },
+    {
+        label: "player vendor import",
+        pattern: /player-vendor|\bimport\s*\(/i,
     },
     {
         label: "eval(",
@@ -66,4 +107,35 @@ test("runtime files must not contain remote-hosted executable code patterns", ()
         [],
         `runtime files must not contain remote-hosted executable code patterns:\n${violations.join("\n")}`
     );
+});
+
+test("following preview must not fall back to popup, window, iframe, or remote JS execution", () => {
+    const violations = [];
+
+    for (const file of followingPreviewFiles) {
+        const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
+        for (const { label, pattern } of followingPreviewForbiddenPatterns) {
+            if (pattern.test(source)) violations.push(`${file}: ${label}`);
+        }
+    }
+
+    assert.deepEqual(
+        violations,
+        [],
+        `following preview must not contain forbidden fallback patterns:\n${violations.join("\n")}`
+    );
+});
+
+test("following preview hls.light fixture must stay on muxed master audio", () => {
+    assert.doesNotMatch(followingPreviewMuxedMasterManifest, /^#EXT-X-MEDIA:.*TYPE=AUDIO/im);
+    assert.match(followingPreviewMuxedMasterManifest, /^#EXT-X-STREAM-INF:.*CODECS="[^"]*mp4a/im);
+});
+
+test("low-risk fallback reductions stay removed", () => {
+    const videoSearchSource = fs.readFileSync(path.join(repoRoot, "features/videoSearch.js"), "utf8");
+    const categoryToolsSource = fs.readFileSync(path.join(repoRoot, "features/categoryTools.js"), "utf8");
+
+    assert.doesNotMatch(videoSearchSource, /COMMENT_MATCH_FALLBACK_TEXT/);
+    assert.doesNotMatch(videoSearchSource, /createFallbackPlaybackProgress/);
+    assert.doesNotMatch(categoryToolsSource, /touchMapEntry\(followerCache,\s*channelId,\s*0/);
 });

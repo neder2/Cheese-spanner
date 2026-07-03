@@ -9,19 +9,14 @@
         "128": "icons/icon128.png"
     },
     "permissions": ["storage"],
-    "host_permissions": ["https://api.chzzk.naver.com/*", "https://apis.naver.com/*"],
+    "host_permissions": ["https://api.chzzk.naver.com/*", "https://apis.naver.com/*", "https://*.pstatic.net/*"],
     "background": {
         "service_worker": "background.js"
     },
     "content_scripts": [
         {
             "matches": ["https://chzzk.naver.com/*"],
-            "js": [
-                "features/routeBridgePage.js",
-                "features/followingPreviewPage.js",
-                "features/autoQualityPage.js",
-                "features/volumeWheelPage.js"
-            ],
+            "js": ["features/routeBridgePage.js", "features/autoQualityPage.js", "features/volumeWheelPage.js"],
             "run_at": "document_start",
             "world": "MAIN"
         },
@@ -47,6 +42,7 @@
                 "features/volumeWheel.js",
                 "features/volumeTooltip.js",
                 "features/followingRefresh.js",
+                "vendor/hls.light.min.js",
                 "features/followingPreviewTooltip.js",
                 "features/shortcutRescue.js"
             ],

@@ -5,12 +5,7 @@ const resetButton = document.getElementById("reset");
 const noticeEl = document.getElementById("notice");
 const messageEl = document.getElementById("message");
 
-const {
-    DEFAULT_OPTIONS,
-    FEATURE_KEYS,
-    OPTION_KEYS,
-    normalizeOptions,
-} = BetterChzzkSettings;
+const { DEFAULT_OPTIONS, FEATURE_KEYS, OPTION_KEYS, normalizeOptions } = BetterChzzkSettings;
 
 const storage = globalThis.chrome?.storage?.sync;
 const AUTOSAVE_DEBOUNCE_MS = 400;
@@ -69,7 +64,9 @@ function getEnabledFeatureCount(options) {
 }
 
 function dependenciesMet(group, options) {
-    const keys = String(group.dataset.dependsOn || "").split(/\s+/).filter(Boolean);
+    const keys = String(group.dataset.dependsOn || "")
+        .split(/\s+/)
+        .filter(Boolean);
     return keys.every((key) => Boolean(options[key]));
 }
 
@@ -202,6 +199,11 @@ function getOptionInput(target) {
     return input && optionInputs.includes(input) ? input : null;
 }
 
+// 검색창이나 숫자 입력에서 Enter를 눌러도 페이지가 다시 로드되지 않게 한다.
+form.addEventListener("submit", (event) => {
+    event.preventDefault();
+});
+
 form.addEventListener("input", (event) => {
     const input = getOptionInput(event.target);
     // 체크박스는 change에서 한 번만 저장하고, 숫자 입력은 타이핑이 멎은 뒤 저장한다.
@@ -251,20 +253,158 @@ if (storage) {
     savedOptions = renderOptions(DEFAULT_OPTIONS);
 }
 
+const versionBadge = document.getElementById("versionBadge");
+const manifestVersion = globalThis.chrome?.runtime?.getManifest?.()?.version;
+if (versionBadge && manifestVersion) {
+    versionBadge.textContent = `v${manifestVersion}`;
+    versionBadge.hidden = false;
+}
+
 const tabButtons = Array.from(document.querySelectorAll(".tab"));
 const tabSections = Array.from(form.querySelectorAll(".settings-card"));
+const tabBar = document.querySelector(".tab-bar");
+const LAST_TAB_STORAGE_KEY = "betterChzzkOptionsLastTab";
 
-function activateTab(index) {
+function readStoredTabIndex() {
+    try {
+        const stored = Number.parseInt(window.localStorage.getItem(LAST_TAB_STORAGE_KEY) ?? "", 10);
+        return Number.isInteger(stored) && stored >= 0 && stored < tabButtons.length ? stored : 0;
+    } catch {
+        return 0;
+    }
+}
+
+function storeTabIndex(index) {
+    try {
+        window.localStorage.setItem(LAST_TAB_STORAGE_KEY, String(index));
+    } catch {
+        // 저장소를 쓸 수 없으면 마지막 탭 기억만 건너뛴다.
+    }
+}
+
+function activateTab(index, { focus = false } = {}) {
     tabButtons.forEach((btn, i) => {
         const active = i === index;
         btn.classList.toggle("is-active", active);
         btn.setAttribute("aria-selected", active ? "true" : "false");
+        btn.tabIndex = active ? 0 : -1;
+        if (active && focus) btn.focus();
     });
     tabSections.forEach((sec, i) => sec.classList.toggle("is-active", i === index));
+    storeTabIndex(index);
 }
 
 tabButtons.forEach((btn, i) => {
-    btn.addEventListener("click", () => activateTab(i));
+    btn.addEventListener("click", () => {
+        clearSearch();
+        activateTab(i);
+    });
 });
 
-if (tabButtons.length) activateTab(0);
+tabBar?.addEventListener("keydown", (event) => {
+    const currentIndex = tabButtons.indexOf(document.activeElement);
+    if (currentIndex < 0) return;
+
+    let nextIndex = null;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % tabButtons.length;
+    else if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + tabButtons.length) % tabButtons.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = tabButtons.length - 1;
+    if (nextIndex === null) return;
+
+    event.preventDefault();
+    clearSearch();
+    activateTab(nextIndex, { focus: true });
+});
+
+if (tabButtons.length) activateTab(readStoredTabIndex());
+
+const searchInput = document.getElementById("settingsSearch");
+const searchEmptyEl = document.getElementById("searchEmpty");
+const searchStatusEl = document.getElementById("searchStatus");
+let searchOpenSnapshot = null;
+
+function normalizeSearchText(text) {
+    return String(text).toLowerCase().replace(/\s+/g, "");
+}
+
+// 카드 안에서 제목을 제외한 직계 요소(토글 행, 세부 설정, 버튼 행, 안내문)를 검색 단위로 삼는다.
+const searchUnits = tabSections.flatMap((section) => {
+    const heading = section.querySelector(".section-heading");
+    const headingText = normalizeSearchText(heading?.textContent || "");
+    return Array.from(section.children)
+        .filter((child) => child !== heading)
+        .map((element) => {
+            const optionKeys = Array.from(element.querySelectorAll("[data-option]"), (input) => input.dataset.option);
+            return {
+                element,
+                headingText,
+                section,
+                text: normalizeSearchText(`${element.textContent} ${optionKeys.join(" ")}`),
+            };
+        });
+});
+
+function applySearch(query) {
+    if (!searchInput) return;
+    const normalized = normalizeSearchText(query);
+    const searching = normalized.length > 0;
+    form.classList.toggle("is-searching", searching);
+
+    if (!searching) {
+        for (const unit of searchUnits) unit.element.classList.remove("search-miss");
+        for (const section of tabSections) section.classList.remove("search-miss");
+        if (searchOpenSnapshot) {
+            for (const details of form.querySelectorAll(".advanced-settings")) {
+                details.open = searchOpenSnapshot.has(details);
+            }
+            searchOpenSnapshot = null;
+        }
+        searchEmptyEl?.classList.add("hidden");
+        if (searchStatusEl) searchStatusEl.hidden = true;
+        return;
+    }
+
+    if (!searchOpenSnapshot) {
+        searchOpenSnapshot = new Set(
+            Array.from(form.querySelectorAll(".advanced-settings")).filter((details) => details.open)
+        );
+    }
+
+    let matchCount = 0;
+    const matchedSections = new Set();
+    for (const unit of searchUnits) {
+        const matched = unit.headingText.includes(normalized) || unit.text.includes(normalized);
+        unit.element.classList.toggle("search-miss", !matched);
+        if (!matched) continue;
+        matchCount += 1;
+        matchedSections.add(unit.section);
+        // 세부 설정 안쪽 항목이 걸리면 펼쳐서 바로 보여준다.
+        if (unit.element.matches(".advanced-settings")) unit.element.open = true;
+    }
+    for (const section of tabSections) {
+        section.classList.toggle("search-miss", !matchedSections.has(section));
+    }
+
+    if (searchEmptyEl) {
+        searchEmptyEl.textContent = `‘${query.trim()}’에 해당하는 설정이 없습니다.`;
+        searchEmptyEl.classList.toggle("hidden", matchCount > 0);
+    }
+    if (searchStatusEl) {
+        searchStatusEl.hidden = false;
+        searchStatusEl.textContent = `${matchCount}개 항목`;
+    }
+}
+
+function clearSearch() {
+    if (!searchInput || searchInput.value === "") return;
+    searchInput.value = "";
+    applySearch("");
+}
+
+searchInput?.addEventListener("input", () => applySearch(searchInput.value));
+searchInput?.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    clearSearch();
+});

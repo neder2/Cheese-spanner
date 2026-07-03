@@ -1285,7 +1285,7 @@ test("options player controls merge playback defaults", () => {
     assert.equal(section.querySelector("h2").textContent.trim(), "플레이어");
     assert.deepEqual(detailOrder, [
         "통나무 보상 설정",
-        "라이브 위치 유지 설정",
+        "보던 위치 유지 설정",
         "스킵 수치 설정",
         "볼륨 휠 설정",
         "오디오 컴프레서 설정",
@@ -1376,9 +1376,9 @@ test("options places following controls with exploration controls", () => {
         optionOrder.indexOf("categoryToolsLiveElapsedEnabled") < optionOrder.indexOf("followingPreviewTooltipEnabled")
     );
     assert.ok(
-        optionOrder.indexOf("followingPreviewTooltipEnabled") < optionOrder.indexOf("followingPreviewAudioEnabled")
+        optionOrder.indexOf("followingPreviewTooltipEnabled") < optionOrder.indexOf("followingPreviewSoundEnabled")
     );
-    assert.ok(optionOrder.indexOf("followingPreviewAudioEnabled") < optionOrder.indexOf("titleTooltipEnabled"));
+    assert.ok(optionOrder.indexOf("followingPreviewSoundEnabled") < optionOrder.indexOf("titleTooltipEnabled"));
 });
 
 test("manifest loads playback scripts in the expected worlds", () => {
@@ -1389,22 +1389,22 @@ test("manifest loads playback scripts in the expected worlds", () => {
     assert.ok(mainScript);
     assert.ok(isolatedScript);
     assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
-    assert.ok(mainScript.js.includes("features/followingPreviewPage.js"));
+    assert.equal(mainScript.js.includes("features/followingPreviewPage.js"), false);
     assert.ok(
         mainScript.js.indexOf("features/routeBridgePage.js") < mainScript.js.indexOf("features/autoQualityPage.js")
-    );
-    assert.ok(
-        mainScript.js.indexOf("features/routeBridgePage.js") < mainScript.js.indexOf("features/followingPreviewPage.js")
-    );
-    assert.ok(
-        mainScript.js.indexOf("features/followingPreviewPage.js") < mainScript.js.indexOf("features/autoQualityPage.js")
     );
     assert.ok(mainScript.js.includes("features/volumeWheelPage.js"));
     assert.ok(
         mainScript.js.indexOf("features/volumeWheelPage.js") > mainScript.js.indexOf("features/autoQualityPage.js")
     );
     assert.ok(isolatedScript.js.includes("features/volumeWheel.js"));
+    assert.ok(isolatedScript.js.includes("vendor/hls.light.min.js"));
+    assert.ok(isolatedScript.js.includes("features/followingPreviewTooltip.js"));
     assert.ok(isolatedScript.js.indexOf("features/volumeWheel.js") > isolatedScript.js.indexOf("content.js"));
+    assert.ok(
+        isolatedScript.js.indexOf("vendor/hls.light.min.js") <
+            isolatedScript.js.indexOf("features/followingPreviewTooltip.js")
+    );
     assert.ok(isolatedScript.js.includes("features/chatTools.js"));
     assert.ok(
         isolatedScript.js.indexOf("features/chatTools.js") > isolatedScript.js.indexOf("features/rewardAutoCollect.js")
@@ -1497,6 +1497,62 @@ test("video search stores the comment device id in extension storage only", asyn
     assert.ok(commentRequest.init.headers.deviceId);
     assert.equal(chrome.testState.local.betterchzzkCommentDeviceId, commentRequest.init.headers.deviceId);
     assert.equal(dom.window.localStorage.getItem("betterchzzk-comment-device-id"), null);
+});
+
+test("video search skips generic comment and progress fallbacks", async () => {
+    const chrome = createFakeChrome({ sync: { videoSearchCommentDelayMs: 0 } });
+    const dom = createVideoSearchDom(chrome);
+    const { document } = dom.window;
+    const requests = [];
+
+    document
+        .querySelector('a[href="/video/100"]')
+        .insertAdjacentHTML("afterbegin", '<img src="https://example.com/template-thumb.jpg" alt="">');
+
+    dom.window.fetch = async (url, init = {}) => {
+        requests.push({ url: String(url), init });
+        if (String(url).includes("/videos?")) {
+            return {
+                ok: true,
+                json: async () => ({
+                    content: {
+                        data: [
+                            {
+                                videoNo: "100",
+                                videoTitle: "Existing 100",
+                                duration: 100,
+                                thumbnailImageUrl: "https://example.com/index-thumb.jpg",
+                                watchTimeline: { lastPlaybackSeconds: 50 },
+                            },
+                        ],
+                        last: true,
+                    },
+                }),
+            };
+        }
+        return {
+            ok: true,
+            json: async () => ({
+                content: {
+                    comments: {
+                        data: [{ comment: { content: "alpha" } }, { comment: { content: "beta" } }],
+                    },
+                },
+            }),
+        };
+    };
+
+    await loadVideoSearchPage(dom);
+    await waitForCondition(() => getVideoSearchInput(dom));
+
+    searchVideoSearchInput(dom, "alphabeta");
+    await waitForCondition(() => requests.some((request) => request.init?.headers?.deviceId));
+    await waitForCondition(() => document.querySelector('[data-bcvs-injected="1"]'));
+
+    const card = document.querySelector('[data-bcvs-injected="1"]');
+    assert.ok(card);
+    assert.equal(card.querySelector('[data-bcvs-comment-icon="1"]'), null);
+    assert.equal(card.querySelector('[data-bcvs-watch-progress="1"]'), null);
 });
 
 test("video search retries after an index fetch failure instead of caching partial results as complete", async () => {

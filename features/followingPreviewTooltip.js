@@ -40,16 +40,17 @@
         /(^|[\s_-])(badge|verified|certified|certification|official|icon|mark|emblem|check)([\s_-]|$)|(?:verified|certified|official|badge|icon|mark)Image|\uC778\uC99D/i;
     const LIVE_THUMBNAIL_URL_RE = /(?:livecloud-thumb|\/thumbnail\/image|\/livecloud\/)/i;
     const LIVE_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/channels";
+    const LIVE_AUTO_PLAY_API_BASE = "https://api.chzzk.naver.com/service/v1/live";
     const HOVER_OPEN_DELAY_MS = 0;
     const PREVIEW_FETCH_DELAY_MS = 100;
+    const PREVIEW_PLAYBACK_DELAY_MS = 300;
+    const PREVIEW_MAX_HEIGHT = 480;
+    const PREVIEW_SOUND_VOLUME_DEFAULT = 15;
+    const LIVE_PLAYER_VOLUME_STORAGE_KEY = "live-player-volume";
     const FETCH_TIMEOUT_MS = 8000;
     const CACHE_TTL_MS = 20000;
     const MAX_CACHE_ENTRIES = 80;
     const CARD_WIDTH = 460;
-    const PLAYER_START_SETTLE_MS = 90;
-    const PLAYER_PLAY_EVENT = "betterchzzk:following-preview:play";
-    const PLAYER_STOP_EVENT = "betterchzzk:following-preview:stop";
-    const PLAYER_STATUS_EVENT = "betterchzzk:following-preview:status";
     const PLAYER_MOUNT_ATTR = "data-bcfp-player-mount";
     const PLAYER_STATE_ATTR = "data-bcfp-player-state";
     const ELAPSED_REFRESH_MS = 1000;
@@ -85,7 +86,7 @@
   background:#05070A;
 }
 #${TOOLTIP_ID} .bcfp-media img,
-#${TOOLTIP_ID} .bcfp-player{
+#${TOOLTIP_ID} video.bcfp-player{
   display:block;
   width:100%;
   height:100%;
@@ -93,51 +94,40 @@
 #${TOOLTIP_ID} .bcfp-media img{
   object-fit:cover;
 }
-#${TOOLTIP_ID} .bcfp-player{
+#${TOOLTIP_ID} video.bcfp-player{
   position:absolute;
   inset:0;
   border:0;
   background:#05070A;
+  object-fit:cover;
 }
-#${TOOLTIP_ID} .bcfp-player[${PLAYER_STATE_ATTR}="idle"],
-#${TOOLTIP_ID} .bcfp-player[${PLAYER_STATE_ATTR}="loading"],
-#${TOOLTIP_ID} .bcfp-player[${PLAYER_STATE_ATTR}="error"]{
+#${TOOLTIP_ID} video.bcfp-player[${PLAYER_STATE_ATTR}="idle"],
+#${TOOLTIP_ID} video.bcfp-player[${PLAYER_STATE_ATTR}="loading"],
+#${TOOLTIP_ID} video.bcfp-player[${PLAYER_STATE_ATTR}="error"]{
   visibility:hidden;
 }
-#${TOOLTIP_ID} .bcfp-player > *{
-  display:block;
-  width:100% !important;
-  height:100% !important;
-  object-fit:cover !important;
-}
-#${TOOLTIP_ID} .bcfp-player iframe{
-  display:block;
-  width:100% !important;
-  height:100% !important;
-  border:0;
-}
-#${TOOLTIP_ID} .bcfp-player video{
-  display:block;
-  width:100% !important;
-  height:100% !important;
-  object-fit:cover !important;
-}
-#${TOOLTIP_ID} .bcfp-player button,
-#${TOOLTIP_ID} .bcfp-player [role="button"]{
-  display:none !important;
-  pointer-events:none !important;
-}
-#${TOOLTIP_ID} .bcfp-media-fallback{
+#${TOOLTIP_ID} .bcfp-sound-unlock{
   position:absolute;
-  inset:0;
+  right:8px;
+  bottom:8px;
   display:flex;
   align-items:center;
   justify-content:center;
-  background:linear-gradient(135deg, #202329, #3A4250);
-  color:#00FFA3;
-  font-size:24px;
-  font-weight:900;
-  letter-spacing:0;
+  width:30px;
+  height:30px;
+  border:1px solid rgba(255,255,255,0.64);
+  border-radius:999px;
+  background:rgba(5,7,10,0.78);
+  color:#FFFFFF;
+  box-shadow:0 4px 12px rgba(0,0,0,0.32);
+  cursor:pointer;
+  font-family:inherit;
+  font-size:15px;
+  line-height:1;
+}
+#${TOOLTIP_ID} .bcfp-sound-unlock:focus-visible{
+  outline:2px solid #00FFA3;
+  outline-offset:2px;
 }
 #${TOOLTIP_ID} .bcfp-body{
   display:flex;
@@ -243,6 +233,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     const {
         bindFeatureOptions,
         fetchJson: sharedFetchJson,
+        getMainVideoElement,
         injectStyleOnce,
         normSpace,
         onReady,
@@ -250,7 +241,6 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     } = BetterChzzk.utils;
 
     let featureOptions = BetterChzzkSettings.normalizeOptions();
-    let featureOptionsReady = false;
     let listenersInstalled = false;
     let tooltip = null;
     let activeInfo = null;
@@ -262,8 +252,10 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     let activeFetchController = null;
     let previewFetchTimer = 0;
     let playerStartTimer = 0;
-    let activePlayerMeta = null;
     let removePageChangeDetection = null;
+    let videoRequestSeq = 0;
+    let activeVideoRequestId = "";
+    let activeVideoSession = null;
 
     const previewCache = new Map();
     const pendingRequests = new Map();
@@ -363,8 +355,9 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         }
         return value;
     }
+
     function isFeatureEnabled() {
-        return featureOptionsReady && featureOptions.followingPreviewTooltipEnabled;
+        return featureOptions.followingPreviewTooltipEnabled;
     }
 
     function getElementMarker(el) {
@@ -417,7 +410,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         return "";
     }
 
-    function normalizeImageUrl(value) {
+    function normalizeUrl(value) {
         const raw = pickString(value);
         if (!raw) return "";
 
@@ -430,6 +423,10 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         } catch (_) {
             return withSize;
         }
+    }
+
+    function normalizeImageUrl(value) {
+        return normalizeUrl(value);
     }
 
     function getBackgroundImageUrl(el) {
@@ -643,7 +640,6 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         );
         const openDate = pickString(content.openDate, content.liveOpenDate, content.startedAt, content.startDate);
         const elapsedStartMs = getElapsedStartMs(openDate) || Number(fallback.elapsedStartMs) || 0;
-        const livePlaybackJson = pickRawString(content.livePlaybackJson);
 
         return {
             category: pickString(
@@ -668,7 +664,26 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             ),
             title: title || fallback.title,
             liveId: pickString(content.liveId, fallback.liveId),
-            playbackJson: pickRawString(livePlaybackJson, fallback.playbackJson),
+            playbackJson: pickRawString(fallback.playbackJson),
+            isPreviewPlayback: Boolean(fallback.isPreviewPlayback),
+        };
+    }
+
+    function normalizeAutoPlayInfo(source, fallback = {}) {
+        const content = source?.content ?? source ?? {};
+        const livePlaybackJson = pickRawString(content.livePlaybackJson);
+        const previewPlaybackJson = pickRawString(content.previewPlaybackJson);
+        const playbackJson = pickRawString(
+            livePlaybackJson,
+            previewPlaybackJson,
+            content.playbackJson,
+            fallback.playbackJson
+        );
+
+        return {
+            ...fallback,
+            playbackJson,
+            isPreviewPlayback: !livePlaybackJson && Boolean(previewPlaybackJson || fallback.isPreviewPlayback),
         };
     }
 
@@ -678,18 +693,37 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         return normalizePreviewMeta(json, fallback);
     }
 
+    async function fetchAutoPlayInfo(liveId, { signal } = {}) {
+        const url = `${LIVE_AUTO_PLAY_API_BASE}/${encodeURIComponent(liveId)}/auto-play-info`;
+        const json = await fetchJson(url, { signal, timeoutMs: FETCH_TIMEOUT_MS });
+        return normalizeAutoPlayInfo(json);
+    }
+
+    async function fetchPreviewData(channelId, fallback, { signal } = {}) {
+        const meta = await fetchPreviewMeta(channelId, fallback, { signal });
+        if (!meta.liveId) return meta;
+
+        try {
+            const playback = await fetchAutoPlayInfo(meta.liveId, { signal });
+            return normalizeAutoPlayInfo(playback, meta);
+        } catch (error) {
+            if (isAbortError(error)) throw error;
+            return meta;
+        }
+    }
+
     async function getPreviewMeta(channelId, fallback, { signal } = {}) {
         const now = Date.now();
         const cached = previewCache.get(channelId);
         if (cached && now - cached.cachedAt <= CACHE_TTL_MS) return cached.value;
 
         if (signal) {
-            const value = await fetchPreviewMeta(channelId, fallback, { signal });
+            const value = await fetchPreviewData(channelId, fallback, { signal });
             return touchMapEntry(previewCache, channelId, { cachedAt: Date.now(), value }, MAX_CACHE_ENTRIES).value;
         }
 
         if (!pendingRequests.has(channelId)) {
-            const request = fetchPreviewMeta(channelId, fallback)
+            const request = fetchPreviewData(channelId, fallback)
                 .then((value) => {
                     touchMapEntry(previewCache, channelId, { cachedAt: Date.now(), value }, MAX_CACHE_ENTRIES);
                     return value;
@@ -719,87 +753,52 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         return el;
     }
 
-    function dispatchPlayerEvent(type, detail) {
-        window.dispatchEvent(new CustomEvent(type, { detail: JSON.stringify(detail || {}) }));
-    }
-
-    function parsePlayerDetail(detail) {
-        if (!detail) return {};
-        if (typeof detail === "string") {
-            try {
-                return JSON.parse(detail) || {};
-            } catch (_) {
-                return {};
-            }
-        }
-        return detail;
-    }
-
-    function getPlayerMountSelector(requestId) {
-        return `[${PLAYER_MOUNT_ATTR}="${String(requestId || "").replace(/["\\]/g, "\\$&")}"]`;
-    }
-
-    function getLivePagePreviewUrl(meta) {
-        const channelId = String(meta?.channelId || "").trim();
-        if (!channelId) return "";
-        return new URL(`/live/${encodeURIComponent(channelId)}`, location.origin).href;
-    }
-
-    function createLivePageFallbackFrame(meta) {
-        const src = getLivePagePreviewUrl(meta);
-        if (!src) return null;
-
-        const frame = document.createElement("iframe");
-        frame.className = "bcfp-player-frame";
-        frame.title = `${meta.channelName || meta.channelId} \ub77c\uc774\ube0c \ubbf8\ub9ac\ubcf4\uae30`;
-        frame.loading = "eager";
-        frame.referrerPolicy = "no-referrer-when-downgrade";
-        frame.setAttribute("allow", "autoplay; encrypted-media; fullscreen; picture-in-picture");
-        frame.setAttribute("allowfullscreen", "true");
-        frame.src = src;
-        return frame;
-    }
-
-    let playerRequestSeq = 0;
-    let activePlayerRequestId = "";
-
     function clearPlayerStartTimer() {
         if (!playerStartTimer) return;
         window.clearTimeout(playerStartTimer);
         playerStartTimer = 0;
     }
 
-    function stopPreviewPlayer(requestId = activePlayerRequestId) {
-        clearPlayerStartTimer();
-        if (!requestId) return;
-        dispatchPlayerEvent(PLAYER_STOP_EVENT, { requestId });
-        if (requestId === activePlayerRequestId) {
-            activePlayerRequestId = "";
-            activePlayerMeta = null;
+    function markPlayerState(video, state) {
+        if (!video) return;
+        video.setAttribute(PLAYER_STATE_ATTR, state);
+    }
+
+    function cleanupVideoElement(video) {
+        if (!video) return;
+
+        try {
+            video.pause?.();
+        } catch (_) {
+            // Some test DOMs do not implement media methods.
+        }
+        try {
+            video.removeAttribute("src");
+            video.load?.();
+        } catch (_) {
+            // Some test DOMs do not implement media methods.
         }
     }
 
-    function showLivePageFallback(requestId) {
-        if (!requestId || requestId !== activePlayerRequestId || !activePlayerMeta) return;
+    function stopPreviewPlayer(requestId = activeVideoRequestId) {
+        clearPlayerStartTimer();
+        if (!requestId && !activeVideoSession) return;
+        if (requestId && activeVideoRequestId && requestId !== activeVideoRequestId) return;
 
-        const mount = tooltip?.querySelector(getPlayerMountSelector(requestId));
-        if (!mount?.isConnected) return;
+        const session = activeVideoSession;
+        activeVideoSession = null;
+        activeVideoRequestId = "";
 
-        const frame = createLivePageFallbackFrame(activePlayerMeta);
-        if (!frame) return;
-
-        mount.replaceChildren(frame);
-        mount.setAttribute(PLAYER_STATE_ATTR, "ready");
+        try {
+            session?.hls?.destroy?.();
+        } catch (_) {
+            // Destroy should not block tooltip teardown.
+        }
+        cleanupVideoElement(session?.video);
+        markPlayerState(session?.video, "idle");
     }
 
-    function handlePlayerStatus(event) {
-        const detail = parsePlayerDetail(event.detail);
-        const requestId = String(detail.requestId || "");
-        if (detail.state !== "runtime-unavailable") return;
-        showLivePageFallback(requestId);
-    }
-
-    function queuePlayerRequest(fn) {
+    function queuePreviewTask(fn) {
         if (typeof queueMicrotask === "function") {
             queueMicrotask(fn);
             return;
@@ -807,38 +806,338 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         Promise.resolve().then(fn);
     }
 
-    function requestPreviewPlayer(mount, meta) {
-        if (!mount?.isConnected || !meta.playbackJson) return;
+    function parsePlaybackJson(value) {
+        const raw = pickRawString(value);
+        if (!raw) return null;
+        try {
+            return JSON.parse(raw);
+        } catch (_) {
+            return null;
+        }
+    }
 
-        const requestId = `bcfp${Date.now().toString(36)}${(playerRequestSeq += 1).toString(36)}`;
-        activePlayerRequestId = requestId;
-        activePlayerMeta = meta;
-        mount.setAttribute(PLAYER_MOUNT_ATTR, requestId);
-        mount.setAttribute(PLAYER_STATE_ATTR, "loading");
+    function getMediaHeight(media) {
+        const heights = Array.isArray(media?.encodingTrack)
+            ? media.encodingTrack
+                  .map(
+                      (track) =>
+                          Number(track?.videoHeight) ||
+                          Number(String(track?.encodingTrackId || "").match(/\d+/)?.[0]) ||
+                          0
+                  )
+                  .filter((height) => height > 0)
+            : [];
+        return heights.length ? Math.min(...heights) : 0;
+    }
 
-        const startPlayer = () => {
-            playerStartTimer = 0;
-            if (activePlayerRequestId !== requestId || !mount.isConnected) return;
-            dispatchPlayerEvent(PLAYER_PLAY_EVENT, {
-                audioEnabled: featureOptions.followingPreviewAudioEnabled !== false,
-                channelId: meta.channelId,
-                mountId: requestId,
-                playbackJson: meta.playbackJson,
-                requestId,
-            });
+    function selectHlsSource(playback) {
+        const mediaList = Array.isArray(playback?.media) ? playback.media : [];
+        const hlsMedia = mediaList.filter((media) => {
+            const path = pickRawString(media?.path);
+            const marker = pickString(media?.mediaId, media?.protocol);
+            return path && (/HLS/i.test(marker) || /\.m3u8(?:[?#]|$)/i.test(path));
+        });
+
+        if (!hlsMedia.length) return null;
+
+        const preferred =
+            hlsMedia.find((media) => String(media?.mediaId || "").toUpperCase() === "HLS") ||
+            hlsMedia.find((media) => getMediaHeight(media) && getMediaHeight(media) <= PREVIEW_MAX_HEIGHT) ||
+            hlsMedia[0];
+
+        return {
+            lowLatency:
+                String(preferred?.mediaId || "").toUpperCase() === "LLHLS" ||
+                /lowLatency/i.test(String(preferred?.latency || "")),
+            url: normalizeUrl(preferred.path),
         };
+    }
 
-        clearPlayerStartTimer();
-        if (PLAYER_START_SETTLE_MS > 0) {
-            playerStartTimer = window.setTimeout(startPlayer, PLAYER_START_SETTLE_MS);
+    function getPlaybackSource(meta) {
+        return selectHlsSource(parsePlaybackJson(meta.playbackJson));
+    }
+
+    function canPlayNativeHls(video) {
+        return Boolean(
+            video.canPlayType?.("application/vnd.apple.mpegurl") || video.canPlayType?.("application/x-mpegURL")
+        );
+    }
+
+    function capPreviewLevel(hls) {
+        const levels = Array.isArray(hls?.levels) ? hls.levels : [];
+        if (!levels.length) return;
+
+        const sorted = levels
+            .map((level, index) => ({ height: Number(level?.height) || 0, index }))
+            .sort((a, b) => a.height - b.height || a.index - b.index);
+        const capped = [...sorted].reverse().find((level) => level.height && level.height <= PREVIEW_MAX_HEIGHT);
+        const selected = capped || sorted[0];
+        if (!selected) return;
+
+        hls.autoLevelCapping = selected.index;
+        hls.startLevel = selected.index;
+        hls.nextLevel = selected.index;
+    }
+
+    function normalizePlayerVolume(value) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) return null;
+        if (parsed >= 0 && parsed <= 1) return parsed;
+        if (parsed > 1 && parsed <= 100) return parsed / 100;
+        return null;
+    }
+
+    function readStoredPlayerVolume() {
+        try {
+            const storage = window.localStorage;
+            if (!storage) return null;
+
+            // CHZZK stores the main player volume as {"value":N} under this key.
+            const liveVolume = parseStoredVolume(storage.getItem(LIVE_PLAYER_VOLUME_STORAGE_KEY));
+            if (liveVolume !== null) return liveVolume;
+
+            const embedCandidates = [];
+            for (let index = 0; index < storage.length; index += 1) {
+                const key = storage.key(index);
+                if (!key || !key.endsWith("player-volume") || key.endsWith("-muted")) continue;
+                if (key.startsWith("embed")) {
+                    embedCandidates.push(key);
+                    continue;
+                }
+
+                const volume = parseStoredVolume(storage.getItem(key));
+                if (volume !== null) return volume;
+            }
+
+            for (const key of embedCandidates) {
+                const volume = parseStoredVolume(storage.getItem(key));
+                if (volume !== null) return volume;
+            }
+        } catch (_error) {
+            return null;
+        }
+
+        return null;
+    }
+
+    function parseStoredVolume(raw) {
+        if (raw == null) return null;
+        try {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === "object") {
+                return normalizePlayerVolume(parsed.value);
+            }
+            return normalizePlayerVolume(parsed);
+        } catch (_error) {
+            return normalizePlayerVolume(raw);
+        }
+    }
+
+    function getPreferredPlayerVolume() {
+        const mainVideo = typeof getMainVideoElement === "function" ? getMainVideoElement() : null;
+        if (mainVideo && Number.isFinite(mainVideo.volume)) {
+            return mainVideo.volume;
+        }
+
+        const stored = readStoredPlayerVolume();
+        if (stored !== null) return stored;
+
+        return PREVIEW_SOUND_VOLUME_DEFAULT / 100;
+    }
+
+    function isPreviewSoundEnabled() {
+        return Boolean(featureOptions.followingPreviewSoundEnabled);
+    }
+
+    function applyPreviewAudioState(video, soundEnabled) {
+        if (!video) return;
+
+        if (soundEnabled) {
+            video.muted = false;
+            video.defaultMuted = false;
+            video.volume = getPreferredPlayerVolume();
+            video.removeAttribute("muted");
             return;
         }
 
-        queuePlayerRequest(startPlayer);
+        video.muted = true;
+        video.defaultMuted = true;
+        video.volume = 0;
+        video.setAttribute("muted", "");
     }
 
-    function shouldCreatePlayer(meta) {
-        return Boolean(meta.playbackJson);
+    function isAutoplayBlockedError(error) {
+        return error?.name === "NotAllowedError";
+    }
+
+    function removeSoundUnlockBadge(video) {
+        video?.closest(".bcfp-media")?.querySelector(".bcfp-sound-unlock")?.remove();
+    }
+
+    function showSoundUnlockBadge(video, requestId) {
+        const media = video?.closest(".bcfp-media");
+        if (!media) return;
+
+        removeSoundUnlockBadge(video);
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "bcfp-sound-unlock";
+        button.textContent = "\uD83D\uDD07";
+        button.title = "\uBBF8\uB9AC\uBCF4\uAE30 \uC18C\uB9AC \uCF1C\uAE30";
+        button.setAttribute("aria-label", "\uBBF8\uB9AC\uBCF4\uAE30 \uC18C\uB9AC \uCF1C\uAE30");
+        button.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            unlockPreviewSound(video, requestId);
+        });
+        media.appendChild(button);
+    }
+
+    function revealVideoWhenReady(video, requestId) {
+        const reveal = () => {
+            if (activeVideoRequestId !== requestId || activeVideoSession?.video !== video || !video.isConnected) return;
+            markPlayerState(video, "ready");
+        };
+
+        video.addEventListener("playing", reveal, { once: true });
+        video.addEventListener("loadeddata", reveal, { once: true });
+
+        if (video.readyState >= 2) reveal();
+    }
+
+    function handlePreviewPlayError(video, requestId, error, attemptedSound) {
+        if (activeVideoRequestId !== requestId || activeVideoSession?.video !== video || !video.isConnected) return;
+
+        if (attemptedSound && isAutoplayBlockedError(error)) {
+            applyPreviewAudioState(video, false);
+            showSoundUnlockBadge(video, requestId);
+            runPreviewPlay(video, requestId, false);
+            return;
+        }
+
+        markPlayerState(video, "error");
+    }
+
+    function runPreviewPlay(video, requestId, attemptedSound) {
+        let result = null;
+        try {
+            result = video.play?.();
+        } catch (error) {
+            handlePreviewPlayError(video, requestId, error, attemptedSound);
+            return;
+        }
+
+        if (result?.catch) {
+            result
+                .then(() => {
+                    if (activeVideoRequestId === requestId && activeVideoSession?.video === video && attemptedSound)
+                        removeSoundUnlockBadge(video);
+                })
+                .catch((error) => handlePreviewPlayError(video, requestId, error, attemptedSound));
+        } else if (attemptedSound) {
+            removeSoundUnlockBadge(video);
+        }
+    }
+
+    function unlockPreviewSound(video, requestId) {
+        if (activeVideoRequestId !== requestId || activeVideoSession?.video !== video || !video.isConnected) return;
+
+        applyPreviewAudioState(video, true);
+        runPreviewPlay(video, requestId, true);
+    }
+
+    function playVideo(video, requestId) {
+        if (activeVideoRequestId !== requestId || activeVideoSession?.video !== video || !video.isConnected) return;
+
+        revealVideoWhenReady(video, requestId);
+
+        const soundEnabled = isPreviewSoundEnabled();
+        applyPreviewAudioState(video, soundEnabled);
+        if (!soundEnabled) removeSoundUnlockBadge(video);
+        runPreviewPlay(video, requestId, soundEnabled);
+    }
+
+    function startHlsPlayback(video, source, requestId) {
+        const HlsCtor = window.Hls;
+
+        if (HlsCtor?.isSupported?.()) {
+            const hls = new HlsCtor({
+                backBufferLength: 0,
+                capLevelToPlayerSize: true,
+                enableWorker: false,
+                lowLatencyMode: source.lowLatency,
+                maxBufferLength: 12,
+            });
+            const events = HlsCtor.Events || {};
+            const manifestParsedEvent = events.MANIFEST_PARSED || "hlsManifestParsed";
+            const errorEvent = events.ERROR || "hlsError";
+
+            activeVideoSession = { hls, video };
+            hls.on?.(manifestParsedEvent, () => {
+                capPreviewLevel(hls);
+                playVideo(video, requestId);
+            });
+            hls.on?.(errorEvent, (_event, data) => {
+                if (!data?.fatal) return;
+                if (activeVideoRequestId === requestId && activeVideoSession?.video === video)
+                    markPlayerState(video, "error");
+            });
+            hls.attachMedia?.(video);
+            hls.loadSource?.(source.url);
+            return true;
+        }
+
+        if (canPlayNativeHls(video)) {
+            activeVideoSession = { hls: null, video };
+            video.src = source.url;
+            video.addEventListener("loadedmetadata", () => playVideo(video, requestId), { once: true });
+            try {
+                video.load?.();
+            } catch (_) {
+                // Native HLS setup should still try play on metadata.
+            }
+            return true;
+        }
+
+        return false;
+    }
+
+    function requestPreviewVideo(video, meta) {
+        if (!video?.isConnected || !meta.playbackJson) return;
+
+        const source = getPlaybackSource(meta);
+        if (!source?.url) {
+            markPlayerState(video, "error");
+            return;
+        }
+
+        const requestId = `bcfp${Date.now().toString(36)}${(videoRequestSeq += 1).toString(36)}`;
+        activeVideoRequestId = requestId;
+        video.setAttribute(PLAYER_MOUNT_ATTR, requestId);
+        markPlayerState(video, "loading");
+
+        const startPlayer = () => {
+            playerStartTimer = 0;
+            if (activeVideoRequestId !== requestId || !video.isConnected) return;
+
+            stopPreviewPlayer();
+            activeVideoRequestId = requestId;
+            applyPreviewAudioState(video, isPreviewSoundEnabled());
+            video.autoplay = true;
+            video.controls = false;
+            video.playsInline = true;
+
+            if (!startHlsPlayback(video, source, requestId)) markPlayerState(video, "error");
+        };
+
+        clearPlayerStartTimer();
+        if (PREVIEW_PLAYBACK_DELAY_MS > 0) {
+            playerStartTimer = window.setTimeout(startPlayer, PREVIEW_PLAYBACK_DELAY_MS);
+            return;
+        }
+
+        queuePreviewTask(startPlayer);
     }
 
     function createTextEl(className, text) {
@@ -879,41 +1178,29 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             img.referrerPolicy = "no-referrer";
             img.src = meta.thumbnailUrl;
             media.appendChild(img);
-        } else {
-            const fallback = document.createElement("div");
-            fallback.className = "bcfp-media-fallback";
-            fallback.textContent = "LIVE";
-            media.appendChild(fallback);
         }
 
-        if (shouldCreatePlayer(meta)) {
+        if (meta.playbackJson) {
             media.dataset.hasPlayer = "1";
 
-            const playerMount = document.createElement("div");
-            playerMount.className = "bcfp-player";
-            const playerTitle = `${meta.channelName || meta.channelId} \ub77c\uc774\ube0c \ubbf8\ub9ac\ubcf4\uae30`;
-            playerMount.title = playerTitle;
-            playerMount.setAttribute(PLAYER_STATE_ATTR, "loading");
-            media.appendChild(playerMount);
-            queuePlayerRequest(() => requestPreviewPlayer(playerMount, meta));
+            const video = document.createElement("video");
+            video.className = "bcfp-player";
+            video.title = `${meta.channelName || meta.channelId} \uB77C\uC774\uBE0C \uBBF8\uB9AC\uBCF4\uAE30`;
+            applyPreviewAudioState(video, isPreviewSoundEnabled());
+            video.autoplay = true;
+            video.controls = false;
+            video.playsInline = true;
+            video.setAttribute("playsinline", "");
+            video.setAttribute(PLAYER_STATE_ATTR, "loading");
+            media.appendChild(video);
+            queuePreviewTask(() => requestPreviewVideo(video, meta));
         }
 
         return media;
     }
 
     function updateMedia(tip, meta) {
-        const channelId = meta.channelId || "";
-        const currentChannelId = tip.dataset.channelId || "";
         const existingMedia = tip.querySelector(".bcfp-media");
-
-        if (
-            existingMedia &&
-            channelId &&
-            currentChannelId === channelId &&
-            existingMedia.querySelector(".bcfp-player")
-        ) {
-            return;
-        }
 
         if (existingMedia?.querySelector(".bcfp-player")) stopPreviewPlayer();
 
@@ -921,7 +1208,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         if (existingMedia) existingMedia.replaceWith(media);
         else tip.prepend(media);
 
-        if (channelId) tip.dataset.channelId = channelId;
+        if (meta.channelId) tip.dataset.channelId = meta.channelId;
         else delete tip.dataset.channelId;
     }
 
@@ -1067,6 +1354,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     function openPreview(info) {
         clearPreviewFetchTimer();
         abortActiveFetch();
+        stopPreviewPlayer();
         requestToken += 1;
         const token = requestToken;
 
@@ -1167,7 +1455,6 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         document.addEventListener("pointerout", handlePointerOut, true);
         window.addEventListener("scroll", handleViewportChange, true);
         window.addEventListener("resize", handleViewportChange);
-        window.addEventListener(PLAYER_STATUS_EVENT, handlePlayerStatus);
         removePageChangeDetection = startPageChangeDetection(hidePreview);
     }
 
@@ -1179,7 +1466,6 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         document.removeEventListener("pointerout", handlePointerOut, true);
         window.removeEventListener("scroll", handleViewportChange, true);
         window.removeEventListener("resize", handleViewportChange);
-        window.removeEventListener(PLAYER_STATUS_EVENT, handlePlayerStatus);
 
         if (removePageChangeDetection) {
             removePageChangeDetection();
@@ -1196,7 +1482,6 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
     function applyOptions(options) {
         featureOptions = options;
-        featureOptionsReady = true;
         if (isFeatureEnabled()) installListeners();
         else uninstallListeners();
     }

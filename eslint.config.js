@@ -3,7 +3,15 @@ const globals = require("globals");
 
 module.exports = [
     {
-        ignores: ["node_modules/**", "coverage/**", "dist/**", "web-ext-artifacts/**", "*.zip", "web-ext-config.mjs"],
+        ignores: [
+            "node_modules/**",
+            "coverage/**",
+            "dist/**",
+            "vendor/**",
+            "web-ext-artifacts/**",
+            "*.zip",
+            "web-ext-config.mjs",
+        ],
     },
     js.configs.recommended,
     {
