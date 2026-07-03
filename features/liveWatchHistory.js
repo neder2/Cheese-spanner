@@ -9,6 +9,7 @@
     const STORAGE_MIN_SESSION_SECONDS = 60;
     const HISTORY_MAX_ENTRIES = 2000;
     const HISTORY_MAX_SESSION_DETAILS_PER_ENTRY = 300;
+    const HISTORY_MAX_WATCHED_RANGES_PER_SESSION = 200;
     const SESSION_MERGE_GAP_MS = 60 * 1000;
 
     const storage = globalThis.chrome?.storage?.local;
@@ -50,6 +51,10 @@
     let lifecycleListenersInstalled = false;
     let flushInProgress = false;
     let flushAgainRequested = false;
+    let historyCache = null;
+    let historyCachePromise = null;
+    let historyCacheUpdatedAt = 0;
+    let historyStorageListenerInstalled = false;
 
     const scheduleDomSync = createThrottledDomSync(syncTrackingState, 250);
 
@@ -207,7 +212,10 @@
         return {
             channelId,
             liveId: pickString(content.liveId, content.liveNo, live.liveId, live.liveNo, content.id),
-            title: cleanEntryTitle(pickString(content.liveTitle, content.title, live.liveTitle, live.title), channelName),
+            title: cleanEntryTitle(
+                pickString(content.liveTitle, content.title, live.liveTitle, live.title),
+                channelName
+            ),
             channelName,
             thumbnailUrl: pickString(
                 content.liveImageUrl,
@@ -259,7 +267,11 @@
             const json = await fetchJson(url, { timeoutMs: FETCH_TIMEOUT_MS });
             if (requestId !== metadataRequestSeq || session !== current) return;
             mergeMetadata(current, extractMetadataFromLiveDetail(json, channelId));
-            if (!current.storageSessionRecorded && current.liveId && String(current.recordId || "").startsWith("channel:")) {
+            if (
+                !current.storageSessionRecorded &&
+                current.liveId &&
+                String(current.recordId || "").startsWith("channel:")
+            ) {
                 current.recordId = `live:${current.liveId}`;
             }
         } catch (_) {
@@ -281,8 +293,8 @@
         const rawEntries = Array.isArray(source.entries)
             ? source.entries
             : source.entries && typeof source.entries === "object"
-                ? Object.values(source.entries)
-                : [];
+              ? Object.values(source.entries)
+              : [];
 
         for (const row of rawEntries) {
             if (!row || typeof row !== "object") continue;
@@ -320,6 +332,7 @@
             if (entry.watchedSeconds < STORAGE_MIN_SESSION_SECONDS) {
                 continue;
             }
+            pruneHistoryEntry(entry);
             entries[id] = entry;
         }
 
@@ -337,9 +350,13 @@
             .filter((row) => row && typeof row === "object")
             .map((row) => {
                 const id = pickString(row.id);
-                const title = cleanEntryTitle(pickString(row.title, row.videoTitle, row.liveTitle, row.name), channelName);
+                const title = cleanEntryTitle(
+                    pickString(row.title, row.videoTitle, row.liveTitle, row.name),
+                    channelName
+                );
                 const watchedSeconds = Math.max(0, Number(row.watchedSeconds) || 0);
-                const dailySeconds = row.dailySeconds && typeof row.dailySeconds === "object" ? { ...row.dailySeconds } : {};
+                const dailySeconds =
+                    row.dailySeconds && typeof row.dailySeconds === "object" ? { ...row.dailySeconds } : {};
                 return {
                     id,
                     title,
@@ -388,31 +405,65 @@
         return values.length ? Math.max(...values) : 0;
     }
 
-    function pruneHistory(history) {
-        const rows = Object.values(history.entries);
-        for (const entry of rows) {
-            if (!Array.isArray(entry.sessionDetails)) entry.sessionDetails = [];
-            if (entry.sessionDetails.length > HISTORY_MAX_SESSION_DETAILS_PER_ENTRY) {
-                entry.sessionDetails = entry.sessionDetails
-                    .sort((a, b) => Number(b.enteredAt || 0) - Number(a.enteredAt || 0))
-                    .slice(0, HISTORY_MAX_SESSION_DETAILS_PER_ENTRY);
-            }
-            entry.sessions = Math.max(Number(entry.sessions) || 0, entry.sessionDetails.length || 0);
+    function pruneHistoryEntry(entry) {
+        if (!entry || typeof entry !== "object") return;
+        if (!Array.isArray(entry.sessionDetails)) entry.sessionDetails = [];
+        if (entry.sessionDetails.length > HISTORY_MAX_SESSION_DETAILS_PER_ENTRY) {
+            entry.sessionDetails = entry.sessionDetails
+                .sort((a, b) => Number(b.enteredAt || 0) - Number(a.enteredAt || 0))
+                .slice(0, HISTORY_MAX_SESSION_DETAILS_PER_ENTRY);
         }
+        entry.sessions = Math.max(Number(entry.sessions) || 0, entry.sessionDetails.length || 0);
+    }
 
+    function pruneHistory(history, updatedEntry = null) {
+        pruneHistoryEntry(updatedEntry);
+
+        const entryCount = Object.keys(history.entries).length;
+        if (entryCount <= HISTORY_MAX_ENTRIES) return;
+
+        const rows = Object.values(history.entries);
         if (rows.length <= HISTORY_MAX_ENTRIES) return;
 
         rows.sort((a, b) => Number(b.lastWatchedAt || 0) - Number(a.lastWatchedAt || 0));
         history.entries = Object.fromEntries(rows.slice(0, HISTORY_MAX_ENTRIES).map((entry) => [entry.id, entry]));
     }
 
+    function invalidateHistoryCache() {
+        historyCache = null;
+        historyCachePromise = null;
+        historyCacheUpdatedAt = 0;
+    }
+
+    async function getHistoryCache() {
+        if (historyCache) return historyCache;
+        if (!historyCachePromise) {
+            historyCachePromise = storageGet(storage, STORAGE_KEY)
+                .then((data) => {
+                    historyCache = normalizeHistory(data[STORAGE_KEY]);
+                    historyCacheUpdatedAt = Number(historyCache.updatedAt) || 0;
+                    return historyCache;
+                })
+                .finally(() => {
+                    historyCachePromise = null;
+                });
+        }
+        return historyCachePromise;
+    }
+
     async function mutateHistory(updater) {
-        const data = await storageGet(storage, STORAGE_KEY);
-        const history = normalizeHistory(data[STORAGE_KEY]);
-        updater(history);
+        const history = await getHistoryCache();
+        const updatedEntry = updater(history);
         history.updatedAt = Date.now();
-        pruneHistory(history);
-        await storageSet(storage, { [STORAGE_KEY]: history });
+        pruneHistory(history, updatedEntry);
+        historyCache = history;
+        historyCacheUpdatedAt = history.updatedAt;
+        try {
+            await storageSet(storage, { [STORAGE_KEY]: history });
+        } catch (error) {
+            invalidateHistoryCache();
+            throw error;
+        }
     }
 
     function mergePending(target, pendingByDate) {
@@ -480,6 +531,16 @@
         return Object.values(snapshot || {}).reduce((sum, seconds) => sum + Math.max(0, Number(seconds) || 0), 0);
     }
 
+    function getSessionLeftAt(current) {
+        return current?.lastSeenAt || current?.lastWatchedAt || Date.now();
+    }
+
+    function hasStoredSessionStateChange(current) {
+        if (!current?.storageSessionRecorded) return false;
+        if ((current.closed === true) !== (current.storageClosed === true)) return true;
+        return getSessionLeftAt(current) > (Number(current.storageLeftAt) || 0);
+    }
+
     function createSessionId() {
         return `${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
     }
@@ -508,12 +569,21 @@
         detail.watchedRanges = mergeWatchRanges(detail.watchedRanges);
         if (deltaSeconds > 0) {
             detail.watchedSeconds = Math.max(0, Number(detail.watchedSeconds) || 0) + deltaSeconds;
-            detail.dailySeconds = detail.dailySeconds && typeof detail.dailySeconds === "object" ? detail.dailySeconds : {};
+            detail.dailySeconds =
+                detail.dailySeconds && typeof detail.dailySeconds === "object" ? detail.dailySeconds : {};
             mergePending(detail.dailySeconds, snapshot);
             detail.watchedRanges = mergeWatchRanges([...detail.watchedRanges, ...(rangeSnapshot || [])]);
+            if (detail.watchedRanges.length > HISTORY_MAX_WATCHED_RANGES_PER_SESSION) {
+                detail.watchedRanges = detail.watchedRanges.slice(-HISTORY_MAX_WATCHED_RANGES_PER_SESSION);
+            }
         }
 
         entry.sessionDetails = mergeContinuousSessionDetails(entry.sessionDetails, current.sessionId);
+        for (const row of entry.sessionDetails) {
+            if (Array.isArray(row.watchedRanges) && row.watchedRanges.length > HISTORY_MAX_WATCHED_RANGES_PER_SESSION) {
+                row.watchedRanges = row.watchedRanges.slice(-HISTORY_MAX_WATCHED_RANGES_PER_SESSION);
+            }
+        }
     }
 
     async function flushSession({ force = false } = {}) {
@@ -544,7 +614,7 @@
         const snapshot = takePendingSnapshot(current);
         const rangeSnapshot = takePendingRangeSnapshot(current);
         const deltaSeconds = pendingTotal(snapshot);
-        const shouldUpdateSession = force && current.storageSessionRecorded;
+        const shouldUpdateSession = force && hasStoredSessionStateChange(current);
         if (deltaSeconds <= 0 && !shouldUpdateSession) return;
 
         flushInProgress = true;
@@ -568,17 +638,27 @@
                 entry.liveOpenDate = current.liveOpenDate || entry.liveOpenDate;
                 entry.liveUrl = current.liveUrl || entry.liveUrl;
                 entry.firstWatchedAt = Math.min(Number(entry.firstWatchedAt) || current.startedAt, current.startedAt);
-                entry.lastWatchedAt = Math.max(Number(entry.lastWatchedAt) || 0, current.lastSeenAt || current.lastWatchedAt || Date.now());
-                if (deltaSeconds > 0) entry.watchedSeconds = Math.max(0, Number(entry.watchedSeconds) || 0) + deltaSeconds;
-                entry.dailySeconds = entry.dailySeconds && typeof entry.dailySeconds === "object" ? entry.dailySeconds : {};
+                entry.lastWatchedAt = Math.max(
+                    Number(entry.lastWatchedAt) || 0,
+                    current.lastSeenAt || current.lastWatchedAt || Date.now()
+                );
+                if (deltaSeconds > 0)
+                    entry.watchedSeconds = Math.max(0, Number(entry.watchedSeconds) || 0) + deltaSeconds;
+                entry.dailySeconds =
+                    entry.dailySeconds && typeof entry.dailySeconds === "object" ? entry.dailySeconds : {};
                 if (deltaSeconds > 0) mergePending(entry.dailySeconds, snapshot);
                 upsertSessionDetail(entry, current, deltaSeconds, snapshot, rangeSnapshot);
                 entry.sessions = Math.max(Number(entry.sessions) || 0, entry.sessionDetails.length);
 
                 history.entries[id] = entry;
+                return entry;
             });
 
-            if (session === current) current.storageSessionRecorded = true;
+            if (session === current) {
+                current.storageSessionRecorded = true;
+                current.storageLeftAt = getSessionLeftAt(current);
+                current.storageClosed = current.closed === true;
+            }
         } catch (_) {
             restorePendingSnapshot(current, snapshot);
             restorePendingRangeSnapshot(current, rangeSnapshot);
@@ -768,9 +848,8 @@
         domObserver = createMutationObserverSync({
             options: { childList: true, subtree: true },
             onMutations: handlePageChange,
-            shouldSchedule: (mutations) => (
-                isFeatureEnabled() && mutations.some((mutation) => mutationMatchesSelector(mutation, "video"))
-            ),
+            shouldSchedule: (mutations) =>
+                isFeatureEnabled() && mutations.some((mutation) => mutationMatchesSelector(mutation, "video")),
             schedule: scheduleDomSync,
             onBodyReady: syncTrackingState,
         });
@@ -808,10 +887,30 @@
         window.removeEventListener("pagehide", handlePageHide, true);
     }
 
+    function handleHistoryStorageChange(changes, areaName) {
+        if (areaName !== "local" || !changes?.[STORAGE_KEY]) return;
+        const nextUpdatedAt = Number(changes[STORAGE_KEY].newValue?.updatedAt) || 0;
+        if (nextUpdatedAt && nextUpdatedAt === historyCacheUpdatedAt) return;
+        invalidateHistoryCache();
+    }
+
+    function installHistoryStorageListener() {
+        if (historyStorageListenerInstalled || !globalThis.chrome?.storage?.onChanged) return;
+        historyStorageListenerInstalled = true;
+        chrome.storage.onChanged.addListener(handleHistoryStorageChange);
+    }
+
+    function uninstallHistoryStorageListener() {
+        if (!historyStorageListenerInstalled || !globalThis.chrome?.storage?.onChanged) return;
+        historyStorageListenerInstalled = false;
+        chrome.storage.onChanged.removeListener(handleHistoryStorageChange);
+    }
+
     function installRuntime() {
         if (runtimeInstalled) return;
         runtimeInstalled = true;
         installLifecycleListeners();
+        installHistoryStorageListener();
         if (!removePageChangeDetection) {
             removePageChangeDetection = startPageChangeDetection(syncTrackingState);
         }
@@ -825,6 +924,8 @@
         clearTimers();
         stopDomObserver();
         uninstallLifecycleListeners();
+        uninstallHistoryStorageListener();
+        invalidateHistoryCache();
         if (removePageChangeDetection) {
             removePageChangeDetection();
             removePageChangeDetection = null;

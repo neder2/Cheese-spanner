@@ -1,98 +1,137 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Better Chzzk 시청 기록</title>
-    <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-    <main class="options-page history-page">
-        <header class="hero">
-            <img class="brand-mark" src="icons/icon128.png" alt="" aria-hidden="true">
-            <div>
-                <p class="eyebrow">Better Chzzk</p>
-                <h1>시청 기록</h1>
-                <p class="subtitle">이 브라우저에 저장된 라이브 시청 시간과 월별 기록을 확인합니다.</p>
-            </div>
-            <span id="notice" class="status-pill" aria-live="polite">불러오는 중</span>
-        </header>
-
-        <div class="history-workspace">
-            <div class="history-side">
-                <section class="settings-card history-summary-card">
-                    <div class="history-summary">
-                        <div class="history-stat">
-                            <span>총 시청</span>
-                            <strong id="totalWatchTime">-</strong>
-                        </div>
-                        <div class="history-stat">
-                            <span>라이브</span>
-                            <strong id="totalLiveCount">-</strong>
-                        </div>
-                        <div class="history-stat">
-                            <span>이번 달</span>
-                            <strong id="monthWatchTime">-</strong>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="settings-card history-calendar-card">
-                    <div class="history-toolbar">
-                        <button id="prevMonth" class="secondary-button history-nav-button" type="button" aria-label="이전 달">‹</button>
-                        <h2 id="calendarTitle">-</h2>
-                        <button id="calendarRefresh" class="secondary-button history-nav-button" type="button" aria-label="달력 새로고침">↻</button>
-                        <button id="nextMonth" class="secondary-button history-nav-button" type="button" aria-label="다음 달">›</button>
-                    </div>
-                    <div class="history-calendar" aria-label="월별 시청 기록 달력">
-                        <div id="weekdays" class="history-weekdays" aria-hidden="true"></div>
-                        <div id="calendarDays" class="history-days"></div>
-                    </div>
-                    <p id="calendarFoot" class="history-calendar-foot">날짜를 선택하면 해당 날짜에 본 라이브만 표시합니다.</p>
-                </section>
-            </div>
-
-            <section class="settings-card history-list-card">
-                <div class="history-list-header">
-                    <div class="section-heading">
-                        <h2>라이브 내역</h2>
-                        <p id="listDescription">선택한 월의 라이브 시청 기록입니다.</p>
-                    </div>
-                    <div class="history-filter-row">
-                        <input id="historySearch" type="search" placeholder="제목 또는 채널 검색" autocomplete="off">
-                        <select id="historySort" aria-label="정렬 기준">
-                            <option value="watchTime">시청시간 순</option>
-                            <option value="actualTime">실제시간 순</option>
-                        </select>
-                        <select id="historySortDirection" aria-label="정렬 방향">
-                            <option value="desc">내림차순</option>
-                            <option value="asc">오름차순</option>
-                        </select>
-                        <button id="refresh" class="secondary-button" type="button">새로고침</button>
-                        <button id="clearHistory" class="secondary-button danger-button" type="button">전체 삭제</button>
-                    </div>
-                    <div class="history-selection-row">
-                        <label class="history-select-all">
-                            <input id="selectVisibleHistory" type="checkbox">
-                            <span>현재 목록 선택</span>
-                        </label>
-                        <span id="selectionStatus" class="history-selection-status">선택 0개</span>
-                        <button id="deleteSelectedHistory" class="secondary-button danger-button" type="button" disabled>선택 삭제</button>
-                    </div>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Better Chzzk 시청 기록</title>
+        <link rel="stylesheet" href="styles.css" />
+    </head>
+    <body>
+        <main class="options-page history-page">
+            <header class="hero">
+                <img class="brand-mark" src="icons/icon128.png" alt="" aria-hidden="true" />
+                <div>
+                    <p class="eyebrow">Better Chzzk</p>
+                    <h1>시청 기록</h1>
+                    <p class="subtitle">이 브라우저에 저장된 라이브 시청 시간과 월별 기록을 확인합니다.</p>
                 </div>
-                <div id="historyList" class="history-list"></div>
-            </section>
-        </div>
+                <span id="notice" class="status-pill" aria-live="polite">불러오는 중</span>
+            </header>
 
-        <div class="action-bar">
-            <a class="secondary-button" href="options.html">설정으로 돌아가기</a>
-            <a class="primary-button" href="https://chzzk.naver.com/lives" target="_blank" rel="noopener">라이브 보러가기</a>
-        </div>
+            <div class="history-workspace">
+                <div class="history-side">
+                    <section class="settings-card history-summary-card">
+                        <div class="history-summary">
+                            <div class="history-stat">
+                                <span>총 시청</span>
+                                <strong id="totalWatchTime">-</strong>
+                            </div>
+                            <div class="history-stat">
+                                <span>라이브</span>
+                                <strong id="totalLiveCount">-</strong>
+                            </div>
+                            <div class="history-stat">
+                                <span>이번 달</span>
+                                <strong id="monthWatchTime">-</strong>
+                            </div>
+                        </div>
+                    </section>
 
-        <p id="message" class="message hidden" role="status" aria-live="polite"></p>
-    </main>
+                    <section class="settings-card history-calendar-card">
+                        <div class="history-toolbar">
+                            <button
+                                id="prevMonth"
+                                class="secondary-button history-nav-button"
+                                type="button"
+                                aria-label="이전 달"
+                            >
+                                ‹
+                            </button>
+                            <h2 id="calendarTitle">-</h2>
+                            <button
+                                id="calendarRefresh"
+                                class="secondary-button history-nav-button"
+                                type="button"
+                                aria-label="달력 새로고침"
+                            >
+                                ↻
+                            </button>
+                            <button
+                                id="nextMonth"
+                                class="secondary-button history-nav-button"
+                                type="button"
+                                aria-label="다음 달"
+                            >
+                                ›
+                            </button>
+                        </div>
+                        <div class="history-calendar" aria-label="월별 시청 기록 달력">
+                            <div id="weekdays" class="history-weekdays" aria-hidden="true"></div>
+                            <div id="calendarDays" class="history-days"></div>
+                        </div>
+                        <p id="calendarFoot" class="history-calendar-foot">
+                            날짜를 선택하면 해당 날짜에 본 라이브만 표시합니다.
+                        </p>
+                    </section>
+                </div>
 
-    <script src="shared/data.js"></script>
-    <script src="history.js"></script>
-</body>
+                <section class="settings-card history-list-card">
+                    <div class="history-list-header">
+                        <div class="section-heading">
+                            <h2>라이브 내역</h2>
+                            <p id="listDescription">선택한 월의 라이브 시청 기록입니다.</p>
+                        </div>
+                        <div class="history-filter-row">
+                            <input
+                                id="historySearch"
+                                type="search"
+                                placeholder="제목 또는 채널 검색"
+                                autocomplete="off"
+                            />
+                            <select id="historySort" aria-label="정렬 기준">
+                                <option value="watchTime">시청시간 순</option>
+                                <option value="actualTime">실제시간 순</option>
+                            </select>
+                            <select id="historySortDirection" aria-label="정렬 방향">
+                                <option value="desc">내림차순</option>
+                                <option value="asc">오름차순</option>
+                            </select>
+                            <button id="refresh" class="secondary-button" type="button">새로고침</button>
+                            <button id="clearHistory" class="secondary-button danger-button" type="button">
+                                전체 삭제
+                            </button>
+                        </div>
+                        <div class="history-selection-row">
+                            <label class="history-select-all">
+                                <input id="selectVisibleHistory" type="checkbox" />
+                                <span>현재 목록 선택</span>
+                            </label>
+                            <span id="selectionStatus" class="history-selection-status">선택 0개</span>
+                            <button
+                                id="deleteSelectedHistory"
+                                class="secondary-button danger-button"
+                                type="button"
+                                disabled
+                            >
+                                선택 삭제
+                            </button>
+                        </div>
+                    </div>
+                    <div id="historyList" class="history-list"></div>
+                </section>
+            </div>
+
+            <div class="action-bar">
+                <a class="secondary-button" href="options.html">설정으로 돌아가기</a>
+                <a class="primary-button" href="https://chzzk.naver.com/lives" target="_blank" rel="noopener"
+                    >라이브 보러가기</a
+                >
+            </div>
+
+            <p id="message" class="message hidden" role="status" aria-live="polite"></p>
+        </main>
+
+        <script src="shared/data.js"></script>
+        <script src="history.js"></script>
+    </body>
 </html>

@@ -15,6 +15,9 @@
     const MODERATOR_CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
     const MODERATOR_CACHE_MAX_ENTRIES = 12;
     const CHAT_SYNC_THROTTLE_MS = 120;
+    const MODERATOR_CACHE_PERSIST_DEBOUNCE_MS = 600;
+    const CHAT_ROOT_FIND_THROTTLE_MS = 600;
+    const CHAT_DIRTY_ATTRIBUTE_FILTER = ["class", "style", "hidden", "aria-label", "title", "aria-hidden"];
     const CHAT_ROOT_SELECTORS = [
         "[role='log']",
         "[role='list'][class*='chat']",
@@ -383,6 +386,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         createThrottledDomSync,
         getLiveChannelIdFromPath,
         injectStyleOnce,
+        isLiveRoute,
         normSpace,
         onReady,
         startPageChangeDetection,
@@ -408,6 +412,16 @@ body[theme="dark"] .bcct-moderator-box__empty,
     let moderatorCacheReadyKey = "";
     let moderatorCacheLoadKey = "";
     let moderatorCacheLoadSeq = 0;
+    let moderatorCachePersistTimer = 0;
+    let moderatorCacheFlushListenersInstalled = false;
+    const dirtyChatRows = new Set();
+    let parsedChatRows = new WeakSet();
+    let forceFullChatScan = true;
+    let forceReparseChatRows = true;
+    let chatMutationBatchShouldSchedule = false;
+    let lastChatRootFindAt = 0;
+    let lastChatRootFindResult = null;
+    let moderatorListRenderKeys = [];
     const rowIds = new WeakMap();
     let nextRowId = 1;
 
@@ -468,41 +482,126 @@ body[theme="dark"] .bcct-moderator-box__empty,
         ].join(" ");
     }
 
-    function getTreeAttrText(rootEl, limit = 120) {
+    function createRowParseContext(row) {
+        const elements = row instanceof Element ? [row, ...Array.from(row.querySelectorAll("*")).slice(0, 160)] : [];
+        return {
+            row,
+            elements,
+            hiddenCache: new WeakMap(),
+            visibleTextCache: new WeakMap(),
+            rawTextCache: new WeakMap(),
+            treeAttrText: "",
+            attributeTextCandidates: null,
+            hiddenElements: null,
+            authorElements: null,
+            firstMessageEl: undefined,
+            roleSignalElements: null,
+            rowSignalsScanned: false,
+        };
+    }
+
+    function scanRowSignals(row, context) {
+        if (context?.row !== row || context.rowSignalsScanned) return;
+
+        const attrCandidates = [];
+        const hiddenElements = [];
+        const authorElements = [];
+        const roleCandidates = [];
+        const attrChunks = [];
+        let firstMessageEl = null;
+
+        for (const el of context.elements) {
+            if (!(el instanceof Element)) continue;
+            if (isOwnUi(el)) continue;
+
+            attrChunks.push(getElementAttrText(el));
+
+            const roleDecoration = isRoleDecoration(el, context);
+            const hidden = el !== row && !roleDecoration && isHiddenWithin(el, row, context);
+
+            if (!roleDecoration) {
+                for (const attr of Array.from(el.attributes)) {
+                    const name = attr.name.toLowerCase();
+                    if (!CLIENT_TEXT_ATTR_RE.test(name) && name !== "aria-label" && name !== "title") continue;
+                    if ((name === "aria-label" || name === "title") && !hidden && !BLIND_SIGNAL_RE.test(attr.value)) {
+                        continue;
+                    }
+                    parseClientTextValue(attr.value, attrCandidates);
+                }
+            }
+
+            if (hidden && !roleDecoration) hiddenElements.push(el);
+            if (el !== row && el.matches(AUTHOR_SELECTORS) && !hidden && !roleDecoration) authorElements.push(el);
+            if (!firstMessageEl && isMessageTextElement(el, row)) firstMessageEl = el;
+            roleCandidates.push(el);
+        }
+
+        context.treeAttrText = attrChunks.join(" ");
+        context.attributeTextCandidates = attrCandidates;
+        context.hiddenElements = hiddenElements;
+        context.authorElements = authorElements;
+        context.firstMessageEl = firstMessageEl;
+        context.roleSignalElements = roleCandidates.filter((el) =>
+            isRoleSignalElement(el, row, authorElements, firstMessageEl, context)
+        );
+        context.rowSignalsScanned = true;
+    }
+
+    function getContextElements(context, rootEl, limit = 160) {
+        if (context?.row === rootEl && Array.isArray(context.elements)) {
+            return context.elements.slice(0, limit + 1);
+        }
+        if (!(rootEl instanceof Element)) return [];
+        return [rootEl, ...Array.from(rootEl.querySelectorAll("*")).slice(0, limit)];
+    }
+
+    function getTreeAttrText(rootEl, limit = 120, context = null) {
         if (!(rootEl instanceof Element)) return "";
-        const chunks = [getElementAttrText(rootEl)];
-        const descendants = Array.from(rootEl.querySelectorAll("*"));
-        for (const el of descendants.slice(0, limit)) {
+        if (context?.row === rootEl) {
+            scanRowSignals(rootEl, context);
+            return context.treeAttrText;
+        }
+
+        const chunks = [];
+        for (const el of getContextElements(context, rootEl, limit)) {
             if (isOwnUi(el)) continue;
             chunks.push(getElementAttrText(el));
         }
-        return chunks.join(" ");
+
+        const text = chunks.join(" ");
+        if (context?.row === rootEl) context.treeAttrText = text;
+        return text;
     }
 
-    function isElementHidden(el) {
+    function isElementHidden(el, context = null) {
         if (!(el instanceof HTMLElement)) return false;
-        if (el.hidden || el.getAttribute("aria-hidden") === "true") return true;
+        if (context?.hiddenCache?.has(el)) return context.hiddenCache.get(el);
+        if (el.hidden || el.getAttribute("aria-hidden") === "true") {
+            context?.hiddenCache?.set(el, true);
+            return true;
+        }
         const style = getComputedStyle(el);
         const opacity = style.opacity;
-        return (
+        const hidden =
             style.display === "none" ||
             style.visibility === "hidden" ||
             style.visibility === "collapse" ||
-            (opacity !== "" && Number(opacity) === 0)
-        );
+            (opacity !== "" && Number(opacity) === 0);
+        context?.hiddenCache?.set(el, hidden);
+        return hidden;
     }
 
-    function isHiddenWithin(el, boundary) {
+    function isHiddenWithin(el, boundary, context = null) {
         let current = el;
         while (current && current instanceof Element && current !== boundary.parentElement) {
-            if (isElementHidden(current)) return true;
+            if (isElementHidden(current, context)) return true;
             if (current === boundary) break;
             current = current.parentElement;
         }
         return false;
     }
 
-    function collectText(node, out, { includeHidden = false, boundary = null } = {}) {
+    function collectText(node, out, { includeHidden = false, boundary = null, context = null } = {}) {
         if (node.nodeType === Node.TEXT_NODE) {
             out.push(node.nodeValue || "");
             return;
@@ -511,60 +610,69 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
         const el = /** @type {Element} */ (node);
         if (isOwnUi(el) || el.matches(EXCLUDED_TEXT_SELECTOR)) return;
-        if (!includeHidden && boundary && isHiddenWithin(el, boundary)) return;
+        if (!includeHidden && boundary && isHiddenWithin(el, boundary, context)) return;
 
-        for (const child of el.childNodes) collectText(child, out, { includeHidden, boundary });
+        for (const child of el.childNodes) collectText(child, out, { includeHidden, boundary, context });
     }
 
-    function getVisibleText(el) {
+    function getVisibleText(el, context = null) {
         if (!(el instanceof Element)) return "";
+        if (context?.visibleTextCache?.has(el)) return context.visibleTextCache.get(el);
         const chunks = [];
-        collectText(el, chunks, { boundary: el });
-        return normSpace(chunks.join(" "));
+        collectText(el, chunks, { boundary: el, context });
+        const text = normSpace(chunks.join(" "));
+        context?.visibleTextCache?.set(el, text);
+        return text;
     }
 
-    function getRawText(el) {
+    function getRawText(el, context = null) {
         if (!(el instanceof Element)) return "";
+        if (context?.rawTextCache?.has(el)) return context.rawTextCache.get(el);
         const chunks = [];
-        collectText(el, chunks, { includeHidden: true, boundary: el });
-        return normSpace(chunks.join(" "));
+        collectText(el, chunks, { includeHidden: true, boundary: el, context });
+        const text = normSpace(chunks.join(" "));
+        context?.rawTextCache?.set(el, text);
+        return text;
     }
 
-    function isRoleDecoration(el) {
+    function isRoleDecoration(el, context = null) {
         if (!(el instanceof Element)) return false;
         const marker = getElementAttrText(el);
         if (/badge|role|manager|moderator|owner|streamer|broadcaster|닉네임|nickname|author|name/i.test(marker)) {
-            return ROLE_ATTR_RE.test(`${marker} ${getVisibleText(el)}`);
+            return ROLE_ATTR_RE.test(`${marker} ${getVisibleText(el, context)}`);
         }
         return false;
     }
 
-    function getMessageText(row) {
-        const candidates = Array.from(row.querySelectorAll(MESSAGE_TEXT_SELECTORS)).filter((el) => {
-            if (isOwnUi(el) || isRoleDecoration(el)) return false;
-            return !isHiddenWithin(el, row);
+    function getMessageText(row, context = null) {
+        const candidates = getContextElements(context, row).filter((el) => {
+            if (el === row || !(el instanceof Element) || !el.matches(MESSAGE_TEXT_SELECTORS)) return false;
+            if (isOwnUi(el) || isRoleDecoration(el, context)) return false;
+            return !isHiddenWithin(el, row, context);
         });
         let best = "";
 
         for (const el of candidates) {
-            const text = getVisibleText(el);
+            const text = getVisibleText(el, context);
             if (text.length > best.length) best = text;
         }
 
         if (best) return best;
-        return getVisibleText(row);
+        return getVisibleText(row, context);
     }
 
-    function getAuthor(row) {
+    function getAuthor(row, context = null) {
         const attrAuthor = normSpace(getAttr(row, "data-author-name"));
         if (attrAuthor) return attrAuthor;
 
-        const candidates = Array.from(row.querySelectorAll(AUTHOR_SELECTORS));
+        const candidates = getContextElements(context, row).filter(
+            (el) => el !== row && el.matches?.(AUTHOR_SELECTORS)
+        );
         for (const el of candidates) {
-            if (isOwnUi(el) || isRoleDecoration(el) || isHiddenWithin(el, row)) continue;
+            if (isOwnUi(el) || isRoleDecoration(el, context) || isHiddenWithin(el, row, context)) continue;
             const dataAuthor = normSpace(getAttr(el, "data-author-name"));
             if (dataAuthor) return dataAuthor;
-            const text = getVisibleText(el);
+            const text = getVisibleText(el, context);
             if (text) return text;
         }
 
@@ -606,24 +714,31 @@ body[theme="dark"] .bcct-moderator-box__empty,
         }
     }
 
-    function collectAttributeTextCandidates(row, out) {
-        const elements = [row, ...Array.from(row.querySelectorAll("*")).slice(0, 160)];
+    function collectAttributeTextCandidates(row, out, context = null) {
+        if (context?.row === row) {
+            scanRowSignals(row, context);
+            out.push(...context.attributeTextCandidates);
+            return;
+        }
 
-        for (const el of elements) {
-            if (!(el instanceof Element) || isOwnUi(el) || isRoleDecoration(el)) continue;
+        const candidates = [];
+        for (const el of getContextElements(context, row, 160)) {
+            if (!(el instanceof Element) || isOwnUi(el) || isRoleDecoration(el, context)) continue;
             for (const attr of Array.from(el.attributes)) {
                 const name = attr.name.toLowerCase();
                 if (!CLIENT_TEXT_ATTR_RE.test(name) && name !== "aria-label" && name !== "title") continue;
                 if (
                     (name === "aria-label" || name === "title") &&
-                    !isHiddenWithin(el, row) &&
+                    !isHiddenWithin(el, row, context) &&
                     !BLIND_SIGNAL_RE.test(attr.value)
                 ) {
                     continue;
                 }
-                parseClientTextValue(attr.value, out);
+                parseClientTextValue(attr.value, candidates);
             }
         }
+        if (context?.row === row) context.attributeTextCandidates = candidates;
+        out.push(...candidates);
     }
 
     function isGenericBlindText(text) {
@@ -671,14 +786,31 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return el.matches(MESSAGE_TEXT_SELECTORS);
     }
 
-    function getAuthorCandidateElements(row) {
-        return Array.from(row.querySelectorAll(AUTHOR_SELECTORS)).filter(
-            (el) => el instanceof Element && !isOwnUi(el) && !isHiddenWithin(el, row)
+    function getAuthorCandidateElements(row, context = null) {
+        if (context?.row === row) {
+            scanRowSignals(row, context);
+            return context.authorElements;
+        }
+        const elements = getContextElements(context, row).filter(
+            (el) =>
+                el !== row &&
+                el instanceof Element &&
+                el.matches(AUTHOR_SELECTORS) &&
+                !isOwnUi(el) &&
+                !isHiddenWithin(el, row, context)
         );
+        if (context?.row === row) context.authorElements = elements;
+        return elements;
     }
 
-    function getFirstMessageTextElement(row) {
-        return Array.from(row.querySelectorAll(MESSAGE_TEXT_SELECTORS)).find((el) => isMessageTextElement(el, row));
+    function getFirstMessageTextElement(row, context = null) {
+        if (context?.row === row) {
+            scanRowSignals(row, context);
+            return context.firstMessageEl;
+        }
+        const first = getContextElements(context, row).find((el) => isMessageTextElement(el, row)) || null;
+        if (context?.row === row) context.firstMessageEl = first;
+        return first;
     }
 
     function isInsideMessageTextElement(el, row) {
@@ -703,17 +835,37 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return Boolean(firstMessageEl && isBeforeElement(el, firstMessageEl));
     }
 
-    function pickHiddenOriginalText(row, visibleText, author) {
-        const candidates = [];
-        collectAttributeTextCandidates(row, candidates);
+    function isRoleSignalElement(el, row, authorElements, firstMessageEl, context = null) {
+        if (!(el instanceof Element) || isOwnUi(el)) return false;
+        if (isInsideMessageTextElement(el, row)) return false;
+        if (el !== row && !isAuthorRoleAreaElement(el, authorElements, firstMessageEl)) return false;
 
-        const hiddenElements = Array.from(row.querySelectorAll("*")).filter((el) => {
-            if (!(el instanceof Element) || isOwnUi(el) || isRoleDecoration(el)) return false;
-            return isHiddenWithin(el, row);
-        });
+        const roleDataText = getRoleDataText(el);
+        if (ROLE_ATTR_RE.test(roleDataText)) return true;
+        if (ROLE_CLASS_RE.test(getClassText(el))) return true;
+
+        const roleSignalAttrText = getRoleSignalAttrText(el);
+        if (!ROLE_SIGNAL_ELEMENT_RE.test(roleSignalAttrText)) return false;
+        if (ROLE_ATTR_RE.test(getRoleLabelText(el))) return true;
+        return isRoleOnlyText(getVisibleText(el, context));
+    }
+
+    function pickHiddenOriginalText(row, visibleText, author, context = null) {
+        const candidates = [];
+        collectAttributeTextCandidates(row, candidates, context);
+
+        let hiddenElements = context?.row === row ? context.hiddenElements : null;
+        if (!hiddenElements) {
+            hiddenElements = getContextElements(context, row).filter((el) => {
+                if (el === row || !(el instanceof Element) || isOwnUi(el) || isRoleDecoration(el, context))
+                    return false;
+                return isHiddenWithin(el, row, context);
+            });
+            if (context?.row === row) context.hiddenElements = hiddenElements;
+        }
 
         for (const el of hiddenElements) {
-            const text = getRawText(el);
+            const text = getRawText(el, context);
             if (text) candidates.push(text);
         }
 
@@ -732,44 +884,39 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return best;
     }
 
-    function hasBlindSignal(row, hiddenText) {
-        const visibleText = getVisibleText(row);
+    function hasBlindSignal(row, hiddenText, context = null) {
+        const visibleText = getVisibleText(row, context);
         if (BLIND_SIGNAL_RE.test(visibleText)) return true;
-        const attrText = getTreeAttrText(row);
+        const attrText = getTreeAttrText(row, 120, context);
         return Boolean(hiddenText && BLIND_SIGNAL_RE.test(attrText));
     }
 
-    function getRoleSignalElements(row) {
-        const authorElements = getAuthorCandidateElements(row);
-        const firstMessageEl = getFirstMessageTextElement(row);
-        const elements = [row, ...Array.from(row.querySelectorAll("*")).slice(0, 120)];
-        return elements.filter((el) => {
-            if (!(el instanceof Element) || isOwnUi(el)) return false;
-            if (isInsideMessageTextElement(el, row)) return false;
-            if (el !== row && !isAuthorRoleAreaElement(el, authorElements, firstMessageEl)) return false;
-
-            const roleDataText = getRoleDataText(el);
-            if (ROLE_ATTR_RE.test(roleDataText)) return true;
-            if (ROLE_CLASS_RE.test(getClassText(el))) return true;
-
-            const roleSignalAttrText = getRoleSignalAttrText(el);
-            if (!ROLE_SIGNAL_ELEMENT_RE.test(roleSignalAttrText)) return false;
-            if (ROLE_ATTR_RE.test(getRoleLabelText(el))) return true;
-            return isRoleOnlyText(getVisibleText(el));
-        });
+    function getRoleSignalElements(row, context = null) {
+        if (context?.row === row) {
+            scanRowSignals(row, context);
+            return context.roleSignalElements;
+        }
+        const authorElements = getAuthorCandidateElements(row, context);
+        const firstMessageEl = getFirstMessageTextElement(row, context);
+        const elements = getContextElements(context, row, 120);
+        const roleElements = elements.filter((el) =>
+            isRoleSignalElement(el, row, authorElements, firstMessageEl, context)
+        );
+        if (context?.row === row) context.roleSignalElements = roleElements;
+        return roleElements;
     }
 
-    function detectRole(row) {
+    function detectRole(row, context = null) {
         let managerScore = 0;
         let broadcasterScore = 0;
 
-        for (const el of getRoleSignalElements(row)) {
+        for (const el of getRoleSignalElements(row, context)) {
             const roleDataText = getRoleDataText(el);
             const roleSignalAttrText = getRoleSignalAttrText(el);
             const canUseLabelText = ROLE_SIGNAL_ELEMENT_RE.test(roleSignalAttrText);
             const labelText = canUseLabelText ? getRoleLabelText(el) : "";
             const classText = getClassText(el);
-            const visibleText = getVisibleText(el);
+            const visibleText = getVisibleText(el, context);
             const hasVisibleRoleSignal = canUseLabelText && isRoleOnlyText(visibleText);
 
             if (BROADCASTER_RE.test(roleDataText)) broadcasterScore += 100;
@@ -805,11 +952,12 @@ body[theme="dark"] .bcct-moderator-box__empty,
     }
 
     function parseChatMessage(row) {
-        const author = getAuthor(row);
-        const text = getMessageText(row);
-        const hiddenText = pickHiddenOriginalText(row, text, author);
-        const isBlind = hasBlindSignal(row, hiddenText);
-        const role = detectRole(row);
+        const context = createRowParseContext(row);
+        const author = getAuthor(row, context);
+        const text = getMessageText(row, context);
+        const hiddenText = pickHiddenOriginalText(row, text, author, context);
+        const isBlind = hasBlindSignal(row, hiddenText, context);
+        const role = detectRole(row, context);
         const parsed = { author, role, text, isBlind, hiddenText, node: row };
         parsed.id = getMessageId(row, parsed);
         return parsed;
@@ -917,15 +1065,17 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return added;
     }
 
-    async function persistModeratorCache() {
+    async function persistModeratorCache({ cacheKey: cacheKeySnapshot = "", messages: messageSnapshot = null } = {}) {
         if (!isModeratorCacheEnabled()) return;
 
-        const cacheKey = getModeratorCacheKey();
+        const cacheKey = cacheKeySnapshot || getModeratorCacheKey();
         if (!cacheKey || moderatorCacheReadyKey !== cacheKey || !storage || typeof storageSet !== "function") return;
 
         const now = Date.now();
+        const messages = Array.isArray(messageSnapshot)
+            ? messageSnapshot
+            : serializeModeratorMessages().slice(-getMaxModeratorMessages());
         const store = await readModeratorCacheStore();
-        const messages = serializeModeratorMessages().slice(-getMaxModeratorMessages());
 
         if (messages.length) {
             store.entries[cacheKey] = {
@@ -946,7 +1096,59 @@ body[theme="dark"] .bcct-moderator-box__empty,
         }
     }
 
+    function cancelModeratorCachePersist() {
+        if (!moderatorCachePersistTimer) return;
+        clearTimeout(moderatorCachePersistTimer);
+        moderatorCachePersistTimer = 0;
+    }
+
+    function getModeratorCachePersistSnapshot() {
+        return {
+            cacheKey: getModeratorCacheKey(),
+            messages: serializeModeratorMessages().slice(-getMaxModeratorMessages()),
+        };
+    }
+
+    function scheduleModeratorCachePersist() {
+        if (!isModeratorCacheEnabled()) {
+            cancelModeratorCachePersist();
+            return;
+        }
+        if (moderatorCachePersistTimer) return;
+        moderatorCachePersistTimer = setTimeout(() => {
+            moderatorCachePersistTimer = 0;
+            persistModeratorCache();
+        }, MODERATOR_CACHE_PERSIST_DEBOUNCE_MS);
+    }
+
+    function flushModeratorCachePersist() {
+        if (!moderatorCachePersistTimer) return;
+        const snapshot = getModeratorCachePersistSnapshot();
+        cancelModeratorCachePersist();
+        persistModeratorCache(snapshot);
+    }
+
+    function handleModeratorCacheFlushEvent(event) {
+        if (event?.type === "visibilitychange" && !document.hidden) return;
+        flushModeratorCachePersist();
+    }
+
+    function installModeratorCacheFlushListeners() {
+        if (moderatorCacheFlushListenersInstalled) return;
+        moderatorCacheFlushListenersInstalled = true;
+        window.addEventListener("pagehide", handleModeratorCacheFlushEvent, true);
+        document.addEventListener("visibilitychange", handleModeratorCacheFlushEvent, true);
+    }
+
+    function uninstallModeratorCacheFlushListeners() {
+        if (!moderatorCacheFlushListenersInstalled) return;
+        moderatorCacheFlushListenersInstalled = false;
+        window.removeEventListener("pagehide", handleModeratorCacheFlushEvent, true);
+        document.removeEventListener("visibilitychange", handleModeratorCacheFlushEvent, true);
+    }
+
     async function clearModeratorCacheStore() {
+        cancelModeratorCachePersist();
         moderatorCacheKey = "";
         moderatorCacheReadyKey = "";
         moderatorCacheLoadKey = "";
@@ -991,7 +1193,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
                 moderatorCacheLoadKey = "";
                 trimModeratorMessages();
                 renderModeratorList();
-                persistModeratorCache();
+                scheduleModeratorCachePersist();
             })
             .catch(() => {
                 if (seq !== moderatorCacheLoadSeq || moderatorCacheKey !== cacheKey) return;
@@ -1006,6 +1208,20 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
         const removed = moderatorMessages.splice(0, moderatorMessages.length - max);
         for (const message of removed) collectedMessageIds.delete(message.id);
+    }
+
+    function getModeratorRenderKey(message) {
+        return [message.id, message.role, message.author, message.text]
+            .map((value) => String(value || ""))
+            .join("\u001f");
+    }
+
+    function areArraysEqual(left, right) {
+        if (left.length !== right.length) return false;
+        for (let index = 0; index < left.length; index += 1) {
+            if (left[index] !== right[index]) return false;
+        }
+        return true;
     }
 
     function collectModeratorMessage(parsed) {
@@ -1027,7 +1243,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         });
         trimModeratorMessages();
         renderModeratorList();
-        persistModeratorCache();
+        scheduleModeratorCachePersist();
         return true;
     }
 
@@ -1040,14 +1256,52 @@ body[theme="dark"] .bcct-moderator-box__empty,
         }
     }
 
+    function buildModeratorRow(message) {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "bcct-moderator-row";
+        row.setAttribute(MODERATOR_ROW_ATTR, message.id);
+
+        const meta = document.createElement("span");
+        meta.className = "bcct-moderator-row__meta";
+        meta.textContent = message.author ? `${roleLabel(message.role)} · ${message.author}` : roleLabel(message.role);
+
+        const text = document.createElement("span");
+        text.className = "bcct-moderator-row__text";
+        text.textContent = message.text;
+
+        row.append(meta, text);
+        row.addEventListener("click", () => scrollToOriginalMessage(message));
+        return row;
+    }
+
+    function canAppendModeratorRows(nextKeys) {
+        if (!moderatorListRenderKeys.length || nextKeys.length <= moderatorListRenderKeys.length) return false;
+        for (let index = 0; index < moderatorListRenderKeys.length; index += 1) {
+            if (nextKeys[index] !== moderatorListRenderKeys[index]) return false;
+        }
+        return true;
+    }
+
     function renderModeratorList() {
         if (!moderatorList || !moderatorCount || !moderatorTriggerCount) return;
 
         const countText = `${moderatorMessages.length}`;
-        moderatorCount.textContent = countText;
-        moderatorTriggerCount.textContent = countText;
+        if (moderatorCount.textContent !== countText) moderatorCount.textContent = countText;
+        if (moderatorTriggerCount.textContent !== countText) moderatorTriggerCount.textContent = countText;
         moderatorTriggerCount.dataset.empty = moderatorMessages.length ? "0" : "1";
         setModeratorPanelOpen(moderatorPanelOpen);
+
+        const renderKeys = moderatorMessages.map(getModeratorRenderKey);
+        if (areArraysEqual(renderKeys, moderatorListRenderKeys)) return;
+        if (canAppendModeratorRows(renderKeys)) {
+            for (const message of moderatorMessages.slice(moderatorListRenderKeys.length)) {
+                moderatorList.appendChild(buildModeratorRow(message));
+            }
+            moderatorListRenderKeys = renderKeys;
+            return;
+        }
+        moderatorListRenderKeys = renderKeys;
         moderatorList.textContent = "";
 
         if (!moderatorMessages.length) {
@@ -1059,24 +1313,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         }
 
         for (const message of moderatorMessages) {
-            const row = document.createElement("button");
-            row.type = "button";
-            row.className = "bcct-moderator-row";
-            row.setAttribute(MODERATOR_ROW_ATTR, message.id);
-
-            const meta = document.createElement("span");
-            meta.className = "bcct-moderator-row__meta";
-            meta.textContent = message.author
-                ? `${roleLabel(message.role)} · ${message.author}`
-                : roleLabel(message.role);
-
-            const text = document.createElement("span");
-            text.className = "bcct-moderator-row__text";
-            text.textContent = message.text;
-
-            row.append(meta, text);
-            row.addEventListener("click", () => scrollToOriginalMessage(message));
-            moderatorList.appendChild(row);
+            moderatorList.appendChild(buildModeratorRow(message));
         }
     }
 
@@ -1100,6 +1337,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
             moderatorList = null;
             moderatorCount = null;
         }
+        moderatorListRenderKeys = [];
         if (moderatorToggle) {
             moderatorToggle.remove();
             moderatorToggle = null;
@@ -1374,11 +1612,13 @@ body[theme="dark"] .bcct-moderator-box__empty,
     }
 
     function clearModeratorState() {
+        cancelModeratorCachePersist();
         for (const row of Array.from(document.querySelectorAll(`[${MODERATOR_COLLECTED_ATTR}]`))) {
             row.removeAttribute(MODERATOR_COLLECTED_ATTR);
         }
         moderatorMessages = [];
         collectedMessageIds = new Set();
+        moderatorListRenderKeys = [];
         moderatorCacheReadyKey = "";
         moderatorCacheLoadKey = "";
         renderModeratorList();
@@ -1408,6 +1648,129 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return el;
     }
 
+    function hasCandidateAncestor(row, candidateRows, rootEl) {
+        for (let current = row?.parentElement; current && current !== rootEl; current = current.parentElement) {
+            if (candidateRows.has(current)) return true;
+        }
+        return false;
+    }
+
+    function resetChatProcessingState({ reparse = true } = {}) {
+        dirtyChatRows.clear();
+        parsedChatRows = new WeakSet();
+        forceFullChatScan = true;
+        forceReparseChatRows = reparse;
+        chatMutationBatchShouldSchedule = false;
+    }
+
+    function requestFullChatScan({ reparse = false } = {}) {
+        forceFullChatScan = true;
+        if (reparse) forceReparseChatRows = true;
+    }
+
+    function resolveMutationElement(node) {
+        if (node instanceof Element) return node;
+        return node?.parentElement instanceof Element ? node.parentElement : null;
+    }
+
+    function getChatRowForNode(node, rootEl = chatRoot) {
+        const el = resolveMutationElement(node);
+        if (!(el instanceof Element) || !(rootEl instanceof Element) || el === rootEl) return null;
+        if (!rootEl.contains(el) || isOwnUi(el)) return null;
+
+        const closestRow = el.closest(CHAT_ROW_SELECTORS);
+        const candidate = closestRow && rootEl.contains(closestRow) ? closestRow : el;
+        const row = normalizeCandidateRow(candidate, rootEl);
+        if (!(row instanceof HTMLElement) || row === rootEl || isOwnUi(row)) return null;
+        return row;
+    }
+
+    function markDirtyChatRow(node, rootEl = chatRoot) {
+        const row = getChatRowForNode(node, rootEl);
+        if (!row) return false;
+        dirtyChatRows.add(row);
+        chatMutationBatchShouldSchedule = true;
+        return true;
+    }
+
+    function getMutationSignalText(row, target) {
+        const el = target instanceof Element ? target : target?.parentElement;
+        return [
+            el ? getElementAttrText(el) : "",
+            el?.textContent || "",
+            row instanceof Element ? getElementAttrText(row) : "",
+            row?.textContent || "",
+        ].join(" ");
+    }
+
+    function shouldTrackChatAttributeMutation(mutation, row) {
+        const attrName = String(mutation.attributeName || "").toLowerCase();
+        if (!CHAT_DIRTY_ATTRIBUTE_FILTER.includes(attrName)) return false;
+        if (row?.hasAttribute(BLIND_PROCESSED_ATTR)) return true;
+
+        const signalText = getMutationSignalText(row, mutation.target);
+        if (isBlindRevealEnabled() && BLIND_SIGNAL_RE.test(signalText)) return true;
+        if (isModeratorBoxEnabled() && !row?.hasAttribute(MODERATOR_COLLECTED_ATTR) && ROLE_ATTR_RE.test(signalText)) {
+            return true;
+        }
+        return false;
+    }
+
+    function shouldTrackChatTextMutation(mutation, row) {
+        if (row?.hasAttribute(BLIND_PROCESSED_ATTR)) return true;
+
+        const signalText = getMutationSignalText(row, mutation.target);
+        if (isBlindRevealEnabled() && BLIND_SIGNAL_RE.test(signalText)) return true;
+        if (isModeratorBoxEnabled() && !row?.hasAttribute(MODERATOR_COLLECTED_ATTR) && ROLE_ATTR_RE.test(signalText)) {
+            return true;
+        }
+        return false;
+    }
+
+    function markDirtyChatMutationTarget(mutation, rootEl, shouldTrack) {
+        const row = getChatRowForNode(mutation.target, rootEl);
+        if (!row || !shouldTrack(mutation, row)) return false;
+        dirtyChatRows.add(row);
+        chatMutationBatchShouldSchedule = true;
+        return true;
+    }
+
+    function collectDirtyChatRowsFromMutations(mutations) {
+        chatMutationBatchShouldSchedule = false;
+        const rootEl = chatRoot?.isConnected ? chatRoot : null;
+        if (!(rootEl instanceof Element)) {
+            requestFullChatScan({ reparse: false });
+            chatMutationBatchShouldSchedule = true;
+            return;
+        }
+
+        for (const mutation of mutations || []) {
+            if (mutation.type === "attributes") {
+                markDirtyChatMutationTarget(mutation, rootEl, shouldTrackChatAttributeMutation);
+                continue;
+            }
+
+            if (mutation.type === "characterData") {
+                markDirtyChatMutationTarget(mutation, rootEl, shouldTrackChatTextMutation);
+                continue;
+            }
+
+            if (mutation.type !== "childList") continue;
+
+            for (const node of mutation.addedNodes || []) {
+                markDirtyChatRow(node, rootEl);
+            }
+            for (const node of mutation.removedNodes || []) {
+                if (isOwnUi(node)) continue;
+                const el = resolveMutationElement(mutation.target);
+                if (el === rootEl || markDirtyChatRow(mutation.target, rootEl)) {
+                    chatMutationBatchShouldSchedule = true;
+                }
+                break;
+            }
+        }
+    }
+
     function findChatRows(rootEl = chatRoot) {
         if (!(rootEl instanceof Element)) return [];
 
@@ -1422,22 +1785,43 @@ body[theme="dark"] .bcct-moderator-box__empty,
         }
 
         const rowList = Array.from(rows);
+        const candidateRows = new Set(rowList.filter((row) => row instanceof Element));
         return rowList.filter((row) => {
             if (!(row instanceof HTMLElement) || row === rootEl || isOwnUi(row)) return false;
-            if (rowList.some((other) => other !== row && other instanceof Element && other.contains(row))) return false;
+            if (hasCandidateAncestor(row, candidateRows, rootEl)) return false;
             const text = getVisibleText(row);
             return Boolean(text || hasChatRowSignal(row));
         });
     }
 
     function findChatRoot() {
+        if (typeof isLiveRoute === "function" && !isLiveRoute()) {
+            lastChatRootFindResult = null;
+            return null;
+        }
+        const now = performance.now();
+        if (lastChatRootFindResult?.isConnected && now - lastChatRootFindAt < CHAT_ROOT_FIND_THROTTLE_MS) {
+            return lastChatRootFindResult;
+        }
+        if (
+            !lastChatRootFindResult &&
+            lastChatRootFindAt > 0 &&
+            now - lastChatRootFindAt < CHAT_ROOT_FIND_THROTTLE_MS
+        ) {
+            return null;
+        }
+        lastChatRootFindAt = now;
+
         for (const selector of CHAT_ROOT_SELECTORS) {
             const candidates = Array.from(document.querySelectorAll(selector)).filter((el) => {
                 if (!(el instanceof HTMLElement) || isOwnUi(el)) return false;
                 if (getAttr(el, "role") === "log") return true;
                 return getVisibleText(el) || el.children.length > 0;
             });
-            if (candidates.length) return candidates[0];
+            if (candidates.length) {
+                lastChatRootFindResult = candidates[0];
+                return lastChatRootFindResult;
+            }
         }
 
         const rows = findChatRows(document.body).slice(0, 80);
@@ -1457,7 +1841,33 @@ body[theme="dark"] .bcct-moderator-box__empty,
             }
         }
 
-        return best;
+        lastChatRootFindResult = best;
+        return lastChatRootFindResult;
+    }
+
+    function getRowsToProcess(rootEl) {
+        if (forceFullChatScan) {
+            const rows = findChatRows(rootEl);
+            dirtyChatRows.clear();
+            forceFullChatScan = false;
+            if (forceReparseChatRows) {
+                forceReparseChatRows = false;
+                return rows;
+            }
+            return rows.filter((row) => !isProcessedChatRow(row));
+        }
+
+        const rows = Array.from(dirtyChatRows).filter(
+            (row) => row instanceof HTMLElement && row.isConnected && row !== rootEl && rootEl.contains(row)
+        );
+        dirtyChatRows.clear();
+        return rows;
+    }
+
+    function isProcessedChatRow(row) {
+        if (!(row instanceof HTMLElement)) return false;
+        if (parsedChatRows.has(row)) return true;
+        return row.hasAttribute(BLIND_PROCESSED_ATTR) || row.hasAttribute(MODERATOR_COLLECTED_ATTR);
     }
 
     function syncChatTools() {
@@ -1472,10 +1882,11 @@ body[theme="dark"] .bcct-moderator-box__empty,
         ensureModeratorCacheLoaded();
         if (!isBlindRevealEnabled()) removeAllBlindReveals();
 
-        for (const row of findChatRows(rootEl)) {
+        for (const row of getRowsToProcess(rootEl)) {
             const parsed = parseChatMessage(row);
             syncBlindReveal(row, parsed);
             collectModeratorMessage(parsed);
+            parsedChatRows.add(row);
         }
 
         trimModeratorMessages();
@@ -1485,21 +1896,25 @@ body[theme="dark"] .bcct-moderator-box__empty,
     function startObserver() {
         if (observer) observer.disconnectAll?.();
         observer = createMutationObserverSync({
-            target: findChatRoot,
+            target: () => (typeof isLiveRoute !== "function" || isLiveRoute() ? findChatRoot() : null),
             options: {
                 childList: true,
                 subtree: true,
                 attributes: true,
                 characterData: true,
-                attributeFilter: ["class", "style", "hidden", "aria-label", "title", "aria-hidden"],
+                attributeFilter: CHAT_DIRTY_ATTRIBUTE_FILTER,
             },
+            onMutations: collectDirtyChatRowsFromMutations,
+            shouldSchedule: () => chatMutationBatchShouldSchedule,
             schedule: scheduleSync,
             onObserved: (_observer, node) => {
                 chatRoot = node;
+                requestFullChatScan({ reparse: false });
                 scheduleSync();
             },
             onBodyReady: (_observer, node) => {
                 chatRoot = node;
+                requestFullChatScan({ reparse: false });
                 scheduleSync();
             },
         });
@@ -1509,13 +1924,18 @@ body[theme="dark"] .bcct-moderator-box__empty,
         if (!isFeatureEnabled()) return;
         chatRoot = null;
         removeModeratorBox();
-        if (clearMessages) clearModeratorState();
+        resetChatProcessingState({ reparse: true });
+        if (clearMessages) {
+            flushModeratorCachePersist();
+            clearModeratorState();
+        }
         startObserver();
         scheduleSync();
     }
 
     function installRuntime() {
         injectStyleOnce(STYLE_ID, STYLE_TEXT);
+        installModeratorCacheFlushListeners();
         if (!observer) startObserver();
         if (!removePageChangeDetection) {
             removePageChangeDetection = startPageChangeDetection(() => restartRuntime({ clearMessages: true }));
@@ -1532,7 +1952,10 @@ body[theme="dark"] .bcct-moderator-box__empty,
             removePageChangeDetection();
             removePageChangeDetection = null;
         }
+        flushModeratorCachePersist();
+        uninstallModeratorCacheFlushListeners();
         chatRoot = null;
+        resetChatProcessingState({ reparse: true });
         removeInjectedUi();
     }
 
@@ -1540,8 +1963,9 @@ body[theme="dark"] .bcct-moderator-box__empty,
         const cacheWasEnabled = Boolean(featureOptions.chatToolsCacheModeratorMessagesEnabled);
         featureOptions = options;
         trimModeratorMessages();
-        if (isModeratorCacheEnabled()) persistModeratorCache();
+        if (isModeratorCacheEnabled()) scheduleModeratorCachePersist();
         else {
+            cancelModeratorCachePersist();
             moderatorCacheKey = "";
             moderatorCacheReadyKey = "";
             moderatorCacheLoadKey = "";
@@ -1557,6 +1981,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         }
 
         installRuntime();
+        requestFullChatScan({ reparse: true });
         if (!isModeratorBoxEnabled()) removeModeratorBox();
         if (!isBlindRevealEnabled()) removeAllBlindReveals();
         scheduleSync();

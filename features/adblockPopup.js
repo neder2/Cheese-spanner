@@ -48,21 +48,27 @@
     }
 
     function publishReady() {
-        document.documentElement.setAttribute(READY_ATTR, JSON.stringify({
-            href: location.href,
-            at: Date.now(),
-        }));
+        document.documentElement.setAttribute(
+            READY_ATTR,
+            JSON.stringify({
+                href: location.href,
+                at: Date.now(),
+            })
+        );
         window.dispatchEvent(new Event(READY_EVENT));
     }
 
     function injectAdblockPopupStyleOnce() {
-        BetterChzzk.utils.injectStyleOnce(AD_STYLE_ID, `
+        BetterChzzk.utils.injectStyleOnce(
+            AD_STYLE_ID,
+            `
 [${AD_SUPPRESS_ATTR}="1"]{
   display:none !important;
   pointer-events:none !important;
   visibility:hidden !important;
 }
-`);
+`
+        );
     }
 
     function getClassText(el) {
@@ -176,9 +182,12 @@
             setTimeout(unlockBodyScrollIfOnlySuppressedPopups, delay);
         }
 
-        setTimeout(() => {
-            scrollUnlockScheduled = false;
-        }, Math.max(...SCROLL_UNLOCK_DELAYS_MS) + 50);
+        setTimeout(
+            () => {
+                scrollUnlockScheduled = false;
+            },
+            Math.max(...SCROLL_UNLOCK_DELAYS_MS) + 50
+        );
     }
 
     function syncBackdropSuppression() {

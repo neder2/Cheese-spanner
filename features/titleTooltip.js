@@ -8,14 +8,7 @@
     const ITEM_PATH_RE = /^\/(?:live|video|clips)\//;
     const CHANNEL_PATH_RE = /^\/[a-f0-9]{32}(?:\/|$)/i;
     const CARD_SELECTOR = "article, li, [class*='card'], [class*='item'], [class*='video']";
-    const IGNORED_TEXT_SELECTOR = [
-        "script",
-        "style",
-        "noscript",
-        "svg",
-        "[hidden]",
-        "[aria-hidden='true']",
-    ].join(", ");
+    const IGNORED_TEXT_SELECTOR = ["script", "style", "noscript", "svg", "[hidden]", "[aria-hidden='true']"].join(", ");
     const VISUALLY_HIDDEN_TOKEN_RE = /(^|[\s_-])(blind|sr-only|screen-reader|visually-hidden|a11y-hidden)([\s_-]|$)/i;
     const HOVER_OPEN_DELAY_MS = 150;
     const TOOLTIP_MAX_WIDTH = 420;
@@ -75,13 +68,7 @@ body[theme="dark"] [data-bctt-active="1"],
     let listenersInstalled = false;
     let removePageChangeDetection = null;
 
-    const {
-        bindFeatureOptions,
-        injectStyleOnce,
-        normSpace,
-        onReady,
-        startPageChangeDetection,
-    } = BetterChzzk.utils;
+    const { bindFeatureOptions, injectStyleOnce, normSpace, onReady, startPageChangeDetection } = BetterChzzk.utils;
 
     function isFeatureEnabled() {
         return featureOptions.titleTooltipEnabled;
@@ -132,7 +119,7 @@ body[theme="dark"] [data-bctt-active="1"],
     }
 
     function isTruncated(el) {
-        return (el.scrollWidth - el.clientWidth > 1) || (el.scrollHeight - el.clientHeight > 1);
+        return el.scrollWidth - el.clientWidth > 1 || el.scrollHeight - el.clientHeight > 1;
     }
 
     function isVisuallyHiddenTextElement(el) {

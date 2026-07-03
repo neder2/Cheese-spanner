@@ -94,7 +94,9 @@
 
     function compact(value) {
         if (typeof normalizeCompact === "function") return normalizeCompact(value);
-        return String(value || "").toLowerCase().replace(/\s+/g, "");
+        return String(value || "")
+            .toLowerCase()
+            .replace(/\s+/g, "");
     }
 
     function containsAnyTerm(value, terms) {
@@ -103,11 +105,7 @@
     }
 
     function getCandidateText(button) {
-        return [
-            button.getAttribute("aria-label"),
-            button.getAttribute("title"),
-            button.textContent,
-        ].join(" ");
+        return [button.getAttribute("aria-label"), button.getAttribute("title"), button.textContent].join(" ");
     }
 
     function getVisibleArea(el) {
@@ -253,9 +251,7 @@
         if (!(activeButtonEl instanceof HTMLElement)) return false;
 
         const hasActiveTextPatch =
-            activeTextNode instanceof Text &&
-            activeTextNode.isConnected &&
-            activeButtonEl.contains(activeTextNode);
+            activeTextNode instanceof Text && activeTextNode.isConnected && activeButtonEl.contains(activeTextNode);
 
         return (
             activeButtonEl.isConnected &&
@@ -541,7 +537,7 @@
         activeButtonEl = button;
         activeTextNode = textNode;
         injectPatchStyleOnce();
-        button.setAttribute(TEXT_PATCHED_ATTR, "1");
+        if (button.getAttribute(TEXT_PATCHED_ATTR) !== "1") button.setAttribute(TEXT_PATCHED_ATTR, "1");
         removeFallbackLagLabel();
         return true;
     }

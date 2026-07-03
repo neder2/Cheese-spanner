@@ -81,15 +81,13 @@
     }
 
     function compact(value) {
-        return String(value || "").replace(/\s+/g, "").toLowerCase();
+        return String(value || "")
+            .replace(/\s+/g, "")
+            .toLowerCase();
     }
 
     function getControlText(el) {
-        return compact([
-            el?.getAttribute?.("aria-label"),
-            el?.getAttribute?.("title"),
-            el?.textContent,
-        ].join(" "));
+        return compact([el?.getAttribute?.("aria-label"), el?.getAttribute?.("title"), el?.textContent].join(" "));
     }
 
     function isExpandedPlayerLayout() {

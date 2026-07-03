@@ -734,6 +734,40 @@ function createDeferred() {
     return { promise, resolve };
 }
 
+function createTestAbortError() {
+    const error = new Error("Aborted");
+    error.name = "AbortError";
+    return error;
+}
+
+function waitForDeferredWithAbort(deferred, signal) {
+    if (!deferred) return Promise.resolve();
+    if (signal?.aborted) return Promise.reject(createTestAbortError());
+
+    return new Promise((resolve, reject) => {
+        function cleanup() {
+            signal?.removeEventListener("abort", abort);
+        }
+
+        function abort() {
+            cleanup();
+            reject(createTestAbortError());
+        }
+
+        signal?.addEventListener("abort", abort, { once: true });
+        deferred.promise.then(
+            () => {
+                cleanup();
+                resolve();
+            },
+            (error) => {
+                cleanup();
+                reject(error);
+            }
+        );
+    });
+}
+
 async function createMonthlyBroadcastFixture({
     deferList = false,
     details = {},
@@ -770,6 +804,7 @@ async function createMonthlyBroadcastFixture({
     const { document } = dom.window;
     const listGate = deferList ? createDeferred() : null;
     const fetchCalls = [];
+    const fetchInits = [];
 
     dom.window.Date.now = () => nowMs;
     document.getElementById("profile").getBoundingClientRect = () => ({
@@ -797,12 +832,13 @@ async function createMonthlyBroadcastFixture({
         bottom: 62,
     });
 
-    dom.window.fetch = async (url) => {
+    dom.window.fetch = async (url, init = {}) => {
         const href = String(url);
         fetchCalls.push(href);
+        fetchInits.push({ href, init });
 
         if (href.includes("/service/v1/channels/")) {
-            if (listGate) await listGate.promise;
+            await waitForDeferredWithAbort(listGate, init.signal);
             return {
                 ok: true,
                 json: async () => ({
@@ -844,6 +880,7 @@ async function createMonthlyBroadcastFixture({
         document,
         dom,
         fetchCalls,
+        fetchInits,
         resolveList: () => listGate?.resolve(),
     };
 }
@@ -923,6 +960,29 @@ test("monthly broadcast calendar colors KST days after async metadata load", asy
     } finally {
         await closeMonthlyBroadcastFixture(fixture);
     }
+});
+
+test("monthly broadcast aborts pending page fetches when disabled", async () => {
+    const fixture = await createMonthlyBroadcastFixture({
+        deferList: true,
+        videos: [
+            {
+                duration: 20 * 60,
+                liveCloseDate: "2026-06-28T09:20:00+09:00",
+                liveOpenDate: "2026-06-28T09:00:00+09:00",
+                videoNo: "abort-pending",
+                videoTitle: "Abort pending fixture",
+                videoType: "REPLAY",
+            },
+        ],
+    });
+
+    const pending = fixture.fetchInits.find((call) => call.href.includes("/service/v1/channels/"));
+    assert.ok(pending?.init.signal instanceof fixture.dom.window.AbortSignal);
+
+    await closeMonthlyBroadcastFixture(fixture);
+
+    assert.equal(pending.init.signal.aborted, true);
 });
 
 test("monthly broadcast calendar separates stream and watch rows in dense day tips", async () => {
@@ -1428,6 +1488,70 @@ async function loadVideoSearchPage(dom) {
     await waitForAsyncCallbacks();
 }
 
+async function loadCategoryToolsPage(dom) {
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "categoryTools.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    await waitForAsyncCallbacks();
+}
+
+function setElementRect(el, { left = 0, top = 0, width = 100, height = 40 } = {}) {
+    el.getBoundingClientRect = () => ({
+        x: left,
+        y: top,
+        left,
+        top,
+        right: left + width,
+        bottom: top + height,
+        width,
+        height,
+    });
+}
+
+function createCategoryToolsDom(chrome) {
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<nav id="tabs">',
+            "<button>라이브</button>",
+            "<button>동영상</button>",
+            "<button>클립</button>",
+            "</nav>",
+            '<main id="grid">',
+            '<article id="card-a"><a href="/live/channel-a"><strong>Alpha live</strong><span>LIVE 10명</span></a></article>',
+            '<article id="card-b"><a href="/live/channel-b"><strong>Beta live</strong><span>LIVE 20명</span></a></article>',
+            "</main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/category/game/test/lives",
+        chrome
+    );
+    const { document } = dom.window;
+    setElementRect(document.getElementById("tabs"), { left: 16, top: 20, width: 360, height: 40 });
+    document.querySelectorAll("#tabs button").forEach((button, index) => {
+        setElementRect(button, { left: 24 + index * 80, top: 24, width: 70, height: 32 });
+    });
+    setElementRect(document.getElementById("grid"), { left: 16, top: 100, width: 760, height: 560 });
+    setElementRect(document.getElementById("card-a"), { left: 24, top: 120, width: 320, height: 180 });
+    setElementRect(document.querySelector('#card-a a[href="/live/channel-a"]'), {
+        left: 24,
+        top: 120,
+        width: 320,
+        height: 180,
+    });
+    setElementRect(document.getElementById("card-b"), { left: 24, top: 5000, width: 320, height: 180 });
+    setElementRect(document.querySelector('#card-b a[href="/live/channel-b"]'), {
+        left: 24,
+        top: 5000,
+        width: 320,
+        height: 180,
+    });
+    return dom;
+}
+
 function createVideoSearchDom(chrome) {
     return createPageDom(
         [
@@ -1456,6 +1580,85 @@ function searchVideoSearchInput(dom, value) {
     input.value = value;
     input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 }
+
+test("category tools hydrates newly visible follower badges on scroll without a full apply pass", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            categoryToolsFollowerFetchDelayMs: 0,
+            categoryToolsFollowerFetchMaxPerPass: 10,
+        },
+    });
+    const dom = createCategoryToolsDom(chrome);
+    const clock = useFakePerformanceNow(dom);
+    const { document } = dom.window;
+    const requests = [];
+
+    dom.window.fetch = async (url) => {
+        const href = String(url);
+        requests.push(href);
+
+        if (href.includes("/v2/categories/")) {
+            return {
+                ok: true,
+                json: async () => ({
+                    content: {
+                        data: [
+                            {
+                                liveTitle: "Alpha live",
+                                concurrentUserCount: 10,
+                                channel: { channelId: "channel-a", channelName: "Alpha" },
+                            },
+                            {
+                                liveTitle: "Beta live",
+                                concurrentUserCount: 20,
+                                channel: { channelId: "channel-b", channelName: "Beta" },
+                            },
+                        ],
+                        page: { next: null },
+                    },
+                }),
+            };
+        }
+
+        const channelId = decodeURIComponent(href.match(/\/v1\/channels\/([^/?#]+)/)?.[1] || "");
+        return {
+            ok: true,
+            json: async () => ({
+                content: {
+                    followerCount: channelId === "channel-a" ? 100 : 200,
+                },
+            }),
+        };
+    };
+
+    await loadCategoryToolsPage(dom);
+
+    await waitForCondition(() => requests.some((href) => href.includes("/v1/channels/channel-a")));
+    assert.equal(requests.filter((href) => href.includes("/v2/categories/")).length, 1);
+    assert.equal(
+        requests.some((href) => href.includes("/v1/channels/channel-b")),
+        false
+    );
+
+    clock.advance(1000);
+    setElementRect(document.getElementById("card-b"), { left: 24, top: 220, width: 320, height: 180 });
+    setElementRect(document.querySelector('#card-b a[href="/live/channel-b"]'), {
+        left: 24,
+        top: 220,
+        width: 320,
+        height: 180,
+    });
+    dom.window.dispatchEvent(new dom.window.Event("scroll"));
+
+    await waitForCondition(() => requests.some((href) => href.includes("/v1/channels/channel-b")));
+    assert.equal(requests.filter((href) => href.includes("/v2/categories/")).length, 1);
+    assert.deepEqual(
+        requests
+            .filter((href) => href.includes("/v1/channels/"))
+            .map((href) => decodeURIComponent(href.match(/\/v1\/channels\/([^/?#]+)/)?.[1] || "")),
+        ["channel-a", "channel-b"]
+    );
+});
 
 test("video search stores the comment device id in extension storage only", async () => {
     const chrome = createFakeChrome({ sync: { videoSearchCommentDelayMs: 0 } });
@@ -2329,7 +2532,7 @@ test("volume wheel ignores following preview videos when choosing media volume",
     assert.equal(up.defaultPrevented, true);
 });
 
-test("volume wheel stays inert until settings publish while keeping early listener priority", async () => {
+test("volume wheel installs the page wheel listener only after enabled settings publish", async () => {
     const chrome = createFakeChrome();
     const dom = createPageDom(
         [
@@ -2352,33 +2555,30 @@ test("volume wheel stays inert until settings publish while keeping early listen
     video.getBoundingClientRect = () => ({ width: 640, height: 360, left: 0, top: 0, right: 640, bottom: 360 });
     vol.getBoundingClientRect = () => ({ width: 40, height: 40, left: 20, top: 320, right: 60, bottom: 360 });
 
+    const nativeAddEventListener = dom.window.addEventListener.bind(dom.window);
+    const wheelListeners = [];
+    dom.window.addEventListener = (type, listener, options) => {
+        if (type === "wheel") wheelListeners.push(listener);
+        return nativeAddEventListener(type, listener, options);
+    };
+
     evalRepoScript(dom, "features", "volumeWheelPage.js");
 
-    let nativeWheelCount = 0;
-    dom.window.addEventListener(
-        "wheel",
-        () => {
-            nativeWheelCount += 1;
-            video.volume = 1;
-        },
-        { capture: true }
-    );
+    assert.equal(wheelListeners.length, 0);
 
     const beforeSettings = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
     Object.defineProperty(beforeSettings, "deltaY", { value: -100 });
     vol.dispatchEvent(beforeSettings);
 
-    assert.equal(video.volume, 1);
+    assert.equal(video.volume, 0.5);
     assert.equal(beforeSettings.defaultPrevented, false);
-    assert.equal(nativeWheelCount, 1);
-
-    video.volume = 0.5;
-    nativeWheelCount = 0;
 
     evalRepoScript(dom, "shared", "settings.js");
     evalContentScripts(dom);
     evalRepoScript(dom, "features", "volumeWheel.js");
     await waitForAsyncCallbacks();
+
+    assert.equal(wheelListeners.length, 1);
 
     const up = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
     Object.defineProperty(up, "deltaY", { value: -100 });
@@ -2386,7 +2586,6 @@ test("volume wheel stays inert until settings publish while keeping early listen
 
     assert.ok(Math.abs(video.volume - 0.55) < 1e-6);
     assert.equal(up.defaultPrevented, true);
-    assert.equal(nativeWheelCount, 0);
 });
 
 test("volume wheel respects unit-range native sliders", async () => {
@@ -2921,6 +3120,254 @@ test("auto quality treats an active preferred track as already selected", () => 
     assert.equal(tracks[1].selected, false);
 });
 
+test("auto quality removes the VOD startup timeupdate listener after startup settles", () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
+        "https://chzzk.naver.com/video/12345",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const tracks = [
+        { id: "auto", label: "auto 1080p", height: 1080 },
+        { id: "1080", label: "1080p", height: 1080, kind: "main" },
+    ];
+    const trackList = createVideoTrackList(tracks, 0);
+    const timeupdateListeners = [];
+    const removedTimeupdateListeners = [];
+    const nativeAddEventListener = video.addEventListener.bind(video);
+    const nativeRemoveEventListener = video.removeEventListener.bind(video);
+
+    video.currentTime = 2;
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "duration", {
+        configurable: true,
+        get: () => 120,
+    });
+    Object.defineProperty(video, "videoTracks", {
+        configurable: true,
+        get: () => trackList,
+    });
+    video.addEventListener = (type, listener, options) => {
+        if (type === "timeupdate") timeupdateListeners.push(listener);
+        return nativeAddEventListener(type, listener, options);
+    };
+    video.removeEventListener = (type, listener, options) => {
+        if (type === "timeupdate") removedTimeupdateListeners.push(listener);
+        return nativeRemoveEventListener(type, listener, options);
+    };
+
+    evalRepoScript(dom, "features", "autoQualityPage.js");
+
+    assert.equal(timeupdateListeners.length, 1);
+
+    video.dispatchEvent(new dom.window.Event("timeupdate", { bubbles: true }));
+
+    assert.deepEqual(removedTimeupdateListeners, timeupdateListeners);
+
+    video.dispatchEvent(new dom.window.Event("timeupdate", { bubbles: true }));
+
+    assert.deepEqual(removedTimeupdateListeners, timeupdateListeners);
+});
+
+test("auto quality stops the VOD page observer after a stable already result", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
+        "https://chzzk.naver.com/video/12345",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const tracks = [
+        { id: "auto", label: "auto 1080p", height: 1080 },
+        { id: "1080", label: "1080p", height: 1080, kind: "main", selected: true },
+    ];
+    const trackList = createVideoTrackList(tracks, 1);
+
+    video.currentTime = 2;
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "duration", {
+        configurable: true,
+        get: () => 120,
+    });
+    Object.defineProperty(video, "videoTracks", {
+        configurable: true,
+        get: () => trackList,
+    });
+
+    evalRepoScript(dom, "features", "autoQualityPage.js");
+
+    const result = requestAutoQualityApply(dom, "1080p");
+    assert.equal(result.status, "already");
+
+    const statusBefore = document.documentElement.getAttribute("data-betterchzzk-auto-quality-status");
+    document.body.appendChild(document.createElement("video"));
+    await waitForAsyncCallbacks();
+
+    assert.equal(document.documentElement.getAttribute("data-betterchzzk-auto-quality-status"), statusBefore);
+});
+
+test("auto quality removes VOD track list listeners after a stable already result", () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
+        "https://chzzk.naver.com/video/12345",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const tracks = [
+        { id: "auto", label: "auto 1080p", height: 1080 },
+        { id: "1080", label: "1080p", height: 1080, kind: "main", selected: true },
+    ];
+    const trackList = createVideoTrackList(tracks, 1);
+    const listeners = new Map();
+
+    trackList.addEventListener = (type, listener) => {
+        if (!listeners.has(type)) listeners.set(type, new Set());
+        listeners.get(type).add(listener);
+    };
+    trackList.removeEventListener = (type, listener) => {
+        listeners.get(type)?.delete(listener);
+    };
+
+    video.currentTime = 2;
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "duration", {
+        configurable: true,
+        get: () => 120,
+    });
+    Object.defineProperty(video, "videoTracks", {
+        configurable: true,
+        get: () => trackList,
+    });
+
+    evalRepoScript(dom, "features", "autoQualityPage.js");
+
+    const result = requestAutoQualityApply(dom, "1080p");
+    assert.equal(result.status, "already");
+    assert.equal(listeners.get("change")?.size || 0, 0);
+
+    const statusBefore = document.documentElement.getAttribute("data-betterchzzk-auto-quality-status");
+    for (const listener of listeners.get("change") || []) {
+        listener.call(trackList, new dom.window.Event("change"));
+    }
+
+    assert.equal(document.documentElement.getAttribute("data-betterchzzk-auto-quality-status"), statusBefore);
+});
+
+test("auto quality does not reopen VOD page apply after stable already startup progress", () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
+        "https://chzzk.naver.com/video/12345",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const tracks = [
+        { id: "auto", label: "auto 1080p", height: 1080 },
+        { id: "1080", label: "1080p", height: 1080, kind: "main", selected: true },
+    ];
+    const trackList = createVideoTrackList(tracks, 1);
+
+    video.currentTime = 2;
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "duration", {
+        configurable: true,
+        get: () => 120,
+    });
+    Object.defineProperty(video, "videoTracks", {
+        configurable: true,
+        get: () => trackList,
+    });
+
+    evalRepoScript(dom, "features", "autoQualityPage.js");
+
+    const result = requestAutoQualityApply(dom, "1080p");
+    assert.equal(result.status, "already");
+
+    const scheduledTimers = [];
+    dom.window.setTimeout = (callback, delay) => {
+        scheduledTimers.push({ callback, delay });
+        return scheduledTimers.length;
+    };
+    dom.window.clearTimeout = () => {};
+    const statusBefore = document.documentElement.getAttribute("data-betterchzzk-auto-quality-status");
+
+    video.dispatchEvent(new dom.window.Event("timeupdate", { bubbles: true }));
+
+    assert.equal(scheduledTimers.length, 0);
+    assert.equal(document.documentElement.getAttribute("data-betterchzzk-auto-quality-status"), statusBefore);
+});
+
+test("auto quality reopens VOD page apply when the stable video is replaced", () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
+        "https://chzzk.naver.com/video/12345",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const tracks = [
+        { id: "auto", label: "auto 1080p", height: 1080 },
+        { id: "1080", label: "1080p", height: 1080, kind: "main", selected: true },
+    ];
+
+    video.currentTime = 2;
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "duration", {
+        configurable: true,
+        get: () => 120,
+    });
+    Object.defineProperty(video, "videoTracks", {
+        configurable: true,
+        get: () => createVideoTrackList(tracks, 1),
+    });
+
+    evalRepoScript(dom, "features", "autoQualityPage.js");
+
+    const result = requestAutoQualityApply(dom, "1080p");
+    assert.equal(result.status, "already");
+
+    const scheduledTimers = [];
+    dom.window.setTimeout = (callback, delay) => {
+        scheduledTimers.push({ callback, delay });
+        return scheduledTimers.length;
+    };
+    dom.window.clearTimeout = () => {};
+
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:auto-quality:state"));
+    assert.equal(scheduledTimers.length, 0);
+
+    const replacement = document.createElement("video");
+    replacement.currentTime = 2;
+    makeVisibleVideo(replacement);
+    Object.defineProperty(replacement, "duration", {
+        configurable: true,
+        get: () => 120,
+    });
+    Object.defineProperty(replacement, "videoTracks", {
+        configurable: true,
+        get: () =>
+            createVideoTrackList(
+                [
+                    { id: "auto", label: "auto 1080p", height: 1080 },
+                    { id: "1080", label: "1080p", height: 1080, kind: "main" },
+                ],
+                0
+            ),
+    });
+    document.querySelector("main").replaceChildren(replacement);
+
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:auto-quality:state"));
+    assert.equal(scheduledTimers.length, 1);
+    assert.equal(scheduledTimers[0].delay, 0);
+});
+
 test("auto quality page hook leaves videoTracks descriptors untouched outside playback routes", () => {
     const chrome = createFakeChrome();
     const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/category/game/lives", chrome);
@@ -2988,6 +3435,205 @@ test("auto quality publishes state without writing a page localStorage cache", a
 
     assert.ok(dom.window.document.documentElement.getAttribute("data-betterchzzk-auto-quality-state"));
     assert.equal(dom.window.localStorage.getItem("betterchzzk:auto-quality:state-cache"), null);
+});
+
+test("live watch history reuses normalized history between session flushes", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: true,
+        },
+    });
+    const dom = createPageDom(
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const clock = useFakePerformanceNow(dom);
+    const video = dom.window.document.getElementById("video");
+    let historyGetCount = 0;
+    let historySetCount = 0;
+    const nativeGet = chrome.storage.local.get.bind(chrome.storage.local);
+    const nativeSet = chrome.storage.local.set.bind(chrome.storage.local);
+
+    t.after(async () => {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    });
+
+    chrome.storage.local.get = (keys, callback) => {
+        const list = Array.isArray(keys) ? keys : [keys];
+        if (list.includes("betterChzzkLiveWatchHistory")) historyGetCount += 1;
+        return nativeGet(keys, callback);
+    };
+    chrome.storage.local.set = (values, callback) => {
+        if (values && Object.hasOwn(values, "betterChzzkLiveWatchHistory")) historySetCount += 1;
+        return nativeSet(values, callback);
+    };
+
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+    Object.defineProperty(video, "ended", { configurable: true, get: () => false });
+    Object.defineProperty(video, "playbackRate", { configurable: true, get: () => 1 });
+    Object.defineProperty(video, "readyState", {
+        configurable: true,
+        get: () => dom.window.HTMLMediaElement.HAVE_CURRENT_DATA,
+    });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "liveWatchHistory.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const tick = intervals.find((interval) => interval.ms === 5000)?.fn;
+    const flush = intervals.find((interval) => interval.ms === 15000)?.fn;
+    assert.equal(typeof tick, "function");
+    assert.equal(typeof flush, "function");
+
+    for (let index = 0; index < 6; index += 1) {
+        clock.advance(10000);
+        tick();
+    }
+    flush();
+
+    await waitForCondition(() => historySetCount === 1);
+    assert.equal(historyGetCount, 1);
+
+    clock.advance(10000);
+    tick();
+    flush();
+
+    await waitForCondition(() => historySetCount === 2);
+    assert.equal(historyGetCount, 1);
+    assert.equal(Object.keys(chrome.testState.local.betterChzzkLiveWatchHistory.entries).length, 1);
+});
+
+test("live watch history skips force flush when session state is unchanged", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: true,
+        },
+    });
+    const dom = createPageDom(
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const clock = useFakePerformanceNow(dom);
+    const video = dom.window.document.getElementById("video");
+    let historySetCount = 0;
+    const nativeSet = chrome.storage.local.set.bind(chrome.storage.local);
+
+    t.after(async () => {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    });
+
+    chrome.storage.local.set = (values, callback) => {
+        if (values && Object.hasOwn(values, "betterChzzkLiveWatchHistory")) historySetCount += 1;
+        return nativeSet(values, callback);
+    };
+
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+    Object.defineProperty(video, "ended", { configurable: true, get: () => false });
+    Object.defineProperty(video, "playbackRate", { configurable: true, get: () => 1 });
+    Object.defineProperty(video, "readyState", {
+        configurable: true,
+        get: () => dom.window.HTMLMediaElement.HAVE_CURRENT_DATA,
+    });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "liveWatchHistory.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const tick = intervals.find((interval) => interval.ms === 5000)?.fn;
+    const flush = intervals.find((interval) => interval.ms === 15000)?.fn;
+    assert.equal(typeof tick, "function");
+    assert.equal(typeof flush, "function");
+
+    for (let index = 0; index < 6; index += 1) {
+        clock.advance(10000);
+        tick();
+    }
+    flush();
+
+    await waitForCondition(() => historySetCount === 1);
+
+    dom.window.dispatchEvent(new dom.window.Event("pagehide"));
+    await waitForAsyncCallbacks();
+
+    assert.equal(historySetCount, 1);
+});
+
+test("live watch history caps stored watched ranges per session", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: true,
+        },
+    });
+    const dom = createPageDom(
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const clock = useFakePerformanceNow(dom);
+    const video = dom.window.document.getElementById("video");
+    let nowMs = Date.parse("2026-06-29T12:00:00+09:00");
+
+    t.after(async () => {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    });
+
+    dom.window.Date.now = () => nowMs;
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+    Object.defineProperty(video, "ended", { configurable: true, get: () => false });
+    Object.defineProperty(video, "playbackRate", { configurable: true, get: () => 1 });
+    Object.defineProperty(video, "readyState", {
+        configurable: true,
+        get: () => dom.window.HTMLMediaElement.HAVE_CURRENT_DATA,
+    });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "liveWatchHistory.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const tick = intervals.find((interval) => interval.ms === 5000)?.fn;
+    const flush = intervals.find((interval) => interval.ms === 15000)?.fn;
+    assert.equal(typeof tick, "function");
+    assert.equal(typeof flush, "function");
+
+    for (let index = 0; index < 205; index += 1) {
+        clock.advance(10000);
+        nowMs += 20000;
+        tick();
+    }
+    flush();
+
+    await waitForCondition(() => chrome.testState.local.betterChzzkLiveWatchHistory);
+
+    const entry = Object.values(chrome.testState.local.betterChzzkLiveWatchHistory.entries)[0];
+    const detail = entry.sessionDetails[0];
+    assert.equal(detail.watchedRanges.length, 200);
+    assert.ok(detail.watchedSeconds >= 2000);
 });
 
 test("VOD replay chat fix ignores currentTime-only URL changes on the same VOD", async () => {

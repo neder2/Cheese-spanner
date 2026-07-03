@@ -26,7 +26,6 @@
     let currentQuery = "";
     let observer = null;
     let lastUrl = location.href;
-    let scheduled = false;
     let activeFetchToken = 0;
     let commentSearchTimer = 0;
     let commentSearchToken = 0;
@@ -41,15 +40,20 @@
     let activeCommentTooltipIcon = null;
     let commentTooltipOpenedAt = 0;
     let lastIndexApplyAt = 0;
+    let lastCommentApplyAt = 0;
+    let commentApplyTimer = 0;
+    let commentAlignFrame = 0;
     let activeIndexAbortController = null;
     let activeCommentAbortController = null;
     let runtimeInstalled = false;
     let routeListenersInstalled = false;
     let removePageChangeDetection = null;
     let commentTooltipListenersInstalled = false;
+    let filterPillGroupCache = null;
     const {
         bindFeatureOptions,
         createMutationObserverSync,
+        createThrottledDomSync,
         fetchJson,
         isLastPage,
         normSpace,
@@ -63,6 +67,7 @@
         storageGet,
         storageSet,
     } = BetterChzzk.utils;
+    const scheduleThrottledMount = createThrottledDomSync(runScheduledMount, 160);
     let commentDeviceId = "";
     let commentDeviceIdPromise = null;
 
@@ -119,9 +124,7 @@
     }
 
     function createCommentDeviceId() {
-        return globalThis.crypto?.randomUUID
-            ? globalThis.crypto.randomUUID()
-            : `${Date.now()}-${Math.random()}`;
+        return globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
     }
 
     async function getCommentDeviceId() {
@@ -141,18 +144,22 @@
             } catch (_) {
                 return createCommentDeviceId();
             }
-        })().then((value) => {
-            commentDeviceId = value;
-            return value;
-        }).finally(() => {
-            commentDeviceIdPromise = null;
-        });
+        })()
+            .then((value) => {
+                commentDeviceId = value;
+                return value;
+            })
+            .finally(() => {
+                commentDeviceIdPromise = null;
+            });
 
         return commentDeviceIdPromise;
     }
 
     function injectStyleOnce() {
-        BetterChzzk.utils.injectStyleOnce(STYLE_ID, `
+        BetterChzzk.utils.injectStyleOnce(
+            STYLE_ID,
+            `
 #${BAR_ID}{
   --bcvs-accent:var(--Content-Brand-Strong, #00FFA3);
   --bcvs-bg:var(--Surface-Neutral-Base, #2E3033);
@@ -406,7 +413,8 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
     max-height:260px;
   }
 }
-`);
+`
+        );
     }
 
     function findCardLinks(root = document) {
@@ -469,13 +477,10 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
                 const title = v.videoTitle ?? v.title ?? v.subject ?? "";
                 if (!videoNo || !title) return null;
                 const readCount = v.readCount ?? v.videoReadCount ?? v.viewCount ?? null;
-                const readCountNumber = readCount === null || readCount === undefined || readCount === ""
-                    ? null
-                    : Number(readCount);
+                const readCountNumber =
+                    readCount === null || readCount === undefined || readCount === "" ? null : Number(readCount);
                 const livePv = v.livePv ?? v.livePlaybackCount ?? v.liveViewCount ?? null;
-                const livePvNumber = livePv === null || livePv === undefined || livePv === ""
-                    ? null
-                    : Number(livePv);
+                const livePvNumber = livePv === null || livePv === undefined || livePv === "" ? null : Number(livePv);
                 return {
                     videoNo,
                     title: String(title),
@@ -648,7 +653,14 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         activeIndexAbortController = new AbortController();
         const signal = activeIndexAbortController.signal;
         const token = ++activeFetchToken;
-        const entry = existing || { videos: [], seen: new Set(), complete: false, error: null, loading: false, loadingToken: 0 };
+        const entry = existing || {
+            videos: [],
+            seen: new Set(),
+            complete: false,
+            error: null,
+            loading: false,
+            loadingToken: 0,
+        };
         let reachedBoundary = false;
         let failed = false;
         entry.complete = false;
@@ -762,9 +774,41 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
             window.clearTimeout(commentSearchTimer);
             commentSearchTimer = 0;
         }
+        if (commentApplyTimer) {
+            window.clearTimeout(commentApplyTimer);
+            commentApplyTimer = 0;
+        }
         abortController(activeCommentAbortController);
         activeCommentAbortController = null;
         setLoading(false, "comments");
+    }
+
+    function applyCommentSearchFilter() {
+        if (commentApplyTimer) {
+            window.clearTimeout(commentApplyTimer);
+            commentApplyTimer = 0;
+        }
+        lastCommentApplyAt = performance.now();
+        lastFilterKey = null;
+        applyFilter();
+        updateStatus();
+    }
+
+    function scheduleCommentSearchFilterApply({ force = false } = {}) {
+        updateStatus();
+        if (force) {
+            applyCommentSearchFilter();
+            return;
+        }
+
+        const now = performance.now();
+        const remaining = INDEX_APPLY_INTERVAL_MS - (now - lastCommentApplyAt);
+        if (remaining <= 0) {
+            applyCommentSearchFilter();
+            return;
+        }
+        if (commentApplyTimer) return;
+        commentApplyTimer = window.setTimeout(applyCommentSearchFilter, remaining);
     }
 
     function shouldFetchCommentsForQuery(video, query) {
@@ -844,13 +888,14 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
                     const batch = targets.slice(i, i + COMMENT_FETCH_CONCURRENCY);
                     await Promise.all(batch.map((video) => hydrateVideoComments(video, token, signal)));
                     fetchedCount += batch.length;
-                    lastFilterKey = null;
-                    applyFilter();
-                    updateStatus();
+                    scheduleCommentSearchFilterApply();
                     if (fetchedCount >= getCommentMaxVideos()) break;
                 }
             }
         } finally {
+            if (token === commentSearchToken && normalize(currentQuery)) {
+                scheduleCommentSearchFilterApply({ force: true });
+            }
             if (activeCommentAbortController?.signal === signal) activeCommentAbortController = null;
             commentSearchRunning = false;
             setLoading(false, "comments");
@@ -877,13 +922,15 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
             return;
         }
         if (!currentQuery) {
-            status.textContent = entry.loading ? `${total}개 로딩중` : (total ? `${total}개` : "");
+            status.textContent = entry.loading ? `${total}개 로딩중` : total ? `${total}개` : "";
             return;
         }
         const matches = filterVideosByNormalizedQuery(entry.videos, normalize(currentQuery));
         status.textContent = entry.complete
             ? `${matches.length} / ${total}`
-            : entry.loading ? `${matches.length} / ${total} (로딩중)` : `${matches.length} / ${total}`;
+            : entry.loading
+              ? `${matches.length} / ${total} (로딩중)`
+              : `${matches.length} / ${total}`;
     }
 
     function computePath(root, target) {
@@ -973,11 +1020,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
 
         if (!video || typeof video.readCount !== "number" || !Number.isFinite(video.readCount)) return [];
         const n = Math.max(0, Math.floor(video.readCount));
-        const variants = [
-            formatCountNumber(n),
-            n.toLocaleString("ko-KR"),
-            String(n),
-        ].map((v) => normalize(v));
+        const variants = [formatCountNumber(n), n.toLocaleString("ko-KR"), String(n)].map((v) => normalize(v));
 
         for (const el of getLeafElements(root)) {
             const raw = normSpace(el.textContent || "");
@@ -990,12 +1033,15 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
     }
 
     function findViewCountElement(root, video) {
-        return findViewCountElements(root, video)[0] || findElementByPredicate(root, (t) => {
-            if (looksLikePlaybackStateText(t)) return false;
-            if (!/(조회수|views?)/i.test(t) || !/\d/.test(t)) return false;
-            const text = normalize(t);
-            return !/\d+\s*(분|시간|일|주|개월|년)\s*전/.test(text);
-        });
+        return (
+            findViewCountElements(root, video)[0] ||
+            findElementByPredicate(root, (t) => {
+                if (looksLikePlaybackStateText(t)) return false;
+                if (!/(조회수|views?)/i.test(t) || !/\d/.test(t)) return false;
+                const text = normalize(t);
+                return !/\d+\s*(분|시간|일|주|개월|년)\s*전/.test(text);
+            })
+        );
     }
 
     function findLivePvElements(root) {
@@ -1040,7 +1086,10 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         const countText = formatLivePvNumber(livePv);
         const original = normSpace(fallbackText);
         if (/시청된\s*라이브/.test(original)) {
-            const replaced = original.replace(/[\d,.]+(?:\.\d+)?\s*만?\s*회\s*시청된\s*라이브/, `${countText}회 시청된 라이브`);
+            const replaced = original.replace(
+                /[\d,.]+(?:\.\d+)?\s*만?\s*회\s*시청된\s*라이브/,
+                `${countText}회 시청된 라이브`
+            );
             return replaced === original ? `${countText}회 시청된 라이브` : replaced;
         }
         return `${countText}회 시청된 라이브`;
@@ -1223,8 +1272,9 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         const ratio = getWatchProgressRatio(video.watchTimeline, video.duration) ?? video.progressRatio;
         if (typeof ratio !== "number" || !Number.isFinite(ratio) || ratio <= 0) return;
 
-        const template = (tpl.playbackTemplates || [])
-            .find((item) => !looksLikePlaybackStateText(normSpace(item.node.textContent || "")));
+        const template = (tpl.playbackTemplates || []).find(
+            (item) => !looksLikePlaybackStateText(normSpace(item.node.textContent || ""))
+        );
         if (!template) return;
 
         const parent = applyPath(card, template.parentPath);
@@ -1256,8 +1306,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
             const cloned = child.cloneNode(true);
 
             const titleEl =
-                findElementByExactText(cloned, tplVideo.title) ||
-                findElementByContainsText(cloned, tplVideo.title);
+                findElementByExactText(cloned, tplVideo.title) || findElementByContainsText(cloned, tplVideo.title);
             const titlePath = titleEl ? computePath(cloned, titleEl) : null;
 
             const durEl = findDurationLeaf(cloned);
@@ -1270,7 +1319,9 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
             const viewPaths = viewEls.map((el) => computePath(cloned, el)).filter(Boolean);
             const viewEl = viewEls[0] || findViewCountElement(cloned, tplVideo);
             const viewPath = viewEl ? computePath(cloned, viewEl) : null;
-            const livePvPaths = findLivePvElements(cloned).map((el) => computePath(cloned, el)).filter(Boolean);
+            const livePvPaths = findLivePvElements(cloned)
+                .map((el) => computePath(cloned, el))
+                .filter(Boolean);
             const playbackTemplates = capturePlaybackTemplates(cloned);
 
             cardTemplate = {
@@ -1288,7 +1339,6 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         }
         return null;
     }
-
 
     function formatDuration(sec) {
         if (typeof sec !== "number" || !Number.isFinite(sec) || sec <= 0) return "";
@@ -1311,9 +1361,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
             return `${y}.${m}.${day}`;
         }
 
-        const dateValue = typeof iso === "number" || /^\d{11,}$/.test(raw)
-            ? Number(raw)
-            : raw.replace(" ", "T");
+        const dateValue = typeof iso === "number" || /^\d{11,}$/.test(raw) ? Number(raw) : raw.replace(" ", "T");
         const d = new Date(dateValue);
         if (Number.isNaN(d.getTime())) return raw;
         const y = String(d.getFullYear()).slice(-2);
@@ -1365,9 +1413,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
     }
 
     function handleCommentTooltipResize() {
-        alignCommentIconsToTagRows();
-        if (activeCommentTooltipIcon?.isConnected) positionCommentTooltip(activeCommentTooltipIcon);
-        else hideCommentTooltip();
+        scheduleCommentIconAlign();
     }
 
     function installCommentTooltipListeners() {
@@ -1405,10 +1451,12 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
     }
 
     function isPointInRect(x, y, rect, padding = 0) {
-        return x >= rect.left - padding &&
+        return (
+            x >= rect.left - padding &&
             x <= rect.right + padding &&
             y >= rect.top - padding &&
-            y <= rect.bottom + padding;
+            y <= rect.bottom + padding
+        );
     }
 
     function isPointerInCommentSurface(e) {
@@ -1422,9 +1470,11 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
             top: Math.min(iconRect.top, tooltipRect.top),
             bottom: Math.max(iconRect.bottom, tooltipRect.bottom),
         };
-        return isPointInRect(e.clientX, e.clientY, iconRect, 6) ||
+        return (
+            isPointInRect(e.clientX, e.clientY, iconRect, 6) ||
             isPointInRect(e.clientX, e.clientY, tooltipRect, 6) ||
-            isPointInRect(e.clientX, e.clientY, bridgeRect, 10);
+            isPointInRect(e.clientX, e.clientY, bridgeRect, 10)
+        );
     }
 
     function handleCommentTooltipPointerMove(e) {
@@ -1438,10 +1488,10 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
 
     function handleCommentTooltipPointerDown(e) {
         if (!activeCommentTooltipIcon) return;
-        if (e.target instanceof Node && (
-            activeCommentTooltipIcon.contains(e.target) ||
-            commentTooltip?.contains(e.target)
-        )) {
+        if (
+            e.target instanceof Node &&
+            (activeCommentTooltipIcon.contains(e.target) || commentTooltip?.contains(e.target))
+        ) {
             return;
         }
         hideCommentTooltip();
@@ -1508,7 +1558,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
     }
 
     function scrollCommentTooltipToHit(tooltip) {
-        const hit = tooltip.querySelector(".bcvs-comment-tooltip-line[data-hit=\"1\"]");
+        const hit = tooltip.querySelector('.bcvs-comment-tooltip-line[data-hit="1"]');
         if (!(hit instanceof HTMLElement)) {
             tooltip.scrollTop = 0;
             return;
@@ -1598,6 +1648,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
 
     function alignCommentIconsToTagRows() {
         if (!currentGrid?.isConnected) return;
+        const updates = [];
         for (const card of currentGrid.querySelectorAll(`[${INJECTED_ATTR}="1"]`)) {
             if (!(card instanceof HTMLElement)) continue;
             const icon = card.querySelector(`[${COMMENT_ICON_ATTR}="1"]`);
@@ -1605,17 +1656,33 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
 
             const tagBottom = getCommentTagLineBottom(card, icon);
             if (!tagBottom) {
-                icon.style.removeProperty("top");
-                icon.style.setProperty("bottom", "0px", "important");
+                updates.push({ icon, top: null });
                 continue;
             }
 
             const cardRect = card.getBoundingClientRect();
             const iconHeight = icon.getBoundingClientRect().height || 30;
-            icon.style.setProperty("top", `${Math.round(tagBottom - cardRect.top - iconHeight)}px`, "important");
-            icon.style.setProperty("bottom", "auto", "important");
+            updates.push({ icon, top: Math.round(tagBottom - cardRect.top - iconHeight) });
+        }
+        for (const { icon, top } of updates) {
+            if (top === null) {
+                icon.style.removeProperty("top");
+                icon.style.setProperty("bottom", "0px", "important");
+            } else {
+                icon.style.setProperty("top", `${top}px`, "important");
+                icon.style.setProperty("bottom", "auto", "important");
+            }
         }
         if (activeCommentTooltipIcon?.isConnected) positionCommentTooltip(activeCommentTooltipIcon);
+    }
+
+    function scheduleCommentIconAlign() {
+        if (commentAlignFrame) return;
+        commentAlignFrame = requestAnimationFrame(() => {
+            commentAlignFrame = 0;
+            alignCommentIconsToTagRows();
+            if (!activeCommentTooltipIcon?.isConnected) hideCommentTooltip();
+        });
     }
 
     function attachCommentMatch(card, video) {
@@ -1699,13 +1766,14 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
             if (formatted) durEl.textContent = formatted;
         }
 
-        const dateEl = applyPath(card, tpl.datePath) || findElementByPredicate(card, looksLikeDateText, { leafOnly: true });
+        const dateEl =
+            applyPath(card, tpl.datePath) || findElementByPredicate(card, looksLikeDateText, { leafOnly: true });
         if (dateEl && video.publishDate) {
             const formatted = formatDate(video.publishDate);
             if (formatted) dateEl.textContent = formatted;
         }
 
-        const viewPaths = tpl.viewPaths?.length ? tpl.viewPaths : (tpl.viewPath ? [tpl.viewPath] : []);
+        const viewPaths = tpl.viewPaths?.length ? tpl.viewPaths : tpl.viewPath ? [tpl.viewPath] : [];
         for (const viewPath of viewPaths) {
             const viewEl = applyPath(card, viewPath);
             if (!viewEl) continue;
@@ -1823,14 +1891,14 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         const matches = filterVideosByNormalizedQuery(entry.videos, normalizedQuery);
         const renderedMatches = matches.slice(0, visibleMatchLimit);
         const remainingMatches = Math.max(0, matches.length - renderedMatches.length);
-        const stateKey = !entry || entry.videos.length === 0
-            ? "loading"
-            : entry.complete ? "done" : "partial";
-        const expected = matches.map((v) => {
-            const commentCount = Array.isArray(v.commentTexts) ? v.commentTexts.length : 0;
-            const commentHit = hasCommentMatchNorm(v, normalizedQuery) ? "c" : "t";
-            return `${v.videoNo}:${commentHit}:${v.commentFetched ? 1 : 0}:${commentCount}`;
-        }).join(",");
+        const stateKey = !entry || entry.videos.length === 0 ? "loading" : entry.complete ? "done" : "partial";
+        const expected = matches
+            .map((v) => {
+                const commentCount = Array.isArray(v.commentTexts) ? v.commentTexts.length : 0;
+                const commentHit = hasCommentMatchNorm(v, normalizedQuery) ? "c" : "t";
+                return `${v.videoNo}:${commentHit}:${v.commentFetched ? 1 : 0}:${commentCount}`;
+            })
+            .join(",");
         const key = `on|${stateKey}|${visibleMatchLimit}|${expected}`;
 
         const existingInjected = currentGrid.querySelectorAll(`[${INJECTED_ATTR}="1"]`);
@@ -1912,7 +1980,10 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
                 stopActiveFetch();
             } else {
                 const entry = getEntry();
-                if (currentChannelId && (!entry || (!entry.complete && (!entry.loading || entry.loadingToken !== activeFetchToken)))) {
+                if (
+                    currentChannelId &&
+                    (!entry || (!entry.complete && (!entry.loading || entry.loadingToken !== activeFetchToken)))
+                ) {
                     buildIndex(currentChannelId);
                 }
                 scheduleCommentSearch();
@@ -1940,12 +2011,14 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
     }
 
     function findFilterPillGroup() {
+        if (filterPillGroupCache?.isConnected) return filterPillGroupCache;
+        filterPillGroupCache = null;
+
         const labels = ["전체", "지난 방송", "업로드한 영상"];
-        const candidates = Array.from(document.querySelectorAll("button, a, span, div"))
-            .filter((el) => {
-                const t = (el.textContent || "").trim();
-                return labels.includes(t);
-            });
+        const candidates = Array.from(document.querySelectorAll("button, a, span, div")).filter((el) => {
+            const t = (el.textContent || "").trim();
+            return labels.includes(t);
+        });
         if (candidates.length < 2) return null;
 
         const counts = new Map();
@@ -1967,7 +2040,8 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
             best = el;
             bestCount = count;
         }
-        return best;
+        filterPillGroupCache = best;
+        return filterPillGroupCache;
     }
 
     function parseCssRgb(value) {
@@ -1991,7 +2065,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
     function isDarkColor(value) {
         const rgb = parseCssRgb(value);
         if (!rgb) return false;
-        return (rgb.r * 0.299 + rgb.g * 0.587 + rgb.b * 0.114) < 96;
+        return rgb.r * 0.299 + rgb.g * 0.587 + rgb.b * 0.114 < 96;
     }
 
     function getReadableTextColor(backgroundColor) {
@@ -2000,13 +2074,12 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
 
     function getVisibleControls(root) {
         if (!root) return [];
-        return Array.from(root.querySelectorAll("button, a"))
-            .filter((el) => {
-                if (!(el instanceof HTMLElement)) return false;
-                if (el.closest(`#${BAR_ID}`)) return false;
-                const rect = el.getBoundingClientRect();
-                return rect.width > 0 && rect.height > 0;
-            });
+        return Array.from(root.querySelectorAll("button, a")).filter((el) => {
+            if (!(el instanceof HTMLElement)) return false;
+            if (el.closest(`#${BAR_ID}`)) return false;
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        });
     }
 
     function syncBarWithHostUi(bar, host) {
@@ -2021,10 +2094,11 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         bar.style.setProperty("--bcvs-font-weight", fontStyle.fontWeight);
         bar.style.setProperty("--bcvs-line-height", fontStyle.lineHeight);
 
-        const styleSource = controls.find((el) => {
-            const cs = getComputedStyle(el);
-            return !isTransparentColor(cs.backgroundColor) && !isDarkColor(cs.color);
-        }) || controls.find((el) => !isTransparentColor(getComputedStyle(el).backgroundColor));
+        const styleSource =
+            controls.find((el) => {
+                const cs = getComputedStyle(el);
+                return !isTransparentColor(cs.backgroundColor) && !isDarkColor(cs.color);
+            }) || controls.find((el) => !isTransparentColor(getComputedStyle(el).backgroundColor));
 
         if (!styleSource) return;
 
@@ -2116,6 +2190,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         currentChannelId = null;
         currentGrid = null;
         cardTemplate = null;
+        filterPillGroupCache = null;
         lastFilterKey = null;
         activeFetchToken++;
         cancelCommentSearch();
@@ -2149,12 +2224,13 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         const added = m.addedNodes || [];
         const removed = m.removedNodes || [];
         if (!added.length && !removed.length) {
-            if (m.type === "attributes" && (
-                m.attributeName === HIDE_ATTR ||
-                m.attributeName === CARD_MARK_ATTR ||
-                m.attributeName === INJECTED_ATTR ||
-                m.attributeName === LOAD_MORE_ATTR
-            )) {
+            if (
+                m.type === "attributes" &&
+                (m.attributeName === HIDE_ATTR ||
+                    m.attributeName === CARD_MARK_ATTR ||
+                    m.attributeName === INJECTED_ATTR ||
+                    m.attributeName === LOAD_MORE_ATTR)
+            ) {
                 return true;
             }
             return false;
@@ -2168,6 +2244,14 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         return true;
     }
 
+    function runScheduledMount() {
+        if (!isFeatureEnabled() || !isVideosTab()) {
+            removeBarIfMounted();
+            return;
+        }
+        ensureBarMounted();
+    }
+
     function schedule() {
         if (!isFeatureEnabled()) {
             removeBarIfMounted();
@@ -2177,16 +2261,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
             removeBarIfMounted();
             return;
         }
-        if (scheduled) return;
-        scheduled = true;
-        requestAnimationFrame(() => {
-            scheduled = false;
-            if (!isFeatureEnabled() || !isVideosTab()) {
-                removeBarIfMounted();
-                return;
-            }
-            ensureBarMounted();
-        });
+        scheduleThrottledMount();
     }
 
     function startObserver() {
@@ -2203,7 +2278,7 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
                     if (newChannel !== currentChannelId) removeBar();
                 }
             },
-            shouldIgnoreMutations: (mutations) => !urlChanged && mutations.every(isOurMutation),
+            shouldIgnoreMutations: (mutations) => !urlChanged && (!isVideosTab() || mutations.every(isOurMutation)),
             shouldSchedule: () => {
                 if (!isFeatureEnabled() || !isVideosTab()) {
                     if (urlChanged) removeBarIfMounted();
@@ -2216,6 +2291,10 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
     }
 
     function removeCommentSurfaces() {
+        if (commentAlignFrame) {
+            cancelAnimationFrame(commentAlignFrame);
+            commentAlignFrame = 0;
+        }
         removeCommentTooltip();
         document.querySelectorAll(`[${COMMENT_ICON_ATTR}="1"]`).forEach((el) => el.remove());
     }
@@ -2252,7 +2331,6 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
 
     function teardownRuntime() {
         runtimeInstalled = false;
-        scheduled = false;
         stopActiveFetch();
         removeBarIfMounted();
         removeCommentTooltip();

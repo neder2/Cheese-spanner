@@ -141,12 +141,23 @@
         return rectsOverlap(controlRect, videoRect, 12);
     }
 
-    function getVolumeControlAt(event, video) {
+    function getVolumeControlCandidates(event) {
+        const controls = [];
+        const seen = new Set();
         for (const el of getEventElements(event)) {
             const control = getVisibleVolumeElement(el);
-            if (control && isVolumeControlInPlaybackContext(control, video)) return control;
+            if (!control || seen.has(control)) continue;
+            seen.add(control);
+            controls.push(control);
         }
 
+        return controls;
+    }
+
+    function getVolumeControlForVideo(controls, video) {
+        for (const control of controls || []) {
+            if (isVolumeControlInPlaybackContext(control, video)) return control;
+        }
         return null;
     }
 
@@ -242,10 +253,13 @@
         if (!options.enabled || !isPlaybackRoute()) return;
         if (!Number.isFinite(event.deltaY) || event.deltaY === 0) return;
 
+        const controls = getVolumeControlCandidates(event);
+        if (!controls.length) return;
+
         const video = getMainVideoElement();
         if (!(video instanceof HTMLVideoElement)) return;
 
-        const control = getVolumeControlAt(event, video);
+        const control = getVolumeControlForVideo(controls, video);
         if (!control) return;
 
         event.preventDefault();
@@ -290,7 +304,7 @@
     }
 
     function syncWheelListener() {
-        if (isPlaybackRoute()) installWheelListener();
+        if (options.enabled && isPlaybackRoute()) installWheelListener();
         else uninstallWheelListener();
     }
 

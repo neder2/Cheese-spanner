@@ -47,7 +47,10 @@
         onReady,
         startPageChangeDetection,
     } = BetterChzzk.utils;
-    const scheduleDomApply = createThrottledDomSync(() => requestQualityApplyBurst(RECOVERY_BURST_WINDOW_MS), DOM_APPLY_THROTTLE_MS);
+    const scheduleDomApply = createThrottledDomSync(
+        () => requestQualityApplyBurst(RECOVERY_BURST_WINDOW_MS),
+        DOM_APPLY_THROTTLE_MS
+    );
 
     function isSupportedRoute() {
         return isPlaybackRoute();
@@ -90,9 +93,7 @@
     }
 
     function getStartupApplyDelay(delayMs) {
-        const remainingMs = playbackStartupReadyAt
-            ? Math.ceil(playbackStartupReadyAt - performance.now())
-            : 0;
+        const remainingMs = playbackStartupReadyAt ? Math.ceil(playbackStartupReadyAt - performance.now()) : 0;
         return Math.max(delayMs, remainingMs > 0 ? remainingMs : 0);
     }
 
@@ -193,11 +194,13 @@
         document.documentElement.setAttribute(REQUEST_ATTR, JSON.stringify(payload));
         window.dispatchEvent(new Event(APPLY_EVENT));
 
-        return parseResult(requestId) || {
-            requestId,
-            status: "pending",
-            reason: "page-handler-missing",
-        };
+        return (
+            parseResult(requestId) || {
+                requestId,
+                status: "pending",
+                reason: "page-handler-missing",
+            }
+        );
     }
 
     async function applyPreferredQuality() {

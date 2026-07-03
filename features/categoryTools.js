@@ -21,7 +21,9 @@
     const API_BASE = "https://api.chzzk.naver.com/service";
     const API_PAGE_SIZE = 50;
     const MAX_FOLLOWER_CACHE_ENTRIES = 1000;
-    const DEFAULT_PROFILE_IMAGE_URL = "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2080%2080'%3E%3Crect%20width='80'%20height='80'%20rx='40'%20fill='%23E7EAEE'/%3E%3Ccircle%20cx='40'%20cy='31'%20r='14'%20fill='%239DA5B6'/%3E%3Cpath%20d='M18%2068c3-15%2015-24%2022-24s19%209%2022%2024'%20fill='%239DA5B6'/%3E%3C/svg%3E";
+    const FOLLOWER_NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000;
+    const DEFAULT_PROFILE_IMAGE_URL =
+        "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2080%2080'%3E%3Crect%20width='80'%20height='80'%20rx='40'%20fill='%23E7EAEE'/%3E%3Ccircle%20cx='40'%20cy='31'%20r='14'%20fill='%239DA5B6'/%3E%3Cpath%20d='M18%2068c3-15%2015-24%2022-24s19%209%2022%2024'%20fill='%239DA5B6'/%3E%3C/svg%3E";
     const FOLLOWER_FILTER_PRESET_KEYS = Object.freeze([
         "categoryToolsFollowerFilterPreset1",
         "categoryToolsFollowerFilterPreset2",
@@ -49,7 +51,6 @@
     let viewFilterCustom = "";
     let viewFilterMaxCustom = "";
     let observer = null;
-    let scheduled = false;
     let applying = false;
     let applyQueued = false;
     let lastUrl = location.href;
@@ -64,6 +65,9 @@
     let metadataSearchRunning = false;
     let metadataSearchToken = 0;
     let followerHydrateTimer = 0;
+    let followerHydrationRefreshing = false;
+    let lastFollowerRefreshRouteKey = "";
+    let lastFollowerRefreshRows = [];
     let lastFollowerHydrateAt = 0;
     let menuPositionScheduled = false;
     let filterOptionDrag = null;
@@ -100,6 +104,7 @@
     const {
         bindFeatureOptions,
         createMutationObserverSync,
+        createThrottledDomSync,
         fetchJson,
         normSpace,
         normalizeCompact: normalize,
@@ -109,6 +114,7 @@
         startPageChangeDetection,
         touchMapEntry,
     } = BetterChzzk.utils;
+    const scheduleThrottledApply = createThrottledDomSync(runScheduledApply, 160);
 
     function isFeatureEnabled() {
         return featureOptions.categoryToolsEnabled;
@@ -182,7 +188,9 @@
     }
 
     function injectStyleOnce() {
-        BetterChzzk.utils.injectStyleOnce(STYLE_ID, `
+        BetterChzzk.utils.injectStyleOnce(
+            STYLE_ID,
+            `
 [${TABS_ATTR}="1"]{
   display:flex !important;
   align-items:center !important;
@@ -649,12 +657,14 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
   font:inherit;
   font-weight:700;
 }
-`);
+`
+        );
     }
 
     function findTabLineByLabels(labels, minCount, minWidth) {
-        const controls = Array.from(document.querySelectorAll("button, a"))
-            .filter((el) => labels.includes(normSpace(el.textContent)));
+        const controls = Array.from(document.querySelectorAll("button, a")).filter((el) =>
+            labels.includes(normSpace(el.textContent))
+        );
         if (controls.length < minCount) return null;
 
         const counts = new Map();
@@ -692,8 +702,8 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         return findTabLineByLabels(["라이브", "동영상"], 2, 100);
     }
 
-    function findGlobalSortLine() {
-        const controls = getGlobalSortControls();
+    function findGlobalSortLine(context = null) {
+        const controls = getGlobalSortControls(context);
         if (controls.length < 3) return null;
 
         const counts = new Map();
@@ -722,10 +732,31 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         return best;
     }
 
-    function getGlobalSortControls() {
+    function createApplyScanContext(route) {
+        return {
+            route,
+            globalSortControls: null,
+            globalSortKey: "",
+            globalSortRect: undefined,
+            tabLines: new Map(),
+            contentLeft: undefined,
+            tabBottom: undefined,
+            cardLinksByRoot: new WeakMap(),
+        };
+    }
+
+    function getContextTabLine(context, route = context?.route) {
+        if (!context) return findTabLine(route);
+        const key = route ? routeKey(route) : "";
+        if (!context.tabLines.has(key)) context.tabLines.set(key, findTabLine(route));
+        return context.tabLines.get(key);
+    }
+
+    function getGlobalSortControls(context = null) {
+        if (context?.globalSortControls) return context.globalSortControls;
         const labels = ["인기", "최신", "추천"];
         const byLabel = new Map();
-        for (const el of document.querySelectorAll("button, a, [role='button'], span, div")) {
+        for (const el of document.querySelectorAll("button, a, [role='button']")) {
             if (!(el instanceof HTMLElement)) continue;
             if (el.closest(`#${BAR_ID}`) || el.closest(`#${MENU_ID}`)) continue;
             const text = normSpace(el.textContent);
@@ -737,7 +768,9 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             if (!existing || candidate.area < existing.area) byLabel.set(text, candidate);
         }
 
-        return labels.map((label) => byLabel.get(label)?.el).filter(Boolean);
+        const controls = labels.map((label) => byLabel.get(label)?.el).filter(Boolean);
+        if (context) context.globalSortControls = controls;
+        return controls;
     }
 
     function rgbLuminance(value) {
@@ -774,25 +807,28 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         return score;
     }
 
-    function getGlobalSortKey() {
-        const controls = getGlobalSortControls();
+    function getGlobalSortKey(context = null) {
+        if (context?.globalSortKey) return context.globalSortKey;
+        const controls = getGlobalSortControls(context);
         const active = controls
             .map((control) => ({ control, score: activeGlobalSortScore(control) }))
             .filter((entry) => entry.score > 0)
             .sort((a, b) => b.score - a.score)[0]?.control;
-        return normSpace((active || controls[0])?.textContent) || "인기";
+        const key = normSpace((active || controls[0])?.textContent) || "인기";
+        if (context) context.globalSortKey = key;
+        return key;
     }
 
-    function listStateKey(route) {
+    function listStateKey(route, context = null) {
         if (!route) return "";
-        if (route.scope === "global-lives") return `${routeKey(route)}|sort:${getGlobalSortKey()}`;
+        if (route.scope === "global-lives") return `${routeKey(route)}|sort:${getGlobalSortKey(context)}`;
         return routeKey(route);
     }
 
-    function canUseMetadataForCurrentList(route) {
+    function canUseMetadataForCurrentList(route, context = null) {
         if (!route) return false;
         if (route.scope !== "global-lives") return true;
-        return getGlobalSortKey() === "인기";
+        return getGlobalSortKey(context) === "인기";
     }
 
     function isGlobalSortClickTarget(target) {
@@ -821,8 +857,8 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         scheduleApply();
     }
 
-    function findGlobalNavigationFilterHost() {
-        const controls = getGlobalSortControls();
+    function findGlobalNavigationFilterHost(context = null) {
+        const controls = getGlobalSortControls(context);
         for (const control of controls) {
             let node = control.parentElement;
             let depth = 0;
@@ -839,13 +875,14 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             }
         }
 
-        return Array.from(document.querySelectorAll('div[class*="navigation_component_filter"]'))
-            .find((node) => {
+        return (
+            Array.from(document.querySelectorAll('div[class*="navigation_component_filter"]')).find((node) => {
                 if (!(node instanceof HTMLElement)) return false;
                 if (node.closest(`#${BAR_ID}`) || node.closest(`#${MENU_ID}`)) return false;
                 const rect = node.getBoundingClientRect();
                 return rect.width > 0 && rect.height > 0 && rect.top < 220;
-            }) || null;
+            }) || null
+        );
     }
 
     function ensureGlobalFallbackHost(route) {
@@ -914,25 +951,27 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         };
     }
 
-    function getGlobalSortRect() {
-        const controls = getGlobalSortControls();
-        return getUnionRect(controls);
+    function getGlobalSortRect(context = null) {
+        if (context?.globalSortRect !== undefined) return context.globalSortRect;
+        const controls = getGlobalSortControls(context);
+        const rect = getUnionRect(controls);
+        if (context) context.globalSortRect = rect;
+        return rect;
     }
 
     function findGlobalTagSearch() {
-        const inputs = Array.from(document.querySelectorAll("input"))
-            .filter((input) => {
-                if (!(input instanceof HTMLElement)) return false;
-                if (input.closest(`#${BAR_ID}`) || input.closest(`#${MENU_ID}`)) return false;
-                const label = [
-                    input.getAttribute("placeholder"),
-                    input.getAttribute("aria-label"),
-                    input.getAttribute("title"),
-                ].join(" ");
-                if (!/태그/.test(label)) return false;
-                const rect = input.getBoundingClientRect();
-                return rect.width > 0 && rect.height > 0;
-            });
+        const inputs = Array.from(document.querySelectorAll("input")).filter((input) => {
+            if (!(input instanceof HTMLElement)) return false;
+            if (input.closest(`#${BAR_ID}`) || input.closest(`#${MENU_ID}`)) return false;
+            const label = [
+                input.getAttribute("placeholder"),
+                input.getAttribute("aria-label"),
+                input.getAttribute("title"),
+            ].join(" ");
+            if (!/태그/.test(label)) return false;
+            const rect = input.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        });
         return inputs[0] || null;
     }
 
@@ -1020,21 +1059,21 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
 
     function getVisibleHostControls(root) {
         if (!root) return [];
-        return Array.from(root.querySelectorAll("button, a"))
-            .filter((el) => {
-                if (!(el instanceof HTMLElement)) return false;
-                if (el.closest(`#${BAR_ID}`) || el.closest(`#${MENU_ID}`)) return false;
-                const rect = el.getBoundingClientRect();
-                return rect.width > 0 && rect.height > 0;
-            });
+        return Array.from(root.querySelectorAll("button, a")).filter((el) => {
+            if (!(el instanceof HTMLElement)) return false;
+            if (el.closest(`#${BAR_ID}`) || el.closest(`#${MENU_ID}`)) return false;
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        });
     }
 
     function syncFontWithHostUi(bar, host) {
         if (!bar || !host) return;
         const controls = getVisibleHostControls(host);
-        const fontSource = controls.find((el) => {
-            return ["라이브", "동영상", "클립"].includes(normSpace(el.textContent));
-        }) || controls[0];
+        const fontSource =
+            controls.find((el) => {
+                return ["라이브", "동영상", "클립"].includes(normSpace(el.textContent));
+            }) || controls[0];
         if (!fontSource) return;
 
         const fontStyle = getComputedStyle(fontSource);
@@ -1051,25 +1090,32 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         }
     }
 
-    function getContentLeft(route = getRoute()) {
+    function getContentLeft(route = getRoute(), context = null) {
+        if (context && context.contentLeft !== undefined) return context.contentLeft;
+        let value;
         if (route?.scope === "global-lives") {
-            const sortRect = getGlobalSortRect();
-            return sortRect ? Math.max(0, Math.floor(sortRect.left) - 8) : 0;
+            const sortRect = getGlobalSortRect(context);
+            value = sortRect ? Math.max(0, Math.floor(sortRect.left) - 8) : 0;
+        } else {
+            const tabs = getContextTabLine(context, route);
+            value = tabs ? Math.max(0, Math.floor(tabs.getBoundingClientRect().left) - 8) : 240;
         }
-        const tabs = findTabLine(route);
-        if (!tabs) return 240;
-        return Math.max(0, Math.floor(tabs.getBoundingClientRect().left) - 8);
+        if (context) context.contentLeft = value;
+        return value;
     }
 
-    function getTabBottom(route = getRoute()) {
+    function getTabBottom(route = getRoute(), context = null) {
+        if (context && context.tabBottom !== undefined) return context.tabBottom;
+        let value;
         if (route?.scope === "global-lives") {
-            const sortRect = getGlobalSortRect();
-            if (!sortRect) return 0;
-            return Math.max(0, Math.floor(sortRect.bottom) - 8);
+            const sortRect = getGlobalSortRect(context);
+            value = sortRect ? Math.max(0, Math.floor(sortRect.bottom) - 8) : 0;
+        } else {
+            const tabs = getContextTabLine(context, route);
+            value = tabs ? Math.floor(tabs.getBoundingClientRect().bottom) - 8 : 0;
         }
-        const tabs = findTabLine(route);
-        if (!tabs) return 0;
-        return Math.floor(tabs.getBoundingClientRect().bottom) - 8;
+        if (context) context.tabBottom = value;
+        return value;
     }
 
     function idPattern(route) {
@@ -1094,29 +1140,32 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         return mediaRect.width >= 120 && mediaRect.height >= 70;
     }
 
-    function findCardLinks(route, root = document) {
+    function findCardLinks(route, root = document, context = null) {
+        if (context?.cardLinksByRoot?.has(root)) return context.cardLinksByRoot.get(root);
         const pattern = idPattern(route);
-        const contentLeft = getContentLeft(route);
-        const tabBottom = getTabBottom(route);
+        const contentLeft = getContentLeft(route, context);
+        const tabBottom = getTabBottom(route, context);
         const seen = new Set();
-        return Array.from(root.querySelectorAll("a[href]"))
-            .filter((link) => {
-                const href = link.getAttribute("href") || "";
-                if (!pattern.test(href)) return false;
-                const id = getItemId(route, href);
-                if (!id) return false;
-                const rect = link.getBoundingClientRect();
-                const seenKey = `${href}|${Math.round(rect.x)}`;
-                if (seen.has(seenKey)) return false;
-                if (rect.width <= 0 || rect.height <= 0) return false;
-                if (rect.left < contentLeft || rect.top < tabBottom) return false;
-                if (!isCardLinkCandidate(route, link, rect)) return false;
-                seen.add(seenKey);
-                return true;
-            });
+        const links = Array.from(root.querySelectorAll("a[href]")).filter((link) => {
+            const href = link.getAttribute("href") || "";
+            if (!pattern.test(href)) return false;
+            const id = getItemId(route, href);
+            if (!id) return false;
+            const rect = link.getBoundingClientRect();
+            const seenKey = `${href}|${Math.round(rect.x)}`;
+            if (seen.has(seenKey)) return false;
+            if (rect.width <= 0 || rect.height <= 0) return false;
+            if (rect.left < contentLeft || rect.top < tabBottom) return false;
+            if (!isCardLinkCandidate(route, link, rect)) return false;
+            seen.add(seenKey);
+            return true;
+        });
+        context?.cardLinksByRoot?.set(root, links);
+        return links;
     }
 
-    function findGrid(route, links = findCardLinks(route)) {
+    function findGrid(route, links = null, context = null) {
+        if (!links) links = findCardLinks(route, document, context);
         if (links.length < 2) return null;
 
         const counts = new Map();
@@ -1145,14 +1194,14 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         }
         if (best) {
             cachedGrid = best;
-            cachedGridKey = listStateKey(route);
+            cachedGridKey = listStateKey(route, context);
         }
         return best;
     }
 
-    function getCachedGrid(route) {
-        if (!cachedGrid?.isConnected || cachedGridKey !== listStateKey(route)) return null;
-        if (findCardLinks(route, cachedGrid).length < 2) return null;
+    function getCachedGrid(route, context = null) {
+        if (!cachedGrid?.isConnected || cachedGridKey !== listStateKey(route, context)) return null;
+        if (findCardLinks(route, cachedGrid, context).length < 2) return null;
         return cachedGrid;
     }
 
@@ -1172,6 +1221,19 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         const text = normSpace(parts.join(" "));
         card.__bcgtDomText = text;
         return text;
+    }
+
+    function createCardEntry(card, id, meta = null) {
+        const domText = meta?.id
+            ? normSpace([getCardDomText(card), buildMetaSearchText(meta)].join(" "))
+            : getCardDomText(card);
+        if (meta?.id) card.__bcgtDomText = domText;
+        return {
+            id,
+            card,
+            order: Number(card.getAttribute(ORDER_ATTR)) || 0,
+            domText,
+        };
     }
 
     function prepareCardIdentity(card, id) {
@@ -1196,35 +1258,31 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         const byId = new Set();
         for (const card of Array.from(document.querySelectorAll(`[${CARD_ATTR}="1"]`))) {
             if (!(card instanceof HTMLElement) || !card.isConnected) continue;
-            const link = Array.from(card.querySelectorAll("a[href]"))
-                .find((item) => getItemId(route, item.getAttribute("href")));
+            const link = Array.from(card.querySelectorAll("a[href]")).find((item) =>
+                getItemId(route, item.getAttribute("href"))
+            );
             if (!link) continue;
             const id = getItemId(route, link.getAttribute("href"));
             if (!id || byCard.has(card) || byId.has(id)) continue;
             prepareCardIdentity(card, id);
             byCard.add(card);
             byId.add(id);
-            entries.push({
-                id,
-                card,
-                order: Number(card.getAttribute(ORDER_ATTR)) || 0,
-                domText: getCardDomText(card),
-            });
+            entries.push(createCardEntry(card, id));
         }
         return entries;
     }
 
-    function getCardEntries(route) {
+    function getCardEntries(route, context = null) {
         const existing = getExistingCardEntries(route);
-        const cached = getCachedGrid(route);
-        const grid = cached || findGrid(route);
+        const cached = getCachedGrid(route, context);
+        const grid = cached || findGrid(route, undefined, context);
         if (!grid && existing.length) return existing;
         if (!grid) return [];
 
         const entries = [...existing];
         const byCard = new Set(existing.map((entry) => entry.card));
         const byId = new Set(existing.map((entry) => entry.id));
-        for (const link of findCardLinks(route, grid)) {
+        for (const link of findCardLinks(route, grid, context)) {
             const id = getItemId(route, link.getAttribute("href"));
             if (!id) continue;
 
@@ -1239,18 +1297,15 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             byId.add(id);
 
             card.setAttribute(CARD_ATTR, "1");
-            entries.push({
-                id,
-                card,
-                order: Number(card.getAttribute(ORDER_ATTR)) || 0,
-                domText: getCardDomText(card),
-            });
+            entries.push(createCardEntry(card, id));
         }
         return entries;
     }
 
     function parseCount(value) {
-        const raw = String(value || "").replace(/,/g, "").trim();
+        const raw = String(value || "")
+            .replace(/,/g, "")
+            .trim();
         const match = raw.match(/([\d.]+)\s*(만|천)?/);
         if (!match) return 0;
         const base = Number(match[1]);
@@ -1293,12 +1348,17 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             params.set("clipUID", cursor?.clipUID ? String(cursor.clipUID) : "");
             params.set("filterType", "WITHIN_THIRTY_DAYS");
             params.set("orderType", "POPULAR");
-            params.set("readCount", cursor?.readCount !== undefined && cursor?.readCount !== null ? String(cursor.readCount) : "");
+            params.set(
+                "readCount",
+                cursor?.readCount !== undefined && cursor?.readCount !== null ? String(cursor.readCount) : ""
+            );
             return `${API_BASE}/v1/categories/${type}/${id}/clips?${params.toString()}`;
         }
         if (route.tab === "videos" && cursor) {
-            if (cursor.publishDateAt !== undefined && cursor.publishDateAt !== null) params.set("publishDateAt", String(cursor.publishDateAt));
-            if (cursor.readCount !== undefined && cursor.readCount !== null) params.set("readCount", String(cursor.readCount));
+            if (cursor.publishDateAt !== undefined && cursor.publishDateAt !== null)
+                params.set("publishDateAt", String(cursor.publishDateAt));
+            if (cursor.readCount !== undefined && cursor.readCount !== null)
+                params.set("readCount", String(cursor.readCount));
         }
         if (route.tab === "lives" && cursor) {
             if (cursor.concurrentUserCount !== undefined && cursor.concurrentUserCount !== null) {
@@ -1313,7 +1373,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         if (followerHydrateTimer) return;
         followerHydrateTimer = window.setTimeout(() => {
             followerHydrateTimer = 0;
-            scheduleApply();
+            void refreshFollowerHydrationRows();
         }, getFollowerFetchDelayMs());
     }
 
@@ -1430,13 +1490,40 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         return loadMetadataPage(route);
     }
 
+    function isFollowerFetchMiss(value) {
+        return Boolean(value && typeof value === "object" && value.type === "miss" && Number.isFinite(value.expiresAt));
+    }
+
+    function rememberFollowerFetchMiss(channelId) {
+        const miss = {
+            type: "miss",
+            expiresAt: Date.now() + FOLLOWER_NEGATIVE_CACHE_TTL_MS,
+        };
+        touchMapEntry(followerCache, channelId, miss, MAX_FOLLOWER_CACHE_ENTRIES);
+        return null;
+    }
+
+    function readFollowerCache(channelId) {
+        if (!channelId || !followerCache.has(channelId)) return { hit: false, count: null };
+
+        const cached = followerCache.get(channelId);
+        if (isFollowerFetchMiss(cached)) {
+            if (cached.expiresAt > Date.now()) {
+                touchMapEntry(followerCache, channelId, cached, MAX_FOLLOWER_CACHE_ENTRIES);
+                return { hit: true, count: null };
+            }
+            followerCache.delete(channelId);
+            return { hit: false, count: null };
+        }
+
+        touchMapEntry(followerCache, channelId, cached, MAX_FOLLOWER_CACHE_ENTRIES);
+        return { hit: true, count: cached };
+    }
+
     async function getFollowerCount(channelId) {
         if (!channelId) return 0;
-        if (followerCache.has(channelId)) {
-            const cached = followerCache.get(channelId);
-            touchMapEntry(followerCache, channelId, cached, MAX_FOLLOWER_CACHE_ENTRIES);
-            return cached;
-        }
+        const cached = readFollowerCache(channelId);
+        if (cached.hit) return cached.count;
         if (followerInflight.has(channelId)) return followerInflight.get(channelId);
 
         const promise = fetchJson(`${API_BASE}/v1/channels/${encodeURIComponent(channelId)}`, {
@@ -1444,15 +1531,16 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         })
             .then((json) => {
                 const rawCount = json?.content?.followerCount;
-                if (rawCount === null || rawCount === undefined || rawCount === "") return null;
+                if (rawCount === null || rawCount === undefined || rawCount === "")
+                    return rememberFollowerFetchMiss(channelId);
                 const count = Number(rawCount);
-                if (!Number.isFinite(count)) return null;
+                if (!Number.isFinite(count)) return rememberFollowerFetchMiss(channelId);
                 const safeCount = Math.max(0, Math.floor(count));
                 touchMapEntry(followerCache, channelId, safeCount, MAX_FOLLOWER_CACHE_ENTRIES);
                 return safeCount;
             })
             .catch(() => {
-                return null;
+                return rememberFollowerFetchMiss(channelId);
             })
             .finally(() => {
                 followerInflight.delete(channelId);
@@ -1478,7 +1566,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     async function hydrateFollowerIds(ids, clearWhenDone = true, force = false) {
         if (!force && !hasFollowerFilter()) return false;
         if (force && !hasFollowerFilter() && !areFollowerBadgesEnabled()) return false;
-        const targets = ids.filter((id) => id && !followerCache.has(id));
+        const targets = ids.filter((id) => id && !readFollowerCache(id).hit);
         const unique = Array.from(new Set(targets));
         if (!unique.length) {
             if (clearWhenDone) setLoading(false, "followers");
@@ -1510,7 +1598,69 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     }
 
     async function hydrateFollowers(rows, clearWhenDone = true, force = false) {
-        return hydrateFollowerIds(rows.map((row) => row.meta?.channelId), clearWhenDone, force);
+        return hydrateFollowerIds(
+            rows.map((row) => row.meta?.channelId),
+            clearWhenDone,
+            force
+        );
+    }
+
+    function rememberFollowerRefreshRows(route, rows) {
+        lastFollowerRefreshRouteKey = route ? routeKey(route) : "";
+        lastFollowerRefreshRows = rows
+            .filter((row) => row?.entry?.card?.isConnected)
+            .map((row) => {
+                const channelId = row.meta?.channelId || inferChannelIdFromCard(route, row.entry);
+                return {
+                    ...row,
+                    meta: { ...row.meta, channelId },
+                };
+            })
+            .filter((row) => row.meta.channelId);
+    }
+
+    function getRememberedFollowerRefreshRows(route) {
+        if (!route || lastFollowerRefreshRouteKey !== routeKey(route)) return [];
+        lastFollowerRefreshRows = lastFollowerRefreshRows.filter((row) => row?.entry?.card?.isConnected);
+        return lastFollowerRefreshRows;
+    }
+
+    function syncFollowerVisibilityRows(rows) {
+        if (!hasFollowerFilter()) return;
+        for (const row of rows) {
+            setCardHidden(row.entry.card, !passesStickyFilters(row));
+        }
+    }
+
+    function setCardHidden(card, hidden) {
+        if (!(card instanceof HTMLElement)) return;
+        if (hidden) {
+            if (card.getAttribute(HIDE_ATTR) !== "1") card.setAttribute(HIDE_ATTR, "1");
+            return;
+        }
+        if (card.hasAttribute(HIDE_ATTR)) card.removeAttribute(HIDE_ATTR);
+    }
+
+    async function refreshFollowerHydrationRows() {
+        if (followerHydrationRefreshing) return;
+        const route = getRoute();
+        const rememberedRows = getRememberedFollowerRefreshRows(route);
+        if (!route || !rememberedRows.length) {
+            scheduleApply();
+            return;
+        }
+
+        const rows = getRowsNearViewport(rememberedRows);
+        if (!rows.length) return;
+
+        followerHydrationRefreshing = true;
+        try {
+            await hydrateFollowers(rows, true, true);
+            syncFollowerBadges(route, rows);
+            syncFollowerVisibilityRows(rows);
+        } finally {
+            followerHydrationRefreshing = false;
+        }
     }
 
     // 필터가 없을 때 팔로워 배지는 화면 근처 카드만 채운다.
@@ -1528,7 +1678,11 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     }
 
     async function hydrateMetadataFollowers(metas, clearWhenDone = true, force = false) {
-        return hydrateFollowerIds(metas.map((meta) => meta?.channelId), clearWhenDone, force);
+        return hydrateFollowerIds(
+            metas.map((meta) => meta?.channelId),
+            clearWhenDone,
+            force
+        );
     }
 
     function buildSearchText(row) {
@@ -1538,10 +1692,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         const cacheKey = `${row.entry.domText}|${metaText}`;
         if (card?.__bcgtSearchTextKey === cacheKey && card.__bcgtSearchText) return card.__bcgtSearchText;
 
-        const text = normalize([
-            row.entry.domText,
-            metaText,
-        ].join(" "));
+        const text = normalize([row.entry.domText, metaText].join(" "));
         if (card) {
             card.__bcgtSearchTextKey = cacheKey;
             card.__bcgtSearchText = text;
@@ -1585,14 +1736,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
 
     function getViewFilterSnapshotKey(route, query = normalize(currentQuery)) {
         if (!hasViewFilter()) return "";
-        return [
-            routeKey(route),
-            query,
-            viewFilterMin,
-            viewFilterMax,
-            followerFilterMin,
-            followerFilterMax,
-        ].join("|");
+        return [routeKey(route), query, viewFilterMin, viewFilterMax, followerFilterMin, followerFilterMax].join("|");
     }
 
     function syncViewFilterSnapshot(route, query = normalize(currentQuery)) {
@@ -1653,8 +1797,9 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     function passesFollowerFilter(meta) {
         if (!hasFollowerFilter()) return true;
         const channelId = meta?.channelId;
-        if (!channelId || !followerCache.has(channelId)) return false;
-        return passesCountRange(followerCache.get(channelId), followerFilterMin, followerFilterMax);
+        const cached = channelId ? readFollowerCache(channelId) : { hit: false };
+        if (!cached.hit || cached.count === null) return false;
+        return passesCountRange(cached.count, followerFilterMin, followerFilterMax);
     }
 
     function passesMetaFilters(meta, query = "") {
@@ -1671,7 +1816,9 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     }
 
     function parseFilterInput(value) {
-        const raw = String(value || "").replace(/,/g, "").trim();
+        const raw = String(value || "")
+            .replace(/,/g, "")
+            .trim();
         if (!raw) return 0;
         const match = raw.match(/^(\d+(?:\.\d+)?)\s*(만|천)?/);
         if (!match) return 0;
@@ -1720,9 +1867,12 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     }
 
     function buildFilterOptionButtons(kind, unit) {
-        return getFilterPresetRanges(kind).map(({ min, max }) => (
-            `<button type="button" class="bcgt-option" data-filter-kind="${kind}" data-filter-min="${min}" data-filter-max="${max}" role="menuitemradio">${formatFilterOptionLabel(min, max, unit)}</button>`
-        )).join("");
+        return getFilterPresetRanges(kind)
+            .map(
+                ({ min, max }) =>
+                    `<button type="button" class="bcgt-option" data-filter-kind="${kind}" data-filter-min="${min}" data-filter-max="${max}" role="menuitemradio">${formatFilterOptionLabel(min, max, unit)}</button>`
+            )
+            .join("");
     }
 
     function syncFilterOptionButtons(menu, route = getRoute()) {
@@ -1811,10 +1961,9 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
 
     function setFilterRangeFromOptions(kind, firstRange, lastRange) {
         const min = Math.min(firstRange.min, lastRange.min);
-        const includesOpenEnd = (firstRange.max <= 0 && firstRange.min > 0) || (lastRange.max <= 0 && lastRange.min > 0);
-        const max = includesOpenEnd
-            ? 0
-            : Math.max(firstRange.max || firstRange.min, lastRange.max || lastRange.min);
+        const includesOpenEnd =
+            (firstRange.max <= 0 && firstRange.min > 0) || (lastRange.max <= 0 && lastRange.min > 0);
+        const max = includesOpenEnd ? 0 : Math.max(firstRange.max || firstRange.min, lastRange.max || lastRange.min);
         if (min === 0 && max === 0) {
             setFilterValue(kind, 0, "", 0, "");
             return;
@@ -1823,13 +1972,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             setFilterValue(kind, min, min > 0 ? formatFilterInput(min) : "", 0, "");
             return;
         }
-        setFilterValue(
-            kind,
-            min,
-            min > 0 ? formatFilterInput(min) : "",
-            max,
-            formatFilterInput(max)
-        );
+        setFilterValue(kind, min, min > 0 ? formatFilterInput(min) : "", max, formatFilterInput(max));
     }
 
     function getFilterOptionAtPoint(x, y, kind) {
@@ -1861,13 +2004,18 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         if (!option) return filterOptionDrag.moved;
 
         const range = optionFilterRange(option);
-        const moved = filterOptionDrag.moved ||
+        const moved =
+            filterOptionDrag.moved ||
             range.min !== filterOptionDrag.startRange.min ||
             range.max !== filterOptionDrag.startRange.max;
         if (!moved) return false;
 
         filterOptionDrag.moved = true;
-        if (range.min !== filterOptionDrag.currentRange.min || range.max !== filterOptionDrag.currentRange.max || finish) {
+        if (
+            range.min !== filterOptionDrag.currentRange.min ||
+            range.max !== filterOptionDrag.currentRange.max ||
+            finish
+        ) {
             filterOptionDrag.currentRange = range;
             setFilterRangeFromOptions(filterOptionDrag.kind, filterOptionDrag.startRange, range);
             updateUiState();
@@ -1891,12 +2039,9 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     function buildMetaSearchText(meta) {
         meta = meta || {};
         if (meta?._bcgtSearchText) return meta._bcgtSearchText;
-        const text = normalize([
-            meta.title,
-            meta.channelName,
-            meta.categoryName,
-            ...(Array.isArray(meta.tags) ? meta.tags : []),
-        ].join(" "));
+        const text = normalize(
+            [meta.title, meta.channelName, meta.categoryName, ...(Array.isArray(meta.tags) ? meta.tags : [])].join(" ")
+        );
         if (meta && meta.id) meta._bcgtSearchText = text;
         return text;
     }
@@ -2004,12 +2149,11 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         }
 
         const compactCountPattern = /^(LIVE\s*)?[\d,.]+(?:만|천)?\s*명$/;
-        const elements = Array.from(card.querySelectorAll("*"))
-            .filter((el) => {
-                const text = normSpace(el.textContent);
-                if (!compactCountPattern.test(text)) return false;
-                return !Array.from(el.children).some((child) => compactCountPattern.test(normSpace(child.textContent)));
-            });
+        const elements = Array.from(card.querySelectorAll("*")).filter((el) => {
+            const text = normSpace(el.textContent);
+            if (!compactCountPattern.test(text)) return false;
+            return !Array.from(el.children).some((child) => compactCountPattern.test(normSpace(child.textContent)));
+        });
         for (const el of elements) {
             el.textContent = replaceViewerCountText(el.textContent, countText);
         }
@@ -2040,16 +2184,16 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     }
 
     function pickThumbnailImage(pairs, card) {
-        const best = pairs
-            .slice()
-            .sort((a, b) => getImageArea(b.templateImg) - getImageArea(a.templateImg))[0];
+        const best = pairs.slice().sort((a, b) => getImageArea(b.templateImg) - getImageArea(a.templateImg))[0];
         return best?.img || card.querySelector("img");
     }
 
     function pickCardThumbnailImage(card) {
-        return Array.from(card.querySelectorAll("img"))
-            .filter((img) => !img.closest(`[${FOLLOWER_BADGE_WRAP_ATTR}="1"], [${FOLLOWER_BADGE_ATTR}="1"]`))
-            .sort((a, b) => getImageArea(b) - getImageArea(a))[0] || null;
+        return (
+            Array.from(card.querySelectorAll("img"))
+                .filter((img) => !img.closest(`[${FOLLOWER_BADGE_WRAP_ATTR}="1"], [${FOLLOWER_BADGE_ATTR}="1"]`))
+                .sort((a, b) => getImageArea(b) - getImageArea(a))[0] || null
+        );
     }
 
     function imageAttrs(img) {
@@ -2070,17 +2214,15 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         const height = rect.height || Number(img.getAttribute("height")) || img.naturalHeight || 0;
         const area = getImageArea(img);
         const scoreFromAttrs = /profile|avatar|channel|name|creator|streamer|nng-phinf/i.test(attrs) ? 100 : 0;
-        const scoreFromShape = width > 0 && height > 0 && width <= 96 && height <= 96 && Math.abs(width - height) <= 24 ? 40 : 0;
+        const scoreFromShape =
+            width > 0 && height > 0 && width <= 96 && height <= 96 && Math.abs(width - height) <= 24 ? 40 : 0;
         const scoreFromSize = area >= 24 * 24 && area <= 96 * 96 ? 20 : 0;
         return scoreFromAttrs + scoreFromShape + scoreFromSize;
     }
 
     function profileImagePairScore(pair, thumbImg) {
         if (!pair?.img || pair.img === thumbImg) return 0;
-        const attrs = [
-            imageAttrs(pair.templateImg),
-            imageAttrs(pair.img),
-        ].join(" ");
+        const attrs = [imageAttrs(pair.templateImg), imageAttrs(pair.img)].join(" ");
         const attrScore = /profile|avatar|channel|name|creator|streamer|nng-phinf/i.test(attrs) ? 100 : 0;
         return attrScore + profileImageScore(pair.templateImg, null) + profileImageScore(pair.img, thumbImg);
     }
@@ -2095,7 +2237,8 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             .map((pair) => ({ pair, score: profileImagePairScore(pair, thumbImg) }))
             .filter((entry) => entry.score > 0)
             .sort((a, b) => b.score - a.score)[0]?.pair;
-        const profileImg = profilePair?.img ||
+        const profileImg =
+            profilePair?.img ||
             Array.from(card.querySelectorAll("img"))
                 .map((img) => ({ img, score: profileImageScore(img, thumbImg) }))
                 .filter((entry) => entry.score > 0)
@@ -2106,33 +2249,33 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
 
     function updateProfileBackgroundImage(card, meta) {
         const url = profileImageUrl(meta);
-        const target = Array.from(card.querySelectorAll("*"))
-            .find((el) => {
-                if (!(el instanceof HTMLElement)) return false;
-                const attrs = [
-                    el.getAttribute("class"),
-                    el.parentElement?.getAttribute("class"),
-                    el.closest("a")?.getAttribute("href"),
-                    el.style.backgroundImage,
-                ].join(" ");
-                return /url\(/.test(el.style.backgroundImage) && /profile|avatar|channel|nng-phinf/i.test(attrs);
-            });
+        const target = Array.from(card.querySelectorAll("*")).find((el) => {
+            if (!(el instanceof HTMLElement)) return false;
+            const attrs = [
+                el.getAttribute("class"),
+                el.parentElement?.getAttribute("class"),
+                el.closest("a")?.getAttribute("href"),
+                el.style.backgroundImage,
+            ].join(" ");
+            return /url\(/.test(el.style.backgroundImage) && /profile|avatar|channel|nng-phinf/i.test(attrs);
+        });
         if (target) target.style.backgroundImage = `url("${normalizeImageUrl(url)}")`;
     }
 
     function pickProfileImage(card) {
-        const images = Array.from(card.querySelectorAll("img"))
-            .filter((img) => !img.closest(`[${FOLLOWER_BADGE_ATTR}="1"]`));
+        const images = Array.from(card.querySelectorAll("img")).filter(
+            (img) => !img.closest(`[${FOLLOWER_BADGE_ATTR}="1"]`)
+        );
         if (!images.length) return null;
 
-        const thumbImg = images
-            .slice()
-            .sort((a, b) => getImageArea(b) - getImageArea(a))[0];
-        return images
-            .filter((img) => img !== thumbImg)
-            .map((img) => ({ img, score: profileImageScore(img, thumbImg) }))
-            .filter((entry) => entry.score > 0)
-            .sort((a, b) => b.score - a.score)[0]?.img || null;
+        const thumbImg = images.slice().sort((a, b) => getImageArea(b) - getImageArea(a))[0];
+        return (
+            images
+                .filter((img) => img !== thumbImg)
+                .map((img) => ({ img, score: profileImageScore(img, thumbImg) }))
+                .filter((entry) => entry.score > 0)
+                .sort((a, b) => b.score - a.score)[0]?.img || null
+        );
     }
 
     function unwrapFollowerBadgeHost(wrap) {
@@ -2143,6 +2286,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     }
 
     function removeFollowerBadge(card) {
+        delete card.__bcgtFollowerBadgeKey;
         card.querySelectorAll(`[${FOLLOWER_BADGE_ATTR}="1"]`).forEach((badge) => badge.remove());
         card.querySelectorAll(`[${FOLLOWER_BADGE_WRAP_ATTR}="1"]`).forEach((wrap) => {
             if (!wrap.querySelector(`[${FOLLOWER_BADGE_ATTR}="1"]`)) unwrapFollowerBadgeHost(wrap);
@@ -2150,6 +2294,10 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     }
 
     function clearFollowerBadges(root = document) {
+        root.querySelectorAll(`[${CARD_ATTR}="1"]`).forEach((card) => {
+            delete card.__bcgtFollowerBadgeKey;
+            delete card.__bcgtProfileImage;
+        });
         root.querySelectorAll(`[${FOLLOWER_BADGE_ATTR}="1"]`).forEach((badge) => badge.remove());
         root.querySelectorAll(`[${FOLLOWER_BADGE_WRAP_ATTR}="1"]`).forEach(unwrapFollowerBadgeHost);
     }
@@ -2165,9 +2313,10 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
                 host = picture;
             } else {
                 const parent = profileImg.parentElement;
-                host = parent && parent.querySelectorAll("img").length === 1 && normSpace(parent.textContent).length <= 20
-                    ? parent
-                    : profileImg;
+                host =
+                    parent && parent.querySelectorAll("img").length === 1 && normSpace(parent.textContent).length <= 20
+                        ? parent
+                        : profileImg;
             }
         }
 
@@ -2180,16 +2329,29 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         return wrap;
     }
 
+    function getCachedProfileImage(card) {
+        const cached = card.__bcgtProfileImage;
+        if (cached?.isConnected && card.contains(cached) && !cached.closest(`[${FOLLOWER_BADGE_ATTR}="1"]`)) {
+            return cached;
+        }
+        const profileImg = pickProfileImage(card);
+        card.__bcgtProfileImage = profileImg || null;
+        return profileImg;
+    }
+
     function syncFollowerBadge(card, meta) {
         const channelId = meta?.channelId;
-        const count = channelId ? followerCache.get(channelId) : 0;
+        const cached = channelId ? readFollowerCache(channelId) : { hit: false, count: 0 };
+        const count = cached.hit ? cached.count : 0;
         const label = formatFollowerBadgeCount(count);
         if (!label) {
-            removeFollowerBadge(card);
+            if (card.__bcgtFollowerBadgeKey || card.querySelector(`[${FOLLOWER_BADGE_ATTR}="1"]`)) {
+                removeFollowerBadge(card);
+            }
             return;
         }
 
-        const profileImg = pickProfileImage(card);
+        const profileImg = getCachedProfileImage(card);
         if (!profileImg) {
             removeFollowerBadge(card);
             return;
@@ -2203,8 +2365,12 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             badge.setAttribute(FOLLOWER_BADGE_ATTR, "1");
             wrap.appendChild(badge);
         }
+        const title = `팔로워 ${Math.round(Number(count) || 0).toLocaleString("ko-KR")}명`;
+        const renderKey = `${label}|${title}`;
+        if (card.__bcgtFollowerBadgeKey === renderKey && badge.textContent === label && badge.title === title) return;
         badge.textContent = label;
-        badge.setAttribute("title", `팔로워 ${Math.round(Number(count) || 0).toLocaleString("ko-KR")}명`);
+        badge.setAttribute("title", title);
+        card.__bcgtFollowerBadgeKey = renderKey;
     }
 
     function inferChannelIdFromCard(route, entry) {
@@ -2264,6 +2430,8 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     }
 
     function removeLiveElapsedBadge(card) {
+        delete card.__bcgtLiveElapsedHost;
+        delete card.__bcgtLiveElapsedKey;
         card.querySelectorAll(`[${LIVE_ELAPSED_BADGE_ATTR}="1"]`).forEach((badge) => badge.remove());
         card.querySelectorAll(`[${LIVE_THUMB_HOST_ATTR}="1"]`).forEach((host) => {
             if (!host.querySelector(`[${LIVE_ELAPSED_BADGE_ATTR}="1"]`)) {
@@ -2273,8 +2441,14 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     }
 
     function clearLiveElapsedBadges(root = document) {
+        root.querySelectorAll(`[${CARD_ATTR}="1"]`).forEach((card) => {
+            delete card.__bcgtLiveElapsedHost;
+            delete card.__bcgtLiveElapsedKey;
+        });
         root.querySelectorAll(`[${LIVE_ELAPSED_BADGE_ATTR}="1"]`).forEach((badge) => badge.remove());
-        root.querySelectorAll(`[${LIVE_THUMB_HOST_ATTR}="1"]`).forEach((host) => host.removeAttribute(LIVE_THUMB_HOST_ATTR));
+        root.querySelectorAll(`[${LIVE_THUMB_HOST_ATTR}="1"]`).forEach((host) =>
+            host.removeAttribute(LIVE_THUMB_HOST_ATTR)
+        );
         clearLiveElapsedTimer();
     }
 
@@ -2287,6 +2461,14 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         return thumbImg.parentElement && card.contains(thumbImg.parentElement) ? thumbImg.parentElement : null;
     }
 
+    function getCachedLiveThumbnailHost(card) {
+        const cached = card.__bcgtLiveElapsedHost;
+        if (cached?.isConnected && card.contains(cached)) return cached;
+        const host = getLiveThumbnailHost(card, pickCardThumbnailImage(card));
+        card.__bcgtLiveElapsedHost = host || null;
+        return host;
+    }
+
     function syncLiveElapsedBadge(card, meta) {
         const label = formatElapsedSince(meta?.publishDate);
         if (!label) {
@@ -2294,23 +2476,28 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             return;
         }
 
-        const thumbImg = pickCardThumbnailImage(card);
-        const host = getLiveThumbnailHost(card, thumbImg);
+        const host = getCachedLiveThumbnailHost(card);
         if (!host) {
             removeLiveElapsedBadge(card);
             return;
         }
 
-        host.setAttribute(LIVE_THUMB_HOST_ATTR, "1");
+        if (host.getAttribute(LIVE_THUMB_HOST_ATTR) !== "1") host.setAttribute(LIVE_THUMB_HOST_ATTR, "1");
         let badge = host.querySelector(`[${LIVE_ELAPSED_BADGE_ATTR}="1"]`);
         if (!badge) {
             badge = document.createElement("span");
             badge.setAttribute(LIVE_ELAPSED_BADGE_ATTR, "1");
             host.appendChild(badge);
         }
-        badge.textContent = label;
-        badge.setAttribute("data-bcgt-live-start", String(parseDateTime(meta.publishDate)));
-        badge.setAttribute("title", `방송 진행 시간 ${label}`);
+        const start = String(parseDateTime(meta.publishDate));
+        const title = `방송 진행 시간 ${label}`;
+        const renderKey = `${label}|${start}|${title}`;
+        if (card.__bcgtLiveElapsedKey !== renderKey) {
+            if (badge.textContent !== label) badge.textContent = label;
+            if (badge.getAttribute("data-bcgt-live-start") !== start) badge.setAttribute("data-bcgt-live-start", start);
+            if (badge.getAttribute("title") !== title) badge.setAttribute("title", title);
+            card.__bcgtLiveElapsedKey = renderKey;
+        }
         ensureLiveElapsedTimer();
     }
 
@@ -2328,7 +2515,10 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         card.setAttribute(CARD_ATTR, "1");
         if (meta?.id) card.setAttribute(CARD_ID_ATTR, String(meta.id));
         card.removeAttribute(HIDE_ATTR);
-        card.setAttribute(ORDER_ATTR, String(Number.isFinite(Number(meta.order)) ? Number(meta.order) : orderCounter++));
+        card.setAttribute(
+            ORDER_ATTR,
+            String(Number.isFinite(Number(meta.order)) ? Number(meta.order) : orderCounter++)
+        );
     }
 
     function buildInjectedLiveCard(route, template, meta) {
@@ -2342,13 +2532,17 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             const href = anchor.getAttribute("href") || "";
             if (getItemId(route, href)) {
                 anchor.setAttribute("href", itemHref);
-            } else if (channelHref && (href.match(/^\/[a-f0-9]{32}/i) || /channel|profile|name/i.test(anchor.className))) {
+            } else if (
+                channelHref &&
+                (href.match(/^\/[a-f0-9]{32}/i) || /channel|profile|name/i.test(anchor.className))
+            ) {
                 anchor.setAttribute("href", channelHref);
             }
         }
 
-        const itemAnchors = Array.from(card.querySelectorAll("a[href]"))
-            .filter((anchor) => anchor.getAttribute("href") === itemHref);
+        const itemAnchors = Array.from(card.querySelectorAll("a[href]")).filter(
+            (anchor) => anchor.getAttribute("href") === itemHref
+        );
         for (const anchor of itemAnchors) {
             anchor.addEventListener("click", (event) => {
                 if (
@@ -2358,14 +2552,16 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
                     event.ctrlKey ||
                     event.shiftKey ||
                     event.altKey
-                ) return;
+                )
+                    return;
                 event.preventDefault();
                 window.location.assign(anchor.href);
             });
         }
 
         const imagePairs = getImagePairs(template, card);
-        const thumbImg = pickThumbnailImage(imagePairs, card) ||
+        const thumbImg =
+            pickThumbnailImage(imagePairs, card) ||
             itemAnchors.map((anchor) => anchor.querySelector("img")).find(Boolean) ||
             card.querySelector("img");
         setImageSource(thumbImg, meta.thumb, meta.title);
@@ -2379,10 +2575,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
 
         const tagContainer = card.querySelector("[class*='information'][class*='link']");
         if (tagContainer) {
-            const tagValues = [
-                meta.categoryName,
-                ...(Array.isArray(meta.tags) ? meta.tags : []),
-            ].filter(Boolean);
+            const tagValues = [meta.categoryName, ...(Array.isArray(meta.tags) ? meta.tags : [])].filter(Boolean);
             const tagAnchors = Array.from(tagContainer.querySelectorAll("a"));
             tagAnchors.forEach((anchor, index) => {
                 const tag = tagValues[index];
@@ -2422,8 +2615,9 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             }
         }
 
-        const itemAnchors = Array.from(card.querySelectorAll("a[href]"))
-            .filter((anchor) => anchor.getAttribute("href") === itemHref);
+        const itemAnchors = Array.from(card.querySelectorAll("a[href]")).filter(
+            (anchor) => anchor.getAttribute("href") === itemHref
+        );
         for (const anchor of itemAnchors) {
             anchor.addEventListener("click", (event) => {
                 if (
@@ -2433,13 +2627,15 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
                     event.ctrlKey ||
                     event.shiftKey ||
                     event.altKey
-                ) return;
+                )
+                    return;
                 event.preventDefault();
                 window.location.assign(anchor.href);
             });
         }
         const imagePairs = getImagePairs(template, card);
-        const thumbImg = pickThumbnailImage(imagePairs, card) ||
+        const thumbImg =
+            pickThumbnailImage(imagePairs, card) ||
             itemAnchors.map((anchor) => anchor.querySelector("img")).find(Boolean) ||
             card.querySelector("img");
         setImageSource(thumbImg, meta.thumb, meta.title);
@@ -2481,8 +2677,9 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         const viewportTop = 0;
         const capturedScrollY = window.scrollY;
         const capturedUserScrollAt = lastUserScrollAt;
-        const candidates = Array.from(grid.children)
-            .filter((child) => child instanceof HTMLElement && child.getAttribute(EMPTY_ATTR) !== "1");
+        const candidates = Array.from(grid.children).filter(
+            (child) => child instanceof HTMLElement && child.getAttribute(EMPTY_ATTR) !== "1"
+        );
         let best = null;
         for (const child of candidates) {
             const rect = child.getBoundingClientRect();
@@ -2517,15 +2714,17 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
 
     function cardImageSignature(card) {
         return Array.from(card?.querySelectorAll?.("img, source, [style]") || [])
-            .map((el) => [
-                el.getAttribute?.("src"),
-                el.getAttribute?.("srcset"),
-                el.getAttribute?.("data-src"),
-                el.getAttribute?.("data-original"),
-                el.getAttribute?.("data-lazy-src"),
-                el.getAttribute?.("style"),
-                el.getAttribute?.("class"),
-            ].join(" "))
+            .map((el) =>
+                [
+                    el.getAttribute?.("src"),
+                    el.getAttribute?.("srcset"),
+                    el.getAttribute?.("data-src"),
+                    el.getAttribute?.("data-original"),
+                    el.getAttribute?.("data-lazy-src"),
+                    el.getAttribute?.("style"),
+                    el.getAttribute?.("class"),
+                ].join(" ")
+            )
             .join(" ");
     }
 
@@ -2550,28 +2749,33 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     }
 
     function pickInjectedCardTemplate(entries) {
-        return entries
-            .filter((entry) => entry.card.getAttribute(INJECTED_ATTR) !== "1")
-            .map((entry) => entry.card)
-            .find((card) => !isRestrictedTemplateCard(card) && hasUsableTemplateThumbnail(card)) || null;
+        return (
+            entries
+                .filter((entry) => entry.card.getAttribute(INJECTED_ATTR) !== "1")
+                .map((entry) => entry.card)
+                .find((card) => !isRestrictedTemplateCard(card) && hasUsableTemplateThumbnail(card)) || null
+        );
     }
 
     async function syncInjectedCards(route, grid, entries, metadata, query = normalize(currentQuery)) {
-        if (!isAutoLoadActive()) return;
+        if (!isAutoLoadActive()) return [];
 
-        if (!canUseMetadataForCurrentList(route)) return;
+        if (!canUseMetadataForCurrentList(route)) return [];
 
         const template = pickInjectedCardTemplate(entries);
-        if (!template) return;
+        if (!template) return [];
 
         const renderedIds = new Set(entries.map((entry) => entry.id));
         const fragment = document.createDocumentFragment();
+        const injectedEntries = [];
         let builtCount = 0;
 
         for (const meta of metadata.values()) {
             if (!meta.id || renderedIds.has(meta.id)) continue;
             if (!passesMetaFilters(meta, query)) continue;
-            fragment.appendChild(buildInjectedCard(route, template, meta));
+            const card = buildInjectedCard(route, template, meta);
+            fragment.appendChild(card);
+            injectedEntries.push(createCardEntry(card, meta.id, meta));
             renderedIds.add(meta.id);
             builtCount++;
 
@@ -2582,6 +2786,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         }
 
         if (fragment.childNodes.length) grid.appendChild(fragment);
+        return injectedEntries;
     }
 
     function buildMenu() {
@@ -2722,7 +2927,8 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             !menu ||
             bar.getAttribute("data-menu-open") !== "1" ||
             menu.getAttribute("data-open") !== "1"
-        ) return;
+        )
+            return;
 
         const buttonRect = button.getBoundingClientRect();
         const scrollTop = menu.scrollTop;
@@ -2734,10 +2940,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         const openBelow = availableBelow > availableAbove;
         const availableHeight = Math.max(120, openBelow ? availableBelow : availableAbove);
         const height = Math.min(naturalHeight, availableHeight);
-        const left = Math.min(
-            Math.max(8, buttonRect.right - width),
-            Math.max(8, window.innerWidth - width - 8)
-        );
+        const left = Math.min(Math.max(8, buttonRect.right - width), Math.max(8, window.innerWidth - width - 8));
         const top = openBelow
             ? Math.min(window.innerHeight - height - 8, buttonRect.bottom + 6)
             : Math.max(8, buttonRect.top - height - 6);
@@ -2805,10 +3008,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             const stateEnd = state.max > 0 ? state.max : Number.POSITIVE_INFINITY;
             const inRange = hasRange && optionHasRange && min >= state.min && optionEnd <= stateEnd;
             const isEdge = inRange && (min === state.min || optionEnd === stateEnd);
-            option.setAttribute(
-                "aria-checked",
-                state.min === min && state.max === optionMax ? "true" : "false"
-            );
+            option.setAttribute("aria-checked", state.min === min && state.max === optionMax ? "true" : "false");
             option.setAttribute("data-in-range", inRange ? "1" : "0");
             option.setAttribute("data-range-edge", isEdge ? "1" : "0");
         }
@@ -2918,7 +3118,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         return bar;
     }
 
-    function mountToolbar(route) {
+    function mountToolbar(route, context = null) {
         injectStyleOnce();
         let bar = document.getElementById(BAR_ID);
         if (!bar) bar = buildToolbar();
@@ -2939,17 +3139,17 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
                 bar.style.width = "";
                 if (bar.parentElement !== tabLine) tabLine.appendChild(bar);
                 cleanupUnusedGlobalFallback(null);
-                document.querySelectorAll(`[${GLOBAL_SORT_ATTR}="1"]`).forEach((el) => el.removeAttribute(GLOBAL_SORT_ATTR));
+                document
+                    .querySelectorAll(`[${GLOBAL_SORT_ATTR}="1"]`)
+                    .forEach((el) => el.removeAttribute(GLOBAL_SORT_ATTR));
                 syncFontWithHostUi(bar, tabLine);
             } else {
-                const sortLine = findGlobalNavigationFilterHost() ||
-                    findGlobalSortLine() ||
-                    (
-                        bar.parentElement?.isConnected &&
-                        bar.parentElement?.getAttribute?.(GLOBAL_SORT_ATTR) === "1"
-                            ? bar.parentElement
-                            : null
-                    );
+                const sortLine =
+                    findGlobalNavigationFilterHost(context) ||
+                    findGlobalSortLine(context) ||
+                    (bar.parentElement?.isConnected && bar.parentElement?.getAttribute?.(GLOBAL_SORT_ATTR) === "1"
+                        ? bar.parentElement
+                        : null);
                 const host = sortLine || ensureGlobalFallbackHost(route);
                 if (!host) return false;
                 host.setAttribute(GLOBAL_SORT_ATTR, "1");
@@ -2967,8 +3167,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
                     if (tagAnchor && tagAnchor !== bar) {
                         tagAnchor.setAttribute(TAG_SEARCH_ANCHOR_ATTR, "1");
                         host.insertBefore(bar, tagAnchor);
-                    }
-                    else if (bar.parentElement !== host) host.appendChild(bar);
+                    } else if (bar.parentElement !== host) host.appendChild(bar);
                 }
                 cleanupUnusedGlobalFallback(host);
                 syncFontWithHostUi(bar, host);
@@ -2976,7 +3175,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             }
         } else {
             restoreHiddenGlobalTagSearch();
-            const tabLine = findTabLine(route);
+            const tabLine = getContextTabLine(context, route);
             if (!tabLine) return false;
             tabLine.setAttribute(TABS_ATTR, "1");
             bar.setAttribute("data-mode", "category-inline");
@@ -3114,7 +3313,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             if (!areFollowerBadgesEnabled() || !getRoute()) return;
             if (now - lastBadgeScrollCheckAt < BADGE_SCROLL_THROTTLE_MS) return;
             lastBadgeScrollCheckAt = now;
-            scheduleApply();
+            void refreshFollowerHydrationRows();
             return;
         }
 
@@ -3136,14 +3335,15 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             removeTools();
             return;
         }
-        if (!mountToolbar(route)) return;
+        const scanContext = createApplyScanContext(route);
+        if (!mountToolbar(route, scanContext)) return;
 
-        let entries = getCardEntries(route);
+        let entries = getCardEntries(route, scanContext);
         if (!entries.length) return;
         const grid = entries[0].card.parentElement;
         if (!grid) return;
 
-        const currentListStateKey = listStateKey(route);
+        const currentListStateKey = listStateKey(route, scanContext);
         if (currentListStateKey !== lastListStateKey) {
             clearInjectedCards(grid);
             resetMetadata(routeKey(route));
@@ -3153,10 +3353,11 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             lastListStateKey = currentListStateKey;
             cachedGrid = null;
             cachedGridKey = "";
-            entries = getCardEntries(route);
+            scanContext.cardLinksByRoot = new WeakMap();
+            entries = getCardEntries(route, scanContext);
         }
 
-        const canUseMetadata = canUseMetadataForCurrentList(route);
+        const canUseMetadata = canUseMetadataForCurrentList(route, scanContext);
         if (!isAutoLoadActive()) {
             resetViewFilterSnapshot();
             clearInjectedCards(grid);
@@ -3171,11 +3372,13 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
                     channelId: metadata.get(entry.id)?.channelId || inferChannelIdFromCard(route, entry),
                 },
             }));
+            rememberFollowerRefreshRows(route, visibleRows);
             syncLiveElapsedBadges(route, visibleRows);
             syncFollowerBadges(route, visibleRows);
-            await hydrateFollowers(getRowsNearViewport(visibleRows), true, true);
-            syncFollowerBadges(route, visibleRows);
-            for (const entry of entries) entry.card.removeAttribute(HIDE_ATTR);
+            const nearViewportRows = getRowsNearViewport(visibleRows);
+            await hydrateFollowers(nearViewportRows, true, true);
+            syncFollowerBadges(route, nearViewportRows);
+            for (const entry of entries) setCardHidden(entry.card, false);
             removeEmptyMessage(grid);
             updateStatus(entries.length, entries.length);
             return;
@@ -3196,19 +3399,21 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         }
 
         const scrollAnchor = captureScrollAnchor(grid);
-        await syncInjectedCards(route, grid, entries, metadata, query);
+        const injectedEntries = await syncInjectedCards(route, grid, entries, metadata, query);
         await yieldToUi();
-        entries = getCardEntries(route);
+        if (injectedEntries.length) entries = entries.concat(injectedEntries);
         const rows = entries.map((entry) => {
             const meta = metadata.get(entry.id) || {};
-            const views = Number.isFinite(Number(meta.views)) && Number(meta.views) > 0
-                ? Number(meta.views)
-                : parseViewsFromText(route, entry.domText);
-            return { entry, meta: { ...meta, channelId: meta.channelId || inferChannelIdFromCard(route, entry), views } };
+            const views =
+                Number.isFinite(Number(meta.views)) && Number(meta.views) > 0
+                    ? Number(meta.views)
+                    : parseViewsFromText(route, entry.domText);
+            return {
+                entry,
+                meta: { ...meta, channelId: meta.channelId || inferChannelIdFromCard(route, entry), views },
+            };
         });
-        await yieldToUi();
-        syncLiveElapsedBadges(route, rows);
-        syncFollowerBadges(route, rows);
+        rememberFollowerRefreshRows(route, rows);
 
         const candidateRows = [];
         let checkedRows = 0;
@@ -3222,7 +3427,6 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
 
         await hydrateFollowers(rows, !followerHydrationPending, true);
         await yieldToUi();
-        syncFollowerBadges(route, rows);
 
         const visible = candidateRows
             .filter((row) => passesStickyFilters(row))
@@ -3230,9 +3434,10 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         rememberVisibleRows(visible);
 
         const visibleSet = new Set(visible.map((row) => row.entry.card));
+        syncLiveElapsedBadges(route, rows);
+        syncFollowerBadges(route, rows);
         for (const row of rows) {
-            if (visibleSet.has(row.entry.card)) row.entry.card.removeAttribute(HIDE_ATTR);
-            else row.entry.card.setAttribute(HIDE_ATTR, "1");
+            setCardHidden(row.entry.card, !visibleSet.has(row.entry.card));
         }
 
         if (visible.length) removeEmptyMessage(grid);
@@ -3249,7 +3454,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     function restoreCards() {
         const cards = Array.from(document.querySelectorAll(`[${CARD_ATTR}="1"]`));
         for (const card of cards) {
-            card.removeAttribute(HIDE_ATTR);
+            setCardHidden(card, false);
             const parent = card.parentElement;
             if (parent) removeEmptyMessage(parent);
         }
@@ -3285,9 +3490,20 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         resetMetadata("");
         orderCounter = 0;
         lastFollowerHydrateAt = 0;
+        followerHydrationRefreshing = false;
+        lastFollowerRefreshRouteKey = "";
+        lastFollowerRefreshRows = [];
         lastMetadataApplyAt = 0;
         clearFollowerHydrationTimer();
         clearLoading();
+    }
+
+    function runScheduledApply() {
+        if (!isFeatureEnabled() || !getRoute()) {
+            removeToolsIfMounted();
+            return;
+        }
+        runApply();
     }
 
     function scheduleApply() {
@@ -3299,16 +3515,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             removeToolsIfMounted();
             return;
         }
-        if (scheduled) return;
-        scheduled = true;
-        requestAnimationFrame(() => {
-            scheduled = false;
-            if (!isFeatureEnabled() || !getRoute()) {
-                removeToolsIfMounted();
-                return;
-            }
-            runApply();
-        });
+        scheduleThrottledApply();
     }
 
     async function runApply() {
@@ -3356,21 +3563,22 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         const added = mutation.addedNodes;
         const removed = mutation.removedNodes;
         if ((!added || added.length === 0) && (!removed || removed.length === 0)) {
-            return mutation.type === "attributes" && (
-                mutation.attributeName === TABS_ATTR ||
-                mutation.attributeName === GLOBAL_SORT_ATTR ||
-                mutation.attributeName === CARD_ATTR ||
-                mutation.attributeName === CARD_ID_ATTR ||
-                mutation.attributeName === INJECTED_ATTR ||
-                mutation.attributeName === HIDE_ATTR ||
-                mutation.attributeName === HIDDEN_TAG_SEARCH_ATTR ||
-                mutation.attributeName === TAG_SEARCH_ANCHOR_ATTR ||
-                mutation.attributeName === ORDER_ATTR ||
-                mutation.attributeName === EMPTY_ATTR ||
-                mutation.attributeName === FOLLOWER_BADGE_ATTR ||
-                mutation.attributeName === FOLLOWER_BADGE_WRAP_ATTR ||
-                mutation.attributeName === LIVE_ELAPSED_BADGE_ATTR ||
-                mutation.attributeName === LIVE_THUMB_HOST_ATTR
+            return (
+                mutation.type === "attributes" &&
+                (mutation.attributeName === TABS_ATTR ||
+                    mutation.attributeName === GLOBAL_SORT_ATTR ||
+                    mutation.attributeName === CARD_ATTR ||
+                    mutation.attributeName === CARD_ID_ATTR ||
+                    mutation.attributeName === INJECTED_ATTR ||
+                    mutation.attributeName === HIDE_ATTR ||
+                    mutation.attributeName === HIDDEN_TAG_SEARCH_ATTR ||
+                    mutation.attributeName === TAG_SEARCH_ANCHOR_ATTR ||
+                    mutation.attributeName === ORDER_ATTR ||
+                    mutation.attributeName === EMPTY_ATTR ||
+                    mutation.attributeName === FOLLOWER_BADGE_ATTR ||
+                    mutation.attributeName === FOLLOWER_BADGE_WRAP_ATTR ||
+                    mutation.attributeName === LIVE_ELAPSED_BADGE_ATTR ||
+                    mutation.attributeName === LIVE_THUMB_HOST_ATTR)
             );
         }
         for (const node of added || []) {
@@ -3432,11 +3640,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         const menu = document.getElementById(MENU_ID);
         if (!bar && !menu && getRoute()?.scope !== "global-lives") return;
         handleGlobalSortClick(event);
-        if (
-            bar &&
-            !bar.contains(event.target) &&
-            (!menu || !menu.contains(event.target))
-        ) closeMenu();
+        if (bar && !bar.contains(event.target) && (!menu || !menu.contains(event.target))) closeMenu();
     }
 
     function installGlobalListeners() {
@@ -3474,7 +3678,6 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
 
     function teardownRuntime() {
         runtimeInstalled = false;
-        scheduled = false;
         applyQueued = false;
         metadataSearchToken++;
         metadataSearchRunning = false;

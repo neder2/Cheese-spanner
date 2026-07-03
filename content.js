@@ -1,5 +1,5 @@
 (() => {
-    const root = window.BetterChzzk = window.BetterChzzk || {};
+    const root = (window.BetterChzzk = window.BetterChzzk || {});
     const existingUtils = root.utils || {};
     const PAGE_ROUTE_CHANGE_EVENT = "betterchzzk:routechange";
     const FEATURE_ROUTE_CHANGE_EVENT = "betterchzzk:routechange:detected";
@@ -17,10 +17,19 @@
         fn();
     }
 
-    const normSpace = existingUtils.compactSpaces || ((value) => String(value || "").replace(/\s+/g, " ").trim());
+    const normSpace =
+        existingUtils.compactSpaces ||
+        ((value) =>
+            String(value || "")
+                .replace(/\s+/g, " ")
+                .trim());
 
-    const normalizeCompact = existingUtils.normalizeCompact ||
-        ((value) => String(value || "").toLowerCase().replace(/\s+/g, ""));
+    const normalizeCompact =
+        existingUtils.normalizeCompact ||
+        ((value) =>
+            String(value || "")
+                .toLowerCase()
+                .replace(/\s+/g, ""));
 
     function sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
@@ -59,7 +68,12 @@
             }
 
             const rootNode = current.getRootNode?.();
-            if (typeof ShadowRoot !== "undefined" && rootNode instanceof ShadowRoot && rootNode.host && rootNode.host !== current) {
+            if (
+                typeof ShadowRoot !== "undefined" &&
+                rootNode instanceof ShadowRoot &&
+                rootNode.host &&
+                rootNode.host !== current
+            ) {
                 current = rootNode.host;
                 continue;
             }
@@ -74,7 +88,9 @@
     }
 
     function getMainVideoElement() {
-        const videos = Array.from(document.querySelectorAll("video")).filter((video) => !isExtensionPreviewVideo(video));
+        const videos = Array.from(document.querySelectorAll("video")).filter(
+            (video) => !isExtensionPreviewVideo(video)
+        );
         return pickLargestVisible(videos) || videos[0] || null;
     }
 
@@ -128,9 +144,11 @@
         const href = location.href;
         if (href === routeDetectionLastHref) return false;
         routeDetectionLastHref = href;
-        window.dispatchEvent(new CustomEvent(FEATURE_ROUTE_CHANGE_EVENT, {
-            detail: { href, source },
-        }));
+        window.dispatchEvent(
+            new CustomEvent(FEATURE_ROUTE_CHANGE_EVENT, {
+                detail: { href, source },
+            })
+        );
         return true;
     }
 
@@ -195,15 +213,17 @@
         return style;
     }
 
-    const isLastPage = existingUtils.isLastPage || ((json, rows, pageSize) => {
-        const content = json?.content ?? json;
-        if (!content) return true;
-        if (typeof content.totalPages === "number" && typeof content.page?.number === "number") {
-            return content.page.number >= content.totalPages - 1;
-        }
-        if (typeof content.last === "boolean") return content.last;
-        return rows.length < pageSize;
-    });
+    const isLastPage =
+        existingUtils.isLastPage ||
+        ((json, rows, pageSize) => {
+            const content = json?.content ?? json;
+            if (!content) return true;
+            if (typeof content.totalPages === "number" && typeof content.page?.number === "number") {
+                return content.page.number >= content.totalPages - 1;
+            }
+            if (typeof content.last === "boolean") return content.last;
+            return rows.length < pageSize;
+        });
 
     function isPlaybackRoute(pathname = location.pathname) {
         return /^\/(?:live|video)(?:\/|$)/.test(pathname);

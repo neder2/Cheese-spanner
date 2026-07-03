@@ -3,16 +3,11 @@
     // 오래 기다리면 복구 자체가 입력 지연처럼 보이므로 짧은 유예만 둔다.
     const PROBE_TIMEOUT_MS = 80;
     const BUTTON_SELECTOR = "button, [role='button']";
-    const INTERACTIVE_SELECTOR = "button, [role='button'], a[href], input, textarea, select, summary, [contenteditable='true']";
+    const INTERACTIVE_SELECTOR =
+        "button, [role='button'], a[href], input, textarea, select, summary, [contenteditable='true']";
     const DESCRIPTOR_ATTRS = ["aria-label", "label", "tooltip", "title", "data-testid", "class"];
 
-    const {
-        getMainVideoElement,
-        isPlaybackRoute,
-        isVisible,
-        normalizeCompact,
-        bindFeatureOptions,
-    } = BetterChzzk.utils;
+    const { getMainVideoElement, isPlaybackRoute, isVisible, normalizeCompact, bindFeatureOptions } = BetterChzzk.utils;
 
     let featureOptions = BetterChzzkSettings.normalizeOptions();
 

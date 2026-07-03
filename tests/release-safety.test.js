@@ -139,3 +139,40 @@ test("low-risk fallback reductions stay removed", () => {
     assert.doesNotMatch(videoSearchSource, /createFallbackPlaybackProgress/);
     assert.doesNotMatch(categoryToolsSource, /touchMapEntry\(followerCache,\s*channelId,\s*0/);
 });
+
+test("optimization guards stay in the hot paths", () => {
+    const autoQualityPageSource = fs.readFileSync(path.join(repoRoot, "features/autoQualityPage.js"), "utf8");
+    const categoryToolsSource = fs.readFileSync(path.join(repoRoot, "features/categoryTools.js"), "utf8");
+    const chatToolsSource = fs.readFileSync(path.join(repoRoot, "features/chatTools.js"), "utf8");
+    const liveWatchHistorySource = fs.readFileSync(path.join(repoRoot, "features/liveWatchHistory.js"), "utf8");
+    const monthlyBroadcastTimeSource = fs.readFileSync(path.join(repoRoot, "features/monthlyBroadcastTime.js"), "utf8");
+    const videoSearchSource = fs.readFileSync(path.join(repoRoot, "features/videoSearch.js"), "utf8");
+
+    assert.doesNotMatch(autoQualityPageSource, /querySelectorAll\(["']\*["']\)/);
+    assert.match(autoQualityPageSource, /function startPageAutoApply[\s\S]{0,260}hasStableVodApply\(\)/);
+    assert.match(categoryToolsSource, /createThrottledDomSync\(runScheduledApply,\s*160\)/);
+    assert.match(monthlyBroadcastTimeSource, /createThrottledDomSync\(runScheduledMount,\s*160\)/);
+    assert.match(videoSearchSource, /createThrottledDomSync\(runScheduledMount,\s*160\)/);
+    assert.doesNotMatch(monthlyBroadcastTimeSource, /scheduleFallbackTimer|let scheduled = false/);
+    assert.match(categoryToolsSource, /lastBadgeScrollCheckAt = now;\s*void refreshFollowerHydrationRows\(\);/);
+    assert.match(
+        categoryToolsSource,
+        /rememberVisibleRows\(visible\);[\s\S]{0,240}syncLiveElapsedBadges\(route, rows\);[\s\S]{0,120}syncFollowerBadges\(route, rows\);/
+    );
+    assert.doesNotMatch(
+        categoryToolsSource,
+        /rememberFollowerRefreshRows\(route, rows\);[\s\S]{0,220}syncFollowerBadges\(route, rows\);[\s\S]{0,220}const candidateRows = \[\]/
+    );
+    assert.match(categoryToolsSource, /const injectedEntries = \[\]/);
+    assert.match(categoryToolsSource, /entries = entries\.concat\(injectedEntries\)/);
+    assert.doesNotMatch(
+        categoryToolsSource,
+        /await syncInjectedCards[\s\S]{0,160}entries = getCardEntries\(route, scanContext\)/
+    );
+    assert.match(chatToolsSource, /hasAttribute\(BLIND_PROCESSED_ATTR\)/);
+    assert.match(chatToolsSource, /hasAttribute\(MODERATOR_COLLECTED_ATTR\)/);
+    assert.match(chatToolsSource, /createThrottledDomSync\(syncChatTools/);
+    assert.match(liveWatchHistorySource, /const updatedEntry = updater\(history\);/);
+    assert.match(liveWatchHistorySource, /pruneHistory\(history, updatedEntry\);/);
+    assert.doesNotMatch(liveWatchHistorySource, /for\s*\(\s*const entry of Object\.values\(history\.entries\)/);
+});

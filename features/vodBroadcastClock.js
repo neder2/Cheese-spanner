@@ -211,8 +211,8 @@
         const rawEntries = Array.isArray(source.entries)
             ? source.entries
             : source.entries && typeof source.entries === "object"
-                ? Object.values(source.entries)
-                : [];
+              ? Object.values(source.entries)
+              : [];
 
         return rawEntries
             .filter((row) => row && typeof row === "object")
@@ -273,7 +273,12 @@
     }
 
     function getVideoDetailChannelId(detail) {
-        return pickString(detail?.channelId, detail?.channel?.channelId, detail?.channel?.id, detail?.channel?.channelNo);
+        return pickString(
+            detail?.channelId,
+            detail?.channel?.channelId,
+            detail?.channel?.id,
+            detail?.channel?.channelNo
+        );
     }
 
     function getVideoDetailChannelName(detail) {
@@ -281,7 +286,10 @@
     }
 
     function getVideoDetailTitle(detail) {
-        return cleanEntryTitle(pickString(detail?.videoTitle, detail?.title, detail?.liveTitle), getVideoDetailChannelName(detail));
+        return cleanEntryTitle(
+            pickString(detail?.videoTitle, detail?.title, detail?.liveTitle),
+            getVideoDetailChannelName(detail)
+        );
     }
 
     function getHistoryChannelMatch(entry, detail) {
@@ -418,26 +426,24 @@
             return;
         }
 
-        getWatchHistorySnapshot().then((historySnapshot) => {
-            if (metadataToken !== token || currentVideoNo !== videoNo) return;
-            const entries = getHistoryEntries(historySnapshot);
-            const info = findHistoryInfo(videoNo, detail, entries);
-            touchMapEntry(historyInfoCache, cacheKey, info, MAX_HISTORY_INFO_CACHE_ENTRIES);
-            currentHistoryInfo = info;
-            scheduleSync();
-        }).catch(() => {
-            if (metadataToken !== token || currentVideoNo !== videoNo) return;
-            currentHistoryInfo = null;
-            scheduleSync();
-        });
+        getWatchHistorySnapshot()
+            .then((historySnapshot) => {
+                if (metadataToken !== token || currentVideoNo !== videoNo) return;
+                const entries = getHistoryEntries(historySnapshot);
+                const info = findHistoryInfo(videoNo, detail, entries);
+                touchMapEntry(historyInfoCache, cacheKey, info, MAX_HISTORY_INFO_CACHE_ENTRIES);
+                currentHistoryInfo = info;
+                scheduleSync();
+            })
+            .catch(() => {
+                if (metadataToken !== token || currentVideoNo !== videoNo) return;
+                currentHistoryInfo = null;
+                scheduleSync();
+            });
     }
 
     function getCandidateText(el) {
-        return [
-            el?.getAttribute?.("aria-label"),
-            el?.getAttribute?.("title"),
-            el?.textContent,
-        ].join(" ");
+        return [el?.getAttribute?.("aria-label"), el?.getAttribute?.("title"), el?.textContent].join(" ");
     }
 
     function getDirectChildUnder(host, target) {
@@ -471,8 +477,9 @@
             return controls[0].directChild;
         }
 
-        const children = Array.from(container.children || [])
-            .filter((child) => child instanceof HTMLElement && child.id !== CLOCK_ID && getVisibleArea(child) > 0);
+        const children = Array.from(container.children || []).filter(
+            (child) => child instanceof HTMLElement && child.id !== CLOCK_ID && getVisibleArea(child) > 0
+        );
         children.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
         return children[0] || null;
     }
@@ -486,7 +493,9 @@
     }
 
     function injectClockStyleOnce() {
-        injectStyleOnce(STYLE_ID, `
+        injectStyleOnce(
+            STYLE_ID,
+            `
 #${CLOCK_ID}{
   display:inline-flex;
   align-items:center;
@@ -694,7 +703,8 @@
     max-width:calc(100vw - 130px);
   }
 }
-`);
+`
+        );
     }
 
     function getClockElement() {
@@ -775,7 +785,8 @@
         clock.setAttribute("data-bcbc-placement", "time-inline");
         const insertAfter = findClockInsertAfter(anchorEl);
         if (!insertAfter?.parentElement) return false;
-        if (clock.parentElement === insertAfter.parentElement && clock.previousElementSibling === insertAfter) return true;
+        if (clock.parentElement === insertAfter.parentElement && clock.previousElementSibling === insertAfter)
+            return true;
 
         if (clock.parentElement) clock.remove();
         insertAfter.insertAdjacentElement("afterend", clock);
@@ -865,10 +876,12 @@
         const promise = fetchJson(`${VIDEO_DETAIL_API_BASE}/${encodeURIComponent(videoNo)}`, {
             headers: { Accept: "application/json" },
             timeoutMs: FETCH_TIMEOUT_MS,
-        }).then((json) => json?.content || null).catch((error) => {
-            detailCache.delete(videoNo);
-            throw error;
-        });
+        })
+            .then((json) => json?.content || null)
+            .catch((error) => {
+                detailCache.delete(videoNo);
+                throw error;
+            });
 
         touchMapEntry(detailCache, videoNo, promise, MAX_DETAIL_CACHE_ENTRIES);
         return promise;
@@ -895,36 +908,38 @@
         titleHistoryExpanded = false;
         metadataState = "loading";
 
-        fetchVideoDetail(videoNo).then((detail) => {
-            if (metadataToken !== token || currentVideoNo !== videoNo) return;
+        fetchVideoDetail(videoNo)
+            .then((detail) => {
+                if (metadataToken !== token || currentVideoNo !== videoNo) return;
 
-            const startInfo = getVodSegmentStartInfo(detail);
-            if (Number.isFinite(startInfo.segmentStartMs)) {
-                currentStartMs = startInfo.segmentStartMs;
-                currentOriginalStartMs = startInfo.originalStartMs;
-                currentSegmentOffsetMs = startInfo.segmentOffsetMs;
-                currentStartSource = pickStartDateText(detail);
-                metadataState = "ready";
-            } else {
+                const startInfo = getVodSegmentStartInfo(detail);
+                if (Number.isFinite(startInfo.segmentStartMs)) {
+                    currentStartMs = startInfo.segmentStartMs;
+                    currentOriginalStartMs = startInfo.originalStartMs;
+                    currentSegmentOffsetMs = startInfo.segmentOffsetMs;
+                    currentStartSource = pickStartDateText(detail);
+                    metadataState = "ready";
+                } else {
+                    currentStartMs = NaN;
+                    currentOriginalStartMs = NaN;
+                    currentSegmentOffsetMs = 0;
+                    currentStartSource = "";
+                    metadataState = "unavailable";
+                }
+                loadHistoryInfo(videoNo, detail, token);
+                scheduleSync();
+            })
+            .catch(() => {
+                if (metadataToken !== token || currentVideoNo !== videoNo) return;
                 currentStartMs = NaN;
                 currentOriginalStartMs = NaN;
                 currentSegmentOffsetMs = 0;
                 currentStartSource = "";
-                metadataState = "unavailable";
-            }
-            loadHistoryInfo(videoNo, detail, token);
-            scheduleSync();
-        }).catch(() => {
-            if (metadataToken !== token || currentVideoNo !== videoNo) return;
-            currentStartMs = NaN;
-            currentOriginalStartMs = NaN;
-            currentSegmentOffsetMs = 0;
-            currentStartSource = "";
-            currentHistoryInfo = null;
-            metadataState = "error";
-            loadHistoryInfo(videoNo, null, token);
-            scheduleSync();
-        });
+                currentHistoryInfo = null;
+                metadataState = "error";
+                loadHistoryInfo(videoNo, null, token);
+                scheduleSync();
+            });
     }
 
     function ensureRouteMetadata(videoNo) {
@@ -1008,8 +1023,9 @@
                 byTitle.set(key, { ...row });
             }
         }
-        return Array.from(byTitle.values())
-            .sort((a, b) => a.firstSeenAt - b.firstSeenAt || a.lastSeenAt - b.lastSeenAt);
+        return Array.from(byTitle.values()).sort(
+            (a, b) => a.firstSeenAt - b.firstSeenAt || a.lastSeenAt - b.lastSeenAt
+        );
     }
 
     function getPreviousTitleRows() {
@@ -1025,14 +1041,28 @@
     function getElementTitleText(el) {
         if (!(el instanceof HTMLElement)) return "";
         const clone = el.cloneNode(true);
-        for (const node of clone.querySelectorAll(`#${TITLE_HISTORY_WRAP_ID}, #${TITLE_HISTORY_BUTTON_ID}, #${TITLE_HISTORY_PANEL_ID}`)) {
+        for (const node of clone.querySelectorAll(
+            `#${TITLE_HISTORY_WRAP_ID}, #${TITLE_HISTORY_BUTTON_ID}, #${TITLE_HISTORY_PANEL_ID}`
+        )) {
             node.remove();
         }
         return cleanTitle(clone.textContent || "");
     }
 
+    function setAttributeIfChanged(el, name, value) {
+        if (!(el instanceof Element)) return;
+        const next = String(value);
+        if (el.getAttribute(name) !== next) el.setAttribute(name, next);
+    }
+
+    function setElementTitleIfChanged(el, value) {
+        if (!(el instanceof HTMLElement)) return;
+        const next = String(value);
+        if (el.title !== next) el.title = next;
+    }
+
     function applyClockTitle(clock, lines) {
-        clock.title = lines.join("\n");
+        setElementTitleIfChanged(clock, lines.join("\n"));
     }
 
     function findVodTitleElement(video) {
@@ -1050,7 +1080,8 @@
             const text = getElementTitleText(el);
             const textNorm = normalizeForMatch(text);
             if (!textNorm) continue;
-            if (textNorm !== expectedNorm && !textNorm.includes(expectedNorm) && !expectedNorm.includes(textNorm)) continue;
+            if (textNorm !== expectedNorm && !textNorm.includes(expectedNorm) && !expectedNorm.includes(textNorm))
+                continue;
 
             const rect = el.getBoundingClientRect();
             const tagName = el.tagName.toUpperCase();
@@ -1189,10 +1220,11 @@
             document.body.appendChild(panel);
         }
 
-        button.setAttribute("aria-controls", TITLE_HISTORY_PANEL_ID);
-        button.setAttribute("aria-expanded", titleHistoryExpanded ? "true" : "false");
-        button.setAttribute("aria-label", titleHistoryExpanded ? "이전 방제 접기" : `이전 방제 ${rows.length}개 보기`);
-        button.title = titleHistoryExpanded ? "이전 방제 접기" : `이전 방제 ${rows.length}개 보기`;
+        const titleHistoryLabel = titleHistoryExpanded ? "이전 방제 접기" : `이전 방제 ${rows.length}개 보기`;
+        setAttributeIfChanged(button, "aria-controls", TITLE_HISTORY_PANEL_ID);
+        setAttributeIfChanged(button, "aria-expanded", titleHistoryExpanded ? "true" : "false");
+        setAttributeIfChanged(button, "aria-label", titleHistoryLabel);
+        setElementTitleIfChanged(button, titleHistoryLabel);
 
         renderTitleHistoryPanel(panel, rows);
         positionTitleHistoryPanel(wrap, panel);
@@ -1214,11 +1246,12 @@
             }
             if (clockTextEl && clockTextEl.textContent !== text) clockTextEl.textContent = text;
 
-            const stateText = metadataState === "loading"
-                ? "방송 시작 시간을 가져오는 중입니다."
-                : "방송 시작 시간을 찾지 못했습니다.";
+            const stateText =
+                metadataState === "loading"
+                    ? "방송 시작 시간을 가져오는 중입니다."
+                    : "방송 시작 시간을 찾지 못했습니다.";
             applyClockTitle(clock, [stateText]);
-            clock.setAttribute("aria-label", `현재 방송 시각 ${text}`);
+            setAttributeIfChanged(clock, "aria-label", `현재 방송 시각 ${text}`);
             return true;
         }
 
@@ -1242,7 +1275,7 @@
         }
         if (currentStartSource) title.push(`원본 시작 시간: ${currentStartSource}`);
         applyClockTitle(clock, title);
-        clock.setAttribute("aria-label", `현재 방송 시각 ${text}`);
+        setAttributeIfChanged(clock, "aria-label", `현재 방송 시각 ${text}`);
         return true;
     }
 
@@ -1310,9 +1343,8 @@
             return;
         }
 
-        const anchorEl = clockAnchorEl?.isConnected && getVisibleArea(clockAnchorEl) > 0
-            ? clockAnchorEl
-            : findClockAnchor(video);
+        const anchorEl =
+            clockAnchorEl?.isConnected && getVisibleArea(clockAnchorEl) > 0 ? clockAnchorEl : findClockAnchor(video);
         if (!(anchorEl instanceof HTMLElement)) {
             removeClock();
             return;
@@ -1359,8 +1391,10 @@
 
     function mutationCouldAffectClock(mutation) {
         if (mutationMatchesSelector(mutation, RELEVANT_DOM_SELECTOR)) return true;
-        return mutation.target instanceof Element &&
-            Boolean(mutation.target.closest?.(`${LEFT_BUTTONS_SELECTOR}, ${RIGHT_BUTTONS_SELECTOR}`));
+        return (
+            mutation.target instanceof Element &&
+            Boolean(mutation.target.closest?.(`${LEFT_BUTTONS_SELECTOR}, ${RIGHT_BUTTONS_SELECTOR}`))
+        );
     }
 
     function getDomObserverConfig(mode) {

@@ -394,6 +394,82 @@ test("duplicate mutations do not duplicate collected manager messages", async (t
     assert.equal(moderatorRows(dom.window.document).length, 1);
 });
 
+test("nested chat row candidates are processed as a single outer row", async (t) => {
+    const { dom } = createPageDom(
+        [
+            '<div class="chat-row" data-chat-id="manager-nested-outer">',
+            '<span class="badge" aria-label="매니저"></span>',
+            '<span class="nickname">manager</span>',
+            '<span class="message">',
+            '<span class="chat-message">중첩 후보가 있어도 한 번만 수집</span>',
+            "</span>",
+            "</div>",
+        ].join("")
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 1);
+
+    assert.match(moderatorRows(dom.window.document)[0].textContent, /중첩 후보가 있어도 한 번만 수집/);
+});
+
+test("added chat rows are processed without reparsing the whole list", async (t) => {
+    const { dom } = createPageDom(
+        [
+            '<div class="chat-row" data-chat-id="normal-before-add">',
+            '<span class="nickname">viewer</span>',
+            '<span class="message">기존 일반 채팅</span>',
+            "</div>",
+        ].join("")
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-box"));
+
+    dom.window.document
+        .querySelector(".chat-list")
+        .insertAdjacentHTML(
+            "beforeend",
+            [
+                '<div class="chat-row" data-chat-id="manager-added-incremental">',
+                '<span class="badge" aria-label="매니저"></span>',
+                '<span class="nickname">manager</span>',
+                '<span class="message">증분 추가 수집</span>',
+                "</div>",
+            ].join("")
+        );
+
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 1);
+
+    assert.match(moderatorRows(dom.window.document)[0].textContent, /증분 추가 수집/);
+});
+
+test("dirty blind rows are reparsed when hidden original text changes", async (t) => {
+    const { dom } = createPageDom(
+        [
+            '<div class="chat-row" data-chat-id="blind-dirty-update">',
+            '<span class="nickname">viewer</span>',
+            '<span class="message">블라인드 처리된 메시지입니다.</span>',
+            '<span class="message-hidden" style="display:none">처음 숨김 원문</span>',
+            "</div>",
+        ].join("")
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() =>
+        /처음 숨김 원문/.test(dom.window.document.querySelector(".bcct-blind-reveal")?.textContent || "")
+    );
+
+    dom.window.document.querySelector(".message-hidden").textContent = "바뀐 숨김 원문";
+
+    await waitForCondition(() =>
+        /바뀐 숨김 원문/.test(dom.window.document.querySelector(".bcct-blind-reveal")?.textContent || "")
+    );
+});
+
 test("moderator box trims old messages at the configured maximum", async (t) => {
     const rows = Array.from({ length: 25 }, (_, index) =>
         [

@@ -21,6 +21,16 @@
     const MAX_PAGE_CACHE_CHANNELS = 8;
     const MAX_PAGES_PER_CHANNEL_CACHE = 120;
     const MAX_VIDEO_DETAIL_CACHE_ENTRIES = 600;
+    const WATCH_HISTORY_STORAGE_CHANGE_DEBOUNCE_MS = 300;
+    const HOST_RETRY_INITIAL_MS = 250;
+    const HOST_RETRY_MAX_MS = 3000;
+    const PAGE_FETCH_DELAY_MS = 80;
+    const WIDGET_FONT_FAMILY =
+        '"Sandoll Nemony2", "Sandoll Nemony", "Apple SD Gothic Neo", "Apple SD Gothic NEO", "Malgun Gothic", "맑은 고딕", sans-serif';
+    const CALENDAR_FOOT_INNER_WIDTH_PX = 208;
+    const CALENDAR_FOOT_GAP_PX = 8;
+    const CALENDAR_FOOT_NOTE_MAX_FONT_PX = 10;
+    const CALENDAR_FOOT_NOTE_MIN_FONT_PX = 7;
 
     const ROUTE_EXCLUSIONS = new Set([
         "category",
@@ -42,17 +52,22 @@
     const videoDetailCache = new Map();
     const loadingTokens = new Map();
     const calendarLoadingTokens = new Map();
+    const loadingAbortControllers = new Map();
+    const calendarLoadingAbortControllers = new Map();
 
     let currentChannelId = null;
     let observer = null;
-    let scheduled = false;
-    let scheduleFallbackTimer = 0;
     let lastUrl = location.href;
     let featureOptions = BetterChzzkSettings.normalizeOptions();
     let watchHistoryEntries = [];
     let watchHistoryLoaded = false;
     let watchHistoryLoading = false;
     let watchHistoryRerenderTimer = 0;
+    let watchHistoryNormalizeTimer = 0;
+    let pendingWatchHistoryRaw = null;
+    let watchHistoryVersion = 0;
+    let nextHostRetryAt = 0;
+    let hostRetryDelayMs = HOST_RETRY_INITIAL_MS;
     let runtimeInstalled = false;
     let routeListenersInstalled = false;
     let calendarCloseListenerInstalled = false;
@@ -82,6 +97,7 @@
         pickVideoEndDateText,
         pickVideoStartDateText,
         parseChzzkDate,
+        createThrottledDomSync,
         startStorageChangeListener,
         startPageChangeDetection,
         storageGet,
@@ -89,6 +105,7 @@
         sumWatchRangesByDate,
         touchMapEntry,
     } = BetterChzzk.utils;
+    const scheduleThrottledMount = createThrottledDomSync(runScheduledMount, 160);
 
     function isFeatureEnabled() {
         return featureOptions.monthlyBroadcastTimeEnabled;
@@ -139,9 +156,7 @@
 
     function hasMountedWidget() {
         return Boolean(
-            currentChannelId ||
-            document.getElementById(WIDGET_ID) ||
-            document.querySelector(`[${HOST_ATTR}="1"]`)
+            currentChannelId || document.getElementById(WIDGET_ID) || document.querySelector(`[${HOST_ATTR}="1"]`)
         );
     }
 
@@ -150,7 +165,9 @@
     }
 
     function injectStyleOnce() {
-        BetterChzzk.utils.injectStyleOnce(STYLE_ID, `
+        BetterChzzk.utils.injectStyleOnce(
+            STYLE_ID,
+            `
 [${HOST_ATTR}="1"]{
   align-items:center !important;
 }
@@ -172,7 +189,7 @@
   color:#111114;
   box-shadow:none;
   box-sizing:border-box;
-  font-family:"Sandoll Nemony2", "Sandoll Nemony", "Apple SD Gothic Neo", "Apple SD Gothic NEO", "Malgun Gothic", "맑은 고딕", sans-serif;
+  font-family:${WIDGET_FONT_FAMILY};
   line-height:1;
   white-space:nowrap;
   pointer-events:auto;
@@ -470,25 +487,27 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   background:transparent;
 }
 #${WIDGET_ID} .bcmb-calendar-foot{
-  display:grid;
-  grid-template-columns:minmax(0, 1fr) auto;
-  align-items:end;
-  gap:8px;
+  display:flex;
+  align-items:baseline;
+  gap:${CALENDAR_FOOT_GAP_PX}px;
   margin-top:10px;
   color:#697183;
-  font-size:11px;
+  font-size:${CALENDAR_FOOT_NOTE_MAX_FONT_PX}px;
   font-weight:800;
-  line-height:15px;
+  line-height:14px;
 }
 #${WIDGET_ID} .bcmb-calendar-foot-note{
+  flex:0 1 auto;
+  min-width:0;
   overflow:hidden;
   text-overflow:ellipsis;
   white-space:nowrap;
 }
 #${WIDGET_ID} .bcmb-calendar-watch-total{
+  flex:0 0 auto;
+  margin-left:auto;
   color:#00a86b;
   font-weight:900;
-  text-align:right;
   white-space:nowrap;
 }
 #${WIDGET_ID} .bcmb-calendar[data-loading="1"] .bcmb-days{
@@ -549,7 +568,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
   }
   #${WIDGET_ID} .bcmb-label{display:none;}
 }
-`);
+`
+        );
     }
 
     function createWidget() {
@@ -699,19 +719,20 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
     function getActionControls() {
         const keywords = ["팔로우", "팔로잉", "구독", "구독 선물"];
         return Array.from(document.querySelectorAll("button, a"))
-            .filter((el) => {
+            .map((el) => {
                 if (!isVisible(el)) return false;
                 if (el.closest("nav, aside")) return false;
-                const text = normSpace([
-                    el.textContent,
-                    el.getAttribute("aria-label"),
-                    el.getAttribute("title"),
-                ].filter(Boolean).join(" "));
+                const text = normSpace(
+                    [el.textContent, el.getAttribute("aria-label"), el.getAttribute("title")].filter(Boolean).join(" ")
+                );
                 if (!keywords.some((keyword) => text.includes(keyword))) return false;
                 const rect = el.getBoundingClientRect();
-                return rect.top >= 0 && rect.top < Math.min(window.innerHeight, 260) && rect.left > 220;
+                if (rect.top < 0 || rect.top >= Math.min(window.innerHeight, 260) || rect.left <= 220) return false;
+                return { el, rect };
             })
-            .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+            .filter(Boolean)
+            .sort((a, b) => a.rect.left - b.rect.left)
+            .map((entry) => entry.el);
     }
 
     function scoreActionHost(host, controls) {
@@ -755,9 +776,11 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
     }
 
     function findFollowerInfo() {
-        return Array.from(document.querySelectorAll("span, strong, em, div, p"))
-            .filter((el) => isVisible(el) && /팔로워\s*[\d,.]+/.test(normSpace(el.textContent)))
-            .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0] || null;
+        return (
+            Array.from(document.querySelectorAll("span, strong, em, div, p"))
+                .filter((el) => isVisible(el) && /팔로워\s*[\d,.]+/.test(normSpace(el.textContent)))
+                .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0] || null
+        );
     }
 
     function findFallbackHost() {
@@ -803,16 +826,27 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
 
         let widget = document.getElementById(WIDGET_ID);
         if (widget && currentChannelId === channelId && widget.isConnected && isVisible(widget)) {
+            nextHostRetryAt = 0;
+            hostRetryDelayMs = HOST_RETRY_INITIAL_MS;
             widget.setAttribute("data-calendar-disabled", isCalendarEnabled() ? "0" : "1");
             if (!isCalendarEnabled()) setCalendarOpen(widget, false);
             renderCachedStats(widget, channelId);
             return widget;
         }
 
+        const now = performance.now();
+        if (now < nextHostRetryAt) return null;
+
         const controls = getActionControls();
         const host = findActionHost(controls);
         const fallbackHost = host ? null : findFallbackHost();
-        if (!host && !fallbackHost) return null;
+        if (!host && !fallbackHost) {
+            nextHostRetryAt = now + hostRetryDelayMs;
+            hostRetryDelayMs = Math.min(HOST_RETRY_MAX_MS, Math.round(hostRetryDelayMs * 1.6));
+            return null;
+        }
+        nextHostRetryAt = 0;
+        hostRetryDelayMs = HOST_RETRY_INITIAL_MS;
 
         if (!widget) widget = createWidget();
         widget.setAttribute("data-calendar-disabled", isCalendarEnabled() ? "0" : "1");
@@ -857,10 +891,16 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
     }
 
     function removeWidget() {
+        if (currentChannelId) {
+            abortControllerMap(loadingAbortControllers, currentChannelId);
+            abortControllerMap(calendarLoadingAbortControllers, currentChannelId);
+        }
         const widget = document.getElementById(WIDGET_ID);
         if (widget) widget.remove();
         document.querySelectorAll(`[${HOST_ATTR}="1"]`).forEach((el) => el.removeAttribute(HOST_ATTR));
         currentChannelId = null;
+        nextHostRetryAt = 0;
+        hostRetryDelayMs = HOST_RETRY_INITIAL_MS;
     }
 
     function extractVideos(json) {
@@ -868,24 +908,26 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         const rows = pickArray(content);
         if (!rows) return [];
 
-        return rows.map((row) => {
-            const videoNo = pickChzzkVideoNo(row);
-            const type = row.videoType || row.type || "";
-            const duration = Number(row.duration);
-            const startDateText = pickVideoStartDateText(row);
-            const endDateText = pickVideoEndDateText(row);
+        return rows
+            .map((row) => {
+                const videoNo = pickChzzkVideoNo(row);
+                const type = row.videoType || row.type || "";
+                const duration = Number(row.duration);
+                const startDateText = pickVideoStartDateText(row);
+                const endDateText = pickVideoEndDateText(row);
 
-            if (!videoNo || !Number.isFinite(duration) || duration <= 0) return null;
-            return {
-                videoNo,
-                type: String(type || ""),
-                title: normSpace(row.videoTitle || row.title || row.liveTitle || ""),
-                duration,
-                startedAt: parseChzzkDate(startDateText),
-                startIsExact: Boolean(startDateText),
-                endedAt: parseChzzkDate(endDateText),
-            };
-        }).filter(Boolean);
+                if (!videoNo || !Number.isFinite(duration) || duration <= 0) return null;
+                return {
+                    videoNo,
+                    type: String(type || ""),
+                    title: normSpace(row.videoTitle || row.title || row.liveTitle || ""),
+                    duration,
+                    startedAt: parseChzzkDate(startDateText),
+                    startIsExact: Boolean(startDateText),
+                    endedAt: parseChzzkDate(endDateText),
+                };
+            })
+            .filter(Boolean);
     }
 
     function getChannelPageCache(channelId) {
@@ -899,7 +941,73 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         return cache;
     }
 
-    async function fetchVideoPage(channelId, page) {
+    function createAbortError() {
+        try {
+            return new DOMException("Aborted", "AbortError");
+        } catch (_) {
+            const error = new Error("Aborted");
+            error.name = "AbortError";
+            return error;
+        }
+    }
+
+    function isAbortError(error) {
+        return error?.name === "AbortError";
+    }
+
+    function abortControllerFor(map, channelId) {
+        const previous = map.get(channelId);
+        if (previous && !previous.signal.aborted) previous.abort();
+        const controller = new AbortController();
+        map.set(channelId, controller);
+        return controller;
+    }
+
+    function clearAbortController(map, channelId, controller) {
+        if (map.get(channelId) === controller) map.delete(channelId);
+    }
+
+    function abortControllerMap(map, channelId) {
+        const controller = map.get(channelId);
+        if (controller && !controller.signal.aborted) controller.abort();
+        map.delete(channelId);
+    }
+
+    function abortAllControllers() {
+        for (const channelId of Array.from(loadingAbortControllers.keys())) {
+            abortControllerMap(loadingAbortControllers, channelId);
+        }
+        for (const channelId of Array.from(calendarLoadingAbortControllers.keys())) {
+            abortControllerMap(calendarLoadingAbortControllers, channelId);
+        }
+    }
+
+    function waitWithAbort(ms, signal) {
+        if (!ms) return signal?.aborted ? Promise.reject(createAbortError()) : Promise.resolve();
+        if (signal?.aborted) return Promise.reject(createAbortError());
+        return new Promise((resolve, reject) => {
+            const timer = window.setTimeout(done, ms);
+
+            function done() {
+                signal?.removeEventListener("abort", abort);
+                resolve();
+            }
+
+            function abort() {
+                window.clearTimeout(timer);
+                reject(createAbortError());
+            }
+
+            signal?.addEventListener("abort", abort, { once: true });
+        });
+    }
+
+    async function waitBeforeVideoPage(page, signal) {
+        if (page <= 0) return;
+        await waitWithAbort(PAGE_FETCH_DELAY_MS, signal);
+    }
+
+    async function fetchVideoPage(channelId, page, { signal } = {}) {
         const params = new URLSearchParams({
             sortType: "LATEST",
             pagingType: "PAGE",
@@ -909,11 +1017,12 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         const url = `${API_BASE}/${encodeURIComponent(channelId)}/videos?${params.toString()}`;
         return fetchJson(url, {
             headers: { Accept: "application/json" },
+            signal,
             timeoutMs: FETCH_TIMEOUT_MS,
         });
     }
 
-    async function fetchVideoPageCached(channelId, page) {
+    async function fetchVideoPageCached(channelId, page, { signal } = {}) {
         const cache = getChannelPageCache(channelId);
         const cached = cache.get(page);
         if (cached && Date.now() - cached.fetchedAt < REFRESH_MS) {
@@ -923,7 +1032,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
 
         const entry = {
             fetchedAt: Date.now(),
-            promise: fetchVideoPage(channelId, page).catch((error) => {
+            promise: fetchVideoPage(channelId, page, { signal }).catch((error) => {
                 cache.delete(page);
                 throw error;
             }),
@@ -1013,7 +1122,9 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
     }
 
     function getWatchSessionFirstWatchedAt(sessionDetails) {
-        const values = (sessionDetails || []).map((session) => Number(session.enteredAt) || 0).filter((value) => value > 0);
+        const values = (sessionDetails || [])
+            .map((session) => Number(session.enteredAt) || 0)
+            .filter((value) => value > 0);
         return values.length ? Math.min(...values) : 0;
     }
 
@@ -1029,8 +1140,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         const rows = Array.isArray(source.entries)
             ? source.entries
             : source.entries && typeof source.entries === "object"
-                ? Object.values(source.entries)
-                : [];
+              ? Object.values(source.entries)
+              : [];
 
         return rows
             .filter((row) => row && typeof row === "object")
@@ -1069,15 +1180,19 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         if (!storage || watchHistoryLoading) return;
 
         watchHistoryLoading = true;
-        storageGet(storage, WATCH_HISTORY_STORAGE_KEY).then((data) => {
-            watchHistoryEntries = normalizeWatchHistory(data?.[WATCH_HISTORY_STORAGE_KEY]);
-            watchHistoryLoaded = true;
-            if (rerender) rerenderCurrentCalendar({ deferWhenVisible });
-        }).catch(() => {
-            // Preserve the previous behavior: storage read failures only skip watch-history enrichment.
-        }).finally(() => {
-            watchHistoryLoading = false;
-        });
+        storageGet(storage, WATCH_HISTORY_STORAGE_KEY)
+            .then((data) => {
+                watchHistoryEntries = normalizeWatchHistory(data?.[WATCH_HISTORY_STORAGE_KEY]);
+                watchHistoryVersion++;
+                watchHistoryLoaded = true;
+                if (rerender) rerenderCurrentCalendar({ deferWhenVisible });
+            })
+            .catch(() => {
+                // Preserve the previous behavior: storage read failures only skip watch-history enrichment.
+            })
+            .finally(() => {
+                watchHistoryLoading = false;
+            });
     }
 
     function ensureWatchHistoryLoaded() {
@@ -1104,6 +1219,27 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
             watchHistoryRerenderTimer = 0;
             rerenderCurrentCalendar({ deferWhenVisible });
         }, 300);
+    }
+
+    function flushPendingWatchHistoryStorageChange({ deferWhenVisible = true } = {}) {
+        if (watchHistoryNormalizeTimer) {
+            window.clearTimeout(watchHistoryNormalizeTimer);
+            watchHistoryNormalizeTimer = 0;
+        }
+        const raw = pendingWatchHistoryRaw;
+        pendingWatchHistoryRaw = null;
+        watchHistoryEntries = normalizeWatchHistory(raw);
+        watchHistoryVersion++;
+        watchHistoryLoaded = true;
+        scheduleWatchHistoryRerender({ deferWhenVisible });
+    }
+
+    function scheduleWatchHistoryStorageChange(raw) {
+        pendingWatchHistoryRaw = raw;
+        if (watchHistoryNormalizeTimer) window.clearTimeout(watchHistoryNormalizeTimer);
+        watchHistoryNormalizeTimer = window.setTimeout(() => {
+            flushPendingWatchHistoryStorageChange({ deferWhenVisible: true });
+        }, WATCH_HISTORY_STORAGE_CHANGE_DEBOUNCE_MS);
     }
 
     function getEntryDailySeconds(entry, dateKey) {
@@ -1197,7 +1333,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         return `${formatWatchDuration(watchInfo.seconds)} (${formatWatchPercent(watchInfo.percent)})`;
     }
 
-    async function fetchVideoDetail(videoNo) {
+    async function fetchVideoDetail(videoNo, { signal } = {}) {
         if (videoDetailCache.has(videoNo)) {
             const cached = videoDetailCache.get(videoNo);
             touchMapEntry(videoDetailCache, videoNo, cached, MAX_VIDEO_DETAIL_CACHE_ENTRIES);
@@ -1206,11 +1342,14 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
 
         const promise = fetchJson(`${VIDEO_DETAIL_API_BASE}/${encodeURIComponent(videoNo)}`, {
             headers: { Accept: "application/json" },
+            signal,
             timeoutMs: FETCH_TIMEOUT_MS,
-        }).then((json) => json?.content || null).catch((error) => {
-            videoDetailCache.delete(videoNo);
-            throw error;
-        });
+        })
+            .then((json) => json?.content || null)
+            .catch((error) => {
+                videoDetailCache.delete(videoNo);
+                throw error;
+            });
 
         touchMapEntry(videoDetailCache, videoNo, promise, MAX_VIDEO_DETAIL_CACHE_ENTRIES);
         return promise;
@@ -1251,17 +1390,25 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         return upper >= monthInfo.startMs && lower < monthInfo.nextStartMs;
     }
 
-    async function hydrateVideoStartDetails(videos, monthInfo, channelId, token, tokenMap = loadingTokens) {
+    async function hydrateVideoStartDetails(
+        videos,
+        monthInfo,
+        channelId,
+        token,
+        tokenMap = loadingTokens,
+        { signal } = {}
+    ) {
         const targets = videos.filter((video) => shouldFetchStartDetail(video, monthInfo));
         if (!targets.length) return;
 
         let index = 0;
         const workers = Array.from({ length: Math.min(DETAIL_FETCH_CONCURRENCY, targets.length) }, async () => {
             while (index < targets.length) {
+                if (signal?.aborted) return;
                 if (tokenMap.get(channelId) !== token) return;
                 const video = targets[index++];
                 try {
-                    const detail = await fetchVideoDetail(video.videoNo);
+                    const detail = await fetchVideoDetail(video.videoNo, { signal });
                     if (tokenMap.get(channelId) !== token) return;
                     mergeVideoDetail(video, detail);
                 } catch (_) {
@@ -1345,13 +1492,17 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
     }
 
     function getMonthBroadcastSeconds(month) {
-        return Object.values(month?.dailySeconds || {})
-            .reduce((sum, seconds) => sum + Math.max(0, Number(seconds) || 0), 0);
+        return Object.values(month?.dailySeconds || {}).reduce(
+            (sum, seconds) => sum + Math.max(0, Number(seconds) || 0),
+            0
+        );
     }
 
     function getMonthReplayCount(month) {
-        return Object.values(month?.startsByDate || {})
-            .reduce((sum, starts) => sum + (Array.isArray(starts) ? starts.length : 0), 0);
+        return Object.values(month?.startsByDate || {}).reduce(
+            (sum, starts) => sum + (Array.isArray(starts) ? starts.length : 0),
+            0
+        );
     }
 
     function getMonthAverageSeconds(month) {
@@ -1374,9 +1525,10 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         const label = `${monthName} 방송: ${broadcastDays}일`;
         const value = `${formatDuration(getMonthAverageSeconds(month))}/일`;
         const limited = month.partial ? "+" : "";
-        const meta = replayCount > 0
-            ? `총 ${formatDuration(totalSeconds)} · ${replayCount}${limited}개 다시보기`
-            : "다시보기 없음";
+        const meta =
+            replayCount > 0
+                ? `총 ${formatDuration(totalSeconds)} · ${replayCount}${limited}개 다시보기`
+                : "다시보기 없음";
 
         setWidgetState(widget, state || (totalSeconds > 0 ? "ready" : "empty"), value, meta, label);
     }
@@ -1399,7 +1551,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
     }
 
     function compareMonth(aYear, aMonth, bYear, bMonth) {
-        return (aYear * 12 + aMonth) - (bYear * 12 + bMonth);
+        return aYear * 12 + aMonth - (bYear * 12 + bMonth);
     }
 
     function isFutureMonth(year, month, nowMs = Date.now()) {
@@ -1428,10 +1580,15 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
 
     function cacheMonthInfo(channelId, monthInfo) {
         if (!channelId || !monthInfo) return;
-        touchMapEntry(channelMonthCache, formatChannelMonthKey(channelId, monthInfo.year, monthInfo.month), {
-            month: monthInfo,
-            fetchedAt: Date.now(),
-        }, MAX_MONTH_CACHE_ENTRIES);
+        touchMapEntry(
+            channelMonthCache,
+            formatChannelMonthKey(channelId, monthInfo.year, monthInfo.month),
+            {
+                month: monthInfo,
+                fetchedAt: Date.now(),
+            },
+            MAX_MONTH_CACHE_ENTRIES
+        );
     }
 
     function getCachedMonthInfo(channelId, year, month) {
@@ -1457,7 +1614,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         const startKey = `${key}-${Math.floor(startMs / 60000)}`;
         const duration = Number(video.duration) || 0;
         if (duration <= 0) return;
-        const endMs = getVideoEndMs(video) ?? (startMs + duration * 1000);
+        const endMs = getVideoEndMs(video) ?? startMs + duration * 1000;
         const title = normSpace(video.title);
         const titleKey = normalizeMatchText(title);
 
@@ -1489,13 +1646,13 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
     }
 
     function finalizeMonthInfo(monthInfo) {
-        monthInfo.broadcastDayCount = Object.values(monthInfo.dailySeconds)
-            .filter((seconds) => seconds >= MINUTE_SECONDS)
-            .length;
+        monthInfo.broadcastDayCount = Object.values(monthInfo.dailySeconds).filter(
+            (seconds) => seconds >= MINUTE_SECONDS
+        ).length;
         return monthInfo;
     }
 
-    async function calculateCalendarMonth(channelId, year, month, token) {
+    async function calculateCalendarMonth(channelId, year, month, token, { signal } = {}) {
         const now = Date.now();
         const monthInfo = getKstMonthInfo(now, year, month);
         const seen = new Set();
@@ -1504,11 +1661,13 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         const maxCalendarPages = getMaxCalendarPages();
 
         for (let page = 0; page < maxCalendarPages; page++) {
+            if (signal?.aborted) throw createAbortError();
             if (calendarLoadingTokens.get(channelId) !== token) return null;
+            await waitBeforeVideoPage(page, signal);
 
-            const json = await fetchVideoPageCached(channelId, page);
+            const json = await fetchVideoPageCached(channelId, page, { signal });
             const videos = extractVideos(json);
-            await hydrateVideoStartDetails(videos, monthInfo, channelId, token, calendarLoadingTokens);
+            await hydrateVideoStartDetails(videos, monthInfo, channelId, token, calendarLoadingTokens, { signal });
             pagesLoaded++;
 
             for (const video of videos) {
@@ -1517,7 +1676,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
                 addMonthStart(video, monthInfo, now);
             }
 
-            reachedOlderThanMonth = videos.length > 0 &&
+            reachedOlderThanMonth =
+                videos.length > 0 &&
                 videos.every((video) => {
                     const endMs = getVideoEndMs(video);
                     return endMs !== null && endMs < monthInfo.startMs;
@@ -1531,7 +1691,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         return finalizeMonthInfo(monthInfo);
     }
 
-    async function calculateStats(channelId, token) {
+    async function calculateStats(channelId, token, { signal } = {}) {
         const now = Date.now();
         const windowDays = getWindowDays();
         const windowStart = now - getWindowMs();
@@ -1545,11 +1705,13 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         const oldestNeededMs = Math.min(windowStart, monthInfo.startMs);
 
         for (let page = 0; page < maxPages; page++) {
+            if (signal?.aborted) throw createAbortError();
             if (loadingTokens.get(channelId) !== token) return null;
+            await waitBeforeVideoPage(page, signal);
 
-            const json = await fetchVideoPageCached(channelId, page);
+            const json = await fetchVideoPageCached(channelId, page, { signal });
             const videos = extractVideos(json);
-            await hydrateVideoStartDetails(videos, monthInfo, channelId, token);
+            await hydrateVideoStartDetails(videos, monthInfo, channelId, token, loadingTokens, { signal });
             pagesLoaded++;
 
             for (const video of videos) {
@@ -1569,7 +1731,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
                 addMonthStart(video, monthInfo, now);
             }
 
-            const pageIsOlderThanWindow = videos.length > 0 &&
+            const pageIsOlderThanWindow =
+                videos.length > 0 &&
                 videos.every((video) => {
                     const endMs = getVideoEndMs(video);
                     return endMs !== null && endMs < oldestNeededMs;
@@ -1601,10 +1764,11 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         }
 
         const token = Symbol(channelId);
+        const controller = abortControllerFor(loadingAbortControllers, channelId);
         loadingTokens.set(channelId, token);
 
         try {
-            const stats = await calculateStats(channelId, token);
+            const stats = await calculateStats(channelId, token, { signal: controller.signal });
             if (!stats || loadingTokens.get(channelId) !== token) return;
             touchMapEntry(channelStatsCache, channelId, stats, MAX_STATS_CACHE_CHANNELS);
             loadingTokens.delete(channelId);
@@ -1612,10 +1776,13 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         } catch (error) {
             if (loadingTokens.get(channelId) !== token) return;
             loadingTokens.delete(channelId);
+            if (controller.signal.aborted || isAbortError(error)) return;
             const widget = document.getElementById(WIDGET_ID);
             if (widget && currentChannelId === channelId) {
                 setWidgetState(widget, "error", "계산 실패", error?.message || "다시 시도 예정");
             }
+        } finally {
+            clearAbortController(loadingAbortControllers, channelId, controller);
         }
     }
 
@@ -1686,11 +1853,14 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
     async function loadCalendarMonth(widget, channelId, year, month) {
         if (!widget || !channelId) return;
         const token = Symbol(`${channelId}:${formatMonthKey(year, month)}`);
+        const controller = abortControllerFor(calendarLoadingAbortControllers, channelId);
         calendarLoadingTokens.set(channelId, token);
         renderCalendarLoading(widget, year, month);
 
         try {
-            const monthInfo = await calculateCalendarMonth(channelId, year, month, token);
+            const monthInfo = await calculateCalendarMonth(channelId, year, month, token, {
+                signal: controller.signal,
+            });
             if (!monthInfo || calendarLoadingTokens.get(channelId) !== token) return;
             calendarLoadingTokens.delete(channelId);
             cacheMonthInfo(channelId, monthInfo);
@@ -1702,7 +1872,10 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         } catch (_) {
             if (calendarLoadingTokens.get(channelId) !== token) return;
             calendarLoadingTokens.delete(channelId);
+            if (controller.signal.aborted) return;
             renderCalendarError(widget, year, month);
+        } finally {
+            clearAbortController(calendarLoadingAbortControllers, channelId, controller);
         }
     }
 
@@ -1734,7 +1907,13 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         if (monthEl) monthEl.textContent = `${year}.${String(month).padStart(2, "0")}`;
         if (countEl) countEl.textContent = "조회 실패";
         if (footEl) footEl.textContent = "잠시 후 다시 시도";
-        setWidgetState(widget, "error", "조회 실패", "잠시 후 다시 시도", `${getCalendarMonthDisplayName(year, month)} 조회 실패`);
+        setWidgetState(
+            widget,
+            "error",
+            "조회 실패",
+            "잠시 후 다시 시도",
+            `${getCalendarMonthDisplayName(year, month)} 조회 실패`
+        );
         updateCalendarNav(widget, year, month);
     }
 
@@ -1798,13 +1977,17 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([key, starts]) => {
                 const rows = Array.isArray(starts) ? starts : [];
-                return `${key}:${rows.map((start) => [
-                    start.startMs || 0,
-                    start.endMs || 0,
-                    Math.round(Number(start.duration) || 0),
-                    start.exact ? 1 : 0,
-                    (start.videoNos || []).join(","),
-                ].join("/")).join(";")}`;
+                return `${key}:${rows
+                    .map((start) =>
+                        [
+                            start.startMs || 0,
+                            start.endMs || 0,
+                            Math.round(Number(start.duration) || 0),
+                            start.exact ? 1 : 0,
+                            (start.videoNos || []).join(","),
+                        ].join("/")
+                    )
+                    .join(";")}`;
             })
             .join("|");
         const watchKey = buildCalendarWatchRenderKey(month);
@@ -1823,19 +2006,34 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
     }
 
     function buildCalendarWatchRenderKey(month) {
+        if (
+            month?.__bcmbWatchKeyVersion === watchHistoryVersion &&
+            month?.__bcmbWatchKeyChannelId === currentChannelId &&
+            typeof month?.__bcmbWatchKey === "string"
+        ) {
+            return month.__bcmbWatchKey;
+        }
         const totalWatchKey = Math.round(getChannelWatchSeconds(currentChannelId));
         const startWatchKey = Object.entries(month?.startsByDate || {})
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([key, starts]) => {
                 const rows = Array.isArray(starts) ? [...starts] : [];
                 rows.sort((a, b) => Number(a.startMs || 0) - Number(b.startMs || 0));
-                return `${key}:${rows.map((start) => {
-                    const watchInfo = getStartWatchInfo(currentChannelId, start);
-                    return `${start.startMs || 0}/${formatWatchInfo(watchInfo)}`;
-                }).join(";")}`;
+                return `${key}:${rows
+                    .map((start) => {
+                        const watchInfo = getStartWatchInfo(currentChannelId, start);
+                        return `${start.startMs || 0}/${formatWatchInfo(watchInfo)}`;
+                    })
+                    .join(";")}`;
             })
             .join("|");
-        return `${totalWatchKey}|${startWatchKey}`;
+        const key = `${totalWatchKey}|${startWatchKey}`;
+        if (month) {
+            month.__bcmbWatchKeyVersion = watchHistoryVersion;
+            month.__bcmbWatchKeyChannelId = currentChannelId;
+            month.__bcmbWatchKey = key;
+        }
+        return key;
     }
 
     function renderCalendar(widget, month, { force = false } = {}) {
@@ -1927,6 +2125,30 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         renderCalendarFoot(footEl, month);
     }
 
+    let footMeasureContext;
+
+    function getFootMeasureContext() {
+        if (footMeasureContext === undefined) {
+            footMeasureContext = document.createElement("canvas").getContext("2d") || null;
+        }
+        return footMeasureContext;
+    }
+
+    function fitCalendarFootNoteFont(noteEl, totalEl) {
+        const context = getFootMeasureContext();
+        if (!context) return;
+        context.font = `900 ${CALENDAR_FOOT_NOTE_MAX_FONT_PX}px ${WIDGET_FONT_FAMILY}`;
+        const availableWidth =
+            CALENDAR_FOOT_INNER_WIDTH_PX - CALENDAR_FOOT_GAP_PX - context.measureText(totalEl.textContent).width - 1;
+        let size = CALENDAR_FOOT_NOTE_MAX_FONT_PX;
+        while (size > CALENDAR_FOOT_NOTE_MIN_FONT_PX) {
+            context.font = `800 ${size}px ${WIDGET_FONT_FAMILY}`;
+            if (context.measureText(noteEl.textContent).width <= availableWidth) break;
+            size = Math.max(CALENDAR_FOOT_NOTE_MIN_FONT_PX, size - 0.5);
+        }
+        if (size < CALENDAR_FOOT_NOTE_MAX_FONT_PX) noteEl.style.fontSize = `${size}px`;
+    }
+
     function renderCalendarFoot(footEl, month) {
         const noteEl = document.createElement("span");
         noteEl.className = "bcmb-calendar-foot-note";
@@ -1936,6 +2158,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
         totalEl.className = "bcmb-calendar-watch-total";
         totalEl.textContent = `내 시청 시간 ${formatDuration(getChannelWatchSeconds(currentChannelId))}`;
 
+        fitCalendarFootNoteFont(noteEl, totalEl);
         footEl.replaceChildren(noteEl, totalEl);
     }
 
@@ -1984,11 +2207,13 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
     }
 
     function buildDayAriaLabel(starts) {
-        return starts.map((start) => {
-            const endText = start.endMs ? formatKstClock(start.endMs) : "알 수 없음";
-            const watchInfo = getStartWatchInfo(currentChannelId, start);
-            return `${start.time} 시작, ${endText} 종료, ${formatDuration(start.duration)} 진행, 내 시청 ${formatWatchInfo(watchInfo)}`;
-        }).join(", ");
+        return starts
+            .map((start) => {
+                const endText = start.endMs ? formatKstClock(start.endMs) : "알 수 없음";
+                const watchInfo = getStartWatchInfo(currentChannelId, start);
+                return `${start.time} 시작, ${endText} 종료, ${formatDuration(start.duration)} 진행, 내 시청 ${formatWatchInfo(watchInfo)}`;
+            })
+            .join(", ");
     }
 
     function formatDuration(seconds) {
@@ -2027,17 +2252,31 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
     }
 
     function hasActiveWidgetForCurrentRoute() {
-        return Boolean(currentChannelId && currentChannelId === getChannelIdFromUrl() && document.getElementById(WIDGET_ID));
+        return Boolean(
+            currentChannelId && currentChannelId === getChannelIdFromUrl() && document.getElementById(WIDGET_ID)
+        );
     }
 
-    function mutationShouldSchedule(mutation) {
+    function mutationShouldSchedule(mutation, activeWidget = hasActiveWidgetForCurrentRoute()) {
         if (isOurMutation(mutation)) return false;
 
-        if (hasActiveWidgetForCurrentRoute() && mutation.type === "attributes") {
+        if (activeWidget && mutation.type === "attributes") {
             return mutation.target === document.body || mutation.target === document.documentElement;
         }
 
         return true;
+    }
+
+    function runScheduledMount() {
+        if (!isFeatureEnabled()) {
+            removeWidgetIfMounted();
+            return;
+        }
+        if (!isChannelRoute()) {
+            removeWidgetIfMounted();
+            return;
+        }
+        mountWidget();
     }
 
     function schedule() {
@@ -2049,20 +2288,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
             removeWidgetIfMounted();
             return;
         }
-        if (scheduled) return;
-        scheduled = true;
-        const run = () => {
-            if (!scheduled) return;
-            scheduled = false;
-            if (scheduleFallbackTimer) {
-                window.clearTimeout(scheduleFallbackTimer);
-                scheduleFallbackTimer = 0;
-            }
-            mountWidget();
-        };
-
-        requestAnimationFrame(run);
-        scheduleFallbackTimer = window.setTimeout(run, 180);
+        scheduleThrottledMount();
     }
 
     function startObserver() {
@@ -2083,7 +2309,11 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
                     else removeWidgetIfMounted();
                 }
             },
-            shouldSchedule: (mutations) => isFeatureEnabled() && isChannelRoute() && mutations.some(mutationShouldSchedule),
+            shouldSchedule: (mutations) => {
+                if (!isFeatureEnabled() || !isChannelRoute()) return false;
+                const activeWidget = hasActiveWidgetForCurrentRoute();
+                return mutations.some((mutation) => mutationShouldSchedule(mutation, activeWidget));
+            },
             schedule,
         });
     }
@@ -2114,9 +2344,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
 
     function handleWatchHistoryStorageChange(changes, areaName) {
         if (areaName !== "local" || !changes[WATCH_HISTORY_STORAGE_KEY]) return;
-        watchHistoryEntries = normalizeWatchHistory(changes[WATCH_HISTORY_STORAGE_KEY].newValue);
-        watchHistoryLoaded = true;
-        scheduleWatchHistoryRerender({ deferWhenVisible: true });
+        scheduleWatchHistoryStorageChange(changes[WATCH_HISTORY_STORAGE_KEY].newValue);
     }
 
     function installStorageListener() {
@@ -2131,15 +2359,15 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
     }
 
     function clearRuntimeTimers() {
-        scheduled = false;
-        if (scheduleFallbackTimer) {
-            window.clearTimeout(scheduleFallbackTimer);
-            scheduleFallbackTimer = 0;
-        }
         if (watchHistoryRerenderTimer) {
             window.clearTimeout(watchHistoryRerenderTimer);
             watchHistoryRerenderTimer = 0;
         }
+        if (watchHistoryNormalizeTimer) {
+            window.clearTimeout(watchHistoryNormalizeTimer);
+            watchHistoryNormalizeTimer = 0;
+        }
+        pendingWatchHistoryRaw = null;
     }
 
     function installRuntime() {
@@ -2154,6 +2382,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
 
     function teardownRuntime() {
         runtimeInstalled = false;
+        abortAllControllers();
         clearRuntimeTimers();
         stopObserver();
         uninstallRouteListeners();
@@ -2175,6 +2404,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
             channelVideoPageCache.clear();
             loadingTokens.clear();
             calendarLoadingTokens.clear();
+            abortAllControllers();
         }
 
         if (!isFeatureEnabled()) {

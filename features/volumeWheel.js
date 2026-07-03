@@ -4,9 +4,7 @@
 
     let featureOptions = BetterChzzkSettings.normalizeOptions();
 
-    const {
-        bindFeatureOptions,
-    } = BetterChzzk.utils;
+    const { bindFeatureOptions } = BetterChzzk.utils;
 
     function clamp(value, min, max) {
         return Math.min(Math.max(value, min), max);

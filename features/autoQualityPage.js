@@ -42,6 +42,7 @@
     const PAGE_SLOW_RETRY_DELAY_MS = 350;
     const PAGE_VERIFY_DELAY_MS = 180;
     const FULL_PLAYER_SCAN_INTERVAL_MS = 1200;
+    const NEARBY_PLAYER_CANDIDATE_LIMIT = 160;
     const PLAYBACK_RESTORE_DELAY_MS = 250;
     const PLAYBACK_RESTORE_RETRY_MS = 180;
     const PLAYBACK_RESTORE_MAX_ATTEMPTS = 12;
@@ -117,12 +118,20 @@
     let vodStartupMediaReadyAt = 0;
     let vodStartupLastSeekAt = 0;
     let vodStartupSettled = false;
+    let stableVodApplyKey = "";
+    let stableVodApplyVideo = null;
     let urlStartSeekSeq = 0;
     let activeUrlStartSeek = null;
     let lastUrlStartSeekAt = 0;
     let lastUrlStartSeekHref = "";
     let pageEventListenersInstalled = false;
     const trackedQualityTargets = [];
+    let cachedRoutePathname = "";
+    let cachedIsPlaybackRoute = false;
+    let cachedIsVodRoute = false;
+    let resumeControlCacheHref = "";
+    let resumeControlCacheExpiresAt = 0;
+    let resumeControlCacheValue = false;
 
     const nativeDefineProperty = Object.defineProperty;
     const nativeDefineProperties = Object.defineProperties;
@@ -131,21 +140,35 @@
     const DEFINE_PATCH_NATIVE = "__betterChzzkAutoQualityDefineNative";
     let qualityTargetInterceptorInstalled = false;
 
+    function refreshRouteCache() {
+        if (cachedRoutePathname === location.pathname) return;
+        cachedRoutePathname = location.pathname;
+        cachedIsPlaybackRoute = PLAYBACK_ROUTE_RE.test(cachedRoutePathname);
+        cachedIsVodRoute = /^\/video(?:\/|$)/.test(cachedRoutePathname);
+    }
+
     function isPlaybackRoute() {
-        return PLAYBACK_ROUTE_RE.test(location.pathname);
+        refreshRouteCache();
+        return cachedIsPlaybackRoute;
     }
 
     function isVodRoute() {
-        return /^\/video(?:\/|$)/.test(location.pathname);
+        refreshRouteCache();
+        return cachedIsVodRoute;
     }
 
     function getCompactText(el) {
         if (!(el instanceof Element)) return "";
-        return String(el.textContent || "").replace(/\s+/g, " ").trim();
+        return String(el.textContent || "")
+            .replace(/\s+/g, " ")
+            .trim();
     }
 
     function parseTimecodeSeconds(text) {
-        const parts = String(text || "").trim().split(":").map(Number);
+        const parts = String(text || "")
+            .trim()
+            .split(":")
+            .map(Number);
         if ((parts.length !== 2 && parts.length !== 3) || parts.some((value) => !Number.isFinite(value))) {
             return NaN;
         }
@@ -161,9 +184,7 @@
     function isVideoNavigationControl(control) {
         if (!(control instanceof Element)) return false;
 
-        const anchor = control.matches?.("a[href]")
-            ? control
-            : control.closest?.("a[href]");
+        const anchor = control.matches?.("a[href]") ? control : control.closest?.("a[href]");
         const href = anchor?.getAttribute?.("href") || "";
         return /(?:^|\/\/chzzk\.naver\.com)?\/video\/\d+(?:[/?#]|$)/.test(href);
     }
@@ -198,14 +219,17 @@
 
         const elapsedSeconds = Math.max(0, (performance.now() - clickedAt) / 1000);
         const playbackRate = Number(video?.playbackRate);
-        const expectedProgress = elapsedSeconds * (Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1);
+        const expectedProgress =
+            elapsedSeconds * (Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1);
         return currentTime <= targetSeconds + expectedProgress + COMMENT_TIMELINE_SEEK_EPSILON_SECONDS;
     }
 
     function hasRecentCommentTimelineSeekIntent(now = performance.now()) {
-        return isVodRoute() &&
+        return (
+            isVodRoute() &&
             lastCommentTimelineSeekAt > 0 &&
-            now - lastCommentTimelineSeekAt <= COMMENT_TIMELINE_SEEK_INTENT_WINDOW_MS;
+            now - lastCommentTimelineSeekAt <= COMMENT_TIMELINE_SEEK_INTENT_WINDOW_MS
+        );
     }
 
     function finishCommentTimelineSeek(seq) {
@@ -235,14 +259,13 @@
 
         const elapsedSeconds = Math.max(0, (performance.now() - startedAt) / 1000);
         const playbackRate = Number(video?.playbackRate);
-        const expectedProgress = elapsedSeconds * (Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1);
+        const expectedProgress =
+            elapsedSeconds * (Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1);
         return currentTime <= targetSeconds + expectedProgress + URL_START_SEEK_EPSILON_SECONDS;
     }
 
     function hasRecentUrlStartSeekIntent(now = performance.now()) {
-        return isVodRoute() &&
-            lastUrlStartSeekAt > 0 &&
-            now - lastUrlStartSeekAt <= URL_START_SEEK_INTENT_WINDOW_MS;
+        return isVodRoute() && lastUrlStartSeekAt > 0 && now - lastUrlStartSeekAt <= URL_START_SEEK_INTENT_WINDOW_MS;
     }
 
     function finishUrlStartSeek(seq) {
@@ -305,10 +328,7 @@
             return;
         }
 
-        if (
-            lastUrlStartSeekHref === href &&
-            activeUrlStartSeek?.targetSeconds === targetSeconds
-        ) {
+        if (lastUrlStartSeekHref === href && activeUrlStartSeek?.targetSeconds === targetSeconds) {
             return;
         }
 
@@ -359,23 +379,28 @@
     }
 
     function isEditableTarget(target) {
-        return target instanceof Element &&
-            Boolean(target.closest("input, textarea, select, [contenteditable=''], [contenteditable='true']"));
+        return (
+            target instanceof Element &&
+            Boolean(target.closest("input, textarea, select, [contenteditable=''], [contenteditable='true']"))
+        );
     }
 
     function isPlayerInteractionTarget(target) {
-        return target instanceof Element &&
-            Boolean(target.closest(PLAYER_INTERACTION_SELECTOR));
+        return target instanceof Element && Boolean(target.closest(PLAYER_INTERACTION_SELECTOR));
     }
 
     function cancelCommentTimelineSeekOnUserIntent(event) {
-        const shouldCancelUrlStartSeek = Boolean(activeUrlStartSeek) &&
-            (event.type === "keydown" || isPlayerInteractionTarget(event.target));
+        const shouldCancelUrlStartSeek =
+            Boolean(activeUrlStartSeek) && (event.type === "keydown" || isPlayerInteractionTarget(event.target));
         if (!activeCommentTimelineSeek && !shouldCancelUrlStartSeek) return;
 
         if (event.type === "keydown") {
             if (isEditableTarget(event.target)) return;
-            if (!["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", "j", "J", "l", "L"].includes(event.key)) {
+            if (
+                !["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", "j", "J", "l", "L"].includes(
+                    event.key
+                )
+            ) {
                 return;
             }
         }
@@ -392,7 +417,23 @@
 
         if (event.type === "keydown") {
             if (isEditableTarget(event.target)) return;
-            if (!["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", " ", "k", "K", "j", "J", "l", "L"].includes(event.key)) {
+            if (
+                ![
+                    "ArrowLeft",
+                    "ArrowRight",
+                    "Home",
+                    "End",
+                    "PageUp",
+                    "PageDown",
+                    " ",
+                    "k",
+                    "K",
+                    "j",
+                    "J",
+                    "l",
+                    "L",
+                ].includes(event.key)
+            ) {
                 return;
             }
         }
@@ -404,7 +445,6 @@
     function hasRecentUserMediaIntent(now = performance.now()) {
         return lastUserMediaIntentAt > 0 && now - lastUserMediaIntentAt <= USER_MEDIA_INTENT_WINDOW_MS;
     }
-
 
     function readAutoQualityState() {
         const raw = document.documentElement.getAttribute(STATE_ATTR);
@@ -444,6 +484,7 @@
         }
 
         ensureVodPlaybackGuardAttached();
+        if (isVodRoute() && hasStableVodApply()) return;
         startPageAutoApply();
     }
 
@@ -533,9 +574,7 @@
 
     function getTrackListFromTarget(target) {
         const tracks = readLooseProp(target, "videoTracks");
-        return tracks && Number.isFinite(Number(tracks.length)) && Number(tracks.length) > 0
-            ? tracks
-            : null;
+        return tracks && Number.isFinite(Number(tracks.length)) && Number(tracks.length) > 0 ? tracks : null;
     }
 
     function findVideoTrackListTarget(player, includeTracked = true) {
@@ -552,13 +591,14 @@
 
     function wrapVideoTracksDescriptor(prop, descriptor) {
         if (prop !== "videoTracks" || !descriptor) return descriptor;
-        if (descriptor.get?.__betterChzzkVideoTracksWrapped || descriptor.set?.__betterChzzkVideoTracksWrapped) return descriptor;
+        if (descriptor.get?.__betterChzzkVideoTracksWrapped || descriptor.set?.__betterChzzkVideoTracksWrapped)
+            return descriptor;
 
         const nextDescriptor = { ...descriptor };
 
         if (typeof descriptor.get === "function") {
             const originalGet = descriptor.get;
-            nextDescriptor.get = function() {
+            nextDescriptor.get = function () {
                 const tracks = originalGet.call(this);
                 if (tracks && Number.isFinite(Number(tracks.length)) && Number(tracks.length) > 0) {
                     rememberQualityTarget(this);
@@ -575,7 +615,7 @@
 
         if (typeof descriptor.set === "function") {
             const originalSet = descriptor.set;
-            nextDescriptor.set = function(value) {
+            nextDescriptor.set = function (value) {
                 rememberQualityTarget(this);
                 return originalSet.call(this, value);
             };
@@ -625,10 +665,12 @@
         if (qualityTargetInterceptorInstalled) return;
         if (!canInstallDefinePatch(Object.defineProperty, nativeDefineProperty)) return;
         if (nativeDefineProperties && !canInstallDefinePatch(Object.defineProperties, nativeDefineProperties)) return;
-        if (nativeReflectDefineProperty && !canInstallDefinePatch(Reflect.defineProperty, nativeReflectDefineProperty)) return;
+        if (nativeReflectDefineProperty && !canInstallDefinePatch(Reflect.defineProperty, nativeReflectDefineProperty))
+            return;
 
         try {
-            Object.defineProperty = markDefinePatch(function(target, prop, descriptor) {
+            Object.defineProperty = markDefinePatch(function (target, prop, descriptor) {
+                if (prop !== "videoTracks") return nativeDefineProperty.call(Object, target, prop, descriptor);
                 if (!isPlaybackRoute()) return nativeDefineProperty.call(Object, target, prop, descriptor);
                 return nativeDefineProperty.call(Object, target, prop, safeWrapQualityDescriptor(prop, descriptor));
             }, nativeDefineProperty);
@@ -639,16 +681,26 @@
 
         if (nativeDefineProperties) {
             try {
-                Object.defineProperties = markDefinePatch(function(target, descriptors) {
-                    if (descriptors == null || !isPlaybackRoute()) {
+                Object.defineProperties = markDefinePatch(function (target, descriptors) {
+                    if (descriptors == null) {
+                        return nativeDefineProperties.call(Object, target, descriptors);
+                    }
+                    let descriptorKeys = [];
+                    try {
+                        descriptorKeys = Reflect.ownKeys(descriptors);
+                    } catch (_) {
+                        return nativeDefineProperties.call(Object, target, descriptors);
+                    }
+                    if (!descriptorKeys.includes("videoTracks") || !isPlaybackRoute()) {
                         return nativeDefineProperties.call(Object, target, descriptors);
                     }
 
                     let nextDescriptors = descriptors;
                     try {
                         nextDescriptors = {};
-                        for (const key of Reflect.ownKeys(descriptors)) {
-                            nextDescriptors[key] = wrapQualityDescriptor(key, descriptors[key]);
+                        for (const key of descriptorKeys) {
+                            nextDescriptors[key] =
+                                key === "videoTracks" ? wrapQualityDescriptor(key, descriptors[key]) : descriptors[key];
                         }
                     } catch (_) {
                         nextDescriptors = descriptors;
@@ -663,9 +715,16 @@
 
         if (nativeReflectDefineProperty) {
             try {
-                Reflect.defineProperty = markDefinePatch(function(target, prop, descriptor) {
+                Reflect.defineProperty = markDefinePatch(function (target, prop, descriptor) {
+                    if (prop !== "videoTracks")
+                        return nativeReflectDefineProperty.call(Reflect, target, prop, descriptor);
                     if (!isPlaybackRoute()) return nativeReflectDefineProperty.call(Reflect, target, prop, descriptor);
-                    return nativeReflectDefineProperty.call(Reflect, target, prop, safeWrapQualityDescriptor(prop, descriptor));
+                    return nativeReflectDefineProperty.call(
+                        Reflect,
+                        target,
+                        prop,
+                        safeWrapQualityDescriptor(prop, descriptor)
+                    );
                 }, nativeReflectDefineProperty);
             } catch (_) {
                 // Reflect.defineProperty patching is opportunistic.
@@ -735,6 +794,23 @@
         return videos[0];
     }
 
+    function createApplyContext() {
+        return {
+            mainVideoResolved: false,
+            mainVideo: null,
+            trackTextCache: new WeakMap(),
+        };
+    }
+
+    function getMainVideoForContext(context = null) {
+        if (!context) return getMainVideo();
+        if (!context.mainVideoResolved) {
+            context.mainVideo = getMainVideo();
+            context.mainVideoResolved = true;
+        }
+        return context.mainVideo;
+    }
+
     function hasVideoTrackList(el) {
         return Boolean(findVideoTrackListTarget(el, false));
     }
@@ -789,6 +865,47 @@
         return null;
     }
 
+    function collectNearbyPlayerCandidates(video) {
+        const candidates = [];
+        const seen = new WeakSet();
+
+        function add(node) {
+            if (!(node instanceof HTMLElement)) return false;
+            if (seen.has(node)) return false;
+            seen.add(node);
+            candidates.push(node);
+            return candidates.length < NEARBY_PLAYER_CANDIDATE_LIMIT;
+        }
+
+        function addChildren(node) {
+            for (const child of Array.from(node?.children || [])) {
+                if (!add(child)) return false;
+            }
+            return true;
+        }
+
+        let node = video;
+        let depth = 0;
+        while (node && node !== document.body && depth < 12 && candidates.length < NEARBY_PLAYER_CANDIDATE_LIMIT) {
+            add(node);
+            addChildren(node);
+
+            const parent = node.parentElement || node.getRootNode?.()?.host || null;
+            if (parent instanceof HTMLElement) {
+                add(parent);
+                for (const sibling of Array.from(parent.children)) {
+                    if (sibling === node) continue;
+                    if (!add(sibling)) break;
+                }
+            }
+
+            node = parent;
+            depth += 1;
+        }
+
+        return candidates;
+    }
+
     function findPlayerFromDocument(video) {
         for (const selector of PLAYER_DISCOVERY_SELECTORS) {
             for (const el of document.querySelectorAll(selector)) {
@@ -807,7 +924,7 @@
         if (now - lastFullPlayerScanAt < FULL_PLAYER_SCAN_INTERVAL_MS) return null;
         lastFullPlayerScanAt = now;
 
-        for (const el of document.querySelectorAll("*")) {
+        for (const el of collectNearbyPlayerCandidates(video)) {
             if (!hasQualityControlTarget(el)) continue;
             if (elementContainsVideo(el, video) || overlapsVideo(el, video)) {
                 playerSearchMisses = 0;
@@ -818,17 +935,20 @@
         return null;
     }
 
-    function getPlayer() {
+    function getPlayer(context = null) {
         if (!isPlaybackRoute()) return null;
 
-        const video = getMainVideo();
+        const video = getMainVideoForContext(context);
         if (!video) {
             if (hasQualityControlTarget(cachedPlayer)) return cachedPlayer;
             cachedPlayer = findTrackedQualityTarget() || findPlayerBySelectorOnly();
             return cachedPlayer;
         }
 
-        if (hasQualityControlTarget(cachedPlayer) && (elementContainsVideo(cachedPlayer, video) || overlapsVideo(cachedPlayer, video))) {
+        if (
+            hasQualityControlTarget(cachedPlayer) &&
+            (elementContainsVideo(cachedPlayer, video) || overlapsVideo(cachedPlayer, video))
+        ) {
             return cachedPlayer;
         }
 
@@ -904,20 +1024,23 @@
         ].forEach((prop) => pushTrackTextProp(parts, dataset, prop));
 
         const attributes = readLooseProp(track, "attributes");
-        [
-            "RESOLUTION",
-            "resolution",
-            "height",
-            "videoHeight",
-            "BANDWIDTH",
-            "bandwidth",
-        ].forEach((prop) => pushTrackTextProp(parts, attributes, prop));
+        ["RESOLUTION", "resolution", "height", "videoHeight", "BANDWIDTH", "bandwidth"].forEach((prop) =>
+            pushTrackTextProp(parts, attributes, prop)
+        );
 
         return parts.join(" ").toLowerCase();
     }
 
-    function isAutomaticTrack(track) {
+    function getTrackText(track, context = null) {
+        if (!context?.trackTextCache || !track || typeof track !== "object") return trackText(track);
+        if (context.trackTextCache.has(track)) return context.trackTextCache.get(track);
         const text = trackText(track);
+        context.trackTextCache.set(track, text);
+        return text;
+    }
+
+    function isAutomaticTrack(track, context = null) {
+        const text = getTrackText(track, context);
         return text.includes("abr") || text.includes("auto") || text.includes("\uC790\uB3D9");
     }
 
@@ -954,7 +1077,8 @@
 
         const elapsedSeconds = Math.max(0, (performance.now() - startedAt) / 1000);
         const playbackRate = Number(video?.playbackRate);
-        const expectedProgress = elapsedSeconds * (Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1);
+        const expectedProgress =
+            elapsedSeconds * (Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1);
         return Math.abs(currentTime - (capturedTime + expectedProgress)) <= RESTORE_TIME_ALLOWED_DRIFT_SECONDS;
     }
 
@@ -1027,13 +1151,19 @@
         clearVodGuardState();
     }
 
-    function ensureVodPlaybackGuardAttached() {
+    function detachVodStartupTimeUpdate(video = vodGuardVideo) {
+        if (video instanceof HTMLVideoElement) {
+            video.removeEventListener("timeupdate", onVodStartupProgress, true);
+        }
+    }
+
+    function ensureVodPlaybackGuardAttached(context = null) {
         if (!autoQualityEnabled || !isVodRoute()) {
             detachVodPlaybackGuard();
             return;
         }
 
-        const video = getMainVideo();
+        const video = getMainVideoForContext(context);
         if (!(video instanceof HTMLVideoElement)) {
             detachVodPlaybackGuard();
             return;
@@ -1071,21 +1201,33 @@
 
     function getResumeControlText(el) {
         if (!(el instanceof Element)) return "";
-        return [
-            el.textContent,
-            el.getAttribute("aria-label"),
-            el.getAttribute("title"),
-        ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+        return [el.textContent, el.getAttribute("aria-label"), el.getAttribute("title")]
+            .filter(Boolean)
+            .join(" ")
+            .replace(/\s+/g, " ")
+            .trim();
     }
 
     function hasVisibleVodResumeControl() {
         if (!isVodRoute()) return false;
+        const now = performance.now();
+        if (resumeControlCacheHref === location.href && now < resumeControlCacheExpiresAt) {
+            return resumeControlCacheValue;
+        }
+
+        resumeControlCacheHref = location.href;
+        resumeControlCacheExpiresAt = now + 200;
+        resumeControlCacheValue = false;
+
         const controls = document.querySelectorAll("button, a, [role='button']");
         for (const el of controls) {
             if (!isVisible(el)) continue;
-            if (VOD_RESUME_CONTROL_TEXT_RE.test(getResumeControlText(el))) return true;
+            if (VOD_RESUME_CONTROL_TEXT_RE.test(getResumeControlText(el))) {
+                resumeControlCacheValue = true;
+                return true;
+            }
         }
-        return false;
+        return resumeControlCacheValue;
     }
 
     function isVodStartupQualityReady(video) {
@@ -1097,7 +1239,8 @@
 
         const now = performance.now();
         const currentTime = getVodTime(video);
-        const mediaReady = video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA ||
+        const mediaReady =
+            video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA ||
             (Number.isFinite(Number(video.duration)) && Number(video.duration) > 0);
         if (mediaReady && !vodStartupMediaReadyAt) vodStartupMediaReadyAt = now;
 
@@ -1106,7 +1249,11 @@
         if (vodStartupLastSeekAt && now - vodStartupLastSeekAt < VOD_STARTUP_SEEK_SETTLE_MS) return false;
         if (!mediaReady && (!Number.isFinite(currentTime) || currentTime < RESTORE_TIME_EPSILON_SECONDS)) return false;
 
-        if (hasRecentUserMediaIntent(now) && Number.isFinite(currentTime) && currentTime > RESTORE_TIME_EPSILON_SECONDS) {
+        if (
+            hasRecentUserMediaIntent(now) &&
+            Number.isFinite(currentTime) &&
+            currentTime > RESTORE_TIME_EPSILON_SECONDS
+        ) {
             vodStartupSettled = true;
         } else if (Number.isFinite(currentTime) && currentTime >= VOD_STARTUP_READY_SECONDS) {
             vodStartupSettled = true;
@@ -1117,12 +1264,12 @@
         return vodStartupSettled;
     }
 
-    function shouldDeferVodStartupQuality() {
+    function shouldDeferVodStartupQuality(context = null) {
         if (!autoQualityEnabled || !isVodRoute()) return false;
 
-        const video = getMainVideo();
+        const video = getMainVideoForContext(context);
         if (!(video instanceof HTMLVideoElement)) return true;
-        ensureVodPlaybackGuardAttached();
+        ensureVodPlaybackGuardAttached(context);
         return !isVodStartupQualityReady(video);
     }
 
@@ -1134,7 +1281,10 @@
             vodStartupLastSeekAt = performance.now();
         }
 
-        if (isVodStartupQualityReady(video)) startPageAutoApply(TRACK_RECOVERY_WINDOW_MS);
+        if (!isVodStartupQualityReady(video)) return;
+        if (vodStartupSettled) detachVodStartupTimeUpdate(video);
+        if (hasStableVodApply(video)) return;
+        startPageAutoApply(TRACK_RECOVERY_WINDOW_MS);
     }
 
     function readNumericHeight(target, props) {
@@ -1146,7 +1296,7 @@
         return NaN;
     }
 
-    function getTrackHeight(track) {
+    function getTrackHeight(track, context = null) {
         const directHeight = readNumericHeight(track, ["height", "videoHeight"]);
         if (Number.isFinite(directHeight)) return directHeight;
 
@@ -1156,7 +1306,7 @@
         const attributesHeight = readNumericHeight(readLooseProp(track, "attributes"), ["height", "videoHeight"]);
         if (Number.isFinite(attributesHeight)) return attributesHeight;
 
-        const text = trackText(track);
+        const text = getTrackText(track, context);
         const resolutionMatch = text.match(/\b\d{3,5}\s*x\s*(\d{3,4})\b/);
         if (resolutionMatch) return Number(resolutionMatch[1]);
 
@@ -1164,15 +1314,15 @@
         return labelMatch ? Number(labelMatch[1]) : NaN;
     }
 
-    function trackMatchesQuality(track, preferredHeight) {
-        return !isAutomaticTrack(track) && getTrackHeight(track) === preferredHeight;
+    function trackMatchesQuality(track, preferredHeight, context = null) {
+        return !isAutomaticTrack(track, context) && getTrackHeight(track, context) === preferredHeight;
     }
 
-    function getSelectableTrackCandidates(tracks) {
+    function getSelectableTrackCandidates(tracks, context = null) {
         const candidates = [];
         for (const track of tracks) {
-            if (isAutomaticTrack(track)) continue;
-            const height = getTrackHeight(track);
+            if (isAutomaticTrack(track, context)) continue;
+            const height = getTrackHeight(track, context);
             if (!Number.isFinite(height)) continue;
             candidates.push({ track, height });
         }
@@ -1243,16 +1393,17 @@
         }
 
         const selectedIndex = Number(trackList?.selectedIndex);
-        const selectedTrack = Number.isInteger(selectedIndex) && selectedIndex >= 0
-            ? tracks[selectedIndex]
-            : getSelectedTrack(tracks, trackList);
+        const selectedTrack =
+            Number.isInteger(selectedIndex) && selectedIndex >= 0
+                ? tracks[selectedIndex]
+                : getSelectedTrack(tracks, trackList);
 
         return selectedTrack === targetTrack || targetTrack.selected === true;
     }
 
-    function scoreTrack(track, selectedTrack) {
+    function scoreTrack(track, selectedTrack, context = null) {
         let score = 0;
-        const text = trackText(track);
+        const text = getTrackText(track, context);
 
         if (track?.kind && selectedTrack?.kind && track.kind === selectedTrack.kind) score += 20;
         if (!text.includes("p2p")) score += 8;
@@ -1262,13 +1413,15 @@
         return score;
     }
 
-    function pickTargetTrack(tracks, selectedTrack, preferredHeight) {
-        const candidates = getSelectableTrackCandidates(tracks);
+    function pickTargetTrack(tracks, selectedTrack, preferredHeight, context = null) {
+        const candidates = getSelectableTrackCandidates(tracks, context);
         if (!candidates.length) return null;
 
         const exactCandidates = candidates.filter((candidate) => candidate.height === preferredHeight);
         if (exactCandidates.length) {
-            exactCandidates.sort((a, b) => scoreTrack(b.track, selectedTrack) - scoreTrack(a.track, selectedTrack));
+            exactCandidates.sort(
+                (a, b) => scoreTrack(b.track, selectedTrack, context) - scoreTrack(a.track, selectedTrack, context)
+            );
             return exactCandidates[0].track;
         }
 
@@ -1277,20 +1430,22 @@
 
         const fallbackHeight = Math.max(...lowerCandidates.map((candidate) => candidate.height));
         const fallbackCandidates = lowerCandidates.filter((candidate) => candidate.height === fallbackHeight);
-        fallbackCandidates.sort((a, b) => scoreTrack(b.track, selectedTrack) - scoreTrack(a.track, selectedTrack));
+        fallbackCandidates.sort(
+            (a, b) => scoreTrack(b.track, selectedTrack, context) - scoreTrack(a.track, selectedTrack, context)
+        );
         return fallbackCandidates[0].track;
     }
 
-    function describeTrack(track) {
+    function describeTrack(track, context = null) {
         if (!track) return null;
-        const height = getTrackHeight(track);
+        const height = getTrackHeight(track, context);
         return {
             id: String(track.id || ""),
             label: String(track.label || ""),
             kind: String(track.kind || ""),
             qualityLabel: String(track.qualityLabel || ""),
             height: Number.isFinite(height) ? height : null,
-            automatic: isAutomaticTrack(track),
+            automatic: isAutomaticTrack(track, context),
             selected: Boolean(track.selected),
         };
     }
@@ -1308,12 +1463,12 @@
         return String(target.constructor?.name || typeof target);
     }
 
-    function applyQualityToPlayer(player, quality) {
+    function applyQualityToPlayer(player, quality, context = null) {
         if (!player) return { status: "pending", reason: "player-missing" };
 
-        ensureVodPlaybackGuardAttached();
+        ensureVodPlaybackGuardAttached(context);
         const preferredHeight = getPreferredHeight(quality);
-        const video = getMainVideo();
+        const video = getMainVideoForContext(context);
         const currentTime = Number(video?.currentTime);
         const wasPaused = video?.paused !== false;
         const shouldResume = shouldResumeAfterQualityChange(video, wasPaused);
@@ -1325,21 +1480,21 @@
         }
 
         const selectedTrack = getSelectedTrack(tracks, trackList);
-        const targetTrack = pickTargetTrack(tracks, selectedTrack, preferredHeight);
+        const targetTrack = pickTargetTrack(tracks, selectedTrack, preferredHeight, context);
         if (!targetTrack) {
             return {
                 status: "unavailable",
-                selected: describeTrack(selectedTrack),
+                selected: describeTrack(selectedTrack, context),
                 targetType: describeTarget(trackTarget?.target),
                 trackCount: tracks.length,
             };
         }
 
-        const targetHeight = getTrackHeight(targetTrack);
-        if (selectedTrack && trackMatchesQuality(selectedTrack, targetHeight)) {
+        const targetHeight = getTrackHeight(targetTrack, context);
+        if (selectedTrack && trackMatchesQuality(selectedTrack, targetHeight, context)) {
             return {
                 status: "already",
-                selected: describeTrack(selectedTrack),
+                selected: describeTrack(selectedTrack, context),
                 targetType: describeTarget(trackTarget?.target),
                 trackCount: tracks.length,
             };
@@ -1352,21 +1507,22 @@
 
         return {
             status: selected ? "selected" : "pending",
-            selected: describeTrack(targetTrack),
-            previous: describeTrack(selectedTrack),
+            selected: describeTrack(targetTrack, context),
+            previous: describeTrack(selectedTrack, context),
             targetType: describeTarget(trackTarget?.target),
             trackCount: tracks.length,
         };
     }
 
     function applyQuality(quality) {
-        if (shouldDeferVodStartupQuality()) {
+        const context = createApplyContext();
+        if (shouldDeferVodStartupQuality(context)) {
             return { status: "pending", reason: "vod-resume-wait" };
         }
 
-        const player = getPlayer();
+        const player = getPlayer(context);
         bindTrackList(player);
-        return applyQualityToPlayer(player, quality);
+        return applyQualityToPlayer(player, quality, context);
     }
 
     function removeTrackListListeners() {
@@ -1402,6 +1558,37 @@
         stopPageObserver();
     }
 
+    function getStableVodApplyKey() {
+        return isVodRoute() ? `${location.href}|${preferredQuality}` : "";
+    }
+
+    function hasStableVodApply(video = getMainVideo()) {
+        const key = getStableVodApplyKey();
+        if (!key || stableVodApplyKey !== key) return false;
+        return stableVodApplyVideo === video;
+    }
+
+    function rememberStableVodApply(result) {
+        if (isVodRoute() && result?.status === "already") {
+            stableVodApplyKey = getStableVodApplyKey();
+            stableVodApplyVideo = getMainVideo();
+        }
+    }
+
+    function settlePageApplyWindow({ stopObserver = false, stopTrackList = false } = {}) {
+        if (pageApplyTimer) {
+            clearTimeout(pageApplyTimer);
+            pageApplyTimer = 0;
+        }
+        pageApplyStartedAt = 0;
+        pageApplyDeadline = 0;
+        if (stopTrackList) {
+            removeTrackListListeners();
+            observedTrackList = null;
+        }
+        if (stopObserver) stopPageObserver();
+    }
+
     function schedulePageApply(delayMs) {
         if (!isPlaybackRoute()) {
             clearPageAutoApply();
@@ -1422,6 +1609,11 @@
             return;
         }
 
+        if (isVodRoute() && hasStableVodApply()) {
+            settlePageApplyWindow({ stopObserver: true, stopTrackList: true });
+            return;
+        }
+
         extendPageApplyWindow(windowMs);
         ensurePageObserver();
         schedulePageApply(0);
@@ -1434,8 +1626,15 @@
     }
 
     function scheduleNextPageApply(result) {
-        if (result.status === "already") return;
-        if (performance.now() >= pageApplyDeadline) return;
+        if (result.status === "already") {
+            rememberStableVodApply(result);
+            settlePageApplyWindow({ stopObserver: isVodRoute(), stopTrackList: isVodRoute() });
+            return;
+        }
+        if (performance.now() >= pageApplyDeadline) {
+            settlePageApplyWindow({ stopObserver: isVodRoute(), stopTrackList: isVodRoute() });
+            return;
+        }
 
         if (result.status === "selected") {
             schedulePageApply(PAGE_VERIFY_DELAY_MS);
@@ -1517,12 +1716,15 @@
 
     function writeStatus(result) {
         try {
-            document.documentElement.setAttribute(STATUS_ATTR, JSON.stringify({
-                href: location.href,
-                enabled: autoQualityEnabled,
-                at: Date.now(),
-                ...result,
-            }));
+            document.documentElement.setAttribute(
+                STATUS_ATTR,
+                JSON.stringify({
+                    href: location.href,
+                    enabled: autoQualityEnabled,
+                    at: Date.now(),
+                    ...result,
+                })
+            );
         } catch (_) {
             // Diagnostics only.
         }
@@ -1543,6 +1745,10 @@
                 requestId: request.requestId,
                 ...result,
             });
+            if (result.status === "already") {
+                rememberStableVodApply(result);
+                settlePageApplyWindow({ stopObserver: isVodRoute(), stopTrackList: isVodRoute() });
+            }
         } catch (error) {
             writeStatus({
                 status: "error",

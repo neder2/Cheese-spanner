@@ -21,13 +21,7 @@
     const LIVE_FAST_FORWARD_LABEL = "\uBE68\uB9AC \uAC10\uAE30";
     const LIVE_FAST_FORWARD_BUTTON_TERMS = [LIVE_FAST_FORWARD_LABEL, "fast forward", "fast-forward", "fastforward"];
     const EXTERNAL_FAST_FORWARD_SIGNATURE_TERMS = ["knifeff", "fastforward", "livefastforward"];
-    const PLAYBACK_TOGGLE_BUTTON_TERMS = [
-        "play",
-        "pause",
-        "playback",
-        "\uC7AC\uC0DD",
-        "\uC77C\uC2DC\uC815\uC9C0",
-    ];
+    const PLAYBACK_TOGGLE_BUTTON_TERMS = ["play", "pause", "playback", "\uC7AC\uC0DD", "\uC77C\uC2DC\uC815\uC9C0"];
     const RELEVANT_DOM_SELECTOR = `video, ${TIME_SELECTOR}, ${LIVE_LEFT_BUTTONS_SELECTOR}, ${LIVE_PLAYBACK_SWITCH_SELECTOR}, [${LIVE_EDGE_PATCHED_ATTR}], #${SKIP_PILL_ID}, #${LIVE_FAST_FORWARD_BUTTON_ID}`;
     const SKIP_VISIBILITY_RESYNC_DELAY_MS = 240;
     const CONTROL_AREA_BEFORE_VIDEO_BOTTOM = 150;
@@ -131,12 +125,41 @@
 
     function compact(value) {
         if (typeof normalizeCompact === "function") return normalizeCompact(value);
-        return String(value || "").toLowerCase().replace(/\s+/g, "");
+        return String(value || "")
+            .toLowerCase()
+            .replace(/\s+/g, "");
     }
 
     function containsAnyTerm(value, terms) {
         const text = compact(value);
         return terms.some((term) => text.includes(compact(term)));
+    }
+
+    function setAttributeIfChanged(el, name, value) {
+        if (!(el instanceof Element)) return;
+        const next = String(value);
+        if (el.getAttribute(name) !== next) el.setAttribute(name, next);
+    }
+
+    function setElementTitleIfChanged(el, value) {
+        if (!(el instanceof HTMLElement)) return;
+        const next = String(value);
+        if (el.title !== next) el.title = next;
+    }
+
+    function setClassNameIfChanged(el, value) {
+        if (!(el instanceof HTMLElement)) return;
+        const next = String(value || "");
+        if (el.className !== next) el.className = next;
+    }
+
+    function classNameWithToken(className, token) {
+        const tokens = String(className || "")
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean);
+        if (!tokens.includes(token)) tokens.push(token);
+        return tokens.join(" ");
     }
 
     function getCandidateText(el) {
@@ -152,10 +175,7 @@
     function isOwnedLiveControl(el) {
         return (
             el instanceof HTMLElement &&
-            (
-                OWNED_LIVE_CONTROL_IDS.has(el.id) ||
-                el.dataset?.betterChzzkLiveFastForward === "1"
-            )
+            (OWNED_LIVE_CONTROL_IDS.has(el.id) || el.dataset?.betterChzzkLiveFastForward === "1")
         );
     }
 
@@ -195,7 +215,9 @@
     }
 
     function getMainVideoElement() {
-        const videos = Array.from(document.querySelectorAll("video")).filter((video) => !isExtensionPreviewVideo?.(video));
+        const videos = Array.from(document.querySelectorAll("video")).filter(
+            (video) => !isExtensionPreviewVideo?.(video)
+        );
         return pickLargestVisible(videos) || videos[0] || null;
     }
 
@@ -331,7 +353,10 @@
         if (button.id === LIVE_FAST_FORWARD_BUTTON_ID) return true;
         if (looksLikeExternalLiveFastForwardButton(button)) return true;
         if (looksLikePlaybackToggleButton(button)) return false;
-        return button.hasAttribute(LIVE_EDGE_PATCHED_ATTR) || containsAnyTerm(getCandidateText(button), LIVE_EDGE_BUTTON_TERMS);
+        return (
+            button.hasAttribute(LIVE_EDGE_PATCHED_ATTR) ||
+            containsAnyTerm(getCandidateText(button), LIVE_EDGE_BUTTON_TERMS)
+        );
     }
 
     function looksLikeExternalLiveFastForwardButton(button) {
@@ -346,12 +371,14 @@
         if (!(button instanceof HTMLElement)) return false;
         if (button.matches?.(LIVE_PLAYBACK_SWITCH_SELECTOR)) return true;
 
-        const signature = compact([
-            getElementSignature(button),
-            getCandidateText(button),
-            button.getAttribute("role"),
-            button.getAttribute("type"),
-        ].join(" "));
+        const signature = compact(
+            [
+                getElementSignature(button),
+                getCandidateText(button),
+                button.getAttribute("role"),
+                button.getAttribute("type"),
+            ].join(" ")
+        );
         return PLAYBACK_TOGGLE_BUTTON_TERMS.some((term) => signature.includes(compact(term)));
     }
 
@@ -470,18 +497,18 @@
     function isLiveTimeShiftStateForVideo(video) {
         return Boolean(
             liveTimeShiftState?.video === video &&
-                liveTimeShiftState.routeKey === getLiveRouteKey() &&
-                liveTimeShiftState.videoGeneration === getCurrentVideoGeneration(video)
+            liveTimeShiftState.routeKey === getLiveRouteKey() &&
+            liveTimeShiftState.videoGeneration === getCurrentVideoGeneration(video)
         );
     }
 
     function isPauseSnapshotForCurrentRoute(video = attachedVideo) {
         return Boolean(
             pauseSnapshot?.routeKey &&
-                pauseSnapshot.routeKey === getLiveRouteKey() &&
-                pauseSnapshot.video === video &&
-                pauseSnapshot.videoGeneration === getCurrentVideoGeneration(video) &&
-                pauseSnapshot.armedByUser
+            pauseSnapshot.routeKey === getLiveRouteKey() &&
+            pauseSnapshot.video === video &&
+            pauseSnapshot.videoGeneration === getCurrentVideoGeneration(video) &&
+            pauseSnapshot.armedByUser
         );
     }
 
@@ -515,7 +542,10 @@
         }
 
         const routeKey = getLiveRouteKey();
-        const previous = liveTimeShiftState?.routeKey === routeKey && liveTimeShiftState?.video === video ? liveTimeShiftState : null;
+        const previous =
+            liveTimeShiftState?.routeKey === routeKey && liveTimeShiftState?.video === video
+                ? liveTimeShiftState
+                : null;
         liveTimeShiftState = {
             video,
             routeKey,
@@ -603,7 +633,8 @@
         if (canRestore) {
             const expectedTime = getExpectedLiveTimeShiftTime(state);
             const jumpedAhead = currentTime > expectedTime + LIVE_TIMESHIFT_SNAP_AHEAD_SECONDS;
-            const collapsedLag = lag <= LIVE_TIMESHIFT_NEAR_EDGE_SECONDS || lag < state.lag - LIVE_TIMESHIFT_SNAP_AHEAD_SECONDS;
+            const collapsedLag =
+                lag <= LIVE_TIMESHIFT_NEAR_EDGE_SECONDS || lag < state.lag - LIVE_TIMESHIFT_SNAP_AHEAD_SECONDS;
             if (jumpedAhead && collapsedLag && restoreLiveTimeShiftPosition(video, state, expectedTime, edge)) return;
         }
 
@@ -913,7 +944,9 @@
     }
 
     function injectSkipStyleOnce() {
-        BetterChzzk.utils.injectStyleOnce(SKIP_STYLE_ID, `
+        BetterChzzk.utils.injectStyleOnce(
+            SKIP_STYLE_ID,
+            `
 #${SKIP_PILL_ID}{
   display:inline-flex;
   align-items:center;
@@ -1036,7 +1069,8 @@
   height:24px;
   fill:currentColor;
 }
-`);
+`
+        );
     }
 
     function findTimeElement() {
@@ -1115,7 +1149,7 @@
         pill.style.bottom = "";
         pill.style.transform = "";
         pill.style.transition = "";
-        pill.className = "";
+        setClassNameIfChanged(pill, "");
     }
 
     function pickVisibleControls(elements) {
@@ -1146,9 +1180,7 @@
         );
         if (playbackReference) return playbackReference;
 
-        const buttonReference = pickFirstVisibleControl(
-            children.filter((child) => child.matches?.(BUTTON_SELECTOR))
-        );
+        const buttonReference = pickFirstVisibleControl(children.filter((child) => child.matches?.(BUTTON_SELECTOR)));
         if (buttonReference) return buttonReference;
 
         const fallbackReference = pickFirstVisibleControl(children);
@@ -1159,7 +1191,7 @@
         if (!(pill instanceof HTMLElement) || !(container instanceof HTMLElement)) return;
 
         const reference = findLiveButtonBoxReference(container);
-        pill.className = reference?.className || "";
+        setClassNameIfChanged(pill, reference?.className || "");
         pill.style.order = "9999";
         pill.style.marginLeft = "8px";
 
@@ -1185,14 +1217,9 @@
     function findLiveFastForwardReference(container) {
         if (!(container instanceof HTMLElement)) return null;
 
-        const playbackSwitches = Array.from(container.querySelectorAll(LIVE_PLAYBACK_SWITCH_SELECTOR))
-            .filter((el) => {
-                return (
-                    el instanceof HTMLElement &&
-                    el.id !== LIVE_FAST_FORWARD_BUTTON_ID &&
-                    getVisibleArea(el) > 0
-                );
-            });
+        const playbackSwitches = Array.from(container.querySelectorAll(LIVE_PLAYBACK_SWITCH_SELECTOR)).filter((el) => {
+            return el instanceof HTMLElement && el.id !== LIVE_FAST_FORWARD_BUTTON_ID && getVisibleArea(el) > 0;
+        });
         if (playbackSwitches.length) {
             playbackSwitches.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
             return playbackSwitches[0];
@@ -1208,12 +1235,12 @@
     function findExternalLiveFastForwardButton(container) {
         if (!(container instanceof HTMLElement)) return null;
 
-        const candidates = Array.from(container.querySelectorAll(BUTTON_SELECTOR))
-            .filter((button) => (
+        const candidates = Array.from(container.querySelectorAll(BUTTON_SELECTOR)).filter(
+            (button) =>
                 button instanceof HTMLElement &&
                 getVisibleArea(button) > 0 &&
                 looksLikeExternalLiveFastForwardButton(button)
-            ));
+        );
 
         if (!candidates.length) return null;
         candidates.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
@@ -1224,8 +1251,7 @@
         if (!(button instanceof HTMLElement) || !(container instanceof HTMLElement)) return;
 
         const reference = findLiveFastForwardReference(container);
-        button.className = reference?.className || "";
-        button.classList.add("knife-ff");
+        setClassNameIfChanged(button, classNameWithToken(reference?.className, "knife-ff"));
         button.style.order = "";
         button.style.marginLeft = "";
 
@@ -1242,10 +1268,10 @@
 
     function syncLiveFastForwardButtonLabels(button) {
         if (!(button instanceof HTMLElement)) return;
-        button.setAttribute("label", LIVE_FAST_FORWARD_LABEL);
-        button.setAttribute("aria-label", LIVE_FAST_FORWARD_LABEL);
-        button.setAttribute("tooltip", LIVE_FAST_FORWARD_LABEL);
-        button.removeAttribute("title");
+        setAttributeIfChanged(button, "label", LIVE_FAST_FORWARD_LABEL);
+        setAttributeIfChanged(button, "aria-label", LIVE_FAST_FORWARD_LABEL);
+        setAttributeIfChanged(button, "tooltip", LIVE_FAST_FORWARD_LABEL);
+        if (button.hasAttribute("title")) button.removeAttribute("title");
     }
 
     function syncLiveFastForwardButtonState(button = getLiveFastForwardButtonElement()) {
@@ -1351,7 +1377,10 @@
             if (skipValueEl.textContent !== nextText) skipValueEl.textContent = nextText;
         }
 
-        pill.title = `Wheel: +/- ${featureOptions.skipWheelStep}s (Shift: ${featureOptions.skipWheelShiftStep}s, Alt: ${featureOptions.skipWheelAltStep}s)\nClick: reset to default`;
+        setElementTitleIfChanged(
+            pill,
+            `Wheel: +/- ${featureOptions.skipWheelStep}s (Shift: ${featureOptions.skipWheelShiftStep}s, Alt: ${featureOptions.skipWheelAltStep}s)\nClick: reset to default`
+        );
     }
 
     function setSkipSeconds(next, { persist = true } = {}) {
@@ -1560,6 +1589,7 @@
     }
 
     function removeSkipPill() {
+        uninstallSkipPillGlobalHandlers();
         const pill = getSkipPillElement();
         if (pill) pill.remove();
         skipPillEl = null;
@@ -1701,12 +1731,9 @@
     function looksLikeSeekGestureElement(el) {
         if (!(el instanceof HTMLElement)) return false;
 
-        const signature = compact([
-            getElementSignature(el),
-            getCandidateText(el),
-            el.getAttribute("role"),
-            el.getAttribute("type"),
-        ].join(" "));
+        const signature = compact(
+            [getElementSignature(el), getCandidateText(el), el.getAttribute("role"), el.getAttribute("type")].join(" ")
+        );
         if (NON_SEEK_GESTURE_SIGNATURE_TERMS.some((term) => signature.includes(compact(term)))) return false;
 
         return SEEK_GESTURE_SIGNATURE_TERMS.some((term) => signature.includes(term));
@@ -1732,7 +1759,8 @@
     function isLikelyPlaybackTogglePointerEvent(event, button) {
         if (!canUseLiveResumeGuard(attachedVideo) || attachedVideo.paused) return false;
         if (isLikelyUserSeekGestureTarget(event.target)) return false;
-        if (button instanceof HTMLElement && (button.id === SKIP_PILL_ID || looksLikeLiveEdgeButton(button))) return false;
+        if (button instanceof HTMLElement && (button.id === SKIP_PILL_ID || looksLikeLiveEdgeButton(button)))
+            return false;
         return isPointerEventInVideoArea(event, attachedVideo);
     }
 

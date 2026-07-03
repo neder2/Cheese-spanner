@@ -1,5 +1,5 @@
 (() => {
-    const root = globalThis.BetterChzzk = globalThis.BetterChzzk || {};
+    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
     const ARRAY_RESPONSE_KEYS = Object.freeze(["data", "videos", "list", "items", "content"]);
     const DEFAULT_WATCH_RANGE_MERGE_GAP_MS = 2000;
     const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
@@ -31,11 +31,15 @@
     }
 
     function compactSpaces(value) {
-        return String(value || "").replace(/\s+/g, " ").trim();
+        return String(value || "")
+            .replace(/\s+/g, " ")
+            .trim();
     }
 
     function normalizeCompact(value) {
-        return String(value || "").toLowerCase().replace(/\s+/g, "");
+        return String(value || "")
+            .toLowerCase()
+            .replace(/\s+/g, "");
     }
 
     function pickString(...values) {
@@ -104,7 +108,9 @@
     }
 
     function normalizeForMatch(value) {
-        return compactSpaces(value).toLowerCase().replace(/[^\p{Letter}\p{Number}]+/gu, "");
+        return compactSpaces(value)
+            .toLowerCase()
+            .replace(/[^\p{Letter}\p{Number}]+/gu, "");
     }
 
     function parseChzzkDate(value) {
@@ -154,7 +160,9 @@
     }
 
     function parseKstDateKeyParts(dateKey) {
-        const parts = String(dateKey || "").split("-").map(Number);
+        const parts = String(dateKey || "")
+            .split("-")
+            .map(Number);
         if (parts.length !== 3 || parts.some((value) => !Number.isFinite(value))) return null;
         return { year: parts[0], month: parts[1], day: parts[2] };
     }
@@ -223,8 +231,10 @@
     }
 
     function sumWatchRanges(ranges, mergeGapMs = DEFAULT_WATCH_RANGE_MERGE_GAP_MS) {
-        return mergeWatchRanges(ranges, mergeGapMs)
-            .reduce((sum, range) => sum + Math.max(0, range.endAt - range.startAt) / 1000, 0);
+        return mergeWatchRanges(ranges, mergeGapMs).reduce(
+            (sum, range) => sum + Math.max(0, range.endAt - range.startAt) / 1000,
+            0
+        );
     }
 
     function normalizeDailySeconds(value) {

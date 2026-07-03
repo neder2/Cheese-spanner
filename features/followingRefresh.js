@@ -4,7 +4,7 @@
     const { normalizeOptions } = BetterChzzkSettings;
     const { bindFeatureOptions, normSpace } = BetterChzzk.utils;
 
-    const REFRESH_BUTTON_SELECTOR = "button[aria-label], [role=\"button\"][aria-label]";
+    const REFRESH_BUTTON_SELECTOR = 'button[aria-label], [role="button"][aria-label]';
     const REFRESH_LABEL_RE = /새로고침|refresh/i;
     const FOLLOWING_SECTION_RE = /팔로(잉|우)|following|follow/i;
     const FOLLOWING_HREF_RE = /(^|\/)following(?:[/?#]|$)/i;
@@ -29,10 +29,10 @@
     function isUsableRefreshButton(button) {
         return Boolean(
             button &&
-                button.isConnected &&
-                isRefreshButton(button) &&
-                !button.disabled &&
-                button.getAttribute("aria-disabled") !== "true"
+            button.isConnected &&
+            isRefreshButton(button) &&
+            !button.disabled &&
+            button.getAttribute("aria-disabled") !== "true"
         );
     }
 
@@ -60,7 +60,9 @@
                     return button;
                 }
 
-                const refreshButtons = Array.from(node.querySelectorAll(REFRESH_BUTTON_SELECTOR)).filter(isRefreshButton);
+                const refreshButtons = Array.from(node.querySelectorAll(REFRESH_BUTTON_SELECTOR)).filter(
+                    isRefreshButton
+                );
                 if (refreshButtons.length > 1) break;
             }
         }

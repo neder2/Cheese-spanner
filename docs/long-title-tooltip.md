@@ -14,8 +14,8 @@
 
 1. **긴 제목 한정** — 실제로 잘린(truncated) 제목에만 반응한다. 한 줄에 다 들어오는 제목은 아무 변화도 없다.
 2. 잘린 제목 위에 **커서를 올리면**:
-   - (a) 그 **제목 박스가 하이라이트**된다.
-   - (b) 그 자리에 맞춰 **툴팁으로 전체 제목**이 표시된다(잘리지 않은 완전한 텍스트).
+    - (a) 그 **제목 박스가 하이라이트**된다.
+    - (b) 그 자리에 맞춰 **툴팁으로 전체 제목**이 표시된다(잘리지 않은 완전한 텍스트).
 3. 커서를 치우면 하이라이트와 툴팁이 사라진다.
 4. **디자인 통일** — 기존 `videoSearch.js`의 댓글 툴팁(`bcvs-comment-tooltip`)과 동일한 비주얼 토큰(배경/보더/그림자/다크모드/라운드)을 사용한다.
 
@@ -34,14 +34,17 @@
 ## 3. 아키텍처 결정
 
 ### 3.1 새 독립 feature 파일로 만든다
+
 `features/titleTooltip.js` 를 **신규 생성**한다. 기존 `categoryTools.js`(3,400줄+)에 끼워넣지 않는다.
 
 이유: 제목 잘림은 독립 관심사이며 여러 페이지에 걸친다. 독립 파일이어야 on/off 옵션·테스트·유지보수가 깔끔하다.
 
 ### 3.2 MutationObserver가 아니라 "이벤트 위임"을 쓴다
+
 기존 feature들은 `createMutationObserverSync`로 DOM을 폴링하지만, **이 기능은 `document`에 `pointerover` 위임 리스너 1개**만 건다.
 
 이유:
+
 - 카드가 수백 개여도 리스너는 1개 → 가볍다.
 - 동적으로 추가되는 카드(무한 스크롤)도 자동 커버된다.
 - 잘림 여부는 **호버 시점에 즉석 계산**하면 되므로 사전 스캔/관찰이 불필요하다.
@@ -49,27 +52,28 @@
 단, 페이지 이동/스크롤/리사이즈 시 열린 툴팁을 닫고 위치를 보정하는 보조 리스너는 둔다(§6.4).
 
 ### 3.3 네이밍 prefix = `bctt`
+
 기존 규약을 따른다(categoryTools=`bcgt`, videoSearch=`bcvs`). 이 기능은 **`bctt`** (better-chzzk title tooltip).
 
-| 용도 | 값 |
-|------|-----|
-| 스타일 `<style>` id | `betterchzzk-title-tooltip-style` |
-| 툴팁 엘리먼트 class | `bctt-tooltip` |
-| 툴팁 마킹 속성 | `data-bctt-tooltip="1"` |
-| 제목 하이라이트 속성 | `data-bctt-active="1"` |
-| 옵션 키 | `titleTooltipEnabled` |
+| 용도                 | 값                                |
+| -------------------- | --------------------------------- |
+| 스타일 `<style>` id  | `betterchzzk-title-tooltip-style` |
+| 툴팁 엘리먼트 class  | `bctt-tooltip`                    |
+| 툴팁 마킹 속성       | `data-bctt-tooltip="1"`           |
+| 제목 하이라이트 속성 | `data-bctt-active="1"`            |
+| 옵션 키              | `titleTooltipEnabled`             |
 
 ---
 
 ## 4. 파일별 변경 체크리스트
 
-| # | 파일 | 변경 |
-|---|------|------|
-| 1 | `manifest.json` | 콘텐츠 스크립트 js 배열에 `features/titleTooltip.js` 추가 |
-| 2 | `shared/settings.js` | `OPTION_SCHEMA`에 `titleTooltipEnabled` 추가 |
-| 3 | `options.html` | "방송 목록 도구" 카드에 토글 추가 |
-| 4 | `features/titleTooltip.js` | **신규** — 본 기능 구현 |
-| 5 | `tests/extension-pages.test.js` | 잘림 감지/툴팁 생성 테스트 추가 |
+| #   | 파일                            | 변경                                                      |
+| --- | ------------------------------- | --------------------------------------------------------- |
+| 1   | `manifest.json`                 | 콘텐츠 스크립트 js 배열에 `features/titleTooltip.js` 추가 |
+| 2   | `shared/settings.js`            | `OPTION_SCHEMA`에 `titleTooltipEnabled` 추가              |
+| 3   | `options.html`                  | "방송 목록 도구" 카드에 토글 추가                         |
+| 4   | `features/titleTooltip.js`      | **신규** — 본 기능 구현                                   |
+| 5   | `tests/extension-pages.test.js` | 잘림 감지/툴팁 생성 테스트 추가                           |
 
 아래 각 항목의 구체 지시를 따른다.
 
@@ -114,7 +118,7 @@ titleTooltipEnabled: { kind: "bool", default: true, feature: true },
 ```html
 <label class="toggle-row">
     <span><strong>긴 제목 툴팁</strong><small>잘린 방송 제목에 마우스를 올리면 전체 제목을 보여줍니다.</small></span>
-    <input type="checkbox" data-option="titleTooltipEnabled">
+    <input type="checkbox" data-option="titleTooltipEnabled" />
 </label>
 ```
 
@@ -150,13 +154,7 @@ titleTooltipEnabled: { kind: "bool", default: true, feature: true },
     let openTimer = 0;
     let listenersInstalled = false;
 
-    const {
-        bindFeatureOptions,
-        injectStyleOnce,
-        normSpace,
-        onReady,
-        startPageChangeDetection,
-    } = BetterChzzk.utils;
+    const { bindFeatureOptions, injectStyleOnce, normSpace, onReady, startPageChangeDetection } = BetterChzzk.utils;
 
     let removePageChangeDetection = null;
 
@@ -183,7 +181,7 @@ function resolveTitleElement(target) {
     if (!(target instanceof Element)) return null;
     const el = target.closest(TITLE_SELECTOR);
     if (!(el instanceof HTMLElement)) return null;
-    if (el.closest(`[${TOOLTIP_ATTR}="1"]`)) return null;      // 우리 툴팁 제외
+    if (el.closest(`[${TOOLTIP_ATTR}="1"]`)) return null; // 우리 툴팁 제외
     // 방송 카드 맥락인지 확인: 같은 카드 안에 item 링크가 있어야 함.
     const card = el.closest("article, li, [class*='card'], [class*='item'], [class*='video']") || el.parentElement;
     if (card && !card.querySelector(ITEM_LINK_SELECTOR) && !el.closest(ITEM_LINK_SELECTOR)) return null;
@@ -192,7 +190,7 @@ function resolveTitleElement(target) {
 
 // line-clamp(세로) 또는 ellipsis(가로)로 잘렸는가.
 function isTruncated(el) {
-    return (el.scrollWidth - el.clientWidth > 1) || (el.scrollHeight - el.clientHeight > 1);
+    return el.scrollWidth - el.clientWidth > 1 || el.scrollHeight - el.clientHeight > 1;
 }
 
 // 전체 제목 텍스트. clamp/ellipsis는 텍스트를 자르지 않고 시각적으로만 가리므로
@@ -286,8 +284,8 @@ function positionTooltip(anchor) {
 function handlePointerOver(e) {
     const titleEl = resolveTitleElement(e.target);
     if (!titleEl) return;
-    if (titleEl === activeTitleEl) return;          // 이미 표시중
-    if (!isTruncated(titleEl)) return;              // 긴 제목 한정
+    if (titleEl === activeTitleEl) return; // 이미 표시중
+    if (!isTruncated(titleEl)) return; // 긴 제목 한정
     clearOpenTimer();
     openTimer = window.setTimeout(() => {
         openTimer = 0;
@@ -337,9 +335,15 @@ function uninstallListeners() {
     document.removeEventListener("pointerout", handlePointerOut, true);
     window.removeEventListener("scroll", handleScroll, true);
     window.removeEventListener("resize", handleResize);
-    if (removePageChangeDetection) { removePageChangeDetection(); removePageChangeDetection = null; }
+    if (removePageChangeDetection) {
+        removePageChangeDetection();
+        removePageChangeDetection = null;
+    }
     hideTooltip();
-    if (tooltip) { tooltip.remove(); tooltip = null; }
+    if (tooltip) {
+        tooltip.remove();
+        tooltip = null;
+    }
 }
 
 function applyOptions(options) {
@@ -349,7 +353,9 @@ function applyOptions(options) {
 }
 
 bindFeatureOptions(applyOptions);
-onReady(() => { if (isFeatureEnabled()) installListeners(); });
+onReady(() => {
+    if (isFeatureEnabled()) installListeners();
+});
 ```
 
 > `bindFeatureOptions`는 최초 옵션 로드 + 변경 리스너를 모두 등록한다(`content.js` 참고). 따라서 옵션 토글 즉시 install/uninstall이 반영된다.
@@ -361,54 +367,59 @@ onReady(() => { if (isFeatureEnabled()) installListeners(); });
 `STYLE_TEXT`로 주입할 문자열. 색/그림자/라운드/다크모드는 `videoSearch.js`의 `.bcvs-comment-tooltip`와 **동일 토큰**을 사용한다. 하이라이트는 프로젝트 액센트(`#00FFA3` 계열)를 쓰되 **텍스트 색은 건드리지 않는다**(다크/라이트 카드 양쪽에서 가독성 유지).
 
 ```css
-.bctt-tooltip{
-  display:none;
-  position:fixed;
-  left:0; top:0;
-  width:max-content;
-  max-width:min(420px, calc(100vw - 32px));
-  padding:8px 10px;
-  border:1px solid rgba(17,17,20,0.14);
-  border-radius:6px;
-  background:#fff;
-  color:#111114;
-  box-shadow:0 8px 24px rgba(0,0,0,0.18);
-  font-family:inherit;
-  font-size:13px;
-  font-weight:600;
-  line-height:18px;
-  white-space:normal;
-  word-break:break-word;
-  z-index:2147483647;
-  pointer-events:none;           /* 전체 제목만 보여주므로 상호작용 불필요 → 호버 로직 단순화 */
+.bctt-tooltip {
+    display: none;
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: max-content;
+    max-width: min(420px, calc(100vw - 32px));
+    padding: 8px 10px;
+    border: 1px solid rgba(17, 17, 20, 0.14);
+    border-radius: 6px;
+    background: #fff;
+    color: #111114;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 18px;
+    white-space: normal;
+    word-break: break-word;
+    z-index: 2147483647;
+    pointer-events: none; /* 전체 제목만 보여주므로 상호작용 불필요 → 호버 로직 단순화 */
 }
-.bctt-tooltip[data-show="1"]{ display:block; }
+.bctt-tooltip[data-show="1"] {
+    display: block;
+}
 
 /* 제목 박스 하이라이트 */
-[data-bctt-active="1"]{
-  background:rgba(0,255,163,0.12) !important;
-  border-radius:4px;
-  box-shadow:0 0 0 1px rgba(0,168,107,0.32);
+[data-bctt-active="1"] {
+    background: rgba(0, 255, 163, 0.12) !important;
+    border-radius: 4px;
+    box-shadow: 0 0 0 1px rgba(0, 168, 107, 0.32);
 }
 
 /* 다크 모드 — comment tooltip과 동일 분기 셀렉터 */
 html[dark] .bctt-tooltip,
 body[theme="dark"] .bctt-tooltip,
-[class*="dark"] .bctt-tooltip{
-  border-color:rgba(157,165,182,0.22);
-  background:#1B1D20;
-  color:#F2F4F7;
-  box-shadow:0 10px 30px rgba(0,0,0,0.34);
+[class*="dark"] .bctt-tooltip {
+    border-color: rgba(157, 165, 182, 0.22);
+    background: #1b1d20;
+    color: #f2f4f7;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.34);
 }
 html[dark] [data-bctt-active="1"],
 body[theme="dark"] [data-bctt-active="1"],
-[class*="dark"] [data-bctt-active="1"]{
-  background:rgba(0,255,163,0.16) !important;
-  box-shadow:0 0 0 1px rgba(0,255,163,0.4);
+[class*="dark"] [data-bctt-active="1"] {
+    background: rgba(0, 255, 163, 0.16) !important;
+    box-shadow: 0 0 0 1px rgba(0, 255, 163, 0.4);
 }
 
-@media (max-width: 520px){
-  .bctt-tooltip{ max-width:calc(100vw - 16px); }
+@media (max-width: 520px) {
+    .bctt-tooltip {
+        max-width: calc(100vw - 16px);
+    }
 }
 ```
 
