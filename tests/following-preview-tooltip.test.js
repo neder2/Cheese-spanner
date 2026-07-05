@@ -375,7 +375,7 @@ test("following preview loading card does not use verified badges as thumbnails"
     assert.doesNotMatch(tip.textContent, /verified-badge/);
 });
 
-test("following preview plays auto-play-info HLS in the hover card and reuses cache", async () => {
+test("following preview prefers low-latency LLHLS in the hover card and reuses cache", async () => {
     const chrome = createFakeChrome();
     const { document, dom, item, link } = createFollowingPreviewDom(chrome);
     const hlsState = installFakeHls(dom);
@@ -493,8 +493,9 @@ test("following preview plays auto-play-info HLS in the hover card and reuses ca
 
     assert.equal(hlsState.instances.length, 1);
     assert.equal(hlsState.instances[0].config.enableWorker, false);
+    assert.equal(hlsState.instances[0].config.lowLatencyMode, true);
     assert.equal(hlsState.instances[0].autoLevelCapping, 1);
-    assert.equal(hlsState.loadSources[0], "https://nvelop-livecloud.pstatic.net/chzzk/live/master.m3u8");
+    assert.equal(hlsState.loadSources[0], "https://nvelop-livecloud.pstatic.net/chzzk/live/ll.m3u8");
     assert.equal(hlsState.playCalls[0], video);
     assert.equal(video.getAttribute("data-bcfp-player-state"), "ready");
 
@@ -524,6 +525,65 @@ test("following preview plays auto-play-info HLS in the hover card and reuses ca
     link.dispatchEvent(new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
     assert.equal(tip.hasAttribute("data-show"), false);
     assert.equal(item.hasAttribute("data-bcfp-active"), false);
+});
+
+test("following preview falls back to standard HLS when no low-latency source exists", async () => {
+    const chrome = createFakeChrome();
+    const { document, dom, link } = createFollowingPreviewDom(chrome);
+    const hlsState = installFakeHls(dom);
+    const now = Date.parse("2026-06-23T03:02:03Z");
+    const playbackJson = JSON.stringify({
+        media: [{ mediaId: "HLS", path: "https://nvelop-livecloud.pstatic.net/chzzk/live/master.m3u8" }],
+    });
+
+    dom.window.Date.now = () => now;
+    dom.window.fetch = async (url) => {
+        if (String(url).includes("/live-detail")) {
+            return {
+                ok: true,
+                json: async () => ({
+                    content: {
+                        liveId: "live-789",
+                        liveTitle: "API 방송 제목",
+                        liveImageUrl: "https://example.com/live-{type}.jpg",
+                        liveCategoryValue: "게임",
+                        openDate: new Date(now - 60 * 1000).toISOString(),
+                        channel: { channelName: "API 채널" },
+                    },
+                }),
+            };
+        }
+
+        if (String(url).includes("/auto-play-info")) {
+            return {
+                ok: true,
+                json: async () => ({
+                    content: {
+                        livePlaybackJson: playbackJson,
+                        previewPlaybackJson: "",
+                    },
+                }),
+            };
+        }
+
+        throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForFollowingPreviewDelay();
+    await waitForAsyncCallbacks();
+    await waitForFollowingPreviewFetchDelay();
+    await waitForAsyncCallbacks();
+    await waitForAsyncCallbacks();
+    await waitForFollowingPlaybackDelay();
+
+    assert.equal(hlsState.instances.length, 1);
+    assert.equal(hlsState.instances[0].config.lowLatencyMode, false);
+    assert.equal(hlsState.loadSources[0], "https://nvelop-livecloud.pstatic.net/chzzk/live/master.m3u8");
 });
 
 function attachMainPlayerVideo(dom, volume) {

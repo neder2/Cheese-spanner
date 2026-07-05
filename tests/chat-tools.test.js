@@ -987,3 +987,59 @@ test("disabling the option removes UI and stops collecting new chat rows", async
 
     assert.equal(dom.window.document.querySelector(".bcct-moderator-box"), null);
 });
+
+test("moderator trigger returns after the chat root node is wholly replaced and new chat arrives", async (t) => {
+    // 재현: 채팅 접기/펼치기·플레이어 모드 전환 등으로 채팅 메시지 목록(chat root)
+    // 노드가 통째로 새 노드로 교체되면, 옛 root를 관찰하던 observer는 새 메시지
+    // mutation을 못 받아 syncChatTools가 영영 안 돌고 트리거가 복구되지 않았다.
+    const { dom } = createPageDom(
+        [
+            '<div class="chat-row" data-chat-id="seed-1">',
+            '<span class="nickname">viewer</span>',
+            '<span class="message">첫 메시지</span>',
+            "</div>",
+        ].join("")
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+
+    // 첫 sync에서 트리거가 붙는다.
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+
+    const document = dom.window.document;
+    const area = document.querySelector(".live_chatting_area");
+    const oldList = document.querySelector(".chat-list");
+
+    // 트리거/액션 그룹을 제거해 "버튼이 사라진" 상태를 만든다. 재연결 로직이
+    // 없으면 이 뒤로 새 메시지가 와도 옛 분리 노드만 관찰해 복구되지 않는다.
+    document.querySelector("[data-bcct-moderator-actions]")?.remove();
+    assert.equal(document.querySelector(".bcct-moderator-trigger"), null);
+
+    // chat root 노드를 통째로 새 노드로 교체한다(옛 노드는 DOM에서 분리).
+    oldList.remove();
+    const newList = document.createElement("div");
+    newList.className = "chat-list";
+    newList.setAttribute("role", "log");
+    area.appendChild(newList);
+
+    // 새 root에 새 채팅 메시지가 도착한다.
+    newList.insertAdjacentHTML(
+        "beforeend",
+        [
+            '<div class="chat-row" data-chat-id="after-swap-1">',
+            '<span class="nickname">viewer</span>',
+            '<span class="message">교체 후 메시지</span>',
+            "</div>",
+        ].join("")
+    );
+
+    // 재연결 감시가 분리를 감지해 새 root로 옮겨 타고 full-scan이 돌아
+    // 트리거가 다시 붙어야 한다.
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+
+    const trigger = document.querySelector(".bcct-moderator-trigger");
+    assert.equal(trigger.tagName, "BUTTON");
+    // 새 root가 실제 관찰 대상이 되었는지: 새 메시지 행이 파싱 처리되었는지로 확인한다.
+    assert.ok(document.querySelector('[data-chat-id="after-swap-1"]'));
+});

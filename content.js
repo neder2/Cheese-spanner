@@ -7,6 +7,7 @@
     const INTERACTIVE_SELECTOR =
         "button, [role='button'], a[href], input, textarea, select, summary, [contenteditable='true']";
     const ROUTE_CHECK_DELAYS_MS = [0, 80, 250, 800];
+    const RECONNECT_CHECK_THROTTLE_MS = 160;
     let routeDetectionUsers = 0;
     let routeDetectionInstalled = false;
     let routeDetectionLastHref = location.href;
@@ -295,6 +296,9 @@
         onBodyReady,
     } = {}) {
         let bodyObserver = null;
+        let reconnectObserver = null;
+        let reconnectCheckScheduled = false;
+        let observedNode = null;
         let disconnectedAll = false;
         const observer = new MutationObserver((mutations) => {
             if (disconnectedAll) return;
@@ -306,8 +310,17 @@
         });
         const disconnectObserver = observer.disconnect.bind(observer);
 
+        const stopReconnectWatch = () => {
+            if (reconnectObserver) {
+                reconnectObserver.disconnect();
+                reconnectObserver = null;
+            }
+        };
+
         observer.disconnect = () => {
             disconnectObserver();
+            observedNode = null;
+            stopReconnectWatch();
             if (bodyObserver) {
                 bodyObserver.disconnect();
                 bodyObserver = null;
@@ -320,9 +333,68 @@
 
         const resolveTarget = () => (typeof target === "function" ? target() : target);
         const resolveOptions = () => (typeof options === "function" ? options() : options);
+
+        // 재연결 감시는 target이 함수로 주어져(동적으로 노드가 교체될 수 있음) 관찰
+        // 대상이 body/documentElement 같은 상시 노드가 아닐 때만 켠다. 상시 노드는
+        // 분리되지 않으므로 감시 비용을 들일 이유가 없다.
+        const shouldWatchForReconnect = (node) =>
+            typeof target === "function" &&
+            node !== document.body &&
+            node !== document.documentElement;
+
+        // busy polling 없이 documentElement의 childList 변화가 있을 때만 throttle을
+        // 걸어 관찰 노드의 isConnected를 확인한다. 분리됐으면 target을 다시 resolve해
+        // 재관찰하고, 새 대상을 잡았음을 onBodyReady로 알려 소비자가 full-scan 복구를
+        // 하도록 한다(대상이 새로 나타났을 때와 동일한 의미). throttle은 rAF가 아닌
+        // setTimeout으로 건다: 분리된 노드는 더 이상 mutation을 만들지 않으므로,
+        // 백그라운드 탭 등에서 rAF가 멈추면 복구가 영영 안 될 수 있기 때문이다.
+        const checkReconnect = () => {
+            reconnectCheckScheduled = false;
+            if (disconnectedAll || !observedNode || observedNode.isConnected) return;
+            disconnectObserver();
+            const previous = observedNode;
+            observedNode = null;
+            stopReconnectWatch();
+            const readyTarget = resolveTarget();
+            if (readyTarget) {
+                observeTarget(readyTarget);
+                if (readyTarget !== previous) onBodyReady?.(observer, readyTarget);
+                return;
+            }
+            // 새 대상을 아직 못 찾으면 대상 대기 폴백으로 되돌아간다.
+            startBodyWatch();
+        };
+        const scheduleReconnectCheck = () => {
+            if (reconnectCheckScheduled || disconnectedAll) return;
+            reconnectCheckScheduled = true;
+            window.setTimeout(checkReconnect, RECONNECT_CHECK_THROTTLE_MS);
+        };
+
+        const startReconnectWatch = () => {
+            if (reconnectObserver) return;
+            reconnectObserver = new MutationObserver(scheduleReconnectCheck);
+            reconnectObserver.observe(document.documentElement, { childList: true, subtree: true });
+        };
+
         const observeTarget = (node) => {
+            observedNode = node;
             observer.observe(node, resolveOptions());
             onObserved?.(observer, node);
+            if (shouldWatchForReconnect(node)) startReconnectWatch();
+        };
+
+        const startBodyWatch = () => {
+            if (bodyObserver) return;
+            bodyObserver = new MutationObserver(() => {
+                if (disconnectedAll) return;
+                const readyTarget = resolveTarget();
+                if (!readyTarget) return;
+                bodyObserver.disconnect();
+                bodyObserver = null;
+                observeTarget(readyTarget);
+                onBodyReady?.(observer, readyTarget);
+            });
+            bodyObserver.observe(document.documentElement, { childList: true, subtree: true });
         };
 
         const initialTarget = resolveTarget();
@@ -331,17 +403,7 @@
             return observer;
         }
 
-        bodyObserver = new MutationObserver(() => {
-            if (disconnectedAll) return;
-            const readyTarget = resolveTarget();
-            if (!readyTarget) return;
-            bodyObserver.disconnect();
-            bodyObserver = null;
-            observeTarget(readyTarget);
-            onBodyReady?.(observer, readyTarget);
-        });
-
-        bodyObserver.observe(document.documentElement, { childList: true, subtree: true });
+        startBodyWatch();
         return observer;
     }
 

@@ -840,7 +840,14 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
         if (!hlsMedia.length) return null;
 
+        // 일반 HLS는 플레이리스트 끝이 실시간보다 ~30초 뒤라 미리보기가 뒤처져 보인다.
+        // 저지연(LLHLS)이 있으면 본방 플레이어처럼 실시간에 붙도록 먼저 고른다.
         const preferred =
+            hlsMedia.find(
+                (media) =>
+                    String(media?.mediaId || "").toUpperCase() === "LLHLS" ||
+                    /lowLatency/i.test(String(media?.latency || ""))
+            ) ||
             hlsMedia.find((media) => String(media?.mediaId || "").toUpperCase() === "HLS") ||
             hlsMedia.find((media) => getMediaHeight(media) && getMediaHeight(media) <= PREVIEW_MAX_HEIGHT) ||
             hlsMedia[0];

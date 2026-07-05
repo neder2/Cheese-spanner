@@ -352,6 +352,99 @@ test("createMutationObserverSync disconnectAll prevents deferred callbacks after
     assert.deepEqual(events, []);
 });
 
+test("createMutationObserverSync re-resolves a function target after it is detached and replaced", async () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
+    evalContentScripts(dom);
+
+    const { BetterChzzk, document } = dom.window;
+    const events = [];
+
+    const firstTarget = document.createElement("div");
+    document.body.appendChild(firstTarget);
+    let target = firstTarget;
+
+    const observer = BetterChzzk.utils.createMutationObserverSync({
+        target: () => target,
+        schedule: () => events.push("scheduled"),
+        onBodyReady: (_obs, node) => events.push(node === target ? "ready:new" : "ready:other"),
+    });
+
+    // 최초 대상에서의 mutation은 정상적으로 스케줄된다.
+    firstTarget.appendChild(document.createElement("span"));
+    await waitForAsyncCallbacks();
+    assert.deepEqual(events, ["scheduled"]);
+
+    // 대상 노드가 통째로 교체(제거 후 새 노드로 대체)된다.
+    firstTarget.remove();
+    const secondTarget = document.createElement("div");
+    document.body.appendChild(secondTarget);
+    target = secondTarget;
+
+    // 재연결 감시가 분리를 감지해 새 대상으로 옮겨 탄 뒤 onBodyReady로 알린다.
+    await waitForCondition(() => events.includes("ready:new"));
+    assert.deepEqual(events, ["scheduled", "ready:new"]);
+
+    // 새 대상에서 발생한 mutation이 실제로 관찰된다(옛 분리 노드가 아니라 새 노드).
+    secondTarget.appendChild(document.createElement("span"));
+    await waitForCondition(() => events.length === 3);
+    assert.deepEqual(events, ["scheduled", "ready:new", "scheduled"]);
+
+    observer.disconnect();
+});
+
+test("createMutationObserverSync does not watch for reconnect when the target is document.body", async () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
+    evalContentScripts(dom);
+
+    const { BetterChzzk, document } = dom.window;
+    const events = [];
+
+    const observer = BetterChzzk.utils.createMutationObserverSync({
+        target: () => document.body,
+        schedule: () => events.push("scheduled"),
+        onBodyReady: () => events.push("ready"),
+    });
+
+    // body 대상은 분리되지 않으므로 재연결 감시로 인한 중복 onBodyReady 없이
+    // 일반 mutation만 스케줄되어야 한다.
+    document.body.appendChild(document.createElement("span"));
+    await waitForAsyncCallbacks();
+    assert.deepEqual(events, ["scheduled"]);
+
+    observer.disconnect();
+});
+
+test("createMutationObserverSync reconnect watch stops after disconnectAll", async () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
+    evalContentScripts(dom);
+
+    const { BetterChzzk, document } = dom.window;
+    const events = [];
+
+    const firstTarget = document.createElement("div");
+    document.body.appendChild(firstTarget);
+    let target = firstTarget;
+
+    const observer = BetterChzzk.utils.createMutationObserverSync({
+        target: () => target,
+        schedule: () => events.push("scheduled"),
+        onBodyReady: () => events.push("ready"),
+    });
+
+    observer.disconnectAll();
+
+    // teardown 이후에는 대상 교체를 감지해도 어떤 콜백도 발생하지 않아야 한다(누수 금지).
+    firstTarget.remove();
+    const secondTarget = document.createElement("div");
+    document.body.appendChild(secondTarget);
+    target = secondTarget;
+    secondTarget.appendChild(document.createElement("span"));
+    // 재연결 throttle 창(160ms)보다 넉넉히 기다려도 어떤 콜백도 발생하지 않아야 한다.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    assert.deepEqual(events, []);
+});
+
 test("startPageChangeDetection detects pushState without a DOM mutation through the page route bridge", async () => {
     const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
     evalRepoScript(dom, "features", "routeBridgePage.js");
