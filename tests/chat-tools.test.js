@@ -428,6 +428,37 @@ test("real chzzk markup: badge img alt collects broadcaster and manager, not vie
     assert.equal(broadcasterAuthor.style.color, "rgb(217, 176, 79)");
 });
 
+test("real chzzk markup: the renamed 채팅 운영자 badge is collected as manager", async (t) => {
+    // 치지직이 매니저 칭호를 "채팅 운영자"로 바꾼 마크업. 아이콘 URL 이 함께
+    // 바뀌어도 alt 텍스트만으로 감지되어야 한다.
+    const { dom } = createPageDom(
+        [
+            realChzzkChatRow({ nickname: "일반 시청자", text: "그냥 일반 채팅" }),
+            realChzzkChatRow({
+                badgeImg:
+                    '<img src="https://ssl.pstatic.net/static/nng/glive/icon/chat_operator.png" alt="채팅 운영자" width="18" height="18">',
+                nickname: "부지런한 봇지기",
+                text: "운영자 공지입니다",
+                chatId: "chat-operator-rename-1",
+            }),
+        ].join("")
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 1);
+
+    openModeratorPanel(dom.window.document);
+    const row = moderatorRows(dom.window.document)[0];
+    assert.match(row.textContent, /운영자 공지입니다/);
+    assert.doesNotMatch(row.textContent, /그냥 일반 채팅/);
+    assert.equal(row.querySelector(".bcct-moderator-row__author").textContent, "부지런한 봇지기");
+    const badge = row.querySelector(".bcct-moderator-row__badge");
+    assert.equal(badge.getAttribute("alt"), "채팅 운영자");
+    assert.match(badge.getAttribute("src"), /icon\/chat_operator\.png$/);
+});
+
 test("sr-only badge descriptions are not mixed into the collected nickname or text", async (t) => {
     // 실측(대형 방송, dtc6c 계열 닉네임 컨테이너): 아이콘의 <span class="blind">
     // 는 네이버 공통 sr-only 클래스로 clip/absolute 처리라 화면에 안 보이지만

@@ -12,7 +12,7 @@
     const MODERATOR_PANEL_HOST_ATTR = "data-bcct-moderator-panel-host";
     const MODERATOR_ACTION_GROUP_ATTR = "data-bcct-moderator-actions";
     const PLACEHOLDER_TEXT = "[블라인드 메시지: 원문 없음]";
-    const MODERATOR_TITLE = "방송자/매니저 채팅";
+    const MODERATOR_TITLE = "방송자/채팅 운영자 채팅";
     const ROLE_SCORE_THRESHOLD = 80;
     const DEFAULT_MAX_MODERATOR_MESSAGES = 100;
     const MODERATOR_CACHE_STORAGE_KEY = "betterChzzkChatToolsModeratorCache";
@@ -1154,7 +1154,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
     }
 
     function roleLabel(role) {
-        return role === "broadcaster" ? "방송자" : "매니저";
+        return role === "broadcaster" ? "방송자" : "채팅 운영자";
     }
 
     function normalizeCachedMessage(message) {
@@ -1959,7 +1959,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         // 인라인 style 을 한 박자 늦게 적용하는 경우가 있어, 그 mutation 이
         // 재파싱을 일으켜야 뱃지/색상 백필이 발동한다. role 신호(img alt)는
         // 하위 요소에만 있어 signalText 로는 못 잡지만, 수집 표시 자체가 이미
-        // 방송자/매니저 판정이다. 재파싱은 idempotent 라 (백필은 값이 실제로
+        // 방송자/채팅 운영자 판정이다. 재파싱은 idempotent 라 (백필은 값이 실제로
         // 바뀔 때만 다시 그림) 루프를 만들지 않는다.
         if (isModeratorBoxEnabled() && getCollectedModeratorRow(row)) return true;
 

@@ -338,9 +338,7 @@
         // 대상이 body/documentElement 같은 상시 노드가 아닐 때만 켠다. 상시 노드는
         // 분리되지 않으므로 감시 비용을 들일 이유가 없다.
         const shouldWatchForReconnect = (node) =>
-            typeof target === "function" &&
-            node !== document.body &&
-            node !== document.documentElement;
+            typeof target === "function" && node !== document.body && node !== document.documentElement;
 
         // busy polling 없이 documentElement의 childList 변화가 있을 때만 throttle을
         // 걸어 관찰 노드의 isConnected를 확인한다. 분리됐으면 target을 다시 resolve해
