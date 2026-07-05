@@ -1551,7 +1551,6 @@ test("options places chat tools controls in a dedicated section", () => {
     const optionOrder = Array.from(section.querySelectorAll("[data-option]")).map((input) => input.dataset.option);
     const chatTools = queryOption(document, "chatToolsEnabled");
     const showBlind = queryOption(document, "chatToolsShowBlindEnabled");
-    const cacheMessages = queryOption(document, "chatToolsCacheModeratorMessagesEnabled");
     const maxMessages = queryOption(document, "chatToolsMaxModeratorMessages");
 
     assert.equal(section.querySelector("h2").textContent.trim(), "채팅 도구");
@@ -1559,18 +1558,15 @@ test("options places chat tools controls in a dedicated section", () => {
         "chatToolsEnabled",
         "chatToolsShowBlindEnabled",
         "chatToolsModeratorBoxEnabled",
-        "chatToolsCacheModeratorMessagesEnabled",
         "chatToolsMaxModeratorMessages",
     ]);
     assert.equal(showBlind.disabled, true);
-    assert.equal(cacheMessages.disabled, true);
     assert.equal(maxMessages.disabled, true);
 
     chatTools.checked = true;
     dispatch(dom, chatTools, "change");
 
     assert.equal(showBlind.disabled, false);
-    assert.equal(cacheMessages.disabled, false);
     assert.equal(maxMessages.disabled, false);
 });
 

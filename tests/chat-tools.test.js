@@ -753,111 +753,48 @@ test("moderator box trims old messages at the configured maximum", async (t) => 
     assert.match(collectedText, /관리자 메시지 24/);
 });
 
-test("moderator cache restores messages collected while watching the same live", async (t) => {
-    const { chrome, dom } = createPageDom(
+test("badge image appearing after collection is backfilled into the moderator box", async (t) => {
+    // 치지직이 aria-label 로 역할을 먼저 노출해 뱃지 이미지 없이 수집된 뒤,
+    // 같은 행에 역할 뱃지 이미지를 한 박자 늦게 붙이는 상황을 재현한다. 뱃지가
+    // 없이 수집된 항목이 재파싱 때 뱃지를 백필받아야 한다 (캐시 없이도 발동).
+    const { dom } = createPageDom(
         [
-            '<div class="chat-row" data-chat-id="manager-cache-1">',
+            '<div class="chat-row" data-chat-id="manager-late-badge">',
             '<span class="badge" aria-label="매니저"></span>',
             '<span class="nickname">manager</span>',
-            '<span class="message">잠깐 저장할 안내</span>',
+            '<span class="message">뱃지는 나중에 옵니다</span>',
             "</div>",
-        ].join(""),
-        { chatToolsCacheModeratorMessagesEnabled: true }
+        ].join("")
     );
     t.after(() => closeChatToolsDom(dom));
 
     loadChatTools(dom);
 
-    await waitForCondition(() => {
-        const entry = chrome.testState.local[MODERATOR_CACHE_STORAGE_KEY]?.entries?.["live:test-channel"];
-        return entry?.messages?.length === 1;
-    });
-
-    const cachedLocal = chrome.testState.local;
-    const { dom: restoredDom } = createPageDom("", { chatToolsCacheModeratorMessagesEnabled: true }, cachedLocal);
-    t.after(() => closeChatToolsDom(restoredDom));
-
-    loadChatTools(restoredDom);
-
-    await waitForCondition(() => moderatorRows(restoredDom.window.document).length === 1);
-    openModeratorPanel(restoredDom.window.document);
-    assert.match(moderatorRows(restoredDom.window.document)[0].textContent, /잠깐 저장할 안내/);
-});
-
-function fakeLiveDetailFetch(liveId, status = "OPEN") {
-    return async () => ({
-        ok: true,
-        json: async () => ({ content: { status, liveId } }),
-    });
-}
-
-test("restored legacy cache entries get badges and color backfilled from the live DOM", async (t) => {
-    // 뱃지/색상이 없던 구버전 저장분을 캐시에서 먼저 복원한 뒤(빈 DOM 으로 로드),
-    // 같은 메시지가 나중에 DOM 에 나타나 재파싱되는 실사용 순서를 재현한다. 캐시
-    // 항목 id 는 getMessageId 의 `${attr}:${value}` 형식이라 data-chat-id 값과
-    // 맞춰야 같은 항목으로 매칭돼 백필 분기를 탄다.
-    const now = Date.now();
-    const local = {
-        [MODERATOR_CACHE_STORAGE_KEY]: {
-            version: 1,
-            entries: {
-                "live:test-channel": {
-                    savedAt: now,
-                    expiresAt: now + 60 * 60 * 1000,
-                    liveId: "300",
-                    messages: [
-                        {
-                            id: "data-chat-id:manager-backfill-1",
-                            author: "성실한 부계정",
-                            role: "manager",
-                            text: "백필 대상 안내",
-                            // badges/authorColor 없음 (구버전 저장분)
-                        },
-                    ],
-                },
-            },
-        },
-    };
-
-    // 처음에는 DOM 에 해당 메시지가 없어 캐시 복원만으로 뱃지 없는 행이 뜬다.
-    const { dom } = createPageDom("", { chatToolsCacheModeratorMessagesEnabled: true }, local);
-    t.after(() => closeChatToolsDom(dom));
-
-    dom.window.fetch = fakeLiveDetailFetch(300);
-    loadChatTools(dom);
-
-    // 캐시 복원분은 뱃지/색상이 없다.
+    // 처음에는 이미지 뱃지 없이 수집돼 역할 라벨 텍스트만 보인다.
     await waitForCondition(() => moderatorRows(dom.window.document).length === 1);
     assert.equal(moderatorRows(dom.window.document)[0].querySelector(".bcct-moderator-row__badge"), null);
-    assert.equal(moderatorRows(dom.window.document)[0].querySelector(".bcct-moderator-row__author").style.color, "");
 
-    // 이제 같은 id 의 원본 채팅 행이 DOM 에 나타나면 재파싱으로 뱃지/색상이 백필된다.
-    dom.window.document.querySelector(".chat-list").insertAdjacentHTML(
-        "beforeend",
-        realChzzkChatRow({
-            badgeImg:
-                '<img src="https://ssl.pstatic.net/static/nng/glive/icon/manager.png" alt="방송 매니저" width="18" height="18">',
-            nickname: "성실한 부계정",
-            text: "백필 대상 안내",
-            chatId: "manager-backfill-1",
-        })
-    );
+    // 치지직이 뒤늦게 역할 뱃지 이미지를 닉네임 영역에 붙인다.
+    dom.window.document
+        .querySelector('.chat-row[data-chat-id="manager-late-badge"] .nickname')
+        .insertAdjacentHTML(
+            "afterbegin",
+            '<img src="https://ssl.pstatic.net/static/nng/glive/icon/manager.png" alt="방송 매니저" width="18" height="18">'
+        );
 
     await waitForCondition(() => {
-        const rows = moderatorRows(dom.window.document);
-        if (rows.length !== 1) return false;
-        const badge = rows[0].querySelector(".bcct-moderator-row__badge");
-        const author = rows[0].querySelector(".bcct-moderator-row__author");
-        return Boolean(badge) && author?.style.color === "rgb(217, 176, 79)";
+        const badge = moderatorRows(dom.window.document)[0]?.querySelector(".bcct-moderator-row__badge");
+        return Boolean(badge);
     });
 
     openModeratorPanel(dom.window.document);
     const row = moderatorRows(dom.window.document)[0];
-    assert.match(row.textContent, /백필 대상 안내/);
+    assert.match(row.textContent, /뱃지는 나중에 옵니다/);
     const badge = row.querySelector(".bcct-moderator-row__badge");
+    // 늦게 붙은 역할 뱃지 이미지의 src 가 백필된다. (닉네임 영역 밖 폴백 경로라
+    // alt 는 역할 라벨로 대체된다.)
     assert.match(badge.getAttribute("src"), /icon\/manager\.png$/);
-    assert.equal(badge.getAttribute("alt"), "방송 매니저");
-    assert.equal(row.querySelector(".bcct-moderator-row__author").style.color, "rgb(217, 176, 79)");
+    assert.equal(badge.getAttribute("alt"), "채팅 운영자");
     // 백필로 새 행이 중복 추가되지 않고 그대로 1개여야 한다.
     assert.equal(moderatorRows(dom.window.document).length, 1);
 });
@@ -896,79 +833,20 @@ test("nickname color applied after collection is backfilled into the moderator b
     assert.equal(moderatorRows(dom.window.document).length, 1);
 });
 
-test("moderator cache is scoped to a single live session", async (t) => {
-    const { chrome, dom } = createPageDom(
-        [
-            '<div class="chat-row" data-chat-id="manager-session-1">',
-            '<span class="badge" aria-label="매니저"></span>',
-            '<span class="nickname">manager</span>',
-            '<span class="message">이번 방송 안내</span>',
-            "</div>",
-        ].join(""),
-        { chatToolsCacheModeratorMessagesEnabled: true }
-    );
-    t.after(() => closeChatToolsDom(dom));
-
-    dom.window.fetch = fakeLiveDetailFetch(100);
-    loadChatTools(dom);
-
-    await waitForCondition(() => {
-        const entry = chrome.testState.local[MODERATOR_CACHE_STORAGE_KEY]?.entries?.["live:test-channel"];
-        return entry?.messages?.length === 1 && entry?.liveId === "100";
+test("feature init removes the legacy moderator cache key from storage.local", async (t) => {
+    // 제거된 「방송 중 모아보기 유지」 옵션이 storage.local 에 남긴 잔존 캐시가
+    // 기능 초기화 시 한 번 지워져야 한다.
+    const { chrome, dom } = createPageDom("", undefined, {
+        [MODERATOR_CACHE_STORAGE_KEY]: { version: 1, entries: { "live:test-channel": { messages: [] } } },
+        keepThisKey: 1,
     });
-
-    // 같은 방송(liveId 100)에서 다시 접속하면 복원된다.
-    const { dom: sameSessionDom } = createPageDom(
-        "",
-        { chatToolsCacheModeratorMessagesEnabled: true },
-        chrome.testState.local
-    );
-    t.after(() => closeChatToolsDom(sameSessionDom));
-    sameSessionDom.window.fetch = fakeLiveDetailFetch(100);
-    loadChatTools(sameSessionDom);
-
-    await waitForCondition(() => moderatorRows(sameSessionDom.window.document).length === 1);
-
-    // 다음 방송(liveId 200)에서는 이전 수집분이 버려진다.
-    const { chrome: nextChrome, dom: nextSessionDom } = createPageDom(
-        "",
-        { chatToolsCacheModeratorMessagesEnabled: true },
-        chrome.testState.local
-    );
-    t.after(() => closeChatToolsDom(nextSessionDom));
-    nextSessionDom.window.fetch = fakeLiveDetailFetch(200);
-    loadChatTools(nextSessionDom);
-
-    // 폐기된 캐시는 이후 저장 사이클에서 storage 에서도 사라진다.
-    await waitForCondition(() => {
-        const entry = nextChrome.testState.local[MODERATOR_CACHE_STORAGE_KEY]?.entries?.["live:test-channel"];
-        return !entry;
-    });
-    assert.equal(moderatorRows(nextSessionDom.window.document).length, 0);
-});
-
-test("turning off moderator cache removes the stored messages", async (t) => {
-    const { chrome, dom } = createPageDom(
-        [
-            '<div class="chat-row" data-chat-id="manager-cache-clear">',
-            '<span class="badge" aria-label="매니저"></span>',
-            '<span class="nickname">manager</span>',
-            '<span class="message">끄면 지울 안내</span>',
-            "</div>",
-        ].join(""),
-        { chatToolsCacheModeratorMessagesEnabled: true }
-    );
     t.after(() => closeChatToolsDom(dom));
 
     loadChatTools(dom);
 
-    await waitForCondition(() => Boolean(chrome.testState.local[MODERATOR_CACHE_STORAGE_KEY]));
-
-    for (const listener of chrome.testState.storageChangeListeners) {
-        listener({ chatToolsCacheModeratorMessagesEnabled: { oldValue: true, newValue: false } }, "sync");
-    }
-
-    await waitForCondition(() => !chrome.testState.local[MODERATOR_CACHE_STORAGE_KEY]);
+    await waitForCondition(() => !Object.hasOwn(chrome.testState.local, MODERATOR_CACHE_STORAGE_KEY));
+    // 다른 키는 건드리지 않는다.
+    assert.equal(chrome.testState.local.keepThisKey, 1);
 });
 
 test("disabling the option removes UI and stops collecting new chat rows", async (t) => {

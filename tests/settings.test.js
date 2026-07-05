@@ -44,7 +44,6 @@ const expectedDefaults = {
     chatToolsEnabled: false,
     chatToolsShowBlindEnabled: false,
     chatToolsModeratorBoxEnabled: true,
-    chatToolsCacheModeratorMessagesEnabled: false,
     chatToolsMaxModeratorMessages: 100,
     videoSearchEnabled: true,
     videoSearchCommentEnabled: true,

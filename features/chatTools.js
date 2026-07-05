@@ -15,11 +15,9 @@
     const MODERATOR_TITLE = "방송자/채팅 운영자 채팅";
     const ROLE_SCORE_THRESHOLD = 80;
     const DEFAULT_MAX_MODERATOR_MESSAGES = 100;
+    // 제거된 「방송 중 모아보기 유지」 옵션이 남긴 이전 캐시 데이터를 지우기 위한 키.
     const MODERATOR_CACHE_STORAGE_KEY = "betterChzzkChatToolsModeratorCache";
-    const MODERATOR_CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-    const MODERATOR_CACHE_MAX_ENTRIES = 12;
     const CHAT_SYNC_THROTTLE_MS = 120;
-    const MODERATOR_CACHE_PERSIST_DEBOUNCE_MS = 600;
     const CHAT_ROOT_FIND_THROTTLE_MS = 600;
     const CHAT_DIRTY_ATTRIBUTE_FILTER = ["class", "style", "hidden", "aria-label", "title", "aria-hidden"];
     const CHAT_ROOT_SELECTORS = [
@@ -392,18 +390,13 @@ body[theme="dark"] .bcct-moderator-box__empty,
         bindFeatureOptions,
         createMutationObserverSync,
         createThrottledDomSync,
-        getLiveChannelIdFromPath,
         injectStyleOnce,
         isLiveRoute,
         normSpace,
         onReady,
         startPageChangeDetection,
-        storageGet,
-        storageRemove,
-        storageSet,
     } = root.utils;
 
-    const storage = globalThis.chrome?.storage?.local;
     let featureOptions = BetterChzzkSettings.normalizeOptions();
     let chatRoot = null;
     let observer = null;
@@ -416,13 +409,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
     let moderatorPanelOpen = false;
     let moderatorMessages = [];
     let collectedMessageIds = new Set();
-    let moderatorCacheKey = "";
-    let moderatorCacheReadyKey = "";
-    let moderatorCacheLoadKey = "";
-    let moderatorCacheLoadSeq = 0;
-    let moderatorCachePersistTimer = 0;
-    let moderatorCacheFlushListenersInstalled = false;
-    let liveSessionCache = { key: "", promise: null };
+    let legacyModeratorCachePurged = false;
     const dirtyChatRows = new Set();
     let parsedChatRows = new WeakSet();
     let forceFullChatScan = true;
@@ -449,47 +436,9 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return isFeatureEnabled() && Boolean(featureOptions.chatToolsModeratorBoxEnabled);
     }
 
-    function isModeratorCacheEnabled() {
-        return isModeratorBoxEnabled() && Boolean(featureOptions.chatToolsCacheModeratorMessagesEnabled);
-    }
-
     function getMaxModeratorMessages() {
         const value = Number(featureOptions.chatToolsMaxModeratorMessages);
         return Number.isFinite(value) && value > 0 ? value : DEFAULT_MAX_MODERATOR_MESSAGES;
-    }
-
-    function getModeratorCacheKey() {
-        const channelId = typeof getLiveChannelIdFromPath === "function" ? normSpace(getLiveChannelIdFromPath()) : "";
-        return channelId ? `live:${channelId}` : "";
-    }
-
-    function getCurrentLiveSession() {
-        const channelId = typeof getLiveChannelIdFromPath === "function" ? normSpace(getLiveChannelIdFromPath()) : "";
-        if (!channelId) return Promise.resolve({ ok: false, liveId: "" });
-
-        if (liveSessionCache.key !== channelId || !liveSessionCache.promise) {
-            liveSessionCache = {
-                key: channelId,
-                promise: (async () => {
-                    try {
-                        const response = await fetch(
-                            `https://api.chzzk.naver.com/service/v2/channels/${encodeURIComponent(channelId)}/live-detail`,
-                            { credentials: "include" }
-                        );
-                        if (!response?.ok) return { ok: false, liveId: "" };
-                        const content = (await response.json())?.content ?? {};
-                        const isOpen = String(content.status || "").toUpperCase() === "OPEN";
-                        const liveId = normSpace(String(content.liveId ?? content.liveNo ?? "")).slice(0, 80);
-                        return { ok: true, liveId: isOpen ? liveId : "" };
-                    } catch (_) {
-                        // 세션을 판단할 수 없으면 기존 TTL 기반 동작으로 폴백한다.
-                        return { ok: false, liveId: "" };
-                    }
-                })(),
-            };
-        }
-
-        return liveSessionCache.promise;
     }
 
     function isOwnUi(node) {
@@ -1157,225 +1106,14 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return role === "broadcaster" ? "방송자" : "채팅 운영자";
     }
 
-    function normalizeCachedMessage(message) {
-        if (!message || typeof message !== "object") return null;
-        const role = message.role === "broadcaster" || message.role === "manager" ? message.role : "";
-        const text = normSpace(message.text).slice(0, 1000);
-        if (!role || !text) return null;
-
-        const author = normSpace(message.author).slice(0, 120);
-        const id = normSpace(message.id).slice(0, 500) || normSpace(`${role}:${author}:${text}`).slice(0, 500);
-        if (!id) return null;
-
-        const badges = (Array.isArray(message.badges) ? message.badges : [])
-            .map((badge) => {
-                const src = normSpace(badge?.src);
-                if (!/^https:\/\//.test(src)) return null;
-                return { src: src.slice(0, 500), alt: normSpace(badge?.alt).slice(0, 80) };
-            })
-            .filter(Boolean)
-            .slice(0, 8);
-        const authorColor = normSpace(message.authorColor).slice(0, 60);
-        return { id, author, role, text, badges, authorColor, node: null };
-    }
-
-    function serializeModeratorMessages() {
-        return moderatorMessages.map(normalizeCachedMessage).filter(Boolean);
-    }
-
-    function normalizeModeratorCacheStore(raw, now = Date.now()) {
-        const entries = raw?.entries && typeof raw.entries === "object" ? raw.entries : {};
-        const rows = [];
-
-        for (const [key, entry] of Object.entries(entries)) {
-            const savedAt = Number(entry?.savedAt) || 0;
-            const expiresAt = Number(entry?.expiresAt) || 0;
-            if (!key || !expiresAt || expiresAt <= now) continue;
-
-            const messages = Array.isArray(entry?.messages)
-                ? entry.messages.map(normalizeCachedMessage).filter(Boolean)
-                : [];
-            if (!messages.length) continue;
-
-            const liveId = normSpace(String(entry?.liveId ?? "")).slice(0, 80);
-            rows.push([key, { savedAt, expiresAt, liveId, messages }]);
-        }
-
-        rows.sort((a, b) => b[1].savedAt - a[1].savedAt);
-        return {
-            version: 1,
-            entries: Object.fromEntries(rows.slice(0, MODERATOR_CACHE_MAX_ENTRIES)),
-        };
-    }
-
-    async function readModeratorCacheStore() {
-        if (!storage || typeof storageGet !== "function") return normalizeModeratorCacheStore({});
-
+    function purgeLegacyModeratorCache() {
+        if (legacyModeratorCachePurged) return;
+        legacyModeratorCachePurged = true;
         try {
-            const data = await storageGet(storage, MODERATOR_CACHE_STORAGE_KEY, {});
-            return normalizeModeratorCacheStore(data?.[MODERATOR_CACHE_STORAGE_KEY]);
+            globalThis.chrome?.storage?.local?.remove(MODERATOR_CACHE_STORAGE_KEY);
         } catch (_) {
-            return normalizeModeratorCacheStore({});
+            // 잔존 캐시 정리는 best-effort 라 실패는 조용히 무시한다.
         }
-    }
-
-    function mergeCachedModeratorMessages(messages) {
-        let added = false;
-        for (const message of messages || []) {
-            const normalized = normalizeCachedMessage(message);
-            if (!normalized || collectedMessageIds.has(normalized.id)) continue;
-            collectedMessageIds.add(normalized.id);
-            moderatorMessages.push(normalized);
-            added = true;
-        }
-        if (added) trimModeratorMessages();
-        return added;
-    }
-
-    async function persistModeratorCache({ cacheKey: cacheKeySnapshot = "", messages: messageSnapshot = null } = {}) {
-        if (!isModeratorCacheEnabled()) return;
-
-        const cacheKey = cacheKeySnapshot || getModeratorCacheKey();
-        if (!cacheKey || moderatorCacheReadyKey !== cacheKey || !storage || typeof storageSet !== "function") return;
-
-        const now = Date.now();
-        const messages = Array.isArray(messageSnapshot)
-            ? messageSnapshot
-            : serializeModeratorMessages().slice(-getMaxModeratorMessages());
-        const [store, session] = await Promise.all([readModeratorCacheStore(), getCurrentLiveSession()]);
-
-        if (messages.length) {
-            store.entries[cacheKey] = {
-                savedAt: now,
-                expiresAt: now + MODERATOR_CACHE_MAX_AGE_MS,
-                liveId: session.liveId || "",
-                messages,
-            };
-        } else {
-            delete store.entries[cacheKey];
-        }
-
-        try {
-            await storageSet(storage, {
-                [MODERATOR_CACHE_STORAGE_KEY]: normalizeModeratorCacheStore(store, now),
-            });
-        } catch (_) {
-            // Cache persistence is best-effort; the live UI should keep working if storage fails.
-        }
-    }
-
-    function cancelModeratorCachePersist() {
-        if (!moderatorCachePersistTimer) return;
-        clearTimeout(moderatorCachePersistTimer);
-        moderatorCachePersistTimer = 0;
-    }
-
-    function getModeratorCachePersistSnapshot() {
-        return {
-            cacheKey: getModeratorCacheKey(),
-            messages: serializeModeratorMessages().slice(-getMaxModeratorMessages()),
-        };
-    }
-
-    function scheduleModeratorCachePersist() {
-        if (!isModeratorCacheEnabled()) {
-            cancelModeratorCachePersist();
-            return;
-        }
-        if (moderatorCachePersistTimer) return;
-        moderatorCachePersistTimer = setTimeout(() => {
-            moderatorCachePersistTimer = 0;
-            persistModeratorCache();
-        }, MODERATOR_CACHE_PERSIST_DEBOUNCE_MS);
-    }
-
-    function flushModeratorCachePersist() {
-        if (!moderatorCachePersistTimer) return;
-        const snapshot = getModeratorCachePersistSnapshot();
-        cancelModeratorCachePersist();
-        persistModeratorCache(snapshot);
-    }
-
-    function handleModeratorCacheFlushEvent(event) {
-        if (event?.type === "visibilitychange" && !document.hidden) return;
-        flushModeratorCachePersist();
-    }
-
-    function installModeratorCacheFlushListeners() {
-        if (moderatorCacheFlushListenersInstalled) return;
-        moderatorCacheFlushListenersInstalled = true;
-        window.addEventListener("pagehide", handleModeratorCacheFlushEvent, true);
-        document.addEventListener("visibilitychange", handleModeratorCacheFlushEvent, true);
-    }
-
-    function uninstallModeratorCacheFlushListeners() {
-        if (!moderatorCacheFlushListenersInstalled) return;
-        moderatorCacheFlushListenersInstalled = false;
-        window.removeEventListener("pagehide", handleModeratorCacheFlushEvent, true);
-        document.removeEventListener("visibilitychange", handleModeratorCacheFlushEvent, true);
-    }
-
-    async function clearModeratorCacheStore() {
-        cancelModeratorCachePersist();
-        moderatorCacheKey = "";
-        moderatorCacheReadyKey = "";
-        moderatorCacheLoadKey = "";
-
-        if (!storage || typeof storageRemove !== "function") return;
-        try {
-            await storageRemove(storage, MODERATOR_CACHE_STORAGE_KEY);
-        } catch (_) {
-            // Ignore storage cleanup failures for the same reason as persistence failures.
-        }
-    }
-
-    function ensureModeratorCacheLoaded() {
-        if (!isModeratorCacheEnabled()) {
-            moderatorCacheKey = "";
-            moderatorCacheReadyKey = "";
-            moderatorCacheLoadKey = "";
-            return;
-        }
-
-        const cacheKey = getModeratorCacheKey();
-        if (!cacheKey) return;
-
-        if (cacheKey !== moderatorCacheKey) {
-            moderatorCacheKey = cacheKey;
-            moderatorCacheReadyKey = "";
-            moderatorCacheLoadKey = "";
-        }
-
-        if (moderatorCacheReadyKey === cacheKey || moderatorCacheLoadKey === cacheKey) return;
-
-        const seq = moderatorCacheLoadSeq + 1;
-        moderatorCacheLoadSeq = seq;
-        moderatorCacheLoadKey = cacheKey;
-
-        Promise.all([readModeratorCacheStore(), getCurrentLiveSession()])
-            .then(([store, session]) => {
-                if (seq !== moderatorCacheLoadSeq || moderatorCacheKey !== cacheKey) return;
-
-                const entry = store.entries?.[cacheKey];
-                let messages = entry?.messages || [];
-                // 모아보기는 한 라이브 세션에서만 유지한다. 세션을 확인할 수 있으면
-                // 같은 방송(liveId 일치)일 때만 복원하고, 방송이 끝났거나 다른
-                // 방송이면 이전 수집분을 버린다. 확인 실패 시에만 TTL 로 폴백한다.
-                if (session.ok && (!session.liveId || entry?.liveId !== session.liveId)) {
-                    messages = [];
-                }
-                mergeCachedModeratorMessages(messages);
-                moderatorCacheReadyKey = cacheKey;
-                moderatorCacheLoadKey = "";
-                trimModeratorMessages();
-                renderModeratorList();
-                scheduleModeratorCachePersist();
-            })
-            .catch(() => {
-                if (seq !== moderatorCacheLoadSeq || moderatorCacheKey !== cacheKey) return;
-                moderatorCacheReadyKey = cacheKey;
-                moderatorCacheLoadKey = "";
-            });
     }
 
     function trimModeratorMessages() {
@@ -1443,7 +1181,6 @@ body[theme="dark"] .bcct-moderator-box__empty,
         });
         trimModeratorMessages();
         renderModeratorList();
-        scheduleModeratorCachePersist();
         return true;
     }
 
@@ -1859,15 +1596,12 @@ body[theme="dark"] .bcct-moderator-box__empty,
     }
 
     function clearModeratorState() {
-        cancelModeratorCachePersist();
         for (const row of Array.from(document.querySelectorAll(`[${MODERATOR_COLLECTED_ATTR}]`))) {
             row.removeAttribute(MODERATOR_COLLECTED_ATTR);
         }
         moderatorMessages = [];
         collectedMessageIds = new Set();
         moderatorListRenderKeys = [];
-        moderatorCacheReadyKey = "";
-        moderatorCacheLoadKey = "";
         renderModeratorList();
     }
 
@@ -2142,7 +1876,6 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
         injectStyleOnce(STYLE_ID, STYLE_TEXT);
         ensureModeratorBox(rootEl);
-        ensureModeratorCacheLoaded();
         if (!isBlindRevealEnabled()) removeAllBlindReveals();
 
         for (const row of getRowsToProcess(rootEl)) {
@@ -2190,20 +1923,17 @@ body[theme="dark"] .bcct-moderator-box__empty,
     function restartRuntime({ clearMessages = false } = {}) {
         if (!isFeatureEnabled()) return;
         chatRoot = null;
-        liveSessionCache = { key: "", promise: null };
         removeModeratorBox();
         resetChatProcessingState({ reparse: true });
-        if (clearMessages) {
-            flushModeratorCachePersist();
-            clearModeratorState();
-        }
+        if (clearMessages) clearModeratorState();
         startObserver();
         scheduleSync();
     }
 
     function installRuntime() {
         injectStyleOnce(STYLE_ID, STYLE_TEXT);
-        installModeratorCacheFlushListeners();
+        // 제거된 「방송 중 모아보기 유지」 옵션이 storage.local 에 남긴 캐시를 한 번 지운다.
+        purgeLegacyModeratorCache();
         if (!observer) startObserver();
         if (!removePageChangeDetection) {
             removePageChangeDetection = startPageChangeDetection(() => restartRuntime({ clearMessages: true }));
@@ -2220,28 +1950,14 @@ body[theme="dark"] .bcct-moderator-box__empty,
             removePageChangeDetection();
             removePageChangeDetection = null;
         }
-        flushModeratorCachePersist();
-        uninstallModeratorCacheFlushListeners();
         chatRoot = null;
         resetChatProcessingState({ reparse: true });
         removeInjectedUi();
     }
 
     function applyOptions(options) {
-        const cacheWasEnabled = Boolean(featureOptions.chatToolsCacheModeratorMessagesEnabled);
         featureOptions = options;
         trimModeratorMessages();
-        if (isModeratorCacheEnabled()) scheduleModeratorCachePersist();
-        else {
-            cancelModeratorCachePersist();
-            moderatorCacheKey = "";
-            moderatorCacheReadyKey = "";
-            moderatorCacheLoadKey = "";
-        }
-
-        if (cacheWasEnabled && !featureOptions.chatToolsCacheModeratorMessagesEnabled) {
-            clearModeratorCacheStore();
-        }
 
         if (!isFeatureEnabled()) {
             uninstallRuntime();

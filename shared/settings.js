@@ -75,7 +75,6 @@
         chatToolsEnabled: { kind: "bool", default: false, feature: true },
         chatToolsShowBlindEnabled: { kind: "bool", default: false },
         chatToolsModeratorBoxEnabled: { kind: "bool", default: true },
-        chatToolsCacheModeratorMessagesEnabled: { kind: "bool", default: false },
         chatToolsMaxModeratorMessages: {
             kind: "int",
             default: 100,
