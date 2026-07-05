@@ -620,20 +620,37 @@
         syncButtonState();
     }
 
+    function isOwnButtonMutation(mutation) {
+        // syncState가 매번 버튼의 class/style을 다시 쓰므로, 자기 자신이 만든
+        // attribute mutation으로 sync가 다시 깨어나는 자기 루프를 끊는다.
+        const button = currentButton();
+        if (!button || !(mutation.target instanceof Node)) return false;
+        return mutation.target === button || button.contains(mutation.target);
+    }
+
     function installRuntime() {
         if (runtimeInstalled) return;
         runtimeInstalled = true;
         if (!removePageChangeDetection) removePageChangeDetection = startPageChangeDetection(syncState);
         window.addEventListener("pagehide", releaseActiveGraph, true);
         createMutationObserverSync({
+            // childList만으로는 플레이어 지연 로드를 놓친다: 컨트롤이 DOM에 들어온 뒤
+            // 상태 변화가 class 토글로만 일어나면 재동기화 기회가 없어 버튼이 영영 안 생긴다.
+            options: {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ["class", "style", "hidden", "aria-hidden"],
+            },
             onMutations(mutations) {
                 if (
                     mutations.some(
                         (mutation) =>
-                            mutationMatchesSelector(mutation, "video") ||
-                            mutationMatchesSelector(mutation, VOLUME_CONTROL_SELECTOR) ||
-                            mutationMatchesSelector(mutation, VOLUME_BUTTON_SELECTOR) ||
-                            mutationMatchesSelector(mutation, EXTERNAL_COMPRESSOR_SELECTOR)
+                            !isOwnButtonMutation(mutation) &&
+                            (mutationMatchesSelector(mutation, "video") ||
+                                mutationMatchesSelector(mutation, VOLUME_CONTROL_SELECTOR) ||
+                                mutationMatchesSelector(mutation, VOLUME_BUTTON_SELECTOR) ||
+                                mutationMatchesSelector(mutation, EXTERNAL_COMPRESSOR_SELECTOR))
                     )
                 ) {
                     scheduleSync();

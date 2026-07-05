@@ -76,7 +76,7 @@ const expectedDefaults = {
     categoryToolsFollowerFetchDelayMs: 700,
     followingRefreshEnabled: true,
     followingRefreshSeconds: 30,
-    followingPreviewTooltipEnabled: true,
+    followingPreviewTooltipEnabled: false,
     followingPreviewSoundEnabled: true,
     shortcutRescueEnabled: true,
 };

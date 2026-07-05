@@ -36,7 +36,8 @@ function createStorageArea(initialData = {}) {
 }
 
 function createFakeChrome({ sync = {} } = {}) {
-    const syncArea = createStorageArea(sync);
+    // 기본값이 꺼짐인 기능이므로, 동작 테스트에서는 켜진 상태를 명시적으로 시드한다.
+    const syncArea = createStorageArea({ followingPreviewTooltipEnabled: true, ...sync });
     const storageChangeListeners = [];
 
     return {
@@ -228,7 +229,8 @@ test("manifest loads following preview after following refresh without the page 
         manifest.content_scripts.some((entry) => entry.js?.includes("features/followingPreviewPage.js")),
         false
     );
-    assert.ok(manifest.host_permissions.includes("https://*.pstatic.net/*"));
+    assert.ok(manifest.optional_host_permissions.includes("https://*.pstatic.net/*"));
+    assert.ok(!manifest.host_permissions.includes("https://*.pstatic.net/*"));
     assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
     assert.ok(mainScript.js.includes("features/autoQualityPage.js"));
     assert.ok(isolatedScript.js.includes("vendor/hls.light.min.js"));

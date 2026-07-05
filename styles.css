@@ -666,12 +666,19 @@ h1 {
 
 .advanced-settings {
     min-width: 0;
+    /* 위 간격: 앞 행 padding-bottom 10px + margin-top 10px = 20px.
+       아래 간격도 margin-bottom 10px + 다음 행 padding-top 10px로 맞춘다. */
     margin-top: 10px;
+    margin-bottom: 10px;
     border: 1px solid var(--border);
     border-radius: 10px;
     background: var(--surface-2);
     overflow: hidden;
     transition: border-color 120ms ease;
+}
+
+.advanced-settings:last-child {
+    margin-bottom: 0;
 }
 
 .advanced-settings:hover {
@@ -1100,8 +1107,14 @@ h1 {
 }
 
 .history-filter-row {
-    grid-template-columns: minmax(0, 1fr) 92px 82px 74px 74px;
+    /* 검색창이 placeholder를 다 보여줄 수 있게 첫 줄 전체를 쓰고,
+       정렬/새로고침/삭제 컨트롤은 둘째 줄에 균등 배치한다. */
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     margin-top: 0;
+}
+
+.history-filter-row input[type="search"] {
+    grid-column: 1 / -1;
 }
 
 .history-selection-row {
@@ -1110,7 +1123,7 @@ h1 {
     min-height: 36px;
     padding: 6px 8px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 8px;
     background: var(--surface-2);
     margin-top: 0;
 }
@@ -1121,9 +1134,19 @@ h1 {
     height: 36px;
     padding: 0 11px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 8px;
     color: var(--text);
     background: var(--surface-2);
+    transition:
+        border-color 120ms ease,
+        box-shadow 120ms ease;
+}
+
+.history-filter-row input:focus,
+.history-filter-row select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-weak);
+    outline: none;
 }
 
 .history-filter-row select {
@@ -1180,10 +1203,19 @@ h1 {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: baseline;
     min-height: 0;
-    padding: 9px 10px;
+    padding: 9px 11px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 8px;
     background: var(--surface-2);
+}
+
+.history-summary .history-stat:first-child {
+    border-color: var(--success-border);
+    background: var(--accent-weak);
+}
+
+.history-summary .history-stat:first-child strong {
+    color: var(--accent);
 }
 
 .history-stat span,
@@ -1279,7 +1311,11 @@ h1 {
 }
 
 .history-day[data-today="1"] {
-    box-shadow: inset 0 0 0 2px var(--text);
+    box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.history-day[data-today="1"] .history-day-number {
+    color: var(--accent);
 }
 
 .history-day-number,
@@ -1322,12 +1358,13 @@ h1 {
     gap: 10px;
     align-items: center;
     min-width: 0;
-    padding: 9px 10px;
+    padding: 10px 11px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 10px;
     color: var(--text);
     background: var(--surface-2);
     text-decoration: none;
+    transition: border-color 120ms ease;
 }
 
 .history-item[data-selected="1"] {
@@ -1410,17 +1447,19 @@ h1 {
     border: 1px solid rgba(255, 107, 107, 0.38);
     border-radius: 6px;
     color: var(--danger);
-    background: var(--danger-bg);
+    background: transparent;
     font-size: 12px;
     font-weight: 900;
     line-height: 1;
     cursor: pointer;
+    transition:
+        background-color 120ms ease,
+        border-color 120ms ease;
 }
 
 .history-entry-detail {
     border-color: var(--border-strong);
     color: var(--text-muted);
-    background: transparent;
 }
 
 .history-entry-detail[aria-expanded="true"] {
@@ -1429,9 +1468,14 @@ h1 {
     background: var(--accent-weak);
 }
 
-.history-entry-detail:hover,
+.history-entry-detail:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-weak);
+}
+
 .history-entry-delete:hover {
-    filter: brightness(1.05);
+    background: var(--danger-bg);
 }
 
 .history-title-list {
@@ -1491,7 +1535,9 @@ h1 {
 
 .history-session-item {
     display: grid;
-    grid-template-columns: minmax(160px, 1.6fr) minmax(112px, 1fr) minmax(112px, 1fr) minmax(82px, 0.65fr);
+    /* 고정 최소 폭을 주면 좁은 카드에서 내용이 카드 밖으로 넘친다.
+       셀은 ellipsis로 줄이고 시청 시간만 내용 폭을 유지한다. */
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr) auto;
     gap: 6px;
     align-items: center;
     min-width: 0;

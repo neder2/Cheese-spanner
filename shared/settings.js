@@ -142,7 +142,9 @@
         categoryToolsFollowerFetchDelayMs: { kind: "int", default: 700, min: 0, max: 5000 },
         followingRefreshEnabled: { kind: "bool", default: true, feature: true },
         followingRefreshSeconds: { kind: "int", default: 30, min: 10, max: 600 },
-        followingPreviewTooltipEnabled: { kind: "bool", default: true, feature: true },
+        // 미리보기 HLS가 선택 권한(pstatic.net) 승인을 전제로 하므로, 사용자가
+        // 옵션에서 직접 켜면서 권한을 허용하는 흐름이 되도록 기본값은 꺼짐이다.
+        followingPreviewTooltipEnabled: { kind: "bool", default: false, feature: true },
         followingPreviewSoundEnabled: { kind: "bool", default: true },
         shortcutRescueEnabled: { kind: "bool", default: true, feature: true },
     });

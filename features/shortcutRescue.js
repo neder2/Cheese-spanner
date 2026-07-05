@@ -3,11 +3,18 @@
     // 오래 기다리면 복구 자체가 입력 지연처럼 보이므로 짧은 유예만 둔다.
     const PROBE_TIMEOUT_MS = 80;
     const BUTTON_SELECTOR = "button, [role='button']";
-    const INTERACTIVE_SELECTOR =
-        "button, [role='button'], a[href], input, textarea, select, summary, [contenteditable='true']";
     const DESCRIPTOR_ATTRS = ["aria-label", "label", "tooltip", "title", "data-testid", "class"];
 
-    const { getMainVideoElement, isPlaybackRoute, isVisible, normalizeCompact, bindFeatureOptions } = BetterChzzk.utils;
+    const {
+        getMainVideoElement,
+        getPlayerRoot,
+        isEditableTarget,
+        isOutsidePlayerInteractiveTarget,
+        isPlaybackRoute,
+        isVisible,
+        normalizeCompact,
+        bindFeatureOptions,
+    } = BetterChzzk.utils;
 
     let featureOptions = BetterChzzkSettings.normalizeOptions();
 
@@ -75,37 +82,6 @@
             buttonTerms: ["넓은 화면", "넓은화면", "기본 화면", "기본화면", "wide", "theater"],
         },
     };
-
-    function isEditableTarget(target) {
-        if (!target) return false;
-        if (target.isContentEditable) return true;
-        if (typeof target.closest === "function") {
-            return !!target.closest("input, textarea, select, [contenteditable='true']");
-        }
-        return false;
-    }
-
-    function getPlayerRoot(video) {
-        let node = video?.closest?.("[class*='pzp']") || null;
-        while (node) {
-            const parent = node.parentElement?.closest?.("[class*='pzp']");
-            if (!parent) break;
-            node = parent;
-        }
-        if (node instanceof HTMLElement) return node;
-        const fallback = document.querySelector(".pzp-pc, [class*='pzp-pc']");
-        return fallback instanceof HTMLElement ? fallback : null;
-    }
-
-    // 스페이스는 플레이어 밖 버튼/링크에 포커스가 있으면 그 요소를 누르려는 의도로 보고 개입하지 않는다.
-    // 플레이어 컨트롤 버튼에 포커스가 남은 경우는 치지직 기본 동작처럼 재생 토글로 처리한다.
-    function isOutsidePlayerInteractiveTarget(target, video) {
-        if (!(target instanceof Element)) return false;
-        const interactive = target.closest(INTERACTIVE_SELECTOR);
-        if (!interactive) return false;
-        const root = getPlayerRoot(video);
-        return !(root && root.contains(interactive));
-    }
 
     function getElementDescriptor(el) {
         if (!(el instanceof Element)) return "";

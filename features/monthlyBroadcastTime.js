@@ -545,6 +545,22 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
 [class*="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before{
   background:#00ffa3;
 }
+/* 다크에서 방송이 있던 날은 셀 배경이 민트 계열이라 민트 점이 묻힌다.
+   반투명 민트(레벨 1~2)는 다크 배경과 섞여 어두워지므로 밝은 점,
+   순수 민트(레벨 3)는 어두운 점이 가장 잘 보인다. */
+html[dark] #${WIDGET_ID} .bcmb-day[data-has-broadcast="1"][data-watch="1"]::before,
+body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-has-broadcast="1"][data-watch="1"]::before,
+[class*="dark"] #${WIDGET_ID} .bcmb-day[data-has-broadcast="1"][data-watch="1"]::before,
+html[dark] #${WIDGET_ID} .bcmb-day[data-live="1"][data-watch="1"]::before,
+body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-live="1"][data-watch="1"]::before,
+[class*="dark"] #${WIDGET_ID} .bcmb-day[data-live="1"][data-watch="1"]::before{
+  background:#f2f4f7;
+}
+html[dark] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::before,
+body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::before,
+[class*="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::before{
+  background:#07150f;
+}
 #${WIDGET_ID}[data-state="loading"] .bcmb-icon svg{
   animation:bcmb-spin 0.8s linear infinite;
 }

@@ -1,6 +1,10 @@
 (() => {
     const STYLE_ID = "betterchzzk-chat-tools-style";
     const BLIND_PROCESSED_ATTR = "data-bcct-blind-processed";
+    // 블라인드 문구 가림 표시. 치지직(React)이 리스트를 재렌더하면서 className 을
+    // 다시 설정하면 classList.add 로 붙인 클래스는 소실되지만, React 가 관리하지
+    // 않는 data 속성은 유지되므로 클래스 대신 data 속성으로 가림 상태를 표시한다.
+    const BLIND_MASKED_ATTR = "data-bcct-blind-masked";
     const MODERATOR_COLLECTED_ATTR = "data-bcct-moderator-collected";
     const MODERATOR_BOX_ATTR = "data-bcct-moderator-box";
     const MODERATOR_ROW_ATTR = "data-bcct-moderator-row";
@@ -63,6 +67,11 @@
         "svg",
         `[${MODERATOR_BOX_ATTR}]`,
         ".bcct-blind-reveal",
+        // 치지직(네이버)의 sr-only 클래스. clip/absolute 로 화면에 보이지 않는
+        // 뱃지 설명 텍스트("명예훈장" 등)라 닉네임/본문에 섞이면 안 된다.
+        // display:none 이 아니어서 isElementHidden 으로는 걸러지지 않는다.
+        // 우리 확장의 블라인드 기능(bcct-blind-*)과는 이름만 비슷할 뿐 무관하다.
+        ".blind",
     ].join(",");
     const ROLE_ATTR_RE = /방장|방송자|스트리머|streamer|owner|broadcaster|매니저|운영자|manager|moderator|\bmod\b/i;
     const BROADCASTER_RE = /방장|방송자|스트리머|streamer|owner|broadcaster/i;
@@ -71,34 +80,26 @@
     const ROLE_SIGNAL_ELEMENT_RE = /badge|role|manager|moderator|owner|streamer|broadcaster/i;
     const BLIND_SIGNAL_RE = /블라인드|숨김|삭제|차단|가림|blind|hidden|deleted|blocked|moderated/i;
     const GENERIC_BLIND_TEXT_RE =
-        /^(?:\[?\s*)?(블라인드|숨김|삭제|차단|가림|blind|hidden|deleted|blocked|moderated)(?:\s*(메시지|채팅|message|chat|처리|됨|되었습니다|입니다|글|내용|원문 없음|no text|unavailable))*[\]\s.:：-]*$/i;
+        /^(?:\[?\s*)?(?:(?:메시지가|채팅이)\s*)?(블라인드|숨김|삭제|차단|가림|blind|hidden|deleted|blocked|moderated)(?:\s*(메시지|채팅|message|chat|처리|처리된|됨|된|되었습니다|됩니다|입니다|글|내용|원문 없음|no text|unavailable))*[\]\s.:：-]*$/i;
     const CLIENT_TEXT_ATTR_RE = /message|content|text|body|comment|original/i;
     const CHAT_TITLE_RE = /chat|\uCC44\uD305/i;
     const CHAT_INPUT_RE = /input|textarea|editor|composer|write|\uC785\uB825/i;
     const PINNED_NOTICE_RE = /pin|pinned|fixed|sticky|notice|announcement|announce|\uACE0\uC815|\uACF5\uC9C0/i;
     const ID_ATTRS = ["data-chat-id", "data-message-id", "data-id", "id"];
     const STYLE_TEXT = `
+[data-bcct-blind-masked="1"]{
+  display:none!important;
+}
 .bcct-blind-reveal{
-  margin-top:4px;
-  padding:5px 7px;
-  border:1px solid rgba(0,168,107,0.28);
-  border-radius:6px;
-  background:rgba(0,168,107,0.08);
   color:inherit;
-  font-family:inherit;
-  font-size:12px;
-  line-height:17px;
+  font:inherit;
+  opacity:.72;
+  text-decoration:line-through;
   word-break:break-word;
 }
-.bcct-blind-reveal[data-empty="1"]{
-  border-color:rgba(125,132,145,0.28);
-  background:rgba(125,132,145,0.08);
-  opacity:.9;
-}
-.bcct-blind-reveal__label{
-  margin-right:6px;
-  font-weight:700;
-  color:#00a86b;
+.bcct-blind-reveal:hover{
+  opacity:1;
+  text-decoration:none;
 }
 .bcct-moderator-panel-host{
   position:relative!important;
@@ -269,7 +270,7 @@
   color:inherit;
   cursor:pointer;
   font:inherit;
-  padding:10px 12px;
+  padding:7px 12px;
   text-align:left;
   transition:background-color .12s ease;
 }
@@ -280,15 +281,22 @@
   border-bottom:0;
 }
 .bcct-moderator-row__meta{
-  display:block;
-  margin-bottom:4px;
+  display:inline;
+  margin-right:6px;
   color:#00a86b;
-  font-size:11px;
+  font-size:12px;
   font-weight:700;
-  line-height:15px;
+  line-height:18px;
+}
+.bcct-moderator-row__badge{
+  display:inline-block;
+  width:18px;
+  height:18px;
+  margin-right:4px;
+  vertical-align:-4px;
 }
 .bcct-moderator-row__text{
-  display:block;
+  display:inline;
   color:#25282d;
   font-size:13px;
   line-height:18px;
@@ -414,6 +422,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
     let moderatorCacheLoadSeq = 0;
     let moderatorCachePersistTimer = 0;
     let moderatorCacheFlushListenersInstalled = false;
+    let liveSessionCache = { key: "", promise: null };
     const dirtyChatRows = new Set();
     let parsedChatRows = new WeakSet();
     let forceFullChatScan = true;
@@ -423,6 +432,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
     let lastChatRootFindResult = null;
     let moderatorListRenderKeys = [];
     const rowIds = new WeakMap();
+    const rowOriginalTexts = new WeakMap();
     let nextRowId = 1;
 
     const scheduleSync = createThrottledDomSync(syncChatTools, CHAT_SYNC_THROTTLE_MS);
@@ -453,6 +463,35 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return channelId ? `live:${channelId}` : "";
     }
 
+    function getCurrentLiveSession() {
+        const channelId = typeof getLiveChannelIdFromPath === "function" ? normSpace(getLiveChannelIdFromPath()) : "";
+        if (!channelId) return Promise.resolve({ ok: false, liveId: "" });
+
+        if (liveSessionCache.key !== channelId || !liveSessionCache.promise) {
+            liveSessionCache = {
+                key: channelId,
+                promise: (async () => {
+                    try {
+                        const response = await fetch(
+                            `https://api.chzzk.naver.com/service/v2/channels/${encodeURIComponent(channelId)}/live-detail`,
+                            { credentials: "include" }
+                        );
+                        if (!response?.ok) return { ok: false, liveId: "" };
+                        const content = (await response.json())?.content ?? {};
+                        const isOpen = String(content.status || "").toUpperCase() === "OPEN";
+                        const liveId = normSpace(String(content.liveId ?? content.liveNo ?? "")).slice(0, 80);
+                        return { ok: true, liveId: isOpen ? liveId : "" };
+                    } catch (_) {
+                        // 세션을 판단할 수 없으면 기존 TTL 기반 동작으로 폴백한다.
+                        return { ok: false, liveId: "" };
+                    }
+                })(),
+            };
+        }
+
+        return liveSessionCache.promise;
+    }
+
     function isOwnUi(node) {
         const el = node instanceof Element ? node : node?.parentElement;
         return Boolean(el?.closest(`[${MODERATOR_BOX_ATTR}], .bcct-blind-reveal`));
@@ -479,6 +518,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
             getAttr(el, "data-author-type"),
             getAttr(el, "data-user-role"),
             getAttr(el, "data-message-type"),
+            getAttr(el, "alt"),
         ].join(" ");
     }
 
@@ -576,6 +616,12 @@ body[theme="dark"] .bcct-moderator-box__empty,
     function isElementHidden(el, context = null) {
         if (!(el instanceof HTMLElement)) return false;
         if (context?.hiddenCache?.has(el)) return context.hiddenCache.get(el);
+        // 우리가 가린 블라인드 문구는 파싱 관점에서는 계속 보이는 것으로 취급해야
+        // 재파싱 때 블라인드 판정과 본문 선택이 흔들리지 않는다.
+        if (el.hasAttribute(BLIND_MASKED_ATTR)) {
+            context?.hiddenCache?.set(el, false);
+            return false;
+        }
         if (el.hidden || el.getAttribute("aria-hidden") === "true") {
             context?.hiddenCache?.set(el, true);
             return true;
@@ -644,26 +690,31 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return false;
     }
 
-    function getMessageText(row, context = null) {
+    function pickMessageTextTarget(row, context = null) {
         const candidates = getContextElements(context, row).filter((el) => {
             if (el === row || !(el instanceof Element) || !el.matches(MESSAGE_TEXT_SELECTORS)) return false;
             if (isOwnUi(el) || isRoleDecoration(el, context)) return false;
+            if (isAuthorCandidateElement(el) || hasAuthorAncestor(el, row)) return false;
+            if (el.querySelector(AUTHOR_SELECTORS)) return false;
             return !isHiddenWithin(el, row, context);
         });
-        let best = "";
+        let bestEl = null;
+        let bestText = "";
 
         for (const el of candidates) {
             const text = getVisibleText(el, context);
-            if (text.length > best.length) best = text;
+            if (text.length > bestText.length) {
+                bestEl = el;
+                bestText = text;
+            }
         }
 
-        if (best) return best;
-        return getVisibleText(row, context);
+        return { el: bestEl, text: bestText };
     }
 
-    function getAuthor(row, context = null) {
+    function pickAuthorTarget(row, context = null) {
         const attrAuthor = normSpace(getAttr(row, "data-author-name"));
-        if (attrAuthor) return attrAuthor;
+        if (attrAuthor) return { el: null, text: attrAuthor };
 
         const candidates = getContextElements(context, row).filter(
             (el) => el !== row && el.matches?.(AUTHOR_SELECTORS)
@@ -671,11 +722,43 @@ body[theme="dark"] .bcct-moderator-box__empty,
         for (const el of candidates) {
             if (isOwnUi(el) || isRoleDecoration(el, context) || isHiddenWithin(el, row, context)) continue;
             const dataAuthor = normSpace(getAttr(el, "data-author-name"));
-            if (dataAuthor) return dataAuthor;
+            if (dataAuthor) return { el, text: dataAuthor };
             const text = getVisibleText(el, context);
-            if (text) return text;
+            if (text) return { el, text };
         }
 
+        return { el: null, text: "" };
+    }
+
+    function getAuthorBadges(authorEl) {
+        if (!(authorEl instanceof Element)) return [];
+        const badges = [];
+        for (const img of Array.from(authorEl.querySelectorAll("img")).slice(0, 8)) {
+            const src = getAttr(img, "src");
+            if (!/^https:\/\//.test(src)) continue;
+            badges.push({ src: src.slice(0, 500), alt: normSpace(getAttr(img, "alt")).slice(0, 80) });
+        }
+        return badges;
+    }
+
+    function getAuthorColor(authorEl) {
+        if (!(authorEl instanceof Element)) return "";
+        const candidates = [authorEl, ...Array.from(authorEl.querySelectorAll("[style]")).slice(0, 20)];
+        for (const el of candidates) {
+            const inlineColor = normSpace(el.style?.color || "");
+            if (!inlineColor) continue;
+            // 치지직이 color: var(--...) 형태를 쓰면 모아보기 박스 컨텍스트에서
+            // 변수가 해석되지 않으므로, rgb 로 해석된 computed 값을 우선 저장한다.
+            // 인라인 color 가 없는 요소는 계속 건너뛴다 (기본 텍스트색을 잘못
+            // 저장하면 다크모드 채팅색이 라이트 박스에서 안 보일 수 있음).
+            try {
+                const computedColor = normSpace(getComputedStyle(el).color || "");
+                if (computedColor) return computedColor.slice(0, 60);
+            } catch (_) {
+                // computed style 조회가 실패하면 인라인 원문으로 폴백한다.
+            }
+            return inlineColor.slice(0, 60);
+        }
         return "";
     }
 
@@ -767,6 +850,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
             getAttr(el, "data-badge"),
             getAttr(el, "data-author-type"),
             getAttr(el, "data-user-role"),
+            getAttr(el, "alt"),
         ].join(" ");
     }
 
@@ -780,8 +864,18 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return [getClassText(el), getAttr(el, "id"), getAttr(el, "data-testid")].join(" ");
     }
 
+    function hasAuthorAncestor(el, row) {
+        let current = el instanceof Element ? el.parentElement : null;
+        while (current instanceof Element && current !== row) {
+            if (isAuthorCandidateElement(current)) return true;
+            current = current.parentElement;
+        }
+        return false;
+    }
+
     function isMessageTextElement(el, row) {
         if (!(el instanceof Element) || el === row || isAuthorCandidateElement(el)) return false;
+        if (hasAuthorAncestor(el, row) || el.querySelector(AUTHOR_SELECTORS)) return false;
         if (ROLE_ATTR_RE.test(getRoleDataText(el))) return false;
         return el.matches(MESSAGE_TEXT_SELECTORS);
     }
@@ -906,6 +1000,15 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return roleElements;
     }
 
+    function getRoleBadgeSrc(row, context = null) {
+        for (const el of getRoleSignalElements(row, context)) {
+            if (el.tagName !== "IMG" || !ROLE_ATTR_RE.test(getAttr(el, "alt"))) continue;
+            const src = getAttr(el, "src");
+            if (/^https:\/\//.test(src)) return src.slice(0, 500);
+        }
+        return "";
+    }
+
     function detectRole(row, context = null) {
         let managerScore = 0;
         let broadcasterScore = 0;
@@ -953,18 +1056,63 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
     function parseChatMessage(row) {
         const context = createRowParseContext(row);
-        const author = getAuthor(row, context);
-        const text = getMessageText(row, context);
+        const authorTarget = pickAuthorTarget(row, context);
+        const author = authorTarget.text;
+        const textTarget = pickMessageTextTarget(row, context);
+        const text = textTarget.text || getVisibleText(row, context);
         const hiddenText = pickHiddenOriginalText(row, text, author, context);
         const isBlind = hasBlindSignal(row, hiddenText, context);
         const role = detectRole(row, context);
-        const parsed = { author, role, text, isBlind, hiddenText, node: row };
+        let badges = role ? getAuthorBadges(authorTarget.el) : [];
+        if (role && !badges.length) {
+            // 역할 뱃지가 닉네임 영역 밖에 있는 마크업 폴백.
+            const roleBadgeSrc = getRoleBadgeSrc(row, context);
+            if (roleBadgeSrc) badges = [{ src: roleBadgeSrc, alt: roleLabel(role) }];
+        }
+        const authorColor = role ? getAuthorColor(authorTarget.el) : "";
+        const parsed = {
+            author,
+            role,
+            text,
+            isBlind,
+            hiddenText,
+            badges,
+            authorColor,
+            node: row,
+            textEl: textTarget.el,
+        };
         parsed.id = getMessageId(row, parsed);
         return parsed;
     }
 
+    function cacheOriginalMessageText(row, parsed) {
+        if (parsed.isBlind || !parsed.text || isGenericBlindText(parsed.text)) return;
+        // 파싱 경로에 따라 같은 채팅이 다른 노드를 row 로 갖기도 해서
+        // (전체 스캔은 바깥 wrapper, mutation 은 안쪽 컨테이너) 양쪽에 저장한다.
+        rowOriginalTexts.set(row, parsed.text);
+        if (parsed.textEl instanceof Element) rowOriginalTexts.set(parsed.textEl, parsed.text);
+    }
+
+    function lookupCachedOriginalText(row, parsed) {
+        const byRow = rowOriginalTexts.get(row);
+        if (byRow) return byRow;
+        if (parsed.textEl instanceof Element) {
+            const byTextEl = rowOriginalTexts.get(parsed.textEl);
+            if (byTextEl) return byTextEl;
+        }
+        let current = row.parentElement;
+        for (let depth = 0; current instanceof Element && depth < 4; depth += 1, current = current.parentElement) {
+            const byAncestor = rowOriginalTexts.get(current);
+            if (byAncestor) return byAncestor;
+        }
+        return "";
+    }
+
     function removeBlindReveal(row) {
         row.querySelector(".bcct-blind-reveal")?.remove();
+        for (const el of Array.from(row.querySelectorAll(`[${BLIND_MASKED_ATTR}]`))) {
+            el.removeAttribute(BLIND_MASKED_ATTR);
+        }
         row.removeAttribute(BLIND_PROCESSED_ATTR);
     }
 
@@ -974,25 +1122,34 @@ body[theme="dark"] .bcct-moderator-box__empty,
             return;
         }
 
-        const text = parsed.hiddenText || PLACEHOLDER_TEXT;
-        let reveal = row.querySelector(".bcct-blind-reveal");
-        if (!reveal) {
-            reveal = document.createElement("div");
-            reveal.className = "bcct-blind-reveal";
-
-            const label = document.createElement("span");
-            label.className = "bcct-blind-reveal__label";
-            label.textContent = "블라인드 원문";
-
-            const body = document.createElement("span");
-            body.className = "bcct-blind-reveal__text";
-
-            reveal.append(label, body);
-            row.appendChild(reveal);
+        const original = parsed.hiddenText || lookupCachedOriginalText(row, parsed);
+        if (!original) {
+            // 원문을 모르면 치지직의 블라인드 문구를 그대로 둔다.
+            removeBlindReveal(row);
+            return;
         }
 
-        reveal.dataset.empty = parsed.hiddenText ? "0" : "1";
-        reveal.querySelector(".bcct-blind-reveal__text").textContent = text;
+        // 프로필 카드 같은 다른 UI 를 본문으로 오인해 가리지 않도록,
+        // 실제 블라인드 안내 문구가 표시된 요소일 때만 원문으로 교체한다.
+        const target = parsed.textEl instanceof Element && parsed.textEl !== row ? parsed.textEl : null;
+        if (!target || !isGenericBlindText(getVisibleText(target))) {
+            removeBlindReveal(row);
+            return;
+        }
+
+        let reveal = row.querySelector(".bcct-blind-reveal");
+        if (!reveal) {
+            reveal = document.createElement("span");
+            reveal.className = "bcct-blind-reveal";
+            reveal.title = "블라인드된 메시지의 원문입니다.";
+        }
+        if (reveal.textContent !== original) reveal.textContent = original;
+
+        // React 가 className 을 재설정해도 data 속성은 살아남는다 (재렌더 깜빡임 방지).
+        target.setAttribute(BLIND_MASKED_ATTR, "1");
+        if (reveal.previousElementSibling !== target || reveal.parentElement !== target.parentElement) {
+            target.after(reveal);
+        }
         row.setAttribute(BLIND_PROCESSED_ATTR, "1");
     }
 
@@ -1010,7 +1167,16 @@ body[theme="dark"] .bcct-moderator-box__empty,
         const id = normSpace(message.id).slice(0, 500) || normSpace(`${role}:${author}:${text}`).slice(0, 500);
         if (!id) return null;
 
-        return { id, author, role, text, node: null };
+        const badges = (Array.isArray(message.badges) ? message.badges : [])
+            .map((badge) => {
+                const src = normSpace(badge?.src);
+                if (!/^https:\/\//.test(src)) return null;
+                return { src: src.slice(0, 500), alt: normSpace(badge?.alt).slice(0, 80) };
+            })
+            .filter(Boolean)
+            .slice(0, 8);
+        const authorColor = normSpace(message.authorColor).slice(0, 60);
+        return { id, author, role, text, badges, authorColor, node: null };
     }
 
     function serializeModeratorMessages() {
@@ -1031,7 +1197,8 @@ body[theme="dark"] .bcct-moderator-box__empty,
                 : [];
             if (!messages.length) continue;
 
-            rows.push([key, { savedAt, expiresAt, messages }]);
+            const liveId = normSpace(String(entry?.liveId ?? "")).slice(0, 80);
+            rows.push([key, { savedAt, expiresAt, liveId, messages }]);
         }
 
         rows.sort((a, b) => b[1].savedAt - a[1].savedAt);
@@ -1075,12 +1242,13 @@ body[theme="dark"] .bcct-moderator-box__empty,
         const messages = Array.isArray(messageSnapshot)
             ? messageSnapshot
             : serializeModeratorMessages().slice(-getMaxModeratorMessages());
-        const store = await readModeratorCacheStore();
+        const [store, session] = await Promise.all([readModeratorCacheStore(), getCurrentLiveSession()]);
 
         if (messages.length) {
             store.entries[cacheKey] = {
                 savedAt: now,
                 expiresAt: now + MODERATOR_CACHE_MAX_AGE_MS,
+                liveId: session.liveId || "",
                 messages,
             };
         } else {
@@ -1184,11 +1352,19 @@ body[theme="dark"] .bcct-moderator-box__empty,
         moderatorCacheLoadSeq = seq;
         moderatorCacheLoadKey = cacheKey;
 
-        readModeratorCacheStore()
-            .then((store) => {
+        Promise.all([readModeratorCacheStore(), getCurrentLiveSession()])
+            .then(([store, session]) => {
                 if (seq !== moderatorCacheLoadSeq || moderatorCacheKey !== cacheKey) return;
 
-                mergeCachedModeratorMessages(store.entries?.[cacheKey]?.messages || []);
+                const entry = store.entries?.[cacheKey];
+                let messages = entry?.messages || [];
+                // 모아보기는 한 라이브 세션에서만 유지한다. 세션을 확인할 수 있으면
+                // 같은 방송(liveId 일치)일 때만 복원하고, 방송이 끝났거나 다른
+                // 방송이면 이전 수집분을 버린다. 확인 실패 시에만 TTL 로 폴백한다.
+                if (session.ok && (!session.liveId || entry?.liveId !== session.liveId)) {
+                    messages = [];
+                }
+                mergeCachedModeratorMessages(messages);
                 moderatorCacheReadyKey = cacheKey;
                 moderatorCacheLoadKey = "";
                 trimModeratorMessages();
@@ -1211,7 +1387,10 @@ body[theme="dark"] .bcct-moderator-box__empty,
     }
 
     function getModeratorRenderKey(message) {
-        return [message.id, message.role, message.author, message.text]
+        const badgeKey = (Array.isArray(message.badges) ? message.badges : [])
+            .map((badge) => `${badge?.src}|${badge?.alt}`)
+            .join(",");
+        return [message.id, message.role, message.author, message.text, badgeKey, message.authorColor]
             .map((value) => String(value || ""))
             .join("\u001f");
     }
@@ -1228,7 +1407,26 @@ body[theme="dark"] .bcct-moderator-box__empty,
         if (!isModeratorBoxEnabled() || !parsed.role || !parsed.text) return false;
         if (collectedMessageIds.has(parsed.id)) {
             const existing = moderatorMessages.find((message) => message.id === parsed.id);
-            if (existing) existing.node = parsed.node;
+            if (existing) {
+                existing.node = parsed.node;
+                // 이전 버전에서 수집됐거나 구버전 캐시에서 복원된 항목은 뱃지/색상이
+                // 비어 있을 수 있다. text/author/role 은 블라인드 전환 등으로 오염될 수
+                // 있으니 건드리지 않고, 뱃지/색상만 재파싱 값으로 백필한다.
+                let backfilled = false;
+                if (parsed.role) {
+                    const parsedBadges = Array.isArray(parsed.badges) ? parsed.badges : [];
+                    const existingBadges = Array.isArray(existing.badges) ? existing.badges : [];
+                    if (!existingBadges.length && parsedBadges.length) {
+                        existing.badges = parsedBadges;
+                        backfilled = true;
+                    }
+                    if (!existing.authorColor && parsed.authorColor) {
+                        existing.authorColor = parsed.authorColor;
+                        backfilled = true;
+                    }
+                }
+                if (backfilled) renderModeratorList();
+            }
             return false;
         }
 
@@ -1239,6 +1437,8 @@ body[theme="dark"] .bcct-moderator-box__empty,
             author: parsed.author,
             role: parsed.role,
             text: parsed.text,
+            badges: Array.isArray(parsed.badges) ? parsed.badges : [],
+            authorColor: parsed.authorColor || "",
             node: parsed.node,
         });
         trimModeratorMessages();
@@ -1264,7 +1464,34 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
         const meta = document.createElement("span");
         meta.className = "bcct-moderator-row__meta";
-        meta.textContent = message.author ? `${roleLabel(message.role)} · ${message.author}` : roleLabel(message.role);
+
+        const author = document.createElement("span");
+        author.className = "bcct-moderator-row__author";
+        author.textContent = message.author || roleLabel(message.role);
+        const authorColor = normSpace(message.authorColor || "");
+        if (authorColor) author.style.color = authorColor;
+
+        // 치지직 본 채팅창처럼 그 행에 있던 뱃지 아이콘(역할/구독/후원 등)을
+        // 순서대로 붙이고, 뱃지가 하나도 없을 때만 역할 라벨 텍스트로 표시한다.
+        const badges = (Array.isArray(message.badges) ? message.badges : []).filter((badge) =>
+            /^https:\/\//.test(normSpace(badge?.src))
+        );
+        if (badges.length) {
+            for (const badge of badges.slice(0, 8)) {
+                const icon = document.createElement("img");
+                icon.className = "bcct-moderator-row__badge";
+                icon.src = normSpace(badge.src);
+                icon.alt = normSpace(badge.alt) || roleLabel(message.role);
+                icon.width = 18;
+                icon.height = 18;
+                meta.appendChild(icon);
+            }
+            meta.appendChild(author);
+        } else if (message.author) {
+            meta.append(`${roleLabel(message.role)} · `, author);
+        } else {
+            meta.textContent = roleLabel(message.role);
+        }
 
         const text = document.createElement("span");
         text.className = "bcct-moderator-row__text";
@@ -1295,10 +1522,14 @@ body[theme="dark"] .bcct-moderator-box__empty,
         const renderKeys = moderatorMessages.map(getModeratorRenderKey);
         if (areArraysEqual(renderKeys, moderatorListRenderKeys)) return;
         if (canAppendModeratorRows(renderKeys)) {
+            // 패널이 열려 있고 사용자가 바닥 근처를 보고 있었다면 새 메시지 append 후에도
+            // 바닥으로 따라간다. 위로 스크롤해 과거를 보는 중이면 위치를 건드리지 않는다.
+            const stickToBottom = moderatorPanelOpen && isModeratorListNearBottom();
             for (const message of moderatorMessages.slice(moderatorListRenderKeys.length)) {
                 moderatorList.appendChild(buildModeratorRow(message));
             }
             moderatorListRenderKeys = renderKeys;
+            if (stickToBottom) scrollModeratorListToBottom();
             return;
         }
         moderatorListRenderKeys = renderKeys;
@@ -1317,7 +1548,19 @@ body[theme="dark"] .bcct-moderator-box__empty,
         }
     }
 
+    function isModeratorListNearBottom(threshold = 40) {
+        if (!moderatorList) return false;
+        const distance = moderatorList.scrollHeight - moderatorList.scrollTop - moderatorList.clientHeight;
+        return distance <= threshold;
+    }
+
+    function scrollModeratorListToBottom() {
+        if (!moderatorList) return;
+        moderatorList.scrollTop = moderatorList.scrollHeight;
+    }
+
     function setModeratorPanelOpen(open) {
+        const wasOpen = moderatorPanelOpen;
         moderatorPanelOpen = open;
         if (!moderatorBox || !moderatorToggle) return;
         moderatorBox.dataset.open = open ? "1" : "0";
@@ -1326,6 +1569,10 @@ body[theme="dark"] .bcct-moderator-box__empty,
             "aria-label",
             `${MODERATOR_TITLE} ${moderatorMessages.length}개 ${open ? "닫기" : "열기"}`
         );
+        // 패널이 새로 열릴 때(닫힘→열림)만 최신 메시지가 보이도록 맨 아래로 내린다.
+        // display:none 인 동안에는 scrollHeight 가 0 이라 dataset.open="1" 로 표시된
+        // 뒤에 실행해야 한다.
+        if (open && !wasOpen) scrollModeratorListToBottom();
     }
 
     function removeModeratorBox() {
@@ -1708,29 +1955,45 @@ body[theme="dark"] .bcct-moderator-box__empty,
         if (!CHAT_DIRTY_ATTRIBUTE_FILTER.includes(attrName)) return false;
         if (row?.hasAttribute(BLIND_PROCESSED_ATTR)) return true;
 
+        // 이미 수집된 행도 계속 추적한다. 치지직이 메시지 삽입 직후 닉네임 색
+        // 인라인 style 을 한 박자 늦게 적용하는 경우가 있어, 그 mutation 이
+        // 재파싱을 일으켜야 뱃지/색상 백필이 발동한다. role 신호(img alt)는
+        // 하위 요소에만 있어 signalText 로는 못 잡지만, 수집 표시 자체가 이미
+        // 방송자/매니저 판정이다. 재파싱은 idempotent 라 (백필은 값이 실제로
+        // 바뀔 때만 다시 그림) 루프를 만들지 않는다.
+        if (isModeratorBoxEnabled() && getCollectedModeratorRow(row)) return true;
+
         const signalText = getMutationSignalText(row, mutation.target);
         if (isBlindRevealEnabled() && BLIND_SIGNAL_RE.test(signalText)) return true;
-        if (isModeratorBoxEnabled() && !row?.hasAttribute(MODERATOR_COLLECTED_ATTR) && ROLE_ATTR_RE.test(signalText)) {
-            return true;
-        }
+        if (isModeratorBoxEnabled() && ROLE_ATTR_RE.test(signalText)) return true;
         return false;
     }
 
     function shouldTrackChatTextMutation(mutation, row) {
         if (row?.hasAttribute(BLIND_PROCESSED_ATTR)) return true;
+        // 수집된 행을 계속 추적하는 이유는 shouldTrackChatAttributeMutation 참고.
+        if (isModeratorBoxEnabled() && getCollectedModeratorRow(row)) return true;
 
         const signalText = getMutationSignalText(row, mutation.target);
         if (isBlindRevealEnabled() && BLIND_SIGNAL_RE.test(signalText)) return true;
-        if (isModeratorBoxEnabled() && !row?.hasAttribute(MODERATOR_COLLECTED_ATTR) && ROLE_ATTR_RE.test(signalText)) {
-            return true;
-        }
+        if (isModeratorBoxEnabled() && ROLE_ATTR_RE.test(signalText)) return true;
         return false;
+    }
+
+    function getCollectedModeratorRow(row) {
+        if (!(row instanceof Element)) return null;
+        // 수집 표시는 바깥 wrapper 에 붙는데 mutation 경로의 row 는 안쪽
+        // 컨테이너로 정규화될 수 있어서 조상까지 확인한다 (closest 는 자신 포함).
+        return row.closest(`[${MODERATOR_COLLECTED_ATTR}]`);
     }
 
     function markDirtyChatMutationTarget(mutation, rootEl, shouldTrack) {
         const row = getChatRowForNode(mutation.target, rootEl);
         if (!row || !shouldTrack(mutation, row)) return false;
-        dirtyChatRows.add(row);
+        // 안쪽 컨테이너에는 본문이 없어 재파싱해도 백필로 이어지지 않으므로,
+        // 수집 표시가 붙은 바깥 wrapper 가 있으면 그쪽을 dirty 에 넣는다.
+        const collectedRow = getCollectedModeratorRow(row);
+        dirtyChatRows.add(collectedRow instanceof HTMLElement ? collectedRow : row);
         chatMutationBatchShouldSchedule = true;
         return true;
     }
@@ -1883,7 +2146,11 @@ body[theme="dark"] .bcct-moderator-box__empty,
         if (!isBlindRevealEnabled()) removeAllBlindReveals();
 
         for (const row of getRowsToProcess(rootEl)) {
+            // 닉네임 클릭 프로필 카드 등 팝업이 펼쳐진 행은 팝업 내용이 파싱을
+            // 오염시키므로 팝업이 닫힌 뒤(다음 mutation)에 처리한다.
+            if (row.querySelector("[aria-haspopup='true'][aria-expanded='true']")) continue;
             const parsed = parseChatMessage(row);
+            cacheOriginalMessageText(row, parsed);
             syncBlindReveal(row, parsed);
             collectModeratorMessage(parsed);
             parsedChatRows.add(row);
@@ -1923,6 +2190,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
     function restartRuntime({ clearMessages = false } = {}) {
         if (!isFeatureEnabled()) return;
         chatRoot = null;
+        liveSessionCache = { key: "", promise: null };
         removeModeratorBox();
         resetChatProcessingState({ reparse: true });
         if (clearMessages) {

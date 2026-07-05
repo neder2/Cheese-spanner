@@ -20,6 +20,11 @@ const NOTICE_STATE_LABELS = {
     error: "저장 실패",
 };
 
+// 팔로잉 미리보기 영상(HLS)은 pstatic.net에서 내려오므로 선택 권한으로 두고,
+// 기능을 켜는 순간에만 요청한다. 이미 허용된 상태의 request는 팝업 없이 승인된다.
+const PREVIEW_HOST_PERMISSION = { origins: ["https://*.pstatic.net/*"] };
+const PREVIEW_PERMISSION_DENIED_MESSAGE = "권한이 거부되어 팔로잉 미리보기를 켜지 않았습니다.";
+
 let hideMessageTimer = 0;
 let savedOptions = null;
 let autosaveTimer = 0;
@@ -174,6 +179,20 @@ function commitSave(message) {
     });
 }
 
+function requestPreviewPermission(callback) {
+    const permissions = globalThis.chrome?.permissions;
+    // 권한 API가 없는 환경(테스트, 구형 브라우저)에서는 기존처럼 그대로 저장한다.
+    if (typeof permissions?.request !== "function") {
+        callback(true);
+        return;
+    }
+    permissions.request(PREVIEW_HOST_PERMISSION, (granted) => {
+        // 사용자가 팝업에서 거부해도 lastError가 남을 수 있어 읽어서 경고를 지운다.
+        void globalThis.chrome?.runtime?.lastError;
+        callback(Boolean(granted));
+    });
+}
+
 function cancelAutosave() {
     if (!autosaveTimer) return;
     clearTimeout(autosaveTimer);
@@ -220,6 +239,16 @@ form.addEventListener("change", (event) => {
         // 범위를 벗어난 값은 입력을 마친 시점에 보정값을 되돌려 보여준다.
         const normalized = readOptionsFromForm();
         setInputValue(input, normalized[input.dataset.option]);
+    }
+    if (input.dataset.option === "followingPreviewTooltipEnabled" && input.checked) {
+        requestPreviewPermission((granted) => {
+            if (!granted) {
+                input.checked = false;
+                showMessage(PREVIEW_PERMISSION_DENIED_MESSAGE, "error");
+            }
+            commitSave();
+        });
+        return;
     }
     commitSave();
 });

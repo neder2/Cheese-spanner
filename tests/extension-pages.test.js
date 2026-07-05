@@ -47,13 +47,20 @@ function createStorageArea(initialData = {}) {
     };
 }
 
-function createFakeChrome({ sync = {}, local = {} } = {}) {
+function createFakeChrome({ sync = {}, local = {}, permissionGranted = true } = {}) {
     const syncArea = createStorageArea(sync);
     const localArea = createStorageArea(local);
     const storageChangeListeners = [];
+    const permissionRequests = [];
 
     return {
         runtime: {},
+        permissions: {
+            request(spec, callback) {
+                permissionRequests.push(spec);
+                callback(permissionGranted);
+            },
+        },
         storage: {
             sync: syncArea,
             local: localArea,
@@ -71,6 +78,7 @@ function createFakeChrome({ sync = {}, local = {} } = {}) {
             sync: syncArea.data,
             local: localArea.data,
             storageChangeListeners,
+            permissionRequests,
         },
     };
 }
@@ -2025,6 +2033,58 @@ test("options page autosaves toggles immediately and number inputs after a debou
 
     assert.equal(skipSeconds.value, "600", "autosave should show the clamped numeric value");
     assert.equal(chrome.testState.sync.skipSeconds, 600);
+});
+
+test("options requests the pstatic host permission only when enabling the preview toggle", async () => {
+    const chrome = createFakeChrome({ sync: { followingPreviewTooltipEnabled: false } });
+    const dom = createDom("options.html", "options.html", chrome);
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+
+    const { document } = dom.window;
+    const previewToggle = queryOption(document, "followingPreviewTooltipEnabled");
+    const soundToggle = queryOption(document, "followingPreviewSoundEnabled");
+
+    previewToggle.checked = true;
+    dispatch(dom, previewToggle, "change");
+    await waitForAsyncCallbacks();
+
+    assert.equal(chrome.testState.permissionRequests.length, 1);
+    assert.equal(JSON.stringify(chrome.testState.permissionRequests[0]), '{"origins":["https://*.pstatic.net/*"]}');
+    assert.equal(chrome.testState.sync.followingPreviewTooltipEnabled, true);
+
+    previewToggle.checked = false;
+    dispatch(dom, previewToggle, "change");
+    soundToggle.checked = false;
+    dispatch(dom, soundToggle, "change");
+    await waitForAsyncCallbacks();
+
+    assert.equal(chrome.testState.permissionRequests.length, 1, "끄기나 다른 토글에서는 권한을 요청하지 않는다");
+});
+
+test("options reverts the preview toggle when the permission request is denied", async () => {
+    const chrome = createFakeChrome({
+        sync: { followingPreviewTooltipEnabled: false },
+        permissionGranted: false,
+    });
+    const dom = createDom("options.html", "options.html", chrome);
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+
+    const { document } = dom.window;
+    const previewToggle = queryOption(document, "followingPreviewTooltipEnabled");
+
+    previewToggle.checked = true;
+    dispatch(dom, previewToggle, "change");
+    await waitForAsyncCallbacks();
+
+    assert.equal(previewToggle.checked, false, "거부되면 토글이 꺼진 상태로 돌아간다");
+    assert.equal(chrome.testState.sync.followingPreviewTooltipEnabled, false);
+    assert.equal(document.getElementById("message").dataset.type, "error");
 });
 
 test("options page shows initial storage read failures without overwriting existing sync options", async () => {
