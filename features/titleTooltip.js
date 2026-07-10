@@ -1,3 +1,15 @@
+/**
+ * features/titleTooltip.js — 잘림(ellipsis) 처리된 영상/방송 카드 제목에 전체 텍스트 툴팁을 띄운다.
+ *
+ * 동작 위치: chzzk.naver.com 전역의 카드형 UI (제목이 클래스명에 "title"을 포함하는 요소)
+ * 하는 일: pointerover 시 대상이 실제로 잘려 있는지(scrollWidth/scrollHeight 초과) 확인해
+ *   150ms 지연 후 커스텀 툴팁을 표시한다. 숨김 텍스트(sr-only 등)는 제외하고 읽을 수 있는
+ *   텍스트만 모아 전체 제목으로 사용하며, 스크롤/리사이즈 시 위치를 재계산한다.
+ *   라우트 변경 시 툴팁을 숨기고, 옵션 변경에 따라 리스너를 설치/제거한다.
+ * 의존: BetterChzzkSettings(shared/settings.js), BetterChzzk.utils(content.js)
+ * 옵션 키: titleTooltipEnabled
+ * DOM 마커: .bctt-tooltip, data-bctt-tooltip, data-bctt-active
+ */
 (() => {
     const STYLE_ID = "betterchzzk-title-tooltip-style";
     const TOOLTIP_CLASS = "bctt-tooltip";

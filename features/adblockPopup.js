@@ -1,3 +1,20 @@
+/**
+ * features/adblockPopup.js — CHZZK의 광고 차단 안내 팝업(및 배경 dimmed 오버레이)을 숨긴다.
+ *
+ * 동작 위치: isolated world, chzzk.naver.com 전역. MutationObserver + URL 변경 감지로 SPA
+ *   네비게이션 전반에서 동작한다.
+ * 하는 일: [role="alertdialog"]/[role="dialog"]/[aria-modal="true"] 및 popup_container__ 계열
+ *   후보를 스캔해 텍스트에 "adblock"/"광고 차단" 등이 있으면 CSS로 display:none 처리(제거는 하지
+ *   않음)한다. 팝업이 body 스크롤을 잠갔던 경우 지연 후 overflow 잠금을 해제한다. 옵션이 꺼지면
+ *   숨겼던 요소를 모두 복원한다.
+ * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
+ *   createMutationObserverSync, mutationMatchesSelector, normalizeCompact, onReady,
+ *   startPageChangeDetection, injectStyleOnce).
+ * 옵션 키: adblockPopupEnabled.
+ * DOM 마커: data-betterchzzk-suppress-adblock-popup 속성, #betterchzzk-adblock-popup-style
+ *   스타일 태그, document.documentElement[data-betterchzzk-adblock-popup-ready] 속성.
+ * 통신: window에 betterchzzk:adblock-popup:ready CustomEvent를 매 패스마다 dispatch한다.
+ */
 (() => {
     const LEGACY_AD_POPUP_SELECTOR = [
         ".popup_container__Aqx-3",

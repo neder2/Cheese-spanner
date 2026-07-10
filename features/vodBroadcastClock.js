@@ -1,3 +1,32 @@
+/**
+ * features/vodBroadcastClock.js — 다시보기(VOD) 재생 위치를 실제 방송 시각으로 환산해 표시하고,
+ *   같은 방송의 이전 방제 이력을 보여주는 기능.
+ *
+ * 동작 위치: https://chzzk.naver.com/video/{videoNo} 다시보기 시청 페이지 (isolated content script).
+ * 하는 일: video-detail API로 방송 시작 시각과 길이를 가져와 currentTime에 더해 실시각 시계를
+ *   렌더링하고(#betterchzzk-vod-broadcast-clock), 17시간 단위로 분할된 장시간 VOD의 세그먼트
+ *   오프셋을 보정한다. 시청 기록 스토리지를 읽어 현재 다시보기와 같은 방송으로 추정되는
+ *   기록을 채널/liveId/방영 시간대/제목 유사도로 점수화해 매칭하고, 일치하면 방제 변경 이력을
+ *   펼침 버튼(#betterchzzk-vod-title-history-toggle)과 패널로 노출한다.
+ * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.utils (addTitleHistory, bindFeatureOptions,
+ *   createMutationObserverSync, createThrottledDomSync, fetchJson, getVodVideoNoFromPath,
+ *   injectStyleOnce, parseChzzkDate, startPageChangeDetection, startStorageChangeListener,
+ *   storageGet, touchMapEntry 등), chrome.storage.local.
+ * 옵션 키: vodBroadcastClockEnabled, liveWatchHistoryEnabled(방제 이력 펼침 기능 노출 여부로 재사용).
+ * DOM 마커: #betterchzzk-vod-broadcast-clock(시계), #betterchzzk-vod-title-history(방제 이력 래퍼),
+ *   #betterchzzk-vod-title-history-toggle(펼침 버튼), #betterchzzk-vod-title-history-panel(패널),
+ *   data-bcbc-placement 속성으로 시계 삽입 위치 구분.
+ * 통신: chrome.storage.local 키 "betterChzzkLiveWatchHistory"를 읽기 전용으로 조회한다. 이 키는
+ *   features/liveWatchHistory.js가 채널/라이브 단위로 적재하며, chrome.storage.onChanged를 통해
+ *   변경 시 자체 스냅샷·매칭 캐시를 무효화한다.
+ * 구조: CLOCK_ID 등 상수/선택자 → 옵션 판정(isClockEnabled 등) → 컨트롤 영역 탐지(findLeftButtonsContainer 등) →
+ *   시청 기록 스냅샷 조회 및 매칭 점수화(getWatchHistorySnapshot, scoreHistoryMatch, findHistoryInfo) →
+ *   video-detail API 조회 및 분할 VOD 오프셋 계산(fetchVideoDetail, getVodSegmentStartInfo) →
+ *   시계 DOM 생성/배치(createClockElement, mountClock, updateClockText) →
+ *   방제 이력 펼침 UI(syncTitleHistoryExpander, renderTitleHistoryPanel) →
+ *   전체 동기화 진입점(syncVodBroadcastClock) → 라우트/DOM 변경 감지(handlePageChange, startDomObserver) →
+ *   런타임 설치/해제(installRuntime, teardownRuntime) → 옵션 바인딩(applyOptions).
+ */
 (() => {
     const CLOCK_ID = "betterchzzk-vod-broadcast-clock";
     const STYLE_ID = "betterchzzk-vod-broadcast-clock-style";

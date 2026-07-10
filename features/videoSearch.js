@@ -1,3 +1,28 @@
+/**
+ * features/videoSearch.js — 채널 다시보기(/videos) 탭에 제목·댓글 검색 바를 주입한다.
+ *
+ * 동작 위치: https://chzzk.naver.com/<channelId>/videos 경로의 영상 그리드
+ * 하는 일: 채널의 영상 목록을 페이지네이션 API로 전부 인덱싱해 제목/댓글 텍스트로 필터링한다.
+ *   기존 그리드 카드를 템플릿으로 복제해 검색 결과 카드를 만들고, 원본 카드는 숨긴다.
+ *   댓글 검색은 별도로 영상별 인기 댓글을 지연 로딩하며, 댓글 히트 아이콘과 툴팁을 붙인다.
+ *   MutationObserver와 라우트 변경 감지로 SPA 네비게이션에도 검색 바를 재마운트한다.
+ * 의존: BetterChzzkSettings(shared/settings.js), BetterChzzk.utils(content.js)
+ * 옵션 키: videoSearchEnabled, videoSearchCommentEnabled, videoSearchMaxPages,
+ *   videoSearchRenderBatchSize, videoSearchCommentDelayMs, videoSearchCommentMaxVideos,
+ *   videoSearchCommentMaxPagesPerVideo
+ * DOM 마커: #betterchzzk-video-search-bar, data-bcvs-grid, data-bcvs-card, data-bcvs-hide,
+ *   data-bcvs-injected, data-bcvs-load-more, data-bcvs-comment-icon, data-bcvs-comment-tooltip,
+ *   data-bcvs-comment-video-no
+ * 구조:
+ *   - 옵션/상태 변수 선언, BetterChzzk.utils 구조분해 (파일 상단)
+ *   - 채널 영상 인덱스 구축: fetchPage, extractVideos, buildIndex, applyFilterDuringIndex
+ *   - 댓글 검색: fetchCommentPage, hydrateVideoComments, scheduleCommentSearch, runCommentSearch
+ *   - 카드 템플릿 캡처/적용: captureTemplate, buildInjectedCard, applyPlaybackProgress
+ *   - 검색 바 UI: buildBar, findFilterPillGroup, syncBarWithHostUi
+ *   - 필터 적용/렌더: applyFilter, buildLoadMoreControl, updateStatus
+ *   - 댓글 히트 아이콘/툴팁: attachCommentMatch, showCommentTooltip, alignCommentIconsToTagRows
+ *   - 마운트 수명주기: ensureBarMounted, removeBar, startObserver, installRuntime, applyOptions
+ */
 (() => {
     const BAR_ID = "betterchzzk-video-search-bar";
     const STYLE_ID = "betterchzzk-video-search-style";
@@ -163,14 +188,14 @@
 #${BAR_ID}{
   --bcvs-accent:var(--Content-Brand-Strong, #00FFA3);
   --bcvs-bg:var(--Surface-Neutral-Base, #2E3033);
-  --bcvs-bg-hover:#FFFFFF;
-  --bcvs-bg-elev:#FFFFFF;
+  --bcvs-bg-hover:var(--Surface-Neutral-Strongest, #DFE2EA);
+  --bcvs-bg-elev:var(--Surface-Neutral-Strongest, #DFE2EA);
   --bcvs-border:var(--Border-Neutral-Weak, #2E3033);
   --bcvs-border-strong:var(--Border-Neutral-Strong, #697183);
   --bcvs-text:var(--Content-Neutral-Cool-Base, #9DA5B6);
-  --bcvs-text-strong:#FFFFFF;
-  --bcvs-text-hover:#111114;
-  --bcvs-text-focus:#111114;
+  --bcvs-text-strong:var(--Content-Neutral-Primary, #FFFFFF);
+  --bcvs-text-hover:var(--Content-Neutral-Inverse, #111114);
+  --bcvs-text-focus:var(--Content-Neutral-Inverse, #111114);
   --bcvs-text-dim:var(--Content-Neutral-Cool-Weak, #697183);
   --bcvs-font-family:inherit;
   --bcvs-font-size:13px;
@@ -241,7 +266,7 @@
   cursor:pointer;padding:0;border-radius:50%;
   align-items:center;justify-content:center;
 }
-#${BAR_ID} .bcvs-clear:hover{color:var(--bcvs-text-strong);background:rgba(255,255,255,0.06);}
+#${BAR_ID} .bcvs-clear:hover{color:var(--bcvs-text-strong);background:var(--Surface-Interaction-Lighten-Hovered, rgba(255,255,255,0.06));}
 #${BAR_ID}[data-has-query="1"] .bcvs-clear{display:inline-flex;}
 #${BAR_ID} .bcvs-meter{
   display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;
@@ -250,7 +275,7 @@
 }
 #${BAR_ID} .bcvs-spinner{
   width:12px;height:12px;border-radius:50%;
-  border:2px solid rgba(157,165,182,0.24);
+  border:2px solid var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.24));
   border-top-color:var(--bcvs-accent);
   animation:bcvs-spin 0.8s linear infinite;flex:0 0 auto;
   visibility:hidden;
@@ -300,11 +325,11 @@
   max-height:30px !important;
   margin:0 !important;
   padding:0 !important;
-  border:1px solid rgba(105,113,131,0.28);
+  border:1px solid var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.28));
   border-radius:50%;
-  background:rgba(255,255,255,0.94);
-  color:var(--Content-Neutral-Cool-Weak, #697183);
-  box-shadow:0 2px 8px rgba(0,0,0,0.14);
+  background:var(--Surface-Neutral-Alpha-Inverse-Strongest, rgba(27,29,32,0.94));
+  color:var(--Content-Neutral-Cool-Base, #9DA5B6);
+  box-shadow:0 2px 8px rgba(0,0,0,0.24);
   box-sizing:border-box;
   cursor:default;
   pointer-events:auto !important;
@@ -323,31 +348,10 @@
 .bcvs-comment-hit:hover,
 .bcvs-comment-hit:focus-visible,
 .bcvs-comment-hit[data-active="1"]{
-  border-color:rgba(0,168,107,0.42);
-  background:rgba(0,255,163,0.12);
-  color:#00A86B;
+  border-color:var(--Border-Brand-Alpha-Base, rgba(0,255,163,0.5));
+  background:var(--Surface-Brand-Alpha-Weak, rgba(0,255,163,0.16));
+  color:var(--Content-Brand-Base, #00E693);
   outline:none;
-}
-html[dark] .bcvs-comment-hit,
-body[theme="dark"] .bcvs-comment-hit,
-[class*="dark"] .bcvs-comment-hit{
-  border-color:rgba(157,165,182,0.28);
-  background:rgba(27,29,32,0.94);
-  color:#DDE3EA;
-  box-shadow:0 2px 8px rgba(0,0,0,0.32);
-}
-html[dark] .bcvs-comment-hit:hover,
-html[dark] .bcvs-comment-hit:focus-visible,
-html[dark] .bcvs-comment-hit[data-active="1"],
-body[theme="dark"] .bcvs-comment-hit:hover,
-body[theme="dark"] .bcvs-comment-hit:focus-visible,
-body[theme="dark"] .bcvs-comment-hit[data-active="1"],
-[class*="dark"] .bcvs-comment-hit:hover,
-[class*="dark"] .bcvs-comment-hit:focus-visible,
-[class*="dark"] .bcvs-comment-hit[data-active="1"]{
-  border-color:rgba(0,255,163,0.5);
-  background:rgba(0,255,163,0.16);
-  color:#D9FFF0;
 }
 .bcvs-comment-tooltip{
   display:none;
@@ -357,11 +361,11 @@ body[theme="dark"] .bcvs-comment-hit[data-active="1"],
   width:max-content;
   max-width:min(460px, calc(100vw - 32px));
   padding:8px 10px;
-  border:1px solid rgba(17,17,20,0.14);
+  border:1px solid var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.22));
   border-radius:6px;
-  background:#fff;
-  color:#111114;
-  box-shadow:0 8px 24px rgba(0,0,0,0.18);
+  background:var(--Surface-Neutral-Weaker, #1B1D20);
+  color:var(--Content-Neutral-Primary, #F2F4F7);
+  box-shadow:0 10px 30px rgba(0,0,0,0.3);
   font-family:inherit;
   font-size:12px;
   font-weight:500;
@@ -385,27 +389,12 @@ body[theme="dark"] .bcvs-comment-hit[data-active="1"],
   box-sizing:border-box;
 }
 .bcvs-comment-tooltip-line[data-hit="1"]{
-  border-color:rgba(0,168,107,0.55);
-  background:rgba(0,255,163,0.12);
-  color:#0B513C;
+  border-color:var(--Border-Brand-Alpha-Base, rgba(0,255,163,0.5));
+  background:var(--Surface-Brand-Alpha-Weak, rgba(0,255,163,0.14));
+  color:var(--Content-Brand-Base, #00E693);
 }
 .bcvs-comment-tooltip[data-show="1"]{
   display:block;
-}
-html[dark] .bcvs-comment-tooltip,
-body[theme="dark"] .bcvs-comment-tooltip,
-[class*="dark"] .bcvs-comment-tooltip{
-  border-color:rgba(157,165,182,0.22);
-  background:#1B1D20;
-  color:#F2F4F7;
-  box-shadow:0 10px 30px rgba(0,0,0,0.34);
-}
-html[dark] .bcvs-comment-tooltip-line[data-hit="1"],
-body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
-[class*="dark"] .bcvs-comment-tooltip-line[data-hit="1"]{
-  border-color:rgba(0,255,163,0.5);
-  background:rgba(0,255,163,0.14);
-  color:#D9FFF0;
 }
 @media (max-width: 520px){
   .bcvs-comment-tooltip{
@@ -2068,10 +2057,6 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         return rgb.r * 0.299 + rgb.g * 0.587 + rgb.b * 0.114 < 96;
     }
 
-    function getReadableTextColor(backgroundColor) {
-        return isDarkColor(backgroundColor) ? "#FFFFFF" : "#111114";
-    }
-
     function getVisibleControls(root) {
         if (!root) return [];
         return Array.from(root.querySelectorAll("button, a")).filter((el) => {
@@ -2108,10 +2093,8 @@ body[theme="dark"] .bcvs-comment-tooltip-line[data-hit="1"],
         if (cs.borderRadius) bar.style.setProperty("--bcvs-radius", cs.borderRadius);
         if (!isTransparentColor(cs.backgroundColor)) {
             bar.style.setProperty("--bcvs-bg", cs.backgroundColor);
-            bar.style.setProperty("--bcvs-bg-elev", "#FFFFFF");
-            bar.style.setProperty("--bcvs-bg-hover", "#FFFFFF");
-            bar.style.setProperty("--bcvs-text-focus", getReadableTextColor("#FFFFFF"));
-            bar.style.setProperty("--bcvs-text-hover", getReadableTextColor("#FFFFFF"));
+            // hover/focus 반전색은 CSS의 치지직 토큰(--Surface-Neutral-Strongest 등)이
+            // 테마에 맞게 처리하므로 여기서 덮어쓰지 않는다.
         }
         if (cs.borderColor) bar.style.setProperty("--bcvs-border", cs.borderColor);
         if (cs.color) bar.style.setProperty("--bcvs-text", cs.color);

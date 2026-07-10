@@ -38,6 +38,7 @@ const expectedDefaults = {
     monthlyBroadcastTimeWindowDays: 30,
     monthlyBroadcastTimeMaxPages: 12,
     monthlyBroadcastTimeCalendarEnabled: true,
+    monthlyBroadcastTimeWatchEnabled: false,
     monthlyBroadcastTimeMaxCalendarPages: 60,
     liveWatchHistoryEnabled: true,
     liveWatchHistoryMinMinutes: 1,
@@ -70,6 +71,12 @@ const expectedDefaults = {
     categoryToolsViewFilterPreset4: 3000,
     categoryToolsViewFilterPreset5: 5000,
     categoryToolsViewFilterPreset6: 10000,
+    categoryToolsDurationFilterPreset1: 1,
+    categoryToolsDurationFilterPreset2: 2,
+    categoryToolsDurationFilterPreset3: 4,
+    categoryToolsDurationFilterPreset4: 6,
+    categoryToolsDurationFilterPreset5: 12,
+    categoryToolsDurationFilterPreset6: 24,
     categoryToolsFollowerFetchMaxPerPass: 6,
     categoryToolsFollowerFetchConcurrency: 2,
     categoryToolsFollowerFetchDelayMs: 700,
@@ -124,6 +131,8 @@ test("normalizeOptions preserves boolean parsing and integer bounds", () => {
         rewardAutoCollectDelayMs: 9999,
         chatToolsMaxModeratorMessages: 9999,
         categoryToolsFollowerFilterPreset1: "50000000",
+        categoryToolsDurationFilterPreset1: "0",
+        categoryToolsDurationFilterPreset6: "999",
         categoryToolsFollowerFetchConcurrency: "0",
     });
 
@@ -141,6 +150,8 @@ test("normalizeOptions preserves boolean parsing and integer bounds", () => {
     assert.equal(normalized.rewardAutoCollectDelayMs, settings.REWARD_AUTO_COLLECT_DELAY_MS_MAX);
     assert.equal(normalized.chatToolsMaxModeratorMessages, settings.CHAT_TOOLS_MAX_MODERATOR_MESSAGES);
     assert.equal(normalized.categoryToolsFollowerFilterPreset1, 10000000);
+    assert.equal(normalized.categoryToolsDurationFilterPreset1, 1);
+    assert.equal(normalized.categoryToolsDurationFilterPreset6, 168);
     assert.equal(normalized.categoryToolsFollowerFetchConcurrency, 1);
 });
 

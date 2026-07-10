@@ -1,3 +1,39 @@
+/**
+ * features/skipControl.js — 재생/라이브 화면에 스킵 컨트롤(초 단위 이동 pill, 키보드 스킵, 라이브 빨리감기
+ * 버튼, 라이브 일시정지 재개 가드)을 주입하고 유지하는 기능 모듈.
+ *
+ * 동작 위치: 재생 라우트(VOD/라이브) 하단 컨트롤 바 부근 DOM. isolated world, content.js 이후 로드.
+ * 하는 일:
+ *   - #betterchzzk-skip-pill(초 단위 스킵 값 표시/조절 pill)과 #betterchzzk-live-fast-forward(라이브 빨리감기
+ *     버튼)를 좌측 버튼 컨테이너 또는 시간 표시 요소 옆에 주입·재배치한다.
+ *   - ArrowLeft/ArrowRight로 skipSeconds만큼, comma/period로 1/60초(60fps 기준) 프레임 단위 seek를 처리한다.
+ *   - 라이브 일시정지 중 버퍼가 밀려도 사용자가 멈춘 지점을 기억했다가 재생 재개 시 그 지점으로 복원하고,
+ *     라이브 엣지에서 벗어난(타임시프트) 상태를 감지해 사용자 seek 제스처가 아니면 원위치로 되돌린다.
+ *   - MutationObserver와 페이지 전환 감지로 라우트가 바뀔 때마다 pill/버튼/가드를 재부착한다.
+ * 의존: 전역 BetterChzzkSettings(DEFAULT_SKIP_SECONDS, getStorageLastError, normalizeSkipSeconds,
+ *   normalizeOptions), 전역 BetterChzzk.utils(bindFeatureOptions, createMutationObserverSync,
+ *   createThrottledDomSync, isLiveRoute, isPlaybackRoute, isVisible, isExtensionPreviewVideo,
+ *   mutationMatchesSelector, normalizeCompact, onReady, pickLargestVisible, startPageChangeDetection,
+ *   injectStyleOnce), chrome.storage.sync.
+ * 옵션 키: skipControlEnabled, skipKeyboardEnabled, skipPillEnabled, skipLivePillEnabled,
+ *   skipLivePauseResumeEnabled, skipLivePauseResumeDepthMinutes, skipSeconds, skipWheelStep,
+ *   skipWheelShiftStep, skipWheelAltStep.
+ * DOM 마커: id="betterchzzk-skip-pill", id="betterchzzk-live-fast-forward",
+ *   id="betterchzzk-skip-style"(주입 스타일), data-bctm-text-patched(라이브 엣지 버튼 패치 표시),
+ *   data-bc-placement(pill 배치 모드), data-better-chzzk-live-fast-forward.
+ * 구조:
+ *   - 상수/상태 선언, isSkipEnabled/isPillEnabled 등 기능 on/off 판정 함수.
+ *   - 라이브 엣지·재생 토글·시크 제스처 버튼을 텍스트/신호로 식별하는 looksLike*, containsAnyTerm 계열.
+ *   - getSeekableRange/getBufferedRange/getLiveEdge/getSeekBounds: video 시간 범위 계산 유틸.
+ *   - 라이브 일시정지 재개 가드: rememberPausedPosition, startResumeRestore, onVideoPause/Play/Seeked 등
+ *     이벤트 핸들러와 pauseSnapshot 상태 관리.
+ *   - 라이브 타임시프트 가드: syncLiveTimeShiftGuard, rememberLiveTimeShiftPosition,
+ *     restoreLiveTimeShiftPosition로 사용자가 되감기한 지점을 유지.
+ *   - injectSkipStyleOnce: pill/버튼 CSS 문자열 주입.
+ *   - pill/라이브 빨리감기 버튼 DOM 생성·배치·가시성 동기화 함수군(find*, mount*, sync*).
+ *   - onKeyDownSeek: 키보드 스킵/프레임 스텝 처리.
+ *   - installRuntime/teardownRuntime/applyOptions: 옵션 변경과 라우트 변경에 따른 전체 생명주기 관리.
+ */
 (() => {
     const SKIP_PILL_ID = "betterchzzk-skip-pill";
     const LIVE_FAST_FORWARD_BUTTON_ID = "betterchzzk-live-fast-forward";

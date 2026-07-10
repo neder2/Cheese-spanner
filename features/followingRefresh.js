@@ -1,3 +1,13 @@
+/**
+ * features/followingRefresh.js — 팔로잉 사이드바를 주기적으로 자동 새로고침한다.
+ *
+ * 동작 위치: isolated world, chzzk.naver.com 전역(팔로잉 사이드바가 있는 모든 페이지).
+ * 하는 일: DOM에서 팔로잉 사이드바의 네이티브 새로고침 버튼을 찾아 캐시해두고, setInterval로
+ *   주기적으로 button.click()을 호출해 CHZZK 자체 refetch 로직을 그대로 트리거한다. 탭이 보이지
+ *   않거나(document.visibilityState) 오프라인(navigator.onLine)이면 새로고침을 건너뛴다.
+ * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils.bindFeatureOptions/normSpace.
+ * 옵션 키: followingRefreshEnabled, followingRefreshSeconds.
+ */
 (() => {
     // CHZZK owns the actual sidebar refetch. Keep a cached handle to its native
     // refresh button instead of synthesizing global focus events every tick.

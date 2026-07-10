@@ -1,3 +1,38 @@
+/**
+ * features/autoQualityPage.js — 자동 화질 기능의 페이지 측(MAIN world) 실행부: 실제 화질 트랙 전환.
+ *
+ * 실행 컨텍스트: MAIN world(페이지). 최초 로드 시 chrome.runtime API가 보이면 web_accessible_resources로
+ *   등록된 자기 자신을 script 태그로 페이지 문서에 재주입하고 반환하며(부트스트랩), 재주입된 실행에서는
+ *   chrome API가 보이지 않는 순수 페이지 컨텍스트로 나머지 로직 전체가 실행된다.
+ * 동작 위치: PLAYBACK_ROUTE_RE(/^\/(?:live|video)(?:\/|$)/)에 매칭하는 라이브/VOD 재생 라우트의 video 및
+ *   pzp 계열 플레이어 요소.
+ * 하는 일: 페이지 컨텍스트에서만 접근 가능한 플레이어 객체(_corePlayer 등)와 videoTracks를 탐색해
+ *   원하는 해상도 트랙을 직접 선택한다. 화질 전환 후 재생 시간/재생 상태를 복원하고, VOD 시작 시점의
+ *   이어보기 유도 UI, URL의 currentTime 파라미터, 댓글 타임라인 클릭 탐색과 화질 적용 타이밍이 겹치지
+ *   않도록 여러 지연/재시도 창을 관리한다. Object.defineProperty 등을 패치해 플레이어가 나중에
+ *   videoTracks를 정의하는 경우도 추적한다.
+ * 의존: 없음 (isolated world 전역에 접근 불가). window/document, chrome.runtime.getURL(부트스트랩 전용)만 사용.
+ * 옵션 키: 없음 — 활성화 여부(autoQualityEnabled)는 옵션 키가 아니라 STATE_ATTR로 전달받는다.
+ * DOM 마커: document.documentElement에 data-betterchzzk-auto-quality-page-injected(재주입 가드),
+ *   data-betterchzzk-auto-quality-status(진단용 결과) 속성을 쓴다.
+ * 통신: isolated world의 features/autoQuality.js가 쓰는 data-betterchzzk-auto-quality-request를 읽고
+ *   data-betterchzzk-auto-quality-result에 결과를 써서 응답하며, window Event
+ *   betterchzzk:auto-quality:apply(요청 트리거)를 수신한다. 활성화 상태는
+ *   data-betterchzzk-auto-quality-state 속성 + betterchzzk:auto-quality:state 이벤트로 받는다.
+ *   라우트 변경은 features/routeBridgePage.js가 보내는 betterchzzk:routechange 이벤트로 받는다.
+ * 구조(행 번호는 이 헤더를 포함한 파일 기준):
+ *   35-61행: chrome.runtime 감지 시 자기 자신을 페이지에 재주입하는 부트스트랩, 이후 중복 실행 가드.
+ *   63-168행: 이벤트/속성 이름, 타이밍 상수, 플레이어 탐색 셀렉터, 상태 변수 선언.
+ *   177-194행: 라우트 캐시(refreshRouteCache/isPlaybackRoute/isVodRoute).
+ *   194-440행: 댓글 타임라인 클릭 탐색, URL currentTime 파라미터 탐색의 감지·보정·취소 로직.
+ *   483-549행: 확장 측이 보낸 활성화 상태 읽기(readAutoQualityState)와 리스너 설치/해제.
+ *   558-800행: 플레이어 객체 내 videoTracks 탐색용 추적 목록 및 Object.defineProperty 인터셉터.
+ *   801-804행: syncAutoQualityState 최초 호출과 state/routechange/pageshow 리스너 등록.
+ *   806-1497행: 플레이어/비디오 요소 탐색(getPlayer 등), VOD 시작 게이트, 트랙 점수화·선택 로직.
+ *   1500-1553행: applyQualityToPlayer/applyQuality — 실제 트랙 전환과 재생 상태 복원 진입점.
+ *   1562-1734행: 트랙 리스트 이벤트 바인딩과 재적용 예약/타이머(schedulePageApply 계열).
+ *   1736-1798행: 요청 읽기(REQUEST_ATTR)와 결과/상태 쓰기, betterchzzk:auto-quality:apply 리스너.
+ */
 (() => {
     const INSTALL_FLAG = "__betterChzzkAutoQualityPageInstalled";
     const INJECT_ATTR = "data-betterchzzk-auto-quality-page-injected";

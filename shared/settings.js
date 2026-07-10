@@ -1,3 +1,17 @@
+/**
+ * shared/settings.js — 옵션 단일 공급원 (globalThis.BetterChzzkSettings)
+ *
+ * 실행 컨텍스트: isolated world 콘텐츠 스크립트 + service worker(background.js의 importScripts) +
+ *   확장 페이지(options.html, history.html). 그래서 window/document 같은 DOM API를 쓰면 안 되고
+ *   globalThis/chrome만 쓴다.
+ * 하는 일: OPTION_SCHEMA(키별 kind/default/min/max/feature 플래그)에서 DEFAULT_OPTIONS, OPTION_KEYS,
+ *   FEATURE_KEYS를 파생하고, chrome.storage.sync 기반 옵션 로드·정규화·변경 구독을 제공한다.
+ *   새 옵션은 OPTION_SCHEMA에 항목 하나를 추가하면 기본값·정규화·변경 알림이 함께 따라온다.
+ * 공개 API: normalizeOptions, getOptions(callback), addOptionsChangeListener(callback),
+ *   getStorageLastError, normalizeSkipSeconds, 각종 min/max 상수.
+ *   background.js, options.js, 모든 feature가 의존하므로 키 이름과 시그니처를 바꾸지 말 것.
+ * 통신: chrome.storage.sync(옵션 저장소), chrome.storage.onChanged 구독.
+ */
 (() => {
     const DEFAULT_QUALITY = "1080p";
     const DEFAULT_SKIP_SECONDS = 5;
@@ -7,6 +21,8 @@
     const MONTHLY_CALENDAR_MAX_PAGES = 300;
     const FILTER_PRESET_MIN = 1;
     const FILTER_PRESET_MAX = 10000000;
+    const DURATION_FILTER_PRESET_MIN = 1;
+    const DURATION_FILTER_PRESET_MAX = 168;
     const LIVE_WATCH_HISTORY_MIN_MINUTES_MIN = 1;
     const LIVE_WATCH_HISTORY_MIN_MINUTES_MAX = 1440;
     const LIVE_PAUSE_CACHE_DEPTH_MINUTES_MIN = 1;
@@ -59,6 +75,7 @@
         monthlyBroadcastTimeWindowDays: { kind: "int", default: 30, min: 1, max: 365 },
         monthlyBroadcastTimeMaxPages: { kind: "int", default: 12, min: 1, max: 200 },
         monthlyBroadcastTimeCalendarEnabled: { kind: "bool", default: true },
+        monthlyBroadcastTimeWatchEnabled: { kind: "bool", default: false },
         monthlyBroadcastTimeMaxCalendarPages: {
             kind: "int",
             default: 60,
@@ -136,6 +153,42 @@
         categoryToolsViewFilterPreset4: { kind: "int", default: 3000, min: FILTER_PRESET_MIN, max: FILTER_PRESET_MAX },
         categoryToolsViewFilterPreset5: { kind: "int", default: 5000, min: FILTER_PRESET_MIN, max: FILTER_PRESET_MAX },
         categoryToolsViewFilterPreset6: { kind: "int", default: 10000, min: FILTER_PRESET_MIN, max: FILTER_PRESET_MAX },
+        categoryToolsDurationFilterPreset1: {
+            kind: "int",
+            default: 1,
+            min: DURATION_FILTER_PRESET_MIN,
+            max: DURATION_FILTER_PRESET_MAX,
+        },
+        categoryToolsDurationFilterPreset2: {
+            kind: "int",
+            default: 2,
+            min: DURATION_FILTER_PRESET_MIN,
+            max: DURATION_FILTER_PRESET_MAX,
+        },
+        categoryToolsDurationFilterPreset3: {
+            kind: "int",
+            default: 4,
+            min: DURATION_FILTER_PRESET_MIN,
+            max: DURATION_FILTER_PRESET_MAX,
+        },
+        categoryToolsDurationFilterPreset4: {
+            kind: "int",
+            default: 6,
+            min: DURATION_FILTER_PRESET_MIN,
+            max: DURATION_FILTER_PRESET_MAX,
+        },
+        categoryToolsDurationFilterPreset5: {
+            kind: "int",
+            default: 12,
+            min: DURATION_FILTER_PRESET_MIN,
+            max: DURATION_FILTER_PRESET_MAX,
+        },
+        categoryToolsDurationFilterPreset6: {
+            kind: "int",
+            default: 24,
+            min: DURATION_FILTER_PRESET_MIN,
+            max: DURATION_FILTER_PRESET_MAX,
+        },
         categoryToolsFollowerFetchMaxPerPass: { kind: "int", default: 6, min: 1, max: 50 },
         categoryToolsFollowerFetchConcurrency: { kind: "int", default: 2, min: 1, max: 10 },
         categoryToolsFollowerFetchDelayMs: { kind: "int", default: 700, min: 0, max: 5000 },

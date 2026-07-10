@@ -1,3 +1,33 @@
+/**
+ * features/followingPreviewTooltip.js — 팔로잉 사이드바 라이브 링크 호버 시 라이브 미리보기 툴팁을 띄운다.
+ *
+ * 동작 위치: isolated world, chzzk.naver.com 전역의 팔로잉 사이드바(a[href*='/live/'] 링크 영역).
+ * 하는 일: pointerover/pointerout으로 호버 대상을 감지해 DOM에서 채널명/제목/썸네일을 우선
+ *   추정(domMeta)한 뒤 tooltip을 즉시 표시하고, live-detail 및 auto-play-info API로 실제 방송
+ *   정보와 HLS 재생 경로(playbackJson)를 받아온다. 팝업/새 창/외부 프레임 폴백 없이 인라인 video
+ *   요소로 재생하며, HLS 소스가 있으면 전역 Hls로 붙이고 없으면 네이티브 HLS 재생을 시도한다.
+ *   자동재생이 소리와 함께 막히면 소리 켜기 배지를 보여주고 무음으로 재생한다. 페이지 이동/포인터
+ *   이탈 시 플레이어를 정리하고 툴팁을 숨긴다.
+ * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
+ *   fetchJson, getMainVideoElement, injectStyleOnce, normSpace, onReady,
+ *   startPageChangeDetection), vendor/hls.light.min.js가 제공하는 전역 window.Hls.
+ * 옵션 키: followingPreviewTooltipEnabled, followingPreviewSoundEnabled.
+ * DOM 마커: #betterchzzk-following-preview 툴팁, data-bcfp-tooltip/data-bcfp-active/
+ *   data-bcfp-player-mount/data-bcfp-player-state 속성, .bcfp-* 클래스.
+ * 통신: 없음(다른 파일과 CustomEvent·storage 키를 주고받지 않음).
+ * 구조:
+ *   - 상수/스타일: 셀렉터, 지연 시간, 캐시 TTL, STYLE_TEXT(툴팁 CSS) 정의.
+ *   - fetchJson/텍스트 유틸: 문자열 정리, 날짜 파싱, 제목 정리(cleanTitle 등).
+ *   - DOM 추정: getImageUrl/resolveHoverInfo/extractDomMeta — 호버 링크에서 폴백 메타 추출.
+ *   - API 메타: fetchPreviewMeta/fetchAutoPlayInfo/getPreviewMeta — live-detail·auto-play-info
+ *     호출과 캐시(previewCache/pendingRequests).
+ *   - 재생 소스 선택: selectHlsSource/getPlaybackSource — LLHLS 우선, HLS 그다음으로 고름.
+ *   - 비디오 재생: startHlsPlayback/playVideo/requestPreviewVideo/stopPreviewPlayer — Hls
+ *     인스턴스 부착, 볼륨/음소거 적용, 자동재생 실패 시 소리 배지 처리.
+ *   - 렌더링: createMedia/createBody/renderPreview/positionTooltip — 툴팁 DOM 구성과 배치.
+ *   - 이벤트 라이프사이클: scheduleOpen/openPreview/hidePreview/installListeners/
+ *     uninstallListeners — 호버 오픈 지연, 옵션 on/off에 따른 리스너 설치·해제.
+ */
 (() => {
     const STYLE_ID = "betterchzzk-following-preview-style";
     const TOOLTIP_ID = "betterchzzk-following-preview";

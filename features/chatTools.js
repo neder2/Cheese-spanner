@@ -1,3 +1,34 @@
+/**
+ * features/chatTools.js — 실시간 채팅에 블라인드 원문 보기와 방송자/채팅 운영자 모아보기를 붙인다.
+ *
+ * 동작 위치: 치지직 방송 시청 페이지(라이브)의 실시간 채팅 리스트 DOM.
+ * 하는 일: MutationObserver 로 채팅 행을 감지해 작성자/본문/역할/블라인드 여부를 파싱한다.
+ *   블라인드 처리된 메시지는 숨겨진 원문을 찾아 취소선 텍스트로 보여주고,
+ *   방송자·채팅 운영자 메시지는 별도 패널에 모아 보여주는 트리거 버튼과 박스를 채팅 헤더에 삽입한다.
+ *   옵션 변경(bindFeatureOptions)과 라우트 변경(startPageChangeDetection) 시 런타임을 재시작한다.
+ * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
+ *   createMutationObserverSync, createThrottledDomSync, injectStyleOnce, isLiveRoute, normSpace,
+ *   onReady, startPageChangeDetection), chrome.storage.local(레거시 캐시 정리용).
+ * 옵션 키: chatToolsEnabled, chatToolsShowBlindEnabled, chatToolsModeratorBoxEnabled,
+ *   chatToolsMaxModeratorMessages.
+ * DOM 마커: id=betterchzzk-chat-tools-style, data-bcct-blind-processed, data-bcct-blind-masked,
+ *   data-bcct-moderator-collected, data-bcct-moderator-box, data-bcct-moderator-row,
+ *   data-bcct-moderator-trigger, data-bcct-moderator-panel-host, data-bcct-moderator-actions,
+ *   class bcct-blind-reveal / bcct-moderator-*.
+ * 통신: root.chatTools(parseChatMessage, renderModeratorBox, syncBlindReveal)를
+ *   window.BetterChzzk 에 공개해 다른 파일이 참조할 수 있게 한다.
+ * 구조:
+ *   1-86: 상수 — DOM 마커 attr, 채팅 root/row/본문/작성자 선택자, 역할/블라인드 판별 정규식.
+ *   87-386: STYLE_TEXT — 모아보기 트리거/패널/행 CSS(다크모드 포함), injectStyleOnce 로 주입.
+ *   388-425: 전역 상태(featureOptions, chatRoot, observer, moderatorMessages 등) 선언.
+ *   427-442: isFeatureEnabled/isBlindRevealEnabled/isModeratorBoxEnabled 등 옵션 헬퍼.
+ *   444-989: 채팅 행 파싱 유틸 — 작성자/본문 타겟 선택, 숨은 원문 탐색, 역할(detectRole) 판별.
+ *   991-1107: parseChatMessage 본체, 블라인드 원문 캐시(cacheOriginalMessageText)와 복원(syncBlindReveal).
+ *   1109-1345: 모아보기 메시지 수집(collectModeratorMessage)·렌더링(renderModeratorList)·패널 토글.
+ *   1347-1602: 채팅 헤더/메뉴버튼 탐색과 모아보기 트리거·박스 DOM 삽입(ensureModeratorBox).
+ *   1615-1892: mutation 기반 dirty row 추적과 syncChatTools 동기화 본체.
+ *   1896-1984: observer 시작/재시작, install/uninstallRuntime, applyOptions, root.chatTools 공개.
+ */
 (() => {
     const STYLE_ID = "betterchzzk-chat-tools-style";
     const BLIND_PROCESSED_ATTR = "data-bcct-blind-processed";
@@ -72,6 +103,8 @@
         ".blind",
     ].join(",");
     const ROLE_ATTR_RE = /방장|방송자|스트리머|streamer|owner|broadcaster|매니저|운영자|manager|moderator|\bmod\b/i;
+    const ROLE_LABEL_EXACT_RE =
+        /^(?:방장|방송자|스트리머|매니저|운영자|채팅 운영자|streamer|owner|broadcaster|manager|moderator|mod)$/i;
     const BROADCASTER_RE = /방장|방송자|스트리머|streamer|owner|broadcaster/i;
     const MANAGER_RE = /매니저|운영자|manager|moderator|\bmod\b/i;
     const ROLE_CLASS_RE = /(^|[\s_-])(manager|moderator|mod|owner|streamer|broadcaster)([\s_-]|$)/i;
@@ -633,10 +666,10 @@ body[theme="dark"] .bcct-moderator-box__empty,
     function isRoleDecoration(el, context = null) {
         if (!(el instanceof Element)) return false;
         const marker = getElementAttrText(el);
-        if (/badge|role|manager|moderator|owner|streamer|broadcaster|닉네임|nickname|author|name/i.test(marker)) {
-            return ROLE_ATTR_RE.test(`${marker} ${getVisibleText(el, context)}`);
-        }
-        return false;
+        if (!/badge|role|manager|moderator|owner|streamer|broadcaster|닉네임|nickname|author|name/i.test(marker))
+            return false;
+        if (ROLE_ATTR_RE.test(marker)) return true;
+        return ROLE_LABEL_EXACT_RE.test(getVisibleText(el, context));
     }
 
     function pickMessageTextTarget(row, context = null) {
@@ -1008,7 +1041,8 @@ body[theme="dark"] .bcct-moderator-box__empty,
         const authorTarget = pickAuthorTarget(row, context);
         const author = authorTarget.text;
         const textTarget = pickMessageTextTarget(row, context);
-        const text = textTarget.text || getVisibleText(row, context);
+        let text = textTarget.text || getVisibleText(row, context);
+        if (!textTarget.text && author && text === author) text = "";
         const hiddenText = pickHiddenOriginalText(row, text, author, context);
         const isBlind = hasBlindSignal(row, hiddenText, context);
         const role = detectRole(row, context);
@@ -1660,7 +1694,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         if (!rootEl.contains(el) || isOwnUi(el)) return null;
 
         const closestRow = el.closest(CHAT_ROW_SELECTORS);
-        const candidate = closestRow && rootEl.contains(closestRow) ? closestRow : el;
+        const candidate = closestRow && closestRow !== rootEl && rootEl.contains(closestRow) ? closestRow : el;
         const row = normalizeCandidateRow(candidate, rootEl);
         if (!(row instanceof HTMLElement) || row === rootEl || isOwnUi(row)) return null;
         return row;
@@ -1773,7 +1807,9 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
         const rows = new Set();
         for (const child of Array.from(rootEl.children)) {
-            if (!isOwnUi(child) && getVisibleText(child)) rows.add(child);
+            if (isOwnUi(child) || !getVisibleText(child)) continue;
+            if (child.querySelectorAll(CHAT_ROW_SELECTORS).length >= 2) continue;
+            rows.add(child);
         }
 
         for (const el of Array.from(rootEl.querySelectorAll(CHAT_ROW_SELECTORS))) {

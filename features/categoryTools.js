@@ -1,3 +1,37 @@
+/**
+ * features/categoryTools.js — 카테고리/전체 라이브 목록 페이지에 검색·필터 툴바와 팔로워/경과시간 배지를 주입한다.
+ *
+ * 동작 위치: /lives (전체 라이브) 및 /category/:categoryType/:categoryId/(lives|videos|clips) 라우트의 탭·정렬 줄.
+ * 하는 일:
+ *   - 탭/정렬 줄 옆에 검색 입력과 필터(팔로워 수, 조회수/시청자 수, 진행 시간 범위) 버튼이 있는 툴바를 DOM에 삽입한다.
+ *   - Chzzk API(v1/v2 lives, videos, clips, channels)에서 메타데이터를 페이지네이션으로 받아 캐싱하고,
+ *     검색어/필터 조건에 맞는 카드를 기존 DOM 카드를 템플릿 삼아 추가로 주입한 뒤 조건에 안 맞는 카드는 숨긴다.
+ *   - 화면에 보이는 채널에 대해 팔로워 수를 조회해 프로필 이미지 옆에 배지로 표시하고, 라이브 카드에는
+ *     방송 경과 시간 배지를 썸네일 위에 표시한다(1초 간격 갱신).
+ *   - MutationObserver와 scroll 이벤트로 라우트 변화·무한 스크롤을 감지해 자동으로 다음 메타데이터 페이지를 불러온다.
+ *   - 옵션 변경 시(bindFeatureOptions) 런타임을 설치/해체하고 배지·툴바 상태를 다시 동기화한다.
+ * 의존: 전역 BetterChzzkSettings.normalizeOptions/bindFeatureOptions, 전역 BetterChzzk.utils
+ *   (createMutationObserverSync, createThrottledDomSync, fetchJson, normSpace, normalizeCompact, onReady,
+ *   setLoadingReason, sleep, startPageChangeDetection, touchMapEntry, injectStyleOnce).
+ * 옵션 키: categoryToolsEnabled, categoryToolsMaxMetadataPages, categoryToolsHideGlobalTagSearch,
+ *   categoryToolsFollowerBadgesEnabled, categoryToolsLiveElapsedEnabled,
+ *   categoryToolsFollowerFilterPreset1~6, categoryToolsViewFilterPreset1~6, categoryToolsDurationFilterPreset1~6,
+ *   categoryToolsFollowerFetchMaxPerPass, categoryToolsFollowerFetchConcurrency, categoryToolsFollowerFetchDelayMs.
+ * DOM 마커: id betterchzzk-category-tools(바), betterchzzk-category-filter-menu(필터 메뉴),
+ *   betterchzzk-category-tools-fallback(정렬 줄을 못 찾을 때 대체 호스트), betterchzzk-category-tools-style;
+ *   data-bcgt-* 프리픽스 속성들(카드/주입/숨김/순서/배지 마킹용).
+ * 구조 (위→아래 순서):
+ *   - 상수/전역 상태, BetterChzzk.utils 구조분해, 옵션 게터 함수들.
+ *   - 라우트 판별(getRoute/routeKey)과 탭 줄·정렬 줄·콘텐츠 좌표 탐색 함수들.
+ *   - 카드 링크/그리드 탐색과 카드 엔트리 생성(findGrid, getCardEntries 등).
+ *   - API URL 조립과 메타데이터 페이지 로드/병합(apiUrl, mergeMetadataPage, ensureMetadata).
+ *   - 팔로워 수 캐시·조회(getFollowerCount)와 필터 상태 관리(followerFilter*, viewFilter*, durationFilter*).
+ *   - 필터 프리셋 버튼/드래그 선택, 필터 메뉴 빌드(buildMenu)와 위치 계산(positionMenu).
+ *   - 주입 카드 생성(buildInjectedCard/buildInjectedLiveCard)과 팔로워·경과시간 배지 동기화.
+ *   - 툴바 빌드/마운트(buildToolbar, mountToolbar)와 메인 적용 루프(applyTools).
+ *   - MutationObserver 설정(startObserver)과 전역 리스너 설치/해체, 런타임 설치/해체(installRuntime/teardownRuntime).
+ *   - 옵션 변경 반영(applyOptions)과 초기 구동(bindFeatureOptions, onReady).
+ */
 (() => {
     const BAR_ID = "betterchzzk-category-tools";
     const MENU_ID = "betterchzzk-category-filter-menu";
@@ -17,7 +51,6 @@
     const FOLLOWER_BADGE_WRAP_ATTR = "data-bcgt-follower-wrap";
     const LIVE_ELAPSED_BADGE_ATTR = "data-bcgt-live-elapsed-badge";
     const LIVE_THUMB_HOST_ATTR = "data-bcgt-live-thumb-host";
-
     const API_BASE = "https://api.chzzk.naver.com/service";
     const API_PAGE_SIZE = 50;
     const MAX_FOLLOWER_CACHE_ENTRIES = 1000;
@@ -40,16 +73,29 @@
         "categoryToolsViewFilterPreset5",
         "categoryToolsViewFilterPreset6",
     ]);
+    const DURATION_FILTER_PRESET_KEYS = Object.freeze([
+        "categoryToolsDurationFilterPreset1",
+        "categoryToolsDurationFilterPreset2",
+        "categoryToolsDurationFilterPreset3",
+        "categoryToolsDurationFilterPreset4",
+        "categoryToolsDurationFilterPreset5",
+        "categoryToolsDurationFilterPreset6",
+    ]);
+    const SECONDS_PER_HOUR = 60 * 60;
 
     let currentQuery = "";
     let followerFilterMin = 0;
     let followerFilterMax = 0;
     let viewFilterMin = 0;
     let viewFilterMax = 0;
+    let durationFilterMin = 0;
+    let durationFilterMax = 0;
     let followerFilterCustom = "";
     let followerFilterMaxCustom = "";
     let viewFilterCustom = "";
     let viewFilterMaxCustom = "";
+    let durationFilterCustom = "";
+    let durationFilterMaxCustom = "";
     let observer = null;
     let applying = false;
     let applyQueued = false;
@@ -66,6 +112,8 @@
     let metadataSearchToken = 0;
     let followerHydrateTimer = 0;
     let followerHydrationRefreshing = false;
+    let followerHydrationQueued = false;
+    let followerHydrationRunToken = 0;
     let lastFollowerRefreshRouteKey = "";
     let lastFollowerRefreshRows = [];
     let lastFollowerHydrateAt = 0;
@@ -73,6 +121,7 @@
     let filterOptionDrag = null;
     let suppressNextOptionClick = false;
     let liveElapsedTimer = 0;
+    let durationFilterRefreshTimer = 0;
     let featureOptions = BetterChzzkSettings.normalizeOptions();
     let viewFilterSnapshotKey = "";
     let viewFilterSnapshotIds = new Set();
@@ -184,7 +233,7 @@
     }
 
     function removeToolsIfMounted() {
-        if (hasMountedTools() || lastRouteKey || liveElapsedTimer) removeTools();
+        if (hasMountedTools() || lastRouteKey || liveElapsedTimer || durationFilterRefreshTimer) removeTools();
     }
 
     function injectStyleOnce() {
@@ -212,17 +261,18 @@
 }
 #${GLOBAL_FALLBACK_ID} #${BAR_ID}{margin-left:0;}
 #${BAR_ID}{
-  --bcgt-accent:#00FFA3;
-  --bcgt-bg:#111114;
-  --bcgt-bg-hover:#FFFFFF;
-  --bcgt-bg-elev:#FFFFFF;
-  --bcgt-border:#111114;
-  --bcgt-border-strong:#697183;
-  --bcgt-text:#9DA5B6;
-  --bcgt-text-strong:#FFFFFF;
-  --bcgt-text-hover:#111114;
-  --bcgt-text-focus:#111114;
-  --bcgt-text-dim:#697183;
+  /* 치지직 디자인 토큰 참조(테마 자동 연동) + 토큰이 없을 때의 다크 기준 fallback */
+  --bcgt-accent:var(--Content-Brand-Strong, #00FFA3);
+  --bcgt-bg:var(--Surface-Neutral-Weakest, #111114);
+  --bcgt-bg-hover:var(--Surface-Neutral-Strongest, #DFE2EA);
+  --bcgt-bg-elev:var(--Surface-Neutral-Strongest, #DFE2EA);
+  --bcgt-border:var(--Surface-Neutral-Weakest, #111114);
+  --bcgt-border-strong:var(--Border-Neutral-Strong, #697183);
+  --bcgt-text:var(--Content-Neutral-Cool-Base, #9DA5B6);
+  --bcgt-text-strong:var(--Content-Neutral-Primary, #FFFFFF);
+  --bcgt-text-hover:var(--Content-Neutral-Inverse, #111114);
+  --bcgt-text-focus:var(--Content-Neutral-Inverse, #111114);
+  --bcgt-text-dim:var(--Content-Neutral-Cool-Weak, #697183);
   --bcgt-font-family:inherit;
   --bcgt-font-size:13px;
   --bcgt-font-weight:400;
@@ -327,7 +377,7 @@
   cursor:pointer;padding:0;border-radius:50%;
   align-items:center;justify-content:center;
 }
-#${BAR_ID} .bcgt-clear:hover{color:var(--bcgt-text-strong);background:rgba(255,255,255,0.06);}
+#${BAR_ID} .bcgt-clear:hover{color:var(--bcgt-text-strong);background:var(--Surface-Interaction-Lighten-Hovered, rgba(255,255,255,0.06));}
 #${BAR_ID}[data-has-query="1"] .bcgt-clear{display:inline-flex;}
 #${BAR_ID} .bcgt-meter{
   display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;
@@ -336,7 +386,7 @@
 }
 #${BAR_ID} .bcgt-spinner{
   width:12px;height:12px;border-radius:50%;
-  border:2px solid rgba(157,165,182,0.24);
+  border:2px solid var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.24));
   border-top-color:var(--bcgt-accent);
   animation:bcgt-spin 0.8s linear infinite;flex:0 0 auto;
   visibility:hidden;
@@ -360,11 +410,26 @@
 }
 #${BAR_ID} .bcgt-filter:hover,
 #${BAR_ID}[data-menu-open="1"] .bcgt-filter{
-  background:#FFFFFF;
+  background:var(--bcgt-bg-hover);
   border-color:var(--bcgt-border-strong);
-  color:#111114;
+  color:var(--bcgt-text-hover);
 }
 #${MENU_ID}{
+  /* 메뉴는 BAR 밖 fixed 요소라 토큰 변수를 자체적으로 다시 참조한다(fallback은 다크 기준). */
+  --bcgt-menu-bg:var(--Surface-Neutral-Weaker, #1B1D20);
+  --bcgt-menu-border:var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.24));
+  --bcgt-menu-text:var(--Content-Neutral-Primary, #F2F4F7);
+  --bcgt-menu-text-sub:var(--Content-Neutral-Cool-Base, #9DA5B6);
+  --bcgt-menu-text-dim:var(--Content-Neutral-Cool-Weak, #697183);
+  --bcgt-menu-hover:var(--Surface-Interaction-Lighten-Hovered, rgba(255,255,255,0.08));
+  --bcgt-menu-field-bg:var(--Surface-Neutral-Weak, #24262A);
+  --bcgt-menu-button-bg:var(--Surface-Neutral-Subtle, #24262A);
+  --bcgt-menu-checked:var(--Content-Brand-Base, #00E693);
+  --bcgt-menu-checked-bg:var(--Surface-Brand-Alpha-Weak, rgba(0,255,163,0.15));
+  --bcgt-menu-brand-border:var(--Border-Brand-Alpha-Base, rgba(0,255,163,0.3));
+  --bcgt-menu-brand-bg:var(--Surface-Brand-Weaker, #11382C);
+  --bcgt-menu-disabled:var(--Content-Neutral-Cool-Weaker, #545A69);
+
   position:fixed;
   top:0;
   left:0;
@@ -373,10 +438,11 @@
   width:560px;
   max-width:calc(100vw - 16px);
   padding:8px;
-  border:1px solid rgba(105,113,131,0.32);
+  border:1px solid var(--bcgt-menu-border);
   border-radius:8px;
-  background:#FFFFFF;
-  box-shadow:0 8px 24px rgba(0,0,0,0.18);
+  background:var(--bcgt-menu-bg);
+  color:var(--bcgt-menu-text);
+  box-shadow:0 10px 30px rgba(0,0,0,0.3);
   font-family:inherit;
   font-size:13px;
   line-height:16px;
@@ -396,15 +462,23 @@
   flex-direction:column;
   gap:4px;
 }
+#${MENU_ID} .bcgt-filter-group[data-filter-group="duration"]{
+  grid-column:1 / -1;
+}
+#${MENU_ID} .bcgt-filter-group[hidden]{display:none;}
 #${MENU_ID} .bcgt-option-list{
   display:flex;
   min-width:0;
   flex-direction:column;
   gap:4px;
 }
+#${MENU_ID} [data-filter-options="duration"]{
+  display:grid;
+  grid-template-columns:repeat(4, minmax(0, 1fr));
+}
 #${MENU_ID} .bcgt-filter-title{
   padding:2px 8px 4px;
-  color:#697183;
+  color:var(--bcgt-menu-text-sub);
   font-size:12px;
   font-weight:800;
 }
@@ -417,7 +491,7 @@
   border:0;
   border-radius:6px;
   background:transparent;
-  color:#111114;
+  color:var(--bcgt-menu-text);
   font:inherit;
   font-weight:700;
   text-align:left;
@@ -426,14 +500,14 @@
   user-select:none;
   touch-action:none;
 }
-#${MENU_ID} .bcgt-option:hover{background:rgba(0,0,0,0.06);}
-#${MENU_ID} .bcgt-option[aria-checked="true"]{color:#00A86B;background:rgba(0,255,163,0.14);}
+#${MENU_ID} .bcgt-option:hover{background:var(--bcgt-menu-hover);}
+#${MENU_ID} .bcgt-option[aria-checked="true"]{color:var(--bcgt-menu-checked);background:var(--bcgt-menu-checked-bg);}
 #${MENU_ID} .bcgt-option[data-in-range="1"]{
-  color:#00A86B;
-  background:rgba(0,255,163,0.14);
+  color:var(--bcgt-menu-checked);
+  background:var(--bcgt-menu-checked-bg);
 }
 #${MENU_ID} .bcgt-option[data-range-edge="1"]{
-  box-shadow:inset 0 0 0 1px rgba(0,168,107,0.32);
+  box-shadow:inset 0 0 0 1px var(--bcgt-menu-brand-border);
 }
 #${MENU_ID} .bcgt-custom{
   display:flex;
@@ -443,18 +517,18 @@
   height:34px;
   margin-top:4px;
   padding:0 10px;
-  border:1px solid rgba(105,113,131,0.26);
+  border:1px solid var(--bcgt-menu-border);
   border-radius:7px;
-  background:#F6F7F9;
-  color:#111114;
+  background:var(--bcgt-menu-field-bg);
+  color:var(--bcgt-menu-text);
   font:inherit;
   font-weight:700;
   box-sizing:border-box;
 }
 #${MENU_ID} .bcgt-custom[data-active="1"]{
-  border-color:rgba(0,168,107,0.38);
-  background:rgba(0,255,163,0.14);
-  color:#00A86B;
+  border-color:var(--bcgt-menu-brand-border);
+  background:var(--bcgt-menu-checked-bg);
+  color:var(--bcgt-menu-checked);
 }
 #${MENU_ID} .bcgt-custom span{
   flex:0 0 auto;
@@ -471,17 +545,17 @@
   border:0;
   outline:0;
   background:transparent;
-  color:#111114;
+  color:var(--bcgt-menu-text);
   font:inherit;
   font-weight:700;
 }
-#${MENU_ID} .bcgt-custom input::placeholder{color:#8B93A3;}
+#${MENU_ID} .bcgt-custom input::placeholder{color:var(--bcgt-menu-text-dim);}
 #${MENU_ID} .bcgt-reset-row{
   display:flex;
   justify-content:flex-end;
   margin-top:10px;
   padding-top:8px;
-  border-top:1px solid rgba(105,113,131,0.18);
+  border-top:1px solid var(--bcgt-menu-border);
 }
 #${MENU_ID} .bcgt-reset{
   display:inline-flex;
@@ -489,75 +563,22 @@
   justify-content:center;
   height:28px;
   padding:0 12px;
-  border:1px solid rgba(105,113,131,0.32);
+  border:1px solid var(--bcgt-menu-border);
   border-radius:6px;
-  background:#FFFFFF;
-  color:#111114;
+  background:var(--bcgt-menu-button-bg);
+  color:var(--bcgt-menu-text);
   font:inherit;
   font-weight:800;
   cursor:pointer;
 }
 #${MENU_ID} .bcgt-reset:hover:not(:disabled){
-  border-color:#111114;
-  background:#F6F7F9;
+  border-color:var(--bcgt-menu-brand-border);
+  background:var(--bcgt-menu-brand-bg);
 }
 #${MENU_ID} .bcgt-reset:disabled{
-  color:#9DA5B6;
+  color:var(--bcgt-menu-disabled);
   cursor:default;
   opacity:0.62;
-}
-html[dark] #${MENU_ID},
-body[theme="dark"] #${MENU_ID},
-[class*="dark"] #${MENU_ID}{
-  border-color:rgba(157,165,182,0.24);
-  background:#1B1D20;
-  color:#F2F4F7;
-  box-shadow:0 10px 30px rgba(0,0,0,0.34);
-}
-html[dark] #${MENU_ID} .bcgt-filter-title,
-body[theme="dark"] #${MENU_ID} .bcgt-filter-title,
-[class*="dark"] #${MENU_ID} .bcgt-filter-title{
-  color:#9DA5B6;
-}
-html[dark] #${MENU_ID} .bcgt-option,
-body[theme="dark"] #${MENU_ID} .bcgt-option,
-[class*="dark"] #${MENU_ID} .bcgt-option{
-  color:#F2F4F7;
-}
-html[dark] #${MENU_ID} .bcgt-option:hover,
-body[theme="dark"] #${MENU_ID} .bcgt-option:hover,
-[class*="dark"] #${MENU_ID} .bcgt-option:hover{
-  background:rgba(255,255,255,0.08);
-}
-html[dark] #${MENU_ID} .bcgt-custom,
-body[theme="dark"] #${MENU_ID} .bcgt-custom,
-[class*="dark"] #${MENU_ID} .bcgt-custom{
-  border-color:rgba(157,165,182,0.24);
-  background:#24262A;
-  color:#F2F4F7;
-}
-html[dark] #${MENU_ID} .bcgt-custom input,
-body[theme="dark"] #${MENU_ID} .bcgt-custom input,
-[class*="dark"] #${MENU_ID} .bcgt-custom input{
-  color:#F2F4F7;
-}
-html[dark] #${MENU_ID} .bcgt-custom input::placeholder,
-body[theme="dark"] #${MENU_ID} .bcgt-custom input::placeholder,
-[class*="dark"] #${MENU_ID} .bcgt-custom input::placeholder{
-  color:#697183;
-}
-html[dark] #${MENU_ID} .bcgt-reset,
-body[theme="dark"] #${MENU_ID} .bcgt-reset,
-[class*="dark"] #${MENU_ID} .bcgt-reset{
-  border-color:rgba(157,165,182,0.26);
-  background:#24262A;
-  color:#F2F4F7;
-}
-html[dark] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
-body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
-[class*="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled){
-  border-color:rgba(0,255,163,0.36);
-  background:#28332F;
 }
 @media (max-width: 520px){
   #${BAR_ID}[data-mode="global-inline"]{
@@ -577,6 +598,9 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
   }
   #${MENU_ID} .bcgt-filter-groups{
     grid-template-columns:1fr;
+  }
+  #${MENU_ID} [data-filter-options="duration"]{
+    grid-template-columns:repeat(2, minmax(0, 1fr));
   }
 }
 [${FOLLOWER_BADGE_WRAP_ATTR}="1"]{
@@ -722,7 +746,9 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         for (const [node, count] of counts) {
             if (count < 3) continue;
             const rect = node.getBoundingClientRect();
-            if (rect.width < 100 || rect.height < 24 || rect.top > 180) continue;
+            // 정렬 칩의 최소 공통 행만 허용한다. 전체 섹션을 잡으면 툴바가 카드 목록
+            // 끝으로 밀리고 네이티브 탭 레이아웃까지 flex로 바뀐다.
+            if (rect.width < 100 || rect.height < 24 || rect.height > 120) continue;
             const score = count * 10000 - Math.round(rect.width * rect.height);
             if (score > bestScore) {
                 best = node;
@@ -855,34 +881,6 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         clearLoading();
         lastListStateKey = "";
         scheduleApply();
-    }
-
-    function findGlobalNavigationFilterHost(context = null) {
-        const controls = getGlobalSortControls(context);
-        for (const control of controls) {
-            let node = control.parentElement;
-            let depth = 0;
-            while (node && depth < 8) {
-                if (
-                    node instanceof HTMLElement &&
-                    String(node.className || "").includes("navigation_component_filter")
-                ) {
-                    const rect = node.getBoundingClientRect();
-                    if (rect.width > 0 && rect.height > 0) return node;
-                }
-                node = node.parentElement;
-                depth++;
-            }
-        }
-
-        return (
-            Array.from(document.querySelectorAll('div[class*="navigation_component_filter"]')).find((node) => {
-                if (!(node instanceof HTMLElement)) return false;
-                if (node.closest(`#${BAR_ID}`) || node.closest(`#${MENU_ID}`)) return false;
-                const rect = node.getBoundingClientRect();
-                return rect.width > 0 && rect.height > 0 && rect.top < 220;
-            }) || null
-        );
     }
 
     function ensureGlobalFallbackHost(route) {
@@ -1398,6 +1396,8 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
                 views: Number(item.concurrentUserCount) || 0,
                 categoryName: item.liveCategoryValue || "",
                 tags: item.tags || [],
+                liveId: Number(item.liveId) || 0,
+                adult: Boolean(item.adult),
             };
         }
         if (route.tab === "videos") {
@@ -1642,7 +1642,10 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     }
 
     async function refreshFollowerHydrationRows() {
-        if (followerHydrationRefreshing) return;
+        if (followerHydrationRefreshing) {
+            followerHydrationQueued = true;
+            return;
+        }
         const route = getRoute();
         const rememberedRows = getRememberedFollowerRefreshRows(route);
         if (!route || !rememberedRows.length) {
@@ -1650,16 +1653,25 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             return;
         }
 
-        const rows = getRowsNearViewport(rememberedRows);
+        const rows = hasFollowerFilter() ? rememberedRows : getRowsNearViewport(rememberedRows);
         if (!rows.length) return;
 
+        const hydrationRunToken = ++followerHydrationRunToken;
         followerHydrationRefreshing = true;
+        const hydrationRouteKey = routeKey(route);
         try {
             await hydrateFollowers(rows, true, true);
+            const currentRoute = getRoute();
+            if (!isFeatureEnabled() || !currentRoute || routeKey(currentRoute) !== hydrationRouteKey) return;
             syncFollowerBadges(route, rows);
             syncFollowerVisibilityRows(rows);
         } finally {
-            followerHydrationRefreshing = false;
+            if (hydrationRunToken === followerHydrationRunToken) {
+                followerHydrationRefreshing = false;
+                const shouldRepeat = followerHydrationQueued;
+                followerHydrationQueued = false;
+                if (shouldRepeat && isFeatureEnabled() && getRoute()) queueFollowerHydrationPass();
+            }
         }
     }
 
@@ -1708,12 +1720,16 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         return viewFilterMin > 0 || viewFilterMax > 0;
     }
 
+    function hasDurationFilter() {
+        return durationFilterMin > 0 || durationFilterMax > 0;
+    }
+
     function hasActiveFilters() {
-        return hasFollowerFilter() || hasViewFilter();
+        return hasFollowerFilter() || hasViewFilter() || hasDurationFilter();
     }
 
     function activeFilterCount() {
-        return (hasFollowerFilter() ? 1 : 0) + (hasViewFilter() ? 1 : 0);
+        return (hasFollowerFilter() ? 1 : 0) + (hasViewFilter() ? 1 : 0) + (hasDurationFilter() ? 1 : 0);
     }
 
     function passesCountRange(value, min, max) {
@@ -1727,6 +1743,51 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         return passesCountRange(meta?.views, viewFilterMin, viewFilterMax);
     }
 
+    function getLiveElapsedSeconds(meta, now = Date.now()) {
+        const start = parseDateTime(meta?.publishDate);
+        if (!start || start > now) return null;
+        return Math.max(0, Math.floor((now - start) / 1000));
+    }
+
+    function passesDurationFilter(meta) {
+        if (!hasDurationFilter()) return true;
+        const elapsed = getLiveElapsedSeconds(meta);
+        if (elapsed === null) return false;
+        return passesCountRange(elapsed, durationFilterMin, durationFilterMax);
+    }
+
+    function clearDurationFilterRefreshTimer() {
+        if (!durationFilterRefreshTimer) return;
+        window.clearTimeout(durationFilterRefreshTimer);
+        durationFilterRefreshTimer = 0;
+    }
+
+    function scheduleDurationFilterRefresh(metadata) {
+        clearDurationFilterRefreshTimer();
+        if (!hasDurationFilter()) return;
+
+        const now = Date.now();
+        let nextAt = Number.POSITIVE_INFINITY;
+        for (const meta of metadata || []) {
+            const start = parseDateTime(meta?.publishDate);
+            if (!start || start > now) continue;
+            const elapsed = Math.floor((now - start) / 1000);
+            if (durationFilterMin > 0 && elapsed < durationFilterMin) {
+                nextAt = Math.min(nextAt, start + durationFilterMin * 1000);
+            }
+            if (durationFilterMax > 0 && elapsed <= durationFilterMax) {
+                nextAt = Math.min(nextAt, start + (durationFilterMax + 1) * 1000);
+            }
+        }
+        if (!Number.isFinite(nextAt)) return;
+
+        const delay = Math.max(50, Math.min(nextAt - now + 50, 2_147_000_000));
+        durationFilterRefreshTimer = window.setTimeout(() => {
+            durationFilterRefreshTimer = 0;
+            scheduleApply();
+        }, delay);
+    }
+
     function resetViewFilterSnapshot() {
         viewFilterSnapshotKey = "";
         viewFilterSnapshotIds = new Set();
@@ -1736,7 +1797,16 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
 
     function getViewFilterSnapshotKey(route, query = normalize(currentQuery)) {
         if (!hasViewFilter()) return "";
-        return [routeKey(route), query, viewFilterMin, viewFilterMax, followerFilterMin, followerFilterMax].join("|");
+        return [
+            routeKey(route),
+            query,
+            viewFilterMin,
+            viewFilterMax,
+            followerFilterMin,
+            followerFilterMax,
+            durationFilterMin,
+            durationFilterMax,
+        ].join("|");
     }
 
     function syncViewFilterSnapshot(route, query = normalize(currentQuery)) {
@@ -1772,6 +1842,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
 
     function passesStickyFilters(row) {
         if (!passesStickyViewFilter(row)) return false;
+        if (!passesDurationFilter(row.meta)) return false;
         return passesFollowerFilter(row.meta);
     }
 
@@ -1805,6 +1876,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     function passesMetaFilters(meta, query = "") {
         if (query && !buildMetaSearchText(meta).includes(query)) return false;
         if (!passesViewFilter(meta) && !isViewFilterSnapshotId(meta?.id)) return false;
+        if (!passesDurationFilter(meta)) return false;
         return passesFollowerFilter(meta);
     }
 
@@ -1837,10 +1909,43 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         return number.toLocaleString("ko-KR");
     }
 
+    function parseDurationFilterInput(value) {
+        const raw = String(value || "")
+            .replace(/,/g, "")
+            .trim();
+        if (!raw) return 0;
+        const match = raw.match(/^(\d+(?:\.\d+)?)/);
+        if (!match) return 0;
+        const hours = Number(match[1]);
+        if (!Number.isFinite(hours) || hours <= 0) return 0;
+        return Math.floor(hours * SECONDS_PER_HOUR);
+    }
+
+    function formatDurationFilterInput(value) {
+        const seconds = Math.max(0, Number(value) || 0);
+        if (!seconds) return "";
+        const hours = seconds / SECONDS_PER_HOUR;
+        return String(Number.isInteger(hours) ? hours : Math.round(hours * 100) / 100);
+    }
+
+    function parseFilterInputForKind(kind, value) {
+        return kind === "duration" ? parseDurationFilterInput(value) : parseFilterInput(value);
+    }
+
+    function formatFilterInputForKind(kind, value) {
+        return kind === "duration" ? formatDurationFilterInput(value) : formatFilterInput(value);
+    }
+
     function getFilterPresetValues(kind) {
-        const keys = kind === "followers" ? FOLLOWER_FILTER_PRESET_KEYS : VIEW_FILTER_PRESET_KEYS;
+        const keys =
+            kind === "followers"
+                ? FOLLOWER_FILTER_PRESET_KEYS
+                : kind === "duration"
+                  ? DURATION_FILTER_PRESET_KEYS
+                  : VIEW_FILTER_PRESET_KEYS;
+        const scale = kind === "duration" ? SECONDS_PER_HOUR : 1;
         const values = keys
-            .map((key) => Math.max(0, Math.floor(Number(featureOptions[key]) || 0)))
+            .map((key) => Math.max(0, Math.floor(Number(featureOptions[key]) || 0)) * scale)
             .filter((value) => value > 0)
             .sort((a, b) => a - b);
         return Array.from(new Set(values));
@@ -1859,18 +1964,21 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         return ranges;
     }
 
-    function formatFilterOptionLabel(min, max, unit) {
+    function formatFilterOptionLabel(kind, min, max, unit) {
         if (min <= 0 && max <= 0) return "전체";
-        if (min <= 0) return `${formatFilterInput(max)}${unit} 이하`;
-        if (max <= 0) return `${formatFilterInput(min)}${unit} ~ 최대`;
-        return `${formatFilterInput(min)}${unit} ~ ${formatFilterInput(max)}${unit}`;
+        if (min <= 0) return `${formatFilterInputForKind(kind, max)}${unit} 이하`;
+        if (max <= 0) {
+            const suffix = kind === "duration" ? " 이상" : " ~ 최대";
+            return `${formatFilterInputForKind(kind, min)}${unit}${suffix}`;
+        }
+        return `${formatFilterInputForKind(kind, min)}${unit} ~ ${formatFilterInputForKind(kind, max)}${unit}`;
     }
 
     function buildFilterOptionButtons(kind, unit) {
         return getFilterPresetRanges(kind)
             .map(
                 ({ min, max }) =>
-                    `<button type="button" class="bcgt-option" data-filter-kind="${kind}" data-filter-min="${min}" data-filter-max="${max}" role="menuitemradio">${formatFilterOptionLabel(min, max, unit)}</button>`
+                    `<button type="button" class="bcgt-option" data-filter-kind="${kind}" data-filter-min="${min}" data-filter-max="${max}" role="menuitemradio">${formatFilterOptionLabel(kind, min, max, unit)}</button>`
             )
             .join("");
     }
@@ -1882,14 +1990,17 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         const renderKey = [
             getFilterPresetValues("followers").join(","),
             getFilterPresetValues("views").join(","),
+            getFilterPresetValues("duration").join(","),
             viewUnit,
         ].join("|");
         if (menu.__bcgtFilterOptionsKey === renderKey) return;
 
         const followerOptions = menu.querySelector('[data-filter-options="followers"]');
         const viewOptions = menu.querySelector('[data-filter-options="views"]');
+        const durationOptions = menu.querySelector('[data-filter-options="duration"]');
         if (followerOptions) followerOptions.innerHTML = buildFilterOptionButtons("followers", "명");
         if (viewOptions) viewOptions.innerHTML = buildFilterOptionButtons("views", viewUnit);
+        if (durationOptions) durationOptions.innerHTML = buildFilterOptionButtons("duration", "시간");
         menu.__bcgtFilterOptionsKey = renderKey;
     }
 
@@ -1900,6 +2011,14 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
                 max: followerFilterMax,
                 minCustom: followerFilterCustom,
                 maxCustom: followerFilterMaxCustom,
+            };
+        }
+        if (kind === "duration") {
+            return {
+                min: durationFilterMin,
+                max: durationFilterMax,
+                minCustom: durationFilterCustom,
+                maxCustom: durationFilterMaxCustom,
             };
         }
         return {
@@ -1923,6 +2042,12 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             viewFilterCustom = customValue;
             viewFilterMaxCustom = maxCustomValue;
         }
+        if (kind === "duration") {
+            durationFilterMin = min;
+            durationFilterMax = max;
+            durationFilterCustom = customValue;
+            durationFilterMaxCustom = maxCustomValue;
+        }
     }
 
     function setFilterMin(kind, min, customValue = "") {
@@ -1933,6 +2058,10 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         if (kind === "views") {
             viewFilterMin = min;
             viewFilterCustom = customValue;
+        }
+        if (kind === "duration") {
+            durationFilterMin = min;
+            durationFilterCustom = customValue;
         }
     }
 
@@ -1945,6 +2074,18 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             viewFilterMax = max;
             viewFilterMaxCustom = customValue;
         }
+        if (kind === "duration") {
+            durationFilterMax = max;
+            durationFilterMaxCustom = customValue;
+        }
+    }
+
+    function resetDurationFilterState() {
+        durationFilterMin = 0;
+        durationFilterMax = 0;
+        durationFilterCustom = "";
+        durationFilterMaxCustom = "";
+        clearDurationFilterRefreshTimer();
     }
 
     function resetFilterState() {
@@ -1956,6 +2097,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         followerFilterMaxCustom = "";
         viewFilterCustom = "";
         viewFilterMaxCustom = "";
+        resetDurationFilterState();
         resetViewFilterSnapshot();
     }
 
@@ -1969,10 +2111,16 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             return;
         }
         if (min === max) {
-            setFilterValue(kind, min, min > 0 ? formatFilterInput(min) : "", 0, "");
+            setFilterValue(kind, min, min > 0 ? formatFilterInputForKind(kind, min) : "", 0, "");
             return;
         }
-        setFilterValue(kind, min, min > 0 ? formatFilterInput(min) : "", max, formatFilterInput(max));
+        setFilterValue(
+            kind,
+            min,
+            min > 0 ? formatFilterInputForKind(kind, min) : "",
+            max,
+            formatFilterInputForKind(kind, max)
+        );
     }
 
     function getFilterOptionAtPoint(x, y, kind) {
@@ -2521,22 +2669,62 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         );
     }
 
+    function syncInjectedChannelIdentity(card, channelAnchors, meta) {
+        const channelName = normSpace(meta?.channelName);
+        if (!channelName) return;
+
+        const explicitName =
+            card.querySelector("[class*='name_text']") ||
+            channelAnchors
+                .map((anchor) =>
+                    anchor.querySelector(
+                        "[class*='channel_name'], [class*='name_text'], [class*='ellipsis'] > [class*='text']"
+                    )
+                )
+                .find((element) => element && !element.matches(".blind, [class*='blind'], [aria-hidden='true']"));
+        if (explicitName) setText(explicitName, channelName);
+
+        for (const anchor of channelAnchors) {
+            if (!explicitName) {
+                const textTarget = Array.from(anchor.querySelectorAll("strong, span"))
+                    .filter((element) => {
+                        if (element.matches("[aria-hidden='true'], .blind, [class*='blind']")) return false;
+                        return Boolean(normSpace(element.textContent));
+                    })
+                    .sort((a, b) => a.querySelectorAll("*").length - b.querySelectorAll("*").length)[0];
+                if (textTarget) setText(textTarget, channelName);
+            }
+            anchor.setAttribute("aria-label", `${channelName} 채널로 이동`);
+            if (anchor.hasAttribute("title")) anchor.setAttribute("title", channelName);
+            for (const label of anchor.querySelectorAll(".blind, [class*='blind']")) {
+                if (/채널로 이동/.test(normSpace(label.textContent))) setText(label, `${channelName} 채널로 이동`);
+            }
+        }
+    }
+
     function buildInjectedLiveCard(route, template, meta) {
         const card = template instanceof HTMLElement ? template.cloneNode(true) : document.createElement("article");
+        removeFollowerBadge(card);
+        removeLiveElapsedBadge(card);
         applyCardAttrs(card, meta);
 
         const itemHref = contentHref(route, meta);
         const channelHref = meta.channelId ? `/${meta.channelId}` : "";
+        const channelAnchors = [];
 
         for (const anchor of card.querySelectorAll("a[href]")) {
             const href = anchor.getAttribute("href") || "";
+            const hiddenLabels = Array.from(anchor.querySelectorAll(".blind, [class*='blind']"))
+                .map((label) => label.textContent || "")
+                .join(" ");
+            const channelSignal = `${String(anchor.className || "")} ${anchor.getAttribute("aria-label") || ""} ${anchor.getAttribute("title") || ""} ${hiddenLabels}`;
+            const isChannelAnchor = /channel|profile|name|채널로 이동/i.test(channelSignal);
             if (getItemId(route, href)) {
                 anchor.setAttribute("href", itemHref);
-            } else if (
-                channelHref &&
-                (href.match(/^\/[a-f0-9]{32}/i) || /channel|profile|name/i.test(anchor.className))
-            ) {
+                if (isChannelAnchor) channelAnchors.push(anchor);
+            } else if (channelHref && (href.match(/^\/[a-f0-9]{32}/i) || isChannelAnchor)) {
                 anchor.setAttribute("href", channelHref);
+                channelAnchors.push(anchor);
             }
         }
 
@@ -2569,9 +2757,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         updateLiveViewerCount(card, meta.views);
 
         setText(card.querySelector("a[class*='title'], [class*='title']"), meta.title);
-        setText(card.querySelector("[class*='name_text']"), meta.channelName);
-        const channelAnchor = card.querySelector("a[class*='channel'], a[class*='name']");
-        if (channelAnchor && !card.querySelector("[class*='name_text']")) setText(channelAnchor, meta.channelName);
+        syncInjectedChannelIdentity(card, channelAnchors, meta);
 
         const tagContainer = card.querySelector("[class*='information'][class*='link']");
         if (tagContainer) {
@@ -2732,7 +2918,8 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         if (!(card instanceof HTMLElement)) return true;
         const text = normSpace(card.textContent);
         const signature = `${text} ${cardImageSignature(card)}`;
-        return /(\uC5F0\uB839|\uCCAD\uC18C\uB144|19\s*\+?|adult|age[_-]?limit|restricted)/i.test(signature);
+        // "19"\uB97C \uB9E8\uC22B\uC790\uB85C \uB9E4\uCE6D\uD558\uBA74 liveId(19xxxxxx)\uAC00 \uB4E4\uC5B4\uAC04 \uC378\uB124\uC77C URL\uAE4C\uC9C0 \uC804\uBD80 \uC81C\uD55C \uCE74\uB4DC\uB85C \uC624\uD310\uD55C\uB2E4.
+        return /(\uC5F0\uB839|\uCCAD\uC18C\uB144|19\s*[+\uAE08]|adult|age[_-]?limit|restricted)/i.test(signature);
     }
 
     function hasUsableTemplateThumbnail(card) {
@@ -2819,6 +3006,17 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
       <span data-view-filter-unit>회</span>
     </label>
   </section>
+  <section class="bcgt-filter-group" aria-label="진행 시간" data-filter-group="duration">
+    <div class="bcgt-filter-title">진행 시간</div>
+    <div class="bcgt-option-list" data-filter-options="duration"></div>
+    <label class="bcgt-custom" data-custom-kind="duration">
+      <span>직접</span>
+      <input type="text" inputmode="decimal" data-filter-min-input="duration" placeholder="최소" />
+      <span>~</span>
+      <input type="text" inputmode="decimal" data-filter-max-input="duration" placeholder="최대" />
+      <span>시간</span>
+    </label>
+  </section>
 </div>
 <div class="bcgt-reset-row">
   <button type="button" class="bcgt-reset" data-filter-reset aria-label="&#54596;&#53552; &#52488;&#44592;&#54868;">&#54596;&#53552; &#52488;&#44592;&#54868;</button>
@@ -2881,8 +3079,9 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             input.addEventListener("input", () => {
                 const isMax = input.hasAttribute("data-filter-max-input");
                 const kind = input.getAttribute(isMax ? "data-filter-max-input" : "data-filter-min-input");
-                if (isMax) setFilterMax(kind, parseFilterInput(input.value), input.value);
-                else setFilterMin(kind, parseFilterInput(input.value), input.value);
+                const value = parseFilterInputForKind(kind, input.value);
+                if (isMax) setFilterMax(kind, value, input.value);
+                else setFilterMin(kind, value, input.value);
                 updateUiState();
                 scheduleApply();
             });
@@ -2992,6 +3191,10 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         syncFilterOptionButtons(menu, route);
         const viewFilterGroup = menu?.querySelector('[data-filter-group="views"]');
         if (viewFilterGroup) viewFilterGroup.setAttribute("aria-label", viewFilterLabel);
+        const durationFilterGroup = menu?.querySelector('[data-filter-group="duration"]');
+        if (durationFilterGroup) {
+            durationFilterGroup.hidden = !isLiveList || !canUseMetadataForCurrentList(route);
+        }
         const viewFilterTitle = menu?.querySelector("[data-view-filter-title]");
         if (viewFilterTitle) viewFilterTitle.textContent = viewFilterLabel;
         const viewFilterUnitEl = menu?.querySelector("[data-view-filter-unit]");
@@ -3144,15 +3347,15 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
                     .forEach((el) => el.removeAttribute(GLOBAL_SORT_ATTR));
                 syncFontWithHostUi(bar, tabLine);
             } else {
-                const sortLine =
-                    findGlobalNavigationFilterHost(context) ||
-                    findGlobalSortLine(context) ||
-                    (bar.parentElement?.isConnected && bar.parentElement?.getAttribute?.(GLOBAL_SORT_ATTR) === "1"
-                        ? bar.parentElement
-                        : null);
+                const sortLine = findGlobalSortLine(context);
                 const host = sortLine || ensureGlobalFallbackHost(route);
                 if (!host) return false;
-                host.setAttribute(GLOBAL_SORT_ATTR, "1");
+                document.querySelectorAll(`[${TABS_ATTR}="1"]`).forEach((el) => el.removeAttribute(TABS_ATTR));
+                document.querySelectorAll(`[${GLOBAL_SORT_ATTR}="1"]`).forEach((el) => {
+                    if (el !== host || host.id !== GLOBAL_FALLBACK_ID) el.removeAttribute(GLOBAL_SORT_ATTR);
+                });
+                if (host.id === GLOBAL_FALLBACK_ID) host.setAttribute(GLOBAL_SORT_ATTR, "1");
+                else host.removeAttribute(GLOBAL_SORT_ATTR);
                 bar.setAttribute("data-mode", "global-inline");
                 bar.setAttribute("data-tag-search-hidden", hideTagSearch ? "1" : "0");
                 bar.style.left = "";
@@ -3338,6 +3541,14 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         const scanContext = createApplyScanContext(route);
         if (!mountToolbar(route, scanContext)) return;
 
+        const canUseMetadata = canUseMetadataForCurrentList(route, scanContext);
+        if (hasDurationFilter() && (route.tab !== "lives" || !canUseMetadata)) {
+            resetDurationFilterState();
+            resetViewFilterSnapshot();
+            updateUiState();
+        }
+        if (!hasDurationFilter()) clearDurationFilterRefreshTimer();
+
         let entries = getCardEntries(route, scanContext);
         if (!entries.length) return;
         const grid = entries[0].card.parentElement;
@@ -3357,7 +3568,6 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             entries = getCardEntries(route, scanContext);
         }
 
-        const canUseMetadata = canUseMetadataForCurrentList(route, scanContext);
         if (!isAutoLoadActive()) {
             resetViewFilterSnapshot();
             clearInjectedCards(grid);
@@ -3385,11 +3595,13 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         }
 
         const metadata = canUseMetadata ? await ensureMetadata(route) : new Map();
+        scheduleDurationFilterRefresh(metadata.values());
         const query = normalize(currentQuery);
         syncViewFilterSnapshot(route, query);
         const metadataCandidates = Array.from(metadata.values()).filter((meta) => {
             if (!meta?.id) return false;
             if (query && !buildMetaSearchText(meta).includes(query)) return false;
+            if (!passesDurationFilter(meta)) return false;
             return passesViewFilter(meta) || isViewFilterSnapshotId(meta.id);
         });
 
@@ -3418,7 +3630,11 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         const candidateRows = [];
         let checkedRows = 0;
         for (const row of rows) {
-            if ((!query || buildSearchText(row).includes(query)) && passesStickyViewFilter(row)) {
+            if (
+                (!query || buildSearchText(row).includes(query)) &&
+                passesStickyViewFilter(row) &&
+                passesDurationFilter(row.meta)
+            ) {
                 candidateRows.push(row);
             }
             checkedRows++;
@@ -3452,6 +3668,8 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
     }
 
     function restoreCards() {
+        // 시간 모드는 카드로 마킹되지 않은 그리드 자식(사이트 로더 등)도 숨기므로 전부 되살린다.
+        document.querySelectorAll(`[${HIDE_ATTR}="1"]`).forEach((el) => setCardHidden(el, false));
         const cards = Array.from(document.querySelectorAll(`[${CARD_ATTR}="1"]`));
         for (const card of cards) {
             setCardHidden(card, false);
@@ -3490,11 +3708,14 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         resetMetadata("");
         orderCounter = 0;
         lastFollowerHydrateAt = 0;
+        followerHydrationRunToken++;
         followerHydrationRefreshing = false;
+        followerHydrationQueued = false;
         lastFollowerRefreshRouteKey = "";
         lastFollowerRefreshRows = [];
         lastMetadataApplyAt = 0;
         clearFollowerHydrationTimer();
+        clearDurationFilterRefreshTimer();
         clearLoading();
     }
 
@@ -3585,7 +3806,11 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
             if (node.nodeType === 1 && !isOurNode(node)) return false;
         }
         for (const node of removed || []) {
-            if (node.nodeType === 1 && !isOurNode(node)) return false;
+            if (node.nodeType !== 1) continue;
+            if (!isOurNode(node)) return false;
+            // 주입 카드 제거는 사이트 재렌더가 지운 것일 수 있어 무시하면 복구가 안 된다.
+            // 우리가 지운 경우에도 재적용은 id-set 가드로 멱등이라 한 번 더 도는 비용뿐이다.
+            if (node.getAttribute && node.getAttribute(INJECTED_ATTR) === "1") return false;
         }
         return true;
     }
@@ -3683,6 +3908,7 @@ body[theme="dark"] #${MENU_ID} .bcgt-reset:hover:not(:disabled),
         metadataSearchRunning = false;
         clearFollowerHydrationTimer();
         clearLiveElapsedTimer();
+        clearDurationFilterRefreshTimer();
         clearLoading();
         removeToolsIfMounted();
         stopObserver();

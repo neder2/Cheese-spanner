@@ -1,3 +1,22 @@
+/**
+ * features/autoQuality.js — 자동 화질 기능의 확장 측(isolated world) 오케스트레이터.
+ *
+ * 실행 컨텍스트: isolated world(확장) — shared/settings.js, shared/data.js, content.js 이후 로드된다.
+ * 동작 위치: BetterChzzk.utils.isPlaybackRoute()가 true인 라이브/VOD 재생 라우트.
+ * 하는 일: 옵션(autoQualityEnabled)과 라우트 상태를 관찰해 언제 화질을 적용할지 타이밍을 결정한다.
+ *   MutationObserver와 페이지 변경 감지로 재생 화면 DOM 변화를 감지해 재적용을 예약하고,
+ *   광고 차단 안내 팝업(adblockPopupEnabled) 준비 완료를 기다렸다가 적용을 시작하는 게이트를 둔다.
+ *   실제 화질 선택 로직은 갖고 있지 않으며, MAIN world 쪽에 적용을 요청만 한다.
+ * 의존: 전역 BetterChzzkSettings(옵션 정규화/기본 화질), BetterChzzk.utils(라우트 판별, DOM 옵저버,
+ *   페이지 변경 감지, throttle 유틸).
+ * 옵션 키: autoQualityEnabled, adblockPopupEnabled(광고 차단 팝업 게이트 대기 여부에만 사용).
+ * DOM 마커: document.documentElement에 data-betterchzzk-auto-quality-request/result/state 속성을 쓰고,
+ *   data-betterchzzk-adblock-popup-ready 속성을 읽는다.
+ * 통신: MAIN world의 features/autoQualityPage.js에 window Event betterchzzk:auto-quality:apply로
+ *   적용을 요청하고, 요청/결과는 REQUEST_ATTR/RESULT_ATTR(JSON 직렬화)로 주고받는다. 자신의 활성화
+ *   상태는 betterchzzk:auto-quality:state 이벤트 + STATE_ATTR로 페이지 측에 알린다. 광고 차단 팝업
+ *   기능(features/adblockPopup.js)이 보내는 betterchzzk:adblock-popup:ready 이벤트를 대기해 게이트로 쓴다.
+ */
 (() => {
     const APPLY_EVENT = "betterchzzk:auto-quality:apply";
     const REQUEST_ATTR = "data-betterchzzk-auto-quality-request";
@@ -354,6 +373,7 @@
         }
     }
 
+    // bindFeatureOptions가 옵션 변경 시 호출하는 진입점으로, 런타임 설치/해제 여부를 여기서 결정한다.
     function applyOptions(options) {
         featureOptions = options;
         if (!featureOptions.adblockPopupEnabled || isAdblockReadyForCurrentUrl()) {

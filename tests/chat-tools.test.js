@@ -375,19 +375,135 @@ function realChzzkChatRow({ badgeImg = "", nickname, text, chatId = "", nickname
     ].join("");
 }
 
+function installRealChzzkPinnedWrapper(document, rows = "") {
+    const root = document.querySelector(".chat-list");
+    root.className = "chat-list _container_sg7hy_1 _exist_fixed_message_sg7hy_83";
+    root.innerHTML = `<div class="_wrapper_sg7hy_25">${rows}</div>`;
+    return {
+        root,
+        wrapper: root.querySelector("._wrapper_sg7hy_25"),
+    };
+}
+
+test("real chzzk pinned root dynamically collects a manager row without data-chat-id", async (t) => {
+    const { dom } = createPageDom("");
+    t.after(() => closeChatToolsDom(dom));
+
+    const { root, wrapper } = installRealChzzkPinnedWrapper(dom.window.document);
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-box"));
+
+    wrapper.insertAdjacentHTML(
+        "beforeend",
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/chzzk-role-pinned.png" alt="채팅 운영자" width="18" height="18">',
+            nickname: "고정 공지 매니저",
+            text: "고정 공지 아래에서 추가된 안내",
+        })
+    );
+
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 1);
+
+    const sourceRow = wrapper.querySelector("._item_sg7hy_7");
+    assert.equal(sourceRow.hasAttribute("data-chat-id"), false);
+    assert.equal(sourceRow.getAttribute("data-bcct-moderator-collected"), "1");
+    assert.equal(wrapper.hasAttribute("data-bcct-moderator-collected"), false);
+    assert.equal(root.hasAttribute("data-bcct-moderator-collected"), false);
+    assert.equal(
+        moderatorRows(dom.window.document)[0].querySelector(".bcct-moderator-row__text").textContent,
+        "고정 공지 아래에서 추가된 안내"
+    );
+});
+
+test("real chzzk pinned wrapper full scan collects each manager row, not the wrapper", async (t) => {
+    const { dom } = createPageDom("");
+    t.after(() => closeChatToolsDom(dom));
+
+    const { root, wrapper } = installRealChzzkPinnedWrapper(
+        dom.window.document,
+        [
+            realChzzkChatRow({
+                badgeImg:
+                    '<img src="https://example.test/chzzk-role-full-a.png" alt="채팅 운영자" width="18" height="18">',
+                nickname: "첫 번째 매니저",
+                text: "첫 번째 안내",
+            }),
+            realChzzkChatRow({
+                badgeImg:
+                    '<img src="https://example.test/chzzk-role-full-b.png" alt="방송 매니저" width="18" height="18">',
+                nickname: "두 번째 매니저",
+                text: "두 번째 안내",
+            }),
+        ].join("")
+    );
+
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 2);
+
+    const sourceRows = Array.from(wrapper.querySelectorAll("._item_sg7hy_7"));
+    const collectedSources = Array.from(wrapper.querySelectorAll("[data-bcct-moderator-collected]"));
+    assert.equal(sourceRows.length, 2);
+    assert.equal(collectedSources.length, 2);
+    assert.ok(sourceRows.every((row) => collectedSources.some((source) => row.contains(source))));
+    assert.equal(wrapper.hasAttribute("data-bcct-moderator-collected"), false);
+    assert.equal(root.hasAttribute("data-bcct-moderator-collected"), false);
+    assert.deepEqual(
+        moderatorRows(dom.window.document).map((row) => row.querySelector(".bcct-moderator-row__text").textContent),
+        ["첫 번째 안내", "두 번째 안내"]
+    );
+});
+
+test("manager role words inside the nickname are preserved as the author", async (t) => {
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/chzzk-role-name.png" alt="채팅 운영자" width="18" height="18">',
+            nickname: "총괄매니저",
+            text: "닉네임 보존 확인",
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 1);
+
+    assert.equal(
+        moderatorRows(dom.window.document)[0].querySelector(".bcct-moderator-row__author").textContent,
+        "총괄매니저"
+    );
+});
+
+test("emoji-only manager rows parse an empty message instead of repeating the nickname", async (t) => {
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/chzzk-role-emoji.png" alt="채팅 운영자" width="18" height="18">',
+            nickname: "이모티콘 매니저",
+            text: '<img src="https://example.test/emoji.png" alt="웃는 이모티콘" width="80" height="80">',
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-box"));
+
+    const parsed = dom.window.BetterChzzk.chatTools.parseChatMessage(
+        dom.window.document.querySelector("._item_sg7hy_7")
+    );
+    assert.equal(parsed.author, "이모티콘 매니저");
+    assert.equal(parsed.text, "");
+});
+
 test("real chzzk markup: badge img alt collects broadcaster and manager, not viewers", async (t) => {
     const { dom } = createPageDom(
         [
             realChzzkChatRow({ nickname: "일반 시청자", text: "그냥 일반 채팅" }),
             realChzzkChatRow({
-                badgeImg:
-                    '<img src="https://ssl.pstatic.net/static/nng/glive/icon/streamer.png" alt="스트리머" width="18" height="18">',
+                badgeImg: '<img src="https://example.test/chzzk-role-a.png" alt="스트리머" width="18" height="18">',
                 nickname: "부지런한 휴먼 989",
                 text: "asd",
             }),
             realChzzkChatRow({
                 badgeImg: [
-                    '<img src="https://ssl.pstatic.net/static/nng/glive/icon/manager.png" alt="방송 매니저" width="18" height="18">',
+                    '<img src="https://example.test/chzzk-role-b.png" alt="방송 매니저" width="18" height="18">',
                     '<img src="https://nng-phinf.pstatic.net/subscription/badge3.png" alt="3개월 구독" width="18" height="18">',
                 ].join(""),
                 nickname: "성실한 부계정",
@@ -415,11 +531,11 @@ test("real chzzk markup: badge img alt collects broadcaster and manager, not vie
     // 본 채팅창과 같은 실제 뱃지 아이콘이 순서대로 함께 표시된다.
     const broadcasterBadges = rows[0].querySelectorAll(".bcct-moderator-row__badge");
     assert.equal(broadcasterBadges.length, 1);
-    assert.match(broadcasterBadges[0].getAttribute("src"), /icon\/streamer\.png$/);
+    assert.equal(broadcasterBadges[0].getAttribute("src"), "https://example.test/chzzk-role-a.png");
     assert.equal(broadcasterBadges[0].getAttribute("alt"), "스트리머");
     const managerBadges = rows[1].querySelectorAll(".bcct-moderator-row__badge");
     assert.equal(managerBadges.length, 2);
-    assert.match(managerBadges[0].getAttribute("src"), /icon\/manager\.png$/);
+    assert.equal(managerBadges[0].getAttribute("src"), "https://example.test/chzzk-role-b.png");
     assert.match(managerBadges[1].getAttribute("src"), /subscription\/badge3\.png$/);
     assert.equal(managerBadges[1].getAttribute("alt"), "3개월 구독");
     // 닉네임 색상도 본 채팅창과 동일하게 복원된다.
@@ -435,8 +551,7 @@ test("real chzzk markup: the renamed 채팅 운영자 badge is collected as mana
         [
             realChzzkChatRow({ nickname: "일반 시청자", text: "그냥 일반 채팅" }),
             realChzzkChatRow({
-                badgeImg:
-                    '<img src="https://ssl.pstatic.net/static/nng/glive/icon/chat_operator.png" alt="채팅 운영자" width="18" height="18">',
+                badgeImg: '<img src="https://example.test/chzzk-role-c.png" alt="채팅 운영자" width="18" height="18">',
                 nickname: "부지런한 봇지기",
                 text: "운영자 공지입니다",
                 chatId: "chat-operator-rename-1",
@@ -456,7 +571,7 @@ test("real chzzk markup: the renamed 채팅 운영자 badge is collected as mana
     assert.equal(row.querySelector(".bcct-moderator-row__author").textContent, "부지런한 봇지기");
     const badge = row.querySelector(".bcct-moderator-row__badge");
     assert.equal(badge.getAttribute("alt"), "채팅 운영자");
-    assert.match(badge.getAttribute("src"), /icon\/chat_operator\.png$/);
+    assert.equal(badge.getAttribute("src"), "https://example.test/chzzk-role-c.png");
 });
 
 test("sr-only badge descriptions are not mixed into the collected nickname or text", async (t) => {
@@ -472,7 +587,7 @@ test("sr-only badge descriptions are not mixed into the collected nickname or te
             '<button type="button" class="_nickname_1vemp_37" aria-haspopup="true" aria-expanded="false">',
             '<strong class="_name_1hyev_92">',
             '<span class="_truncate_dtc6c_2" style="overflow-wrap: break-word;">',
-            '<img src="https://ssl.pstatic.net/static/nng/glive/icon/streamer.png" alt="스트리머" width="18" height="18">',
+            '<img src="https://example.test/chzzk-role-d.png" alt="스트리머" width="18" height="18">',
             '<i class="_icon_dtc6c_17" style="width: 16px; height: 16px; margin-top: 1px;">',
             '<span class="blind">명예훈장</span>',
             "</i>",
@@ -779,7 +894,7 @@ test("badge image appearing after collection is backfilled into the moderator bo
         .querySelector('.chat-row[data-chat-id="manager-late-badge"] .nickname')
         .insertAdjacentHTML(
             "afterbegin",
-            '<img src="https://ssl.pstatic.net/static/nng/glive/icon/manager.png" alt="방송 매니저" width="18" height="18">'
+            '<img src="https://example.test/chzzk-role-e.png" alt="방송 매니저" width="18" height="18">'
         );
 
     await waitForCondition(() => {
@@ -793,7 +908,7 @@ test("badge image appearing after collection is backfilled into the moderator bo
     const badge = row.querySelector(".bcct-moderator-row__badge");
     // 늦게 붙은 역할 뱃지 이미지의 src 가 백필된다. (닉네임 영역 밖 폴백 경로라
     // alt 는 역할 라벨로 대체된다.)
-    assert.match(badge.getAttribute("src"), /icon\/manager\.png$/);
+    assert.equal(badge.getAttribute("src"), "https://example.test/chzzk-role-e.png");
     assert.equal(badge.getAttribute("alt"), "채팅 운영자");
     // 백필로 새 행이 중복 추가되지 않고 그대로 1개여야 한다.
     assert.equal(moderatorRows(dom.window.document).length, 1);
@@ -805,8 +920,7 @@ test("nickname color applied after collection is backfilled into the moderator b
     // 백필이 발동해야 한다.
     const { dom } = createPageDom(
         realChzzkChatRow({
-            badgeImg:
-                '<img src="https://ssl.pstatic.net/static/nng/glive/icon/streamer.png" alt="스트리머" width="18" height="18">',
+            badgeImg: '<img src="https://example.test/chzzk-role-f.png" alt="스트리머" width="18" height="18">',
             nickname: "부지런한 휴먼 989",
             text: "색은 나중에 옵니다",
             chatId: "broadcaster-late-color",
@@ -897,7 +1011,7 @@ test("disabling the option removes UI and stops collecting new chat rows", async
     assert.equal(dom.window.document.querySelector(".bcct-moderator-box"), null);
 });
 
-test("moderator trigger returns after the chat root node is wholly replaced and new chat arrives", async (t) => {
+test("moderator collection reconnects after a pinned chat root is wholly replaced", async (t) => {
     // 재현: 채팅 접기/펼치기·플레이어 모드 전환 등으로 채팅 메시지 목록(chat root)
     // 노드가 통째로 새 노드로 교체되면, 옛 root를 관찰하던 observer는 새 메시지
     // mutation을 못 받아 syncChatTools가 영영 안 돌고 트리거가 복구되지 않았다.
@@ -928,27 +1042,39 @@ test("moderator trigger returns after the chat root node is wholly replaced and 
     // chat root 노드를 통째로 새 노드로 교체한다(옛 노드는 DOM에서 분리).
     oldList.remove();
     const newList = document.createElement("div");
-    newList.className = "chat-list";
+    newList.className = "chat-list _container_sg7hy_1 _exist_fixed_message_sg7hy_83";
     newList.setAttribute("role", "log");
+    newList.innerHTML = '<div class="_wrapper_sg7hy_25"></div>';
     area.appendChild(newList);
 
-    // 새 root에 새 채팅 메시지가 도착한다.
-    newList.insertAdjacentHTML(
+    // 새 pinned root의 wrapper에 data-chat-id 없는 실제 매니저 행이 도착한다.
+    const wrapper = newList.querySelector("._wrapper_sg7hy_25");
+    wrapper.insertAdjacentHTML(
         "beforeend",
-        [
-            '<div class="chat-row" data-chat-id="after-swap-1">',
-            '<span class="nickname">viewer</span>',
-            '<span class="message">교체 후 메시지</span>',
-            "</div>",
-        ].join("")
+        realChzzkChatRow({
+            badgeImg:
+                '<img src="https://example.test/chzzk-role-reconnect.png" alt="채팅 운영자" width="18" height="18">',
+            nickname: "교체 후 매니저",
+            text: "교체 후 실제 수집",
+        })
     );
 
     // 재연결 감시가 분리를 감지해 새 root로 옮겨 타고 full-scan이 돌아
-    // 트리거가 다시 붙어야 한다.
-    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+    // 트리거가 다시 붙고 새 매니저 메시지가 실제로 수집되어야 한다.
+    await waitForCondition(
+        () => document.querySelector(".bcct-moderator-trigger") && moderatorRows(document).length === 1
+    );
 
     const trigger = document.querySelector(".bcct-moderator-trigger");
     assert.equal(trigger.tagName, "BUTTON");
-    // 새 root가 실제 관찰 대상이 되었는지: 새 메시지 행이 파싱 처리되었는지로 확인한다.
-    assert.ok(document.querySelector('[data-chat-id="after-swap-1"]'));
+    const sourceRow = wrapper.querySelector("._item_sg7hy_7");
+    const collectedSource = wrapper.querySelector("[data-bcct-moderator-collected]");
+    assert.equal(sourceRow.hasAttribute("data-chat-id"), false);
+    assert.ok(collectedSource);
+    assert.ok(sourceRow.contains(collectedSource));
+    assert.equal(wrapper.hasAttribute("data-bcct-moderator-collected"), false);
+    assert.equal(newList.hasAttribute("data-bcct-moderator-collected"), false);
+    const collected = moderatorRows(document)[0];
+    assert.equal(collected.querySelector(".bcct-moderator-row__author").textContent, "교체 후 매니저");
+    assert.equal(collected.querySelector(".bcct-moderator-row__text").textContent, "교체 후 실제 수집");
 });

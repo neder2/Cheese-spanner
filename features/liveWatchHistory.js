@@ -1,3 +1,28 @@
+/**
+ * features/liveWatchHistory.js — 라이브 시청 시간을 추적해 chrome.storage.local에 기록하는 기능.
+ *
+ * 동작 위치: https://chzzk.naver.com/live/{channelId} 라이브 시청 페이지 (isolated content script).
+ * 하는 일: video 엘리먼트의 재생 상태를 감시해 시청 세션을 시작/누적/종료하고, 5초 간격으로
+ *   watchedSeconds를 집계하며 15초 간격/가시성 변경/pagehide 시점에 storage로 flush한다.
+ *   채널/방송 메타데이터는 DOM(og:title 등)에서 우선 추론하고 live-detail API로 보강한다.
+ *   channel:{channelId}:{date} 임시 레코드를 liveId 확보 시 live:{liveId}로 승격한다.
+ * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.utils (addTitleHistory, bindFeatureOptions,
+ *   createMutationObserverSync, createThrottledDomSync, fetchJson, getLiveChannelIdFromPath,
+ *   mergeWatchRanges, onReady, startPageChangeDetection, storageGet/storageSet 등), chrome.storage.local.
+ * 옵션 키: liveWatchHistoryEnabled, liveWatchHistoryMinMinutes.
+ * 통신: chrome.storage.local 키 "betterChzzkLiveWatchHistory"에 { version, updatedAt, entries }를 쓴다.
+ *   같은 키를 features/vodBroadcastClock.js가 읽어 다시보기 페이지에서 방제 이력을 매칭하고,
+ *   history.html/history.js가 시청 기록 조회에 사용한다. chrome.storage.onChanged로 자신이 쓴
+ *   updatedAt과 다르면 내부 캐시를 무효화한다.
+ * 구조: STORAGE_KEY 등 상수 → 옵션/세션 상태 변수 → 세션 판정 유틸(isVideoActive 등) →
+ *   메타데이터 추론/API 보강(inferMetadataFromPage, refreshMetadata) →
+ *   히스토리 정규화/정리(normalizeHistory, pruneHistory) →
+ *   캐시된 히스토리 읽기/쓰기(getHistoryCache, mutateHistory) →
+ *   세션 시작/누적/종료(startSession, accrueWatchTime, flushSession, endSession) →
+ *   video 엘리먼트 부착(attachVideo/detachVideo) → 라우트/DOM 변경 동기화(syncTrackingState) →
+ *   생명주기 리스너 설치(visibilitychange, pagehide, storage.onChanged) →
+ *   런타임 설치/해제(installRuntime, teardownRuntime) → 옵션 바인딩(applyOptions).
+ */
 (() => {
     const STORAGE_KEY = "betterChzzkLiveWatchHistory";
     const LIVE_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/channels";

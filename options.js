@@ -1,3 +1,21 @@
+/**
+ * options.js — options.html(설정 페이지)의 스크립트로, 모든 기능 토글/수치를 폼으로 보여주고 자동 저장한다.
+ *
+ * 실행 컨텍스트: manifest의 action.default_popup이자 options_page인 options.html에서 로드된다.
+ * 확장 아이콘을 클릭하면 작은 팝업 창으로 여는 것이 1차 사용 환경이라, UI는 좁은 뷰포트를 기준으로
+ * 짜여 있다(전체 탭으로 여는 것은 부차적 경로). options.html은 shared/settings.js를 같은 페이지에
+ * script 태그로 먼저 로드하고 그다음 이 파일을 로드한다. content script가 아니다.
+ * 하는 일: chrome.storage.sync에서 옵션을 불러와 폼에 채우고, 입력/체크박스 변경 시 디바운스 후
+ * 자동 저장한다. 옵션 간 의존 관계(data-depends-on)에 따라 하위 컨트롤을 비활성화하고, 탭 전환과
+ * 설정 검색(검색어로 카드 항목 필터링), 기본값 복원 버튼을 처리한다.
+ * 의존: BetterChzzkSettings(shared/settings.js가 노출하는 DEFAULT_OPTIONS, FEATURE_KEYS,
+ * OPTION_KEYS, normalizeOptions), globalThis.chrome.storage.sync, globalThis.chrome.permissions,
+ * window.localStorage.
+ * 통신: chrome.storage.sync에 각 data-option 키를 읽고 쓴다(다른 파일들이 같은 키를 구독해 기능을
+ * 켜고 끔). followingPreviewTooltipEnabled를 켤 때만 optional_host_permissions로 선언된
+ * PREVIEW_HOST_PERMISSION(https://*.pstatic.net/*)을 chrome.permissions.request로 요청한다.
+ * 마지막으로 본 탭 인덱스는 window.localStorage 키 "betterChzzkOptionsLastTab"에 저장한다.
+ */
 const form = document.getElementById("optionsForm");
 const optionInputs = Array.from(document.querySelectorAll("[data-option]"));
 const dependencyGroups = Array.from(document.querySelectorAll("[data-depends-on]"));

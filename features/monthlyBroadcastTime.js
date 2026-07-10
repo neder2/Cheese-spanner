@@ -1,3 +1,35 @@
+/**
+ * features/monthlyBroadcastTime.js — 채널 페이지에 최근 방송 시간/월간 캘린더 위젯을 붙인다.
+ *
+ * 동작 위치: chzzk.naver.com/{channelId}(및 about/chat/clips/community/info/videos 하위 경로) 채널 페이지.
+ * 하는 일:
+ *   - 채널의 다시보기(VOD) 목록 API를 페이지네이션 호출해 최근 N일 방송 시간, 이번 달 방송 통계를 계산한다.
+ *   - 팔로우/구독 버튼 근처(action host)를 찾아 위젯을 mount하고, 없으면 팔로워 수 표시 영역 근처에 fallback mount한다.
+ *   - hover/focus 시 펼쳐지는 월간 캘린더를 렌더링하며, 내 시청 표시 옵션(기본 꺼짐)이 켜져 있으면
+ *     liveWatchHistory.js가 기록한 시청 기록과 방송 시작 시각을 매칭해 하루/방송별 "내 시청 시간"을 함께 보여준다.
+ *   - 캘린더 날짜 셀을 클릭하면 그날 첫 방송 다시보기(/video/{videoNo})로 이동하고, 툴팁의 방송 항목은
+ *     개별 앵커라 특정 방송으로 이동할 수 있다. 보조키(Ctrl/Cmd/Shift)·가운데 클릭은 새 탭.
+ *   - 라우트 변경, DOM 변화, storage 변경을 감지해 위젯 mount/unmount와 재계산을 스케줄링한다.
+ * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions, fetchJson,
+ *   createMutationObserverSync, createThrottledDomSync, startPageChangeDetection, startStorageChangeListener,
+ *   storageGet, KST 날짜/시간 포맷 및 watch-range 유틸 등), chrome.storage.local.
+ * 옵션 키: monthlyBroadcastTimeEnabled, monthlyBroadcastTimeCalendarEnabled, monthlyBroadcastTimeWatchEnabled,
+ *   monthlyBroadcastTimeWindowDays, monthlyBroadcastTimeMaxPages, monthlyBroadcastTimeMaxCalendarPages.
+ * DOM 마커: #betterchzzk-monthly-broadcast-time(위젯 루트), #betterchzzk-monthly-broadcast-time-style(스타일 태그),
+ *   data-bcmb-host(위젯이 붙은 호스트 요소 표시).
+ * 통신: chrome.storage.local의 betterChzzkLiveWatchHistory 키를 읽어(liveWatchHistory.js가 기록) 시청 시간을
+ *   방송 시작 시각과 매칭한다. 자체 DOM 변형은 옵저버 재귀 트리거를 피하도록 별도로 식별한다.
+ * 구조:
+ *   - 상수/캐시 선언, 옵션 접근자(isFeatureEnabled 등) — 파일 상단.
+ *   - injectStyleOnce/createWidget/installWidgetInteractions — 위젯 DOM과 스타일 생성.
+ *   - findActionHost/findFallbackHost/mountWidget/removeWidget — 위젯을 페이지에 붙이고 뗀다.
+ *   - extractVideos/fetchVideoPage(Cached)/fetchVideoDetail — 다시보기 목록·상세 API 호출과 캐시.
+ *   - normalizeWatchHistory/getStartWatchInfo/getChannelWatchSeconds — 시청 기록 정규화와 매칭 점수 계산.
+ *   - calculateStats/calculateCalendarMonth/loadStats/loadCalendarMonth — 통계·월간 캘린더 계산 파이프라인.
+ *   - renderCachedStats/renderCalendar/renderCalendarFoot/buildDayTipContent — 위젯·캘린더 렌더링.
+ *   - startObserver/installRouteListeners/installStorageListener/installRuntime/teardownRuntime — 수명주기 배선.
+ *   - applyOptions/bindFeatureOptions 호출 — 옵션 변경 반영 및 초기 구동.
+ */
 (() => {
     const WIDGET_ID = "betterchzzk-monthly-broadcast-time";
     const STYLE_ID = "betterchzzk-monthly-broadcast-time-style";
@@ -113,6 +145,10 @@
 
     function isCalendarEnabled() {
         return isFeatureEnabled() && featureOptions.monthlyBroadcastTimeCalendarEnabled;
+    }
+
+    function isWatchDisplayEnabled() {
+        return isCalendarEnabled() && featureOptions.monthlyBroadcastTimeWatchEnabled;
     }
 
     function getWindowDays() {
@@ -391,7 +427,16 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   white-space:normal;
   transform:translateX(-50%);
   z-index:2147483647;
-  pointer-events:none;
+  pointer-events:auto;
+}
+/* 셀과 툴팁 사이 6px 갭에서 hover가 끊기면 앵커를 클릭하러 갈 수 없다. */
+#${WIDGET_ID} .bcmb-day-tip::before{
+  content:"";
+  position:absolute;
+  left:0;
+  right:0;
+  top:100%;
+  height:8px;
 }
 #${WIDGET_ID} .bcmb-day-tip-title{
   display:block;
@@ -441,6 +486,13 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   border-left:2px solid rgba(0,255,163,0.48);
   border-radius:6px;
   background:rgba(255,255,255,0.045);
+  color:inherit;
+  text-decoration:none;
+}
+#${WIDGET_ID} a.bcmb-day-tip-item:hover,
+#${WIDGET_ID} a.bcmb-day-tip-item:focus{
+  border-left-color:#00ffa3;
+  background:rgba(255,255,255,0.09);
 }
 #${WIDGET_ID} .bcmb-day-tip-item + .bcmb-day-tip-item{
   margin-top:7px;
@@ -455,8 +507,12 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   transform:translateX(-50%);
 }
 #${WIDGET_ID} .bcmb-day:hover .bcmb-day-tip,
-#${WIDGET_ID} .bcmb-day:focus .bcmb-day-tip{
+#${WIDGET_ID} .bcmb-day:focus .bcmb-day-tip,
+#${WIDGET_ID} .bcmb-day:focus-within .bcmb-day-tip{
   display:block;
+}
+#${WIDGET_ID} .bcmb-day[data-video-no]{
+  cursor:pointer;
 }
 #${WIDGET_ID} .bcmb-day[data-has-broadcast="1"],
 #${WIDGET_ID} .bcmb-day[data-live="1"]{
@@ -637,13 +693,41 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
                 navigateCalendarMonth(widget, Number(navButton.getAttribute("data-bcmb-nav")) || 0);
                 return;
             }
+            // 툴팁 방송 항목은 실제 앵커라 보조키·새 탭 처리를 브라우저 기본 동작에 맡기고,
+            // 툴팁의 앵커 밖 영역 클릭은 이동으로 치지 않는다.
+            if (event.target?.closest?.(".bcmb-day-tip")) return;
+            const dayEl = event.target?.closest?.(".bcmb-day[data-video-no]");
+            if (dayEl && widget.contains(dayEl)) {
+                event.preventDefault();
+                event.stopPropagation();
+                openDayVideo(dayEl.getAttribute("data-video-no"), event.ctrlKey || event.metaKey || event.shiftKey);
+                return;
+            }
             if (event.target?.closest?.(".bcmb-calendar")) return;
             if (!isCalendarEnabled()) return;
             const open = widget.getAttribute("data-open") === "1";
             setCalendarOpen(widget, !open);
         });
 
+        widget.addEventListener("auxclick", (event) => {
+            if (event.button !== 1) return;
+            if (event.target?.closest?.(".bcmb-day-tip")) return;
+            const dayEl = event.target?.closest?.(".bcmb-day[data-video-no]");
+            if (!dayEl || !widget.contains(dayEl)) return;
+            event.preventDefault();
+            openDayVideo(dayEl.getAttribute("data-video-no"), true);
+        });
+
         widget.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                if (event.target?.closest?.("a.bcmb-day-tip-item[href]")) return;
+                const dayEl = event.target?.closest?.(".bcmb-day[data-video-no]");
+                if (dayEl && widget.contains(dayEl)) {
+                    event.preventDefault();
+                    openDayVideo(dayEl.getAttribute("data-video-no"), event.ctrlKey || event.metaKey || event.shiftKey);
+                    return;
+                }
+            }
             if (!isCalendarEnabled()) return;
             if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
@@ -1193,6 +1277,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
     }
 
     function refreshWatchHistory({ rerender = true, deferWhenVisible = false } = {}) {
+        if (!isWatchDisplayEnabled()) return;
         if (!storage || watchHistoryLoading) return;
 
         watchHistoryLoading = true;
@@ -2022,6 +2107,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
     }
 
     function buildCalendarWatchRenderKey(month) {
+        if (!isWatchDisplayEnabled()) return "off";
         if (
             month?.__bcmbWatchKeyVersion === watchHistoryVersion &&
             month?.__bcmbWatchKeyChannelId === currentChannelId &&
@@ -2113,21 +2199,31 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
             if (month.today > 0 && day > month.today) item.setAttribute("data-future", "1");
 
             if (hasBroadcast) {
-                const hasWatchedStart = starts.some((start) => {
-                    const watchInfo = getStartWatchInfo(currentChannelId, start);
-                    return watchInfo && watchInfo.seconds > 0;
-                });
+                const hasWatchedStart =
+                    isWatchDisplayEnabled() &&
+                    starts.some((start) => {
+                        const watchInfo = getStartWatchInfo(currentChannelId, start);
+                        return watchInfo && watchInfo.seconds > 0;
+                    });
                 item.setAttribute("data-has-broadcast", "1");
                 item.setAttribute("data-live", "1");
                 item.setAttribute("data-level", getCalendarLevel(seconds));
                 if (hasWatchedStart) item.setAttribute("data-watch", "1");
                 if (starts.length) {
                     item.tabIndex = 0;
+                    const primaryVideoNo = getStartPrimaryVideoNo(starts[0]);
+                    if (primaryVideoNo) {
+                        item.setAttribute("data-video-no", String(primaryVideoNo));
+                        item.setAttribute("role", "link");
+                    }
                     const tip = document.createElement("span");
                     tip.className = "bcmb-day-tip";
                     tip.appendChild(buildDayTipContent(month, day, starts));
                     item.appendChild(tip);
-                    item.setAttribute("aria-label", `${month.month}월 ${day}일 ${buildDayAriaLabel(starts)}`);
+                    item.setAttribute(
+                        "aria-label",
+                        `${month.month}월 ${day}일 ${buildDayAriaLabel(starts)}${primaryVideoNo ? ", 클릭하면 다시보기로 이동" : ""}`
+                    );
                 } else {
                     item.setAttribute("aria-label", `${month.month}월 ${day}일 방송 기록 있음`);
                 }
@@ -2170,12 +2266,38 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         noteEl.className = "bcmb-calendar-foot-note";
         noteEl.textContent = month.partial ? "일부 기록만 표시됨" : "방송 시작일 기준 · KST";
 
+        if (!isWatchDisplayEnabled()) {
+            footEl.replaceChildren(noteEl);
+            return;
+        }
+
         const totalEl = document.createElement("span");
         totalEl.className = "bcmb-calendar-watch-total";
         totalEl.textContent = `내 시청 시간 ${formatDuration(getChannelWatchSeconds(currentChannelId))}`;
 
         fitCalendarFootNoteFont(noteEl, totalEl);
         footEl.replaceChildren(noteEl, totalEl);
+    }
+
+    function getStartPrimaryVideoNo(start) {
+        const videoNos = Array.isArray(start?.videoNos) ? start.videoNos.filter(Boolean) : [];
+        if (!videoNos.length) return null;
+        // 17시간 분할 VOD는 videoNo가 작은 쪽이 방송 앞부분 세그먼트다.
+        const numeric = videoNos.map(Number);
+        if (numeric.every((value) => Number.isFinite(value))) {
+            return videoNos[numeric.indexOf(Math.min(...numeric))];
+        }
+        return videoNos[0];
+    }
+
+    function getVideoUrl(videoNo) {
+        return `/video/${encodeURIComponent(videoNo)}`;
+    }
+
+    function openDayVideo(videoNo, newTab) {
+        if (!videoNo) return;
+        if (newTab) window.open(getVideoUrl(videoNo), "_blank", "noopener");
+        else window.location.assign(getVideoUrl(videoNo));
     }
 
     function buildDayTipContent(month, day, starts) {
@@ -2186,8 +2308,10 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         fragment.appendChild(title);
 
         for (const start of starts) {
-            const item = document.createElement("span");
+            const videoNo = getStartPrimaryVideoNo(start);
+            const item = document.createElement(videoNo ? "a" : "span");
             item.className = "bcmb-day-tip-item";
+            if (videoNo) item.setAttribute("href", getVideoUrl(videoNo));
 
             const startText = `${start.time}${start.exact ? "" : " 추정"}`;
             const endText = start.endMs
@@ -2195,10 +2319,12 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
                 : "종료 미상";
             const durationText = formatDuration(start.duration);
             const broadcastText = `${startText} - ${endText} · ${durationText}`;
-            const watchInfo = getStartWatchInfo(currentChannelId, start);
 
             appendTipRow(item, "방송", broadcastText, "broadcast");
-            appendTipRow(item, "내 시청", formatWatchInfo(watchInfo), "watch");
+            if (isWatchDisplayEnabled()) {
+                const watchInfo = getStartWatchInfo(currentChannelId, start);
+                appendTipRow(item, "내 시청", formatWatchInfo(watchInfo), "watch");
+            }
             fragment.appendChild(item);
         }
 
@@ -2226,8 +2352,10 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         return starts
             .map((start) => {
                 const endText = start.endMs ? formatKstClock(start.endMs) : "알 수 없음";
+                const base = `${start.time} 시작, ${endText} 종료, ${formatDuration(start.duration)} 진행`;
+                if (!isWatchDisplayEnabled()) return base;
                 const watchInfo = getStartWatchInfo(currentChannelId, start);
-                return `${start.time} 시작, ${endText} 종료, ${formatDuration(start.duration)} 진행, 내 시청 ${formatWatchInfo(watchInfo)}`;
+                return `${base}, 내 시청 ${formatWatchInfo(watchInfo)}`;
             })
             .join(", ");
     }
@@ -2359,6 +2487,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
     }
 
     function handleWatchHistoryStorageChange(changes, areaName) {
+        if (!isWatchDisplayEnabled()) return;
         if (areaName !== "local" || !changes[WATCH_HISTORY_STORAGE_KEY]) return;
         scheduleWatchHistoryStorageChange(changes[WATCH_HISTORY_STORAGE_KEY].newValue);
     }
@@ -2429,6 +2558,14 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         }
 
         installRuntime();
+
+        // 꺼져 있는 동안의 storage 변경은 무시되므로, 켜질 때 시청 기록을 새로 읽는다.
+        if (
+            prev.monthlyBroadcastTimeWatchEnabled !== options.monthlyBroadcastTimeWatchEnabled &&
+            isWatchDisplayEnabled()
+        ) {
+            refreshWatchHistory({ rerender: true });
+        }
 
         if (!isChannelRoute()) {
             removeWidgetIfMounted();

@@ -561,6 +561,16 @@
                         <span><strong>월간 달력</strong><small>방송한 날을 달력에 표시합니다.</small></span>
                         <input type="checkbox" data-option="monthlyBroadcastTimeCalendarEnabled" />
                     </label>
+                    <label
+                        class="toggle-row"
+                        data-depends-on="monthlyBroadcastTimeEnabled monthlyBroadcastTimeCalendarEnabled"
+                    >
+                        <span
+                            ><strong>내 시청 표시</strong
+                            ><small>달력에 내가 시청한 날과 시간을 함께 표시합니다.</small></span
+                        >
+                        <input type="checkbox" data-option="monthlyBroadcastTimeWatchEnabled" />
+                    </label>
 
                     <details class="advanced-settings">
                         <summary>방송 시간 수치 설정</summary>
@@ -858,8 +868,68 @@
                                     data-option="categoryToolsViewFilterPreset6"
                                 /><em>명/회</em></label
                             >
+                            <label
+                                ><span>진행 시간 1</span
+                                ><input
+                                    type="number"
+                                    min="1"
+                                    max="168"
+                                    step="1"
+                                    data-option="categoryToolsDurationFilterPreset1"
+                                /><em>시간</em></label
+                            >
+                            <label
+                                ><span>진행 시간 2</span
+                                ><input
+                                    type="number"
+                                    min="1"
+                                    max="168"
+                                    step="1"
+                                    data-option="categoryToolsDurationFilterPreset2"
+                                /><em>시간</em></label
+                            >
+                            <label
+                                ><span>진행 시간 3</span
+                                ><input
+                                    type="number"
+                                    min="1"
+                                    max="168"
+                                    step="1"
+                                    data-option="categoryToolsDurationFilterPreset3"
+                                /><em>시간</em></label
+                            >
+                            <label
+                                ><span>진행 시간 4</span
+                                ><input
+                                    type="number"
+                                    min="1"
+                                    max="168"
+                                    step="1"
+                                    data-option="categoryToolsDurationFilterPreset4"
+                                /><em>시간</em></label
+                            >
+                            <label
+                                ><span>진행 시간 5</span
+                                ><input
+                                    type="number"
+                                    min="1"
+                                    max="168"
+                                    step="1"
+                                    data-option="categoryToolsDurationFilterPreset5"
+                                /><em>시간</em></label
+                            >
+                            <label
+                                ><span>진행 시간 6</span
+                                ><input
+                                    type="number"
+                                    min="1"
+                                    max="168"
+                                    step="1"
+                                    data-option="categoryToolsDurationFilterPreset6"
+                                /><em>시간</em></label
+                            >
                         </div>
-                        <p class="setting-note">1번 값은 ‘이하’ 기준, 나머지는 구간 경계입니다.</p>
+                        <p class="setting-note">1번 값은 ‘이하’, 마지막 값 이후는 ‘이상’ 구간입니다.</p>
                     </details>
 
                     <details class="advanced-settings">

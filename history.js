@@ -1,3 +1,29 @@
+/**
+ * history.js — history.html(시청 기록 페이지)의 스크립트로, 로컬에 쌓인 라이브 시청 기록을 달력·목록으로 보여준다.
+ *
+ * 실행 컨텍스트: 확장 자체 페이지 history.html에서 로드된다. history.html은 shared/data.js를 먼저 script
+ * 태그로 로드하고 그다음 이 파일을 로드한다. content script가 아니라 확장 페이지 스크립트다.
+ * 하는 일: chrome.storage.local의 기록을 읽어 정규화하고, 월별 달력·목록·요약 통계를 렌더링한다.
+ * 검색/정렬, 항목 선택/삭제, 세션(입장~퇴장) 세부 보기를 제공하며, 클릭 시 치지직 API로 다시보기
+ * 영상을 찾아 새 탭으로 연다. storage.onChanged를 구독해 다른 곳의 변경도 반영한다.
+ * 의존: globalThis.chrome.storage.local, globalThis.BetterChzzk.utils(shared/data.js가 채움).
+ * 통신: chrome.storage.local 키 "betterChzzkLiveWatchHistory"를 읽고 쓴다(이 키는
+ * features/liveWatchHistory.js가 적재함). api.chzzk.naver.com의 채널 영상 목록/영상 상세 API를 호출해
+ * 다시보기 videoNo를 찾아내고, 찾은 값을 다시 같은 storage 키에 되써서 다음 조회를 캐시한다.
+ * 구조(위→아래 순서):
+ * - 상수/DOM 참조/전역 상태 선언 (STORAGE_KEY, API_BASE 등, 각 엘리먼트 참조, entries 등 상태 변수)
+ * - 제목 이력/표시 텍스트 포맷터 (getEntryTitleRows, formatDateLabel, formatDuration 등)
+ * - 세션 정규화/병합 (mergeContinuousSessionDetails, normalizeSessionDetails, normalizeHistory)
+ * - 원본 storage 데이터 갱신/삭제 헬퍼 (updateRawHistoryEntry, removeEntryIdsFromRawHistory)
+ * - 다시보기 매칭 로직 (extractReplayVideos, videoCouldMatchEntry, scoreReplayCandidate,
+ *   resolveReplayVideoNo)
+ * - 월 선택/집계 헬퍼 (ensureSelectedMonth, getMonthScopeBounds, getUniqueWatchSecondsForMonth)
+ * - 목록 정렬/필터/선택 상태 (getVisibleRows, renderSelectionControls, setEntrySelected 등)
+ * - 다시보기 열기 흐름 (persistReplayVideoNo, openUrlInNewTab, handleTitleClick)
+ * - 렌더링 함수 (renderCalendar, renderList, renderSummary, renderAll)
+ * - storage 로드/새로고침/삭제 액션 (loadHistory, refreshHistory, clearHistory, deleteEntriesByIds)
+ * - 이벤트 리스너 등록과 초기 로드 호출 (파일 최하단)
+ */
 const STORAGE_KEY = "betterChzzkLiveWatchHistory";
 const API_BASE = "https://api.chzzk.naver.com/service/v1/channels";
 const VIDEO_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/videos";

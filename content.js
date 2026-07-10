@@ -1,3 +1,19 @@
+/**
+ * content.js — isolated world 공용 유틸 모음 (window.BetterChzzk.utils)
+ *
+ * 실행 컨텍스트: isolated world. shared/settings.js, shared/data.js 다음이자 모든 features/* 이전에 로드된다.
+ * 하는 일: feature들이 공유하는 DOM·라우트·옵저버 유틸을 window.BetterChzzk.utils에 등록한다.
+ *   - 라우트 감지: routeBridgePage.js(MAIN world)가 쏘는 "betterchzzk:routechange"와 popstate/click 등을 모아
+ *     "betterchzzk:routechange:detected"로 feature들에 재배포한다 (startPageChangeDetection).
+ *   - getMainVideoElement: 확장이 만든 미리보기 video(data-bcfp-* 계열)를 제외하고 가장 큰 가시 video를 고른다.
+ *   - createMutationObserverSync: 대상 노드 대기(startBodyWatch)와 분리 후 재연결 감시가 붙은 옵저버 팩토리.
+ *   - bindFeatureOptions: 옵션 최초 로드 + 변경 구독을 한 번에 거는 헬퍼.
+ * 의존: BetterChzzkSettings(shared/settings.js). shared/data.js가 먼저 등록한 utils는 스프레드로 보존·재사용한다.
+ * 통신: window 이벤트 "betterchzzk:routechange"(수신, MAIN world발) → "betterchzzk:routechange:detected"(발신).
+ * 구조: 문자열·가시성 판별 유틸 → 플레이어/편집 대상 판별(getPlayerRoot 등) → 라우트 감지 설치/해제 →
+ *   injectStyleOnce → 라우트 판별(isLiveRoute/isVodRoute 등) → createMutationObserverSync →
+ *   bindFeatureOptions → root.utils 병합 등록.
+ */
 (() => {
     const root = (window.BetterChzzk = window.BetterChzzk || {});
     const existingUtils = root.utils || {};

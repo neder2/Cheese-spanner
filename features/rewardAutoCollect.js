@@ -1,3 +1,18 @@
+/**
+ * features/rewardAutoCollect.js — 채팅 사이드바(aside)의 보상(통나무 등) 수집 버튼을 자동으로 클릭한다.
+ *
+ * 동작 위치: chzzk.naver.com 전역 중 aside#aside-chatting(채팅 사이드바) 내부.
+ * 하는 일:
+ *   - aside#aside-chatting 하위의 button/[role="button"]/a[href] 후보를 스캔해 텍스트·속성·조상 문맥에서
+ *     보상 신호(TARGET_REWARD_SIGNAL_RE)와 수집 동작(CLAIM_ACTION_RE)을 동시에 만족하는 요소만 점수화한다.
+ *   - 구독/팔로우/로그인/결제 등(BLOCKED_ACTION_RE)에 해당하면 즉시 제외해 오클릭을 막는다.
+ *   - 가장 점수가 높은 버튼을 찾으면 지연 후 클릭하고, data-bcra-clicked 마커와 서명별 쿨다운으로 중복 클릭을 막는다.
+ *   - MutationObserver로 후보 셀렉터에 닿는 변화만 걸러 스캔을 재예약한다.
+ * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
+ *   createMutationObserverSync, createThrottledDomSync, isVisible, normSpace).
+ * 옵션 키: rewardAutoCollectEnabled, rewardAutoCollectDelayMs.
+ * DOM 마커: data-bcra-clicked(클릭 완료 표시 attribute).
+ */
 (() => {
     const { normalizeOptions } = BetterChzzkSettings;
     const { bindFeatureOptions, createMutationObserverSync, createThrottledDomSync, isVisible, normSpace } =

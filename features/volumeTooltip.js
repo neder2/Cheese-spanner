@@ -1,3 +1,31 @@
+/**
+ * features/volumeTooltip.js — 볼륨 슬라이더 위 hover 시 현재 볼륨(%)을 보여주는 툴팁 + 오디오 컴프레서 버튼.
+ *
+ * 실행 컨텍스트: isolated world(확장 컨텍스트).
+ * 동작 위치: 볼륨 슬라이더(.pzp-pc__volume-slider 계열) 및 볼륨 컨트롤(.pzp-pc__volume-control 계열) 주변.
+ * 하는 일: 이 파일은 서로 독립된 두 개의 IIFE로 구성된다.
+ *   (1) 볼륨 툴팁 — mouseover/mouseout으로 볼륨 슬라이더 hover를 감지해 #betterchzzk-volume-tooltip 요소를
+ *       표시하고, video의 volumechange 이벤트를 구독해 텍스트를 갱신한다. 전체화면 시 fullscreenElement로 이동.
+ *   (2) 오디오 컴프레서(cheese-knife 기반, 출처 주석은 코드 내 유지) — 볼륨 컨트롤 옆에 토글 버튼을 삽입하고,
+ *       Web Audio API로 MediaElementSource → DynamicsCompressor → Gain 그래프를 구성/해제한다. MutationObserver와
+ *       startPageChangeDetection으로 플레이어 재마운트에 맞춰 버튼과 그래프 상태를 재동기화한다.
+ * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions, injectStyleOnce,
+ *   getMainVideoElement, createMutationObserverSync, createThrottledDomSync, isPlaybackRoute, isVisible,
+ *   mutationMatchesSelector, onReady, startPageChangeDetection), 브라우저 Web Audio API(AudioContext).
+ * 옵션 키: volumeTooltipEnabled, audioCompressorEnabled, audioCompressorThreshold, audioCompressorKnee,
+ *   audioCompressorRatio, audioCompressorAttack, audioCompressorRelease, audioCompressorMakeupGain.
+ * DOM 마커: #betterchzzk-volume-tooltip, #betterchzzk-volume-tooltip-style, #betterchzzk-audio-compressor,
+ *   #betterchzzk-audio-compressor-style, data-better-chzzk-audio-compressor, data-better-chzzk-ready.
+ * 구조:
+ *   - 1~173행: 볼륨 툴팁 IIFE (ensureTooltipElement, showTooltip/hideTooltip, watchVideo, applyOptions).
+ *   - 175~180행: cheese-knife 출처 라이선스 주석(수정 금지).
+ *   - 181행~: 오디오 컴프레서 IIFE.
+ *     - createGraph/graphFor/connectGraph/disconnectGraph: Web Audio 그래프 생성과 압축/우회 모드 전환.
+ *     - resumeContext/installResumeHandlers: AudioContext suspended 상태 복구.
+ *     - createButton/ensureButton/syncButtonState: 토글 버튼 DOM 삽입과 위치/라벨 동기화.
+ *     - syncState: 옵션/라우트/비디오 변경에 따른 전체 상태 재계산 진입점.
+ *     - installRuntime: MutationObserver + 페이지 변경 감지 설치(1회).
+ */
 (() => {
     const TOOLTIP_ID = "betterchzzk-volume-tooltip";
     const STYLE_ID = "betterchzzk-volume-tooltip-style";

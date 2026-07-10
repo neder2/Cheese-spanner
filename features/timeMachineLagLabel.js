@@ -1,3 +1,34 @@
+/**
+ * features/timeMachineLagLabel.js — 라이브 화면의 "실시간/라이브" 버튼 텍스트에 타임머신(되감기) 지연 시간을
+ * "-분:초" 형태로 덧붙여 표시하는 기능 모듈.
+ *
+ * 동작 위치: 라이브 라우트 하단 컨트롤 바의 실시간/라이브 버튼 또는 좌측 버튼 컨테이너. isolated world,
+ *   content.js 이후 로드.
+ * 하는 일:
+ *   - video의 seekable 범위와 currentTime으로 라이브 엣지 대비 지연(lag)을 추정하고, 3초 이하는 표시하지
+ *     않는다.
+ *   - 대상 버튼의 텍스트 노드를 찾아 원본 텍스트를 저장한 뒤 지연 라벨을 이어붙이고(patchLiveText),
+ *     기능이 꺼지거나 라이브를 벗어나면 원본 텍스트로 복원한다(restoreLiveText).
+ *   - 적절한 버튼을 찾지 못하면 좌측 버튼 컨테이너에 별도 라벨 요소(#betterchzzk-live-lag-label)를 붙이는
+ *     fallback 경로를 쓴다.
+ *   - MutationObserver, timeupdate/progress 이벤트, 1초 간격 fallback 인터벌, 페이지 전환 감지를 함께
+ *     사용해 라벨을 최신 상태로 유지한다.
+ * 의존: 전역 BetterChzzkSettings.normalizeOptions, 전역 BetterChzzk.utils(bindFeatureOptions,
+ *   createMutationObserverSync, createThrottledDomSync, getMainVideoElement, isLiveRoute,
+ *   mutationMatchesSelector, normalizeCompact, onReady, pickLargestVisible, startPageChangeDetection).
+ * 옵션 키: timeMachineLagLabelEnabled.
+ * DOM 마커: data-bctm-text-patched(패치된 버튼 표시), id="betterchzzk-live-lag-label"(fallback 라벨),
+ *   id="betterchzzk-live-lag-patch-style"/id="betterchzzk-live-lag-label-style"(주입 스타일).
+ * 구조:
+ *   - 상수/상태 선언, isFeatureEnabled 및 텍스트 정규화(compact/containsAnyTerm) 유틸.
+ *   - isInLikelyVideoControlArea 등 버튼이 실제 컨트롤 바 안에 있는지 위치로 판별하는 함수군.
+ *   - findLiveEdgeButton/scoreButton: "실시간/라이브" 텍스트를 가진 버튼 후보를 점수화해 선택.
+ *   - getEstimatedLiveEdge/getLagSeconds/formatStableLagLabel: 라이브 엣지 추정과 지연 라벨 문자열 생성.
+ *   - patchLiveText/restoreLiveText: 대상 버튼 텍스트 노드 치환·복원.
+ *   - mountFallbackLagLabel/removeFallbackLagLabel: 버튼을 못 찾을 때 쓰는 별도 라벨 요소 관리.
+ *   - syncTimeMachineLagText: 매 동기화 주기마다 위 과정을 묶어 실행하는 핵심 루프.
+ *   - installRuntime/teardownRuntime/applyOptions: 옵션 변경과 라우트 변경에 따른 전체 생명주기 관리.
+ */
 (() => {
     const TEXT_PATCHED_ATTR = "data-bctm-text-patched";
     const PATCH_STYLE_ID = "betterchzzk-live-lag-patch-style";

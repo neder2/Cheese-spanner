@@ -934,6 +934,7 @@ async function createMonthlyBroadcastFixture({
     nowMs = Date.parse("2026-06-29T12:00:00+09:00"),
     videos = [],
     watchHistory = [],
+    watchDisplay = true,
 } = {}) {
     const chrome = createFakeChrome({
         local: {
@@ -942,6 +943,7 @@ async function createMonthlyBroadcastFixture({
         sync: {
             monthlyBroadcastTimeEnabled: true,
             monthlyBroadcastTimeCalendarEnabled: true,
+            monthlyBroadcastTimeWatchEnabled: watchDisplay,
             monthlyBroadcastTimeMaxCalendarPages: 5,
             monthlyBroadcastTimeMaxPages: 5,
             monthlyBroadcastTimeWindowDays: 30,
@@ -1230,6 +1232,57 @@ test("monthly broadcast calendar separates stream and watch rows in dense day ti
     }
 });
 
+test("monthly broadcast calendar hides watch info when watch display is disabled", async () => {
+    const startMs = Date.parse("2026-06-28T09:00:00+09:00");
+    const duration = 20 * 60;
+    const fixture = await createMonthlyBroadcastFixture({
+        watchDisplay: false,
+        videos: [
+            {
+                duration,
+                liveCloseDate: new Date(startMs + duration * 1000).toISOString(),
+                liveOpenDate: "2026-06-28T09:00:00+09:00",
+                videoNo: "hiddenWatch",
+                videoTitle: "Watch hidden fixture",
+                videoType: "REPLAY",
+            },
+        ],
+        watchHistory: [
+            {
+                channelId: MONTHLY_BROADCAST_CHANNEL_ID,
+                dailySeconds: { "2026-06-28": duration },
+                firstWatchedAt: startMs,
+                id: "watch-hidden",
+                lastWatchedAt: startMs + duration * 1000,
+                liveId: "hiddenWatch",
+                liveOpenDate: "2026-06-28T09:00:00+09:00",
+                title: "Watch hidden fixture",
+                watchedSeconds: duration,
+            },
+        ],
+    });
+
+    try {
+        await waitForCondition(
+            () => getMonthlyCalendarDay(fixture.document, "2026-06-28")?.getAttribute("data-has-broadcast") === "1",
+            { timeoutMs: 3000 }
+        );
+        await waitForAsyncCallbacks();
+
+        const day = getMonthlyCalendarDay(fixture.document, "2026-06-28");
+        assert.equal(day.getAttribute("data-watch"), null);
+        assert.ok(day.querySelector(".bcmb-day-tip-row-broadcast"));
+        assert.equal(day.querySelector(".bcmb-day-tip-row-watch"), null);
+        assert.doesNotMatch(day.getAttribute("aria-label"), /내 시청/);
+
+        const foot = fixture.document.querySelector(`#${MONTHLY_BROADCAST_WIDGET_ID} .bcmb-calendar-foot`);
+        assert.equal(foot.querySelector(".bcmb-calendar-watch-total"), null);
+        assert.match(foot.textContent, /방송 시작일 기준/);
+    } finally {
+        await closeMonthlyBroadcastFixture(fixture);
+    }
+});
+
 test("monthly broadcast calendar keeps colored days when returning to a cached month", async () => {
     const startMs = Date.parse("2026-06-28T23:30:00+09:00");
     const fixture = await createMonthlyBroadcastFixture({
@@ -1269,6 +1322,100 @@ test("monthly broadcast calendar keeps colored days when returning to a cached m
         );
 
         assert.equal(getMonthlyCalendarDay(fixture.document, "2026-06-28").getAttribute("data-live"), "1");
+    } finally {
+        await closeMonthlyBroadcastFixture(fixture);
+    }
+});
+
+test("monthly broadcast calendar day click opens the day's first replay", async () => {
+    const firstOpen = "2026-06-28T09:00:00+09:00";
+    const firstStartMs = Date.parse(firstOpen);
+    const secondOpen = "2026-06-28T15:10:00+09:00";
+    const secondStartMs = Date.parse(secondOpen);
+    const fixture = await createMonthlyBroadcastFixture({
+        videos: [
+            // 같은 방송이 17시간 분할로 쪼개진 두 세그먼트: videoNo가 작은 쪽이 앞부분.
+            {
+                duration: 30 * 60,
+                liveCloseDate: new Date(firstStartMs + 60 * 60 * 1000).toISOString(),
+                liveOpenDate: firstOpen,
+                videoNo: "7002",
+                videoTitle: "Split segment two",
+                videoType: "REPLAY",
+            },
+            {
+                duration: 30 * 60,
+                liveCloseDate: new Date(firstStartMs + 30 * 60 * 1000).toISOString(),
+                liveOpenDate: firstOpen,
+                videoNo: "7001",
+                videoTitle: "Split segment one",
+                videoType: "REPLAY",
+            },
+            {
+                duration: 40 * 60,
+                liveCloseDate: new Date(secondStartMs + 40 * 60 * 1000).toISOString(),
+                liveOpenDate: secondOpen,
+                videoNo: "8001",
+                videoTitle: "Afternoon stream",
+                videoType: "REPLAY",
+            },
+        ],
+    });
+
+    try {
+        await waitForCondition(
+            () => getMonthlyCalendarDay(fixture.document, "2026-06-28")?.getAttribute("data-has-broadcast") === "1",
+            { timeoutMs: 3000 }
+        );
+
+        const widget = fixture.document.getElementById(MONTHLY_BROADCAST_WIDGET_ID);
+        const day = getMonthlyCalendarDay(fixture.document, "2026-06-28");
+
+        assert.equal(day.getAttribute("data-video-no"), "7001");
+        assert.equal(day.getAttribute("role"), "link");
+        assert.match(day.getAttribute("aria-label"), /클릭하면 다시보기로 이동/);
+
+        const anchors = Array.from(day.querySelectorAll("a.bcmb-day-tip-item"));
+        assert.deepEqual(
+            anchors.map((anchor) => anchor.getAttribute("href")),
+            ["/video/7001", "/video/8001"]
+        );
+
+        const opened = [];
+        fixture.dom.window.open = (url, target) => {
+            opened.push({ url, target });
+            return null;
+        };
+
+        day.dispatchEvent(
+            new fixture.dom.window.MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true })
+        );
+        assert.deepEqual(opened, [{ url: "/video/7001", target: "_blank" }]);
+        assert.notEqual(widget.getAttribute("data-open"), "1");
+
+        day.dispatchEvent(
+            new fixture.dom.window.MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 })
+        );
+        assert.equal(opened.length, 2);
+        assert.equal(opened[1].url, "/video/7001");
+
+        day.dispatchEvent(
+            new fixture.dom.window.KeyboardEvent("keydown", {
+                bubbles: true,
+                cancelable: true,
+                ctrlKey: true,
+                key: "Enter",
+            })
+        );
+        assert.equal(opened.length, 3);
+        assert.notEqual(widget.getAttribute("data-open"), "1");
+
+        // 툴팁의 앵커 밖 영역(제목) 클릭은 이동으로 치지 않는다.
+        day.querySelector(".bcmb-day-tip-title").dispatchEvent(
+            new fixture.dom.window.MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true })
+        );
+        assert.equal(opened.length, 3);
+        assert.notEqual(widget.getAttribute("data-open"), "1");
     } finally {
         await closeMonthlyBroadcastFixture(fixture);
     }
@@ -1597,7 +1744,43 @@ test("options places following controls with exploration controls", () => {
     assert.ok(optionOrder.indexOf("followingPreviewSoundEnabled") < optionOrder.indexOf("titleTooltipEnabled"));
 });
 
-test("manifest loads playback scripts in the expected worlds", () => {
+test("shared selector registry preserves lookup priority and warns once per stale anchor", async () => {
+    const dom = createPageDom(
+        `
+        <div id="generic-dimmed" class="overlay"></div>
+        <div id="legacy-dimmed" class="popup_dimmed__zs78t"></div>
+        <div id="popup-start" class="popup_container__newHash"></div>
+        <div id="popup-second" class="other popup_container__newerHash"></div>
+        `,
+        "https://chzzk.naver.com/live/selector-test",
+        createFakeChrome()
+    );
+    const warnings = [];
+    dom.window.console.warn = (...args) => warnings.push(args.join(" "));
+
+    evalRepoScript(dom, "shared", "selectors.js");
+
+    const { CHZZK, queryChain, queryChainAll, watchSelector } = dom.window.BetterChzzk.selectors;
+    assert.equal(queryChain(dom.window.document, CHZZK.popupDimmed)?.id, "legacy-dimmed");
+    assert.deepEqual(
+        Array.from(queryChainAll(dom.window.document, CHZZK.popupDimmed), (element) => element.id),
+        ["legacy-dimmed"]
+    );
+    assert.equal(queryChain(dom.window.document, CHZZK.popupContainer)?.id, "popup-start");
+
+    dom.window.document.querySelector("#popup-start").remove();
+    assert.equal(queryChain(dom.window.document, CHZZK.popupContainer)?.id, "popup-second");
+
+    watchSelector("playerRoot", dom.window.document, 0);
+    watchSelector("playerRoot", dom.window.document, 0);
+    await waitForAsyncCallbacks();
+
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /selector stale: playerRoot/);
+    dom.window.close();
+});
+
+test("manifest loads shared and playback scripts in the expected worlds", () => {
     const manifest = JSON.parse(readRepoFile("manifest.json"));
     const mainScript = manifest.content_scripts.find((entry) => entry.world === "MAIN");
     const isolatedScript = manifest.content_scripts.find((entry) => entry.js?.includes("features/volumeWheel.js"));
@@ -1616,6 +1799,9 @@ test("manifest loads playback scripts in the expected worlds", () => {
     assert.ok(isolatedScript.js.includes("features/volumeWheel.js"));
     assert.ok(isolatedScript.js.includes("vendor/hls.light.min.js"));
     assert.ok(isolatedScript.js.includes("features/followingPreviewTooltip.js"));
+    assert.ok(isolatedScript.js.includes("shared/selectors.js"));
+    assert.ok(isolatedScript.js.indexOf("shared/selectors.js") > isolatedScript.js.indexOf("shared/data.js"));
+    assert.ok(isolatedScript.js.indexOf("shared/selectors.js") < isolatedScript.js.indexOf("content.js"));
     assert.ok(isolatedScript.js.indexOf("features/volumeWheel.js") > isolatedScript.js.indexOf("content.js"));
     assert.ok(
         isolatedScript.js.indexOf("vendor/hls.light.min.js") <
@@ -1706,6 +1892,183 @@ function createCategoryToolsDom(chrome) {
         height: 180,
     });
     return dom;
+}
+
+function createGlobalLivesDom(chrome, { nestedScroll = false } = {}) {
+    const scrollOpen = nestedScroll ? '<div id="scroll-shell" style="overflow-y:auto">' : "";
+    const scrollClose = nestedScroll ? "</div>" : "";
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<section id="global-section">',
+            '<nav id="global-tabs"><a href="/lives" aria-current="page">라이브</a><a href="/videos">동영상</a></nav>',
+            '<div id="native-filter"><input type="search" placeholder="태그 검색" aria-label="태그 검색"></div>',
+            '<div id="sort-row">',
+            '<button aria-selected="true">인기</button>',
+            "<button>최신</button>",
+            "<button>추천</button>",
+            "</div>",
+            scrollOpen,
+            '<main id="grid">',
+            '<article id="live-card-a">' +
+                '<a class="_thumbnail" href="/live/native-a">' +
+                '<img src="https://example.com/a.jpg" width="320" height="180" alt=""></a>' +
+                '<a class="_title" href="/live/native-a"><strong class="_live_title">Native A</strong></a>' +
+                "<span>LIVE 10명</span>" +
+                '<a class="_image" href="/live/native-a"><span class="_blind">Template Channel 채널로 이동</span></a>' +
+                '<a class="_channel" href="/live/native-a" aria-label="Template Channel 채널로 이동" ' +
+                'title="Template Channel"><span class="_ellipsis"><span class="_text">Template Channel</span></span>' +
+                '<span class="_blind">Template Channel 채널로 이동</span>' +
+                '<span data-bcgt-follower-wrap="1"><span data-bcgt-follower-badge="1">44.7만</span></span>' +
+                "</a></article>",
+            '<article id="live-card-b">' +
+                '<a class="_thumbnail" href="/live/native-b">' +
+                '<img src="https://example.com/b.jpg" width="320" height="180" alt=""></a>' +
+                '<a class="_title" href="/live/native-b"><strong class="_live_title">Native B</strong></a>' +
+                "<span>LIVE 20명</span>" +
+                '<a class="_image" href="/live/native-b">' +
+                '<span class="_blind">Second Template Channel 채널로 이동</span></a>' +
+                '<a class="_channel" href="/live/native-b" aria-label="Second Template Channel 채널로 이동" ' +
+                'title="Second Template Channel">' +
+                '<span class="_ellipsis"><span class="_text">Second Template Channel</span></span>' +
+                '<span class="_blind">Second Template Channel 채널로 이동</span>' +
+                '<span data-bcgt-follower-wrap="1"><span data-bcgt-follower-badge="1">99.9만</span></span>' +
+                "</a></article>",
+            '<div id="native-sentinel">Loading</div>',
+            "</main>",
+            scrollClose,
+            "</section>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/lives",
+        chrome
+    );
+    const { document } = dom.window;
+    setElementRect(document.getElementById("global-section"), { left: 16, top: 96, width: 1160, height: 1200 });
+    setElementRect(document.getElementById("global-tabs"), { left: 32, top: 112, width: 1120, height: 48 });
+    document.querySelectorAll("#global-tabs a").forEach((tab, index) => {
+        setElementRect(tab, { left: 40 + index * 88, top: 120, width: 76, height: 32 });
+    });
+    setElementRect(document.getElementById("native-filter"), { left: 32, top: 168, width: 1120, height: 68 });
+    setElementRect(document.querySelector("#native-filter input"), { left: 896, top: 184, width: 240, height: 36 });
+    setElementRect(document.getElementById("sort-row"), { left: 32, top: 209, width: 1120, height: 44 });
+    document.querySelectorAll("#sort-row button").forEach((button, index) => {
+        setElementRect(button, { left: 40 + index * 70, top: 215, width: 60, height: 32 });
+    });
+    setElementRect(document.getElementById("grid"), { left: 32, top: 280, width: 1120, height: 900 });
+    setElementRect(document.getElementById("live-card-a"), { left: 40, top: 300, width: 320, height: 240 });
+    setElementRect(document.querySelector("#live-card-a a._thumbnail"), {
+        left: 40,
+        top: 300,
+        width: 320,
+        height: 180,
+    });
+    setElementRect(document.getElementById("live-card-b"), { left: 384, top: 300, width: 320, height: 240 });
+    setElementRect(document.querySelector("#live-card-b a._thumbnail"), {
+        left: 384,
+        top: 300,
+        width: 320,
+        height: 180,
+    });
+    // global-lives 카드 판정은 링크 내부 미디어의 실제 rect(120x70 이상)를 요구한다.
+    setElementRect(document.querySelector("#live-card-a img"), { left: 40, top: 300, width: 320, height: 180 });
+    setElementRect(document.querySelector("#live-card-b img"), { left: 384, top: 300, width: 320, height: 180 });
+
+    const getDefaultRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
+    dom.window.HTMLElement.prototype.getBoundingClientRect = function getFixtureRect() {
+        if (this.id === "betterchzzk-category-tools") {
+            return {
+                x: 300,
+                y: 213,
+                left: 300,
+                top: 213,
+                right: 820,
+                bottom: 253,
+                width: 520,
+                height: 40,
+            };
+        }
+        return getDefaultRect.call(this);
+    };
+    if (nestedScroll) {
+        const shell = document.getElementById("scroll-shell");
+        Object.defineProperties(shell, {
+            clientHeight: { configurable: true, value: 600 },
+            scrollHeight: { configurable: true, value: 2400 },
+        });
+    }
+    return dom;
+}
+
+// 주입 카드가 경과 시간 배지 interval을 살려두므로, 기능을 꺼서 타이머를 정리하고 창을 닫는다.
+async function closeCategoryToolsFixture(dom, chrome) {
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener({ categoryToolsEnabled: { newValue: false } }, "sync");
+    }
+    await waitForAsyncCallbacks();
+    dom.window.close();
+}
+
+const DEFAULT_GLOBAL_LIVES_FIXTURE = [
+    {
+        liveId: 500000,
+        openDate: "2026-04-01 01:00:00",
+        adult: false,
+        channelId: "old-1",
+        channelName: "Old Channel One",
+        title: "Oldest live",
+        views: 250,
+    },
+    {
+        liveId: 500500,
+        openDate: "2026-04-03 01:00:00",
+        adult: false,
+        channelId: "old-2",
+        channelName: "Old Channel Two",
+        title: "Second oldest",
+        views: 50,
+    },
+    { liveId: 501000, openDate: "2026-04-05 01:00:00", adult: true, channelId: "old-adult", title: "Adult live" },
+    ...Array.from({ length: 9 }, (_, index) => ({
+        liveId: 999991 + index,
+        openDate: `2026-07-06 0${index}:00:00`,
+        adult: false,
+        channelId: `new-${index}`,
+        title: `Recent ${index}`,
+    })),
+];
+
+// /v1/lives 목업: liveId가 openDate와 단조 증가하는 가상 라이브 목록.
+// 커서(liveId) 미만을 내림차순으로 페이지네이션해 실제 API의 커서 점프 동작을 흉내 낸다.
+function createGlobalLivesApiMock(lives = DEFAULT_GLOBAL_LIVES_FIXTURE) {
+    return function livesResponse(href) {
+        const url = new URL(href);
+        const size = Number(url.searchParams.get("size")) || 50;
+        const cursor = url.searchParams.get("liveId");
+        let rows = lives.slice().sort((a, b) => b.liveId - a.liveId);
+        if (cursor !== null) rows = rows.filter((row) => row.liveId < Number(cursor));
+        const pageRows = rows.slice(0, size);
+        const hasMore = rows.length > pageRows.length;
+        return {
+            content: {
+                data: pageRows.map((row) => ({
+                    liveId: row.liveId,
+                    liveTitle: row.title,
+                    liveImageUrl: `https://example.com/${row.channelId}_{type}.jpg`,
+                    concurrentUserCount: row.views ?? 5,
+                    openDate: row.openDate,
+                    adult: row.adult,
+                    tags: [],
+                    liveCategoryValue: "테스트",
+                    channel: { channelId: row.channelId, channelName: row.channelName || row.channelId },
+                })),
+                page: hasMore
+                    ? { next: { concurrentUserCount: 0, liveId: pageRows[pageRows.length - 1].liveId } }
+                    : { next: null },
+            },
+        };
+    };
 }
 
 function createVideoSearchDom(chrome) {
@@ -1814,6 +2177,200 @@ test("category tools hydrates newly visible follower badges on scroll without a 
             .map((href) => decodeURIComponent(href.match(/\/v1\/channels\/([^/?#]+)/)?.[1] || "")),
         ["channel-a", "channel-b"]
     );
+});
+
+test("global lives duration filter uses openDate and keeps the native list path", async () => {
+    const chrome = createFakeChrome({ sync: { categoryToolsFollowerBadgesEnabled: false } });
+    const dom = createGlobalLivesDom(chrome);
+    const now = Date.parse("2026-07-10T12:00:00Z");
+    dom.window.Date.now = () => now;
+
+    const { document } = dom.window;
+    const grid = document.getElementById("grid");
+    const sentinel = document.getElementById("native-sentinel");
+    const addNativeCard = ({ cardId, channelId, title, top }) => {
+        const card = document.getElementById("live-card-b").cloneNode(true);
+        card.id = cardId;
+        for (const anchor of card.querySelectorAll("a[href]")) {
+            anchor.setAttribute("href", "/live/" + channelId);
+        }
+        card.querySelector("._live_title").textContent = title;
+        grid.insertBefore(card, sentinel);
+        setElementRect(card, { left: 40, top, width: 320, height: 240 });
+        setElementRect(card.querySelector("a._thumbnail"), { left: 40, top, width: 320, height: 180 });
+        setElementRect(card.querySelector("img"), { left: 40, top, width: 320, height: 180 });
+        return card;
+    };
+    const missingDateCard = addNativeCard({
+        cardId: "live-card-missing",
+        channelId: "native-missing",
+        title: "Missing open date",
+        top: 560,
+    });
+    const futureDateCard = addNativeCard({
+        cardId: "live-card-future",
+        channelId: "native-future",
+        title: "Future open date",
+        top: 820,
+    });
+
+    const livesResponse = createGlobalLivesApiMock([
+        {
+            liveId: 500005,
+            openDate: "2026-07-10T09:00:00Z",
+            adult: false,
+            channelId: "native-a",
+            channelName: "Native Channel A",
+            title: "Native A metadata",
+            views: 250,
+        },
+        {
+            liveId: 500004,
+            openDate: "2026-07-10T11:30:00Z",
+            adult: false,
+            channelId: "native-b",
+            channelName: "Native Channel B",
+            title: "Native B metadata",
+            views: 50,
+        },
+        {
+            liveId: 500003,
+            openDate: "",
+            adult: false,
+            channelId: "native-missing",
+            channelName: "Missing Date Channel",
+            title: "Missing date metadata",
+            views: 30,
+        },
+        {
+            liveId: 500002,
+            openDate: "2026-07-10T13:00:00Z",
+            adult: false,
+            channelId: "native-future",
+            channelName: "Future Date Channel",
+            title: "Future date metadata",
+            views: 20,
+        },
+        {
+            liveId: 500001,
+            openDate: "2026-07-10T08:30:00Z",
+            adult: false,
+            channelId: "injected-pass",
+            channelName: "Duration Match Channel",
+            title: "Injected duration match",
+            views: 100,
+        },
+    ]);
+    const requests = [];
+    dom.window.fetch = async (url) => {
+        const href = String(url);
+        requests.push(href);
+        if (href.includes("/v1/lives")) {
+            return { ok: true, json: async () => livesResponse(href) };
+        }
+        return { ok: true, json: async () => ({ content: {} }) };
+    };
+
+    await loadCategoryToolsPage(dom);
+
+    try {
+        await waitForCondition(() => document.querySelector('[data-filter-options="duration"] .bcgt-option'));
+
+        assert.equal(document.querySelector('[data-bcgt-time-chip="1"]'), null);
+        assert.equal(
+            requests.some((href) => href.includes("sortType=LATEST")),
+            false
+        );
+
+        const toolbar = document.getElementById("betterchzzk-category-tools");
+        const filterButton = toolbar.querySelector(".bcgt-filter");
+        filterButton.click();
+
+        const menu = document.getElementById("betterchzzk-category-filter-menu");
+        const durationGroup = menu.querySelector('[data-filter-group="duration"]');
+        assert.equal(durationGroup.hidden, false);
+        assert.equal(menu.getAttribute("data-open"), "1");
+
+        const durationRanges = Array.from(
+            menu.querySelectorAll('[data-filter-kind="duration"]'),
+            (button) => button.getAttribute("data-filter-min") + ":" + button.getAttribute("data-filter-max")
+        );
+        assert.deepEqual(durationRanges, [
+            "0:0",
+            "0:3600",
+            "3600:7200",
+            "7200:14400",
+            "14400:21600",
+            "21600:43200",
+            "43200:86400",
+            "86400:0",
+        ]);
+
+        const twoToFourHours = menu.querySelector(
+            '[data-filter-kind="duration"][data-filter-min="7200"][data-filter-max="14400"]'
+        );
+        twoToFourHours.click();
+
+        await waitForCondition(
+            () =>
+                document.getElementById("live-card-a").getAttribute("data-bcgt-hide") !== "1" &&
+                document.getElementById("live-card-b").getAttribute("data-bcgt-hide") === "1" &&
+                missingDateCard.getAttribute("data-bcgt-hide") === "1" &&
+                futureDateCard.getAttribute("data-bcgt-hide") === "1" &&
+                document.querySelector('[data-bcgt-injected="1"][data-bcgt-card-id="injected-pass"]'),
+            { timeoutMs: 3000 }
+        );
+
+        assert.equal(toolbar.querySelector(".bcgt-filter-label").textContent, "필터 1");
+        const injected = document.querySelector('[data-bcgt-injected="1"][data-bcgt-card-id="injected-pass"]');
+        const injectedChannel = injected.querySelector("a._channel");
+        assert.equal(injected.querySelector("a._title").textContent, "Injected duration match");
+        assert.equal(injectedChannel.querySelector("._text").textContent, "Duration Match Channel");
+        assert.equal(injectedChannel.getAttribute("href"), "/live/injected-pass");
+        assert.equal(injectedChannel.getAttribute("aria-label"), "Duration Match Channel 채널로 이동");
+        assert.equal(injected.querySelector('[data-bcgt-follower-badge="1"]'), null);
+
+        const durationMin = menu.querySelector('[data-filter-min-input="duration"]');
+        const durationMax = menu.querySelector('[data-filter-max-input="duration"]');
+        durationMin.value = "0.25";
+        durationMin.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+        durationMax.value = "1";
+        durationMax.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+
+        await waitForCondition(
+            () =>
+                document.getElementById("live-card-a").getAttribute("data-bcgt-hide") === "1" &&
+                document.getElementById("live-card-b").getAttribute("data-bcgt-hide") !== "1" &&
+                missingDateCard.getAttribute("data-bcgt-hide") === "1" &&
+                futureDateCard.getAttribute("data-bcgt-hide") === "1" &&
+                injected.getAttribute("data-bcgt-hide") === "1",
+            { timeoutMs: 3000 }
+        );
+        assert.equal(toolbar.querySelector(".bcgt-filter-label").textContent, "필터 1");
+
+        menu.querySelector("[data-filter-reset]").click();
+        await waitForCondition(
+            () =>
+                document.querySelector('[data-bcgt-injected="1"]') === null &&
+                [
+                    document.getElementById("live-card-a"),
+                    document.getElementById("live-card-b"),
+                    missingDateCard,
+                    futureDateCard,
+                ].every((card) => card.getAttribute("data-bcgt-hide") !== "1"),
+            { timeoutMs: 3000 }
+        );
+
+        assert.equal(toolbar.querySelector(".bcgt-filter-label").textContent, "필터");
+        assert.equal(toolbar.getAttribute("data-has-filter"), "0");
+        assert.equal(document.querySelector('[data-bcgt-time-chip="1"]'), null);
+        assert.equal(
+            requests.some((href) => href.includes("sortType=LATEST")),
+            false
+        );
+    } finally {
+        await closeCategoryToolsFixture(dom, chrome);
+    }
 });
 
 test("video search stores the comment device id in extension storage only", async () => {

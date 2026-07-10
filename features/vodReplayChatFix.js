@@ -1,3 +1,14 @@
+/**
+ * features/vodReplayChatFix.js — 다시보기 진입 직후 "라이브 채팅 다시보기"가 안 뜨면 새로고침한다.
+ *
+ * 동작 위치: 치지직 VOD 시청 페이지(/video/{id}) SPA 라우트.
+ * 하는 일: SPA 내비게이션으로 VOD 라우트에 들어오면 일정 지연 후 채팅 다시보기 UI가 나타났는지
+ *   본문 텍스트로 확인한다. 플레이어 확장 레이아웃이거나 레이아웃이 안정화 중이거나 비디오가 아직
+ *   준비 안 됐으면 미루고, 조건이 맞으면 현재 재생 시간을 URL 에 담아 location.replace 로 한 번만
+ *   새로고침한다. sessionStorage 에 새로고침 표시를 남겨 같은 경로에서 중복 새로고침을 막는다.
+ * 의존: BetterChzzk.utils(createMutationObserverSync, createThrottledDomSync, getMainVideoElement,
+ *   onReady, startPageChangeDetection), sessionStorage.
+ */
 (() => {
     const VOD_ROUTE_RE = /^\/video\/\d+(?:\/|$)/;
     const CHAT_HEADING_TEXT = "\uB77C\uC774\uBE0C \uCC44\uD305 \uB2E4\uC2DC\uBCF4\uAE30";

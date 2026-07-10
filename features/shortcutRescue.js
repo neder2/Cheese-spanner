@@ -1,3 +1,18 @@
+/**
+ * features/shortcutRescue.js — 치지직 네이티브 플레이어 단축키(재생/음소거/전체화면/넓은 화면)가 죽었을 때 복구한다.
+ *
+ * 실행 컨텍스트: isolated world(확장 컨텍스트). manifest.json 로드 순서상 가장 마지막에 실행된다.
+ * 동작 위치: /live 또는 /video 재생 라우트(isPlaybackRoute)의 플레이어 영역, keydown(Space/KeyM/KeyF/KeyT).
+ * 하는 일: 키를 누르면 네이티브 핸들러가 상태(재생/음소거/전체화면)를 바꾸는지 PROBE_TIMEOUT_MS(80ms) 동안
+ *   관찰해 파이프라인 생존 여부(pipelineState: unknown/alive/dead)를 라우트 진입마다 새로 판정한다. 죽었다고
+ *   판정되면 이후 같은 라우트에서는 관찰을 건너뛰고 즉시 버튼 클릭(우선) 또는 video/document API 직접 호출로
+ *   폴백한다. Space는 repeat keydown을 무시하며(네이티브와 달리 반복 입력에 반응하지 않음), 편집 가능 대상이나
+ *   플레이어 바깥 상호작용 대상에서는 개입하지 않는다.
+ * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(getMainVideoElement, getPlayerRoot,
+ *   isEditableTarget, isOutsidePlayerInteractiveTarget, isPlaybackRoute, isVisible, normalizeCompact,
+ *   bindFeatureOptions).
+ * 옵션 키: shortcutRescueEnabled.
+ */
 (() => {
     // 네이티브 키 핸들러는 정상일 때 같은 이벤트 턴 근처에서 상태를 바꾼다.
     // 오래 기다리면 복구 자체가 입력 지연처럼 보이므로 짧은 유예만 둔다.
