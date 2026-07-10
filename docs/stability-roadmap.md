@@ -1,22 +1,19 @@
 # Better Chzzk 안정화 로드맵 — 작업 지시서
 
 > 이 문서는 다음 작업 세션(AI 모델 포함)이 사전 맥락 없이 바로 실행할 수 있도록 쓴 지시서다.
-> 작성일: 2026-07-07 / 기준 버전: 1.2.1 (브랜치 1.2.2)
+> 작성일: 2026-07-07 / 갱신일: 2026-07-10 / 기준 버전: 1.2.2
 > **핵심 방침: 새 기능 추가는 아래 1~4단계가 끝날 때까지 동결한다.**
 
-## 선행 조건 — 1.2.2 작업 마무리가 먼저다
+## 선행 조건 — 1.2.2 릴리스 완결이 먼저다
 
-2026-07-07 기준 작업 트리에 **34개 파일, +2,029/-275 줄의 미커밋 변경**(1.2.2 진행분)이
-있다. 여기에는 chatTools 행 탐지 수정(docs/chat-tools-row-detection-fix-plan.md 참조)과
-테스트 확장이 포함된다. **이 로드맵의 리팩토링을 미커밋 기능 변경 위에 얹지 말 것** —
-회귀가 나면 원인 분리가 불가능해진다. 순서:
+1.2.2 기능 변경과 후속 안정화 변경을 같은 릴리스 범위로 정리했다. 이후 로드맵 작업은
+이 릴리스와 섞지 말고 단계별로 검증해 회귀 원인을 분리한다. 순서:
 
-1. 1.2.2 릴리스 작업을 먼저 완결한다 (AGENTS.md 릴리스 규칙: manifest.json과
-   package.json 버전 동시 인상, docs/update-history.md 갱신, 기능·옵션·권한 변경 시
-   README.md 갱신).
-2. 단, 이 로드맵이 만든 파일들(shared/selectors.js 신규, manifest.json의 로드 순서
-   1줄, docs/stability-roadmap.md)은 dead code라 1.2.2에 포함해도 무해하고,
-   빼고 싶으면 그 두 변경만 스테이징에서 제외하면 된다.
+1. 1.2.2 릴리스 변경을 모두 커밋하고 전체 테스트·린트·포맷 검사를 통과시킨 뒤
+   패키지와 공개 릴리스를 완결한다.
+2. `shared/selectors.js`, manifest 로드 순서, 이 로드맵은 커밋 `227a61f`부터
+   1.2.2 범위에 포함됐다. `shared/selectors.js`는 1단계 치환 전까지 기존 기능이
+   소비하지 않는 기반 코드다.
 3. 릴리스 후 깨끗한 트리에서 1단계 치환을 시작한다.
 
 ## AGENTS.md와의 관계 (반드시 준수)
@@ -54,7 +51,7 @@ Better Chzzk는 치지직의 **비공개 DOM 클래스 해시**(`live_chatting_l
 
 실사례: 고정공지가 있는 방송에서 chatRoot 자체에 `_exist_fixed_message_` 클래스가 붙어
 `closest()` 행 탐색이 루트에 매치되면서 새 채팅이 전부 무시된 버그
-(상세: docs/chat-tools-row-detection-fix-plan.md). 이런 유형의 장애는 조용히 발생하고
+(2026-07-10 수정 완료, 회귀 픽스처: `tests/chat-tools.test.js`). 이런 유형의 장애는 조용히 발생하고
 사용자가 한참 뒤에 발견한다. 아래 작업의 목적은 "치지직이 변해도 버티고, 못 버티면
 즉시 알아차리는" 구조를 만드는 것이다.
 
@@ -334,8 +331,8 @@ videoSearch 2,399줄 / chatTools 2,015줄 / skipControl 1,979줄)에 반복 구�
 
 ### 주의
 
-- 기존 docs/refactoring-guide.md, docs/optimization-plan.md 가 있다면 착수 전
-  한 번 읽고 중복 계획을 만들지 말 것.
+- 착수 전 `docs/refactoring-guide.md`, `docs/optimization-plan.md`와 현재 공용
+  유틸·테스트를 확인해 중복 추출을 만들지 말 것.
 - 추출은 "동작 동일" 원칙. 추출하면서 버그 수정을 섞지 말고, 발견한 버그는
   별도 커밋으로 분리한다.
 
@@ -402,8 +399,8 @@ docs/update-history.md 는 사용자 대상 문서다. 실측한 기존 양식(1
 - `npm test` 는 매 커밋 전 실행. (테스트 러너는 package.json 확인)
 - options.html은 default_popup 기준의 **좁은 팝업**이 1차 환경이다.
   UI를 건드릴 일이 있으면 좁은 폭에서 먼저 확인할 것.
-- 치지직 API/DOM에 대해 확신이 없으면 실측 우선. 문서의 기존 실측 기록:
-  docs/ 폴더 및 chat-tools-row-detection-fix-plan.md 참조.
+- 치지직 API/DOM에 대해 확신이 없으면 현재 소스와 실제 마크업 기반 테스트를 먼저
+  확인하고, 부족하면 날짜와 재현 조건을 포함해 다시 실측한다.
 - 막히면 우회 구현으로 뭉개지 말고, 막힌 지점과 근거를 남기고 사용자에게 보고.
 
 ---
@@ -485,8 +482,8 @@ titleTooltip, videoSearch, vodBroadcastClock, volumeTooltip, volumeWheelPage, co
 - 고정공지가 있는 방송은 chatRoot 요소 자체에 `_exist_fixed_message_` 클래스가 붙는다.
   `closest()` 기반 행 탐색이 chatRoot에 매치되면 새 채팅이 전부 무시된다.
 - 클린봇 차단 문구는 BLIND_SIGNAL_RE에 포함되지 않은 사례가 있었다.
-- 풀스캔 시 wrapper 요소가 행을 삼키고 원문 캐시가 오염되는 문제도 함께 발견됨.
-  상세: docs/chat-tools-row-detection-fix-plan.md.
+- 풀스캔 시 wrapper 요소가 행을 삼키고 원문 캐시가 오염되는 문제도 함께 발견됐다.
+  2026-07-10 수정했으며 현재 회귀 사례는 `tests/chat-tools.test.js`에 정리돼 있다.
 
 ### shared/api.js 인터페이스 스케치 (4단계용 — 구현 전 사용자와 형태 합의 권장)
 
@@ -506,15 +503,15 @@ BetterChzzk.api = {
 원칙: 재시도·폴백 응답 생성 금지(AGENTS.md Fallback 금지). 실패는 null/예외로
 정직하게 전달하고 호출측이 기능 단위로 처리한다.
 
-### 테스트 지도 (2026-07-10 실측 — 총 177개, 리팩토링 시 안전망 위치)
+### 테스트 지도 (2026-07-10 실측 — 총 212개, 리팩토링 시 안전망 위치)
 
 | 파일                              | 개수 | 커버 범위                                                                                                       | 로드맵 작업과의 관계                                                                                                                                            |
 | --------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| extension-pages.test.js           | 121  | content.js utils(createMutationObserverSync, 라우트 감지), shared fetchJson·selector registry, 옵션/기록 페이지 | **1단계 치환의 주 안전망.** selectors.js의 manifest 위치, 체인 우선순위, 구형 팝업 클래스 범위, watchSelector 1회 경고를 직접 검증한다                          |
-| chat-tools.test.js                | 26   | 블라인드 원문 복원, 모아보기 수집 판정. **실제 치지직 마크업 픽스처** 포함                                      | 3차 chatTools 치환 직후 실행 필수                                                                                                                               |
+| extension-pages.test.js           | 122  | content.js utils(createMutationObserverSync, 라우트 감지), shared fetchJson·selector registry, 옵션/기록 페이지 | **1단계 치환의 주 안전망.** selectors.js의 manifest 위치, 체인 우선순위, 구형 팝업 클래스 범위, watchSelector 1회 경고를 직접 검증한다                          |
+| chat-tools.test.js                | 41   | 블라인드 원문 복원, 모아보기 수집 판정. **실제 치지직 마크업 픽스처** 포함                                      | 3차 chatTools 치환 직후 실행 필수                                                                                                                               |
 | following-preview-tooltip.test.js | 14   | 미리보기 카드, LLHLS 우선/HLS 폴백, 썸네일 선택                                                                 | 3차 followingPreviewTooltip 치환 직후 실행 필수                                                                                                                 |
-| release-safety.test.js            | 8    | 원격 코드 금지, 폴백 재도입 금지, **"optimization guards stay in the hot paths"**                               | ⚠ 함정: 핫 패스 최적화 가드의 존재 자체를 테스트가 강제한다. 4단계 추출 중 이 테스트가 깨지면 가드를 실수로 제거한 것이니 되돌릴 것 (테스트를 고치는 게 아니라) |
-| reward-auto-collect.test.js       | 8    | 통나무 버튼 판정·쿨다운·해제                                                                                    | —                                                                                                                                                               |
+| release-safety.test.js            | 6    | 원격 코드 금지, 폴백 재도입 금지, **"optimization guards stay in the hot paths"**                               | ⚠ 함정: 핫 패스 최적화 가드의 존재 자체를 테스트가 강제한다. 4단계 추출 중 이 테스트가 깨지면 가드를 실수로 제거한 것이니 되돌릴 것 (테스트를 고치는 게 아니라) |
+| reward-auto-collect.test.js       | 25   | 통나무 버튼 판정, 지연 마운트·재렌더링·라우트 전환, 중복 방지·해제                                              | —                                                                                                                                                               |
 | settings.test.js                  | 4    | OPTION_SCHEMA ↔ options.html data-option 키 일치 강제                                                           | 새 옵션 추가 시 자동 검문소                                                                                                                                     |
 
 ### vendor/ 내용

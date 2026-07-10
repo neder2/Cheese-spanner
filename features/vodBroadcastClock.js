@@ -138,6 +138,7 @@
     let startupSyncTimer = 0;
     const detailCache = new Map();
     const historyInfoCache = new Map();
+    const titleHistoryPanelRenderKeys = new WeakMap();
     const storage = globalThis.chrome?.storage?.local;
     let watchHistorySnapshot = null;
     let watchHistorySnapshotPromise = null;
@@ -1138,26 +1139,32 @@
     }
 
     function renderTitleHistoryPanel(panel, rows) {
-        const fragment = document.createDocumentFragment();
+        const renderKey = JSON.stringify(rows.map((row) => [row.title, row.firstSeenAt, row.lastSeenAt]));
+        if (titleHistoryPanelRenderKeys.get(panel) !== renderKey) {
+            const fragment = document.createDocumentFragment();
 
-        for (const row of rows) {
-            const item = document.createElement("div");
-            item.className = "bcbc-title-history-row";
+            for (const row of rows) {
+                const item = document.createElement("div");
+                item.className = "bcbc-title-history-row";
 
-            const time = document.createElement("span");
-            time.className = "bcbc-title-history-time";
-            time.textContent = formatTitleSeenShortRange(row);
+                const time = document.createElement("span");
+                time.className = "bcbc-title-history-time";
+                time.textContent = formatTitleSeenShortRange(row);
 
-            const title = document.createElement("strong");
-            title.className = "bcbc-title-history-title";
-            title.textContent = row.title;
+                const title = document.createElement("strong");
+                title.className = "bcbc-title-history-title";
+                title.textContent = row.title;
 
-            item.append(time, title);
-            fragment.appendChild(item);
+                item.append(time, title);
+                fragment.appendChild(item);
+            }
+
+            panel.replaceChildren(fragment);
+            titleHistoryPanelRenderKeys.set(panel, renderKey);
         }
 
-        panel.replaceChildren(fragment);
-        panel.hidden = !titleHistoryExpanded;
+        const shouldHide = !titleHistoryExpanded;
+        if (panel.hidden !== shouldHide) panel.hidden = shouldHide;
     }
 
     function setPanelStyleValue(panel, name, value) {

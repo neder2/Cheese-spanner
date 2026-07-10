@@ -261,6 +261,308 @@ test("message blinded after the fact is restored from the cached original", asyn
     assert.equal(reveal.previousElementSibling, notice);
 });
 
+test("cleanbot notice with a hidden original is restored on the initial scan", async (t) => {
+    const { dom } = createPageDom(
+        [
+            '<div class="chat-row" data-chat-id="cleanbot-initial">',
+            '<span class="nickname">viewer</span>',
+            '<span class="message">클린봇이 부적절한 표현을 감지했습니다.</span>',
+            '<span class="original-text" data-message-original="숨겨진 클린봇 원문" style="display:none">숨겨진 클린봇 원문</span>',
+            "</div>",
+        ].join("")
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+
+    const row = dom.window.document.querySelector('[data-chat-id="cleanbot-initial"]');
+    const notice = row.querySelector(".message");
+    const reveal = row.querySelector(".bcct-blind-reveal");
+    assert.equal(reveal?.textContent, "숨겨진 클린봇 원문");
+    assert.equal(notice.getAttribute("data-bcct-blind-masked"), "1");
+    assert.equal(reveal?.previousElementSibling, notice);
+});
+
+test("message changed to a cleanbot notice is restored from its cached original", async (t) => {
+    const { dom } = createPageDom(
+        realChzzkChatRow({ chatId: "cleanbot-later", nickname: "일반 시청자", text: "클린봇 전 원문" })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+
+    const row = dom.window.document.querySelector('[data-chat-id="cleanbot-later"]');
+    const notice = row.querySelector("._text_1vemp_1");
+    notice.textContent = "클린봇이 부적절한 표현을 감지했습니다.";
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const reveal = row.querySelector(".bcct-blind-reveal");
+    assert.equal(reveal?.textContent, "클린봇 전 원문");
+    assert.equal(notice.getAttribute("data-bcct-blind-masked"), "1");
+    assert.equal(reveal?.previousElementSibling, notice);
+});
+
+test("ordinary chat mentioning cleanbot is not classified as a blind notice", async (t) => {
+    const { dom } = createPageDom(
+        [
+            '<div class="chat-row" data-chat-id="cleanbot-mention">',
+            '<span class="nickname">viewer</span>',
+            '<span class="message">오늘 클린봇 설정을 바꿨나요?</span>',
+            "</div>",
+        ].join("")
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+
+    const row = dom.window.document.querySelector('[data-chat-id="cleanbot-mention"]');
+    const parsed = dom.window.BetterChzzk.chatTools.parseChatMessage(row);
+    assert.equal(parsed.isBlind, false);
+    assert.equal(row.querySelector(".bcct-blind-reveal"), null);
+    assert.equal(row.querySelector("[data-bcct-blind-masked]"), null);
+});
+
+test("a cleanbot notice without a recoverable original stays visible", async (t) => {
+    const { dom } = createPageDom(
+        [
+            '<div class="chat-row" data-chat-id="cleanbot-unknown">',
+            '<span class="nickname">viewer</span>',
+            '<span class="message">클린봇이 부적절한 표현을 감지했습니다.</span>',
+            "</div>",
+        ].join("")
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+
+    const row = dom.window.document.querySelector('[data-chat-id="cleanbot-unknown"]');
+    const parsed = dom.window.BetterChzzk.chatTools.parseChatMessage(row);
+    assert.equal(parsed.isBlind, true);
+    assert.equal(row.querySelector(".bcct-blind-reveal"), null);
+    assert.equal(row.querySelector("[data-bcct-blind-masked]"), null);
+    assert.match(row.textContent, /클린봇이 부적절한 표현을 감지했습니다/);
+});
+
+test("an administrator deletion notice uses the same guarded restore path", async (t) => {
+    const { dom } = createPageDom(realChzzkChatRow({ nickname: "viewer", text: "관리자에 의해 삭제된 메시지입니다." }));
+    t.after(() => closeChatToolsDom(dom));
+
+    const row = dom.window.document.querySelector("._item_sg7hy_7");
+    row.querySelector("._chatting_message_1vemp_21").insertAdjacentHTML(
+        "beforeend",
+        '<span class="message-original" style="display:none">관리자 삭제 전 원문</span>'
+    );
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-blind-reveal"));
+
+    const notice = row.querySelector("._text_1vemp_1");
+    assert.equal(row.querySelector(".bcct-blind-reveal").textContent, "관리자 삭제 전 원문");
+    assert.equal(notice.getAttribute("data-bcct-blind-masked"), "1");
+});
+
+test("a pinned wrapper cache never leaks one chat original into another blind chat", async (t) => {
+    const { dom } = createPageDom("");
+    t.after(() => closeChatToolsDom(dom));
+
+    const { wrapper } = installRealChzzkPinnedWrapper(
+        dom.window.document,
+        [
+            '<div class="pinned-entry-shell">',
+            '<span class="nickname">첫 시청자</span>',
+            '<span class="message">A의 캐시된 원문</span>',
+            "</div>",
+        ].join("")
+    );
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+
+    wrapper.insertAdjacentHTML(
+        "beforeend",
+        [
+            '<div class="chat-row">',
+            '<span class="nickname">둘째 시청자</span>',
+            '<span class="message">블라인드 처리된 메시지입니다.</span>',
+            "</div>",
+        ].join("")
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const blindRow = wrapper.querySelector(".chat-row");
+    const notice = blindRow.querySelector(".message");
+    assert.equal(blindRow.querySelector(".bcct-blind-reveal"), null);
+    assert.equal(notice.getAttribute("data-bcct-blind-masked"), null);
+    assert.doesNotMatch(blindRow.textContent, /A의 캐시된 원문/);
+});
+
+test("hidden profile actions do not outrank the hidden original message", async (t) => {
+    const { dom } = createPageDom(
+        [
+            '<div class="chat-row" data-chat-id="blind-hidden-ui">',
+            '<span class="nickname">viewer</span>',
+            '<span class="message">블라인드 처리된 메시지입니다.</span>',
+            '<span class="message-original" data-message-original="실제 숨은 원문" style="display:none">실제 숨은 원문</span>',
+            '<div class="_layer_ab12" style="display:none">',
+            "<strong>숨겨진 프로필 메뉴</strong>",
+            '<button type="button">메시지 신고 및 활동 제한을 설정하는 매우 긴 버튼 문구</button>',
+            "</div>",
+            "</div>",
+        ].join("")
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-blind-reveal"));
+
+    const row = dom.window.document.querySelector('[data-chat-id="blind-hidden-ui"]');
+    assert.equal(row.querySelector(".bcct-blind-reveal").textContent, "실제 숨은 원문");
+});
+
+test("a link inside an explicit hidden original remains recoverable", async (t) => {
+    const { dom } = createPageDom(
+        [
+            '<div class="chat-row" data-chat-id="blind-link-original">',
+            '<span class="nickname">viewer</span>',
+            '<span class="message">블라인드 처리된 메시지입니다.</span>',
+            '<span class="message-original" style="display:none">',
+            '<a href="https://example.test/original">링크가 포함된 실제 원문</a>',
+            "</span>",
+            "</div>",
+        ].join("")
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-blind-reveal"));
+
+    const row = dom.window.document.querySelector('[data-chat-id="blind-link-original"]');
+    assert.equal(row.querySelector(".bcct-blind-reveal").textContent, "링크가 포함된 실제 원문");
+});
+
+test("a direct message child is normalized to its chat row after a blind transition", async (t) => {
+    const { dom } = createPageDom(
+        [
+            '<div class="chat-row" data-chat-id="direct-message-child">',
+            '<span class="nickname">viewer</span>',
+            '<span class="message">직접 자식 원문</span>',
+            "</div>",
+        ].join("")
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+
+    const row = dom.window.document.querySelector('[data-chat-id="direct-message-child"]');
+    const notice = row.querySelector(".message");
+    notice.textContent = "메시지가 블라인드 처리되었습니다.";
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const reveal = row.querySelector(".bcct-blind-reveal");
+    assert.equal(reveal?.textContent, "직접 자식 원문");
+    assert.equal(notice.getAttribute("data-bcct-blind-masked"), "1");
+    assert.equal(reveal?.previousElementSibling, notice);
+});
+
+test("reusing a chat row for a new message id invalidates the previous original cache", async (t) => {
+    const { dom } = createPageDom(
+        realChzzkChatRow({ chatId: "reused-a", nickname: "viewer", text: "재사용 전 A 원문" })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+
+    const row = dom.window.document.querySelector('[data-chat-id="reused-a"]');
+    const notice = row.querySelector("._text_1vemp_1");
+    row.setAttribute("data-chat-id", "reused-b");
+    notice.textContent = "블라인드 처리된 메시지입니다.";
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    assert.equal(row.querySelector(".bcct-blind-reveal"), null);
+    assert.equal(notice.getAttribute("data-bcct-blind-masked"), null);
+    assert.doesNotMatch(row.textContent, /재사용 전 A 원문/);
+});
+
+test("changing an id-less row reuse signal invalidates the cache even when its text element is reused", async (t) => {
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            badgeImg: '<img src="https://ssl.pstatic.net/static/nng/glive/icon/manager.png" alt="채팅 운영자">',
+            nickname: "viewer",
+            text: "재사용 전 무ID 원문",
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    const row = dom.window.document.querySelector("._item_sg7hy_7");
+    row.setAttribute("data-virtual-index", "1");
+
+    loadChatTools(dom);
+    await waitForCondition(() => row.hasAttribute("data-bcct-moderator-collected"));
+
+    const notice = row.querySelector("._text_1vemp_1");
+    row.setAttribute("data-virtual-index", "2");
+    row.querySelector("._nickname_o04z9_57").style.color = "rgb(10, 20, 30)";
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    notice.textContent = "클린봇이 부적절한 표현을 감지했습니다.";
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    assert.equal(row.querySelector(".bcct-blind-reveal"), null);
+    assert.equal(notice.getAttribute("data-bcct-blind-masked"), null);
+    assert.doesNotMatch(row.textContent, /재사용 전 무ID 원문/);
+});
+
+test("replacing the text node of an id-less row cannot reuse its previous original cache", async (t) => {
+    const { dom } = createPageDom(realChzzkChatRow({ nickname: "viewer", text: "교체 전 무ID 원문" }));
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+
+    const row = dom.window.document.querySelector("._item_sg7hy_7");
+    const oldText = row.querySelector("._text_1vemp_1");
+    const notice = dom.window.document.createElement("span");
+    notice.className = "_text_1vemp_1";
+    notice.textContent = "블라인드 처리된 메시지입니다.";
+    oldText.replaceWith(notice);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    assert.equal(row.querySelector(".bcct-blind-reveal"), null);
+    assert.equal(notice.getAttribute("data-bcct-blind-masked"), null);
+    assert.doesNotMatch(row.textContent, /교체 전 무ID 원문/);
+});
+
+test("removing and reinserting an id-less row invalidates its previous original cache", async (t) => {
+    const { dom } = createPageDom(realChzzkChatRow({ nickname: "viewer", text: "분리 전 무ID 원문" }));
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+
+    const root = dom.window.document.querySelector(".chat-list");
+    const row = root.querySelector("._item_sg7hy_7");
+    const notice = row.querySelector("._text_1vemp_1");
+    row.remove();
+    notice.textContent = "블라인드 처리된 메시지입니다.";
+    root.append(row);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    assert.equal(row.querySelector(".bcct-blind-reveal"), null);
+    assert.equal(notice.getAttribute("data-bcct-blind-masked"), null);
+    assert.doesNotMatch(row.textContent, /분리 전 무ID 원문/);
+});
+
 test("an open profile card inside a chat row is not blinded or collected", async (t) => {
     const { dom } = createPageDom(realChzzkChatRow({ nickname: "일반 시청자", text: "그냥 채팅" }));
     t.after(() => closeChatToolsDom(dom));

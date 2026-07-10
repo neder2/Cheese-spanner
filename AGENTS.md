@@ -1,113 +1,149 @@
 # Better Chzzk — 에이전트 작업 지침
 
-이 문서는 대화 맥락 없이 저장소만 보고 작업하는 에이전트를 위한 안내서다.
-모든 JS 소스 파일 최상단에 역할·의존·구조를 담은 헤더 주석이 있으니, 파일을 통독하기 전에 헤더부터 읽는다.
+이 문서는 대화 맥락 없이 저장소를 다루는 에이전트가 지켜야 할 **지속 규칙**이다.
+현재 구조·버전·권한·로드 순서는 항상 `manifest.json`, `package.json`, 실제 소스와 테스트를 기준으로 판단한다. 이 문서의 예시나 과거 문서가 현재 코드와 다르면 현재 저장소를 우선한다.
 
-> **진행 중인 장기 작업**: 안정화 리팩토링 로드맵이 `docs/stability-roadmap.md`에 있다.
-> 리팩토링·셀렉터 중앙화·스모크 테스트 관련 작업은 그 문서의 진행 상태를 먼저 확인하고 이어서 진행한다.
+## 작업 경계
 
-## 최상위 지침
+- 요청의 범위와 성공 조건을 먼저 확인하고 관련 파일·호출부·테스트만 읽는다.
+- 사용자가 리뷰를 먼저 요청하면 읽기 전용으로 결과를 먼저 보고하고, 계획을 먼저 요청하면 구현 전 계획에서 멈춘다.
+- 작업 전 `git status`와 기존 diff를 확인한다. 사용자가 만든 변경을 임의로 되돌리거나 덮어쓰지 않는다.
+- 커밋, push, 병합, 태그, 버전 증가, GitHub Release 생성은 사용자가 명시적으로 요청했을 때만 한다.
+- 버그 수정이나 기능 구현에 관계없는 정리·이름 변경·전면 포맷을 같은 변경에 섞지 않는다.
+- 큰 파일은 필요한 함수와 호출부부터 읽는다. 상단에 구조 설명이 **있는 경우** 활용하되, 모든 파일에 헤더가 있다고 가정하지 않는다.
+- 하위 에이전트는 독립적으로 나눌 수 있는 큰 조사에만 최소한으로 사용하고, 작업 범위와 이 문서의 제약을 함께 전달한다.
+- 사용자에게는 한국어 존댓말로 답하고, 실제로 수행한 검증과 수행하지 못한 검증을 구분해 보고한다.
 
-- **Fallback 금지.** 기능이 정상 경로로 성립하지 않으면 우회 경로, 대체 UI, 임의 데이터, iframe/팝업/새 페이지, 조용한 실패 은폐를 추가하지 않는다. 먼저 정상 경로의 원인을 수정하고, 외부 서비스 변화처럼 직접 고칠 수 없는 경우에는 구현으로 보정하지 말고 차단 근거와 실패 조건을 보고한다.
-- CSS 변수의 정적 fallback 값처럼 렌더러·테스트 환경에서 값 누락을 막기 위한 선언형 기본값은 예외로 둔다. 이 예외는 기능 동작을 대체하는 폴백 분기나 사용자에게 보이는 가짜 결과를 허용하지 않는다.
+## 버그 수정과 대체 경로
 
-## 대화·커밋·릴리스 규칙
+1. 증상을 재현하고 기대 동작과 실제 동작을 구분한다.
+2. 이벤트·상태·DOM·네트워크 흐름에서 최초로 잘못된 값이나 분기가 생기는 지점을 찾는다.
+3. 원인 로직을 소유한 파일과 함수에서 최소 범위로 수정한다.
+4. 가능하면 수정 전 실패하고 수정 후 통과하는 회귀 테스트를 추가한다.
+5. SPA 이동, 새로고침, 옵션 켜기·끄기, DOM 재마운트 경로를 함께 확인한다.
 
-- 존댓말 사용.
-- 커밋 제목의 첫 줄은 변경 내용 요약 대신 해당 변경이 속하는 릴리스 버전만 표시하는 `Better Chzzk <version>` 형식으로 통일한다. 예: `Better Chzzk 1.2.0`
-- 버전 업데이트, GitHub 메인 머지, 릴리스 작업을 할 때는 GitHub Release 또는 업데이트 내역(`docs/update-history.md`)을 반드시 작성하거나 갱신한다.
-- 버전은 `manifest.json`과 `package.json` 두 곳에 있다. 함께 올린다.
-- 기능·옵션·권한이 바뀌면 README.md(기능 상세, 설정 항목 표, 권한 설명)도 같은 릴리스에서 갱신한다.
+증상을 가리려고 타이머·재시도·광범위 DOM 스캔을 먼저 늘리거나 기존 기능을 꺼서 문제를 없애지 않는다.
 
-## 버그 수정 원칙
+다음과 같이 **원래 기능과 다른 사용자 흐름으로 바꾸는 임의 우회**는 추가하지 않는다.
 
-버그를 수정할 때는 보정용 우회 코드부터 만들지 말고, 기존 코드의 어느 경로가 어떻게 잘못되어 증상이 생겼는지 먼저 파악한다. 원인이 되는 기존 로직의 소유 표면에서 수정하는 것을 우선하며, 외부 서비스 변화처럼 직접 고칠 수 없는 원인일 때만 그 근거를 명확히 설명하고 보정 코드를 검토한다.
+- 페이지 안 기능 실패를 새 탭·새 창·팝업·iframe·다른 페이지 열기로 대신하는 동작
+- 원격 스크립트·WASM·문자열 코드를 가져와 실행하는 동작
+- 확인할 수 없는 데이터·문구·진행률·썸네일을 지어내는 동작
+- 실패를 성공처럼 표시하거나 별도 UI로 정상 경로의 실패를 숨기는 동작
 
-## 구현 원칙
+`null` 가드, 파싱 기본값, 캐시 미스 처리, 기능 감지, CSS 변수 기본값, 실제 응답에서 확인된 스트림·응답 형식 선택은 위 금지 대상이 아니다. 새 호환 분기는 **실측된 변형, 결정적인 선택 조건, 회귀 테스트**가 있을 때만 추가한다. 직접 고칠 수 없는 외부 장애라면 다른 흐름을 발명하지 말고 실패 조건·영향 범위·확인 근거를 보고한다.
 
-- **UI는 화이트/다크 모드를 둘 다 고려해 만든다.** 치지직 디자인을 따라가는 요소는 색·크기를 하드코딩하지 말고 아래 우선순위로 네이티브를 따라간다:
-    1. **치지직 CSS 디자인 토큰 참조(1순위).** 치지직은 `--Surface-*`, `--Content-*`, `--Border-*` 계열 디자인 토큰 1200여 개를 페이지 CSS 변수로 노출하며, 이 중 시맨틱 토큰들은 테마(`html.theme_dark`/`theme_light`)에 따라 값이 바뀐다(2026-07 실측). `var(--Surface-Neutral-Weaker, #1B1D20)`처럼 **다크 기준 fallback**과 함께 참조하면 다크 분기 셀렉터 없이 두 테마가 자동 대응된다. 자주 쓰는 쌍: 반전 강조 배경/텍스트 = `--Surface-Neutral-Strongest`/`--Content-Neutral-Inverse`, 팝업 배경 = `--Surface-Neutral-Weaker`, 기본/보조 텍스트 = `--Content-Neutral-Primary`/`--Content-Neutral-Cool-Base`, hover 오버레이 = `--Surface-Interaction-Lighten-Hovered`, 브랜드 강조 = `--Content-Brand-Base`·`--Surface-Brand-Alpha-Weak`·`--Border-Brand-Alpha-Base`. 선례: categoryTools.js 툴바·필터 메뉴, videoSearch.js.
-    2. **네이티브 요소 계산 스타일 복사(2순위).** 토큰으로 표현이 안 되는 "옆 요소와 픽셀 단위로 똑같아야 하는" UI(칩 등)는 네이티브 요소의 getComputedStyle 값을 CSS 변수로 복사한다. 선례: categoryTools.js `syncFontWithHostUi`(툴바 폰트). **주의:** 색처럼 테마에 따라 달라지는 값을 복사하면 html class 변경을 감지해 재복사해야 한다. 복사 원본이 화면에 항상 존재하는 경우에만 안정적이다.
-    3. **라이트/다크 셀렉터 분기(3순위).** 네이티브 대응물이 없는 확장 고유 UI(팝업 위젯 등)만 `[class*="dark"]` 계열 분기로 두 모드를 직접 스타일링한다(monthlyBroadcastTime.js 선례).
-    - 공통: CSS 변수에는 항상 합리적인 fallback(다크 기준)을 함께 둔다 — jsdom 등 토큰이 없는 환경 대비.
-- **폴백 금지는 최상위 지침을 따른다.** 정상 경로 하나를 정확하게 맞추는 것을 우선한다. "혹시 안 되면 이 방법도"식의 폴백 분기는 실제로는 안 타는 죽은 코드가 되거나, 오동작을 조용히 가리는 원인이 된다. 과거에 정리한 폴백이 되살아나지 않도록 `tests/release-safety.test.js`가 일부를 가드하고 있다("low-risk fallback reductions stay removed").
-- **Chrome 웹 스토어 정책을 지킨다.** 이 확장은 스토어에 게시되므로 모든 변경이 심사 대상이다:
-    - 원격 호스팅 코드 금지(MV3): 실행 코드는 전부 패키지 안에 있어야 한다. 외부 스크립트 로드, 동적 코드 실행 계열 API 금지 — `tests/release-safety.test.js`가 텍스트 수준으로 가드한다.
-    - 최소 권한: 새 권한·host 권한은 정말 필요할 때만 추가하고, 상시 필요가 아니면 `optional_host_permissions` + 기능을 켤 때 `chrome.permissions.request`로 요청한다(pstatic.net 선례). 권한이 늘면 기존 사용자에게 재승인 경고가 뜨고 심사가 길어진다.
-    - 단일 목적 유지: "치지직 시청 경험 개선"에서 벗어나는 기능(예: 다른 사이트 대상, 수집·전송)은 넣지 않는다.
-    - 개인정보: 수집 데이터(시청 기록 등)는 로컬(`chrome.storage`)에만 두고 외부 전송하지 않는다. 데이터 취급이 바뀌면 `PRIVACY.md`와 스토어 개인정보 고지를 함께 갱신한다.
-    - 권한·기능 설명이 바뀌면 README와 스토어 등록 정보 문구도 같은 릴리스에서 맞춘다.
+## 커밋·버전·릴리스
 
-## 프로젝트 개요
+- 커밋을 요청받으면 제목 첫 줄은 프로젝트 규칙인 `Better Chzzk <version>` 형식을 사용한다. 예: `Better Chzzk 1.2.0`
+- 버전을 올릴 때는 `manifest.json`과 `package.json`을 함께 변경하고 값이 같은지 확인한다.
+- 릴리스 또는 버전 업데이트를 요청받으면 `docs/update-history.md`를 갱신한다.
+- 사용자에게 보이는 기능·옵션·조작법·권한이 바뀌면 같은 릴리스에서 `README.md`를 갱신한다.
+- 데이터 처리 방식이 바뀌면 `PRIVACY.md`, 서드파티 코드·라이선스가 바뀌면 `THIRD_PARTY_NOTICES.md`와 해당 소스 고지를 확인한다.
+- 스토어 등록 문구 변경이 필요한 경우 저장소 밖 작업으로 누락하지 말고 필요한 변경 내용을 보고한다.
+- GitHub Release는 명시적인 릴리스 요청이 있을 때만 만들고 본문은 `docs/update-history.md`와 맞춘다.
 
-- "Better Chzzk" — 치지직(chzzk.naver.com)용 Chrome 확장. Manifest V3, 순수 vanilla JS, **빌드 단계 없음**.
-- 번들러·`import`/`export`·ESM 도입 금지. `manifest.json`의 `content_scripts[].js` 배열 순서가 곧 의존성 그래프다. 새 공용 파일을 만들면 소비자보다 먼저 오도록 manifest에 등록한다.
-- 각 기능 파일은 자기완결적 IIFE. DOM 마커는 `betterchzzk-*` id와 `data-bc??-*` 속성 프리픽스(기능별 약어: bcgt=categoryTools, bcvs=videoSearch, bcfp=followingPreview, bcct=chatTools, bctm=timeMachine, bctt=titleTooltip, bcmb=monthlyBroadcast, bcra=rewardAuto).
+## 프로젝트 구조와 실행 컨텍스트
 
-## 실행 컨텍스트 지도
+- Better Chzzk는 `chzzk.naver.com`용 Chrome Manifest V3 확장이다.
+- 런타임은 순수 vanilla JS이며 빌드 단계가 없다. `package.json`은 개발·검증과 vendored 의존성 관리에 사용한다.
+- 별도 아키텍처 변경 요청이 없으면 번들러, 런타임 ESM, `import`/`export`, 생성된 배포 산출물을 도입하지 않는다.
+- `manifest.json`의 `content_scripts[].js` 배열 순서가 런타임 의존성 순서다. 공용 파일을 추가하면 소비자보다 먼저 로드되도록 등록한다.
+- 각 기능은 기존 IIFE 패턴과 전역 네임스페이스 규칙을 유지한다.
 
-콘텐츠 스크립트는 두 world로 나뉜다 (둘 다 `document_start`):
+콘텐츠 스크립트 파일 목록과 순서는 작업 시점의 `manifest.json`을 다시 확인한다.
 
-| world           | 파일                                                                                                                                             | 특징                                                                                             |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| MAIN (페이지)   | features/routeBridgePage.js, features/autoQualityPage.js, features/volumeWheelPage.js                                                            | `BetterChzzk.utils`·`BetterChzzkSettings` 접근 불가. isolated 측과 CustomEvent·DOM 속성으로 통신 |
-| isolated (확장) | shared/settings.js → shared/data.js → content.js → 나머지 features/\* → vendor/hls.light.min.js → followingPreviewTooltip.js → shortcutRescue.js | 전역 네임스페이스 공유. 나열 순서 = 로드 순서                                                    |
-
-그 외 컨텍스트:
-
-- `background.js` — MV3 service worker. `importScripts("shared/settings.js")`로 settings를 로드하므로 **settings.js에서는 DOM API 사용 금지** (`globalThis`/`chrome`만).
-- `options.html` + `options.js` — 액션 팝업(`action.default_popup`)이자 옵션 페이지(`options_page`). **확장 아이콘 클릭 시 열리는 작은 팝업 창이 1차 사용 환경**이므로 UI 작업·검증은 좁은 뷰포트 기준으로 한다. 작은 글씨에서 뭉개지는 특수문자 나열(",/." 등)은 한글로 풀어쓴다(예: "쉼표·마침표 키").
-- `history.html` + `history.js` — 시청 기록 페이지. `chrome.storage.local`의 `betterChzzkLiveWatchHistory`를 읽는다.
+- **MAIN world**: 현재 `features/routeBridgePage.js`, `features/autoQualityPage.js`, `features/volumeWheelPage.js`. isolated world의 `BetterChzzk.utils`와 `BetterChzzkSettings`에 직접 접근할 수 없다.
+- **isolated world**: `shared/settings.js` → `shared/data.js` → `content.js` → feature·vendor 순서로 전역 네임스페이스를 공유한다.
+- world 간 통신은 기존 `CustomEvent`, DOM 속성 등 명시적 브리지를 따른다. 새 전역 공유를 임의로 만들지 않는다.
+- `background.js`는 `shared/settings.js`를 `importScripts()`로 로드하는 service worker다. `shared/settings.js`에서 `window`, `document`, DOM API를 무가드로 사용하지 않는다.
+- `options.html`과 `options.js`는 액션 팝업이자 옵션 페이지다. 좁은 팝업을 1차 환경으로 검증한다.
+- `history.html`과 `history.js`는 별도 확장 페이지이며 시청 기록을 `chrome.storage.local`에서 읽는다.
 
 ## 공용 인프라
 
-- **`BetterChzzkSettings`** (shared/settings.js): `OPTION_SCHEMA`가 옵션의 단일 공급원. 공개 API(`normalizeOptions`, `getOptions`, `addOptionsChangeListener`, `OPTION_KEYS`, `FEATURE_KEYS`, `DEFAULT_OPTIONS` 등)의 키 이름·시그니처는 background/options/모든 feature가 의존하므로 바꾸지 않는다.
-- **`BetterChzzk.utils`**: shared/data.js(데이터·KST 날짜·시청 구간·스토리지 유틸)와 content.js(DOM·라우트·MutationObserver 유틸)가 병합 등록한다.
-- 옵션 추가 절차: ① `OPTION_SCHEMA`에 항목 추가 → ② `options.html`에 `data-option` 입력 추가(의존 관계는 `data-depends-on`) → ③ feature에서 `bindFeatureOptions`로 구독 → ④ README 설정 표와 `docs/update-history.md` 갱신.
-- 라우트 변경 감지: MAIN world의 routeBridgePage.js가 history API 훅으로 `betterchzzk:routechange`를 쏘고, content.js가 이를 받아 `betterchzzk:routechange:detected`로 feature들에 재배포한다. feature는 `startPageChangeDetection(handler)`만 쓰면 된다.
+- `shared/settings.js`의 내부 `OPTION_SCHEMA`가 옵션 정의의 단일 공급원이다.
+- 공개 객체는 현재 `OPTION_SPEC`, `DEFAULT_OPTIONS`, `OPTION_KEYS`, `FEATURE_KEYS`, `normalizeOptions`, `getOptions`, `addOptionsChangeListener` 등을 노출한다. 실제 export 목록을 확인하고 기존 키 이름과 시그니처를 함부로 바꾸지 않는다.
+- 옵션 변경 시 `OPTION_SCHEMA` → `options.html`의 `data-option`·`data-depends-on` → feature의 `bindFeatureOptions`와 비활성화 정리 → 관련 테스트 → README·릴리스 문서를 함께 확인한다.
+- 권한이 필요한 옵션은 사용자 제스처 안의 승인·거부·기존 승인 흐름을 모두 처리한다.
+- `shared/data.js`와 `content.js`는 기존 `BetterChzzk.utils` 객체를 병합해 확장한다. 같은 유틸을 feature마다 다시 만들기 전에 공용 구현을 확인한다.
+- 콜백형 `chrome.storage` API를 직접 사용할 때는 같은 콜백 안에서 `chrome.runtime.lastError`를 즉시 확인한다. 가능한 경우 기존 `storageGet`·`storageSet`·`storageRemove` 또는 `getStorageLastError`를 재사용한다.
+- SPA 라우트 변경은 `routeBridgePage.js`와 `content.js`가 연결한다. feature에서는 history API를 다시 패치하지 말고 `startPageChangeDetection(handler)`를 사용한다.
+- DOM 마커는 기존 `betterchzzk-*` ID와 기능별 `data-bc*` 접두어를 따른다.
+
+## UI 구현
+
+- 새 UI와 변경 UI는 라이트·다크 모드를 모두 확인한다.
+- 치지직 UI를 따르는 요소는 현재 페이지에서 실제로 노출되는 `--Surface-*`, `--Content-*`, `--Border-*` 계열 시맨틱 CSS 변수를 우선 검토하고, 토큰이 없는 테스트 환경을 위한 정적 기본값을 함께 둔다. 현재 예시는 `features/videoSearch.js`를 참고하되 토큰 이름을 불변으로 가정하지 않는다.
+- 네이티브 요소와 정확히 같아야 하고 적절한 토큰이 없으면 `getComputedStyle()` 복사를 검토한다. 복사 값은 테마 전환과 DOM 교체 때 다시 동기화한다.
+- 직접 테마 분기가 필요하면 현재 페이지에서 확인한 루트 테마 상태를 사용한다. `[class*="dark"]` 같은 넓은 부분 문자열 셀렉터는 오탐 가능성을 검토한다.
+- 옵션 팝업은 좁은 너비, 긴 한글 문구, 키보드 탐색과 focus 표시를 확인한다. 작은 글씨에서 읽기 어려운 기호 나열은 의미가 드러나는 문구로 쓴다.
+- 클릭 가능한 요소는 적절한 요소 타입, `type="button"`, 접근 가능한 이름과 키보드 동작을 갖춘다.
+- 로딩·빈 결과·오류 상태는 실제 상태만 표시하고 가짜 콘텐츠를 만들지 않는다.
+
+## Chrome 웹 스토어·권한·개인정보
+
+- 실행 코드는 모두 확장 패키지 안에 둔다. 원격 JavaScript·WASM 실행, 원격 코드 import, 문자열 코드 실행을 추가하지 않는다. API에서 받은 JSON·미디어 등 데이터는 실행하지 않는다.
+- `tests/release-safety.test.js`의 금지 패턴과 Chrome 웹 스토어 정책을 함께 지킨다.
+- 권한은 최소화한다. 상시 필요하지 않은 host 접근은 가능한 경우 `optional_host_permissions`로 선언하고, 사용자가 기능을 켜는 제스처 안에서 `chrome.permissions.request()`를 호출한다.
+- 새 권한과 match pattern은 설치·업데이트 경고와 심사 범위에 영향을 줄 수 있으므로 필요성·대안·사용 시점을 먼저 검토한다.
+- 확장의 단일 목적은 치지직 시청·탐색 경험 개선이다. 다른 사이트 대상 기능이나 무관한 수집·전송 기능을 추가하지 않는다.
+- 설정과 기록은 현재 `chrome.storage.sync` 또는 `chrome.storage.local` 범위에 유지한다. 외부 전송·계정 연동·분석 수집은 별도 명시적 요청과 개인정보 문서 갱신 없이는 추가하지 않는다.
 
 ## 검증
 
-- `npm test` — `node --test`. `tests/extension-pages.test.js`는 jsdom으로 options/history 페이지를 실제 구동한다.
-- `npm run lint`(eslint), `npm run format:check`(prettier: 4칸 들여쓰기, printWidth 120).
-- **`tests/release-safety.test.js`는 소스 파일의 원문 텍스트를 정규식으로 검사한다 — 주석도 걸린다:**
-    - 전 런타임 파일 금지: 동적 코드 실행·원격 코드 로딩 계열 문자열(테스트 파일의 `forbiddenPatterns` 참고). 주석에도 해당 단어를 쓰면 안 된다.
-    - followingPreviewTooltip.js 전용 금지 패턴이 더 있다(팝업/새 창/외부 프레임 폴백 계열).
-    - autoQualityPage·categoryTools·chatTools·liveWatchHistory·monthlyBroadcastTime·videoSearch에는 특정 코드 시퀀스 사이 간격(`[\s\S]{0,N}`)을 검사하는 최적화 가드가 있어, **해당 지점 사이에 줄(주석 포함)을 추가하면 테스트가 깨진다.** 이 파일들을 수정하면 반드시 `npm test`로 확인한다.
-    - volumeTooltip.js에는 cheese-knife/jebibot 출처 표기가 남아 있어야 한다(THIRD_PARTY_NOTICES.md와 세트).
-- 수동 스모크 매트릭스와 리팩토링 하드 제약 상세는 `docs/refactoring-guide.md` 참고.
+런타임 JS·HTML·CSS·manifest를 변경했다면 관련 대상 테스트 후 전체 검증을 실행한다.
 
-## 실브라우저 자동 검증 방법 (2026-07 확립)
+Windows PowerShell에서는 실행 정책에 막힐 수 있는 `npm.ps1` 대신 `npm.cmd`로 npm 스크립트를 실행한다.
 
-- claude-in-chrome MCP는 chzzk.naver.com을 안전 제한으로 차단한다 — 사용 불가.
-- **Chrome 137+ 정식 빌드는 `--load-extension` 플래그를 에러 없이 조용히 무시한다** (격리 월드가 아예 안 생김). headless Chrome을 `--enable-unsafe-extension-debugging`으로 띄우고, 브라우저 레벨 CDP로 `Extensions.loadUnpacked { path }`를 호출해야 한다.
-- Node 24 내장 WebSocket으로 의존성 없는 raw CDP 클라이언트를 만들 수 있다. `Input.dispatchKeyEvent`는 trusted 키 이벤트라 네이티브·확장 리스너 모두 실제처럼 반응한다.
-- 격리 월드 주입 판정: `Runtime.enable` 후 `executionContextCreated`에서 `auxData.type === "isolated"`이고 이름이 "Better Chzzk"인 컨텍스트 존재 확인.
-- VOD는 https://chzzk.naver.com/videos 에서 `a[href^="/video/"]` 첫 링크로 로그인 없이 재생 가능. `--autoplay-policy=no-user-gesture-required --mute-audio` 플래그가 필요하다.
+```powershell
+npm.cmd test
+npm.cmd run lint
+npm.cmd run format:check
+```
 
-## 치지직 플랫폼 실측 지식 (2026-07 실측 — 외부 서비스라 변할 수 있으니 의심되면 재측정)
+- 저장소 전체 `format:check`가 범위 밖의 기존 Prettier drift 때문에 실패하면 변경 파일만 `npx.cmd prettier --check path/to/file...`로 다시 검사한다. 전체 검사 실패와 범위 밖 원인을 별도로 보고하고, 이를 해소하려고 범위 밖 파일을 포맷하지 않는다.
+- `npm.cmd test`는 공용 유틸, 옵션·기록 페이지, 주요 feature와 릴리스 안전 규칙을 포함한다.
+- `tests/release-safety.test.js`는 원문 텍스트를 정규식으로 검사하므로 주석도 실패 원인이 될 수 있다.
+- 일부 성능 가드는 코드 사이 최대 문자 수를 검사한다. hot path를 수정하기 전에 assertion을 읽고, 테스트를 느슨하게 만들지 말고 의도를 보존한다.
+- `features/followingPreviewTooltip.js`에는 새 창·팝업·iframe·원격 실행 계열 대체 경로를 막는 별도 검사가 있다.
+- `features/volumeTooltip.js`의 cheese-knife/jebibot 표기와 `THIRD_PARTY_NOTICES.md`는 함께 유지한다.
 
-- 라이브 재생 정보 API(auto-play-info)의 `livePlaybackJson.media`에는 `mediaId: "HLS"`(경로 `_hls_playlist.m3u8`)와 `mediaId: "LLHLS", latency: "lowLatency"`(경로 `_playlist.m3u8`) 두 항목이 온다. `previewPlaybackJson`은 비어 있을 수 있다.
-- **오디오는 muxed**: 마스터 플레이리스트에 `EXT-X-MEDIA`(TYPE=AUDIO)가 없고 모든 화질 variant의 CODECS에 `mp4a.40.2`가 포함된다 → vendor의 hls.light(alternate audio 미지원)로도 소리까지 재생된다. 소리가 안 나면 대부분 Chrome 오토플레이 정책(unmuted는 sticky activation 필요)이나 unmute UX 문제다. 치지직이 demuxed로 바꾸면 full 빌드(hls.min.js)로 교체해야 한다.
-- 지연: 일반 HLS는 세그먼트가 2초여도 `EXT-X-TARGETDURATION:10`이라 hls.js 비-LL 모드 기본 시작점(targetduration×3)이 정확히 30초 뒤가 된다. LLHLS(`PART-HOLD-BACK≈3.05`)를 `lowLatencyMode: true`로 재생하면 실측 지연 3~4초. hls.light 번들도 LL-HLS를 정상 지원한다.
-- 네이티브 플레이어(pzp)는 Space keydown마다 재생/일시정지를 토글하고 **repeat keydown도 무시하지 않는다** — 키 이벤트를 가로채는 기능은 repeat 누수에 특히 주의.
-- API 도메인: `api.chzzk.naver.com`(서비스 API), `apis.naver.com`(댓글 API), `*.pstatic.net`(미리보기 HLS — `optional_host_permissions`라 기능을 켤 때만 `chrome.permissions.request`로 요청).
+관련 화면의 수동 스모크에서는 다음을 변경 범위에 맞게 확인한다.
 
-## 조사·작업 방식
+- 확장이 실제로 로드됐는지 확인한다. 실행 플래그나 자동화 명령 성공만으로 주입 성공을 가정하지 않는다.
+- 새로고침 진입과 SPA 이동, 옵션 즉시 반영과 비활성화 정리, 라이트·다크 모드, 좁은 옵션 팝업을 확인한다.
+- 라이브·타임머신·VOD·채널 영상 탭·카테고리 목록·시청 기록 중 변경한 기능의 화면을 확인한다.
+- 권한 변경은 승인·거부·기존 승인 상태를 확인한다.
+- 콘솔 오류, 불필요한 반복 요청, MutationObserver 루프가 없는지 확인한다.
 
-- 상수값·호출 지점 몇 개를 확인하는 수준의 조사는 에이전트 팬아웃 대신 직접 Grep/Read(호출부와 주변만)로 처리한다. 에이전트를 띄울 때는 개수를 최소화하고 프롬프트에 읽기 범위를 좁혀 지시한다.
-- 큰 파일은 헤더 주석의 "구조" 지도를 먼저 읽고 필요한 함수만 Read한다.
-- 코드 구조가 크게 바뀌는 수정을 하면 해당 파일의 헤더 주석도 함께 갱신한다.
+실브라우저 자동화 방법은 Chrome 빌드와 실행 환경에 따라 달라질 수 있다. 특정 버전·플래그·도구 동작을 영구 규칙으로 보지 말고 실제 확장 ID, isolated execution context, DOM 마커 등으로 로드 성공을 검증한다.
 
-## 문서 지도
+## 치지직 외부 플랫폼 가정
 
-- `README.md` — 사용자 문서(기능 상세, 조작 방법, 설정 항목 표, 권한).
-- `docs/update-history.md` — 릴리스별 업데이트 내역(Release 본문의 원본).
-- `docs/refactoring-guide.md` — 구조 리팩토링 지시서(하드 제약·스모크 매트릭스 상세).
-- `PRIVACY.md`, `THIRD_PARTY_NOTICES.md` — 스토어 게시·서드파티 고지.
+치지직의 DOM, API 응답, 플레이어 구현, HLS/LL-HLS 구성은 예고 없이 바뀔 수 있다.
 
-<!-- vowline:start -->
+- 재생·API·셀렉터 문제를 수정하기 전에 현재 응답과 DOM을 다시 측정한다.
+- 과거 실측의 정확한 지연 시간, playlist 속성, 오디오 mux/demux 구성, CSS 토큰 개수를 불변 조건으로 하드코딩하지 않는다.
+- 실측 메모에는 날짜, endpoint 또는 대상 URL, 확인한 필드·playlist 태그와 재현 조건을 남긴다.
+- fixture와 테스트는 확인된 사례를 보존하는 회귀 자료이지 현재 모든 방송 형식의 증명이 아니다.
+- 여러 형식을 지원할 때는 실제로 관측된 형식만 명시적 조건으로 처리하고 각각 테스트한다.
+- 현재 API·host 권한 범위는 `manifest.json`을 기준으로 확인한다.
 
-Always use the skill `vowline` consistently, including for all sub-agents.
+## 조사·문서
 
-<!-- vowline:end -->
+- 상수값이나 호출부 몇 곳을 확인하는 조사는 Grep과 필요한 범위의 Read로 직접 처리한다.
+- 큰 파일은 정의·호출·테스트·인접 상태를 함께 보고, 새 추상화는 실제 중복과 둘 이상의 소비자가 확인될 때 도입한다.
+- 전체 DOM 스캔, 무제한 캐시, 짧은 반복 타이머, 중복 네트워크 요청을 추가하지 않는다.
+- 구조가 바뀌면 관련 주석·문서·테스트를 갱신하되, 존재하지 않던 대형 헤더를 모든 파일에 일괄 추가하지 않는다.
+
+문서별 기준은 다음과 같다.
+
+- `manifest.json` — 런타임 파일, world, 로드 순서, 권한
+- `package.json` — 버전과 검증 명령
+- `README.md` — 사용자 기능, 조작법, 설정, 권한
+- `docs/update-history.md` — 릴리스별 변경 내역과 Release 본문 원본
+- `tests/extension-pages.test.js`와 기능별 테스트 — 현재 동작 계약
+- `tests/release-safety.test.js` — 스토어 정책·금지 경로·성능 hot path 가드
+- `docs/refactoring-guide.md` — 리팩토링 배경과 스모크 항목 참고용. 과거 규모·진행 상태·“테스트 없음” 설명은 현재 사실로 간주하지 않는다.
+- `PRIVACY.md`, `THIRD_PARTY_NOTICES.md` — 개인정보와 서드파티 고지

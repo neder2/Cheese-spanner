@@ -1315,8 +1315,9 @@
         const video = getMainVideoElement();
         const target = getLiveFastForwardTarget(video);
         const available = Number.isFinite(target);
+        const disabled = !available;
 
-        button.disabled = !available;
+        if (button.disabled !== disabled) button.disabled = disabled;
         syncLiveFastForwardButtonLabels(button);
         button.dataset.betterChzzkReady = available ? "1" : "0";
     }

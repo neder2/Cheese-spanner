@@ -3353,6 +3353,35 @@ test("volume wheel installs the page wheel listener only after enabled settings 
     assert.equal(up.defaultPrevented, true);
 });
 
+test("volume wheel removes the page wheel listener after pushState leaves playback routes", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/live/test-channel", chrome);
+    const nativeAddEventListener = dom.window.addEventListener.bind(dom.window);
+    const nativeRemoveEventListener = dom.window.removeEventListener.bind(dom.window);
+    const activeWheelListeners = new Set();
+
+    dom.window.addEventListener = (type, listener, options) => {
+        if (type === "wheel") activeWheelListeners.add(listener);
+        return nativeAddEventListener(type, listener, options);
+    };
+    dom.window.removeEventListener = (type, listener, options) => {
+        if (type === "wheel") activeWheelListeners.delete(listener);
+        return nativeRemoveEventListener(type, listener, options);
+    };
+
+    evalRepoScript(dom, "features", "routeBridgePage.js");
+    evalVolumeWheelScripts(dom);
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    assert.equal(activeWheelListeners.size, 1);
+
+    dom.window.history.pushState({}, "", "/following");
+    await waitForCondition(() => activeWheelListeners.size === 0);
+
+    assert.equal(dom.window.location.pathname, "/following");
+});
+
 test("volume wheel respects unit-range native sliders", async () => {
     const chrome = createFakeChrome();
     const dom = createPageDom(
@@ -4537,10 +4566,13 @@ test("VOD replay chat fix runs even when the old stored option is disabled", asy
     );
 });
 
-async function createVodBroadcastClockFixture(detail, { currentTime = 2, videoNo = "12345" } = {}) {
+async function createVodBroadcastClockFixture(detail, { currentTime = 2, videoNo = "12345", watchHistory = [] } = {}) {
     const chrome = createFakeChrome({
+        local: {
+            betterChzzkLiveWatchHistory: { entries: watchHistory },
+        },
         sync: {
-            liveWatchHistoryEnabled: false,
+            liveWatchHistoryEnabled: watchHistory.length > 0,
             vodBroadcastClockEnabled: true,
         },
     });
@@ -4551,6 +4583,7 @@ async function createVodBroadcastClockFixture(detail, { currentTime = 2, videoNo
             "<main>",
             '<video id="video"></video>',
             '<div class="pzp-vod-time" id="time">0:00 / 1:00</div>',
+            '<h1 id="title">Split VOD fixture</h1>',
             "</main>",
             "</body>",
         ].join(""),
@@ -4560,6 +4593,7 @@ async function createVodBroadcastClockFixture(detail, { currentTime = 2, videoNo
     const { document } = dom.window;
     const video = document.getElementById("video");
     const time = document.getElementById("time");
+    const title = document.getElementById("title");
 
     video.currentTime = currentTime;
     makeVisibleVideo(video);
@@ -4570,6 +4604,14 @@ async function createVodBroadcastClockFixture(detail, { currentTime = 2, videoNo
         top: 324,
         right: 136,
         bottom: 348,
+    });
+    title.getBoundingClientRect = () => ({
+        width: 480,
+        height: 36,
+        left: 16,
+        top: 372,
+        right: 496,
+        bottom: 408,
     });
     dom.window.fetch = async (url) => {
         assert.match(String(url), new RegExp(`/service/v2/videos/${videoNo}$`));
@@ -4597,6 +4639,7 @@ async function createVodBroadcastClockFixture(detail, { currentTime = 2, videoNo
 
     return {
         clock: document.getElementById("betterchzzk-vod-broadcast-clock"),
+        chrome,
         dom,
         video,
     };
@@ -4614,6 +4657,75 @@ test("VOD broadcast clock keeps normal VOD start time without a split offset", a
     assert.equal(clock.querySelector(".bcbc-time").textContent, "00:00:02");
     assert.match(clock.title, /2026-06-28 00:00:00 KST/);
     assert.equal(clock.title.includes("VOD"), false);
+});
+
+test("VOD broadcast clock reuses an unchanged title history panel across time updates", async () => {
+    const originalStart = Date.parse("2026-06-28T00:00:00+09:00");
+    const durationSeconds = 60 * 60;
+    const { chrome, dom, video } = await createVodBroadcastClockFixture(
+        {
+            liveOpenDate: "2026-06-28 00:00:00",
+            duration: durationSeconds,
+            publishDate: new Date(originalStart + durationSeconds * 1000).toISOString(),
+        },
+        {
+            watchHistory: [
+                {
+                    id: "history-12345",
+                    replayVideoNo: "12345",
+                    title: "Split VOD fixture",
+                    firstWatchedAt: originalStart,
+                    lastWatchedAt: originalStart + 1000,
+                    titleHistory: [
+                        {
+                            title: "Earlier fixture title",
+                            firstSeenAt: originalStart - 2000,
+                            lastSeenAt: originalStart - 1000,
+                        },
+                    ],
+                },
+            ],
+        }
+    );
+
+    try {
+        await waitForCondition(() => dom.window.document.getElementById("betterchzzk-vod-title-history-panel"));
+        const panel = dom.window.document.getElementById("betterchzzk-vod-title-history-panel");
+        const initialRow = panel.querySelector(".bcbc-title-history-row");
+        let replaceCalls = 0;
+        let hiddenMutations = 0;
+        const replaceChildren = panel.replaceChildren.bind(panel);
+        panel.replaceChildren = (...nodes) => {
+            replaceCalls += 1;
+            return replaceChildren(...nodes);
+        };
+        const observer = new dom.window.MutationObserver((mutations) => {
+            hiddenMutations += mutations.filter(
+                (mutation) => mutation.type === "attributes" && mutation.attributeName === "hidden"
+            ).length;
+        });
+        observer.observe(panel, { attributes: true, attributeFilter: ["hidden"] });
+
+        video.dispatchEvent(new dom.window.Event("timeupdate", { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 220));
+        observer.disconnect();
+
+        assert.equal(panel.querySelector(".bcbc-title-history-row"), initialRow);
+        assert.equal(replaceCalls, 0);
+        assert.equal(hiddenMutations, 0);
+    } finally {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener(
+                {
+                    liveWatchHistoryEnabled: { oldValue: true, newValue: false },
+                    vodBroadcastClockEnabled: { oldValue: true, newValue: false },
+                },
+                "sync"
+            );
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    }
 });
 
 test("VOD broadcast clock applies a 17h split offset for the second VOD segment", async () => {
@@ -5475,6 +5587,46 @@ test("live fast-forward button seeks to the buffered live edge", async () => {
         }
         await waitForAsyncCallbacks();
         dom.window.close();
+    }
+});
+
+test("live fast-forward button does not rewrite an unchanged disabled state during DOM resync", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            skipLivePauseResumeEnabled: false,
+        },
+    });
+    const { dom, state } = createLiveTimeShiftGuardDom(chrome);
+    let disabledObserver = null;
+
+    state.bufferedEnd = 0;
+    state.seekableEnd = 0;
+
+    try {
+        await loadSkipControlPage(dom);
+
+        const button = dom.window.document.getElementById("betterchzzk-live-fast-forward");
+        assert.ok(button);
+        assert.equal(button.disabled, true);
+
+        let disabledMutations = 0;
+        disabledObserver = new dom.window.MutationObserver((mutations) => {
+            disabledMutations += mutations.length;
+        });
+        disabledObserver.observe(button, {
+            attributes: true,
+            attributeFilter: ["disabled"],
+        });
+
+        button.setAttribute("label", "stale");
+        await waitForCondition(() => button.getAttribute("label") === "\uBE68\uB9AC \uAC10\uAE30");
+        await waitForAsyncCallbacks();
+
+        assert.equal(disabledMutations, 0);
+        assert.equal(button.disabled, true);
+    } finally {
+        disabledObserver?.disconnect();
+        await closeSkipControlPage(dom, chrome);
     }
 });
 

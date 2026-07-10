@@ -18,16 +18,14 @@
  * 통신: root.chatTools(parseChatMessage, renderModeratorBox, syncBlindReveal)를
  *   window.BetterChzzk 에 공개해 다른 파일이 참조할 수 있게 한다.
  * 구조:
- *   1-86: 상수 — DOM 마커 attr, 채팅 root/row/본문/작성자 선택자, 역할/블라인드 판별 정규식.
- *   87-386: STYLE_TEXT — 모아보기 트리거/패널/행 CSS(다크모드 포함), injectStyleOnce 로 주입.
- *   388-425: 전역 상태(featureOptions, chatRoot, observer, moderatorMessages 등) 선언.
- *   427-442: isFeatureEnabled/isBlindRevealEnabled/isModeratorBoxEnabled 등 옵션 헬퍼.
- *   444-989: 채팅 행 파싱 유틸 — 작성자/본문 타겟 선택, 숨은 원문 탐색, 역할(detectRole) 판별.
- *   991-1107: parseChatMessage 본체, 블라인드 원문 캐시(cacheOriginalMessageText)와 복원(syncBlindReveal).
- *   1109-1345: 모아보기 메시지 수집(collectModeratorMessage)·렌더링(renderModeratorList)·패널 토글.
- *   1347-1602: 채팅 헤더/메뉴버튼 탐색과 모아보기 트리거·박스 DOM 삽입(ensureModeratorBox).
- *   1615-1892: mutation 기반 dirty row 추적과 syncChatTools 동기화 본체.
- *   1896-1984: observer 시작/재시작, install/uninstallRuntime, applyOptions, root.chatTools 공개.
+ *   1-135: 상수 — DOM 마커 attr, 채팅 root/row/본문/작성자 선택자, 역할/블라인드 판별 정규식.
+ *   136-436: STYLE_TEXT — 모아보기 트리거/패널/행 CSS(다크모드 포함), injectStyleOnce 로 주입.
+ *   437-475: 전역 상태(featureOptions, chatRoot, observer, moderatorMessages 등) 선언.
+ *   476-1080: 채팅 행 파싱 유틸 — 작성자/본문 타겟 선택, 숨은 원문 탐색, 역할(detectRole) 판별.
+ *   1081-1201: parseChatMessage 본체, 행 소유 원문 캐시와 블라인드 복원(syncBlindReveal).
+ *   1202-1704: 모아보기 수집·렌더링·패널 토글과 채팅 헤더/트리거/박스 DOM 삽입.
+ *   1705-2015: mutation 기반 dirty row 추적, 행 정규화와 syncChatTools 동기화 본체.
+ *   2016-끝: observer 시작/재시작, install/uninstallRuntime, applyOptions, root.chatTools 공개.
  */
 (() => {
     const STYLE_ID = "betterchzzk-chat-tools-style";
@@ -50,7 +48,17 @@
     const MODERATOR_CACHE_STORAGE_KEY = "betterChzzkChatToolsModeratorCache";
     const CHAT_SYNC_THROTTLE_MS = 120;
     const CHAT_ROOT_FIND_THROTTLE_MS = 600;
-    const CHAT_DIRTY_ATTRIBUTE_FILTER = ["class", "style", "hidden", "aria-label", "title", "aria-hidden"];
+    const MESSAGE_ID_ATTRS = ["data-chat-id", "data-message-id", "data-id"];
+    const ROW_REUSE_SIGNAL_ATTR_RE = /^(?:data-(?:(?:virtual|row|item|list)-)?(?:key|index|position)|aria-posinset)$/i;
+    const CHAT_DIRTY_ATTRIBUTE_FILTER = [
+        "class",
+        "style",
+        "hidden",
+        "aria-label",
+        "title",
+        "aria-hidden",
+        ...MESSAGE_ID_ATTRS,
+    ];
     const CHAT_ROOT_SELECTORS = [
         "[role='log']",
         "[role='list'][class*='chat']",
@@ -109,14 +117,21 @@
     const MANAGER_RE = /매니저|운영자|manager|moderator|\bmod\b/i;
     const ROLE_CLASS_RE = /(^|[\s_-])(manager|moderator|mod|owner|streamer|broadcaster)([\s_-]|$)/i;
     const ROLE_SIGNAL_ELEMENT_RE = /badge|role|manager|moderator|owner|streamer|broadcaster/i;
-    const BLIND_SIGNAL_RE = /블라인드|숨김|삭제|차단|가림|blind|hidden|deleted|blocked|moderated/i;
+    const BLIND_SIGNAL_RE =
+        /블라인드|숨김|삭제|차단|가림|클린봇이\s*부적절한\s*표현을\s*감지|blind|hidden|deleted|blocked|moderated/i;
+    const SERVICE_BLIND_NOTICE_RE =
+        /^(?:클린봇이\s*부적절한\s*표현을\s*감지했습니다|(?:관리자|운영자)에\s*의해\s*(?:블라인드|숨김|삭제|차단|가림)(?:\s*처리)?된\s*(?:메시지|채팅)입니다)[\s.!?…]*$/i;
     const GENERIC_BLIND_TEXT_RE =
         /^(?:\[?\s*)?(?:(?:메시지가|채팅이)\s*)?(블라인드|숨김|삭제|차단|가림|blind|hidden|deleted|blocked|moderated)(?:\s*(메시지|채팅|message|chat|처리|처리된|됨|된|되었습니다|됩니다|입니다|글|내용|원문 없음|no text|unavailable))*[\]\s.:：-]*$/i;
     const CLIENT_TEXT_ATTR_RE = /message|content|text|body|comment|original/i;
+    const HIDDEN_NON_MESSAGE_UI_RE =
+        /profile|popover|tooltip|menu|toolbar|control|action|button|dialog|nickname|author|avatar|프로필|메뉴|도구|버튼/i;
+    const HIDDEN_NON_MESSAGE_UI_SELECTOR =
+        "button,a,input,textarea,select,option,[role='button'],[role='menu'],[role='menuitem'],[role='dialog'],[aria-haspopup]";
     const CHAT_TITLE_RE = /chat|\uCC44\uD305/i;
     const CHAT_INPUT_RE = /input|textarea|editor|composer|write|\uC785\uB825/i;
     const PINNED_NOTICE_RE = /pin|pinned|fixed|sticky|notice|announcement|announce|\uACE0\uC815|\uACF5\uC9C0/i;
-    const ID_ATTRS = ["data-chat-id", "data-message-id", "data-id", "id"];
+    const ID_ATTRS = [...MESSAGE_ID_ATTRS, "id"];
     const STYLE_TEXT = `
 [data-bcct-blind-masked="1"]{
   display:none!important;
@@ -504,6 +519,36 @@ body[theme="dark"] .bcct-moderator-box__empty,
         ].join(" ");
     }
 
+    function isExplicitHiddenOriginalElement(el) {
+        if (!(el instanceof Element)) return false;
+        const marker = [getClassText(el), getAttr(el, "id"), getAttr(el, "data-testid")].join(" ");
+        if (
+            /(?:message|chat|comment|content|text)[\s_-]*(?:original|hidden)|(?:original|hidden)[\s_-]*(?:message|chat|comment|content|text)/i.test(
+                marker
+            )
+        ) {
+            return true;
+        }
+        return Array.from(el.attributes).some((attr) => /original/i.test(attr.name));
+    }
+
+    function isHiddenNonMessageUi(el, row) {
+        if (!(el instanceof Element)) return false;
+        const explicitOriginal = isExplicitHiddenOriginalElement(el);
+        const interactive = el.closest(HIDDEN_NON_MESSAGE_UI_SELECTOR);
+        if (interactive && interactive !== row && row.contains(interactive)) return true;
+
+        for (let current = el; current instanceof Element && current !== row; current = current.parentElement) {
+            if (
+                HIDDEN_NON_MESSAGE_UI_RE.test(getElementAttrText(current)) ||
+                (!explicitOriginal && isElementHidden(current) && current.querySelector(HIDDEN_NON_MESSAGE_UI_SELECTOR))
+            ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     function createRowParseContext(row) {
         const elements = row instanceof Element ? [row, ...Array.from(row.querySelectorAll("*")).slice(0, 160)] : [];
         return {
@@ -540,8 +585,9 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
             const roleDecoration = isRoleDecoration(el, context);
             const hidden = el !== row && !roleDecoration && isHiddenWithin(el, row, context);
+            const hiddenNonMessageUi = hidden && isHiddenNonMessageUi(el, row);
 
-            if (!roleDecoration) {
+            if (!roleDecoration && !hiddenNonMessageUi) {
                 for (const attr of Array.from(el.attributes)) {
                     const name = attr.name.toLowerCase();
                     if (!CLIENT_TEXT_ATTR_RE.test(name) && name !== "aria-label" && name !== "title") continue;
@@ -552,7 +598,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
                 }
             }
 
-            if (hidden && !roleDecoration) hiddenElements.push(el);
+            if (hidden && !roleDecoration && !hiddenNonMessageUi) hiddenElements.push(el);
             if (el !== row && el.matches(AUTHOR_SELECTORS) && !hidden && !roleDecoration) authorElements.push(el);
             if (!firstMessageEl && isMessageTextElement(el, row)) firstMessageEl = el;
             roleCandidates.push(el);
@@ -788,7 +834,14 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
         const candidates = [];
         for (const el of getContextElements(context, row, 160)) {
-            if (!(el instanceof Element) || isOwnUi(el) || isRoleDecoration(el, context)) continue;
+            if (
+                !(el instanceof Element) ||
+                isOwnUi(el) ||
+                isRoleDecoration(el, context) ||
+                isHiddenNonMessageUi(el, row)
+            ) {
+                continue;
+            }
             for (const attr of Array.from(el.attributes)) {
                 const name = attr.name.toLowerCase();
                 if (!CLIENT_TEXT_ATTR_RE.test(name) && name !== "aria-label" && name !== "title") continue;
@@ -806,11 +859,14 @@ body[theme="dark"] .bcct-moderator-box__empty,
         out.push(...candidates);
     }
 
-    function isGenericBlindText(text) {
+    function isBlindNoticeText(text) {
         const normalized = normSpace(text);
-        if (!normalized) return true;
-        if (GENERIC_BLIND_TEXT_RE.test(normalized)) return true;
-        return normalized === PLACEHOLDER_TEXT;
+        if (!normalized) return false;
+        return (
+            SERVICE_BLIND_NOTICE_RE.test(normalized) ||
+            GENERIC_BLIND_TEXT_RE.test(normalized) ||
+            normalized === PLACEHOLDER_TEXT
+        );
     }
 
     function isRoleOnlyText(text) {
@@ -951,7 +1007,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
             const text = normSpace(candidate);
             if (!text || seen.has(text)) continue;
             seen.add(text);
-            if (isGenericBlindText(text) || isRoleOnlyText(text)) continue;
+            if (isBlindNoticeText(text) || isRoleOnlyText(text)) continue;
             if (author && text === author) continue;
             if (visibleText && text === visibleText) continue;
             if (text.length > best.length) best = text;
@@ -960,9 +1016,8 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return best;
     }
 
-    function hasBlindSignal(row, hiddenText, context = null) {
-        const visibleText = getVisibleText(row, context);
-        if (BLIND_SIGNAL_RE.test(visibleText)) return true;
+    function hasBlindSignal(row, messageText, hiddenText, context = null) {
+        if (isBlindNoticeText(messageText)) return true;
         const attrText = getTreeAttrText(row, 120, context);
         return Boolean(hiddenText && BLIND_SIGNAL_RE.test(attrText));
     }
@@ -1044,7 +1099,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         let text = textTarget.text || getVisibleText(row, context);
         if (!textTarget.text && author && text === author) text = "";
         const hiddenText = pickHiddenOriginalText(row, text, author, context);
-        const isBlind = hasBlindSignal(row, hiddenText, context);
+        const isBlind = hasBlindSignal(row, text, hiddenText, context);
         const role = detectRole(row, context);
         let badges = role ? getAuthorBadges(authorTarget.el) : [];
         if (role && !badges.length) {
@@ -1068,27 +1123,79 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return parsed;
     }
 
+    function getCacheMessageIdentity(row, textEl) {
+        let current = textEl instanceof Element && row.contains(textEl) ? textEl : row;
+        while (current instanceof Element) {
+            for (const attr of MESSAGE_ID_ATTRS) {
+                const value = normSpace(getAttr(current, attr));
+                if (value) return `${attr}:${value}`;
+            }
+            if (current === row) break;
+            current = current.parentElement;
+        }
+        return "";
+    }
+
+    function getCacheRowReuseSignal(row) {
+        if (!(row instanceof Element)) return "";
+        return Array.from(row.attributes)
+            .filter((attr) => ROW_REUSE_SIGNAL_ATTR_RE.test(attr.name))
+            .map((attr) => `${attr.name.toLowerCase()}:${normSpace(attr.value)}`)
+            .sort()
+            .join("|");
+    }
+
     function cacheOriginalMessageText(row, parsed) {
-        if (parsed.isBlind || !parsed.text || isGenericBlindText(parsed.text)) return;
-        // 파싱 경로에 따라 같은 채팅이 다른 노드를 row 로 갖기도 해서
-        // (전체 스캔은 바깥 wrapper, mutation 은 안쪽 컨테이너) 양쪽에 저장한다.
-        rowOriginalTexts.set(row, parsed.text);
-        if (parsed.textEl instanceof Element) rowOriginalTexts.set(parsed.textEl, parsed.text);
+        if (parsed.isBlind || !parsed.text || isBlindNoticeText(parsed.text)) return;
+        const rowReuseSignal = getCacheRowReuseSignal(row);
+        const cached = rowOriginalTexts.get(row);
+        if (
+            cached &&
+            cached.rowReuseSignal !== rowReuseSignal &&
+            cached.author === parsed.author &&
+            cached.sourceTextEl === parsed.textEl &&
+            cached.text === parsed.text
+        ) {
+            // 재사용 표식만 먼저 바뀐 행을 기존 메시지 상태로 다시 파싱해도
+            // 낡은 원문을 새 행 소유 캐시로 덮어쓰지 않는다.
+            rowOriginalTexts.delete(row);
+            return;
+        }
+        rowOriginalTexts.set(row, {
+            author: parsed.author,
+            identity: getCacheMessageIdentity(row, parsed.textEl),
+            rowReuseSignal,
+            root: chatRoot,
+            sourceTextEl: parsed.textEl instanceof Element ? parsed.textEl : null,
+            text: parsed.text,
+        });
     }
 
     function lookupCachedOriginalText(row, parsed) {
-        const byRow = rowOriginalTexts.get(row);
-        if (byRow) return byRow;
-        if (parsed.textEl instanceof Element) {
-            const byTextEl = rowOriginalTexts.get(parsed.textEl);
-            if (byTextEl) return byTextEl;
+        const cached = rowOriginalTexts.get(row);
+        if (!cached) return "";
+
+        const identity = getCacheMessageIdentity(row, parsed.textEl);
+        const hasIdentityMismatch = cached.identity || identity ? cached.identity !== identity : false;
+        const hasRowReuseSignalMismatch = cached.rowReuseSignal !== getCacheRowReuseSignal(row);
+        const hasAuthorMismatch = cached.author && parsed.author && cached.author !== parsed.author;
+        const hasUnownedTextElement =
+            !cached.identity &&
+            (!(cached.sourceTextEl instanceof Element) ||
+                !(parsed.textEl instanceof Element) ||
+                cached.sourceTextEl !== parsed.textEl);
+        if (
+            cached.root !== chatRoot ||
+            hasIdentityMismatch ||
+            hasRowReuseSignalMismatch ||
+            hasAuthorMismatch ||
+            hasUnownedTextElement
+        ) {
+            rowOriginalTexts.delete(row);
+            return "";
         }
-        let current = row.parentElement;
-        for (let depth = 0; current instanceof Element && depth < 4; depth += 1, current = current.parentElement) {
-            const byAncestor = rowOriginalTexts.get(current);
-            if (byAncestor) return byAncestor;
-        }
-        return "";
+
+        return cached.text;
     }
 
     function removeBlindReveal(row) {
@@ -1115,7 +1222,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         // 프로필 카드 같은 다른 UI 를 본문으로 오인해 가리지 않도록,
         // 실제 블라인드 안내 문구가 표시된 요소일 때만 원문으로 교체한다.
         const target = parsed.textEl instanceof Element && parsed.textEl !== row ? parsed.textEl : null;
-        if (!target || !isGenericBlindText(getVisibleText(target))) {
+        if (!target || !isBlindNoticeText(getVisibleText(target))) {
             removeBlindReveal(row);
             return;
         }
@@ -1654,13 +1761,26 @@ body[theme="dark"] .bcct-moderator-box__empty,
     }
 
     function normalizeCandidateRow(el, rootEl) {
+        let identityRow = null;
+        let structuralRow = null;
+        let weakRow = el;
         let current = el;
-        for (let depth = 0; current && current !== rootEl && depth < 4; depth += 1, current = current.parentElement) {
+        for (let depth = 0; current && current !== rootEl && depth < 8; depth += 1, current = current.parentElement) {
             if (!(current instanceof Element)) break;
-            if (getAttr(current, "data-chat-id") || getAttr(current, "data-message-id")) return current;
-            if (/\b(row|item|message|chat)\b/i.test(getClassText(current)) && getVisibleText(current)) return current;
+            if (MESSAGE_ID_ATTRS.some((attr) => getAttr(current, attr)) || getAttr(current, "role") === "listitem") {
+                identityRow = current;
+            }
+
+            const classText = getClassText(current);
+            if (/(^|[\s_-])(row|item)(?=$|[\s_-])/i.test(classText) && getVisibleText(current)) {
+                structuralRow = current;
+                continue;
+            }
+            if (/(^|[\s_-])(message|chat|comment)(?=$|[\s_-])/i.test(classText) && getVisibleText(current)) {
+                weakRow = current;
+            }
         }
-        return el;
+        return structuralRow || identityRow || weakRow;
     }
 
     function hasCandidateAncestor(row, candidateRows, rootEl) {
@@ -1721,6 +1841,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
     function shouldTrackChatAttributeMutation(mutation, row) {
         const attrName = String(mutation.attributeName || "").toLowerCase();
         if (!CHAT_DIRTY_ATTRIBUTE_FILTER.includes(attrName)) return false;
+        if (MESSAGE_ID_ATTRS.includes(attrName)) return true;
         if (row?.hasAttribute(BLIND_PROCESSED_ATTR)) return true;
 
         // 이미 수집된 행도 계속 추적한다. 치지직이 메시지 삽입 직후 닉네임 색
@@ -1766,6 +1887,12 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return true;
     }
 
+    function clearOriginalTextCachesInRemovedSubtree(node) {
+        if (!(node instanceof Element)) return;
+        rowOriginalTexts.delete(node);
+        for (const el of node.querySelectorAll("*")) rowOriginalTexts.delete(el);
+    }
+
     function collectDirtyChatRowsFromMutations(mutations) {
         chatMutationBatchShouldSchedule = false;
         const rootEl = chatRoot?.isConnected ? chatRoot : null;
@@ -1793,6 +1920,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
             }
             for (const node of mutation.removedNodes || []) {
                 if (isOwnUi(node)) continue;
+                clearOriginalTextCachesInRemovedSubtree(node);
                 const el = resolveMutationElement(mutation.target);
                 if (el === rootEl || markDirtyChatRow(mutation.target, rootEl)) {
                     chatMutationBatchShouldSchedule = true;
@@ -1808,7 +1936,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         const rows = new Set();
         for (const child of Array.from(rootEl.children)) {
             if (isOwnUi(child) || !getVisibleText(child)) continue;
-            if (child.querySelectorAll(CHAT_ROW_SELECTORS).length >= 2) continue;
+            if (child.querySelector(CHAT_ROW_SELECTORS)) continue;
             rows.add(child);
         }
 

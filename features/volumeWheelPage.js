@@ -6,14 +6,15 @@
  * 동작 위치: /live 또는 /video 라우트(PLAYBACK_ROUTE_RE)의 볼륨 컨트롤(.pzp-pc__volume 계열) 위.
  * 하는 일: window에 capture 단계 wheel 리스너를 설치해, 이벤트 경로가 볼륨 컨트롤과 겹치고 메인 video와
  *   같은 플레이어 컨텍스트에 있을 때만 deltaY 부호로 볼륨을 step만큼 증감시킨다. 확장 자체 미리보기 영상
- *   (EXTENSION_PREVIEW_VIDEO_SELECTOR)은 메인 video 후보에서 제외한다. 라우트 변경(popstate/hashchange/
- *   pageshow/click 후 재확인)마다 리스너 설치 여부를 다시 동기화한다.
+ *   (EXTENSION_PREVIEW_VIDEO_SELECTOR)은 메인 video 후보에서 제외한다. route bridge의
+ *   betterchzzk:routechange와 기존 라우트 폴백마다 리스너 설치 여부를 다시 동기화한다.
  * 옵션 키: volumeWheelEnabled, volumeWheelStep (모두 volumeWheel.js를 통해 전달받음).
  * 통신: CONFIG_ATTR(data-betterchzzk-volume-wheel-options) attribute를 읽고, CONFIG_EVENT
  *   (betterchzzk:volume-wheel-options)를 window에서 수신해 옵션을 갱신한다.
  */
 (() => {
     const CONFIG_EVENT = "betterchzzk:volume-wheel-options";
+    const ROUTE_CHANGE_EVENT = "betterchzzk:routechange";
     const CONFIG_ATTR = "data-betterchzzk-volume-wheel-options";
     const EXTENSION_PREVIEW_VIDEO_SELECTOR = "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip]";
     const VOLUME_CONTROL_SELECTOR = [
@@ -331,6 +332,7 @@
     }
 
     window.addEventListener(CONFIG_EVENT, applyOptionsFromAttribute, true);
+    window.addEventListener(ROUTE_CHANGE_EVENT, syncWheelListener, true);
     window.addEventListener("popstate", syncWheelListener, true);
     window.addEventListener("hashchange", syncWheelListener, true);
     window.addEventListener("pageshow", syncWheelListener, true);
