@@ -438,6 +438,15 @@
         activeVideo = null;
     }
 
+    function handlePageHide(event) {
+        if (event?.persisted) return;
+        releaseActiveGraph();
+    }
+
+    function handlePageShow(event) {
+        if (event?.persisted) syncState();
+    }
+
     function injectButtonStyle() {
         injectStyleOnce(
             STYLE_ID,
@@ -660,7 +669,8 @@
         if (runtimeInstalled) return;
         runtimeInstalled = true;
         if (!removePageChangeDetection) removePageChangeDetection = startPageChangeDetection(syncState);
-        window.addEventListener("pagehide", releaseActiveGraph, true);
+        window.addEventListener("pagehide", handlePageHide, true);
+        window.addEventListener("pageshow", handlePageShow, true);
         createMutationObserverSync({
             // childList만으로는 플레이어 지연 로드를 놓친다: 컨트롤이 DOM에 들어온 뒤
             // 상태 변화가 class 토글로만 일어나면 재동기화 기회가 없어 버튼이 영영 안 생긴다.

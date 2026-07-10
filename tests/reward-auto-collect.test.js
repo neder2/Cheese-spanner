@@ -206,6 +206,40 @@ test("reward auto collect clicks a visible enabled 통나무 claim button once",
     assert.equal(tracked.clicks, 1);
 });
 
+test("reward auto collect never clicks executable URL anchors", async () => {
+    const dom = createRewardDom();
+    const scope = createRewardScope(dom);
+    const anchor = dom.window.document.createElement("a");
+    anchor.href = "javascript:globalThis.__betterChzzkRemoteCodeRan = true";
+    anchor.className = "reward-claim-button";
+    anchor.textContent = "통나무 받기";
+    anchor.addEventListener("click", (event) => event.preventDefault());
+    const tracked = trackButton(anchor);
+
+    scope.appendChild(tracked.button);
+    await wait(650);
+
+    assert.equal(tracked.clicks, 0);
+    assert.equal(dom.window.__betterChzzkRemoteCodeRan, undefined);
+});
+
+test("reward auto collect rejects executable URL schemes hidden by ASCII whitespace", async () => {
+    const dom = createRewardDom();
+    const scope = createRewardScope(dom);
+    const anchor = dom.window.document.createElement("a");
+    anchor.setAttribute("href", "java\nscript:globalThis.__betterChzzkRemoteCodeRan = true");
+    anchor.setAttribute("role", "button");
+    anchor.textContent = "통나무 받기";
+    anchor.addEventListener("click", (event) => event.preventDefault());
+    const tracked = trackButton(anchor);
+
+    scope.appendChild(tracked.button);
+    await wait(650);
+
+    assert.equal(tracked.clicks, 0);
+    assert.equal(dom.window.__betterChzzkRemoteCodeRan, undefined);
+});
+
 test("reward auto collect ignores non-reward attribute changes after a completed claim", async () => {
     const dom = createRewardDom();
     const scope = createRewardScope(dom);

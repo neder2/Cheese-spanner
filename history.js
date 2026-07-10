@@ -6,25 +6,29 @@
  * 하는 일: chrome.storage.local의 기록을 읽어 정규화하고, 월별 달력·목록·요약 통계를 렌더링한다.
  * 검색/정렬, 항목 선택/삭제, 세션(입장~퇴장) 세부 보기를 제공하며, 클릭 시 치지직 API로 다시보기
  * 영상을 찾아 새 탭으로 연다. storage.onChanged를 구독해 다른 곳의 변경도 반영한다.
- * 의존: globalThis.chrome.storage.local, globalThis.BetterChzzk.utils(shared/data.js가 채움).
- * 통신: chrome.storage.local 키 "betterChzzkLiveWatchHistory"를 읽고 쓴다(이 키는
- * features/liveWatchHistory.js가 적재함). api.chzzk.naver.com의 채널 영상 목록/영상 상세 API를 호출해
- * 다시보기 videoNo를 찾아내고, 찾은 값을 다시 같은 storage 키에 되써서 다음 조회를 캐시한다.
+ * 의존: globalThis.chrome.storage.local, globalThis.chrome.runtime,
+ * globalThis.BetterChzzk.utils(shared/data.js가 채움).
+ * 통신: chrome.storage.local 키 "betterChzzkLiveWatchHistory"는 읽기와 변경 감지에만 사용한다.
+ * 삭제·초기화·다시보기 캐시는 runtime 메시지로 background 단일 writer에 요청한다.
+ * api.chzzk.naver.com의 채널 영상 목록/영상 상세 API를 호출해 다시보기 videoNo를 찾는다.
  * 구조(위→아래 순서):
  * - 상수/DOM 참조/전역 상태 선언 (STORAGE_KEY, API_BASE 등, 각 엘리먼트 참조, entries 등 상태 변수)
  * - 제목 이력/표시 텍스트 포맷터 (getEntryTitleRows, formatDateLabel, formatDuration 등)
  * - 세션 정규화/병합 (mergeContinuousSessionDetails, normalizeSessionDetails, normalizeHistory)
- * - 원본 storage 데이터 갱신/삭제 헬퍼 (updateRawHistoryEntry, removeEntryIdsFromRawHistory)
+ * - background mutation 메시지 전송 헬퍼 (sendWatchHistoryMutation)
  * - 다시보기 매칭 로직 (extractReplayVideos, videoCouldMatchEntry, scoreReplayCandidate,
  *   resolveReplayVideoNo)
  * - 월 선택/집계 헬퍼 (ensureSelectedMonth, getMonthScopeBounds, getUniqueWatchSecondsForMonth)
  * - 목록 정렬/필터/선택 상태 (getVisibleRows, renderSelectionControls, setEntrySelected 등)
  * - 다시보기 열기 흐름 (persistReplayVideoNo, openUrlInNewTab, handleTitleClick)
  * - 렌더링 함수 (renderCalendar, renderList, renderSummary, renderAll)
- * - storage 로드/새로고침/삭제 액션 (loadHistory, refreshHistory, clearHistory, deleteEntriesByIds)
+ * - storage 로드/새로고침과 background 삭제 액션 (loadHistory, refreshHistory, clearHistory,
+ *   deleteEntriesByIds)
  * - 이벤트 리스너 등록과 초기 로드 호출 (파일 최하단)
  */
 const STORAGE_KEY = "betterChzzkLiveWatchHistory";
+const WATCH_HISTORY_MESSAGE_TYPE = "betterChzzk:watch-history-mutation";
+const WATCH_HISTORY_MESSAGE_VERSION = 1;
 const API_BASE = "https://api.chzzk.naver.com/service/v1/channels";
 const VIDEO_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/videos";
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -57,6 +61,7 @@ const {
     getKstParts,
     isSameKstDate,
     mergeDailySeconds: mergeSessionDailySeconds,
+    mergeDailySecondsMax,
     mergeWatchRanges,
     normalizeDailySeconds,
     normalizeForMatch,
@@ -67,9 +72,8 @@ const {
     pickString,
     pickVideoEndDateText,
     pickVideoStartDateText,
+    runtimeSendMessage,
     storageGet,
-    storageRemove,
-    storageSet,
     sumWatchRanges,
     sumWatchRangesByDate,
     touchMapEntry,
@@ -104,11 +108,20 @@ let selectedMonth = 0;
 let selectedDateKey = "";
 let hideMessageTimer = 0;
 let storageChangeReloadTimer = 0;
-let suppressNextStorageChange = false;
 const selectedEntryIds = new Set();
 const expandedEntryIds = new Set();
 const replayLookupCache = new Map();
 const resolvingReplayEntryIds = new Set();
+
+async function sendWatchHistoryMutation(operation) {
+    const response = await runtimeSendMessage({
+        type: WATCH_HISTORY_MESSAGE_TYPE,
+        version: WATCH_HISTORY_MESSAGE_VERSION,
+        operation,
+    });
+    if (!response?.ok) throw new Error(response?.error || "Watch history mutation failed");
+    return response.result || {};
+}
 
 function getEntryTitleRows(entry) {
     const target = {
@@ -257,15 +270,24 @@ function normalizeSessionDetails(row, fallbackEntry) {
 }
 
 function sumSessionSeconds(sessionDetails) {
-    return sumWatchRanges(collectWatchSessionRanges(sessionDetails));
+    const exactSeconds = sumWatchRanges(collectWatchSessionRanges(sessionDetails));
+    const storedSeconds = (sessionDetails || []).reduce(
+        (sum, session) => sum + Math.max(0, Number(session?.watchedSeconds) || 0),
+        0
+    );
+    return Math.max(exactSeconds, storedSeconds);
 }
 
 function buildDailySecondsFromSessions(sessionDetails) {
     const rangesByDate = {};
+    const storedDailySeconds = {};
+    for (const session of sessionDetails || []) {
+        mergeSessionDailySeconds(storedDailySeconds, session?.dailySeconds);
+    }
     for (const range of collectWatchSessionRanges(sessionDetails)) {
         addWatchRangeToRangesByDate(rangesByDate, range);
     }
-    return sumWatchRangesByDate(rangesByDate);
+    return mergeDailySecondsMax(storedDailySeconds, sumWatchRangesByDate(rangesByDate));
 }
 
 function getSessionFirstWatchedAt(sessionDetails) {
@@ -310,11 +332,22 @@ function normalizeHistory(raw) {
                 dailySeconds: normalizeDailySeconds(row.dailySeconds),
             };
             entry.sessionDetails = normalizeSessionDetails(row, entry);
-            entry.watchedSeconds = sumSessionSeconds(entry.sessionDetails);
-            entry.dailySeconds = buildDailySecondsFromSessions(entry.sessionDetails);
-            entry.firstWatchedAt = getSessionFirstWatchedAt(entry.sessionDetails) || entry.firstWatchedAt;
-            entry.lastWatchedAt = getSessionLastWatchedAt(entry.sessionDetails) || entry.lastWatchedAt;
-            entry.sessions = entry.sessionDetails.length;
+            entry.watchedSeconds = Math.max(entry.watchedSeconds, sumSessionSeconds(entry.sessionDetails));
+            entry.dailySeconds = mergeDailySecondsMax(
+                entry.dailySeconds,
+                buildDailySecondsFromSessions(entry.sessionDetails)
+            );
+            const sessionFirstWatchedAt = getSessionFirstWatchedAt(entry.sessionDetails);
+            const sessionLastWatchedAt = getSessionLastWatchedAt(entry.sessionDetails);
+            if (sessionFirstWatchedAt > 0) {
+                entry.firstWatchedAt = entry.firstWatchedAt
+                    ? Math.min(entry.firstWatchedAt, sessionFirstWatchedAt)
+                    : sessionFirstWatchedAt;
+            }
+            if (sessionLastWatchedAt > 0) {
+                entry.lastWatchedAt = Math.max(entry.lastWatchedAt, sessionLastWatchedAt);
+            }
+            entry.sessions = Math.max(entry.sessions, entry.sessionDetails.length);
             for (const session of entry.sessionDetails) {
                 addTitleHistory(entry, session.title, session.enteredAt, session.leftAt || session.enteredAt);
             }
@@ -323,55 +356,6 @@ function normalizeHistory(raw) {
         })
         .filter((entry) => entry.id && entry.sessionDetails.length > 0)
         .sort((a, b) => b.lastWatchedAt - a.lastWatchedAt);
-}
-
-function getRawEntryId(row, fallback = "") {
-    return pickString(row?.id) || pickString(fallback);
-}
-
-function updateRawHistoryEntry(raw, entryId, updater) {
-    const source = raw && typeof raw === "object" ? { ...raw } : {};
-    const rawEntries = source.entries;
-
-    if (Array.isArray(rawEntries)) {
-        source.entries = rawEntries.map((row) => {
-            if (getRawEntryId(row) !== entryId) return row;
-            const next = { ...(row && typeof row === "object" ? row : {}) };
-            updater(next);
-            return next;
-        });
-    } else if (rawEntries && typeof rawEntries === "object") {
-        source.entries = { ...rawEntries };
-        for (const [key, row] of Object.entries(source.entries)) {
-            if (getRawEntryId(row, key) !== entryId) continue;
-            const next = { ...(row && typeof row === "object" ? row : {}) };
-            updater(next);
-            source.entries[key] = next;
-        }
-    }
-
-    source.version = Number(source.version) || 1;
-    source.updatedAt = Date.now();
-    return source;
-}
-
-function removeEntryIdsFromRawHistory(raw, ids) {
-    const source = raw && typeof raw === "object" ? { ...raw } : {};
-    const rawEntries = source.entries;
-
-    if (Array.isArray(rawEntries)) {
-        source.entries = rawEntries.filter((row) => !ids.has(getRawEntryId(row)));
-    } else if (rawEntries && typeof rawEntries === "object") {
-        source.entries = Object.fromEntries(
-            Object.entries(rawEntries).filter(([key, row]) => !ids.has(getRawEntryId(row, key)))
-        );
-    } else {
-        source.entries = {};
-    }
-
-    source.version = Number(source.version) || 1;
-    source.updatedAt = Date.now();
-    return source;
 }
 
 function extractReplayVideos(json) {
@@ -460,7 +444,8 @@ async function fetchVideoDetail(videoNo) {
 function mergeVideoDetail(video, detail) {
     if (!video || !detail) return video;
 
-    video.liveId = video.liveId || pickString(detail.liveId, detail.liveNo, detail.live?.liveId, detail.live?.liveNo);
+    video.detailLiveId = pickString(detail.liveId, detail.liveNo, detail.live?.liveId, detail.live?.liveNo);
+    video.liveId = video.liveId || video.detailLiveId;
     video.title = pickString(video.title, detail.videoTitle, detail.title, detail.liveTitle);
     video.titleNorm = normalizeForMatch(video.title);
 
@@ -480,8 +465,14 @@ function mergeVideoDetail(video, detail) {
     return video;
 }
 
+function hasConflictingLiveId(entry, video) {
+    if (!entry?.liveId || !video) return false;
+    return [video.liveId, video.detailLiveId].some((liveId) => liveId && entry.liveId !== liveId);
+}
+
 function videoCouldMatchEntry(entry, video) {
     if (!video || !replayOnly(video)) return false;
+    if (hasConflictingLiveId(entry, video)) return false;
     if (entry.liveId && video.liveId && entry.liveId === video.liveId) return true;
 
     const targetMs = getEntryTargetMs(entry);
@@ -506,6 +497,7 @@ function videoCouldMatchEntry(entry, video) {
 }
 
 function scoreReplayCandidate(entry, video) {
+    if (hasConflictingLiveId(entry, video)) return Number.NEGATIVE_INFINITY;
     let score = 0;
 
     if (entry.liveId && video.liveId && entry.liveId === video.liveId) score += 1000;
@@ -594,6 +586,8 @@ async function resolveReplayVideoNo(entry) {
                     // The list data is still useful if detail lookup is unavailable.
                 }
 
+                if (hasConflictingLiveId(entry, video)) continue;
+
                 const score = scoreReplayCandidate(entry, video);
                 if (!best || score > best.score) best = { video, score };
                 if (score >= 1000) return video.videoNo;
@@ -607,10 +601,16 @@ async function resolveReplayVideoNo(entry) {
         return best && best.score >= 220 ? best.video.videoNo : "";
     })();
 
-    const guardedPromise = promise.catch((error) => {
-        replayLookupCache.delete(cacheKey);
-        throw error;
-    });
+    const guardedPromise = promise.then(
+        (videoNo) => {
+            if (!videoNo) replayLookupCache.delete(cacheKey);
+            return videoNo;
+        },
+        (error) => {
+            replayLookupCache.delete(cacheKey);
+            throw error;
+        }
+    );
     touchMapEntry(replayLookupCache, cacheKey, guardedPromise, MAX_REPLAY_LOOKUP_CACHE_ENTRIES);
     return guardedPromise;
 }
@@ -643,17 +643,27 @@ function getMonthScopeBounds(year, month) {
     };
 }
 
+function getStoredWatchSecondsForScope(record, startMs = -Infinity, endMs = Infinity) {
+    if (startMs === -Infinity && endMs === Infinity) {
+        return Math.max(0, Number(record?.watchedSeconds) || 0);
+    }
+
+    return Object.entries(record?.dailySeconds || {}).reduce((sum, [dateKey, seconds]) => {
+        const bounds = getDateScopeBounds(dateKey);
+        if (!bounds || bounds.startMs < startMs || bounds.endMs > endMs) return sum;
+        return sum + Math.max(0, Number(seconds) || 0);
+    }, 0);
+}
+
 function getUniqueWatchSecondsForScope(startMs = -Infinity, endMs = Infinity) {
     return entries.reduce((sum, entry) => {
-        return (
-            sum +
-            sumWatchRanges(
-                collectWatchSessionRanges(entry.sessionDetails, {
-                    scopeStartMs: startMs,
-                    scopeEndMs: endMs,
-                })
-            )
+        const exactSeconds = sumWatchRanges(
+            collectWatchSessionRanges(entry.sessionDetails, {
+                scopeStartMs: startMs,
+                scopeEndMs: endMs,
+            })
         );
+        return sum + Math.max(exactSeconds, getStoredWatchSecondsForScope(entry, startMs, endMs));
     }, 0);
 }
 
@@ -679,7 +689,10 @@ function getEntrySessionsForScope(entry) {
                 : [];
             return {
                 ...session,
-                scopeSeconds: sumWatchRanges(scopeRanges),
+                scopeSeconds: Math.max(
+                    sumWatchRanges(scopeRanges),
+                    getStoredWatchSecondsForScope(session, bounds?.startMs, bounds?.endMs)
+                ),
                 scopeRanges,
             };
         })
@@ -769,8 +782,20 @@ function getDayTotals(year, month) {
                 scopeEndMs: endMs,
             });
         }
-        for (const [dateKey, seconds] of Object.entries(sumWatchRangesByDate(rangesByDate))) {
-            totals[dateKey] = (Number(totals[dateKey]) || 0) + Math.max(0, Number(seconds) || 0);
+        const exactDailySeconds = sumWatchRangesByDate(rangesByDate);
+        const dateKeys = new Set([
+            ...Object.keys(exactDailySeconds),
+            ...Object.keys(entry.dailySeconds || {}).filter((dateKey) =>
+                dateKey.startsWith(formatMonthKey(year, month))
+            ),
+        ]);
+        for (const dateKey of dateKeys) {
+            const seconds = Math.max(
+                Math.max(0, Number(exactDailySeconds[dateKey]) || 0),
+                Math.max(0, Number(entry.dailySeconds?.[dateKey]) || 0)
+            );
+            if (seconds <= 0) continue;
+            totals[dateKey] = (Number(totals[dateKey]) || 0) + seconds;
         }
     }
     return totals;
@@ -881,10 +906,17 @@ function renderCalendar() {
 
 function getVisibleRows() {
     const query = compactSpaces(historySearchEl.value).toLowerCase();
+    const scopeBounds = selectedDateKey
+        ? getDateScopeBounds(selectedDateKey)
+        : getMonthScopeBounds(selectedYear, selectedMonth);
     const rows = (selectedDateKey ? entries : getMonthEntries())
         .map((entry) => {
             const sessionsForScope = getEntrySessionsForScope(entry);
-            const seconds = sessionsForScope.reduce((sum, session) => sum + session.scopeSeconds, 0);
+            const sessionSeconds = sessionsForScope.reduce((sum, session) => sum + session.scopeSeconds, 0);
+            const seconds = Math.max(
+                sessionSeconds,
+                getStoredWatchSecondsForScope(entry, scopeBounds?.startMs, scopeBounds?.endMs)
+            );
             return { entry, seconds, sessionsForScope };
         })
         .filter((row) => row.seconds > 0);
@@ -952,17 +984,15 @@ function toggleEntryExpanded(id) {
 }
 
 async function persistReplayVideoNo(entry, videoNo) {
-    if (!storage || !entry?.id || !videoNo) return;
+    if (!entry?.id || !videoNo) return;
 
-    const data = await storageGet(storage, STORAGE_KEY);
-    const nextHistory = updateRawHistoryEntry(data[STORAGE_KEY], entry.id, (row) => {
-        row.replayVideoNo = videoNo;
+    await sendWatchHistoryMutation({
+        kind: "setReplayVideoNo",
+        recordId: entry.id,
+        videoNo,
     });
-    await storageSet(storage, { [STORAGE_KEY]: nextHistory });
 
     entry.replayVideoNo = videoNo;
-    entries = normalizeHistory(nextHistory);
-    pruneSelectedEntryIds();
 }
 
 function openUrlInNewTab(url, pendingWindow = null) {
@@ -1354,8 +1384,7 @@ async function clearHistory() {
     if (!confirm("이 브라우저에 저장된 시청 기록을 모두 삭제할까요?")) return;
 
     try {
-        suppressNextStorageChange = true;
-        await storageRemove(storage, STORAGE_KEY);
+        await sendWatchHistoryMutation({ kind: "clearHistory", cutoffAt: Date.now() });
         entries = [];
         selectedDateKey = "";
         selectedEntryIds.clear();
@@ -1364,26 +1393,21 @@ async function clearHistory() {
         renderAll();
         showMessage("시청 기록을 삭제했습니다.");
     } catch (_) {
-        suppressNextStorageChange = false;
         showMessage("시청 기록을 삭제하지 못했습니다.", "error");
     }
 }
 
 async function deleteEntriesByIds(ids, successMessage) {
-    if (!storage) {
-        showMessage("저장소를 사용할 수 없습니다.", "error");
-        return false;
-    }
-
     const targets = new Set(Array.from(ids || []).filter(Boolean));
     if (!targets.size) return false;
 
     try {
-        const data = await storageGet(storage, STORAGE_KEY);
-        const nextHistory = removeEntryIdsFromRawHistory(data[STORAGE_KEY], targets);
-        suppressNextStorageChange = true;
-        await storageSet(storage, { [STORAGE_KEY]: nextHistory });
-        entries = normalizeHistory(nextHistory);
+        await sendWatchHistoryMutation({
+            kind: "deleteEntries",
+            entryIds: Array.from(targets),
+            cutoffAt: Date.now(),
+        });
+        entries = entries.filter((entry) => !targets.has(entry.id));
         for (const id of targets) {
             selectedEntryIds.delete(id);
             expandedEntryIds.delete(id);
@@ -1393,7 +1417,6 @@ async function deleteEntriesByIds(ids, successMessage) {
         showMessage(successMessage || "선택한 시청 기록을 삭제했습니다.");
         return true;
     } catch (_) {
-        suppressNextStorageChange = false;
         showMessage("시청 기록을 삭제하지 못했습니다.", "error");
         return false;
     }
@@ -1430,10 +1453,6 @@ deleteSelectedHistoryButton.addEventListener("click", deleteSelectedEntries);
 if (globalThis.chrome?.storage?.onChanged) {
     chrome.storage.onChanged.addListener((changes, areaName) => {
         if (areaName !== "local" || !changes[STORAGE_KEY]) return;
-        if (suppressNextStorageChange) {
-            suppressNextStorageChange = false;
-            return;
-        }
         scheduleStorageChangeReload();
     });
 }

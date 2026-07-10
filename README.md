@@ -466,7 +466,7 @@ npm test             # node:test + jsdom 회귀 테스트
 ```
 Better Chzzk/
 ├─ manifest.json            확장 프로그램 매니페스트 (MV3) — content_scripts 순서가 곧 로드/의존 순서
-├─ background.js            서비스 워커 (설치 시 옵션 정규화)
+├─ background.js            서비스 워커 (옵션 정규화 + 시청 기록 단일 writer/직렬 mutation 큐)
 ├─ content.js               공용 DOM·라우트·옵저버 유틸 (window.BetterChzzk.utils)
 ├─ options.html / .js       설정 화면 (액션 팝업 겸 옵션 페이지)
 ├─ history.html / .js       시청 기록 페이지
@@ -474,7 +474,8 @@ Better Chzzk/
 ├─ styles.css               설정·기록 페이지 스타일
 ├─ shared/
 │  ├─ settings.js           옵션 스키마·기본값·정규화 (globalThis.BetterChzzkSettings)
-│  └─ data.js               API 응답 파싱·KST 날짜·시청 구간 유틸
+│  ├─ data.js               API 응답 파싱·KST 날짜·시청 구간·storage 유틸
+│  └─ watchHistoryStore.js  시청 기록 mutation 검증·병합·삭제 barrier·보존 상한
 ├─ features/                기능별 콘텐츠 스크립트 (기능 1개 = 파일 1개, IIFE)
 │  ├─ routeBridgePage.js / chatTimestampPage.js / autoQualityPage.js / volumeWheelPage.js
 │  │                                                                    ← 페이지(MAIN world)에서 실행

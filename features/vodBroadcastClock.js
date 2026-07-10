@@ -124,9 +124,11 @@
     let currentSegmentOffsetMs = 0;
     let currentStartSource = "";
     let currentHistoryInfo = null;
+    let currentVideoDetail = null;
     let titleHistoryExpanded = false;
     let metadataState = "idle";
     let metadataToken = 0;
+    let historyInfoToken = 0;
     let pageChangeTimer = 0;
     let lastUrl = location.href;
     let domObserver = null;
@@ -142,6 +144,7 @@
     const storage = globalThis.chrome?.storage?.local;
     let watchHistorySnapshot = null;
     let watchHistorySnapshotPromise = null;
+    let watchHistorySnapshotGeneration = 0;
 
     const scheduleSync = createThrottledDomSync(syncVodBroadcastClock, DOM_SYNC_THROTTLE_MS);
 
@@ -271,30 +274,42 @@
         if (watchHistorySnapshot) return Promise.resolve(watchHistorySnapshot);
         if (watchHistorySnapshotPromise) return watchHistorySnapshotPromise;
 
-        watchHistorySnapshotPromise = storageGet(storage, WATCH_HISTORY_STORAGE_KEY)
+        const generation = watchHistorySnapshotGeneration;
+        const request = storageGet(storage, WATCH_HISTORY_STORAGE_KEY)
             .then((data) => {
+                if (generation !== watchHistorySnapshotGeneration) return null;
                 watchHistorySnapshot = data?.[WATCH_HISTORY_STORAGE_KEY] || null;
                 return watchHistorySnapshot;
             })
             .finally(() => {
-                watchHistorySnapshotPromise = null;
+                if (watchHistorySnapshotPromise === request) watchHistorySnapshotPromise = null;
             });
 
-        return watchHistorySnapshotPromise;
+        watchHistorySnapshotPromise = request;
+        return request;
     }
 
     function invalidateWatchHistorySnapshot() {
+        watchHistorySnapshotGeneration += 1;
         watchHistorySnapshot = null;
         watchHistorySnapshotPromise = null;
         historyInfoCache.clear();
+        historyInfoToken += 1;
         currentHistoryInfo = null;
+        if (isVodRoute() && currentVideoNo && metadataState !== "loading") {
+            loadHistoryInfo(currentVideoNo, currentVideoDetail, metadataToken);
+            scheduleSync();
+            return;
+        }
         if (isVodRoute()) scheduleSync();
     }
 
     function clearWatchHistorySnapshotCache() {
+        watchHistorySnapshotGeneration += 1;
         watchHistorySnapshot = null;
         watchHistorySnapshotPromise = null;
         historyInfoCache.clear();
+        historyInfoToken += 1;
         currentHistoryInfo = null;
     }
 
@@ -438,6 +453,7 @@
     }
 
     function loadHistoryInfo(videoNo, detail, token) {
+        const historyToken = ++historyInfoToken;
         currentHistoryInfo = null;
         if (!storage || !videoNo) {
             scheduleSync();
@@ -458,7 +474,9 @@
 
         getWatchHistorySnapshot()
             .then((historySnapshot) => {
-                if (metadataToken !== token || currentVideoNo !== videoNo) return;
+                if (metadataToken !== token || historyInfoToken !== historyToken || currentVideoNo !== videoNo) {
+                    return;
+                }
                 const entries = getHistoryEntries(historySnapshot);
                 const info = findHistoryInfo(videoNo, detail, entries);
                 touchMapEntry(historyInfoCache, cacheKey, info, MAX_HISTORY_INFO_CACHE_ENTRIES);
@@ -466,7 +484,9 @@
                 scheduleSync();
             })
             .catch(() => {
-                if (metadataToken !== token || currentVideoNo !== videoNo) return;
+                if (metadataToken !== token || historyInfoToken !== historyToken || currentVideoNo !== videoNo) {
+                    return;
+                }
                 currentHistoryInfo = null;
                 scheduleSync();
             });
@@ -923,18 +943,22 @@
         currentSegmentOffsetMs = 0;
         currentStartSource = "";
         currentHistoryInfo = null;
+        currentVideoDetail = null;
         titleHistoryExpanded = false;
         metadataState = "idle";
         metadataToken += 1;
+        historyInfoToken += 1;
     }
 
     function loadMetadata(videoNo) {
         const token = ++metadataToken;
+        historyInfoToken += 1;
         currentStartMs = NaN;
         currentOriginalStartMs = NaN;
         currentSegmentOffsetMs = 0;
         currentStartSource = "";
         currentHistoryInfo = null;
+        currentVideoDetail = null;
         titleHistoryExpanded = false;
         metadataState = "loading";
 
@@ -942,6 +966,7 @@
             .then((detail) => {
                 if (metadataToken !== token || currentVideoNo !== videoNo) return;
 
+                currentVideoDetail = detail;
                 const startInfo = getVodSegmentStartInfo(detail);
                 if (Number.isFinite(startInfo.segmentStartMs)) {
                     currentStartMs = startInfo.segmentStartMs;
@@ -966,6 +991,7 @@
                 currentSegmentOffsetMs = 0;
                 currentStartSource = "";
                 currentHistoryInfo = null;
+                currentVideoDetail = null;
                 metadataState = "error";
                 loadHistoryInfo(videoNo, null, token);
                 scheduleSync();

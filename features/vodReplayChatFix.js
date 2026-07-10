@@ -6,8 +6,8 @@
  *   본문 텍스트로 확인한다. 플레이어 확장 레이아웃이거나 레이아웃이 안정화 중이거나 비디오가 아직
  *   준비 안 됐으면 미루고, 조건이 맞으면 현재 재생 시간을 URL 에 담아 location.replace 로 한 번만
  *   새로고침한다. sessionStorage 에 새로고침 표시를 남겨 같은 경로에서 중복 새로고침을 막는다.
- * 의존: BetterChzzk.utils(createMutationObserverSync, createThrottledDomSync, getMainVideoElement,
- *   onReady, startPageChangeDetection), sessionStorage.
+ * 의존: BetterChzzk.utils(createMutationObserverSync, getMainVideoElement, onReady,
+ *   startPageChangeDetection), sessionStorage.
  */
 (() => {
     const VOD_ROUTE_RE = /^\/video\/\d+(?:\/|$)/;
@@ -16,8 +16,8 @@
     const RELOAD_MARK_TTL_MS = 60 * 1000;
     const MIN_RELOAD_DELAY_MS = 12000;
     const LAYOUT_SETTLE_DELAY_MS = 2500;
+    const LAYOUT_SETTLE_MAX_WAIT_MS = 6000;
     const CHECK_DELAYS_MS = [12000, 16000, 22000];
-    const OBSERVER_THROTTLE_MS = 500;
     const EXPANDED_PLAYER_TERMS = [
         "\uAE30\uBCF8 \uD654\uBA74",
         "\uC881\uC740 \uD654\uBA74",
@@ -26,23 +26,19 @@
         "normal screen",
     ];
 
-    const {
-        createMutationObserverSync,
-        createThrottledDomSync,
-        getMainVideoElement,
-        onReady,
-        startPageChangeDetection,
-    } = BetterChzzk.utils;
+    const { createMutationObserverSync, getMainVideoElement, onReady, startPageChangeDetection } = BetterChzzk.utils;
 
     let lastHref = location.href;
     let lastVodRouteKey = getVodRouteKey();
     let lastLayoutMutationAt = 0;
+    let layoutSettleStartedAt = 0;
     let checkSeq = 0;
     let observer = null;
     let routeStartedAt = performance.now();
     let routeNeedsReplayChatFix = false;
     let removePageChangeDetection = null;
     let runtimeInstalled = false;
+    let observerCheckTimer = 0;
 
     function isVodRoute() {
         return VOD_ROUTE_RE.test(location.pathname);
@@ -110,8 +106,44 @@
         return false;
     }
 
+    function noteLayoutMutation() {
+        const now = performance.now();
+        if (!lastLayoutMutationAt || now - lastLayoutMutationAt >= LAYOUT_SETTLE_DELAY_MS) {
+            layoutSettleStartedAt = now;
+        }
+        lastLayoutMutationAt = now;
+    }
+
     function isLayoutSettling() {
-        return lastLayoutMutationAt > 0 && performance.now() - lastLayoutMutationAt < LAYOUT_SETTLE_DELAY_MS;
+        if (!lastLayoutMutationAt || !layoutSettleStartedAt) return false;
+        const now = performance.now();
+        return (
+            now - lastLayoutMutationAt < LAYOUT_SETTLE_DELAY_MS &&
+            now - layoutSettleStartedAt < LAYOUT_SETTLE_MAX_WAIT_MS
+        );
+    }
+
+    function clearObserverCheckTimer() {
+        if (!observerCheckTimer) return;
+        clearTimeout(observerCheckTimer);
+        observerCheckTimer = 0;
+    }
+
+    function scheduleObserverCheck() {
+        clearObserverCheckTimer();
+        const now = performance.now();
+        const quietDelayMs = Math.max(0, LAYOUT_SETTLE_DELAY_MS - Math.max(0, now - lastLayoutMutationAt));
+        const maxWaitDelayMs = Math.max(0, LAYOUT_SETTLE_MAX_WAIT_MS - Math.max(0, now - layoutSettleStartedAt));
+        const delayMs = isLayoutSettling() ? Math.min(quietDelayMs, maxWaitDelayMs) : 0;
+        observerCheckTimer = setTimeout(() => {
+            observerCheckTimer = 0;
+            if (!routeNeedsReplayChatFix || !isVodRoute()) return;
+            if (isLayoutSettling()) {
+                scheduleObserverCheck();
+                return;
+            }
+            reloadOnceForReplayChat();
+        }, delayMs);
     }
 
     function hasPlayableVod() {
@@ -151,7 +183,10 @@
     }
 
     function scheduleChecks({ spaNavigation = false } = {}) {
+        clearObserverCheckTimer();
         routeStartedAt = performance.now();
+        lastLayoutMutationAt = 0;
+        layoutSettleStartedAt = 0;
         routeNeedsReplayChatFix = spaNavigation && isVodRoute();
         checkSeq += 1;
         const seq = checkSeq;
@@ -163,8 +198,6 @@
         }
     }
 
-    const scheduleObserverCheck = createThrottledDomSync(reloadOnceForReplayChat, OBSERVER_THROTTLE_MS);
-
     function handlePageChange() {
         if (location.href === lastHref) return;
         const previousVodRouteKey = lastVodRouteKey;
@@ -174,6 +207,7 @@
         if (!lastVodRouteKey) {
             routeNeedsReplayChatFix = false;
             checkSeq += 1;
+            clearObserverCheckTimer();
             return;
         }
 
@@ -187,8 +221,8 @@
 
         observer = createMutationObserverSync({
             onMutations() {
-                lastLayoutMutationAt = performance.now();
                 handlePageChange();
+                noteLayoutMutation();
                 if (routeNeedsReplayChatFix && isVodRoute() && !hasReplayChat() && !hasRecentReloadMark()) {
                     scheduleObserverCheck();
                 }

@@ -59,6 +59,7 @@
     let domObserver = null;
     let removePageChangeDetection = null;
     let runtimeInstalled = false;
+    let bodyScrollRestore = null;
 
     function isEnabled() {
         return featureOptions.adblockPopupEnabled;
@@ -163,7 +164,7 @@
     }
 
     function hasSuppressedAdblockPopup() {
-        return Boolean(document.querySelector(`[${AD_SUPPRESS_ATTR}="1"]`));
+        return getPopupCandidates().some(isSuppressed);
     }
 
     function hasActiveUnsuppressedPopup() {
@@ -175,6 +176,64 @@
         return false;
     }
 
+    function snapshotInlineStyles(style, properties) {
+        return properties.map((property) => ({
+            property,
+            value: style.getPropertyValue(property),
+            priority: style.getPropertyPriority(property),
+        }));
+    }
+
+    function inlineStyleSnapshotsMatch(left, right) {
+        return left.every(
+            (entry, index) => entry.value === right[index]?.value && entry.priority === right[index]?.priority
+        );
+    }
+
+    function rememberBodyScrollChanges(body, beforeGroups, afterGroups) {
+        if (!bodyScrollRestore || bodyScrollRestore.body !== body) {
+            bodyScrollRestore = { body, groups: [] };
+        }
+
+        for (let index = 0; index < beforeGroups.length; index++) {
+            const before = beforeGroups[index];
+            const after = afterGroups[index];
+            if (inlineStyleSnapshotsMatch(before, after)) continue;
+
+            const properties = before.map((entry) => entry.property);
+            const key = properties.join("|");
+            const existing = bodyScrollRestore.groups.find((group) => group.key === key);
+            if (existing) existing.after = after;
+            else bodyScrollRestore.groups.push({ key, properties, before, after });
+        }
+    }
+
+    function restoreBodyScrollStyles() {
+        const restore = bodyScrollRestore;
+        bodyScrollRestore = null;
+        if (!restore?.body) return;
+
+        const style = restore.body.style;
+        for (const group of restore.groups) {
+            const current = snapshotInlineStyles(style, group.properties);
+            if (!inlineStyleSnapshotsMatch(current, group.after)) continue;
+
+            for (const property of group.properties) style.removeProperty(property);
+            for (const entry of group.before) {
+                if (entry.value) style.setProperty(entry.property, entry.value, entry.priority);
+            }
+        }
+
+        if (!restore.body.getAttribute("style")?.trim()) {
+            restore.body.removeAttribute("style");
+        }
+    }
+
+    function discardBodyScrollRestoreIfPopupGone() {
+        if (hasSuppressedAdblockPopup()) return;
+        bodyScrollRestore = null;
+    }
+
     function unlockBodyScrollIfOnlySuppressedPopups() {
         if (!document.body || !hasSuppressedAdblockPopup() || hasActiveUnsuppressedPopup()) return;
 
@@ -182,9 +241,14 @@
         const hadScrollLock = style.overflow === "hidden" || style.overflowY === "hidden";
         if (!hadScrollLock) return;
 
+        const styleGroups = [["overflow", "overflow-x", "overflow-y"], ["padding-right"]];
+        const beforeGroups = styleGroups.map((properties) => snapshotInlineStyles(style, properties));
+
         if (style.overflow === "hidden") style.removeProperty("overflow");
         if (style.overflowY === "hidden") style.removeProperty("overflow-y");
         style.removeProperty("padding-right");
+        const afterGroups = styleGroups.map((properties) => snapshotInlineStyles(style, properties));
+        rememberBodyScrollChanges(document.body, beforeGroups, afterGroups);
 
         if (!document.body.getAttribute("style")?.trim()) {
             document.body.removeAttribute("style");
@@ -226,6 +290,7 @@
 
         const popups = getPopupCandidates();
         if (!popups.length) {
+            discardBodyScrollRestoreIfPopupGone();
             unlockBodyScrollIfOnlySuppressedPopups();
             return;
         }
@@ -246,6 +311,7 @@
 
         syncBackdropSuppression();
         if (suppressedCount > 0) scheduleScrollUnlock();
+        else discardBodyScrollRestoreIfPopupGone();
     }
 
     function runPopupPass() {
@@ -258,6 +324,7 @@
         document.querySelectorAll(`[${AD_SUPPRESS_ATTR}="1"]`).forEach((el) => {
             el.removeAttribute(AD_SUPPRESS_ATTR);
         });
+        restoreBodyScrollStyles();
     }
 
     function mutationCouldAffectPopup(mutation) {

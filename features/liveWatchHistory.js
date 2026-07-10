@@ -1,43 +1,26 @@
 /**
- * features/liveWatchHistory.js — 라이브 시청 시간을 추적해 chrome.storage.local에 기록하는 기능.
+ * features/liveWatchHistory.js — 라이브 재생 시간을 세션 단위로 추적한다.
  *
- * 동작 위치: https://chzzk.naver.com/live/{channelId} 라이브 시청 페이지 (isolated content script).
- * 하는 일: video 엘리먼트의 재생 상태를 감시해 시청 세션을 시작/누적/종료하고, 5초 간격으로
- *   watchedSeconds를 집계하며 15초 간격/가시성 변경/pagehide 시점에 storage로 flush한다.
- *   채널/방송 메타데이터는 DOM(og:title 등)에서 우선 추론하고 live-detail API로 보강한다.
- *   channel:{channelId}:{date} 임시 레코드를 liveId 확보 시 live:{liveId}로 승격한다.
- * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.utils (addTitleHistory, bindFeatureOptions,
- *   createMutationObserverSync, createThrottledDomSync, fetchJson, getLiveChannelIdFromPath,
- *   mergeWatchRanges, onReady, startPageChangeDetection, storageGet/storageSet 등), chrome.storage.local.
- * 옵션 키: liveWatchHistoryEnabled, liveWatchHistoryMinMinutes.
- * 통신: chrome.storage.local 키 "betterChzzkLiveWatchHistory"에 { version, updatedAt, entries }를 쓴다.
- *   같은 키를 features/vodBroadcastClock.js가 읽어 다시보기 페이지에서 방제 이력을 매칭하고,
- *   history.html/history.js가 시청 기록 조회에 사용한다. chrome.storage.onChanged로 자신이 쓴
- *   updatedAt과 다르면 내부 캐시를 무효화한다.
- * 구조: STORAGE_KEY 등 상수 → 옵션/세션 상태 변수 → 세션 판정 유틸(isVideoActive 등) →
- *   메타데이터 추론/API 보강(inferMetadataFromPage, refreshMetadata) →
- *   히스토리 정규화/정리(normalizeHistory, pruneHistory) →
- *   캐시된 히스토리 읽기/쓰기(getHistoryCache, mutateHistory) →
- *   세션 시작/누적/종료(startSession, accrueWatchTime, flushSession, endSession) →
- *   video 엘리먼트 부착(attachVideo/detachVideo) → 라우트/DOM 변경 동기화(syncTrackingState) →
- *   생명주기 리스너 설치(visibilitychange, pagehide, storage.onChanged) →
- *   런타임 설치/해제(installRuntime, teardownRuntime) → 옵션 바인딩(applyOptions).
+ * 실행 컨텍스트: https://chzzk.naver.com/live/{channelId}의 isolated content script.
+ * 하는 일: 실제 media time이 전진한 구간만 누적하고 15초 간격·가시성 변경·pagehide에 flush한다.
+ * 의존: BetterChzzkSettings와 BetterChzzk.utils의 DOM, 날짜, 범위 병합, runtime 메시지 유틸.
+ * 통신: 누적 절대값 세션 스냅샷을 background 단일 writer에 보내며 직접 기록 저장소를 쓰지 않는다.
+ * 삭제 barrier 응답을 받으면 기존 세션을 버리고 현재 시각부터 새 세션으로 다시 추적한다.
  */
 (() => {
-    const STORAGE_KEY = "betterChzzkLiveWatchHistory";
+    const WATCH_HISTORY_MESSAGE_TYPE = "betterChzzk:watch-history-mutation";
+    const WATCH_HISTORY_MESSAGE_VERSION = 1;
     const LIVE_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/channels";
     const TRACK_TICK_MS = 5000;
     const FLUSH_MS = 15000;
+    const FLUSH_RETRY_BASE_MS = 5000;
+    const FLUSH_RETRY_MAX_ATTEMPTS = 5;
+    const FLUSH_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
     const METADATA_REFRESH_MS = 60000;
     const FETCH_TIMEOUT_MS = 10000;
     const MAX_TICK_SECONDS = 10;
-    const STORAGE_MIN_SESSION_SECONDS = 60;
-    const HISTORY_MAX_ENTRIES = 2000;
-    const HISTORY_MAX_SESSION_DETAILS_PER_ENTRY = 300;
     const HISTORY_MAX_WATCHED_RANGES_PER_SESSION = 200;
-    const SESSION_MERGE_GAP_MS = 60 * 1000;
 
-    const storage = globalThis.chrome?.storage?.local;
     const { normalizeOptions } = BetterChzzkSettings;
     const {
         addTitleHistory,
@@ -51,15 +34,12 @@
         getKstDateKey,
         getMainVideoElement,
         getNextKstDayStartMs,
-        mergeDailySeconds,
         mergeWatchRanges,
         mutationMatchesSelector,
-        normalizeTitleHistory,
         onReady,
         pickString,
+        runtimeSendMessage,
         startPageChangeDetection,
-        storageGet,
-        storageSet,
     } = BetterChzzk.utils;
 
     let featureOptions = normalizeOptions();
@@ -74,12 +54,7 @@
     let removePageChangeDetection = null;
     let runtimeInstalled = false;
     let lifecycleListenersInstalled = false;
-    let flushInProgress = false;
-    let flushAgainRequested = false;
-    let historyCache = null;
-    let historyCachePromise = null;
-    let historyCacheUpdatedAt = 0;
-    let historyStorageListenerInstalled = false;
+    const pendingClosedSessions = new Set();
 
     const scheduleDomSync = createThrottledDomSync(syncTrackingState, 250);
 
@@ -119,57 +94,21 @@
     }
 
     function shouldCountWatchTime(video, current, deltaSeconds) {
-        if (!isVideoActive(video) || deltaSeconds <= 0) return false;
-
         const mediaTime = getVideoMediaTime(video);
         const previousMediaTime = current.lastMediaTime;
         if (mediaTime !== null) current.lastMediaTime = mediaTime;
 
-        if (video.readyState >= 2) return true;
-        if (mediaTime === null || previousMediaTime === null) return true;
+        if (!isVideoActive(video) || deltaSeconds <= 0) return false;
+        if (mediaTime === null || previousMediaTime === null) return false;
         return mediaTime > previousMediaTime + 0.05;
-    }
-
-    function mergeContinuousSessionDetails(sessionDetails, preferredSessionId = "") {
-        const merged = [];
-        const rows = (Array.isArray(sessionDetails) ? sessionDetails : [])
-            .filter((row) => row && typeof row === "object")
-            .map((row) => ({
-                ...row,
-                enteredAt: Number(row.enteredAt) || 0,
-                leftAt: Number(row.leftAt) || Number(row.enteredAt) || 0,
-                watchedSeconds: Math.max(0, Number(row.watchedSeconds) || 0),
-                dailySeconds: row.dailySeconds && typeof row.dailySeconds === "object" ? { ...row.dailySeconds } : {},
-                watchedRanges: mergeWatchRanges(row.watchedRanges),
-            }))
-            .filter((row) => row.enteredAt > 0 && row.watchedSeconds > 0)
-            .sort((a, b) => a.enteredAt - b.enteredAt || a.leftAt - b.leftAt);
-
-        for (const row of rows) {
-            const last = merged[merged.length - 1];
-            const lastLeftAt = Number(last?.leftAt) || Number(last?.enteredAt) || 0;
-            const shouldMerge = last && lastLeftAt > 0 && row.enteredAt <= lastLeftAt + SESSION_MERGE_GAP_MS;
-
-            if (!shouldMerge) {
-                merged.push(row);
-                continue;
-            }
-
-            if (row.id === preferredSessionId) last.id = row.id;
-            if (row.title) last.title = row.title;
-            last.leftAt = Math.max(lastLeftAt, Number(row.leftAt) || row.enteredAt);
-            last.watchedSeconds = Math.max(0, Number(last.watchedSeconds) || 0) + row.watchedSeconds;
-            last.dailySeconds = mergeDailySeconds(last.dailySeconds, row.dailySeconds, { round: true });
-            last.watchedRanges = mergeWatchRanges([...(last.watchedRanges || []), ...(row.watchedRanges || [])]);
-            last.closed = last.closed === true && row.closed === true;
-        }
-
-        return merged.sort((a, b) => Number(b.enteredAt || 0) - Number(a.enteredAt || 0));
     }
 
     function addPendingRange(current, startAt, endAt) {
         if (!current || endAt <= startAt) return;
         current.pendingRanges = mergeWatchRanges([...(current.pendingRanges || []), { startAt, endAt }]);
+        current.watchedRanges = mergeWatchRanges([...(current.watchedRanges || []), { startAt, endAt }]).slice(
+            -HISTORY_MAX_WATCHED_RANGES_PER_SESSION
+        );
 
         let cursor = startAt;
         while (cursor < endAt) {
@@ -178,14 +117,9 @@
             const seconds = Math.max(0, (next - cursor) / 1000);
             if (seconds > 0) {
                 current.pendingByDate[dateKey] = (Number(current.pendingByDate[dateKey]) || 0) + seconds;
+                current.dailySeconds[dateKey] = (Number(current.dailySeconds[dateKey]) || 0) + seconds;
             }
             cursor = next;
-        }
-    }
-
-    function mergeTitleHistory(target, sourceHistory) {
-        for (const row of normalizeTitleHistory(sourceHistory, target?.channelName)) {
-            addTitleHistory(target, row.title, row.firstSeenAt, row.lastSeenAt);
         }
     }
 
@@ -312,216 +246,6 @@
         return `channel:${current.channelId}:${getKstDateKey(current.startedAt)}`;
     }
 
-    function normalizeHistory(raw) {
-        const source = raw && typeof raw === "object" ? raw : {};
-        const entries = {};
-        const rawEntries = Array.isArray(source.entries)
-            ? source.entries
-            : source.entries && typeof source.entries === "object"
-              ? Object.values(source.entries)
-              : [];
-
-        for (const row of rawEntries) {
-            if (!row || typeof row !== "object") continue;
-            const id = pickString(row.id);
-            if (!id) continue;
-            const channelName = pickString(row.channelName) || "알 수 없는 채널";
-            const entry = {
-                id,
-                channelId: pickString(row.channelId),
-                liveId: pickString(row.liveId),
-                title: cleanEntryTitle(pickString(row.title), channelName) || "제목 없는 라이브",
-                channelName,
-                thumbnailUrl: pickString(row.thumbnailUrl),
-                liveOpenDate: pickString(row.liveOpenDate),
-                liveUrl: pickString(row.liveUrl),
-                firstWatchedAt: Number(row.firstWatchedAt) || Date.now(),
-                lastWatchedAt: Number(row.lastWatchedAt) || Number(row.firstWatchedAt) || Date.now(),
-                watchedSeconds: Math.max(0, Number(row.watchedSeconds) || 0),
-                sessions: Math.max(1, Math.round(Number(row.sessions) || 1)),
-                dailySeconds: row.dailySeconds && typeof row.dailySeconds === "object" ? { ...row.dailySeconds } : {},
-                sessionDetails: normalizeSessionDetails(row.sessionDetails, channelName),
-                titleHistory: normalizeTitleHistory(row.titleHistory, channelName),
-            };
-            const hasSessionDetails = Array.isArray(row.sessionDetails);
-            if (hasSessionDetails) {
-                entry.watchedSeconds = sumSessionSeconds(entry.sessionDetails);
-                entry.dailySeconds = buildDailySecondsFromSessions(entry.sessionDetails);
-                entry.firstWatchedAt = getSessionFirstWatchedAt(entry.sessionDetails) || entry.firstWatchedAt;
-                entry.lastWatchedAt = getSessionLastWatchedAt(entry.sessionDetails) || entry.lastWatchedAt;
-            }
-            for (const detail of entry.sessionDetails) {
-                addTitleHistory(entry, detail.title, detail.enteredAt, detail.leftAt || detail.enteredAt);
-            }
-            addTitleHistory(entry, entry.title, entry.firstWatchedAt || entry.lastWatchedAt);
-            if (entry.watchedSeconds < STORAGE_MIN_SESSION_SECONDS) {
-                continue;
-            }
-            pruneHistoryEntry(entry);
-            entries[id] = entry;
-        }
-
-        return {
-            version: 1,
-            updatedAt: Number(source.updatedAt) || 0,
-            entries,
-        };
-    }
-
-    function normalizeSessionDetails(value, channelName = "") {
-        if (!Array.isArray(value)) return [];
-
-        const sessions = value
-            .filter((row) => row && typeof row === "object")
-            .map((row) => {
-                const id = pickString(row.id);
-                const title = cleanEntryTitle(
-                    pickString(row.title, row.videoTitle, row.liveTitle, row.name),
-                    channelName
-                );
-                const watchedSeconds = Math.max(0, Number(row.watchedSeconds) || 0);
-                const dailySeconds =
-                    row.dailySeconds && typeof row.dailySeconds === "object" ? { ...row.dailySeconds } : {};
-                return {
-                    id,
-                    title,
-                    enteredAt: Number(row.enteredAt) || Number(row.startedAt) || 0,
-                    leftAt: Number(row.leftAt) || Number(row.endedAt) || Number(row.lastWatchedAt) || 0,
-                    watchedSeconds,
-                    dailySeconds,
-                    watchedRanges: mergeWatchRanges(row.watchedRanges),
-                    closed: row.closed === true,
-                };
-            })
-            .filter((row) => row.id && row.enteredAt > 0 && row.watchedSeconds >= STORAGE_MIN_SESSION_SECONDS);
-
-        return mergeContinuousSessionDetails(sessions);
-    }
-
-    function sumSessionSeconds(sessionDetails) {
-        return (sessionDetails || []).reduce((sum, row) => sum + Math.max(0, Number(row.watchedSeconds) || 0), 0);
-    }
-
-    function buildDailySecondsFromSessions(sessionDetails) {
-        const dailySeconds = {};
-        for (const row of sessionDetails || []) {
-            const dailyEntries = Object.entries(row.dailySeconds || {});
-            if (dailyEntries.length) {
-                mergePending(dailySeconds, row.dailySeconds);
-                continue;
-            }
-
-            if (row.enteredAt > 0 && row.watchedSeconds > 0) {
-                mergePending(dailySeconds, { [getKstDateKey(row.enteredAt)]: row.watchedSeconds });
-            }
-        }
-        return dailySeconds;
-    }
-
-    function getSessionFirstWatchedAt(sessionDetails) {
-        const values = (sessionDetails || []).map((row) => Number(row.enteredAt) || 0).filter((value) => value > 0);
-        return values.length ? Math.min(...values) : 0;
-    }
-
-    function getSessionLastWatchedAt(sessionDetails) {
-        const values = (sessionDetails || [])
-            .map((row) => Number(row.leftAt) || Number(row.enteredAt) || 0)
-            .filter((value) => value > 0);
-        return values.length ? Math.max(...values) : 0;
-    }
-
-    function pruneHistoryEntry(entry) {
-        if (!entry || typeof entry !== "object") return;
-        if (!Array.isArray(entry.sessionDetails)) entry.sessionDetails = [];
-        if (entry.sessionDetails.length > HISTORY_MAX_SESSION_DETAILS_PER_ENTRY) {
-            entry.sessionDetails = entry.sessionDetails
-                .sort((a, b) => Number(b.enteredAt || 0) - Number(a.enteredAt || 0))
-                .slice(0, HISTORY_MAX_SESSION_DETAILS_PER_ENTRY);
-        }
-        entry.sessions = Math.max(Number(entry.sessions) || 0, entry.sessionDetails.length || 0);
-    }
-
-    function pruneHistory(history, updatedEntry = null) {
-        pruneHistoryEntry(updatedEntry);
-
-        const entryCount = Object.keys(history.entries).length;
-        if (entryCount <= HISTORY_MAX_ENTRIES) return;
-
-        const rows = Object.values(history.entries);
-        if (rows.length <= HISTORY_MAX_ENTRIES) return;
-
-        rows.sort((a, b) => Number(b.lastWatchedAt || 0) - Number(a.lastWatchedAt || 0));
-        history.entries = Object.fromEntries(rows.slice(0, HISTORY_MAX_ENTRIES).map((entry) => [entry.id, entry]));
-    }
-
-    function invalidateHistoryCache() {
-        historyCache = null;
-        historyCachePromise = null;
-        historyCacheUpdatedAt = 0;
-    }
-
-    async function getHistoryCache() {
-        if (historyCache) return historyCache;
-        if (!historyCachePromise) {
-            historyCachePromise = storageGet(storage, STORAGE_KEY)
-                .then((data) => {
-                    historyCache = normalizeHistory(data[STORAGE_KEY]);
-                    historyCacheUpdatedAt = Number(historyCache.updatedAt) || 0;
-                    return historyCache;
-                })
-                .finally(() => {
-                    historyCachePromise = null;
-                });
-        }
-        return historyCachePromise;
-    }
-
-    async function mutateHistory(updater) {
-        const history = await getHistoryCache();
-        const updatedEntry = updater(history);
-        history.updatedAt = Date.now();
-        pruneHistory(history, updatedEntry);
-        historyCache = history;
-        historyCacheUpdatedAt = history.updatedAt;
-        try {
-            await storageSet(storage, { [STORAGE_KEY]: history });
-        } catch (error) {
-            invalidateHistoryCache();
-            throw error;
-        }
-    }
-
-    function mergePending(target, pendingByDate) {
-        for (const [dateKey, seconds] of Object.entries(pendingByDate || {})) {
-            const value = Math.round(Number(seconds) || 0);
-            if (value <= 0) continue;
-            target[dateKey] = Math.max(0, Number(target[dateKey]) || 0) + value;
-        }
-    }
-
-    function createEntry(id, current) {
-        const channelName = current.channelName || "알 수 없는 채널";
-        const entry = {
-            id,
-            channelId: current.channelId || "",
-            liveId: current.liveId || "",
-            title: cleanEntryTitle(current.title, channelName) || "제목 없는 라이브",
-            channelName,
-            thumbnailUrl: current.thumbnailUrl || "",
-            liveOpenDate: current.liveOpenDate || "",
-            liveUrl: current.liveUrl || `${location.origin}${location.pathname}`,
-            firstWatchedAt: current.startedAt,
-            lastWatchedAt: current.lastWatchedAt || Date.now(),
-            watchedSeconds: 0,
-            sessions: 0,
-            dailySeconds: {},
-            sessionDetails: [],
-            titleHistory: normalizeTitleHistory(current.titleHistory, channelName),
-        };
-        addTitleHistory(entry, entry.title, current.enteredAt || current.startedAt);
-        return entry;
-    }
-
     function takePendingSnapshot(current) {
         const snapshot = {};
         for (const [dateKey, seconds] of Object.entries(current.pendingByDate || {})) {
@@ -570,138 +294,193 @@
         return `${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
     }
 
-    function upsertSessionDetail(entry, current, deltaSeconds, snapshot, rangeSnapshot) {
-        entry.sessionDetails = Array.isArray(entry.sessionDetails) ? entry.sessionDetails : [];
-
-        let detail = entry.sessionDetails.find((row) => row.id === current.sessionId);
-        if (!detail) {
-            detail = {
+    function buildSessionSnapshot(current) {
+        const dailySeconds = {};
+        for (const [dateKey, seconds] of Object.entries(current.dailySeconds || {})) {
+            const value = Math.max(0, Math.round(Number(seconds) || 0));
+            if (value > 0) dailySeconds[dateKey] = value;
+        }
+        return {
+            kind: "upsertSessionSnapshot",
+            recordId: getRecordId(current),
+            entry: {
+                channelId: current.channelId || "",
+                liveId: current.liveId || "",
+                title: current.title || "",
+                channelName: current.channelName || "",
+                thumbnailUrl: current.thumbnailUrl || "",
+                liveOpenDate: current.liveOpenDate || "",
+                liveUrl: current.liveUrl || `${location.origin}${location.pathname}`,
+                firstWatchedAt: current.startedAt,
+                lastWatchedAt: current.lastSeenAt || current.lastWatchedAt || Date.now(),
+                titleHistory: current.titleHistory || [],
+            },
+            session: {
                 id: current.sessionId,
                 title: current.title || "",
                 enteredAt: current.enteredAt || current.startedAt,
                 leftAt: current.lastSeenAt || current.lastWatchedAt || Date.now(),
-                watchedSeconds: 0,
-                dailySeconds: {},
-                watchedRanges: [],
-                closed: false,
-            };
-            entry.sessionDetails.push(detail);
-        }
-
-        if (current.title && !detail.title) detail.title = current.title;
-        detail.leftAt = Math.max(Number(detail.leftAt) || 0, current.lastSeenAt || current.lastWatchedAt || Date.now());
-        detail.closed = current.closed === true;
-        detail.watchedRanges = mergeWatchRanges(detail.watchedRanges);
-        if (deltaSeconds > 0) {
-            detail.watchedSeconds = Math.max(0, Number(detail.watchedSeconds) || 0) + deltaSeconds;
-            detail.dailySeconds =
-                detail.dailySeconds && typeof detail.dailySeconds === "object" ? detail.dailySeconds : {};
-            mergePending(detail.dailySeconds, snapshot);
-            detail.watchedRanges = mergeWatchRanges([...detail.watchedRanges, ...(rangeSnapshot || [])]);
-            if (detail.watchedRanges.length > HISTORY_MAX_WATCHED_RANGES_PER_SESSION) {
-                detail.watchedRanges = detail.watchedRanges.slice(-HISTORY_MAX_WATCHED_RANGES_PER_SESSION);
-            }
-        }
-
-        entry.sessionDetails = mergeContinuousSessionDetails(entry.sessionDetails, current.sessionId);
-        for (const row of entry.sessionDetails) {
-            if (Array.isArray(row.watchedRanges) && row.watchedRanges.length > HISTORY_MAX_WATCHED_RANGES_PER_SESSION) {
-                row.watchedRanges = row.watchedRanges.slice(-HISTORY_MAX_WATCHED_RANGES_PER_SESSION);
-            }
-        }
+                watchedSeconds: Math.max(0, Math.floor(current.watchedSeconds)),
+                dailySeconds,
+                watchedRanges: mergeWatchRanges(current.watchedRanges).slice(-HISTORY_MAX_WATCHED_RANGES_PER_SESSION),
+                closed: current.closed === true,
+            },
+        };
     }
 
-    async function flushSession({ force = false } = {}) {
-        if (flushInProgress) {
-            flushAgainRequested = true;
-            return;
-        }
+    async function sendWatchHistoryMutation(operation) {
+        const response = await runtimeSendMessage({
+            type: WATCH_HISTORY_MESSAGE_TYPE,
+            version: WATCH_HISTORY_MESSAGE_VERSION,
+            operation,
+        });
+        if (!response?.ok) throw new Error(response?.error || "Watch history mutation failed");
+        return response.result || {};
+    }
 
-        accrueWatchTime();
+    function resetSessionAfterDeletion(current) {
+        if (!current || current.closed === true || session !== current) return;
+        const now = Date.now();
+        current.sessionId = createSessionId();
+        current.enteredAt = now;
+        current.startedAt = now;
+        current.lastWatchedAt = now;
+        current.lastSeenAt = now;
+        current.watchedSeconds = 0;
+        current.dailySeconds = {};
+        current.watchedRanges = [];
+        current.pendingSeconds = 0;
+        current.pendingByDate = {};
+        current.pendingRanges = [];
+        current.storageSessionRecorded = false;
+        current.storageClosed = false;
+        current.storageLeftAt = 0;
+        current.closed = false;
+        current.lastTickAt = performance.now();
+        current.lastMediaTime = getVideoMediaTime(attachedVideo);
+        current.titleHistory = [];
+        addTitleHistory(current, current.title, now);
+        current.recordId = "";
+        current.recordId = getRecordId(current);
+    }
 
-        const current = session;
+    function clearFlushRetryTimer(current) {
+        if (!current?.flushRetryTimer) return;
+        clearTimeout(current.flushRetryTimer);
+        current.flushRetryTimer = 0;
+    }
+
+    function resetFlushRetryState(current) {
         if (!current) return;
-        if (!storage) {
-            if (force && current.closed === true && session === current) {
-                session = null;
+        clearFlushRetryTimer(current);
+        current.flushRetryAttempts = 0;
+    }
+
+    function finalizeClosedSession(current) {
+        if (!current) return;
+        resetFlushRetryState(current);
+        current.flushFinalized = true;
+        pendingClosedSessions.delete(current);
+    }
+
+    function scheduleFlushRetry(current, retryForce) {
+        if (!current || current.flushFinalized || current.flushRetryTimer) return;
+        const burstExhausted = current.flushRetryAttempts >= FLUSH_RETRY_MAX_ATTEMPTS;
+        const delayMs = burstExhausted
+            ? FLUSH_RETRY_COOLDOWN_MS
+            : FLUSH_RETRY_BASE_MS * 2 ** Math.max(0, current.flushRetryAttempts - 1);
+        current.flushRetryTimer = setTimeout(() => {
+            current.flushRetryTimer = 0;
+            if (!current.flushFinalized) {
+                if (burstExhausted) current.flushRetryAttempts = 0;
+                void flushSession({
+                    force: retryForce || current.closed === true,
+                    retryAttempt: true,
+                    target: current,
+                });
             }
+        }, delayMs);
+    }
+
+    async function flushSession({ force = false, retryAttempt = false, target = session } = {}) {
+        const current = target;
+        if (!current || current.flushFinalized) return;
+        if (current.flushInProgress) {
+            current.flushAgainRequested = true;
+            current.flushAgainForce = current.flushAgainForce || force || current.closed === true;
             return;
         }
+        if (!retryAttempt) resetFlushRetryState(current);
+
+        if (session === current && current.closed !== true) accrueWatchTime();
 
         const totalWatched = Math.floor(current.watchedSeconds);
         if (totalWatched < getMinSessionSeconds()) {
-            if (force && current.closed === true && session === current) {
-                session = null;
-            }
+            if (force && current.closed === true) finalizeClosedSession(current);
             return;
         }
 
         const snapshot = takePendingSnapshot(current);
         const rangeSnapshot = takePendingRangeSnapshot(current);
         const deltaSeconds = pendingTotal(snapshot);
-        const shouldUpdateSession = force && hasStoredSessionStateChange(current);
-        if (deltaSeconds <= 0 && !shouldUpdateSession) return;
+        const shouldUpdateSession = (force || current.closed === true) && hasStoredSessionStateChange(current);
+        if (deltaSeconds <= 0 && !shouldUpdateSession) {
+            if (current.closed === true && current.storageSessionRecorded && current.storageClosed === true) {
+                finalizeClosedSession(current);
+            }
+            return;
+        }
 
-        flushInProgress = true;
-        flushAgainRequested = false;
+        current.flushInProgress = true;
+        current.flushAgainRequested = false;
+        current.flushAgainForce = false;
+        let discardedByDeletion = false;
+        let flushFailed = false;
+        const operation = buildSessionSnapshot(current);
 
         try {
-            const id = getRecordId(current);
-            await mutateHistory((history) => {
-                const entry = history.entries[id] || createEntry(id, current);
-
-                entry.channelId = current.channelId || entry.channelId;
-                entry.liveId = current.liveId || entry.liveId;
-                entry.channelName = current.channelName || entry.channelName;
-                mergeTitleHistory(entry, current.titleHistory);
-                if (current.title) {
-                    const title = cleanEntryTitle(current.title, entry.channelName);
-                    addTitleHistory(entry, title, current.lastSeenAt || current.lastWatchedAt || Date.now());
-                    entry.title = title || entry.title;
-                }
-                entry.thumbnailUrl = current.thumbnailUrl || entry.thumbnailUrl;
-                entry.liveOpenDate = current.liveOpenDate || entry.liveOpenDate;
-                entry.liveUrl = current.liveUrl || entry.liveUrl;
-                entry.firstWatchedAt = Math.min(Number(entry.firstWatchedAt) || current.startedAt, current.startedAt);
-                entry.lastWatchedAt = Math.max(
-                    Number(entry.lastWatchedAt) || 0,
-                    current.lastSeenAt || current.lastWatchedAt || Date.now()
-                );
-                if (deltaSeconds > 0)
-                    entry.watchedSeconds = Math.max(0, Number(entry.watchedSeconds) || 0) + deltaSeconds;
-                entry.dailySeconds =
-                    entry.dailySeconds && typeof entry.dailySeconds === "object" ? entry.dailySeconds : {};
-                if (deltaSeconds > 0) mergePending(entry.dailySeconds, snapshot);
-                upsertSessionDetail(entry, current, deltaSeconds, snapshot, rangeSnapshot);
-                entry.sessions = Math.max(Number(entry.sessions) || 0, entry.sessionDetails.length);
-
-                history.entries[id] = entry;
-                return entry;
-            });
-
-            if (session === current) {
+            const result = await sendWatchHistoryMutation(operation);
+            discardedByDeletion = result.status === "ignored" && result.reason === "deleted";
+            if (discardedByDeletion) {
+                resetSessionAfterDeletion(current);
+            } else {
                 current.storageSessionRecorded = true;
-                current.storageLeftAt = getSessionLeftAt(current);
-                current.storageClosed = current.closed === true;
+                current.storageLeftAt = operation.session.leftAt;
+                current.storageClosed = operation.session.closed;
             }
         } catch (_) {
+            flushFailed = true;
             restorePendingSnapshot(current, snapshot);
             restorePendingRangeSnapshot(current, rangeSnapshot);
         } finally {
-            flushInProgress = false;
-            const needsFollowUp = flushAgainRequested || (force && current.closed !== true);
-            if (needsFollowUp) {
-                flushAgainRequested = false;
-                if (session === current) flushSession({ force: current.closed === true });
-            } else if (current.closed === true && session === current) {
-                session = null;
+            current.flushInProgress = false;
+            const needsFollowUp = current.flushAgainRequested;
+            const followUpForce = current.flushAgainForce || current.closed === true;
+            current.flushAgainRequested = false;
+            current.flushAgainForce = false;
+            if (flushFailed) {
+                if (needsFollowUp && followUpForce) {
+                    void flushSession({ force: true, target: current });
+                } else if (force || current.closed === true) {
+                    current.flushRetryAttempts = (Number(current.flushRetryAttempts) || 0) + 1;
+                    scheduleFlushRetry(current, force);
+                } else {
+                    resetFlushRetryState(current);
+                }
+            } else {
+                resetFlushRetryState(current);
+                if (needsFollowUp) {
+                    void flushSession({ force: followUpForce, target: current });
+                } else if (current.closed === true) {
+                    finalizeClosedSession(current);
+                }
             }
         }
     }
 
     function accrueWatchTime() {
         const current = session;
-        if (!current) return;
+        if (!current || current.closed === true) return;
 
         const now = performance.now();
         const deltaSeconds = Math.min(Math.max(0, (now - current.lastTickAt) / 1000), MAX_TICK_SECONDS);
@@ -733,6 +512,8 @@
             lastWatchedAt: now,
             lastSeenAt: now,
             watchedSeconds: 0,
+            dailySeconds: {},
+            watchedRanges: [],
             pendingSeconds: 0,
             pendingByDate: {},
             pendingRanges: [],
@@ -750,10 +531,12 @@
     function endSession() {
         if (!session) return;
         const current = session;
+        accrueWatchTime();
         current.closed = true;
         current.lastSeenAt = Date.now();
-        accrueWatchTime();
-        void flushSession({ force: true });
+        session = null;
+        pendingClosedSessions.add(current);
+        void flushSession({ force: true, target: current });
         if (metadataTimer) {
             clearTimeout(metadataTimer);
             metadataTimer = 0;
@@ -762,7 +545,7 @@
 
     function ensureTimers() {
         if (!tickTimer) tickTimer = setInterval(runTrackingTick, TRACK_TICK_MS);
-        if (!flushTimer) flushTimer = setInterval(() => flushSession(), FLUSH_MS);
+        if (!flushTimer) flushTimer = setInterval(() => flushSession({ force: session?.closed === true }), FLUSH_MS);
     }
 
     function clearTimers() {
@@ -912,30 +695,10 @@
         window.removeEventListener("pagehide", handlePageHide, true);
     }
 
-    function handleHistoryStorageChange(changes, areaName) {
-        if (areaName !== "local" || !changes?.[STORAGE_KEY]) return;
-        const nextUpdatedAt = Number(changes[STORAGE_KEY].newValue?.updatedAt) || 0;
-        if (nextUpdatedAt && nextUpdatedAt === historyCacheUpdatedAt) return;
-        invalidateHistoryCache();
-    }
-
-    function installHistoryStorageListener() {
-        if (historyStorageListenerInstalled || !globalThis.chrome?.storage?.onChanged) return;
-        historyStorageListenerInstalled = true;
-        chrome.storage.onChanged.addListener(handleHistoryStorageChange);
-    }
-
-    function uninstallHistoryStorageListener() {
-        if (!historyStorageListenerInstalled || !globalThis.chrome?.storage?.onChanged) return;
-        historyStorageListenerInstalled = false;
-        chrome.storage.onChanged.removeListener(handleHistoryStorageChange);
-    }
-
     function installRuntime() {
         if (runtimeInstalled) return;
         runtimeInstalled = true;
         installLifecycleListeners();
-        installHistoryStorageListener();
         if (!removePageChangeDetection) {
             removePageChangeDetection = startPageChangeDetection(syncTrackingState);
         }
@@ -949,8 +712,6 @@
         clearTimers();
         stopDomObserver();
         uninstallLifecycleListeners();
-        uninstallHistoryStorageListener();
-        invalidateHistoryCache();
         if (removePageChangeDetection) {
             removePageChangeDetection();
             removePageChangeDetection = null;
@@ -965,6 +726,9 @@
         }
 
         installRuntime();
+        for (const current of pendingClosedSessions) {
+            void flushSession({ force: true, target: current });
+        }
         syncTrackingState();
     }
 

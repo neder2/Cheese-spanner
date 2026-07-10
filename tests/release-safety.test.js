@@ -36,8 +36,20 @@ const forbiddenPatterns = [
         pattern: /\beval\s*\(/,
     },
     {
+        label: "javascript URL",
+        pattern: /javascript\s*:/i,
+    },
+    {
         label: ["new", "Function"].join(" "),
         pattern: new RegExp(`\\bnew\\s+${"Function"}\\b`),
+    },
+    {
+        label: "worker constructor",
+        pattern: /\bnew\s+(?:Worker|SharedWorker)\s*\(/,
+    },
+    {
+        label: "WebAssembly runtime",
+        pattern: /\bWebAssembly\s*\./,
     },
 ];
 const followingPreviewForbiddenPatterns = [
@@ -95,6 +107,20 @@ function collectJsFiles(dir) {
     return files;
 }
 
+function isLocalPackagePath(value) {
+    return Boolean(value) && !/^(?:[a-z][a-z\d+.-]*:|\/\/|\/)/i.test(value) && !value.includes("..");
+}
+
+function assertBundledFile(relativePath, context, violations) {
+    if (!isLocalPackagePath(relativePath)) {
+        violations.push(`${context}: non-local path ${relativePath}`);
+        return;
+    }
+    if (!fs.existsSync(path.join(repoRoot, relativePath))) {
+        violations.push(`${context}: missing ${relativePath}`);
+    }
+}
+
 test("runtime files must not contain remote-hosted executable code patterns", () => {
     const files = [...runtimeFiles, ...runtimeDirs.flatMap(collectJsFiles)];
     const violations = [];
@@ -110,6 +136,46 @@ test("runtime files must not contain remote-hosted executable code patterns", ()
         violations,
         [],
         `runtime files must not contain remote-hosted executable code patterns:\n${violations.join("\n")}`
+    );
+});
+
+test("manifest, extension pages, and background imports resolve to bundled local files", () => {
+    const violations = [];
+    const manifest = JSON.parse(readRepoFile("manifest.json"));
+    const manifestFiles = [
+        manifest.background?.service_worker,
+        manifest.action?.default_popup,
+        manifest.options_page,
+        ...Object.values(manifest.icons || {}),
+        ...Object.values(manifest.action?.default_icon || {}),
+        ...(manifest.content_scripts || []).flatMap((entry) => [...(entry.js || []), ...(entry.css || [])]),
+        ...(manifest.web_accessible_resources || []).flatMap((entry) => entry.resources || []),
+    ].filter(Boolean);
+
+    for (const relativePath of manifestFiles) {
+        assertBundledFile(relativePath, "manifest.json", violations);
+    }
+
+    for (const file of fs.readdirSync(repoRoot).filter((name) => name.endsWith(".html"))) {
+        const source = readRepoFile(file);
+        for (const match of source.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+            const src = match[1].match(/\bsrc\s*=\s*["']([^"']+)["']/i)?.[1] || "";
+            if (src) assertBundledFile(src, file, violations);
+            else if (match[2].trim()) violations.push(`${file}: inline script`);
+        }
+    }
+
+    const backgroundSource = readRepoFile("background.js");
+    for (const call of backgroundSource.matchAll(/\bimportScripts\s*\(([^)]*)\)/g)) {
+        const targets = Array.from(call[1].matchAll(/["']([^"']+)["']/g), (match) => match[1]);
+        if (!targets.length) violations.push("background.js: dynamic importScripts target");
+        for (const target of targets) assertBundledFile(target, "background.js importScripts", violations);
+    }
+
+    assert.deepEqual(
+        violations,
+        [],
+        `runtime package references must stay local and present:\n${violations.join("\n")}`
     );
 });
 
@@ -144,13 +210,27 @@ test("low-risk fallback reductions stay removed", () => {
     assert.doesNotMatch(categoryToolsSource, /touchMapEntry\(followerCache,\s*channelId,\s*0/);
 });
 
+test("watch history writes stay behind the background single-writer boundary", () => {
+    const backgroundSource = readRepoFile("background.js");
+    const historySource = readRepoFile("history.js");
+    const liveWatchHistorySource = readRepoFile("features", "liveWatchHistory.js");
+
+    assert.doesNotMatch(historySource, /\bstorage(?:Set|Remove)\b|chrome\.storage\.local\.(?:set|remove)\s*\(/);
+    assert.doesNotMatch(
+        liveWatchHistorySource,
+        /\bstorage(?:Get|Set|Remove)\b|chrome\.storage\.local\.(?:get|set|remove)\s*\(/
+    );
+    assert.match(backgroundSource, /enqueueWatchHistoryMutation/);
+    assert.match(backgroundSource, /shared\/watchHistoryStore\.js/);
+});
+
 test("optimization guards stay in the hot paths", () => {
     const autoQualityPageSource = fs.readFileSync(path.join(repoRoot, "features/autoQualityPage.js"), "utf8");
     const categoryToolsSource = fs.readFileSync(path.join(repoRoot, "features/categoryTools.js"), "utf8");
     const chatToolsSource = fs.readFileSync(path.join(repoRoot, "features/chatTools.js"), "utf8");
-    const liveWatchHistorySource = fs.readFileSync(path.join(repoRoot, "features/liveWatchHistory.js"), "utf8");
     const monthlyBroadcastTimeSource = fs.readFileSync(path.join(repoRoot, "features/monthlyBroadcastTime.js"), "utf8");
     const videoSearchSource = fs.readFileSync(path.join(repoRoot, "features/videoSearch.js"), "utf8");
+    const watchHistoryStoreSource = fs.readFileSync(path.join(repoRoot, "shared/watchHistoryStore.js"), "utf8");
 
     assert.doesNotMatch(autoQualityPageSource, /querySelectorAll\(["']\*["']\)/);
     assert.match(autoQualityPageSource, /function startPageAutoApply[\s\S]{0,260}hasStableVodApply\(\)/);
@@ -176,9 +256,10 @@ test("optimization guards stay in the hot paths", () => {
     assert.match(chatToolsSource, /hasAttribute\(BLIND_PROCESSED_ATTR\)/);
     assert.match(chatToolsSource, /hasAttribute\(MODERATOR_COLLECTED_ATTR\)/);
     assert.match(chatToolsSource, /createThrottledDomSync\(syncChatTools/);
-    assert.match(liveWatchHistorySource, /const updatedEntry = updater\(history\);/);
-    assert.match(liveWatchHistorySource, /pruneHistory\(history, updatedEntry\);/);
-    assert.doesNotMatch(liveWatchHistorySource, /for\s*\(\s*const entry of Object\.values\(history\.entries\)/);
+    assert.match(
+        watchHistoryStoreSource,
+        /const entryCount = Object\.keys\(entries\)\.length;\s*if \(entryCount <= HISTORY_MAX_ENTRIES\) return entries;\s*const rows = Object\.values\(entries\);/
+    );
 });
 
 test("audio compressor third-party notices stay present", () => {

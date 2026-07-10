@@ -49,6 +49,24 @@
     const CHAT_SYNC_THROTTLE_MS = 120;
     const CHAT_ROOT_FIND_THROTTLE_MS = 600;
     const MESSAGE_ID_ATTRS = ["data-chat-id", "data-message-id", "data-id"];
+    const ROW_REUSE_SIGNAL_ATTRIBUTES = [
+        "data-key",
+        "data-index",
+        "data-position",
+        "data-virtual-key",
+        "data-virtual-index",
+        "data-virtual-position",
+        "data-row-key",
+        "data-row-index",
+        "data-row-position",
+        "data-item-key",
+        "data-item-index",
+        "data-item-position",
+        "data-list-key",
+        "data-list-index",
+        "data-list-position",
+        "aria-posinset",
+    ];
     const ROW_REUSE_SIGNAL_ATTR_RE = /^(?:data-(?:(?:virtual|row|item|list)-)?(?:key|index|position)|aria-posinset)$/i;
     const CHAT_DIRTY_ATTRIBUTE_FILTER = [
         "class",
@@ -58,6 +76,7 @@
         "title",
         "aria-hidden",
         ...MESSAGE_ID_ATTRS,
+        ...ROW_REUSE_SIGNAL_ATTRIBUTES,
     ];
     const CHAT_ROOT_SELECTORS = [
         "[role='log']",
@@ -1082,13 +1101,34 @@ body[theme="dark"] .bcct-moderator-box__empty,
             if (value) return `${attr}:${value}`;
         }
 
-        if (!rowIds.has(row)) {
-            const fallback = normSpace(`${parsed.role}:${parsed.author}:${parsed.text}`);
-            rowIds.set(row, fallback ? `text:${fallback}` : `row:${nextRowId}`);
+        const rowReuseSignal = getCacheRowReuseSignal(row);
+        const messageFingerprint = `${parsed.role}:${parsed.author}:${parsed.text}`;
+        const cached = rowIds.get(row);
+        const keepsCollectedIdentity =
+            cached &&
+            cached.rowReuseSignal === rowReuseSignal &&
+            cached.role === parsed.role &&
+            cached.author === parsed.author &&
+            parsed.isBlind === true &&
+            row.hasAttribute(MODERATOR_COLLECTED_ATTR);
+        if (
+            !cached ||
+            cached.rowReuseSignal !== rowReuseSignal ||
+            (!keepsCollectedIdentity && cached.messageFingerprint !== messageFingerprint)
+        ) {
+            rowIds.set(row, {
+                id: `row:${nextRowId}`,
+                rowReuseSignal,
+                messageFingerprint,
+                role: parsed.role,
+                author: parsed.author,
+            });
             nextRowId += 1;
+        } else if (keepsCollectedIdentity) {
+            cached.messageFingerprint = messageFingerprint;
         }
 
-        return rowIds.get(row) || `${parsed.role}:${parsed.author}:${parsed.text}`;
+        return rowIds.get(row)?.id || `${parsed.role}:${parsed.author}:${parsed.text}`;
     }
 
     function parseChatMessage(row) {
@@ -1251,7 +1291,11 @@ body[theme="dark"] .bcct-moderator-box__empty,
         if (legacyModeratorCachePurged) return;
         legacyModeratorCachePurged = true;
         try {
-            globalThis.chrome?.storage?.local?.remove(MODERATOR_CACHE_STORAGE_KEY);
+            globalThis.chrome?.storage?.local?.remove(MODERATOR_CACHE_STORAGE_KEY, () => {
+                // Callback 안에서만 유효한 lastError 를 읽어 잔존 캐시 정리 실패가
+                // 처리되지 않은 확장 오류로 남지 않게 한다.
+                void globalThis.chrome?.runtime?.lastError;
+            });
         } catch (_) {
             // 잔존 캐시 정리는 best-effort 라 실패는 조용히 무시한다.
         }
@@ -1842,6 +1886,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         const attrName = String(mutation.attributeName || "").toLowerCase();
         if (!CHAT_DIRTY_ATTRIBUTE_FILTER.includes(attrName)) return false;
         if (MESSAGE_ID_ATTRS.includes(attrName)) return true;
+        if (ROW_REUSE_SIGNAL_ATTRIBUTES.includes(attrName)) return true;
         if (row?.hasAttribute(BLIND_PROCESSED_ATTR)) return true;
 
         // 이미 수집된 행도 계속 추적한다. 치지직이 메시지 삽입 직후 닉네임 색

@@ -1819,11 +1819,25 @@
         }
     }
 
-    function handleLivePauseKeyIntent(event) {
+    function handleLiveMediaKeyIntent(event) {
         if (!isLiveRoute() || !canUseLiveResumeGuard(attachedVideo)) return;
         if (event.ctrlKey || event.altKey || event.metaKey || isEditableTarget(event.target)) return;
 
         const key = String(event.key || "").toLowerCase();
+        if (
+            event.code === "ArrowLeft" ||
+            event.code === "ArrowRight" ||
+            event.code === "KeyJ" ||
+            event.code === "KeyL" ||
+            key === "arrowleft" ||
+            key === "arrowright" ||
+            key === "j" ||
+            key === "l"
+        ) {
+            markUserSeekGesture();
+            return;
+        }
+
         if (event.code === "Space" || event.code === "KeyK" || key === " " || key === "k") {
             markUserPauseIntent();
         }
@@ -1869,7 +1883,7 @@
         liveResumeHandlersInstalled = true;
         window.addEventListener("pointerdown", handleLiveControlIntent, true);
         window.addEventListener("click", handleLiveControlIntent, true);
-        window.addEventListener("keydown", handleLivePauseKeyIntent, true);
+        window.addEventListener("keydown", handleLiveMediaKeyIntent, true);
         window.addEventListener("pointerup", handleUserSeekGestureRelease, true);
         window.addEventListener("pointercancel", handleUserSeekGestureRelease, true);
         window.addEventListener("blur", handleUserSeekGestureCancel, true);
@@ -1883,7 +1897,7 @@
         lastUserPauseIntentAt = Number.NEGATIVE_INFINITY;
         window.removeEventListener("pointerdown", handleLiveControlIntent, true);
         window.removeEventListener("click", handleLiveControlIntent, true);
-        window.removeEventListener("keydown", handleLivePauseKeyIntent, true);
+        window.removeEventListener("keydown", handleLiveMediaKeyIntent, true);
         window.removeEventListener("pointerup", handleUserSeekGestureRelease, true);
         window.removeEventListener("pointercancel", handleUserSeekGestureRelease, true);
         window.removeEventListener("blur", handleUserSeekGestureCancel, true);

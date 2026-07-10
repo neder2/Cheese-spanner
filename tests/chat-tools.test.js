@@ -521,6 +521,122 @@ test("changing an id-less row reuse signal invalidates the cache even when its t
     assert.doesNotMatch(row.textContent, /재사용 전 무ID 원문/);
 });
 
+test("id-less moderator rows with identical content keep distinct message identities", async (t) => {
+    const repeated = realChzzkChatRow({
+        badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+        nickname: "같은 운영자",
+        text: "반복 안내",
+    });
+    const { dom } = createPageDom(`${repeated}${repeated}`);
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 2);
+
+    assert.deepEqual(
+        moderatorRows(dom.window.document).map((row) => row.querySelector(".bcct-moderator-row__text")?.textContent),
+        ["반복 안내", "반복 안내"]
+    );
+});
+
+test("reusing an id-less moderator row with a new virtual index collects the next message", async (t) => {
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            nickname: "첫 운영자",
+            text: "첫 안내",
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    const row = dom.window.document.querySelector("._item_sg7hy_7");
+    row.setAttribute("data-virtual-index", "1");
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 1);
+
+    row.setAttribute("data-virtual-index", "2");
+    row.querySelector("._nickname_o04z9_57").textContent = "다음 운영자";
+    row.querySelector("._text_1vemp_1").textContent = "다음 안내";
+
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 2);
+
+    assert.deepEqual(
+        moderatorRows(dom.window.document).map((item) => item.querySelector(".bcct-moderator-row__text")?.textContent),
+        ["첫 안내", "다음 안내"]
+    );
+});
+
+test("reusing an id-less moderator row without an index collects changed content", async (t) => {
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            nickname: "첫 운영자",
+            text: "첫 안내",
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    const row = dom.window.document.querySelector("._item_sg7hy_7");
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 1);
+
+    row.querySelector("._nickname_o04z9_57").textContent = "다음 운영자";
+    row.querySelector("._text_1vemp_1").textContent = "다음 안내";
+
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 2);
+    assert.deepEqual(
+        moderatorRows(dom.window.document).map((item) => item.querySelector(".bcct-moderator-row__text")?.textContent),
+        ["첫 안내", "다음 안내"]
+    );
+});
+
+test("reusing an id-less moderator row for another message from the same author collects it", async (t) => {
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            nickname: "같은 운영자",
+            text: "첫 안내",
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    const row = dom.window.document.querySelector("._item_sg7hy_7");
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 1);
+
+    row.querySelector("._text_1vemp_1").textContent = "다음 안내";
+
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 2);
+    assert.deepEqual(
+        moderatorRows(dom.window.document).map((item) => item.querySelector(".bcct-moderator-row__text")?.textContent),
+        ["첫 안내", "다음 안내"]
+    );
+});
+
+test("an id-less moderator row keeps one collected identity across a blind text transition", async (t) => {
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            nickname: "같은 운영자",
+            text: "전환 전 안내",
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    const row = dom.window.document.querySelector("._item_sg7hy_7");
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 1);
+
+    row.querySelector("._text_1vemp_1").textContent = "클린봇이 부적절한 표현을 감지했습니다.";
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    assert.equal(moderatorRows(dom.window.document).length, 1);
+    assert.equal(
+        moderatorRows(dom.window.document)[0].querySelector(".bcct-moderator-row__text")?.textContent,
+        "전환 전 안내"
+    );
+});
+
 test("replacing the text node of an id-less row cannot reuse its previous original cache", async (t) => {
     const { dom } = createPageDom(realChzzkChatRow({ nickname: "viewer", text: "교체 전 무ID 원문" }));
     t.after(() => closeChatToolsDom(dom));
@@ -1263,6 +1379,26 @@ test("feature init removes the legacy moderator cache key from storage.local", a
     await waitForCondition(() => !Object.hasOwn(chrome.testState.local, MODERATOR_CACHE_STORAGE_KEY));
     // 다른 키는 건드리지 않는다.
     assert.equal(chrome.testState.local.keepThisKey, 1);
+});
+
+test("legacy moderator cache cleanup consumes storage.lastError in its callback", async (t) => {
+    const { chrome, dom } = createPageDom("", undefined, {
+        [MODERATOR_CACHE_STORAGE_KEY]: { version: 1, entries: {} },
+    });
+    t.after(() => closeChatToolsDom(dom));
+    let lastErrorReads = 0;
+    Object.defineProperty(chrome.runtime, "lastError", {
+        configurable: true,
+        get() {
+            lastErrorReads += 1;
+            return { message: "simulated cleanup failure" };
+        },
+    });
+
+    loadChatTools(dom);
+
+    await waitForCondition(() => lastErrorReads === 1);
+    assert.equal(lastErrorReads, 1);
 });
 
 test("disabling the option removes UI and stops collecting new chat rows", async (t) => {

@@ -42,6 +42,7 @@
     const COMMENT_FETCH_CONCURRENCY = 3;
     const COMMENT_DEVICE_ID_STORAGE_KEY = "betterchzzkCommentDeviceId";
     const INDEX_APPLY_INTERVAL_MS = 260;
+    const INDEX_CACHE_TTL_MS = 5 * 60 * 1000;
     const MAX_INDEX_CACHE_CHANNELS = 8;
 
     const channelIndex = new Map();
@@ -501,6 +502,16 @@
         }
     }
 
+    function isCompleteIndexFresh(entry, now = Date.now()) {
+        const completedAt = Number(entry?.completedAt) || 0;
+        const age = now - completedAt;
+        return Boolean(entry?.complete && completedAt > 0 && age >= 0 && age < INDEX_CACHE_TTL_MS);
+    }
+
+    function shouldStartIndexBuild(entry) {
+        return !entry || (!isCompleteIndexFresh(entry) && (!entry.loading || entry.loadingToken !== activeFetchToken));
+    }
+
     function touchChannelIndex(channelId, entry) {
         if (!channelId || !entry) return;
         channelIndex.delete(channelId);
@@ -632,7 +643,7 @@
 
     async function buildIndex(channelId) {
         const existing = channelIndex.get(channelId);
-        if (existing && existing.complete) {
+        if (isCompleteIndexFresh(existing)) {
             touchChannelIndex(channelId, existing);
             return existing;
         }
@@ -642,17 +653,22 @@
         activeIndexAbortController = new AbortController();
         const signal = activeIndexAbortController.signal;
         const token = ++activeFetchToken;
-        const entry = existing || {
-            videos: [],
-            seen: new Set(),
-            complete: false,
-            error: null,
-            loading: false,
-            loadingToken: 0,
-        };
+        const entry =
+            existing && !existing.complete
+                ? existing
+                : {
+                      videos: [],
+                      seen: new Set(),
+                      complete: false,
+                      completedAt: 0,
+                      error: null,
+                      loading: false,
+                      loadingToken: 0,
+                  };
         let reachedBoundary = false;
         let failed = false;
         entry.complete = false;
+        entry.completedAt = 0;
         entry.error = null;
         entry.failedAt = 0;
         entry.loading = true;
@@ -694,6 +710,7 @@
                 if (page === getMaxPages() - 1) reachedBoundary = true;
             }
             entry.complete = !failed && reachedBoundary;
+            entry.completedAt = entry.complete ? Date.now() : 0;
         } finally {
             if (entry.loadingToken === token) {
                 entry.loading = false;
@@ -1969,10 +1986,7 @@
                 stopActiveFetch();
             } else {
                 const entry = getEntry();
-                if (
-                    currentChannelId &&
-                    (!entry || (!entry.complete && (!entry.loading || entry.loadingToken !== activeFetchToken)))
-                ) {
+                if (currentChannelId && shouldStartIndexBuild(entry)) {
                     buildIndex(currentChannelId);
                 }
                 scheduleCommentSearch();
@@ -2385,7 +2399,7 @@
 
         if (currentQuery && currentChannelId) {
             const entry = getEntry();
-            if (!entry || (!entry.complete && !entry.loading)) buildIndex(currentChannelId);
+            if (shouldStartIndexBuild(entry)) buildIndex(currentChannelId);
         }
 
         schedule();

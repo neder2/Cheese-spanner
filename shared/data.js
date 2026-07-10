@@ -1,8 +1,9 @@
 /**
  * shared/data.js — DOM에 의존하지 않는 데이터 유틸 (BetterChzzk.utils에 병합 등록)
  *
- * 실행 컨텍스트: isolated world 콘텐츠 스크립트 + 확장 페이지(history.html). content.js보다 먼저 로드되고,
- *   content.js는 여기 등록된 동명 유틸(compactSpaces, normalizeCompact, isLastPage)을 재사용한다.
+ * 실행 컨텍스트: isolated world 콘텐츠 스크립트 + 확장 페이지(history.html) + background service worker.
+ *   content.js보다 먼저 로드되고, content.js는 여기 등록된 동명 유틸(compactSpaces, normalizeCompact,
+ *   isLastPage)을 재사용한다. service worker에서도 쓰므로 DOM 전역을 무가드로 참조하지 않는다.
  * 하는 일:
  *   - 치지직 API 응답 파싱: pickArray, pickChzzkVideoNo, pickVideoStartDateText/pickVideoEndDateText,
  *     isLastPage(페이지네이션 종료 판정), parseChzzkDate(KST 가정 날짜 파싱).
@@ -13,7 +14,8 @@
  *   - 제목 이력: normalizeTitleHistory, addTitleHistory.
  *   - 인프라: fetchJson(타임아웃+credentials include), storageGet/storageSet/storageRemove 프라미스 래퍼,
  *     startStorageChangeListener, touchMapEntry(LRU 캐시 헬퍼).
- * 소비자: liveWatchHistory.js, vodBroadcastClock.js, monthlyBroadcastTime.js, history.js 등 시청 기록 계열 중심.
+ * 소비자: background.js, liveWatchHistory.js, vodBroadcastClock.js, monthlyBroadcastTime.js, history.js 등
+ *   시청 기록 계열 중심.
  */
 (() => {
     const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
@@ -273,6 +275,17 @@
         return next;
     }
 
+    function mergeDailySecondsMax(target, source, { round = false } = {}) {
+        const next = target && typeof target === "object" ? target : {};
+        for (const [dateKey, seconds] of Object.entries(source && typeof source === "object" ? source : {})) {
+            const number = Math.max(0, Number(seconds) || 0);
+            const value = round ? Math.round(number) : number;
+            if (value <= 0) continue;
+            next[dateKey] = Math.max(Math.max(0, Number(next[dateKey]) || 0), value);
+        }
+        return next;
+    }
+
     function getFallbackWatchSessionRange(session, mergeGapMs = DEFAULT_WATCH_RANGE_MERGE_GAP_MS) {
         const watchedSeconds = Math.max(0, Number(session?.watchedSeconds) || 0);
         if (watchedSeconds <= 0) return null;
@@ -520,6 +533,21 @@
         });
     }
 
+    function runtimeSendMessage(message) {
+        return new Promise((resolve, reject) => {
+            const runtime = globalThis.chrome?.runtime;
+            if (typeof runtime?.sendMessage !== "function") {
+                reject(new Error("Extension messaging is unavailable"));
+                return;
+            }
+            runtime.sendMessage(message, (response) => {
+                const error = getStorageError();
+                if (error) reject(error);
+                else resolve(response);
+            });
+        });
+    }
+
     function startStorageChangeListener(listener) {
         const onChanged = globalThis.chrome?.storage?.onChanged;
         if (!onChanged || typeof listener !== "function") return null;
@@ -550,6 +578,7 @@
         isLastPage,
         isSameKstDate,
         mergeDailySeconds,
+        mergeDailySecondsMax,
         mergeWatchRanges,
         normalizeDailySeconds,
         normalizeCompact,
@@ -565,6 +594,7 @@
         storageGet,
         storageRemove,
         storageSet,
+        runtimeSendMessage,
         startStorageChangeListener,
         sumWatchRanges,
         sumWatchRangesByDate,

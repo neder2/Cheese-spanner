@@ -6,7 +6,8 @@
  *   - 채널의 다시보기(VOD) 목록 API를 페이지네이션 호출해 최근 N일 방송 시간, 이번 달 방송 통계를 계산한다.
  *   - 팔로우/구독 버튼 근처(action host)를 찾아 위젯을 mount하고, 없으면 팔로워 수 표시 영역 근처에 fallback mount한다.
  *   - hover/focus 시 펼쳐지는 월간 캘린더를 렌더링하며, 내 시청 표시 옵션(기본 꺼짐)이 켜져 있으면
- *     liveWatchHistory.js가 기록한 시청 기록과 방송 시작 시각을 매칭해 하루/방송별 "내 시청 시간"을 함께 보여준다.
+ *     background 단일 writer가 저장한 라이브 시청 기록과 방송 시작 시각을 매칭해 하루/방송별
+ *     "내 시청 시간"을 함께 보여준다.
  *   - 캘린더 날짜 셀을 클릭하면 그날 첫 방송 다시보기(/video/{videoNo})로 이동하고, 툴팁의 방송 항목은
  *     개별 앵커라 특정 방송으로 이동할 수 있다. 보조키(Ctrl/Cmd/Shift)·가운데 클릭은 새 탭.
  *   - 라우트 변경, DOM 변화, storage 변경을 감지해 위젯 mount/unmount와 재계산을 스케줄링한다.
@@ -17,8 +18,9 @@
  *   monthlyBroadcastTimeWindowDays, monthlyBroadcastTimeMaxPages, monthlyBroadcastTimeMaxCalendarPages.
  * DOM 마커: #betterchzzk-monthly-broadcast-time(위젯 루트), #betterchzzk-monthly-broadcast-time-style(스타일 태그),
  *   data-bcmb-host(위젯이 붙은 호스트 요소 표시).
- * 통신: chrome.storage.local의 betterChzzkLiveWatchHistory 키를 읽어(liveWatchHistory.js가 기록) 시청 시간을
- *   방송 시작 시각과 매칭한다. 자체 DOM 변형은 옵저버 재귀 트리거를 피하도록 별도로 식별한다.
+ * 통신: chrome.storage.local의 betterChzzkLiveWatchHistory 키를 읽어(background가 liveWatchHistory.js의
+ *   누적 snapshot mutation을 직렬 반영) 시청 시간을 방송 시작 시각과 매칭한다. 자체 DOM 변형은 옵저버
+ *   재귀 트리거를 피하도록 별도로 식별한다.
  * 구조:
  *   - 상수/캐시 선언, 옵션 접근자(isFeatureEnabled 등) — 파일 상단.
  *   - injectStyleOnce/createWidget/installWidgetInteractions — 위젯 DOM과 스타일 생성.
@@ -100,6 +102,7 @@
     let watchHistoryVersion = 0;
     let nextHostRetryAt = 0;
     let hostRetryDelayMs = HOST_RETRY_INITIAL_MS;
+    let hostRetryTimer = 0;
     let runtimeInstalled = false;
     let routeListenersInstalled = false;
     let calendarCloseListenerInstalled = false;
@@ -120,6 +123,7 @@
         isLastPage,
         isVisible,
         mergeDailySeconds: mergeWatchSessionDailySeconds,
+        mergeDailySecondsMax,
         mergeWatchRanges,
         normSpace,
         normalizeDailySeconds: normalizeWatchDailySeconds,
@@ -197,7 +201,13 @@
     }
 
     function removeWidgetIfMounted() {
-        if (hasMountedWidget()) removeWidget();
+        if (hasMountedWidget()) {
+            removeWidget();
+            return;
+        }
+        clearHostRetryTimer();
+        nextHostRetryAt = 0;
+        hostRetryDelayMs = HOST_RETRY_INITIAL_MS;
     }
 
     function injectStyleOnce() {
@@ -912,6 +922,22 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         return node?.parentElement === parent ? node : null;
     }
 
+    function clearHostRetryTimer() {
+        if (!hostRetryTimer) return;
+        window.clearTimeout(hostRetryTimer);
+        hostRetryTimer = 0;
+    }
+
+    function scheduleHostRetry(delayMs) {
+        if (hostRetryTimer) return;
+        hostRetryTimer = window.setTimeout(() => {
+            hostRetryTimer = 0;
+            if (!runtimeInstalled || !isFeatureEnabled() || !isChannelRoute()) return;
+            nextHostRetryAt = 0;
+            schedule();
+        }, delayMs);
+    }
+
     function mountWidget() {
         if (!isFeatureEnabled()) {
             removeWidget();
@@ -926,6 +952,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
 
         let widget = document.getElementById(WIDGET_ID);
         if (widget && currentChannelId === channelId && widget.isConnected && isVisible(widget)) {
+            clearHostRetryTimer();
             nextHostRetryAt = 0;
             hostRetryDelayMs = HOST_RETRY_INITIAL_MS;
             widget.setAttribute("data-calendar-disabled", isCalendarEnabled() ? "0" : "1");
@@ -941,10 +968,13 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         const host = findActionHost(controls);
         const fallbackHost = host ? null : findFallbackHost();
         if (!host && !fallbackHost) {
-            nextHostRetryAt = now + hostRetryDelayMs;
-            hostRetryDelayMs = Math.min(HOST_RETRY_MAX_MS, Math.round(hostRetryDelayMs * 1.6));
+            const retryDelayMs = hostRetryDelayMs;
+            nextHostRetryAt = now + retryDelayMs;
+            hostRetryDelayMs = Math.min(HOST_RETRY_MAX_MS, Math.round(retryDelayMs * 1.6));
+            scheduleHostRetry(retryDelayMs);
             return null;
         }
+        clearHostRetryTimer();
         nextHostRetryAt = 0;
         hostRetryDelayMs = HOST_RETRY_INITIAL_MS;
 
@@ -999,6 +1029,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         if (widget) widget.remove();
         document.querySelectorAll(`[${HOST_ATTR}="1"]`).forEach((el) => el.removeAttribute(HOST_ATTR));
         currentChannelId = null;
+        clearHostRetryTimer();
         nextHostRetryAt = 0;
         hostRetryDelayMs = HOST_RETRY_INITIAL_MS;
     }
@@ -1210,15 +1241,24 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
     }
 
     function sumWatchSessionSeconds(sessionDetails) {
-        return sumWatchRanges(collectWatchSessionRanges(sessionDetails));
+        const exactSeconds = sumWatchRanges(collectWatchSessionRanges(sessionDetails));
+        const storedSeconds = (sessionDetails || []).reduce(
+            (sum, session) => sum + Math.max(0, Number(session?.watchedSeconds) || 0),
+            0
+        );
+        return Math.max(exactSeconds, storedSeconds);
     }
 
     function buildWatchDailySeconds(sessionDetails) {
         const rangesByDate = {};
+        const storedDailySeconds = {};
+        for (const session of sessionDetails || []) {
+            mergeWatchSessionDailySeconds(storedDailySeconds, session?.dailySeconds);
+        }
         for (const range of collectWatchSessionRanges(sessionDetails)) {
             addWatchRangeToRangesByDate(rangesByDate, range);
         }
-        return sumWatchRangesByDate(rangesByDate);
+        return mergeDailySecondsMax(storedDailySeconds, sumWatchRangesByDate(rangesByDate));
     }
 
     function getWatchSessionFirstWatchedAt(sessionDetails) {
@@ -1248,22 +1288,28 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
             .map((row) => {
                 const hasSessionDetails = Array.isArray(row.sessionDetails);
                 const sessionDetails = normalizeWatchSessionDetails(row.sessionDetails);
+                const storedDailySeconds = normalizeWatchDailySeconds(row.dailySeconds);
                 const dailySeconds = hasSessionDetails
-                    ? buildWatchDailySeconds(sessionDetails)
-                    : normalizeWatchDailySeconds(row.dailySeconds);
+                    ? mergeDailySecondsMax(storedDailySeconds, buildWatchDailySeconds(sessionDetails))
+                    : storedDailySeconds;
+                const storedWatchedSeconds = Math.max(0, Number(row.watchedSeconds) || 0);
                 const watchedSeconds = hasSessionDetails
-                    ? sumWatchSessionSeconds(sessionDetails)
-                    : Math.max(0, Number(row.watchedSeconds) || 0);
-                const firstWatchedAt = hasSessionDetails
-                    ? getWatchSessionFirstWatchedAt(sessionDetails)
-                    : getNumericMs(row.firstWatchedAt);
-                const lastWatchedAt = hasSessionDetails
-                    ? getWatchSessionLastWatchedAt(sessionDetails)
-                    : getNumericMs(row.lastWatchedAt);
+                    ? Math.max(storedWatchedSeconds, sumWatchSessionSeconds(sessionDetails))
+                    : storedWatchedSeconds;
+                const storedFirstWatchedAt = getNumericMs(row.firstWatchedAt);
+                const storedLastWatchedAt = getNumericMs(row.lastWatchedAt);
+                const sessionFirstWatchedAt = hasSessionDetails ? getWatchSessionFirstWatchedAt(sessionDetails) : 0;
+                const sessionLastWatchedAt = hasSessionDetails ? getWatchSessionLastWatchedAt(sessionDetails) : 0;
+                const firstWatchedAt =
+                    storedFirstWatchedAt && sessionFirstWatchedAt
+                        ? Math.min(storedFirstWatchedAt, sessionFirstWatchedAt)
+                        : storedFirstWatchedAt || sessionFirstWatchedAt;
+                const lastWatchedAt = Math.max(storedLastWatchedAt, sessionLastWatchedAt);
                 return {
                     id: normSpace(row.id),
                     channelId: normSpace(row.channelId),
                     liveId: normSpace(row.liveId),
+                    replayVideoNo: normSpace(row.replayVideoNo),
                     title: normSpace(row.title),
                     titleKey: normalizeMatchText(row.title),
                     liveOpenMs: parseChzzkDate(row.liveOpenDate)?.getTime() || 0,
@@ -1376,7 +1422,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
 
     function getWatchMatchScore(entry, start) {
         if (!entry || !start) return 0;
-        if (start.videoNos?.includes(entry.liveId)) return 120;
+        if (entry.replayVideoNo && start.videoNos?.includes(entry.replayVideoNo)) return 120;
 
         let score = 0;
         if (entryHasSameLiveOpen(entry, start)) score += 80;
@@ -2504,6 +2550,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
     }
 
     function clearRuntimeTimers() {
+        clearHostRetryTimer();
         if (watchHistoryRerenderTimer) {
             window.clearTimeout(watchHistoryRerenderTimer);
             watchHistoryRerenderTimer = 0;

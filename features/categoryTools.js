@@ -55,6 +55,8 @@
     const API_PAGE_SIZE = 50;
     const MAX_FOLLOWER_CACHE_ENTRIES = 1000;
     const FOLLOWER_NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000;
+    const METADATA_RETRY_INITIAL_MS = 1000;
+    const METADATA_RETRY_MAX_MS = 30000;
     const DEFAULT_PROFILE_IMAGE_URL =
         "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2080%2080'%3E%3Crect%20width='80'%20height='80'%20rx='40'%20fill='%23E7EAEE'/%3E%3Ccircle%20cx='40'%20cy='31'%20r='14'%20fill='%239DA5B6'/%3E%3Cpath%20d='M18%2068c3-15%2015-24%2022-24s19%209%2022%2024'%20fill='%239DA5B6'/%3E%3C/svg%3E";
     const FOLLOWER_FILTER_PRESET_KEYS = Object.freeze([
@@ -110,6 +112,9 @@
     let metadataPagesLoaded = 0;
     let metadataSearchRunning = false;
     let metadataSearchToken = 0;
+    let metadataRetryAt = 0;
+    let metadataRetryDelayMs = METADATA_RETRY_INITIAL_MS;
+    let metadataRetryTimer = 0;
     let followerHydrateTimer = 0;
     let followerHydrationRefreshing = false;
     let followerHydrationQueued = false;
@@ -197,6 +202,14 @@
         return featureOptions.categoryToolsFollowerFetchDelayMs;
     }
 
+    function decodeRouteSegment(value) {
+        try {
+            return decodeURIComponent(value);
+        } catch (_) {
+            return value;
+        }
+    }
+
     function getRoute() {
         if (/^\/lives\/?$/.test(location.pathname)) {
             return {
@@ -209,8 +222,8 @@
         if (!match) return null;
         return {
             scope: "category",
-            categoryType: decodeURIComponent(match[1]),
-            categoryId: decodeURIComponent(match[2]),
+            categoryType: decodeRouteSegment(match[1]),
+            categoryId: decodeRouteSegment(match[2]),
             tab: match[3],
         };
     }
@@ -1430,7 +1443,33 @@
         };
     }
 
+    function clearMetadataRetryState() {
+        if (metadataRetryTimer) {
+            window.clearTimeout(metadataRetryTimer);
+            metadataRetryTimer = 0;
+        }
+        metadataRetryAt = 0;
+        metadataRetryDelayMs = METADATA_RETRY_INITIAL_MS;
+    }
+
+    function isMetadataRetryCoolingDown(key) {
+        return metadataKey === key && Date.now() < metadataRetryAt;
+    }
+
+    function scheduleMetadataRetry(key) {
+        const delayMs = metadataRetryDelayMs;
+        metadataRetryAt = Date.now() + delayMs;
+        metadataRetryDelayMs = Math.min(METADATA_RETRY_MAX_MS, delayMs * 2);
+        if (metadataRetryTimer) window.clearTimeout(metadataRetryTimer);
+        metadataRetryTimer = window.setTimeout(() => {
+            metadataRetryTimer = 0;
+            if (metadataKey !== key || !isFeatureEnabled() || routeKey(getRoute()) !== key) return;
+            scheduleApply();
+        }, delayMs);
+    }
+
     function resetMetadata(key = "") {
+        clearMetadataRetryState();
         metadataKey = key;
         metadataMap = new Map();
         metadataNext = null;
@@ -1442,6 +1481,7 @@
     }
 
     function mergeMetadataPage(route, json) {
+        clearMetadataRetryState();
         const data = json?.content?.data || [];
         for (const item of data) {
             const mapped = mapApiItem(route, item);
@@ -1464,6 +1504,7 @@
 
     async function loadMetadataPage(route, cursor = null) {
         const key = routeKey(route);
+        if (isMetadataRetryCoolingDown(key)) return metadataMap;
         metadataLoading = {
             key,
             promise: fetchJson(apiUrl(route, cursor), { headers: { Accept: "application/json" } })
@@ -1472,7 +1513,7 @@
                     return mergeMetadataPage(route, json);
                 })
                 .catch(() => {
-                    if (metadataKey === key) metadataComplete = true;
+                    if (metadataKey === key) scheduleMetadataRetry(key);
                     return metadataMap;
                 })
                 .finally(() => {
@@ -3436,7 +3477,13 @@
     }
 
     function queueMetadataSearch(route) {
-        if (!route || !isAutoLoadActive() || metadataComplete || metadataPagesLoaded >= getMaxMetadataPages()) {
+        if (
+            !route ||
+            !isAutoLoadActive() ||
+            metadataComplete ||
+            metadataPagesLoaded >= getMaxMetadataPages() ||
+            isMetadataRetryCoolingDown(routeKey(route))
+        ) {
             if (!isAutoLoadActive()) {
                 metadataSearchToken++;
                 clearFollowerHydrationTimer();
@@ -3476,7 +3523,8 @@
                 routeKey(route) === routeKey(getRoute()) &&
                 isAutoLoadActive() &&
                 !metadataComplete &&
-                metadataPagesLoaded < getMaxMetadataPages()
+                metadataPagesLoaded < getMaxMetadataPages() &&
+                !isMetadataRetryCoolingDown(routeKey(route))
             ) {
                 if (pagesThisRun >= METADATA_BATCH_PAGES) {
                     scheduleApply();
@@ -3906,6 +3954,7 @@
         applyQueued = false;
         metadataSearchToken++;
         metadataSearchRunning = false;
+        clearMetadataRetryState();
         clearFollowerHydrationTimer();
         clearLiveElapsedTimer();
         clearDurationFilterRefreshTimer();

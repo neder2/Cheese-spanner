@@ -46,7 +46,8 @@ const PREVIEW_PERMISSION_DENIED_MESSAGE = "권한이 거부되어 팔로잉 미�
 let hideMessageTimer = 0;
 let savedOptions = null;
 let autosaveTimer = 0;
-let saveToken = 0;
+let saveInFlight = false;
+let pendingSave = null;
 let optionsLoadFailed = false;
 
 function setInputValue(input, value) {
@@ -156,11 +157,67 @@ function showMessage(text, type = "success") {
     }, 1800);
 }
 
+function finishSave(normalized, message, error) {
+    saveInFlight = false;
+    if (!error) savedOptions = normalized;
+
+    const queued = pendingSave;
+    pendingSave = null;
+    if (queued) {
+        if (!error && areOptionsEqual(queued.options, normalized)) {
+            const current = readOptionsFromForm();
+            if (!areOptionsEqual(current, normalized)) {
+                startSave(current);
+                return;
+            }
+            syncNumberInputs(queued.options);
+            renderPageState(queued.options, "saved");
+            if (queued.message) showMessage(queued.message);
+            return;
+        }
+        startSave(queued.options, queued.message);
+        return;
+    }
+
+    if (error) {
+        renderPageState(readOptionsFromForm(), "error");
+        showMessage(OPTIONS_SAVE_ERROR_MESSAGE, "error");
+        return;
+    }
+
+    const current = readOptionsFromForm();
+    if (!areOptionsEqual(current, normalized)) {
+        startSave(current);
+        return;
+    }
+    syncNumberInputs(normalized);
+    renderPageState(normalized, "saved");
+    if (message) showMessage(message);
+}
+
+function startSave(normalized, message) {
+    saveInFlight = true;
+    renderPageState(normalized, "saving");
+    if (!storage) {
+        finishSave(normalized, message);
+        return;
+    }
+    storage.set(normalized, () => {
+        finishSave(normalized, message, globalThis.chrome?.runtime?.lastError);
+    });
+}
+
 function commitSave(message) {
     const normalized = readOptionsFromForm();
     if (optionsLoadFailed && !savedOptions) {
         renderPageState(normalized, "error");
         showMessage(OPTIONS_LOAD_BLOCKED_SAVE_MESSAGE, "error");
+        return;
+    }
+
+    if (saveInFlight) {
+        pendingSave = { options: normalized, message };
+        renderPageState(normalized, "saving");
         return;
     }
 
@@ -171,30 +228,7 @@ function commitSave(message) {
         return;
     }
 
-    renderPageState(normalized, "saving");
-    const token = ++saveToken;
-
-    const finish = (error) => {
-        if (token !== saveToken) return;
-        if (error) {
-            renderPageState(normalized, "error");
-            showMessage(OPTIONS_SAVE_ERROR_MESSAGE, "error");
-            return;
-        }
-        savedOptions = normalized;
-        syncNumberInputs(normalized);
-        renderPageState(normalized, "saved");
-        if (message) showMessage(message);
-    };
-
-    if (!storage) {
-        finish();
-        return;
-    }
-
-    storage.set(normalized, () => {
-        finish(globalThis.chrome?.runtime?.lastError);
-    });
+    startSave(normalized, message);
 }
 
 function requestPreviewPermission(callback) {
@@ -229,6 +263,28 @@ function flushPendingAutosave() {
     if (!autosaveTimer) return;
     cancelAutosave();
     commitSave();
+}
+
+function flushLatestOptionsOnPageHide() {
+    const hadPendingAutosave = Boolean(autosaveTimer);
+    cancelAutosave();
+
+    if (!saveInFlight) {
+        if (hadPendingAutosave) commitSave();
+        return;
+    }
+    if (!hadPendingAutosave && !pendingSave) return;
+
+    const normalized = readOptionsFromForm();
+    const message = pendingSave?.message;
+    pendingSave = { options: normalized, message };
+    renderPageState(normalized, "saving");
+
+    // 팝업이 닫히면 진행 중인 요청의 콜백이 실행되지 않을 수 있어, 최신값을 그 요청 뒤에 미리 발행한다.
+    // 페이지가 계속 살아 있으면 pendingSave를 유지한 기존 직렬 큐가 같은 최신값을 다시 확정한다.
+    storage?.set(normalized, () => {
+        void globalThis.chrome?.runtime?.lastError;
+    });
 }
 
 function getOptionInput(target) {
@@ -278,7 +334,7 @@ resetButton.addEventListener("click", () => {
     commitSave("기본값으로 복원했습니다.");
 });
 
-window.addEventListener("pagehide", flushPendingAutosave);
+window.addEventListener("pagehide", flushLatestOptionsOnPageHide);
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") flushPendingAutosave();
 });

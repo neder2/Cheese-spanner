@@ -132,6 +132,7 @@
         "[class*=' pzp']",
     ]);
     const PLAYER_MUTATION_SELECTOR = `video, ${PLAYER_DISCOVERY_SELECTORS.join(", ")}`;
+    const EXTENSION_PREVIEW_VIDEO_SELECTOR = "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip]";
 
     let cachedPlayer = null;
     let preferredQuality = DEFAULT_QUALITY;
@@ -167,6 +168,10 @@
     let resumeControlCacheHref = "";
     let resumeControlCacheExpiresAt = 0;
     let resumeControlCacheValue = false;
+    let qualityTargetRouteKey = location.pathname;
+    let awaitingRouteApplyRequest = false;
+    let playbackRestoreSeq = 0;
+    let playbackRestoreTimer = 0;
 
     const nativeDefineProperty = Object.defineProperty;
     const nativeDefineProperties = Object.defineProperties;
@@ -180,6 +185,28 @@
         cachedRoutePathname = location.pathname;
         cachedIsPlaybackRoute = PLAYBACK_ROUTE_RE.test(cachedRoutePathname);
         cachedIsVodRoute = /^\/video(?:\/|$)/.test(cachedRoutePathname);
+    }
+
+    function clearQualityTargetRouteState() {
+        cachedPlayer = null;
+        trackedQualityTargets.length = 0;
+        lastFullPlayerScanAt = 0;
+        playerSearchMisses = 0;
+        stableVodApplyKey = "";
+        stableVodApplyVideo = null;
+    }
+
+    function syncQualityTargetRouteState() {
+        const nextRouteKey = location.pathname;
+        if (qualityTargetRouteKey === nextRouteKey) return false;
+
+        qualityTargetRouteKey = nextRouteKey;
+        awaitingRouteApplyRequest = true;
+        clearPageAutoApply();
+        detachVodPlaybackGuard();
+        cancelPlaybackRestore();
+        clearQualityTargetRouteState();
+        return true;
     }
 
     function isPlaybackRoute() {
@@ -495,6 +522,7 @@
     }
 
     function syncAutoQualityState() {
+        syncQualityTargetRouteState();
         readAutoQualityState();
         if (autoQualityEnabled && isPlaybackRoute()) installQualityTargetInterceptor();
         else uninstallQualityTargetInterceptor();
@@ -507,18 +535,21 @@
         }
 
         if (!isPlaybackRoute()) {
+            cancelPlaybackRestore();
             clearPageAutoApply();
             detachVodPlaybackGuard();
             return;
         }
 
         if (!autoQualityEnabled) {
+            cancelPlaybackRestore();
             clearPageAutoApply();
             detachVodPlaybackGuard();
             return;
         }
 
         ensureVodPlaybackGuardAttached();
+        if (awaitingRouteApplyRequest) return;
         if (isVodRoute() && hasStableVodApply()) return;
         startPageAutoApply();
     }
@@ -822,8 +853,14 @@
         return rect.width * rect.height;
     }
 
+    function isExtensionPreviewVideo(video) {
+        return video instanceof HTMLVideoElement && Boolean(video.closest?.(EXTENSION_PREVIEW_VIDEO_SELECTOR));
+    }
+
     function getMainVideo() {
-        const videos = Array.from(document.querySelectorAll("video"));
+        const videos = Array.from(document.querySelectorAll("video")).filter(
+            (video) => !isExtensionPreviewVideo(video)
+        );
         if (!videos.length) return null;
         videos.sort((a, b) => visibleArea(b) - visibleArea(a));
         return videos[0];
@@ -1128,12 +1165,39 @@
         return !isPlaybackTimeNearExpected(video, currentTime, capturedTime, startedAt);
     }
 
+    function cancelPlaybackRestore() {
+        playbackRestoreSeq += 1;
+        if (!playbackRestoreTimer) return;
+        clearTimeout(playbackRestoreTimer);
+        playbackRestoreTimer = 0;
+    }
+
+    function schedulePlaybackRestore(callback, delayMs, seq) {
+        playbackRestoreTimer = setTimeout(() => {
+            playbackRestoreTimer = 0;
+            if (seq !== playbackRestoreSeq) return;
+            callback();
+        }, delayMs);
+    }
+
     function restorePlaybackAfterQualityChange(video, currentTime, shouldResume) {
+        cancelPlaybackRestore();
         let attemptCount = 0;
         let timeRestoreCancelled = false;
         const startedAt = performance.now();
+        const restoreHref = location.href;
+        const seq = playbackRestoreSeq;
 
         const runRestore = () => {
+            if (
+                seq !== playbackRestoreSeq ||
+                location.href !== restoreHref ||
+                !autoQualityEnabled ||
+                !isPlaybackRoute()
+            ) {
+                return;
+            }
+
             const nextVideo = getMainVideo() || video;
             if (!(nextVideo instanceof HTMLVideoElement)) return;
 
@@ -1160,11 +1224,11 @@
             }
 
             if (shouldRetry && attemptCount < PLAYBACK_RESTORE_MAX_ATTEMPTS) {
-                setTimeout(runRestore, PLAYBACK_RESTORE_RETRY_MS);
+                schedulePlaybackRestore(runRestore, PLAYBACK_RESTORE_RETRY_MS, seq);
             }
         };
 
-        setTimeout(runRestore, PLAYBACK_RESTORE_DELAY_MS);
+        schedulePlaybackRestore(runRestore, PLAYBACK_RESTORE_DELAY_MS, seq);
     }
 
     function clearVodGuardState() {
@@ -1768,6 +1832,8 @@
     window.addEventListener(APPLY_EVENT, () => {
         const request = readRequest();
         if (!request?.requestId) return;
+        syncQualityTargetRouteState();
+        awaitingRouteApplyRequest = false;
         preferredQuality = request.quality || DEFAULT_QUALITY;
         autoQualityEnabled = true;
         syncUrlStartSeekIntent();

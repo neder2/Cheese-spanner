@@ -37,6 +37,7 @@
     const TARGET_REWARD_SIGNAL_RE = /통나무|timber|wood|rewardlog|logreward|claimlog|logclaim|collectlog|logcollect/;
     const CLAIM_ACTION_RE = /받기|수집|획득|claim|collect|receive/;
     const BUTTON_LIKE_ANCHOR_RE = /button|btn|claim|collect|reward/;
+    const EXECUTABLE_URL_SCHEME_RE = /^(?:javascript|data|vbscript):/i;
     const BLOCKED_ACTION_RE =
         /구독|팔로우|로그인|결제|쿠폰|선물|기프트|후원|충전|구매|subscribe|follow|login|payment|pay|coupon|gift|present|donate|donation|purchase|membership/;
 
@@ -84,20 +85,27 @@
     }
 
     function isButtonLikeAnchor(anchor, ownCompact) {
+        const href = normSpace(anchor.getAttribute("href") || "");
+        const compactHrefScheme = Array.from(href)
+            .filter((char) => {
+                const code = char.charCodeAt(0);
+                return code > 0x20 && code !== 0x7f;
+            })
+            .join("");
+        const protocol = String(anchor.protocol || "").toLowerCase();
+        if (EXECUTABLE_URL_SCHEME_RE.test(compactHrefScheme) || EXECUTABLE_URL_SCHEME_RE.test(protocol)) return false;
         if (anchor.getAttribute("role") === "button") return true;
         if (BUTTON_LIKE_ANCHOR_RE.test(ownCompact)) return true;
-
-        const href = normSpace(anchor.getAttribute("href") || "");
-        return href === "#" || href.toLowerCase().startsWith("javascript:");
+        return href === "#";
     }
 
     function isAllowedCandidateElement(el, ownCompact) {
         if (!(el instanceof HTMLElement)) return false;
 
         const tagName = el.tagName.toLowerCase();
+        if (tagName === "a") return isButtonLikeAnchor(el, ownCompact);
         if (tagName === "button") return true;
         if (el.getAttribute("role") === "button") return true;
-        if (tagName === "a") return isButtonLikeAnchor(el, ownCompact);
         return false;
     }
 

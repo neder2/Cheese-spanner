@@ -283,7 +283,12 @@
 
     function getLiveChannelIdFromPath(pathname = location.pathname) {
         const match = pathname.match(/^\/live\/([^/?#]+)/);
-        return match ? decodeURIComponent(match[1]) : "";
+        if (!match) return "";
+        try {
+            return decodeURIComponent(match[1]);
+        } catch (_) {
+            return "";
+        }
     }
 
     function isVodRoute(pathname = location.pathname) {
