@@ -1,3 +1,4 @@
 .claude/
 *.zip
 node_modules/
+/store-assets/screenshot/
