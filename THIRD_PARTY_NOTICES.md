@@ -6,9 +6,12 @@ Better Chzzk에는 아래 오픈소스 프로젝트에서 파생된 코드가 �
 
 - 출처: https://github.com/jebibot/cheese-knife
 - 라이선스: MIT License (Copyright (c) 2023- jebibot)
-- 사용 범위: `features/volumeTooltip.js`의 오디오 컴프레서 — 버튼 UI 구성,
-  아이콘 SVG, Web Audio 그래프(DynamicsCompressor + Gain) 구성이
-  cheese-knife의 구현에서 파생되었으며 Better Chzzk에 맞게 수정되었습니다.
+- 사용 범위:
+    - `features/volumeTooltip.js`의 오디오 컴프레서 — 버튼 UI 구성, 아이콘 SVG,
+      Web Audio 그래프(DynamicsCompressor + Gain) 구성이 cheese-knife의 구현에서
+      파생되었으며 Better Chzzk에 맞게 수정되었습니다.
+    - `features/chatTimestampPage.js`의 채팅 시각 추출 — DOM 행의 React props에서
+      `chatMessage.time`을 읽는 방식이 cheese-knife의 구현을 참고해 작성되었습니다.
 
 ### MIT License
 

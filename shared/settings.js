@@ -89,6 +89,7 @@
             min: LIVE_WATCH_HISTORY_MIN_MINUTES_MIN,
             max: LIVE_WATCH_HISTORY_MIN_MINUTES_MAX,
         },
+        chatTimestampEnabled: { kind: "bool", default: false, feature: true },
         chatToolsEnabled: { kind: "bool", default: false, feature: true },
         chatToolsShowBlindEnabled: { kind: "bool", default: false },
         chatToolsModeratorBoxEnabled: { kind: "bool", default: true },

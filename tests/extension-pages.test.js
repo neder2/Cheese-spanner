@@ -1702,6 +1702,7 @@ test("options places chat tools controls in a dedicated section", () => {
 
     assert.equal(section.querySelector("h2").textContent.trim(), "채팅 도구");
     assert.deepEqual(optionOrder, [
+        "chatTimestampEnabled",
         "chatToolsEnabled",
         "chatToolsShowBlindEnabled",
         "chatToolsModeratorBoxEnabled",

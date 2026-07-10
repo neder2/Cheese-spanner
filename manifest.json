@@ -17,7 +17,12 @@
     "content_scripts": [
         {
             "matches": ["https://chzzk.naver.com/*"],
-            "js": ["features/routeBridgePage.js", "features/autoQualityPage.js", "features/volumeWheelPage.js"],
+            "js": [
+                "features/routeBridgePage.js",
+                "features/chatTimestampPage.js",
+                "features/autoQualityPage.js",
+                "features/volumeWheelPage.js"
+            ],
             "run_at": "document_start",
             "world": "MAIN"
         },
@@ -38,6 +43,7 @@
                 "features/liveWatchHistory.js",
                 "features/rewardAutoCollect.js",
                 "features/chatTools.js",
+                "features/chatTimestamp.js",
                 "features/videoSearch.js",
                 "features/categoryTools.js",
                 "features/titleTooltip.js",

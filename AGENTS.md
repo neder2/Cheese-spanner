@@ -53,7 +53,7 @@
 
 콘텐츠 스크립트 파일 목록과 순서는 작업 시점의 `manifest.json`을 다시 확인한다.
 
-- **MAIN world**: 현재 `features/routeBridgePage.js`, `features/autoQualityPage.js`, `features/volumeWheelPage.js`. isolated world의 `BetterChzzk.utils`와 `BetterChzzkSettings`에 직접 접근할 수 없다.
+- **MAIN world**: 현재 `features/routeBridgePage.js`, `features/chatTimestampPage.js`, `features/autoQualityPage.js`, `features/volumeWheelPage.js`. isolated world의 `BetterChzzk.utils`와 `BetterChzzkSettings`에 직접 접근할 수 없다.
 - **isolated world**: `shared/settings.js` → `shared/data.js` → `content.js` → feature·vendor 순서로 전역 네임스페이스를 공유한다.
 - world 간 통신은 기존 `CustomEvent`, DOM 속성 등 명시적 브리지를 따른다. 새 전역 공유를 임의로 만들지 않는다.
 - `background.js`는 `shared/settings.js`를 `importScripts()`로 로드하는 service worker다. `shared/settings.js`에서 `window`, `document`, DOM API를 무가드로 사용하지 않는다.
@@ -107,7 +107,7 @@ npm.cmd run format:check
 - `tests/release-safety.test.js`는 원문 텍스트를 정규식으로 검사하므로 주석도 실패 원인이 될 수 있다.
 - 일부 성능 가드는 코드 사이 최대 문자 수를 검사한다. hot path를 수정하기 전에 assertion을 읽고, 테스트를 느슨하게 만들지 말고 의도를 보존한다.
 - `features/followingPreviewTooltip.js`에는 새 창·팝업·iframe·원격 실행 계열 대체 경로를 막는 별도 검사가 있다.
-- `features/volumeTooltip.js`의 cheese-knife/jebibot 표기와 `THIRD_PARTY_NOTICES.md`는 함께 유지한다.
+- `features/volumeTooltip.js`, `features/chatTimestampPage.js`의 cheese-knife/jebibot 표기와 `THIRD_PARTY_NOTICES.md`는 함께 유지한다.
 
 관련 화면의 수동 스모크에서는 다음을 변경 범위에 맞게 확인한다.
 
