@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ko">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Better Chzzk 통나무 수령 버튼 CSS 재현</title>
+        <link rel="stylesheet" href="./reward-auto-collect-css-repro.css" />
+    </head>
+    <body>
+        <main class="repro-page">
+            <aside id="aside-chatting" class="surface chat-surface" aria-label="재현 채팅 사이드바">
+                <header class="surface-header">
+                    <strong>채팅</strong>
+                    <span>실제 버튼 DOM 재현</span>
+                </header>
+
+                <section class="chat-log" aria-label="가상 채팅">
+                    <div class="message"><strong>룬농</strong><span>돈을 다쓰는데 갈리가 못가지 ㅋㅋ</span></div>
+                    <div class="message"><strong>재잼</strong><span>전서 카트 옆에 바닥에 있던거 아닌가</span></div>
+                    <div class="message"><strong>Rwori</strong><span>어</span></div>
+                    <div class="message"><strong>패스노</strong><span>돈 버는대로 쓰는데 되냐고 ㅋㅋ</span></div>
+                    <div class="message"><strong>KJHtest</strong><span>아...마?</span></div>
+                    <div class="message"><strong>건던고양이</strong><span>무 빙</span></div>
+                </section>
+
+                <div class="_area_1qgfi_49" data-testid="reward-area">
+                    <div id="reward-container" class="_container_3fvos_1">
+                        <button id="chat-claim" class="_button_3fvos_21" type="button">
+                            <span class="_text_3fvos_13">1시간 시청 통나무 파워 배달 완료!</span>
+                            <svg
+                                class="icon_power_3fvos_17"
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="16"
+                                height="16"
+                                viewBox="0 0 16 16"
+                                aria-hidden="true"
+                            >
+                                <path d="M2.4 7.2h11.2v6.1H2.4zM5 3.1h2.1v4.1H5zM8.9 4.4H11v2.8H8.9z" />
+                            </svg>
+                            100 받기
+                        </button>
+                    </div>
+                </div>
+
+                <div class="chat-input">
+                    <input aria-label="채팅 입력" placeholder="채팅을 입력해주세요 (J)" />
+                    <button type="button" disabled>채팅</button>
+                </div>
+            </aside>
+
+            <section class="result-panel" aria-label="자동 클릭 검증 결과">
+                <h1>실제 기능 스크립트 클릭 결과</h1>
+                <p>
+                    스크린샷의 DOM 구조와 핵심 CSS를 별도 페이지에 만들고 현재
+                    <code>features/rewardAutoCollect.js</code>를 그대로 불러옵니다.
+                </p>
+
+                <div class="dom-preview">
+                    button._button_3fvos_21 span._text_3fvos_13 svg.icon_power_3fvos_17 "100 받기"
+                </div>
+
+                <div class="result-grid">
+                    <div class="result-item">버튼 실측 크기<strong id="button-size">측정 중</strong></div>
+                    <div class="result-item">포인트<strong id="balance" data-testid="balance">3,650</strong></div>
+                    <div class="result-item">클릭 이벤트<strong id="click-count">0</strong></div>
+                    <div class="result-item">기능 마커<strong id="click-marker">대기 중</strong></div>
+                    <div class="result-item">페이지 가시성<strong id="visibility-state">측정 중</strong></div>
+                </div>
+
+                <div id="event-log" class="event-log" data-testid="event-log">실제 rewardAutoCollect.js 로딩 중…</div>
+            </section>
+        </main>
+
+        <script>
+            (() => {
+                const forceHidden = new URLSearchParams(location.search).has("force-hidden");
+                if (forceHidden) {
+                    Object.defineProperty(document, "hidden", {
+                        configurable: true,
+                        get: () => true,
+                    });
+                    Object.defineProperty(document, "visibilityState", {
+                        configurable: true,
+                        get: () => "hidden",
+                    });
+                }
+
+                const button = document.getElementById("chat-claim");
+                const rect = button.getBoundingClientRect();
+                const state = {
+                    accepted: 0,
+                    balance: 3650,
+                    clickEvents: 0,
+                    height: Math.round(rect.height * 10) / 10,
+                    marker: null,
+                    width: Math.round(rect.width * 10) / 10,
+                };
+
+                const publish = (message) => {
+                    document.getElementById("balance").textContent = state.balance.toLocaleString("ko-KR");
+                    document.getElementById("button-size").textContent = `${state.width} × ${state.height}px`;
+                    document.getElementById("click-count").textContent = String(state.clickEvents);
+                    document.getElementById("click-marker").textContent = state.marker || "대기 중";
+                    document.getElementById("visibility-state").textContent = document.visibilityState;
+                    document.getElementById("event-log").textContent = message;
+                    window.__rewardReproResult = {
+                        accepted: state.accepted,
+                        balance: state.balance,
+                        buttonPresent: Boolean(document.getElementById("chat-claim")),
+                        clickEvents: state.clickEvents,
+                        height: state.height,
+                        marker: state.marker,
+                        visibilityState: document.visibilityState,
+                        width: state.width,
+                    };
+                };
+
+                button.addEventListener("click", () => {
+                    state.clickEvents += 1;
+                    if (state.accepted === 0) {
+                        state.accepted = 1;
+                        state.balance += 100;
+                    }
+
+                    const placeholder = document.createElement("div");
+                    placeholder.id = "claimed-placeholder";
+                    placeholder.className = "claimed-placeholder";
+                    placeholder.textContent = "자동 클릭 완료 · 수령 버튼 DOM 제거";
+                    button.replaceWith(placeholder);
+                    publish("[성공] 실제 rewardAutoCollect.js가 버튼을 1회 클릭했고 포인트가 +100 되었습니다.");
+
+                    queueMicrotask(() => {
+                        state.marker = button.getAttribute("data-bcra-clicked");
+                        publish("[성공] 클릭 1회 · +100 · data-bcra-clicked=1 · 버튼 제거 확인");
+                    });
+                });
+
+                window.BetterChzzkSettings = {
+                    normalizeOptions() {
+                        return {
+                            rewardAutoCollectDelayMs: 800,
+                            rewardAutoCollectEnabled: true,
+                        };
+                    },
+                };
+
+                window.BetterChzzk = {
+                    utils: {
+                        bindFeatureOptions(applyOptions) {
+                            applyOptions(window.BetterChzzkSettings.normalizeOptions());
+                            return () => {};
+                        },
+                        createMutationObserverSync(config) {
+                            const target = typeof config.target === "function" ? config.target() : config.target;
+                            if (!(target instanceof HTMLElement)) {
+                                return {
+                                    disconnect() {},
+                                    disconnectAll() {},
+                                };
+                            }
+
+                            const observer = new MutationObserver((mutations) => {
+                                config.onMutations?.(mutations);
+                                if (config.shouldSchedule?.()) config.schedule?.();
+                            });
+                            observer.observe(target, config.options || { childList: true, subtree: true });
+                            config.onObserved?.(observer, target);
+                            return {
+                                disconnect() {
+                                    observer.disconnect();
+                                },
+                                disconnectAll() {
+                                    observer.disconnect();
+                                },
+                            };
+                        },
+                        normSpace(value) {
+                            return String(value || "")
+                                .replace(/\s+/g, " ")
+                                .trim();
+                        },
+                        startPageChangeDetection() {
+                            return () => {};
+                        },
+                    },
+                };
+
+                window.fetch = async () => {
+                    throw new Error("빈 페이지 DOM 클릭 재현에서는 네트워크 요청을 사용하지 않습니다.");
+                };
+                publish("실제 rewardAutoCollect.js 로딩 완료 대기 중…");
+            })();
+        </script>
+        <script src="../../features/rewardAutoCollect.js"></script>
+    </body>
+</html>

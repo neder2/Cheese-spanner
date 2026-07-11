@@ -25,9 +25,6 @@
     const DURATION_FILTER_PRESET_MAX = 168;
     const LIVE_WATCH_HISTORY_MIN_MINUTES_MIN = 1;
     const LIVE_WATCH_HISTORY_MIN_MINUTES_MAX = 1440;
-    const LIVE_PAUSE_CACHE_DEPTH_MINUTES_MIN = 1;
-    const LIVE_PAUSE_CACHE_DEPTH_MINUTES_MAX = 360;
-    const LIVE_PAUSE_CACHE_DEPTH_MINUTES_DEFAULT = 120;
     const REWARD_AUTO_COLLECT_DELAY_MS_DEFAULT = 800;
     const REWARD_AUTO_COLLECT_DELAY_MS_MIN = 0;
     const REWARD_AUTO_COLLECT_DELAY_MS_MAX = 5000;
@@ -48,12 +45,6 @@
         skipPillEnabled: { kind: "bool", default: true },
         skipLivePillEnabled: { kind: "bool", default: true },
         skipLivePauseResumeEnabled: { kind: "bool", default: true },
-        skipLivePauseResumeDepthMinutes: {
-            kind: "int",
-            default: LIVE_PAUSE_CACHE_DEPTH_MINUTES_DEFAULT,
-            min: LIVE_PAUSE_CACHE_DEPTH_MINUTES_MIN,
-            max: LIVE_PAUSE_CACHE_DEPTH_MINUTES_MAX,
-        },
         skipSeconds: { kind: "skipSeconds", default: DEFAULT_SKIP_SECONDS },
         skipWheelStep: { kind: "int", default: 1, min: 1, max: 60 },
         skipWheelShiftStep: { kind: "int", default: 5, min: 1, max: 300 },
@@ -89,6 +80,7 @@
             min: LIVE_WATCH_HISTORY_MIN_MINUTES_MIN,
             max: LIVE_WATCH_HISTORY_MIN_MINUTES_MAX,
         },
+        vodCommentTabsEnabled: { kind: "bool", default: true, feature: true },
         chatTimestampEnabled: { kind: "bool", default: false, feature: true },
         chatToolsEnabled: { kind: "bool", default: false, feature: true },
         chatToolsShowBlindEnabled: { kind: "bool", default: false },
@@ -199,6 +191,9 @@
         // 옵션에서 직접 켜면서 권한을 허용하는 흐름이 되도록 기본값은 꺼짐이다.
         followingPreviewTooltipEnabled: { kind: "bool", default: false, feature: true },
         followingPreviewSoundEnabled: { kind: "bool", default: true },
+        followingPreviewVolumePercent: { kind: "int", default: 15, min: 1, max: 100 },
+        livePreviewRightClickSoundEnabled: { kind: "bool", default: true },
+        holdSpeedEnabled: { kind: "bool", default: true, feature: true },
         shortcutRescueEnabled: { kind: "bool", default: true, feature: true },
     });
 
@@ -342,9 +337,6 @@
         MONTHLY_CALENDAR_MAX_PAGES,
         LIVE_WATCH_HISTORY_MIN_MINUTES_MIN,
         LIVE_WATCH_HISTORY_MIN_MINUTES_MAX,
-        LIVE_PAUSE_CACHE_DEPTH_MINUTES_MIN,
-        LIVE_PAUSE_CACHE_DEPTH_MINUTES_MAX,
-        LIVE_PAUSE_CACHE_DEPTH_MINUTES_DEFAULT,
         REWARD_AUTO_COLLECT_DELAY_MS_DEFAULT,
         REWARD_AUTO_COLLECT_DELAY_MS_MIN,
         REWARD_AUTO_COLLECT_DELAY_MS_MAX,

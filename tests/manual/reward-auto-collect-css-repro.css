@@ -1,0 +1,238 @@
+:root {
+    color-scheme: dark;
+    --Content-Brand-Strong: #00d99a;
+    font-family:
+        Pretendard,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+    background: #0d0f10;
+    color: #f1f3f5;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    min-height: 100vh;
+    margin: 0;
+    background: radial-gradient(circle at 50% 0%, rgb(54 68 73 / 24%), transparent 36rem), #0d0f10;
+}
+
+button,
+input {
+    font: inherit;
+}
+
+.repro-page {
+    display: grid;
+    grid-template-columns: 360px minmax(360px, 500px);
+    justify-content: center;
+    gap: 24px;
+    padding: 28px;
+}
+
+.surface,
+.result-panel {
+    overflow: hidden;
+    border: 1px solid #272b2f;
+    border-radius: 14px;
+    background: #111315;
+    box-shadow: 0 24px 70px rgb(0 0 0 / 38%);
+}
+
+.chat-surface {
+    display: grid;
+    min-height: 720px;
+    grid-template-rows: auto 1fr auto auto;
+}
+
+.surface-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 52px;
+    padding: 0 16px;
+    border-bottom: 1px solid #26292d;
+    font-weight: 750;
+}
+
+.surface-header span {
+    color: #858d97;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.chat-log {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 15px;
+    padding: 22px 24px;
+    color: #e2e5e9;
+    font-size: 14px;
+}
+
+.message {
+    display: flex;
+    gap: 8px;
+    line-height: 1.35;
+}
+
+.message strong {
+    color: #56d49f;
+}
+
+._area_1qgfi_49 {
+    padding: 0 24px 12px;
+}
+
+._container_3fvos_1 {
+    width: 100%;
+}
+
+._button_3fvos_21 {
+    display: flex;
+    width: 100%;
+    height: 28px;
+    align-items: center;
+    padding: 0 10px;
+    border: 1px solid #04bd80;
+    border-radius: 5px;
+    background: linear-gradient(90deg, rgb(41 91 76 / 82%), rgb(28 64 55 / 88%));
+    color: var(--Content-Brand-Strong);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 28px;
+    text-align: left;
+}
+
+._button_3fvos_21:hover {
+    background: linear-gradient(90deg, rgb(48 111 90 / 92%), rgb(31 82 67 / 95%));
+}
+
+._text_3fvos_13 {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    color: #9fc3ba;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.icon_power_3fvos_17 {
+    width: 16px;
+    height: 16px;
+    margin: 0 3px 0 8px;
+    flex: 0 0 16px;
+    fill: currentColor;
+}
+
+.claimed-placeholder {
+    display: flex;
+    width: 100%;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed #3b4147;
+    border-radius: 5px;
+    color: #7f8791;
+    font-size: 11px;
+}
+
+.chat-input {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 9px;
+    padding: 10px 14px 14px;
+    border-top: 1px solid #25292d;
+}
+
+.chat-input input {
+    min-width: 0;
+    padding: 11px 12px;
+    border: 1px solid #2e3338;
+    border-radius: 8px;
+    outline: none;
+    background: #0d0f10;
+    color: #e5e8eb;
+}
+
+.chat-input button {
+    padding: 0 14px;
+    border: 0;
+    border-radius: 8px;
+    background: #292d31;
+    color: #757c85;
+}
+
+.result-panel {
+    align-self: start;
+    padding: 22px;
+}
+
+.result-panel h1 {
+    margin: 0;
+    font-size: 20px;
+}
+
+.result-panel > p {
+    margin: 9px 0 20px;
+    color: #929aa5;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.dom-preview {
+    padding: 14px;
+    border-radius: 10px;
+    background: #0a0c0d;
+    color: #9ab8ae;
+    font:
+        12px/1.6 Consolas,
+        monospace;
+    white-space: pre-wrap;
+}
+
+.result-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin: 16px 0;
+}
+
+.result-item {
+    padding: 13px;
+    border-radius: 10px;
+    background: #1a1d20;
+    color: #929aa5;
+    font-size: 12px;
+}
+
+.result-item strong {
+    display: block;
+    margin-top: 5px;
+    color: #f1f3f5;
+    font-size: 17px;
+}
+
+.event-log {
+    min-height: 66px;
+    padding: 13px;
+    border: 1px solid #27342f;
+    border-radius: 10px;
+    background: #0d1210;
+    color: #6fe5b2;
+    font:
+        12px/1.55 Consolas,
+        monospace;
+}
+
+@media (max-width: 800px) {
+    .repro-page {
+        grid-template-columns: 360px;
+    }
+}

@@ -384,7 +384,7 @@
             startBodyWatch();
         };
         const scheduleReconnectCheck = () => {
-            if (reconnectCheckScheduled || disconnectedAll) return;
+            if (reconnectCheckScheduled || disconnectedAll || observedNode?.isConnected) return;
             reconnectCheckScheduled = true;
             window.setTimeout(checkReconnect, RECONNECT_CHECK_THROTTLE_MS);
         };

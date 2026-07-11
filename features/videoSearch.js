@@ -36,11 +36,9 @@
     const COMMENT_VIDEO_ATTR = "data-bcvs-comment-video-no";
 
     const API_BASE = "https://api.chzzk.naver.com/service/v1/channels";
-    const COMMENT_API_BASE = "https://apis.naver.com/nng_main/nng_comment_api/v1";
     const PAGE_SIZE = 30;
     const COMMENT_PAGE_SIZE = 30;
     const COMMENT_FETCH_CONCURRENCY = 3;
-    const COMMENT_DEVICE_ID_STORAGE_KEY = "betterchzzkCommentDeviceId";
     const INDEX_APPLY_INTERVAL_MS = 260;
     const INDEX_CACHE_TTL_MS = 5 * 60 * 1000;
     const MAX_INDEX_CACHE_CHANNELS = 8;
@@ -80,6 +78,7 @@
         bindFeatureOptions,
         createMutationObserverSync,
         createThrottledDomSync,
+        fetchChzzkCommentPage,
         fetchJson,
         isLastPage,
         normSpace,
@@ -90,12 +89,8 @@
         setLoadingReason,
         sleep,
         startPageChangeDetection,
-        storageGet,
-        storageSet,
     } = BetterChzzk.utils;
     const scheduleThrottledMount = createThrottledDomSync(runScheduledMount, 160);
-    let commentDeviceId = "";
-    let commentDeviceIdPromise = null;
 
     function isFeatureEnabled() {
         return featureOptions.videoSearchEnabled;
@@ -149,39 +144,6 @@
         return m ? m[1] : null;
     }
 
-    function createCommentDeviceId() {
-        return globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-    }
-
-    async function getCommentDeviceId() {
-        if (commentDeviceId) return commentDeviceId;
-        if (commentDeviceIdPromise) return commentDeviceIdPromise;
-
-        commentDeviceIdPromise = (async () => {
-            const storage = globalThis.chrome?.storage?.local;
-            try {
-                const data = await storageGet(storage, COMMENT_DEVICE_ID_STORAGE_KEY);
-                const existing = normSpace(data?.[COMMENT_DEVICE_ID_STORAGE_KEY]);
-                if (existing) return existing;
-
-                const next = createCommentDeviceId();
-                await storageSet(storage, { [COMMENT_DEVICE_ID_STORAGE_KEY]: next });
-                return next;
-            } catch (_) {
-                return createCommentDeviceId();
-            }
-        })()
-            .then((value) => {
-                commentDeviceId = value;
-                return value;
-            })
-            .finally(() => {
-                commentDeviceIdPromise = null;
-            });
-
-        return commentDeviceIdPromise;
-    }
-
     function injectStyleOnce() {
         BetterChzzk.utils.injectStyleOnce(
             STYLE_ID,
@@ -194,7 +156,7 @@
   --bcvs-border:var(--Border-Neutral-Weak, #2E3033);
   --bcvs-border-strong:var(--Border-Neutral-Strong, #697183);
   --bcvs-text:var(--Content-Neutral-Cool-Base, #9DA5B6);
-  --bcvs-text-strong:var(--Content-Neutral-Primary, #FFFFFF);
+  --bcvs-text-strong:var(--Content-Neutral-Cool-Strong, #C9CEDC);
   --bcvs-text-hover:var(--Content-Neutral-Inverse, #111114);
   --bcvs-text-focus:var(--Content-Neutral-Inverse, #111114);
   --bcvs-text-dim:var(--Content-Neutral-Cool-Weak, #697183);
@@ -532,28 +494,13 @@
     }
 
     async function fetchCommentPage(videoNo, offset, signal = undefined) {
-        const deviceId = await getCommentDeviceId();
-        const params = new URLSearchParams({
-            limit: String(COMMENT_PAGE_SIZE),
-            offset: String(offset),
+        return fetchChzzkCommentPage({
+            limit: COMMENT_PAGE_SIZE,
+            objectId: videoNo,
+            offset,
             orderType: "POPULAR",
-            pagingType: "PAGE",
-        });
-        const url = `${COMMENT_API_BASE}/type/STREAMING_VIDEO/id/${encodeURIComponent(videoNo)}/comments?${params.toString()}`;
-        const json = await fetchJson(url, {
-            headers: {
-                Accept: "application/json",
-                "Cache-Control": "no-cache",
-                "Front-Client-Platform-Type": "PC",
-                "Front-Client-Product-Type": "web",
-                "If-Modified-Since": "Mon, 26 Jul 1997 05:00:00 GMT",
-                Pragma: "no-cache",
-                deviceId,
-            },
             signal,
         });
-        if (json?.code && json.code !== 200) throw new Error(json.message || `code ${json.code}`);
-        return json?.content || null;
     }
 
     function collectCommentTexts(value, out = []) {

@@ -1,6 +1,6 @@
 {
     "name": "better-chzzk",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "private": true,
     "description": "Development tooling for the Better Chzzk browser extension.",
     "type": "commonjs",

@@ -16,7 +16,6 @@ const expectedDefaults = {
     skipPillEnabled: true,
     skipLivePillEnabled: true,
     skipLivePauseResumeEnabled: true,
-    skipLivePauseResumeDepthMinutes: 120,
     skipSeconds: 5,
     skipWheelStep: 1,
     skipWheelShiftStep: 5,
@@ -42,6 +41,7 @@ const expectedDefaults = {
     monthlyBroadcastTimeMaxCalendarPages: 60,
     liveWatchHistoryEnabled: true,
     liveWatchHistoryMinMinutes: 1,
+    vodCommentTabsEnabled: true,
     chatTimestampEnabled: false,
     chatToolsEnabled: false,
     chatToolsShowBlindEnabled: false,
@@ -85,6 +85,9 @@ const expectedDefaults = {
     followingRefreshSeconds: 30,
     followingPreviewTooltipEnabled: false,
     followingPreviewSoundEnabled: true,
+    followingPreviewVolumePercent: 15,
+    livePreviewRightClickSoundEnabled: true,
+    holdSpeedEnabled: true,
     shortcutRescueEnabled: true,
 };
 
@@ -106,6 +109,7 @@ test("feature count keys are derived from feature toggles only", () => {
         "adblockPopupEnabled",
         "monthlyBroadcastTimeEnabled",
         "liveWatchHistoryEnabled",
+        "vodCommentTabsEnabled",
         "chatTimestampEnabled",
         "chatToolsEnabled",
         "videoSearchEnabled",
@@ -113,6 +117,7 @@ test("feature count keys are derived from feature toggles only", () => {
         "titleTooltipEnabled",
         "followingRefreshEnabled",
         "followingPreviewTooltipEnabled",
+        "holdSpeedEnabled",
         "shortcutRescueEnabled",
     ]);
 });
@@ -136,6 +141,7 @@ test("normalizeOptions preserves boolean parsing and integer bounds", () => {
         categoryToolsDurationFilterPreset1: "0",
         categoryToolsDurationFilterPreset6: "999",
         categoryToolsFollowerFetchConcurrency: "0",
+        followingPreviewVolumePercent: 200,
     });
 
     assert.equal(normalized.autoQualityEnabled, false);
@@ -155,6 +161,8 @@ test("normalizeOptions preserves boolean parsing and integer bounds", () => {
     assert.equal(normalized.categoryToolsDurationFilterPreset1, 1);
     assert.equal(normalized.categoryToolsDurationFilterPreset6, 168);
     assert.equal(normalized.categoryToolsFollowerFetchConcurrency, 1);
+    assert.equal(normalized.followingPreviewVolumePercent, 100);
+    assert.equal(settings.normalizeOptions({ followingPreviewVolumePercent: 0 }).followingPreviewVolumePercent, 1);
 });
 
 test("options.html data-option keys match the settings keys", () => {

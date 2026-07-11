@@ -1,5 +1,5 @@
 /**
- * features/rewardAutoCollect.js — 채팅 사이드바(aside)의 보상(통나무 등) 수집 버튼을 자동으로 클릭한다.
+ * features/rewardAutoCollect.js — 채팅 사이드바의 통나무 수령 버튼과 서버가 제공한 비시청 claim을 자동 수집한다.
  *
  * 동작 위치: chzzk.naver.com 전역 중 aside#aside-chatting(채팅 사이드바) 내부.
  * 하는 일:
@@ -8,6 +8,8 @@
  *   - 구독/팔로우/로그인/결제 등(BLOCKED_ACTION_RE)에 해당하면 즉시 제외해 오클릭을 막는다.
  *   - 가장 점수가 높은 버튼을 지연 후 클릭하고, 보상 상태 서명당 한 번만 실행해 중복 클릭을 막는다.
  *   - MutationObserver를 채팅 aside에만 연결하고, 변경된 버튼 후보만 모아 증분 검사한다.
+ *   - 라이브 채널의 log-power claim 목록을 주기적으로 확인하고 WATCH_1_HOUR를 제외한 claim만 API로 수령한다.
+ *     1시간 시청 보상은 치지직이 표시한 버튼을 통해서만 수령한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
  *   createMutationObserverSync, normSpace, startPageChangeDetection).
  * 옵션 키: rewardAutoCollectEnabled, rewardAutoCollectDelayMs.
@@ -23,7 +25,11 @@
     const SCAN_THROTTLE_MS = 250;
     const COMPLETED_SIGNATURE_RELEASE_MS = 750;
     const MAX_COMPLETED_SIGNATURES = 32;
+    const MAX_COMPLETED_API_CLAIMS = 64;
     const DEFAULT_DELAY_MS = 800;
+    const API_CLAIM_POLL_MS = 30000;
+    const WATCH_CLAIM_TYPE = "WATCH_1_HOUR";
+    const LOG_POWER_API_ORIGIN = "https://api.chzzk.naver.com";
     const ANCESTOR_STATE_ATTRIBUTES = new Set([
         "class",
         "style",
@@ -35,7 +41,10 @@
     ]);
 
     const TARGET_REWARD_SIGNAL_RE = /통나무|timber|wood|rewardlog|logreward|claimlog|logclaim|collectlog|logcollect/;
-    const CLAIM_ACTION_RE = /받기|수집|획득|claim|collect|receive/;
+    const WATCH_VERIFICATION_SIGNAL_RE = /(?:1시간|60분)(?:라이브)?시청(?:후)?인증/;
+    const WATCH_REWARD_ROW_SIGNAL_RE = /(?:1시간|60분)(?:라이브)?시청(?:후)?(?:보상|인증)/;
+    const POWER_AMOUNT_BUTTON_RE = /^\d[\d,.]*파워$/;
+    const CLAIM_ACTION_RE = /받기|수집|획득|인증|claim|collect|receive/;
     const BUTTON_LIKE_ANCHOR_RE = /button|btn|claim|collect|reward/;
     const EXECUTABLE_URL_SCHEME_RE = /^(?:javascript|data|vbscript):/i;
     const BLOCKED_ACTION_RE =
@@ -47,10 +56,17 @@
     let scanRoot = null;
     let scanTimer = 0;
     let fullScanRequested = true;
+    let apiPollTimer = 0;
+    let apiCheckTimer = 0;
+    let apiCheckInFlight = false;
+    let apiRequestGeneration = 0;
+    let apiAbortController = null;
+    let apiChannelId = null;
     const dirtyCandidates = new Set();
     const knownRewardCandidates = new Set();
     const pendingClicks = new Map();
     const completedSignatures = new Map();
+    const completedApiClaims = new Set();
 
     function compactSignal(value) {
         return String(value || "")
@@ -120,17 +136,32 @@
         return style.display !== "none" && style.visibility !== "hidden" && style.pointerEvents !== "none";
     }
 
+    function getWatchRewardRowSignal(el) {
+        if (!(el instanceof HTMLElement)) return "";
+        const row = el.closest("li");
+        if (!(row instanceof HTMLElement) || !row.closest('[role="alertdialog"]')) return "";
+        return compactSignal(`${getElementText(row)} ${getAttributeSignal(row)}`);
+    }
+
+    function isWatchRewardPowerButton(el, ownCompact) {
+        return POWER_AMOUNT_BUTTON_RE.test(ownCompact) && WATCH_REWARD_ROW_SIGNAL_RE.test(getWatchRewardRowSignal(el));
+    }
+
     function scoreRewardButton(el) {
         const ownText = getElementText(el);
+        const ownTextCompact = compactSignal(ownText);
         const ownSignal = normSpace(`${ownText} ${getAttributeSignal(el)}`);
         const ownCompact = compactSignal(ownSignal);
+        const directRewardButton =
+            CLAIM_ACTION_RE.test(ownCompact) &&
+            (TARGET_REWARD_SIGNAL_RE.test(ownCompact) || WATCH_VERIFICATION_SIGNAL_RE.test(ownCompact));
+        const watchRewardPowerButton = isWatchRewardPowerButton(el, ownTextCompact);
 
         // 일반 채팅 버튼은 레이아웃 조회 전에 빠르게 제외한다.
         if (
             !isAllowedCandidateElement(el, ownCompact) ||
             BLOCKED_ACTION_RE.test(ownCompact) ||
-            !CLAIM_ACTION_RE.test(ownCompact) ||
-            !TARGET_REWARD_SIGNAL_RE.test(ownCompact)
+            (!directRewardButton && !watchRewardPowerButton)
         ) {
             knownRewardCandidates.delete(el);
             return 0;
@@ -140,8 +171,138 @@
 
         let score = 1;
         score += 5;
+        if (watchRewardPowerButton) score += 4;
+        if (WATCH_VERIFICATION_SIGNAL_RE.test(ownCompact)) score += 2;
         if (/claim|collect|receive/.test(ownCompact)) score += 2;
         return score;
+    }
+
+    function getLiveChannelId() {
+        const match = String(location.pathname || "").match(/^\/live\/([\w-]+)/);
+        return match ? match[1] : null;
+    }
+
+    function getLogPowerUrl(channelId) {
+        return `${LOG_POWER_API_ORIGIN}/service/v1/channels/${encodeURIComponent(channelId)}/log-power`;
+    }
+
+    function getClaimUrl(channelId, claimId) {
+        return `${getLogPowerUrl(channelId)}/claims/${encodeURIComponent(claimId)}`;
+    }
+
+    function rememberCompletedApiClaim(key) {
+        completedApiClaims.delete(key);
+        completedApiClaims.add(key);
+        while (completedApiClaims.size > MAX_COMPLETED_API_CLAIMS) {
+            completedApiClaims.delete(completedApiClaims.values().next().value);
+        }
+    }
+
+    function isCurrentApiRequest(generation, channelId) {
+        return (
+            isEnabled() &&
+            generation === apiRequestGeneration &&
+            channelId === apiChannelId &&
+            channelId === getLiveChannelId()
+        );
+    }
+
+    async function collectAvailableApiClaims() {
+        if (!isEnabled() || apiCheckInFlight) return;
+        const channelId = getLiveChannelId();
+        if (!channelId) return;
+
+        if (apiChannelId !== channelId) {
+            apiChannelId = channelId;
+            completedApiClaims.clear();
+        }
+
+        const generation = apiRequestGeneration;
+        const controller = typeof AbortController === "function" ? new AbortController() : null;
+        apiAbortController = controller;
+        apiCheckInFlight = true;
+
+        try {
+            const response = await fetch(getLogPowerUrl(channelId), {
+                credentials: "include",
+                signal: controller?.signal,
+            });
+            if (!response?.ok) return;
+
+            const data = await response.json();
+            if (!isCurrentApiRequest(generation, channelId)) return;
+            const claims = Array.isArray(data?.content?.claims) ? data.content.claims : [];
+            const attemptedClaimIds = new Set();
+
+            for (const claim of claims) {
+                if (!isCurrentApiRequest(generation, channelId)) return;
+                if (String(claim?.claimType || "").toUpperCase() === WATCH_CLAIM_TYPE) continue;
+                if (claim?.claimId === null || claim?.claimId === undefined) continue;
+
+                const claimId = String(claim.claimId);
+                if (!claimId || attemptedClaimIds.has(claimId)) continue;
+                attemptedClaimIds.add(claimId);
+
+                const claimKey = `${channelId}:${claimId}`;
+                if (completedApiClaims.has(claimKey)) continue;
+
+                const claimResponse = await fetch(getClaimUrl(channelId, claimId), {
+                    method: "PUT",
+                    credentials: "include",
+                    signal: controller?.signal,
+                });
+                if (!isCurrentApiRequest(generation, channelId)) return;
+                if (claimResponse?.ok) rememberCompletedApiClaim(claimKey);
+            }
+        } catch (error) {
+            if (error?.name !== "AbortError") return;
+        } finally {
+            if (generation === apiRequestGeneration) {
+                apiCheckInFlight = false;
+                apiAbortController = null;
+            }
+        }
+    }
+
+    function scheduleApiClaimCheck() {
+        if (!isEnabled() || apiCheckTimer || apiCheckInFlight || !getLiveChannelId()) return;
+        apiCheckTimer = window.setTimeout(() => {
+            apiCheckTimer = 0;
+            void collectAvailableApiClaims();
+        }, 0);
+    }
+
+    function syncApiChannel() {
+        const channelId = getLiveChannelId();
+        if (apiChannelId !== channelId) {
+            apiRequestGeneration += 1;
+            apiAbortController?.abort();
+            apiAbortController = null;
+            apiCheckInFlight = false;
+            apiChannelId = channelId;
+            completedApiClaims.clear();
+        }
+        scheduleApiClaimCheck();
+    }
+
+    function startApiCollection() {
+        syncApiChannel();
+        if (apiPollTimer) return;
+        apiPollTimer = window.setInterval(scheduleApiClaimCheck, API_CLAIM_POLL_MS);
+    }
+
+    function stopApiCollection() {
+        apiRequestGeneration += 1;
+        apiAbortController?.abort();
+        apiAbortController = null;
+        apiCheckInFlight = false;
+
+        if (apiCheckTimer) window.clearTimeout(apiCheckTimer);
+        if (apiPollTimer) window.clearInterval(apiPollTimer);
+        apiCheckTimer = 0;
+        apiPollTimer = 0;
+        apiChannelId = null;
+        completedApiClaims.clear();
     }
 
     function getScanRoot() {
@@ -170,7 +331,9 @@
 
     function getButtonSignature(button) {
         const context = normSpace(location.pathname || "/").slice(0, 120);
-        const stateSignal = normSpace(`${getElementText(button)} ${button.getAttribute("aria-label") || ""}`);
+        const stateSignal = normSpace(
+            `${getElementText(button)} ${button.getAttribute("aria-label") || ""} ${getWatchRewardRowSignal(button)}`
+        );
         return `${context}@${compactSignal(stateSignal).slice(0, 180)}`;
     }
 
@@ -443,6 +606,7 @@
         clearPendingClicks();
         dirtyCandidates.clear();
         requestFullScan();
+        syncApiChannel();
     }
 
     function startObserver() {
@@ -504,11 +668,13 @@
 
         if (!isEnabled()) {
             stopObserver();
+            stopApiCollection();
             return;
         }
 
         // 기본값이 이미 true여도 observer를 반드시 설치한다. startObserver는 멱등이다.
         startObserver();
+        startApiCollection();
     }
 
     bindFeatureOptions(applyOptions);

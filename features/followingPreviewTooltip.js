@@ -1,20 +1,20 @@
 /**
- * features/followingPreviewTooltip.js — 팔로잉 사이드바 라이브 링크 호버 시 라이브 미리보기 툴팁을 띄운다.
+ * features/followingPreviewTooltip.js — 팔로잉과 라이브 목록의 호버 미리보기 재생·소리를 관리한다.
  *
- * 동작 위치: isolated world, chzzk.naver.com 전역의 팔로잉 사이드바(a[href*='/live/'] 링크 영역).
- * 하는 일: pointerover/pointerout으로 호버 대상을 감지해 DOM에서 채널명/제목/썸네일을 우선
- *   추정(domMeta)한 뒤 tooltip을 즉시 표시하고, live-detail 및 auto-play-info API로 실제 방송
- *   정보와 HLS 재생 경로(playbackJson)를 받아온다. 팝업/새 창/외부 프레임 폴백 없이 인라인 video
- *   요소로 재생하며, HLS 소스가 있으면 전역 Hls로 붙이고 없으면 네이티브 HLS 재생을 시도한다.
- *   자동재생이 소리와 함께 막히면 소리 켜기 배지를 보여주고 무음으로 재생한다. 페이지 이동/포인터
- *   이탈 시 플레이어를 정리하고 툴팁을 숨긴다.
+ * 동작 위치: isolated world, 팔로잉 사이드바와 /lives·카테고리 라이브 목록.
+ * 하는 일: 팔로잉 링크는 tooltip 미리보기를 띄우고, categoryTools가 필터 결과로 만든 복제 카드는
+ *   auto-play-info의 실제 HLS를 썸네일 안에서 재생한다. 네이티브 목록 미리보기는 치지직 플레이어를
+ *   그대로 사용한다. 옵션이 켜진 상태에서 우클릭하면 팔로잉은 소리를 토글하고 목록 미리보기는
+ *   소리를 켜면서 CSS로 확대한다. 페이지 이동·포인터 이탈·DOM 제거 시 요청과 플레이어를 정리한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
- *   fetchJson, getMainVideoElement, injectStyleOnce, normSpace, onReady,
- *   startPageChangeDetection), vendor/hls.light.min.js가 제공하는 전역 window.Hls.
- * 옵션 키: followingPreviewTooltipEnabled, followingPreviewSoundEnabled.
+ *   fetchJson, injectStyleOnce, normSpace, onReady,
+ *   startPageChangeDetection, storageSet), vendor/hls.light.min.js가 제공하는 전역 window.Hls.
+ * 옵션 키: followingPreviewTooltipEnabled, followingPreviewSoundEnabled,
+ *   followingPreviewVolumePercent, livePreviewRightClickSoundEnabled.
  * DOM 마커: #betterchzzk-following-preview 툴팁, data-bcfp-tooltip/data-bcfp-active/
  *   data-bcfp-player-mount/data-bcfp-player-state 속성, .bcfp-* 클래스.
- * 통신: 없음(다른 파일과 CustomEvent·storage 키를 주고받지 않음).
+ * 통신: 우클릭으로 바꾼 팔로잉 소리 선호도를 chrome.storage.sync에 저장한다.
+ *   livePreviewFastHoverPage.js에는 DOM attribute와 CustomEvent로 활성 상태를 전달한다.
  * 구조:
  *   - 상수/스타일: 셀렉터, 지연 시간, 캐시 TTL, STYLE_TEXT(툴팁 CSS) 정의.
  *   - fetchJson/텍스트 유틸: 문자열 정리, 날짜 파싱, 제목 정리(cleanTitle 등).
@@ -72,17 +72,27 @@
     const LIVE_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/channels";
     const LIVE_AUTO_PLAY_API_BASE = "https://api.chzzk.naver.com/service/v1/live";
     const HOVER_OPEN_DELAY_MS = 0;
-    const PREVIEW_FETCH_DELAY_MS = 100;
+    const FAST_HOVER_CONFIG_EVENT = "betterchzzk:live-preview-fast-hover-options";
+    const FAST_HOVER_CONFIG_ATTR = "data-betterchzzk-live-preview-fast-hover-options";
+    const FOLLOWING_PREVIEW_FETCH_DELAY_MS = 100;
     const PREVIEW_PLAYBACK_DELAY_MS = 300;
     const PREVIEW_MAX_HEIGHT = 480;
+    const PREVIEW_FOCUS_MAX_HEIGHT = 1080;
     const PREVIEW_SOUND_VOLUME_DEFAULT = 15;
-    const LIVE_PLAYER_VOLUME_STORAGE_KEY = "live-player-volume";
     const FETCH_TIMEOUT_MS = 8000;
     const CACHE_TTL_MS = 20000;
     const MAX_CACHE_ENTRIES = 80;
     const CARD_WIDTH = 460;
     const PLAYER_MOUNT_ATTR = "data-bcfp-player-mount";
     const PLAYER_STATE_ATTR = "data-bcfp-player-state";
+    const FORCE_MUTED_ATTR = "data-bcfp-force-muted";
+    const LIST_EXPANDED_ATTR = "data-bcfp-list-expanded";
+    const CATEGORY_CARD_ATTR = "data-bcgt-card";
+    const CATEGORY_INJECTED_ATTR = "data-bcgt-injected";
+    const CATEGORY_LIVE_ID_ATTR = "data-bcgt-live-id";
+    const CATEGORY_CHANNEL_ID_ATTR = "data-bcgt-channel-id";
+    const CATEGORY_PREVIEW_HOST_ATTR = "data-bcgt-live-preview-host";
+    const CATEGORY_LIVE_ELAPSED_BADGE_ATTR = "data-bcgt-live-elapsed-badge";
     const ELAPSED_REFRESH_MS = 1000;
     const UNKNOWN_TITLE = "\uC81C\uBAA9 \uC5C6\uB294 \uB77C\uC774\uBE0C";
     const LOADING_TITLE = "\uBBF8\uB9AC\uBCF4\uAE30 \uBD88\uB7EC\uC624\uB294 \uC911";
@@ -135,6 +145,40 @@
 #${TOOLTIP_ID} video.bcfp-player[${PLAYER_STATE_ATTR}="loading"],
 #${TOOLTIP_ID} video.bcfp-player[${PLAYER_STATE_ATTR}="error"]{
   visibility:hidden;
+}
+[${CATEGORY_PREVIEW_HOST_ATTR}="1"]{
+  position:relative;
+  overflow:hidden;
+  isolation:isolate;
+}
+[${CATEGORY_PREVIEW_HOST_ATTR}="1"] video.bcfp-list-player{
+  position:absolute;
+  inset:0;
+  z-index:3;
+  display:block;
+  width:100%;
+  height:100%;
+  border:0;
+  background:#05070A;
+  object-fit:cover;
+}
+[${CATEGORY_PREVIEW_HOST_ATTR}="1"] video.bcfp-list-player[${PLAYER_STATE_ATTR}="idle"],
+[${CATEGORY_PREVIEW_HOST_ATTR}="1"] video.bcfp-list-player[${PLAYER_STATE_ATTR}="loading"],
+[${CATEGORY_PREVIEW_HOST_ATTR}="1"] video.bcfp-list-player[${PLAYER_STATE_ATTR}="error"]{
+  visibility:hidden;
+}
+[${LIST_EXPANDED_ATTR}="1"]{
+  position:relative !important;
+  z-index:2147483646 !important;
+  scale:1.45;
+  transform-origin:var(--bcfp-expand-origin, center center);
+  border-radius:8px;
+  box-shadow:0 18px 48px rgba(0,0,0,0.38);
+  transition:scale 120ms ease-out, box-shadow 120ms ease-out;
+}
+[${LIST_EXPANDED_ATTR}="1"] [${CATEGORY_LIVE_ELAPSED_BADGE_ATTR}="1"]{
+  opacity:0 !important;
+  visibility:hidden !important;
 }
 #${TOOLTIP_ID} .bcfp-sound-unlock{
   position:absolute;
@@ -263,11 +307,11 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     const {
         bindFeatureOptions,
         fetchJson: sharedFetchJson,
-        getMainVideoElement,
         injectStyleOnce,
         normSpace,
         onReady,
         startPageChangeDetection,
+        storageSet,
     } = BetterChzzk.utils;
 
     let featureOptions = BetterChzzkSettings.normalizeOptions();
@@ -286,6 +330,12 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     let videoRequestSeq = 0;
     let activeVideoRequestId = "";
     let activeVideoSession = null;
+    let activeInjectedInfo = null;
+    let injectedFetchController = null;
+    let injectedRequestToken = 0;
+    let injectedDisconnectObserver = null;
+    let activeListExpansion = null;
+    let listExpansionObserver = null;
 
     const previewCache = new Map();
     const pendingRequests = new Map();
@@ -388,6 +438,23 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
     function isFeatureEnabled() {
         return featureOptions.followingPreviewTooltipEnabled;
+    }
+
+    function isRightClickSoundEnabled() {
+        return featureOptions.livePreviewRightClickSoundEnabled !== false;
+    }
+
+    function publishFastHoverOptions() {
+        if (!document.documentElement) return;
+        document.documentElement.setAttribute(
+            FAST_HOVER_CONFIG_ATTR,
+            JSON.stringify({ enabled: Boolean(isFeatureEnabled()) })
+        );
+        window.dispatchEvent(new CustomEvent(FAST_HOVER_CONFIG_EVENT));
+    }
+
+    function isLiveListRoute() {
+        return /^\/lives\/?$/.test(location.pathname) || /^\/category\/[^/]+\/[^/]+\/lives\/?$/.test(location.pathname);
     }
 
     function getElementMarker(el) {
@@ -643,6 +710,38 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         };
     }
 
+    function resolveInjectedPreviewInfo(target) {
+        if (!(target instanceof Element) || !isLiveListRoute()) return null;
+
+        const host = target.closest(`[${CATEGORY_PREVIEW_HOST_ATTR}="1"]`);
+        if (!(host instanceof HTMLElement)) return null;
+
+        const card = host.closest(
+            `[${CATEGORY_CARD_ATTR}="1"][${CATEGORY_INJECTED_ATTR}="1"][${CATEGORY_LIVE_ID_ATTR}]`
+        );
+        if (!(card instanceof HTMLElement)) return null;
+
+        const liveId = compactSpaces(card.getAttribute(CATEGORY_LIVE_ID_ATTR));
+        const channelId = pickString(
+            card.getAttribute(CATEGORY_CHANNEL_ID_ATTR),
+            card.getAttribute("data-bcgt-card-id")
+        );
+        const link = Array.from(card.querySelectorAll(LIVE_LINK_SELECTOR)).find((anchor) => host.contains(anchor));
+        if (!liveId || !channelId || !(link instanceof HTMLAnchorElement)) return null;
+
+        return {
+            card,
+            channelId,
+            domMeta: {
+                ...extractDomMeta(card, link, channelId),
+                liveId,
+            },
+            host,
+            link,
+            liveId,
+        };
+    }
+
     function getElapsedStartMs(value) {
         const date = value instanceof Date ? value : parseChzzkDate(value);
         const startMs = date?.getTime?.() || 0;
@@ -769,6 +868,20 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         const cached = previewCache.get(channelId);
         if (!cached || Date.now() - cached.cachedAt > CACHE_TTL_MS) return null;
         return cached.value;
+    }
+
+    async function getInjectedPreviewMeta(info, { signal } = {}) {
+        const cacheKey = `list:${info.liveId}`;
+        const cached = previewCache.get(cacheKey);
+        if (cached && Date.now() - cached.cachedAt <= CACHE_TTL_MS) return cached.value;
+
+        const playback = await fetchAutoPlayInfo(info.liveId, { signal });
+        const value = normalizeAutoPlayInfo(playback, {
+            ...info.domMeta,
+            channelId: info.channelId,
+            liveId: info.liveId,
+        });
+        return touchMapEntry(previewCache, cacheKey, { cachedAt: Date.now(), value }, MAX_CACHE_ENTRIES).value;
     }
 
     function getTooltip() {
@@ -900,99 +1013,48 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         );
     }
 
-    function capPreviewLevel(hls) {
+    function setPreviewQualityCap(hls, maxHeight, { setStartLevel = false } = {}) {
         const levels = Array.isArray(hls?.levels) ? hls.levels : [];
-        if (!levels.length) return;
+        if (!levels.length) return null;
 
         const sorted = levels
             .map((level, index) => ({ height: Number(level?.height) || 0, index }))
             .sort((a, b) => a.height - b.height || a.index - b.index);
-        const capped = [...sorted].reverse().find((level) => level.height && level.height <= PREVIEW_MAX_HEIGHT);
+        const capped = [...sorted].reverse().find((level) => level.height && level.height <= maxHeight);
         const selected = capped || sorted[0];
-        if (!selected) return;
+        if (!selected) return null;
 
         hls.autoLevelCapping = selected.index;
-        hls.startLevel = selected.index;
-        hls.nextLevel = selected.index;
+        if (setStartLevel) hls.startLevel = selected.index;
+        if ("nextAutoLevel" in hls) hls.nextAutoLevel = selected.index;
+        return selected.index;
     }
 
-    function normalizePlayerVolume(value) {
-        const parsed = Number(value);
-        if (!Number.isFinite(parsed)) return null;
-        if (parsed >= 0 && parsed <= 1) return parsed;
-        if (parsed > 1 && parsed <= 100) return parsed / 100;
-        return null;
-    }
-
-    function readStoredPlayerVolume() {
-        try {
-            const storage = window.localStorage;
-            if (!storage) return null;
-
-            // CHZZK stores the main player volume as {"value":N} under this key.
-            const liveVolume = parseStoredVolume(storage.getItem(LIVE_PLAYER_VOLUME_STORAGE_KEY));
-            if (liveVolume !== null) return liveVolume;
-
-            const embedCandidates = [];
-            for (let index = 0; index < storage.length; index += 1) {
-                const key = storage.key(index);
-                if (!key || !key.endsWith("player-volume") || key.endsWith("-muted")) continue;
-                if (key.startsWith("embed")) {
-                    embedCandidates.push(key);
-                    continue;
-                }
-
-                const volume = parseStoredVolume(storage.getItem(key));
-                if (volume !== null) return volume;
-            }
-
-            for (const key of embedCandidates) {
-                const volume = parseStoredVolume(storage.getItem(key));
-                if (volume !== null) return volume;
-            }
-        } catch (_error) {
-            return null;
-        }
-
-        return null;
-    }
-
-    function parseStoredVolume(raw) {
-        if (raw == null) return null;
-        try {
-            const parsed = JSON.parse(raw);
-            if (parsed && typeof parsed === "object") {
-                return normalizePlayerVolume(parsed.value);
-            }
-            return normalizePlayerVolume(parsed);
-        } catch (_error) {
-            return normalizePlayerVolume(raw);
-        }
-    }
-
-    function getPreferredPlayerVolume() {
-        const mainVideo = typeof getMainVideoElement === "function" ? getMainVideoElement() : null;
-        if (mainVideo && Number.isFinite(mainVideo.volume)) {
-            return mainVideo.volume;
-        }
-
-        const stored = readStoredPlayerVolume();
-        if (stored !== null) return stored;
-
-        return PREVIEW_SOUND_VOLUME_DEFAULT / 100;
+    function getConfiguredPreviewVolume() {
+        const raw = Number(featureOptions.followingPreviewVolumePercent);
+        const percent = Number.isFinite(raw) ? Math.min(100, Math.max(1, raw)) : PREVIEW_SOUND_VOLUME_DEFAULT;
+        return percent / 100;
     }
 
     function isPreviewSoundEnabled() {
         return Boolean(featureOptions.followingPreviewSoundEnabled);
     }
 
-    function applyPreviewAudioState(video, soundEnabled) {
+    function shouldStartPreviewWithSound(video) {
+        return !video?.hasAttribute(FORCE_MUTED_ATTR) && isPreviewSoundEnabled();
+    }
+
+    function applyPreviewAudioState(video, soundEnabled, { ensureAudible = false } = {}) {
         if (!video) return;
 
         if (soundEnabled) {
+            let volume = getConfiguredPreviewVolume();
+            if (ensureAudible && (!(volume > 0) || !Number.isFinite(volume))) {
+                volume = PREVIEW_SOUND_VOLUME_DEFAULT / 100;
+            }
             video.muted = false;
             video.defaultMuted = false;
-            video.volume = getPreferredPlayerVolume();
+            video.volume = volume;
             video.removeAttribute("muted");
             return;
         }
@@ -1080,7 +1142,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     function unlockPreviewSound(video, requestId) {
         if (activeVideoRequestId !== requestId || activeVideoSession?.video !== video || !video.isConnected) return;
 
-        applyPreviewAudioState(video, true);
+        applyPreviewAudioState(video, true, { ensureAudible: true });
         runPreviewPlay(video, requestId, true);
     }
 
@@ -1089,7 +1151,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
         revealVideoWhenReady(video, requestId);
 
-        const soundEnabled = isPreviewSoundEnabled();
+        const soundEnabled = shouldStartPreviewWithSound(video);
         applyPreviewAudioState(video, soundEnabled);
         if (!soundEnabled) removeSoundUnlockBadge(video);
         runPreviewPlay(video, requestId, soundEnabled);
@@ -1112,7 +1174,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
             activeVideoSession = { hls, video };
             hls.on?.(manifestParsedEvent, () => {
-                capPreviewLevel(hls);
+                setPreviewQualityCap(hls, PREVIEW_MAX_HEIGHT, { setStartLevel: true });
                 playVideo(video, requestId);
             });
             hls.on?.(errorEvent, (_event, data) => {
@@ -1140,7 +1202,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         return false;
     }
 
-    function requestPreviewVideo(video, meta) {
+    function requestPreviewVideo(video, meta, { playbackDelayMs = PREVIEW_PLAYBACK_DELAY_MS } = {}) {
         if (!video?.isConnected || !meta.playbackJson) return;
 
         const source = getPlaybackSource(meta);
@@ -1160,7 +1222,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
             stopPreviewPlayer();
             activeVideoRequestId = requestId;
-            applyPreviewAudioState(video, isPreviewSoundEnabled());
+            applyPreviewAudioState(video, shouldStartPreviewWithSound(video));
             video.autoplay = true;
             video.controls = false;
             video.playsInline = true;
@@ -1169,8 +1231,8 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         };
 
         clearPlayerStartTimer();
-        if (PREVIEW_PLAYBACK_DELAY_MS > 0) {
-            playerStartTimer = window.setTimeout(startPlayer, PREVIEW_PLAYBACK_DELAY_MS);
+        if (playbackDelayMs > 0) {
+            playerStartTimer = window.setTimeout(startPlayer, playbackDelayMs);
             return;
         }
 
@@ -1223,7 +1285,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             const video = document.createElement("video");
             video.className = "bcfp-player";
             video.title = `${meta.channelName || meta.channelId} \uB77C\uC774\uBE0C \uBBF8\uB9AC\uBCF4\uAE30`;
-            applyPreviewAudioState(video, isPreviewSoundEnabled());
+            applyPreviewAudioState(video, shouldStartPreviewWithSound(video));
             video.autoplay = true;
             video.controls = false;
             video.playsInline = true;
@@ -1309,6 +1371,102 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         tip.setAttribute("data-show", "1");
         startElapsedTimer(displayMeta);
         positionTooltip(activeInfo?.item || activeInfo?.link);
+    }
+
+    function stopInjectedDisconnectObserver() {
+        injectedDisconnectObserver?.disconnect();
+        injectedDisconnectObserver = null;
+    }
+
+    function startInjectedDisconnectObserver() {
+        stopInjectedDisconnectObserver();
+        if (!document.body || !activeInjectedInfo) return;
+
+        injectedDisconnectObserver = new MutationObserver(() => {
+            if (
+                !activeInjectedInfo?.card?.isConnected ||
+                !activeInjectedInfo?.host?.isConnected ||
+                (activeInjectedInfo.video && !activeInjectedInfo.video.isConnected)
+            ) {
+                hideInjectedPreview();
+            }
+        });
+        injectedDisconnectObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
+    function clearInjectedFetch() {
+        if (injectedFetchController) {
+            injectedFetchController.abort();
+            injectedFetchController = null;
+        }
+    }
+
+    function renderInjectedPreview(info, meta) {
+        if (activeInjectedInfo !== info || !info.card.isConnected || !info.host.isConnected || !meta.playbackJson) {
+            return;
+        }
+
+        info.host.querySelectorAll("video.bcfp-list-player").forEach((video) => video.remove());
+        const video = document.createElement("video");
+        video.className = "bcfp-player bcfp-list-player";
+        video.title = `${meta.channelName || info.channelId} 라이브 미리보기`;
+        video.autoplay = true;
+        video.controls = false;
+        video.playsInline = true;
+        video.setAttribute("playsinline", "");
+        video.setAttribute(FORCE_MUTED_ATTR, "1");
+        video.setAttribute(PLAYER_STATE_ATTR, "loading");
+        applyPreviewAudioState(video, false);
+        info.video = video;
+        info.host.appendChild(video);
+        requestPreviewVideo(video, meta, { playbackDelayMs: 0 });
+    }
+
+    function hideInjectedPreview() {
+        clearInjectedFetch();
+        injectedRequestToken += 1;
+        stopInjectedDisconnectObserver();
+
+        const info = activeInjectedInfo;
+        activeInjectedInfo = null;
+        if (!info) return;
+
+        if (activeListExpansion?.card === info.card) restoreListExpansion();
+        info.card.removeAttribute(ACTIVE_ATTR);
+        const players = Array.from(
+            new Set([info.video, ...info.host.querySelectorAll("video.bcfp-list-player")].filter(Boolean))
+        );
+        stopPreviewPlayer();
+        for (const video of players) {
+            cleanupVideoElement(video);
+            video.remove();
+        }
+    }
+
+    function openInjectedPreview(info) {
+        if (activeInjectedInfo?.card === info.card && activeInjectedInfo?.liveId === info.liveId) return;
+
+        hidePreview();
+        hideInjectedPreview();
+        activeInjectedInfo = info;
+        info.card.setAttribute(ACTIVE_ATTR, "1");
+        startInjectedDisconnectObserver();
+        const token = ++injectedRequestToken;
+        const controller = new AbortController();
+        injectedFetchController = controller;
+
+        getInjectedPreviewMeta(info, { signal: controller.signal })
+            .then((meta) => {
+                if (injectedFetchController === controller) injectedFetchController = null;
+                if (token !== injectedRequestToken || activeInjectedInfo !== info) return;
+                renderInjectedPreview(info, meta);
+            })
+            .catch((error) => {
+                if (injectedFetchController === controller) injectedFetchController = null;
+                if (!isAbortError(error) && token === injectedRequestToken && activeInjectedInfo === info) {
+                    info.card.removeAttribute(ACTIVE_ATTR);
+                }
+            });
     }
 
     function positionTooltip(anchor) {
@@ -1408,7 +1566,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         previewFetchTimer = window.setTimeout(() => {
             previewFetchTimer = 0;
             startPreviewMetaRequest(info, token);
-        }, PREVIEW_FETCH_DELAY_MS);
+        }, FOLLOWING_PREVIEW_FETCH_DELAY_MS);
     }
 
     function hidePreview() {
@@ -1452,17 +1610,270 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         }, HOVER_OPEN_DELAY_MS);
     }
 
+    function isVisiblePreviewVideo(video) {
+        if (!(video instanceof HTMLVideoElement) || !video.isConnected) return false;
+        if (video.classList.contains("bcfp-player")) {
+            return video.getAttribute(PLAYER_STATE_ATTR) === "ready";
+        }
+        if (video.paused || video.readyState < 2) return false;
+        const rect = video.getBoundingClientRect();
+        if (rect.width < 80 || rect.height < 45) return false;
+        const style = getComputedStyle(video);
+        return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+    }
+
+    function findLiveListCard(target) {
+        if (!(target instanceof Element) || !isLiveListRoute()) return null;
+        const marked = target.closest(`[${CATEGORY_CARD_ATTR}="1"]`);
+        if (marked instanceof HTMLElement) return marked;
+
+        const directAnchor = target.closest(LIVE_LINK_SELECTOR);
+        if (directAnchor instanceof HTMLElement && directAnchor.querySelector("video")) return directAnchor;
+
+        let node = target;
+        for (let depth = 0; node instanceof HTMLElement && node !== document.body && depth < 7; depth += 1) {
+            if (node.querySelector("video") && node.querySelector(LIVE_LINK_SELECTOR)) return node;
+            node = node.parentElement;
+        }
+        return null;
+    }
+
+    function findListPreviewVideo(card, target) {
+        const direct = target instanceof Element ? target.closest("video") : null;
+        if (direct instanceof HTMLVideoElement && card.contains(direct) && isVisiblePreviewVideo(direct)) return direct;
+        return Array.from(card.querySelectorAll("video")).find(isVisiblePreviewVideo) || null;
+    }
+
+    function getListPreviewSurface(card, video) {
+        return (
+            video.closest(`[${CATEGORY_PREVIEW_HOST_ATTR}="1"]`) ||
+            video.closest(LIVE_LINK_SELECTOR) ||
+            video.parentElement ||
+            card
+        );
+    }
+
+    function restoreVideoAudioState(video, state) {
+        if (!(video instanceof HTMLVideoElement) || !state) return;
+        video.muted = state.muted;
+        video.defaultMuted = state.defaultMuted;
+        video.volume = state.volume;
+        if (state.hadMutedAttribute) video.setAttribute("muted", "");
+        else video.removeAttribute("muted");
+    }
+
+    function getListExpansionQualityState(video) {
+        const session = activeVideoSession;
+        if (session?.video !== video || !session?.hls) return null;
+        return {
+            capLevelToPlayerSize: session.hls.capLevelToPlayerSize !== false,
+            hls: session.hls,
+            video,
+        };
+    }
+
+    function applyListFocusQuality(state) {
+        if (!state?.hls || activeVideoSession?.hls !== state.hls || activeVideoSession?.video !== state.video) return;
+        try {
+            state.hls.capLevelToPlayerSize = false;
+            setPreviewQualityCap(state.hls, PREVIEW_FOCUS_MAX_HEIGHT);
+        } catch (_) {
+            // A disappearing preview may destroy its HLS instance during focus teardown.
+        }
+    }
+
+    function restoreListPreviewQuality(state) {
+        if (!state?.hls || activeVideoSession?.hls !== state.hls || activeVideoSession?.video !== state.video) return;
+        try {
+            state.hls.capLevelToPlayerSize = state.capLevelToPlayerSize;
+            setPreviewQualityCap(state.hls, PREVIEW_MAX_HEIGHT);
+        } catch (_) {
+            // HLS teardown owns the remaining cleanup when the preview is already gone.
+        }
+    }
+
+    function stopListExpansionObserver() {
+        listExpansionObserver?.disconnect();
+        listExpansionObserver = null;
+    }
+
+    function startListExpansionObserver(state) {
+        stopListExpansionObserver();
+        if (!(state?.card instanceof HTMLElement)) return;
+        listExpansionObserver = new MutationObserver(() => {
+            if (activeListExpansion !== state) return;
+            if (!state.card.isConnected || !state.surface?.isConnected || !state.video?.isConnected) {
+                restoreListExpansion();
+            }
+        });
+        listExpansionObserver.observe(state.card, { childList: true, subtree: true });
+    }
+
+    function restoreListExpansion() {
+        const state = activeListExpansion;
+        activeListExpansion = null;
+        stopListExpansionObserver();
+        if (!state) return;
+
+        state.surface?.removeAttribute(LIST_EXPANDED_ATTR);
+        state.surface?.style?.removeProperty("--bcfp-expand-origin");
+        restoreListPreviewQuality(state.quality);
+        restoreVideoAudioState(state.video, state.audio);
+        if (state.video?.isConnected) state.video.title = state.title;
+    }
+
+    function getExpansionOrigin(surface) {
+        const rect = surface.getBoundingClientRect();
+        const center = rect.left + rect.width / 2;
+        if (center < window.innerWidth / 3) return "left center";
+        if (center > (window.innerWidth * 2) / 3) return "right center";
+        return "center center";
+    }
+
+    function expandListPreview(card, video, surface) {
+        restoreListExpansion();
+        const audio = {
+            defaultMuted: video.defaultMuted,
+            hadMutedAttribute: video.hasAttribute("muted"),
+            muted: video.muted,
+            volume: video.volume,
+        };
+        const quality = getListExpansionQualityState(video);
+        const title = video.title;
+        const soundApplied = isRightClickSoundEnabled();
+
+        activeListExpansion = { audio, card, quality, soundApplied, surface, title, video };
+        startListExpansionObserver(activeListExpansion);
+        surface.style.setProperty("--bcfp-expand-origin", getExpansionOrigin(surface));
+        surface.setAttribute(LIST_EXPANDED_ATTR, "1");
+        video.title = "우클릭으로 미리보기 집중 모드 끄기";
+        applyListFocusQuality(quality);
+        if (!soundApplied) return;
+
+        applyPreviewAudioState(video, true, { ensureAudible: true });
+        if (activeVideoSession?.video === video && activeVideoRequestId) {
+            runPreviewPlay(video, activeVideoRequestId, true);
+        }
+    }
+
+    function disableListExpansionSound() {
+        const state = activeListExpansion;
+        if (!state?.soundApplied) return;
+        state.soundApplied = false;
+        restoreVideoAudioState(state.video, state.audio);
+    }
+
+    function syncAudibleActivePreviewVolume() {
+        const volume = getConfiguredPreviewVolume();
+        const sessionVideo = activeVideoSession?.video;
+        if (sessionVideo?.isConnected && !sessionVideo.muted) sessionVideo.volume = volume;
+
+        const focused = activeListExpansion;
+        if (
+            focused?.soundApplied &&
+            focused.video !== sessionVideo &&
+            focused.video?.isConnected &&
+            !focused.video.muted
+        ) {
+            focused.video.volume = volume;
+        }
+    }
+
+    function persistFollowingPreviewSound(enabled) {
+        featureOptions = { ...featureOptions, followingPreviewSoundEnabled: enabled };
+        if (typeof storageSet !== "function") return;
+        void storageSet(globalThis.chrome?.storage?.sync, { followingPreviewSoundEnabled: enabled }).catch(() => {});
+    }
+
+    function toggleFollowingPreviewSound(video) {
+        const soundOn = !video.muted && video.volume > 0;
+        const nextSoundOn = !soundOn;
+        applyPreviewAudioState(video, nextSoundOn, { ensureAudible: nextSoundOn });
+        if (nextSoundOn && activeVideoSession?.video === video && activeVideoRequestId) {
+            runPreviewPlay(video, activeVideoRequestId, true);
+        } else if (!nextSoundOn) {
+            removeSoundUnlockBadge(video);
+        }
+        video.title = nextSoundOn ? "우클릭으로 미리보기 소리 끄기" : "우클릭으로 미리보기 소리 켜기";
+        tooltip?.setAttribute("data-sound", nextSoundOn ? "on" : "off");
+        persistFollowingPreviewSound(nextSoundOn);
+    }
+
+    function handleContextMenu(event) {
+        if (!(event.target instanceof Element)) return;
+
+        const followingTip = event.target.closest(`#${TOOLTIP_ID}`);
+        if (followingTip && followingTip === tooltip) {
+            if (!isRightClickSoundEnabled()) return;
+            const media = event.target.closest(".bcfp-media");
+            const video = media?.querySelector("video.bcfp-player");
+            if (!media || !followingTip.contains(media) || !isVisiblePreviewVideo(video)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            toggleFollowingPreviewSound(video);
+            return;
+        }
+
+        const card = findLiveListCard(event.target);
+        if (!card) return;
+        const video = findListPreviewVideo(card, event.target);
+        if (!video) return;
+        const surface = getListPreviewSurface(card, video);
+        if (!(surface instanceof HTMLElement) || !surface.contains(event.target)) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        if (activeListExpansion?.video === video) {
+            restoreListExpansion();
+            return;
+        }
+        expandListPreview(card, video, surface);
+    }
+
+    function handleKeyDown(event) {
+        if (event.key === "Escape") restoreListExpansion();
+    }
+
+    function handlePointerDown(event) {
+        if (!activeListExpansion || !(event.target instanceof Node)) return;
+        if (!activeListExpansion.surface?.contains(event.target)) restoreListExpansion();
+    }
+
+    function handlePageChange() {
+        restoreListExpansion();
+        hideInjectedPreview();
+        hidePreview();
+    }
+
     function handlePointerOver(event) {
+        const injectedInfo = resolveInjectedPreviewInfo(event.target);
+        if (injectedInfo) {
+            openInjectedPreview(injectedInfo);
+            return;
+        }
         const info = resolveHoverInfo(event.target);
         if (!info) return;
+        hideInjectedPreview();
         scheduleOpen(info);
     }
 
     function handlePointerOut(event) {
+        const related = event.relatedTarget;
+        if (activeListExpansion && !(related instanceof Node && activeListExpansion.surface?.contains(related))) {
+            restoreListExpansion();
+        }
+
+        if (activeInjectedInfo) {
+            if (related instanceof Node && activeInjectedInfo.card.contains(related)) return;
+            const movedToSameCard =
+                related instanceof Element && resolveInjectedPreviewInfo(related)?.card === activeInjectedInfo.card;
+            if (movedToSameCard) return;
+            hideInjectedPreview();
+        }
+
         if (!activeInfo && !pendingInfo) return;
 
         const current = activeInfo || pendingInfo;
-        const related = event.relatedTarget;
         if (related instanceof Node && current.item?.contains(related)) return;
         if (related instanceof Node && tooltip?.contains(related)) return;
 
@@ -1479,8 +1890,12 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     }
 
     function handleViewportChange() {
+        restoreListExpansion();
+        if (activeInjectedInfo && (!activeInjectedInfo.card.isConnected || !activeInjectedInfo.host.isConnected)) {
+            hideInjectedPreview();
+        }
         if (activeInfo?.item?.isConnected) positionTooltip(activeInfo.item);
-        else hidePreview();
+        else if (activeInfo) hidePreview();
     }
 
     function installListeners() {
@@ -1490,9 +1905,12 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         injectStyleOnce(STYLE_ID, STYLE_TEXT);
         document.addEventListener("pointerover", handlePointerOver, true);
         document.addEventListener("pointerout", handlePointerOut, true);
+        document.addEventListener("pointerdown", handlePointerDown, true);
+        document.addEventListener("contextmenu", handleContextMenu, true);
+        document.addEventListener("keydown", handleKeyDown, true);
         window.addEventListener("scroll", handleViewportChange, true);
         window.addEventListener("resize", handleViewportChange);
-        removePageChangeDetection = startPageChangeDetection(hidePreview);
+        removePageChangeDetection = startPageChangeDetection(handlePageChange);
     }
 
     function uninstallListeners() {
@@ -1501,6 +1919,9 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         listenersInstalled = false;
         document.removeEventListener("pointerover", handlePointerOver, true);
         document.removeEventListener("pointerout", handlePointerOut, true);
+        document.removeEventListener("pointerdown", handlePointerDown, true);
+        document.removeEventListener("contextmenu", handleContextMenu, true);
+        document.removeEventListener("keydown", handleKeyDown, true);
         window.removeEventListener("scroll", handleViewportChange, true);
         window.removeEventListener("resize", handleViewportChange);
 
@@ -1509,7 +1930,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             removePageChangeDetection = null;
         }
 
-        hidePreview();
+        handlePageChange();
         if (tooltip) {
             tooltip.remove();
             tooltip = null;
@@ -1518,13 +1939,22 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     }
 
     function applyOptions(options) {
+        const previousOptions = featureOptions;
         featureOptions = options;
+        publishFastHoverOptions();
+        if (previousOptions.livePreviewRightClickSoundEnabled !== false && !isRightClickSoundEnabled()) {
+            disableListExpansionSound();
+        }
+        if (previousOptions.followingPreviewVolumePercent !== options.followingPreviewVolumePercent) {
+            syncAudibleActivePreviewVolume();
+        }
         if (isFeatureEnabled()) installListeners();
         else uninstallListeners();
     }
 
     bindFeatureOptions(applyOptions);
     onReady(() => {
+        publishFastHoverOptions();
         if (isFeatureEnabled()) installListeners();
     });
 })();

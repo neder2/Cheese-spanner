@@ -99,6 +99,7 @@ function waitForFollowingPlaybackDelay() {
 
 function evalFollowingPreviewTooltipScripts(dom) {
     evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "shared", "data.js");
     evalRepoScript(dom, "content.js");
     evalRepoScript(dom, "features", "followingPreviewTooltip.js");
 }
@@ -124,6 +125,8 @@ function installFakeHls(
             this.handlers = {};
             this.levels = levels;
             this.autoLevelCapping = -1;
+            this.capLevelToPlayerSize = config.capLevelToPlayerSize;
+            this.nextAutoLevel = -1;
             this.startLevel = -1;
             this.nextLevel = -1;
             state.instances.push(this);
@@ -214,6 +217,39 @@ function createFollowingPreviewDom(chrome = createFakeChrome()) {
     return { document, dom, item, link };
 }
 
+function createInjectedListPreviewDom(chrome = createFakeChrome()) {
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<main><ul id="grid">',
+            '<li id="injectedCard" data-bcgt-card="1" data-bcgt-injected="1"',
+            ' data-bcgt-card-id="channel-list" data-bcgt-channel-id="channel-list"',
+            ' data-bcgt-live-id="live-list">',
+            '<a id="injectedHost" href="/live/channel-list" data-bcgt-live-preview-host="1">',
+            '<img id="injectedThumb" class="live_thumbnail_image" src="https://example.com/list.jpg" alt="">',
+            '<span id="injectedElapsed" data-bcgt-live-elapsed-badge="1">01:23:45</span>',
+            '<span class="name_text">목록 채널</span>',
+            '<span class="live_title">목록 방송</span>',
+            "</a>",
+            "</li>",
+            "</ul></main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/lives",
+        chrome
+    );
+    const { document } = dom.window;
+    const card = document.getElementById("injectedCard");
+    const host = document.getElementById("injectedHost");
+    const thumb = document.getElementById("injectedThumb");
+    const rect = { bottom: 229, height: 189, left: 40, right: 376, top: 40, width: 336 };
+    card.getBoundingClientRect = () => rect;
+    host.getBoundingClientRect = () => rect;
+    thumb.getBoundingClientRect = () => rect;
+    return { card, document, dom, host, thumb };
+}
+
 test("manifest loads following preview after following refresh without the page bridge", () => {
     const manifest = JSON.parse(readRepoFile("manifest.json"));
     const mainScript = manifest.content_scripts.find((entry) => entry.world === "MAIN");
@@ -232,6 +268,7 @@ test("manifest loads following preview after following refresh without the page 
     assert.ok(manifest.optional_host_permissions.includes("https://*.pstatic.net/*"));
     assert.ok(!manifest.host_permissions.includes("https://*.pstatic.net/*"));
     assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
+    assert.ok(mainScript.js.includes("features/livePreviewFastHoverPage.js"));
     assert.ok(mainScript.js.includes("features/autoQualityPage.js"));
     assert.ok(isolatedScript.js.includes("vendor/hls.light.min.js"));
     assert.ok(isolatedScript.js.includes("features/followingPreviewTooltip.js"));
@@ -262,6 +299,11 @@ test("following preview delays live-detail fetches while opening the DOM card im
     evalFollowingPreviewTooltipScripts(dom);
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
+
+    assert.deepEqual(
+        JSON.parse(document.documentElement.getAttribute("data-betterchzzk-live-preview-fast-hover-options")),
+        { enabled: true }
+    );
 
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
 
@@ -495,6 +537,8 @@ test("following preview prefers low-latency LLHLS in the hover card and reuses c
     assert.equal(hlsState.instances[0].config.enableWorker, false);
     assert.equal(hlsState.instances[0].config.lowLatencyMode, true);
     assert.equal(hlsState.instances[0].autoLevelCapping, 1);
+    assert.equal(hlsState.instances[0].nextAutoLevel, 1);
+    assert.equal(hlsState.instances[0].nextLevel, -1, "preview quality must stay in ABR mode");
     assert.equal(hlsState.loadSources[0], "https://nvelop-livecloud.pstatic.net/chzzk/live/ll.m3u8");
     assert.equal(hlsState.playCalls[0], video);
     assert.equal(video.getAttribute("data-bcfp-player-state"), "ready");
@@ -661,10 +705,11 @@ async function runSoundPreview(dom, link, document) {
     return { tip, video };
 }
 
-test("following preview sound follows the main player volume", async () => {
+test("following preview sound uses the fixed configured volume instead of the main player", async () => {
     const chrome = createFakeChrome({
         sync: {
             followingPreviewSoundEnabled: true,
+            followingPreviewVolumePercent: 37,
         },
     });
     const { document, dom, link } = createFollowingPreviewDom(chrome);
@@ -673,6 +718,7 @@ test("following preview sound follows the main player volume", async () => {
 
     evalFollowingPreviewTooltipScripts(dom);
     attachMainPlayerVideo(dom, 0.3);
+    dom.window.localStorage.setItem("live-player-volume", '{"value":40}');
 
     const { tip, video } = await runSoundPreview(dom, link, document);
 
@@ -681,12 +727,12 @@ test("following preview sound follows the main player volume", async () => {
     assert.equal(video.muted, false);
     assert.equal(video.defaultMuted, false);
     assert.equal(video.hasAttribute("muted"), false);
-    assert.ok(Math.abs(video.volume - 0.3) < 1e-6);
+    assert.ok(Math.abs(video.volume - 0.37) < 1e-6);
     assert.equal(tip.querySelector(".bcfp-sound-unlock"), null);
     assert.equal(video.getAttribute("data-bcfp-player-state"), "ready");
 });
 
-test("following preview sound falls back to the stored player volume without a main video", async () => {
+test("following preview sound defaults to 15 percent without following stored player volume", async () => {
     const chrome = createFakeChrome({
         sync: {
             followingPreviewSoundEnabled: true,
@@ -705,18 +751,19 @@ test("following preview sound falls back to the stored player volume without a m
 
     assert.equal(hlsState.playCalls.length, 1);
     assert.equal(video.muted, false);
-    assert.ok(Math.abs(video.volume - 0.4) < 1e-6);
+    assert.ok(Math.abs(video.volume - 0.15) < 1e-6);
 });
 
-test("following preview sound falls back to the default volume without any source", async () => {
+test("following preview applies volume option changes only to an audible active preview", async () => {
     const chrome = createFakeChrome({
         sync: {
             followingPreviewSoundEnabled: true,
+            followingPreviewVolumePercent: 25,
         },
     });
     const { document, dom, link } = createFollowingPreviewDom(chrome);
     const hlsState = installFakeHls(dom);
-    dom.window.fetch = createSoundPreviewFetch(dom, { liveId: "live-default" });
+    dom.window.fetch = createSoundPreviewFetch(dom, { liveId: "live-volume-change" });
 
     evalFollowingPreviewTooltipScripts(dom);
 
@@ -724,7 +771,21 @@ test("following preview sound falls back to the default volume without any sourc
 
     assert.equal(hlsState.playCalls.length, 1);
     assert.equal(video.muted, false);
-    assert.ok(Math.abs(video.volume - 0.15) < 1e-6);
+    assert.ok(Math.abs(video.volume - 0.25) < 1e-6);
+
+    for (const listener of [...chrome.testState.storageChangeListeners]) {
+        listener({ followingPreviewVolumePercent: { oldValue: 25, newValue: 64 } }, "sync");
+    }
+    await waitForAsyncCallbacks();
+    assert.ok(Math.abs(video.volume - 0.64) < 1e-6);
+
+    video.muted = true;
+    video.defaultMuted = true;
+    for (const listener of [...chrome.testState.storageChangeListeners]) {
+        listener({ followingPreviewVolumePercent: { oldValue: 64, newValue: 80 } }, "sync");
+    }
+    await waitForAsyncCallbacks();
+    assert.ok(Math.abs(video.volume - 0.64) < 1e-6, "a volume change must not unmute or rewrite muted playback");
 });
 
 test("following preview falls back to muted playback and unlocks sound from the badge", async () => {
@@ -819,6 +880,348 @@ test("following preview falls back to muted playback and unlocks sound from the 
     assert.equal(video.defaultMuted, false);
     assert.equal(video.hasAttribute("muted"), false);
     assert.ok(Math.abs(video.volume - 0.15) < 1e-6);
+});
+
+test("following preview right click toggles and persists sound without expanding", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            followingPreviewSoundEnabled: false,
+            livePreviewRightClickSoundEnabled: true,
+        },
+    });
+    const { document, dom, link } = createFollowingPreviewDom(chrome);
+    installFakeHls(dom);
+    dom.window.fetch = createSoundPreviewFetch(dom, { liveId: "live-right-click" });
+    evalFollowingPreviewTooltipScripts(dom);
+
+    const { tip, video } = await runSoundPreview(dom, link, document);
+    assert.equal(video.muted, true);
+
+    const bodyEvent = new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 });
+    tip.querySelector(".bcfp-body").dispatchEvent(bodyEvent);
+    assert.equal(bodyEvent.defaultPrevented, false);
+    assert.equal(chrome.testState.sync.followingPreviewSoundEnabled, false);
+
+    const enableEvent = new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 });
+    video.dispatchEvent(enableEvent);
+    await waitForAsyncCallbacks();
+
+    assert.equal(enableEvent.defaultPrevented, true);
+    assert.equal(video.muted, false);
+    assert.ok(video.volume > 0);
+    assert.equal(chrome.testState.sync.followingPreviewSoundEnabled, true);
+    assert.equal(tip.querySelector("[data-bcfp-list-expanded='1']"), null);
+
+    const disableEvent = new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 });
+    video.dispatchEvent(disableEvent);
+    await waitForAsyncCallbacks();
+
+    assert.equal(disableEvent.defaultPrevented, true);
+    assert.equal(video.muted, true);
+    assert.equal(chrome.testState.sync.followingPreviewSoundEnabled, false);
+});
+
+test("right click sound option preserves the browser context menu when disabled", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            followingPreviewSoundEnabled: false,
+            livePreviewRightClickSoundEnabled: false,
+        },
+    });
+    const { document, dom, link } = createFollowingPreviewDom(chrome);
+    installFakeHls(dom);
+    dom.window.fetch = createSoundPreviewFetch(dom, { liveId: "live-context-menu" });
+    evalFollowingPreviewTooltipScripts(dom);
+
+    const { video } = await runSoundPreview(dom, link, document);
+    const event = new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 });
+    video.dispatchEvent(event);
+    await waitForAsyncCallbacks();
+
+    assert.equal(event.defaultPrevented, false);
+    assert.equal(video.muted, true);
+    assert.equal(chrome.testState.sync.followingPreviewSoundEnabled, false);
+});
+
+test("global lives native hover stays site-owned and right click enables sound and enlargement", async () => {
+    const chrome = createFakeChrome({
+        sync: { followingPreviewVolumePercent: 42, livePreviewRightClickSoundEnabled: true },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html><body><main><ul>",
+            '<li><a id="nativeHost" href="/live/native-channel">',
+            '<img src="https://example.com/native.jpg" alt=""><video id="nativePreview" muted></video>',
+            '<span id="nativeElapsed" data-bcgt-live-elapsed-badge="1">01:23:45</span>',
+            "</a></li></ul></main></body>",
+        ].join(""),
+        "https://chzzk.naver.com/lives",
+        chrome
+    );
+    const { document } = dom.window;
+    const host = document.getElementById("nativeHost");
+    const video = document.getElementById("nativePreview");
+    const elapsed = document.getElementById("nativeElapsed");
+    const rect = { bottom: 229, height: 189, left: 40, right: 376, top: 40, width: 336 };
+    host.getBoundingClientRect = () => rect;
+    video.getBoundingClientRect = () => rect;
+    Object.defineProperty(video, "paused", { configurable: true, value: false });
+    Object.defineProperty(video, "readyState", { configurable: true, value: 4 });
+    video.muted = true;
+    video.defaultMuted = true;
+    video.volume = 0.7;
+    const hlsState = installFakeHls(dom);
+    let fetchCount = 0;
+    dom.window.fetch = async () => {
+        fetchCount += 1;
+        return { ok: true, json: async () => ({ content: {} }) };
+    };
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    host.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    assert.equal(fetchCount, 0);
+    assert.equal(hlsState.instances.length, 0);
+    assert.equal(host.querySelectorAll("video").length, 1);
+
+    const expandEvent = new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 });
+    host.dispatchEvent(expandEvent);
+    assert.equal(expandEvent.defaultPrevented, true);
+    assert.equal(host.getAttribute("data-bcfp-list-expanded"), "1");
+    assert.equal(video.muted, false);
+    assert.ok(Math.abs(video.volume - 0.42) < 1e-6);
+    assert.equal(dom.window.getComputedStyle(elapsed).visibility, "hidden");
+
+    for (const listener of [...chrome.testState.storageChangeListeners]) {
+        listener({ livePreviewRightClickSoundEnabled: { oldValue: true, newValue: false } }, "sync");
+    }
+    await waitForAsyncCallbacks();
+    assert.equal(host.getAttribute("data-bcfp-list-expanded"), "1", "sound changes must not close focus mode");
+    assert.equal(video.muted, true);
+    assert.equal(video.defaultMuted, true);
+    assert.equal(video.volume, 0.7);
+    assert.equal(dom.window.getComputedStyle(elapsed).visibility, "hidden");
+
+    const collapseEvent = new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 });
+    host.dispatchEvent(collapseEvent);
+    assert.equal(collapseEvent.defaultPrevented, true);
+    assert.equal(host.hasAttribute("data-bcfp-list-expanded"), false);
+    assert.equal(video.muted, true);
+    assert.equal(video.defaultMuted, true);
+    assert.equal(video.volume, 0.7);
+    assert.notEqual(dom.window.getComputedStyle(elapsed).visibility, "hidden");
+
+    const disconnectEvent = new dom.window.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+    });
+    host.dispatchEvent(disconnectEvent);
+    assert.equal(host.getAttribute("data-bcfp-list-expanded"), "1");
+    video.remove();
+    await waitForAsyncCallbacks();
+    assert.equal(host.hasAttribute("data-bcfp-list-expanded"), false);
+});
+
+test("global lives right click focus stays available when right click sound is disabled", async () => {
+    const chrome = createFakeChrome({ sync: { livePreviewRightClickSoundEnabled: false } });
+    const dom = createPageDom(
+        [
+            "<!doctype html><body><main>",
+            '<a id="nativeHost" href="/live/native-channel">',
+            '<video id="nativePreview" muted></video>',
+            '<span id="nativeElapsed" data-bcgt-live-elapsed-badge="1">01:23:45</span>',
+            "</a></main></body>",
+        ].join(""),
+        "https://chzzk.naver.com/lives",
+        chrome
+    );
+    const { document } = dom.window;
+    const host = document.getElementById("nativeHost");
+    const video = document.getElementById("nativePreview");
+    const elapsed = document.getElementById("nativeElapsed");
+    const rect = { bottom: 229, height: 189, left: 40, right: 376, top: 40, width: 336 };
+    host.getBoundingClientRect = () => rect;
+    video.getBoundingClientRect = () => rect;
+    Object.defineProperty(video, "paused", { configurable: true, value: false });
+    Object.defineProperty(video, "readyState", { configurable: true, value: 4 });
+    video.muted = true;
+    video.defaultMuted = true;
+    video.volume = 0.7;
+
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const expandEvent = new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 });
+    host.dispatchEvent(expandEvent);
+    assert.equal(expandEvent.defaultPrevented, true);
+    assert.equal(host.getAttribute("data-bcfp-list-expanded"), "1");
+    assert.equal(video.muted, true);
+    assert.equal(video.volume, 0.7);
+    assert.equal(dom.window.getComputedStyle(elapsed).visibility, "hidden");
+
+    const collapseEvent = new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 });
+    host.dispatchEvent(collapseEvent);
+    assert.equal(collapseEvent.defaultPrevented, true);
+    assert.equal(host.hasAttribute("data-bcfp-list-expanded"), false);
+    assert.equal(video.muted, true);
+    assert.equal(video.volume, 0.7);
+    assert.notEqual(dom.window.getComputedStyle(elapsed).visibility, "hidden");
+});
+
+test("filtered injected live cards get a muted hover player and right click enlargement", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            followingPreviewSoundEnabled: true,
+            followingPreviewVolumePercent: 55,
+            livePreviewRightClickSoundEnabled: true,
+        },
+    });
+    const { card, document, dom, host, thumb } = createInjectedListPreviewDom(chrome);
+    const hlsState = installFakeHls(dom, {
+        levels: [{ height: 360 }, { height: 480 }, { height: 720 }, { height: 1080 }, { height: 1440 }],
+    });
+    const requests = [];
+    const playbackJson = JSON.stringify({
+        media: [{ mediaId: "HLS", path: "https://example.com/list-preview.m3u8" }],
+    });
+    dom.window.fetch = async (url) => {
+        requests.push(String(url));
+        return {
+            ok: true,
+            json: async () => ({ content: { livePlaybackJson: playbackJson } }),
+        };
+    };
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    thumb.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    assert.equal(requests.length, 1);
+    await waitForAsyncCallbacks();
+
+    const video = host.querySelector("video.bcfp-list-player");
+    assert.ok(video);
+    assert.equal(video.getAttribute("data-bcfp-player-state"), "ready");
+    assert.equal(video.muted, true);
+    assert.equal(video.volume, 0);
+    assert.equal(requests.length, 1);
+    assert.match(requests[0], /\/live\/live-list\/auto-play-info$/);
+    assert.deepEqual(hlsState.loadSources, ["https://example.com/list-preview.m3u8"]);
+    assert.equal(hlsState.instances[0].autoLevelCapping, 1);
+    assert.equal(hlsState.instances[0].nextAutoLevel, 1);
+    assert.equal(hlsState.instances[0].nextLevel, -1);
+    assert.equal(hlsState.instances[0].capLevelToPlayerSize, true);
+
+    const expandEvent = new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 });
+    video.dispatchEvent(expandEvent);
+    assert.equal(expandEvent.defaultPrevented, true);
+    assert.equal(host.getAttribute("data-bcfp-list-expanded"), "1");
+    assert.equal(video.muted, false);
+    assert.ok(Math.abs(video.volume - 0.55) < 1e-6);
+    assert.equal(hlsState.instances[0].autoLevelCapping, 3);
+    assert.equal(hlsState.instances[0].nextAutoLevel, 3);
+    assert.equal(hlsState.instances[0].nextLevel, -1);
+    assert.equal(hlsState.instances[0].capLevelToPlayerSize, false);
+    assert.equal(dom.window.getComputedStyle(document.getElementById("injectedElapsed")).visibility, "hidden");
+
+    const collapseEvent = new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 });
+    video.dispatchEvent(collapseEvent);
+    assert.equal(collapseEvent.defaultPrevented, true);
+    assert.equal(host.hasAttribute("data-bcfp-list-expanded"), false);
+    assert.equal(video.muted, true);
+    assert.equal(video.volume, 0);
+    assert.equal(hlsState.instances[0].autoLevelCapping, 1);
+    assert.equal(hlsState.instances[0].nextAutoLevel, 1);
+    assert.equal(hlsState.instances[0].nextLevel, -1);
+    assert.equal(hlsState.instances[0].capLevelToPlayerSize, true);
+    assert.notEqual(dom.window.getComputedStyle(document.getElementById("injectedElapsed")).visibility, "hidden");
+
+    video.dispatchEvent(new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+    document.body.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
+    assert.equal(host.hasAttribute("data-bcfp-list-expanded"), false);
+    assert.equal(video.muted, true);
+    assert.equal(hlsState.instances[0].autoLevelCapping, 1);
+    assert.notEqual(dom.window.getComputedStyle(document.getElementById("injectedElapsed")).visibility, "hidden");
+
+    video.dispatchEvent(new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+    dom.window.dispatchEvent(new dom.window.Event("scroll"));
+    assert.equal(host.hasAttribute("data-bcfp-list-expanded"), false);
+    assert.equal(video.muted, true);
+    assert.equal(hlsState.instances[0].autoLevelCapping, 1);
+    assert.notEqual(dom.window.getComputedStyle(document.getElementById("injectedElapsed")).visibility, "hidden");
+
+    video.remove();
+    await waitForAsyncCallbacks();
+    assert.equal(hlsState.destroyed.length, 1);
+    assert.equal(card.hasAttribute("data-bcfp-active"), false);
+
+    thumb.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    const secondVideo = host.querySelector("video.bcfp-list-player");
+    assert.ok(secondVideo);
+
+    secondVideo.dispatchEvent(new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+    assert.equal(host.getAttribute("data-bcfp-list-expanded"), "1");
+    assert.equal(hlsState.instances[1].autoLevelCapping, 3);
+    document.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+    assert.equal(host.hasAttribute("data-bcfp-list-expanded"), false);
+    assert.equal(secondVideo.muted, true);
+    assert.equal(hlsState.instances[1].autoLevelCapping, 1);
+    assert.notEqual(dom.window.getComputedStyle(document.getElementById("injectedElapsed")).visibility, "hidden");
+
+    card.dispatchEvent(new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
+    await waitForAsyncCallbacks();
+    assert.equal(host.querySelector("video.bcfp-list-player"), null);
+    assert.equal(hlsState.destroyed.length, 2);
+
+    thumb.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    const routeVideo = host.querySelector("video.bcfp-list-player");
+    routeVideo.dispatchEvent(new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+    assert.equal(host.getAttribute("data-bcfp-list-expanded"), "1");
+    assert.equal(hlsState.instances[2].autoLevelCapping, 3);
+
+    dom.window.history.pushState({}, "", "/following");
+    dom.window.dispatchEvent(new dom.window.CustomEvent("betterchzzk:routechange", { detail: { source: "test" } }));
+    await waitForAsyncCallbacks();
+    assert.equal(host.hasAttribute("data-bcfp-list-expanded"), false);
+    assert.equal(hlsState.instances[2].autoLevelCapping, 1);
+    assert.equal(routeVideo.muted, true);
+    assert.notEqual(dom.window.getComputedStyle(document.getElementById("injectedElapsed")).visibility, "hidden");
+    assert.equal(hlsState.destroyed.length, 3);
+});
+
+test("filtered injected preview starts immediately and aborts when its card is removed", async () => {
+    const { card, document, dom, thumb } = createInjectedListPreviewDom();
+    const hlsState = installFakeHls(dom);
+    let fetchCount = 0;
+    let requestSignal = null;
+    dom.window.fetch = async (_url, options = {}) => {
+        fetchCount += 1;
+        requestSignal = options.signal;
+        return new Promise((resolve, reject) => {
+            requestSignal?.addEventListener(
+                "abort",
+                () => reject(new dom.window.DOMException("Aborted", "AbortError")),
+                { once: true }
+            );
+        });
+    };
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    thumb.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    assert.equal(fetchCount, 1);
+    card.remove();
+    await waitForAsyncCallbacks();
+
+    assert.equal(requestSignal?.aborted, true);
+    assert.equal(hlsState.instances.length, 0);
 });
 
 test("following preview aborts stale live-detail requests during rapid hover", async () => {
@@ -939,6 +1342,11 @@ test("following preview tooltip removes listeners and UI when the option is disa
         listener({ followingPreviewTooltipEnabled: { newValue: false } }, "sync");
     }
     await waitForAsyncCallbacks();
+
+    assert.deepEqual(
+        JSON.parse(document.documentElement.getAttribute("data-betterchzzk-live-preview-fast-hover-options")),
+        { enabled: false }
+    );
 
     assert.equal(document.getElementById("betterchzzk-following-preview"), null);
     assert.equal(document.getElementById("betterchzzk-following-preview-style"), null);

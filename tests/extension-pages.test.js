@@ -425,6 +425,35 @@ test("createMutationObserverSync re-resolves a function target after it is detac
     observer.disconnect();
 });
 
+test("createMutationObserverSync skips reconnect timers while the target stays connected", async () => {
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/live/test", createFakeChrome());
+    evalContentScripts(dom);
+
+    const { BetterChzzk, document } = dom.window;
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    const nativeSetTimeout = dom.window.setTimeout.bind(dom.window);
+    let reconnectTimers = 0;
+    dom.window.setTimeout = (callback, delay, ...args) => {
+        if (delay === 160) reconnectTimers += 1;
+        return nativeSetTimeout(callback, delay, ...args);
+    };
+
+    const observer = BetterChzzk.utils.createMutationObserverSync({
+        target: () => target,
+        schedule: () => {},
+    });
+
+    document.body.appendChild(document.createElement("section"));
+    await waitForAsyncCallbacks();
+    assert.equal(reconnectTimers, 0, "unrelated document mutations must not arm reconnect work");
+
+    target.remove();
+    await waitForAsyncCallbacks();
+    assert.equal(reconnectTimers, 1, "detaching the observed target must still schedule reconnect work");
+    observer.disconnectAll();
+});
+
 test("createMutationObserverSync does not watch for reconnect when the target is document.body", async () => {
     const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
     evalContentScripts(dom);
@@ -737,6 +766,43 @@ test("shared CHZZK video field pickers keep API fallback order", () => {
     assert.equal(pickVideoEndDateText({ publishDateAt: "at", publishDate: "published" }), "at");
     assert.equal(pickVideoEndDateText({ liveCloseDate: "closed", publishDateAt: "at" }), "closed");
     assert.equal(pickVideoEndDateText({ live: { liveCloseDate: "nested-closed" } }), "nested-closed");
+});
+
+test("shared CHZZK comment helper reuses extension storage device id and page.next request shape", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/video/123", chrome);
+    const requests = [];
+    dom.window.fetch = async (url, init) => {
+        requests.push({ init, url: String(url) });
+        return {
+            ok: true,
+            json: async () => ({
+                code: 200,
+                content: { commentActive: true, comments: { data: [], page: { next: null } } },
+            }),
+        };
+    };
+    evalRepoScript(dom, "shared", "data.js");
+
+    const { fetchChzzkCommentPage } = dom.window.BetterChzzk.utils;
+    await fetchChzzkCommentPage({ limit: 10, objectId: "123", offset: 20, orderType: "DESC" });
+    await fetchChzzkCommentPage({ limit: 10, objectId: "123", offset: 30, orderType: "DESC" });
+
+    assert.equal(requests.length, 2);
+    const firstUrl = new URL(requests[0].url);
+    assert.equal(firstUrl.pathname, "/nng_main/nng_comment_api/v1/type/STREAMING_VIDEO/id/123/comments");
+    assert.equal(firstUrl.searchParams.get("limit"), "10");
+    assert.equal(firstUrl.searchParams.get("offset"), "20");
+    assert.equal(firstUrl.searchParams.get("orderType"), "DESC");
+    assert.equal(firstUrl.searchParams.has("pagingType"), false);
+    assert.equal(requests[0].init.headers["Front-Client-Platform-Type"], "PC");
+    assert.equal(requests[0].init.headers["Front-Client-Product-Type"], "web");
+    assert.ok(requests[0].init.headers.deviceId);
+    assert.equal(requests[1].init.headers.deviceId, requests[0].init.headers.deviceId);
+    assert.equal(chrome.testState.local.betterchzzkCommentDeviceId, requests[0].init.headers.deviceId);
+    assert.equal(dom.window.localStorage.getItem("betterchzzk-comment-device-id"), null);
+
+    dom.window.close();
 });
 
 test("shared KST helpers keep date keys and day boundaries consistent", () => {
@@ -1743,13 +1809,7 @@ test("options player controls merge playback defaults", () => {
         "방송 목록 필터",
     ]);
     assert.equal(section.querySelector("h2").textContent.trim(), "플레이어");
-    assert.deepEqual(detailOrder, [
-        "통나무 보상 설정",
-        "보던 위치 유지 설정",
-        "스킵 수치 설정",
-        "볼륨 휠 설정",
-        "오디오 컴프레서 설정",
-    ]);
+    assert.deepEqual(detailOrder, ["통나무 보상 설정", "스킵 수치 설정", "볼륨 휠 설정", "오디오 컴프레서 설정"]);
     assert.deepEqual(optionOrder, [
         "autoQualityEnabled",
         "rewardAutoCollectEnabled",
@@ -1757,7 +1817,6 @@ test("options player controls merge playback defaults", () => {
         "skipControlEnabled",
         "skipKeyboardEnabled",
         "skipLivePauseResumeEnabled",
-        "skipLivePauseResumeDepthMinutes",
         "timeMachineLagLabelEnabled",
         "skipPillEnabled",
         "skipLivePillEnabled",
@@ -1776,6 +1835,7 @@ test("options player controls merge playback defaults", () => {
         "audioCompressorRelease",
         "audioCompressorMakeupGain",
         "vodBroadcastClockEnabled",
+        "holdSpeedEnabled",
         "shortcutRescueEnabled",
     ]);
 });
@@ -1795,6 +1855,7 @@ test("options places chat tools controls in a dedicated section", () => {
 
     assert.equal(section.querySelector("h2").textContent.trim(), "채팅 도구");
     assert.deepEqual(optionOrder, [
+        "vodCommentTabsEnabled",
         "chatTimestampEnabled",
         "chatToolsEnabled",
         "chatToolsShowBlindEnabled",
@@ -1835,7 +1896,13 @@ test("options places following controls with exploration controls", () => {
     assert.ok(
         optionOrder.indexOf("followingPreviewTooltipEnabled") < optionOrder.indexOf("followingPreviewSoundEnabled")
     );
-    assert.ok(optionOrder.indexOf("followingPreviewSoundEnabled") < optionOrder.indexOf("titleTooltipEnabled"));
+    assert.ok(
+        optionOrder.indexOf("followingPreviewSoundEnabled") < optionOrder.indexOf("followingPreviewVolumePercent")
+    );
+    assert.ok(
+        optionOrder.indexOf("followingPreviewVolumePercent") < optionOrder.indexOf("livePreviewRightClickSoundEnabled")
+    );
+    assert.ok(optionOrder.indexOf("livePreviewRightClickSoundEnabled") < optionOrder.indexOf("titleTooltipEnabled"));
 });
 
 test("shared selector registry preserves lookup priority and warns once per stale anchor", async () => {
@@ -1908,10 +1975,15 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     assert.ok(
         isolatedScript.js.indexOf("features/chatTools.js") < isolatedScript.js.indexOf("features/videoSearch.js")
     );
+    assert.ok(isolatedScript.js.includes("features/vodCommentTabs.js"));
+    assert.ok(
+        isolatedScript.js.indexOf("features/vodCommentTabs.js") >
+            isolatedScript.js.indexOf("features/vodReplayChatFix.js")
+    );
+    assert.ok(isolatedScript.js.includes("features/holdSpeed.js"));
     assert.ok(isolatedScript.js.includes("features/shortcutRescue.js"));
     assert.ok(
-        isolatedScript.js.indexOf("features/shortcutRescue.js") >
-            isolatedScript.js.indexOf("features/followingRefresh.js")
+        isolatedScript.js.indexOf("features/holdSpeed.js") < isolatedScript.js.indexOf("features/shortcutRescue.js")
     );
 });
 
@@ -2194,6 +2266,13 @@ function searchVideoSearchInput(dom, value) {
     input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 }
 
+test("video search input uses a theme-aware strong text color", () => {
+    const source = readRepoFile("features/videoSearch.js");
+
+    assert.match(source, /--bcvs-text-strong:var\(--Content-Neutral-Cool-Strong, #C9CEDC\)/);
+    assert.doesNotMatch(source, /--bcvs-text-strong:var\(--Content-Neutral-Primary/);
+});
+
 test("category tools hydrates newly visible follower badges on scroll without a full apply pass", async () => {
     const chrome = createFakeChrome({
         sync: {
@@ -2418,7 +2497,12 @@ test("global lives duration filter uses openDate and keeps the native list path"
         assert.equal(toolbar.querySelector(".bcgt-filter-label").textContent, "필터 1");
         const injected = document.querySelector('[data-bcgt-injected="1"][data-bcgt-card-id="injected-pass"]');
         const injectedChannel = injected.querySelector("a._channel");
+        const injectedPreviewHost = injected.querySelector('[data-bcgt-live-preview-host="1"]');
         assert.equal(injected.querySelector("a._title").textContent, "Injected duration match");
+        assert.equal(injected.getAttribute("data-bcgt-live-id"), "500001");
+        assert.equal(injected.getAttribute("data-bcgt-channel-id"), "injected-pass");
+        assert.ok(injectedPreviewHost);
+        assert.equal(injectedPreviewHost.getAttribute("href"), "/live/injected-pass");
         assert.equal(injectedChannel.querySelector("._text").textContent, "Duration Match Channel");
         assert.equal(injectedChannel.getAttribute("href"), "/live/injected-pass");
         assert.equal(injectedChannel.getAttribute("aria-label"), "Duration Match Channel 채널로 이동");
@@ -2786,6 +2870,7 @@ test("options requests the pstatic host permission only when enabling the previe
     const { document } = dom.window;
     const previewToggle = queryOption(document, "followingPreviewTooltipEnabled");
     const soundToggle = queryOption(document, "followingPreviewSoundEnabled");
+    const rightClickSoundToggle = queryOption(document, "livePreviewRightClickSoundEnabled");
 
     previewToggle.checked = true;
     dispatch(dom, previewToggle, "change");
@@ -2799,6 +2884,8 @@ test("options requests the pstatic host permission only when enabling the previe
     dispatch(dom, previewToggle, "change");
     soundToggle.checked = false;
     dispatch(dom, soundToggle, "change");
+    rightClickSoundToggle.checked = false;
+    dispatch(dom, rightClickSoundToggle, "change");
     await waitForAsyncCallbacks();
 
     assert.equal(chrome.testState.permissionRequests.length, 1, "끄기나 다른 토글에서는 권한을 요청하지 않는다");
@@ -5919,6 +6006,28 @@ test("live timeshift guard does not roll back keyboard seeks into the near-live 
     }
 });
 
+test("live timeshift guard preserves a deep user seek anywhere inside the seekable window", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+    const clock = useFakePerformanceNow(dom);
+
+    try {
+        state.bufferedEnd = 10000;
+        state.currentTime = 2000;
+        state.seekableEnd = 10000;
+        await loadSkipControlPage(dom);
+        armLiveTimeShiftGuard(dom, video, state, 2000);
+        clock.advance(1300);
+
+        state.currentTime = 10000;
+        dispatchVideoEvent(dom, video, "seeking");
+
+        assert.ok(video.currentTime >= 2000 && video.currentTime < 2002);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
 test("live timeshift guard ignores delayed live startup without user intent", async () => {
     const chrome = createFakeChrome();
     const { dom, state, video } = createLiveTimeShiftGuardDom(chrome);
@@ -6020,6 +6129,32 @@ test("live pause snapshot restores a user-paused time-shift", async () => {
         dispatchVideoEvent(dom, video, "play");
 
         assert.ok(video.currentTime >= 970 && video.currentTime < 972);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live pause snapshot restores a deep user-paused position inside the seekable window", async () => {
+    const chrome = createFakeChrome();
+    const { dom, play, state, video } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        state.bufferedEnd = 10000;
+        state.currentTime = 2000;
+        state.seekableEnd = 10000;
+        await loadSkipControlPage(dom);
+
+        play.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true, cancelable: true }));
+        state.paused = true;
+        dispatchVideoEvent(dom, video, "pause");
+
+        state.bufferedEnd = 10030;
+        state.paused = false;
+        state.currentTime = 10030;
+        state.seekableEnd = 10030;
+        dispatchVideoEvent(dom, video, "play");
+
+        assert.ok(video.currentTime >= 2000 && video.currentTime < 2002);
     } finally {
         await closeSkipControlPage(dom, chrome);
     }
@@ -6388,6 +6523,37 @@ test("live timeshift guard still restores forced live-edge jumps after the user-
         dispatchVideoEvent(dom, video, "seeking");
 
         assert.ok(video.currentTime >= 32 && video.currentTime < 34);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live timeshift guard preserves state across consecutive forced live-edge jumps", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+    const clock = useFakePerformanceNow(dom);
+
+    try {
+        state.bufferedEnd = 1000;
+        state.currentTime = 970;
+        state.seekableEnd = 1000;
+        await loadSkipControlPage(dom);
+        armLiveTimeShiftGuard(dom, video, state, 970);
+        clock.advance(1300);
+
+        state.currentTime = 1000;
+        dispatchVideoEvent(dom, video, "seeking");
+        assert.ok(video.currentTime >= 970 && video.currentTime < 972);
+
+        state.currentTime = 1000;
+        dispatchVideoEvent(dom, video, "seeking");
+        assert.equal(video.currentTime, 1000, "복원 중인 두 번째 점프는 즉시 재진입하지 않는다");
+
+        await waitForAsyncCallbacks();
+        clock.advance(121);
+        dispatchVideoEvent(dom, video, "timeupdate");
+
+        assert.ok(video.currentTime >= 970 && video.currentTime < 972, "보호 상태를 유지해 다음 동기화에서 복원한다");
     } finally {
         await closeSkipControlPage(dom, chrome);
     }

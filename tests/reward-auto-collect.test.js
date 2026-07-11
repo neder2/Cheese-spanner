@@ -78,7 +78,17 @@ function createFakeChrome({ sync = {} } = {}) {
     };
 }
 
-function createRewardDom(syncOptions = {}) {
+function createJsonResponse(data, { ok = true, status = 200 } = {}) {
+    return {
+        ok,
+        status,
+        async json() {
+            return data;
+        },
+    };
+}
+
+function createRewardDom(syncOptions = {}, { fetchImpl } = {}) {
     const dom = new JSDOM("<!doctype html><html><body></body></html>", {
         url: "https://chzzk.naver.com/live/test-channel",
         runScripts: "outside-only",
@@ -92,9 +102,8 @@ function createRewardDom(syncOptions = {}) {
             ...syncOptions,
         },
     });
-    dom.window.fetch = async () => {
-        throw new Error("Unexpected network request in reward auto collect test");
-    };
+    dom.window.fetch =
+        fetchImpl || (async () => createJsonResponse({ content: { active: true, amount: 0, claims: [] } }));
     activeDoms.add(dom);
 
     evalRepoScript(dom, "shared", "settings.js");
@@ -267,6 +276,180 @@ test("reward auto collect matches the real split-text 통나무 reward button", 
     await waitForCondition(() => tracked.clicks === 1 && tracked.button.getAttribute("data-bcra-clicked") === "1");
     assert.match(tracked.button.textContent, /1시간 시청 통나무 파워 배달 완료!/);
     assert.match(tracked.button.textContent, /100 받기/);
+});
+
+test("reward auto collect completes the real two-step watch reward flow", async () => {
+    const dom = createRewardDom();
+    const scope = createRewardScope(dom);
+    const opener = createScreenshotRewardButton(dom);
+    let balance = 3650;
+    let powerClicks = 0;
+    let powerButton = null;
+
+    opener.button.addEventListener("click", () => {
+        opener.button.remove();
+
+        const dialog = dom.window.document.createElement("div");
+        dialog.setAttribute("role", "alertdialog");
+        const list = dom.window.document.createElement("ul");
+        const row = dom.window.document.createElement("li");
+        const label = dom.window.document.createElement("span");
+        label.textContent = "1시간 시청 보상";
+        powerButton = dom.window.document.createElement("button");
+        powerButton.type = "button";
+        powerButton.className = "_button_nsb6t_140";
+        powerButton.textContent = "100 파워";
+        makeVisible(powerButton);
+        powerButton.addEventListener("click", () => {
+            powerClicks += 1;
+            balance += 100;
+            dialog.remove();
+        });
+        row.append(label, powerButton);
+        list.appendChild(row);
+        dialog.appendChild(list);
+        scope.appendChild(dialog);
+    });
+
+    scope.appendChild(opener.button);
+
+    await waitForCondition(() => balance === 3750);
+    assert.equal(opener.clicks, 1, "the chat reward button should open the power dialog once");
+    assert.equal(powerClicks, 1, "the nested 100 파워 button should perform the actual claim once");
+    assert.equal(powerButton.getAttribute("data-bcra-clicked"), "1");
+});
+
+test("reward auto collect ignores a generic power button outside the 1-hour watch row", async () => {
+    const dom = createRewardDom();
+    const scope = createRewardScope(dom);
+    const dialog = dom.window.document.createElement("div");
+    dialog.setAttribute("role", "alertdialog");
+    const row = dom.window.document.createElement("li");
+    const label = dom.window.document.createElement("span");
+    label.textContent = "팔로우 보상";
+    const tracked = createTrackedButton(dom, "100 파워");
+    row.append(label, tracked.button);
+    dialog.appendChild(row);
+    scope.appendChild(dialog);
+
+    await wait(450);
+
+    assert.equal(tracked.clicks, 0);
+    assert.equal(tracked.button.hasAttribute("data-bcra-clicked"), false);
+});
+
+test("reward auto collect matches the current 1-hour live verification button copy", async () => {
+    const dom = createRewardDom();
+    const scope = createRewardScope(dom);
+    const tracked = createTrackedButton(dom, "1시간 라이브 시청 후 인증하기 100");
+
+    scope.appendChild(tracked.button);
+
+    await waitForCondition(() => tracked.clicks === 1);
+    assert.equal(tracked.button.getAttribute("data-bcra-clicked"), "1");
+});
+
+test("reward auto collect ignores the static 1-hour acquisition-method row", async () => {
+    const dom = createRewardDom();
+    const scope = createRewardScope(dom);
+    const item = dom.window.document.createElement("li");
+    item.textContent = "1시간 라이브 시청 후 인증하기 100";
+    makeVisible(item);
+    let clicks = 0;
+    item.addEventListener("click", () => {
+        clicks += 1;
+    });
+
+    scope.appendChild(item);
+    await wait(450);
+
+    assert.equal(clicks, 0);
+    assert.equal(item.hasAttribute("data-bcra-clicked"), false);
+});
+
+test("reward auto collect claims non-watch API rewards and leaves WATCH_1_HOUR to the page button", async () => {
+    const requests = [];
+    const dom = createRewardDom(
+        {},
+        {
+            fetchImpl: async (url, options = {}) => {
+                const method = options.method || "GET";
+                requests.push({ credentials: options.credentials, method, url: String(url) });
+                if (method === "GET") {
+                    return createJsonResponse({
+                        content: {
+                            active: true,
+                            amount: 100,
+                            claims: [
+                                { amount: 100, claimId: "watch-claim", claimType: "WATCH_1_HOUR" },
+                                { amount: 300, claimId: "follow-claim", claimType: "FOLLOW" },
+                            ],
+                        },
+                    });
+                }
+                return createJsonResponse({ content: { amount: 400 } });
+            },
+        }
+    );
+
+    await waitForCondition(() => requests.some((request) => request.method === "PUT"));
+
+    const getRequests = requests.filter((request) => request.method === "GET");
+    const putRequests = requests.filter((request) => request.method === "PUT");
+    assert.equal(getRequests.length, 1);
+    assert.equal(getRequests[0].url, "https://api.chzzk.naver.com/service/v1/channels/test-channel/log-power");
+    assert.equal(putRequests.length, 1);
+    assert.equal(
+        putRequests[0].url,
+        "https://api.chzzk.naver.com/service/v1/channels/test-channel/log-power/claims/follow-claim"
+    );
+    assert.equal(putRequests[0].credentials, "include");
+    assert.equal(
+        requests.some((request) => request.url.includes("watch-claim")),
+        false
+    );
+
+    dom.window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
+    await wait(250);
+    assert.equal(
+        requests.filter((request) => request.method === "PUT").length,
+        1,
+        "the same successful claim must not be submitted twice"
+    );
+});
+
+test("reward auto collect discards an in-flight API result after the option is disabled", async () => {
+    let resolveGet;
+    const requests = [];
+    const dom = createRewardDom(
+        {},
+        {
+            fetchImpl: (url, options = {}) => {
+                const method = options.method || "GET";
+                requests.push({ method, url: String(url) });
+                if (method !== "GET") return Promise.resolve(createJsonResponse({ content: { amount: 300 } }));
+                return new Promise((resolve) => {
+                    resolveGet = resolve;
+                });
+            },
+        }
+    );
+
+    await waitForCondition(() => typeof resolveGet === "function");
+    dom.window.chrome.testState.emitSyncChange({ rewardAutoCollectEnabled: false });
+    resolveGet(
+        createJsonResponse({
+            content: {
+                claims: [{ amount: 300, claimId: "follow-after-disable", claimType: "FOLLOW" }],
+            },
+        })
+    );
+    await wait(100);
+
+    assert.equal(
+        requests.some((request) => request.method === "PUT"),
+        false
+    );
 });
 
 test("reward auto collect observes a reward inside a late-mounted live chat aside", async () => {

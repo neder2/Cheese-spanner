@@ -13,7 +13,8 @@
  *     collectWatchSessionRanges, addWatchRangeToRangesByDate, sumWatchRangesByDate.
  *   - 제목 이력: normalizeTitleHistory, addTitleHistory.
  *   - 인프라: fetchJson(타임아웃+credentials include), storageGet/storageSet/storageRemove 프라미스 래퍼,
- *     startStorageChangeListener, touchMapEntry(LRU 캐시 헬퍼).
+ *     getCommentDeviceId/fetchChzzkCommentPage(공용 댓글 읽기), startStorageChangeListener,
+ *     touchMapEntry(LRU 캐시 헬퍼).
  * 소비자: background.js, liveWatchHistory.js, vodBroadcastClock.js, monthlyBroadcastTime.js, history.js 등
  *   시청 기록 계열 중심.
  */
@@ -21,8 +22,12 @@
     const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
     const ARRAY_RESPONSE_KEYS = Object.freeze(["data", "videos", "list", "items", "content"]);
     const DEFAULT_WATCH_RANGE_MERGE_GAP_MS = 2000;
+    const COMMENT_API_BASE = "https://apis.naver.com/nng_main/nng_comment_api/v1";
+    const COMMENT_DEVICE_ID_STORAGE_KEY = "betterchzzkCommentDeviceId";
     const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
     const DAY_MS = 24 * 60 * 60 * 1000;
+    let commentDeviceId = "";
+    let commentDeviceIdPromise = null;
 
     function pickArray(obj, keys = ARRAY_RESPONSE_KEYS) {
         if (!obj || typeof obj !== "object") return null;
@@ -487,6 +492,78 @@
         }
     }
 
+    function createCommentDeviceId() {
+        return globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+    }
+
+    async function getCommentDeviceId() {
+        if (commentDeviceId) return commentDeviceId;
+        if (commentDeviceIdPromise) return commentDeviceIdPromise;
+
+        commentDeviceIdPromise = (async () => {
+            const storage = globalThis.chrome?.storage?.local;
+            try {
+                const data = await storageGet(storage, COMMENT_DEVICE_ID_STORAGE_KEY);
+                const existing = compactSpaces(data?.[COMMENT_DEVICE_ID_STORAGE_KEY]);
+                if (existing) return existing;
+
+                const next = createCommentDeviceId();
+                await storageSet(storage, { [COMMENT_DEVICE_ID_STORAGE_KEY]: next });
+                return next;
+            } catch (_) {
+                return createCommentDeviceId();
+            }
+        })()
+            .then((value) => {
+                commentDeviceId = value;
+                return value;
+            })
+            .finally(() => {
+                commentDeviceIdPromise = null;
+            });
+
+        return commentDeviceIdPromise;
+    }
+
+    async function fetchChzzkCommentPage({
+        objectId,
+        objectType = "STREAMING_VIDEO",
+        limit = 10,
+        offset = 0,
+        orderType = "ASC",
+        originalLoungeId = "",
+        signal,
+    } = {}) {
+        const normalizedObjectId = compactSpaces(objectId);
+        if (!normalizedObjectId) throw new Error("댓글 대상이 없습니다.");
+
+        const deviceId = await getCommentDeviceId();
+        const params = new URLSearchParams({
+            limit: String(Math.max(1, Math.trunc(Number(limit) || 10))),
+            offset: String(Math.max(0, Math.trunc(Number(offset) || 0))),
+            orderType: compactSpaces(orderType) || "ASC",
+        });
+        if (originalLoungeId) params.set("originalLoungeId", compactSpaces(originalLoungeId));
+
+        const url = `${COMMENT_API_BASE}/type/${encodeURIComponent(objectType)}/id/${encodeURIComponent(
+            normalizedObjectId
+        )}/comments?${params.toString()}`;
+        const json = await fetchJson(url, {
+            headers: {
+                Accept: "application/json",
+                "Cache-Control": "no-cache",
+                "Front-Client-Platform-Type": "PC",
+                "Front-Client-Product-Type": "web",
+                "If-Modified-Since": "Mon, 26 Jul 1997 05:00:00 GMT",
+                Pragma: "no-cache",
+                deviceId,
+            },
+            signal,
+        });
+        if (json?.code && json.code !== 200) throw new Error(json.message || `code ${json.code}`);
+        return json?.content || null;
+    }
+
     function getStorageError() {
         return globalThis.chrome?.runtime?.lastError || null;
     }
@@ -563,6 +640,7 @@
         cleanTitle,
         collectWatchSessionRanges,
         compactSpaces,
+        fetchChzzkCommentPage,
         fetchJson,
         formatKstDateKey,
         formatKstDateTime,
@@ -573,6 +651,7 @@
         getKstDayStartMs,
         getKstMonthStartMs,
         getKstParts,
+        getCommentDeviceId,
         getNextKstDayStartMs,
         getWatchSessionRanges,
         isLastPage,

@@ -42,6 +42,9 @@
     const CARD_ATTR = "data-bcgt-card";
     const CARD_ID_ATTR = "data-bcgt-card-id";
     const INJECTED_ATTR = "data-bcgt-injected";
+    const LIVE_ID_ATTR = "data-bcgt-live-id";
+    const CHANNEL_ID_ATTR = "data-bcgt-channel-id";
+    const LIVE_PREVIEW_HOST_ATTR = "data-bcgt-live-preview-host";
     const HIDE_ATTR = "data-bcgt-hide";
     const HIDDEN_TAG_SEARCH_ATTR = "data-bcgt-hidden-tag-search";
     const TAG_SEARCH_ANCHOR_ATTR = "data-bcgt-tag-search-anchor";
@@ -2703,6 +2706,10 @@
         card.setAttribute(INJECTED_ATTR, "1");
         card.setAttribute(CARD_ATTR, "1");
         if (meta?.id) card.setAttribute(CARD_ID_ATTR, String(meta.id));
+        if (meta?.liveId) card.setAttribute(LIVE_ID_ATTR, String(meta.liveId));
+        else card.removeAttribute(LIVE_ID_ATTR);
+        if (meta?.channelId) card.setAttribute(CHANNEL_ID_ATTR, String(meta.channelId));
+        else card.removeAttribute(CHANNEL_ID_ATTR);
         card.removeAttribute(HIDE_ATTR);
         card.setAttribute(
             ORDER_ATTR,
@@ -2794,6 +2801,11 @@
             itemAnchors.map((anchor) => anchor.querySelector("img")).find(Boolean) ||
             card.querySelector("img");
         setImageSource(thumbImg, meta.thumb, meta.title);
+        const previewHost =
+            (thumbImg && itemAnchors.find((anchor) => anchor.contains(thumbImg))) ||
+            thumbImg?.closest?.("a[href]") ||
+            thumbImg?.parentElement;
+        if (previewHost instanceof HTMLElement) previewHost.setAttribute(LIVE_PREVIEW_HOST_ATTR, "1");
         if (!updateProfileImage(imagePairs, card, thumbImg, meta)) updateProfileBackgroundImage(card, meta);
         updateLiveViewerCount(card, meta.views);
 

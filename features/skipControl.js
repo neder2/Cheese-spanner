@@ -16,8 +16,7 @@
  *   mutationMatchesSelector, normalizeCompact, onReady, pickLargestVisible, startPageChangeDetection,
  *   injectStyleOnce), chrome.storage.sync.
  * 옵션 키: skipControlEnabled, skipKeyboardEnabled, skipPillEnabled, skipLivePillEnabled,
- *   skipLivePauseResumeEnabled, skipLivePauseResumeDepthMinutes, skipSeconds, skipWheelStep,
- *   skipWheelShiftStep, skipWheelAltStep.
+ *   skipLivePauseResumeEnabled, skipSeconds, skipWheelStep, skipWheelShiftStep, skipWheelAltStep.
  * DOM 마커: id="betterchzzk-skip-pill", id="betterchzzk-live-fast-forward",
  *   id="betterchzzk-skip-style"(주입 스타일), data-bctm-text-patched(라이브 엣지 버튼 패치 표시),
  *   data-bc-placement(pill 배치 모드), data-better-chzzk-live-fast-forward.
@@ -371,19 +370,6 @@
         return Math.min(Math.max(value, bounds.min), bounds.max);
     }
 
-    function getLiveCacheDepthSeconds() {
-        const minutes = Number(featureOptions.skipLivePauseResumeDepthMinutes);
-        if (!Number.isFinite(minutes) || minutes <= 0) return Infinity;
-        return minutes * 60;
-    }
-
-    function isWithinLiveCacheDepth(behindSeconds) {
-        const behind = Number(behindSeconds);
-        if (!Number.isFinite(behind)) return false;
-        if (behind <= 0) return true;
-        return behind <= getLiveCacheDepthSeconds();
-    }
-
     function looksLikeLiveEdgeButton(button) {
         if (!(button instanceof HTMLElement)) return false;
         if (button.id === LIVE_FAST_FORWARD_BUTTON_ID) return true;
@@ -572,11 +558,6 @@
             return;
         }
 
-        if (!isWithinLiveCacheDepth(lag)) {
-            clearLiveTimeShiftState(video);
-            return;
-        }
-
         const routeKey = getLiveRouteKey();
         const previous =
             liveTimeShiftState?.routeKey === routeKey && liveTimeShiftState?.video === video
@@ -658,20 +639,22 @@
         const lag = edge - currentTime;
         const state = liveTimeShiftState;
         const recentUserSeekGesture = isRecentUserSeekGesture();
-        const canRestore =
+        const shouldProtectPosition =
             state?.video === video &&
             state.routeKey === getLiveRouteKey() &&
             state.videoGeneration === getCurrentVideoGeneration(video) &&
-            !liveTimeShiftRestoring &&
             !allowCurrent &&
             !recentUserSeekGesture;
 
-        if (canRestore) {
+        if (shouldProtectPosition) {
             const expectedTime = getExpectedLiveTimeShiftTime(state);
             const jumpedAhead = currentTime > expectedTime + LIVE_TIMESHIFT_SNAP_AHEAD_SECONDS;
             const collapsedLag =
                 lag <= LIVE_TIMESHIFT_NEAR_EDGE_SECONDS || lag < state.lag - LIVE_TIMESHIFT_SNAP_AHEAD_SECONDS;
-            if (jumpedAhead && collapsedLag && restoreLiveTimeShiftPosition(video, state, expectedTime, edge)) return;
+            if (jumpedAhead && collapsedLag) {
+                if (!liveTimeShiftRestoring) restoreLiveTimeShiftPosition(video, state, expectedTime, edge);
+                return;
+            }
         }
 
         if ((allowCurrent || recentUserSeekGesture) && lag < LIVE_TIMESHIFT_ARM_LAG_SECONDS) {
@@ -701,7 +684,7 @@
 
         const edge = getLiveEdge(video);
         const lag = Number.isFinite(edge) ? edge - time : seekableRange.end - time;
-        if (!Number.isFinite(lag) || !isWithinLiveCacheDepth(lag)) {
+        if (!Number.isFinite(lag)) {
             if (pauseSnapshot?.video === video) pauseSnapshot = null;
             return;
         }

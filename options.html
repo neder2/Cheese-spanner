@@ -235,7 +235,7 @@
                     <label class="toggle-row">
                         <span>
                             <strong>통나무 보상 자동 받기</strong>
-                            <small>보상 버튼이 보이면 자동으로 클릭합니다.</small>
+                            <small>통나무 수령 버튼과 대기 중인 보상을 자동 처리합니다.</small>
                         </span>
                         <input type="checkbox" data-option="rewardAutoCollectEnabled" />
                     </label>
@@ -254,7 +254,9 @@
                                 /><em>ms</em></label
                             >
                         </div>
-                        <p class="setting-note">화면에 보이는 보상 버튼만 누릅니다.</p>
+                        <p class="setting-note">
+                            1시간 시청 보상은 화면 버튼으로 받고, 그 외 대기 보상은 치지직 API로 받습니다.
+                        </p>
                     </details>
 
                     <label class="toggle-row">
@@ -278,34 +280,6 @@
                         >
                         <input type="checkbox" data-option="skipLivePauseResumeEnabled" />
                     </label>
-
-                    <details class="advanced-settings">
-                        <summary>보던 위치 유지 설정</summary>
-                        <div class="number-grid" data-depends-on="skipControlEnabled skipLivePauseResumeEnabled">
-                            <label
-                                ><span class="has-tip"
-                                    >라이브 캐시 용량<span
-                                        class="help-tip"
-                                        tabindex="0"
-                                        role="button"
-                                        aria-label="라이브 캐시가 저장되는 방식 설명"
-                                        ><span class="help-tip__mark" aria-hidden="true">?</span
-                                        ><span class="help-tip__bubble" role="tooltip"
-                                            >실시간에서 설정한 시간 이내의 위치만 기억합니다. 값은 이 탭에만 잠시
-                                            저장되고 페이지를 벗어나면 사라집니다.</span
-                                        ></span
-                                    ></span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="360"
-                                    step="5"
-                                    data-option="skipLivePauseResumeDepthMinutes"
-                                /><em>분</em></label
-                            >
-                        </div>
-                        <p class="setting-note">설정한 시간보다 더 뒤로 가면 기억하지 않습니다.</p>
-                    </details>
 
                     <label class="toggle-row">
                         <span><strong>타임머신 지연 표시</strong></span>
@@ -452,6 +426,14 @@
 
                     <label class="toggle-row">
                         <span
+                            ><strong>다시보기 Space 홀드 2배속</strong
+                            ><small>Space를 길게 누르는 동안만 2배속으로 재생합니다.</small></span
+                        >
+                        <input type="checkbox" data-option="holdSpeedEnabled" />
+                    </label>
+
+                    <label class="toggle-row">
+                        <span
                             ><strong>단축키 복구</strong
                             ><small>스페이스/m/f/t 단축키가 멈추면 대신 처리합니다.</small></span
                         >
@@ -500,6 +482,13 @@
                         <p>라이브 채팅 보조 기능을 조절합니다.</p>
                     </div>
 
+                    <label class="toggle-row">
+                        <span
+                            ><strong>다시보기 댓글 탭</strong
+                            ><small>채팅 다시보기 영역에서 댓글을 함께 봅니다.</small></span
+                        >
+                        <input type="checkbox" data-option="vodCommentTabsEnabled" />
+                    </label>
                     <label class="toggle-row">
                         <span
                             ><strong>채팅 시각 표시</strong
@@ -735,17 +724,39 @@
                     </label>
                     <label class="toggle-row">
                         <span>
-                            <strong>팔로잉 호버 미리보기</strong>
-                            <small>마우스를 올리면 방송 미리보기를 띄웁니다.</small>
+                            <strong>라이브 호버 미리보기</strong>
+                            <small>팔로잉과 방송 목록에서 미리보기를 재생합니다.</small>
                         </span>
                         <input type="checkbox" data-option="followingPreviewTooltipEnabled" />
                     </label>
                     <label class="toggle-row" data-depends-on="followingPreviewTooltipEnabled">
                         <span>
                             <strong>호버 미리보기 소리</strong>
-                            <small>플레이어에서 쓰던 볼륨으로 미리보기를 재생합니다.</small>
+                            <small>설정한 고정 볼륨으로 미리보기를 재생합니다.</small>
                         </span>
                         <input type="checkbox" data-option="followingPreviewSoundEnabled" />
+                    </label>
+                    <div
+                        class="number-grid"
+                        data-depends-on="followingPreviewTooltipEnabled followingPreviewSoundEnabled"
+                    >
+                        <label
+                            ><span>미리보기 볼륨</span
+                            ><input
+                                type="number"
+                                min="1"
+                                max="100"
+                                step="1"
+                                data-option="followingPreviewVolumePercent"
+                            /><em>%</em></label
+                        >
+                    </div>
+                    <label class="toggle-row" data-depends-on="followingPreviewTooltipEnabled">
+                        <span>
+                            <strong>미리보기 우클릭 소리</strong>
+                            <small>방송 미리보기에서 우클릭으로 소리를 제어합니다.</small>
+                        </span>
+                        <input type="checkbox" data-option="livePreviewRightClickSoundEnabled" />
                     </label>
                     <label class="toggle-row">
                         <span><strong>긴 제목 툴팁</strong></span>
