@@ -1391,6 +1391,57 @@ test("monthly broadcast keeps stored watch aggregates when exact ranges are capp
     }
 });
 
+test("monthly broadcast counts overlapping tab ranges only once", async () => {
+    const startMs = Date.parse("2026-06-28T09:00:00+09:00");
+    const duration = 20 * 60;
+    const dateKey = "2026-06-28";
+    const session = (id) => ({
+        dailySeconds: { [dateKey]: duration },
+        enteredAt: startMs,
+        id,
+        leftAt: startMs + duration * 1000,
+        watchedRanges: [{ startAt: startMs, endAt: startMs + duration * 1000 }],
+        watchedSeconds: duration,
+    });
+    const fixture = await createMonthlyBroadcastFixture({
+        videos: [
+            {
+                duration,
+                liveCloseDate: new Date(startMs + duration * 1000).toISOString(),
+                liveOpenDate: "2026-06-28T09:00:00+09:00",
+                videoNo: "overlapping-tabs",
+                videoTitle: "Overlapping tabs fixture",
+                videoType: "REPLAY",
+            },
+        ],
+        watchHistory: [
+            {
+                channelId: MONTHLY_BROADCAST_CHANNEL_ID,
+                dailySeconds: { [dateKey]: duration * 2 },
+                firstWatchedAt: startMs,
+                id: "watch-overlapping-tabs",
+                lastWatchedAt: startMs + duration * 1000,
+                liveId: "overlapping-tabs",
+                liveOpenDate: "2026-06-28T09:00:00+09:00",
+                sessionDetails: [session("tab-a"), session("tab-b")],
+                title: "Overlapping tabs fixture",
+                watchedSeconds: duration * 2,
+            },
+        ],
+    });
+
+    try {
+        await waitForCondition(() => {
+            const value = getMonthlyCalendarDay(fixture.document, dateKey)?.querySelector(
+                ".bcmb-day-tip-row-watch .bcmb-day-tip-value"
+            );
+            return value?.textContent === "20분 (100%)";
+        });
+    } finally {
+        await closeMonthlyBroadcastFixture(fixture);
+    }
+});
+
 test("monthly broadcast calendar hides watch info when watch display is disabled", async () => {
     const startMs = Date.parse("2026-06-28T09:00:00+09:00");
     const duration = 20 * 60;
@@ -2938,6 +2989,7 @@ test("options page shows initial storage read failures without overwriting exist
     const message = document.getElementById("message");
 
     assert.equal(document.getElementById("notice").dataset.state, "error");
+    assert.equal(autoQuality.disabled, true);
     assert.equal(message.textContent, "설정을 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.");
 
     autoQuality.checked = false;
@@ -2946,10 +2998,7 @@ test("options page shows initial storage read failures without overwriting exist
 
     assert.equal(chrome.testState.sync.autoQualityEnabled, true);
     assert.equal(document.getElementById("notice").dataset.state, "error");
-    assert.equal(
-        message.textContent,
-        "설정을 불러오지 못해 저장하지 않았습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요."
-    );
+    assert.equal(message.textContent, "설정을 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.");
 });
 
 test("options page shows storage write failures without updating saved options", async () => {
@@ -4577,6 +4626,106 @@ test("auto quality page hook leaves videoTracks descriptors untouched outside pl
     assert.equal(Object.getOwnPropertyDescriptor(target, "videoTracks").get, getter);
 });
 
+test("auto quality defineProperties hook preserves native descriptor-map semantics", () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/live/test-channel", chrome);
+    const nativeDefineProperty = dom.window.Object.defineProperty;
+    const descriptorMapPrototype = { inherited: { configurable: true, value: "inherited" } };
+    const descriptorMap = dom.window.Object.create(descriptorMapPrototype);
+    const symbolKey = dom.window.Symbol("quality-test");
+    const trackList = createVideoTrackList([{ id: "720", label: "720p", height: 720 }]);
+    const qualityGetter = () => trackList;
+    const qualityDescriptorPrototype = dom.window.Object.create(null);
+    nativeDefineProperty(qualityDescriptorPrototype, "configurable", { value: true });
+    nativeDefineProperty(qualityDescriptorPrototype, "enumerable", { value: true });
+    nativeDefineProperty(qualityDescriptorPrototype, "get", { value: qualityGetter });
+    const qualityDescriptor = dom.window.Object.create(qualityDescriptorPrototype);
+
+    nativeDefineProperty(descriptorMap, "hidden", {
+        configurable: true,
+        enumerable: false,
+        value: { configurable: true, enumerable: true, value: "hidden" },
+    });
+    nativeDefineProperty(descriptorMap, symbolKey, {
+        configurable: true,
+        enumerable: true,
+        value: { configurable: true, enumerable: true, value: "symbol" },
+    });
+    nativeDefineProperty(descriptorMap, "__proto__", {
+        configurable: true,
+        enumerable: true,
+        value: { configurable: true, enumerable: true, writable: true, value: "own-proto" },
+    });
+    nativeDefineProperty(descriptorMap, "videoTracks", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: qualityDescriptor,
+    });
+    const videoTracksMapDescriptor = Object.getOwnPropertyDescriptor(descriptorMap, "videoTracks");
+
+    evalRepoScript(dom, "features", "autoQualityPage.js");
+
+    const target = dom.window.Object.create(dom.window.Object.prototype);
+    dom.window.Object.defineProperties(target, descriptorMap);
+
+    assert.equal(Object.getPrototypeOf(descriptorMap), descriptorMapPrototype);
+    assert.deepEqual(Object.getOwnPropertyDescriptor(descriptorMap, "videoTracks"), videoTracksMapDescriptor);
+    assert.equal(Object.hasOwn(target, "hidden"), false);
+    assert.equal(Object.hasOwn(target, "inherited"), false);
+    assert.equal(target[symbolKey], "symbol");
+    assert.equal(Object.getPrototypeOf(target), dom.window.Object.prototype);
+    assert.equal(Object.hasOwn(target, "__proto__"), true);
+    assert.equal(target.__proto__, "own-proto");
+    assert.equal(target.videoTracks, trackList);
+    const installedVideoTracksDescriptor = Object.getOwnPropertyDescriptor(target, "videoTracks");
+    assert.equal(installedVideoTracksDescriptor.configurable, true);
+    assert.equal(installedVideoTracksDescriptor.enumerable, true);
+    assert.equal(installedVideoTracksDescriptor.get.__betterChzzkVideoTracksWrapped, true);
+    disableAutoQualityPage(dom);
+    dom.window.close();
+});
+
+test("auto quality defineProperties hook preserves a descriptor map locked during collection", () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/live/test-channel", chrome);
+    const nativeDefineProperty = dom.window.Object.defineProperty;
+    const descriptorMap = dom.window.Object.create(null);
+    const trackList = createVideoTrackList([{ id: "720", label: "720p", height: 720 }]);
+    const qualityGetter = () => trackList;
+    const qualityDescriptor = { configurable: true, get: qualityGetter };
+
+    nativeDefineProperty(descriptorMap, "first", {
+        configurable: true,
+        enumerable: true,
+        get() {
+            nativeDefineProperty(descriptorMap, "videoTracks", {
+                configurable: false,
+                enumerable: true,
+                writable: false,
+                value: qualityDescriptor,
+            });
+            return { configurable: true, value: "first" };
+        },
+    });
+    nativeDefineProperty(descriptorMap, "videoTracks", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: qualityDescriptor,
+    });
+
+    evalRepoScript(dom, "features", "autoQualityPage.js");
+
+    const target = {};
+    assert.doesNotThrow(() => dom.window.Object.defineProperties(target, descriptorMap));
+    assert.equal(target.first, "first");
+    assert.equal(target.videoTracks, trackList);
+    assert.equal(Object.getOwnPropertyDescriptor(target, "videoTracks").get, qualityGetter);
+    disableAutoQualityPage(dom);
+    dom.window.close();
+});
+
 test("auto quality page hook unpatches defineProperty APIs outside playback routes", () => {
     const chrome = createFakeChrome();
     const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/live/test-channel", chrome);
@@ -4609,6 +4758,14 @@ test("auto quality page hook unpatches defineProperty APIs outside playback rout
     );
 
     assert.notEqual(dom.window.Object.defineProperty, nativeDefineProperty);
+    assert.notEqual(dom.window.Object.defineProperties, nativeDefineProperties);
+    assert.notEqual(dom.window.Reflect.defineProperty, nativeReflectDefineProperty);
+
+    disableAutoQualityPage(dom);
+
+    assert.equal(dom.window.Object.defineProperty, nativeDefineProperty);
+    assert.equal(dom.window.Object.defineProperties, nativeDefineProperties);
+    assert.equal(dom.window.Reflect.defineProperty, nativeReflectDefineProperty);
 });
 
 test("auto quality publishes state without writing a page localStorage cache", async () => {
@@ -5297,6 +5454,94 @@ test("live watch history requires media progress before counting watch time", as
     assert.equal(entry.watchedSeconds, 60);
 });
 
+test("live watch history restarts an active session after a retired checkpoint barrier", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: true,
+        },
+    });
+    const originalSendMessage = chrome.runtime.sendMessage.bind(chrome.runtime);
+    let retiredBarrier = 0;
+    chrome.runtime.sendMessage = (message, callback) => {
+        if (message?.operation?.kind === "upsertSessionSnapshot" && retiredBarrier === 0) {
+            chrome.testState.runtimeMessages.push(message);
+            retiredBarrier = message.operation.session.leftAt;
+            setTimeout(
+                () =>
+                    callback?.({ ok: true, result: { status: "ignored", reason: "retired", barrier: retiredBarrier } }),
+                0
+            );
+            return;
+        }
+        originalSendMessage(message, callback);
+    };
+    const dom = createPageDom(
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const clock = useFakePerformanceNow(dom);
+    const video = dom.window.document.getElementById("video");
+    let nowMs = Date.parse("2026-07-10T12:00:00+09:00");
+    let mediaTime = 0;
+
+    t.after(async () => {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    });
+
+    dom.window.Date.now = () => nowMs;
+    dom.window.fetch = async () => {
+        throw new Error("metadata unavailable");
+    };
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+    Object.defineProperty(video, "ended", { configurable: true, get: () => false });
+    Object.defineProperty(video, "playbackRate", { configurable: true, get: () => 1 });
+    Object.defineProperty(video, "currentTime", { configurable: true, get: () => mediaTime });
+    Object.defineProperty(video, "readyState", {
+        configurable: true,
+        get: () => dom.window.HTMLMediaElement.HAVE_CURRENT_DATA,
+    });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "liveWatchHistory.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const tick = intervals.find((interval) => interval.ms === 5000)?.fn;
+    const flush = intervals.find((interval) => interval.ms === 15000)?.fn;
+    for (let index = 0; index < 6; index += 1) {
+        clock.advance(10000);
+        nowMs += 10000;
+        mediaTime += 10;
+        tick();
+    }
+    flush();
+    await waitForCondition(() => retiredBarrier > 0);
+    await waitForAsyncCallbacks();
+
+    for (let index = 0; index < 6; index += 1) {
+        clock.advance(10000);
+        nowMs += 10000;
+        mediaTime += 10;
+        tick();
+    }
+    flush();
+    await waitForCondition(() => chrome.testState.runtimeMessages.length === 2);
+
+    const [retiredSnapshot, restartedSnapshot] = chrome.testState.runtimeMessages.map((message) => message.operation);
+    assert.notEqual(restartedSnapshot.session.id, retiredSnapshot.session.id);
+    assert.equal(restartedSnapshot.session.enteredAt, retiredBarrier + 1);
+    assert.equal(restartedSnapshot.session.watchedSeconds, 60);
+    assert.equal(Object.values(chrome.testState.local.betterChzzkLiveWatchHistory.entries)[0].watchedSeconds, 60);
+});
+
 test("live watch history caps stored watched ranges per session", async (t) => {
     const chrome = createFakeChrome({
         sync: {
@@ -5360,7 +5605,303 @@ test("live watch history caps stored watched ranges per session", async (t) => {
     assert.ok(detail.watchedSeconds >= 2000);
 });
 
-test("live watch history preserves aggregates after capped session details reload", async (t) => {
+test("live watch history migrates a flushed provisional record when live detail arrives later", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: true,
+        },
+    });
+    const originalSendMessage = chrome.runtime.sendMessage.bind(chrome.runtime);
+    let releaseProvisionalResponse = null;
+    let provisionalResponseHeld = false;
+    chrome.runtime.sendMessage = (message, callback) => {
+        if (message?.operation?.kind === "upsertSessionSnapshot" && !provisionalResponseHeld) {
+            provisionalResponseHeld = true;
+            originalSendMessage(message, () => {
+                releaseProvisionalResponse = () =>
+                    callback?.({ ok: true, result: { status: "ignored", reason: "deleted", barrier: Date.now() } });
+            });
+            return;
+        }
+        originalSendMessage(message, callback);
+    };
+    const dom = createPageDom(
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const clock = useFakePerformanceNow(dom);
+    const video = dom.window.document.getElementById("video");
+    let mediaTime = 0;
+    let resolveLiveDetail = null;
+
+    t.after(async () => {
+        releaseProvisionalResponse?.();
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    });
+
+    dom.window.fetch = () =>
+        new Promise((resolve) => {
+            resolveLiveDetail = () =>
+                resolve({
+                    ok: true,
+                    json: async () => ({ content: { liveId: "late-live" } }),
+                });
+        });
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+    Object.defineProperty(video, "ended", { configurable: true, get: () => false });
+    Object.defineProperty(video, "playbackRate", { configurable: true, get: () => 1 });
+    Object.defineProperty(video, "currentTime", { configurable: true, get: () => mediaTime });
+    Object.defineProperty(video, "readyState", {
+        configurable: true,
+        get: () => dom.window.HTMLMediaElement.HAVE_CURRENT_DATA,
+    });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "liveWatchHistory.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForCondition(() => typeof resolveLiveDetail === "function");
+
+    const tick = intervals.find((interval) => interval.ms === 5000)?.fn;
+    const flush = intervals.find((interval) => interval.ms === 15000)?.fn;
+    for (let index = 0; index < 6; index += 1) {
+        clock.advance(10000);
+        mediaTime += 10;
+        tick();
+    }
+    flush();
+    await waitForCondition(() => typeof releaseProvisionalResponse === "function");
+    const provisionalRecordId = chrome.testState.runtimeMessages[0].operation.recordId;
+    assert.match(provisionalRecordId, /^channel:test-channel:provisional:/);
+
+    resolveLiveDetail();
+    await waitForCondition(() =>
+        chrome.testState.runtimeMessages.some((message) => message?.operation?.kind === "migrateRecordId")
+    );
+    await waitForCondition(() => chrome.testState.local.betterChzzkLiveWatchHistory.entries["live:late-live"]);
+    const history = chrome.testState.local.betterChzzkLiveWatchHistory;
+    assert.equal(history.entries[provisionalRecordId], undefined);
+    assert.equal(history.entries["live:late-live"].watchedSeconds, 60);
+    assert.equal(history.entries["live:late-live"].liveId, "late-live");
+    assert.equal(history.recordAliases[provisionalRecordId].targetRecordId, "live:late-live");
+
+    releaseProvisionalResponse();
+    releaseProvisionalResponse = null;
+    await waitForCondition(
+        () =>
+            chrome.testState.runtimeMessages.filter((message) => message?.operation?.kind === "upsertSessionSnapshot")
+                .length === 2
+    );
+    const snapshots = chrome.testState.runtimeMessages.filter(
+        (message) => message?.operation?.kind === "upsertSessionSnapshot"
+    );
+    assert.equal(snapshots[1].operation.recordId, "live:late-live");
+    assert.equal(snapshots[1].operation.session.id, snapshots[0].operation.session.id);
+});
+
+test("live watch history keeps a deleted provisional id until migration is acknowledged", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: true,
+        },
+    });
+    const originalSendMessage = chrome.runtime.sendMessage.bind(chrome.runtime);
+    chrome.runtime.sendMessage = (message, callback) => {
+        if (message?.operation?.kind === "migrateRecordId") {
+            chrome.testState.runtimeMessages.push(message);
+            setTimeout(() => callback?.({ ok: false, error: "migration unavailable" }), 0);
+            return;
+        }
+        originalSendMessage(message, callback);
+    };
+    const dom = createPageDom(
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const clock = useFakePerformanceNow(dom);
+    const video = dom.window.document.getElementById("video");
+    let nowMs = Date.parse("2026-07-10T12:00:00+09:00");
+    let mediaTime = 0;
+    let resolveLiveDetail = null;
+
+    t.after(async () => {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    });
+
+    dom.window.Date.now = () => nowMs;
+    dom.window.fetch = () =>
+        new Promise((resolve) => {
+            resolveLiveDetail = () =>
+                resolve({
+                    ok: true,
+                    json: async () => ({ content: { liveId: "failed-migration-live" } }),
+                });
+        });
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+    Object.defineProperty(video, "ended", { configurable: true, get: () => false });
+    Object.defineProperty(video, "playbackRate", { configurable: true, get: () => 1 });
+    Object.defineProperty(video, "currentTime", { configurable: true, get: () => mediaTime });
+    Object.defineProperty(video, "readyState", {
+        configurable: true,
+        get: () => dom.window.HTMLMediaElement.HAVE_CURRENT_DATA,
+    });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "liveWatchHistory.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForCondition(() => typeof resolveLiveDetail === "function");
+
+    const tick = intervals.find((interval) => interval.ms === 5000)?.fn;
+    const flush = intervals.find((interval) => interval.ms === 15000)?.fn;
+    for (let index = 0; index < 6; index += 1) {
+        clock.advance(10000);
+        nowMs += 10000;
+        mediaTime += 10;
+        tick();
+    }
+    flush();
+    await waitForCondition(
+        () =>
+            chrome.testState.runtimeMessages.filter((message) => message?.operation?.kind === "upsertSessionSnapshot")
+                .length === 1
+    );
+    const sourceRecordId = chrome.testState.runtimeMessages[0].operation.recordId;
+    const deletion = watchHistoryStore.applyMutation(
+        chrome.testState.local.betterChzzkLiveWatchHistory,
+        { kind: "deleteEntries", entryIds: [sourceRecordId], cutoffAt: nowMs },
+        nowMs
+    );
+    chrome.testState.local.betterChzzkLiveWatchHistory = deletion.history;
+
+    resolveLiveDetail();
+    await waitForCondition(() =>
+        chrome.testState.runtimeMessages.some((message) => message?.operation?.kind === "migrateRecordId")
+    );
+    clock.advance(10000);
+    nowMs += 10000;
+    mediaTime += 10;
+    tick();
+    flush();
+    await waitForCondition(
+        () =>
+            chrome.testState.runtimeMessages.filter((message) => message?.operation?.kind === "upsertSessionSnapshot")
+                .length === 2
+    );
+
+    const snapshots = chrome.testState.runtimeMessages.filter(
+        (message) => message?.operation?.kind === "upsertSessionSnapshot"
+    );
+    assert.equal(snapshots[1].operation.recordId, sourceRecordId);
+    assert.equal(chrome.testState.local.betterChzzkLiveWatchHistory.entries[sourceRecordId], undefined);
+    assert.equal(chrome.testState.local.betterChzzkLiveWatchHistory.entries["live:failed-migration-live"], undefined);
+});
+
+test("live watch history gives same-channel sessions distinct provisional record ids", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: true,
+        },
+    });
+    const dom = createPageDom(
+        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const clock = useFakePerformanceNow(dom);
+    const video = dom.window.document.getElementById("video");
+    let mediaTime = 0;
+
+    t.after(async () => {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    });
+
+    dom.window.fetch = async () => {
+        throw new Error("metadata unavailable");
+    };
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+    Object.defineProperty(video, "ended", { configurable: true, get: () => false });
+    Object.defineProperty(video, "playbackRate", { configurable: true, get: () => 1 });
+    Object.defineProperty(video, "currentTime", { configurable: true, get: () => mediaTime });
+    Object.defineProperty(video, "readyState", {
+        configurable: true,
+        get: () => dom.window.HTMLMediaElement.HAVE_CURRENT_DATA,
+    });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "liveWatchHistory.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    let tick = intervals.find((interval) => interval.ms === 5000 && !interval.cleared)?.fn;
+    let flush = intervals.find((interval) => interval.ms === 15000 && !interval.cleared)?.fn;
+    for (let index = 0; index < 6; index += 1) {
+        clock.advance(10000);
+        mediaTime += 10;
+        tick();
+    }
+    flush();
+    await waitForCondition(
+        () =>
+            chrome.testState.runtimeMessages.filter((message) => message?.operation?.kind === "upsertSessionSnapshot")
+                .length === 1
+    );
+
+    dom.window.history.pushState({}, "", "/category/test/lives");
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    await waitForAsyncCallbacks();
+    dom.window.history.pushState({}, "", "/live/test-channel");
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    await waitForAsyncCallbacks();
+
+    tick = intervals.findLast((interval) => interval.ms === 5000 && !interval.cleared)?.fn;
+    flush = intervals.findLast((interval) => interval.ms === 15000 && !interval.cleared)?.fn;
+    for (let index = 0; index < 6; index += 1) {
+        clock.advance(10000);
+        mediaTime += 10;
+        tick();
+    }
+    flush();
+    await waitForCondition(
+        () =>
+            chrome.testState.runtimeMessages.filter(
+                (message) =>
+                    message?.operation?.kind === "upsertSessionSnapshot" && message.operation.session.closed !== true
+            ).length === 2
+    );
+
+    const openSnapshots = chrome.testState.runtimeMessages
+        .map((message) => message.operation)
+        .filter((operation) => operation?.kind === "upsertSessionSnapshot" && operation.session.closed !== true);
+    assert.notEqual(openSnapshots[0].session.id, openSnapshots[1].session.id);
+    assert.notEqual(openSnapshots[0].recordId, openSnapshots[1].recordId);
+    assert.match(openSnapshots[0].recordId, /^channel:test-channel:provisional:/);
+    assert.match(openSnapshots[1].recordId, /^channel:test-channel:provisional:/);
+    assert.equal(Object.keys(chrome.testState.local.betterChzzkLiveWatchHistory.entries).length, 2);
+});
+
+test("live watch history preserves capped aggregates and pins the first resolved live id", async (t) => {
     const dateKey = "2026-06-29";
     const dayStartMs = Date.parse("2026-06-29T00:00:00+09:00");
     const nowStartMs = Date.parse("2026-06-29T20:00:00+09:00");
@@ -5379,7 +5920,7 @@ test("live watch history preserves aggregates after capped session details reloa
             watchedSeconds: 60,
         };
     });
-    const recordId = `channel:test-channel:${dateKey}`;
+    const recordId = "live:capped-live";
     const chrome = createFakeChrome({
         local: {
             betterChzzkLiveWatchHistory: {
@@ -5391,6 +5932,7 @@ test("live watch history preserves aggregates after capped session details reloa
                         firstWatchedAt: dayStartMs - 3 * 60 * 1000,
                         id: recordId,
                         lastWatchedAt: retainedSessions.at(-1).leftAt,
+                        liveId: "capped-live",
                         liveUrl: "https://chzzk.naver.com/live/test-channel",
                         sessionDetails: retainedSessions,
                         sessions: storedSessionCount,
@@ -5416,6 +5958,28 @@ test("live watch history preserves aggregates after capped session details reloa
     const video = dom.window.document.getElementById("video");
     let nowMs = nowStartMs;
     let mediaTime = 0;
+    let apiLiveId = "capped-live";
+    let metadataRefreshCallback = null;
+    let metadataTimerId = 50000;
+    const metadataTimerIds = new Set();
+    const originalSetTimeout = dom.window.setTimeout.bind(dom.window);
+    const originalClearTimeout = dom.window.clearTimeout.bind(dom.window);
+    dom.window.setTimeout = (callback, delayMs, ...args) => {
+        if (delayMs === 60000) {
+            const id = metadataTimerId++;
+            metadataTimerIds.add(id);
+            metadataRefreshCallback = () => callback(...args);
+            return id;
+        }
+        return originalSetTimeout(callback, delayMs, ...args);
+    };
+    dom.window.clearTimeout = (id) => {
+        if (metadataTimerIds.has(id)) {
+            metadataTimerIds.delete(id);
+            return;
+        }
+        originalClearTimeout(id);
+    };
 
     t.after(async () => {
         for (const listener of chrome.testState.storageChangeListeners) {
@@ -5426,9 +5990,10 @@ test("live watch history preserves aggregates after capped session details reloa
     });
 
     dom.window.Date.now = () => nowMs;
-    dom.window.fetch = async () => {
-        throw new Error("metadata unavailable");
-    };
+    dom.window.fetch = async () => ({
+        ok: true,
+        json: async () => ({ content: { liveId: apiLiveId } }),
+    });
     makeVisibleVideo(video);
     Object.defineProperty(video, "paused", { configurable: true, get: () => false });
     Object.defineProperty(video, "ended", { configurable: true, get: () => false });
@@ -5464,6 +6029,175 @@ test("live watch history preserves aggregates after capped session details reloa
     assert.equal(entry.dailySeconds[dateKey], storedSeconds + 60);
     assert.equal(entry.sessions, storedSessionCount + 1);
     assert.equal(entry.sessionDetails.length, retainedSessionCount);
+
+    apiLiveId = "changed-live";
+    assert.equal(typeof metadataRefreshCallback, "function");
+    metadataRefreshCallback();
+    await waitForAsyncCallbacks();
+    clock.advance(10000);
+    nowMs += 10000;
+    mediaTime += 10;
+    tick();
+    flush();
+    await waitForCondition(
+        () =>
+            chrome.testState.runtimeMessages.filter((message) => message?.operation?.kind === "upsertSessionSnapshot")
+                .length === 2
+    );
+    assert.equal(
+        chrome.testState.runtimeMessages.some((message) => message?.operation?.kind === "migrateRecordId"),
+        false
+    );
+    assert.equal(chrome.testState.local.betterChzzkLiveWatchHistory.entries["live:changed-live"], undefined);
+    assert.equal(chrome.testState.local.betterChzzkLiveWatchHistory.entries[recordId].liveId, "capped-live");
+});
+
+test("live watch history splits same-channel broadcasts when live detail changes", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: true,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<head><title>A DOM 제목</title></head>",
+            "<body>",
+            "<main>",
+            '<video id="video"></video>',
+            "</main>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const clock = useFakePerformanceNow(dom);
+    const video = dom.window.document.getElementById("video");
+    let nowMs = Date.parse("2026-07-10T12:00:00+09:00");
+    let mediaTime = 0;
+    let apiLiveId = "broadcast-a";
+    let apiTitle = "A 방송";
+    let metadataRefreshCallback = null;
+    let metadataTimerId = 60000;
+    const metadataTimerIds = new Set();
+    const originalSetTimeout = dom.window.setTimeout.bind(dom.window);
+    const originalClearTimeout = dom.window.clearTimeout.bind(dom.window);
+    dom.window.setTimeout = (callback, delayMs, ...args) => {
+        if (delayMs === 60000) {
+            const id = metadataTimerId++;
+            metadataTimerIds.add(id);
+            metadataRefreshCallback = () => callback(...args);
+            return id;
+        }
+        return originalSetTimeout(callback, delayMs, ...args);
+    };
+    dom.window.clearTimeout = (id) => {
+        if (metadataTimerIds.has(id)) {
+            metadataTimerIds.delete(id);
+            return;
+        }
+        originalClearTimeout(id);
+    };
+
+    t.after(async () => {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    });
+
+    dom.window.Date.now = () => nowMs;
+    dom.window.fetch = async () => ({
+        ok: true,
+        json: async () => ({
+            content: {
+                channelName: "테스트 채널",
+                liveId: apiLiveId,
+                liveTitle: apiTitle,
+            },
+        }),
+    });
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+    Object.defineProperty(video, "ended", { configurable: true, get: () => false });
+    Object.defineProperty(video, "playbackRate", { configurable: true, get: () => 1 });
+    Object.defineProperty(video, "currentTime", { configurable: true, get: () => mediaTime });
+    Object.defineProperty(video, "readyState", {
+        configurable: true,
+        get: () => dom.window.HTMLMediaElement.HAVE_CURRENT_DATA,
+    });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "liveWatchHistory.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForCondition(() => typeof metadataRefreshCallback === "function");
+
+    const tick = intervals.find((interval) => interval.ms === 5000)?.fn;
+    const flush = intervals.find((interval) => interval.ms === 15000)?.fn;
+    for (let index = 0; index < 6; index += 1) {
+        clock.advance(10000);
+        nowMs += 10000;
+        mediaTime += 10;
+        tick();
+    }
+    flush();
+    await waitForCondition(
+        () => chrome.testState.local.betterChzzkLiveWatchHistory?.entries?.["live:broadcast-a"]?.watchedSeconds === 60
+    );
+
+    apiLiveId = "broadcast-b";
+    apiTitle = "B 방송";
+    dom.window.document.title = "B DOM 제목";
+    metadataRefreshCallback();
+    await waitForCondition(() =>
+        chrome.testState.runtimeMessages.some(
+            (message) =>
+                message?.operation?.kind === "upsertSessionSnapshot" &&
+                message.operation.recordId === "live:broadcast-a" &&
+                message.operation.session.closed === true
+        )
+    );
+    await waitForAsyncCallbacks();
+
+    for (let index = 0; index < 6; index += 1) {
+        clock.advance(10000);
+        nowMs += 10000;
+        mediaTime += 10;
+        tick();
+    }
+    flush();
+    await waitForCondition(
+        () => chrome.testState.local.betterChzzkLiveWatchHistory?.entries?.["live:broadcast-b"]?.watchedSeconds === 60
+    );
+    video.dispatchEvent(new dom.window.Event("ended"));
+    await waitForCondition(
+        () =>
+            chrome.testState.local.betterChzzkLiveWatchHistory.entries["live:broadcast-b"].sessionDetails[0].closed ===
+            true
+    );
+
+    const history = chrome.testState.local.betterChzzkLiveWatchHistory;
+    const entryA = history.entries["live:broadcast-a"];
+    const entryB = history.entries["live:broadcast-b"];
+    assert.equal(Object.keys(history.entries).length, 2);
+    assert.equal(entryA.watchedSeconds, 60);
+    assert.equal(entryB.watchedSeconds, 60);
+    assert.equal(entryA.title, "A 방송");
+    assert.equal(entryB.title, "B 방송");
+    assert.equal(entryA.sessionDetails[0].title, "A 방송");
+    assert.equal(entryB.sessionDetails[0].title, "B 방송");
+    assert.notEqual(entryA.sessionDetails[0].id, entryB.sessionDetails[0].id);
+    assert.equal(
+        entryA.titleHistory.some((row) => row.title === "B 방송"),
+        false
+    );
+    assert.equal(
+        entryB.titleHistory.some((row) => row.title === "A 방송"),
+        false
+    );
 });
 
 test("VOD replay chat fix ignores currentTime-only URL changes on the same VOD", async () => {
@@ -7109,4 +7843,52 @@ test("history page keeps stored totals when exact watch ranges are capped", asyn
     assert.equal(document.getElementById("totalWatchTime").textContent, "34분");
     assert.equal(document.getElementById("monthWatchTime").textContent, "34분");
     assert.match(document.querySelector(`[data-date="${dateKey}"]`).getAttribute("aria-label"), /34분/);
+});
+
+test("history page counts overlapping tab ranges once while keeping a single merged session row", async () => {
+    const startMs = Date.parse("2026-06-29T09:00:00+09:00");
+    const watchedSeconds = 10 * 60;
+    const dateKey = "2026-06-29";
+    const session = (id) => ({
+        dailySeconds: { [dateKey]: watchedSeconds },
+        enteredAt: startMs,
+        id,
+        leftAt: startMs + watchedSeconds * 1000,
+        watchedRanges: [{ startAt: startMs, endAt: startMs + watchedSeconds * 1000 }],
+        watchedSeconds,
+    });
+    const chrome = createFakeChrome({
+        local: {
+            betterChzzkLiveWatchHistory: {
+                entries: {
+                    "live:overlapping-tabs": {
+                        channelId: "test-channel",
+                        channelName: "테스트 채널",
+                        dailySeconds: { [dateKey]: watchedSeconds * 2 },
+                        firstWatchedAt: startMs,
+                        id: "live:overlapping-tabs",
+                        lastWatchedAt: startMs + watchedSeconds * 1000,
+                        liveId: "overlapping-tabs",
+                        sessionDetails: [session("tab-a"), session("tab-b")],
+                        title: "동시 탭 기록",
+                        watchedSeconds: watchedSeconds * 2,
+                    },
+                },
+            },
+        },
+    });
+    const dom = createDom("history.html", "history.html", chrome);
+
+    evalRepoScript(dom, "shared", "data.js");
+    evalRepoScript(dom, "history.js");
+    await waitForAsyncCallbacks();
+
+    const { document } = dom.window;
+    assert.equal(document.getElementById("totalWatchTime").textContent, "10분");
+    assert.equal(document.getElementById("monthWatchTime").textContent, "10분");
+    assert.match(document.querySelector(`[data-date="${dateKey}"]`).getAttribute("aria-label"), /10분/);
+    document.querySelector(".history-entry-detail").click();
+    assert.equal(document.querySelectorAll(".history-session-item").length, 1);
+    assert.match(document.querySelector(".history-session-item").textContent, /시청10분/);
+    dom.window.close();
 });

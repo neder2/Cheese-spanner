@@ -142,6 +142,202 @@ test("different tab sessions merge without overwriting each other", () => {
     assert.equal(entry.watchedSeconds, 140);
 });
 
+test("unique watch totals deduplicate overlapping tabs while preserving range and retired residuals", () => {
+    const { context } = loadStore();
+    const startAt = Date.parse("2026-07-10T12:00:00+09:00");
+    const dateKey = "2026-07-10";
+    const sessions = [
+        {
+            id: "tab-a",
+            watchedSeconds: 600,
+            dailySeconds: { [dateKey]: 600 },
+            watchedRanges: [{ startAt, endAt: startAt + 600000 }],
+        },
+        {
+            id: "tab-b",
+            watchedSeconds: 620,
+            dailySeconds: { [dateKey]: 620 },
+            watchedRanges: [{ startAt, endAt: startAt + 600000 }],
+        },
+    ];
+
+    const totals = context.BetterChzzk.utils.getUniqueWatchTotals(
+        { watchedSeconds: 1250, dailySeconds: { [dateKey]: 1250 } },
+        sessions
+    );
+
+    assert.equal(totals.watchedSeconds, 650);
+    assert.equal(totals.dailySeconds[dateKey], 650);
+});
+
+test("record migration merges distinct and legacy session totals and redirects late provisional snapshots", () => {
+    const now = Date.parse("2026-07-10T12:00:00+09:00");
+    const sourceRecordId = "channel:channel-a:provisional:session-a";
+    const targetRecordId = "live:100";
+    const { store } = loadStore();
+    let outcome = store.applyMutation(
+        undefined,
+        createSnapshot(now, { recordId: sourceRecordId, sessionId: "source-session", watchedSeconds: 60 }),
+        now
+    );
+    const sourceEntry = outcome.history.entries[sourceRecordId];
+    sourceEntry.watchedSeconds = 180;
+    sourceEntry.dailySeconds["2026-07-10"] = 180;
+    sourceEntry.sessions = 3;
+    sourceEntry.retiredSessionStartedAtBarrier = now - 500000;
+    outcome = store.applyMutation(
+        outcome.history,
+        createSnapshot(now + 1, {
+            recordId: targetRecordId,
+            sessionId: "target-session",
+            enteredAt: now - 60000,
+            watchedSeconds: 80,
+        }),
+        now + 1
+    );
+    outcome.history.entries[targetRecordId].retiredSessionStartedAtBarrier = now - 400000;
+
+    outcome = store.applyMutation(
+        outcome.history,
+        { kind: "migrateRecordId", sourceRecordId, targetRecordId },
+        now + 2
+    );
+    let entry = outcome.history.entries[targetRecordId];
+    assert.equal(outcome.history.entries[sourceRecordId], undefined);
+    assert.equal(entry.watchedSeconds, 260);
+    assert.equal(entry.dailySeconds["2026-07-10"], 260);
+    assert.equal(entry.sessions, 4);
+    assert.equal(entry.retiredSessionStartedAtBarrier, now - 400000);
+    assert.deepEqual(Array.from(entry.sessionDetails, (session) => session.id).sort(), [
+        "source-session",
+        "target-session",
+    ]);
+
+    outcome = store.applyMutation(
+        outcome.history,
+        { kind: "migrateRecordId", sourceRecordId, targetRecordId },
+        now + 3
+    );
+    assert.equal(outcome.changed, false);
+    entry = outcome.history.entries[targetRecordId];
+    assert.equal(entry.watchedSeconds, 260);
+    assert.equal(entry.dailySeconds["2026-07-10"], 260);
+    assert.equal(entry.sessions, 4);
+    assert.equal(entry.retiredSessionStartedAtBarrier, now - 400000);
+
+    outcome = store.applyMutation(
+        outcome.history,
+        createSnapshot(now + 4, {
+            recordId: sourceRecordId,
+            sessionId: "source-session",
+            watchedSeconds: 120,
+        }),
+        now + 4
+    );
+    entry = outcome.history.entries[targetRecordId];
+    assert.equal(outcome.result.recordId, targetRecordId);
+    assert.equal(outcome.history.entries[sourceRecordId], undefined);
+    assert.equal(entry.watchedSeconds, 320);
+    assert.equal(entry.sessions, 4);
+});
+
+test("a deleted provisional record propagates its barrier through migration", () => {
+    const now = Date.parse("2026-07-10T12:00:00+09:00");
+    const enteredAt = now - 120000;
+    const sourceRecordId = "channel:channel-a:provisional:deleted-session";
+    const targetRecordId = "live:deleted-live";
+    const { store } = loadStore();
+    let outcome = store.applyMutation(
+        undefined,
+        createSnapshot(now, { recordId: sourceRecordId, sessionId: "deleted-session", enteredAt }),
+        now
+    );
+    outcome = store.applyMutation(
+        outcome.history,
+        { kind: "deleteEntries", entryIds: [sourceRecordId], cutoffAt: now },
+        now
+    );
+    outcome = store.applyMutation(
+        outcome.history,
+        { kind: "migrateRecordId", sourceRecordId, targetRecordId },
+        now + 1
+    );
+
+    assert.equal(outcome.history.entries[sourceRecordId], undefined);
+    assert.equal(outcome.history.entries[targetRecordId], undefined);
+    assert.equal(outcome.history.tombstones[targetRecordId], now);
+
+    outcome = store.applyMutation(
+        outcome.history,
+        createSnapshot(now + 2, { recordId: targetRecordId, sessionId: "deleted-session", enteredAt }),
+        now + 2
+    );
+    assert.equal(outcome.result.reason, "deleted");
+    assert.equal(outcome.history.entries[targetRecordId], undefined);
+
+    outcome = store.applyMutation(
+        outcome.history,
+        createSnapshot(now + 3, {
+            recordId: targetRecordId,
+            sessionId: "after-delete",
+            enteredAt: now + 1,
+        }),
+        now + 3
+    );
+    assert.equal(outcome.result.status, "applied");
+    assert.equal(outcome.history.entries[targetRecordId].sessionDetails[0].id, "after-delete");
+});
+
+test("reverse record migrations are rejected and conflicting retargets are safe no-ops", () => {
+    const now = Date.parse("2026-07-10T12:00:00+09:00");
+    const sourceRecordId = "channel:channel-a:provisional:session-a";
+    const targetRecordId = "live:target-a";
+    const { store } = loadStore();
+    let outcome = store.applyMutation(
+        undefined,
+        createSnapshot(now, { recordId: sourceRecordId, sessionId: "session-a" }),
+        now
+    );
+    outcome = store.applyMutation(
+        outcome.history,
+        { kind: "migrateRecordId", sourceRecordId, targetRecordId },
+        now + 1
+    );
+    const migratedEntry = JSON.stringify(outcome.history.entries[targetRecordId]);
+
+    assert.throws(
+        () =>
+            store.applyMutation(
+                outcome.history,
+                { kind: "migrateRecordId", sourceRecordId: targetRecordId, targetRecordId: sourceRecordId },
+                now + 2
+            ),
+        /direction/
+    );
+    assert.equal(outcome.history.recordAliases[targetRecordId], undefined);
+    assert.equal(JSON.stringify(outcome.history.entries[targetRecordId]), migratedEntry);
+
+    outcome = store.applyMutation(
+        outcome.history,
+        { kind: "migrateRecordId", sourceRecordId, targetRecordId: "live:target-b" },
+        now + 3
+    );
+    assert.equal(outcome.changed, false);
+    assert.equal(outcome.result.reason, "conflicting-alias");
+    assert.equal(outcome.history.recordAliases[sourceRecordId].targetRecordId, targetRecordId);
+    assert.equal(outcome.history.entries["live:target-b"], undefined);
+
+    const normalizedCycle = store.normalizeStoredHistory({
+        updatedAt: now,
+        recordAliases: {
+            [sourceRecordId]: { targetRecordId, migratedAt: now - 1 },
+            [targetRecordId]: { targetRecordId: sourceRecordId, migratedAt: now },
+        },
+    });
+    assert.equal(normalizedCycle.recordAliases[sourceRecordId].targetRecordId, targetRecordId);
+    assert.equal(normalizedCycle.recordAliases[targetRecordId], undefined);
+});
+
 test("session aggregates keep growing after retained details reach their cap", () => {
     const now = Date.parse("2026-07-10T18:00:00+09:00");
     const dayKey = "2026-07-10";
@@ -277,6 +473,25 @@ test("the bounded retired-session ledger keeps a newly delayed session idempoten
     assert.equal(entry.sessionDetails.length, 300);
     assert.equal(entry.retiredSessionCheckpoints.length, 1000);
     assert.ok(entry.retiredSessionCheckpoints.some((checkpoint) => checkpoint.id === "newly-delayed"));
+    assert.equal(
+        entry.retiredSessionCheckpoints.some((checkpoint) => checkpoint.id === "checkpoint-999"),
+        false
+    );
+    assert.equal(entry.retiredSessionStartedAtBarrier, now - 1999 * 1000);
+
+    outcome = store.applyMutation(
+        outcome.history,
+        createSnapshot(now + 2, {
+            sessionId: "checkpoint-999",
+            enteredAt: now - 1999 * 1000,
+            watchedSeconds: 60,
+        }),
+        now + 2
+    );
+    assert.equal(outcome.result.reason, "retired");
+    assert.equal(outcome.history.entries["live:100"].watchedSeconds, storedSeconds + 60);
+    assert.equal(outcome.history.entries["live:100"].dailySeconds[dayKey], storedSeconds + 60);
+    assert.equal(outcome.history.entries["live:100"].sessions, 1301);
 });
 
 test("delete and clear barriers reject stale snapshots but allow later sessions", () => {
@@ -312,6 +527,83 @@ test("delete and clear barriers reject stale snapshots but allow later sessions"
     );
     assert.equal(outcome.result.reason, "deleted");
     assert.deepEqual(Object.keys(outcome.history.entries), []);
+});
+
+test("an individual tombstone does not reset an unrelated active record", () => {
+    const now = Date.parse("2026-07-10T12:00:00+09:00");
+    const enteredAt = now - 120000;
+    const { store } = loadStore();
+    let outcome = store.applyMutation(
+        undefined,
+        createSnapshot(now, { recordId: "live:unrelated", enteredAt, watchedSeconds: 60 }),
+        now
+    );
+    outcome = store.applyMutation(
+        outcome.history,
+        { kind: "deleteEntries", entryIds: ["live:deleted"], cutoffAt: now },
+        now
+    );
+    outcome = store.applyMutation(
+        outcome.history,
+        createSnapshot(now + 1, { recordId: "live:unrelated", enteredAt, watchedSeconds: 120 }),
+        now + 1
+    );
+
+    assert.equal(outcome.result.status, "applied");
+    assert.equal(outcome.history.entries["live:unrelated"].watchedSeconds, 120);
+});
+
+test("tombstone compaction stays bounded and its global barrier blocks an evicted stale snapshot", () => {
+    const base = Date.parse("2026-07-10T12:00:00+09:00");
+    const { store } = loadStore();
+    const tombstones = Object.fromEntries(
+        Array.from({ length: store.HISTORY_MAX_TOMBSTONES + 1 }, (_, index) => [`live:deleted-${index}`, base + index])
+    );
+    const history = store.normalizeStoredHistory({ tombstones });
+
+    assert.equal(Object.keys(history.tombstones).length, store.HISTORY_MAX_TOMBSTONES);
+    assert.equal(history.tombstones["live:deleted-0"], undefined);
+    assert.equal(history.compactedSessionBarrierAt, base);
+
+    const outcome = store.applyMutation(
+        history,
+        createSnapshot(base + store.HISTORY_MAX_TOMBSTONES + 2, {
+            recordId: "live:deleted-0",
+            sessionId: "stale-after-compaction",
+            enteredAt: base - 60000,
+        }),
+        base + store.HISTORY_MAX_TOMBSTONES + 2
+    );
+    assert.equal(outcome.result.reason, "deleted");
+    assert.equal(outcome.history.entries["live:deleted-0"], undefined);
+});
+
+test("record alias compaction blocks a late provisional snapshot after its redirect is evicted", () => {
+    const base = Date.parse("2026-07-10T12:00:00+09:00");
+    const { store } = loadStore();
+    const recordAliases = Object.fromEntries(
+        Array.from({ length: store.HISTORY_MAX_RECORD_ALIASES + 1 }, (_, index) => [
+            `channel:channel-a:provisional:${index}`,
+            { targetRecordId: `live:target-${index}`, migratedAt: base + index },
+        ])
+    );
+    const history = store.normalizeStoredHistory({ recordAliases });
+
+    assert.equal(Object.keys(history.recordAliases).length, store.HISTORY_MAX_RECORD_ALIASES);
+    assert.equal(history.recordAliases["channel:channel-a:provisional:0"], undefined);
+    assert.equal(history.compactedSessionBarrierAt, base);
+
+    const outcome = store.applyMutation(
+        history,
+        createSnapshot(base + store.HISTORY_MAX_RECORD_ALIASES + 2, {
+            recordId: "channel:channel-a:provisional:0",
+            sessionId: "late-provisional",
+            enteredAt: base - 60000,
+        }),
+        base + store.HISTORY_MAX_RECORD_ALIASES + 2
+    );
+    assert.equal(outcome.result.reason, "deleted");
+    assert.equal(outcome.history.entries["channel:channel-a:provisional:0"], undefined);
 });
 
 test("delayed delete and clear retain sessions that started after their cutoff", () => {
@@ -365,6 +657,15 @@ test("mutation schema rejects unsupported operations and malformed record ids", 
     assert.throws(
         () => store.normalizeMutation({ kind: "setReplayVideoNo", recordId: "bad", videoNo: "1" }),
         /record id/
+    );
+    assert.throws(
+        () =>
+            store.normalizeMutation({
+                kind: "migrateRecordId",
+                sourceRecordId: "live:same",
+                targetRecordId: "live:same",
+            }),
+        /different/
     );
 });
 
@@ -495,6 +796,35 @@ test("background validates sender and schema before mutating history", async () 
     assert.equal(harness.local[harness.store.STORAGE_KEY].entries["live:100"].replayVideoNo, "555");
 });
 
+test("background queue keeps a migration alias when an older provisional snapshot arrives later", async () => {
+    const harness = createBackgroundHarness();
+    const sender = {
+        id: "extension-id",
+        tab: { id: 1 },
+        url: "https://chzzk.naver.com/live/channel-a",
+    };
+    const sourceRecordId = "channel:channel-a:provisional:session-a";
+    const targetRecordId = "live:late-live";
+    const migration = harness.send(
+        mutationMessage(harness.store, { kind: "migrateRecordId", sourceRecordId, targetRecordId }),
+        sender
+    );
+    const delayedSnapshot = harness.send(
+        mutationMessage(
+            harness.store,
+            createSnapshot(Date.now(), { recordId: sourceRecordId, sessionId: "session-a" })
+        ),
+        sender
+    );
+
+    assert.equal((await migration).ok, true);
+    assert.equal((await delayedSnapshot).ok, true);
+    const history = harness.local[harness.store.STORAGE_KEY];
+    assert.equal(history.entries[sourceRecordId], undefined);
+    assert.equal(history.entries[targetRecordId].liveId, "late-live");
+    assert.equal(history.entries[targetRecordId].sessionDetails[0].id, "session-a");
+});
+
 test("background queue reports runtime.lastError and continues with the next mutation", async () => {
     const harness = createBackgroundHarness();
     const sender = { id: "extension-id", tab: { id: 1 }, url: "https://chzzk.naver.com/live/channel-a" };
@@ -560,7 +890,7 @@ function jsonResponse(content) {
     return Promise.resolve({ ok: true, json: async () => ({ content }) });
 }
 
-test("history replay lookup retries after an empty result instead of caching it forever", async (t) => {
+test("history replay lookup negative cache expires after a short retry window", async (t) => {
     let available = false;
     let pageRequests = 0;
     const fixture = createHistoryResolver((url) => {
@@ -575,6 +905,8 @@ test("history replay lookup retries after an empty result instead of caching it 
         return jsonResponse({ liveId: "expected-live", videoNo: "42", videoTitle: "테스트 방송" });
     });
     t.after(() => fixture.dom.window.close());
+    let now = Date.parse("2026-07-10T12:00:00+09:00");
+    fixture.dom.window.Date.now = () => now;
     const entry = {
         id: "live:expected-live",
         channelId: "channel-a",
@@ -587,6 +919,10 @@ test("history replay lookup retries after an empty result instead of caching it 
 
     assert.equal(await fixture.resolveReplayVideoNo(entry), "");
     available = true;
+    assert.equal(await fixture.resolveReplayVideoNo(entry), "");
+    assert.equal(pageRequests, 1);
+
+    now += 30001;
     assert.equal(await fixture.resolveReplayVideoNo(entry), "42");
     assert.equal(pageRequests, 2);
 });
@@ -660,4 +996,155 @@ test("history replay lookup rejects a detail liveId that conflicts with a matchi
         firstWatchedAt: Date.parse("2026-07-10T10:00:00+09:00"),
     });
     assert.equal(videoNo, "");
+});
+
+test("history replay lookup bounds detail requests across 80 full candidate pages", async (t) => {
+    let pageRequests = 0;
+    let detailRequests = 0;
+    const fixture = createHistoryResolver((url) => {
+        const parsed = new URL(String(url));
+        if (parsed.pathname.endsWith("/videos")) {
+            const page = Number(parsed.searchParams.get("page"));
+            pageRequests += 1;
+            return jsonResponse({
+                data: Array.from({ length: 30 }, (_, index) => ({
+                    videoNo: `${page}-${index}`,
+                    videoType: "REPLAY",
+                    videoTitle: "같은 제목",
+                })),
+            });
+        }
+
+        detailRequests += 1;
+        return jsonResponse({ videoTitle: "같은 제목" });
+    });
+    t.after(() => fixture.dom.window.close());
+
+    const videoNo = await fixture.resolveReplayVideoNo({
+        id: "channel:channel-a:2026-07-10",
+        channelId: "channel-a",
+        liveId: "",
+        title: "같은 제목",
+        titleHistory: [],
+        firstWatchedAt: 0,
+        lastWatchedAt: 0,
+    });
+
+    assert.equal(videoNo, "");
+    assert.equal(pageRequests, 80);
+    assert.equal(detailRequests, 20);
+});
+
+test("history replay lookup stops after three consecutive detail errors", async (t) => {
+    let pageRequests = 0;
+    let detailRequests = 0;
+    const fixture = createHistoryResolver((url) => {
+        const parsed = new URL(String(url));
+        if (parsed.pathname.endsWith("/videos")) {
+            const page = Number(parsed.searchParams.get("page"));
+            pageRequests += 1;
+            return jsonResponse({
+                data:
+                    page === 0
+                        ? Array.from({ length: 30 }, (_, index) => ({
+                              videoNo: String(index),
+                              videoType: "REPLAY",
+                              videoTitle: "같은 제목",
+                          }))
+                        : [],
+            });
+        }
+
+        detailRequests += 1;
+        return Promise.reject(new Error("detail unavailable"));
+    });
+    t.after(() => fixture.dom.window.close());
+
+    await fixture.resolveReplayVideoNo({
+        id: "channel:channel-a:2026-07-10",
+        channelId: "channel-a",
+        liveId: "",
+        title: "같은 제목",
+        titleHistory: [],
+        firstWatchedAt: 0,
+        lastWatchedAt: 0,
+    });
+
+    assert.equal(pageRequests, 2);
+    assert.equal(detailRequests, 3);
+});
+
+test("history replay lookup inspects a top page detail before scanning later full pages", async (t) => {
+    let pageRequests = 0;
+    let detailRequests = 0;
+    const fixture = createHistoryResolver((url) => {
+        const parsed = new URL(String(url));
+        if (parsed.pathname.endsWith("/videos")) {
+            const page = Number(parsed.searchParams.get("page"));
+            pageRequests += 1;
+            return jsonResponse({
+                data: Array.from({ length: 30 }, (_, index) => ({
+                    videoNo: `${page}-${index}`,
+                    videoType: "REPLAY",
+                    videoTitle: "같은 제목",
+                })),
+            });
+        }
+
+        detailRequests += 1;
+        return jsonResponse({ liveId: "expected-live", videoTitle: "같은 제목" });
+    });
+    t.after(() => fixture.dom.window.close());
+
+    const videoNo = await fixture.resolveReplayVideoNo({
+        id: "live:expected-live",
+        channelId: "channel-a",
+        liveId: "expected-live",
+        title: "같은 제목",
+        titleHistory: [],
+        firstWatchedAt: 0,
+        lastWatchedAt: 0,
+    });
+
+    assert.equal(videoNo, "0-0");
+    assert.equal(pageRequests, 1);
+    assert.equal(detailRequests, 1);
+});
+
+test("history replay lookup stops scheduling requests after its total time budget", async (t) => {
+    let now = 1000000;
+    let pageRequests = 0;
+    let detailRequests = 0;
+    const fixture = createHistoryResolver((url) => {
+        const parsed = new URL(String(url));
+        if (parsed.pathname.endsWith("/videos")) {
+            pageRequests += 1;
+            now += 11000;
+            return jsonResponse({
+                data: Array.from({ length: 30 }, (_, index) => ({
+                    videoNo: `${pageRequests}-${index}`,
+                    videoType: "REPLAY",
+                    videoTitle: "같은 제목",
+                })),
+            });
+        }
+
+        detailRequests += 1;
+        return jsonResponse({ videoTitle: "같은 제목" });
+    });
+    t.after(() => fixture.dom.window.close());
+    fixture.dom.window.Date.now = () => now;
+
+    await fixture.resolveReplayVideoNo({
+        id: "channel:channel-a:2026-07-10",
+        channelId: "channel-a",
+        liveId: "",
+        title: "같은 제목",
+        titleHistory: [],
+        firstWatchedAt: 0,
+        lastWatchedAt: 0,
+    });
+
+    assert.equal(pageRequests, 2);
+    assert.equal(detailRequests, 5);
 });

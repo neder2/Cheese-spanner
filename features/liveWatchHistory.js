@@ -4,7 +4,7 @@
  * 실행 컨텍스트: https://chzzk.naver.com/live/{channelId}의 isolated content script.
  * 하는 일: 실제 media time이 전진한 구간만 누적하고 15초 간격·가시성 변경·pagehide에 flush한다.
  * 의존: BetterChzzkSettings와 BetterChzzk.utils의 DOM, 날짜, 범위 병합, runtime 메시지 유틸.
- * 통신: 누적 절대값 세션 스냅샷을 background 단일 writer에 보내며 직접 기록 저장소를 쓰지 않는다.
+ * 통신: 누적 절대값 세션 스냅샷과 provisional→live ID migration을 background 단일 writer에 보낸다.
  * 삭제 barrier 응답을 받으면 기존 세션을 버리고 현재 시각부터 새 세션으로 다시 추적한다.
  */
 (() => {
@@ -206,6 +206,24 @@
         }
     }
 
+    function createEmptyMetadata(channelId) {
+        return {
+            channelId,
+            liveId: "",
+            title: "",
+            channelName: "",
+            thumbnailUrl: "",
+            liveOpenDate: "",
+            liveUrl: `${location.origin}${location.pathname}`,
+        };
+    }
+
+    function combineMetadata(channelId, ...sources) {
+        const combined = { ...createEmptyMetadata(channelId), titleHistory: [] };
+        for (const source of sources) mergeMetadata(combined, source);
+        return combined;
+    }
+
     function scheduleMetadataRefresh(delayMs = METADATA_REFRESH_MS) {
         if (metadataTimer) clearTimeout(metadataTimer);
         if (!session || !isEnabledForCurrentPage()) return;
@@ -219,22 +237,24 @@
 
         const requestId = ++metadataRequestSeq;
         const channelId = current.channelId || getLiveChannelIdFromUrl();
-        mergeMetadata(current, inferMetadataFromPage(channelId));
+        const pageMetadata = inferMetadataFromPage(channelId);
 
         try {
             const url = `${LIVE_DETAIL_API_BASE}/${encodeURIComponent(channelId)}/live-detail`;
             const json = await fetchJson(url, { timeoutMs: FETCH_TIMEOUT_MS });
             if (requestId !== metadataRequestSeq || session !== current) return;
-            mergeMetadata(current, extractMetadataFromLiveDetail(json, channelId));
-            if (
-                !current.storageSessionRecorded &&
-                current.liveId &&
-                String(current.recordId || "").startsWith("channel:")
-            ) {
-                current.recordId = `live:${current.liveId}`;
+            const nextMetadata = extractMetadataFromLiveDetail(json, channelId);
+            const pinnedLiveId = getPinnedLiveId(current);
+            if (pinnedLiveId && nextMetadata.liveId && nextMetadata.liveId !== pinnedLiveId) {
+                endSession();
+                startSession(combineMetadata(channelId, pageMetadata, nextMetadata));
+                return;
             }
+            mergeMetadata(current, pageMetadata);
+            mergeMetadata(current, nextMetadata);
+            await promoteSessionRecordId(current);
         } catch (_) {
-            // DOM metadata is enough to keep recording when the detail API is unavailable.
+            if (requestId === metadataRequestSeq && session === current) mergeMetadata(current, pageMetadata);
         } finally {
             if (session === current) scheduleMetadataRefresh();
         }
@@ -243,7 +263,14 @@
     function getRecordId(current) {
         if (current.recordId) return current.recordId;
         if (current.liveId) return `live:${current.liveId}`;
-        return `channel:${current.channelId}:${getKstDateKey(current.startedAt)}`;
+        return `channel:${current.channelId}:provisional:${current.sessionId}`;
+    }
+
+    function getPinnedLiveId(current) {
+        for (const recordId of [current?.pendingRecordMigrationTarget, current?.recordId]) {
+            if (String(recordId || "").startsWith("live:")) return recordId.slice("live:".length);
+        }
+        return "";
     }
 
     function takePendingSnapshot(current) {
@@ -338,9 +365,57 @@
         return response.result || {};
     }
 
-    function resetSessionAfterDeletion(current) {
+    async function promoteSessionRecordId(current) {
+        if (!current?.liveId) return;
+        const pendingSourceRecordId = current.pendingRecordMigrationSource || "";
+        const pendingTargetRecordId = current.pendingRecordMigrationTarget || "";
+        const existingRecordId = getRecordId(current);
+        if (!pendingSourceRecordId && existingRecordId.startsWith("live:")) {
+            current.liveId = existingRecordId.slice("live:".length);
+            return;
+        }
+
+        const sourceRecordId = pendingSourceRecordId || existingRecordId;
+        if (!sourceRecordId.startsWith("channel:") || !sourceRecordId.includes(":provisional:")) return;
+        const targetRecordId = pendingTargetRecordId || `live:${current.liveId}`;
+        const shouldMigrate =
+            Boolean(pendingSourceRecordId) || current.storageSessionRecorded || current.flushInProgress;
+        current.liveId = targetRecordId.slice("live:".length);
+        if (!shouldMigrate) {
+            current.recordId = targetRecordId;
+            return;
+        }
+
+        current.pendingRecordMigrationSource = sourceRecordId;
+        current.pendingRecordMigrationTarget = targetRecordId;
+        try {
+            await sendWatchHistoryMutation({
+                kind: "migrateRecordId",
+                sourceRecordId,
+                targetRecordId,
+            });
+            if (
+                current.pendingRecordMigrationSource === sourceRecordId &&
+                current.pendingRecordMigrationTarget === targetRecordId
+            ) {
+                current.recordId = targetRecordId;
+                current.pendingRecordMigrationSource = "";
+                current.pendingRecordMigrationTarget = "";
+            }
+        } catch (_) {
+            if (
+                current.pendingRecordMigrationSource === sourceRecordId &&
+                current.pendingRecordMigrationTarget === targetRecordId
+            ) {
+                current.recordId = sourceRecordId;
+            }
+            // 다음 metadata refresh에서 같은 직렬 migration을 다시 시도한다.
+        }
+    }
+
+    function resetSessionAfterBarrier(current, barrier = 0) {
         if (!current || current.closed === true || session !== current) return;
-        const now = Date.now();
+        const now = Math.max(Date.now(), Math.round(Number(barrier) || 0) + 1);
         current.sessionId = createSessionId();
         current.enteredAt = now;
         current.startedAt = now;
@@ -359,6 +434,8 @@
         current.lastTickAt = performance.now();
         current.lastMediaTime = getVideoMediaTime(attachedVideo);
         current.titleHistory = [];
+        current.pendingRecordMigrationSource = "";
+        current.pendingRecordMigrationTarget = "";
         addTitleHistory(current, current.title, now);
         current.recordId = "";
         current.recordId = getRecordId(current);
@@ -424,7 +501,7 @@
         const rangeSnapshot = takePendingRangeSnapshot(current);
         const deltaSeconds = pendingTotal(snapshot);
         const shouldUpdateSession = (force || current.closed === true) && hasStoredSessionStateChange(current);
-        if (deltaSeconds <= 0 && !shouldUpdateSession) {
+        if (deltaSeconds <= 0 && !shouldUpdateSession && !current.pendingRecordMigrationSource) {
             if (current.closed === true && current.storageSessionRecorded && current.storageClosed === true) {
                 finalizeClosedSession(current);
             }
@@ -434,19 +511,27 @@
         current.flushInProgress = true;
         current.flushAgainRequested = false;
         current.flushAgainForce = false;
-        let discardedByDeletion = false;
+        let discardedByBarrier = false;
         let flushFailed = false;
+        if (current.pendingRecordMigrationSource) await promoteSessionRecordId(current);
         const operation = buildSessionSnapshot(current);
 
         try {
             const result = await sendWatchHistoryMutation(operation);
-            discardedByDeletion = result.status === "ignored" && result.reason === "deleted";
-            if (discardedByDeletion) {
-                resetSessionAfterDeletion(current);
+            discardedByBarrier =
+                result.status === "ignored" && (result.reason === "deleted" || result.reason === "retired");
+            if (discardedByBarrier && operation.recordId === getRecordId(current)) {
+                resetSessionAfterBarrier(current, result.barrier);
+            } else if (discardedByBarrier) {
+                restorePendingSnapshot(current, snapshot);
+                restorePendingRangeSnapshot(current, rangeSnapshot);
+                current.flushAgainRequested = true;
+                current.flushAgainForce = current.flushAgainForce || force;
             } else {
                 current.storageSessionRecorded = true;
                 current.storageLeftAt = operation.session.leftAt;
                 current.storageClosed = operation.session.closed;
+                flushFailed = Boolean(current.pendingRecordMigrationSource);
             }
         } catch (_) {
             flushFailed = true;
@@ -497,11 +582,11 @@
         current.lastSeenAt = current.lastWatchedAt;
     }
 
-    function startSession() {
+    function startSession(initialMetadata = null) {
         if (session || !isEnabledForCurrentPage()) return;
 
         const channelId = getLiveChannelIdFromUrl();
-        const metadata = inferMetadataFromPage(channelId);
+        const metadata = initialMetadata ? createEmptyMetadata(channelId) : inferMetadataFromPage(channelId);
         const now = Date.now();
 
         session = {
@@ -520,7 +605,9 @@
             storageSessionRecorded: false,
             lastTickAt: performance.now(),
             lastMediaTime: getVideoMediaTime(attachedVideo),
+            titleHistory: [],
         };
+        if (initialMetadata) mergeMetadata(session, initialMetadata);
         addTitleHistory(session, session.title, now);
         session.recordId = getRecordId(session);
 
@@ -574,12 +661,16 @@
         void flushSession({ force: true });
     }
 
+    function onVideoEnded() {
+        endSession();
+    }
+
     function detachVideo() {
         if (!attachedVideo) return;
         attachedVideo.removeEventListener("play", onVideoPlay, true);
         attachedVideo.removeEventListener("playing", onVideoPlay, true);
         attachedVideo.removeEventListener("pause", onVideoPause, true);
-        attachedVideo.removeEventListener("ended", onVideoPause, true);
+        attachedVideo.removeEventListener("ended", onVideoEnded, true);
         attachedVideo.removeEventListener("waiting", onVideoPause, true);
         attachedVideo = null;
     }
@@ -593,9 +684,10 @@
         attachedVideo.addEventListener("play", onVideoPlay, true);
         attachedVideo.addEventListener("playing", onVideoPlay, true);
         attachedVideo.addEventListener("pause", onVideoPause, true);
-        attachedVideo.addEventListener("ended", onVideoPause, true);
+        attachedVideo.addEventListener("ended", onVideoEnded, true);
         attachedVideo.addEventListener("waiting", onVideoPause, true);
 
+        if (session) scheduleMetadataRefresh(0);
         if (isVideoActive(video)) startSession();
     }
 

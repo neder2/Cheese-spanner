@@ -47,7 +47,7 @@ function isTrustedWatchHistorySender(operation, sender) {
         return false;
     }
 
-    if (operation.kind === "upsertSessionSnapshot") {
+    if (operation.kind === "upsertSessionSnapshot" || operation.kind === "migrateRecordId") {
         return Boolean(sender.tab) && senderUrl.protocol === "https:" && senderUrl.hostname === "chzzk.naver.com";
     }
 

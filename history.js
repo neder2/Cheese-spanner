@@ -37,6 +37,12 @@ const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
 const VIDEO_PAGE_SIZE = 30;
 const REPLAY_LOOKUP_MAX_PAGES = 80;
 const FETCH_TIMEOUT_MS = 8000;
+const REPLAY_LOOKUP_MAX_DURATION_MS = 20000;
+const REPLAY_DETAIL_CANDIDATES_PER_PAGE = 5;
+const REPLAY_LOOKUP_MAX_DETAIL_REQUESTS = 20;
+const REPLAY_LOOKUP_RESERVED_EXACT_DETAIL_REQUESTS = 5;
+const REPLAY_LOOKUP_MAX_CONSECUTIVE_ERRORS = 3;
+const REPLAY_LOOKUP_NEGATIVE_CACHE_TTL_MS = 30000;
 const START_EXACT_TOLERANCE_MS = 20 * 60 * 1000;
 const START_LOOSE_TOLERANCE_MS = 3 * 60 * 60 * 1000;
 const TARGET_WINDOW_MS = 7 * DAY_MS;
@@ -59,9 +65,9 @@ const {
     getKstDateScopeBounds: getDateScopeBounds,
     getKstMonthStartMs,
     getKstParts,
+    getUniqueWatchTotals,
     isSameKstDate,
     mergeDailySeconds: mergeSessionDailySeconds,
-    mergeDailySecondsMax,
     mergeWatchRanges,
     normalizeDailySeconds,
     normalizeForMatch,
@@ -209,20 +215,35 @@ function mergeContinuousSessionDetails(sessionDetails) {
         const shouldMerge = last && lastLeftAt > 0 && session.enteredAt <= lastLeftAt + SESSION_MERGE_GAP_MS;
 
         if (!shouldMerge) {
-            merged.push(session);
+            merged.push({ ...session, sourceSessions: [session] });
             continue;
         }
 
+        last.sourceSessions.push(session);
         if (session.title) last.title = session.title;
         last.leftAt = Math.max(lastLeftAt, Number(session.leftAt) || session.enteredAt);
-        last.watchedSeconds = Math.max(0, Number(last.watchedSeconds) || 0) + session.watchedSeconds;
-        last.dailySeconds = mergeSessionDailySeconds(last.dailySeconds, session.dailySeconds);
         last.watchedRanges = mergeWatchRanges([...(last.watchedRanges || []), ...(session.watchedRanges || [])]);
         last.closed = last.closed === true && session.closed === true;
         last.legacy = last.legacy === true && session.legacy === true;
     }
 
-    return merged.sort((a, b) => b.enteredAt - a.enteredAt);
+    return merged
+        .map((session) => {
+            const sourceSessions = session.sourceSessions;
+            const storedTotals = sourceSessions.reduce(
+                (totals, source) => {
+                    totals.watchedSeconds += Math.max(0, Number(source.watchedSeconds) || 0);
+                    mergeSessionDailySeconds(totals.dailySeconds, source.dailySeconds);
+                    return totals;
+                },
+                { watchedSeconds: 0, dailySeconds: {} }
+            );
+            const uniqueTotals = getUniqueWatchTotals(storedTotals, sourceSessions);
+            const normalized = { ...session, ...uniqueTotals };
+            delete normalized.sourceSessions;
+            return normalized;
+        })
+        .sort((a, b) => b.enteredAt - a.enteredAt);
 }
 
 function normalizeSessionDetails(row, fallbackEntry) {
@@ -249,9 +270,7 @@ function normalizeSessionDetails(row, fallbackEntry) {
         })
         .filter((session) => session.id && session.enteredAt > 0 && session.watchedSeconds >= MIN_WATCH_SECONDS);
 
-    if (sessions.length) {
-        return mergeContinuousSessionDetails(sessions);
-    }
+    if (sessions.length) return sessions;
 
     if (hasRawSessions || !fallbackEntry || fallbackEntry.watchedSeconds < MIN_WATCH_SECONDS) return [];
     return [
@@ -267,27 +286,6 @@ function normalizeSessionDetails(row, fallbackEntry) {
             legacy: true,
         },
     ];
-}
-
-function sumSessionSeconds(sessionDetails) {
-    const exactSeconds = sumWatchRanges(collectWatchSessionRanges(sessionDetails));
-    const storedSeconds = (sessionDetails || []).reduce(
-        (sum, session) => sum + Math.max(0, Number(session?.watchedSeconds) || 0),
-        0
-    );
-    return Math.max(exactSeconds, storedSeconds);
-}
-
-function buildDailySecondsFromSessions(sessionDetails) {
-    const rangesByDate = {};
-    const storedDailySeconds = {};
-    for (const session of sessionDetails || []) {
-        mergeSessionDailySeconds(storedDailySeconds, session?.dailySeconds);
-    }
-    for (const range of collectWatchSessionRanges(sessionDetails)) {
-        addWatchRangeToRangesByDate(rangesByDate, range);
-    }
-    return mergeDailySecondsMax(storedDailySeconds, sumWatchRangesByDate(rangesByDate));
 }
 
 function getSessionFirstWatchedAt(sessionDetails) {
@@ -331,12 +329,11 @@ function normalizeHistory(raw) {
                 sessions: Math.max(1, Math.round(Number(row.sessions) || 1)),
                 dailySeconds: normalizeDailySeconds(row.dailySeconds),
             };
-            entry.sessionDetails = normalizeSessionDetails(row, entry);
-            entry.watchedSeconds = Math.max(entry.watchedSeconds, sumSessionSeconds(entry.sessionDetails));
-            entry.dailySeconds = mergeDailySecondsMax(
-                entry.dailySeconds,
-                buildDailySecondsFromSessions(entry.sessionDetails)
-            );
+            const sourceSessionDetails = normalizeSessionDetails(row, entry);
+            const uniqueTotals = getUniqueWatchTotals(entry, sourceSessionDetails);
+            entry.sessionDetails = mergeContinuousSessionDetails(sourceSessionDetails);
+            entry.watchedSeconds = uniqueTotals.watchedSeconds;
+            entry.dailySeconds = uniqueTotals.dailySeconds;
             const sessionFirstWatchedAt = getSessionFirstWatchedAt(entry.sessionDetails);
             const sessionLastWatchedAt = getSessionLastWatchedAt(entry.sessionDetails);
             if (sessionFirstWatchedAt > 0) {
@@ -418,7 +415,7 @@ function getEntryTargetMs(entry) {
     return last > 0 ? last : 0;
 }
 
-async function fetchVideoPage(channelId, page) {
+async function fetchVideoPage(channelId, page, { signal, timeoutMs = FETCH_TIMEOUT_MS } = {}) {
     const params = new URLSearchParams({
         sortType: "LATEST",
         pagingType: "PAGE",
@@ -428,15 +425,17 @@ async function fetchVideoPage(channelId, page) {
     const url = `${API_BASE}/${encodeURIComponent(channelId)}/videos?${params.toString()}`;
     return fetchJson(url, {
         headers: { Accept: "application/json" },
-        timeoutMs: FETCH_TIMEOUT_MS,
+        signal,
+        timeoutMs,
     });
 }
 
-async function fetchVideoDetail(videoNo) {
+async function fetchVideoDetail(videoNo, { signal, timeoutMs = FETCH_TIMEOUT_MS } = {}) {
     const url = `${VIDEO_DETAIL_API_BASE}/${encodeURIComponent(videoNo)}`;
     const json = await fetchJson(url, {
         headers: { Accept: "application/json" },
-        timeoutMs: FETCH_TIMEOUT_MS,
+        signal,
+        timeoutMs,
     });
     return json?.content || null;
 }
@@ -558,6 +557,15 @@ function shouldStopReplayLookup(entry, videos, page) {
     return Number.isFinite(oldestComparable) && oldestComparable < targetMs - TARGET_WINDOW_MS;
 }
 
+function compareReplayCandidates(left, right) {
+    return right.score - left.score || left.order - right.order;
+}
+
+function getReplayLookupFetchTimeout(deadlineAt) {
+    const remainingMs = Math.max(0, deadlineAt - Date.now());
+    return remainingMs > 0 ? Math.max(1, Math.min(FETCH_TIMEOUT_MS, remainingMs)) : 0;
+}
+
 async function resolveReplayVideoNo(entry) {
     const cachedVideoNo = getReplayVideoNo(entry);
     if (cachedVideoNo) return cachedVideoNo;
@@ -566,52 +574,167 @@ async function resolveReplayVideoNo(entry) {
     const cacheKey = `${entry.id}:${entry.channelId}:${entry.liveId}:${entry.liveOpenDate}:${getEntryTitles(entry).join("|")}`;
     if (replayLookupCache.has(cacheKey)) {
         const cached = replayLookupCache.get(cacheKey);
-        touchMapEntry(replayLookupCache, cacheKey, cached, MAX_REPLAY_LOOKUP_CACHE_ENTRIES);
-        return cached;
+        if (cached.expiresAt > 0 && cached.expiresAt <= Date.now()) {
+            replayLookupCache.delete(cacheKey);
+        } else {
+            touchMapEntry(replayLookupCache, cacheKey, cached, MAX_REPLAY_LOOKUP_CACHE_ENTRIES);
+            return cached.promise;
+        }
     }
 
+    const lookupAbortController = new AbortController();
+    const lookupAbortTimer = setTimeout(() => lookupAbortController.abort(), REPLAY_LOOKUP_MAX_DURATION_MS);
     const promise = (async () => {
-        let best = null;
+        const deadlineAt = Date.now() + REPLAY_LOOKUP_MAX_DURATION_MS;
+        const candidatesByVideoNo = new Map();
+        const detailCandidatesByVideoNo = new Map();
+        const attemptedDetailVideoNos = new Set();
+        let candidateOrder = 0;
+        let detailRequests = 0;
+        let consecutivePageErrors = 0;
+        let consecutiveDetailErrors = 0;
+        let detailLookupStopped = false;
+
+        async function inspectReplayCandidateDetail(candidate) {
+            if (
+                !candidate ||
+                attemptedDetailVideoNos.has(candidate.video.videoNo) ||
+                detailLookupStopped ||
+                detailRequests >= REPLAY_LOOKUP_MAX_DETAIL_REQUESTS
+            ) {
+                return "";
+            }
+
+            const timeoutMs = getReplayLookupFetchTimeout(deadlineAt);
+            if (!timeoutMs || lookupAbortController.signal.aborted) return "";
+
+            attemptedDetailVideoNos.add(candidate.video.videoNo);
+            detailRequests += 1;
+            let detailFailed = false;
+            try {
+                mergeVideoDetail(
+                    candidate.video,
+                    await fetchVideoDetail(candidate.video.videoNo, {
+                        signal: lookupAbortController.signal,
+                        timeoutMs,
+                    })
+                );
+                consecutiveDetailErrors = 0;
+            } catch (_) {
+                // The list data is still useful if a bounded detail lookup is unavailable.
+                detailFailed = true;
+                consecutiveDetailErrors += 1;
+            }
+
+            if (hasConflictingLiveId(entry, candidate.video)) {
+                candidate.rejected = true;
+            } else {
+                candidate.score = scoreReplayCandidate(entry, candidate.video);
+                if (candidate.score >= 1000) return candidate.video.videoNo;
+            }
+
+            if (detailFailed && consecutiveDetailErrors >= REPLAY_LOOKUP_MAX_CONSECUTIVE_ERRORS) {
+                detailLookupStopped = true;
+            }
+            return "";
+        }
 
         for (let page = 0; page < REPLAY_LOOKUP_MAX_PAGES; page++) {
-            const json = await fetchVideoPage(entry.channelId, page);
+            const timeoutMs = getReplayLookupFetchTimeout(deadlineAt);
+            if (!timeoutMs || lookupAbortController.signal.aborted) break;
+
+            let json;
+            try {
+                json = await fetchVideoPage(entry.channelId, page, {
+                    signal: lookupAbortController.signal,
+                    timeoutMs,
+                });
+                consecutivePageErrors = 0;
+            } catch (_) {
+                consecutivePageErrors += 1;
+                if (
+                    consecutivePageErrors >= REPLAY_LOOKUP_MAX_CONSECUTIVE_ERRORS ||
+                    lookupAbortController.signal.aborted ||
+                    getReplayLookupFetchTimeout(deadlineAt) === 0
+                ) {
+                    break;
+                }
+                continue;
+            }
+
             const videos = extractReplayVideos(json).filter(replayOnly);
             if (!videos.length && page === 0) break;
 
-            const candidates = videos.filter((video) => videoCouldMatchEntry(entry, video));
-            for (const video of candidates) {
-                try {
-                    mergeVideoDetail(video, await fetchVideoDetail(video.videoNo));
-                } catch (_) {
-                    // The list data is still useful if detail lookup is unavailable.
-                }
-
-                if (hasConflictingLiveId(entry, video)) continue;
+            const pageCandidates = new Map();
+            for (const video of videos) {
+                if (!videoCouldMatchEntry(entry, video)) continue;
 
                 const score = scoreReplayCandidate(entry, video);
-                if (!best || score > best.score) best = { video, score };
-                if (score >= 1000) return video.videoNo;
+                const existing = candidatesByVideoNo.get(video.videoNo);
+                if (!existing) {
+                    const candidate = { video, score, order: candidateOrder, rejected: false };
+                    candidateOrder += 1;
+                    candidatesByVideoNo.set(video.videoNo, candidate);
+                    pageCandidates.set(video.videoNo, candidate);
+                } else {
+                    if (score > existing.score && !attemptedDetailVideoNos.has(video.videoNo)) {
+                        existing.video = video;
+                        existing.score = score;
+                    }
+                    pageCandidates.set(video.videoNo, existing);
+                }
             }
 
-            if (best?.score >= 420 && shouldStopReplayLookup(entry, videos, page)) break;
+            const pageDetailCandidates = Array.from(pageCandidates.values())
+                .sort(compareReplayCandidates)
+                .slice(0, REPLAY_DETAIL_CANDIDATES_PER_PAGE);
+            for (const candidate of pageDetailCandidates) {
+                const previous = detailCandidatesByVideoNo.get(candidate.video.videoNo);
+                if (!previous || compareReplayCandidates(candidate, previous) < 0) {
+                    detailCandidatesByVideoNo.set(candidate.video.videoNo, candidate);
+                }
+            }
+
+            const immediateRegularDetailLimit =
+                REPLAY_LOOKUP_MAX_DETAIL_REQUESTS - REPLAY_LOOKUP_RESERVED_EXACT_DETAIL_REQUESTS;
+            for (const candidate of pageDetailCandidates) {
+                const isExactListMatch = candidate.score >= 1000;
+                if (!isExactListMatch && detailRequests >= immediateRegularDetailLimit) continue;
+
+                const resolvedVideoNo = await inspectReplayCandidateDetail(candidate);
+                if (resolvedVideoNo) return resolvedVideoNo;
+            }
+
             if (shouldStopReplayLookup(entry, videos, page)) break;
             if (videos.length < VIDEO_PAGE_SIZE) break;
         }
 
-        return best && best.score >= 220 ? best.video.videoNo : "";
-    })();
+        const detailCandidates = Array.from(detailCandidatesByVideoNo.values()).sort(compareReplayCandidates);
+        for (const candidate of detailCandidates) {
+            if (detailRequests >= REPLAY_LOOKUP_MAX_DETAIL_REQUESTS || detailLookupStopped) break;
+            const resolvedVideoNo = await inspectReplayCandidateDetail(candidate);
+            if (resolvedVideoNo) return resolvedVideoNo;
+        }
 
+        const best = Array.from(candidatesByVideoNo.values())
+            .filter((candidate) => !candidate.rejected && !hasConflictingLiveId(entry, candidate.video))
+            .sort(compareReplayCandidates)[0];
+        return best && best.score >= 220 ? best.video.videoNo : "";
+    })().finally(() => clearTimeout(lookupAbortTimer));
+
+    const cacheEntry = { promise: null, expiresAt: 0 };
     const guardedPromise = promise.then(
         (videoNo) => {
-            if (!videoNo) replayLookupCache.delete(cacheKey);
+            if (!videoNo) cacheEntry.expiresAt = Date.now() + REPLAY_LOOKUP_NEGATIVE_CACHE_TTL_MS;
             return videoNo;
         },
         (error) => {
-            replayLookupCache.delete(cacheKey);
+            if (replayLookupCache.get(cacheKey) === cacheEntry) replayLookupCache.delete(cacheKey);
             throw error;
         }
     );
-    touchMapEntry(replayLookupCache, cacheKey, guardedPromise, MAX_REPLAY_LOOKUP_CACHE_ENTRIES);
+    cacheEntry.promise = guardedPromise;
+    touchMapEntry(replayLookupCache, cacheKey, cacheEntry, MAX_REPLAY_LOOKUP_CACHE_ENTRIES);
     return guardedPromise;
 }
 

@@ -1,6 +1,6 @@
 /**
  * shared/watchHistoryStore.js — background service worker가 단독으로 소유하는 시청 기록 mutation 코어.
- * DOM에 의존하지 않으며, 동일 세션의 절대값 스냅샷을 멱등 병합하고 삭제 barrier를 유지한다.
+ * DOM에 의존하지 않으며, 동일 세션의 절대값 스냅샷을 멱등 병합하고 bounded 삭제·ID migration barrier를 유지한다.
  */
 (() => {
     "use strict";
@@ -8,10 +8,12 @@
     const STORAGE_KEY = "betterChzzkLiveWatchHistory";
     const MESSAGE_TYPE = "betterChzzk:watch-history-mutation";
     const MESSAGE_VERSION = 1;
-    const HISTORY_VERSION = 2;
+    const HISTORY_VERSION = 3;
     const HISTORY_MAX_ENTRIES = 2000;
     const HISTORY_MAX_SESSION_DETAILS_PER_ENTRY = 300;
     const HISTORY_MAX_RETIRED_SESSION_CHECKPOINTS_PER_ENTRY = 1000;
+    const HISTORY_MAX_TOMBSTONES = 2000;
+    const HISTORY_MAX_RECORD_ALIASES = 2000;
     const HISTORY_MAX_WATCHED_RANGES_PER_SESSION = 200;
     const TITLE_HISTORY_MAX = 20;
     const MAX_ENTRY_IDS_PER_MUTATION = 2000;
@@ -171,6 +173,15 @@
                 session: normalizeSessionSnapshot(value.session, now),
             };
         }
+        if (kind === "migrateRecordId") {
+            const sourceRecordId = normalizeRecordId(value.sourceRecordId);
+            const targetRecordId = normalizeRecordId(value.targetRecordId);
+            if (sourceRecordId === targetRecordId) throw new Error("record migration target must be different");
+            if (!sourceRecordId.startsWith("channel:") || !targetRecordId.startsWith("live:")) {
+                throw new Error("invalid record migration direction");
+            }
+            return { kind, sourceRecordId, targetRecordId };
+        }
         if (kind === "setReplayVideoNo") {
             const videoNo = compactString(value.videoNo, 120);
             if (!videoNo) throw new Error("replay video number is required");
@@ -239,28 +250,47 @@
         };
     }
 
-    function normalizeRetiredSessionCheckpoints(value) {
+    function normalizeRetiredSessionCheckpoints(value, { retainOverflow = false } = {}) {
         const byId = new Map();
         for (const rawCheckpoint of Array.isArray(value) ? value : []) {
             const checkpoint = cloneRetiredSessionCheckpoint(rawCheckpoint);
             if (!checkpoint) continue;
             byId.set(checkpoint.id, mergeRetiredSessionCheckpoint(byId.get(checkpoint.id), checkpoint));
         }
-        return Array.from(byId.values())
-            .sort((a, b) => b.checkpointedAt - a.checkpointedAt)
-            .slice(0, HISTORY_MAX_RETIRED_SESSION_CHECKPOINTS_PER_ENTRY);
+        const rows = Array.from(byId.values()).sort((a, b) => b.checkpointedAt - a.checkpointedAt);
+        return retainOverflow ? rows : rows.slice(0, HISTORY_MAX_RETIRED_SESSION_CHECKPOINTS_PER_ENTRY);
     }
 
     function upsertRetiredSessionCheckpoint(value, session, checkpointedAt) {
         const checkpoint = cloneRetiredSessionCheckpoint({ ...session, checkpointedAt });
-        if (!checkpoint) return normalizeRetiredSessionCheckpoints(value);
+        if (!checkpoint) {
+            return { checkpoints: normalizeRetiredSessionCheckpoints(value), evicted: [] };
+        }
         const rows = normalizeRetiredSessionCheckpoints(value);
         const index = rows.findIndex((row) => row.id === checkpoint.id);
         if (index >= 0) rows[index] = mergeRetiredSessionCheckpoint(rows[index], checkpoint);
         else rows.push(checkpoint);
-        return rows
-            .sort((a, b) => b.checkpointedAt - a.checkpointedAt)
-            .slice(0, HISTORY_MAX_RETIRED_SESSION_CHECKPOINTS_PER_ENTRY);
+        rows.sort((a, b) => b.checkpointedAt - a.checkpointedAt);
+        return {
+            checkpoints: rows.slice(0, HISTORY_MAX_RETIRED_SESSION_CHECKPOINTS_PER_ENTRY),
+            evicted: rows.slice(HISTORY_MAX_RETIRED_SESSION_CHECKPOINTS_PER_ENTRY),
+        };
+    }
+
+    function extendRetiredSessionStartedAtBarrier(value, evictedSessions) {
+        return (Array.isArray(evictedSessions) ? evictedSessions : []).reduce(
+            (barrier, session) => Math.max(barrier, finiteNumber(session?.enteredAt)),
+            Math.max(0, Math.round(finiteNumber(value)))
+        );
+    }
+
+    function upsertEntryRetiredSessionCheckpoint(entry, session, checkpointedAt) {
+        const outcome = upsertRetiredSessionCheckpoint(entry.retiredSessionCheckpoints, session, checkpointedAt);
+        entry.retiredSessionCheckpoints = outcome.checkpoints;
+        entry.retiredSessionStartedAtBarrier = extendRetiredSessionStartedAtBarrier(
+            entry.retiredSessionStartedAtBarrier,
+            outcome.evicted
+        );
     }
 
     function normalizeStoredHistory(value) {
@@ -275,11 +305,21 @@
             if (!rawEntry || typeof rawEntry !== "object") continue;
             const id = compactString(rawEntry.id, 240);
             if (!id) continue;
+            const retiredSessionRows = normalizeRetiredSessionCheckpoints(rawEntry.retiredSessionCheckpoints, {
+                retainOverflow: true,
+            });
             const entry = {
                 ...rawEntry,
                 id,
                 dailySeconds: normalizeDailySeconds(rawEntry.dailySeconds),
-                retiredSessionCheckpoints: normalizeRetiredSessionCheckpoints(rawEntry.retiredSessionCheckpoints),
+                retiredSessionCheckpoints: retiredSessionRows.slice(
+                    0,
+                    HISTORY_MAX_RETIRED_SESSION_CHECKPOINTS_PER_ENTRY
+                ),
+                retiredSessionStartedAtBarrier: extendRetiredSessionStartedAtBarrier(
+                    rawEntry.retiredSessionStartedAtBarrier,
+                    retiredSessionRows.slice(HISTORY_MAX_RETIRED_SESSION_CHECKPOINTS_PER_ENTRY)
+                ),
                 titleHistory: Array.isArray(rawEntry.titleHistory)
                     ? rawEntry.titleHistory.map((row) => ({ ...row }))
                     : [],
@@ -291,21 +331,159 @@
             }
             entries[id] = entry;
         }
+        let compactedSessionBarrierAt = Math.max(
+            0,
+            Math.round(finiteNumber(source.compactedSessionBarrierAt, source.sessionResetAt))
+        );
         const tombstones = {};
+        const normalizedTombstones = [];
         if (source.tombstones && typeof source.tombstones === "object") {
             for (const [id, deletedAt] of Object.entries(source.tombstones)) {
                 const timestamp = Math.max(0, Math.round(finiteNumber(deletedAt)));
-                if (id && timestamp > 0) tombstones[id] = timestamp;
+                if (/^(?:live|channel):/.test(id) && timestamp > 0) {
+                    normalizedTombstones.push([id, timestamp]);
+                }
             }
+        }
+        normalizedTombstones.sort(([, a], [, b]) => b - a);
+        for (const [id, deletedAt] of normalizedTombstones.slice(0, HISTORY_MAX_TOMBSTONES)) {
+            tombstones[id] = deletedAt;
+        }
+        for (const [, deletedAt] of normalizedTombstones.slice(HISTORY_MAX_TOMBSTONES)) {
+            compactedSessionBarrierAt = Math.max(compactedSessionBarrierAt, deletedAt);
+        }
+        const recordAliases = {};
+        const aliases = [];
+        if (source.recordAliases && typeof source.recordAliases === "object") {
+            for (const [rawSourceId, rawAlias] of Object.entries(source.recordAliases)) {
+                const sourceId = compactString(rawSourceId, 240);
+                const targetId = compactString(
+                    rawAlias && typeof rawAlias === "object" ? rawAlias.targetRecordId : rawAlias,
+                    240
+                );
+                const migratedAt = Math.max(
+                    0,
+                    Math.round(
+                        finiteNumber(rawAlias && typeof rawAlias === "object" ? rawAlias.migratedAt : source.updatedAt)
+                    )
+                );
+                if (
+                    !/^(?:live|channel):/.test(sourceId) ||
+                    !/^(?:live|channel):/.test(targetId) ||
+                    !sourceId.startsWith("channel:") ||
+                    !targetId.startsWith("live:") ||
+                    sourceId === targetId ||
+                    migratedAt <= 0
+                ) {
+                    continue;
+                }
+                aliases.push({ sourceId, targetRecordId: targetId, migratedAt });
+            }
+        }
+        aliases.sort((a, b) => b.migratedAt - a.migratedAt);
+        for (const alias of aliases.slice(0, HISTORY_MAX_RECORD_ALIASES)) {
+            recordAliases[alias.sourceId] = {
+                targetRecordId: alias.targetRecordId,
+                migratedAt: alias.migratedAt,
+            };
+        }
+        for (const alias of aliases.slice(HISTORY_MAX_RECORD_ALIASES)) {
+            compactedSessionBarrierAt = Math.max(compactedSessionBarrierAt, alias.migratedAt);
+        }
+        const flattenedRecordAliases = {};
+        for (const [sourceId, alias] of Object.entries(recordAliases)) {
+            const targetRecordId = resolveRecordId({ recordAliases }, sourceId);
+            if (!targetRecordId || targetRecordId === sourceId) continue;
+            flattenedRecordAliases[sourceId] = {
+                targetRecordId,
+                migratedAt: alias.migratedAt,
+            };
         }
         return {
             ...source,
             version: Math.max(HISTORY_VERSION, Math.round(finiteNumber(source.version, HISTORY_VERSION))),
             updatedAt: Math.max(0, Math.round(finiteNumber(source.updatedAt))),
             clearedAt: Math.max(0, Math.round(finiteNumber(source.clearedAt))),
+            compactedSessionBarrierAt,
             tombstones,
+            recordAliases: flattenedRecordAliases,
             entries,
         };
+    }
+
+    function resolveRecordId(history, recordId) {
+        let resolved = recordId;
+        const path = [];
+        const visitedIndexes = new Map();
+        while (true) {
+            if (visitedIndexes.has(resolved)) {
+                return path.slice(visitedIndexes.get(resolved)).sort()[0] || resolved;
+            }
+            visitedIndexes.set(resolved, path.length);
+            path.push(resolved);
+            const next = compactString(history.recordAliases?.[resolved]?.targetRecordId, 240);
+            if (!next || next === resolved) break;
+            resolved = next;
+        }
+        return resolved;
+    }
+
+    function setRecordAlias(history, sourceRecordId, targetRecordId, migratedAt) {
+        const before = JSON.stringify(history.recordAliases || {});
+        const beforeBarrier = finiteNumber(history.compactedSessionBarrierAt);
+        const previous = history.recordAliases?.[sourceRecordId];
+        const alias = previous?.targetRecordId === targetRecordId ? previous : { targetRecordId, migratedAt };
+        const aliases = {
+            ...(history.recordAliases || {}),
+            [sourceRecordId]: alias,
+        };
+        const rows = Object.entries(aliases).sort(
+            ([, a], [, b]) => finiteNumber(b?.migratedAt) - finiteNumber(a?.migratedAt)
+        );
+        history.recordAliases = Object.fromEntries(rows.slice(0, HISTORY_MAX_RECORD_ALIASES));
+        for (const [, alias] of rows.slice(HISTORY_MAX_RECORD_ALIASES)) {
+            history.compactedSessionBarrierAt = Math.max(
+                finiteNumber(history.compactedSessionBarrierAt),
+                finiteNumber(alias?.migratedAt)
+            );
+        }
+        return (
+            before !== JSON.stringify(history.recordAliases) ||
+            beforeBarrier !== finiteNumber(history.compactedSessionBarrierAt)
+        );
+    }
+
+    function setTombstone(history, recordId, deletedAt) {
+        const before = JSON.stringify(history.tombstones || {});
+        const beforeBarrier = finiteNumber(history.compactedSessionBarrierAt);
+        const tombstones = {
+            ...(history.tombstones || {}),
+            [recordId]: Math.max(finiteNumber(history.tombstones?.[recordId]), deletedAt),
+        };
+        const rows = Object.entries(tombstones).sort(([, a], [, b]) => finiteNumber(b) - finiteNumber(a));
+        history.tombstones = Object.fromEntries(rows.slice(0, HISTORY_MAX_TOMBSTONES));
+        for (const [, cutoffAt] of rows.slice(HISTORY_MAX_TOMBSTONES)) {
+            history.compactedSessionBarrierAt = Math.max(
+                finiteNumber(history.compactedSessionBarrierAt),
+                finiteNumber(cutoffAt)
+            );
+        }
+        return (
+            before !== JSON.stringify(history.tombstones) ||
+            beforeBarrier !== finiteNumber(history.compactedSessionBarrierAt)
+        );
+    }
+
+    function applyRecordDeletionBarrier(history, recordId, cutoffAt) {
+        if (cutoffAt <= 0) return false;
+        let changed = setTombstone(history, recordId, cutoffAt);
+        const entry = history.entries[recordId];
+        if (!entry || getEntryStartedAt(entry) > cutoffAt) return changed;
+        const retainedEntry = retainEntrySessionsAfter(entry, cutoffAt);
+        if (retainedEntry) history.entries[recordId] = retainedEntry;
+        else delete history.entries[recordId];
+        changed = true;
+        return changed;
     }
 
     function getEntryStartedAt(entry) {
@@ -384,6 +562,139 @@
         entry.titleHistory = mergeTitleHistory(entry.titleHistory, patch.titleHistory, entry.channelName);
     }
 
+    function mergeStoredSession(previous, incoming) {
+        if (!previous) return cloneSession(incoming);
+        const next = cloneSession(incoming);
+        return {
+            ...previous,
+            ...next,
+            title: next.title || previous.title || "",
+            enteredAt: Math.min(
+                finiteNumber(previous.enteredAt) || finiteNumber(next.enteredAt),
+                finiteNumber(next.enteredAt) || finiteNumber(previous.enteredAt)
+            ),
+            leftAt: Math.max(finiteNumber(previous.leftAt), finiteNumber(next.leftAt)),
+            watchedSeconds: Math.max(finiteNumber(previous.watchedSeconds), finiteNumber(next.watchedSeconds)),
+            dailySeconds: mergeDailyMax(previous.dailySeconds, next.dailySeconds),
+            watchedRanges: mergeRanges([...(previous.watchedRanges || []), ...(next.watchedRanges || [])]),
+            closed: previous.closed === true || next.closed === true,
+        };
+    }
+
+    function getEntryKnownSessions(entry) {
+        const byId = new Map();
+        for (const checkpoint of normalizeRetiredSessionCheckpoints(entry?.retiredSessionCheckpoints)) {
+            byId.set(checkpoint.id, cloneSession(checkpoint));
+        }
+        for (const session of Array.isArray(entry?.sessionDetails) ? entry.sessionDetails : []) {
+            const cloned = cloneSession(session);
+            if (!cloned.id) continue;
+            byId.set(cloned.id, mergeStoredSession(byId.get(cloned.id), cloned));
+        }
+        return Array.from(byId.values());
+    }
+
+    function getEntryAggregateResidual(entry, knownSessions) {
+        const representedSeconds = knownSessions.reduce(
+            (sum, session) => sum + Math.max(0, finiteNumber(session.watchedSeconds)),
+            0
+        );
+        const dailySeconds = {};
+        for (const session of knownSessions) {
+            for (const [dateKey, seconds] of Object.entries(normalizeDailySeconds(session.dailySeconds))) {
+                dailySeconds[dateKey] = finiteNumber(dailySeconds[dateKey]) + seconds;
+            }
+        }
+        const residualDailySeconds = {};
+        for (const [dateKey, seconds] of Object.entries(normalizeDailySeconds(entry?.dailySeconds))) {
+            const residual = Math.max(0, seconds - finiteNumber(dailySeconds[dateKey]));
+            if (residual > 0) residualDailySeconds[dateKey] = residual;
+        }
+        return {
+            watchedSeconds: Math.max(0, finiteNumber(entry?.watchedSeconds) - representedSeconds),
+            dailySeconds: residualDailySeconds,
+            sessions: Math.max(0, Math.round(finiteNumber(entry?.sessions)) - knownSessions.length),
+        };
+    }
+
+    function mergeEntriesForMigration(sourceEntry, targetEntry, targetRecordId, now) {
+        if (!sourceEntry) return targetEntry || null;
+        const sourceSessions = getEntryKnownSessions(sourceEntry);
+        const targetSessions = getEntryKnownSessions(targetEntry);
+        const sourceResidual = getEntryAggregateResidual(sourceEntry, sourceSessions);
+        const targetResidual = getEntryAggregateResidual(targetEntry, targetSessions);
+        const byId = new Map();
+        for (const session of [...sourceSessions, ...targetSessions]) {
+            if (!session.id) continue;
+            byId.set(session.id, mergeStoredSession(byId.get(session.id), session));
+        }
+        const allSessions = Array.from(byId.values()).sort(
+            (a, b) => finiteNumber(b.enteredAt) - finiteNumber(a.enteredAt)
+        );
+        const sessionDetails = allSessions.slice(0, HISTORY_MAX_SESSION_DETAILS_PER_ENTRY);
+        const retainedIds = new Set(sessionDetails.map((session) => session.id));
+        const retiredSessionRows = normalizeRetiredSessionCheckpoints(
+            allSessions
+                .filter((session) => !retainedIds.has(session.id))
+                .map((session) => ({ ...session, checkpointedAt: now })),
+            { retainOverflow: true }
+        );
+        const retiredSessionCheckpoints = retiredSessionRows.slice(
+            0,
+            HISTORY_MAX_RETIRED_SESSION_CHECKPOINTS_PER_ENTRY
+        );
+        const aggregateDailySeconds = {};
+        let watchedSeconds = sourceResidual.watchedSeconds + targetResidual.watchedSeconds;
+        for (const session of allSessions) {
+            watchedSeconds += Math.max(0, finiteNumber(session.watchedSeconds));
+            for (const [dateKey, seconds] of Object.entries(normalizeDailySeconds(session.dailySeconds))) {
+                aggregateDailySeconds[dateKey] = finiteNumber(aggregateDailySeconds[dateKey]) + seconds;
+            }
+        }
+        for (const residual of [sourceResidual.dailySeconds, targetResidual.dailySeconds]) {
+            for (const [dateKey, seconds] of Object.entries(residual)) {
+                aggregateDailySeconds[dateKey] = finiteNumber(aggregateDailySeconds[dateKey]) + seconds;
+            }
+        }
+
+        const sourceLastWatchedAt = finiteNumber(sourceEntry.lastWatchedAt);
+        const targetLastWatchedAt = finiteNumber(targetEntry?.lastWatchedAt);
+        const newer = targetLastWatchedAt >= sourceLastWatchedAt ? targetEntry || {} : sourceEntry;
+        const older = newer === sourceEntry ? targetEntry || {} : sourceEntry;
+        const firstWatchedValues = [sourceEntry.firstWatchedAt, targetEntry?.firstWatchedAt]
+            .map((value) => finiteNumber(value))
+            .filter((value) => value > 0);
+        const entry = {
+            ...older,
+            ...newer,
+            id: targetRecordId,
+            watchedSeconds,
+            dailySeconds: aggregateDailySeconds,
+            sessions: allSessions.length + sourceResidual.sessions + targetResidual.sessions,
+            sessionDetails,
+            retiredSessionCheckpoints,
+            retiredSessionStartedAtBarrier: extendRetiredSessionStartedAtBarrier(
+                Math.max(
+                    finiteNumber(sourceEntry.retiredSessionStartedAtBarrier),
+                    finiteNumber(targetEntry?.retiredSessionStartedAtBarrier)
+                ),
+                retiredSessionRows.slice(HISTORY_MAX_RETIRED_SESSION_CHECKPOINTS_PER_ENTRY)
+            ),
+            titleHistory: mergeTitleHistory(
+                sourceEntry.titleHistory,
+                targetEntry?.titleHistory,
+                newer.channelName || older.channelName
+            ),
+            firstWatchedAt: firstWatchedValues.length ? Math.min(...firstWatchedValues) : 0,
+            lastWatchedAt: Math.max(sourceLastWatchedAt, targetLastWatchedAt),
+        };
+        if (targetRecordId.startsWith("live:")) entry.liveId = targetRecordId.slice("live:".length);
+        if (!Array.isArray(sourceEntry.sessionDetails) && !Array.isArray(targetEntry?.sessionDetails)) {
+            delete entry.sessionDetails;
+        }
+        return entry;
+    }
+
     function pruneEntries(entries) {
         const entryCount = Object.keys(entries).length;
         if (entryCount <= HISTORY_MAX_ENTRIES) return entries;
@@ -394,7 +705,15 @@
     }
 
     function applySessionSnapshot(history, operation, now) {
-        const barrier = Math.max(history.clearedAt, finiteNumber(history.tombstones[operation.recordId]));
+        const requestedRecordId = operation.recordId;
+        const resolvedRecordId = resolveRecordId(history, operation.recordId);
+        if (resolvedRecordId !== operation.recordId) operation = { ...operation, recordId: resolvedRecordId };
+        const barrier = Math.max(
+            history.clearedAt,
+            finiteNumber(history.compactedSessionBarrierAt),
+            finiteNumber(history.tombstones[requestedRecordId]),
+            finiteNumber(history.tombstones[resolvedRecordId])
+        );
         if (operation.session.enteredAt <= barrier) {
             return { changed: false, result: { status: "ignored", reason: "deleted", barrier } };
         }
@@ -411,6 +730,10 @@
                   retiredSessionCheckpoints: normalizeRetiredSessionCheckpoints(
                       previousEntry.retiredSessionCheckpoints
                   ),
+                  retiredSessionStartedAtBarrier: Math.max(
+                      0,
+                      Math.round(finiteNumber(previousEntry.retiredSessionStartedAtBarrier))
+                  ),
               }
             : {
                   id: operation.recordId,
@@ -419,16 +742,34 @@
                   sessions: 0,
                   sessionDetails: [],
                   retiredSessionCheckpoints: [],
+                  retiredSessionStartedAtBarrier: 0,
                   titleHistory: [],
               };
         const sessionIndex = entry.sessionDetails.findIndex((row) => row?.id === operation.session.id);
         const retiredSessionIndex = entry.retiredSessionCheckpoints.findIndex((row) => row.id === operation.session.id);
+        if (
+            sessionIndex < 0 &&
+            retiredSessionIndex < 0 &&
+            operation.session.enteredAt <= finiteNumber(entry.retiredSessionStartedAtBarrier)
+        ) {
+            return {
+                changed: false,
+                result: {
+                    status: "ignored",
+                    reason: "retired",
+                    barrier: entry.retiredSessionStartedAtBarrier,
+                },
+            };
+        }
         const previousSessionCount = Math.max(
             0,
             Math.round(finiteNumber(entry.sessions)),
             entry.sessionDetails.length + entry.retiredSessionCheckpoints.length
         );
         mergeEntryMetadata(entry, operation.entry);
+        if (operation.recordId.startsWith("live:")) {
+            entry.liveId = operation.recordId.slice("live:".length);
+        }
 
         const previousSession =
             sessionIndex >= 0
@@ -471,22 +812,14 @@
 
         if (sessionIndex >= 0) entry.sessionDetails[sessionIndex] = nextSession;
         else if (retiredSessionIndex >= 0) {
-            entry.retiredSessionCheckpoints = upsertRetiredSessionCheckpoint(
-                entry.retiredSessionCheckpoints,
-                nextSession,
-                now
-            );
+            upsertEntryRetiredSessionCheckpoint(entry, nextSession, now);
         } else entry.sessionDetails.push(nextSession);
 
         const sortedSessionDetails = entry.sessionDetails.sort(
             (a, b) => finiteNumber(b.enteredAt) - finiteNumber(a.enteredAt)
         );
         for (const retiredSession of sortedSessionDetails.slice(HISTORY_MAX_SESSION_DETAILS_PER_ENTRY)) {
-            entry.retiredSessionCheckpoints = upsertRetiredSessionCheckpoint(
-                entry.retiredSessionCheckpoints,
-                retiredSession,
-                now
-            );
+            upsertEntryRetiredSessionCheckpoint(entry, retiredSession, now);
         }
         entry.sessionDetails = sortedSessionDetails.slice(0, HISTORY_MAX_SESSION_DETAILS_PER_ENTRY);
         const retainedSessionIds = new Set(entry.sessionDetails.map((session) => session.id));
@@ -530,17 +863,82 @@
 
         if (operation.kind === "upsertSessionSnapshot") {
             outcome = applySessionSnapshot(history, operation, now);
+        } else if (operation.kind === "migrateRecordId") {
+            const sourceRecordId = operation.sourceRecordId;
+            const targetRecordId = resolveRecordId(history, operation.targetRecordId);
+            const resolvedSourceRecordId = resolveRecordId(history, sourceRecordId);
+            const invalidCanonicalTarget = !targetRecordId.startsWith("live:");
+            const conflictsWithExistingAlias =
+                resolvedSourceRecordId !== sourceRecordId && resolvedSourceRecordId !== targetRecordId;
+            if (invalidCanonicalTarget || conflictsWithExistingAlias) {
+                outcome = {
+                    changed: false,
+                    result: {
+                        status: "ignored",
+                        reason: invalidCanonicalTarget ? "invalid-target-alias" : "conflicting-alias",
+                        sourceRecordId,
+                        recordId: resolvedSourceRecordId,
+                    },
+                };
+            } else {
+                const sourceBarrier = Math.max(
+                    finiteNumber(history.tombstones[sourceRecordId]),
+                    finiteNumber(history.tombstones[resolvedSourceRecordId])
+                );
+                let changed = applyRecordDeletionBarrier(history, targetRecordId, sourceBarrier);
+                if (resolvedSourceRecordId === targetRecordId) {
+                    outcome = {
+                        changed,
+                        result: {
+                            status: changed ? "applied" : "unchanged",
+                            sourceRecordId,
+                            recordId: targetRecordId,
+                        },
+                    };
+                } else {
+                    changed = setRecordAlias(history, sourceRecordId, targetRecordId, now) || changed;
+                    const sourceEntry = history.entries[sourceRecordId];
+                    const targetEntry = history.entries[targetRecordId];
+                    if (sourceEntry) {
+                        let mergedEntry = mergeEntriesForMigration(sourceEntry, targetEntry, targetRecordId, now);
+                        const barrier = Math.max(
+                            history.clearedAt,
+                            finiteNumber(history.compactedSessionBarrierAt),
+                            finiteNumber(history.tombstones[sourceRecordId]),
+                            finiteNumber(history.tombstones[targetRecordId])
+                        );
+                        if (mergedEntry && getEntryStartedAt(mergedEntry) <= barrier) {
+                            mergedEntry = retainEntrySessionsAfter(mergedEntry, barrier);
+                        }
+                        if (mergedEntry) history.entries[targetRecordId] = mergedEntry;
+                        else delete history.entries[targetRecordId];
+                        delete history.entries[sourceRecordId];
+                        history.entries = pruneEntries(history.entries);
+                        changed = true;
+                    }
+                    outcome = {
+                        changed,
+                        result: {
+                            status: changed ? "applied" : "unchanged",
+                            sourceRecordId,
+                            recordId: targetRecordId,
+                        },
+                    };
+                }
+            }
         } else if (operation.kind === "setReplayVideoNo") {
-            const entry = history.entries[operation.recordId];
+            const recordId = resolveRecordId(history, operation.recordId);
+            const entry = history.entries[recordId];
             if (!entry || entry.replayVideoNo === operation.videoNo) {
                 outcome = { changed: false, result: { status: entry ? "unchanged" : "missing" } };
             } else {
-                history.entries[operation.recordId] = { ...entry, replayVideoNo: operation.videoNo };
-                outcome = { changed: true, result: { status: "applied", recordId: operation.recordId } };
+                history.entries[recordId] = { ...entry, replayVideoNo: operation.videoNo };
+                outcome = { changed: true, result: { status: "applied", recordId } };
             }
         } else if (operation.kind === "deleteEntries") {
             let changed = false;
-            for (const id of operation.entryIds) {
+            for (const rawId of operation.entryIds) {
+                const id = resolveRecordId(history, rawId);
                 const entry = history.entries[id];
                 if (entry && getEntryStartedAt(entry) <= operation.cutoffAt) {
                     const retainedEntry = retainEntrySessionsAfter(entry, operation.cutoffAt);
@@ -548,10 +946,7 @@
                     else delete history.entries[id];
                     changed = true;
                 }
-                if (finiteNumber(history.tombstones[id]) < operation.cutoffAt) {
-                    history.tombstones[id] = operation.cutoffAt;
-                    changed = true;
-                }
+                changed = setTombstone(history, id, operation.cutoffAt) || changed;
             }
             outcome = { changed, result: { status: changed ? "applied" : "unchanged" } };
         } else {
@@ -581,6 +976,8 @@
     }
 
     globalThis.BetterChzzkWatchHistoryStore = {
+        HISTORY_MAX_RECORD_ALIASES,
+        HISTORY_MAX_TOMBSTONES,
         HISTORY_VERSION,
         MESSAGE_TYPE,
         MESSAGE_VERSION,

@@ -175,6 +175,8 @@
 
     const nativeDefineProperty = Object.defineProperty;
     const nativeDefineProperties = Object.defineProperties;
+    const nativeGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+    const nativeReflectGet = Reflect?.get;
     const nativeReflectDefineProperty = Reflect?.defineProperty;
     const DEFINE_PATCH_FLAG = "__betterChzzkAutoQualityDefinePatch";
     const DEFINE_PATCH_NATIVE = "__betterChzzkAutoQualityDefineNative";
@@ -656,44 +658,73 @@
     }
 
     function wrapVideoTracksDescriptor(prop, descriptor) {
-        if (prop !== "videoTracks" || !descriptor) return descriptor;
-        if (descriptor.get?.__betterChzzkVideoTracksWrapped || descriptor.set?.__betterChzzkVideoTracksWrapped)
+        if (
+            prop !== "videoTracks" ||
+            !descriptor ||
+            (typeof descriptor !== "object" && typeof descriptor !== "function") ||
+            typeof Proxy !== "function" ||
+            !nativeReflectGet
+        ) {
             return descriptor;
-
-        const nextDescriptor = { ...descriptor };
-
-        if (typeof descriptor.get === "function") {
-            const originalGet = descriptor.get;
-            nextDescriptor.get = function () {
-                const tracks = originalGet.call(this);
-                if (tracks && Number.isFinite(Number(tracks.length)) && Number(tracks.length) > 0) {
-                    rememberQualityTarget(this);
-                }
-                return tracks;
-            };
-
-            try {
-                nativeDefineProperty(nextDescriptor.get, "__betterChzzkVideoTracksWrapped", { value: true });
-            } catch (_) {
-                nextDescriptor.get.__betterChzzkVideoTracksWrapped = true;
-            }
         }
 
-        if (typeof descriptor.set === "function") {
-            const originalSet = descriptor.set;
-            nextDescriptor.set = function (value) {
+        let originalWrappedGet = null;
+        let wrappedGet = null;
+        let originalWrappedSet = null;
+        let wrappedSet = null;
+
+        function markWrappedAccessor(accessor) {
+            try {
+                nativeDefineProperty(accessor, "__betterChzzkVideoTracksWrapped", { value: true });
+            } catch (_) {
+                accessor.__betterChzzkVideoTracksWrapped = true;
+            }
+            return accessor;
+        }
+
+        function wrapAccessor(source, key, accessor) {
+            if (typeof accessor !== "function" || accessor.__betterChzzkVideoTracksWrapped) return accessor;
+
+            const ownDescriptor = nativeGetOwnPropertyDescriptor.call(Object, source, key);
+            if (
+                ownDescriptor &&
+                "value" in ownDescriptor &&
+                ownDescriptor.configurable === false &&
+                ownDescriptor.writable === false
+            ) {
+                return accessor;
+            }
+
+            if (key === "get") {
+                if (originalWrappedGet === accessor) return wrappedGet;
+                originalWrappedGet = accessor;
+                wrappedGet = markWrappedAccessor(function () {
+                    const tracks = accessor.call(this);
+                    if (tracks && Number.isFinite(Number(tracks.length)) && Number(tracks.length) > 0) {
+                        rememberQualityTarget(this);
+                    }
+                    return tracks;
+                });
+                return wrappedGet;
+            }
+
+            if (originalWrappedSet === accessor) return wrappedSet;
+            originalWrappedSet = accessor;
+            wrappedSet = markWrappedAccessor(function (value) {
                 rememberQualityTarget(this);
-                return originalSet.call(this, value);
-            };
-
-            try {
-                nativeDefineProperty(nextDescriptor.set, "__betterChzzkVideoTracksWrapped", { value: true });
-            } catch (_) {
-                nextDescriptor.set.__betterChzzkVideoTracksWrapped = true;
-            }
+                return accessor.call(this, value);
+            });
+            return wrappedSet;
         }
 
-        return nextDescriptor;
+        // Native ToPropertyDescriptor reads inherited and non-enumerable fields through Get.
+        // A view keeps that behavior while replacing only callable get/set values.
+        return new Proxy(descriptor, {
+            get(source, key) {
+                const value = nativeReflectGet.call(Reflect, source, key, source);
+                return key === "get" || key === "set" ? wrapAccessor(source, key, value) : value;
+            },
+        });
     }
 
     function wrapQualityDescriptor(prop, descriptor) {
@@ -706,6 +737,36 @@
         } catch (_) {
             return descriptor;
         }
+    }
+
+    function createQualityDescriptorMapView(descriptors) {
+        const mapDescriptor = nativeGetOwnPropertyDescriptor.call(Object, descriptors, "videoTracks");
+        if (!mapDescriptor?.enumerable || typeof Proxy !== "function" || !nativeReflectGet) return descriptors;
+
+        // Let native defineProperties observe the original map's prototype, own-key descriptors,
+        // symbols, non-enumerable entries, and __proto__ key. Only the value read for the one
+        // intercepted key is changed; rebuilding the map with assignments changes those semantics.
+        if ("value" in mapDescriptor && mapDescriptor.configurable === false && mapDescriptor.writable === false) {
+            return descriptors;
+        }
+
+        return new Proxy(descriptors, {
+            get(source, prop) {
+                const descriptor = nativeReflectGet.call(Reflect, source, prop, source);
+                if (prop !== "videoTracks") return descriptor;
+
+                const currentMapDescriptor = nativeGetOwnPropertyDescriptor.call(Object, source, prop);
+                if (
+                    currentMapDescriptor &&
+                    "value" in currentMapDescriptor &&
+                    currentMapDescriptor.configurable === false &&
+                    currentMapDescriptor.writable === false
+                ) {
+                    return descriptor;
+                }
+                return safeWrapQualityDescriptor(prop, descriptor);
+            },
+        });
     }
 
     function markDefinePatch(fn, nativeFn) {
@@ -748,30 +809,18 @@
         if (nativeDefineProperties) {
             try {
                 Object.defineProperties = markDefinePatch(function (target, descriptors) {
-                    if (descriptors == null) {
+                    if (descriptors == null || !isPlaybackRoute()) {
                         return nativeDefineProperties.call(Object, target, descriptors);
                     }
-                    let descriptorKeys = [];
-                    try {
-                        descriptorKeys = Reflect.ownKeys(descriptors);
-                    } catch (_) {
-                        return nativeDefineProperties.call(Object, target, descriptors);
-                    }
-                    if (!descriptorKeys.includes("videoTracks") || !isPlaybackRoute()) {
-                        return nativeDefineProperties.call(Object, target, descriptors);
-                    }
-
                     let nextDescriptors = descriptors;
                     try {
-                        nextDescriptors = {};
-                        for (const key of descriptorKeys) {
-                            nextDescriptors[key] =
-                                key === "videoTracks" ? wrapQualityDescriptor(key, descriptors[key]) : descriptors[key];
-                        }
+                        nextDescriptors = createQualityDescriptorMapView(descriptors);
                     } catch (_) {
-                        nextDescriptors = descriptors;
+                        return nativeDefineProperties.call(Object, target, descriptors);
                     }
-
+                    if (nextDescriptors === descriptors) {
+                        return nativeDefineProperties.call(Object, target, descriptors);
+                    }
                     return nativeDefineProperties.call(Object, target, nextDescriptors);
                 }, nativeDefineProperties);
             } catch (_) {

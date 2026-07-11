@@ -14,10 +14,12 @@ function waitForCallbacks() {
     return new Promise((resolve) => setTimeout(resolve, 20));
 }
 
-async function createOptionsFixture(t, initial = { autoQualityEnabled: true }) {
+async function createOptionsFixture(t, initial = { autoQualityEnabled: true }, { deferLoad = false } = {}) {
     const stored = { ...initial };
     const setCalls = [];
+    const permissionRequests = [];
     let lastError = null;
+    let pendingGetCallback = null;
     const chrome = {
         runtime: {
             getManifest: () => ({ version: "1.2.2" }),
@@ -26,13 +28,18 @@ async function createOptionsFixture(t, initial = { autoQualityEnabled: true }) {
             },
         },
         permissions: {
-            request(_spec, callback) {
+            request(spec, callback) {
+                permissionRequests.push(spec);
                 callback(true);
             },
         },
         storage: {
             sync: {
                 get(_keys, callback) {
+                    if (deferLoad) {
+                        pendingGetCallback = callback;
+                        return;
+                    }
                     setTimeout(() => callback({ ...stored }), 0);
                 },
                 set(values, callback) {
@@ -59,10 +66,97 @@ async function createOptionsFixture(t, initial = { autoQualityEnabled: true }) {
     dom.window.confirm = () => true;
     dom.window.eval(readRepoFile("shared", "settings.js"));
     dom.window.eval(readRepoFile("options.js"));
-    await waitForCallbacks();
+    if (!deferLoad) await waitForCallbacks();
 
-    return { dom, setCalls, stored };
+    return {
+        dom,
+        permissionRequests,
+        setCalls,
+        stored,
+        completeLoad(error = null) {
+            assert.ok(pendingGetCallback, "the initial storage read should be pending");
+            const callback = pendingGetCallback;
+            pendingGetCallback = null;
+            lastError = error ? { message: String(error) } : null;
+            callback(error ? {} : { ...stored });
+            lastError = null;
+        },
+    };
 }
+
+test("options blocks edits until the initial settings load completes", async (t) => {
+    const { dom, setCalls, stored, completeLoad } = await createOptionsFixture(
+        t,
+        { autoQualityEnabled: false, skipSeconds: 17 },
+        { deferLoad: true }
+    );
+    const toggle = dom.window.document.querySelector('[data-option="autoQualityEnabled"]');
+    const input = dom.window.document.querySelector('[data-option="skipSeconds"]');
+    const resetButton = dom.window.document.getElementById("reset");
+
+    assert.equal(toggle.disabled, true);
+    assert.equal(input.disabled, true);
+    assert.equal(resetButton.disabled, true);
+
+    toggle.checked = true;
+    toggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    input.value = "99";
+    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    resetButton.dispatchEvent(new dom.window.Event("click", { bubbles: true }));
+
+    assert.equal(setCalls.length, 0, "loading-time interactions must not write default form values");
+
+    completeLoad();
+
+    assert.equal(toggle.disabled, false);
+    assert.equal(resetButton.disabled, false);
+    assert.equal(toggle.checked, false);
+    assert.equal(input.value, "17");
+
+    toggle.checked = true;
+    toggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+
+    assert.equal(setCalls.length, 1);
+    assert.equal(setCalls[0].values.autoQualityEnabled, true);
+    assert.equal(setCalls[0].values.skipSeconds, 17, "an unrelated loaded setting must be preserved");
+    setCalls[0].complete();
+
+    assert.equal(stored.autoQualityEnabled, true);
+    assert.equal(stored.skipSeconds, 17);
+});
+
+test("options ignores programmatic edits after the initial settings load fails", async (t) => {
+    const fixture = await createOptionsFixture(
+        t,
+        { followingPreviewTooltipEnabled: false, skipSeconds: 17 },
+        { deferLoad: true }
+    );
+    const { dom, permissionRequests, setCalls, completeLoad } = fixture;
+    const previewToggle = dom.window.document.querySelector('[data-option="followingPreviewTooltipEnabled"]');
+    const input = dom.window.document.querySelector('[data-option="skipSeconds"]');
+    const notice = dom.window.document.getElementById("notice");
+
+    completeLoad("initial read failed");
+
+    assert.equal(previewToggle.disabled, true);
+    assert.equal(input.disabled, true);
+    assert.equal(notice.dataset.state, "error");
+    const noticeText = notice.textContent;
+
+    previewToggle.checked = true;
+    previewToggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    input.value = "99";
+    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    dom.window.dispatchEvent(new dom.window.Event("pagehide"));
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    assert.equal(permissionRequests.length, 0, "a disabled preview toggle must not request host permission");
+    assert.equal(setCalls.length, 0, "failed-load events and pagehide must not write default form values");
+    assert.equal(notice.dataset.state, "error", "failed-load events must not show a saving state");
+    assert.equal(notice.textContent, noticeText);
+});
 
 test("options serializes rapid saves when the form returns to its original value", async (t) => {
     const { dom, setCalls, stored } = await createOptionsFixture(t);

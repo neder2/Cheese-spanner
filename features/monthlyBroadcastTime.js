@@ -49,7 +49,6 @@
     const WATCH_HISTORY_STORAGE_KEY = "betterChzzkLiveWatchHistory";
     const WATCH_MATCH_START_TOLERANCE_MS = 60 * 60 * 1000;
     const WATCH_MATCH_OVERLAP_GRACE_MS = 10 * 60 * 1000;
-    const SESSION_MERGE_GAP_MS = 60 * 1000;
     const MAX_STATS_CACHE_CHANNELS = 8;
     const MAX_MONTH_CACHE_ENTRIES = 36;
     const MAX_PAGE_CACHE_CHANNELS = 8;
@@ -110,9 +109,7 @@
     let removePageChangeDetection = null;
     const storage = globalThis.chrome?.storage?.local;
     const {
-        addWatchRangeToRangesByDate,
         bindFeatureOptions,
-        collectWatchSessionRanges,
         createMutationObserverSync,
         fetchJson,
         formatKstDateKey: formatDateKey,
@@ -120,10 +117,9 @@
         formatKstTime: formatKstClock,
         getKstDateKey,
         getKstParts,
+        getUniqueWatchTotals,
         isLastPage,
         isVisible,
-        mergeDailySeconds: mergeWatchSessionDailySeconds,
-        mergeDailySecondsMax,
         mergeWatchRanges,
         normSpace,
         normalizeDailySeconds: normalizeWatchDailySeconds,
@@ -138,7 +134,6 @@
         startPageChangeDetection,
         storageGet,
         sumWatchRanges,
-        sumWatchRangesByDate,
         touchMapEntry,
     } = BetterChzzk.utils;
     const scheduleThrottledMount = createThrottledDomSync(runScheduledMount, 160);
@@ -1184,40 +1179,6 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         return Number.isFinite(number) && number > 0 ? number : 0;
     }
 
-    function mergeContinuousWatchSessionDetails(sessionDetails) {
-        const merged = [];
-        const rows = (Array.isArray(sessionDetails) ? sessionDetails : [])
-            .filter((session) => session && typeof session === "object")
-            .map((session) => ({
-                ...session,
-                enteredAt: Number(session.enteredAt) || 0,
-                leftAt: Number(session.leftAt) || Number(session.enteredAt) || 0,
-                watchedSeconds: Math.max(0, Number(session.watchedSeconds) || 0),
-                dailySeconds: normalizeWatchDailySeconds(session.dailySeconds),
-                watchedRanges: mergeWatchRanges(session.watchedRanges),
-            }))
-            .filter((session) => session.id && session.enteredAt > 0 && session.watchedSeconds >= MINUTE_SECONDS)
-            .sort((a, b) => a.enteredAt - b.enteredAt || a.leftAt - b.leftAt);
-
-        for (const session of rows) {
-            const last = merged[merged.length - 1];
-            const lastLeftAt = Number(last?.leftAt) || Number(last?.enteredAt) || 0;
-            const shouldMerge = last && lastLeftAt > 0 && session.enteredAt <= lastLeftAt + SESSION_MERGE_GAP_MS;
-
-            if (!shouldMerge) {
-                merged.push(session);
-                continue;
-            }
-
-            last.leftAt = Math.max(lastLeftAt, Number(session.leftAt) || session.enteredAt);
-            last.watchedSeconds = Math.max(0, Number(last.watchedSeconds) || 0) + session.watchedSeconds;
-            last.dailySeconds = mergeWatchSessionDailySeconds(last.dailySeconds, session.dailySeconds);
-            last.watchedRanges = mergeWatchRanges([...(last.watchedRanges || []), ...(session.watchedRanges || [])]);
-        }
-
-        return merged;
-    }
-
     function normalizeWatchSessionDetails(value) {
         if (!Array.isArray(value)) return [];
         const sessions = value
@@ -1237,28 +1198,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
             })
             .filter((session) => session.id && session.enteredAt > 0 && session.watchedSeconds >= MINUTE_SECONDS);
 
-        return mergeContinuousWatchSessionDetails(sessions);
-    }
-
-    function sumWatchSessionSeconds(sessionDetails) {
-        const exactSeconds = sumWatchRanges(collectWatchSessionRanges(sessionDetails));
-        const storedSeconds = (sessionDetails || []).reduce(
-            (sum, session) => sum + Math.max(0, Number(session?.watchedSeconds) || 0),
-            0
-        );
-        return Math.max(exactSeconds, storedSeconds);
-    }
-
-    function buildWatchDailySeconds(sessionDetails) {
-        const rangesByDate = {};
-        const storedDailySeconds = {};
-        for (const session of sessionDetails || []) {
-            mergeWatchSessionDailySeconds(storedDailySeconds, session?.dailySeconds);
-        }
-        for (const range of collectWatchSessionRanges(sessionDetails)) {
-            addWatchRangeToRangesByDate(rangesByDate, range);
-        }
-        return mergeDailySecondsMax(storedDailySeconds, sumWatchRangesByDate(rangesByDate));
+        return sessions;
     }
 
     function getWatchSessionFirstWatchedAt(sessionDetails) {
@@ -1289,13 +1229,13 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
                 const hasSessionDetails = Array.isArray(row.sessionDetails);
                 const sessionDetails = normalizeWatchSessionDetails(row.sessionDetails);
                 const storedDailySeconds = normalizeWatchDailySeconds(row.dailySeconds);
-                const dailySeconds = hasSessionDetails
-                    ? mergeDailySecondsMax(storedDailySeconds, buildWatchDailySeconds(sessionDetails))
-                    : storedDailySeconds;
                 const storedWatchedSeconds = Math.max(0, Number(row.watchedSeconds) || 0);
-                const watchedSeconds = hasSessionDetails
-                    ? Math.max(storedWatchedSeconds, sumWatchSessionSeconds(sessionDetails))
-                    : storedWatchedSeconds;
+                const uniqueTotals = hasSessionDetails
+                    ? getUniqueWatchTotals(
+                          { watchedSeconds: storedWatchedSeconds, dailySeconds: storedDailySeconds },
+                          sessionDetails
+                      )
+                    : { watchedSeconds: storedWatchedSeconds, dailySeconds: storedDailySeconds };
                 const storedFirstWatchedAt = getNumericMs(row.firstWatchedAt);
                 const storedLastWatchedAt = getNumericMs(row.lastWatchedAt);
                 const sessionFirstWatchedAt = hasSessionDetails ? getWatchSessionFirstWatchedAt(sessionDetails) : 0;
@@ -1315,8 +1255,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
                     liveOpenMs: parseChzzkDate(row.liveOpenDate)?.getTime() || 0,
                     firstWatchedAt,
                     lastWatchedAt,
-                    watchedSeconds,
-                    dailySeconds,
+                    watchedSeconds: uniqueTotals.watchedSeconds,
+                    dailySeconds: uniqueTotals.dailySeconds,
                 };
             })
             .filter((entry) => entry.id && entry.channelId && entry.watchedSeconds >= MINUTE_SECONDS);

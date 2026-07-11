@@ -394,6 +394,77 @@
         return dailySeconds;
     }
 
+    /**
+     * 여러 탭의 시청 구간은 한 번만 세되, 범위 상한·legacy/retired 세션 때문에 구간으로 표현되지
+     * 않은 누적값은 보존한다. 반드시 UI용 연속 세션 병합 전의 원본 세션 배열을 전달해야 한다.
+     */
+    function getUniqueWatchTotals(record, sessionDetails) {
+        const sessions = (Array.isArray(sessionDetails) ? sessionDetails : []).filter(
+            (session) => session && typeof session === "object"
+        );
+        const allRanges = [];
+        const exactRangesByDate = {};
+        const representedDailySeconds = {};
+        const residualDailySeconds = {};
+        let representedSeconds = 0;
+        let residualSeconds = 0;
+
+        for (const session of sessions) {
+            const storedSeconds = Math.max(0, Number(session.watchedSeconds) || 0);
+            const ranges = mergeWatchRanges(session.watchedRanges);
+            const rangeSeconds = sumWatchRanges(ranges);
+            representedSeconds += Math.max(storedSeconds, rangeSeconds);
+            residualSeconds += Math.max(0, storedSeconds - rangeSeconds);
+            allRanges.push(...ranges);
+
+            const sessionRangesByDate = {};
+            for (const range of ranges) {
+                addWatchRangeToRangesByDate(exactRangesByDate, range);
+                addWatchRangeToRangesByDate(sessionRangesByDate, range);
+            }
+            const sessionRangeDailySeconds = sumWatchRangesByDate(sessionRangesByDate);
+            const sessionDailySeconds = normalizeDailySeconds(session.dailySeconds);
+            const sessionDateKeys = new Set([
+                ...Object.keys(sessionDailySeconds),
+                ...Object.keys(sessionRangeDailySeconds),
+            ]);
+            for (const dateKey of sessionDateKeys) {
+                const seconds = Number(sessionDailySeconds[dateKey]) || 0;
+                const rangeDailySeconds = Number(sessionRangeDailySeconds[dateKey]) || 0;
+                representedDailySeconds[dateKey] =
+                    (Number(representedDailySeconds[dateKey]) || 0) + Math.max(seconds, rangeDailySeconds);
+                residualDailySeconds[dateKey] =
+                    (Number(residualDailySeconds[dateKey]) || 0) + Math.max(0, seconds - rangeDailySeconds);
+            }
+        }
+
+        const storedSeconds = Math.max(0, Number(record?.watchedSeconds) || 0);
+        const legacyOrRetiredSeconds = Math.max(0, storedSeconds - representedSeconds);
+        const watchedSeconds = sumWatchRanges(allRanges) + residualSeconds + legacyOrRetiredSeconds;
+        const exactDailySeconds = sumWatchRangesByDate(exactRangesByDate);
+        const storedDailySeconds = normalizeDailySeconds(record?.dailySeconds);
+        const dailySeconds = {};
+        const dateKeys = new Set([
+            ...Object.keys(exactDailySeconds),
+            ...Object.keys(residualDailySeconds),
+            ...Object.keys(storedDailySeconds),
+        ]);
+
+        for (const dateKey of dateKeys) {
+            const legacyOrRetiredDailySeconds = Math.max(
+                0,
+                (Number(storedDailySeconds[dateKey]) || 0) - (Number(representedDailySeconds[dateKey]) || 0)
+            );
+            const seconds =
+                (Number(exactDailySeconds[dateKey]) || 0) +
+                (Number(residualDailySeconds[dateKey]) || 0) +
+                legacyOrRetiredDailySeconds;
+            if (seconds > 0) dailySeconds[dateKey] = seconds;
+        }
+
+        return { watchedSeconds, dailySeconds };
+    }
+
     function trimMapToSize(map, maxSize) {
         while (map.size > maxSize) {
             const oldestKey = map.keys().next().value;
@@ -654,6 +725,7 @@
         getCommentDeviceId,
         getNextKstDayStartMs,
         getWatchSessionRanges,
+        getUniqueWatchTotals,
         isLastPage,
         isSameKstDate,
         mergeDailySeconds,

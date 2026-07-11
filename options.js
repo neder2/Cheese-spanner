@@ -48,7 +48,7 @@ let savedOptions = null;
 let autosaveTimer = 0;
 let saveInFlight = false;
 let pendingSave = null;
-let optionsLoadFailed = false;
+let optionsLoadState = storage ? "loading" : "ready";
 
 function setInputValue(input, value) {
     if (input.type === "checkbox") {
@@ -110,9 +110,11 @@ function isDisabledByDependency(control, options) {
 }
 
 function applyControlStates(options) {
+    const optionsUnavailable = optionsLoadState !== "ready";
     for (const control of optionInputs) {
-        control.disabled = isDisabledByDependency(control, options);
+        control.disabled = optionsUnavailable || isDisabledByDependency(control, options);
     }
+    resetButton.disabled = optionsUnavailable;
 }
 
 function renderNotice(options, state) {
@@ -196,6 +198,7 @@ function finishSave(normalized, message, error) {
 }
 
 function startSave(normalized, message) {
+    if (optionsLoadState !== "ready") return;
     saveInFlight = true;
     renderPageState(normalized, "saving");
     if (!storage) {
@@ -208,13 +211,15 @@ function startSave(normalized, message) {
 }
 
 function commitSave(message) {
-    const normalized = readOptionsFromForm();
-    if (optionsLoadFailed && !savedOptions) {
-        renderPageState(normalized, "error");
-        showMessage(OPTIONS_LOAD_BLOCKED_SAVE_MESSAGE, "error");
+    if (optionsLoadState !== "ready") {
+        if (optionsLoadState === "failed") {
+            renderPageState(readOptionsFromForm(), "error");
+            showMessage(OPTIONS_LOAD_BLOCKED_SAVE_MESSAGE, "error");
+        }
         return;
     }
 
+    const normalized = readOptionsFromForm();
     if (saveInFlight) {
         pendingSave = { options: normalized, message };
         renderPageState(normalized, "saving");
@@ -268,6 +273,7 @@ function flushPendingAutosave() {
 function flushLatestOptionsOnPageHide() {
     const hadPendingAutosave = Boolean(autosaveTimer);
     cancelAutosave();
+    if (optionsLoadState !== "ready") return;
 
     if (!saveInFlight) {
         if (hadPendingAutosave) commitSave();
@@ -298,6 +304,7 @@ form.addEventListener("submit", (event) => {
 });
 
 form.addEventListener("input", (event) => {
+    if (optionsLoadState !== "ready") return;
     const input = getOptionInput(event.target);
     // 체크박스는 change에서 한 번만 저장하고, 숫자 입력은 타이핑이 멎은 뒤 저장한다.
     if (!input || input.type === "checkbox") return;
@@ -306,6 +313,7 @@ form.addEventListener("input", (event) => {
 });
 
 form.addEventListener("change", (event) => {
+    if (optionsLoadState !== "ready") return;
     const input = getOptionInput(event.target);
     if (!input) return;
     cancelAutosave();
@@ -328,6 +336,7 @@ form.addEventListener("change", (event) => {
 });
 
 resetButton.addEventListener("click", () => {
+    if (optionsLoadState !== "ready") return;
     if (!window.confirm("모든 설정을 기본값으로 되돌릴까요? 직접 입력한 수치도 함께 초기화됩니다.")) return;
     cancelAutosave();
     renderOptions(DEFAULT_OPTIONS);
@@ -341,15 +350,16 @@ document.addEventListener("visibilitychange", () => {
 
 if (storage) {
     renderNotice(null, "loading");
+    applyControlStates(readOptionsFromForm());
     storage.get(OPTION_KEYS, (data) => {
         const error = globalThis.chrome?.runtime?.lastError;
         if (error) {
-            optionsLoadFailed = true;
+            optionsLoadState = "failed";
             renderOptions(DEFAULT_OPTIONS, { state: "error" });
             showMessage(OPTIONS_LOAD_ERROR_MESSAGE, "error");
             return;
         }
-        optionsLoadFailed = false;
+        optionsLoadState = "ready";
         savedOptions = renderOptions(data);
     });
 } else {
