@@ -438,6 +438,13 @@
         activeVideo = null;
     }
 
+    function bypassActiveGraph() {
+        const graph = activeVideo ? graphs.get(activeVideo) : null;
+        if (!graph || graph.failed) return;
+        connectGraph(graph, "bypass");
+        resumeContext(graph);
+    }
+
     function handlePageHide(event) {
         if (event?.persisted) return;
         releaseActiveGraph();
@@ -611,11 +618,7 @@
     function syncDisabledState() {
         compressorActive = false;
         removeButton();
-        const graph = activeVideo ? graphs.get(activeVideo) : null;
-        if (graph && !graph.failed) {
-            connectGraph(graph, "bypass");
-            resumeContext(graph);
-        }
+        bypassActiveGraph();
     }
 
     function syncState() {
@@ -627,7 +630,7 @@
         ensureButton();
         if (!isPlaybackRoute()) {
             compressorActive = false;
-            releaseActiveGraph();
+            bypassActiveGraph();
             return;
         }
         const video = getMainVideoElement?.();

@@ -430,7 +430,7 @@ test("VOD title history reloads storage changes and ignores the older pending sn
     dom.window.close();
 });
 
-test("audio compressor preserves its graph across BFCache pagehide and resumes it on pageshow", async () => {
+test("audio compressor preserves its graph across SPA mini-player and BFCache transitions", async () => {
     const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true } });
     const dom = createPageDom(
         [
@@ -526,6 +526,24 @@ test("audio compressor preserves its graph across BFCache pagehide and resumes i
     document.getElementById("betterchzzk-audio-compressor").click();
     assert.equal(contexts.length, 1);
     const context = contexts[0];
+
+    dom.window.history.pushState({}, "", "/lives");
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    await waitForAsyncCallbacks();
+    assert.equal(context.closeCalls, 0, "the mini-player reuses the media element and still needs its audio graph");
+
+    dom.window.history.pushState({}, "", "/live/test-channel");
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    await waitForAsyncCallbacks();
+    assert.equal(contexts.length, 1, "returning to the same media element must reuse its existing graph");
+    const returnedButton = document.getElementById("betterchzzk-audio-compressor");
+    assert.ok(returnedButton, "the compressor control should return on the playback route");
+    returnedButton.click();
+    await waitForAsyncCallbacks();
+    assert.equal(returnedButton.dataset.betterChzzkAudioCompressor, "1");
+    assert.equal(returnedButton.dataset.betterChzzkReady, "1");
+    assert.equal(contexts.length, 1, "reactivating the compressor must reuse the preserved graph");
+    assert.equal(context.closeCalls, 0);
 
     const persistedPageHide = new dom.window.Event("pagehide");
     Object.defineProperty(persistedPageHide, "persisted", { value: true });
