@@ -1,12 +1,12 @@
 /**
- * options.js — options.html(설정 페이지)의 스크립트로, 모든 기능 토글/수치를 폼으로 보여주고 자동 저장한다.
+ * options.js — options.html(설정 페이지)의 스크립트로, 모든 기능 토글/수치를 폼으로 보여주고 저장한다.
  *
  * 실행 컨텍스트: manifest의 action.default_popup이자 options_page인 options.html에서 로드된다.
  * 확장 아이콘을 클릭하면 작은 팝업 창으로 여는 것이 1차 사용 환경이라, UI는 좁은 뷰포트를 기준으로
  * 짜여 있다(전체 탭으로 여는 것은 부차적 경로). options.html은 shared/settings.js를 같은 페이지에
  * script 태그로 먼저 로드하고 그다음 이 파일을 로드한다. content script가 아니다.
- * 하는 일: chrome.storage.sync에서 옵션을 불러와 폼에 채우고, 입력/체크박스 변경 시 디바운스 후
- * 자동 저장한다. 옵션 간 의존 관계(data-depends-on)에 따라 하위 컨트롤을 비활성화하고, 탭 전환과
+ * 하는 일: chrome.storage.sync에서 옵션을 불러와 폼에 채우고, 저장 버튼을 누르면 현재 값을 저장한다.
+ * 옵션 간 의존 관계(data-depends-on)에 따라 하위 컨트롤을 비활성화하고, 탭 전환과
  * 설정 검색(검색어로 카드 항목 필터링), 기본값 복원 버튼을 처리한다.
  * 의존: BetterChzzkSettings(shared/settings.js가 노출하는 DEFAULT_OPTIONS, FEATURE_KEYS,
  * OPTION_KEYS, normalizeOptions), globalThis.chrome.storage.sync, globalThis.chrome.permissions,
@@ -20,19 +20,27 @@ const form = document.getElementById("optionsForm");
 const optionInputs = Array.from(document.querySelectorAll("[data-option]"));
 const dependencyGroups = Array.from(document.querySelectorAll("[data-depends-on]"));
 const resetButton = document.getElementById("reset");
+const saveButton = document.getElementById("save");
 const noticeEl = document.getElementById("notice");
 const messageEl = document.getElementById("message");
 
-const { DEFAULT_OPTIONS, FEATURE_KEYS, OPTION_KEYS, normalizeOptions } = BetterChzzkSettings;
+const {
+    DEFAULT_OPTIONS,
+    FEATURE_KEYS,
+    OPTION_KEYS,
+    STORAGE_OPTION_KEYS,
+    normalizeOptions,
+    migrateLegacyChatToolsOption,
+} = BetterChzzkSettings;
 
 const storage = globalThis.chrome?.storage?.sync;
-const AUTOSAVE_DEBOUNCE_MS = 400;
 const OPTIONS_LOAD_ERROR_MESSAGE = "설정을 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.";
 const OPTIONS_LOAD_BLOCKED_SAVE_MESSAGE =
     "설정을 불러오지 못해 저장하지 않았습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.";
 const OPTIONS_SAVE_ERROR_MESSAGE = "설정을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.";
 const NOTICE_STATE_LABELS = {
     loading: "불러오는 중",
+    dirty: "변경됨",
     saving: "저장 중",
     saved: "저장됨",
     error: "저장 실패",
@@ -45,9 +53,7 @@ const PREVIEW_PERMISSION_DENIED_MESSAGE = "권한이 거부되어 팔로잉 미�
 
 let hideMessageTimer = 0;
 let savedOptions = null;
-let autosaveTimer = 0;
 let saveInFlight = false;
-let pendingSave = null;
 let optionsLoadState = storage ? "loading" : "ready";
 
 function setInputValue(input, value) {
@@ -114,7 +120,8 @@ function applyControlStates(options) {
     for (const control of optionInputs) {
         control.disabled = optionsUnavailable || isDisabledByDependency(control, options);
     }
-    resetButton.disabled = optionsUnavailable;
+    resetButton.disabled = optionsUnavailable || saveInFlight;
+    saveButton.disabled = optionsUnavailable || saveInFlight || !savedOptions || areOptionsEqual(options, savedOptions);
 }
 
 function renderNotice(options, state) {
@@ -161,35 +168,16 @@ function showMessage(text, type = "success") {
 
 function finishSave(normalized, message, error) {
     saveInFlight = false;
-    if (!error) savedOptions = normalized;
-
-    const queued = pendingSave;
-    pendingSave = null;
-    if (queued) {
-        if (!error && areOptionsEqual(queued.options, normalized)) {
-            const current = readOptionsFromForm();
-            if (!areOptionsEqual(current, normalized)) {
-                startSave(current);
-                return;
-            }
-            syncNumberInputs(queued.options);
-            renderPageState(queued.options, "saved");
-            if (queued.message) showMessage(queued.message);
-            return;
-        }
-        startSave(queued.options, queued.message);
-        return;
-    }
-
     if (error) {
         renderPageState(readOptionsFromForm(), "error");
         showMessage(OPTIONS_SAVE_ERROR_MESSAGE, "error");
         return;
     }
 
+    savedOptions = normalized;
     const current = readOptionsFromForm();
     if (!areOptionsEqual(current, normalized)) {
-        startSave(current);
+        renderPageState(current, "dirty");
         return;
     }
     syncNumberInputs(normalized);
@@ -220,11 +208,7 @@ function commitSave(message) {
     }
 
     const normalized = readOptionsFromForm();
-    if (saveInFlight) {
-        pendingSave = { options: normalized, message };
-        renderPageState(normalized, "saving");
-        return;
-    }
+    if (saveInFlight) return;
 
     if (savedOptions && areOptionsEqual(normalized, savedOptions)) {
         syncNumberInputs(normalized);
@@ -250,52 +234,37 @@ function requestPreviewPermission(callback) {
     });
 }
 
-function cancelAutosave() {
-    if (!autosaveTimer) return;
-    clearTimeout(autosaveTimer);
-    autosaveTimer = 0;
-}
-
-function scheduleAutosave() {
-    cancelAutosave();
-    autosaveTimer = setTimeout(() => {
-        autosaveTimer = 0;
-        commitSave();
-    }, AUTOSAVE_DEBOUNCE_MS);
-}
-
-function flushPendingAutosave() {
-    if (!autosaveTimer) return;
-    cancelAutosave();
-    commitSave();
-}
-
-function flushLatestOptionsOnPageHide() {
-    const hadPendingAutosave = Boolean(autosaveTimer);
-    cancelAutosave();
-    if (optionsLoadState !== "ready") return;
-
-    if (!saveInFlight) {
-        if (hadPendingAutosave) commitSave();
-        return;
-    }
-    if (!hadPendingAutosave && !pendingSave) return;
-
-    const normalized = readOptionsFromForm();
-    const message = pendingSave?.message;
-    pendingSave = { options: normalized, message };
-    renderPageState(normalized, "saving");
-
-    // 팝업이 닫히면 진행 중인 요청의 콜백이 실행되지 않을 수 있어, 최신값을 그 요청 뒤에 미리 발행한다.
-    // 페이지가 계속 살아 있으면 pendingSave를 유지한 기존 직렬 큐가 같은 최신값을 다시 확정한다.
-    storage?.set(normalized, () => {
-        void globalThis.chrome?.runtime?.lastError;
-    });
-}
-
 function getOptionInput(target) {
     const input = target instanceof Element ? target.closest("[data-option]") : null;
     return input && optionInputs.includes(input) ? input : null;
+}
+
+function renderFormChanges() {
+    const normalized = readOptionsFromForm();
+    renderPageState(normalized, areOptionsEqual(normalized, savedOptions) ? "saved" : "dirty");
+}
+
+function saveCurrentOptions() {
+    if (optionsLoadState !== "ready" || saveInFlight) return;
+
+    const normalized = readOptionsFromForm();
+    if (normalized.followingPreviewTooltipEnabled && !savedOptions?.followingPreviewTooltipEnabled) {
+        requestPreviewPermission((granted) => {
+            if (!granted) {
+                const previewToggle = optionInputs.find(
+                    (input) => input.dataset.option === "followingPreviewTooltipEnabled"
+                );
+                if (previewToggle) previewToggle.checked = false;
+                renderFormChanges();
+                showMessage(PREVIEW_PERMISSION_DENIED_MESSAGE, "error");
+                return;
+            }
+            commitSave("옵션을 저장했습니다.");
+        });
+        return;
+    }
+
+    commitSave("옵션을 저장했습니다.");
 }
 
 // 검색창이나 숫자 입력에서 Enter를 눌러도 페이지가 다시 로드되지 않게 한다.
@@ -306,52 +275,36 @@ form.addEventListener("submit", (event) => {
 form.addEventListener("input", (event) => {
     if (optionsLoadState !== "ready") return;
     const input = getOptionInput(event.target);
-    // 체크박스는 change에서 한 번만 저장하고, 숫자 입력은 타이핑이 멎은 뒤 저장한다.
+    // 체크박스는 change에서 한 번만 처리한다.
     if (!input || input.type === "checkbox") return;
-    renderPageState(readOptionsFromForm(), "saving");
-    scheduleAutosave();
+    renderFormChanges();
 });
 
 form.addEventListener("change", (event) => {
     if (optionsLoadState !== "ready") return;
     const input = getOptionInput(event.target);
     if (!input) return;
-    cancelAutosave();
     if (input.type !== "checkbox") {
         // 범위를 벗어난 값은 입력을 마친 시점에 보정값을 되돌려 보여준다.
         const normalized = readOptionsFromForm();
         setInputValue(input, normalized[input.dataset.option]);
     }
-    if (input.dataset.option === "followingPreviewTooltipEnabled" && input.checked) {
-        requestPreviewPermission((granted) => {
-            if (!granted) {
-                input.checked = false;
-                showMessage(PREVIEW_PERMISSION_DENIED_MESSAGE, "error");
-            }
-            commitSave();
-        });
-        return;
-    }
-    commitSave();
+    renderFormChanges();
 });
+
+saveButton.addEventListener("click", saveCurrentOptions);
 
 resetButton.addEventListener("click", () => {
     if (optionsLoadState !== "ready") return;
     if (!window.confirm("모든 설정을 기본값으로 되돌릴까요? 직접 입력한 수치도 함께 초기화됩니다.")) return;
-    cancelAutosave();
     renderOptions(DEFAULT_OPTIONS);
     commitSave("기본값으로 복원했습니다.");
-});
-
-window.addEventListener("pagehide", flushLatestOptionsOnPageHide);
-document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") flushPendingAutosave();
 });
 
 if (storage) {
     renderNotice(null, "loading");
     applyControlStates(readOptionsFromForm());
-    storage.get(OPTION_KEYS, (data) => {
+    storage.get(STORAGE_OPTION_KEYS, (data) => {
         const error = globalThis.chrome?.runtime?.lastError;
         if (error) {
             optionsLoadState = "failed";
@@ -361,6 +314,7 @@ if (storage) {
         }
         optionsLoadState = "ready";
         savedOptions = renderOptions(data);
+        migrateLegacyChatToolsOption(data, savedOptions);
     });
 } else {
     savedOptions = renderOptions(DEFAULT_OPTIONS);
@@ -395,7 +349,19 @@ function storeTabIndex(index) {
     }
 }
 
-function activateTab(index, { focus = false } = {}) {
+function alignCompactTabPanel(index) {
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+    const section = tabSections[index];
+    if (!section || viewportWidth > 860 || window.scrollY <= 0 || typeof window.scrollTo !== "function") return;
+
+    const toolbar = document.querySelector(".settings-toolbar");
+    const toolbarIsSticky = viewportWidth <= 480 || (toolbar && getComputedStyle(toolbar).position === "sticky");
+    const toolbarHeight = toolbar && toolbarIsSticky ? toolbar.getBoundingClientRect().height : 0;
+    const sectionTop = section.getBoundingClientRect().top + window.scrollY;
+    window.scrollTo({ top: Math.max(0, sectionTop - toolbarHeight - 8), behavior: "auto" });
+}
+
+function activateTab(index, { focus = false, align = false } = {}) {
     tabButtons.forEach((btn, i) => {
         const active = i === index;
         btn.classList.toggle("is-active", active);
@@ -405,12 +371,13 @@ function activateTab(index, { focus = false } = {}) {
     });
     tabSections.forEach((sec, i) => sec.classList.toggle("is-active", i === index));
     storeTabIndex(index);
+    if (align) alignCompactTabPanel(index);
 }
 
 tabButtons.forEach((btn, i) => {
     btn.addEventListener("click", () => {
         clearSearch();
-        activateTab(i);
+        activateTab(i, { align: true });
     });
 });
 
@@ -427,7 +394,7 @@ tabBar?.addEventListener("keydown", (event) => {
 
     event.preventDefault();
     clearSearch();
-    activateTab(nextIndex, { focus: true });
+    activateTab(nextIndex, { focus: true, align: true });
 });
 
 if (tabButtons.length) activateTab(readStoredTabIndex());
@@ -435,28 +402,83 @@ if (tabButtons.length) activateTab(readStoredTabIndex());
 const searchInput = document.getElementById("settingsSearch");
 const searchEmptyEl = document.getElementById("searchEmpty");
 const searchStatusEl = document.getElementById("searchStatus");
+const optionGroups = Array.from(form.querySelectorAll(".option-group"));
 let searchOpenSnapshot = null;
 
 function normalizeSearchText(text) {
     return String(text).toLowerCase().replace(/\s+/g, "");
 }
 
-// 카드 안에서 제목을 제외한 직계 요소(토글 행, 세부 설정, 버튼 행, 안내문)를 검색 단위로 삼는다.
+// 접이식 그룹 안에서는 각 행·수치 묶음을 개별 검색 단위로 유지한다.
 const searchUnits = tabSections.flatMap((section) => {
     const heading = section.querySelector(".section-heading");
     const headingText = normalizeSearchText(heading?.textContent || "");
     return Array.from(section.children)
         .filter((child) => child !== heading)
+        .flatMap((element) => {
+            if (!element.matches(".option-group")) return [element];
+            const body = Array.from(element.children).find((child) => child.classList.contains("option-group-body"));
+            return body ? Array.from(body.children) : [];
+        })
         .map((element) => {
             const optionKeys = Array.from(element.querySelectorAll("[data-option]"), (input) => input.dataset.option);
+            const dependencyNodes = element.matches("[data-depends-on]")
+                ? [element, ...element.querySelectorAll("[data-depends-on]")]
+                : Array.from(element.querySelectorAll("[data-depends-on]"));
+            const dependencyKeys = [
+                ...new Set(
+                    dependencyNodes.flatMap((node) =>
+                        String(node.dataset.dependsOn || "")
+                            .split(/\s+/)
+                            .filter(Boolean)
+                    )
+                ),
+            ];
+            const group = element.closest(".option-group");
+            const groupText = normalizeSearchText(group?.firstElementChild?.textContent || "");
             return {
+                dependencyKeys,
                 element,
+                group,
+                groupText,
                 headingText,
+                optionKeys,
                 section,
                 text: normalizeSearchText(`${element.textContent} ${optionKeys.join(" ")}`),
             };
         });
 });
+
+const searchUnitByOptionKey = new Map();
+for (const unit of searchUnits) {
+    for (const optionKey of unit.optionKeys) searchUnitByOptionKey.set(optionKey, unit);
+}
+
+function includeSearchContext(directMatches) {
+    const visibleUnits = new Set(directMatches);
+
+    // 안내문만 검색된 경우에도 관련 설정을 함께 보여 줘 문맥과 조작 경로를 남긴다.
+    for (const unit of directMatches) {
+        if (!unit.element.matches(".setting-note")) continue;
+        for (const candidate of searchUnits) {
+            const sameContext = unit.group ? candidate.group === unit.group : candidate.section === unit.section;
+            if (sameContext) visibleUnits.add(candidate);
+        }
+    }
+
+    // 비활성화된 세부 설정을 검색해도 상위 토글을 켤 수 있도록 의존 관계를 끝까지 따라간다.
+    const pending = [...visibleUnits];
+    for (let index = 0; index < pending.length; index += 1) {
+        for (const optionKey of pending[index].dependencyKeys) {
+            const masterUnit = searchUnitByOptionKey.get(optionKey);
+            if (!masterUnit || visibleUnits.has(masterUnit)) continue;
+            visibleUnits.add(masterUnit);
+            pending.push(masterUnit);
+        }
+    }
+
+    return visibleUnits;
+}
 
 function applySearch(query) {
     if (!searchInput) return;
@@ -466,11 +488,10 @@ function applySearch(query) {
 
     if (!searching) {
         for (const unit of searchUnits) unit.element.classList.remove("search-miss");
+        for (const group of optionGroups) group.classList.remove("search-miss");
         for (const section of tabSections) section.classList.remove("search-miss");
         if (searchOpenSnapshot) {
-            for (const details of form.querySelectorAll(".advanced-settings")) {
-                details.open = searchOpenSnapshot.has(details);
-            }
+            for (const group of optionGroups) group.open = searchOpenSnapshot.has(group);
             searchOpenSnapshot = null;
         }
         searchEmptyEl?.classList.add("hidden");
@@ -479,33 +500,40 @@ function applySearch(query) {
     }
 
     if (!searchOpenSnapshot) {
-        searchOpenSnapshot = new Set(
-            Array.from(form.querySelectorAll(".advanced-settings")).filter((details) => details.open)
-        );
+        searchOpenSnapshot = new Set(optionGroups.filter((group) => group.open));
     }
 
-    let matchCount = 0;
+    const directMatches = searchUnits.filter(
+        (unit) =>
+            unit.headingText.includes(normalized) ||
+            unit.groupText.includes(normalized) ||
+            unit.text.includes(normalized)
+    );
+    const visibleUnits = includeSearchContext(directMatches);
+    const matchedGroups = new Set();
     const matchedSections = new Set();
     for (const unit of searchUnits) {
-        const matched = unit.headingText.includes(normalized) || unit.text.includes(normalized);
-        unit.element.classList.toggle("search-miss", !matched);
-        if (!matched) continue;
-        matchCount += 1;
+        const visible = visibleUnits.has(unit);
+        unit.element.classList.toggle("search-miss", !visible);
+        if (!visible) continue;
         matchedSections.add(unit.section);
-        // 세부 설정 안쪽 항목이 걸리면 펼쳐서 바로 보여준다.
-        if (unit.element.matches(".advanced-settings")) unit.element.open = true;
+        if (unit.group) {
+            matchedGroups.add(unit.group);
+            unit.group.open = true;
+        }
     }
+    for (const group of optionGroups) group.classList.toggle("search-miss", !matchedGroups.has(group));
     for (const section of tabSections) {
         section.classList.toggle("search-miss", !matchedSections.has(section));
     }
 
     if (searchEmptyEl) {
         searchEmptyEl.textContent = `‘${query.trim()}’에 해당하는 설정이 없습니다.`;
-        searchEmptyEl.classList.toggle("hidden", matchCount > 0);
+        searchEmptyEl.classList.toggle("hidden", directMatches.length > 0);
     }
     if (searchStatusEl) {
         searchStatusEl.hidden = false;
-        searchStatusEl.textContent = `${matchCount}개 항목`;
+        searchStatusEl.textContent = `${directMatches.length}개 항목`;
     }
 }
 

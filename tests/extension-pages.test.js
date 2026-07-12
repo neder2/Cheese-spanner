@@ -1253,6 +1253,62 @@ test("monthly broadcast aborts pending page fetches when disabled", async () => 
     assert.equal(pending.init.signal.aborted, true);
 });
 
+test("monthly broadcast calendar combines split VODs into one continuous broadcast", async () => {
+    const liveOpenDate = "2026-07-10 19:01:32";
+    const fixture = await createMonthlyBroadcastFixture({
+        nowMs: Date.parse("2026-07-13T12:00:00+09:00"),
+        videos: [
+            {
+                duration: 7 * 60 * 60 + 55 * 60 + 56,
+                liveOpenDate,
+                publishDate: "2026-07-12 16:55:34",
+                videoNo: "14154992",
+                videoTitle: "Split segment three",
+                videoType: "REPLAY",
+            },
+            {
+                duration: 17 * 60 * 60 + 1,
+                liveOpenDate,
+                publishDate: "2026-07-12 14:28:21",
+                videoNo: "14152282",
+                videoTitle: "Split segment two",
+                videoType: "REPLAY",
+            },
+            {
+                duration: 17 * 60 * 60,
+                liveOpenDate,
+                publishDate: "2026-07-11 12:18:00",
+                videoNo: "14137551",
+                videoTitle: "Split segment one",
+                videoType: "REPLAY",
+            },
+        ],
+    });
+
+    try {
+        await waitForCondition(
+            () => getMonthlyCalendarDay(fixture.document, "2026-07-10")?.getAttribute("data-has-broadcast") === "1",
+            { timeoutMs: 3000 }
+        );
+
+        const day = getMonthlyCalendarDay(fixture.document, "2026-07-10");
+        const items = day.querySelectorAll(".bcmb-day-tip-item");
+        const broadcastText = day.querySelector(".bcmb-day-tip-row-broadcast .bcmb-day-tip-value").textContent;
+
+        assert.equal(items.length, 1);
+        assert.equal(day.getAttribute("data-video-no"), "14137551");
+        assert.match(broadcastText, /19:01/);
+        assert.match(broadcastText, /12:57 \(7\/12\)/);
+        assert.match(broadcastText, /41시간 56분/);
+        assert.equal(
+            fixture.document.querySelector(`#${MONTHLY_BROADCAST_WIDGET_ID} .bcmb-calendar-count`).textContent,
+            "총 방송 41시간 56분"
+        );
+    } finally {
+        await closeMonthlyBroadcastFixture(fixture);
+    }
+});
+
 test("monthly broadcast calendar separates stream and watch rows in dense day tips", async () => {
     const firstStartMs = Date.parse("2026-06-28T09:00:00+09:00");
     const secondStartMs = Date.parse("2026-06-28T15:10:00+09:00");
@@ -1818,7 +1874,7 @@ test("options page renders defaults and dependency-disabled controls without ext
     assert.equal(optionInputs.length, BetterChzzkSettings.OPTION_KEYS.length);
     assert.equal(queryOption(document, "skipSeconds").value, String(BetterChzzkSettings.DEFAULT_OPTIONS.skipSeconds));
     assert.equal(queryOption(document, "vodBroadcastClockEnabled").checked, false);
-    assert.equal(document.getElementById("save"), null, "자동 저장 전환 후 저장 버튼은 없어야 한다");
+    assert.equal(document.getElementById("save").disabled, true, "변경 전에는 저장 버튼이 비활성화된다");
     assert.equal(notice.dataset.state, "saved");
     assert.match(notice.textContent, /기능 \d+개/);
 
@@ -1834,6 +1890,32 @@ test("options page renders defaults and dependency-disabled controls without ext
     assert.equal(skipKeyboard.closest("[data-depends-on]").classList.contains("is-disabled"), true);
 });
 
+test("options compact tab switches align the new panel below the sticky toolbar", () => {
+    const dom = createDom("options.html", "options.html");
+    const scrollCalls = [];
+
+    Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 400 });
+    Object.defineProperty(dom.window, "scrollY", { configurable: true, value: 500 });
+    dom.window.scrollTo = (options) => scrollCalls.push(options);
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+
+    const { document } = dom.window;
+    const toolbar = document.querySelector(".settings-toolbar");
+    const chatPanel = document.getElementById("tab-panel-2");
+    toolbar.getBoundingClientRect = () => ({ height: 82 });
+    chatPanel.getBoundingClientRect = () => ({ top: -300 });
+
+    assert.equal(scrollCalls.length, 0, "initial tab restore must not move the popup");
+    document.getElementById("tab-2").click();
+
+    assert.equal(scrollCalls.length, 1);
+    assert.equal(scrollCalls[0].top, 110);
+    assert.equal(scrollCalls[0].behavior, "auto");
+    assert.equal(chatPanel.classList.contains("is-active"), true);
+});
+
 test("options player controls merge playback defaults", () => {
     const dom = createDom("options.html", "options.html");
 
@@ -1847,7 +1929,9 @@ test("options player controls merge playback defaults", () => {
     );
     const section = queryOption(document, "skipControlEnabled").closest(".settings-card");
     const optionOrder = Array.from(section.querySelectorAll("[data-option]")).map((input) => input.dataset.option);
-    const detailOrder = Array.from(section.querySelectorAll("summary")).map((summary) => summary.textContent.trim());
+    const groupLabels = Array.from(section.querySelectorAll(".option-group > summary")).map((summary) =>
+        summary.textContent.trim()
+    );
 
     assert.deepEqual(tabLabels, ["플레이어", "시청 기록", "채팅", "팝업", "방송 시간", "검색", "탐색"]);
     assert.deepEqual(sectionLabels, [
@@ -1860,11 +1944,10 @@ test("options player controls merge playback defaults", () => {
         "방송 목록 필터",
     ]);
     assert.equal(section.querySelector("h2").textContent.trim(), "플레이어");
-    assert.deepEqual(detailOrder, ["통나무 보상 설정", "스킵 수치 설정", "볼륨 휠 설정", "오디오 컴프레서 설정"]);
+    assert.deepEqual(groupLabels, ["자동 처리", "시간 이동", "볼륨", "오디오 컴프레서", "다시보기·단축키"]);
     assert.deepEqual(optionOrder, [
         "autoQualityEnabled",
         "rewardAutoCollectEnabled",
-        "rewardAutoCollectDelayMs",
         "skipControlEnabled",
         "skipKeyboardEnabled",
         "skipLivePauseResumeEnabled",
@@ -1887,7 +1970,6 @@ test("options player controls merge playback defaults", () => {
         "audioCompressorMakeupGain",
         "vodBroadcastClockEnabled",
         "holdSpeedEnabled",
-        "shortcutRescueEnabled",
     ]);
 });
 
@@ -1898,28 +1980,30 @@ test("options places chat tools controls in a dedicated section", () => {
     evalRepoScript(dom, "options.js");
 
     const { document } = dom.window;
-    const section = queryOption(document, "chatToolsEnabled").closest(".settings-card");
+    const section = queryOption(document, "chatToolsShowBlindEnabled").closest(".settings-card");
     const optionOrder = Array.from(section.querySelectorAll("[data-option]")).map((input) => input.dataset.option);
-    const chatTools = queryOption(document, "chatToolsEnabled");
     const showBlind = queryOption(document, "chatToolsShowBlindEnabled");
+    const moderatorBox = queryOption(document, "chatToolsModeratorBoxEnabled");
     const maxMessages = queryOption(document, "chatToolsMaxModeratorMessages");
+    const groupLabels = Array.from(section.querySelectorAll(".option-group > summary"), (summary) =>
+        summary.textContent.trim()
+    );
 
     assert.equal(section.querySelector("h2").textContent.trim(), "채팅 도구");
     assert.deepEqual(optionOrder, [
         "vodCommentTabsEnabled",
         "chatTimestampEnabled",
-        "chatToolsEnabled",
         "chatToolsShowBlindEnabled",
         "chatToolsModeratorBoxEnabled",
         "chatToolsMaxModeratorMessages",
     ]);
-    assert.equal(showBlind.disabled, true);
+    assert.deepEqual(groupLabels, ["댓글·표시", "채팅 관리"]);
+    assert.equal(showBlind.disabled, false);
     assert.equal(maxMessages.disabled, true);
 
-    chatTools.checked = true;
-    dispatch(dom, chatTools, "change");
+    moderatorBox.checked = true;
+    dispatch(dom, moderatorBox, "change");
 
-    assert.equal(showBlind.disabled, false);
     assert.equal(maxMessages.disabled, false);
 });
 
@@ -1941,9 +2025,8 @@ test("options places following controls with exploration controls", () => {
     assert.equal(followingRefreshSection, explorationSection);
     assert.ok(optionOrder.indexOf("followingRefreshEnabled") < optionOrder.indexOf("followingRefreshSeconds"));
     assert.ok(optionOrder.indexOf("followingRefreshSeconds") < optionOrder.indexOf("categoryToolsEnabled"));
-    assert.ok(
-        optionOrder.indexOf("categoryToolsLiveElapsedEnabled") < optionOrder.indexOf("followingPreviewTooltipEnabled")
-    );
+    assert.ok(optionOrder.indexOf("categoryToolsLiveElapsedEnabled") < optionOrder.indexOf("titleTooltipEnabled"));
+    assert.ok(optionOrder.indexOf("titleTooltipEnabled") < optionOrder.indexOf("followingPreviewTooltipEnabled"));
     assert.ok(
         optionOrder.indexOf("followingPreviewTooltipEnabled") < optionOrder.indexOf("followingPreviewSoundEnabled")
     );
@@ -1953,7 +2036,221 @@ test("options places following controls with exploration controls", () => {
     assert.ok(
         optionOrder.indexOf("followingPreviewVolumePercent") < optionOrder.indexOf("livePreviewRightClickSoundEnabled")
     );
-    assert.ok(optionOrder.indexOf("livePreviewRightClickSoundEnabled") < optionOrder.indexOf("titleTooltipEnabled"));
+    assert.deepEqual(
+        Array.from(explorationSection.querySelectorAll(".option-group > summary"), (summary) =>
+            summary.textContent.trim()
+        ),
+        [
+            "목록 새로고침",
+            "검색·목록 표시",
+            "호버 미리보기",
+            "팔로워 필터 기준값",
+            "시청자·조회수 필터 기준값",
+            "진행 시간 필터 기준값",
+            "데이터 조회",
+        ]
+    );
+});
+
+test("options groups stay accessible and never disable their own master toggle", () => {
+    const dom = createDom("options.html", "options.html");
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+
+    const { document } = dom.window;
+    const groups = Array.from(document.querySelectorAll(".option-group"));
+    const playerAuto = document.querySelector('[data-option-group="player-auto"]');
+    const playerCompressor = document.querySelector('[data-option-group="player-compressor"]');
+
+    assert.ok(groups.length >= 10);
+    assert.equal(document.querySelector(".advanced-settings"), null);
+    assert.equal(document.querySelector(".section-heading p"), null);
+    assert.equal(document.querySelector(".toggle-row small"), null);
+    assert.equal(document.querySelectorAll(".option-group[open]").length, 5);
+    assert.equal(playerAuto.open, true);
+    assert.equal(playerCompressor.open, false);
+
+    for (const group of groups) {
+        const summary = group.firstElementChild;
+        const icon = summary.querySelector(".option-group-title > svg");
+        assert.equal(summary?.tagName, "SUMMARY");
+        assert.ok(summary.textContent.trim().length > 0);
+        assert.equal(summary.querySelector("input, button, a[href]"), null);
+        assert.equal(summary.querySelectorAll(".option-group-title").length, 1);
+        if (group === playerAuto) assert.equal(icon, null);
+        else assert.equal(icon?.getAttribute("aria-hidden"), "true");
+        assert.equal(
+            Array.from(group.children).filter((child) => child.classList.contains("option-group-body")).length,
+            1
+        );
+    }
+
+    const tabs = Array.from(document.querySelectorAll(".tab"));
+    const panels = Array.from(document.querySelectorAll(".settings-form > .settings-card"));
+    assert.equal(document.body.classList.contains("options-body"), true);
+    assert.equal(tabs.length, 7);
+    assert.equal(panels.length, tabs.length);
+    assert.equal(document.querySelectorAll(".section-heading-icon[aria-hidden='true']").length, 7);
+    assert.ok(tabs.every((tab) => tab.getAttribute("aria-label") && tab.getAttribute("title")));
+    assert.equal(document.querySelector("#reset svg")?.getAttribute("aria-hidden"), "true");
+
+    for (const dependencyGroup of document.querySelectorAll("[data-depends-on]")) {
+        for (const optionKey of dependencyGroup.dataset.dependsOn.split(/\s+/).filter(Boolean)) {
+            const masterInput = queryOption(document, optionKey);
+            assert.ok(masterInput, `${optionKey} dependency must reference an existing option`);
+            assert.equal(
+                dependencyGroup.contains(masterInput),
+                false,
+                `${optionKey} must stay outside its own dependency group`
+            );
+        }
+    }
+});
+
+test("options match the wide reference layout and keep a compact popup layout", () => {
+    const styles = readRepoFile("styles.css");
+    const readRule = (selector) => {
+        const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return styles.match(new RegExp(`(?:^|\\r?\\n)[ \\t]*${escaped}[ \\t]*\\{([^}]*)\\}`))?.[1] || "";
+    };
+
+    const pageRule = readRule(".options-body .options-page");
+    const toggleRule = readRule(".options-body .options-page .toggle-row");
+    const groupRule = readRule(".options-body .options-page .option-group");
+    const summaryRule = readRule(".options-body .options-page .option-group > summary");
+    const summaryFocusRule = readRule(".option-group > summary:focus-visible");
+    const activeTabRule = readRule(".options-body .options-page .tab.is-active");
+    const activeTabLineRule = readRule(".options-body .options-page .tab.is-active::after");
+    const compactTabLabelRule = readRule(".options-body .options-page .tab span");
+    const noteRule = readRule(".options-body .options-page .setting-note");
+    const unitRule = readRule(".options-body .options-page .number-grid em");
+    const responsiveStart = styles.lastIndexOf("@media (max-width: 860px)");
+    const responsiveEnd = styles.indexOf("@media (max-width: 640px)", responsiveStart);
+    const responsiveRules = styles.slice(responsiveStart, responsiveEnd);
+    const compactStart = styles.lastIndexOf("@media (max-width: 640px)");
+    const compactEnd = styles.indexOf("@media (max-width: 480px)", compactStart);
+    const compactRules = styles.slice(compactStart, compactEnd);
+    const popupStart = styles.lastIndexOf("@media (max-width: 480px)");
+    const popupEnd = styles.indexOf("@media (max-width: 360px)", popupStart);
+    const popupRules = styles.slice(popupStart, popupEnd);
+    const referenceStart = styles.indexOf("/* Options page — reference layout");
+    const referenceRules = styles.slice(referenceStart);
+
+    assert.match(pageRule, /width:\s*min\(1344px, 100%\)/);
+    assert.match(toggleRule, /min-height:\s*58px/);
+    assert.match(groupRule, /border:\s*1px solid var\(--border\)/);
+    assert.match(groupRule, /border-radius:\s*9px/);
+    assert.match(summaryRule, /min-height:\s*54px/);
+    assert.match(summaryRule, /padding:\s*0 22px/);
+    assert.match(summaryFocusRule, /var\(--focus-ring\)/);
+    assert.match(activeTabRule, /color:\s*var\(--accent-text\)/);
+    assert.match(activeTabRule, /background:\s*transparent/);
+    assert.match(activeTabLineRule, /height:\s*3px/);
+    assert.match(activeTabLineRule, /background:\s*var\(--accent\)/);
+    assert.match(compactTabLabelRule, /clip:\s*rect\(0, 0, 0, 0\)/);
+    assert.match(popupRules, /grid-template-columns:\s*repeat\(7, minmax\(0, 1fr\)\)/);
+    assert.match(
+        compactRules,
+        /\.options-body \.options-page \.option-group-body > \.number-grid\s*\{\s*grid-template-columns:\s*1fr/
+    );
+    assert.match(popupRules, /\.options-body \.options-page \.reset-row \.secondary-button\s*\{\s*width:\s*100%/);
+    assert.match(popupRules, /grid-template-columns:\s*48px minmax\(0, 1fr\)/);
+    assert.match(
+        popupRules,
+        /\.options-body \.options-page \.brand-mark\s*\{[^}]*grid-row:\s*1 \/ 3[^}]*width:\s*48px/s
+    );
+    assert.match(popupRules, /\.options-body \.options-page \.hero-actions\s*\{[^}]*grid-column:\s*2/s);
+    assert.doesNotMatch(referenceRules, /(?:^|\n)\s*\.options-page(?:[\s,.#:[>+]|$)/);
+    assert.match(noteRule, /color:\s*var\(--text-muted\)/);
+    assert.match(noteRule, /font-size:\s*13px/);
+    assert.match(responsiveRules, /\.options-body \.options-page \.setting-note\s*\{[^}]*font-size:\s*11px/s);
+    assert.match(unitRule, /color:\s*var\(--text-muted\)/);
+    assert.doesNotMatch(referenceRules, /padding-bottom:\s*(?:68|74)px|\.action-bar/);
+});
+
+test("extension pages keep explicit light and dark theme contrast with a responsive history action bar", () => {
+    const styles = readRepoFile("styles.css");
+    const mobileStart = styles.indexOf("@media (max-width: 480px)");
+    const mobileEnd = styles.indexOf("@media (max-width: 360px)", mobileStart);
+    const mobileRules = styles.slice(mobileStart, mobileEnd);
+
+    assert.match(styles, /:root\[data-theme="light"\]\s*\{[^}]*--accent-text:\s*#007f50/s);
+    assert.match(styles, /:root\[data-theme="dark"\]\s*\{[^}]*--history-level-3:/s);
+    assert.match(styles, /\.history-day\[data-level="2"\]\s*\{\s*background:\s*var\(--history-level-2\)/);
+    assert.match(styles, /\.primary-button:disabled,[^{]+\{[^}]*opacity:\s*0\.5/s);
+    assert.match(styles, /\.options-body \.options-page \.save-button:disabled\s*\{[^}]*opacity:\s*0\.72/s);
+    assert.match(
+        styles,
+        /\.history-page > \.action-bar\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/s
+    );
+    assert.match(mobileRules, /\.history-page \.action-bar\s*\{[^}]*position:\s*fixed[^}]*backdrop-filter:\s*blur/s);
+});
+
+test("options search keeps dependency controls visible and restores previous group state", () => {
+    const dom = createDom("options.html", "options.html");
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+
+    const { document } = dom.window;
+    const search = document.getElementById("settingsSearch");
+    const playerAuto = document.querySelector('[data-option-group="player-auto"]');
+    const playerCompressor = document.querySelector('[data-option-group="player-compressor"]');
+    const playerSeek = document.querySelector('[data-option-group="player-seek"]');
+    const compressorToggle = queryOption(document, "audioCompressorEnabled");
+    const makeupGain = queryOption(document, "audioCompressorMakeupGain");
+
+    assert.equal(playerAuto.open, true);
+    assert.equal(playerCompressor.open, false);
+
+    search.value = "보정 게인";
+    dispatch(dom, search, "input");
+
+    assert.equal(playerCompressor.open, true);
+    assert.equal(playerCompressor.classList.contains("search-miss"), false);
+    assert.equal(playerAuto.classList.contains("search-miss"), true);
+    assert.equal(compressorToggle.closest(".toggle-row").classList.contains("search-miss"), false);
+    assert.equal(makeupGain.disabled, true);
+
+    compressorToggle.checked = true;
+    dispatch(dom, compressorToggle, "change");
+
+    assert.equal(makeupGain.disabled, false);
+
+    search.value = "왼쪽·오른쪽 방향키";
+    dispatch(dom, search, "input");
+
+    assert.equal(
+        Array.from(playerSeek.querySelectorAll(".option-group-body > *")).every(
+            (element) => !element.classList.contains("search-miss")
+        ),
+        true
+    );
+
+    search.value = "댓글 검색 지연";
+    dispatch(dom, search, "input");
+
+    const videoSearchToggle = queryOption(document, "videoSearchEnabled");
+    const commentSearchToggle = queryOption(document, "videoSearchCommentEnabled");
+    assert.equal(videoSearchToggle.closest(".toggle-row").classList.contains("search-miss"), false);
+    assert.equal(commentSearchToggle.closest(".toggle-row").classList.contains("search-miss"), false);
+    assert.equal(videoSearchToggle.closest(".option-group").open, true);
+    assert.equal(commentSearchToggle.closest(".option-group").open, true);
+
+    search.value = "라이브에도 스킵 버튼 표시";
+    dispatch(dom, search, "input");
+
+    for (const optionKey of ["skipControlEnabled", "skipPillEnabled", "skipLivePillEnabled"]) {
+        assert.equal(queryOption(document, optionKey).closest(".toggle-row").classList.contains("search-miss"), false);
+    }
+
+    search.value = "";
+    dispatch(dom, search, "input");
+
+    assert.equal(playerAuto.open, true);
+    assert.equal(playerCompressor.open, false);
+    assert.equal(document.querySelector(".option-group.search-miss"), null);
 });
 
 test("shared selector registry preserves lookup priority and warns once per stale anchor", async () => {
@@ -2868,7 +3165,7 @@ test("following refresh restarts the timer when the custom interval changes", as
     assert.equal(intervals[1].ms, 45000);
 });
 
-test("options page autosaves toggles immediately and number inputs after a debounce", async () => {
+test("options page saves changed toggles and numbers when the save button is clicked", async () => {
     const chrome = createFakeChrome({
         sync: {
             skipSeconds: 15,
@@ -2885,6 +3182,7 @@ test("options page autosaves toggles immediately and number inputs after a debou
     const skipSeconds = queryOption(document, "skipSeconds");
     const videoComment = queryOption(document, "videoSearchCommentEnabled");
     const autoQuality = queryOption(document, "autoQualityEnabled");
+    const saveButton = document.getElementById("save");
 
     assert.equal(skipSeconds.value, "15");
     assert.equal(videoComment.disabled, true);
@@ -2893,25 +3191,30 @@ test("options page autosaves toggles immediately and number inputs after a debou
     dispatch(dom, autoQuality, "change");
     await waitForAsyncCallbacks();
 
-    assert.equal(chrome.testState.sync.autoQualityEnabled, false, "체크박스는 변경 즉시 저장된다");
+    assert.equal(chrome.testState.sync.autoQualityEnabled, undefined, "버튼을 누르기 전에는 토글을 저장하지 않는다");
+    assert.equal(document.getElementById("notice").dataset.state, "dirty");
+    assert.equal(saveButton.disabled, false);
 
     skipSeconds.value = "17";
     dispatch(dom, skipSeconds, "input");
     await waitForAsyncCallbacks();
 
-    assert.equal(chrome.testState.sync.skipSeconds, 15, "숫자 입력은 디바운스 전에는 저장되지 않는다");
-    assert.equal(document.getElementById("notice").dataset.state, "saving");
+    assert.equal(chrome.testState.sync.skipSeconds, 15, "버튼을 누르기 전에는 숫자 입력을 저장하지 않는다");
 
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    saveButton.click();
+    await waitForAsyncCallbacks();
 
-    assert.equal(chrome.testState.sync.skipSeconds, 17, "타이핑이 멎으면 자동 저장된다");
+    assert.equal(chrome.testState.sync.autoQualityEnabled, false);
+    assert.equal(chrome.testState.sync.skipSeconds, 17);
     assert.equal(document.getElementById("notice").dataset.state, "saved");
+    assert.equal(saveButton.disabled, true);
 
     skipSeconds.value = "9999";
     dispatch(dom, skipSeconds, "input");
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    saveButton.click();
+    await waitForAsyncCallbacks();
 
-    assert.equal(skipSeconds.value, "600", "autosave should show the clamped numeric value");
+    assert.equal(skipSeconds.value, "600", "저장 후에는 보정된 숫자를 표시한다");
     assert.equal(chrome.testState.sync.skipSeconds, 600);
 });
 
@@ -2927,9 +3230,16 @@ test("options requests the pstatic host permission only when enabling the previe
     const previewToggle = queryOption(document, "followingPreviewTooltipEnabled");
     const soundToggle = queryOption(document, "followingPreviewSoundEnabled");
     const rightClickSoundToggle = queryOption(document, "livePreviewRightClickSoundEnabled");
+    const saveButton = document.getElementById("save");
 
     previewToggle.checked = true;
     dispatch(dom, previewToggle, "change");
+    await waitForAsyncCallbacks();
+
+    assert.equal(chrome.testState.permissionRequests.length, 0, "저장 전에는 권한을 요청하지 않는다");
+    assert.equal(chrome.testState.sync.followingPreviewTooltipEnabled, false);
+
+    saveButton.click();
     await waitForAsyncCallbacks();
 
     assert.equal(chrome.testState.permissionRequests.length, 1);
@@ -2942,6 +3252,7 @@ test("options requests the pstatic host permission only when enabling the previe
     dispatch(dom, soundToggle, "change");
     rightClickSoundToggle.checked = false;
     dispatch(dom, rightClickSoundToggle, "change");
+    saveButton.click();
     await waitForAsyncCallbacks();
 
     assert.equal(chrome.testState.permissionRequests.length, 1, "끄기나 다른 토글에서는 권한을 요청하지 않는다");
@@ -2960,9 +3271,11 @@ test("options reverts the preview toggle when the permission request is denied",
 
     const { document } = dom.window;
     const previewToggle = queryOption(document, "followingPreviewTooltipEnabled");
+    const saveButton = document.getElementById("save");
 
     previewToggle.checked = true;
     dispatch(dom, previewToggle, "change");
+    saveButton.click();
     await waitForAsyncCallbacks();
 
     assert.equal(previewToggle.checked, false, "거부되면 토글이 꺼진 상태로 돌아간다");
@@ -3028,9 +3341,11 @@ test("options page shows storage write failures without updating saved options",
 
     const { document } = dom.window;
     const autoQuality = queryOption(document, "autoQualityEnabled");
+    const saveButton = document.getElementById("save");
 
     autoQuality.checked = false;
     dispatch(dom, autoQuality, "change");
+    saveButton.click();
     await waitForAsyncCallbacks();
 
     assert.equal(chrome.testState.sync.autoQualityEnabled, true);
@@ -3051,10 +3366,12 @@ test("options page snaps out-of-range numbers back on change and saves the clamp
 
     const { document } = dom.window;
     const skipSeconds = queryOption(document, "skipSeconds");
+    const saveButton = document.getElementById("save");
 
     skipSeconds.value = "9999";
     dispatch(dom, skipSeconds, "input");
     dispatch(dom, skipSeconds, "change");
+    saveButton.click();
     await waitForAsyncCallbacks();
 
     assert.equal(skipSeconds.value, "600", "범위 밖 값은 입력을 마치면 보정값으로 되돌려 보여준다");
@@ -6280,7 +6597,10 @@ test("VOD replay chat fix runs even when the old stored option is disabled", asy
     );
 });
 
-async function createVodBroadcastClockFixture(detail, { currentTime = 2, videoNo = "12345", watchHistory = [] } = {}) {
+async function createVodBroadcastClockFixture(
+    detail,
+    { currentTime = 2, linkedDetails = {}, videoNo = "12345", watchHistory = [] } = {}
+) {
     const chrome = createFakeChrome({
         local: {
             betterChzzkLiveWatchHistory: { entries: watchHistory },
@@ -6328,14 +6648,16 @@ async function createVodBroadcastClockFixture(detail, { currentTime = 2, videoNo
         bottom: 408,
     });
     dom.window.fetch = async (url) => {
-        assert.match(String(url), new RegExp(`/service/v2/videos/${videoNo}$`));
+        const requestedVideoNo = decodeURIComponent(String(url).split("/").pop());
+        const requestedDetail = requestedVideoNo === videoNo ? detail : linkedDetails[requestedVideoNo];
+        assert.ok(requestedDetail, `unexpected VOD detail request: ${requestedVideoNo}`);
         return {
             ok: true,
             json: async () => ({
                 content: {
-                    videoNo,
+                    videoNo: requestedVideoNo,
                     videoTitle: "Split VOD fixture",
-                    ...detail,
+                    ...requestedDetail,
                 },
             }),
         };
@@ -6471,6 +6793,49 @@ test("VOD broadcast clock applies a 34h split offset for the third VOD segment",
     assert.equal(clock.querySelector(".bcbc-time").textContent, "10:00:02");
     assert.match(clock.title, /2026-06-29 10:00:00 KST/);
     assert.match(clock.title, /\+34:00:00/);
+});
+
+test("VOD broadcast clock follows linked 17h segments when publish processing is delayed", async () => {
+    const liveOpenDate = "2026-07-10 19:01:32";
+    const segmentOne = {
+        duration: 17 * 60 * 60,
+        liveOpenDate,
+        nextVideo: { duration: 60 * 60, videoNo: "unrelated" },
+    };
+    const { clock: secondClock } = await createVodBroadcastClockFixture(
+        {
+            duration: 17 * 60 * 60 + 1,
+            liveOpenDate,
+            nextVideo: { duration: 17 * 60 * 60, videoNo: "segment-one" },
+            publishDate: "2026-07-12 14:28:21",
+        },
+        { linkedDetails: { "segment-one": segmentOne } }
+    );
+    const { clock: thirdClock } = await createVodBroadcastClockFixture(
+        {
+            duration: 7 * 60 * 60 + 55 * 60 + 56,
+            liveOpenDate,
+            nextVideo: { duration: 17 * 60 * 60 + 1, videoNo: "segment-two" },
+            publishDate: "2026-07-12 16:55:34",
+        },
+        {
+            linkedDetails: {
+                "segment-one": segmentOne,
+                "segment-two": {
+                    duration: 17 * 60 * 60 + 1,
+                    liveOpenDate,
+                    nextVideo: { duration: 17 * 60 * 60, videoNo: "segment-one" },
+                },
+            },
+        }
+    );
+
+    assert.equal(secondClock.querySelector(".bcbc-time").textContent, "12:01:34");
+    assert.match(secondClock.title, /2026-07-11 12:01:32 KST/);
+    assert.match(secondClock.title, /\+17:00:00/);
+    assert.equal(thirdClock.querySelector(".bcbc-time").textContent, "05:01:34");
+    assert.match(thirdClock.title, /2026-07-12 05:01:32 KST/);
+    assert.match(thirdClock.title, /\+34:00:00/);
 });
 
 test("VOD broadcast clock ignores small publish delays as normal VOD processing time", async () => {
@@ -7705,7 +8070,7 @@ test("shortcut rescue stays inactive while the native pipeline handles keys", as
     assert.equal(state.paused, true);
 });
 
-test("shortcut rescue does nothing when the option is disabled", async () => {
+test("shortcut rescue ignores the removed legacy option and stays built in", async () => {
     const chrome = createFakeChrome({
         sync: {
             shortcutRescueEnabled: false,
@@ -7716,8 +8081,8 @@ test("shortcut rescue does nothing when the option is disabled", async () => {
 
     dispatchShortcutKey(dom, "Space", " ");
     await waitForRescueProbe();
-    assert.equal(state.clicks.play, 0);
-    assert.equal(state.paused, true);
+    assert.equal(state.clicks.play, 1);
+    assert.equal(state.paused, false);
 });
 
 test("history page loads local watch history state without crashing", async () => {

@@ -67,8 +67,8 @@ function createFakeChrome(sync = {}, local = {}) {
 function createPageDom(rows, sync = {}, local = {}) {
     const chrome = createFakeChrome(
         {
-            chatToolsEnabled: true,
             chatToolsShowBlindEnabled: true,
+            chatToolsModeratorBoxEnabled: true,
             ...sync,
         },
         local
@@ -118,7 +118,13 @@ function loadChatTools(dom) {
 
 function closeChatToolsDom(dom) {
     for (const listener of dom.window.chrome?.testState?.storageChangeListeners || []) {
-        listener({ chatToolsEnabled: { oldValue: true, newValue: false } }, "sync");
+        listener(
+            {
+                chatToolsShowBlindEnabled: { oldValue: true, newValue: false },
+                chatToolsModeratorBoxEnabled: { oldValue: true, newValue: false },
+            },
+            "sync"
+        );
     }
     dom.window.close();
 }
@@ -1401,7 +1407,7 @@ test("legacy moderator cache cleanup consumes storage.lastError in its callback"
     assert.equal(lastErrorReads, 1);
 });
 
-test("disabling the option removes UI and stops collecting new chat rows", async (t) => {
+test("chat tools toggle independently and stop the runtime when both are disabled", async (t) => {
     const { chrome, dom } = createPageDom(
         [
             '<div class="chat-row" data-chat-id="manager-enabled">',
@@ -1423,7 +1429,15 @@ test("disabling the option removes UI and stops collecting new chat rows", async
     );
 
     for (const listener of chrome.testState.storageChangeListeners) {
-        listener({ chatToolsEnabled: { oldValue: true, newValue: false } }, "sync");
+        listener({ chatToolsShowBlindEnabled: { oldValue: true, newValue: false } }, "sync");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    assert.ok(dom.window.document.querySelector(".bcct-moderator-box"));
+    assert.equal(dom.window.document.querySelector(".bcct-blind-reveal"), null);
+
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener({ chatToolsModeratorBoxEnabled: { oldValue: true, newValue: false } }, "sync");
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
 
@@ -1431,7 +1445,6 @@ test("disabling the option removes UI and stops collecting new chat rows", async
     assert.equal(dom.window.document.querySelector(".bcct-moderator-trigger"), null);
     assert.equal(dom.window.document.querySelector("[data-bcct-moderator-actions]"), null);
     assert.equal(dom.window.document.querySelector(".chat-more").parentElement.className, "chat-header");
-    assert.equal(dom.window.document.querySelector(".bcct-blind-reveal"), null);
 
     dom.window.document
         .querySelector(".chat-list")

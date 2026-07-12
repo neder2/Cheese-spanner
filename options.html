@@ -6,17 +6,91 @@
         <title>Better Chzzk 설정</title>
         <link rel="stylesheet" href="styles.css" />
     </head>
-    <body>
+    <body class="options-body">
         <main class="options-page">
+            <svg class="icon-sprite" aria-hidden="true">
+                <symbol id="icon-play" viewBox="0 0 24 24">
+                    <path d="m9.5 7.5 7 4.5-7 4.5z" fill="currentColor" stroke="none" />
+                </symbol>
+                <symbol id="icon-clock" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7.5V12l3 2" />
+                </symbol>
+                <symbol id="icon-volume" viewBox="0 0 24 24">
+                    <path d="M5 10v4h3l4 3V7l-4 3z" />
+                    <path d="M15 9.5a4 4 0 0 1 0 5M17.5 7a7.2 7.2 0 0 1 0 10" />
+                </symbol>
+                <symbol id="icon-activity" viewBox="0 0 24 24">
+                    <path d="M3 12h4l2-6 4 12 2-6h6" />
+                </symbol>
+                <symbol id="icon-keyboard" viewBox="0 0 24 24">
+                    <rect x="3" y="6" width="18" height="12" rx="2" />
+                    <path d="M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01M7 14h10" />
+                </symbol>
+                <symbol id="icon-history" viewBox="0 0 24 24">
+                    <path d="M4 7v5h5" />
+                    <path d="M5.3 16.5A8 8 0 1 0 4 12" />
+                    <path d="M12 8v4l2.5 1.5" />
+                </symbol>
+                <symbol id="icon-chat" viewBox="0 0 24 24">
+                    <path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5c-1.4 0-2.7-.4-3.8-1L4 19l1.1-4.4A7.5 7.5 0 1 1 20 11.5z" />
+                </symbol>
+                <symbol id="icon-tools" viewBox="0 0 24 24">
+                    <path d="M14.5 6.5a4 4 0 0 0-5 5L4 17l3 3 5.5-5.5a4 4 0 0 0 5-5l-2.5 2.5-3-3z" />
+                </symbol>
+                <symbol id="icon-window" viewBox="0 0 24 24">
+                    <rect x="3" y="5" width="18" height="14" rx="2" />
+                    <path d="M3 9h18M11 12l3 3m0-3-3 3" />
+                </symbol>
+                <symbol id="icon-calendar" viewBox="0 0 24 24">
+                    <rect x="3" y="5" width="18" height="16" rx="2" />
+                    <path d="M3 9.5h18M8.5 3v4M15.5 3v4" />
+                </symbol>
+                <symbol id="icon-search" viewBox="0 0 24 24">
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="m16.5 16.5 4.5 4.5" />
+                </symbol>
+                <symbol id="icon-compass" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="m14.8 9.2-1.6 4-4 1.6 1.6-4z" />
+                </symbol>
+                <symbol id="icon-refresh" viewBox="0 0 24 24">
+                    <path d="M19 7v5h-5M5 17v-5h5" />
+                    <path d="M7.2 8.2A7 7 0 0 1 19 12M5 12a7 7 0 0 0 11.8 3.8" />
+                </symbol>
+                <symbol id="icon-restore" viewBox="0 0 20 20">
+                    <path d="M3 5v5h5" />
+                    <path d="M3.5 10a6.5 6.5 0 1 1 1.9 4.6" />
+                </symbol>
+                <symbol id="icon-sliders" viewBox="0 0 24 24">
+                    <path d="M4 7h10M18 7h2M4 12h3M11 12h9M4 17h8M16 17h4" />
+                    <circle cx="16" cy="7" r="2" />
+                    <circle cx="9" cy="12" r="2" />
+                    <circle cx="14" cy="17" r="2" />
+                </symbol>
+                <symbol id="icon-eye" viewBox="0 0 24 24">
+                    <path d="M3 12s3.3-5 9-5 9 5 9 5-3.3 5-9 5-9-5-9-5z" />
+                    <circle cx="12" cy="12" r="2.5" />
+                </symbol>
+                <symbol id="icon-users" viewBox="0 0 24 24">
+                    <circle cx="9" cy="8" r="3" />
+                    <path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 5.5a3 3 0 0 1 0 5.5M16.5 14a5 5 0 0 1 4 5" />
+                </symbol>
+                <symbol id="icon-database" viewBox="0 0 24 24">
+                    <ellipse cx="12" cy="6" rx="8" ry="3" />
+                    <path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
+                </symbol>
+            </svg>
             <header class="hero">
                 <img class="brand-mark" src="icons/icon128.png" alt="" aria-hidden="true" />
                 <div>
                     <h1>Better Chzzk <span id="versionBadge" class="version-badge" hidden></span></h1>
-                    <p class="subtitle">
-                        치지직 시청 기능을 켜고 끄고 세부 수치까지 조절합니다. 변경 사항은 즉시 자동 저장됩니다.
-                    </p>
+                    <p class="subtitle">변경 후 저장 버튼을 눌러 적용합니다.</p>
                 </div>
-                <span id="notice" class="status-pill" aria-live="polite">불러오는 중</span>
+                <div class="hero-actions">
+                    <span id="notice" class="status-pill" aria-live="polite">불러오는 중</span>
+                    <button id="save" class="primary-button save-button" type="button" disabled>옵션 저장</button>
+                </div>
             </header>
 
             <form id="optionsForm" class="settings-form" novalidate>
@@ -51,7 +125,9 @@
                             role="tab"
                             data-tab="0"
                             aria-controls="tab-panel-0"
+                            aria-label="플레이어"
                             aria-selected="false"
+                            title="플레이어"
                             tabindex="-1"
                         >
                             <svg
@@ -75,7 +151,9 @@
                             role="tab"
                             data-tab="1"
                             aria-controls="tab-panel-1"
+                            aria-label="시청 기록"
                             aria-selected="false"
+                            title="시청 기록"
                             tabindex="-1"
                         >
                             <svg
@@ -99,7 +177,9 @@
                             role="tab"
                             data-tab="2"
                             aria-controls="tab-panel-2"
+                            aria-label="채팅"
                             aria-selected="false"
+                            title="채팅"
                             tabindex="-1"
                         >
                             <svg
@@ -124,7 +204,9 @@
                             role="tab"
                             data-tab="3"
                             aria-controls="tab-panel-3"
+                            aria-label="팝업"
                             aria-selected="false"
+                            title="팝업"
                             tabindex="-1"
                         >
                             <svg
@@ -149,7 +231,9 @@
                             role="tab"
                             data-tab="4"
                             aria-controls="tab-panel-4"
+                            aria-label="방송 시간"
                             aria-selected="false"
+                            title="방송 시간"
                             tabindex="-1"
                         >
                             <svg
@@ -173,7 +257,9 @@
                             role="tab"
                             data-tab="5"
                             aria-controls="tab-panel-5"
+                            aria-label="검색"
                             aria-selected="false"
+                            title="검색"
                             tabindex="-1"
                         >
                             <svg
@@ -197,7 +283,9 @@
                             role="tab"
                             data-tab="6"
                             aria-controls="tab-panel-6"
+                            aria-label="탐색"
                             aria-selected="false"
+                            title="탐색"
                             tabindex="-1"
                         >
                             <svg
@@ -221,253 +309,249 @@
 
                 <section class="settings-card" id="tab-panel-0" role="tabpanel" aria-labelledby="tab-0">
                     <div class="section-heading">
+                        <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <use href="#icon-play" />
+                        </svg>
                         <h2>플레이어</h2>
-                        <p>화질, 스킵, 볼륨 등 재생 기능을 조절합니다.</p>
                     </div>
 
-                    <label class="toggle-row">
-                        <span>
-                            <strong>자동 화질 복구</strong>
-                        </span>
-                        <input type="checkbox" data-option="autoQualityEnabled" />
-                    </label>
-
-                    <label class="toggle-row">
-                        <span>
-                            <strong>통나무 보상 자동 받기</strong>
-                            <small>통나무 수령 버튼과 대기 중인 보상을 자동 처리합니다.</small>
-                        </span>
-                        <input type="checkbox" data-option="rewardAutoCollectEnabled" />
-                    </label>
-
-                    <details class="advanced-settings">
-                        <summary>통나무 보상 설정</summary>
-                        <div class="number-grid" data-depends-on="rewardAutoCollectEnabled">
-                            <label
-                                ><span>자동 클릭 지연</span
-                                ><input
-                                    type="number"
-                                    min="0"
-                                    max="5000"
-                                    step="100"
-                                    data-option="rewardAutoCollectDelayMs"
-                                /><em>ms</em></label
-                            >
-                        </div>
-                        <p class="setting-note">
-                            1시간 시청 보상은 화면 버튼으로 받고, 그 외 대기 보상은 치지직 API로 받습니다.
-                        </p>
-                    </details>
-
-                    <label class="toggle-row">
-                        <span
-                            ><strong>스킵 기능</strong
-                            ><small>다시보기와 타임머신에서 시간 이동 기능을 켭니다.</small></span
-                        >
-                        <input type="checkbox" data-option="skipControlEnabled" />
-                    </label>
-                    <label class="toggle-row" data-depends-on="skipControlEnabled">
-                        <span
-                            ><strong>방향키 스킵</strong
-                            ><small>←/→로 이동하고, 일시정지 중 쉼표·마침표 키로 프레임 이동합니다.</small></span
-                        >
-                        <input type="checkbox" data-option="skipKeyboardEnabled" />
-                    </label>
-                    <label class="toggle-row" data-depends-on="skipControlEnabled">
-                        <span
-                            ><strong>보던 위치 유지</strong
-                            ><small>일시정지해도 실시간으로 되돌리지 않습니다.</small></span
-                        >
-                        <input type="checkbox" data-option="skipLivePauseResumeEnabled" />
-                    </label>
-
-                    <label class="toggle-row">
-                        <span><strong>타임머신 지연 표시</strong></span>
-                        <input type="checkbox" data-option="timeMachineLagLabelEnabled" />
-                    </label>
-                    <label class="toggle-row" data-depends-on="skipControlEnabled">
-                        <span><strong>스킵 버튼 표시</strong></span>
-                        <input type="checkbox" data-option="skipPillEnabled" />
-                    </label>
-                    <label class="toggle-row" data-depends-on="skipControlEnabled skipPillEnabled">
-                        <span><strong>라이브에도 스킵 버튼 표시</strong></span>
-                        <input type="checkbox" data-option="skipLivePillEnabled" />
-                    </label>
-                    <details class="advanced-settings">
-                        <summary>스킵 수치 설정</summary>
-                        <div class="number-grid" data-depends-on="skipControlEnabled">
-                            <label
-                                ><span>기본 스킵</span
-                                ><input type="number" min="1" max="600" step="1" data-option="skipSeconds" /><em
-                                    >초</em
-                                ></label
-                            >
-                            <label
-                                ><span>휠 기본</span
-                                ><input type="number" min="1" max="60" step="1" data-option="skipWheelStep" /><em
-                                    >초</em
-                                ></label
-                            >
-                            <label
-                                ><span>Shift+휠</span
-                                ><input type="number" min="1" max="300" step="1" data-option="skipWheelShiftStep" /><em
-                                    >초</em
-                                ></label
-                            >
-                            <label
-                                ><span>Alt+휠</span
-                                ><input type="number" min="1" max="600" step="1" data-option="skipWheelAltStep" /><em
-                                    >초</em
-                                ></label
-                            >
+                    <details class="option-group" data-option-group="player-auto" open>
+                        <summary>
+                            <span class="option-group-title"><span>자동 처리</span></span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>자동 화질 복구</strong></span>
+                                <input type="checkbox" data-option="autoQualityEnabled" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>통나무 보상 자동 받기</strong></span>
+                                <input type="checkbox" data-option="rewardAutoCollectEnabled" />
+                            </label>
                         </div>
                     </details>
 
-                    <label class="toggle-row">
-                        <span><strong>휠로 볼륨 조절</strong></span>
-                        <input type="checkbox" data-option="volumeWheelEnabled" />
-                    </label>
-
-                    <details class="advanced-settings">
-                        <summary>볼륨 휠 설정</summary>
-                        <div class="number-grid" data-depends-on="volumeWheelEnabled">
-                            <label
-                                ><span>1틱 볼륨</span
-                                ><input type="number" min="1" max="50" step="1" data-option="volumeWheelStep" /><em
-                                    >%</em
-                                ></label
-                            >
+                    <details class="option-group" data-option-group="player-seek">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-clock" /></svg>
+                                <span>시간 이동</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>다시보기·타임머신 스킵</strong></span>
+                                <input type="checkbox" data-option="skipControlEnabled" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="skipControlEnabled">
+                                <span><strong>방향키·프레임 이동</strong></span>
+                                <input type="checkbox" data-option="skipKeyboardEnabled" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="skipControlEnabled">
+                                <span><strong>일시정지 중 실시간 복귀 방지</strong></span>
+                                <input type="checkbox" data-option="skipLivePauseResumeEnabled" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>타임머신 지연 표시</strong></span>
+                                <input type="checkbox" data-option="timeMachineLagLabelEnabled" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="skipControlEnabled">
+                                <span><strong>스킵 버튼 표시</strong></span>
+                                <input type="checkbox" data-option="skipPillEnabled" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="skipControlEnabled skipPillEnabled">
+                                <span><strong>라이브에도 스킵 버튼 표시</strong></span>
+                                <input type="checkbox" data-option="skipLivePillEnabled" />
+                            </label>
+                            <div class="number-grid" data-depends-on="skipControlEnabled">
+                                <label
+                                    ><span>기본 스킵</span
+                                    ><input type="number" min="1" max="600" step="1" data-option="skipSeconds" /><em
+                                        >초</em
+                                    ></label
+                                >
+                                <label
+                                    ><span>휠 기본</span
+                                    ><input type="number" min="1" max="60" step="1" data-option="skipWheelStep" /><em
+                                        >초</em
+                                    ></label
+                                >
+                                <label
+                                    ><span>Shift+휠</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="300"
+                                        step="1"
+                                        data-option="skipWheelShiftStep"
+                                    /><em>초</em></label
+                                >
+                                <label
+                                    ><span>Alt+휠</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="600"
+                                        step="1"
+                                        data-option="skipWheelAltStep"
+                                    /><em>초</em></label
+                                >
+                            </div>
+                            <p class="setting-note">
+                                왼쪽·오른쪽 방향키로 스킵하고, 일시정지 중 쉼표·마침표 키로 프레임을 이동합니다.
+                            </p>
                         </div>
                     </details>
 
-                    <label class="toggle-row">
-                        <span><strong>볼륨 % 표시</strong></span>
-                        <input type="checkbox" data-option="volumeTooltipEnabled" />
-                    </label>
-
-                    <label class="toggle-row">
-                        <span
-                            ><strong>오디오 컴프레서</strong
-                            ><small
-                                >플레이어에 컴프레서 버튼을 답니다. 치즈나이프 확장의 컴프레서가 있으면 버튼을 자동으로
-                                숨깁니다.</small
-                            ></span
-                        >
-                        <input type="checkbox" data-option="audioCompressorEnabled" />
-                    </label>
-
-                    <details class="advanced-settings">
-                        <summary>오디오 컴프레서 설정</summary>
-                        <div class="number-grid" data-depends-on="audioCompressorEnabled">
-                            <label
-                                ><span>임계값</span
-                                ><input
-                                    type="number"
-                                    min="-60"
-                                    max="0"
-                                    step="1"
-                                    data-option="audioCompressorThreshold"
-                                /><em>dB</em></label
-                            >
-                            <label
-                                ><span>무릎</span
-                                ><input type="number" min="0" max="40" step="1" data-option="audioCompressorKnee" /><em
-                                    >dB</em
-                                ></label
-                            >
-                            <label
-                                ><span>비율</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="20"
-                                    step="0.1"
-                                    data-option="audioCompressorRatio"
-                                /><em>:1</em></label
-                            >
-                            <label
-                                ><span>어택</span
-                                ><input
-                                    type="number"
-                                    min="0"
-                                    max="1"
-                                    step="0.001"
-                                    data-option="audioCompressorAttack"
-                                /><em>초</em></label
-                            >
-                            <label
-                                ><span>릴리즈</span
-                                ><input
-                                    type="number"
-                                    min="0"
-                                    max="1"
-                                    step="0.01"
-                                    data-option="audioCompressorRelease"
-                                /><em>초</em></label
-                            >
-                            <label
-                                ><span>보정 게인</span
-                                ><input
-                                    type="number"
-                                    min="0.5"
-                                    max="3"
-                                    step="0.1"
-                                    data-option="audioCompressorMakeupGain"
-                                /><em>x</em></label
-                            >
+                    <details class="option-group" data-option-group="player-volume">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-volume" /></svg>
+                                <span>볼륨</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>휠로 볼륨 조절</strong></span>
+                                <input type="checkbox" data-option="volumeWheelEnabled" />
+                            </label>
+                            <div class="number-grid" data-depends-on="volumeWheelEnabled">
+                                <label
+                                    ><span>1틱 볼륨</span
+                                    ><input type="number" min="1" max="50" step="1" data-option="volumeWheelStep" /><em
+                                        >%</em
+                                    ></label
+                                >
+                            </div>
+                            <label class="toggle-row">
+                                <span><strong>볼륨 % 표시</strong></span>
+                                <input type="checkbox" data-option="volumeTooltipEnabled" />
+                            </label>
                         </div>
-                        <p class="setting-note">실제 적용은 플레이어 버튼에서 켭니다.</p>
                     </details>
 
-                    <label class="toggle-row">
-                        <span><strong>다시보기에 당시 시간 표시</strong></span>
-                        <input type="checkbox" data-option="vodBroadcastClockEnabled" />
-                    </label>
+                    <details class="option-group" data-option-group="player-compressor">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-activity" /></svg>
+                                <span>오디오 컴프레서</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>컴프레서 버튼 표시</strong></span>
+                                <input type="checkbox" data-option="audioCompressorEnabled" />
+                            </label>
+                            <div class="number-grid" data-depends-on="audioCompressorEnabled">
+                                <label
+                                    ><span>임계값</span
+                                    ><input
+                                        type="number"
+                                        min="-60"
+                                        max="0"
+                                        step="1"
+                                        data-option="audioCompressorThreshold"
+                                    /><em>dB</em></label
+                                >
+                                <label
+                                    ><span>무릎</span
+                                    ><input
+                                        type="number"
+                                        min="0"
+                                        max="40"
+                                        step="1"
+                                        data-option="audioCompressorKnee"
+                                    /><em>dB</em></label
+                                >
+                                <label
+                                    ><span>비율</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="20"
+                                        step="0.1"
+                                        data-option="audioCompressorRatio"
+                                    /><em>:1</em></label
+                                >
+                                <label
+                                    ><span>어택</span
+                                    ><input
+                                        type="number"
+                                        min="0"
+                                        max="1"
+                                        step="0.001"
+                                        data-option="audioCompressorAttack"
+                                    /><em>초</em></label
+                                >
+                                <label
+                                    ><span>릴리즈</span
+                                    ><input
+                                        type="number"
+                                        min="0"
+                                        max="1"
+                                        step="0.01"
+                                        data-option="audioCompressorRelease"
+                                    /><em>초</em></label
+                                >
+                                <label
+                                    ><span>보정 게인</span
+                                    ><input
+                                        type="number"
+                                        min="0.5"
+                                        max="3"
+                                        step="0.1"
+                                        data-option="audioCompressorMakeupGain"
+                                    /><em>x</em></label
+                                >
+                            </div>
+                        </div>
+                    </details>
 
-                    <label class="toggle-row">
-                        <span
-                            ><strong>다시보기 Space 홀드 2배속</strong
-                            ><small>Space를 길게 누르는 동안만 2배속으로 재생합니다.</small></span
-                        >
-                        <input type="checkbox" data-option="holdSpeedEnabled" />
-                    </label>
-
-                    <label class="toggle-row">
-                        <span
-                            ><strong>단축키 복구</strong
-                            ><small>스페이스/m/f/t 단축키가 멈추면 대신 처리합니다.</small></span
-                        >
-                        <input type="checkbox" data-option="shortcutRescueEnabled" />
-                    </label>
+                    <details class="option-group" data-option-group="player-vod">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-keyboard" /></svg>
+                                <span>다시보기·단축키</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>다시보기에 당시 시간 표시</strong></span>
+                                <input type="checkbox" data-option="vodBroadcastClockEnabled" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>다시보기 Space 홀드 2배속</strong></span>
+                                <input type="checkbox" data-option="holdSpeedEnabled" />
+                            </label>
+                        </div>
+                    </details>
                 </section>
 
                 <section class="settings-card" id="tab-panel-1" role="tabpanel" aria-labelledby="tab-1">
                     <div class="section-heading">
+                        <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <use href="#icon-history" />
+                        </svg>
                         <h2>시청 기록</h2>
-                        <p>라이브로 본 시간을 이 브라우저에만 기록합니다.</p>
                     </div>
 
                     <label class="toggle-row">
                         <span><strong>라이브 시청 기록 저장</strong></span>
                         <input type="checkbox" data-option="liveWatchHistoryEnabled" />
                     </label>
-
-                    <details class="advanced-settings">
-                        <summary>시청 기록 설정</summary>
-                        <div class="number-grid" data-depends-on="liveWatchHistoryEnabled">
-                            <label
-                                ><span>최소 저장 시간</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="1440"
-                                    step="1"
-                                    data-option="liveWatchHistoryMinMinutes"
-                                /><em>분</em></label
-                            >
-                        </div>
-                        <p class="setting-note">이보다 짧게 본 라이브는 기록하지 않습니다.</p>
-                    </details>
+                    <div class="number-grid" data-depends-on="liveWatchHistoryEnabled">
+                        <label
+                            ><span>최소 저장 시간</span
+                            ><input
+                                type="number"
+                                min="1"
+                                max="1440"
+                                step="1"
+                                data-option="liveWatchHistoryMinMinutes"
+                            /><em>분</em></label
+                        >
+                    </div>
+                    <p class="setting-note">이보다 짧게 본 라이브는 제외하며, 기록은 이 브라우저에만 저장합니다.</p>
 
                     <div class="inline-action-row">
                         <a class="secondary-button" href="history.html" target="_blank" rel="noopener"
@@ -478,62 +562,71 @@
 
                 <section class="settings-card" id="tab-panel-2" role="tabpanel" aria-labelledby="tab-2">
                     <div class="section-heading">
+                        <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <use href="#icon-chat" />
+                        </svg>
                         <h2>채팅 도구</h2>
-                        <p>라이브 채팅 보조 기능을 조절합니다.</p>
                     </div>
 
-                    <label class="toggle-row">
-                        <span
-                            ><strong>다시보기 댓글 탭</strong
-                            ><small>채팅 다시보기 영역에서 댓글을 함께 봅니다.</small></span
-                        >
-                        <input type="checkbox" data-option="vodCommentTabsEnabled" />
-                    </label>
-                    <label class="toggle-row">
-                        <span
-                            ><strong>채팅 시각 표시</strong
-                            ><small>서버에 기록된 채팅 작성 시각을 닉네임 왼쪽에 표시합니다.</small></span
-                        >
-                        <input type="checkbox" data-option="chatTimestampEnabled" />
-                    </label>
-                    <label class="toggle-row">
-                        <span><strong>채팅 도구</strong></span>
-                        <input type="checkbox" data-option="chatToolsEnabled" />
-                    </label>
-                    <label class="toggle-row" data-depends-on="chatToolsEnabled">
-                        <span
-                            ><strong>블라인드 채팅 원문 표시</strong
-                            ><small>기억해 둔 원문을 취소선으로 되살립니다.</small></span
-                        >
-                        <input type="checkbox" data-option="chatToolsShowBlindEnabled" />
-                    </label>
-                    <label class="toggle-row" data-depends-on="chatToolsEnabled">
-                        <span
-                            ><strong>방송자/채팅 운영자 모아보기</strong
-                            ><small>채팅창 우측 상단 아이콘에서 봅니다.</small></span
-                        >
-                        <input type="checkbox" data-option="chatToolsModeratorBoxEnabled" />
-                    </label>
+                    <details class="option-group" data-option-group="chat-display" open>
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-chat" /></svg>
+                                <span>댓글·표시</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>다시보기 채팅창 댓글 탭</strong></span>
+                                <input type="checkbox" data-option="vodCommentTabsEnabled" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>타임스탬프 표시</strong></span>
+                                <input type="checkbox" data-option="chatTimestampEnabled" />
+                            </label>
+                        </div>
+                    </details>
 
-                    <details class="advanced-settings">
-                        <summary>채팅 도구 수치 설정</summary>
-                        <div class="number-grid" data-depends-on="chatToolsEnabled chatToolsModeratorBoxEnabled">
-                            <label
-                                ><span>모아보기 보관 개수</span
-                                ><input
-                                    type="number"
-                                    min="20"
-                                    max="200"
-                                    step="10"
-                                    data-option="chatToolsMaxModeratorMessages"
-                                /><em>개</em></label
-                            >
+                    <details class="option-group" data-option-group="chat-tools">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-tools" /></svg>
+                                <span>채팅 관리</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>블라인드 채팅 원문 표시</strong></span>
+                                <input type="checkbox" data-option="chatToolsShowBlindEnabled" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>방송자·운영자 채팅 모아보기</strong></span>
+                                <input type="checkbox" data-option="chatToolsModeratorBoxEnabled" />
+                            </label>
+                            <div class="number-grid" data-depends-on="chatToolsModeratorBoxEnabled">
+                                <label
+                                    ><span>모아보기 보관 개수</span
+                                    ><input
+                                        type="number"
+                                        min="20"
+                                        max="200"
+                                        step="10"
+                                        data-option="chatToolsMaxModeratorMessages"
+                                    /><em>개</em></label
+                                >
+                            </div>
+                            <p class="setting-note">
+                                기억한 원문만 취소선으로 표시하며, 모아보기는 채팅창 우측 상단에서 엽니다.
+                            </p>
                         </div>
                     </details>
                 </section>
 
                 <section class="settings-card" id="tab-panel-3" role="tabpanel" aria-labelledby="tab-3">
                     <div class="section-heading">
+                        <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <use href="#icon-window" />
+                        </svg>
                         <h2>광고 차단 안내 팝업</h2>
                     </div>
 
@@ -545,461 +638,572 @@
 
                 <section class="settings-card" id="tab-panel-4" role="tabpanel" aria-labelledby="tab-4">
                     <div class="section-heading">
+                        <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <use href="#icon-calendar" />
+                        </svg>
                         <h2>채널 방송 시간</h2>
-                        <p>채널의 평균 방송 시간과 방송 달력을 보여줍니다.</p>
                     </div>
 
-                    <label class="toggle-row">
-                        <span><strong>평균 방송 시간 표시</strong></span>
-                        <input type="checkbox" data-option="monthlyBroadcastTimeEnabled" />
-                    </label>
-                    <label class="toggle-row" data-depends-on="monthlyBroadcastTimeEnabled">
-                        <span><strong>월간 달력</strong><small>방송한 날을 달력에 표시합니다.</small></span>
-                        <input type="checkbox" data-option="monthlyBroadcastTimeCalendarEnabled" />
-                    </label>
-                    <label
-                        class="toggle-row"
-                        data-depends-on="monthlyBroadcastTimeEnabled monthlyBroadcastTimeCalendarEnabled"
-                    >
-                        <span
-                            ><strong>내 시청 표시</strong
-                            ><small>달력에 내가 시청한 날과 시간을 함께 표시합니다.</small></span
-                        >
-                        <input type="checkbox" data-option="monthlyBroadcastTimeWatchEnabled" />
-                    </label>
-
-                    <details class="advanced-settings">
-                        <summary>방송 시간 수치 설정</summary>
-                        <div class="number-grid" data-depends-on="monthlyBroadcastTimeEnabled">
-                            <label
-                                ><span>평균 기간</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="365"
-                                    step="1"
-                                    data-option="monthlyBroadcastTimeWindowDays"
-                                /><em>일</em></label
-                            >
-                            <label
-                                ><span>평균 조회 상한</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="200"
-                                    step="1"
-                                    data-option="monthlyBroadcastTimeMaxPages"
-                                /><em>쪽</em></label
-                            >
-                            <label data-depends-on="monthlyBroadcastTimeEnabled monthlyBroadcastTimeCalendarEnabled"
-                                ><span>달력 조회 상한</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="300"
-                                    step="10"
-                                    data-option="monthlyBroadcastTimeMaxCalendarPages"
-                                /><em>쪽</em></label
-                            >
+                    <details class="option-group" data-option-group="broadcast-average" open>
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-clock" /></svg>
+                                <span>평균 방송 시간</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>평균 방송 시간 표시</strong></span>
+                                <input type="checkbox" data-option="monthlyBroadcastTimeEnabled" />
+                            </label>
+                            <div class="number-grid" data-depends-on="monthlyBroadcastTimeEnabled">
+                                <label
+                                    ><span>평균 기간</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="365"
+                                        step="1"
+                                        data-option="monthlyBroadcastTimeWindowDays"
+                                    /><em>일</em></label
+                                >
+                                <label
+                                    ><span>평균 조회 상한</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="200"
+                                        step="1"
+                                        data-option="monthlyBroadcastTimeMaxPages"
+                                    /><em>쪽</em></label
+                                >
+                            </div>
+                            <p class="setting-note">조회 상한을 낮추면 채널 페이지가 빨라집니다.</p>
                         </div>
-                        <p class="setting-note">조회 상한을 낮추면 채널 페이지가 빨라집니다.</p>
+                    </details>
+
+                    <details class="option-group" data-option-group="broadcast-calendar">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-calendar" /></svg>
+                                <span>방송 달력</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row" data-depends-on="monthlyBroadcastTimeEnabled">
+                                <span><strong>방송일 월간 달력</strong></span>
+                                <input type="checkbox" data-option="monthlyBroadcastTimeCalendarEnabled" />
+                            </label>
+                            <label
+                                class="toggle-row"
+                                data-depends-on="monthlyBroadcastTimeEnabled monthlyBroadcastTimeCalendarEnabled"
+                            >
+                                <span><strong>달력에 내 시청 시간 표시</strong></span>
+                                <input type="checkbox" data-option="monthlyBroadcastTimeWatchEnabled" />
+                            </label>
+                            <div
+                                class="number-grid"
+                                data-depends-on="monthlyBroadcastTimeEnabled monthlyBroadcastTimeCalendarEnabled"
+                            >
+                                <label
+                                    ><span>달력 조회 상한</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="300"
+                                        step="10"
+                                        data-option="monthlyBroadcastTimeMaxCalendarPages"
+                                    /><em>쪽</em></label
+                                >
+                            </div>
+                        </div>
                     </details>
                 </section>
 
                 <section class="settings-card" id="tab-panel-5" role="tabpanel" aria-labelledby="tab-5">
                     <div class="section-heading">
+                        <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <use href="#icon-search" />
+                        </svg>
                         <h2>다시보기 검색</h2>
-                        <p>채널 다시보기 목록의 검색을 보강합니다.</p>
                     </div>
 
-                    <label class="toggle-row">
-                        <span><strong>다시보기 검색</strong></span>
-                        <input type="checkbox" data-option="videoSearchEnabled" />
-                    </label>
-                    <label class="toggle-row" data-depends-on="videoSearchEnabled">
-                        <span><strong>댓글 검색</strong><small>제목으로 못 찾으면 댓글도 검색합니다.</small></span>
-                        <input type="checkbox" data-option="videoSearchCommentEnabled" />
-                    </label>
-
-                    <details class="advanced-settings">
-                        <summary>검색 수치 설정</summary>
-                        <div class="number-grid" data-depends-on="videoSearchEnabled">
-                            <label
-                                ><span>영상 조회 페이지</span
-                                ><input type="number" min="1" max="200" step="1" data-option="videoSearchMaxPages" /><em
-                                    >쪽</em
-                                ></label
-                            >
-                            <label
-                                ><span>한 번에 표시</span
-                                ><input
-                                    type="number"
-                                    min="10"
-                                    max="300"
-                                    step="10"
-                                    data-option="videoSearchRenderBatchSize"
-                                /><em>개</em></label
-                            >
-                            <label data-depends-on="videoSearchEnabled videoSearchCommentEnabled"
-                                ><span>댓글 검색 지연</span
-                                ><input
-                                    type="number"
-                                    min="0"
-                                    max="5000"
-                                    step="100"
-                                    data-option="videoSearchCommentDelayMs"
-                                /><em>ms</em></label
-                            >
-                            <label data-depends-on="videoSearchEnabled videoSearchCommentEnabled"
-                                ><span>댓글 조회 영상</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="200"
-                                    step="10"
-                                    data-option="videoSearchCommentMaxVideos"
-                                /><em>개</em></label
-                            >
-                            <label data-depends-on="videoSearchEnabled videoSearchCommentEnabled"
-                                ><span>영상당 댓글 페이지</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="3"
-                                    step="1"
-                                    data-option="videoSearchCommentMaxPagesPerVideo"
-                                /><em>쪽</em></label
-                            >
+                    <details class="option-group" data-option-group="search-basic" open>
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-search" /></svg>
+                                <span>기본 검색</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>다시보기 검색</strong></span>
+                                <input type="checkbox" data-option="videoSearchEnabled" />
+                            </label>
+                            <div class="number-grid" data-depends-on="videoSearchEnabled">
+                                <label
+                                    ><span>영상 조회 페이지</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="200"
+                                        step="1"
+                                        data-option="videoSearchMaxPages"
+                                    /><em>쪽</em></label
+                                >
+                                <label
+                                    ><span>한 번에 표시</span
+                                    ><input
+                                        type="number"
+                                        min="10"
+                                        max="300"
+                                        step="10"
+                                        data-option="videoSearchRenderBatchSize"
+                                    /><em>개</em></label
+                                >
+                            </div>
+                            <p class="setting-note">조회 페이지와 표시 개수를 낮추면 목록 반응이 빨라집니다.</p>
                         </div>
-                        <p class="setting-note">값을 낮추면 페이지 반응이 빨라집니다.</p>
+                    </details>
+
+                    <details class="option-group" data-option-group="search-comments">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-chat" /></svg>
+                                <span>댓글 검색</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row" data-depends-on="videoSearchEnabled">
+                                <span><strong>제목에 없으면 댓글까지 검색</strong></span>
+                                <input type="checkbox" data-option="videoSearchCommentEnabled" />
+                            </label>
+                            <div class="number-grid" data-depends-on="videoSearchEnabled videoSearchCommentEnabled">
+                                <label
+                                    ><span>댓글 검색 지연</span
+                                    ><input
+                                        type="number"
+                                        min="0"
+                                        max="5000"
+                                        step="100"
+                                        data-option="videoSearchCommentDelayMs"
+                                    /><em>ms</em></label
+                                >
+                                <label
+                                    ><span>댓글 조회 영상</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="200"
+                                        step="10"
+                                        data-option="videoSearchCommentMaxVideos"
+                                    /><em>개</em></label
+                                >
+                                <label
+                                    ><span>영상당 댓글 페이지</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="3"
+                                        step="1"
+                                        data-option="videoSearchCommentMaxPagesPerVideo"
+                                    /><em>쪽</em></label
+                                >
+                            </div>
+                            <p class="setting-note">값을 낮추면 페이지 반응이 빨라집니다.</p>
+                        </div>
                     </details>
                 </section>
 
                 <section class="settings-card" id="tab-panel-6" role="tabpanel" aria-labelledby="tab-6">
                     <div class="section-heading">
+                        <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <use href="#icon-compass" />
+                        </svg>
                         <h2>방송 목록 필터</h2>
-                        <p>방송 목록의 검색과 필터를 보강합니다.</p>
                     </div>
 
-                    <label class="toggle-row">
-                        <span>
-                            <strong>팔로잉 목록 자동 새로고침</strong>
-                        </span>
-                        <input type="checkbox" data-option="followingRefreshEnabled" />
-                    </label>
-
-                    <details class="advanced-settings">
-                        <summary>새로고침 설정</summary>
-                        <div class="number-grid" data-depends-on="followingRefreshEnabled">
-                            <label
-                                ><span>자동 새로고침 주기</span
-                                ><input
-                                    type="number"
-                                    min="10"
-                                    max="600"
-                                    step="1"
-                                    data-option="followingRefreshSeconds"
-                                /><em>초</em></label
-                            >
+                    <details class="option-group" data-option-group="explore-refresh">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-refresh" /></svg>
+                                <span>목록 새로고침</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>팔로잉 목록 자동 새로고침</strong></span>
+                                <input type="checkbox" data-option="followingRefreshEnabled" />
+                            </label>
+                            <div class="number-grid" data-depends-on="followingRefreshEnabled">
+                                <label
+                                    ><span>자동 새로고침 주기</span
+                                    ><input
+                                        type="number"
+                                        min="10"
+                                        max="600"
+                                        step="1"
+                                        data-option="followingRefreshSeconds"
+                                    /><em>초</em></label
+                                >
+                            </div>
                         </div>
                     </details>
 
-                    <label class="toggle-row">
-                        <span><strong>방송 목록 도구</strong><small>검색창과 필터 메뉴를 추가합니다.</small></span>
-                        <input type="checkbox" data-option="categoryToolsEnabled" />
-                    </label>
-                    <label class="toggle-row" data-depends-on="categoryToolsEnabled">
-                        <span
-                            ><strong>전체 방송 태그 검색 숨김</strong><small>기본 태그 검색창을 숨깁니다.</small></span
-                        >
-                        <input type="checkbox" data-option="categoryToolsHideGlobalTagSearch" />
-                    </label>
-                    <label class="toggle-row" data-depends-on="categoryToolsEnabled">
-                        <span><strong>팔로워 수 표시</strong></span>
-                        <input type="checkbox" data-option="categoryToolsFollowerBadgesEnabled" />
-                    </label>
-                    <label class="toggle-row" data-depends-on="categoryToolsEnabled">
-                        <span><strong>호버로 진행 시간 표시</strong></span>
-                        <input type="checkbox" data-option="categoryToolsLiveElapsedEnabled" />
-                    </label>
-                    <label class="toggle-row">
-                        <span>
-                            <strong>라이브 호버 미리보기</strong>
-                            <small>팔로잉과 방송 목록에서 미리보기를 재생합니다.</small>
-                        </span>
-                        <input type="checkbox" data-option="followingPreviewTooltipEnabled" />
-                    </label>
-                    <label class="toggle-row" data-depends-on="followingPreviewTooltipEnabled">
-                        <span>
-                            <strong>호버 미리보기 소리</strong>
-                            <small>설정한 고정 볼륨으로 미리보기를 재생합니다.</small>
-                        </span>
-                        <input type="checkbox" data-option="followingPreviewSoundEnabled" />
-                    </label>
-                    <div
-                        class="number-grid"
-                        data-depends-on="followingPreviewTooltipEnabled followingPreviewSoundEnabled"
-                    >
-                        <label
-                            ><span>미리보기 볼륨</span
-                            ><input
-                                type="number"
-                                min="1"
-                                max="100"
-                                step="1"
-                                data-option="followingPreviewVolumePercent"
-                            /><em>%</em></label
-                        >
-                    </div>
-                    <label class="toggle-row" data-depends-on="followingPreviewTooltipEnabled">
-                        <span>
-                            <strong>미리보기 우클릭 소리</strong>
-                            <small>방송 미리보기에서 우클릭으로 소리를 제어합니다.</small>
-                        </span>
-                        <input type="checkbox" data-option="livePreviewRightClickSoundEnabled" />
-                    </label>
-                    <label class="toggle-row">
-                        <span><strong>긴 제목 툴팁</strong></span>
-                        <input type="checkbox" data-option="titleTooltipEnabled" />
-                    </label>
-
-                    <details class="advanced-settings">
-                        <summary>필터 버튼 기준값</summary>
-                        <div class="number-grid" data-depends-on="categoryToolsEnabled">
-                            <label
-                                ><span>팔로워 버튼 1</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="10000000"
-                                    step="1"
-                                    data-option="categoryToolsFollowerFilterPreset1"
-                                /><em>명</em></label
-                            >
-                            <label
-                                ><span>팔로워 버튼 2</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="10000000"
-                                    step="1"
-                                    data-option="categoryToolsFollowerFilterPreset2"
-                                /><em>명</em></label
-                            >
-                            <label
-                                ><span>팔로워 버튼 3</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="10000000"
-                                    step="1"
-                                    data-option="categoryToolsFollowerFilterPreset3"
-                                /><em>명</em></label
-                            >
-                            <label
-                                ><span>팔로워 버튼 4</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="10000000"
-                                    step="1"
-                                    data-option="categoryToolsFollowerFilterPreset4"
-                                /><em>명</em></label
-                            >
-                            <label
-                                ><span>팔로워 버튼 5</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="10000000"
-                                    step="1"
-                                    data-option="categoryToolsFollowerFilterPreset5"
-                                /><em>명</em></label
-                            >
-                            <label
-                                ><span>팔로워 버튼 6</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="10000000"
-                                    step="1"
-                                    data-option="categoryToolsFollowerFilterPreset6"
-                                /><em>명</em></label
-                            >
-                            <label
-                                ><span>시청자/조회수 1</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="10000000"
-                                    step="1"
-                                    data-option="categoryToolsViewFilterPreset1"
-                                /><em>명/회</em></label
-                            >
-                            <label
-                                ><span>시청자/조회수 2</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="10000000"
-                                    step="1"
-                                    data-option="categoryToolsViewFilterPreset2"
-                                /><em>명/회</em></label
-                            >
-                            <label
-                                ><span>시청자/조회수 3</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="10000000"
-                                    step="1"
-                                    data-option="categoryToolsViewFilterPreset3"
-                                /><em>명/회</em></label
-                            >
-                            <label
-                                ><span>시청자/조회수 4</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="10000000"
-                                    step="1"
-                                    data-option="categoryToolsViewFilterPreset4"
-                                /><em>명/회</em></label
-                            >
-                            <label
-                                ><span>시청자/조회수 5</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="10000000"
-                                    step="1"
-                                    data-option="categoryToolsViewFilterPreset5"
-                                /><em>명/회</em></label
-                            >
-                            <label
-                                ><span>시청자/조회수 6</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="10000000"
-                                    step="1"
-                                    data-option="categoryToolsViewFilterPreset6"
-                                /><em>명/회</em></label
-                            >
-                            <label
-                                ><span>진행 시간 1</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="168"
-                                    step="1"
-                                    data-option="categoryToolsDurationFilterPreset1"
-                                /><em>시간</em></label
-                            >
-                            <label
-                                ><span>진행 시간 2</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="168"
-                                    step="1"
-                                    data-option="categoryToolsDurationFilterPreset2"
-                                /><em>시간</em></label
-                            >
-                            <label
-                                ><span>진행 시간 3</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="168"
-                                    step="1"
-                                    data-option="categoryToolsDurationFilterPreset3"
-                                /><em>시간</em></label
-                            >
-                            <label
-                                ><span>진행 시간 4</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="168"
-                                    step="1"
-                                    data-option="categoryToolsDurationFilterPreset4"
-                                /><em>시간</em></label
-                            >
-                            <label
-                                ><span>진행 시간 5</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="168"
-                                    step="1"
-                                    data-option="categoryToolsDurationFilterPreset5"
-                                /><em>시간</em></label
-                            >
-                            <label
-                                ><span>진행 시간 6</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="168"
-                                    step="1"
-                                    data-option="categoryToolsDurationFilterPreset6"
-                                /><em>시간</em></label
-                            >
+                    <details class="option-group" data-option-group="explore-tools" open>
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-sliders" /></svg>
+                                <span>검색·목록 표시</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>방송 목록 검색·필터</strong></span>
+                                <input type="checkbox" data-option="categoryToolsEnabled" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="categoryToolsEnabled">
+                                <span><strong>전체 방송 태그 검색 숨김</strong></span>
+                                <input type="checkbox" data-option="categoryToolsHideGlobalTagSearch" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="categoryToolsEnabled">
+                                <span><strong>팔로워 수 표시</strong></span>
+                                <input type="checkbox" data-option="categoryToolsFollowerBadgesEnabled" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="categoryToolsEnabled">
+                                <span><strong>호버로 진행 시간 표시</strong></span>
+                                <input type="checkbox" data-option="categoryToolsLiveElapsedEnabled" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>긴 제목 툴팁</strong></span>
+                                <input type="checkbox" data-option="titleTooltipEnabled" />
+                            </label>
                         </div>
-                        <p class="setting-note">1번 값은 ‘이하’, 마지막 값 이후는 ‘이상’ 구간입니다.</p>
                     </details>
 
-                    <details class="advanced-settings">
-                        <summary>목록 조회 수치 설정</summary>
-                        <div class="number-grid" data-depends-on="categoryToolsEnabled">
-                            <label
-                                ><span>추가 조회 페이지</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="50"
-                                    step="1"
-                                    data-option="categoryToolsMaxMetadataPages"
-                                /><em>쪽</em></label
+                    <details class="option-group" data-option-group="explore-preview">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-eye" /></svg>
+                                <span>호버 미리보기</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>방송 목록 호버 미리보기</strong></span>
+                                <input type="checkbox" data-option="followingPreviewTooltipEnabled" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="followingPreviewTooltipEnabled">
+                                <span><strong>호버 미리보기 소리</strong></span>
+                                <input type="checkbox" data-option="followingPreviewSoundEnabled" />
+                            </label>
+                            <div
+                                class="number-grid"
+                                data-depends-on="followingPreviewTooltipEnabled followingPreviewSoundEnabled"
                             >
-                            <label
-                                ><span>팔로워 묶음</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="50"
-                                    step="1"
-                                    data-option="categoryToolsFollowerFetchMaxPerPass"
-                                /><em>개</em></label
-                            >
-                            <label
-                                ><span>동시 조회</span
-                                ><input
-                                    type="number"
-                                    min="1"
-                                    max="10"
-                                    step="1"
-                                    data-option="categoryToolsFollowerFetchConcurrency"
-                                /><em>개</em></label
-                            >
-                            <label
-                                ><span>조회 간격</span
-                                ><input
-                                    type="number"
-                                    min="0"
-                                    max="5000"
-                                    step="100"
-                                    data-option="categoryToolsFollowerFetchDelayMs"
-                                /><em>ms</em></label
-                            >
+                                <label
+                                    ><span>미리보기 볼륨</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="100"
+                                        step="1"
+                                        data-option="followingPreviewVolumePercent"
+                                    /><em>%</em></label
+                                >
+                            </div>
+                            <label class="toggle-row" data-depends-on="followingPreviewTooltipEnabled">
+                                <span><strong>우클릭으로 미리보기 소리 전환</strong></span>
+                                <input type="checkbox" data-option="livePreviewRightClickSoundEnabled" />
+                            </label>
+                            <p class="setting-note">처음 켤 때 미리보기 재생 권한(pstatic.net)을 요청합니다.</p>
                         </div>
-                        <p class="setting-note">높일수록 더 많은 방송까지 필터링합니다.</p>
+                    </details>
+
+                    <details class="option-group" data-option-group="explore-presets-followers">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-users" /></svg>
+                                <span>팔로워 필터 기준값</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <p class="setting-note">1번 값은 ‘이하’, 마지막 값 이후는 ‘이상’ 구간입니다.</p>
+                            <div class="number-grid" data-depends-on="categoryToolsEnabled">
+                                <label
+                                    ><span>팔로워 버튼 1</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="10000000"
+                                        step="1"
+                                        data-option="categoryToolsFollowerFilterPreset1"
+                                    /><em>명</em></label
+                                >
+                                <label
+                                    ><span>팔로워 버튼 2</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="10000000"
+                                        step="1"
+                                        data-option="categoryToolsFollowerFilterPreset2"
+                                    /><em>명</em></label
+                                >
+                                <label
+                                    ><span>팔로워 버튼 3</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="10000000"
+                                        step="1"
+                                        data-option="categoryToolsFollowerFilterPreset3"
+                                    /><em>명</em></label
+                                >
+                                <label
+                                    ><span>팔로워 버튼 4</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="10000000"
+                                        step="1"
+                                        data-option="categoryToolsFollowerFilterPreset4"
+                                    /><em>명</em></label
+                                >
+                                <label
+                                    ><span>팔로워 버튼 5</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="10000000"
+                                        step="1"
+                                        data-option="categoryToolsFollowerFilterPreset5"
+                                    /><em>명</em></label
+                                >
+                                <label
+                                    ><span>팔로워 버튼 6</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="10000000"
+                                        step="1"
+                                        data-option="categoryToolsFollowerFilterPreset6"
+                                    /><em>명</em></label
+                                >
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="option-group" data-option-group="explore-presets-views">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-eye" /></svg>
+                                <span>시청자·조회수 필터 기준값</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <p class="setting-note">1번 값은 ‘이하’, 마지막 값 이후는 ‘이상’ 구간입니다.</p>
+                            <div class="number-grid" data-depends-on="categoryToolsEnabled">
+                                <label
+                                    ><span>시청자/조회수 1</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="10000000"
+                                        step="1"
+                                        data-option="categoryToolsViewFilterPreset1"
+                                    /><em>명/회</em></label
+                                >
+                                <label
+                                    ><span>시청자/조회수 2</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="10000000"
+                                        step="1"
+                                        data-option="categoryToolsViewFilterPreset2"
+                                    /><em>명/회</em></label
+                                >
+                                <label
+                                    ><span>시청자/조회수 3</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="10000000"
+                                        step="1"
+                                        data-option="categoryToolsViewFilterPreset3"
+                                    /><em>명/회</em></label
+                                >
+                                <label
+                                    ><span>시청자/조회수 4</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="10000000"
+                                        step="1"
+                                        data-option="categoryToolsViewFilterPreset4"
+                                    /><em>명/회</em></label
+                                >
+                                <label
+                                    ><span>시청자/조회수 5</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="10000000"
+                                        step="1"
+                                        data-option="categoryToolsViewFilterPreset5"
+                                    /><em>명/회</em></label
+                                >
+                                <label
+                                    ><span>시청자/조회수 6</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="10000000"
+                                        step="1"
+                                        data-option="categoryToolsViewFilterPreset6"
+                                    /><em>명/회</em></label
+                                >
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="option-group" data-option-group="explore-presets-duration">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-clock" /></svg>
+                                <span>진행 시간 필터 기준값</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <p class="setting-note">1번 값은 ‘이하’, 마지막 값 이후는 ‘이상’ 구간입니다.</p>
+                            <div class="number-grid" data-depends-on="categoryToolsEnabled">
+                                <label
+                                    ><span>진행 시간 1</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="168"
+                                        step="1"
+                                        data-option="categoryToolsDurationFilterPreset1"
+                                    /><em>시간</em></label
+                                >
+                                <label
+                                    ><span>진행 시간 2</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="168"
+                                        step="1"
+                                        data-option="categoryToolsDurationFilterPreset2"
+                                    /><em>시간</em></label
+                                >
+                                <label
+                                    ><span>진행 시간 3</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="168"
+                                        step="1"
+                                        data-option="categoryToolsDurationFilterPreset3"
+                                    /><em>시간</em></label
+                                >
+                                <label
+                                    ><span>진행 시간 4</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="168"
+                                        step="1"
+                                        data-option="categoryToolsDurationFilterPreset4"
+                                    /><em>시간</em></label
+                                >
+                                <label
+                                    ><span>진행 시간 5</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="168"
+                                        step="1"
+                                        data-option="categoryToolsDurationFilterPreset5"
+                                    /><em>시간</em></label
+                                >
+                                <label
+                                    ><span>진행 시간 6</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="168"
+                                        step="1"
+                                        data-option="categoryToolsDurationFilterPreset6"
+                                    /><em>시간</em></label
+                                >
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="option-group" data-option-group="explore-fetch">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-database" /></svg>
+                                <span>데이터 조회</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <div class="number-grid" data-depends-on="categoryToolsEnabled">
+                                <label
+                                    ><span>추가 조회 페이지</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="50"
+                                        step="1"
+                                        data-option="categoryToolsMaxMetadataPages"
+                                    /><em>쪽</em></label
+                                >
+                                <label
+                                    ><span>팔로워 조회 묶음</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="50"
+                                        step="1"
+                                        data-option="categoryToolsFollowerFetchMaxPerPass"
+                                    /><em>개</em></label
+                                >
+                                <label
+                                    ><span>동시 조회</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="10"
+                                        step="1"
+                                        data-option="categoryToolsFollowerFetchConcurrency"
+                                    /><em>개</em></label
+                                >
+                                <label
+                                    ><span>조회 간격</span
+                                    ><input
+                                        type="number"
+                                        min="0"
+                                        max="5000"
+                                        step="100"
+                                        data-option="categoryToolsFollowerFetchDelayMs"
+                                    /><em>ms</em></label
+                                >
+                            </div>
+                            <p class="setting-note">
+                                추가 조회 페이지를 늘리면 더 많은 방송을 확인하지만 느려질 수 있습니다.
+                            </p>
+                        </div>
                     </details>
                 </section>
 
                 <div class="reset-row">
-                    <button id="reset" class="secondary-button" type="button">기본값 복원</button>
+                    <button id="reset" class="secondary-button" type="button">
+                        <svg viewBox="0 0 20 20" aria-hidden="true"><use href="#icon-restore" /></svg>
+                        <span>기본값 복원</span>
+                    </button>
                 </div>
 
                 <p id="message" class="message hidden" role="status" aria-live="polite">설정이 저장되었습니다.</p>

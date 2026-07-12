@@ -505,7 +505,7 @@ test("the independent default-off option stamps existing server rows when enable
 
     const optionsHtml = readRepoFile("options.html");
     assert.match(optionsHtml, /data-option="chatTimestampEnabled"/);
-    assert.match(optionsHtml, /서버에 기록된 채팅 작성 시각/);
+    assert.match(optionsHtml, /타임스탬프 표시/);
     closePageDom(dom);
 });
 

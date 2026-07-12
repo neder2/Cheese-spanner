@@ -284,6 +284,7 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     assert.equal(tablist.style.getPropertyValue("--bcvc-heading-font-size"), "17px");
     assert.equal(tablist.style.getPropertyValue("--bcvc-heading-font-weight"), "700");
     assert.equal(commentPanel.style.getPropertyValue("--bcvc-font-family"), "Arial, sans-serif");
+    assert.equal(commentPanel.style.getPropertyValue("--bcvc-toolbar-font-family"), "Arial, sans-serif");
     assert.equal(container.style.getPropertyValue("--bcvc-panel-height"), "496px");
     const css = document.getElementById("betterchzzk-vod-comment-tabs-style").textContent;
     assert.match(css, /--Content-Neutral-Cool-Strong/);
@@ -292,6 +293,14 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     assert.match(css, /body\[theme="dark"\] #betterchzzk-vod-comment-panel/);
     assert.match(css, /\.theme_dark #betterchzzk-vod-comment-panel/);
     assert.match(css, /font-family:var\(--bcvc-font-family,inherit\)/);
+    assert.match(
+        css,
+        /\.bcvc-count\{[^}]*font-family:var\(--bcvc-toolbar-font-family,var\(--bcvc-font-family,inherit\)\)/s
+    );
+    assert.match(
+        css,
+        /\.bcvc-sort-button\{font-family:var\(--bcvc-toolbar-font-family,var\(--bcvc-font-family,inherit\)\)\}/
+    );
     assert.doesNotMatch(css, /"Malgun Gothic"|"맑은 고딕"/);
     assert.match(css, /button\[aria-selected="true"\]\{\s*color:var\(--bcvc-text/);
     assert.match(css, /container-type:inline-size/);
@@ -305,6 +314,9 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     );
     assert.match(css, /#betterchzzk-vod-comment-comment-tab\{[^}]*flex:0 0 52px/s);
     assert.match(css, /height:var\(--bcvc-panel-height/);
+    assert.doesNotMatch(css, /\[data-bcvc-container="1"\]\{[^}]*position:relative!important/s);
+    assert.doesNotMatch(css, /\[data-bcvc-container="1"\]\{[^}]*height:100%!important/s);
+    assert.match(css, /\[data-bcvc-native-log="1"\]\{[^}]*min-height:0!important/s);
     assert.doesNotMatch(css, /#betterchzzk-vod-comment-panel\{[^}]*bottom:0/s);
     assert.doesNotMatch(css, /font:\s*\d/);
 
@@ -317,7 +329,7 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
 test("VOD comment typography follows the measured native author, date, and message styles", (t) => {
     const fixture = createFixture({
         nativeCommentsHtml: [
-            '<div id="commentArea"><div id="commentBox-1" style="font-family:Trebuchet MS,sans-serif">',
+            '<div id="commentArea"><button type="button" style="font-family:Sandoll Nemony2,sans-serif">인기순</button><div id="commentBox-1" style="font-family:Trebuchet MS,sans-serif">',
             '<button class="_information_fixture_101" type="button">',
             '<strong style="font-size:13px;font-weight:650;line-height:19px;letter-spacing:-0.1px"><span class="_show_tooltip_fixture_51"><span class="_content_tooltip_fixture_2"><span class="_text_tooltip_fixture_3" style="font-size:9px;font-weight:900;line-height:11px">작성자</span></span></span></strong>',
             '<span style="font-size:11px;font-weight:450;line-height:17px;letter-spacing:0.2px">01.04</span>',
@@ -333,6 +345,7 @@ test("VOD comment typography follows the measured native author, date, and messa
     const panel = fixture.document.getElementById("betterchzzk-vod-comment-panel");
 
     assert.equal(panel.style.getPropertyValue("--bcvc-font-family"), '"Trebuchet MS", sans-serif');
+    assert.equal(panel.style.getPropertyValue("--bcvc-toolbar-font-family"), '"Sandoll Nemony2", sans-serif');
     assert.equal(panel.style.getPropertyValue("--bcvc-author-font-size"), "13px");
     assert.equal(panel.style.getPropertyValue("--bcvc-author-font-weight"), "650");
     assert.equal(panel.style.getPropertyValue("--bcvc-author-line-height"), "19px");
@@ -683,7 +696,7 @@ test("VOD comments load from the API without a lower comment DOM and render safe
             offset: fixture.requests[0].offset,
             orderType: fixture.requests[0].orderType,
         },
-        { limit: 10, objectId: "12345", offset: 0, orderType: "ASC" }
+        { limit: 10, objectId: "12345", offset: 0, orderType: "POPULAR" }
     );
     assert.ok(document.querySelector(".bcvc-skeleton-list"));
     assert.equal(document.getElementById("betterchzzk-vod-comment-panel").getAttribute("aria-busy"), "true");
@@ -780,7 +793,7 @@ test("VOD comment rows reuse native Chzzk profile and buff visuals without cloni
             '<button id="native-more-1" class="_button_more_fixture_53" type="button">더보기</button>',
             '<button id="native-time-1" class="_time_fixture_108" type="button">00:01</button>',
             '<button id="native-reply-1" class="_button_reply_fixture_275" type="button">답글 쓰기</button>',
-            '<button id="native-buff-1" type="button" aria-pressed="false"><i class="_buff_icon_fixture_5"><span class="blind">버프</span></i></button>',
+            '<div class="_status_fixture_306"><button id="native-buff-1" class="_buff_button_fixture_1" type="button" aria-pressed="false"><i class="_buff_icon_fixture_5"><span class="blind">버프</span></i></button><span id="native-buff-count-1" class="_buff_count_fixture_27">3</span></div>',
             "</div>",
             "</div>",
         ].join(""),
@@ -805,7 +818,10 @@ test("VOD comment rows reuse native Chzzk profile and buff visuals without cloni
     nativeBuffButton.addEventListener("click", () => {
         buffClicks += 1;
         nativeBuffButton.setAttribute("aria-pressed", "true");
-        window.setTimeout(() => nativeBuffButton.setAttribute("aria-label", "버프 4"), 20);
+        window.setTimeout(() => {
+            document.getElementById("native-buff-count-1").firstChild.nodeValue = "4";
+        }, 20);
+        window.setTimeout(() => nativeBuffButton.setAttribute("aria-pressed", "false"), 80);
     });
 
     clickCommentTab(document);
@@ -840,6 +856,7 @@ test("VOD comment rows reuse native Chzzk profile and buff visuals without cloni
     assert.equal(mirroredBuff.tagName, "BUTTON");
     assert.equal(mirroredBuff.disabled, false);
     assert.equal(mirroredBuff.getAttribute("aria-pressed"), "false");
+    assert.ok(mirroredBuff.classList.contains("_buff_button_fixture_1"));
     assert.ok(reusedBuffIcon);
     assert.notEqual(reusedBuffIcon, nativeBuffIcon);
     assert.ok(reusedBuffIcon.classList.contains("_buff_icon_fixture_5"));
@@ -859,6 +876,7 @@ test("VOD comment rows reuse native Chzzk profile and buff visuals without cloni
     assert.equal(buffClicks, 1, "the mirrored buff control must delegate exactly one native action");
     await waitForCondition(() => mirroredBuff.getAttribute("aria-pressed") === "true");
     await waitForCondition(() => mirroredBuff.getAttribute("aria-label") === "버프 4");
+    await waitForCondition(() => mirroredBuff.getAttribute("aria-pressed") === "false");
     assert.equal(mirroredBuff.getAttribute("aria-label"), "버프 4");
     assert.equal(mirroredBuff.querySelector(".bcvc-buff-count").textContent, "4");
     assert.equal(mirroredBuff.title, "버프 4");
@@ -1036,10 +1054,9 @@ test("VOD buff mirrors text-node-only count updates from the scoped native obser
         fetchComments: async () => apiContent({ rows: [apiComment(1, "버프 갱신", { buffCount: 3 })] }),
         nativeCommentsHtml: [
             '<div id="commentArea"><div id="commentBox-1">',
-            '<button class="_buff_button_fixture_1" type="button" aria-pressed="false">',
+            '<div class="_status_fixture_306"><button class="_buff_button_fixture_1" type="button" aria-pressed="false">',
             '<i class="_buff_icon_fixture_5"><span class="blind">버프</span></i>',
-            '버프 <span id="native-buff-count-1">3</span>',
-            "</button></div></div>",
+            '</button><span id="native-buff-count-1" class="_buff_count_fixture_27">3</span></div></div></div>',
         ].join(""),
     });
     t.after(() => {
@@ -1056,6 +1073,7 @@ test("VOD buff mirrors text-node-only count updates from the scoped native obser
     document.getElementById("native-buff-count-1").firstChild.nodeValue = "4";
     await waitForCondition(() => mirroredBuff.getAttribute("aria-label") === "버프 4");
     assert.equal(mirroredBuff.querySelector(".bcvc-buff-count").textContent, "4");
+    assert.equal(mirroredBuff.getAttribute("data-bcvc-confirmed"), null);
 });
 
 test("VOD comment rows render observed replies and tolerate nullable or deleted API rows", async (t) => {
@@ -1108,11 +1126,34 @@ test("VOD comment rows render observed replies and tolerate nullable or deleted 
     clickCommentTab(document);
     await waitForCondition(() => document.querySelector("[data-bcvc-reply='1']"));
 
+    const replyToggle = document.querySelector("[data-bcvc-comment-key='id:1'] [data-bcvc-action='reply-toggle']");
+    const replyList = document.querySelector("[data-bcvc-comment-key='id:1'] > .bcvc-replies");
+    assert.equal(
+        replyToggle.closest(".bcvc-comment-footer")?.parentElement?.getAttribute("data-bcvc-comment-key"),
+        "id:1"
+    );
+    assert.equal(replyToggle.textContent.trim(), "답글 2");
+    assert.equal(replyToggle.querySelector("svg")?.getAttribute("viewBox"), "0 0 14 14");
+    assert.equal(replyToggle.querySelector("path")?.getAttribute("d"), "M10 8.2002L7 5.2002L4 8.2002");
+    assert.equal(replyToggle.getAttribute("aria-expanded"), "false");
+    assert.equal(replyList.hidden, true);
+    replyToggle.click();
+    assert.equal(replyToggle.getAttribute("aria-expanded"), "true");
+    assert.equal(replyToggle.textContent.trim(), "답글 2");
+    assert.equal(replyList.hidden, false);
+
     const reply = document.querySelector("[data-bcvc-reply='1']");
     assert.match(reply.textContent, /답글 00:30/);
     assert.equal(reply.closest(".bcvc-replies")?.getAttribute("role"), "list");
+    assert.equal(reply.querySelector(".bcvc-mention")?.textContent, "작성자 1");
+    assert.equal(reply.querySelector(".bcvc-message")?.textContent.trim(), "작성자 1답글 00:30");
+    const injectedStyle = document.getElementById("betterchzzk-vod-comment-tabs-style").textContent;
+    assert.match(injectedStyle, /\.bcvc-replies\{[^}]*margin:4px 0 0 12px[^}]*\}/s);
+    assert.match(injectedStyle, /\.bcvc-replies \.bcvc-comment\{[^}]*padding:9px 0 5px 30px[^}]*\}/s);
+    assert.match(injectedStyle, /\.bcvc-replies \.bcvc-avatar\{[^}]*width:22px[^}]*height:22px[^}]*\}/s);
     const directReplyRow = document.querySelector("[data-bcvc-comment-id='7']");
     assert.match(directReplyRow.textContent, /직접 답글 00:45/);
+    assert.equal(directReplyRow.querySelector(".bcvc-mention")?.textContent, "작성자 1");
     assert.match(directReplyRow.textContent, /직접 답글 작성자/);
     assert.ok(directReplyRow.querySelector("[data-bcvc-seconds='45']"));
     assert.equal(
@@ -1128,6 +1169,46 @@ test("VOD comment rows render observed replies and tolerate nullable or deleted 
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:5'] .bcvc-avatar"), null);
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:5'] .bcvc-buff"), null);
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:6'] .bcvc-date").textContent, "20260231010101");
+
+    replyToggle.click();
+    assert.equal(replyToggle.getAttribute("aria-expanded"), "false");
+    assert.equal(replyToggle.textContent.trim(), "답글 2");
+    assert.equal(replyList.hidden, true);
+});
+
+test("VOD long comments start collapsed and can be expanded and collapsed in place", async (t) => {
+    const longText = Array.from(
+        { length: 30 },
+        (_, index) => `${String(index + 1).padStart(2, "0")}:00 긴 댓글 줄`
+    ).join("\n");
+    const fixture = createFixture({
+        fetchComments: async () => apiContent({ rows: [apiComment(1, longText)], totalCount: 1 }),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document } = fixture;
+
+    clickCommentTab(document);
+    await waitForCondition(() => document.querySelector("[data-bcvc-action='message-toggle']"));
+    const toggle = document.querySelector("[data-bcvc-action='message-toggle']");
+    const content = document.querySelector(".bcvc-message-content");
+
+    assert.equal(toggle.textContent, "더보기");
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.ok(content.textContent.length < longText.length);
+    assert.doesNotMatch(content.textContent, /30:00/);
+
+    toggle.click();
+    assert.equal(toggle.textContent, "접기");
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    assert.match(content.textContent, /30:00/);
+
+    toggle.click();
+    assert.equal(toggle.textContent, "더보기");
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.doesNotMatch(content.textContent, /30:00/);
 });
 
 test("VOD comment rendering caps total nested replies without hiding the limit", async (t) => {
@@ -1192,6 +1273,36 @@ test("VOD buff fallback upgrades in place when native lower comments mount later
     assert.ok(renderedRow.querySelector(".bcvc-buff-native-icon").classList.contains("_buff_icon_delayed_5"));
     assert.equal(renderedRow.querySelector(".bcvc-buff").disabled, false);
     assert.equal(fixture.requests.length, 1, "asset synchronization must not reload comments");
+});
+
+test("VOD mirrored timecodes invoke the matching native comment control", async (t) => {
+    const fixture = createFixture({
+        fetchComments: async () => apiContent({ rows: [apiComment(1, "원본 이동 19:10")], totalCount: 1 }),
+        nativeCommentsHtml: [
+            '<div id="commentArea"><div id="commentBox-1">',
+            '<button id="native-time-1" class="_time_fixture_108" type="button">19:12</button>',
+            "</div></div>",
+        ].join(""),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document } = fixture;
+    let nativeClicks = 0;
+    document.getElementById("native-time-1").addEventListener("click", () => {
+        nativeClicks += 1;
+    });
+
+    clickCommentTab(document);
+    await waitForCondition(() => document.querySelector(".bcvc-timecode"));
+    const mirrored = document.querySelector(".bcvc-timecode");
+    assert.equal(mirrored.textContent, "19:12");
+    assert.equal(mirrored.getAttribute("data-bcvc-seconds"), String(19 * 60 + 12));
+
+    mirrored.click();
+    assert.equal(nativeClicks, 1);
+    assert.equal(fixture.mediaState.currentTime, 100, "native control ownership must avoid a competing direct seek");
 });
 
 test("VOD timecode seek retargets a replaced native chat log without refreshing comments", async (t) => {
@@ -1415,7 +1526,21 @@ test("VOD comment sorts cache loaded rows while refresh reloads only the active 
     const { document } = fixture;
 
     clickCommentTab(document);
-    await waitForCondition(() => /ASC 댓글/.test(document.getElementById("betterchzzk-vod-comment-panel").textContent));
+    await waitForCondition(() =>
+        /POPULAR 댓글/.test(document.getElementById("betterchzzk-vod-comment-panel").textContent)
+    );
+    assert.deepEqual(
+        Array.from(document.querySelectorAll("[data-bcvc-action='sort']")).map((button) => ({
+            label: button.textContent,
+            order: button.getAttribute("data-bcvc-order"),
+            pressed: button.getAttribute("aria-pressed"),
+        })),
+        [
+            { label: "인기순", order: "POPULAR", pressed: "true" },
+            { label: "최신순", order: "DESC", pressed: "false" },
+            { label: "등록순", order: "ASC", pressed: "false" },
+        ]
+    );
     const desc = document.querySelector("[data-bcvc-action='sort'][data-bcvc-order='DESC']");
     desc.focus();
     desc.click();
@@ -1423,11 +1548,14 @@ test("VOD comment sorts cache loaded rows while refresh reloads only the active 
         /DESC 댓글/.test(document.getElementById("betterchzzk-vod-comment-panel").textContent)
     );
     assert.equal(document.activeElement, document.querySelector("[data-bcvc-action='sort'][data-bcvc-order='DESC']"));
-    const asc = document.querySelector("[data-bcvc-action='sort'][data-bcvc-order='ASC']");
-    asc.focus();
-    asc.click();
-    assert.match(document.getElementById("betterchzzk-vod-comment-panel").textContent, /ASC 댓글/);
-    assert.equal(document.activeElement, document.querySelector("[data-bcvc-action='sort'][data-bcvc-order='ASC']"));
+    const popular = document.querySelector("[data-bcvc-action='sort'][data-bcvc-order='POPULAR']");
+    popular.focus();
+    popular.click();
+    assert.match(document.getElementById("betterchzzk-vod-comment-panel").textContent, /POPULAR 댓글/);
+    assert.equal(
+        document.activeElement,
+        document.querySelector("[data-bcvc-action='sort'][data-bcvc-order='POPULAR']")
+    );
     assert.equal(fixture.requests.length, 2, "returning to a loaded sort must use memory state");
 
     const refresh = document.querySelector("[data-bcvc-action='refresh']");
@@ -1435,7 +1563,7 @@ test("VOD comment sorts cache loaded rows while refresh reloads only the active 
     refresh.click();
     await waitForCondition(() => fixture.requests.length === 3);
     await waitForCondition(() => document.activeElement === document.querySelector("[data-bcvc-action='refresh']"));
-    assert.equal(fixture.requests[2].orderType, "ASC");
+    assert.equal(fixture.requests[2].orderType, "POPULAR");
     assert.equal(fixture.requests[2].offset, 0);
 });
 

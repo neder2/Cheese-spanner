@@ -1513,13 +1513,14 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
 
     function getVideoEndMs(video) {
         if (!video) return null;
-        if (video.endedAt) {
-            const endMs = video.endedAt.getTime();
-            if (Number.isFinite(endMs)) return endMs;
-        }
+        // publishDate는 VOD 처리 완료 시각이라 지연될 수 있으므로, 방송 시작과 길이가 있으면 이를 우선한다.
         if (video.startedAt && Number.isFinite(video.duration)) {
             const startMs = video.startedAt.getTime();
             if (Number.isFinite(startMs)) return startMs + video.duration * 1000;
+        }
+        if (video.endedAt) {
+            const endMs = video.endedAt.getTime();
+            if (Number.isFinite(endMs)) return endMs;
         }
         return null;
     }
@@ -1709,7 +1710,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         if (existing) {
             monthInfo.dailySeconds[key] = (monthInfo.dailySeconds[key] || 0) + duration;
             existing.duration += duration;
-            existing.endMs = Math.max(existing.endMs || 0, endMs);
+            // 같은 시작 시각의 17시간 분할 VOD는 한 방송이므로 합산 길이만큼 연속된 종료 시각으로 표시한다.
+            existing.endMs = existing.startMs + existing.duration * 1000;
             existing.videoNos.push(video.videoNo);
             if (title && !existing.title) existing.title = title;
             if (titleKey && !existing.titleKey) existing.titleKey = titleKey;

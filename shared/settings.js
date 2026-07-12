@@ -25,21 +25,13 @@
     const DURATION_FILTER_PRESET_MAX = 168;
     const LIVE_WATCH_HISTORY_MIN_MINUTES_MIN = 1;
     const LIVE_WATCH_HISTORY_MIN_MINUTES_MAX = 1440;
-    const REWARD_AUTO_COLLECT_DELAY_MS_DEFAULT = 800;
-    const REWARD_AUTO_COLLECT_DELAY_MS_MIN = 0;
-    const REWARD_AUTO_COLLECT_DELAY_MS_MAX = 5000;
     const CHAT_TOOLS_MIN_MODERATOR_MESSAGES = 20;
     const CHAT_TOOLS_MAX_MODERATOR_MESSAGES = 200;
+    const LEGACY_CHAT_TOOLS_ENABLED_KEY = "chatToolsEnabled";
 
     const OPTION_SCHEMA = Object.freeze({
         autoQualityEnabled: { kind: "bool", default: true, feature: true },
         rewardAutoCollectEnabled: { kind: "bool", default: true, feature: true },
-        rewardAutoCollectDelayMs: {
-            kind: "int",
-            default: REWARD_AUTO_COLLECT_DELAY_MS_DEFAULT,
-            min: REWARD_AUTO_COLLECT_DELAY_MS_MIN,
-            max: REWARD_AUTO_COLLECT_DELAY_MS_MAX,
-        },
         skipControlEnabled: { kind: "bool", default: true, feature: true },
         skipKeyboardEnabled: { kind: "bool", default: true },
         skipPillEnabled: { kind: "bool", default: true },
@@ -82,9 +74,8 @@
         },
         vodCommentTabsEnabled: { kind: "bool", default: true, feature: true },
         chatTimestampEnabled: { kind: "bool", default: false, feature: true },
-        chatToolsEnabled: { kind: "bool", default: false, feature: true },
-        chatToolsShowBlindEnabled: { kind: "bool", default: false },
-        chatToolsModeratorBoxEnabled: { kind: "bool", default: true },
+        chatToolsShowBlindEnabled: { kind: "bool", default: false, feature: true },
+        chatToolsModeratorBoxEnabled: { kind: "bool", default: false, feature: true },
         chatToolsMaxModeratorMessages: {
             kind: "int",
             default: 100,
@@ -194,11 +185,11 @@
         followingPreviewVolumePercent: { kind: "int", default: 15, min: 1, max: 100 },
         livePreviewRightClickSoundEnabled: { kind: "bool", default: true },
         holdSpeedEnabled: { kind: "bool", default: true, feature: true },
-        shortcutRescueEnabled: { kind: "bool", default: true, feature: true },
     });
 
     const OPTION_SPEC = OPTION_SCHEMA;
     const OPTION_KEYS = Object.freeze(Object.keys(OPTION_SCHEMA));
+    const STORAGE_OPTION_KEYS = Object.freeze([...OPTION_KEYS, LEGACY_CHAT_TOOLS_ENABLED_KEY]);
     const FEATURE_KEYS = Object.freeze(OPTION_KEYS.filter((key) => OPTION_SCHEMA[key].feature));
     const DEFAULT_OPTIONS = Object.freeze(
         OPTION_KEYS.reduce((out, key) => {
@@ -261,7 +252,37 @@
             out[key] = normalizeOptionValue(key, raw[key]);
         }
 
+        if (Object.prototype.hasOwnProperty.call(raw, LEGACY_CHAT_TOOLS_ENABLED_KEY)) {
+            const legacyEnabled = normalizeBoolean(raw[LEGACY_CHAT_TOOLS_ENABLED_KEY], false);
+            if (!legacyEnabled) {
+                out.chatToolsShowBlindEnabled = false;
+                out.chatToolsModeratorBoxEnabled = false;
+            } else if (!Object.prototype.hasOwnProperty.call(raw, "chatToolsModeratorBoxEnabled")) {
+                // 기존 상위 토글을 켠 사용자는 당시 기본값이던 모아보기를 그대로 유지한다.
+                out.chatToolsModeratorBoxEnabled = true;
+            }
+        }
+
         return out;
+    }
+
+    function migrateLegacyChatToolsOption(raw, normalized = normalizeOptions(raw)) {
+        if (!Object.prototype.hasOwnProperty.call(raw || {}, LEGACY_CHAT_TOOLS_ENABLED_KEY)) return;
+        const storage = globalThis.chrome?.storage?.sync;
+        if (typeof storage?.set !== "function" || typeof storage?.remove !== "function") return;
+
+        storage.set(
+            {
+                chatToolsShowBlindEnabled: normalized.chatToolsShowBlindEnabled,
+                chatToolsModeratorBoxEnabled: normalized.chatToolsModeratorBoxEnabled,
+            },
+            () => {
+                if (getStorageLastError()) return;
+                storage.remove(LEGACY_CHAT_TOOLS_ENABLED_KEY, () => {
+                    void getStorageLastError();
+                });
+            }
+        );
     }
 
     function flushOptionCallbacks(options) {
@@ -309,7 +330,7 @@
         if (optionsLoading) return;
         optionsLoading = true;
 
-        chrome.storage.sync.get(OPTION_KEYS, (data) => {
+        chrome.storage.sync.get(STORAGE_OPTION_KEYS, (data) => {
             optionsLoading = false;
             if (getStorageLastError()) {
                 flushOptionCallbacks(cachedOptions);
@@ -318,6 +339,7 @@
             cachedOptions = normalizeOptions(data);
             optionsLoaded = true;
             flushOptionCallbacks(cachedOptions);
+            migrateLegacyChatToolsOption(data, cachedOptions);
         });
     }
 
@@ -337,17 +359,16 @@
         MONTHLY_CALENDAR_MAX_PAGES,
         LIVE_WATCH_HISTORY_MIN_MINUTES_MIN,
         LIVE_WATCH_HISTORY_MIN_MINUTES_MAX,
-        REWARD_AUTO_COLLECT_DELAY_MS_DEFAULT,
-        REWARD_AUTO_COLLECT_DELAY_MS_MIN,
-        REWARD_AUTO_COLLECT_DELAY_MS_MAX,
         CHAT_TOOLS_MIN_MODERATOR_MESSAGES,
         CHAT_TOOLS_MAX_MODERATOR_MESSAGES,
         OPTION_SPEC,
         DEFAULT_OPTIONS,
         OPTION_KEYS,
+        STORAGE_OPTION_KEYS,
         FEATURE_KEYS,
         normalizeSkipSeconds,
         normalizeOptions,
+        migrateLegacyChatToolsOption,
         getStorageLastError,
         getOptions,
         addOptionsChangeListener,

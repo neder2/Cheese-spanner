@@ -9,8 +9,7 @@
  * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
  *   createMutationObserverSync, createThrottledDomSync, injectStyleOnce, isLiveRoute, normSpace,
  *   onReady, startPageChangeDetection), chrome.storage.local(레거시 캐시 정리용).
- * 옵션 키: chatToolsEnabled, chatToolsShowBlindEnabled, chatToolsModeratorBoxEnabled,
- *   chatToolsMaxModeratorMessages.
+ * 옵션 키: chatToolsShowBlindEnabled, chatToolsModeratorBoxEnabled, chatToolsMaxModeratorMessages.
  * DOM 마커: id=betterchzzk-chat-tools-style, data-bcct-blind-processed, data-bcct-blind-masked,
  *   data-bcct-moderator-collected, data-bcct-moderator-box, data-bcct-moderator-row,
  *   data-bcct-moderator-trigger, data-bcct-moderator-panel-host, data-bcct-moderator-actions,
@@ -492,15 +491,15 @@ body[theme="dark"] .bcct-moderator-box__empty,
     const scheduleSync = createThrottledDomSync(syncChatTools, CHAT_SYNC_THROTTLE_MS);
 
     function isFeatureEnabled() {
-        return Boolean(featureOptions.chatToolsEnabled);
+        return Boolean(featureOptions.chatToolsShowBlindEnabled || featureOptions.chatToolsModeratorBoxEnabled);
     }
 
     function isBlindRevealEnabled() {
-        return isFeatureEnabled() && Boolean(featureOptions.chatToolsShowBlindEnabled);
+        return Boolean(featureOptions.chatToolsShowBlindEnabled);
     }
 
     function isModeratorBoxEnabled() {
-        return isFeatureEnabled() && Boolean(featureOptions.chatToolsModeratorBoxEnabled);
+        return Boolean(featureOptions.chatToolsModeratorBoxEnabled);
     }
 
     function getMaxModeratorMessages() {

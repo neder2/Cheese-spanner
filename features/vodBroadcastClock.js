@@ -79,6 +79,9 @@
     const VOD_SPLIT_SEGMENT_MS = 17 * 60 * 60 * 1000;
     const VOD_SPLIT_OFFSET_TOLERANCE_MS = 45 * 60 * 1000;
     const VOD_SPLIT_MIN_OFFSET_MS = VOD_SPLIT_SEGMENT_MS - VOD_SPLIT_OFFSET_TOLERANCE_MS;
+    const VOD_SPLIT_DURATION_TOLERANCE_MS = 2 * 60 * 1000;
+    const VOD_SPLIT_START_TOLERANCE_MS = 60 * 1000;
+    const VOD_SPLIT_MAX_LINKS = 8;
     const MAX_DETAIL_CACHE_ENTRIES = 100;
     const MAX_HISTORY_INFO_CACHE_ENTRIES = 100;
 
@@ -898,7 +901,55 @@
         return alignedOffsetMs;
     }
 
-    function getVodSegmentStartInfo(detail) {
+    function hasFullSplitDuration(detail) {
+        const durationSeconds = getVideoDurationSeconds(detail);
+        if (!Number.isFinite(durationSeconds)) return false;
+        return Math.abs(durationSeconds * 1000 - VOD_SPLIT_SEGMENT_MS) <= VOD_SPLIT_DURATION_TOLERANCE_MS;
+    }
+
+    function getLinkedOlderVideoNo(detail) {
+        return pickString(detail?.nextVideo?.videoNo);
+    }
+
+    async function getLinkedVodSegmentOffsetMs(detail, originalStartMs) {
+        if (!Number.isFinite(originalStartMs)) return 0;
+
+        let cursor = detail;
+        let segmentIndex = 0;
+        const currentVideoKey = pickString(detail?.videoNo, detail?.videoId);
+        const seen = new Set(currentVideoKey ? [currentVideoKey] : []);
+
+        while (segmentIndex < VOD_SPLIT_MAX_LINKS) {
+            const olderSummary = cursor?.nextVideo;
+            const olderVideoNo = getLinkedOlderVideoNo(cursor);
+            // 실제 분할 VOD는 nextVideo가 시간상 이전 세그먼트를 가리키며, 완주 세그먼트는 약 17시간이다.
+            if (!olderVideoNo || seen.has(olderVideoNo) || !hasFullSplitDuration(olderSummary)) break;
+            seen.add(olderVideoNo);
+
+            let olderDetail = null;
+            try {
+                olderDetail = await fetchVideoDetail(olderVideoNo);
+            } catch (_) {
+                break;
+            }
+
+            const olderStartMs = getStartMsFromDetail(olderDetail);
+            if (
+                !Number.isFinite(olderStartMs) ||
+                Math.abs(olderStartMs - originalStartMs) > VOD_SPLIT_START_TOLERANCE_MS ||
+                !hasFullSplitDuration(olderDetail)
+            ) {
+                break;
+            }
+
+            segmentIndex += 1;
+            cursor = olderDetail;
+        }
+
+        return segmentIndex * VOD_SPLIT_SEGMENT_MS;
+    }
+
+    async function getVodSegmentStartInfo(detail) {
         const originalStartMs = getStartMsFromDetail(detail);
         if (!Number.isFinite(originalStartMs)) {
             return {
@@ -908,7 +959,9 @@
             };
         }
 
-        const segmentOffsetMs = getSplitVodSegmentOffsetMs(detail, originalStartMs);
+        const inferredOffsetMs = getSplitVodSegmentOffsetMs(detail, originalStartMs);
+        const linkedOffsetMs = await getLinkedVodSegmentOffsetMs(detail, originalStartMs);
+        const segmentOffsetMs = linkedOffsetMs > 0 ? linkedOffsetMs : inferredOffsetMs;
         return {
             originalStartMs,
             segmentOffsetMs,
@@ -963,11 +1016,12 @@
         metadataState = "loading";
 
         fetchVideoDetail(videoNo)
-            .then((detail) => {
+            .then(async (detail) => {
                 if (metadataToken !== token || currentVideoNo !== videoNo) return;
 
                 currentVideoDetail = detail;
-                const startInfo = getVodSegmentStartInfo(detail);
+                const startInfo = await getVodSegmentStartInfo(detail);
+                if (metadataToken !== token || currentVideoNo !== videoNo) return;
                 if (Number.isFinite(startInfo.segmentStartMs)) {
                     currentStartMs = startInfo.segmentStartMs;
                     currentOriginalStartMs = startInfo.originalStartMs;

@@ -93,10 +93,12 @@ test("options blocks edits until the initial settings load completes", async (t)
     const toggle = dom.window.document.querySelector('[data-option="autoQualityEnabled"]');
     const input = dom.window.document.querySelector('[data-option="skipSeconds"]');
     const resetButton = dom.window.document.getElementById("reset");
+    const saveButton = dom.window.document.getElementById("save");
 
     assert.equal(toggle.disabled, true);
     assert.equal(input.disabled, true);
     assert.equal(resetButton.disabled, true);
+    assert.equal(saveButton.disabled, true);
 
     toggle.checked = true;
     toggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
@@ -116,6 +118,10 @@ test("options blocks edits until the initial settings load completes", async (t)
 
     toggle.checked = true;
     toggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+
+    assert.equal(setCalls.length, 0, "a loaded edit must wait for the save button");
+    assert.equal(saveButton.disabled, false);
+    saveButton.click();
 
     assert.equal(setCalls.length, 1);
     assert.equal(setCalls[0].values.autoQualityEnabled, true);
@@ -158,120 +164,85 @@ test("options ignores programmatic edits after the initial settings load fails",
     assert.equal(notice.textContent, noticeText);
 });
 
-test("options serializes rapid saves when the form returns to its original value", async (t) => {
-    const { dom, setCalls, stored } = await createOptionsFixture(t);
+test("options cancels the dirty state when the form returns to its saved value", async (t) => {
+    const { dom, setCalls } = await createOptionsFixture(t);
     const toggle = dom.window.document.querySelector('[data-option="autoQualityEnabled"]');
-    assert.equal(toggle.checked, true);
+    const saveButton = dom.window.document.getElementById("save");
 
     toggle.checked = false;
     toggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    assert.equal(saveButton.disabled, false);
+    assert.equal(dom.window.document.getElementById("notice").dataset.state, "dirty");
+
     toggle.checked = true;
     toggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
 
-    assert.equal(setCalls.length, 1, "only one storage write may be in flight");
-    assert.equal(setCalls[0].values.autoQualityEnabled, false);
-    setCalls[0].complete();
-
-    assert.equal(setCalls.length, 2, "the latest state is written after the first callback");
-    assert.equal(setCalls[1].values.autoQualityEnabled, true);
-    setCalls[1].complete();
-    await waitForCallbacks();
-
-    assert.equal(stored.autoQualityEnabled, true);
+    assert.equal(saveButton.disabled, true);
+    assert.equal(setCalls.length, 0);
     assert.equal(dom.window.document.getElementById("notice").dataset.state, "saved");
 });
 
-test("options saves the latest queued value after an in-flight write fails", async (t) => {
-    const { dom, setCalls, stored } = await createOptionsFixture(t);
-    const input = dom.window.document.querySelector('[data-option="skipSeconds"]');
-    const initialValue = Number(input.value);
-
-    input.value = String(initialValue + 1);
-    input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-    input.value = String(initialValue + 2);
-    input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-
-    assert.equal(setCalls.length, 1);
-    setCalls[0].complete("first write failed");
-
-    assert.equal(setCalls.length, 2);
-    assert.equal(setCalls[1].values.skipSeconds, initialValue + 2);
-    setCalls[1].complete();
-    await waitForCallbacks();
-
-    assert.equal(stored.skipSeconds, initialValue + 2);
-    assert.equal(dom.window.document.getElementById("notice").dataset.state, "saved");
-});
-
-test("options saves form edits made between serialized write callbacks", async (t) => {
+test("options keeps edits made during a write dirty until the user saves again", async (t) => {
     const { dom, setCalls, stored } = await createOptionsFixture(t);
     const toggle = dom.window.document.querySelector('[data-option="autoQualityEnabled"]');
     const input = dom.window.document.querySelector('[data-option="skipSeconds"]');
+    const saveButton = dom.window.document.getElementById("save");
     const latestValue = Number(input.value) + 3;
 
     toggle.checked = false;
     toggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-    toggle.checked = true;
-    toggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-    setCalls[0].complete();
-
-    assert.equal(setCalls.length, 2);
-    input.value = String(latestValue);
-    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
-    setCalls[1].complete();
-
-    assert.equal(setCalls.length, 3);
-    assert.equal(setCalls[2].values.skipSeconds, latestValue);
-    setCalls[2].complete();
-
-    assert.equal(stored.skipSeconds, latestValue);
-});
-
-test("options does not overwrite a newer form edit when the queued value matches the completed write", async (t) => {
-    const { dom, setCalls, stored } = await createOptionsFixture(t);
-    const toggle = dom.window.document.querySelector('[data-option="autoQualityEnabled"]');
-    const input = dom.window.document.querySelector('[data-option="skipSeconds"]');
-    const latestValue = Number(input.value) + 4;
-
-    toggle.checked = false;
-    toggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-    toggle.checked = true;
-    toggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-    toggle.checked = false;
-    toggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    saveButton.click();
+    assert.equal(setCalls.length, 1);
 
     input.value = String(latestValue);
     input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
     setCalls[0].complete();
 
-    assert.equal(input.value, String(latestValue));
+    assert.equal(input.value, String(latestValue), "the completed write must not overwrite a newer form edit");
+    assert.equal(setCalls.length, 1, "a newer edit is not saved without another button click");
+    assert.equal(saveButton.disabled, false);
+    assert.equal(dom.window.document.getElementById("notice").dataset.state, "dirty");
+
+    saveButton.click();
     assert.equal(setCalls.length, 2);
     assert.equal(setCalls[1].values.skipSeconds, latestValue);
     setCalls[1].complete();
 
     assert.equal(stored.skipSeconds, latestValue);
+    assert.equal(dom.window.document.getElementById("notice").dataset.state, "saved");
 });
 
-test("options issues the latest queued state before pagehide can terminate the popup", async (t) => {
+test("options keeps a failed write available for an explicit retry", async (t) => {
+    const { dom, setCalls, stored } = await createOptionsFixture(t);
+    const input = dom.window.document.querySelector('[data-option="skipSeconds"]');
+    const saveButton = dom.window.document.getElementById("save");
+    const nextValue = Number(input.value) + 2;
+
+    input.value = String(nextValue);
+    input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    saveButton.click();
+    setCalls[0].complete("first write failed");
+
+    assert.equal(setCalls.length, 1);
+    assert.equal(saveButton.disabled, false);
+    assert.equal(dom.window.document.getElementById("notice").dataset.state, "error");
+
+    saveButton.click();
+    assert.equal(setCalls.length, 2);
+    setCalls[1].complete();
+
+    assert.equal(stored.skipSeconds, nextValue);
+    assert.equal(dom.window.document.getElementById("notice").dataset.state, "saved");
+});
+
+test("options does not save unsaved changes when the popup closes", async (t) => {
     const { dom, setCalls, stored } = await createOptionsFixture(t);
     const toggle = dom.window.document.querySelector('[data-option="autoQualityEnabled"]');
 
     toggle.checked = false;
     toggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-    toggle.checked = true;
-    toggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-
-    assert.equal(setCalls.length, 1, "the regular queue should still serialize writes before pagehide");
     dom.window.dispatchEvent(new dom.window.Event("pagehide"));
 
-    assert.equal(setCalls.length, 2, "pagehide should issue the pending state before the first callback returns");
-    assert.equal(setCalls[1].values.autoQualityEnabled, true);
-
-    setCalls[0].complete();
-    assert.equal(setCalls.length, 3, "the surviving callback queue should reaffirm the latest state");
-    assert.equal(setCalls[2].values.autoQualityEnabled, true);
-    setCalls[1].complete();
-    setCalls[2].complete();
-
+    assert.equal(setCalls.length, 0);
     assert.equal(stored.autoQualityEnabled, true);
 });

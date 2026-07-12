@@ -10,7 +10,6 @@ const settings = globalThis.BetterChzzkSettings;
 const expectedDefaults = {
     autoQualityEnabled: true,
     rewardAutoCollectEnabled: true,
-    rewardAutoCollectDelayMs: 800,
     skipControlEnabled: true,
     skipKeyboardEnabled: true,
     skipPillEnabled: true,
@@ -43,9 +42,8 @@ const expectedDefaults = {
     liveWatchHistoryMinMinutes: 1,
     vodCommentTabsEnabled: true,
     chatTimestampEnabled: false,
-    chatToolsEnabled: false,
     chatToolsShowBlindEnabled: false,
-    chatToolsModeratorBoxEnabled: true,
+    chatToolsModeratorBoxEnabled: false,
     chatToolsMaxModeratorMessages: 100,
     videoSearchEnabled: true,
     videoSearchCommentEnabled: true,
@@ -88,7 +86,6 @@ const expectedDefaults = {
     followingPreviewVolumePercent: 15,
     livePreviewRightClickSoundEnabled: true,
     holdSpeedEnabled: true,
-    shortcutRescueEnabled: true,
 };
 
 test("settings exports the expected option defaults and key order", () => {
@@ -111,14 +108,14 @@ test("feature count keys are derived from feature toggles only", () => {
         "liveWatchHistoryEnabled",
         "vodCommentTabsEnabled",
         "chatTimestampEnabled",
-        "chatToolsEnabled",
+        "chatToolsShowBlindEnabled",
+        "chatToolsModeratorBoxEnabled",
         "videoSearchEnabled",
         "categoryToolsEnabled",
         "titleTooltipEnabled",
         "followingRefreshEnabled",
         "followingPreviewTooltipEnabled",
         "holdSpeedEnabled",
-        "shortcutRescueEnabled",
     ]);
 });
 
@@ -135,7 +132,6 @@ test("normalizeOptions preserves boolean parsing and integer bounds", () => {
         audioCompressorMakeupGain: 99,
         monthlyBroadcastTimeMaxCalendarPages: 9999,
         videoSearchCommentDelayMs: -2,
-        rewardAutoCollectDelayMs: 9999,
         chatToolsMaxModeratorMessages: 9999,
         categoryToolsFollowerFilterPreset1: "50000000",
         categoryToolsDurationFilterPreset1: "0",
@@ -155,7 +151,6 @@ test("normalizeOptions preserves boolean parsing and integer bounds", () => {
     assert.equal(normalized.audioCompressorMakeupGain, 3);
     assert.equal(normalized.monthlyBroadcastTimeMaxCalendarPages, settings.MONTHLY_CALENDAR_MAX_PAGES);
     assert.equal(normalized.videoSearchCommentDelayMs, 0);
-    assert.equal(normalized.rewardAutoCollectDelayMs, settings.REWARD_AUTO_COLLECT_DELAY_MS_MAX);
     assert.equal(normalized.chatToolsMaxModeratorMessages, settings.CHAT_TOOLS_MAX_MODERATOR_MESSAGES);
     assert.equal(normalized.categoryToolsFollowerFilterPreset1, 10000000);
     assert.equal(normalized.categoryToolsDurationFilterPreset1, 1);
@@ -163,6 +158,25 @@ test("normalizeOptions preserves boolean parsing and integer bounds", () => {
     assert.equal(normalized.categoryToolsFollowerFetchConcurrency, 1);
     assert.equal(normalized.followingPreviewVolumePercent, 100);
     assert.equal(settings.normalizeOptions({ followingPreviewVolumePercent: 0 }).followingPreviewVolumePercent, 1);
+});
+
+test("removed chat tools master toggle migrates its previous disabled and enabled states", () => {
+    const previouslyDisabled = settings.normalizeOptions({
+        chatToolsEnabled: false,
+        chatToolsShowBlindEnabled: true,
+        chatToolsModeratorBoxEnabled: true,
+    });
+    const previouslyEnabled = settings.normalizeOptions({
+        chatToolsEnabled: true,
+        chatToolsShowBlindEnabled: true,
+        chatToolsModeratorBoxEnabled: true,
+    });
+
+    assert.equal(settings.OPTION_KEYS.includes("chatToolsEnabled"), false);
+    assert.equal(previouslyDisabled.chatToolsShowBlindEnabled, false);
+    assert.equal(previouslyDisabled.chatToolsModeratorBoxEnabled, false);
+    assert.equal(previouslyEnabled.chatToolsShowBlindEnabled, true);
+    assert.equal(previouslyEnabled.chatToolsModeratorBoxEnabled, true);
 });
 
 test("options.html data-option keys match the settings keys", () => {

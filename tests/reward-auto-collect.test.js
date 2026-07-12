@@ -6,6 +6,7 @@ const { JSDOM } = require("jsdom");
 
 const repoRoot = path.join(__dirname, "..");
 const candidateSelector = 'button, [role="button"], a[href]';
+const productionClickDelayMs = 800;
 const activeDoms = new Set();
 
 test.afterEach(() => {
@@ -19,6 +20,13 @@ test.afterEach(() => {
 function readRepoFile(...parts) {
     return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
+
+test("reward auto collect uses a fixed internal click delay without a stored option", () => {
+    const source = readRepoFile("features", "rewardAutoCollect.js");
+
+    assert.match(source, /const CLICK_DELAY_MS = 800;/);
+    assert.doesNotMatch(source, /rewardAutoCollectDelayMs/);
+});
 
 function createStorageArea(initialData = {}) {
     const data = { ...initialData };
@@ -88,7 +96,7 @@ function createJsonResponse(data, { ok = true, status = 200 } = {}) {
     };
 }
 
-function createRewardDom(syncOptions = {}, { fetchImpl } = {}) {
+function createRewardDom(syncOptions = {}, { fetchImpl, clickDelayMs = 0 } = {}) {
     const dom = new JSDOM("<!doctype html><html><body></body></html>", {
         url: "https://chzzk.naver.com/live/test-channel",
         runScripts: "outside-only",
@@ -98,10 +106,12 @@ function createRewardDom(syncOptions = {}, { fetchImpl } = {}) {
     dom.window.chrome = createFakeChrome({
         sync: {
             rewardAutoCollectEnabled: true,
-            rewardAutoCollectDelayMs: 0,
             ...syncOptions,
         },
     });
+    const nativeSetTimeout = dom.window.setTimeout.bind(dom.window);
+    dom.window.setTimeout = (callback, delay = 0, ...args) =>
+        nativeSetTimeout(callback, delay === productionClickDelayMs ? clickDelayMs : delay, ...args);
     dom.window.fetch =
         fetchImpl || (async () => createJsonResponse({ content: { active: true, amount: 0, claims: [] } }));
     activeDoms.add(dom);
@@ -522,7 +532,7 @@ test("reward auto collect reconnects when the live chat aside is replaced", asyn
 });
 
 test("reward auto collect follows the latest button when it is re-rendered during the click delay", async () => {
-    const dom = createRewardDom({ rewardAutoCollectDelayMs: 500 });
+    const dom = createRewardDom({}, { clickDelayMs: 500 });
     const scope = createRewardScope(dom);
     const first = createScreenshotRewardButton(dom);
     const originalQuerySelectorAll = scope.querySelectorAll.bind(scope);
@@ -609,7 +619,7 @@ test("reward auto collect allows the same reward text on a different live route"
 });
 
 test("reward auto collect reschedules a pending reward when the live route changes in place", async () => {
-    const dom = createRewardDom({ rewardAutoCollectDelayMs: 500 });
+    const dom = createRewardDom({}, { clickDelayMs: 500 });
     const scope = createRewardScope(dom);
     const tracked = createScreenshotRewardButton(dom);
     const originalQuerySelectorAll = scope.querySelectorAll.bind(scope);
@@ -814,7 +824,7 @@ test("reward auto collect does not immediately repeat the same re-rendered rewar
 });
 
 test("reward auto collect stops observer and pending clicks when the option is disabled", async () => {
-    const dom = createRewardDom({ rewardAutoCollectDelayMs: 500 });
+    const dom = createRewardDom({}, { clickDelayMs: 500 });
     const scope = createRewardScope(dom);
     const first = createTrackedButton(dom, "통나무 받기");
     const originalQuerySelectorAll = scope.querySelectorAll.bind(scope);

@@ -12,7 +12,7 @@
  *     1시간 시청 보상은 치지직이 표시한 버튼을 통해서만 수령한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
  *   createMutationObserverSync, normSpace, startPageChangeDetection).
- * 옵션 키: rewardAutoCollectEnabled, rewardAutoCollectDelayMs.
+ * 옵션 키: rewardAutoCollectEnabled.
  * DOM 마커: data-bcra-clicked(현재 보상 상태의 클릭 완료 표시 attribute).
  */
 (() => {
@@ -26,7 +26,7 @@
     const COMPLETED_SIGNATURE_RELEASE_MS = 750;
     const MAX_COMPLETED_SIGNATURES = 32;
     const MAX_COMPLETED_API_CLAIMS = 64;
-    const DEFAULT_DELAY_MS = 800;
+    const CLICK_DELAY_MS = 800;
     const API_CLAIM_POLL_MS = 30000;
     const WATCH_CLAIM_TYPE = "WATCH_1_HOUR";
     const LOG_POWER_API_ORIGIN = "https://api.chzzk.naver.com";
@@ -76,12 +76,6 @@
 
     function isEnabled() {
         return featureOptions.rewardAutoCollectEnabled === true;
-    }
-
-    function getDelayMs() {
-        const delay = Number(featureOptions.rewardAutoCollectDelayMs);
-        if (!Number.isFinite(delay)) return DEFAULT_DELAY_MS;
-        return Math.min(Math.max(Math.round(delay), 0), 5000);
     }
 
     function getElementText(el) {
@@ -433,7 +427,7 @@
         state.timeoutId = window.setTimeout(() => {
             pendingClicks.delete(signature);
             if (!clickRewardButton(state.button, signature)) requestFullScan();
-        }, getDelayMs());
+        }, CLICK_DELAY_MS);
         pendingClicks.set(signature, state);
     }
 

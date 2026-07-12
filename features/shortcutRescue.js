@@ -8,10 +8,8 @@
  *   판정되면 이후 같은 라우트에서는 관찰을 건너뛰고 즉시 버튼 클릭(우선) 또는 video/document API 직접 호출로
  *   폴백한다. Space는 repeat keydown을 무시하며(네이티브와 달리 반복 입력에 반응하지 않음), 편집 가능 대상이나
  *   플레이어 바깥 상호작용 대상에서는 개입하지 않는다.
- * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(getMainVideoElement, getPlayerRoot,
- *   isEditableTarget, isOutsidePlayerInteractiveTarget, isPlaybackRoute, isVisible, normalizeCompact,
- *   bindFeatureOptions).
- * 옵션 키: shortcutRescueEnabled.
+ * 의존: 전역 BetterChzzk.utils(getMainVideoElement, getPlayerRoot, isEditableTarget,
+ *   isOutsidePlayerInteractiveTarget, isPlaybackRoute, isVisible, normalizeCompact).
  */
 (() => {
     // 네이티브 키 핸들러는 정상일 때 같은 이벤트 턴 근처에서 상태를 바꾼다.
@@ -28,10 +26,7 @@
         isPlaybackRoute,
         isVisible,
         normalizeCompact,
-        bindFeatureOptions,
     } = BetterChzzk.utils;
-
-    let featureOptions = BetterChzzkSettings.normalizeOptions();
 
     // 치지직 단축키 파이프라인 생존 여부는 페이지 진입 시점에 랜덤하게 결정되므로 라우트마다 다시 판정한다.
     let pipelineState = "unknown"; // "unknown" | "alive" | "dead"
@@ -161,7 +156,7 @@
     }
 
     function resolveProbe(action, video, snapshot, startedAt) {
-        if (!featureOptions.shortcutRescueEnabled || pipelineState !== "unknown") return;
+        if (pipelineState !== "unknown") return;
         if (lastHref !== location.href) return;
         // 같은 키의 프로브 도중 우리가 폴백을 실행했다면 그 변화가 섞이므로 이번 판정은 버린다.
         if (lastFallbackAt >= startedAt && lastFallbackAction === action) return;
@@ -189,7 +184,6 @@
     }
 
     function onKeyDown(event) {
-        if (!featureOptions.shortcutRescueEnabled) return;
         if (!isPlaybackRoute()) return;
         if (event.repeat || event.isComposing) return;
         if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
@@ -220,11 +214,5 @@
         scheduleProbe(action, video, snapshot);
     }
 
-    function applyOptions(options) {
-        featureOptions = options;
-        resetPipelineState();
-    }
-
     window.addEventListener("keydown", onKeyDown, true);
-    bindFeatureOptions(applyOptions);
 })();

@@ -27,9 +27,11 @@
     const MAX_COMMENTS_PER_ORDER = 300;
     const MAX_REPLIES_PER_COMMENT = 50;
     const MAX_REPLIES_PER_ORDER = 300;
+    const COLLAPSED_COMMENT_MAX_CHARS = 420;
+    const COLLAPSED_COMMENT_MAX_LINES = 12;
     const MOUNT_SYNC_DELAY_MS = 80;
     const MOUNT_GAP_GRACE_MS = 600;
-    const DEFAULT_ORDER = "ASC";
+    const DEFAULT_ORDER = "POPULAR";
     const ANCHOR_SELECTOR = [
         "#vod-aside",
         "#vod-aside [role='log']",
@@ -42,11 +44,13 @@
     ].join(",");
     const TIMECODE_RE = /^(?:\d{1,2}:)?\d{1,2}:\d{2}$/;
     const TIMECODE_SCAN_RE = /(?:^|[\s([{])((?:\d{1,2}:)?\d{1,2}:\d{2})(?=$|[\s)\]},.!?])/g;
+    const NATIVE_BUFF_BUTTON_CLASS_RE = /^_buff_button_[A-Za-z0-9_-]+$/;
     const NATIVE_BUFF_ICON_CLASS_RE = /^_buff_icon_[A-Za-z0-9_-]+$/;
+    const NATIVE_BUFF_COUNT_CLASS_RE = /^_buff_count_[A-Za-z0-9_-]+$/;
     const SORT_OPTIONS = Object.freeze([
-        Object.freeze({ label: "등록순", order: "ASC" }),
-        Object.freeze({ label: "최신순", order: "DESC" }),
         Object.freeze({ label: "인기순", order: "POPULAR" }),
+        Object.freeze({ label: "최신순", order: "DESC" }),
+        Object.freeze({ label: "등록순", order: "ASC" }),
     ]);
 
     const {
@@ -89,6 +93,7 @@
     let lastVideoNo = getVodVideoNoFromPath();
     let nativeBuffIconClassNames = null;
     const dirtyNativeCommentIds = new Set();
+    const messageToggleStates = new WeakMap();
     const commentStates = new Map();
 
     function isFeatureEnabled() {
@@ -123,7 +128,6 @@
             STYLE_ID,
             `
 [data-bcvc-container="1"]{
-  position:relative!important;
   min-width:0!important;
   min-height:0!important;
 }
@@ -221,8 +225,12 @@
   pointer-events:none!important;
   user-select:none!important;
 }
+[data-bcvc-native-log="1"]{
+  min-height:0!important;
+}
 #${COMMENT_PANEL_ID}{
   --bcvc-font-family:inherit;
+  --bcvc-toolbar-font-family:var(--bcvc-font-family,inherit);
   --bcvc-author-font-size:14px;
   --bcvc-author-font-weight:700;
   --bcvc-author-line-height:18px;
@@ -288,7 +296,7 @@
   min-width:0;
   overflow:hidden;
   color:var(--bcvc-text);
-  font-family:inherit;
+  font-family:var(--bcvc-toolbar-font-family,var(--bcvc-font-family,inherit));
   font-size:13px;
   font-weight:700;
   line-height:18px;
@@ -314,13 +322,13 @@
   padding:4px 6px;
   background:transparent;
   color:var(--bcvc-text-weak);
-  font-family:inherit;
   font-size:11px;
   font-weight:600;
   line-height:18px;
   white-space:nowrap;
   cursor:pointer;
 }
+.bcvc-sort-button{font-family:var(--bcvc-toolbar-font-family,var(--bcvc-font-family,inherit))}
 .bcvc-sort-button:hover,
 .bcvc-icon-button:hover{background:var(--bcvc-hover);color:var(--bcvc-text)}
 .bcvc-sort-button[aria-pressed="true"]{background:var(--bcvc-surface-raised);color:var(--bcvc-brand)}
@@ -371,10 +379,17 @@ body[theme="dark"] .bcvc-avatar-fallback,
 .bcvc-badge{flex:0 0 auto;border-radius:4px;padding:0 4px;font-family:inherit;font-size:9px;font-weight:700;line-height:15px}
 .bcvc-writer{background:var(--Surface-Brand-Alpha-Weaker,rgba(0,230,147,.12));color:var(--bcvc-brand)}
 .bcvc-message{min-width:0;margin-top:2px;color:var(--bcvc-text);font-family:inherit;font-size:var(--bcvc-message-font-size,15px);font-weight:var(--bcvc-message-font-weight,400);line-height:var(--bcvc-message-line-height,20px);letter-spacing:var(--bcvc-message-letter-spacing,normal);overflow-wrap:anywhere;white-space:pre-wrap}
+.bcvc-message-content{display:inline}
+.bcvc-message-toggle{display:block;min-height:24px;border:0;padding:2px 0;background:transparent;color:var(--bcvc-brand);font-family:inherit;font-size:12px;font-weight:600;line-height:20px;text-align:left;cursor:pointer}
+.bcvc-message-toggle:hover{text-decoration:underline}
 .bcvc-best{display:inline-flex;align-items:center;justify-content:center;min-width:39px;height:18px;margin:1px 6px 0 0;border-radius:5px;padding:0 4px;background:#41bd53;color:#fff;font-family:inherit;font-size:9px;font-weight:700;line-height:18px;vertical-align:top}
 .bcvc-timecode{display:inline-block;min-height:0;margin:2px 8px 0 0;border:0;border-radius:4px;padding:0 3px;background:var(--Surface-Brand-Alpha-Weaker,rgba(0,255,163,.1));color:var(--Content-Brand-Base,#00e693);font-family:inherit;font-size:15px;font-weight:600;line-height:16px;vertical-align:top;cursor:pointer}
-.bcvc-comment-footer{display:flex;align-items:flex-start;justify-content:flex-end;min-height:25px;margin-top:2px}
+.bcvc-comment-footer{display:flex;align-items:flex-start;justify-content:space-between;min-height:25px;margin-top:2px}
+.bcvc-reply-toggle{display:block;margin:0 0 0 4px;border:0;padding:3px 4px 2px 6px;background:transparent;color:var(--Content-Brand-Base,var(--bcvc-brand));font-family:inherit;font-size:13px;font-weight:700;line-height:16px;text-align:left;cursor:pointer}
+.bcvc-reply-toggle svg{display:inline-block;width:14px;height:14px;margin:1px 0 0;vertical-align:top}
+.bcvc-reply-toggle[aria-expanded="false"] svg{transform:rotate(180deg)}
 .bcvc-buff{display:inline-flex;align-items:flex-start;min-height:23px;border:0;padding:0;background:transparent;color:var(--bcvc-text-weak);font-family:inherit;appearance:none}
+.bcvc-buff{margin-left:auto}
 .bcvc-buff:not(:disabled){cursor:pointer}
 .bcvc-buff:not(:disabled):hover,.bcvc-buff[aria-pressed="true"]{color:var(--bcvc-brand)}
 .bcvc-buff:disabled{cursor:default}
@@ -383,9 +398,15 @@ body[theme="dark"] .bcvc-avatar-fallback,
 .bcvc-buff-label{display:inline-flex;align-items:center;justify-content:center;width:47px;height:23px;border:2px solid var(--Border-Neutral-Alpha-Weak,rgba(128,137,156,.2));border-radius:12px;font-size:11px;font-weight:700;line-height:19px}
 .bcvc-buff-label::after{content:"↑";margin-left:2px;font-size:12px;line-height:1}
 .bcvc-buff-count{display:inline-block;margin:5px 3px 0;color:var(--color-content-04,var(--bcvc-text-weak));font-family:inherit;font-size:13px;font-weight:500;line-height:16px}
-.bcvc-replies{min-width:0;margin:6px 0 0 10px;border-left:1px solid var(--bcvc-border);padding-left:10px}
-.bcvc-replies .bcvc-comment{padding-top:9px;padding-bottom:5px}
+.bcvc-buff[aria-pressed="true"] .bcvc-buff-count{color:rgb(44,213,136);font-weight:600}
+.bcvc-replies{min-width:0;margin:4px 0 0 12px}
+.bcvc-replies[hidden]{display:none!important}
+.bcvc-replies .bcvc-comment{padding:9px 0 5px 30px}
+.bcvc-replies .bcvc-avatar{top:9px;width:22px;height:22px}
+.bcvc-replies .bcvc-message{font-size:14px;line-height:18px}
+.bcvc-mention{display:inline-block;margin-right:5px;color:var(--Content-Brand-Base,var(--bcvc-brand));font-size:15px;font-weight:700;line-height:20px}
 .bcvc-reply-limit{margin:3px 0 4px 20px;color:var(--bcvc-text-weak);font-size:12px;line-height:18px}
+.bcvc-reply-limit[hidden]{display:none!important}
 .bcvc-comment[data-bcvc-deleted="1"]{padding-left:0}
 .bcvc-attachments{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;overflow:hidden;border-radius:8px}
 .bcvc-attachments[data-count="1"]{display:block}
@@ -492,6 +513,15 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
         const commentStyle = nativeCommentTypographyTarget ? getComputedStyle(nativeCommentTypographyTarget) : style;
         const commentFontFamily = commentStyle.fontFamily || style.fontFamily;
         if (commentFontFamily) commentPanel?.style.setProperty("--bcvc-font-family", commentFontFamily);
+        const nativeSortButton = Array.from(document.querySelectorAll("#commentArea button")).find((button) =>
+            SORT_OPTIONS.some((option) => option.label === compactText(button.textContent))
+        );
+        const toolbarFontFamily =
+            (nativeSortButton instanceof HTMLElement ? getComputedStyle(nativeSortButton).fontFamily : "") ||
+            commentFontFamily;
+        if (toolbarFontFamily) {
+            commentPanel?.style.setProperty("--bcvc-toolbar-font-family", toolbarFontFamily);
+        }
         syncNativeCommentTypography(nativeCommentTypographyTarget);
 
         const asideRect = mountedAside.getBoundingClientRect();
@@ -502,8 +532,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
         tablist.style.setProperty("--bcvc-header-height", `${headerHeight}px`);
         const panelTop =
             headerRect.height > 0 ? Math.max(headerHeight, Math.round(headerRect.bottom - containerRect.top)) : 44;
-        const visibleBottom =
-            asideRect.height > 0 ? Math.min(containerRect.bottom, asideRect.bottom) : containerRect.bottom;
+        const visibleBottom = asideRect.height > 0 ? asideRect.bottom : containerRect.bottom;
         const panelHeight = Math.max(0, Math.round(visibleBottom - (containerRect.top + panelTop)));
         mountedContainer.style.setProperty("--bcvc-panel-top", `${panelTop}px`);
         mountedContainer.style.setProperty("--bcvc-panel-height", `${panelHeight}px`);
@@ -745,6 +774,24 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
         if (cursor < content.length) container.append(content.slice(cursor));
     }
 
+    function getCollapsedCommentText(text) {
+        const content = String(text || "");
+        const lines = content.split("\n");
+        let cutoff = content.length;
+        if (lines.length > COLLAPSED_COMMENT_MAX_LINES) {
+            cutoff = lines.slice(0, COLLAPSED_COMMENT_MAX_LINES).join("\n").length;
+        }
+        cutoff = Math.min(cutoff, COLLAPSED_COMMENT_MAX_CHARS);
+        if (cutoff >= content.length) return "";
+
+        let collapsed = content.slice(0, cutoff).trimEnd();
+        if (cutoff === COLLAPSED_COMMENT_MAX_CHARS) {
+            const lastBreak = collapsed.lastIndexOf("\n");
+            if (lastBreak >= COLLAPSED_COMMENT_MAX_CHARS * 0.65) collapsed = collapsed.slice(0, lastBreak).trimEnd();
+        }
+        return collapsed ? `${collapsed}…` : "";
+    }
+
     function getCommentId(item) {
         const commentId = item?.row?.comment?.commentId;
         return commentId === undefined || commentId === null || commentId === "" ? "" : String(commentId);
@@ -775,6 +822,31 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
                 isOwnedByNativeCommentRow(element, nativeRow)
             ) || null
         );
+    }
+
+    function getNativeTimecodeButtons(nativeRow) {
+        if (!(nativeRow instanceof HTMLElement)) return [];
+        return Array.from(nativeRow.querySelectorAll("button")).filter(
+            (button) =>
+                isOwnedByNativeCommentRow(button, nativeRow) &&
+                Number.isFinite(parseTimecodeSeconds(compactText(button.textContent)))
+        );
+    }
+
+    function syncMirroredTimecodes(container, item) {
+        const mirrored = Array.from(container?.querySelectorAll?.("[data-bcvc-action='time']") || []);
+        if (!mirrored.length) return;
+        const native = getNativeTimecodeButtons(getNativeCommentElement(item));
+        mirrored.forEach((button, index) => {
+            const nativeButton = native[index];
+            if (!(nativeButton instanceof HTMLButtonElement)) return;
+            const label = compactText(nativeButton.textContent);
+            const seconds = parseTimecodeSeconds(label);
+            if (!Number.isFinite(seconds)) return;
+            button.textContent = label;
+            button.setAttribute("data-bcvc-seconds", String(seconds));
+            button.setAttribute("aria-label", `${label}로 이동`);
+        });
     }
 
     function findNativeProfileControlsInRow(nativeRow) {
@@ -883,6 +955,17 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
 
     function getNativeBuffCount(nativeButton) {
         if (!(nativeButton instanceof HTMLElement)) return null;
+        const siblingCount = Array.from(nativeButton.parentElement?.children || []).find(
+            (element) =>
+                element !== nativeButton &&
+                [...element.classList].some((className) => NATIVE_BUFF_COUNT_CLASS_RE.test(className))
+        );
+        const siblingText = compactText(siblingCount?.textContent);
+        if (/^[\d,]+$/.test(siblingText)) {
+            const count = Number(siblingText.replaceAll(",", ""));
+            if (Number.isSafeInteger(count) && count >= 0) return count;
+        }
+
         const text = compactText(
             `${nativeButton.getAttribute("aria-label") || ""} ${nativeButton.getAttribute("title") || ""} ${
                 nativeButton.textContent || ""
@@ -898,6 +981,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
         if (!(mirroredBuff instanceof HTMLButtonElement)) return;
         const count = getNativeBuffCount(nativeButton);
         if (count === null) return;
+        mirroredBuff.setAttribute("data-bcvc-count", String(count));
 
         let countElement = mirroredBuff.querySelector(".bcvc-buff-count");
         if (count > 0) {
@@ -911,8 +995,20 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
         } else {
             countElement?.remove();
         }
-        mirroredBuff.setAttribute("aria-label", `버프 ${count.toLocaleString()}`);
-        if (!mirroredBuff.disabled) mirroredBuff.title = `버프 ${count.toLocaleString()}`;
+        const label = `버프 ${count.toLocaleString()}`;
+        mirroredBuff.setAttribute("aria-label", label);
+        if (!mirroredBuff.disabled) mirroredBuff.title = label;
+    }
+
+    function syncMirroredBuffButtonClass(mirroredBuff, nativeButton) {
+        if (!(mirroredBuff instanceof HTMLButtonElement)) return;
+        for (const className of [...mirroredBuff.classList]) {
+            if (NATIVE_BUFF_BUTTON_CLASS_RE.test(className)) mirroredBuff.classList.remove(className);
+        }
+        if (!(nativeButton instanceof HTMLButtonElement)) return;
+        for (const className of nativeButton.classList) {
+            if (NATIVE_BUFF_BUTTON_CLASS_RE.test(className)) mirroredBuff.classList.add(className);
+        }
     }
 
     function getNativeAvatarUrlFromRow(nativeRow) {
@@ -1117,6 +1213,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             const nativeBuffButton = getNativeBuffButtonInRow(nativeRow);
             const mirroredBuff = row.querySelector(":scope > .bcvc-comment-footer .bcvc-buff");
             if (mirroredBuff instanceof HTMLButtonElement) {
+                syncMirroredBuffButtonClass(mirroredBuff, nativeBuffButton);
                 syncMirroredBuffCount(mirroredBuff, nativeBuffButton);
                 const label = mirroredBuff.getAttribute("aria-label") || "버프";
                 syncMirroredControlAvailability(
@@ -1168,8 +1265,10 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
         buff.type = "button";
         buff.className = "bcvc-buff";
         buff.setAttribute("data-bcvc-action", "buff");
+        buff.setAttribute("data-bcvc-count", String(buffCount));
         buff.setAttribute("aria-label", `버프 ${buffCount.toLocaleString()}`);
         const nativeBuffButton = findNativeBuffButton(item);
+        syncMirroredBuffButtonClass(buff, nativeBuffButton);
         buff.setAttribute("aria-pressed", nativeBuffButton?.getAttribute("aria-pressed") === "true" ? "true" : "false");
         syncMirroredControlAvailability(
             buff,
@@ -1246,8 +1345,64 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
         return {
             best: false,
             key: `reply:${parentItem.key}:${getCommentKey(row, index)}`,
+            replyToName: compactText(parentItem?.row?.user?.userNickname),
             row,
         };
+    }
+
+    function createReplyToggle(count) {
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "bcvc-reply-toggle";
+        toggle.append(`답글 ${count.toLocaleString()}`);
+        toggle.setAttribute("data-bcvc-action", "reply-toggle");
+        toggle.setAttribute("aria-expanded", "false");
+
+        const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        icon.setAttribute("width", "14");
+        icon.setAttribute("height", "14");
+        icon.setAttribute("viewBox", "0 0 14 14");
+        icon.setAttribute("fill", "none");
+        icon.setAttribute("aria-hidden", "true");
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", "M10 8.2002L7 5.2002L4 8.2002");
+        path.setAttribute("stroke", "currentColor");
+        path.setAttribute("stroke-width", "1.6");
+        path.setAttribute("stroke-linecap", "round");
+        path.setAttribute("stroke-linejoin", "round");
+        icon.appendChild(path);
+        toggle.appendChild(icon);
+        return toggle;
+    }
+
+    function renderCommentMessage(record, expanded) {
+        const { allowTimecodes, collapsedText, content, fullText, item, toggle } = record;
+        content.replaceChildren();
+        appendCommentText(content, expanded ? fullText : collapsedText, { allowTimecodes });
+        syncMirroredTimecodes(content, item);
+        toggle.setAttribute("aria-expanded", String(expanded));
+        toggle.textContent = expanded ? "접기" : "더보기";
+    }
+
+    function createMessageToggle(message, item, fullText, allowTimecodes) {
+        const collapsedText = getCollapsedCommentText(fullText);
+        const content = document.createElement("span");
+        content.className = "bcvc-message-content";
+        message.appendChild(content);
+        if (!collapsedText) {
+            appendCommentText(content, fullText, { allowTimecodes });
+            syncMirroredTimecodes(content, item);
+            return null;
+        }
+
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "bcvc-message-toggle";
+        toggle.setAttribute("data-bcvc-action", "message-toggle");
+        const record = { allowTimecodes, collapsedText, content, fullText, item, toggle };
+        messageToggleStates.set(toggle, record);
+        renderCommentMessage(record, false);
+        return toggle;
     }
 
     function createCommentRow(item, { includeReplies = true, reply = false, replyBudget = null } = {}) {
@@ -1310,21 +1465,33 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             best.textContent = "BEST";
             message.appendChild(best);
         }
-        const messageText = deleted
+        let messageText = deleted
             ? "삭제된 댓글입니다."
             : !hasComment
               ? "내용을 표시할 수 없는 댓글입니다."
               : cleanBotHidden
                 ? "클린봇이 부적절한 표현을 감지한 댓글입니다."
                 : String(comment.content || "");
-        appendCommentText(message, messageText, { allowTimecodes: !deleted && !cleanBotHidden });
+        if (reply && !deleted && !cleanBotHidden) {
+            const replyToName = compactText(item.replyToName);
+            if (replyToName) {
+                const mention = document.createElement("span");
+                mention.className = "bcvc-mention";
+                mention.textContent = replyToName;
+                message.appendChild(mention);
+                messageText = messageText.trimStart();
+            }
+        }
+        const messageToggle = createMessageToggle(message, item, messageText, !deleted && !cleanBotHidden);
         row.appendChild(message);
+        if (messageToggle) row.appendChild(messageToggle);
         if (!deleted && !cleanBotHidden) {
             const attachments = createAttachments(comment);
             if (attachments) row.appendChild(attachments);
         }
-        const footer = !deleted && !cleanBotHidden && hasComment ? createCommentFooter(item) : null;
-        if (footer) row.appendChild(footer);
+        let footer = !deleted && !cleanBotHidden && hasComment ? createCommentFooter(item) : null;
+        let replyList = null;
+        let replyLimit = null;
 
         if (includeReplies) {
             const { rows: replies, truncated } = getReplyRows(rowData);
@@ -1335,10 +1502,17 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
                 const visibleReplies = replies.slice(0, availableReplies);
                 if (replyBudget) replyBudget.remaining -= visibleReplies.length;
                 if (visibleReplies.length) {
-                    const replyList = document.createElement("div");
+                    const replyToggle = createReplyToggle(visibleReplies.length);
+                    if (!footer) {
+                        footer = document.createElement("div");
+                        footer.className = "bcvc-comment-footer";
+                    }
+                    footer.prepend(replyToggle);
+                    replyList = document.createElement("div");
                     replyList.className = "bcvc-replies";
                     replyList.setAttribute("role", "list");
                     replyList.setAttribute("aria-label", "답글");
+                    replyList.hidden = true;
                     visibleReplies.forEach((replyRow, index) =>
                         replyList.appendChild(
                             createCommentRow(createReplyItem(item, replyRow, index), {
@@ -1347,19 +1521,21 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
                             })
                         )
                     );
-                    row.appendChild(replyList);
                 }
                 if (truncated || visibleReplies.length < replies.length) {
-                    const limit = document.createElement("div");
-                    limit.className = "bcvc-reply-limit";
-                    limit.textContent =
+                    replyLimit = document.createElement("div");
+                    replyLimit.className = "bcvc-reply-limit";
+                    replyLimit.hidden = true;
+                    replyLimit.textContent =
                         visibleReplies.length < replies.length
                             ? `이 정렬에서는 답글을 ${MAX_REPLIES_PER_ORDER}개까지만 표시합니다.`
                             : `한 댓글의 답글은 ${MAX_REPLIES_PER_COMMENT}개까지만 표시합니다.`;
-                    row.appendChild(limit);
                 }
             }
         }
+        if (footer) row.appendChild(footer);
+        if (replyList) row.appendChild(replyList);
+        if (replyLimit) row.appendChild(replyLimit);
         return row;
     }
 
@@ -1768,6 +1944,47 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
         }
     }
 
+    function activateCommentTimecode(control) {
+        const row = control.closest?.("[data-bcvc-comment-id]");
+        if (row instanceof HTMLElement) {
+            const message = Array.from(row.children).find((child) => child.classList.contains("bcvc-message"));
+            const mirrored = Array.from(message?.querySelectorAll("[data-bcvc-action='time']") || []);
+            const index = mirrored.indexOf(control);
+            const native = getNativeTimecodeButtons(
+                getNativeCommentElementById(row.getAttribute("data-bcvc-comment-id") || "")
+            );
+            const nativeControl = index >= 0 ? native[index] : null;
+            if (isNativeControlAvailable(nativeControl)) {
+                try {
+                    nativeControl.click();
+                    return true;
+                } catch (_) {
+                    // Fall through to the direct media seek when the native control cannot be invoked.
+                }
+            }
+        }
+        return seekToCommentTime(Number(control.getAttribute("data-bcvc-seconds")));
+    }
+
+    function toggleCommentMessage(control) {
+        const record = messageToggleStates.get(control);
+        if (!record) return;
+        renderCommentMessage(record, control.getAttribute("aria-expanded") !== "true");
+    }
+
+    function toggleCommentReplies(control) {
+        const row = control.closest?.(".bcvc-comment");
+        if (!(row instanceof HTMLElement)) return;
+        const replyList = Array.from(row.children).find((child) => child.classList.contains("bcvc-replies"));
+        if (!(replyList instanceof HTMLElement)) return;
+        const expanded = control.getAttribute("aria-expanded") !== "true";
+        control.setAttribute("aria-expanded", String(expanded));
+        replyList.hidden = !expanded;
+        for (const limit of Array.from(row.children).filter((child) => child.classList.contains("bcvc-reply-limit"))) {
+            limit.hidden = !expanded;
+        }
+    }
+
     function restoreCommentControlFocus(request) {
         if (!request || selectedTab !== "comments" || !commentPanel?.isConnected) return;
         const active = document.activeElement;
@@ -1835,7 +2052,11 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
         event.preventDefault();
         event.stopPropagation();
         if (action === "time") {
-            seekToCommentTime(Number(control.getAttribute("data-bcvc-seconds")));
+            activateCommentTimecode(control);
+        } else if (action === "message-toggle") {
+            toggleCommentMessage(control);
+        } else if (action === "reply-toggle") {
+            toggleCommentReplies(control);
         } else if (action === "profile" || action === "buff") {
             activateNativeCommentControl(control, action);
         } else if (action === "sort") {
