@@ -34,6 +34,7 @@
     const TOOLTIP_ATTR = "data-bcfp-tooltip";
     const ACTIVE_ATTR = "data-bcfp-active";
     const LIVE_LINK_SELECTOR = "a[href*='/live/']";
+    const MAIN_CONTENT_SELECTOR = "main, [role='main'], #layout-body";
     const FOLLOWING_HREF_RE = /(^|\/)following(?:[/?#]|$)/i;
     const FOLLOWING_TEXT_RE = /\uD314\uB85C\uC789|following|follow/i;
     const SIDE_CONTAINER_SELECTOR = [
@@ -45,6 +46,12 @@
         "[class*='navigation']",
         "[class*='following']",
         "[class*='follow']",
+    ].join(", ");
+    const DEDICATED_SIDE_CONTAINER_SELECTOR = [
+        "aside",
+        "[class*='aside']",
+        "[class*='sidebar']",
+        "[class*='side_bar']",
     ].join(", ");
     const ITEM_MARKER_RE = /(^|[\s_-])(item|channel|following|follow|live)([\s_-]|$)/i;
     const HIDDEN_TEXT_SELECTOR = ["script", "style", "noscript", "svg", "[hidden]", "[aria-hidden='true']"].join(", ");
@@ -619,13 +626,27 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         });
     }
 
+    function getChildBranchContaining(container, descendant) {
+        let branch = descendant;
+        while (branch?.parentElement && branch.parentElement !== container) branch = branch.parentElement;
+        return branch?.parentElement === container ? branch : null;
+    }
+
+    function hasLocalFollowingSignal(container, link) {
+        if (FOLLOWING_TEXT_RE.test(getElementMarker(container))) return true;
+        if (container.matches(DEDICATED_SIDE_CONTAINER_SELECTOR)) return hasFollowingSignal(container);
+
+        const branch = getChildBranchContaining(container, link);
+        return Boolean(branch && hasFollowingSignal(branch));
+    }
+
     function getFollowingSidebarContainer(link) {
         for (let node = link.parentElement; node && node !== document.body; node = node.parentElement) {
             if (!(node instanceof HTMLElement)) continue;
 
             const marker = getElementMarker(node);
             const isSideLike = node.matches(SIDE_CONTAINER_SELECTOR) || FOLLOWING_TEXT_RE.test(marker);
-            if (isSideLike && hasFollowingSignal(node)) return node;
+            if (isSideLike && hasLocalFollowingSignal(node, link)) return node;
         }
         return null;
     }
@@ -694,6 +715,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
         const link = target.closest(LIVE_LINK_SELECTOR);
         if (!(link instanceof HTMLAnchorElement)) return null;
+        if (link.closest(MAIN_CONTENT_SELECTOR)) return null;
 
         const channelId = extractChannelIdFromHref(link.getAttribute("href") || "");
         if (!channelId) return null;

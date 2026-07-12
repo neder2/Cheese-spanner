@@ -1,5 +1,5 @@
 /**
- * features/vodCommentTabs.js — VOD 채팅 다시보기 영역에 읽기 전용 댓글 탭을 추가한다.
+ * features/vodCommentTabs.js — VOD 채팅 다시보기 영역에 댓글 탭을 추가한다.
  *
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트.
  * 동작 위치: /video/* 의 native aside#vod-aside + [role="log"] 조합.
@@ -22,9 +22,13 @@
     const COMMENT_TAB_ID = "betterchzzk-vod-comment-comment-tab";
     const CHAT_PANEL_ID = "betterchzzk-vod-comment-chat-panel";
     const COMMENT_PANEL_ID = "betterchzzk-vod-comment-panel";
+    const NATIVE_ACTION_HINT_ID = "betterchzzk-vod-comment-native-action-hint";
     const COMMENT_PAGE_SIZE = 10;
     const MAX_COMMENTS_PER_ORDER = 300;
+    const MAX_REPLIES_PER_COMMENT = 50;
+    const MAX_REPLIES_PER_ORDER = 300;
     const MOUNT_SYNC_DELAY_MS = 80;
+    const MOUNT_GAP_GRACE_MS = 600;
     const DEFAULT_ORDER = "ASC";
     const ANCHOR_SELECTOR = [
         "#vod-aside",
@@ -58,10 +62,15 @@
     let featureOptions = BetterChzzkSettings.normalizeOptions();
     let runtimeInstalled = false;
     let bodyObserver = null;
+    let nativeCommentObserver = null;
+    let observedNativeCommentArea = null;
     let resizeObserver = null;
     let loadMoreObserver = null;
     let ensureTimerId = 0;
+    let mountGapTimerId = 0;
     let layoutFrameId = 0;
+    let nativeAssetsFrameId = 0;
+    let syncAllNativeCommentAssets = false;
     let commentPrefetchHandle = null;
     let commentPrefetchGeneration = 0;
     let mountedAside = null;
@@ -79,6 +88,7 @@
     let activeOrder = DEFAULT_ORDER;
     let lastVideoNo = getVodVideoNoFromPath();
     let nativeBuffIconClassNames = null;
+    const dirtyNativeCommentIds = new Set();
     const commentStates = new Map();
 
     function isFeatureEnabled() {
@@ -140,22 +150,29 @@
   --bcvc-heading-font-weight:700;
   --bcvc-heading-line-height:20px;
   --bcvc-heading-letter-spacing:normal;
+  --bcvc-text:var(--Content-Neutral-Cool-Strong,#292c33);
+  --bcvc-text-base:var(--Content-Neutral-Cool-Base,#444a55);
+  --bcvc-text-weak:var(--Content-Neutral-Cool-Weak,#707784);
+  --bcvc-hover:var(--Surface-Interaction-Lighten-Hovered,rgba(0,0,0,.04));
   display:flex;
   flex:1 1 auto;
   align-self:stretch;
   min-width:0;
   height:var(--bcvc-header-height,44px);
+  container-name:bcvc-tabs;
+  container-type:inline-size;
 }
 #${TABLIST_ID} button{
   position:relative;
   display:flex;
+  box-sizing:border-box;
   align-items:center;
   min-width:0;
   height:var(--bcvc-header-height,44px);
   border:0;
   border-radius:0;
   background:transparent;
-  color:var(--Content-Neutral-Cool-Weak,#8b909b);
+  color:var(--bcvc-text-weak);
   font-family:var(--bcvc-heading-font-family,inherit);
   font-size:var(--bcvc-heading-font-size,14px);
   font-weight:var(--bcvc-heading-font-weight,700);
@@ -173,12 +190,16 @@
   text-overflow:ellipsis;
   white-space:nowrap;
 }
+@container bcvc-tabs (max-width:240px){
+  #${CHAT_TAB_ID}{flex:1 1 auto;justify-content:flex-start;padding-right:2px;padding-left:2px;text-align:left}
+  #${COMMENT_TAB_ID}{flex:0 0 52px;padding-right:3px;padding-left:3px}
+}
 #${TABLIST_ID} button:hover{
-  background:var(--Surface-Interaction-Lighten-Hovered,rgba(255,255,255,.04));
-  color:var(--Content-Neutral-Cool-Base,#c9cedc);
+  background:var(--bcvc-hover);
+  color:var(--bcvc-text-base);
 }
 #${TABLIST_ID} button[aria-selected="true"]{
-  color:var(--Content-Neutral-Primary,#f2f3f5);
+  color:var(--bcvc-text);
 }
 #${TABLIST_ID} button[aria-selected="true"]::after{
   content:"";
@@ -201,14 +222,28 @@
   user-select:none!important;
 }
 #${COMMENT_PANEL_ID}{
-  --bcvc-surface:var(--Background-Neutral-Base,var(--Surface-Neutral-Weakest,#141517));
-  --bcvc-surface-raised:var(--Surface-Neutral-Weakest,#1b1c1f);
-  --bcvc-surface-soft:var(--Surface-Neutral-Weaker,#2e3033);
-  --bcvc-text:var(--Content-Neutral-Cool-Strong,#dfe2ea);
-  --bcvc-text-base:var(--Content-Neutral-Cool-Base,#c9cedc);
-  --bcvc-text-weak:var(--Content-Neutral-Cool-Weak,#8b909b);
-  --bcvc-border:var(--Border-Neutral-Alpha-Weak,rgba(255,255,255,.06));
+  --bcvc-font-family:inherit;
+  --bcvc-author-font-size:14px;
+  --bcvc-author-font-weight:700;
+  --bcvc-author-line-height:18px;
+  --bcvc-author-letter-spacing:normal;
+  --bcvc-date-font-size:12px;
+  --bcvc-date-font-weight:400;
+  --bcvc-date-line-height:18px;
+  --bcvc-date-letter-spacing:normal;
+  --bcvc-message-font-size:15px;
+  --bcvc-message-font-weight:400;
+  --bcvc-message-line-height:20px;
+  --bcvc-message-letter-spacing:normal;
+  --bcvc-surface:var(--Background-Neutral-Base,var(--Surface-Neutral-Weakest,#fff));
+  --bcvc-surface-raised:var(--Surface-Neutral-Weakest,#f7f8fa);
+  --bcvc-surface-soft:var(--Surface-Neutral-Weaker,#eef0f3);
+  --bcvc-text:var(--Content-Neutral-Cool-Strong,#292c33);
+  --bcvc-text-base:var(--Content-Neutral-Cool-Base,#444a55);
+  --bcvc-text-weak:var(--Content-Neutral-Cool-Weak,#707784);
+  --bcvc-border:var(--Border-Neutral-Alpha-Weak,rgba(0,0,0,.08));
   --bcvc-brand:var(--Content-Brand-Strong,var(--Content-Brand-Base,#00e693));
+  --bcvc-hover:var(--Surface-Interaction-Lighten-Hovered,rgba(0,0,0,.04));
   position:absolute;
   z-index:1;
   top:var(--bcvc-panel-top,44px);
@@ -223,10 +258,11 @@
   overscroll-behavior:contain;
   scrollbar-gutter:stable;
   contain:size layout paint;
+  container-type:inline-size;
   background:var(--bcvc-surface);
   color:var(--bcvc-text-base);
-  color-scheme:dark light;
-  font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic","맑은 고딕",Helvetica,Arial,sans-serif;
+  color-scheme:light;
+  font-family:var(--bcvc-font-family,inherit);
 }
 #${COMMENT_PANEL_ID}[hidden]{display:none!important}
 #${COMMENT_PANEL_ID},
@@ -237,6 +273,7 @@
   z-index:2;
   top:0;
   display:flex;
+  flex-wrap:wrap;
   align-items:center;
   gap:6px;
   min-width:0;
@@ -247,10 +284,10 @@
   backdrop-filter:blur(8px);
 }
 .bcvc-count{
-  flex:1 1 auto;
+  flex:1 1 72px;
   min-width:0;
   overflow:hidden;
-  color:var(--Content-Neutral-Primary,#f2f3f5);
+  color:var(--bcvc-text);
   font-family:inherit;
   font-size:13px;
   font-weight:700;
@@ -260,11 +297,12 @@
 }
 .bcvc-sort{
   display:flex;
-  flex:0 0 auto;
+  flex:0 1 auto;
   align-items:center;
   gap:2px;
   padding:2px;
   border-radius:8px;
+  max-width:100%;
   background:color-mix(in srgb,var(--bcvc-surface-soft) 55%,transparent);
 }
 .bcvc-sort-button,
@@ -284,7 +322,7 @@
   cursor:pointer;
 }
 .bcvc-sort-button:hover,
-.bcvc-icon-button:hover{background:var(--Surface-Interaction-Lighten-Hovered,rgba(255,255,255,.06));color:var(--bcvc-text)}
+.bcvc-icon-button:hover{background:var(--bcvc-hover);color:var(--bcvc-text)}
 .bcvc-sort-button[aria-pressed="true"]{background:var(--bcvc-surface-raised);color:var(--bcvc-brand)}
 .bcvc-icon-button{display:grid;place-items:center;flex:0 0 28px;width:28px;padding:0}
 .bcvc-icon-button svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;stroke-width:1.8}
@@ -307,28 +345,48 @@
   width:36px;
   height:36px;
   overflow:hidden;
+  border:0;
   border-radius:50%;
+  padding:0;
+  appearance:none;
   background:var(--Surface-Neutral-Base,var(--bcvc-surface-soft));
 }
+.bcvc-avatar:not(:disabled){cursor:pointer}
+.bcvc-avatar:not(:disabled):hover::after{border-color:var(--bcvc-brand)}
+.bcvc-avatar:disabled{cursor:default}
 .bcvc-avatar::after{content:"";position:absolute;inset:0;border:1px solid var(--Border-Neutral-Alpha-Weakest,rgba(0,0,0,.05));border-radius:inherit;pointer-events:none}
-.bcvc-avatar-image{display:block;width:100%;height:100%;border-radius:inherit;object-fit:cover}
+.bcvc-avatar-image,.bcvc-avatar-native-visual{display:block;width:100%;height:100%;border-radius:inherit}
+.bcvc-avatar-image{object-fit:cover}
+.bcvc-avatar-native-visual{background-position:center;background-repeat:no-repeat;background-size:cover}
 .bcvc-avatar-fallback{background-image:url("https://ssl.pstatic.net/static/nng/glive/image/default_profile_light.png");background-position:center;background-repeat:no-repeat;background-size:cover}
+html[dark] .bcvc-avatar-fallback,
+body[theme="dark"] .bcvc-avatar-fallback,
 .theme_dark .bcvc-avatar-fallback{background-image:url("https://ssl.pstatic.net/static/nng/glive/image/default_profile_dark.png")}
 .bcvc-meta{display:flex;align-items:center;gap:6px;min-width:0;min-height:18px}
-.bcvc-author{min-width:0;overflow:hidden;color:var(--bcvc-text);font-family:inherit;font-size:14px;font-weight:700;line-height:18px;text-overflow:ellipsis;white-space:nowrap}
-.bcvc-date{flex:0 0 auto;color:var(--bcvc-text-weak);font-family:inherit;font-size:12px;font-weight:400;line-height:18px;white-space:nowrap}
+.bcvc-author{display:block;min-width:0;overflow:hidden;border:0;padding:0;background:transparent;color:var(--bcvc-text);font-family:inherit;font-size:var(--bcvc-author-font-size,14px);font-weight:var(--bcvc-author-font-weight,700);line-height:var(--bcvc-author-line-height,18px);letter-spacing:var(--bcvc-author-letter-spacing,normal);text-align:left;text-overflow:ellipsis;white-space:nowrap;appearance:none}
+.bcvc-author:not(:disabled){cursor:pointer}
+.bcvc-author:not(:disabled):hover{text-decoration:underline}
+.bcvc-author:disabled{cursor:default}
+.bcvc-date{flex:0 0 auto;color:var(--bcvc-text-weak);font-family:inherit;font-size:var(--bcvc-date-font-size,12px);font-weight:var(--bcvc-date-font-weight,400);line-height:var(--bcvc-date-line-height,18px);letter-spacing:var(--bcvc-date-letter-spacing,normal);white-space:nowrap}
 .bcvc-badge{flex:0 0 auto;border-radius:4px;padding:0 4px;font-family:inherit;font-size:9px;font-weight:700;line-height:15px}
 .bcvc-writer{background:var(--Surface-Brand-Alpha-Weaker,rgba(0,230,147,.12));color:var(--bcvc-brand)}
-.bcvc-message{min-width:0;margin-top:2px;color:var(--bcvc-text);font-family:inherit;font-size:15px;font-weight:400;line-height:20px;overflow-wrap:anywhere;white-space:pre-wrap}
+.bcvc-message{min-width:0;margin-top:2px;color:var(--bcvc-text);font-family:inherit;font-size:var(--bcvc-message-font-size,15px);font-weight:var(--bcvc-message-font-weight,400);line-height:var(--bcvc-message-line-height,20px);letter-spacing:var(--bcvc-message-letter-spacing,normal);overflow-wrap:anywhere;white-space:pre-wrap}
 .bcvc-best{display:inline-flex;align-items:center;justify-content:center;min-width:39px;height:18px;margin:1px 6px 0 0;border-radius:5px;padding:0 4px;background:#41bd53;color:#fff;font-family:inherit;font-size:9px;font-weight:700;line-height:18px;vertical-align:top}
 .bcvc-timecode{display:inline-block;min-height:0;margin:2px 8px 0 0;border:0;border-radius:4px;padding:0 3px;background:var(--Surface-Brand-Alpha-Weaker,rgba(0,255,163,.1));color:var(--Content-Brand-Base,#00e693);font-family:inherit;font-size:15px;font-weight:600;line-height:16px;vertical-align:top;cursor:pointer}
 .bcvc-comment-footer{display:flex;align-items:flex-start;justify-content:flex-end;min-height:25px;margin-top:2px}
-.bcvc-buff{display:inline-flex;align-items:flex-start;min-height:23px;color:var(--bcvc-text-weak);font-family:inherit}
+.bcvc-buff{display:inline-flex;align-items:flex-start;min-height:23px;border:0;padding:0;background:transparent;color:var(--bcvc-text-weak);font-family:inherit;appearance:none}
+.bcvc-buff:not(:disabled){cursor:pointer}
+.bcvc-buff:not(:disabled):hover,.bcvc-buff[aria-pressed="true"]{color:var(--bcvc-brand)}
+.bcvc-buff:disabled{cursor:default}
 .bcvc-buff-icon{display:block;flex:0 0 47px;width:47px;height:23px}
 .bcvc-buff-native-icon{font-style:normal}
 .bcvc-buff-label{display:inline-flex;align-items:center;justify-content:center;width:47px;height:23px;border:2px solid var(--Border-Neutral-Alpha-Weak,rgba(128,137,156,.2));border-radius:12px;font-size:11px;font-weight:700;line-height:19px}
 .bcvc-buff-label::after{content:"↑";margin-left:2px;font-size:12px;line-height:1}
 .bcvc-buff-count{display:inline-block;margin:5px 3px 0;color:var(--color-content-04,var(--bcvc-text-weak));font-family:inherit;font-size:13px;font-weight:500;line-height:16px}
+.bcvc-replies{min-width:0;margin:6px 0 0 10px;border-left:1px solid var(--bcvc-border);padding-left:10px}
+.bcvc-replies .bcvc-comment{padding-top:9px;padding-bottom:5px}
+.bcvc-reply-limit{margin:3px 0 4px 20px;color:var(--bcvc-text-weak);font-size:12px;line-height:18px}
+.bcvc-comment[data-bcvc-deleted="1"]{padding-left:0}
 .bcvc-attachments{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;overflow:hidden;border-radius:8px}
 .bcvc-attachments[data-count="1"]{display:block}
 .bcvc-attachment{display:block;width:100%;height:96px;border-radius:6px;background:var(--bcvc-surface-soft);object-fit:cover}
@@ -337,7 +395,7 @@
 .bcvc-state{display:grid;place-items:center;gap:10px;min-height:168px;margin:0;padding:28px 18px;color:var(--bcvc-text-weak);text-align:center}
 .bcvc-state p{margin:0;font-family:inherit;font-size:13px;font-weight:500;line-height:20px}
 .bcvc-state-button,.bcvc-more-button{min-height:36px;border:0;border-radius:8px;padding:8px 14px;background:color-mix(in srgb,var(--bcvc-surface-soft) 65%,transparent);color:var(--bcvc-text);font-family:inherit;font-size:13px;font-weight:700;line-height:18px;cursor:pointer}
-.bcvc-state-button:hover,.bcvc-more-button:hover{background:var(--Surface-Interaction-Lighten-Hovered,rgba(255,255,255,.08))}
+.bcvc-state-button:hover,.bcvc-more-button:hover{background:var(--bcvc-hover)}
 .bcvc-skeleton-list{padding:0 6px 0 8px}
 .bcvc-skeleton{position:relative;min-height:72px;padding:12px 0 12px 46px;overflow:hidden}
 .bcvc-skeleton::before{content:"";position:absolute;top:12px;left:0;width:36px;height:36px;border-radius:50%;background:var(--bcvc-surface-soft)}
@@ -347,11 +405,37 @@
 .bcvc-footer{display:grid;gap:8px;justify-items:stretch;min-width:0;padding:12px}
 .bcvc-footer:empty{display:none}
 .bcvc-footer-status{margin:0;color:var(--bcvc-text-weak);font-family:inherit;font-size:12px;font-weight:500;line-height:18px;text-align:center}
+.bcvc-sr-only{position:absolute!important;width:1px!important;height:1px!important;margin:-1px!important;padding:0!important;overflow:hidden!important;clip:rect(0 0 0 0)!important;clip-path:inset(50%)!important;white-space:nowrap!important;border:0!important}
 .bcvc-more-button{width:100%;min-height:40px}
 .bcvc-sentinel{width:100%;height:1px}
 @keyframes bcvc-shimmer{to{transform:translateX(100%)}}
-@media (prefers-color-scheme:light){
-  #${COMMENT_PANEL_ID}{--bcvc-surface:var(--Background-Neutral-Base,#fff);--bcvc-surface-raised:var(--Surface-Neutral-Weakest,#f7f8fa);--bcvc-surface-soft:var(--Surface-Neutral-Weaker,#eef0f3);--bcvc-text:var(--Content-Neutral-Cool-Strong,#292c33);--bcvc-text-base:var(--Content-Neutral-Cool-Base,#444a55);--bcvc-text-weak:var(--Content-Neutral-Cool-Weak,#707784);--bcvc-border:var(--Border-Neutral-Alpha-Weak,rgba(0,0,0,.08))}
+html[dark] #${TABLIST_ID},
+body[theme="dark"] #${TABLIST_ID},
+.theme_dark #${TABLIST_ID}{
+  --bcvc-text:var(--Content-Neutral-Cool-Strong,#dfe2ea);
+  --bcvc-text-base:var(--Content-Neutral-Cool-Base,#c9cedc);
+  --bcvc-text-weak:var(--Content-Neutral-Cool-Weak,#8b909b);
+  --bcvc-hover:var(--Surface-Interaction-Lighten-Hovered,rgba(255,255,255,.06));
+}
+html[dark] #${COMMENT_PANEL_ID},
+body[theme="dark"] #${COMMENT_PANEL_ID},
+.theme_dark #${COMMENT_PANEL_ID}{
+  --bcvc-surface:var(--Background-Neutral-Base,var(--Surface-Neutral-Weakest,#141517));
+  --bcvc-surface-raised:var(--Surface-Neutral-Weakest,#1b1c1f);
+  --bcvc-surface-soft:var(--Surface-Neutral-Weaker,#2e3033);
+  --bcvc-text:var(--Content-Neutral-Cool-Strong,#dfe2ea);
+  --bcvc-text-base:var(--Content-Neutral-Cool-Base,#c9cedc);
+  --bcvc-text-weak:var(--Content-Neutral-Cool-Weak,#8b909b);
+  --bcvc-border:var(--Border-Neutral-Alpha-Weak,rgba(255,255,255,.06));
+  --bcvc-hover:var(--Surface-Interaction-Lighten-Hovered,rgba(255,255,255,.06));
+  color-scheme:dark;
+}
+@container (max-width:300px){
+  .bcvc-toolbar{align-items:stretch}
+  .bcvc-count{flex:1 1 calc(100% - 34px)}
+  .bcvc-sort{order:2;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));flex:1 1 100%}
+  .bcvc-sort-button{width:100%;padding-right:3px;padding-left:3px}
+  .bcvc-icon-button{margin-left:auto}
 }
 @media (prefers-reduced-motion:reduce){.bcvc-skeleton::after{animation:none}}
 `
@@ -403,6 +487,12 @@
         for (const [property, value] of propertyMap) {
             if (value) tablist.style.setProperty(property, value);
         }
+        const nativeCommentTypographyTarget =
+            document.querySelector("#commentArea [id^='commentBox-']") || document.getElementById("commentArea");
+        const commentStyle = nativeCommentTypographyTarget ? getComputedStyle(nativeCommentTypographyTarget) : style;
+        const commentFontFamily = commentStyle.fontFamily || style.fontFamily;
+        if (commentFontFamily) commentPanel?.style.setProperty("--bcvc-font-family", commentFontFamily);
+        syncNativeCommentTypography(nativeCommentTypographyTarget);
 
         const asideRect = mountedAside.getBoundingClientRect();
         const headerRect = mountedHeader.getBoundingClientRect();
@@ -424,6 +514,7 @@
         layoutFrameId = requestAnimationFrame(() => {
             layoutFrameId = 0;
             syncNativeHeaderAppearance();
+            cancelScheduledNativeCommentAssetsSync();
             syncNativeCommentAssets();
         });
     }
@@ -441,6 +532,7 @@
             hasMore: true,
             inFlight: null,
             items: [],
+            itemsByKey: new Map(),
             loaded: false,
             loading: false,
             loadingMore: false,
@@ -449,7 +541,6 @@
             order,
             requestToken: 0,
             scrollTop: 0,
-            seenKeys: new Set(),
             totalCount: null,
             version: 0,
         };
@@ -479,11 +570,11 @@
             error: "",
             hasMore: true,
             items: [],
+            itemsByKey: new Map(),
             loaded: false,
             moreError: "",
             nextOffset: 0,
             scrollTop: 0,
-            seenKeys: new Set(),
             totalCount: null,
         });
         touchState(state);
@@ -494,6 +585,12 @@
         commentStates.clear();
         activeOrder = DEFAULT_ORDER;
         nativeBuffIconClassNames = null;
+    }
+
+    function abortPendingCommentRequests() {
+        for (const state of commentStates.values()) {
+            if (state.loading || state.inFlight) abortStateRequest(state);
+        }
     }
 
     function getCommentKey(row, fallbackIndex) {
@@ -508,7 +605,7 @@
         for (const [index, row] of (Array.isArray(rows) ? rows : []).entries()) {
             if (!row || typeof row !== "object") continue;
             const key = getCommentKey(row, offset + index);
-            const existing = state.items.find((item) => item.key === key);
+            const existing = state.itemsByKey.get(key);
             if (existing) {
                 if (best) existing.best = true;
                 continue;
@@ -519,14 +616,26 @@
                 break;
             }
             const item = { best, key, row };
-            state.seenKeys.add(key);
+            state.itemsByKey.set(key, item);
             state.items.push(item);
             added.push(item);
         }
         return added;
     }
 
+    function validateCommentResponse(content) {
+        if (!content || typeof content !== "object") throw new Error("댓글 응답 형식을 확인할 수 없습니다.");
+        if (!content.comments || typeof content.comments !== "object" || !Array.isArray(content.comments.data)) {
+            throw new Error("댓글 목록 응답 형식을 확인할 수 없습니다.");
+        }
+        if (content.bestComments != null && !Array.isArray(content.bestComments)) {
+            throw new Error("인기 댓글 응답 형식을 확인할 수 없습니다.");
+        }
+        return content;
+    }
+
     function applyCommentResponse(state, content, offset) {
+        validateCommentResponse(content);
         const comments = content?.comments || {};
         const rows = Array.isArray(comments.data) ? comments.data : [];
         const added = [];
@@ -569,8 +678,23 @@
         const match = text.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/);
         if (!match) return null;
         const [, year, month, day, hours, minutes, seconds] = match.map(Number);
+        if (month < 1 || month > 12 || day < 1 || day > 31 || hours > 23 || minutes > 59 || seconds > 59) {
+            return null;
+        }
         const date = new Date(Date.UTC(year, month - 1, day, hours - 9, minutes, seconds));
-        return Number.isNaN(date.getTime()) ? null : date;
+        if (Number.isNaN(date.getTime())) return null;
+        const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+        if (
+            kst.getUTCFullYear() !== year ||
+            kst.getUTCMonth() !== month - 1 ||
+            kst.getUTCDate() !== day ||
+            kst.getUTCHours() !== hours ||
+            kst.getUTCMinutes() !== minutes ||
+            kst.getUTCSeconds() !== seconds
+        ) {
+            return null;
+        }
+        return date;
     }
 
     function formatCommentDate(value) {
@@ -621,42 +745,274 @@
         if (cursor < content.length) container.append(content.slice(cursor));
     }
 
-    function getNativeCommentElement(item) {
+    function getCommentId(item) {
         const commentId = item?.row?.comment?.commentId;
+        return commentId === undefined || commentId === null || commentId === "" ? "" : String(commentId);
+    }
+
+    function getNativeCommentElementById(commentId) {
         if (commentId === undefined || commentId === null || commentId === "") return null;
         const nativeRow = document.getElementById(`commentBox-${commentId}`);
         return nativeRow instanceof HTMLElement ? nativeRow : null;
     }
 
-    function getNativeAvatarUrl(item) {
-        const image = getNativeCommentElement(item)?.querySelector("img[width='36'][height='36']");
+    function getNativeCommentElement(item) {
+        return getNativeCommentElementById(getCommentId(item));
+    }
+
+    function isOwnedByNativeCommentRow(element, nativeRow) {
+        if (!(element instanceof Element) || !(nativeRow instanceof HTMLElement) || !nativeRow.contains(element)) {
+            return false;
+        }
+        if (!nativeRow.matches("[id^='commentBox-']")) return true;
+        return element.closest("[id^='commentBox-']") === nativeRow;
+    }
+
+    function findOwnedNativeElement(nativeRow, selector) {
+        if (!(nativeRow instanceof HTMLElement)) return null;
+        return (
+            Array.from(nativeRow.querySelectorAll(selector)).find((element) =>
+                isOwnedByNativeCommentRow(element, nativeRow)
+            ) || null
+        );
+    }
+
+    function findNativeProfileControlsInRow(nativeRow) {
+        if (!(nativeRow instanceof HTMLElement)) return { author: null, avatar: null };
+        const candidates = Array.from(nativeRow.querySelectorAll("button, a[href], [role='button']")).filter(
+            (control) => control instanceof HTMLElement && isOwnedByNativeCommentRow(control, nativeRow)
+        );
+        const avatarImage = findOwnedNativeElement(
+            nativeRow,
+            "img[width='36'][height='36'], img[width='36px'][height='36px']"
+        );
+        const imageControl = avatarImage?.closest("button, a[href], [role='button']");
+        const avatar =
+            (imageControl instanceof HTMLElement && nativeRow.contains(imageControl) ? imageControl : null) ||
+            candidates.find((control) => {
+                const className = String(control.className || "");
+                if (/(?:^|\s)_thumbnail_[A-Za-z0-9_-]+(?:\s|$)/.test(className)) return true;
+                if (control.hasAttribute("aria-pressed") || compactText(control.textContent)) return false;
+                return Boolean(control.querySelector(":scope > span, :scope > picture, :scope > img"));
+            }) ||
+            null;
+        const author =
+            candidates.find((control) => {
+                if (control === avatar || control.hasAttribute("aria-pressed")) return false;
+                const className = String(control.className || "");
+                return (
+                    /(?:^|\s)_information_[A-Za-z0-9_-]+(?:\s|$)/.test(className) ||
+                    Boolean(control.querySelector("strong"))
+                );
+            }) || null;
+        const shared = author || avatar;
+        return { author: author || shared, avatar: avatar || shared };
+    }
+
+    function findNativeProfileControl(item, target = "author") {
+        const controls = findNativeProfileControlsInRow(getNativeCommentElement(item));
+        return target === "avatar" ? controls.avatar : controls.author;
+    }
+
+    function syncNativeCommentTypography(nativeRow) {
+        if (!(commentPanel instanceof HTMLElement) || !(nativeRow instanceof HTMLElement)) return;
+        const { author } = findNativeProfileControlsInRow(nativeRow);
+        const authorTarget = author?.querySelector("strong") || author;
+        const dateTarget = Array.from(author?.children || []).find(
+            (element) => element !== authorTarget && compactText(element.textContent)
+        );
+        const contentTarget = findOwnedNativeElement(nativeRow, ":scope > [class*='_content_']");
+        const messageTarget =
+            contentTarget?.querySelector(":scope > [class*='_text_']") ||
+            contentTarget?.querySelector("[class*='_text_']") ||
+            contentTarget;
+        const targets = [
+            ["author", authorTarget],
+            ["date", dateTarget],
+            ["message", messageTarget],
+        ];
+        for (const [prefix, target] of targets) {
+            if (!(target instanceof HTMLElement)) continue;
+            const style = getComputedStyle(target);
+            const properties = [
+                ["font-size", style.fontSize],
+                ["font-weight", style.fontWeight],
+                ["line-height", style.lineHeight],
+                ["letter-spacing", style.letterSpacing],
+            ];
+            for (const [property, value] of properties) {
+                if (value) commentPanel.style.setProperty(`--bcvc-${prefix}-${property}`, value);
+            }
+        }
+    }
+
+    function getNativeBuffButtonInRow(nativeRow) {
+        if (!(nativeRow instanceof HTMLElement)) return null;
+        for (const button of nativeRow.querySelectorAll("button[aria-pressed]")) {
+            if (!isOwnedByNativeCommentRow(button, nativeRow)) continue;
+            const accessibleText = compactText(
+                `${button.getAttribute("aria-label") || ""} ${button.getAttribute("title") || ""} ${
+                    button.querySelector(".blind, [class*='blind'], [class*='sr-only']")?.textContent || ""
+                } ${button.textContent || ""}`
+            );
+            if (/(^|\s)버프(?:\s|$)/.test(accessibleText)) return button;
+        }
+        return null;
+    }
+
+    function findNativeBuffButton(item) {
+        return getNativeBuffButtonInRow(getNativeCommentElement(item));
+    }
+
+    function isNativeControlAvailable(control) {
+        return Boolean(
+            control instanceof HTMLElement &&
+            control.isConnected &&
+            !control.matches(":disabled, [aria-disabled='true']")
+        );
+    }
+
+    function syncMirroredControlAvailability(control, nativeControl, enabledTitle, disabledTitle) {
+        if (!(control instanceof HTMLButtonElement)) return;
+        const enabled = isNativeControlAvailable(nativeControl);
+        control.disabled = !enabled;
+        control.title = enabled ? enabledTitle : disabledTitle;
+        if (enabled) control.removeAttribute("aria-describedby");
+        else control.setAttribute("aria-describedby", NATIVE_ACTION_HINT_ID);
+    }
+
+    function getNativeBuffCount(nativeButton) {
+        if (!(nativeButton instanceof HTMLElement)) return null;
+        const text = compactText(
+            `${nativeButton.getAttribute("aria-label") || ""} ${nativeButton.getAttribute("title") || ""} ${
+                nativeButton.textContent || ""
+            }`
+        );
+        const match = text.match(/버프\s*([\d,]+)/);
+        if (!match) return null;
+        const count = Number(match[1].replaceAll(",", ""));
+        return Number.isSafeInteger(count) && count >= 0 ? count : null;
+    }
+
+    function syncMirroredBuffCount(mirroredBuff, nativeButton) {
+        if (!(mirroredBuff instanceof HTMLButtonElement)) return;
+        const count = getNativeBuffCount(nativeButton);
+        if (count === null) return;
+
+        let countElement = mirroredBuff.querySelector(".bcvc-buff-count");
+        if (count > 0) {
+            if (!(countElement instanceof HTMLElement)) {
+                countElement = document.createElement("span");
+                countElement.className = "bcvc-buff-count";
+                countElement.setAttribute("aria-hidden", "true");
+                mirroredBuff.appendChild(countElement);
+            }
+            countElement.textContent = count.toLocaleString();
+        } else {
+            countElement?.remove();
+        }
+        mirroredBuff.setAttribute("aria-label", `버프 ${count.toLocaleString()}`);
+        if (!mirroredBuff.disabled) mirroredBuff.title = `버프 ${count.toLocaleString()}`;
+    }
+
+    function getNativeAvatarUrlFromRow(nativeRow) {
+        const avatarControl = findNativeProfileControlsInRow(nativeRow).avatar;
+        const image =
+            avatarControl?.querySelector("img") ||
+            findOwnedNativeElement(nativeRow, "img[width='36'][height='36'], img[width='36px'][height='36px']");
         return image instanceof HTMLImageElement ? safeImageUrl(image.currentSrc || image.src) : "";
+    }
+
+    function getNativeAvatarBackground(nativeRow) {
+        const avatarControl = findNativeProfileControlsInRow(nativeRow).avatar;
+        if (!(avatarControl instanceof HTMLElement)) return null;
+        const visual = avatarControl.querySelector(":scope > span, :scope > picture, :scope > i") || avatarControl;
+        const style = getComputedStyle(visual);
+        if (!style.backgroundImage || style.backgroundImage === "none") return null;
+        if (/\/default_profile_(?:light|dark)\.png/i.test(style.backgroundImage)) return null;
+        return {
+            backgroundImage: style.backgroundImage,
+            backgroundPosition: style.backgroundPosition,
+            backgroundRepeat: style.backgroundRepeat,
+            backgroundSize: style.backgroundSize,
+        };
+    }
+
+    function showMirroredAvatarImage(avatar, url) {
+        let image = avatar.querySelector(".bcvc-avatar-image");
+        if (!(image instanceof HTMLImageElement)) {
+            image = document.createElement("img");
+            image.className = "bcvc-avatar-image";
+            image.alt = "";
+            image.width = 36;
+            image.height = 36;
+            image.loading = "lazy";
+            image.draggable = false;
+            avatar.prepend(image);
+        }
+        if (image.src !== url) image.src = url;
+        avatar.querySelector(".bcvc-avatar-native-visual")?.remove();
+        avatar.classList.remove("bcvc-avatar-fallback");
+    }
+
+    function restoreMirroredAvatarFallback(avatar) {
+        avatar.querySelector(".bcvc-avatar-native-visual")?.remove();
+        const apiUrl = safeImageUrl(avatar.getAttribute("data-bcvc-api-avatar-url"));
+        if (apiUrl && !isNativeDefaultProfileUrl(apiUrl)) {
+            showMirroredAvatarImage(avatar, apiUrl);
+            return;
+        }
+        avatar.querySelector(".bcvc-avatar-image")?.remove();
+        avatar.classList.add("bcvc-avatar-fallback");
+    }
+
+    function syncMirroredAvatarVisual(avatar, nativeRow) {
+        if (!(avatar instanceof HTMLButtonElement)) return;
+        const url = nativeRow instanceof HTMLElement ? getNativeAvatarUrlFromRow(nativeRow) : "";
+        if (url && !isNativeDefaultProfileUrl(url)) {
+            showMirroredAvatarImage(avatar, url);
+            return;
+        }
+
+        const background = getNativeAvatarBackground(nativeRow);
+        if (!background) {
+            restoreMirroredAvatarFallback(avatar);
+            return;
+        }
+        avatar.querySelector(".bcvc-avatar-image")?.remove();
+        let visual = avatar.querySelector(".bcvc-avatar-native-visual");
+        if (!(visual instanceof HTMLElement)) {
+            visual = document.createElement("span");
+            visual.className = "bcvc-avatar-native-visual";
+            visual.setAttribute("aria-hidden", "true");
+            avatar.prepend(visual);
+        }
+        for (const [property, value] of Object.entries(background)) visual.style[property] = value;
+        avatar.classList.remove("bcvc-avatar-fallback");
     }
 
     function isNativeDefaultProfileUrl(url) {
         return /\/default_profile_(?:light|dark)\.png(?:[?#]|$)/i.test(url);
     }
 
-    function createAvatar(item) {
-        const avatar = document.createElement("span");
+    function createAvatar(item, authorName) {
+        const avatar = document.createElement("button");
+        avatar.type = "button";
         avatar.className = "bcvc-avatar";
-        avatar.setAttribute("aria-hidden", "true");
+        avatar.setAttribute("data-bcvc-action", "profile");
+        avatar.setAttribute("data-bcvc-profile-target", "avatar");
+        avatar.setAttribute("aria-label", `${authorName} 프로필 보기`);
+        syncMirroredControlAvailability(
+            avatar,
+            findNativeProfileControl(item, "avatar"),
+            `${authorName} 프로필 보기`,
+            "하단 원본 댓글이 표시되면 프로필을 볼 수 있습니다."
+        );
 
-        const url = getNativeAvatarUrl(item) || safeImageUrl(item?.row?.user?.profileImageUrl);
-        if (!url || isNativeDefaultProfileUrl(url)) {
-            avatar.classList.add("bcvc-avatar-fallback");
-            return avatar;
-        }
-
-        const image = document.createElement("img");
-        image.className = "bcvc-avatar-image";
-        image.src = url;
-        image.alt = "";
-        image.width = 36;
-        image.height = 36;
-        image.loading = "lazy";
-        image.draggable = false;
-        avatar.appendChild(image);
+        const nativeRow = getNativeCommentElement(item);
+        const apiUrl = safeImageUrl(item?.row?.user?.profileImageUrl);
+        if (apiUrl && !isNativeDefaultProfileUrl(apiUrl)) avatar.setAttribute("data-bcvc-api-avatar-url", apiUrl);
+        syncMirroredAvatarVisual(avatar, nativeRow);
         return avatar;
     }
 
@@ -687,18 +1043,17 @@
     }
 
     function findNativeBuffIcon(item) {
-        const nativeRow = getNativeCommentElement(item);
+        const nativeButton = item ? findNativeBuffButton(item) : null;
+        const directIcon = nativeButton?.querySelector("i");
+        if (directIcon instanceof HTMLElement) return directIcon;
+
         const commentArea = document.getElementById("commentArea");
-        const scopes = [nativeRow, commentArea].filter(
+        const scopes = [getNativeCommentElement(item), commentArea].filter(
             (scope, index, list) => scope instanceof HTMLElement && list.indexOf(scope) === index
         );
         for (const scope of scopes) {
-            const buttons = scope.querySelectorAll("button[aria-pressed]");
-            for (const button of buttons) {
-                if (compactText(button.textContent) !== "버프") continue;
-                const icon = button.querySelector("i");
-                if (icon instanceof HTMLElement) return icon;
-            }
+            const icon = getNativeBuffButtonInRow(scope)?.querySelector("i");
+            if (icon instanceof HTMLElement) return icon;
         }
         return null;
     }
@@ -722,13 +1077,84 @@
         return icon;
     }
 
-    function syncNativeCommentAssets() {
-        if (!commentPanel?.isConnected || !getNativeBuffIconClassNames()) return;
-        const fallbackIcons = commentPanel.querySelectorAll(".bcvc-buff-label");
-        for (const fallback of fallbackIcons) {
-            const nativeIcon = createNativeBuffIcon();
-            if (nativeIcon) fallback.replaceWith(nativeIcon);
+    function syncNativeCommentAssets(commentIds = null) {
+        if (!commentPanel?.isConnected) return;
+        if (getNativeBuffIconClassNames()) {
+            const fallbackIcons = commentPanel.querySelectorAll(".bcvc-buff-label");
+            for (const fallback of fallbackIcons) {
+                const nativeIcon = createNativeBuffIcon();
+                if (nativeIcon) fallback.replaceWith(nativeIcon);
+            }
         }
+
+        for (const row of commentPanel.querySelectorAll("[data-bcvc-comment-id]")) {
+            const commentId = row.getAttribute("data-bcvc-comment-id") || "";
+            if (commentIds instanceof Set && !commentIds.has(commentId)) continue;
+            const nativeRow = getNativeCommentElementById(commentId);
+            const profileControls = findNativeProfileControlsInRow(nativeRow);
+            const mirroredAvatar = row.querySelector(":scope > .bcvc-avatar[data-bcvc-action='profile']");
+            if (mirroredAvatar instanceof HTMLButtonElement) {
+                const label = mirroredAvatar.getAttribute("aria-label") || "프로필 보기";
+                syncMirroredControlAvailability(
+                    mirroredAvatar,
+                    profileControls.avatar,
+                    label,
+                    "하단 원본 댓글이 표시되면 프로필을 볼 수 있습니다."
+                );
+                syncMirroredAvatarVisual(mirroredAvatar, nativeRow);
+            }
+            const mirroredAuthor = row.querySelector(":scope > .bcvc-meta > .bcvc-author[data-bcvc-action='profile']");
+            if (mirroredAuthor instanceof HTMLButtonElement) {
+                const label = mirroredAuthor.getAttribute("aria-label") || "프로필 보기";
+                syncMirroredControlAvailability(
+                    mirroredAuthor,
+                    profileControls.author,
+                    label,
+                    "하단 원본 댓글이 표시되면 프로필을 볼 수 있습니다."
+                );
+            }
+
+            const nativeBuffButton = getNativeBuffButtonInRow(nativeRow);
+            const mirroredBuff = row.querySelector(":scope > .bcvc-comment-footer .bcvc-buff");
+            if (mirroredBuff instanceof HTMLButtonElement) {
+                syncMirroredBuffCount(mirroredBuff, nativeBuffButton);
+                const label = mirroredBuff.getAttribute("aria-label") || "버프";
+                syncMirroredControlAvailability(
+                    mirroredBuff,
+                    nativeBuffButton,
+                    label,
+                    "하단 원본 댓글이 표시되면 버프할 수 있습니다."
+                );
+                const pressed = nativeBuffButton?.getAttribute("aria-pressed");
+                mirroredBuff.setAttribute("aria-pressed", pressed === "true" ? "true" : "false");
+            }
+        }
+    }
+
+    function scheduleNativeCommentAssetsSync(commentIds = null) {
+        if (commentIds === null) {
+            syncAllNativeCommentAssets = true;
+            dirtyNativeCommentIds.clear();
+        } else if (!syncAllNativeCommentAssets) {
+            for (const commentId of commentIds) {
+                if (commentId) dirtyNativeCommentIds.add(String(commentId));
+            }
+        }
+        if (nativeAssetsFrameId) return;
+        nativeAssetsFrameId = requestAnimationFrame(() => {
+            nativeAssetsFrameId = 0;
+            const ids = syncAllNativeCommentAssets ? null : new Set(dirtyNativeCommentIds);
+            syncAllNativeCommentAssets = false;
+            dirtyNativeCommentIds.clear();
+            syncNativeCommentAssets(ids);
+        });
+    }
+
+    function cancelScheduledNativeCommentAssetsSync() {
+        if (nativeAssetsFrameId) cancelAnimationFrame(nativeAssetsFrameId);
+        nativeAssetsFrameId = 0;
+        syncAllNativeCommentAssets = false;
+        dirtyNativeCommentIds.clear();
     }
 
     function createCommentFooter(item) {
@@ -738,10 +1164,19 @@
 
         const footer = document.createElement("div");
         footer.className = "bcvc-comment-footer";
-        const buff = document.createElement("span");
+        const buff = document.createElement("button");
+        buff.type = "button";
         buff.className = "bcvc-buff";
-        buff.setAttribute("role", "img");
+        buff.setAttribute("data-bcvc-action", "buff");
         buff.setAttribute("aria-label", `버프 ${buffCount.toLocaleString()}`);
+        const nativeBuffButton = findNativeBuffButton(item);
+        buff.setAttribute("aria-pressed", nativeBuffButton?.getAttribute("aria-pressed") === "true" ? "true" : "false");
+        syncMirroredControlAvailability(
+            buff,
+            nativeBuffButton,
+            `버프 ${buffCount.toLocaleString()}`,
+            "하단 원본 댓글이 표시되면 버프할 수 있습니다."
+        );
         const nativeIcon = createNativeBuffIcon(item);
         if (nativeIcon) {
             buff.appendChild(nativeIcon);
@@ -763,8 +1198,63 @@
         return footer;
     }
 
-    function createCommentRow(item) {
-        const { comment = {}, user = {} } = item.row || {};
+    function normalizeReplyRow(reply) {
+        if (!reply || typeof reply !== "object") return null;
+        if (reply.comment && typeof reply.comment === "object") return reply;
+        if (typeof reply.content !== "string" || !reply.commentType) return reply;
+        const directUser = reply.user && typeof reply.user === "object" ? reply.user : null;
+        return {
+            ...reply,
+            comment: reply,
+            user: directUser || {
+                profileImageUrl: reply.profileImageUrl,
+                userIdHash: reply.userIdHash,
+                userNickname: reply.userNickname,
+                writer: reply.writer,
+            },
+        };
+    }
+
+    function getReplyRows(row) {
+        const rows = [];
+        const seenObjects = new Set();
+        const seenIds = new Set();
+        let truncated = false;
+        for (const source of [row?.replyComments, row?.comment?.replyComments]) {
+            if (!Array.isArray(source)) continue;
+            for (const reply of source) {
+                if (!reply || typeof reply !== "object" || seenObjects.has(reply)) continue;
+                seenObjects.add(reply);
+                const normalized = normalizeReplyRow(reply);
+                if (!normalized) continue;
+                const commentId = normalized.comment?.commentId;
+                const idKey =
+                    commentId === undefined || commentId === null || commentId === "" ? "" : String(commentId);
+                if (idKey && seenIds.has(idKey)) continue;
+                if (idKey) seenIds.add(idKey);
+                if (rows.length >= MAX_REPLIES_PER_COMMENT) {
+                    truncated = true;
+                    return { rows, truncated };
+                }
+                rows.push(normalized);
+            }
+        }
+        return { rows, truncated };
+    }
+
+    function createReplyItem(parentItem, row, index) {
+        return {
+            best: false,
+            key: `reply:${parentItem.key}:${getCommentKey(row, index)}`,
+            row,
+        };
+    }
+
+    function createCommentRow(item, { includeReplies = true, reply = false, replyBudget = null } = {}) {
+        const rowData = item?.row && typeof item.row === "object" ? item.row : {};
+        const hasComment = Boolean(rowData.comment && typeof rowData.comment === "object");
+        const comment = hasComment ? rowData.comment : {};
+        const user = rowData.user && typeof rowData.user === "object" ? rowData.user : {};
         const deleted = comment.deleted === true;
         const cleanBotHidden = comment.hideByCleanBot === true;
         const authorName = deleted ? "삭제된 댓글" : compactText(user.userNickname) || "알 수 없음";
@@ -772,29 +1262,45 @@
         row.className = "bcvc-comment";
         row.setAttribute("role", "listitem");
         row.setAttribute("data-bcvc-comment-key", item.key);
-        row.appendChild(createAvatar(item));
+        const commentId = getCommentId(item);
+        if (commentId) row.setAttribute("data-bcvc-comment-id", commentId);
+        if (reply) row.setAttribute("data-bcvc-reply", "1");
+        if (deleted) row.setAttribute("data-bcvc-deleted", "1");
 
-        const meta = document.createElement("div");
-        meta.className = "bcvc-meta";
-        const author = document.createElement("strong");
-        author.className = "bcvc-author";
-        author.textContent = authorName;
-        author.title = authorName;
-        meta.appendChild(author);
-        if (user.writer === true) {
-            const writer = document.createElement("span");
-            writer.className = "bcvc-badge bcvc-writer";
-            writer.textContent = "방송자";
-            meta.appendChild(writer);
+        if (!deleted) {
+            row.appendChild(createAvatar(item, authorName));
+
+            const meta = document.createElement("div");
+            meta.className = "bcvc-meta";
+            const author = document.createElement("button");
+            author.type = "button";
+            author.className = "bcvc-author";
+            author.textContent = authorName;
+            author.setAttribute("data-bcvc-action", "profile");
+            author.setAttribute("data-bcvc-profile-target", "author");
+            author.setAttribute("aria-label", `${authorName} 프로필 보기`);
+            syncMirroredControlAvailability(
+                author,
+                findNativeProfileControl(item, "author"),
+                `${authorName} 프로필 보기`,
+                "하단 원본 댓글이 표시되면 프로필을 볼 수 있습니다."
+            );
+            meta.appendChild(author);
+            if (user.writer === true) {
+                const writer = document.createElement("span");
+                writer.className = "bcvc-badge bcvc-writer";
+                writer.textContent = "방송자";
+                meta.appendChild(writer);
+            }
+            const dateText = formatCommentDate(comment.createdDate);
+            if (dateText) {
+                const date = document.createElement("span");
+                date.className = "bcvc-date";
+                date.textContent = dateText;
+                meta.appendChild(date);
+            }
+            row.appendChild(meta);
         }
-        const dateText = formatCommentDate(comment.createdDate);
-        if (dateText) {
-            const date = document.createElement("span");
-            date.className = "bcvc-date";
-            date.textContent = dateText;
-            meta.appendChild(date);
-        }
-        row.appendChild(meta);
 
         const message = document.createElement("div");
         message.className = "bcvc-message";
@@ -806,17 +1312,54 @@
         }
         const messageText = deleted
             ? "삭제된 댓글입니다."
-            : cleanBotHidden
-              ? "클린봇이 부적절한 표현을 감지한 댓글입니다."
-              : String(comment.content || "");
+            : !hasComment
+              ? "내용을 표시할 수 없는 댓글입니다."
+              : cleanBotHidden
+                ? "클린봇이 부적절한 표현을 감지한 댓글입니다."
+                : String(comment.content || "");
         appendCommentText(message, messageText, { allowTimecodes: !deleted && !cleanBotHidden });
         row.appendChild(message);
         if (!deleted && !cleanBotHidden) {
             const attachments = createAttachments(comment);
             if (attachments) row.appendChild(attachments);
         }
-        const footer = createCommentFooter(item);
+        const footer = !deleted && !cleanBotHidden && hasComment ? createCommentFooter(item) : null;
         if (footer) row.appendChild(footer);
+
+        if (includeReplies) {
+            const { rows: replies, truncated } = getReplyRows(rowData);
+            if (replies.length) {
+                const availableReplies = replyBudget
+                    ? Math.max(0, Math.min(replies.length, replyBudget.remaining))
+                    : replies.length;
+                const visibleReplies = replies.slice(0, availableReplies);
+                if (replyBudget) replyBudget.remaining -= visibleReplies.length;
+                if (visibleReplies.length) {
+                    const replyList = document.createElement("div");
+                    replyList.className = "bcvc-replies";
+                    replyList.setAttribute("role", "list");
+                    replyList.setAttribute("aria-label", "답글");
+                    visibleReplies.forEach((replyRow, index) =>
+                        replyList.appendChild(
+                            createCommentRow(createReplyItem(item, replyRow, index), {
+                                includeReplies: false,
+                                reply: true,
+                            })
+                        )
+                    );
+                    row.appendChild(replyList);
+                }
+                if (truncated || visibleReplies.length < replies.length) {
+                    const limit = document.createElement("div");
+                    limit.className = "bcvc-reply-limit";
+                    limit.textContent =
+                        visibleReplies.length < replies.length
+                            ? `이 정렬에서는 답글을 ${MAX_REPLIES_PER_ORDER}개까지만 표시합니다.`
+                            : `한 댓글의 답글은 ${MAX_REPLIES_PER_COMMENT}개까지만 표시합니다.`;
+                    row.appendChild(limit);
+                }
+            }
+        }
         return row;
     }
 
@@ -958,6 +1501,12 @@
         view.setAttribute("data-bcvc-mirror", "1");
         view.setAttribute("data-bcvc-order", state.order);
         view.setAttribute("data-bcvc-version", String(state.version));
+        const nativeActionHint = document.createElement("p");
+        nativeActionHint.id = NATIVE_ACTION_HINT_ID;
+        nativeActionHint.className = "bcvc-sr-only";
+        nativeActionHint.textContent =
+            "프로필과 버프는 같은 댓글이 하단 원본 댓글 영역에 표시되어 있을 때 사용할 수 있습니다.";
+        view.appendChild(nativeActionHint);
         view.appendChild(createToolbar(state));
 
         if (state.loading && !state.loaded) {
@@ -981,7 +1530,8 @@
         list.className = "bcvc-list";
         list.setAttribute("role", "list");
         list.setAttribute("data-bcvc-list", "1");
-        state.items.forEach((item) => list.appendChild(createCommentRow(item)));
+        const replyBudget = { remaining: MAX_REPLIES_PER_ORDER };
+        state.items.forEach((item) => list.appendChild(createCommentRow(item, { replyBudget })));
         view.appendChild(list);
         view.appendChild(createFooter(state));
         return view;
@@ -1056,7 +1606,9 @@
             return;
         }
         const fragment = document.createDocumentFragment();
-        added.forEach((item) => fragment.appendChild(createCommentRow(item)));
+        const renderedReplies = list.querySelectorAll("[data-bcvc-reply='1']").length;
+        const replyBudget = { remaining: Math.max(0, MAX_REPLIES_PER_ORDER - renderedReplies) };
+        added.forEach((item) => fragment.appendChild(createCommentRow(item, { replyBudget })));
         list.appendChild(fragment);
         const count = commentPanel.querySelector("[data-bcvc-count='1']");
         if (count)
@@ -1107,7 +1659,7 @@
         });
     }
 
-    async function loadComments({ allowHidden = false, reset = false, silent = false } = {}) {
+    async function loadComments({ allowHidden = false, focusRequest = null, reset = false, silent = false } = {}) {
         const videoNo = getVodVideoNoFromPath();
         if (!videoNo || (selectedTab !== "comments" && !allowHidden)) return;
         const state = getActiveState();
@@ -1138,6 +1690,7 @@
                 });
                 if (token !== state.requestToken || videoNo !== getVodVideoNoFromPath()) return;
                 const added = applyCommentResponse(state, content, offset);
+                if (focusRequest && added[0]) focusRequest.resultKey = added[0].key;
                 state.loaded = true;
                 state.error = "";
                 state.moreError = "";
@@ -1145,7 +1698,7 @@
                 if (initial) renderActiveState({ restoreScroll: false });
                 else appendLoadedRows(state, added);
             } catch (error) {
-                if (token !== state.requestToken || error?.name === "AbortError") return;
+                if (token !== state.requestToken) return;
                 if (initial) {
                     state.error = silent && selectedTab !== "comments" ? "" : error?.message || String(error);
                 } else state.moreError = error?.message || String(error);
@@ -1162,6 +1715,7 @@
                     if (selectedTab === "comments" && state === getActiveState()) {
                         if (initial && (state.error || !state.loaded)) renderActiveState();
                         else updateFooter(state);
+                        restoreCommentControlFocus(focusRequest);
                     }
                 }
             }
@@ -1170,16 +1724,16 @@
         return request;
     }
 
-    function refreshComments() {
+    function refreshComments(focusRequest = null) {
         const state = getActiveState();
         resetState(state);
-        loadComments();
+        loadComments({ focusRequest });
     }
 
-    function showActiveComments() {
+    function showActiveComments({ focusRequest = null } = {}) {
         const state = getActiveState();
         if (!state.loaded && !state.loading && !state.error) {
-            loadComments();
+            loadComments({ focusRequest });
             return;
         }
         if (isRenderedViewCurrent(state)) {
@@ -1188,15 +1742,16 @@
         } else {
             renderActiveState();
         }
+        restoreCommentControlFocus(focusRequest);
     }
 
-    function changeOrder(order) {
+    function changeOrder(order, focusRequest = null) {
         if (!SORT_OPTIONS.some((option) => option.order === order) || order === activeOrder) return;
         const previous = getActiveState();
         previous.scrollTop = commentPanel?.scrollTop || 0;
         if (previous.loading) abortStateRequest(previous);
         activeOrder = order;
-        showActiveComments();
+        showActiveComments({ focusRequest });
     }
 
     function seekToCommentTime(seconds) {
@@ -1213,6 +1768,66 @@
         }
     }
 
+    function restoreCommentControlFocus(request) {
+        if (!request || selectedTab !== "comments" || !commentPanel?.isConnected) return;
+        const active = document.activeElement;
+        if (active instanceof Element && active !== document.body && active.isConnected && active !== request.origin) {
+            return;
+        }
+
+        let target = null;
+        if (request.action === "sort") {
+            target = Array.from(commentPanel.querySelectorAll("[data-bcvc-action='sort']")).find(
+                (control) => control.getAttribute("data-bcvc-order") === request.order
+            );
+        } else if (request.action === "refresh") {
+            target = commentPanel.querySelector("[data-bcvc-action='refresh']");
+        } else if (request.action === "retry-initial") {
+            target =
+                commentPanel.querySelector("[data-bcvc-action='retry-initial']") ||
+                commentPanel.querySelector("[data-bcvc-action='refresh']");
+        } else if (["load-more", "retry-more"].includes(request.action)) {
+            target =
+                commentPanel.querySelector("[data-bcvc-action='retry-more']") ||
+                commentPanel.querySelector("[data-bcvc-action='load-more']");
+        }
+        if (!(target instanceof HTMLElement) && request.resultKey) {
+            target = Array.from(commentPanel.querySelectorAll("[data-bcvc-comment-key]")).find(
+                (row) => row.getAttribute("data-bcvc-comment-key") === request.resultKey
+            );
+        }
+        if (!(target instanceof HTMLElement)) {
+            target = commentPanel.querySelector("[data-bcvc-action='refresh']");
+        }
+        if (target instanceof HTMLElement && !target.matches(":disabled")) {
+            if (!target.matches("button, a[href], input, select, textarea, [tabindex]")) target.tabIndex = -1;
+            target.focus();
+        }
+    }
+
+    function activateNativeCommentControl(control, action) {
+        const row = control.closest?.("[data-bcvc-comment-id]");
+        if (!(row instanceof HTMLElement)) return false;
+        const commentId = row.getAttribute("data-bcvc-comment-id") || "";
+        const nativeRow = getNativeCommentElementById(commentId);
+        const profileTarget = control.getAttribute("data-bcvc-profile-target") === "avatar" ? "avatar" : "author";
+        const profileControls = findNativeProfileControlsInRow(nativeRow);
+        const nativeControl =
+            action === "profile" ? profileControls[profileTarget] : getNativeBuffButtonInRow(nativeRow);
+        if (!isNativeControlAvailable(nativeControl)) {
+            scheduleNativeCommentAssetsSync(new Set([commentId]));
+            return false;
+        }
+        try {
+            nativeControl.click();
+            window.queueMicrotask(() => scheduleNativeCommentAssetsSync(new Set([commentId])));
+            return true;
+        } catch (_) {
+            scheduleNativeCommentAssetsSync(new Set([commentId]));
+            return false;
+        }
+    }
+
     function onCommentPanelClick(event) {
         const control = event.target.closest?.("[data-bcvc-action]");
         if (!(control instanceof HTMLElement) || !commentPanel?.contains(control)) return;
@@ -1221,14 +1836,17 @@
         event.stopPropagation();
         if (action === "time") {
             seekToCommentTime(Number(control.getAttribute("data-bcvc-seconds")));
+        } else if (action === "profile" || action === "buff") {
+            activateNativeCommentControl(control, action);
         } else if (action === "sort") {
-            changeOrder(control.getAttribute("data-bcvc-order") || "");
+            const order = control.getAttribute("data-bcvc-order") || "";
+            changeOrder(order, { action: "sort", order, origin: control });
         } else if (action === "refresh") {
-            refreshComments();
+            refreshComments({ action: "refresh", origin: control });
         } else if (action === "retry-initial") {
-            loadComments({ reset: true });
+            loadComments({ focusRequest: { action, origin: control }, reset: true });
         } else if (["load-more", "retry-more"].includes(action)) {
-            loadComments();
+            loadComments({ focusRequest: { action, origin: control } });
         }
     }
 
@@ -1275,8 +1893,18 @@
     function onTabKeyDown(event) {
         if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
-        if (event.key === "ArrowLeft" || event.key === "Home") selectTab("chat", { focus: true });
-        else selectTab("comments", { focus: true });
+        if (event.key === "Home") {
+            selectTab("chat", { focus: true });
+            return;
+        }
+        if (event.key === "End") {
+            selectTab("comments", { focus: true });
+            return;
+        }
+        const currentIndex = event.target === commentTab ? 1 : 0;
+        const direction = event.key === "ArrowRight" ? 1 : -1;
+        const nextIndex = (currentIndex + direction + 2) % 2;
+        selectTab(nextIndex === 0 ? "chat" : "comments", { focus: true });
     }
 
     function detachMountedChatLog() {
@@ -1378,6 +2006,7 @@
         resizeObserver = null;
         if (layoutFrameId) cancelAnimationFrame(layoutFrameId);
         layoutFrameId = 0;
+        cancelScheduledNativeCommentAssetsSync();
 
         detachMountedChatLog();
         clearMountedNativeMarkers();
@@ -1408,12 +2037,14 @@
 
     function teardownMount() {
         cancelScheduledCommentPrefetch();
+        clearMountGapTimer();
         if (selectedTab === "comments" && commentPanel) getActiveState().scrollTop = commentPanel.scrollTop;
         disconnectLoadMoreObserver();
         resizeObserver?.disconnect();
         resizeObserver = null;
         if (layoutFrameId) cancelAnimationFrame(layoutFrameId);
         layoutFrameId = 0;
+        cancelScheduledNativeCommentAssetsSync();
 
         tablist?.removeEventListener("click", onTabClick);
         tablist?.removeEventListener("keydown", onTabKeyDown);
@@ -1438,14 +2069,17 @@
     function ensureMounted() {
         ensureTimerId = 0;
         if (!isFeatureEnabled() || !isVodRoute()) {
+            clearMountGapTimer();
             teardownMount();
             return;
         }
         const anchors = resolveNativeAnchors();
         if (!anchors) {
-            if (!tablist && !commentPanel) teardownMount();
+            if (mountedAside || mountedChatLog || tablist || commentPanel) scheduleMountGapTeardown();
+            else teardownMount();
             return;
         }
+        clearMountGapTimer();
         const reusableMount =
             tablist instanceof HTMLElement &&
             commentPanel instanceof HTMLElement &&
@@ -1488,6 +2122,26 @@
         ensureTimerId = 0;
     }
 
+    function clearMountGapTimer() {
+        if (!mountGapTimerId) return;
+        clearTimeout(mountGapTimerId);
+        mountGapTimerId = 0;
+    }
+
+    function scheduleMountGapTeardown() {
+        if (mountGapTimerId) return;
+        mountGapTimerId = setTimeout(() => {
+            mountGapTimerId = 0;
+            if (runtimeInstalled && isFeatureEnabled() && isVodRoute() && resolveNativeAnchors()) {
+                scheduleEnsureMounted({ immediate: true });
+                return;
+            }
+            cancelScheduledCommentPrefetch();
+            abortPendingCommentRequests();
+            teardownMount();
+        }, MOUNT_GAP_GRACE_MS);
+    }
+
     function scheduleEnsureMounted({ immediate = false } = {}) {
         if (immediate) {
             clearEnsureTimer();
@@ -1509,31 +2163,124 @@
         return [...mutation.addedNodes, ...mutation.removedNodes].some(nodeCouldAffectAnchors);
     }
 
-    function nodeCouldSupplyNativeCommentAssets(node) {
+    function nodeCouldAffectNativeCommentArea(node) {
         return (
-            node instanceof Element &&
-            (node.matches("#commentArea") ||
-                Boolean(node.closest("#commentArea")) ||
-                Boolean(node.querySelector?.("#commentArea")))
+            node instanceof Element && (node.matches("#commentArea") || Boolean(node.querySelector?.("#commentArea")))
         );
     }
 
-    function mutationCouldSupplyNativeCommentAssets(mutation) {
+    function mutationCouldAffectNativeCommentArea(mutation) {
         if (mutation.type !== "childList") return false;
-        if (mutation.target instanceof Element && mutation.target.closest("#commentArea")) return true;
-        return [...mutation.addedNodes].some(nodeCouldSupplyNativeCommentAssets);
+        return [...mutation.addedNodes, ...mutation.removedNodes].some(nodeCouldAffectNativeCommentArea);
+    }
+
+    function addNativeCommentIdFromNode(commentIds, node, { includeDescendants = false } = {}) {
+        const element = node instanceof Element ? node : node?.parentElement;
+        if (!(element instanceof Element)) return;
+        const row = element.matches("[id^='commentBox-']") ? element : element.closest("[id^='commentBox-']");
+        if (row?.id.startsWith("commentBox-")) commentIds.add(row.id.slice("commentBox-".length));
+        if (!includeDescendants) return;
+        for (const descendant of element.querySelectorAll?.("[id^='commentBox-']") || []) {
+            commentIds.add(descendant.id.slice("commentBox-".length));
+        }
+    }
+
+    function getNativeCommentIdsFromMutations(mutations) {
+        const commentIds = new Set();
+        for (const mutation of mutations) {
+            addNativeCommentIdFromNode(commentIds, mutation.target);
+            if (mutation.type !== "childList") continue;
+            for (const node of [...mutation.addedNodes, ...mutation.removedNodes]) {
+                addNativeCommentIdFromNode(commentIds, node, { includeDescendants: true });
+            }
+        }
+        return commentIds;
+    }
+
+    function mutationCouldChangeNativeCommentRows(mutation) {
+        if (mutation.type === "attributes" && mutation.attributeName === "id") return true;
+        if (mutation.type !== "childList") return false;
+        return [...mutation.addedNodes, ...mutation.removedNodes].some(
+            (node) =>
+                node instanceof Element &&
+                (node.matches("[id^='commentBox-']") || Boolean(node.querySelector?.("[id^='commentBox-']")))
+        );
+    }
+
+    function mutationCouldChangeNativeCommentTypography(mutation) {
+        const firstNativeRow = document.querySelector("#commentArea [id^='commentBox-']");
+        if (!(firstNativeRow instanceof HTMLElement)) return false;
+        const target = mutation.target instanceof Element ? mutation.target : mutation.target?.parentElement;
+        if (!(target instanceof Element)) return false;
+        const owner = target.matches("[id^='commentBox-']") ? target : target.closest("[id^='commentBox-']");
+        if (owner !== firstNativeRow) return false;
+        if (mutation.type === "childList") return true;
+        return mutation.type === "attributes" && ["class", "style"].includes(mutation.attributeName);
+    }
+
+    function disconnectNativeCommentObserver() {
+        nativeCommentObserver?.disconnect();
+        nativeCommentObserver = null;
+        observedNativeCommentArea = null;
+    }
+
+    function syncNativeCommentObserver() {
+        const nextCommentArea = document.getElementById("commentArea");
+        if (nextCommentArea === observedNativeCommentArea && nativeCommentObserver) return;
+        disconnectNativeCommentObserver();
+        if (!(nextCommentArea instanceof HTMLElement) || !isFeatureEnabled() || !isVodRoute()) {
+            scheduleNativeCommentAssetsSync();
+            return;
+        }
+        observedNativeCommentArea = nextCommentArea;
+        nativeCommentObserver = new MutationObserver((mutations) => {
+            if (!isFeatureEnabled() || !isVodRoute()) {
+                disconnectNativeCommentObserver();
+                return;
+            }
+            const commentIds = getNativeCommentIdsFromMutations(mutations);
+            if (
+                mutations.some(
+                    (mutation) =>
+                        mutationCouldChangeNativeCommentRows(mutation) ||
+                        mutationCouldChangeNativeCommentTypography(mutation)
+                )
+            ) {
+                scheduleNativeHeaderSync();
+            } else if (commentIds.size) scheduleNativeCommentAssetsSync(commentIds);
+            else scheduleNativeCommentAssetsSync();
+        });
+        nativeCommentObserver.observe(observedNativeCommentArea, {
+            attributeFilter: [
+                "aria-disabled",
+                "aria-label",
+                "aria-pressed",
+                "class",
+                "disabled",
+                "id",
+                "src",
+                "srcset",
+                "style",
+            ],
+            attributes: true,
+            characterData: true,
+            childList: true,
+            subtree: true,
+        });
+        scheduleNativeHeaderSync();
     }
 
     function installBodyObserver() {
-        if (bodyObserver || !document.documentElement) return;
+        if (!document.documentElement || !isVodRoute()) return;
+        syncNativeCommentObserver();
+        if (bodyObserver) return;
         bodyObserver = new MutationObserver((mutations) => {
             if (!isFeatureEnabled() || !isVodRoute()) {
+                if (!isVodRoute()) disconnectBodyObserver();
                 teardownMount();
                 return;
             }
-            if (!nativeBuffIconClassNames && mutations.some(mutationCouldSupplyNativeCommentAssets)) {
-                scheduleNativeHeaderSync();
-            }
+            if (mutations.some(mutationCouldAffectNativeCommentArea)) syncNativeCommentObserver();
             const hasMount = Boolean(mountedAside || mountedChatLog || tablist || commentPanel);
             const mountDisconnected =
                 hasMount &&
@@ -1544,22 +2291,33 @@
             if (mountDisconnected) scheduleEnsureMounted({ immediate: true });
             else if (mutations.some(mutationCouldAffectAnchors)) scheduleEnsureMounted();
         });
-        bodyObserver.observe(document.documentElement, { childList: true, subtree: true });
+        bodyObserver.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+        });
+    }
+
+    function disconnectBodyObserver() {
+        bodyObserver?.disconnect();
+        bodyObserver = null;
+        disconnectNativeCommentObserver();
     }
 
     function installRuntime() {
-        if (!runtimeInstalled) {
-            runtimeInstalled = true;
-            installBodyObserver();
+        runtimeInstalled = true;
+        if (!isVodRoute()) {
+            disconnectBodyObserver();
+            teardownMount();
+            return;
         }
+        installBodyObserver();
         scheduleEnsureMounted({ immediate: true });
     }
 
     function uninstallRuntime() {
         runtimeInstalled = false;
         clearEnsureTimer();
-        bodyObserver?.disconnect();
-        bodyObserver = null;
+        disconnectBodyObserver();
         teardownMount();
         resetCommentStates();
         selectedTab = "chat";
@@ -1567,12 +2325,20 @@
 
     function handlePageChange() {
         const videoNo = getVodVideoNoFromPath();
-        if (videoNo === lastVideoNo) return;
+        if (videoNo === lastVideoNo) {
+            if (isFeatureEnabled() && videoNo) installBodyObserver();
+            return;
+        }
         lastVideoNo = videoNo;
         teardownMount();
         resetCommentStates();
         selectedTab = "chat";
-        if (isFeatureEnabled() && videoNo) scheduleEnsureMounted();
+        if (isFeatureEnabled() && videoNo) {
+            installBodyObserver();
+            scheduleEnsureMounted();
+        } else {
+            disconnectBodyObserver();
+        }
     }
 
     function applyOptions(options) {

@@ -2,6 +2,14 @@
 
 Better Chzzk에는 아래 오픈소스 프로젝트에서 파생된 코드가 포함되어 있습니다.
 
+## hls.js
+
+- 출처: https://github.com/video-dev/hls.js
+- 버전: 1.6.16
+- 라이선스: Apache License 2.0 (Copyright (c) 2017 Dailymotion)
+- 사용 범위: `vendor/hls.light.min.js` — 팔로잉·방송 목록의 확장 소유 라이브 미리보기 재생
+- 원본 LICENSE 및 추가 저작권 고지: [`vendor/hls.js.LICENSE`](vendor/hls.js.LICENSE)
+
 ## cheese-knife
 
 - 출처: https://github.com/jebibot/cheese-knife

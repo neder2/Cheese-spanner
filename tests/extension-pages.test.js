@@ -2317,10 +2317,15 @@ function searchVideoSearchInput(dom, value) {
     input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 }
 
-test("video search input uses a theme-aware strong text color", () => {
+test("video search input brightens the light theme text without changing the dark theme color", () => {
     const source = readRepoFile("features/videoSearch.js");
 
     assert.match(source, /--bcvs-text-strong:var\(--Content-Neutral-Cool-Strong, #C9CEDC\)/);
+    assert.match(source, /--bcvs-input-text:color-mix\(in srgb, var\(--bcvs-text-strong\) 82%, #FFFFFF\)/);
+    assert.match(source, /html\[dark\] #\$\{BAR_ID\},/);
+    assert.match(source, /body\[theme="dark"\] #\$\{BAR_ID\},/);
+    assert.match(source, /\.theme_dark #\$\{BAR_ID\}\{\s*--bcvs-input-text:var\(--bcvs-text-strong\);/);
+    assert.match(source, /input\[type="search"\]\{[^}]*color:var\(--bcvs-input-text\)/);
     assert.doesNotMatch(source, /--bcvs-text-strong:var\(--Content-Neutral-Primary/);
 });
 

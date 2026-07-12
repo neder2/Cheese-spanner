@@ -1313,6 +1313,54 @@ test("following preview tooltip ignores live links outside the following sidebar
     assert.equal(document.getElementById("betterchzzk-following-preview"), null);
 });
 
+test("following preview tooltip ignores VOD main-content channel links without disabling the real following sidebar", async () => {
+    const chrome = createFakeChrome();
+    const { document, dom, link: followingLink } = createFollowingPreviewDom(chrome);
+    const replayChannelLink = document.getElementById("mainLiveLink");
+    const replayContent = replayChannelLink.closest("main");
+    const replaySection = replayChannelLink.closest("article");
+    let fetchCount = 0;
+
+    replayContent.id = "layout-body";
+    replaySection.className = "_container_1oihj_1 _show_aside_1oihj_17";
+    replaySection.insertAdjacentHTML("beforeend", '<button type="button">\uD314\uB85C\uC789</button>');
+    dom.window.fetch = async () => {
+        fetchCount += 1;
+        throw new Error("the accepted sidebar preview is closed before its delayed request");
+    };
+
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    followingLink.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    assert.equal(document.getElementById("betterchzzk-following-preview")?.getAttribute("data-show"), "1");
+
+    dom.window.history.pushState({}, "", "/video/123456");
+    dom.window.dispatchEvent(new dom.window.CustomEvent("betterchzzk:routechange", { detail: { source: "test" } }));
+    await waitForAsyncCallbacks();
+    assert.equal(document.querySelector("#betterchzzk-following-preview[data-show='1']"), null);
+
+    replayChannelLink.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForFollowingPreviewDelay();
+    await waitForAsyncCallbacks();
+
+    assert.equal(fetchCount, 0);
+    assert.equal(document.querySelector("#betterchzzk-following-preview[data-show='1']"), null);
+
+    followingLink.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    assert.equal(fetchCount, 0);
+    assert.equal(document.getElementById("betterchzzk-following-preview")?.getAttribute("data-show"), "1");
+
+    followingLink.dispatchEvent(
+        new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })
+    );
+    await waitForAsyncCallbacks();
+});
+
 test("following preview tooltip removes listeners and UI when the option is disabled", async () => {
     const chrome = createFakeChrome();
     const { document, dom, item, link } = createFollowingPreviewDom(chrome);
