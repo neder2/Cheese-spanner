@@ -6,7 +6,7 @@ const { JSDOM } = require("jsdom");
 
 const repoRoot = path.join(__dirname, "..");
 
-function evaluateFeature(fileName, { url, options = {}, utils = {}, hooks }) {
+function evaluateFeature(fileName, { url, options = {}, utils = {}, namespaces = {}, hooks }) {
     const dom = new JSDOM("<!doctype html><html><body></body></html>", {
         url,
         runScripts: "outside-only",
@@ -45,6 +45,7 @@ function evaluateFeature(fileName, { url, options = {}, utils = {}, hooks }) {
         }),
     };
     window.BetterChzzk = {
+        ...namespaces,
         utils: {
             addWatchRangeToRangesByDate() {},
             bindFeatureOptions() {},
@@ -459,6 +460,85 @@ test("monthly widget retries mounting when the host appears without another muta
         assert.ok(widget);
         assert.equal(widget.parentElement, host);
         assert.equal(host.getAttribute("data-bcmb-host"), "1");
+    } finally {
+        dom.window.close();
+    }
+});
+
+test("monthly video detail merge reuses the shared timeline normalization without changing title fallback", () => {
+    const normalizedStartMs = Date.parse("2026-07-10T10:20:30+09:00");
+    const normalizedEndMs = normalizedStartMs + 42 * 1000;
+    const missingEndDetail = {
+        duration: 0,
+        liveTitle: "  Live title fallback  ",
+    };
+    const detail = {
+        duration: 999,
+        endDate: "2026-07-12T00:00:00Z",
+        publishDate: "2026-07-11T00:00:00Z",
+        title: "  Detail   fallback title  ",
+        videoTitle: "",
+    };
+    let normalizedSource = null;
+    const { dom, hooks } = evaluateFeature("monthlyBroadcastTime.js", {
+        url: `https://chzzk.naver.com/${"c".repeat(32)}`,
+        namespaces: {
+            vodTimeline: {
+                normalizeVideoDetail(source) {
+                    normalizedSource = source;
+                    if (source === missingEndDetail) {
+                        return {
+                            durationSeconds: NaN,
+                            endMs: NaN,
+                            startMs: NaN,
+                            title: "Live title fallback",
+                        };
+                    }
+                    return {
+                        durationSeconds: 42,
+                        endMs: normalizedEndMs,
+                        startMs: normalizedStartMs,
+                        title: "normalized title must not replace the existing fallback",
+                    };
+                },
+            },
+        },
+        hooks: "{ mergeVideoDetail }",
+    });
+    const video = {
+        duration: 1,
+        endedAt: new Date(0),
+        startedAt: new Date(0),
+        startIsExact: false,
+        title: "List title",
+    };
+
+    try {
+        hooks.mergeVideoDetail(video, detail);
+
+        assert.strictEqual(normalizedSource, detail);
+        assert.equal(video.duration, 42);
+        assert.equal(video.startedAt.getTime(), normalizedStartMs);
+        assert.equal(video.endedAt.getTime(), normalizedEndMs);
+        assert.equal(video.startIsExact, true);
+        assert.equal(video.title, "Detail fallback title");
+
+        const existingStart = new Date("2026-07-09T00:00:00Z");
+        const existingEnd = new Date("2026-07-09T01:00:00Z");
+        const videoWithoutNormalizedEnd = {
+            duration: 3600,
+            endedAt: existingEnd,
+            startedAt: existingStart,
+            startIsExact: false,
+            title: "List title",
+        };
+        hooks.mergeVideoDetail(videoWithoutNormalizedEnd, missingEndDetail);
+
+        assert.equal(videoWithoutNormalizedEnd.duration, 3600);
+        assert.strictEqual(videoWithoutNormalizedEnd.startedAt, existingStart);
+        assert.strictEqual(videoWithoutNormalizedEnd.endedAt, existingEnd);
+        assert.equal(videoWithoutNormalizedEnd.startIsExact, false);
+        assert.equal(videoWithoutNormalizedEnd.title, "Live title fallback");
     } finally {
         dom.window.close();
     }

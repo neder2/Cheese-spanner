@@ -8,7 +8,7 @@
  *   오프셋을 보정한다. 시청 기록 스토리지를 읽어 현재 다시보기와 같은 방송으로 추정되는
  *   기록을 채널/liveId/방영 시간대/제목 유사도로 점수화해 매칭하고, 일치하면 방제 변경 이력을
  *   펼침 버튼(#betterchzzk-vod-title-history-toggle)과 패널로 노출한다.
- * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.utils (addTitleHistory, bindFeatureOptions,
+ * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.vodTimeline, BetterChzzk.utils (addTitleHistory, bindFeatureOptions,
  *   createMutationObserverSync, createThrottledDomSync, fetchJson, getVodVideoNoFromPath,
  *   injectStyleOnce, parseChzzkDate, startPageChangeDetection, startStorageChangeListener,
  *   storageGet, touchMapEntry 등), chrome.storage.local.
@@ -21,7 +21,7 @@
  *   변경 시 자체 스냅샷·매칭 캐시를 무효화한다.
  * 구조: CLOCK_ID 등 상수/선택자 → 옵션 판정(isClockEnabled 등) → 컨트롤 영역 탐지(findLeftButtonsContainer 등) →
  *   시청 기록 스냅샷 조회 및 매칭 점수화(getWatchHistorySnapshot, scoreHistoryMatch, findHistoryInfo) →
- *   video-detail API 조회 및 분할 VOD 오프셋 계산(fetchVideoDetail, getVodSegmentStartInfo) →
+ *   video-detail API 조회 및 공용 분할 VOD 시간축 계산(fetchVideoDetail, BetterChzzk.vodTimeline) →
  *   시계 DOM 생성/배치(createClockElement, mountClock, updateClockText) →
  *   방제 이력 펼침 UI(syncTitleHistoryExpander, renderTitleHistoryPanel) →
  *   전체 동기화 진입점(syncVodBroadcastClock) → 라우트/DOM 변경 감지(handlePageChange, startDomObserver) →
@@ -76,12 +76,6 @@
     const CONTROL_AREA_AFTER_VIDEO_BOTTOM = 110;
     const CONTROL_AREA_MAX_HEIGHT = 96;
     const HISTORY_START_TOLERANCE_MS = 3 * 60 * 60 * 1000;
-    const VOD_SPLIT_SEGMENT_MS = 17 * 60 * 60 * 1000;
-    const VOD_SPLIT_OFFSET_TOLERANCE_MS = 45 * 60 * 1000;
-    const VOD_SPLIT_MIN_OFFSET_MS = VOD_SPLIT_SEGMENT_MS - VOD_SPLIT_OFFSET_TOLERANCE_MS;
-    const VOD_SPLIT_DURATION_TOLERANCE_MS = 2 * 60 * 1000;
-    const VOD_SPLIT_START_TOLERANCE_MS = 60 * 1000;
-    const VOD_SPLIT_MAX_LINKS = 8;
     const MAX_DETAIL_CACHE_ENTRIES = 100;
     const MAX_HISTORY_INFO_CACHE_ENTRIES = 100;
 
@@ -106,7 +100,6 @@
         onReady,
         pad2,
         parseChzzkDate,
-        pickVideoEndDateText,
         pickVideoStartDateText,
         pickLargestVisible,
         pickString,
@@ -131,6 +124,7 @@
     let titleHistoryExpanded = false;
     let metadataState = "idle";
     let metadataToken = 0;
+    let metadataAbortController = null;
     let historyInfoToken = 0;
     let pageChangeTimer = 0;
     let lastUrl = location.href;
@@ -865,132 +859,45 @@
         return Number.isFinite(startMs) ? startMs : NaN;
     }
 
-    function getEndMsFromDetailForSplit(detail) {
-        const endText = pickString(
-            pickVideoEndDateText?.(detail),
-            detail?.liveCloseDate,
-            detail?.closeDate,
-            detail?.broadcastCloseDate,
-            detail?.live?.closeDate,
-            detail?.live?.liveCloseDate
-        );
-        const endMs = parseChzzkDate(endText)?.getTime();
-        return Number.isFinite(endMs) ? endMs : NaN;
+    function throwIfMetadataAborted(signal) {
+        if (!signal?.aborted) return;
+        if (typeof signal.throwIfAborted === "function") signal.throwIfAborted();
+
+        const error = new Error("The operation was aborted.");
+        error.name = "AbortError";
+        throw error;
     }
 
-    function getSplitVodSegmentOffsetMs(detail, originalStartMs) {
-        if (!Number.isFinite(originalStartMs)) return 0;
-
-        const durationSeconds = getVideoDurationSeconds(detail);
-        if (!Number.isFinite(durationSeconds)) return 0;
-
-        const endMs = getEndMsFromDetailForSplit(detail);
-        if (!Number.isFinite(endMs)) return 0;
-
-        const inferredSegmentStartMs = endMs - durationSeconds * 1000;
-        const rawOffsetMs = inferredSegmentStartMs - originalStartMs;
-        if (!Number.isFinite(rawOffsetMs) || rawOffsetMs < VOD_SPLIT_MIN_OFFSET_MS) return 0;
-
-        const segmentIndex = Math.round(rawOffsetMs / VOD_SPLIT_SEGMENT_MS);
-        if (segmentIndex <= 0) return 0;
-
-        const alignedOffsetMs = segmentIndex * VOD_SPLIT_SEGMENT_MS;
-        const driftMs = Math.abs(rawOffsetMs - alignedOffsetMs);
-        if (driftMs > VOD_SPLIT_OFFSET_TOLERANCE_MS) return 0;
-
-        return alignedOffsetMs;
+    function abortMetadataRequest() {
+        if (!metadataAbortController) return;
+        metadataAbortController.abort();
+        metadataAbortController = null;
     }
 
-    function hasFullSplitDuration(detail) {
-        const durationSeconds = getVideoDurationSeconds(detail);
-        if (!Number.isFinite(durationSeconds)) return false;
-        return Math.abs(durationSeconds * 1000 - VOD_SPLIT_SEGMENT_MS) <= VOD_SPLIT_DURATION_TOLERANCE_MS;
-    }
-
-    function getLinkedOlderVideoNo(detail) {
-        return pickString(detail?.nextVideo?.videoNo);
-    }
-
-    async function getLinkedVodSegmentOffsetMs(detail, originalStartMs) {
-        if (!Number.isFinite(originalStartMs)) return 0;
-
-        let cursor = detail;
-        let segmentIndex = 0;
-        const currentVideoKey = pickString(detail?.videoNo, detail?.videoId);
-        const seen = new Set(currentVideoKey ? [currentVideoKey] : []);
-
-        while (segmentIndex < VOD_SPLIT_MAX_LINKS) {
-            const olderSummary = cursor?.nextVideo;
-            const olderVideoNo = getLinkedOlderVideoNo(cursor);
-            // 실제 분할 VOD는 nextVideo가 시간상 이전 세그먼트를 가리키며, 완주 세그먼트는 약 17시간이다.
-            if (!olderVideoNo || seen.has(olderVideoNo) || !hasFullSplitDuration(olderSummary)) break;
-            seen.add(olderVideoNo);
-
-            let olderDetail = null;
-            try {
-                olderDetail = await fetchVideoDetail(olderVideoNo);
-            } catch (_) {
-                break;
-            }
-
-            const olderStartMs = getStartMsFromDetail(olderDetail);
-            if (
-                !Number.isFinite(olderStartMs) ||
-                Math.abs(olderStartMs - originalStartMs) > VOD_SPLIT_START_TOLERANCE_MS ||
-                !hasFullSplitDuration(olderDetail)
-            ) {
-                break;
-            }
-
-            segmentIndex += 1;
-            cursor = olderDetail;
-        }
-
-        return segmentIndex * VOD_SPLIT_SEGMENT_MS;
-    }
-
-    async function getVodSegmentStartInfo(detail) {
-        const originalStartMs = getStartMsFromDetail(detail);
-        if (!Number.isFinite(originalStartMs)) {
-            return {
-                originalStartMs: NaN,
-                segmentOffsetMs: 0,
-                segmentStartMs: NaN,
-            };
-        }
-
-        const inferredOffsetMs = getSplitVodSegmentOffsetMs(detail, originalStartMs);
-        const linkedOffsetMs = await getLinkedVodSegmentOffsetMs(detail, originalStartMs);
-        const segmentOffsetMs = linkedOffsetMs > 0 ? linkedOffsetMs : inferredOffsetMs;
-        return {
-            originalStartMs,
-            segmentOffsetMs,
-            segmentStartMs: originalStartMs + segmentOffsetMs,
-        };
-    }
-
-    function fetchVideoDetail(videoNo) {
+    async function fetchVideoDetail(videoNo, { signal } = {}) {
+        throwIfMetadataAborted(signal);
         if (detailCache.has(videoNo)) {
             const cached = detailCache.get(videoNo);
             touchMapEntry(detailCache, videoNo, cached, MAX_DETAIL_CACHE_ENTRIES);
             return cached;
         }
 
-        const promise = fetchJson(`${VIDEO_DETAIL_API_BASE}/${encodeURIComponent(videoNo)}`, {
+        const json = await fetchJson(`${VIDEO_DETAIL_API_BASE}/${encodeURIComponent(videoNo)}`, {
             headers: { Accept: "application/json" },
+            signal,
             timeoutMs: FETCH_TIMEOUT_MS,
-        })
-            .then((json) => json?.content || null)
-            .catch((error) => {
-                detailCache.delete(videoNo);
-                throw error;
-            });
+        });
+        throwIfMetadataAborted(signal);
 
-        touchMapEntry(detailCache, videoNo, promise, MAX_DETAIL_CACHE_ENTRIES);
-        return promise;
+        const detail = json?.content || null;
+        if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+            touchMapEntry(detailCache, videoNo, detail, MAX_DETAIL_CACHE_ENTRIES);
+        }
+        return detail;
     }
 
     function resetMetadata() {
+        abortMetadataRequest();
         currentStartMs = NaN;
         currentOriginalStartMs = NaN;
         currentSegmentOffsetMs = 0;
@@ -1004,6 +911,10 @@
     }
 
     function loadMetadata(videoNo) {
+        abortMetadataRequest();
+        const controller = new AbortController();
+        metadataAbortController = controller;
+        const { signal } = controller;
         const token = ++metadataToken;
         historyInfoToken += 1;
         currentStartMs = NaN;
@@ -1015,12 +926,15 @@
         titleHistoryExpanded = false;
         metadataState = "loading";
 
-        fetchVideoDetail(videoNo)
+        fetchVideoDetail(videoNo, { signal })
             .then(async (detail) => {
                 if (metadataToken !== token || currentVideoNo !== videoNo) return;
 
                 currentVideoDetail = detail;
-                const startInfo = await getVodSegmentStartInfo(detail);
+                const startInfo = await BetterChzzk.vodTimeline.resolveSegmentStartInfo(detail, {
+                    fetchDetail: fetchVideoDetail,
+                    signal,
+                });
                 if (metadataToken !== token || currentVideoNo !== videoNo) return;
                 if (Number.isFinite(startInfo.segmentStartMs)) {
                     currentStartMs = startInfo.segmentStartMs;
@@ -1049,6 +963,9 @@
                 metadataState = "error";
                 loadHistoryInfo(videoNo, null, token);
                 scheduleSync();
+            })
+            .finally(() => {
+                if (metadataAbortController === controller) metadataAbortController = null;
             });
     }
 
@@ -1485,6 +1402,11 @@
             clearRouteState();
             refreshDomObserverConfig();
             return;
+        }
+
+        const nextVideoNo = getVideoNoFromUrl();
+        if (currentVideoNo && nextVideoNo !== currentVideoNo) {
+            clearRouteState();
         }
 
         refreshDomObserverConfig();

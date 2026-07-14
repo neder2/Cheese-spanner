@@ -146,6 +146,7 @@ function evalRepoScript(dom, ...parts) {
 function evalContentScripts(dom) {
     evalRepoScript(dom, "shared", "data.js");
     evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "shared", "vodTimeline.js");
 }
 
 function dispatch(dom, element, type) {
@@ -2291,11 +2292,23 @@ test("shared selector registry preserves lookup priority and warns once per stal
 
 test("manifest loads shared and playback scripts in the expected worlds", () => {
     const manifest = JSON.parse(readRepoFile("manifest.json"));
+    const packageJson = JSON.parse(readRepoFile("package.json"));
     const mainScript = manifest.content_scripts.find((entry) => entry.world === "MAIN");
     const isolatedScript = manifest.content_scripts.find((entry) => entry.js?.includes("features/volumeWheel.js"));
+    const vodCommentModules = [
+        "features/vodComments/model.js",
+        "features/vodComments/repository.js",
+        "features/vodComments/nativeAdapter.js",
+        "features/vodComments/view.js",
+    ];
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
+    assert.equal(manifest.version, "1.2.4");
+    assert.equal(packageJson.version, manifest.version);
+    assert.deepEqual(manifest.permissions, ["storage"]);
+    assert.deepEqual(manifest.host_permissions, ["https://api.chzzk.naver.com/*", "https://apis.naver.com/*"]);
+    assert.deepEqual(manifest.optional_host_permissions, ["https://*.pstatic.net/*"]);
     assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
     assert.equal(mainScript.js.includes("features/followingPreviewPage.js"), false);
     assert.ok(
@@ -2311,6 +2324,15 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     assert.ok(isolatedScript.js.includes("shared/selectors.js"));
     assert.ok(isolatedScript.js.indexOf("shared/selectors.js") > isolatedScript.js.indexOf("shared/data.js"));
     assert.ok(isolatedScript.js.indexOf("shared/selectors.js") < isolatedScript.js.indexOf("content.js"));
+    assert.ok(isolatedScript.js.includes("shared/vodTimeline.js"));
+    assert.ok(isolatedScript.js.indexOf("shared/vodTimeline.js") > isolatedScript.js.indexOf("content.js"));
+    assert.ok(
+        isolatedScript.js.indexOf("shared/vodTimeline.js") < isolatedScript.js.indexOf("features/vodBroadcastClock.js")
+    );
+    assert.ok(
+        isolatedScript.js.indexOf("shared/vodTimeline.js") <
+            isolatedScript.js.indexOf("features/monthlyBroadcastTime.js")
+    );
     assert.ok(isolatedScript.js.indexOf("features/volumeWheel.js") > isolatedScript.js.indexOf("content.js"));
     assert.ok(
         isolatedScript.js.indexOf("vendor/hls.light.min.js") <
@@ -2327,6 +2349,16 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     assert.ok(
         isolatedScript.js.indexOf("features/vodCommentTabs.js") >
             isolatedScript.js.indexOf("features/vodReplayChatFix.js")
+    );
+    for (const modulePath of vodCommentModules) {
+        assert.ok(isolatedScript.js.includes(modulePath));
+        assert.ok(isolatedScript.js.indexOf(modulePath) < isolatedScript.js.indexOf("features/vodCommentTabs.js"));
+    }
+    assert.deepEqual(
+        vodCommentModules.map((modulePath) => isolatedScript.js.indexOf(modulePath)),
+        [...vodCommentModules]
+            .map((modulePath) => isolatedScript.js.indexOf(modulePath))
+            .sort((left, right) => left - right)
     );
     assert.ok(isolatedScript.js.includes("features/holdSpeed.js"));
     assert.ok(isolatedScript.js.includes("features/shortcutRescue.js"));

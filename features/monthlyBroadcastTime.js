@@ -11,7 +11,9 @@
  *   - 캘린더 날짜 셀을 클릭하면 그날 첫 방송 다시보기(/video/{videoNo})로 이동하고, 툴팁의 방송 항목은
  *     개별 앵커라 특정 방송으로 이동할 수 있다. 보조키(Ctrl/Cmd/Shift)·가운데 클릭은 새 탭.
  *   - 라우트 변경, DOM 변화, storage 변경을 감지해 위젯 mount/unmount와 재계산을 스케줄링한다.
- * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions, fetchJson,
+ * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.vodTimeline(normalizeVideoDetail,
+ *   mergeBroadcastSegment),
+ *   BetterChzzk.utils(bindFeatureOptions, fetchJson,
  *   createMutationObserverSync, createThrottledDomSync, startPageChangeDetection, startStorageChangeListener,
  *   storageGet, KST 날짜/시간 포맷 및 watch-range 유틸 등), chrome.storage.local.
  * 옵션 키: monthlyBroadcastTimeEnabled, monthlyBroadcastTimeCalendarEnabled, monthlyBroadcastTimeWatchEnabled,
@@ -1445,24 +1447,19 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
     function mergeVideoDetail(video, detail) {
         if (!video || !detail) return;
 
-        const detailDuration = Number(detail.duration);
-        if (Number.isFinite(detailDuration) && detailDuration > 0) {
-            video.duration = detailDuration;
+        const normalized = BetterChzzk.vodTimeline.normalizeVideoDetail(detail);
+        if (Number.isFinite(normalized.durationSeconds)) {
+            video.duration = normalized.durationSeconds;
         }
 
         const title = normSpace(detail.videoTitle || detail.title || detail.liveTitle || "");
         if (title) video.title = title;
 
-        const startText = pickVideoStartDateText(detail);
-        const endText = pickVideoEndDateText(detail);
-        const startedAt = parseChzzkDate(startText);
-        const endedAt = parseChzzkDate(endText);
-
-        if (startedAt) {
-            video.startedAt = startedAt;
+        if (Number.isFinite(normalized.startMs)) {
+            video.startedAt = new Date(normalized.startMs);
             video.startIsExact = true;
         }
-        if (endedAt) video.endedAt = endedAt;
+        if (Number.isFinite(normalized.endMs)) video.endedAt = new Date(normalized.endMs);
     }
 
     function shouldFetchStartDetail(video, monthInfo) {
@@ -1705,31 +1702,29 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         const endMs = getVideoEndMs(video) ?? startMs + duration * 1000;
         const title = normSpace(video.title);
         const titleKey = normalizeMatchText(title);
-
-        const existing = monthInfo.startKeyIndex[startKey];
-        if (existing) {
-            monthInfo.dailySeconds[key] = (monthInfo.dailySeconds[key] || 0) + duration;
-            existing.duration += duration;
-            // 같은 시작 시각의 17시간 분할 VOD는 한 방송이므로 합산 길이만큼 연속된 종료 시각으로 표시한다.
-            existing.endMs = existing.startMs + existing.duration * 1000;
-            existing.videoNos.push(video.videoNo);
-            if (title && !existing.title) existing.title = title;
-            if (titleKey && !existing.titleKey) existing.titleKey = titleKey;
-            return;
-        }
-
-        monthInfo.dailySeconds[key] = (monthInfo.dailySeconds[key] || 0) + duration;
-        monthInfo.startsByDate[key] = monthInfo.startsByDate[key] || [];
-        const entry = {
+        const incoming = {
             time: formatKstClock(startMs),
             startMs,
             endMs,
             duration,
             exact: video.startIsExact === true,
-            videoNos: [video.videoNo],
+            videoNo: video.videoNo,
             title,
             titleKey,
         };
+
+        monthInfo.dailySeconds[key] = (monthInfo.dailySeconds[key] || 0) + duration;
+        monthInfo.startsByDate[key] = monthInfo.startsByDate[key] || [];
+        const existing = monthInfo.startKeyIndex[startKey];
+        const entry = BetterChzzk.vodTimeline.mergeBroadcastSegment(existing, incoming);
+        if (existing) {
+            const existingIndex = monthInfo.startsByDate[key].indexOf(existing);
+            if (existingIndex >= 0) monthInfo.startsByDate[key][existingIndex] = entry;
+            else monthInfo.startsByDate[key].push(entry);
+            monthInfo.startKeyIndex[startKey] = entry;
+            return;
+        }
+
         monthInfo.startsByDate[key].push(entry);
         monthInfo.startKeyIndex[startKey] = entry;
     }

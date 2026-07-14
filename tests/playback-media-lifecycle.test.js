@@ -91,6 +91,7 @@ function evalRepoScript(dom, ...parts) {
 function evalContentScripts(dom) {
     evalRepoScript(dom, "shared", "data.js");
     evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "shared", "vodTimeline.js");
 }
 
 function waitForAsyncCallbacks(delayMs = 30) {
@@ -427,6 +428,58 @@ test("VOD title history reloads storage changes and ignores the older pending sn
         vodBroadcastClockEnabled: { oldValue: true, newValue: false },
     });
     await waitForAsyncCallbacks();
+    dom.window.close();
+});
+
+test("VOD broadcast clock aborts pending metadata before switching to another VOD", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            vodBroadcastClockEnabled: true,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<main><video id="video"></video><div class="pzp-vod-time">0:00 / 1:00</div></main>',
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/video/12345",
+        chrome
+    );
+    let resolveResponse;
+    let requestSignal = null;
+    dom.window.fetch = (_url, init = {}) => {
+        requestSignal = init.signal;
+        return new Promise((resolve) => {
+            resolveResponse = resolve;
+        });
+    };
+    makeVisibleVideo(dom.window.document.getElementById("video"));
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "vodBroadcastClock.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+
+    await waitForCondition(() => requestSignal instanceof dom.window.AbortSignal);
+    dom.window.history.pushState({}, "", "/video/67890");
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    await waitForCondition(() => requestSignal.aborted);
+
+    resolveResponse({
+        ok: true,
+        json: async () => ({
+            content: {
+                duration: 3600,
+                liveOpenDate: "2026-06-28T00:00:00+09:00",
+                videoNo: "12345",
+            },
+        }),
+    });
+    await waitForAsyncCallbacks(80);
+
+    assert.equal(dom.window.document.getElementById("betterchzzk-vod-broadcast-clock"), null);
     dom.window.close();
 });
 

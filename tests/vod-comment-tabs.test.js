@@ -85,6 +85,7 @@ function createFixture({
     includeLog = true,
     initialOptions = {},
     nativeCommentsHtml = null,
+    trackLifecycle = false,
     withIdleCallback = true,
     withIntersectionObserver = false,
 } = {}) {
@@ -111,6 +112,13 @@ function createFixture({
     const requests = [];
     const intersectionObservers = [];
     const idleCallbacks = [];
+    const lifecycle = {
+        adapterAttach: 0,
+        adapterDetach: 0,
+        adapterRefresh: 0,
+        idleCancel: 0,
+        viewDestroy: 0,
+    };
     const video = document.getElementById("video");
     const mediaState = { currentTime: 100, paused: false };
 
@@ -124,7 +132,10 @@ function createFixture({
         };
         window.cancelIdleCallback = (id) => {
             const record = idleCallbacks.find((entry) => entry.id === id);
-            if (record) record.cancelled = true;
+            if (record && !record.cancelled) {
+                record.cancelled = true;
+                lifecycle.idleCancel += 1;
+            }
         };
     }
 
@@ -208,12 +219,53 @@ function createFixture({
         },
     };
 
+    evalRepoScript(dom, "features", "vodComments", "model.js");
+    evalRepoScript(dom, "features", "vodComments", "repository.js");
+    evalRepoScript(dom, "features", "vodComments", "nativeAdapter.js");
+    evalRepoScript(dom, "features", "vodComments", "view.js");
+    if (trackLifecycle) {
+        const nativeAdapterModule = window.BetterChzzk.vodComments.nativeAdapter;
+        const viewModule = window.BetterChzzk.vodComments.view;
+        window.BetterChzzk.vodComments.nativeAdapter = Object.freeze({
+            createNativeAdapter(config) {
+                const adapter = nativeAdapterModule.createNativeAdapter(config);
+                return Object.freeze({
+                    ...adapter,
+                    attach(...args) {
+                        lifecycle.adapterAttach += 1;
+                        return adapter.attach(...args);
+                    },
+                    detach(...args) {
+                        lifecycle.adapterDetach += 1;
+                        return adapter.detach(...args);
+                    },
+                    refresh(...args) {
+                        lifecycle.adapterRefresh += 1;
+                        return adapter.refresh(...args);
+                    },
+                });
+            },
+        });
+        window.BetterChzzk.vodComments.view = Object.freeze({
+            createCommentView(config) {
+                const view = viewModule.createCommentView(config);
+                return Object.freeze({
+                    ...view,
+                    destroy(...args) {
+                        lifecycle.viewDestroy += 1;
+                        return view.destroy(...args);
+                    },
+                });
+            },
+        });
+    }
     evalRepoScript(dom, "features", "vodCommentTabs.js");
 
     return {
         document,
         dom,
         intersectionObservers,
+        lifecycle,
         mediaState,
         options,
         requests,
@@ -253,6 +305,37 @@ async function waitForCondition(predicate, { timeoutMs = 1000, intervalMs = 10 }
 function clickCommentTab(document) {
     document.getElementById("betterchzzk-vod-comment-comment-tab").click();
 }
+
+test("VOD comment support factories avoid duplicate attach syncs and keep private helpers private", async (t) => {
+    const fixture = createFixture({
+        initialOptions: { vodCommentTabsEnabled: false },
+        nativeCommentsHtml: '<div id="commentArea"></div>',
+    });
+    t.after(() => fixture.dom.window.close());
+    const { document, window } = fixture;
+    const panel = document.createElement("div");
+    document.body.appendChild(panel);
+    let measurementCount = 0;
+    const adapter = window.BetterChzzk.vodComments.nativeAdapter.createNativeAdapter({
+        onMeasurements: () => {
+            measurementCount += 1;
+        },
+    });
+    const view = window.BetterChzzk.vodComments.view.createCommentView();
+
+    assert.equal(adapter.scheduleSync, undefined);
+    assert.equal(view.isRenderedStateCurrent, undefined);
+    assert.equal(view.setScrollTop, undefined);
+
+    adapter.attach({ panel });
+    assert.equal(measurementCount, 1, "attach must perform its full native sync immediately");
+    await delay(50);
+    assert.equal(measurementCount, 1, "attach must not repeat the same full sync in a queued animation frame");
+
+    adapter.detach();
+    view.destroy();
+    panel.remove();
+});
 
 test("VOD comment tabs preserve the native chat heading treatment and defer prefetch until after mount", async (t) => {
     const fixture = createFixture();
@@ -324,6 +407,43 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     await waitForCondition(() => fixture.requests.length === 1);
     assert.equal(document.getElementById("betterchzzk-vod-comment-chat-tab").getAttribute("aria-selected"), "true");
     assert.equal(document.getElementById("betterchzzk-vod-comment-panel").hidden, true);
+});
+
+test("VOD comment option updates only run lifecycle work on enabled transitions", async (t) => {
+    const fixture = createFixture({ trackLifecycle: true });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+
+    await waitForCondition(() => fixture.document.getElementById("betterchzzk-vod-comment-tabs"));
+    const initialPanel = fixture.document.getElementById("betterchzzk-vod-comment-panel");
+    const afterInitialMount = { ...fixture.lifecycle };
+
+    fixture.emitOptions({ autoQualityEnabled: false });
+
+    assert.strictEqual(fixture.document.getElementById("betterchzzk-vod-comment-panel"), initialPanel);
+    assert.deepEqual(
+        fixture.lifecycle,
+        afterInitialMount,
+        "an unrelated option update must not refresh or rebuild the VOD comment lifecycle"
+    );
+
+    fixture.emitOptions({ vodCommentTabsEnabled: false });
+
+    assert.equal(fixture.document.getElementById("betterchzzk-vod-comment-tabs"), null);
+    assert.equal(fixture.lifecycle.adapterDetach, afterInitialMount.adapterDetach + 1);
+    assert.equal(fixture.lifecycle.viewDestroy, afterInitialMount.viewDestroy + 1);
+    assert.equal(fixture.lifecycle.idleCancel, afterInitialMount.idleCancel + 1);
+
+    const afterDisable = { ...fixture.lifecycle };
+    fixture.emitOptions({ autoQualityEnabled: true });
+    assert.deepEqual(fixture.lifecycle, afterDisable, "unrelated updates while disabled must not repeat teardown work");
+
+    fixture.emitOptions({ vodCommentTabsEnabled: true });
+    await waitForCondition(() => fixture.document.getElementById("betterchzzk-vod-comment-tabs"));
+    assert.notStrictEqual(fixture.document.getElementById("betterchzzk-vod-comment-panel"), initialPanel);
+    assert.equal(fixture.lifecycle.adapterAttach, afterDisable.adapterAttach + 1);
 });
 
 test("VOD comment typography follows the measured native author, date, and message styles", (t) => {
@@ -409,6 +529,12 @@ test("VOD comment typography remeasures when the first native row fills in and r
     assert.equal(panel.style.getPropertyValue("--bcvc-date-line-height"), "17px");
     assert.equal(panel.style.getPropertyValue("--bcvc-message-line-height"), "22px");
 
+    const originalQuerySelector = document.querySelector;
+    let firstNativeRowQueries = 0;
+    document.querySelector = function (selector) {
+        if (selector === "#commentArea [id^='commentBox-']") firstNativeRowQueries += 1;
+        return originalQuerySelector.call(this, selector);
+    };
     document.getElementById("late-native-author").style.lineHeight = "21px";
     document.getElementById("late-native-message").style.fontSize = "18px";
 
@@ -416,6 +542,12 @@ test("VOD comment typography remeasures when the first native row fills in and r
         () =>
             panel.style.getPropertyValue("--bcvc-author-line-height") === "21px" &&
             panel.style.getPropertyValue("--bcvc-message-font-size") === "18px"
+    );
+    document.querySelector = originalQuerySelector;
+    assert.equal(
+        firstNativeRowQueries,
+        2,
+        "a native mutation batch must resolve the first row once before the single typography measurement"
     );
 });
 
@@ -842,6 +974,20 @@ test("VOD comment rows reuse native Chzzk profile and buff visuals without cloni
     assert.notEqual(reusedAvatar, nativeAvatar);
     assert.equal(nativeAvatar.closest("#commentBox-1")?.id, "commentBox-1");
 
+    const nativeRow = document.getElementById("commentBox-1");
+    const originalNativeRowQuerySelectorAll = nativeRow.querySelectorAll;
+    let profileControlScans = 0;
+    nativeRow.querySelectorAll = function (selector) {
+        if (selector === "button, a[href], [role='button']") profileControlScans += 1;
+        return originalNativeRowQuerySelectorAll.call(this, selector);
+    };
+    nativeAvatarButton.setAttribute("aria-disabled", "true");
+    await waitForCondition(() => mirroredAvatar.disabled);
+    nativeRow.querySelectorAll = originalNativeRowQuerySelectorAll;
+    assert.equal(profileControlScans, 1, "each dirty mirrored row sync must resolve native profile controls only once");
+
+    nativeAvatarButton.removeAttribute("aria-disabled");
+    await waitForCondition(() => !mirroredAvatar.disabled);
     nativeAvatar.style.backgroundImage = "none";
     await waitForCondition(() => mirroredAvatar.querySelector(".bcvc-avatar-image"));
     assert.equal(
@@ -1440,6 +1586,13 @@ test("VOD comment pagination coalesces observer requests and appends without rep
     const focusTarget = document.querySelector("[data-bcvc-action='refresh']");
     panel.scrollTop = 80;
     focusTarget.focus();
+    await delay(30);
+    const originalPanelQuerySelectorAll = panel.querySelectorAll;
+    let mirroredRowScans = 0;
+    panel.querySelectorAll = function (selector) {
+        if (selector === "[data-bcvc-comment-id]") mirroredRowScans += 1;
+        return originalPanelQuerySelectorAll.call(this, selector);
+    };
 
     const activeObserver = fixture.intersectionObservers.find((observer) => observer.targets.length);
     assert.ok(activeObserver);
@@ -1447,6 +1600,7 @@ test("VOD comment pagination coalesces observer requests and appends without rep
     activeObserver.trigger();
     document.querySelector("[data-bcvc-action='load-more']")?.click();
     assert.equal(fixture.requests.filter((request) => request.offset === 10).length, 1);
+    assert.equal(mirroredRowScans, 0, "a loading-only footer update must not rescan mirrored native assets");
 
     secondPage.resolve(
         apiContent({
@@ -1460,6 +1614,8 @@ test("VOD comment pagination coalesces observer requests and appends without rep
     assert.equal(document.activeElement, focusTarget);
     assert.equal(panel.scrollTop, 80);
     assert.equal(document.querySelector("[data-bcvc-action='load-more']"), null);
+    panel.querySelectorAll = originalPanelQuerySelectorAll;
+    assert.equal(mirroredRowScans, 1, "appending a page must sync native assets once for the new rows");
 });
 
 test("VOD comment load-more restores focus to the first appended row when pagination ends", async (t) => {
