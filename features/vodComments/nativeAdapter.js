@@ -431,6 +431,18 @@
             });
         }
 
+        function syncCommentIds(commentIds) {
+            if (!(commentPanel instanceof HTMLElement) || !commentPanel.isConnected) return;
+            if (!commentIds || typeof commentIds[Symbol.iterator] !== "function") return;
+            const normalizedIds = new Set();
+            for (const commentId of commentIds) {
+                if (commentId === undefined || commentId === null) continue;
+                const normalizedId = String(commentId).trim();
+                if (normalizedId) normalizedIds.add(normalizedId);
+            }
+            if (normalizedIds.size) scheduleSync(normalizedIds);
+        }
+
         function cancelScheduledSync() {
             if (nativeAssetsFrameId) cancelAnimationFrame(nativeAssetsFrameId);
             nativeAssetsFrameId = 0;
@@ -590,7 +602,7 @@
             commentPanel = null;
         }
 
-        return Object.freeze({ attach, detach, forwardAction, forwardTimecode, refresh, syncAll });
+        return Object.freeze({ attach, detach, forwardAction, forwardTimecode, refresh, syncAll, syncCommentIds });
     }
 
     namespace.nativeAdapter = Object.freeze({ createNativeAdapter });

@@ -1596,6 +1596,12 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         return getMonthBroadcastSeconds(month) / broadcastDays;
     }
 
+    function getMonthCalendarAverageSeconds(month) {
+        const calendarDays = Math.max(0, Number(month?.today || month?.daysInMonth) || 0);
+        if (calendarDays <= 0) return 0;
+        return getMonthBroadcastSeconds(month) / calendarDays;
+    }
+
     function formatMonthBroadcastTotal(month) {
         return `총 방송 ${formatDuration(getMonthBroadcastSeconds(month))}`;
     }
@@ -2247,7 +2253,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
     function renderCalendarFoot(footEl, month) {
         const noteEl = document.createElement("span");
         noteEl.className = "bcmb-calendar-foot-note";
-        noteEl.textContent = month.partial ? "일부 기록만 표시됨" : "방송 시작일 기준 · KST";
+        noteEl.textContent = `월평균 ${formatDuration(getMonthCalendarAverageSeconds(month))}${month.partial ? "+" : ""}/일`;
+        if (month.partial) noteEl.title = "조회 상한으로 일부 방송 기록만 반영됨";
 
         if (!isWatchDisplayEnabled()) {
             footEl.replaceChildren(noteEl);

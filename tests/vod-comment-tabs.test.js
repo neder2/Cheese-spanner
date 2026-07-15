@@ -309,11 +309,12 @@ function clickCommentTab(document) {
 test("VOD comment support factories avoid duplicate attach syncs and keep private helpers private", async (t) => {
     const fixture = createFixture({
         initialOptions: { vodCommentTabsEnabled: false },
-        nativeCommentsHtml: '<div id="commentArea"></div>',
+        nativeCommentsHtml: '<div id="commentArea"><div id="commentBox-1"></div></div>',
     });
     t.after(() => fixture.dom.window.close());
     const { document, window } = fixture;
     const panel = document.createElement("div");
+    panel.innerHTML = '<article data-bcvc-comment-id="1"></article>';
     document.body.appendChild(panel);
     let measurementCount = 0;
     const adapter = window.BetterChzzk.vodComments.nativeAdapter.createNativeAdapter({
@@ -324,6 +325,7 @@ test("VOD comment support factories avoid duplicate attach syncs and keep privat
     const view = window.BetterChzzk.vodComments.view.createCommentView();
 
     assert.equal(adapter.scheduleSync, undefined);
+    assert.equal(typeof adapter.syncCommentIds, "function");
     assert.equal(view.isRenderedStateCurrent, undefined);
     assert.equal(view.setScrollTop, undefined);
 
@@ -332,7 +334,30 @@ test("VOD comment support factories avoid duplicate attach syncs and keep privat
     await delay(50);
     assert.equal(measurementCount, 1, "attach must not repeat the same full sync in a queued animation frame");
 
+    const originalGetElementById = document.getElementById;
+    let nativeRowLookups = 0;
+    document.getElementById = function (id) {
+        if (id === "commentBox-1") nativeRowLookups += 1;
+        return originalGetElementById.call(this, id);
+    };
+    adapter.syncCommentIds([]);
+    adapter.syncCommentIds(new Set());
+    adapter.syncCommentIds([null, "", "   "]);
+    await delay(30);
+    assert.equal(nativeRowLookups, 0, "empty comment IDs must not schedule row synchronization");
+
+    adapter.syncCommentIds(["1", 1, "1"]);
+    adapter.syncCommentIds(new Set(["1"]));
+    await delay(30);
+    assert.equal(nativeRowLookups, 1, "duplicate row IDs must coalesce into one scheduled synchronization");
+    assert.equal(measurementCount, 1, "row synchronization must not remeasure global native typography");
+
     adapter.detach();
+    adapter.syncCommentIds(["1"]);
+    await delay(30);
+    assert.equal(nativeRowLookups, 1, "adapter synchronization must be a no-op after detach");
+    assert.equal(measurementCount, 1, "detached row synchronization must not publish new measurements");
+    document.getElementById = originalGetElementById;
     view.destroy();
     panel.remove();
 });
@@ -1355,6 +1380,92 @@ test("VOD long comments start collapsed and can be expanded and collapsed in pla
     assert.equal(toggle.textContent, "더보기");
     assert.equal(toggle.getAttribute("aria-expanded"), "false");
     assert.doesNotMatch(content.textContent, /30:00/);
+});
+
+test("VOD long-comment toggles synchronize only the changed native row", async (t) => {
+    const firstLongText = Array.from({ length: 30 }, (_, index) => {
+        if (index === 0) return "00:01 첫 번째 댓글 시작";
+        if (index === 29) return "30:00 첫 번째 댓글 끝";
+        return `첫 번째 댓글 ${index + 1}`;
+    }).join("\n");
+    const secondLongText = Array.from({ length: 30 }, (_, index) => {
+        if (index === 0) return "00:02 두 번째 댓글 시작";
+        if (index === 29) return "31:00 두 번째 댓글 끝";
+        return `두 번째 댓글 ${index + 1}`;
+    }).join("\n");
+    const fixture = createFixture({
+        fetchComments: async () =>
+            apiContent({
+                rows: [apiComment(1, firstLongText), apiComment(2, secondLongText)],
+                totalCount: 2,
+            }),
+        nativeCommentsHtml: [
+            '<div id="commentArea">',
+            '<div id="commentBox-1"><button id="native-time-1a" type="button">19:11</button><button id="native-time-1b" type="button">19:12</button></div>',
+            '<div id="commentBox-2"><button id="native-time-2a" type="button">20:21</button><button id="native-time-2b" type="button">20:22</button></div>',
+            "</div>",
+        ].join(""),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document, window } = fixture;
+    let nativeSecondTimecodeClicks = 0;
+    document.getElementById("native-time-1b").addEventListener("click", () => {
+        nativeSecondTimecodeClicks += 1;
+    });
+
+    clickCommentTab(document);
+    await waitForCondition(() => document.querySelectorAll("[data-bcvc-action='message-toggle']").length === 2);
+    await waitForCondition(
+        () =>
+            document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-timecode")?.textContent === "19:11" &&
+            document.querySelector("[data-bcvc-comment-key='id:2'] .bcvc-timecode")?.textContent === "20:21"
+    );
+
+    const firstRow = document.querySelector("[data-bcvc-comment-key='id:1']");
+    const firstToggle = firstRow.querySelector("[data-bcvc-action='message-toggle']");
+    const originalGetElementById = document.getElementById;
+    const originalGetComputedStyle = window.getComputedStyle;
+    let firstNativeRowLookups = 0;
+    let secondNativeRowLookups = 0;
+    let nativeStyleReads = 0;
+    document.getElementById = function (id) {
+        if (id === "commentBox-1") firstNativeRowLookups += 1;
+        if (id === "commentBox-2") secondNativeRowLookups += 1;
+        return originalGetElementById.call(this, id);
+    };
+    window.getComputedStyle = function (...args) {
+        nativeStyleReads += 1;
+        return originalGetComputedStyle.apply(this, args);
+    };
+
+    firstToggle.click();
+    await waitForCondition(
+        () =>
+            firstRow.querySelectorAll(".bcvc-timecode").length === 2 &&
+            firstRow.querySelectorAll(".bcvc-timecode")[1].textContent === "19:12"
+    );
+    firstToggle.click();
+    await waitForCondition(() => firstNativeRowLookups === 2);
+    firstToggle.click();
+    await waitForCondition(
+        () => firstNativeRowLookups === 3 && firstRow.querySelectorAll(".bcvc-timecode")[1]?.textContent === "19:12"
+    );
+
+    assert.equal(secondNativeRowLookups, 0, "long-comment toggles must not look up an unchanged native row");
+    assert.equal(nativeStyleReads, 0, "long-comment toggles must not remeasure global native styles");
+    firstRow.querySelectorAll(".bcvc-timecode")[1].click();
+    assert.equal(nativeSecondTimecodeClicks, 1, "a newly rendered timecode must retain native control forwarding");
+    assert.equal(
+        fixture.mediaState.currentTime,
+        100,
+        "successful native forwarding must not also perform a direct seek"
+    );
+
+    document.getElementById = originalGetElementById;
+    window.getComputedStyle = originalGetComputedStyle;
 });
 
 test("VOD comment rendering caps total nested replies without hiding the limit", async (t) => {

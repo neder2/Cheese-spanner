@@ -1544,7 +1544,8 @@ test("monthly broadcast calendar hides watch info when watch display is disabled
 
         const foot = fixture.document.querySelector(`#${MONTHLY_BROADCAST_WIDGET_ID} .bcmb-calendar-foot`);
         assert.equal(foot.querySelector(".bcmb-calendar-watch-total"), null);
-        assert.match(foot.textContent, /방송 시작일 기준/);
+        assert.equal(foot.querySelector(".bcmb-calendar-foot-note").textContent, "월평균 1분/일");
+        assert.doesNotMatch(foot.textContent, /방송 시작일 기준/);
     } finally {
         await closeMonthlyBroadcastFixture(fixture);
     }
@@ -1874,7 +1875,7 @@ test("options page renders defaults and dependency-disabled controls without ext
 
     assert.equal(optionInputs.length, BetterChzzkSettings.OPTION_KEYS.length);
     assert.equal(queryOption(document, "skipSeconds").value, String(BetterChzzkSettings.DEFAULT_OPTIONS.skipSeconds));
-    assert.equal(queryOption(document, "vodBroadcastClockEnabled").checked, false);
+    assert.equal(queryOption(document, "vodBroadcastClockEnabled").checked, true);
     assert.equal(document.getElementById("save").disabled, true, "변경 전에는 저장 버튼이 비활성화된다");
     assert.equal(notice.dataset.state, "saved");
     assert.match(notice.textContent, /기능 \d+개/);

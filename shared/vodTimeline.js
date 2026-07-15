@@ -55,10 +55,6 @@
         throw error;
     }
 
-    function isAbortError(error) {
-        return error?.name === "AbortError";
-    }
-
     function hasFullSplitDuration(durationSeconds) {
         return (
             Number.isFinite(durationSeconds) &&
@@ -113,9 +109,11 @@
             try {
                 olderRawDetail = await fetchDetail(olderVideoNo, { signal });
                 throwIfAborted(signal);
-            } catch (error) {
+            } catch {
                 if (signal?.aborted) throwIfAborted(signal);
-                if (isAbortError(error)) throw error;
+
+                // The detail request can also abort itself on timeout. Only the caller's
+                // signal represents cancellation of the whole timeline resolution.
                 break;
             }
 

@@ -29,7 +29,7 @@ const expectedDefaults = {
     audioCompressorAttack: 0.003,
     audioCompressorRelease: 0.25,
     audioCompressorMakeupGain: 1,
-    vodBroadcastClockEnabled: false,
+    vodBroadcastClockEnabled: true,
     timeMachineLagLabelEnabled: true,
     adblockPopupEnabled: true,
     monthlyBroadcastTimeEnabled: true,

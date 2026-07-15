@@ -29,6 +29,7 @@
         onOrderChange = () => {},
         onRefresh = () => {},
         onRendered = () => {},
+        onRowRendered = () => {},
         onRetryInitial = () => {},
         onScroll = () => {},
         onTabChange = () => {},
@@ -627,7 +628,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             toggle.textContent = expanded ? "접기" : "더보기";
         }
 
-        function createMessageToggle(message, fullText, allowTimecodes) {
+        function createMessageToggle(message, fullText, allowTimecodes, commentId) {
             const collapsedText = model.getCollapsedCommentText(fullText);
             const content = document.createElement("span");
             content.className = "bcvc-message-content";
@@ -641,7 +642,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             toggle.type = "button";
             toggle.className = "bcvc-message-toggle";
             toggle.setAttribute("data-bcvc-action", "message-toggle");
-            const record = { allowTimecodes, collapsedText, content, fullText, toggle };
+            const record = { allowTimecodes, collapsedText, commentId, content, fullText, toggle };
             messageToggleStates.set(toggle, record);
             renderCommentMessage(record, false);
             return toggle;
@@ -721,7 +722,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
                     messageText = messageText.trimStart();
                 }
             }
-            const messageToggle = createMessageToggle(message, messageText, !deleted && !cleanBotHidden);
+            const messageToggle = createMessageToggle(message, messageText, !deleted && !cleanBotHidden, commentId);
             row.appendChild(message);
             if (messageToggle) row.appendChild(messageToggle);
             if (!deleted && !cleanBotHidden) {
@@ -1040,7 +1041,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             const record = messageToggleStates.get(control);
             if (!record) return;
             renderCommentMessage(record, control.getAttribute("aria-expanded") !== "true");
-            onRendered();
+            if (record.commentId) onRowRendered(record.commentId);
         }
 
         function toggleCommentReplies(control) {

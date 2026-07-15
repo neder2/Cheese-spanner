@@ -77,6 +77,7 @@
         onOrderChange: (order, focusRequest) => changeOrder(order, focusRequest),
         onRefresh: (focusRequest) => refreshComments(focusRequest),
         onRendered: () => nativeAdapter.syncAll(),
+        onRowRendered: (commentId) => nativeAdapter.syncCommentIds(new Set([commentId])),
         onRetryInitial: (focusRequest) => loadInitialComments({ focusRequest, refresh: true }),
         onScroll: (scrollTop) => {
             commentRepository.setScrollTop(scrollTop, { order: activeOrder, videoNo: currentVideoNo });

@@ -307,18 +307,77 @@ test("resolveSegmentStartInfo rejects an already aborted signal before fetching"
     assert.equal(fetchCount, 0);
 });
 
-test("resolveSegmentStartInfo propagates a fetch AbortError even without an aborted signal", async () => {
-    const abortError = new Error("aborted by fetch");
-    abortError.name = "AbortError";
-
-    await assert.rejects(
-        resolveSegmentStartInfo(makeLinkedFixture(1).current, {
-            fetchDetail: async () => {
+test("resolveSegmentStartInfo falls back to inference after a fetch AbortError without external cancellation", async () => {
+    const controller = new dom.window.AbortController();
+    const calls = [];
+    const result = await resolveSegmentStartInfo(
+        makeCurrentDetail({
+            offsetMs: SPLIT_MS * 2,
+            nextVideo: { videoNo: "older", duration: SPLIT_SECONDS },
+        }),
+        {
+            signal: controller.signal,
+            fetchDetail: async (videoNo, { signal } = {}) => {
+                calls.push(videoNo);
+                assert.equal(signal, controller.signal);
+                assert.equal(signal.aborted, false);
+                const abortError = new Error("detail request timed out");
+                abortError.name = "AbortError";
                 throw abortError;
             },
-        }),
-        (error) => error === abortError
+        }
     );
+
+    assert.deepEqual(calls, ["older"]);
+    assert.equal(controller.signal.aborted, false);
+    assert.equal(result.originalStartMs, START_MS);
+    assert.equal(result.segmentOffsetMs, SPLIT_MS * 2);
+    assert.equal(result.segmentStartMs, START_MS + SPLIT_MS * 2);
+});
+
+test("resolveSegmentStartInfo keeps zero offset after a fetch AbortError without an inferred offset", async () => {
+    const controller = new dom.window.AbortController();
+    const calls = [];
+    const result = await resolveSegmentStartInfo(
+        makeCurrentDetail({ nextVideo: { videoNo: "older", duration: SPLIT_SECONDS } }),
+        {
+            signal: controller.signal,
+            fetchDetail: async (videoNo) => {
+                calls.push(videoNo);
+                const abortError = new Error("detail request timed out");
+                abortError.name = "AbortError";
+                throw abortError;
+            },
+        }
+    );
+
+    assert.deepEqual(calls, ["older"]);
+    assert.equal(controller.signal.aborted, false);
+    assert.equal(result.originalStartMs, START_MS);
+    assert.equal(result.segmentOffsetMs, 0);
+    assert.equal(result.segmentStartMs, START_MS);
+});
+
+test("resolveSegmentStartInfo performs no later linked fetch after a fetch AbortError", async () => {
+    const { current, details } = makeLinkedFixture(3);
+    const controller = new dom.window.AbortController();
+    const calls = [];
+    const result = await resolveSegmentStartInfo(current, {
+        signal: controller.signal,
+        fetchDetail: async (videoNo) => {
+            calls.push(videoNo);
+            if (videoNo === "segment-2") {
+                const abortError = new Error("detail request timed out");
+                abortError.name = "AbortError";
+                throw abortError;
+            }
+            return details[videoNo];
+        },
+    });
+
+    assert.deepEqual(calls, ["segment-1", "segment-2"]);
+    assert.equal(controller.signal.aborted, false);
+    assert.equal(result.segmentOffsetMs, SPLIT_MS);
 });
 
 test("mergeBroadcastSegment creates a new first entry and a new ordered videoNos array", () => {

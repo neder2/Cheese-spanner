@@ -51,7 +51,7 @@
         audioCompressorAttack: { kind: "number", default: 0.003, min: 0, max: 1, step: 0.001 },
         audioCompressorRelease: { kind: "number", default: 0.25, min: 0, max: 1, step: 0.01 },
         audioCompressorMakeupGain: { kind: "number", default: 1, min: 0.5, max: 3, step: 0.1 },
-        vodBroadcastClockEnabled: { kind: "bool", default: false, feature: true },
+        vodBroadcastClockEnabled: { kind: "bool", default: true, feature: true },
         timeMachineLagLabelEnabled: { kind: "bool", default: true, feature: true },
         adblockPopupEnabled: { kind: "bool", default: true, feature: true },
         monthlyBroadcastTimeEnabled: { kind: "bool", default: true, feature: true },

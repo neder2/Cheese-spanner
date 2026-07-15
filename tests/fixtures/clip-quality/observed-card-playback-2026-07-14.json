@@ -1,0 +1,76 @@
+{
+    "fixture": {
+        "observedAt": "2026-07-14",
+        "source": "CHZZK embedded NAVER Shorts clip card response",
+        "sanitized": true,
+        "notes": "Only fields needed to identify the observed video representations are retained. Media hosts, signed queries, media IDs, clip IDs, and representation IDs are synthetic."
+    },
+    "body": {
+        "card": {
+            "content": {
+                "mediaType": "SHORT_FORM",
+                "vod": {
+                    "playback": {
+                        "MPD": [
+                            {
+                                "Period": [
+                                    {
+                                        "AdaptationSet": [
+                                            {
+                                                "@mimeType": "video/mp4",
+                                                "@maxWidth": "1280",
+                                                "@maxHeight": "720",
+                                                "Representation": [
+                                                    {
+                                                        "@id": "observed-mp4-720p",
+                                                        "@width": "1280",
+                                                        "@height": "720",
+                                                        "@bandwidth": "1496000",
+                                                        "@frameRate": "30",
+                                                        "@codecs": "avc1.4d401f,mp4a.40.2"
+                                                    },
+                                                    {
+                                                        "@id": "observed-mp4-480p",
+                                                        "@width": "854",
+                                                        "@height": "480",
+                                                        "@bandwidth": "878000",
+                                                        "@frameRate": "30",
+                                                        "@codecs": "avc1.4d401f,mp4a.40.2"
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "@mimeType": "video/mp2t",
+                                                "@maxWidth": "1280",
+                                                "@maxHeight": "720",
+                                                "@nvod:m3u": "https://media.example.invalid/clip/master.m3u8?signature=REDACTED",
+                                                "Representation": [
+                                                    {
+                                                        "@id": "observed-hls-720p",
+                                                        "@width": "1280",
+                                                        "@height": "720",
+                                                        "@bandwidth": "1496000",
+                                                        "@frameRate": "30",
+                                                        "@codecs": "avc1.4d401f,mp4a.40.2"
+                                                    },
+                                                    {
+                                                        "@id": "observed-hls-480p",
+                                                        "@width": "854",
+                                                        "@height": "480",
+                                                        "@bandwidth": "878000",
+                                                        "@frameRate": "30",
+                                                        "@codecs": "avc1.4d401f,mp4a.40.2"
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+}

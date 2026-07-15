@@ -431,6 +431,86 @@ test("VOD title history reloads storage changes and ignores the older pending sn
     dom.window.close();
 });
 
+test("VOD broadcast clock keeps inferred metadata when an older segment fetch throws AbortError without cancellation", async () => {
+    const startMs = Date.parse("2026-06-28T00:00:00+09:00");
+    const splitMs = 17 * 60 * 60 * 1000;
+    const durationSeconds = 60 * 60;
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: false,
+            vodBroadcastClockEnabled: true,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<main><video id="video"></video><div class="pzp-vod-time" id="time">0:02 / 1:00:00</div></main>',
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/video/12345",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const time = document.getElementById("time");
+    const requests = [];
+
+    video.currentTime = 2;
+    makeVisibleVideo(video);
+    time.getBoundingClientRect = () => ({
+        width: 140,
+        height: 24,
+        left: 16,
+        top: 324,
+        right: 156,
+        bottom: 348,
+    });
+    dom.window.fetch = async (url, init = {}) => {
+        requests.push({ signal: init.signal, url: String(url) });
+        if (String(url).endsWith("/older-segment")) {
+            assert.equal(init.signal?.aborted, false, "the older request should fail without cancellation");
+            throw new dom.window.DOMException("The operation was aborted.", "AbortError");
+        }
+
+        return {
+            ok: true,
+            json: async () => ({
+                content: {
+                    duration: durationSeconds,
+                    liveCloseDate: new Date(startMs + splitMs + durationSeconds * 1000).toISOString(),
+                    liveOpenDate: "2026-06-28T00:00:00+09:00",
+                    nextVideo: {
+                        duration: splitMs / 1000,
+                        videoNo: "older-segment",
+                    },
+                    videoNo: "12345",
+                },
+            }),
+        };
+    };
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "vodBroadcastClock.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+
+    await waitForCondition(() => document.getElementById("betterchzzk-vod-broadcast-clock"));
+
+    const clock = document.getElementById("betterchzzk-vod-broadcast-clock");
+    assert.deepEqual(
+        requests.map(({ url }) => url.split("/").pop()),
+        ["12345", "older-segment"]
+    );
+    assert.equal(requests[1].signal.aborted, false);
+    assert.equal(clock.querySelector(".bcbc-time").textContent, "17:00:02");
+    assert.match(clock.title, /방송 기준 시작: 2026-06-28 17:00:00 KST/);
+    assert.match(clock.title, /분할 VOD 보정: \+17:00:00/);
+    assert.match(clock.title, /원본 방송 시작: 2026-06-28 00:00:00 KST/);
+
+    dom.window.close();
+});
+
 test("VOD broadcast clock aborts pending metadata before switching to another VOD", async () => {
     const chrome = createFakeChrome({
         sync: {
