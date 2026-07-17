@@ -17,14 +17,12 @@
  * 통신: root.chatTools(parseChatMessage, renderModeratorBox, syncBlindReveal)를
  *   window.BetterChzzk 에 공개해 다른 파일이 참조할 수 있게 한다.
  * 구조:
- *   1-135: 상수 — DOM 마커 attr, 채팅 root/row/본문/작성자 선택자, 역할/블라인드 판별 정규식.
- *   136-436: STYLE_TEXT — 모아보기 트리거/패널/행 CSS(다크모드 포함), injectStyleOnce 로 주입.
- *   437-475: 전역 상태(featureOptions, chatRoot, observer, moderatorMessages 등) 선언.
- *   476-1080: 채팅 행 파싱 유틸 — 작성자/본문 타겟 선택, 숨은 원문 탐색, 역할(detectRole) 판별.
- *   1081-1201: parseChatMessage 본체, 행 소유 원문 캐시와 블라인드 복원(syncBlindReveal).
- *   1202-1704: 모아보기 수집·렌더링·패널 토글과 채팅 헤더/트리거/박스 DOM 삽입.
- *   1705-2015: mutation 기반 dirty row 추적, 행 정규화와 syncChatTools 동기화 본체.
- *   2016-끝: observer 시작/재시작, install/uninstallRuntime, applyOptions, root.chatTools 공개.
+ *   상수와 STYLE_TEXT — DOM 마커, 선택자, 판별 정규식, 모아보기 UI CSS.
+ *   전역 상태와 파싱 유틸 — 작성자/본문/역할/블라인드 판정, 행 소유 원문 캐시.
+ *   모아보기 수집 — 행-메시지 바인딩, 재사용 후보 안정화, 뱃지/색상 백필.
+ *   UI — 모아보기 렌더링·패널 토글과 채팅 헤더/트리거/박스 DOM 삽입.
+ *   DOM 수명주기 — mutation 기반 dirty row 추적, 행 정규화, observer 재연결.
+ *   런타임 — install/uninstallRuntime, 옵션·라우트 반영, root.chatTools 공개.
  */
 (() => {
     const STYLE_ID = "betterchzzk-chat-tools-style";
@@ -46,6 +44,8 @@
     // 제거된 「방송 중 모아보기 유지」 옵션이 남긴 이전 캐시 데이터를 지우기 위한 키.
     const MODERATOR_CACHE_STORAGE_KEY = "betterChzzkChatToolsModeratorCache";
     const CHAT_SYNC_THROTTLE_MS = 120;
+    const MODERATOR_REUSE_STABILITY_CHECK_MS = 100;
+    const MODERATOR_REUSE_REQUIRED_STABLE_PASSES = 2;
     const CHAT_ROOT_FIND_THROTTLE_MS = 600;
     const MESSAGE_ID_ATTRS = ["data-chat-id", "data-message-id", "data-id"];
     const ROW_REUSE_SIGNAL_ATTRIBUTES = [
@@ -475,6 +475,9 @@ body[theme="dark"] .bcct-moderator-box__empty,
     let moderatorPanelOpen = false;
     let moderatorMessages = [];
     let collectedMessageIds = new Set();
+    let moderatorRowBindings = new WeakMap();
+    const moderatorRowTransitions = new Map();
+    let rowMutationRevisions = new WeakMap();
     let legacyModeratorCachePurged = false;
     const dirtyChatRows = new Set();
     let parsedChatRows = new WeakSet();
@@ -1103,13 +1106,14 @@ body[theme="dark"] .bcct-moderator-box__empty,
         const rowReuseSignal = getCacheRowReuseSignal(row);
         const messageFingerprint = `${parsed.role}:${parsed.author}:${parsed.text}`;
         const cached = rowIds.get(row);
+        const binding = moderatorRowBindings.get(row);
         const keepsCollectedIdentity =
             cached &&
             cached.rowReuseSignal === rowReuseSignal &&
             cached.role === parsed.role &&
             cached.author === parsed.author &&
             parsed.isBlind === true &&
-            row.hasAttribute(MODERATOR_COLLECTED_ATTR);
+            binding?.messageId === cached.id;
         if (
             !cached ||
             cached.rowReuseSignal !== rowReuseSignal ||
@@ -1325,51 +1329,215 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return true;
     }
 
-    function collectModeratorMessage(parsed) {
-        if (!isModeratorBoxEnabled() || !parsed.role || !parsed.text) return false;
-        if (collectedMessageIds.has(parsed.id)) {
-            const existing = moderatorMessages.find((message) => message.id === parsed.id);
-            if (existing) {
-                existing.node = parsed.node;
-                // 이전 버전에서 수집됐거나 구버전 캐시에서 복원된 항목은 뱃지/색상이
-                // 비어 있을 수 있다. text/author/role 은 블라인드 전환 등으로 오염될 수
-                // 있으니 건드리지 않고, 뱃지/색상만 재파싱 값으로 백필한다.
-                let backfilled = false;
-                if (parsed.role) {
-                    const parsedBadges = Array.isArray(parsed.badges) ? parsed.badges : [];
-                    const existingBadges = Array.isArray(existing.badges) ? existing.badges : [];
-                    if (!existingBadges.length && parsedBadges.length) {
-                        existing.badges = parsedBadges;
-                        backfilled = true;
-                    }
-                    if (!existing.authorColor && parsed.authorColor) {
-                        existing.authorColor = parsed.authorColor;
-                        backfilled = true;
-                    }
-                }
-                if (backfilled) renderModeratorList();
-            }
-            return false;
-        }
-
-        collectedMessageIds.add(parsed.id);
-        parsed.node.setAttribute(MODERATOR_COLLECTED_ATTR, "1");
-        moderatorMessages.push({
-            id: parsed.id,
+    function buildModeratorSnapshot(parsed) {
+        const rowReuseSignal = getCacheRowReuseSignal(parsed.node);
+        const identityKey = [parsed.id, rowReuseSignal, parsed.author, parsed.role, parsed.text]
+            .map((value) => String(value || ""))
+            .join("\u001f");
+        return {
+            messageId: parsed.id,
+            identityKey,
             author: parsed.author,
             role: parsed.role,
             text: parsed.text,
-            badges: Array.isArray(parsed.badges) ? parsed.badges : [],
-            authorColor: parsed.authorColor || "",
-            node: parsed.node,
+            rowReuseSignal,
+            root: chatRoot,
+        };
+    }
+
+    function cancelModeratorTransition(row) {
+        const transition = moderatorRowTransitions.get(row);
+        if (!transition) return;
+        if (transition.timerId !== null) clearTimeout(transition.timerId);
+        moderatorRowTransitions.delete(row);
+    }
+
+    function clearModeratorTransitions() {
+        for (const transition of moderatorRowTransitions.values()) {
+            if (transition.timerId !== null) clearTimeout(transition.timerId);
+        }
+        moderatorRowTransitions.clear();
+    }
+
+    function detachModeratorRowBinding(row) {
+        const binding = moderatorRowBindings.get(row);
+        moderatorRowBindings.delete(row);
+        row?.removeAttribute?.(MODERATOR_COLLECTED_ATTR);
+        if (binding?.message?.node === row) binding.message.node = null;
+        return binding || null;
+    }
+
+    function bindModeratorRow(row, message, snapshot) {
+        moderatorRowBindings.set(row, {
+            ...snapshot,
+            message,
         });
-        trimModeratorMessages();
-        renderModeratorList();
-        return true;
+        row.setAttribute(MODERATOR_COLLECTED_ATTR, "1");
+        message.node = row;
+        message.sourceIdentityKey = snapshot.identityKey;
+    }
+
+    function isSameBoundModeratorMessage(binding, parsed) {
+        if (!binding || binding.messageId !== parsed.id) return false;
+        if (binding.author !== parsed.author || binding.role !== parsed.role) return false;
+        return binding.text === parsed.text || parsed.isBlind === true;
+    }
+
+    function backfillModeratorMessage(existing, parsed) {
+        existing.node = parsed.node;
+        // text/author/role 은 블라인드 전환이나 단계적 DOM 재사용으로 오염될 수
+        // 있으므로 변경하지 않고, 늦게 붙는 뱃지와 닉네임 색만 보충한다.
+        let backfilled = false;
+        const parsedBadges = Array.isArray(parsed.badges) ? parsed.badges : [];
+        const existingBadges = Array.isArray(existing.badges) ? existing.badges : [];
+        if (!existingBadges.length && parsedBadges.length) {
+            existing.badges = parsedBadges;
+            backfilled = true;
+        }
+        if (!existing.authorColor && parsed.authorColor) {
+            existing.authorColor = parsed.authorColor;
+            backfilled = true;
+        }
+        if (backfilled) renderModeratorList();
+    }
+
+    function commitModeratorMessage(parsed) {
+        if (!isModeratorBoxEnabled() || !parsed.role || !parsed.text) return false;
+
+        let message = moderatorMessages.find((item) => item.id === parsed.id);
+        const added = !message;
+        if (message) {
+            backfillModeratorMessage(message, parsed);
+        } else {
+            collectedMessageIds.add(parsed.id);
+            message = {
+                id: parsed.id,
+                author: parsed.author,
+                role: parsed.role,
+                text: parsed.text,
+                badges: Array.isArray(parsed.badges) ? parsed.badges : [],
+                authorColor: parsed.authorColor || "",
+                node: parsed.node,
+                sourceIdentityKey: "",
+            };
+            moderatorMessages.push(message);
+        }
+
+        bindModeratorRow(parsed.node, message, buildModeratorSnapshot(parsed));
+        if (added) {
+            trimModeratorMessages();
+            renderModeratorList();
+        }
+        return added;
+    }
+
+    function scheduleModeratorTransitionCheck(row, transition) {
+        if (transition.timerId !== null) clearTimeout(transition.timerId);
+        transition.timerId = setTimeout(() => confirmReusedModeratorCandidate(row), MODERATOR_REUSE_STABILITY_CHECK_MS);
+    }
+
+    function stageReusedModeratorCandidate(parsed) {
+        const row = parsed.node;
+        if (!(row instanceof HTMLElement) || !parsed.role || !parsed.text) {
+            cancelModeratorTransition(row);
+            return false;
+        }
+
+        const snapshot = buildModeratorSnapshot(parsed);
+        const revision = rowMutationRevisions.get(row) || 0;
+        let transition = moderatorRowTransitions.get(row);
+        if (!transition) {
+            transition = {
+                root: chatRoot,
+                snapshotKey: snapshot.identityKey,
+                mutationRevision: revision,
+                stablePasses: 0,
+                timerId: null,
+            };
+            moderatorRowTransitions.set(row, transition);
+        } else {
+            transition.root = chatRoot;
+            transition.snapshotKey = snapshot.identityKey;
+            transition.mutationRevision = revision;
+            transition.stablePasses = 0;
+        }
+        scheduleModeratorTransitionCheck(row, transition);
+        return false;
+    }
+
+    function confirmReusedModeratorCandidate(row) {
+        const transition = moderatorRowTransitions.get(row);
+        if (!transition) return;
+        transition.timerId = null;
+
+        if (!row.isConnected || transition.root !== chatRoot || !chatRoot?.contains(row)) {
+            cancelModeratorTransition(row);
+            return;
+        }
+        if (row.querySelector("[aria-haspopup='true'][aria-expanded='true']")) {
+            scheduleModeratorTransitionCheck(row, transition);
+            return;
+        }
+
+        const parsed = parseChatMessage(row);
+        if (!parsed.role || !parsed.text) {
+            cancelModeratorTransition(row);
+            return;
+        }
+
+        const snapshot = buildModeratorSnapshot(parsed);
+        const revision = rowMutationRevisions.get(row) || 0;
+        if (snapshot.identityKey !== transition.snapshotKey || revision !== transition.mutationRevision) {
+            transition.snapshotKey = snapshot.identityKey;
+            transition.mutationRevision = revision;
+            transition.stablePasses = 0;
+            scheduleModeratorTransitionCheck(row, transition);
+            return;
+        }
+
+        transition.stablePasses += 1;
+        if (transition.stablePasses < MODERATOR_REUSE_REQUIRED_STABLE_PASSES) {
+            scheduleModeratorTransitionCheck(row, transition);
+            return;
+        }
+
+        moderatorRowTransitions.delete(row);
+        commitModeratorMessage(parsed);
+    }
+
+    function collectModeratorMessage(parsed) {
+        const row = parsed.node;
+        const binding = moderatorRowBindings.get(row);
+        if (binding && isSameBoundModeratorMessage(binding, parsed)) {
+            cancelModeratorTransition(row);
+            backfillModeratorMessage(binding.message, parsed);
+            row.setAttribute(MODERATOR_COLLECTED_ATTR, "1");
+            return false;
+        }
+
+        if (binding) {
+            detachModeratorRowBinding(row);
+            if (!parsed.role || !parsed.text) {
+                cancelModeratorTransition(row);
+                return false;
+            }
+            return stageReusedModeratorCandidate(parsed);
+        }
+
+        if (moderatorRowTransitions.has(row)) {
+            return stageReusedModeratorCandidate(parsed);
+        }
+
+        if (row?.hasAttribute?.(MODERATOR_COLLECTED_ATTR)) {
+            row.removeAttribute(MODERATOR_COLLECTED_ATTR);
+        }
+        return commitModeratorMessage(parsed);
     }
 
     function scrollToOriginalMessage(message) {
         if (!message.node?.isConnected) return;
+        const binding = moderatorRowBindings.get(message.node);
+        if (binding?.message !== message || binding.messageId !== message.id) return;
         try {
             message.node.scrollIntoView({ block: "center", behavior: "smooth" });
         } catch (_) {
@@ -1780,16 +1948,20 @@ body[theme="dark"] .bcct-moderator-box__empty,
     }
 
     function clearModeratorState() {
+        clearModeratorTransitions();
         for (const row of Array.from(document.querySelectorAll(`[${MODERATOR_COLLECTED_ATTR}]`))) {
             row.removeAttribute(MODERATOR_COLLECTED_ATTR);
         }
         moderatorMessages = [];
         collectedMessageIds = new Set();
+        moderatorRowBindings = new WeakMap();
+        rowMutationRevisions = new WeakMap();
         moderatorListRenderKeys = [];
         renderModeratorList();
     }
 
     function removeInjectedUi({ clearMessages = true } = {}) {
+        clearModeratorTransitions();
         removeAllBlindReveals();
         removeModeratorBox();
         if (clearMessages) clearModeratorState();
@@ -1841,6 +2013,13 @@ body[theme="dark"] .bcct-moderator-box__empty,
         chatMutationBatchShouldSchedule = false;
     }
 
+    function bumpRowMutationRevision(row) {
+        if (!(row instanceof HTMLElement)) return 0;
+        const next = (rowMutationRevisions.get(row) || 0) + 1;
+        rowMutationRevisions.set(row, next);
+        return next;
+    }
+
     function requestFullChatScan({ reparse = false } = {}) {
         forceFullChatScan = true;
         if (reparse) forceReparseChatRows = true;
@@ -1866,6 +2045,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
     function markDirtyChatRow(node, rootEl = chatRoot) {
         const row = getChatRowForNode(node, rootEl);
         if (!row) return false;
+        bumpRowMutationRevision(row);
         dirtyChatRows.add(row);
         chatMutationBatchShouldSchedule = true;
         return true;
@@ -1917,7 +2097,11 @@ body[theme="dark"] .bcct-moderator-box__empty,
         if (!(row instanceof Element)) return null;
         // 수집 표시는 바깥 wrapper 에 붙는데 mutation 경로의 row 는 안쪽
         // 컨테이너로 정규화될 수 있어서 조상까지 확인한다 (closest 는 자신 포함).
-        return row.closest(`[${MODERATOR_COLLECTED_ATTR}]`);
+        const collectedRow = row.closest(`[${MODERATOR_COLLECTED_ATTR}]`);
+        if (!collectedRow) return null;
+        if (moderatorRowBindings.has(collectedRow)) return collectedRow;
+        collectedRow.removeAttribute(MODERATOR_COLLECTED_ATTR);
+        return null;
     }
 
     function markDirtyChatMutationTarget(mutation, rootEl, shouldTrack) {
@@ -1926,13 +2110,24 @@ body[theme="dark"] .bcct-moderator-box__empty,
         // 안쪽 컨테이너에는 본문이 없어 재파싱해도 백필로 이어지지 않으므로,
         // 수집 표시가 붙은 바깥 wrapper 가 있으면 그쪽을 dirty 에 넣는다.
         const collectedRow = getCollectedModeratorRow(row);
-        dirtyChatRows.add(collectedRow instanceof HTMLElement ? collectedRow : row);
+        const dirtyRow = collectedRow instanceof HTMLElement ? collectedRow : row;
+        bumpRowMutationRevision(dirtyRow);
+        dirtyChatRows.add(dirtyRow);
         chatMutationBatchShouldSchedule = true;
         return true;
     }
 
     function clearOriginalTextCachesInRemovedSubtree(node) {
         if (!(node instanceof Element)) return;
+        for (const row of Array.from(moderatorRowTransitions.keys())) {
+            if (row === node || node.contains(row)) cancelModeratorTransition(row);
+        }
+        for (const message of moderatorMessages) {
+            const row = message.node;
+            if (row instanceof Element && (row === node || node.contains(row))) {
+                detachModeratorRowBinding(row);
+            }
+        }
         rowOriginalTexts.delete(node);
         for (const el of node.querySelectorAll("*")) rowOriginalTexts.delete(el);
     }
@@ -2072,7 +2267,10 @@ body[theme="dark"] .bcct-moderator-box__empty,
     function isProcessedChatRow(row) {
         if (!(row instanceof HTMLElement)) return false;
         if (parsedChatRows.has(row)) return true;
-        return row.hasAttribute(BLIND_PROCESSED_ATTR) || row.hasAttribute(MODERATOR_COLLECTED_ATTR);
+        if (row.hasAttribute(MODERATOR_COLLECTED_ATTR) && !moderatorRowBindings.has(row)) {
+            row.removeAttribute(MODERATOR_COLLECTED_ATTR);
+        }
+        return row.hasAttribute(BLIND_PROCESSED_ATTR) || moderatorRowBindings.has(row);
     }
 
     function syncChatTools() {
@@ -2101,6 +2299,15 @@ body[theme="dark"] .bcct-moderator-box__empty,
         renderModeratorList();
     }
 
+    function adoptObservedChatRoot(node) {
+        if (chatRoot !== node) clearModeratorTransitions();
+        for (const message of moderatorMessages) {
+            const row = message.node;
+            if (row instanceof Element && !node.contains(row)) detachModeratorRowBinding(row);
+        }
+        chatRoot = node;
+    }
+
     function startObserver() {
         if (observer) observer.disconnectAll?.();
         observer = createMutationObserverSync({
@@ -2116,12 +2323,12 @@ body[theme="dark"] .bcct-moderator-box__empty,
             shouldSchedule: () => chatMutationBatchShouldSchedule,
             schedule: scheduleSync,
             onObserved: (_observer, node) => {
-                chatRoot = node;
+                adoptObservedChatRoot(node);
                 requestFullChatScan({ reparse: false });
                 scheduleSync();
             },
             onBodyReady: (_observer, node) => {
-                chatRoot = node;
+                adoptObservedChatRoot(node);
                 requestFullChatScan({ reparse: false });
                 scheduleSync();
             },
@@ -2130,6 +2337,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
     function restartRuntime({ clearMessages = false } = {}) {
         if (!isFeatureEnabled()) return;
+        clearModeratorTransitions();
         chatRoot = null;
         removeModeratorBox();
         resetChatProcessingState({ reparse: true });
@@ -2174,7 +2382,10 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
         installRuntime();
         requestFullChatScan({ reparse: true });
-        if (!isModeratorBoxEnabled()) removeModeratorBox();
+        if (!isModeratorBoxEnabled()) {
+            clearModeratorTransitions();
+            removeModeratorBox();
+        }
         if (!isBlindRevealEnabled()) removeAllBlindReveals();
         scheduleSync();
     }

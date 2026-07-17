@@ -6,9 +6,13 @@
 ## 작업 경계
 
 - 요청의 범위와 성공 조건을 먼저 확인하고 관련 파일·호출부·테스트만 읽는다.
-- 사용자가 리뷰를 먼저 요청하면 읽기 전용으로 결과를 먼저 보고하고, 계획을 먼저 요청하면 구현 전 계획에서 멈춘다.
-- 작업 전 `git status`와 기존 diff를 확인한다. 사용자가 만든 변경을 임의로 되돌리거나 덮어쓰지 않는다.
+- 작업 시작 시 현재 branch, HEAD, `git status`, 기존 diff와 요청 대상 branch·version을 확인한다.
+- 현재 branch가 사용자 요청의 대상과 다르면 구현 전에 중단하고 차이를 보고한다. 다른 버전·기능의 계획, fixture, 테스트, 문서를 현재 작업 branch에 섞지 않는다.
+- 새 branch 생성이나 전환은 사용자가 요청했거나 작업에 필요하다고 합의한 경우에만 한다.
+- 사용자가 리뷰를 요청하면 읽기 전용으로 근거와 결과를 먼저 보고하고, 계획을 요청하면 구현 전 계획에서 멈춘다. 구현을 요청하면 안전한 범위에서 구현과 검증까지 완료한다.
+- 사용자가 만든 변경과 추적되지 않은 파일을 임의로 되돌리거나 덮어쓰거나 삭제하지 않는다. 충돌 가능성이 있으면 멈추고 보고한다.
 - 커밋, push, 병합, 태그, 버전 증가, GitHub Release 생성은 사용자가 명시적으로 요청했을 때만 한다.
+- `git reset --hard`, `git clean`, 강제 push처럼 복구가 어렵거나 범위가 넓은 명령은 사용자의 명시적 요청과 정확한 대상 확인 없이 실행하지 않는다.
 - 버그 수정이나 기능 구현에 관계없는 정리·이름 변경·전면 포맷을 같은 변경에 섞지 않는다.
 - 큰 파일은 필요한 함수와 호출부부터 읽는다. 상단에 구조 설명이 **있는 경우** 활용하되, 모든 파일에 헤더가 있다고 가정하지 않는다.
 - 하위 에이전트는 독립적으로 나눌 수 있는 큰 조사에만 최소한으로 사용하고, 작업 범위와 이 문서의 제약을 함께 전달한다.
@@ -53,10 +57,13 @@
 
 콘텐츠 스크립트 파일 목록과 순서는 작업 시점의 `manifest.json`을 다시 확인한다.
 
-- **MAIN world**: 현재 `features/routeBridgePage.js`, `features/chatTimestampPage.js`, `features/autoQualityPage.js`, `features/volumeWheelPage.js`. isolated world의 `BetterChzzk.utils`와 `BetterChzzkSettings`에 직접 접근할 수 없다.
-- **isolated world**: `shared/settings.js` → `shared/data.js` → `content.js` → feature·vendor 순서로 전역 네임스페이스를 공유한다.
+- MAIN world와 isolated world의 실제 파일 목록·순서는 작업 시점의 `manifest.json`을 기준으로 확인한다.
+- MAIN world와 isolated world는 JavaScript 전역을 직접 공유하지 않는다. MAIN world 스크립트는 isolated world의 `BetterChzzk.utils`와 `BetterChzzkSettings`에 직접 접근할 수 없다.
+- isolated world 스크립트는 `manifest.json` 배열 순서대로 로드되며 기존 `BetterChzzk` 전역 네임스페이스를 공유한다. 새 shared 모듈은 모든 소비자보다 먼저 등록한다.
 - world 간 통신은 기존 `CustomEvent`, DOM 속성 등 명시적 브리지를 따른다. 새 전역 공유를 임의로 만들지 않는다.
-- `background.js`는 `shared/settings.js`를 `importScripts()`로 로드하는 service worker다. `shared/settings.js`에서 `window`, `document`, DOM API를 무가드로 사용하지 않는다.
+- `background.js`는 필요한 shared 파일을 `importScripts()`로 로드하는 service worker다. 실제 의존 목록은 `background.js`를 기준으로 확인한다.
+- 시청 기록 변경은 background의 단일 writer 경계를 우회하지 않는다.
+- background에서 사용하는 shared 파일은 `window`, `document` 등 DOM 전역을 무가드로 참조하지 않는다.
 - `options.html`과 `options.js`는 액션 팝업이자 옵션 페이지다. 좁은 팝업을 1차 환경으로 검증한다.
 - `history.html`과 `history.js`는 별도 확장 페이지이며 시청 기록을 `chrome.storage.local`에서 읽는다.
 
@@ -70,6 +77,23 @@
 - 콜백형 `chrome.storage` API를 직접 사용할 때는 같은 콜백 안에서 `chrome.runtime.lastError`를 즉시 확인한다. 가능한 경우 기존 `storageGet`·`storageSet`·`storageRemove` 또는 `getStorageLastError`를 재사용한다.
 - SPA 라우트 변경은 `routeBridgePage.js`와 `content.js`가 연결한다. feature에서는 history API를 다시 패치하지 말고 `startPageChangeDetection(handler)`를 사용한다.
 - DOM 마커는 기존 `betterchzzk-*` ID와 기능별 `data-bc*` 접두어를 따른다.
+
+## DOM·React 수명주기
+
+- 치지직이 만든 DOM 노드는 React의 가상 스크롤이나 재렌더 과정에서 다른 데이터에 재사용되거나 통째로 교체될 수 있다. DOM 노드 객체 자체를 메시지·댓글·카드의 영구 정체성으로 간주하지 않는다.
+- 노드에 저장한 marker, expando, `WeakMap` 상태는 해당 노드가 현재도 같은 데이터와 연결되어 있는지 확인한 뒤 사용한다. 안정적인 원본 ID, 현재 속성, 작성자·본문 같은 검증 가능한 fingerprint와 재사용 신호를 함께 검토한다.
+- 닉네임·역할 배지·본문처럼 서로 연관된 필드가 여러 mutation에 걸쳐 갱신될 수 있으면 중간의 혼합 상태를 완성된 데이터로 확정하지 않는다. 실제 안정화 조건이나 세대·정체성 확인을 사용하고, 단순 지연 시간 증가에 의존하지 않는다.
+- 원본 DOM 노드를 보관해 스크롤·클릭·스타일 복사에 사용할 때는 실행 직전에 저장 당시의 데이터 정체성과 현재 노드의 정체성이 같은지 다시 확인한다.
+- React가 소유한 트리를 불필요하게 비우거나 재부모화하지 않는다. 확장이 소유하는 wrapper와 marker를 명확히 구분하고, 네이티브 DOM 교체 시 필요한 요소만 재부착한다.
+- `MutationObserver`, `ResizeObserver`, `IntersectionObserver`, 이벤트 listener, timer, RAF, abort controller는 기능 비활성화·라우트 변경·DOM 교체 때 정리한다. 재마운트 후 중복 observer나 listener가 남지 않게 한다.
+
+## 비동기·네트워크 수명주기
+
+- 라우트나 대상 VOD·채널에 종속된 요청에는 가능한 경우 `AbortSignal`을 전달하고, generation·token 또는 현재 대상 ID 확인으로 늦은 응답이 새 화면 상태를 덮지 못하게 한다.
+- 외부 signal 취소와 요청 내부 타임아웃이 같은 `AbortError`로 표현될 수 있으면 오류 이름만으로 의미를 추정하지 말고 실제 외부 signal 상태와 호출 계약을 확인한다.
+- 하위 보조 조회 실패가 상위 핵심 데이터까지 폐기해야 하는지 기존 계약을 확인한다. 현재 데이터로 안전하게 계산 가능한 실측 기반 폴백이 있으면 보조 조회만 중단하고, 실패를 성공처럼 표시하지 않는다.
+- 진행 중 Promise나 응답을 캐시할 때 취소된 요청, 실패한 Promise, 다른 소비자의 signal이 캐시에 미치는 영향을 명시한다. 캐시는 상한과 무효화 조건을 갖고 라우트·옵션 수명주기를 넘겨 stale 상태를 보존하지 않는다.
+- 동일 대상의 foreground 요청과 prefetch가 겹치면 기존 요청 공유 여부를 검토하고, observer나 mutation 폭주로 중복 네트워크 요청이 발생하지 않게 한다.
 
 ## UI 구현
 
@@ -103,6 +127,8 @@ npm.cmd run format:check
 ```
 
 - 저장소 전체 `format:check`가 범위 밖의 기존 Prettier drift 때문에 실패하면 변경 파일만 `npx.cmd prettier --check path/to/file...`로 다시 검사한다. 전체 검사 실패와 범위 밖 원인을 별도로 보고하고, 이를 해소하려고 범위 밖 파일을 포맷하지 않는다.
+- 구현을 통과시키기 위해 기존 테스트를 삭제하거나 assertion을 느슨하게 만들지 않는다. 의도된 동작 계약이 바뀌어 테스트 수정이 필요하면 변경 이유와 대체 회귀 범위를 함께 보고한다.
+- 테스트는 가능하면 함수명·정확한 소스 배치보다 사용자에게 보이는 동작, 상태 전이, 호출 횟수와 부작용을 검증한다. 다만 원격 코드·권한·패키징·금지 경로·성능 hot path처럼 정적 정책 검사가 목적이면 소스 가드를 유지한다.
 - `npm.cmd test`는 공용 유틸, 옵션·기록 페이지, 주요 feature와 릴리스 안전 규칙을 포함한다.
 - `tests/release-safety.test.js`는 원문 텍스트를 정규식으로 검사하므로 주석도 실패 원인이 될 수 있다.
 - 일부 성능 가드는 코드 사이 최대 문자 수를 검사한다. hot path를 수정하기 전에 assertion을 읽고, 테스트를 느슨하게 만들지 말고 의도를 보존한다.
@@ -111,11 +137,13 @@ npm.cmd run format:check
 
 관련 화면의 수동 스모크에서는 다음을 변경 범위에 맞게 확인한다.
 
-- 확장이 실제로 로드됐는지 확인한다. 실행 플래그나 자동화 명령 성공만으로 주입 성공을 가정하지 않는다.
+- 실브라우저 접근이 가능하면 완료 보고 전에 확장을 다시 로드하고 대상 치지직 탭을 새로고침한다. 실제 확장 ID, 실행 context, DOM marker와 기능 UI로 주입 성공을 확인한다.
+- 실행 플래그, 자동화 명령 성공 또는 테스트 통과만으로 브라우저 동작과 주입 성공을 가정하지 않는다.
 - 새로고침 진입과 SPA 이동, 옵션 즉시 반영과 비활성화 정리, 라이트·다크 모드, 좁은 옵션 팝업을 확인한다.
 - 라이브·타임머신·VOD·채널 영상 탭·카테고리 목록·시청 기록 중 변경한 기능의 화면을 확인한다.
 - 권한 변경은 승인·거부·기존 승인 상태를 확인한다.
 - 콘솔 오류, 불필요한 반복 요청, MutationObserver 루프가 없는지 확인한다.
+- 실브라우저 검증이 불가능하면 수행한 것처럼 보고하지 않고, 미검증 항목과 사용자가 확인할 수 있는 최소 수동 절차를 적는다.
 
 실브라우저 자동화 방법은 Chrome 빌드와 실행 환경에 따라 달라질 수 있다. 특정 버전·플래그·도구 동작을 영구 규칙으로 보지 말고 실제 확장 ID, isolated execution context, DOM 마커 등으로 로드 성공을 검증한다.
 

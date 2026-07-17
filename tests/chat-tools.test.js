@@ -572,6 +572,46 @@ test("reusing an id-less moderator row with a new virtual index collects the nex
     );
 });
 
+test("a staged id-less row reuse cannot attribute an old moderator message to a viewer", async (t) => {
+    const originalText = "남자를 애차게찾는 버튜버 이거 귀하네요";
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            nickname: "독케익",
+            text: originalText,
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    const row = dom.window.document.querySelector("._item_sg7hy_7");
+    let scrollCalls = 0;
+    row.scrollIntoView = () => {
+        scrollCalls += 1;
+    };
+    row.setAttribute("data-virtual-index", "1");
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 1);
+
+    // React 가 가상 행을 재사용하며 닉네임과 재사용 신호만 먼저 바꾸고,
+    // 이전 운영자 역할과 본문은 잠시 남겨 둔 혼합 상태를 재현한다.
+    row.setAttribute("data-virtual-index", "2");
+    row.querySelector("._nickname_o04z9_57").textContent = "건실한범부";
+    await new Promise((resolve) => setTimeout(resolve, 160));
+
+    // 최종적으로는 일반 시청자의 새 메시지가 된다. 중간 혼합 상태가 모아보기에
+    // 확정됐다면 이 시점에 철회되지 않고 잘못된 두 번째 행으로 남는다.
+    row.querySelector('img[alt="채팅 운영자"]')?.remove();
+    row.querySelector("._text_1vemp_1").textContent = "일반 시청자의 실제 채팅";
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const collected = moderatorRows(dom.window.document);
+    assert.equal(collected.length, 1);
+    assert.equal(collected[0].querySelector(".bcct-moderator-row__author")?.textContent, "독케익");
+    assert.equal(collected[0].querySelector(".bcct-moderator-row__text")?.textContent, originalText);
+    collected[0].click();
+    assert.equal(scrollCalls, 0);
+});
+
 test("reusing an id-less moderator row without an index collects changed content", async (t) => {
     const { dom } = createPageDom(
         realChzzkChatRow({

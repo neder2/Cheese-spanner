@@ -2305,7 +2305,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.2.4");
+    assert.equal(manifest.version, "1.2.5");
     assert.equal(packageJson.version, manifest.version);
     assert.deepEqual(manifest.permissions, ["storage"]);
     assert.deepEqual(manifest.host_permissions, ["https://api.chzzk.naver.com/*", "https://apis.naver.com/*"]);
