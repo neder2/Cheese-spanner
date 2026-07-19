@@ -106,6 +106,7 @@
     let skipValueEl = null;
     let skipPillAnchorEl = null;
     let liveFastForwardButtonEl = null;
+    const liveFastForwardButtonsWithClickHandler = new WeakSet();
     let lastUrl = location.href;
     let pageChangeTimer = null;
     let attachedVideo = null;
@@ -1342,6 +1343,12 @@
         syncLiveFastForwardButtonState(button);
     }
 
+    function ensureLiveFastForwardButtonClickHandler(button) {
+        if (!(button instanceof HTMLButtonElement) || liveFastForwardButtonsWithClickHandler.has(button)) return;
+        button.addEventListener("click", handleLiveFastForwardClick, true);
+        liveFastForwardButtonsWithClickHandler.add(button);
+    }
+
     function createLiveFastForwardButton() {
         injectSkipStyleOnce();
 
@@ -1357,7 +1364,7 @@
   </svg>
 </ui-next-media-icon>
 `;
-        button.addEventListener("click", handleLiveFastForwardClick, true);
+        ensureLiveFastForwardButtonClickHandler(button);
 
         liveFastForwardButtonEl = button;
         return button;
@@ -1604,6 +1611,7 @@
         injectSkipStyleOnce();
 
         const button = existing || createLiveFastForwardButton();
+        ensureLiveFastForwardButtonClickHandler(button);
         if (!mountLiveFastForwardButton(button, container)) return;
         syncLiveFastForwardButtonState(button);
     }

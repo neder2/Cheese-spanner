@@ -74,6 +74,7 @@
         },
         vodCommentTabsEnabled: { kind: "bool", default: true, feature: true },
         chatTimestampEnabled: { kind: "bool", default: false, feature: true },
+        chatWelcomeMessageRemovalEnabled: { kind: "bool", default: false, feature: true },
         chatToolsShowBlindEnabled: { kind: "bool", default: false, feature: true },
         chatToolsModeratorBoxEnabled: { kind: "bool", default: false, feature: true },
         chatToolsMaxModeratorMessages: {

@@ -1984,6 +1984,7 @@ test("options places chat tools controls in a dedicated section", () => {
     const { document } = dom.window;
     const section = queryOption(document, "chatToolsShowBlindEnabled").closest(".settings-card");
     const optionOrder = Array.from(section.querySelectorAll("[data-option]")).map((input) => input.dataset.option);
+    const welcomeMessageRemoval = queryOption(document, "chatWelcomeMessageRemovalEnabled");
     const showBlind = queryOption(document, "chatToolsShowBlindEnabled");
     const moderatorBox = queryOption(document, "chatToolsModeratorBoxEnabled");
     const maxMessages = queryOption(document, "chatToolsMaxModeratorMessages");
@@ -1995,11 +1996,14 @@ test("options places chat tools controls in a dedicated section", () => {
     assert.deepEqual(optionOrder, [
         "vodCommentTabsEnabled",
         "chatTimestampEnabled",
+        "chatWelcomeMessageRemovalEnabled",
         "chatToolsShowBlindEnabled",
         "chatToolsModeratorBoxEnabled",
         "chatToolsMaxModeratorMessages",
     ]);
     assert.deepEqual(groupLabels, ["댓글·표시", "채팅 관리"]);
+    assert.equal(welcomeMessageRemoval.closest("label").textContent.trim(), "채팅방 환영 메시지 제거");
+    assert.equal(welcomeMessageRemoval.checked, false);
     assert.equal(showBlind.disabled, false);
     assert.equal(maxMessages.disabled, true);
 
@@ -7778,6 +7782,38 @@ test("live fast-forward button seeks to the buffered live edge", async () => {
         }
         await waitForAsyncCallbacks();
         dom.window.close();
+    }
+});
+
+test("live fast-forward button reattaches its click handler when adopting existing DOM", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            skipLivePauseResumeEnabled: false,
+        },
+    });
+    const { controls, document, dom, state } = createLiveTimeShiftGuardDom(chrome);
+    const existingButton = document.createElement("button");
+
+    existingButton.id = "betterchzzk-live-fast-forward";
+    existingButton.type = "button";
+    controls.appendChild(existingButton);
+    state.bufferedEnd = 42;
+    state.currentTime = 12;
+    state.seekableEnd = 42;
+
+    try {
+        await loadSkipControlPage(dom);
+
+        const button = document.getElementById("betterchzzk-live-fast-forward");
+        assert.equal(button, existingButton);
+        assert.equal(button.disabled, false);
+
+        const click = new dom.window.MouseEvent("click", { bubbles: true, cancelable: true });
+        assert.equal(button.dispatchEvent(click), false);
+        assert.equal(click.defaultPrevented, true);
+        assert.equal(state.currentTime, 42);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
     }
 });
 

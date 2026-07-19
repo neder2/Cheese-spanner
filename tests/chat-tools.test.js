@@ -161,6 +161,191 @@ function openModeratorPanel(document) {
     return trigger;
 }
 
+test("welcome message removal stays off by default and survives enable, remount, and re-enable", async (t) => {
+    const { chrome, dom } = createPageDom(
+        '<div class="_item_8lqsk_7 _big_padding_8lqsk_53">' +
+            '<div class="_container_s1cb2_1 _welcome_s1cb2_18">채팅방에 오신 것을 환영합니다!</div>' +
+            "</div>" +
+            '<div class="_item_8lqsk_7">일반 채팅</div>',
+        {
+            chatWelcomeMessageRemovalEnabled: false,
+            chatToolsShowBlindEnabled: false,
+            chatToolsModeratorBoxEnabled: false,
+        }
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(chrome.testState.storageChangeListeners.length > 0);
+
+    const chatLog = dom.window.document.querySelector("[role='log']");
+    let welcomeRow = chatLog.firstElementChild;
+    let welcome = welcomeRow.firstElementChild;
+    let ordinaryChat = welcomeRow.nextElementSibling;
+
+    assert.equal(dom.window.document.getElementById("betterchzzk-chat-welcome-message-style"), null);
+    assert.notEqual(dom.window.getComputedStyle(welcomeRow).display, "none");
+    assert.notEqual(dom.window.getComputedStyle(welcome).display, "none");
+    assert.notEqual(dom.window.getComputedStyle(ordinaryChat).display, "none");
+
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener(
+            {
+                chatWelcomeMessageRemovalEnabled: { oldValue: false, newValue: true },
+            },
+            "sync"
+        );
+    }
+    await waitForCondition(() => dom.window.document.getElementById("betterchzzk-chat-welcome-message-style"));
+
+    chatLog.innerHTML =
+        '<div class="_item_8lqsk_7 _big_padding_8lqsk_53">' +
+        '<div class="_container_s1cb2_1 _welcome_s1cb2_18">채팅방에 다시 오신 것을 환영합니다!</div>' +
+        "</div>" +
+        '<div class="_item_8lqsk_7">새 일반 채팅</div>';
+    welcomeRow = chatLog.firstElementChild;
+    welcome = welcomeRow.firstElementChild;
+    ordinaryChat = welcomeRow.nextElementSibling;
+
+    assert.equal(dom.window.document.querySelectorAll("#betterchzzk-chat-welcome-message-style").length, 1);
+    assert.equal(dom.window.getComputedStyle(welcomeRow).display, "none");
+    assert.equal(dom.window.getComputedStyle(welcome).display, "none");
+    assert.notEqual(dom.window.getComputedStyle(ordinaryChat).display, "none");
+
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener(
+            {
+                chatWelcomeMessageRemovalEnabled: { oldValue: true, newValue: false },
+            },
+            "sync"
+        );
+    }
+
+    assert.equal(dom.window.document.getElementById("betterchzzk-chat-welcome-message-style"), null);
+    assert.notEqual(dom.window.getComputedStyle(welcomeRow).display, "none");
+    assert.notEqual(dom.window.getComputedStyle(welcome).display, "none");
+
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener(
+            {
+                chatWelcomeMessageRemovalEnabled: { oldValue: false, newValue: true },
+            },
+            "sync"
+        );
+    }
+
+    assert.equal(dom.window.document.querySelectorAll("#betterchzzk-chat-welcome-message-style").length, 1);
+    assert.equal(dom.window.getComputedStyle(welcomeRow).display, "none");
+    assert.equal(dom.window.getComputedStyle(welcome).display, "none");
+});
+
+test("welcome message removal also hides the clean-chat filtering notice row", async (t) => {
+    const { chrome, dom } = createPageDom(
+        '<div class="_item_8lqsk_7 _big_padding_8lqsk_53">' +
+            '<div class="_container_s1cb2_1 _filter_s1cb2_22">' +
+            '<div class="_inner_s1cb2_15">' +
+            '<span class="_icon_s1cb2_60" aria-hidden="true"></span>' +
+            "<p>쾌적한 시청 환경을 위해 일부 메시지는 필터링 됩니다. 클린 라이브 채팅 문화 만들기에 동참해 주세요.</p>" +
+            "</div>" +
+            "</div>" +
+            "</div>" +
+            '<div class="_item_8lqsk_7">일반 채팅</div>',
+        {
+            chatWelcomeMessageRemovalEnabled: false,
+            chatToolsShowBlindEnabled: false,
+            chatToolsModeratorBoxEnabled: false,
+        }
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const chatLog = dom.window.document.querySelector("[role='log']");
+    let filteringNoticeRow = chatLog.firstElementChild;
+    let filteringNotice = filteringNoticeRow.firstElementChild;
+    let ordinaryChat = filteringNoticeRow.nextElementSibling;
+
+    assert.notEqual(dom.window.getComputedStyle(filteringNoticeRow).display, "none");
+    assert.notEqual(dom.window.getComputedStyle(filteringNotice).display, "none");
+
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener(
+            {
+                chatWelcomeMessageRemovalEnabled: { oldValue: false, newValue: true },
+            },
+            "sync"
+        );
+    }
+
+    await waitForCondition(() => dom.window.document.getElementById("betterchzzk-chat-welcome-message-style"));
+
+    assert.equal(dom.window.getComputedStyle(filteringNoticeRow).display, "none");
+    assert.equal(dom.window.getComputedStyle(filteringNotice).display, "none");
+    assert.notEqual(dom.window.getComputedStyle(ordinaryChat).display, "none");
+
+    chatLog.replaceChildren(filteringNoticeRow.cloneNode(true), ordinaryChat.cloneNode(true));
+    filteringNoticeRow = chatLog.firstElementChild;
+    filteringNotice = filteringNoticeRow.firstElementChild;
+    ordinaryChat = filteringNoticeRow.nextElementSibling;
+
+    assert.equal(dom.window.getComputedStyle(filteringNoticeRow).display, "none");
+    assert.equal(dom.window.getComputedStyle(filteringNotice).display, "none");
+    assert.notEqual(dom.window.getComputedStyle(ordinaryChat).display, "none");
+
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener(
+            {
+                chatWelcomeMessageRemovalEnabled: { oldValue: true, newValue: false },
+            },
+            "sync"
+        );
+    }
+
+    assert.notEqual(dom.window.getComputedStyle(filteringNoticeRow).display, "none");
+    assert.notEqual(dom.window.getComputedStyle(filteringNotice).display, "none");
+});
+
+test("welcome message removal restores a remounted welcome row when disabled", async (t) => {
+    const { chrome, dom } = createPageDom("", {
+        chatWelcomeMessageRemovalEnabled: true,
+        chatToolsShowBlindEnabled: false,
+        chatToolsModeratorBoxEnabled: false,
+    });
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.getElementById("betterchzzk-chat-welcome-message-style"));
+
+    const chatLog = dom.window.document.querySelector("[role='log']");
+    chatLog.innerHTML =
+        '<div class="_item_8lqsk_7 _big_padding_8lqsk_53">' +
+        '<div class="_container_s1cb2_1 _welcome_s1cb2_18">채팅방에 오신 것을 환영합니다!</div>' +
+        "</div>" +
+        '<div class="_item_8lqsk_7">일반 채팅</div>';
+    const welcomeRow = chatLog.firstElementChild;
+    const welcome = welcomeRow.firstElementChild;
+    const ordinaryChat = welcomeRow.nextElementSibling;
+
+    assert.equal(dom.window.getComputedStyle(welcomeRow).display, "none");
+    assert.equal(dom.window.getComputedStyle(welcome).display, "none");
+    assert.notEqual(dom.window.getComputedStyle(ordinaryChat).display, "none");
+
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener(
+            {
+                chatWelcomeMessageRemovalEnabled: { oldValue: true, newValue: false },
+            },
+            "sync"
+        );
+    }
+
+    assert.equal(dom.window.document.getElementById("betterchzzk-chat-welcome-message-style"), null);
+    assert.notEqual(dom.window.getComputedStyle(welcomeRow).display, "none");
+    assert.notEqual(dom.window.getComputedStyle(welcome).display, "none");
+});
+
 test("blind message with hidden original text replaces the notice with a strikethrough original", async (t) => {
     const { dom } = createPageDom(
         [
@@ -1211,6 +1396,215 @@ test("moderator trigger does not move into the chat input controls", async (t) =
     assert.equal(trigger.nextElementSibling, menuButton);
 });
 
+test("moderator trigger moves to a native chat header that mounts later", async (t) => {
+    const { dom } = createPageDom("");
+    t.after(() => closeChatToolsDom(dom));
+
+    const document = dom.window.document;
+    const panelRoot = document.querySelector("aside.live_chatting_area");
+    document.querySelector(".chat-header").remove();
+
+    loadChatTools(dom);
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+    assert.equal(document.querySelector(".bcct-moderator-trigger").parentElement, panelRoot);
+
+    panelRoot.insertAdjacentHTML(
+        "afterbegin",
+        [
+            '<div class="chat-header">',
+            "<strong>채팅</strong>",
+            '<button class="chat-more" type="button" aria-label="더보기">⋮</button>',
+            "</div>",
+        ].join("")
+    );
+    document
+        .querySelector(".chat-list")
+        .insertAdjacentHTML("beforeend", '<div class="chat-row"><span class="message">새 채팅</span></div>');
+
+    const mountedHeader = document.querySelector(".chat-header");
+    await waitForCondition(() => mountedHeader.querySelector(".bcct-moderator-trigger"));
+
+    const trigger = mountedHeader.querySelector(".bcct-moderator-trigger");
+    const menuButton = mountedHeader.querySelector(".chat-more");
+    assert.equal(trigger.nextElementSibling, menuButton);
+});
+
+test("moderator trigger leaves a provisional header button when the real menu mounts", async (t) => {
+    const { dom } = createPageDom("");
+    t.after(() => closeChatToolsDom(dom));
+
+    const document = dom.window.document;
+    const header = document.querySelector(".chat-header");
+    header.querySelector(".chat-more").remove();
+
+    loadChatTools(dom);
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+    assert.equal(document.querySelector(".bcct-moderator-trigger").nextElementSibling?.className, "chat-collapse");
+
+    header.insertAdjacentHTML("beforeend", '<button class="chat-more" type="button" aria-label="더보기">⋮</button>');
+
+    await waitForCondition(
+        () =>
+            document.querySelector(".bcct-moderator-trigger")?.nextElementSibling === header.querySelector(".chat-more")
+    );
+});
+
+test("moderator UI stays mounted while a native chat menu remains unavailable", async (t) => {
+    const { dom } = createPageDom("");
+    t.after(() => closeChatToolsDom(dom));
+
+    const document = dom.window.document;
+    const panelRoot = document.querySelector("aside.live_chatting_area");
+    document.querySelector(".chat-header").remove();
+
+    loadChatTools(dom);
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+    const initialTrigger = document.querySelector(".bcct-moderator-trigger");
+    const initialBox = document.querySelector(".bcct-moderator-box");
+
+    document
+        .querySelector(".chat-list")
+        .insertAdjacentHTML("beforeend", '<div class="chat-row"><span class="message">새 채팅</span></div>');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    assert.equal(document.querySelector(".bcct-moderator-trigger"), initialTrigger);
+    assert.equal(document.querySelector(".bcct-moderator-box"), initialBox);
+
+    panelRoot.insertAdjacentHTML(
+        "beforeend",
+        [
+            '<div class="chat-input-controls" aria-label="chat input">',
+            '<button type="button" aria-label="emoji menu">menu</button>',
+            '<textarea aria-label="chat input"></textarea>',
+            "</div>",
+        ].join("")
+    );
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    assert.equal(document.querySelector(".bcct-moderator-trigger"), initialTrigger);
+    assert.equal(document.querySelector(".bcct-moderator-box"), initialBox);
+});
+
+test("missing-menu anchor tracking reconnects after the chat root is replaced", async (t) => {
+    const { dom } = createPageDom("");
+    t.after(() => closeChatToolsDom(dom));
+
+    const document = dom.window.document;
+    const panelRoot = document.querySelector("aside.live_chatting_area");
+    document.querySelector(".chat-header").remove();
+
+    loadChatTools(dom);
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+
+    const oldRoot = document.querySelector(".chat-list");
+    const newRoot = document.createElement("div");
+    newRoot.className = "chat-list";
+    newRoot.setAttribute("role", "log");
+    oldRoot.replaceWith(newRoot);
+    panelRoot.insertAdjacentHTML(
+        "afterbegin",
+        [
+            '<div class="chat-header">',
+            "<strong>채팅</strong>",
+            '<button class="chat-more" type="button" aria-label="더보기">⋮</button>',
+            "</div>",
+        ].join("")
+    );
+    newRoot.insertAdjacentHTML("beforeend", '<div class="chat-row"><span class="message">교체 후 새 채팅</span></div>');
+
+    const mountedHeader = document.querySelector(".chat-header");
+    await waitForCondition(() => mountedHeader.querySelector(".bcct-moderator-trigger"));
+    assert.equal(
+        mountedHeader.querySelector(".bcct-moderator-trigger").nextElementSibling,
+        mountedHeader.querySelector(".chat-more")
+    );
+});
+
+test("remounting an id-less moderator row while toggling the panel preserves one collected message", async (t) => {
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            nickname: "실제 운영자",
+            text: "한 번만 모아야 하는 안내",
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    const chatList = dom.window.document.querySelector(".chat-list");
+    chatList.removeAttribute("role");
+    chatList.className = "_container_sg7hy_1";
+
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length >= 1);
+
+    const trigger = dom.window.document.querySelector(".bcct-moderator-trigger");
+    assert.ok(trigger);
+    trigger.click();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const sourceRow = dom.window.document.querySelector("._item_sg7hy_7");
+    const remountedRow = sourceRow.cloneNode(true);
+    let scrollCalls = 0;
+    remountedRow.scrollIntoView = () => {
+        scrollCalls += 1;
+    };
+    sourceRow.replaceWith(remountedRow);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    trigger.click();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    trigger.click();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const rows = moderatorRows(dom.window.document);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].querySelector(".bcct-moderator-row__text")?.textContent, "한 번만 모아야 하는 안내");
+    assert.equal(dom.window.document.querySelector(".bcct-moderator-trigger__count")?.textContent, "1");
+    assert.equal(
+        dom.window.document.querySelector(".chat-header").hasAttribute("data-bcct-moderator-collected"),
+        false
+    );
+    rows[0].click();
+    assert.equal(scrollCalls, 1);
+});
+
+test("remounting identical id-less moderator rows preserves each collected identity", async (t) => {
+    const rowMarkup = realChzzkChatRow({
+        badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+        nickname: "동일 운영자",
+        text: "동일한 반복 안내",
+    });
+    const { dom } = createPageDom(rowMarkup + rowMarkup);
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 2);
+
+    dom.window.document.querySelector(".chat-list").innerHTML = rowMarkup + rowMarkup;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    assert.equal(moderatorRows(dom.window.document).length, 2);
+});
+
+test("separate removal and addition records keep a new identical id-less moderator message", async (t) => {
+    const rowMarkup = realChzzkChatRow({
+        badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+        nickname: "반복 운영자",
+        text: "실제로 다시 보낸 안내",
+    });
+    const { dom } = createPageDom(rowMarkup);
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 1);
+
+    const chatList = dom.window.document.querySelector(".chat-list");
+    chatList.firstElementChild.remove();
+    chatList.insertAdjacentHTML("beforeend", rowMarkup);
+
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 2);
+});
+
 test("duplicate mutations do not duplicate collected manager messages", async (t) => {
     const { dom } = createPageDom(
         [
@@ -1252,6 +1646,28 @@ test("nested chat row candidates are processed as a single outer row", async (t)
     assert.match(moderatorRows(dom.window.document)[0].textContent, /중첩 후보가 있어도 한 번만 수집/);
 });
 
+test("an explicitly identified outer row outranks a nested structural candidate", async (t) => {
+    const { dom } = createPageDom(
+        [
+            '<div data-chat-id="manager-nested-identity">',
+            '<span class="badge" aria-label="매니저"></span>',
+            '<span class="nickname">manager</span>',
+            '<div class="chat-item">',
+            '<span class="message">바깥 행의 역할 정보 유지</span>',
+            "</div>",
+            "</div>",
+        ].join("")
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 1);
+
+    const sourceRow = dom.window.document.querySelector('[data-chat-id="manager-nested-identity"]');
+    assert.equal(sourceRow.getAttribute("data-bcct-moderator-collected"), "1");
+    assert.match(moderatorRows(dom.window.document)[0].textContent, /바깥 행의 역할 정보 유지/);
+});
+
 test("added chat rows are processed without reparsing the whole list", async (t) => {
     const { dom } = createPageDom(
         [
@@ -1282,6 +1698,156 @@ test("added chat rows are processed without reparsing the whole list", async (t)
     await waitForCondition(() => moderatorRows(dom.window.document).length === 1);
 
     assert.match(moderatorRows(dom.window.document)[0].textContent, /증분 추가 수집/);
+});
+
+test("incremental moderator sync reuses mounted UI and skips disabled blind cleanup scans", async (t) => {
+    const { dom } = createPageDom('<div class="chat-row"><span class="message">기존 일반 채팅</span></div>', {
+        chatToolsShowBlindEnabled: false,
+        chatToolsModeratorBoxEnabled: true,
+    });
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-box"));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const document = dom.window.document;
+    const panelRoot = document.querySelector("aside.live_chatting_area");
+    const originalDocumentQuerySelectorAll = document.querySelectorAll.bind(document);
+    const originalPanelQuerySelectorAll = panelRoot.querySelectorAll.bind(panelRoot);
+    let blindCleanupScans = 0;
+    let panelHeaderScans = 0;
+    document.querySelectorAll = (selector) => {
+        if (selector === "[data-bcct-blind-processed]") blindCleanupScans += 1;
+        return originalDocumentQuerySelectorAll(selector);
+    };
+    panelRoot.querySelectorAll = (selector) => {
+        panelHeaderScans += 1;
+        return originalPanelQuerySelectorAll(selector);
+    };
+
+    document
+        .querySelector(".chat-list")
+        .insertAdjacentHTML(
+            "beforeend",
+            [
+                '<div class="chat-row" data-chat-id="manager-incremental-scan">',
+                '<span class="badge" aria-label="매니저"></span>',
+                '<span class="nickname">manager</span>',
+                '<span class="message">증분 스캔 확인</span>',
+                "</div>",
+            ].join("")
+        );
+
+    await waitForCondition(() => moderatorRows(document).length === 1);
+    assert.equal(blindCleanupScans, 0);
+    assert.equal(panelHeaderScans, 0);
+});
+
+test("panel toggles do not create a mutation feedback loop on the broad chat root", async (t) => {
+    const { dom } = createPageDom("");
+    t.after(() => closeChatToolsDom(dom));
+
+    const chatList = dom.window.document.querySelector(".chat-list");
+    chatList.removeAttribute("role");
+    chatList.className = "_container_sg7hy_1";
+
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const trigger = dom.window.document.querySelector(".bcct-moderator-trigger");
+    const originalGetAttribute = trigger.getAttribute.bind(trigger);
+    let moderatorStateReads = 0;
+    trigger.getAttribute = (name) => {
+        if (name === "aria-expanded" || name === "aria-label") moderatorStateReads += 1;
+        return originalGetAttribute(name);
+    };
+
+    trigger.click();
+    await new Promise((resolve) => setTimeout(resolve, 700));
+
+    assert.equal(moderatorStateReads, 2);
+});
+
+test("removing one virtualized row does not reparse every surviving sibling", async (t) => {
+    const rows = Array.from({ length: 40 }, (_, index) =>
+        realChzzkChatRow({ nickname: `viewer-${index}`, text: `일반 채팅 ${index}`, nicknameColor: "" })
+    ).join("");
+    const { dom } = createPageDom("");
+    t.after(() => closeChatToolsDom(dom));
+
+    const { wrapper } = installRealChzzkPinnedWrapper(dom.window.document, rows);
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const removedRow = wrapper.firstElementChild;
+    const survivingRows = new Set(Array.from(wrapper.children).slice(1));
+    const originalQuerySelectorAll = dom.window.Element.prototype.querySelectorAll;
+    let survivingTreeScans = 0;
+    dom.window.Element.prototype.querySelectorAll = function (selector) {
+        if (selector === "*" && survivingRows.has(this)) survivingTreeScans += 1;
+        return originalQuerySelectorAll.call(this, selector);
+    };
+
+    removedRow.remove();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    assert.equal(survivingTreeScans, 0);
+});
+
+test("a capped batch of moderator messages renders the final list once", async (t) => {
+    const initialRows = Array.from({ length: 20 }, (_, index) =>
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            nickname: `manager-${index}`,
+            text: `기존 운영자 안내 ${index}`,
+            chatId: `manager-existing-${index}`,
+        })
+    ).join("");
+    const { dom } = createPageDom(initialRows, {
+        chatToolsShowBlindEnabled: false,
+        chatToolsMaxModeratorMessages: 20,
+    });
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 20);
+
+    const list = dom.window.document.querySelector(".bcct-moderator-box__list");
+    const originalAppendChild = list.appendChild.bind(list);
+    let appendedRows = 0;
+    list.appendChild = (node) => {
+        if (node.classList?.contains("bcct-moderator-row")) appendedRows += 1;
+        return originalAppendChild(node);
+    };
+
+    const addedRows = Array.from({ length: 10 }, (_, index) =>
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            nickname: `new-manager-${index}`,
+            text: `새 운영자 안내 ${index}`,
+            chatId: `manager-added-batch-${index}`,
+        })
+    ).join("");
+    dom.window.document.querySelector(".chat-list").insertAdjacentHTML("beforeend", addedRows);
+
+    await waitForCondition(() =>
+        moderatorRows(dom.window.document).some(
+            (row) => row.querySelector(".bcct-moderator-row__text")?.textContent === "새 운영자 안내 9"
+        )
+    );
+
+    assert.equal(moderatorRows(dom.window.document).length, 20);
+    assert.ok(appendedRows <= 20, `expected one final render, got ${appendedRows} row appends`);
+    assert.deepEqual(
+        moderatorRows(dom.window.document).map((row) => row.querySelector(".bcct-moderator-row__text")?.textContent),
+        [
+            ...Array.from({ length: 10 }, (_, index) => `기존 운영자 안내 ${index + 10}`),
+            ...Array.from({ length: 10 }, (_, index) => `새 운영자 안내 ${index}`),
+        ]
+    );
 });
 
 test("dirty blind rows are reparsed when hidden original text changes", async (t) => {
