@@ -2135,3 +2135,180 @@ test("moderator collection reconnects after a pinned chat root is wholly replace
     assert.equal(collected.querySelector(".bcct-moderator-row__author").textContent, "교체 후 매니저");
     assert.equal(collected.querySelector(".bcct-moderator-row__text").textContent, "교체 후 실제 수집");
 });
+
+test("replacing the whole chat root preserves id-less moderator backlog identities", async (t) => {
+    const firstRow = realChzzkChatRow({
+        badgeImg: '<img src="https://example.test/chzzk-role-root-a.png" alt="채팅 운영자" width="18" height="18">',
+        nickname: "첫 운영자",
+        text: "루트 교체 전 첫 안내",
+    });
+    const secondRow = realChzzkChatRow({
+        badgeImg: '<img src="https://example.test/chzzk-role-root-b.png" alt="채팅 운영자" width="18" height="18">',
+        nickname: "둘째 운영자",
+        text: "루트 교체 전 둘째 안내",
+    });
+    const { dom } = createPageDom(firstRow + secondRow);
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 2);
+
+    const document = dom.window.document;
+    const area = document.querySelector(".live_chatting_area");
+    const oldList = document.querySelector(".chat-list");
+    oldList.remove();
+
+    const newList = document.createElement("div");
+    newList.className = "chat-list _container_sg7hy_1 _exist_fixed_message_sg7hy_83";
+    newList.setAttribute("role", "log");
+    newList.innerHTML = `<div class="_wrapper_sg7hy_25">${firstRow}${secondRow}</div>`;
+    area.appendChild(newList);
+
+    await waitForCondition(() => newList.querySelectorAll("[data-bcct-moderator-collected]").length === 2);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    assert.equal(moderatorRows(document).length, 2);
+    assert.deepEqual(
+        moderatorRows(document).map((row) => row.querySelector(".bcct-moderator-row__text")?.textContent),
+        ["루트 교체 전 첫 안내", "루트 교체 전 둘째 안내"]
+    );
+});
+
+test("repeated root replacements and timestamp mutation storms do not multiply identical id-less backlog", async (t) => {
+    const rowMarkup = realChzzkChatRow({
+        badgeImg:
+            '<img src="https://example.test/chzzk-role-root-stress.png" alt="채팅 운영자" width="18" height="18">',
+        nickname: "반복 운영자",
+        text: "내용까지 같은 반복 안내",
+    });
+    const { dom } = createPageDom(rowMarkup.repeat(3), {
+        chatTimestampEnabled: true,
+    });
+    t.after(() => closeChatToolsDom(dom));
+
+    const document = dom.window.document;
+    for (const message of document.querySelectorAll("._chatting_message_1vemp_21")) {
+        message.setAttribute("data-bcmt-time", "13:00");
+    }
+
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 3);
+
+    for (let cycle = 1; cycle <= 3; cycle += 1) {
+        const oldList = document.querySelector(".chat-list");
+        const newList = document.createElement("div");
+        newList.className = "chat-list _container_sg7hy_1 _exist_fixed_message_sg7hy_83";
+        newList.setAttribute("role", "log");
+        newList.innerHTML = `<div class="_wrapper_sg7hy_25">${rowMarkup.repeat(3)}</div>`;
+
+        for (const [index, message] of Array.from(newList.querySelectorAll("._chatting_message_1vemp_21")).entries()) {
+            message.setAttribute("data-bcmt-time", `13:0${cycle}`);
+            message.setAttribute("aria-label", `hydrated-${cycle}-${index}`);
+        }
+
+        oldList.replaceWith(newList);
+
+        await waitForCondition(() => newList.querySelectorAll("[data-bcct-moderator-collected]").length === 3, {
+            timeoutMs: 2500,
+        });
+
+        // 관찰이 새 root로 옮겨 붙은 뒤 타임스탬프와 스타일 mutation이 연달아
+        // 발생해도 기존 세 행의 백필만 일어나고 수집 개수는 늘지 않아야 한다.
+        for (const [index, message] of Array.from(newList.querySelectorAll("._chatting_message_1vemp_21")).entries()) {
+            message.setAttribute("data-bcmt-time", `14:${cycle}${index}`);
+            message.setAttribute("style", `--stress-cycle: ${cycle}; --stress-index: ${index}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+
+        assert.equal(moderatorRows(document).length, 3);
+        assert.equal(document.querySelectorAll(".bcct-moderator-row__time").length, 3);
+        assert.equal(document.querySelector(".bcct-moderator-trigger__count")?.textContent, "3");
+    }
+});
+
+test("delayed backlog hydration after an empty root sync preserves id-less identities", async (t) => {
+    const firstRow = realChzzkChatRow({
+        badgeImg: '<img src="https://example.test/chzzk-role-delayed-a.png" alt="채팅 운영자" width="18" height="18">',
+        nickname: "지연 첫 운영자",
+        text: "빈 루트 뒤 늦게 복원된 첫 안내",
+    });
+    const secondRow = realChzzkChatRow({
+        badgeImg: '<img src="https://example.test/chzzk-role-delayed-b.png" alt="채팅 운영자" width="18" height="18">',
+        nickname: "지연 둘째 운영자",
+        text: "빈 루트 뒤 늦게 복원된 둘째 안내",
+    });
+    const { dom } = createPageDom(firstRow + secondRow);
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 2);
+
+    const document = dom.window.document;
+    const oldList = document.querySelector(".chat-list");
+    const newList = document.createElement("div");
+    newList.className = "chat-list _container_sg7hy_1 _exist_fixed_message_sg7hy_83";
+    newList.setAttribute("role", "log");
+    newList.innerHTML = '<div class="_wrapper_sg7hy_25"></div>';
+
+    // 트리거를 일부러 떼어 새 빈 root를 대상으로 한 full sync가 실제로 끝났음을
+    // DOM에서 확인한 뒤, 별도 mutation으로 기존 backlog를 늦게 hydration한다.
+    document.querySelector("[data-bcct-moderator-actions]")?.remove();
+    oldList.replaceWith(newList);
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"), {
+        timeoutMs: 2500,
+    });
+
+    const wrapper = newList.querySelector("._wrapper_sg7hy_25");
+    wrapper.insertAdjacentHTML("beforeend", firstRow + secondRow);
+    await waitForCondition(() => newList.querySelectorAll("[data-bcct-moderator-collected]").length === 2);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    assert.equal(moderatorRows(document).length, 2);
+    assert.deepEqual(
+        moderatorRows(document).map((row) => row.querySelector(".bcct-moderator-row__text")?.textContent),
+        ["빈 루트 뒤 늦게 복원된 첫 안내", "빈 루트 뒤 늦게 복원된 둘째 안내"]
+    );
+});
+
+test("root replacement consumes old identical candidates once and keeps extra identical messages", async (t) => {
+    const rowMarkup = realChzzkChatRow({
+        badgeImg:
+            '<img src="https://example.test/chzzk-role-root-overlap.png" alt="채팅 운영자" width="18" height="18">',
+        nickname: "동일 운영자",
+        text: "완전히 같은 신규 안내",
+    });
+    const { dom } = createPageDom(rowMarkup.repeat(2));
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 2);
+
+    const document = dom.window.document;
+    const oldList = document.querySelector(".chat-list");
+    const newList = document.createElement("div");
+    newList.className = "chat-list _container_sg7hy_1 _exist_fixed_message_sg7hy_83";
+    newList.setAttribute("role", "log");
+    newList.innerHTML = `<div class="_wrapper_sg7hy_25">${rowMarkup.repeat(3)}</div>`;
+    oldList.replaceWith(newList);
+
+    // 두 행은 교체 전 backlog와 연결되고, 같은 내용이어도 초과한 세 번째 행은
+    // 실제 신규 메시지로 수집되어야 한다.
+    await waitForCondition(
+        () =>
+            newList.querySelectorAll("[data-bcct-moderator-collected]").length === 3 &&
+            moderatorRows(document).length === 3,
+        { timeoutMs: 2500 }
+    );
+    assert.deepEqual(
+        moderatorRows(document).map((row) => row.querySelector(".bcct-moderator-row__text")?.textContent),
+        Array(3).fill("완전히 같은 신규 안내")
+    );
+
+    // 첫 full scan의 재연결 후보는 이미 폐기되었으므로 이후 따로 도착한 동일 문구도
+    // 오래된 행으로 오인해 삼키지 않고 네 번째 메시지로 수집해야 한다.
+    newList.querySelector("._wrapper_sg7hy_25").insertAdjacentHTML("beforeend", rowMarkup);
+    await waitForCondition(() => moderatorRows(document).length === 4);
+
+    assert.equal(newList.querySelectorAll("[data-bcct-moderator-collected]").length, 4);
+    assert.equal(document.querySelector(".bcct-moderator-trigger__count")?.textContent, "4");
+});

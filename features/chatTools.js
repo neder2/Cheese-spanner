@@ -40,6 +40,8 @@
     const MODERATOR_TRIGGER_ATTR = "data-bcct-moderator-trigger";
     const MODERATOR_PANEL_HOST_ATTR = "data-bcct-moderator-panel-host";
     const MODERATOR_ACTION_GROUP_ATTR = "data-bcct-moderator-actions";
+    const CHAT_TIMESTAMP_ATTR = "data-bcmt-time";
+    const CHAT_TIMESTAMP_VALUE_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
     const PLACEHOLDER_TEXT = "[블라인드 메시지: 원문 없음]";
     const MODERATOR_TITLE = "방송자/채팅 운영자 채팅";
     const ROLE_SCORE_THRESHOLD = 80;
@@ -77,6 +79,7 @@
         "aria-label",
         "title",
         "aria-hidden",
+        CHAT_TIMESTAMP_ATTR,
         ...MESSAGE_ID_ATTRS,
         ...ROW_REUSE_SIGNAL_ATTRIBUTES,
     ];
@@ -374,6 +377,16 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
   font-weight:700;
   line-height:18px;
 }
+.bcct-moderator-row__time{
+  display:inline;
+  margin-right:4px;
+  color:var(--Content-Neutral-Cool-Base,#9da5b6);
+  font-size:12px;
+  font-weight:400;
+  font-variant-numeric:tabular-nums;
+  line-height:18px;
+  white-space:nowrap;
+}
 .bcct-moderator-row__badge{
   display:inline-block;
   width:18px;
@@ -541,6 +554,10 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
     function isModeratorBoxEnabled() {
         return Boolean(featureOptions.chatToolsModeratorBoxEnabled);
+    }
+
+    function isChatTimestampEnabled() {
+        return featureOptions.chatTimestampEnabled === true;
     }
 
     function getMaxModeratorMessages() {
@@ -851,6 +868,24 @@ body[theme="dark"] .bcct-moderator-box__empty,
             return inlineColor.slice(0, 60);
         }
         return "";
+    }
+
+    function getChatTimestamp(row, textEl) {
+        if (!(row instanceof Element)) return "";
+
+        let timestampTarget = null;
+        if (textEl instanceof Element) {
+            const closestTarget = textEl.closest(`[${CHAT_TIMESTAMP_ATTR}]`);
+            if (closestTarget && row.contains(closestTarget)) timestampTarget = closestTarget;
+        }
+        if (!timestampTarget) {
+            timestampTarget = row.hasAttribute(CHAT_TIMESTAMP_ATTR)
+                ? row
+                : row.querySelector(`[${CHAT_TIMESTAMP_ATTR}]`);
+        }
+
+        const timestamp = normSpace(timestampTarget?.getAttribute(CHAT_TIMESTAMP_ATTR));
+        return CHAT_TIMESTAMP_VALUE_RE.test(timestamp) ? timestamp : "";
     }
 
     function parseClientTextValue(value, out, depth = 0) {
@@ -1205,6 +1240,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
             hiddenText,
             badges,
             authorColor,
+            timestamp: getChatTimestamp(row, textTarget.el),
             node: row,
             textEl: textTarget.el,
         };
@@ -1362,7 +1398,8 @@ body[theme="dark"] .bcct-moderator-box__empty,
         const badgeKey = (Array.isArray(message.badges) ? message.badges : [])
             .map((badge) => `${badge?.src}|${badge?.alt}`)
             .join(",");
-        return [message.id, message.role, message.author, message.text, badgeKey, message.authorColor]
+        const timestamp = isChatTimestampEnabled() ? message.timestamp : "";
+        return [message.id, message.role, message.author, message.text, badgeKey, message.authorColor, timestamp]
             .map((value) => String(value || ""))
             .join("\u001f");
     }
@@ -1444,6 +1481,14 @@ body[theme="dark"] .bcct-moderator-box__empty,
             existing.authorColor = parsed.authorColor;
             backfilled = true;
         }
+        if (
+            parsed.timestamp &&
+            existing.timestamp !== parsed.timestamp &&
+            (!existing.timestamp || !String(existing.id || "").startsWith("row:"))
+        ) {
+            existing.timestamp = parsed.timestamp;
+            backfilled = true;
+        }
         if (backfilled && !deferRender) renderModeratorList();
     }
 
@@ -1498,6 +1543,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
                 text: parsed.text,
                 badges: Array.isArray(parsed.badges) ? parsed.badges : [],
                 authorColor: parsed.authorColor || "",
+                timestamp: parsed.timestamp || "",
                 node: parsed.node,
                 sourceIdentityKey: "",
             };
@@ -1667,6 +1713,12 @@ body[theme="dark"] .bcct-moderator-box__empty,
         text.className = "bcct-moderator-row__text";
         text.textContent = message.text;
 
+        if (isChatTimestampEnabled() && CHAT_TIMESTAMP_VALUE_RE.test(message.timestamp || "")) {
+            const timestamp = document.createElement("span");
+            timestamp.className = "bcct-moderator-row__time";
+            timestamp.textContent = message.timestamp;
+            row.appendChild(timestamp);
+        }
         row.append(meta, text);
         row.addEventListener("click", () => scrollToOriginalMessage(message));
         return row;
@@ -2408,14 +2460,19 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return true;
     }
 
-    function queueModeratorRemounts(bindings, addedNodes) {
+    function queueModeratorRemounts(bindings, addedNodes, root = chatRoot, { preserveAcrossEmptyScan = false } = {}) {
         const addedRoots = getTopLevelMutationElements(Array.from(addedNodes || []));
         if (!addedRoots.length) return;
 
         for (const binding of bindings) {
             if (!binding?.message || !String(binding.message.id || "").startsWith("row:")) continue;
             if (pendingModeratorRemounts.some((candidate) => candidate.message === binding.message)) continue;
-            pendingModeratorRemounts.push({ ...binding, addedRoots });
+            pendingModeratorRemounts.push({
+                ...binding,
+                root,
+                addedRoots,
+                preserveAcrossEmptyScan,
+            });
         }
         const maxCandidates = getMaxModeratorMessages();
         if (pendingModeratorRemounts.length > maxCandidates) {
@@ -2663,8 +2720,11 @@ body[theme="dark"] .bcct-moderator-box__empty,
         injectStyleOnce(STYLE_ID, STYLE_TEXT);
         ensureModeratorBox(rootEl);
 
+        let processedChatRows = false;
         try {
-            for (const row of getRowsToProcess(rootEl)) {
+            const rows = getRowsToProcess(rootEl);
+            processedChatRows = rows.length > 0;
+            for (const row of rows) {
                 // 닉네임 클릭 프로필 카드 등 팝업이 펼쳐진 행은 팝업 내용이 파싱을
                 // 오염시키므로 팝업이 닫힌 뒤(다음 mutation)에 처리한다.
                 if (row.querySelector("[aria-haspopup='true'][aria-expanded='true']")) continue;
@@ -2675,7 +2735,12 @@ body[theme="dark"] .bcct-moderator-box__empty,
                 parsedChatRows.add(row);
             }
         } finally {
-            pendingModeratorRemounts = [];
+            pendingModeratorRemounts = processedChatRows
+                ? []
+                : pendingModeratorRemounts.filter(
+                      (candidate) =>
+                          candidate.preserveAcrossEmptyScan === true && candidate.root === rootEl && rootEl.isConnected
+                  );
         }
 
         trimModeratorMessages();
@@ -2683,15 +2748,37 @@ body[theme="dark"] .bcct-moderator-box__empty,
     }
 
     function adoptObservedChatRoot(node) {
-        if (chatRoot !== node) {
+        const rootChanged = chatRoot !== node;
+        if (rootChanged) {
             clearModeratorTransitions();
             pendingModeratorRemounts = [];
         }
+        const detachedBindings = [];
         for (const message of moderatorMessages) {
             const row = message.node;
-            if (row instanceof Element && !node.contains(row)) detachModeratorRowBinding(row);
+            if (!(row instanceof Element)) continue;
+            if (!node.contains(row)) {
+                const binding = detachModeratorRowBinding(row);
+                if (binding) detachedBindings.push(binding);
+                continue;
+            }
+            if (rootChanged) {
+                const binding = moderatorRowBindings.get(row);
+                if (binding) binding.root = node;
+            }
         }
         chatRoot = node;
+        // 채팅 접기/펼치기나 플레이어 모드 전환은 목록 root를 통째로
+        // 교체하면서 같은 id-less 백로그 행을 새 DOM으로 다시 만든다. 새 root의
+        // 첫 full scan 안에서만 기존 binding을 후보로 넘겨 같은 메시지가 다시
+        // 수집되지 않게 한다. 후보는 sync 종료 시 폐기되므로 이후 실제로 도착한
+        // 동일 문구 메시지는 별도 메시지로 계속 수집된다. 단, 새 root가 빈 채로
+        // 먼저 sync되면 실제 채팅 행을 처리할 첫 hydration까지 후보를 유지한다.
+        if (rootChanged && detachedBindings.length) {
+            queueModeratorRemounts(detachedBindings, [node], node, {
+                preserveAcrossEmptyScan: true,
+            });
+        }
     }
 
     function startObserver() {

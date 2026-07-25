@@ -16,15 +16,23 @@ function serverTime(hours, minutes, seconds = 0) {
     return new Date(2026, 6, 10, hours, minutes, seconds).getTime();
 }
 
-function realChatRow({ chatId = "", nickname = "시청자", text = "채팅", reuseSignal = "" } = {}) {
+function realChatRow({ chatId = "", nickname = "시청자", text = "채팅", reuseSignal = "", roleBadgeAlt = "" } = {}) {
     const chatIdAttr = chatId ? ` data-chat-id="${chatId}"` : "";
     const reuseAttr = reuseSignal ? ` data-virtual-index="${reuseSignal}"` : "";
+    const roleBadge = roleBadgeAlt
+        ? `<img src="https://example.test/chzzk-role.png" alt="${roleBadgeAlt}" width="18" height="18">`
+        : "";
     return [
         `<div class="_item_sg7hy_7"${chatIdAttr}${reuseAttr}>`,
         '<div class="_container_1vemp_1">',
         '<div class="_chatting_message_1vemp_21">',
         '<button type="button" class="_nickname_1vemp_37" aria-haspopup="true" aria-expanded="false">',
+        '<span class="_container_o04z9_2 _is_message_o04z9_5 _is_ellipsis_o04z9_86">',
+        roleBadge
+            ? `<span class="_wrapper_o04z9_23"><span class="_icon_o04z9_15"><span class="_container_1jo9t_2">${roleBadge}</span></span></span>`
+            : "",
         `<span class="_nickname_o04z9_57">${nickname}</span>`,
+        "</span>",
         "</button>",
         `<span class="_text_1vemp_1">${text}</span>`,
         "</div>",
@@ -113,7 +121,12 @@ function createPageDom(
         [
             "<!doctype html>",
             "<body>",
-            '<aside id="aside-chatting">',
+            '<aside id="aside-chatting" class="live_chatting_area">',
+            '<div class="chat-header">',
+            '<button class="chat-collapse" type="button" aria-label="채팅 접기">접기</button>',
+            "<strong>채팅</strong>",
+            '<button class="chat-more" type="button" aria-label="더보기">⋮</button>',
+            "</div>",
             '<div class="_container_sg7hy_1" role="log">',
             '<div class="_wrapper_sg7hy_25">',
             rows.map(realChatRow).join(""),
@@ -556,6 +569,120 @@ test("timestamp metadata does not change chatTools author or message parsing", (
     assert.equal(parsed.author, "파싱 시청자");
     assert.equal(parsed.text, "파싱 본문");
     closePageDom(dom);
+});
+
+test("moderator collection backfills server timestamps and follows timestamp option changes", async (t) => {
+    const dom = createPageDom(
+        [
+            {
+                chatId: "manager-time",
+                nickname: "시간지기",
+                text: "서버 시각 안내",
+                messageTime: serverTime(18, 7),
+                roleBadgeAlt: "채팅 운영자",
+            },
+        ],
+        {
+            sync: {
+                chatTimestampEnabled: true,
+                chatToolsShowBlindEnabled: false,
+                chatToolsModeratorBoxEnabled: true,
+            },
+        }
+    );
+    t.after(() => {
+        dom.window.chrome.testState.setSync({
+            chatTimestampEnabled: false,
+            chatToolsShowBlindEnabled: false,
+            chatToolsModeratorBoxEnabled: false,
+        });
+        closePageDom(dom);
+    });
+    installMutableClock(dom);
+
+    evalRepoScript(dom, "features", "chatTimestampPage.js");
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "shared", "data.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "chatTools.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-row"));
+    assert.equal(dom.window.document.querySelector(".bcct-moderator-row__time"), null);
+
+    evalRepoScript(dom, "features", "chatTimestamp.js");
+    await waitForCondition(
+        () => dom.window.document.querySelector(".bcct-moderator-row__time")?.textContent === "18:07"
+    );
+
+    dom.window.chrome.testState.setSync({ chatTimestampEnabled: false });
+    await waitForCondition(() => !dom.window.document.querySelector(".bcct-moderator-row__time"));
+    assert.equal(dom.window.document.querySelector("[data-bcmt-time], [data-bcmt-source-time]"), null);
+
+    dom.window.chrome.testState.setSync({ chatTimestampEnabled: true });
+    await waitForCondition(
+        () => dom.window.document.querySelector(".bcct-moderator-row__time")?.textContent === "18:07"
+    );
+});
+
+test("virtual moderator row reuse keeps each collected message server timestamp", async (t) => {
+    const dom = createPageDom(
+        [
+            {
+                chatId: "manager-a",
+                reuseSignal: "1",
+                nickname: "첫 운영자",
+                text: "첫 안내",
+                messageTime: serverTime(18, 7),
+                roleBadgeAlt: "채팅 운영자",
+            },
+        ],
+        {
+            sync: {
+                chatTimestampEnabled: true,
+                chatToolsShowBlindEnabled: false,
+                chatToolsModeratorBoxEnabled: true,
+            },
+        }
+    );
+    t.after(() => {
+        dom.window.chrome.testState.setSync({
+            chatTimestampEnabled: false,
+            chatToolsShowBlindEnabled: false,
+            chatToolsModeratorBoxEnabled: false,
+        });
+        closePageDom(dom);
+    });
+    installMutableClock(dom);
+
+    evalRepoScript(dom, "features", "chatTimestampPage.js");
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "shared", "data.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "chatTools.js");
+    evalRepoScript(dom, "features", "chatTimestamp.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+
+    await waitForCondition(
+        () => dom.window.document.querySelector(".bcct-moderator-row__time")?.textContent === "18:07"
+    );
+
+    const sourceRow = dom.window.document.querySelector('[data-chat-id="manager-a"]');
+    replaceReactMessage(sourceRow, serverTime(18, 9));
+    sourceRow.setAttribute("data-chat-id", "manager-b");
+    sourceRow.setAttribute("data-virtual-index", "2");
+    sourceRow.querySelector("._nickname_o04z9_57").textContent = "다음 운영자";
+    sourceRow.querySelector("._text_1vemp_1").textContent = "다음 안내";
+
+    await waitForCondition(
+        () =>
+            dom.window.document.querySelectorAll(".bcct-moderator-row").length === 2 &&
+            dom.window.document.querySelectorAll(".bcct-moderator-row__time")[1]?.textContent === "18:09"
+    );
+    assert.deepEqual(
+        Array.from(dom.window.document.querySelectorAll(".bcct-moderator-row__time"), (node) => node.textContent),
+        ["18:07", "18:09"]
+    );
 });
 
 test("manifest loads the timestamp bridge in MAIN world and the UI feature in isolated world", () => {
