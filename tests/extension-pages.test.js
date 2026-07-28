@@ -213,6 +213,18 @@ function makeVisibleVideo(video) {
     });
 }
 
+function configureWatchHistoryVideo(dom, video, getCurrentTime) {
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+    Object.defineProperty(video, "ended", { configurable: true, get: () => false });
+    Object.defineProperty(video, "playbackRate", { configurable: true, get: () => 1 });
+    Object.defineProperty(video, "currentTime", { configurable: true, get: getCurrentTime });
+    Object.defineProperty(video, "readyState", {
+        configurable: true,
+        get: () => dom.window.HTMLMediaElement.HAVE_CURRENT_DATA,
+    });
+}
+
 function createAudioCompressorFixture({ withExternalCompressor = false } = {}) {
     const chrome = createFakeChrome({
         sync: {
@@ -2309,7 +2321,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.2.5");
+    assert.equal(manifest.version, "1.2.6");
     assert.equal(packageJson.version, manifest.version);
     assert.deepEqual(manifest.permissions, ["storage"]);
     assert.deepEqual(manifest.host_permissions, ["https://api.chzzk.naver.com/*", "https://apis.naver.com/*"]);
@@ -6411,6 +6423,454 @@ test("live watch history preserves capped aggregates and pins the first resolved
     assert.equal(chrome.testState.local.betterChzzkLiveWatchHistory.entries[recordId].liveId, "capped-live");
 });
 
+test("live watch history keeps a stale page title provisional when the first flush beats live detail", async (t) => {
+    const staleTitle = "타 방송 다시보기 제목";
+    const staleThumbnail = "https://example.com/old-vod.jpg";
+    const verifiedTitle = "새 방송 제목";
+    const verifiedThumbnail = "https://example.com/new-live.jpg";
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: true,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            [
+                `<head><title>${staleTitle}</title>`,
+                `<meta property="og:title" content="${staleTitle}">`,
+                `<meta property="og:image" content="${staleThumbnail}"></head>`,
+            ].join(""),
+            '<body><main><video id="video"></video></main></body>',
+        ].join(""),
+        "https://chzzk.naver.com/video/old-video",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const clock = useFakePerformanceNow(dom);
+    const video = dom.window.document.getElementById("video");
+    let mediaTime = 0;
+    let resolveLiveDetail = null;
+
+    t.after(async () => {
+        resolveLiveDetail?.();
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    });
+
+    dom.window.fetch = () =>
+        new Promise((resolve) => {
+            resolveLiveDetail = () =>
+                resolve({
+                    ok: true,
+                    json: async () => ({
+                        content: {
+                            channelId: "new-channel",
+                            channelName: "새 채널",
+                            liveId: "new-live",
+                            liveImageUrl: verifiedThumbnail,
+                            liveTitle: verifiedTitle,
+                        },
+                    }),
+                });
+        });
+    configureWatchHistoryVideo(dom, video, () => mediaTime);
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "liveWatchHistory.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    assert.equal(resolveLiveDetail, null);
+
+    dom.window.history.pushState({}, "", "/live/new-channel");
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:routechange", {
+            detail: { href: dom.window.location.href, source: "test" },
+        })
+    );
+    await waitForCondition(() => typeof resolveLiveDetail === "function");
+
+    const tick = intervals.find((interval) => interval.ms === 5000)?.fn;
+    const flush = intervals.find((interval) => interval.ms === 15000)?.fn;
+    for (let index = 0; index < 6; index += 1) {
+        clock.advance(10000);
+        mediaTime += 10;
+        tick();
+    }
+    flush();
+    await waitForCondition(
+        () =>
+            chrome.testState.runtimeMessages.filter((message) => message?.operation?.kind === "upsertSessionSnapshot")
+                .length === 1
+    );
+
+    const provisional = chrome.testState.runtimeMessages[0].operation;
+    assert.equal(provisional.entry.title, "");
+    assert.equal(provisional.entry.thumbnailUrl, "");
+    assert.equal(provisional.session.title, "");
+    assert.equal(provisional.entry.titleHistory.length, 0);
+    assert.equal(JSON.stringify(provisional).includes(staleTitle), false);
+    assert.equal(JSON.stringify(provisional).includes(staleThumbnail), false);
+
+    resolveLiveDetail();
+    resolveLiveDetail = null;
+    await waitForCondition(() =>
+        chrome.testState.runtimeMessages.some((message) => message?.operation?.kind === "migrateRecordId")
+    );
+    clock.advance(10000);
+    mediaTime += 10;
+    tick();
+    flush();
+    await waitForCondition(
+        () =>
+            chrome.testState.runtimeMessages.filter((message) => message?.operation?.kind === "upsertSessionSnapshot")
+                .length === 2
+    );
+
+    const verified = chrome.testState.runtimeMessages.filter(
+        (message) => message?.operation?.kind === "upsertSessionSnapshot"
+    )[1].operation;
+    assert.equal(verified.recordId, "live:new-live");
+    assert.equal(verified.entry.title, verifiedTitle);
+    assert.equal(verified.entry.thumbnailUrl, verifiedThumbnail);
+    assert.equal(verified.session.title, verifiedTitle);
+    assert.deepEqual(
+        Array.from(verified.entry.titleHistory, (row) => row.title),
+        [verifiedTitle]
+    );
+    assert.equal(JSON.stringify(verified).includes(staleTitle), false);
+    assert.equal(JSON.stringify(verified).includes(staleThumbnail), false);
+});
+
+test("live watch history stores watch time without a stale page title when live detail fails", async (t) => {
+    const staleTitle = "실패 전에 남은 다시보기 제목";
+    const staleThumbnail = "https://example.com/failed-old-vod.jpg";
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: true,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            [
+                `<head><title>${staleTitle}</title>`,
+                `<meta property="og:title" content="${staleTitle}">`,
+                `<meta property="og:image" content="${staleThumbnail}"></head>`,
+            ].join(""),
+            '<body><main><video id="video"></video></main></body>',
+        ].join(""),
+        "https://chzzk.naver.com/live/new-channel",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const clock = useFakePerformanceNow(dom);
+    const video = dom.window.document.getElementById("video");
+    let mediaTime = 0;
+    let metadataRefreshCallback = null;
+    let metadataTimerId = 70000;
+    const metadataTimerIds = new Set();
+    const originalSetTimeout = dom.window.setTimeout.bind(dom.window);
+    const originalClearTimeout = dom.window.clearTimeout.bind(dom.window);
+    dom.window.setTimeout = (callback, delayMs, ...args) => {
+        if (delayMs === 60000) {
+            const id = metadataTimerId++;
+            metadataTimerIds.add(id);
+            metadataRefreshCallback = () => callback(...args);
+            return id;
+        }
+        return originalSetTimeout(callback, delayMs, ...args);
+    };
+    dom.window.clearTimeout = (id) => {
+        if (metadataTimerIds.has(id)) {
+            metadataTimerIds.delete(id);
+            return;
+        }
+        originalClearTimeout(id);
+    };
+
+    t.after(async () => {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    });
+
+    dom.window.fetch = async () => {
+        throw new Error("live detail unavailable");
+    };
+    configureWatchHistoryVideo(dom, video, () => mediaTime);
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "liveWatchHistory.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForCondition(() => typeof metadataRefreshCallback === "function");
+
+    const tick = intervals.find((interval) => interval.ms === 5000)?.fn;
+    const flush = intervals.find((interval) => interval.ms === 15000)?.fn;
+    for (let index = 0; index < 6; index += 1) {
+        clock.advance(10000);
+        mediaTime += 10;
+        tick();
+    }
+    flush();
+    await waitForCondition(
+        () =>
+            chrome.testState.runtimeMessages.filter((message) => message?.operation?.kind === "upsertSessionSnapshot")
+                .length === 1
+    );
+
+    const operation = chrome.testState.runtimeMessages[0].operation;
+    assert.equal(operation.session.watchedSeconds, 60);
+    assert.equal(operation.entry.title, "");
+    assert.equal(operation.entry.thumbnailUrl, "");
+    assert.equal(operation.session.title, "");
+    assert.equal(operation.entry.titleHistory.length, 0);
+    assert.equal(JSON.stringify(operation).includes(staleTitle), false);
+    assert.equal(JSON.stringify(operation).includes(staleThumbnail), false);
+    assert.equal(typeof metadataRefreshCallback, "function");
+
+    const storedEntry = Object.values(chrome.testState.local.betterChzzkLiveWatchHistory.entries)[0];
+    assert.equal(storedEntry.title || "", "");
+    assert.equal(storedEntry.thumbnailUrl || "", "");
+    assert.equal(storedEntry.titleHistory?.length || 0, 0);
+    assert.equal(storedEntry.sessionDetails[0].title || "", "");
+});
+
+test("live watch history preserves only verified title changes for the same live", async (t) => {
+    const staleTitle = "이전 VOD 제목";
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: true,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            `<head><title>${staleTitle}</title><meta property="og:title" content="${staleTitle}"></head>`,
+            '<body><main><video id="video"></video></main></body>',
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const clock = useFakePerformanceNow(dom);
+    const video = dom.window.document.getElementById("video");
+    let nowMs = Date.parse("2026-07-10T14:00:00+09:00");
+    let mediaTime = 0;
+    let apiTitle = "방제 A";
+    let metadataRefreshCallback = null;
+    let metadataTimerId = 80000;
+    const metadataTimerIds = new Set();
+    const originalSetTimeout = dom.window.setTimeout.bind(dom.window);
+    const originalClearTimeout = dom.window.clearTimeout.bind(dom.window);
+    dom.window.setTimeout = (callback, delayMs, ...args) => {
+        if (delayMs === 60000) {
+            const id = metadataTimerId++;
+            metadataTimerIds.add(id);
+            metadataRefreshCallback = () => callback(...args);
+            return id;
+        }
+        return originalSetTimeout(callback, delayMs, ...args);
+    };
+    dom.window.clearTimeout = (id) => {
+        if (metadataTimerIds.has(id)) {
+            metadataTimerIds.delete(id);
+            return;
+        }
+        originalClearTimeout(id);
+    };
+
+    t.after(async () => {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    });
+
+    dom.window.Date.now = () => nowMs;
+    dom.window.fetch = async () => ({
+        ok: true,
+        json: async () => ({
+            content: {
+                channelId: "test-channel",
+                channelName: "테스트 채널",
+                liveId: "same-live",
+                liveTitle: apiTitle,
+            },
+        }),
+    });
+    configureWatchHistoryVideo(dom, video, () => mediaTime);
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "liveWatchHistory.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForCondition(() => typeof metadataRefreshCallback === "function");
+
+    const tick = intervals.find((interval) => interval.ms === 5000)?.fn;
+    const flush = intervals.find((interval) => interval.ms === 15000)?.fn;
+    for (let index = 0; index < 6; index += 1) {
+        clock.advance(10000);
+        nowMs += 10000;
+        mediaTime += 10;
+        tick();
+    }
+    flush();
+    await waitForCondition(
+        () => chrome.testState.local.betterChzzkLiveWatchHistory?.entries?.["live:same-live"]?.watchedSeconds === 60
+    );
+
+    apiTitle = "방제 B";
+    const refreshForB = metadataRefreshCallback;
+    metadataRefreshCallback = null;
+    refreshForB();
+    await waitForCondition(() => typeof metadataRefreshCallback === "function");
+    clock.advance(10000);
+    nowMs += 10000;
+    mediaTime += 10;
+    tick();
+    flush();
+    await waitForCondition(
+        () => chrome.testState.local.betterChzzkLiveWatchHistory.entries["live:same-live"].title === "방제 B"
+    );
+    const firstBLastSeenAt = chrome.testState.local.betterChzzkLiveWatchHistory.entries[
+        "live:same-live"
+    ].titleHistory.find((row) => row.title === "방제 B").lastSeenAt;
+
+    const refreshRepeatedB = metadataRefreshCallback;
+    metadataRefreshCallback = null;
+    refreshRepeatedB();
+    await waitForCondition(() => typeof metadataRefreshCallback === "function");
+    clock.advance(10000);
+    nowMs += 10000;
+    mediaTime += 10;
+    tick();
+    flush();
+    await waitForCondition(
+        () =>
+            chrome.testState.runtimeMessages.filter((message) => message?.operation?.kind === "upsertSessionSnapshot")
+                .length === 3
+    );
+
+    const entry = chrome.testState.local.betterChzzkLiveWatchHistory.entries["live:same-live"];
+    assert.equal(entry.title, "방제 B");
+    assert.deepEqual(
+        entry.titleHistory.map((row) => row.title),
+        ["방제 A", "방제 B"]
+    );
+    assert.equal(entry.titleHistory.filter((row) => row.title === "방제 B").length, 1);
+    assert.ok(entry.titleHistory.find((row) => row.title === "방제 B").lastSeenAt > firstBLastSeenAt);
+    assert.equal(JSON.stringify(entry).includes(staleTitle), false);
+});
+
+test("live watch history ignores a late live A response after moving to live B", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: true,
+        },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<head><title>라이브 A 페이지 제목</title></head>",
+            '<body><main><video id="video"></video></main></body>',
+        ].join(""),
+        "https://chzzk.naver.com/live/channel-a",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const clock = useFakePerformanceNow(dom);
+    const video = dom.window.document.getElementById("video");
+    const liveDetailResolvers = new Map();
+    let mediaTime = 0;
+
+    t.after(async () => {
+        for (const release of liveDetailResolvers.values()) release();
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    });
+
+    dom.window.fetch = (url) =>
+        new Promise((resolve) => {
+            const channelId = String(url).includes("/channel-b/") ? "channel-b" : "channel-a";
+            liveDetailResolvers.set(channelId, (overrides = {}) =>
+                resolve({
+                    ok: true,
+                    json: async () => ({
+                        content: {
+                            channelId,
+                            channelName: channelId === "channel-b" ? "채널 B" : "채널 A",
+                            liveId: channelId === "channel-b" ? "live-b" : "live-a",
+                            liveImageUrl:
+                                channelId === "channel-b" ? "https://example.com/b.jpg" : "https://example.com/a.jpg",
+                            liveTitle: channelId === "channel-b" ? "방송 B" : "방송 A",
+                            ...overrides,
+                        },
+                    }),
+                })
+            );
+        });
+    configureWatchHistoryVideo(dom, video, () => mediaTime);
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "liveWatchHistory.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForCondition(() => liveDetailResolvers.has("channel-a"));
+
+    dom.window.history.pushState({}, "", "/live/channel-b");
+    dom.window.document.title = "라이브 B 페이지 제목";
+    dom.window.dispatchEvent(
+        new dom.window.CustomEvent("betterchzzk:routechange", {
+            detail: { href: dom.window.location.href, source: "test" },
+        })
+    );
+    await waitForCondition(() => liveDetailResolvers.has("channel-b"));
+
+    liveDetailResolvers.get("channel-b")();
+    await waitForAsyncCallbacks();
+    liveDetailResolvers.get("channel-a")();
+    await waitForAsyncCallbacks();
+
+    const tick = intervals.find((interval) => interval.ms === 5000)?.fn;
+    const flush = intervals.find((interval) => interval.ms === 15000)?.fn;
+    for (let index = 0; index < 6; index += 1) {
+        clock.advance(10000);
+        mediaTime += 10;
+        tick();
+    }
+    flush();
+    await waitForCondition(
+        () => chrome.testState.local.betterChzzkLiveWatchHistory?.entries?.["live:live-b"]?.watchedSeconds === 60
+    );
+
+    const history = chrome.testState.local.betterChzzkLiveWatchHistory;
+    const entryB = history.entries["live:live-b"];
+    assert.deepEqual(Object.keys(history.entries), ["live:live-b"]);
+    assert.equal(entryB.channelId, "channel-b");
+    assert.equal(entryB.liveId, "live-b");
+    assert.equal(entryB.title, "방송 B");
+    assert.equal(entryB.thumbnailUrl, "https://example.com/b.jpg");
+    assert.deepEqual(
+        entryB.titleHistory.map((row) => row.title),
+        ["방송 B"]
+    );
+    assert.equal(JSON.stringify(entryB).includes("방송 A"), false);
+    assert.equal(JSON.stringify(entryB).includes("live-a"), false);
+    assert.equal(JSON.stringify(entryB).includes("a.jpg"), false);
+});
+
 test("live watch history splits same-channel broadcasts when live detail changes", async (t) => {
     const chrome = createFakeChrome({
         sync: {
@@ -6786,6 +7246,81 @@ test("VOD broadcast clock reuses an unchanged title history panel across time up
         assert.equal(panel.querySelector(".bcbc-title-history-row"), initialRow);
         assert.equal(replaceCalls, 0);
         assert.equal(hiddenMutations, 0);
+    } finally {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener(
+                {
+                    liveWatchHistoryEnabled: { oldValue: true, newValue: false },
+                    vodBroadcastClockEnabled: { oldValue: true, newValue: false },
+                },
+                "sync"
+            );
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    }
+});
+
+test("VOD broadcast clock rejects an explicit live id conflict even when the replay video number matches", async () => {
+    const originalStart = Date.parse("2026-06-28T00:00:00+09:00");
+    const durationSeconds = 60 * 60;
+    const { chrome, dom } = await createVodBroadcastClockFixture(
+        {
+            channelId: "same-channel",
+            channelName: "같은 채널",
+            liveId: "actual-live",
+            liveOpenDate: "2026-06-28 00:00:00",
+            duration: durationSeconds,
+            publishDate: new Date(originalStart + durationSeconds * 1000).toISOString(),
+        },
+        {
+            watchHistory: [
+                {
+                    id: "conflicting-live",
+                    channelId: "same-channel",
+                    channelName: "같은 채널",
+                    liveId: "different-live",
+                    replayVideoNo: "12345",
+                    title: "Split VOD fixture",
+                    firstWatchedAt: originalStart,
+                    lastWatchedAt: originalStart + 1000,
+                    titleHistory: [
+                        {
+                            title: "충돌한 방송의 이전 방제",
+                            firstSeenAt: originalStart - 2000,
+                            lastSeenAt: originalStart - 1000,
+                        },
+                    ],
+                },
+                {
+                    id: "matching-live",
+                    channelId: "same-channel",
+                    channelName: "같은 채널",
+                    liveId: "actual-live",
+                    title: "Split VOD fixture",
+                    firstWatchedAt: originalStart,
+                    lastWatchedAt: originalStart + 1000,
+                    titleHistory: [
+                        {
+                            title: "현재 방송의 이전 방제",
+                            firstSeenAt: originalStart - 2000,
+                            lastSeenAt: originalStart - 1000,
+                        },
+                    ],
+                },
+            ],
+        }
+    );
+
+    try {
+        await waitForCondition(() =>
+            dom.window.document
+                .getElementById("betterchzzk-vod-title-history-panel")
+                ?.textContent.includes("현재 방송의 이전 방제")
+        );
+        const panelText = dom.window.document.getElementById("betterchzzk-vod-title-history-panel").textContent;
+        assert.match(panelText, /현재 방송의 이전 방제/);
+        assert.doesNotMatch(panelText, /충돌한 방송의 이전 방제/);
     } finally {
         for (const listener of chrome.testState.storageChangeListeners) {
             listener(

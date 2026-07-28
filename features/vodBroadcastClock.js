@@ -392,10 +392,12 @@
         const channelMatch = getHistoryChannelMatch(entry, detail);
         if (channelMatch === "different") return Number.NEGATIVE_INFINITY;
 
+        const liveId = getVideoDetailLiveId(detail);
+        if (entry.liveId && liveId && entry.liveId !== liveId) return Number.NEGATIVE_INFINITY;
+
         const replayVideoNoMatches = Boolean(entry.replayVideoNo && entry.replayVideoNo === videoNo);
         if (replayVideoNoMatches) score += 1000;
 
-        const liveId = getVideoDetailLiveId(detail);
         const liveIdMatches = Boolean(entry.liveId && liveId && entry.liveId === liveId);
         if (liveIdMatches) score += 650;
 

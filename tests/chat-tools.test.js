@@ -797,6 +797,235 @@ test("a staged id-less row reuse cannot attribute an old moderator message to a 
     assert.equal(scrollCalls, 0);
 });
 
+test("a long-lived mixed reuse state is retracted when the same generation becomes a viewer", async (t) => {
+    const originalText = "이미 정상 수집된 운영자 안내";
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            nickname: "기존 운영자",
+            text: originalText,
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    const document = dom.window.document;
+    const row = document.querySelector("._item_sg7hy_7");
+    let scrollCalls = 0;
+    row.scrollIntoView = () => {
+        scrollCalls += 1;
+    };
+    row.setAttribute("data-virtual-index", "1");
+
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 1);
+
+    row.setAttribute("data-virtual-index", "2");
+    row.querySelector("._nickname_o04z9_57").textContent = "일반 시청자";
+
+    // 현재 안정화 기준을 넘어 잘못된 전환 항목이 실제로 만들어진 뒤에도
+    // 500ms 이상 같은 혼합 상태를 유지한다.
+    await waitForCondition(() => moderatorRows(document).length === 2);
+    const staleTransitionRow = moderatorRows(document)[1];
+    await new Promise((resolve) => setTimeout(resolve, 550));
+
+    row.querySelector('img[alt="채팅 운영자"]')?.remove();
+    row.querySelector("._text_1vemp_1").textContent = "일반 시청자의 최종 채팅";
+
+    await waitForCondition(
+        () =>
+            moderatorRows(document).length === 1 &&
+            document.querySelector(".bcct-moderator-trigger__count")?.textContent === "1"
+    );
+
+    const collected = moderatorRows(document);
+    assert.equal(collected[0].querySelector(".bcct-moderator-row__author")?.textContent, "기존 운영자");
+    assert.equal(collected[0].querySelector(".bcct-moderator-row__text")?.textContent, originalText);
+    assert.doesNotMatch(document.querySelector(".bcct-moderator-box__list")?.textContent || "", /일반 시청자/);
+    assert.doesNotMatch(document.querySelector(".bcct-moderator-box__list")?.textContent || "", /최종 채팅/);
+    assert.equal(row.hasAttribute("data-bcct-moderator-collected"), false);
+
+    staleTransitionRow.click();
+    collected[0].click();
+    assert.equal(scrollCalls, 0);
+});
+
+test("retractable reuse messages finalize when the row advances through real moderator generations", async (t) => {
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            nickname: "첫 운영자",
+            text: "첫 안내",
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    const document = dom.window.document;
+    const row = document.querySelector("._item_sg7hy_7");
+    const author = row.querySelector("._nickname_o04z9_57");
+    const text = row.querySelector("._text_1vemp_1");
+    row.setAttribute("data-virtual-index", "1");
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 1);
+
+    const advanceGeneration = async ({ index, nickname, message, chatId = "" }, expectedCount) => {
+        row.setAttribute("data-virtual-index", String(index));
+        if (chatId) row.setAttribute("data-chat-id", chatId);
+        author.textContent = nickname;
+        text.textContent = message;
+        await waitForCondition(() => moderatorRows(document).length === expectedCount);
+    };
+
+    await advanceGeneration({ index: 2, nickname: "둘째 운영자", message: "둘째 안내" }, 2);
+    await advanceGeneration({ index: 3, nickname: "둘째 운영자", message: "셋째 안내" }, 3);
+    await advanceGeneration({ index: 4, nickname: "넷째 운영자", message: "셋째 안내" }, 4);
+    await advanceGeneration(
+        { index: 5, nickname: "명시 ID 운영자", message: "명시 ID 안내", chatId: "explicit-generation-5" },
+        5
+    );
+
+    assert.deepEqual(
+        moderatorRows(document).map((item) => ({
+            author: item.querySelector(".bcct-moderator-row__author")?.textContent,
+            text: item.querySelector(".bcct-moderator-row__text")?.textContent,
+        })),
+        [
+            { author: "첫 운영자", text: "첫 안내" },
+            { author: "둘째 운영자", text: "둘째 안내" },
+            { author: "둘째 운영자", text: "셋째 안내" },
+            { author: "넷째 운영자", text: "셋째 안내" },
+            { author: "명시 ID 운영자", text: "명시 ID 안내" },
+        ]
+    );
+    assert.equal(document.querySelector(".bcct-moderator-trigger__count")?.textContent, "5");
+    assert.equal(row.getAttribute("data-bcct-moderator-collected"), "1");
+});
+
+test("a transition-created moderator message keeps its identity through a blind transition", async (t) => {
+    const transitionText = "블라인드 전 전환 소유 안내";
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            nickname: "첫 운영자",
+            text: "첫 안내",
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    const document = dom.window.document;
+    const row = document.querySelector("._item_sg7hy_7");
+    let scrollCalls = 0;
+    row.scrollIntoView = () => {
+        scrollCalls += 1;
+    };
+    row.setAttribute("data-virtual-index", "1");
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 1);
+
+    row.setAttribute("data-virtual-index", "2");
+    row.querySelector("._nickname_o04z9_57").textContent = "전환 소유 운영자";
+    row.querySelector("._text_1vemp_1").textContent = transitionText;
+    await waitForCondition(() => moderatorRows(document).length === 2);
+
+    row.querySelector("._text_1vemp_1").textContent = "클린봇이 부적절한 표현을 감지했습니다.";
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    const collected = moderatorRows(document);
+    assert.equal(collected.length, 2);
+    assert.equal(document.querySelector(".bcct-moderator-trigger__count")?.textContent, "2");
+    assert.equal(collected[1].querySelector(".bcct-moderator-row__author")?.textContent, "전환 소유 운영자");
+    assert.equal(collected[1].querySelector(".bcct-moderator-row__text")?.textContent, transitionText);
+    assert.equal(row.getAttribute("data-bcct-moderator-collected"), "1");
+    collected[1].click();
+    assert.equal(scrollCalls, 1);
+});
+
+test("disabling the moderator box retracts its transition-owned message before re-enable", async (t) => {
+    const { chrome, dom } = createPageDom(
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            nickname: "정리 전 운영자",
+            text: "정리 전 안내",
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    const document = dom.window.document;
+    const row = document.querySelector("._item_sg7hy_7");
+    row.setAttribute("data-virtual-index", "1");
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 1);
+
+    row.setAttribute("data-virtual-index", "2");
+    row.querySelector("._nickname_o04z9_57").textContent = "정리될 혼합 작성자";
+    row.querySelector("._text_1vemp_1").textContent = "정리될 혼합 본문";
+    await waitForCondition(() => moderatorRows(document).length === 2);
+
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener(
+            {
+                chatToolsModeratorBoxEnabled: { oldValue: true, newValue: false },
+            },
+            "sync"
+        );
+    }
+    await waitForCondition(() => document.querySelector(".bcct-moderator-box") === null);
+
+    row.querySelector('img[alt="채팅 운영자"]')?.remove();
+    row.querySelector("._text_1vemp_1").textContent = "비활성 중 일반 시청자 채팅";
+
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener(
+            {
+                chatToolsModeratorBoxEnabled: { oldValue: false, newValue: true },
+            },
+            "sync"
+        );
+    }
+
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    assert.equal(moderatorRows(document).length, 1);
+    assert.equal(document.querySelector(".bcct-moderator-trigger__count")?.textContent, "1");
+    assert.equal(moderatorRows(document)[0].querySelector(".bcct-moderator-row__text")?.textContent, "정리 전 안내");
+    assert.doesNotMatch(document.querySelector(".bcct-moderator-box__list")?.textContent || "", /정리될 혼합/);
+    assert.equal(row.hasAttribute("data-bcct-moderator-collected"), false);
+});
+
+test("route cleanup prevents a retractable reuse callback from touching the next broadcast", async (t) => {
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            nickname: "이전 방송 운영자",
+            text: "이전 방송 안내",
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    const { document, history } = dom.window;
+    const row = document.querySelector("._item_sg7hy_7");
+    row.setAttribute("data-virtual-index", "1");
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 1);
+
+    row.setAttribute("data-virtual-index", "2");
+    row.querySelector("._nickname_o04z9_57").textContent = "이전 방송 혼합 작성자";
+    row.querySelector("._text_1vemp_1").textContent = "이전 방송 혼합 본문";
+    await waitForCondition(() => moderatorRows(document).length === 2);
+
+    history.pushState({}, "", "/live/next-channel");
+    dom.window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
+    document.querySelector(".chat-list").innerHTML = realChzzkChatRow({
+        nickname: "다음 방송 일반 시청자",
+        text: "다음 방송 일반 채팅",
+    });
+
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    assert.equal(moderatorRows(document).length, 0);
+    assert.equal(document.querySelector(".bcct-moderator-trigger__count")?.textContent, "0");
+    assert.equal(document.querySelector("[data-bcct-moderator-collected]"), null);
+});
+
 test("reusing an id-less moderator row without an index collects changed content", async (t) => {
     const { dom } = createPageDom(
         realChzzkChatRow({
@@ -1896,6 +2125,45 @@ test("moderator box trims old messages at the configured maximum", async (t) => 
         .join("\n");
     assert.doesNotMatch(collectedText, /관리자 메시지 0/);
     assert.match(collectedText, /관리자 메시지 24/);
+});
+
+test("capacity-trimmed moderator rows stay evicted after equivalent style and text mutations", async (t) => {
+    const rows = Array.from({ length: 30 }, (_, index) =>
+        [
+            `<div class="chat-row" data-chat-id="capacity-manager-${index}">`,
+            '<span class="badge" aria-label="매니저"></span>',
+            `<span class="nickname">manager-${index}</span>`,
+            `<span class="message">관리자 메시지 ${index}</span>`,
+            "</div>",
+        ].join("")
+    ).join("");
+    const { dom } = createPageDom(rows, { chatToolsMaxModeratorMessages: 20 });
+    t.after(() => closeChatToolsDom(dom));
+
+    const document = dom.window.document;
+    const sourceRows = Array.from(document.querySelectorAll(".chat-row"));
+    loadChatTools(dom);
+
+    const expectedTexts = Array.from({ length: 20 }, (_, index) => `관리자 메시지 ${index + 10}`);
+    await waitForCondition(
+        () =>
+            JSON.stringify(
+                moderatorRows(document).map((row) => row.querySelector(".bcct-moderator-row__text")?.textContent)
+            ) === JSON.stringify(expectedTexts)
+    );
+
+    const firstTrimmedRow = sourceRows[0];
+    firstTrimmedRow.querySelector(".nickname").style.color = "rgb(10, 20, 30)";
+    // DOM 문자열은 다시 쓰되 정규화된 메시지 본문 정체성은 그대로 유지한다.
+    firstTrimmedRow.querySelector(".message").textContent = "관리자   메시지 0";
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    assert.equal(firstTrimmedRow.getAttribute("data-bcct-moderator-collected"), "1");
+    assert.equal(document.querySelector(".bcct-moderator-trigger__count")?.textContent, "20");
+    assert.deepEqual(
+        moderatorRows(document).map((row) => row.querySelector(".bcct-moderator-row__text")?.textContent),
+        expectedTexts
+    );
 });
 
 test("badge image appearing after collection is backfilled into the moderator box", async (t) => {

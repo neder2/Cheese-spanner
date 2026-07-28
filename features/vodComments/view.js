@@ -42,6 +42,7 @@
         let mountedContainer = null;
         let mountedHeader = null;
         let mountedHeading = null;
+        let mountedAppearanceHeading = null;
         let mountedChatLog = null;
         let assignedChatLogId = false;
         let originalChatAriaHidden = null;
@@ -61,6 +62,45 @@
 [data-bcvc-container="1"]{
   min-width:0!important;
   min-height:0!important;
+}
+[data-bcvc-comment-only-host="1"]{
+  display:flex!important;
+  width:100%!important;
+  min-width:0!important;
+}
+[data-bcvc-comment-only-vod-column="1"]{
+  margin-top:0!important;
+}
+#betterchzzk-vod-comment-aside{
+  --bcvc-surface:var(--Background-Neutral-Base,var(--Surface-Neutral-Weakest,#fff));
+  --bcvc-text:var(--Content-Neutral-Cool-Strong,#292c33);
+  --bcvc-border:var(--Border-Neutral-Alpha-Weak,rgba(0,0,0,.08));
+  position:relative;
+  flex:0 0 353px;
+  align-self:stretch;
+  width:353px;
+  max-width:35%;
+  min-width:280px;
+  min-height:280px;
+  overflow:hidden;
+  border-left:1px solid var(--bcvc-border);
+  background:var(--bcvc-surface);
+  color:var(--bcvc-text);
+  color-scheme:light;
+}
+[data-bcvc-comment-only-container="1"]{
+  position:absolute;
+  inset:0;
+  display:flex;
+  flex-direction:column;
+  min-width:0;
+  min-height:0;
+}
+[data-bcvc-comment-only-header="1"]{
+  flex:0 0 44px;
+  height:44px;
+  border-bottom:1px solid var(--bcvc-border);
+  background:var(--bcvc-surface);
 }
 [data-bcvc-header="1"]{
   display:flex!important;
@@ -145,6 +185,24 @@
   height:2px;
   border-radius:2px 2px 0 0;
   background:var(--Content-Brand-Strong,var(--Content-Brand-Base,#00e693));
+}
+#betterchzzk-vod-comment-aside #${TABLIST_ID}{
+  background:var(--bcvc-surface);
+}
+#betterchzzk-vod-comment-aside #${COMMENT_TAB_ID}{
+  flex:1 1 auto;
+  justify-content:flex-start;
+  padding:0 20px;
+  color:var(--bcvc-text);
+  text-align:left;
+  cursor:default;
+}
+#betterchzzk-vod-comment-aside #${COMMENT_TAB_ID}:hover{
+  background:transparent;
+  color:var(--bcvc-text);
+}
+#betterchzzk-vod-comment-aside #${COMMENT_TAB_ID}::after{
+  display:none;
 }
 #${TABLIST_ID} button:focus-visible,
 #${COMMENT_PANEL_ID} button:focus-visible{
@@ -369,6 +427,14 @@ body[theme="dark"] #${TABLIST_ID},
   --bcvc-text-weak:var(--Content-Neutral-Cool-Weak,#8b909b);
   --bcvc-hover:var(--Surface-Interaction-Lighten-Hovered,rgba(255,255,255,.06));
 }
+html[dark] #betterchzzk-vod-comment-aside,
+body[theme="dark"] #betterchzzk-vod-comment-aside,
+.theme_dark #betterchzzk-vod-comment-aside{
+  --bcvc-surface:var(--Background-Neutral-Base,var(--Surface-Neutral-Weakest,#141517));
+  --bcvc-text:var(--Content-Neutral-Cool-Strong,#dfe2ea);
+  --bcvc-border:var(--Border-Neutral-Alpha-Weak,rgba(255,255,255,.06));
+  color-scheme:dark;
+}
 html[dark] #${COMMENT_PANEL_ID},
 body[theme="dark"] #${COMMENT_PANEL_ID},
 .theme_dark #${COMMENT_PANEL_ID}{
@@ -407,7 +473,11 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
         function applyNativeMeasurements(measurements = {}) {
             nativeMeasurements = measurements;
             if (!(commentPanel instanceof HTMLElement)) return;
-            const headingStyle = mountedHeading instanceof HTMLElement ? getComputedStyle(mountedHeading) : null;
+            const appearanceHeading =
+                mountedAppearanceHeading instanceof HTMLElement && mountedAppearanceHeading.isConnected
+                    ? mountedAppearanceHeading
+                    : mountedHeading;
+            const headingStyle = appearanceHeading instanceof HTMLElement ? getComputedStyle(appearanceHeading) : null;
             const fallbackFontFamily = headingStyle?.fontFamily || "";
             const fontFamily = measurements.fontFamily || fallbackFontFamily;
             const toolbarFontFamily = measurements.toolbarFontFamily || fontFamily;
@@ -427,7 +497,11 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
 
         function syncNativeHeaderAppearance() {
             if (!tablist || !mountedHeading?.isConnected || !mountedHeader || !mountedContainer) return;
-            const style = getComputedStyle(mountedHeading);
+            const appearanceHeading =
+                mountedAppearanceHeading instanceof HTMLElement && mountedAppearanceHeading.isConnected
+                    ? mountedAppearanceHeading
+                    : mountedHeading;
+            const style = getComputedStyle(appearanceHeading);
             const propertyMap = [
                 ["--bcvc-heading-font-family", style.fontFamily],
                 ["--bcvc-heading-font-size", style.fontSize],
@@ -1132,7 +1206,9 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
         }
 
         function updateTabState({ focus = false } = {}) {
-            const commentsSelected = selectedTab === "comments";
+            const commentOnly = Boolean(commentTab) && !chatTab;
+            const commentsSelected = commentOnly || selectedTab === "comments";
+            if (commentOnly) selectedTab = "comments";
             chatTab?.setAttribute("aria-selected", String(!commentsSelected));
             commentTab?.setAttribute("aria-selected", String(commentsSelected));
             if (chatTab) chatTab.tabIndex = commentsSelected ? -1 : 0;
@@ -1166,6 +1242,10 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
         function onTabKeyDown(event) {
             if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
             event.preventDefault();
+            if (!chatTab) {
+                commentTab?.focus();
+                return;
+            }
             if (event.key === "Home") {
                 onTabChange("chat", { focus: true });
                 return;
@@ -1195,6 +1275,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
         }
 
         function attachMountedChatLog(chatLog) {
+            if (!(chatLog instanceof HTMLElement)) return false;
             mountedChatLog = chatLog;
             originalChatAriaHidden = mountedChatLog.getAttribute("aria-hidden");
             mountedChatLog.setAttribute("data-bcvc-native-log", "1");
@@ -1203,6 +1284,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
                 assignedChatLogId = true;
             }
             chatTab?.setAttribute("aria-controls", mountedChatLog.id);
+            return true;
         }
 
         function clearMountedNativeMarkers() {
@@ -1222,6 +1304,21 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             resizeObserver.observe(mountedAside);
             resizeObserver.observe(mountedHeader);
             resizeObserver.observe(mountedContainer);
+            if (mountedAppearanceHeading?.isConnected && mountedAppearanceHeading !== mountedHeading) {
+                resizeObserver.observe(mountedAppearanceHeading);
+            }
+        }
+
+        function setHeaderAppearanceSource(heading) {
+            const nextHeading = heading instanceof HTMLElement ? heading : mountedHeading;
+            if (mountedAppearanceHeading === nextHeading) {
+                scheduleNativeHeaderSync();
+                return;
+            }
+            mountedAppearanceHeading = nextHeading;
+            observeMountedLayout();
+            syncNativeHeaderAppearance();
+            scheduleNativeHeaderSync();
         }
 
         function mountTabs(anchors) {
@@ -1230,7 +1327,9 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             mountedContainer = anchors.container;
             mountedHeader = anchors.header;
             mountedHeading = anchors.heading;
-            attachMountedChatLog(anchors.chatLog);
+            mountedAppearanceHeading =
+                anchors.appearanceHeading instanceof HTMLElement ? anchors.appearanceHeading : mountedHeading;
+            const hasChat = attachMountedChatLog(anchors.chatLog);
 
             mountedAside.setAttribute("data-bcvc-mounted", "1");
             mountedContainer.setAttribute("data-bcvc-container", "1");
@@ -1241,13 +1340,16 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             tablist.id = TABLIST_ID;
             tablist.setAttribute("role", "tablist");
             tablist.setAttribute("aria-label", "다시보기 보조 패널");
-            chatTab = createTabButton(
-                CHAT_TAB_ID,
-                model.compactText(mountedHeading.textContent) || "라이브 채팅 다시보기",
-                mountedChatLog.id
-            );
+            chatTab = hasChat
+                ? createTabButton(
+                      CHAT_TAB_ID,
+                      model.compactText(mountedHeading.textContent) || "라이브 채팅 다시보기",
+                      mountedChatLog.id
+                  )
+                : null;
             commentTab = createTabButton(COMMENT_TAB_ID, "댓글", COMMENT_PANEL_ID);
-            tablist.append(chatTab, commentTab);
+            if (chatTab) tablist.appendChild(chatTab);
+            tablist.appendChild(commentTab);
             tablist.addEventListener("click", onTabClick);
             tablist.addEventListener("keydown", onTabKeyDown);
             mountedHeader.insertBefore(tablist, mountedHeading);
@@ -1281,6 +1383,8 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             mountedContainer = anchors.container;
             mountedHeader = anchors.header;
             mountedHeading = anchors.heading;
+            mountedAppearanceHeading =
+                anchors.appearanceHeading instanceof HTMLElement ? anchors.appearanceHeading : mountedHeading;
             attachMountedChatLog(anchors.chatLog);
 
             mountedAside.setAttribute("data-bcvc-mounted", "1");
@@ -1299,7 +1403,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
         }
 
         function replaceChatLog(chatLog) {
-            if (!(chatLog instanceof HTMLElement)) return false;
+            if (!(chatLog instanceof HTMLElement) || !chatTab) return false;
             detachMountedChatLog();
             attachMountedChatLog(chatLog);
             updateTabState();
@@ -1328,6 +1432,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             mountedContainer = null;
             mountedHeader = null;
             mountedHeading = null;
+            mountedAppearanceHeading = null;
             tablist = null;
             chatTab = null;
             commentTab = null;
@@ -1364,7 +1469,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             return (
                 hasMount() &&
                 (!mountedAside?.isConnected ||
-                    !mountedChatLog?.isConnected ||
+                    (Boolean(chatTab) && !mountedChatLog?.isConnected) ||
                     !tablist?.isConnected ||
                     !commentPanel?.isConnected)
             );
@@ -1419,6 +1524,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             restoreFocus: restoreCommentControlFocus,
             scheduleLayoutSync: scheduleNativeHeaderSync,
             setActiveOrder,
+            setHeaderAppearanceSource,
             setSelectedTab,
             showState,
             updateState,

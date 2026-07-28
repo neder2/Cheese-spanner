@@ -169,7 +169,7 @@
         const channelName = pickString(content.channelName, channel.channelName, channel.name);
 
         return {
-            channelId,
+            channelId: pickString(content.channelId, live.channelId, channel.channelId, channelId),
             liveId: pickString(content.liveId, content.liveNo, live.liveId, live.liveNo, content.id),
             title: cleanEntryTitle(
                 pickString(content.liveTitle, content.title, live.liveTitle, live.title),
@@ -188,7 +188,7 @@
         };
     }
 
-    function mergeMetadata(target, metadata) {
+    function mergeMetadata(target, metadata, { persistThumbnail = false, persistTitle = false } = {}) {
         if (!target || !metadata) return;
         const nextChannelName = pickString(metadata.channelName, target.channelName);
         for (const key of ["channelId", "liveId", "channelName", "title", "thumbnailUrl", "liveOpenDate", "liveUrl"]) {
@@ -196,10 +196,17 @@
             if (!value) continue;
             if (key === "title") {
                 const title = cleanEntryTitle(value, nextChannelName);
-                if (title) {
+                if (title && persistTitle) {
                     target.title = title;
+                    target.titleVerified = true;
                     addTitleHistory(target, title);
+                } else if (title) {
+                    target.provisionalTitle = title;
                 }
+                continue;
+            }
+            if (key === "thumbnailUrl" && !persistThumbnail) {
+                target.provisionalThumbnailUrl = value;
                 continue;
             }
             target[key] = value;
@@ -218,10 +225,13 @@
         };
     }
 
-    function combineMetadata(channelId, ...sources) {
-        const combined = { ...createEmptyMetadata(channelId), titleHistory: [] };
-        for (const source of sources) mergeMetadata(combined, source);
-        return combined;
+    function isCurrentMetadataRequest(current, requestId, channelId) {
+        return (
+            requestId === metadataRequestSeq &&
+            session === current &&
+            getLiveChannelIdFromUrl() === channelId &&
+            (!current.channelId || current.channelId === channelId)
+        );
     }
 
     function scheduleMetadataRefresh(delayMs = METADATA_REFRESH_MS) {
@@ -236,25 +246,27 @@
         if (!current || !isEnabledForCurrentPage()) return;
 
         const requestId = ++metadataRequestSeq;
-        const channelId = current.channelId || getLiveChannelIdFromUrl();
+        const channelId = getLiveChannelIdFromUrl();
+        if (!channelId || (current.channelId && current.channelId !== channelId)) return;
         const pageMetadata = inferMetadataFromPage(channelId);
 
         try {
             const url = `${LIVE_DETAIL_API_BASE}/${encodeURIComponent(channelId)}/live-detail`;
             const json = await fetchJson(url, { timeoutMs: FETCH_TIMEOUT_MS });
-            if (requestId !== metadataRequestSeq || session !== current) return;
+            if (!isCurrentMetadataRequest(current, requestId, channelId)) return;
             const nextMetadata = extractMetadataFromLiveDetail(json, channelId);
+            if (nextMetadata.channelId !== channelId) return;
             const pinnedLiveId = getPinnedLiveId(current);
             if (pinnedLiveId && nextMetadata.liveId && nextMetadata.liveId !== pinnedLiveId) {
                 endSession();
-                startSession(combineMetadata(channelId, pageMetadata, nextMetadata));
+                startSession(nextMetadata);
                 return;
             }
             mergeMetadata(current, pageMetadata);
-            mergeMetadata(current, nextMetadata);
+            mergeMetadata(current, nextMetadata, { persistThumbnail: true, persistTitle: true });
             await promoteSessionRecordId(current);
         } catch (_) {
-            if (requestId === metadataRequestSeq && session === current) mergeMetadata(current, pageMetadata);
+            if (isCurrentMetadataRequest(current, requestId, channelId)) mergeMetadata(current, pageMetadata);
         } finally {
             if (session === current) scheduleMetadataRefresh();
         }
@@ -327,24 +339,26 @@
             const value = Math.max(0, Math.round(Number(seconds) || 0));
             if (value > 0) dailySeconds[dateKey] = value;
         }
+        const storedTitle = current.titleVerified ? current.title || "" : "";
+        const storedTitleHistory = current.titleVerified ? current.titleHistory || [] : [];
         return {
             kind: "upsertSessionSnapshot",
             recordId: getRecordId(current),
             entry: {
                 channelId: current.channelId || "",
                 liveId: current.liveId || "",
-                title: current.title || "",
+                title: storedTitle,
                 channelName: current.channelName || "",
                 thumbnailUrl: current.thumbnailUrl || "",
                 liveOpenDate: current.liveOpenDate || "",
                 liveUrl: current.liveUrl || `${location.origin}${location.pathname}`,
                 firstWatchedAt: current.startedAt,
                 lastWatchedAt: current.lastSeenAt || current.lastWatchedAt || Date.now(),
-                titleHistory: current.titleHistory || [],
+                titleHistory: storedTitleHistory,
             },
             session: {
                 id: current.sessionId,
-                title: current.title || "",
+                title: storedTitle,
                 enteredAt: current.enteredAt || current.startedAt,
                 leftAt: current.lastSeenAt || current.lastWatchedAt || Date.now(),
                 watchedSeconds: Math.max(0, Math.floor(current.watchedSeconds)),
@@ -436,7 +450,7 @@
         current.titleHistory = [];
         current.pendingRecordMigrationSource = "";
         current.pendingRecordMigrationTarget = "";
-        addTitleHistory(current, current.title, now);
+        if (current.titleVerified) addTitleHistory(current, current.title, now);
         current.recordId = "";
         current.recordId = getRecordId(current);
     }
@@ -586,11 +600,14 @@
         if (session || !isEnabledForCurrentPage()) return;
 
         const channelId = getLiveChannelIdFromUrl();
-        const metadata = initialMetadata ? createEmptyMetadata(channelId) : inferMetadataFromPage(channelId);
+        const pageMetadata = initialMetadata ? null : inferMetadataFromPage(channelId);
         const now = Date.now();
 
         session = {
-            ...metadata,
+            ...createEmptyMetadata(channelId),
+            provisionalThumbnailUrl: "",
+            provisionalTitle: "",
+            titleVerified: false,
             sessionId: createSessionId(),
             enteredAt: now,
             startedAt: now,
@@ -607,8 +624,10 @@
             lastMediaTime: getVideoMediaTime(attachedVideo),
             titleHistory: [],
         };
-        if (initialMetadata) mergeMetadata(session, initialMetadata);
-        addTitleHistory(session, session.title, now);
+        if (pageMetadata) mergeMetadata(session, pageMetadata);
+        if (initialMetadata) {
+            mergeMetadata(session, initialMetadata, { persistThumbnail: true, persistTitle: true });
+        }
         session.recordId = getRecordId(session);
 
         ensureTimers();

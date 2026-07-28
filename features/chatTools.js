@@ -520,6 +520,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
     let moderatorRowBindings = new WeakMap();
     let pendingModeratorRemounts = [];
     const moderatorRowTransitions = new Map();
+    const moderatorTransitionOwnerships = new Map();
     let rowMutationRevisions = new WeakMap();
     let legacyModeratorCachePurged = false;
     const dirtyChatRows = new Set();
@@ -533,6 +534,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
     const rowIds = new WeakMap();
     const rowOriginalTexts = new WeakMap();
     let nextRowId = 1;
+    let nextModeratorTransitionId = 1;
 
     const scheduleSync = createThrottledDomSync(syncChatTools, CHAT_SYNC_THROTTLE_MS);
 
@@ -1386,14 +1388,6 @@ body[theme="dark"] .bcct-moderator-box__empty,
         }
     }
 
-    function trimModeratorMessages() {
-        const max = getMaxModeratorMessages();
-        if (moderatorMessages.length <= max) return;
-
-        const removed = moderatorMessages.splice(0, moderatorMessages.length - max);
-        for (const message of removed) collectedMessageIds.delete(message.id);
-    }
-
     function getModeratorRenderKey(message) {
         const badgeKey = (Array.isArray(message.badges) ? message.badges : [])
             .map((badge) => `${badge?.src}|${badge?.alt}`)
@@ -1428,6 +1422,35 @@ body[theme="dark"] .bcct-moderator-box__empty,
         };
     }
 
+    function isExplicitModeratorMessageId(messageId) {
+        return Boolean(messageId && !String(messageId).startsWith("row:"));
+    }
+
+    function finalizeModeratorTransitionOwnership(row, expectedOwnership = null) {
+        const ownership = moderatorTransitionOwnerships.get(row);
+        if (!ownership || (expectedOwnership && ownership !== expectedOwnership)) return;
+        moderatorTransitionOwnerships.delete(row);
+        const binding = moderatorRowBindings.get(row);
+        if (binding?.transitionId === ownership.transitionId) delete binding.transitionId;
+    }
+
+    function clearModeratorTransitionOwnerships() {
+        for (const [row, ownership] of moderatorTransitionOwnerships) {
+            finalizeModeratorTransitionOwnership(row, ownership);
+        }
+    }
+
+    function retractModeratorTransitionOwnerships({ deferRender = false } = {}) {
+        const messages = new Set(
+            Array.from(moderatorTransitionOwnerships.values(), (ownership) => ownership.message).filter(Boolean)
+        );
+        let removed = false;
+        for (const message of messages) {
+            removed = removeModeratorMessage(message, { deferRender: true }) || removed;
+        }
+        if (removed && !deferRender) renderModeratorList();
+    }
+
     function cancelModeratorTransition(row) {
         const transition = moderatorRowTransitions.get(row);
         if (!transition) return;
@@ -1458,6 +1481,109 @@ body[theme="dark"] .bcct-moderator-box__empty,
         row.setAttribute(MODERATOR_COLLECTED_ATTR, "1");
         message.node = row;
         message.sourceIdentityKey = snapshot.identityKey;
+    }
+
+    function registerModeratorTransitionOwnership(row, message, snapshot, transition) {
+        if (!transition || !message) return;
+        const ownership = {
+            transitionId: transition.transitionId,
+            sourceRow: row,
+            sourceReuseSignal: snapshot.rowReuseSignal,
+            sourceIdentityKey: snapshot.identityKey,
+            message,
+            messageId: snapshot.messageId,
+            author: snapshot.author,
+            role: snapshot.role,
+            text: snapshot.text,
+            root: chatRoot,
+            retractable: true,
+        };
+        moderatorTransitionOwnerships.set(row, ownership);
+        const binding = moderatorRowBindings.get(row);
+        if (binding?.message === message) binding.transitionId = ownership.transitionId;
+    }
+
+    function getModeratorTransitionDisposition(ownership, parsed) {
+        if (!ownership?.retractable || ownership.sourceRow !== parsed.node || ownership.root !== chatRoot) {
+            return "retract";
+        }
+
+        const snapshot = buildModeratorSnapshot(parsed);
+        if (
+            ownership.sourceReuseSignal !== snapshot.rowReuseSignal &&
+            (ownership.sourceReuseSignal || snapshot.rowReuseSignal)
+        ) {
+            return "finalize";
+        }
+
+        const ownedExplicitId = isExplicitModeratorMessageId(ownership.messageId);
+        const currentExplicitId = isExplicitModeratorMessageId(snapshot.messageId);
+        if (
+            (ownedExplicitId || currentExplicitId) &&
+            String(ownership.messageId || "") !== String(snapshot.messageId || "")
+        ) {
+            return "retract";
+        }
+        if (!parsed.role || !parsed.text) return "retract";
+
+        const matchesOwnedIdentity =
+            ownership.author === parsed.author && ownership.role === parsed.role && ownership.text === parsed.text;
+        if (matchesOwnedIdentity) return "keep";
+
+        // 명시적인 재사용 신호가 같은데 역할·작성자·본문 조합이 달라졌다면
+        // 이번 세대의 중간 혼합 상태로 수집된 항목이다. 신호가 없는 행은 별도
+        // mutation batch의 완전히 다른 운영자 fingerprint를 다음 세대로 본다.
+        return ownership.sourceReuseSignal || snapshot.rowReuseSignal ? "retract" : "finalize";
+    }
+
+    function removeModeratorMessage(message, { deferRender = false } = {}) {
+        const messageIndex = moderatorMessages.indexOf(message);
+        if (messageIndex < 0) return false;
+
+        moderatorMessages.splice(messageIndex, 1);
+        collectedMessageIds.delete(message.id);
+
+        const boundRow = message.node;
+        if (boundRow instanceof Element && moderatorRowBindings.get(boundRow)?.message === message) {
+            detachModeratorRowBinding(boundRow);
+        } else {
+            message.node = null;
+        }
+
+        for (const [row, ownership] of moderatorTransitionOwnerships) {
+            if (ownership.message !== message) continue;
+            if (moderatorRowBindings.get(row)?.message === message) detachModeratorRowBinding(row);
+            finalizeModeratorTransitionOwnership(row, ownership);
+        }
+        pendingModeratorRemounts = pendingModeratorRemounts.filter((candidate) => candidate.message !== message);
+
+        if (!deferRender) renderModeratorList();
+        return true;
+    }
+
+    function evictModeratorMessageForCapacity(message) {
+        const messageIndex = moderatorMessages.indexOf(message);
+        if (messageIndex < 0) return false;
+
+        moderatorMessages.splice(messageIndex, 1);
+        collectedMessageIds.delete(message.id);
+        for (const [row, ownership] of moderatorTransitionOwnerships) {
+            if (ownership.message === message) finalizeModeratorTransitionOwnership(row, ownership);
+        }
+        return true;
+    }
+
+    function trimModeratorMessages() {
+        const max = getMaxModeratorMessages();
+        if (moderatorMessages.length <= max) return;
+
+        const removed = moderatorMessages.slice(0, moderatorMessages.length - max);
+        // 용량 제한은 목록에서만 오래된 항목을 내보낸다. 살아 있는 원본 행의
+        // binding/marker까지 지우면 늦은 style·동일 본문 mutation이 그 항목을
+        // 새 메시지로 다시 수집해 최근 항목을 밀어낼 수 있다.
+        for (const message of removed) {
+            evictModeratorMessageForCapacity(message);
+        }
     }
 
     function isSameBoundModeratorMessage(binding, parsed) {
@@ -1526,7 +1652,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return message;
     }
 
-    function commitModeratorMessage(parsed, { deferRender = false } = {}) {
+    function commitModeratorMessage(parsed, { deferRender = false, transition = null } = {}) {
         if (!isModeratorBoxEnabled() || !parsed.role || !parsed.text) return false;
 
         let message = moderatorMessages.find((item) => item.id === parsed.id);
@@ -1551,6 +1677,9 @@ body[theme="dark"] .bcct-moderator-box__empty,
         }
 
         bindModeratorRow(parsed.node, message, buildModeratorSnapshot(parsed));
+        if (added && transition) {
+            registerModeratorTransitionOwnership(parsed.node, message, buildModeratorSnapshot(parsed), transition);
+        }
         if (added) {
             trimModeratorMessages();
             if (!deferRender) renderModeratorList();
@@ -1563,7 +1692,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         transition.timerId = setTimeout(() => confirmReusedModeratorCandidate(row), MODERATOR_REUSE_STABILITY_CHECK_MS);
     }
 
-    function stageReusedModeratorCandidate(parsed) {
+    function stageReusedModeratorCandidate(parsed, sourceBinding = null) {
         const row = parsed.node;
         if (!(row instanceof HTMLElement) || !parsed.role || !parsed.text) {
             cancelModeratorTransition(row);
@@ -1573,17 +1702,32 @@ body[theme="dark"] .bcct-moderator-box__empty,
         const snapshot = buildModeratorSnapshot(parsed);
         const revision = rowMutationRevisions.get(row) || 0;
         let transition = moderatorRowTransitions.get(row);
+        if (
+            transition &&
+            transition.generationReuseSignal !== snapshot.rowReuseSignal &&
+            (transition.generationReuseSignal || snapshot.rowReuseSignal)
+        ) {
+            cancelModeratorTransition(row);
+            transition = null;
+        }
         if (!transition) {
             transition = {
+                transitionId: nextModeratorTransitionId,
+                sourceRow: row,
+                previousReuseSignal: sourceBinding?.rowReuseSignal || "",
+                sourceIdentityKey: sourceBinding?.identityKey || "",
+                generationReuseSignal: snapshot.rowReuseSignal,
                 root: chatRoot,
                 snapshotKey: snapshot.identityKey,
                 mutationRevision: revision,
                 stablePasses: 0,
                 timerId: null,
             };
+            nextModeratorTransitionId += 1;
             moderatorRowTransitions.set(row, transition);
         } else {
             transition.root = chatRoot;
+            transition.generationReuseSignal = snapshot.rowReuseSignal;
             transition.snapshotKey = snapshot.identityKey;
             transition.mutationRevision = revision;
             transition.stablePasses = 0;
@@ -1629,12 +1773,12 @@ body[theme="dark"] .bcct-moderator-box__empty,
         }
 
         moderatorRowTransitions.delete(row);
-        commitModeratorMessage(parsed);
+        commitModeratorMessage(parsed, { transition });
     }
 
     function collectModeratorMessage(parsed, { deferRender = false } = {}) {
         const row = parsed.node;
-        const binding = moderatorRowBindings.get(row);
+        let binding = moderatorRowBindings.get(row);
         if (binding && isSameBoundModeratorMessage(binding, parsed)) {
             cancelModeratorTransition(row);
             backfillModeratorMessage(binding.message, parsed, { deferRender });
@@ -1642,13 +1786,30 @@ body[theme="dark"] .bcct-moderator-box__empty,
             return false;
         }
 
+        const ownership = moderatorTransitionOwnerships.get(row);
+        if (ownership && binding?.message !== ownership.message) {
+            removeModeratorMessage(ownership.message, { deferRender });
+            binding = moderatorRowBindings.get(row);
+        } else if (ownership) {
+            const disposition = getModeratorTransitionDisposition(ownership, parsed);
+            if (disposition === "retract") {
+                removeModeratorMessage(ownership.message, { deferRender });
+                cancelModeratorTransition(row);
+                if (!parsed.role || !parsed.text) return false;
+                return stageReusedModeratorCandidate(parsed);
+            }
+            if (disposition === "finalize") {
+                finalizeModeratorTransitionOwnership(row, ownership);
+            }
+        }
+
         if (binding) {
-            detachModeratorRowBinding(row);
+            const sourceBinding = detachModeratorRowBinding(row);
             if (!parsed.role || !parsed.text) {
                 cancelModeratorTransition(row);
                 return false;
             }
-            return stageReusedModeratorCandidate(parsed);
+            return stageReusedModeratorCandidate(parsed, sourceBinding);
         }
 
         if (moderatorRowTransitions.has(row)) {
@@ -2217,6 +2378,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
     function clearModeratorState() {
         clearModeratorTransitions();
+        clearModeratorTransitionOwnerships();
         for (const row of Array.from(document.querySelectorAll(`[${MODERATOR_COLLECTED_ATTR}]`))) {
             row.removeAttribute(MODERATOR_COLLECTED_ATTR);
         }
@@ -2231,6 +2393,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
     function removeInjectedUi({ clearMessages = true } = {}) {
         clearModeratorTransitions();
+        clearModeratorTransitionOwnerships();
         removeAllBlindReveals();
         removeModeratorBox();
         if (clearMessages) clearModeratorState();
@@ -2485,6 +2648,9 @@ body[theme="dark"] .bcct-moderator-box__empty,
         for (const row of Array.from(moderatorRowTransitions.keys())) {
             if (row === node || node.contains(row)) cancelModeratorTransition(row);
         }
+        for (const [row, ownership] of moderatorTransitionOwnerships) {
+            if (row === node || node.contains(row)) finalizeModeratorTransitionOwnership(row, ownership);
+        }
 
         const boundRows = new Set();
         if (moderatorRowBindings.has(node) || node.hasAttribute(MODERATOR_COLLECTED_ATTR)) boundRows.add(node);
@@ -2706,12 +2872,16 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
     function syncChatTools() {
         if (!isFeatureEnabled()) {
+            clearModeratorTransitions();
+            clearModeratorTransitionOwnerships();
             pendingModeratorRemounts = [];
             return;
         }
 
         const rootEl = chatRoot?.isConnected ? chatRoot : findChatRoot();
         if (!rootEl) {
+            clearModeratorTransitions();
+            clearModeratorTransitionOwnerships();
             pendingModeratorRemounts = [];
             return;
         }
@@ -2751,6 +2921,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         const rootChanged = chatRoot !== node;
         if (rootChanged) {
             clearModeratorTransitions();
+            clearModeratorTransitionOwnerships();
             pendingModeratorRemounts = [];
         }
         const detachedBindings = [];
@@ -2811,6 +2982,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
     function restartRuntime({ clearMessages = false } = {}) {
         if (!isFeatureEnabled()) return;
         clearModeratorTransitions();
+        clearModeratorTransitionOwnerships();
         chatRoot = null;
         removeModeratorBox();
         resetChatProcessingState({ reparse: true });
@@ -2858,6 +3030,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         requestFullChatScan({ reparse: true });
         if (!isModeratorBoxEnabled()) {
             clearModeratorTransitions();
+            retractModeratorTransitionOwnerships({ deferRender: true });
             removeModeratorBox();
         }
         if (!isBlindRevealEnabled()) removeAllBlindReveals();

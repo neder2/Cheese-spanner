@@ -82,6 +82,7 @@ function chatAsideHtml({ includeLog = true } = {}) {
 
 function createFixture({
     fetchComments,
+    includeAside = true,
     includeLog = true,
     initialOptions = {},
     nativeCommentsHtml = null,
@@ -89,21 +90,30 @@ function createFixture({
     withIdleCallback = true,
     withIntersectionObserver = false,
 } = {}) {
-    const dom = new JSDOM(
-        [
-            "<!doctype html><html><head></head><body>",
-            '<section id="player-layout"><video id="video"></video>',
-            chatAsideHtml({ includeLog }),
-            "</section>",
-            `<main id="below-player">${nativeCommentsHtml ?? "하단 댓글 DOM 없음"}</main>`,
-            "</body></html>",
-        ].join(""),
-        {
-            url: "https://chzzk.naver.com/video/12345",
-            runScripts: "outside-only",
-            pretendToBeVisual: true,
-        }
-    );
+    const pageHtml = includeAside
+        ? [
+              '<section id="player-layout"><video id="video"></video>',
+              chatAsideHtml({ includeLog }),
+              "</section>",
+              `<main id="below-player">${nativeCommentsHtml ?? "하단 댓글 DOM 없음"}</main>`,
+          ]
+        : [
+              '<section id="player-layout"><div class="native-vod-wrapper">',
+              '<div class="native-player-row"><div id="player_layout"><video id="video"></video></div></div>',
+              '<div class="native-content-row">',
+              `<main class="native-content-left" id="below-player">${
+                  nativeCommentsHtml ?? "하단 댓글 DOM 없음"
+              }</main>`,
+              '<div class="native-vod-column" style="margin-top:-378px">',
+              '<div class="native-vod-list"><div class="native-vod-header"><h2 style="font-family:Verdana,sans-serif;font-size:18px;font-weight:650;line-height:24px;letter-spacing:-0.4px">영상 더보기</h2></div>',
+              "<ul><li>다음 VOD</li></ul></div></div></div>",
+              "</div></section>",
+          ];
+    const dom = new JSDOM(["<!doctype html><html><head></head><body>", ...pageHtml, "</body></html>"].join(""), {
+        url: "https://chzzk.naver.com/video/12345",
+        runScripts: "outside-only",
+        pretendToBeVisual: true,
+    });
     const { window } = dom;
     const { document } = window;
     const options = { vodCommentTabsEnabled: true, ...initialOptions };
@@ -152,16 +162,32 @@ function createFixture({
     const aside = document.getElementById("vod-aside");
     const container = document.querySelector(".native-chat-container");
     const header = document.querySelector(".native-chat-header");
-    aside.getBoundingClientRect = () => ({ bottom: 540, height: 540, left: 0, right: 353, top: 0, width: 353 });
-    container.getBoundingClientRect = () => ({
-        bottom: 1803,
-        height: 1803,
-        left: 0,
-        right: 353,
-        top: 0,
-        width: 353,
-    });
-    header.getBoundingClientRect = () => ({ bottom: 44, height: 44, left: 0, right: 353, top: 0, width: 353 });
+    if (aside && container && header) {
+        aside.getBoundingClientRect = () => ({
+            bottom: 540,
+            height: 540,
+            left: 0,
+            right: 353,
+            top: 0,
+            width: 353,
+        });
+        container.getBoundingClientRect = () => ({
+            bottom: 1803,
+            height: 1803,
+            left: 0,
+            right: 353,
+            top: 0,
+            width: 353,
+        });
+        header.getBoundingClientRect = () => ({
+            bottom: 44,
+            height: 44,
+            left: 0,
+            right: 353,
+            top: 0,
+            width: 353,
+        });
+    }
 
     if (withIntersectionObserver) {
         window.IntersectionObserver = class FakeIntersectionObserver {
@@ -664,6 +690,82 @@ test("VOD comments keep click-to-load when requestIdleCallback is unavailable", 
         /클릭 로드/.test(fixture.document.getElementById("betterchzzk-vod-comment-panel").textContent)
     );
     assert.equal(fixture.requests.length, 1);
+});
+
+test("VOD comments mount a comment-only side panel when replay chat is unavailable", async (t) => {
+    const fixture = createFixture({
+        fetchComments: async () => apiContent({ rows: [apiComment(1, "채팅 없이 보는 댓글")], totalCount: 1 }),
+        includeAside: false,
+        nativeCommentsHtml: '<div id="commentArea"></div>',
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document } = fixture;
+
+    await waitForCondition(() => /채팅 없이 보는 댓글/.test(document.body.textContent));
+    const ownedAside = document.getElementById("betterchzzk-vod-comment-aside");
+    const commentTab = document.getElementById("betterchzzk-vod-comment-comment-tab");
+    const tablist = document.getElementById("betterchzzk-vod-comment-tabs");
+    const panel = document.getElementById("betterchzzk-vod-comment-panel");
+    let vodColumn = document.querySelector(".native-vod-column");
+    const vodColumnParent = vodColumn.parentElement;
+    assert.ok(ownedAside);
+    assert.equal(ownedAside.parentElement, document.querySelector(".native-player-row"));
+    assert.equal(document.getElementById("betterchzzk-vod-comment-chat-tab"), null);
+    assert.equal(commentTab.getAttribute("aria-selected"), "true");
+    assert.equal(panel.hidden, false);
+    assert.equal(tablist.style.getPropertyValue("--bcvc-heading-font-family"), "Verdana, sans-serif");
+    assert.equal(tablist.style.getPropertyValue("--bcvc-heading-font-size"), "18px");
+    assert.equal(tablist.style.getPropertyValue("--bcvc-heading-font-weight"), "650");
+    assert.equal(tablist.style.getPropertyValue("--bcvc-heading-line-height"), "24px");
+    assert.equal(tablist.style.getPropertyValue("--bcvc-heading-letter-spacing"), "-0.4px");
+    const css = document.getElementById("betterchzzk-vod-comment-tabs-style").textContent;
+    assert.match(
+        css,
+        /#betterchzzk-vod-comment-aside #betterchzzk-vod-comment-comment-tab\{[^}]*justify-content:flex-start[^}]*text-align:left[^}]*cursor:default/s
+    );
+    assert.match(
+        css,
+        /#betterchzzk-vod-comment-aside #betterchzzk-vod-comment-comment-tab::after\{\s*display:none;\s*\}/
+    );
+    assert.match(css, /html\[dark\] #betterchzzk-vod-comment-aside/);
+    assert.match(css, /body\[theme="dark"\] #betterchzzk-vod-comment-aside/);
+    assert.equal(vodColumn.getAttribute("data-bcvc-comment-only-vod-column"), "1");
+    assert.equal(fixture.window.getComputedStyle(vodColumn).marginTop, "0px");
+    assert.equal(vodColumn.parentElement, vodColumnParent, "the native VOD column must stay in its React-owned tree");
+    assert.equal(fixture.requests.length, 1);
+
+    const oldVodColumn = vodColumn;
+    vodColumn = document.createElement("div");
+    vodColumn.className = "native-vod-column";
+    vodColumn.style.marginTop = "-378px";
+    vodColumn.innerHTML =
+        '<div><h2 style="font-family:Tahoma,sans-serif;font-size:16px;font-weight:600;line-height:22px;letter-spacing:-0.2px">영상 더보기</h2><ul><li>교체된 다음 VOD</li></ul></div>';
+    oldVodColumn.replaceWith(vodColumn);
+    await waitForCondition(() => vodColumn.getAttribute("data-bcvc-comment-only-vod-column") === "1");
+    await waitForCondition(() => tablist.style.getPropertyValue("--bcvc-heading-font-family") === "Tahoma, sans-serif");
+    assert.equal(oldVodColumn.getAttribute("data-bcvc-comment-only-vod-column"), null);
+    assert.equal(fixture.window.getComputedStyle(vodColumn).marginTop, "0px");
+    assert.equal(vodColumn.parentElement, vodColumnParent);
+    assert.equal(tablist.style.getPropertyValue("--bcvc-heading-font-size"), "16px");
+
+    document.querySelector(".native-player-row").insertAdjacentHTML("beforeend", chatAsideHtml());
+    await waitForCondition(
+        () =>
+            !document.getElementById("betterchzzk-vod-comment-aside") &&
+            document.getElementById("betterchzzk-vod-comment-chat-tab")
+    );
+
+    assert.equal(document.querySelector(".native-player-row").hasAttribute("data-bcvc-comment-only-host"), false);
+    assert.equal(vodColumn.getAttribute("data-bcvc-comment-only-vod-column"), null);
+    assert.equal(vodColumn.style.marginTop, "-378px");
+    assert.equal(vodColumn.parentElement, vodColumnParent);
+    assert.equal(document.getElementById("betterchzzk-vod-comment-comment-tab").getAttribute("aria-selected"), "true");
+    assert.match(document.getElementById("betterchzzk-vod-comment-panel").textContent, /채팅 없이 보는 댓글/);
+    assert.equal(document.querySelector("[role='log']").getAttribute("data-bcvc-tab-hidden"), "1");
+    assert.equal(fixture.requests.length, 1, "native chat appearing later must reuse the loaded comment state");
 });
 
 test("VOD comment tabs mount after a delayed chat log and reuse cached comments after an aside remount", async (t) => {

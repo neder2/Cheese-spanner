@@ -30,7 +30,9 @@
 
     const MOUNT_SYNC_DELAY_MS = 80;
     const MOUNT_GAP_GRACE_MS = 600;
+    const COMMENT_ONLY_ASIDE_ID = "betterchzzk-vod-comment-aside";
     const ANCHOR_SELECTOR = [
+        "#player_layout",
         "#vod-aside",
         "#vod-aside [role='log']",
         "#vod-aside h1",
@@ -54,6 +56,9 @@
     let activeOrder = model.DEFAULT_ORDER;
     let currentVideoNo = getVodVideoNoFromPath();
     let commentView = null;
+    let commentOnlyAside = null;
+    let commentOnlyHost = null;
+    let commentOnlyVideoMoreColumn = null;
 
     const commentRepository = repositoryModule.createCommentRepository({
         fetchPage: fetchChzzkCommentPage,
@@ -96,10 +101,123 @@
         );
     }
 
+    function removeCommentOnlyShell() {
+        commentOnlyAside?.remove();
+        if (commentOnlyHost?.getAttribute("data-bcvc-comment-only-host") === "1") {
+            commentOnlyHost.removeAttribute("data-bcvc-comment-only-host");
+        }
+        commentOnlyVideoMoreColumn?.removeAttribute("data-bcvc-comment-only-vod-column");
+        commentOnlyAside = null;
+        commentOnlyHost = null;
+        commentOnlyVideoMoreColumn = null;
+    }
+
+    function findCommentOnlyHost() {
+        const player = document.getElementById("player_layout");
+        if (!(player instanceof HTMLElement)) return null;
+        const section = player.closest("section");
+        if (!(section instanceof HTMLElement)) return null;
+
+        let candidate = player;
+        while (candidate.parentElement && candidate.parentElement !== section) {
+            if (candidate.parentElement.parentElement === section) return candidate;
+            candidate = candidate.parentElement;
+        }
+        return null;
+    }
+
+    function findRaisedVideoMoreColumn(section) {
+        const heading = findVideoMoreHeading(section);
+        let candidate = heading?.parentElement;
+        while (candidate instanceof HTMLElement && candidate !== section) {
+            if (Number.parseFloat(getComputedStyle(candidate).marginTop) < 0) return candidate;
+            candidate = candidate.parentElement;
+        }
+        return null;
+    }
+
+    function isVideoMoreHeading(element) {
+        return model.compactText(element?.textContent) === "영상 더보기";
+    }
+
+    function findVideoMoreHeading(rootElement) {
+        return Array.from(rootElement?.querySelectorAll?.("h1, h2, h3, h4, h5, h6") || []).find(isVideoMoreHeading);
+    }
+
+    function containsVideoMoreHeading(element) {
+        return Array.from(element?.querySelectorAll?.("h1, h2, h3, h4, h5, h6") || []).some(isVideoMoreHeading);
+    }
+
+    function syncCommentOnlyVideoMoreColumn() {
+        const section = commentOnlyHost?.closest("section");
+        if (!(section instanceof HTMLElement) || !commentOnlyAside?.isConnected) return;
+        if (
+            commentOnlyVideoMoreColumn?.isConnected &&
+            section.contains(commentOnlyVideoMoreColumn) &&
+            containsVideoMoreHeading(commentOnlyVideoMoreColumn)
+        ) {
+            return;
+        }
+
+        commentOnlyVideoMoreColumn?.removeAttribute("data-bcvc-comment-only-vod-column");
+        commentOnlyVideoMoreColumn = findRaisedVideoMoreColumn(section);
+        commentOnlyVideoMoreColumn?.setAttribute("data-bcvc-comment-only-vod-column", "1");
+    }
+
+    function resolveCommentOnlyAnchors() {
+        const host = findCommentOnlyHost();
+        if (!(host instanceof HTMLElement)) return null;
+
+        if (commentOnlyAside?.isConnected && commentOnlyHost === host) {
+            syncCommentOnlyVideoMoreColumn();
+            const container = commentOnlyAside.querySelector("[data-bcvc-comment-only-container='1']");
+            const header = commentOnlyAside.querySelector("[data-bcvc-comment-only-header='1']");
+            const heading = header?.querySelector("h2");
+            if (container instanceof HTMLElement && header instanceof HTMLElement && heading instanceof HTMLElement) {
+                return {
+                    appearanceHeading: findVideoMoreHeading(host.closest("section")),
+                    aside: commentOnlyAside,
+                    chatLog: null,
+                    container,
+                    header,
+                    heading,
+                };
+            }
+        }
+
+        removeCommentOnlyShell();
+        const aside = document.createElement("aside");
+        aside.id = COMMENT_ONLY_ASIDE_ID;
+        aside.setAttribute("data-bcvc-comment-only-aside", "1");
+        const container = document.createElement("div");
+        container.setAttribute("data-bcvc-comment-only-container", "1");
+        const header = document.createElement("div");
+        header.setAttribute("data-bcvc-comment-only-header", "1");
+        const heading = document.createElement("h2");
+        heading.textContent = "댓글";
+        header.appendChild(heading);
+        container.appendChild(header);
+        aside.appendChild(container);
+        host.setAttribute("data-bcvc-comment-only-host", "1");
+        host.appendChild(aside);
+        commentOnlyAside = aside;
+        commentOnlyHost = host;
+        syncCommentOnlyVideoMoreColumn();
+        return {
+            appearanceHeading: findVideoMoreHeading(host.closest("section")),
+            aside,
+            chatLog: null,
+            container,
+            header,
+            heading,
+        };
+    }
+
     function resolveNativeAnchors() {
         if (!isFeatureEnabled() || !isVodRoute()) return null;
         const aside = document.querySelector("aside#vod-aside");
-        if (!(aside instanceof HTMLElement)) return null;
+        if (!(aside instanceof HTMLElement)) return resolveCommentOnlyAnchors();
+        removeCommentOnlyShell();
 
         const chatLog = aside.querySelector("[role='log']");
         const heading = findNativeHeading(aside);
@@ -109,7 +227,7 @@
         if (!(header instanceof HTMLElement) || !(container instanceof HTMLElement) || !container.contains(chatLog)) {
             return null;
         }
-        return { aside, chatLog, container, header, heading };
+        return { appearanceHeading: heading, aside, chatLog, container, header, heading };
     }
 
     function getActiveState() {
@@ -260,6 +378,7 @@
     }
 
     function mountView(anchors) {
+        if (!(anchors.chatLog instanceof HTMLElement)) selectedTab = "comments";
         commentView.setActiveOrder(activeOrder);
         commentView.setSelectedTab(selectedTab);
         commentView.mount(anchors);
@@ -277,7 +396,7 @@
         return true;
     }
 
-    function teardownMount({ abortRequests = false } = {}) {
+    function teardownMount({ abortRequests = false, preserveCommentOnlyShell = false } = {}) {
         cancelScheduledCommentPrefetch();
         clearEnsureTimer();
         clearMountGapTimer();
@@ -285,6 +404,7 @@
         saveActiveScroll();
         nativeAdapter.detach();
         commentView.destroy();
+        if (!preserveCommentOnlyShell) removeCommentOnlyShell();
     }
 
     function ensureMounted() {
@@ -302,12 +422,18 @@
 
         if (commentView.matchesShell(anchors) && commentView.ownedNodesConnected()) {
             if (commentView.getChatLog() !== anchors.chatLog) commentView.replaceChatLog(anchors.chatLog);
-            else commentView.scheduleLayoutSync();
+            else commentView.setHeaderAppearanceSource(anchors.appearanceHeading);
             nativeAdapter.refresh();
             return;
         }
-        if (commentView.canReattach() && reattachView(anchors)) return;
-        teardownMount();
+        if (
+            commentView.canReattach() &&
+            Boolean(commentView.getChatLog()) === Boolean(anchors.chatLog) &&
+            reattachView(anchors)
+        ) {
+            return;
+        }
+        teardownMount({ preserveCommentOnlyShell: anchors.aside === commentOnlyAside });
         mountView(anchors);
     }
 
@@ -367,6 +493,19 @@
         return [...mutation.addedNodes, ...mutation.removedNodes].some(nodeCouldAffectNativeCommentArea);
     }
 
+    function nodeCouldAffectVideoMoreColumn(node) {
+        if (!(node instanceof Element)) return false;
+        const headings = node.matches("h1, h2, h3, h4, h5, h6")
+            ? [node]
+            : node.querySelectorAll("h1, h2, h3, h4, h5, h6");
+        return Array.from(headings).some(isVideoMoreHeading);
+    }
+
+    function mutationCouldAffectVideoMoreColumn(mutation) {
+        if (mutation.type !== "childList") return false;
+        return [...mutation.addedNodes, ...mutation.removedNodes].some(nodeCouldAffectVideoMoreColumn);
+    }
+
     function installBodyObserver() {
         if (!document.documentElement || !isVodRoute()) return;
         nativeAdapter.refresh();
@@ -378,6 +517,10 @@
                 return;
             }
             if (mutations.some(mutationCouldAffectNativeCommentArea)) nativeAdapter.refresh();
+            if (commentOnlyAside?.isConnected && mutations.some(mutationCouldAffectVideoMoreColumn)) {
+                syncCommentOnlyVideoMoreColumn();
+                scheduleEnsureMounted();
+            }
             if (commentView.isDisconnected()) scheduleEnsureMounted({ immediate: true });
             else if (mutations.some(mutationCouldAffectAnchors)) scheduleEnsureMounted();
         });
