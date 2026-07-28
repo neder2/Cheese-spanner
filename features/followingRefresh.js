@@ -15,6 +15,7 @@
     const { bindFeatureOptions, normSpace } = BetterChzzk.utils;
 
     const REFRESH_BUTTON_SELECTOR = 'button[aria-label], [role="button"][aria-label]';
+    const EXTENSION_OWNED_ROOT_SELECTOR = "[id^='betterchzzk-']";
     const REFRESH_LABEL_RE = /새로고침|refresh/i;
     const FOLLOWING_SECTION_RE = /팔로(잉|우)|following|follow/i;
     const FOLLOWING_HREF_RE = /(^|\/)following(?:[/?#]|$)/i;
@@ -33,7 +34,10 @@
     }
 
     function isRefreshButton(el) {
-        return REFRESH_LABEL_RE.test(normSpace(el.getAttribute("aria-label")));
+        return (
+            !el.closest(EXTENSION_OWNED_ROOT_SELECTOR) &&
+            REFRESH_LABEL_RE.test(normSpace(el.getAttribute("aria-label")))
+        );
     }
 
     function isUsableRefreshButton(button) {

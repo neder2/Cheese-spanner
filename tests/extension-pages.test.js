@@ -3166,15 +3166,37 @@ test("following refresh clicks the native following sidebar refresh button", asy
 
 test("following refresh stays idle when the native following refresh button is unavailable", async () => {
     const chrome = createFakeChrome({ sync: { followingRefreshSeconds: 10 } });
-    const dom = createPageDom("<!doctype html><body><main></main></body>", "https://chzzk.naver.com/", chrome);
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<div id="app">',
+            '<main id="betterchzzk-vod-comment-aside">',
+            '<div id="betterchzzk-vod-comment-panel">',
+            '<button id="commentRefresh" type="button" aria-label="댓글 새로고침"></button>',
+            "</div>",
+            "</main>",
+            "<nav>",
+            '<a href="/following?tab=LIVE">팔로잉 채널</a>',
+            "</nav>",
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/video/123",
+        chrome
+    );
     const intervals = captureIntervals(dom);
     const events = { visibility: 0, focus: 0 };
+    let commentRefreshClicks = 0;
 
     dom.window.document.addEventListener("visibilitychange", () => {
         events.visibility += 1;
     });
     dom.window.addEventListener("focus", () => {
         events.focus += 1;
+    });
+    dom.window.document.getElementById("commentRefresh").addEventListener("click", () => {
+        commentRefreshClicks += 1;
     });
 
     evalFollowingRefreshScripts(dom);
@@ -3186,6 +3208,52 @@ test("following refresh stays idle when the native following refresh button is u
 
     assert.equal(events.visibility, 0);
     assert.equal(events.focus, 0);
+    assert.equal(commentRefreshClicks, 0, "팔로잉 버튼이 없을 때 다시보기 댓글 새로고침을 대신 클릭하면 안 된다");
+});
+
+test("following refresh ignores the VOD comment refresh control before the native button", async () => {
+    const chrome = createFakeChrome({ sync: { followingRefreshSeconds: 10 } });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<div id="app">',
+            '<aside id="betterchzzk-vod-comment-aside">',
+            '<div id="betterchzzk-vod-comment-panel">',
+            '<button id="commentRefresh" type="button" aria-label="댓글 새로고침"></button>',
+            "</div>",
+            "</aside>",
+            "<nav>",
+            '<section id="following">',
+            "<strong>팔로잉 채널</strong>",
+            '<button id="followingRefresh" type="button" aria-label="새로고침"></button>',
+            '<a href="/following?tab=LIVE">전체보기</a>',
+            "</section>",
+            "</nav>",
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/video/123",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const { document } = dom.window;
+    const clicks = { comments: 0, following: 0 };
+
+    document.getElementById("commentRefresh").addEventListener("click", () => {
+        clicks.comments += 1;
+    });
+    document.getElementById("followingRefresh").addEventListener("click", () => {
+        clicks.following += 1;
+    });
+
+    evalFollowingRefreshScripts(dom);
+    await waitForAsyncCallbacks();
+
+    intervals[0].fn();
+
+    assert.equal(clicks.comments, 0);
+    assert.equal(clicks.following, 1);
 });
 
 test("following refresh restarts the timer when the custom interval changes", async () => {
