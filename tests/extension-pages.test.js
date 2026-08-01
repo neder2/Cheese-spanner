@@ -2183,6 +2183,10 @@ test("options match the wide reference layout and keep a compact popup layout", 
     assert.match(noteRule, /color:\s*var\(--text-muted\)/);
     assert.match(noteRule, /font-size:\s*13px/);
     assert.match(responsiveRules, /\.options-body \.options-page \.setting-note\s*\{[^}]*font-size:\s*11px/s);
+    assert.match(
+        responsiveRules,
+        /\.options-body \.options-page \.toggle-row input\[type="checkbox"\]::before\s*\{[^}]*left:\s*2px[^}]*top:\s*2px/s
+    );
     assert.match(unitRule, /color:\s*var\(--text-muted\)/);
     assert.doesNotMatch(referenceRules, /padding-bottom:\s*(?:68|74)px|\.action-bar/);
 });
@@ -3209,6 +3213,69 @@ test("following refresh stays idle when the native following refresh button is u
     assert.equal(events.visibility, 0);
     assert.equal(events.focus, 0);
     assert.equal(commentRefreshClicks, 0, "팔로잉 버튼이 없을 때 다시보기 댓글 새로고침을 대신 클릭하면 안 된다");
+});
+
+test("following refresh runs immediately when a hidden tab becomes visible", async () => {
+    const chrome = createFakeChrome({ sync: { followingRefreshSeconds: 10 } });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            "<nav>",
+            '<section id="following">',
+            "<strong>팔로잉 채널</strong>",
+            '<button id="followingRefresh" type="button" aria-label="새로고침"></button>',
+            '<a href="/following?tab=LIVE">전체보기</a>',
+            "</section>",
+            "</nav>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const { document } = dom.window;
+    let visibilityState = "hidden";
+    let refreshClicks = 0;
+
+    Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => visibilityState,
+    });
+    document.getElementById("followingRefresh").addEventListener("click", () => {
+        refreshClicks += 1;
+    });
+
+    evalFollowingRefreshScripts(dom);
+    await waitForAsyncCallbacks();
+
+    intervals[0].fn();
+    assert.equal(refreshClicks, 0, "숨겨진 동안에는 주기 새로고침을 건너뛴다");
+
+    visibilityState = "visible";
+    document.dispatchEvent(new dom.window.Event("visibilitychange"));
+
+    assert.equal(refreshClicks, 1, "탭으로 복귀하면 즉시 새로고침한다");
+    assert.equal(intervals[0].cleared, true);
+    assert.equal(intervals.length, 2);
+    assert.equal(intervals[1].ms, 10000, "복귀 시점부터 새 주기를 시작한다");
+
+    chrome.testState.storageChangeListeners[0](
+        {
+            followingRefreshEnabled: {
+                oldValue: true,
+                newValue: false,
+            },
+        },
+        "sync"
+    );
+    visibilityState = "hidden";
+    document.dispatchEvent(new dom.window.Event("visibilitychange"));
+    visibilityState = "visible";
+    document.dispatchEvent(new dom.window.Event("visibilitychange"));
+
+    assert.equal(intervals[1].cleared, true);
+    assert.equal(refreshClicks, 1, "기능을 끄면 복귀 새로고침 리스너도 정리한다");
 });
 
 test("following refresh ignores the VOD comment refresh control before the native button", async () => {

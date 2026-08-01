@@ -724,9 +724,9 @@ test("VOD comments mount a comment-only side panel when replay chat is unavailab
     const css = document.getElementById("betterchzzk-vod-comment-tabs-style").textContent;
     assert.match(
         css,
-        /#betterchzzk-vod-comment-aside #betterchzzk-vod-comment-comment-tab\{[^}]*justify-content:flex-start[^}]*text-align:left[^}]*cursor:default/s
+        /#betterchzzk-vod-comment-aside #betterchzzk-vod-comment-comment-tab\{[^}]*justify-content:center[^}]*text-align:center[^}]*cursor:default/s
     );
-    assert.match(
+    assert.doesNotMatch(
         css,
         /#betterchzzk-vod-comment-aside #betterchzzk-vod-comment-comment-tab::after\{\s*display:none;\s*\}/
     );
@@ -766,6 +766,109 @@ test("VOD comments mount a comment-only side panel when replay chat is unavailab
     assert.match(document.getElementById("betterchzzk-vod-comment-panel").textContent, /채팅 없이 보는 댓글/);
     assert.equal(document.querySelector("[role='log']").getAttribute("data-bcvc-tab-hidden"), "1");
     assert.equal(fixture.requests.length, 1, "native chat appearing later must reuse the loaded comment state");
+});
+
+test("VOD comment-only panel leaves fullscreen and restores its cached state after exit", async (t) => {
+    const fixture = createFixture({
+        fetchComments: async () => apiContent({ rows: [apiComment(1, "전체화면 복귀 댓글")], totalCount: 1 }),
+        includeAside: false,
+        nativeCommentsHtml: '<div id="commentArea"></div>',
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document, window } = fixture;
+    let fullscreenElement = null;
+
+    Object.defineProperty(document, "fullscreenElement", {
+        configurable: true,
+        get: () => fullscreenElement,
+    });
+
+    await waitForCondition(() => /전체화면 복귀 댓글/.test(document.body.textContent));
+    fullscreenElement = document.getElementById("player_layout");
+    document.dispatchEvent(new window.Event("fullscreenchange"));
+
+    assert.equal(document.getElementById("betterchzzk-vod-comment-aside"), null);
+    assert.equal(document.getElementById("betterchzzk-vod-comment-panel"), null);
+
+    document.getElementById("player_layout").appendChild(document.createElement("span"));
+    await delay(120);
+    assert.equal(
+        document.getElementById("betterchzzk-vod-comment-aside"),
+        null,
+        "fullscreen mutations must not remount the independent comment-only panel"
+    );
+
+    fullscreenElement = null;
+    document.dispatchEvent(new window.Event("fullscreenchange"));
+    await waitForCondition(() => /전체화면 복귀 댓글/.test(document.body.textContent));
+
+    assert.ok(document.getElementById("betterchzzk-vod-comment-aside"));
+    assert.equal(fixture.requests.length, 1, "fullscreen exit must reuse the loaded comment state");
+});
+
+test("VOD comments do not replace temporarily hidden native chat with the comment-only panel", async (t) => {
+    const fixture = createFixture({
+        fetchComments: async () => apiContent({ rows: [apiComment(1, "숨김 전 댓글")], totalCount: 1 }),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document } = fixture;
+
+    await waitForCondition(() => document.getElementById("betterchzzk-vod-comment-tabs"));
+    const section = document.getElementById("player-layout");
+    const playerRow = document.createElement("div");
+    playerRow.className = "native-player-row";
+    const player = document.createElement("div");
+    player.id = "player_layout";
+    playerRow.appendChild(player);
+    section.insertBefore(playerRow, section.firstChild);
+    document.getElementById("vod-aside").remove();
+
+    await delay(750);
+    assert.equal(
+        document.getElementById("betterchzzk-vod-comment-aside"),
+        null,
+        "a collapsed native chat must not be mistaken for a chatless VOD"
+    );
+
+    section.insertAdjacentHTML("beforeend", chatAsideHtml());
+    await waitForCondition(() => document.getElementById("betterchzzk-vod-comment-chat-tab"));
+
+    assert.equal(document.getElementById("betterchzzk-vod-comment-aside"), null);
+    assert.equal(fixture.requests.length, 0, "restoring native chat must not fetch comments before the tab is opened");
+});
+
+test("VOD comments still mount comment-only after an incomplete native chat shell disappears", async (t) => {
+    const fixture = createFixture({
+        fetchComments: async () => apiContent({ rows: [apiComment(1, "빈 채팅 껍데기 뒤 댓글")], totalCount: 1 }),
+        includeLog: false,
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document } = fixture;
+    const section = document.getElementById("player-layout");
+    const playerRow = document.createElement("div");
+    playerRow.className = "native-player-row";
+    const player = document.createElement("div");
+    player.id = "player_layout";
+    playerRow.appendChild(player);
+    section.insertBefore(playerRow, section.firstChild);
+
+    await delay(120);
+    assert.equal(document.getElementById("betterchzzk-vod-comment-tabs"), null);
+    document.getElementById("vod-aside").remove();
+    await waitForCondition(() => document.getElementById("betterchzzk-vod-comment-aside"));
+    await waitForCondition(() => /빈 채팅 껍데기 뒤 댓글/.test(document.body.textContent));
+
+    assert.ok(document.getElementById("betterchzzk-vod-comment-aside"));
+    assert.equal(fixture.requests.length, 1);
 });
 
 test("VOD comment tabs mount after a delayed chat log and reuse cached comments after an aside remount", async (t) => {

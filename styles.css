@@ -2450,6 +2450,8 @@ h1 {
     }
 
     .options-body .options-page .toggle-row input[type="checkbox"]::before {
+        left: 2px;
+        top: 2px;
         width: 18px;
         height: 18px;
     }

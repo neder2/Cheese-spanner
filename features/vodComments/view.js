@@ -190,19 +190,16 @@
   background:var(--bcvc-surface);
 }
 #betterchzzk-vod-comment-aside #${COMMENT_TAB_ID}{
-  flex:1 1 auto;
-  justify-content:flex-start;
-  padding:0 20px;
+  flex:1 1 100%;
+  justify-content:center;
+  padding:0 10px;
   color:var(--bcvc-text);
-  text-align:left;
+  text-align:center;
   cursor:default;
 }
 #betterchzzk-vod-comment-aside #${COMMENT_TAB_ID}:hover{
   background:transparent;
   color:var(--bcvc-text);
-}
-#betterchzzk-vod-comment-aside #${COMMENT_TAB_ID}::after{
-  display:none;
 }
 #${TABLIST_ID} button:focus-visible,
 #${COMMENT_PANEL_ID} button:focus-visible{

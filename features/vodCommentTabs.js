@@ -59,6 +59,8 @@
     let commentOnlyAside = null;
     let commentOnlyHost = null;
     let commentOnlyVideoMoreColumn = null;
+    let nativeChatShellSeen = false;
+    let fullscreenListenerInstalled = false;
 
     const commentRepository = repositoryModule.createCommentRepository({
         fetchPage: fetchChzzkCommentPage,
@@ -216,7 +218,13 @@
     function resolveNativeAnchors() {
         if (!isFeatureEnabled() || !isVodRoute()) return null;
         const aside = document.querySelector("aside#vod-aside");
-        if (!(aside instanceof HTMLElement)) return resolveCommentOnlyAnchors();
+        if (!(aside instanceof HTMLElement)) {
+            if (document.fullscreenElement || nativeChatShellSeen) {
+                removeCommentOnlyShell();
+                return null;
+            }
+            return resolveCommentOnlyAnchors();
+        }
         removeCommentOnlyShell();
 
         const chatLog = aside.querySelector("[role='log']");
@@ -227,6 +235,7 @@
         if (!(header instanceof HTMLElement) || !(container instanceof HTMLElement) || !container.contains(chatLog)) {
             return null;
         }
+        nativeChatShellSeen = true;
         return { appearanceHeading: heading, aside, chatLog, container, header, heading };
     }
 
@@ -413,6 +422,10 @@
             teardownMount();
             return;
         }
+        if (document.fullscreenElement) {
+            teardownMount();
+            return;
+        }
         const anchors = resolveNativeAnchors();
         if (!anchors) {
             if (commentView.hasMount()) scheduleMountGapTeardown();
@@ -532,6 +545,28 @@
         bodyObserver = null;
     }
 
+    function handleFullscreenChange() {
+        if (!runtimeInstalled || !isFeatureEnabled() || !isVodRoute()) return;
+        if (document.fullscreenElement) {
+            teardownMount();
+            return;
+        }
+        installBodyObserver();
+        scheduleEnsureMounted({ immediate: true });
+    }
+
+    function installFullscreenListener() {
+        if (fullscreenListenerInstalled) return;
+        document.addEventListener("fullscreenchange", handleFullscreenChange, true);
+        fullscreenListenerInstalled = true;
+    }
+
+    function disconnectFullscreenListener() {
+        if (!fullscreenListenerInstalled) return;
+        document.removeEventListener("fullscreenchange", handleFullscreenChange, true);
+        fullscreenListenerInstalled = false;
+    }
+
     function installRuntime() {
         if (runtimeInstalled) return;
         runtimeInstalled = true;
@@ -543,6 +578,7 @@
         currentVideoNo = getVodVideoNoFromPath();
         commentRepository.setVideo(currentVideoNo);
         activeOrder = commentRepository.getOrder();
+        installFullscreenListener();
         installBodyObserver();
         scheduleEnsureMounted({ immediate: true });
     }
@@ -550,12 +586,14 @@
     function uninstallRuntime() {
         if (!runtimeInstalled) return;
         runtimeInstalled = false;
+        disconnectFullscreenListener();
         disconnectBodyObserver();
         teardownMount();
         commentRepository.reset({ order: model.DEFAULT_ORDER, videoNo: "" });
         requestPresentationGeneration += 1;
         activeOrder = model.DEFAULT_ORDER;
         selectedTab = "chat";
+        nativeChatShellSeen = false;
         commentView.setActiveOrder(activeOrder);
         commentView.setSelectedTab(selectedTab);
     }
@@ -563,12 +601,18 @@
     function handlePageChange() {
         const videoNo = getVodVideoNoFromPath();
         if (videoNo === currentVideoNo) {
-            if (isFeatureEnabled() && videoNo) installBodyObserver();
+            if (isFeatureEnabled() && videoNo) {
+                installFullscreenListener();
+                installBodyObserver();
+            } else {
+                disconnectFullscreenListener();
+            }
             return;
         }
 
         teardownMount();
         currentVideoNo = videoNo;
+        nativeChatShellSeen = false;
         commentRepository.setVideo(videoNo);
         requestPresentationGeneration += 1;
         activeOrder = model.DEFAULT_ORDER;
@@ -576,9 +620,11 @@
         commentView.setActiveOrder(activeOrder);
         commentView.setSelectedTab(selectedTab);
         if (isFeatureEnabled() && videoNo) {
+            installFullscreenListener();
             installBodyObserver();
             scheduleEnsureMounted();
         } else {
+            disconnectFullscreenListener();
             disconnectBodyObserver();
         }
     }

@@ -4,7 +4,8 @@
  * 동작 위치: isolated world, chzzk.naver.com 전역(팔로잉 사이드바가 있는 모든 페이지).
  * 하는 일: DOM에서 팔로잉 사이드바의 네이티브 새로고침 버튼을 찾아 캐시해두고, setInterval로
  *   주기적으로 button.click()을 호출해 CHZZK 자체 refetch 로직을 그대로 트리거한다. 탭이 보이지
- *   않거나(document.visibilityState) 오프라인(navigator.onLine)이면 새로고침을 건너뛴다.
+ *   않거나(document.visibilityState) 오프라인(navigator.onLine)이면 주기 새로고침을 건너뛰고,
+ *   탭이 다시 보이면 즉시 한 번 새로고침한 뒤 그 시점부터 주기를 다시 계산한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils.bindFeatureOptions/normSpace.
  * 옵션 키: followingRefreshEnabled, followingRefreshSeconds.
  */
@@ -99,15 +100,30 @@
         clickFollowingRefreshButton();
     }
 
-    function startRefreshTimer() {
-        if (refreshTimer) return;
+    function restartRefreshTimer() {
+        if (refreshTimer) clearInterval(refreshTimer);
         refreshTimer = setInterval(triggerSidebarRefresh, getIntervalMs());
     }
 
+    function handleVisibilityChange() {
+        if (!isEnabled() || document.visibilityState !== "visible") return;
+
+        triggerSidebarRefresh();
+        restartRefreshTimer();
+    }
+
+    function startRefreshTimer() {
+        if (refreshTimer) return;
+        restartRefreshTimer();
+        document.addEventListener("visibilitychange", handleVisibilityChange, true);
+    }
+
     function stopRefreshTimer() {
-        if (!refreshTimer) return;
-        clearInterval(refreshTimer);
-        refreshTimer = null;
+        if (refreshTimer) {
+            clearInterval(refreshTimer);
+            refreshTimer = null;
+        }
+        document.removeEventListener("visibilitychange", handleVisibilityChange, true);
     }
 
     function applyOptions(options) {
