@@ -11,8 +11,8 @@
  *   - MutationObserver와 scroll 이벤트로 라우트 변화·무한 스크롤을 감지해 자동으로 다음 메타데이터 페이지를 불러온다.
  *   - 옵션 변경 시(bindFeatureOptions) 런타임을 설치/해체하고 배지·툴바 상태를 다시 동기화한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions/bindFeatureOptions, 전역 BetterChzzk.utils
- *   (createMutationObserverSync, createThrottledDomSync, fetchJson, normSpace, normalizeCompact, onReady,
- *   setLoadingReason, sleep, startPageChangeDetection, touchMapEntry, injectStyleOnce).
+ *   (createMutationObserverSync, createThrottledDomSync, fetchJson, normSpace, normalizeChzzkImageUrl,
+ *   normalizeCompact, onReady, setLoadingReason, sleep, startPageChangeDetection, touchMapEntry, injectStyleOnce).
  * 옵션 키: categoryToolsEnabled, categoryToolsMaxMetadataPages, categoryToolsHideGlobalTagSearch,
  *   categoryToolsFollowerBadgesEnabled, categoryToolsLiveElapsedEnabled,
  *   categoryToolsFollowerFilterPreset1~6, categoryToolsViewFilterPreset1~6, categoryToolsDurationFilterPreset1~6,
@@ -164,6 +164,7 @@
         createThrottledDomSync,
         fetchJson,
         normSpace,
+        normalizeChzzkImageUrl,
         normalizeCompact: normalize,
         onReady,
         setLoadingReason,
@@ -2245,7 +2246,9 @@
     }
 
     function normalizeImageUrl(url) {
-        return String(url || "").replace("{type}", "720");
+        const raw = String(url || "").replace(/\{type\}/gi, "720");
+        if (raw === DEFAULT_PROFILE_IMAGE_URL) return raw;
+        return normalizeChzzkImageUrl(raw, location.origin);
     }
 
     function formatDuration(seconds) {
@@ -2286,20 +2289,38 @@
     }
 
     function setImageSource(img, url, alt = "") {
-        if (!img || !url) return;
+        if (!img) return false;
         const normalizedUrl = normalizeImageUrl(url);
+        const sourceAttributes = [
+            "src",
+            "srcset",
+            "data-src",
+            "data-original",
+            "data-lazy-src",
+            "data-srcset",
+            "data-lazy-srcset",
+        ];
+        const pictureSources = Array.from(img.closest("picture")?.querySelectorAll("source") || []);
+        if (!normalizedUrl) {
+            for (const attr of sourceAttributes) img.removeAttribute(attr);
+            for (const source of pictureSources) {
+                for (const attr of sourceAttributes) source.removeAttribute(attr);
+            }
+            return false;
+        }
         img.setAttribute("src", normalizedUrl);
         img.removeAttribute("srcset");
-        for (const attr of ["data-src", "data-original", "data-lazy-src"]) {
+        for (const attr of ["data-src", "data-original", "data-lazy-src", "data-srcset", "data-lazy-srcset"]) {
             if (img.hasAttribute(attr)) img.setAttribute(attr, normalizedUrl);
         }
-        const picture = img.closest("picture");
-        if (picture) {
-            for (const source of picture.querySelectorAll("source")) {
-                source.setAttribute("srcset", normalizedUrl);
+        for (const source of pictureSources) {
+            source.setAttribute("srcset", normalizedUrl);
+            for (const attr of ["data-src", "data-original", "data-lazy-src", "data-srcset", "data-lazy-srcset"]) {
+                if (source.hasAttribute(attr)) source.setAttribute(attr, normalizedUrl);
             }
         }
         if (alt && img.hasAttribute("alt")) img.setAttribute("alt", alt);
+        return true;
     }
 
     function formatViewerCount(count) {
@@ -2420,7 +2441,7 @@
     }
 
     function profileImageUrl(meta) {
-        return meta?.channelImageUrl || DEFAULT_PROFILE_IMAGE_URL;
+        return normalizeImageUrl(meta?.channelImageUrl) || DEFAULT_PROFILE_IMAGE_URL;
     }
 
     function updateProfileImage(pairs, card, thumbImg, meta) {
@@ -2440,7 +2461,7 @@
     }
 
     function updateProfileBackgroundImage(card, meta) {
-        const url = profileImageUrl(meta);
+        const url = normalizeImageUrl(profileImageUrl(meta));
         const target = Array.from(card.querySelectorAll("*")).find((el) => {
             if (!(el instanceof HTMLElement)) return false;
             const attrs = [
@@ -2451,7 +2472,7 @@
             ].join(" ");
             return /url\(/.test(el.style.backgroundImage) && /profile|avatar|channel|nng-phinf/i.test(attrs);
         });
-        if (target) target.style.backgroundImage = `url("${normalizeImageUrl(url)}")`;
+        if (target && url) target.style.backgroundImage = `url("${url}")`;
     }
 
     function pickProfileImage(card) {

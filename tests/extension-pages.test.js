@@ -2314,6 +2314,8 @@ test("shared selector registry preserves lookup priority and warns once per stal
 test("manifest loads shared and playback scripts in the expected worlds", () => {
     const manifest = JSON.parse(readRepoFile("manifest.json"));
     const packageJson = JSON.parse(readRepoFile("package.json"));
+    const packageLock = JSON.parse(readRepoFile("package-lock.json"));
+    const updateHistory = readRepoFile("docs", "update-history.md");
     const mainScript = manifest.content_scripts.find((entry) => entry.world === "MAIN");
     const isolatedScript = manifest.content_scripts.find((entry) => entry.js?.includes("features/volumeWheel.js"));
     const vodCommentModules = [
@@ -2325,8 +2327,11 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.2.6");
+    assert.equal(manifest.version, "1.2.7");
     assert.equal(packageJson.version, manifest.version);
+    assert.equal(packageLock.version, manifest.version);
+    assert.equal(packageLock.packages[""].version, manifest.version);
+    assert.equal(updateHistory.match(/^##\s+(\d+\.\d+\.\d+)/m)?.[1], manifest.version);
     assert.deepEqual(manifest.permissions, ["storage"]);
     assert.deepEqual(manifest.host_permissions, ["https://api.chzzk.naver.com/*", "https://apis.naver.com/*"]);
     assert.deepEqual(manifest.optional_host_permissions, ["https://*.pstatic.net/*"]);
@@ -2480,10 +2485,15 @@ function createGlobalLivesDom(chrome, { nestedScroll = false } = {}) {
             '<main id="grid">',
             '<article id="live-card-a">' +
                 '<a class="_thumbnail" href="/live/native-a">' +
-                '<img src="https://example.com/a.jpg" width="320" height="180" alt=""></a>' +
+                '<picture><source srcset="https://nng-phinf.pstatic.net/a-source.jpg" ' +
+                'data-srcset="https://nng-phinf.pstatic.net/a-lazy-source.jpg">' +
+                '<img src="https://nng-phinf.pstatic.net/a.jpg" srcset="https://nng-phinf.pstatic.net/a-2x.jpg 2x" ' +
+                'data-src="https://nng-phinf.pstatic.net/a-lazy.jpg" width="320" height="180" alt=""></picture></a>' +
                 '<a class="_title" href="/live/native-a"><strong class="_live_title">Native A</strong></a>' +
                 "<span>LIVE 10명</span>" +
-                '<a class="_image" href="/live/native-a"><span class="_blind">Template Channel 채널로 이동</span></a>' +
+                '<a class="_image" href="/live/native-a">' +
+                '<img class="_profile" src="https://nng-phinf.pstatic.net/profile-a.jpg" width="40" height="40" alt="">' +
+                '<span class="_blind">Template Channel 채널로 이동</span></a>' +
                 '<a class="_channel" href="/live/native-a" aria-label="Template Channel 채널로 이동" ' +
                 'title="Template Channel"><span class="_ellipsis"><span class="_text">Template Channel</span></span>' +
                 '<span class="_blind">Template Channel 채널로 이동</span>' +
@@ -2491,10 +2501,14 @@ function createGlobalLivesDom(chrome, { nestedScroll = false } = {}) {
                 "</a></article>",
             '<article id="live-card-b">' +
                 '<a class="_thumbnail" href="/live/native-b">' +
-                '<img src="https://example.com/b.jpg" width="320" height="180" alt=""></a>' +
+                '<picture><source srcset="https://nng-phinf.pstatic.net/b-source.jpg" ' +
+                'data-srcset="https://nng-phinf.pstatic.net/b-lazy-source.jpg">' +
+                '<img src="https://nng-phinf.pstatic.net/b.jpg" srcset="https://nng-phinf.pstatic.net/b-2x.jpg 2x" ' +
+                'data-src="https://nng-phinf.pstatic.net/b-lazy.jpg" width="320" height="180" alt=""></picture></a>' +
                 '<a class="_title" href="/live/native-b"><strong class="_live_title">Native B</strong></a>' +
                 "<span>LIVE 20명</span>" +
                 '<a class="_image" href="/live/native-b">' +
+                '<img class="_profile" src="https://nng-phinf.pstatic.net/profile-b.jpg" width="40" height="40" alt="">' +
                 '<span class="_blind">Second Template Channel 채널로 이동</span></a>' +
                 '<a class="_channel" href="/live/native-b" aria-label="Second Template Channel 채널로 이동" ' +
                 'title="Second Template Channel">' +
@@ -2622,13 +2636,17 @@ function createGlobalLivesApiMock(lives = DEFAULT_GLOBAL_LIVES_FIXTURE) {
                 data: pageRows.map((row) => ({
                     liveId: row.liveId,
                     liveTitle: row.title,
-                    liveImageUrl: `https://example.com/${row.channelId}_{type}.jpg`,
+                    liveImageUrl: row.imageUrl || `https://nng-phinf.pstatic.net/${row.channelId}_{type}.jpg`,
                     concurrentUserCount: row.views ?? 5,
                     openDate: row.openDate,
                     adult: row.adult,
                     tags: [],
                     liveCategoryValue: "테스트",
-                    channel: { channelId: row.channelId, channelName: row.channelName || row.channelId },
+                    channel: {
+                        channelId: row.channelId,
+                        channelName: row.channelName || row.channelId,
+                        channelImageUrl: row.channelImageUrl || "",
+                    },
                 })),
                 page: hasMore
                     ? { next: { concurrentUserCount: 0, liveId: pageRows[pageRows.length - 1].liveId } }
@@ -2838,6 +2856,8 @@ test("global lives duration filter uses openDate and keeps the native list path"
             channelName: "Duration Match Channel",
             title: "Injected duration match",
             views: 100,
+            imageUrl: "https://evil.example/injected.jpg",
+            channelImageUrl: "https://evil.example/profile.jpg",
         },
     ]);
     const requests = [];
@@ -2913,6 +2933,23 @@ test("global lives duration filter uses openDate and keeps the native list path"
         assert.equal(injectedChannel.getAttribute("href"), "/live/injected-pass");
         assert.equal(injectedChannel.getAttribute("aria-label"), "Duration Match Channel 채널로 이동");
         assert.equal(injected.querySelector('[data-bcgt-follower-badge="1"]'), null);
+        const injectedThumbnail = injected.querySelector("a._thumbnail img");
+        const injectedThumbnailSource = injected.querySelector("a._thumbnail source");
+        for (const attr of [
+            "src",
+            "srcset",
+            "data-src",
+            "data-original",
+            "data-lazy-src",
+            "data-srcset",
+            "data-lazy-srcset",
+        ]) {
+            assert.equal(injectedThumbnail.hasAttribute(attr), false);
+            assert.equal(injectedThumbnailSource.hasAttribute(attr), false);
+        }
+        const injectedProfile = injected.querySelector("img._profile");
+        assert.match(injectedProfile.getAttribute("src"), /^data:image\/svg\+xml,/);
+        assert.equal(injected.innerHTML.includes("evil.example"), false);
 
         const durationMin = menu.querySelector('[data-filter-min-input="duration"]');
         const durationMax = menu.querySelector('[data-filter-max-input="duration"]');
@@ -6646,6 +6683,7 @@ test("live watch history keeps a stale page title provisional when the first flu
     const provisional = chrome.testState.runtimeMessages[0].operation;
     assert.equal(provisional.entry.title, "");
     assert.equal(provisional.entry.thumbnailUrl, "");
+    assert.equal(Object.hasOwn(provisional.entry, "liveUrl"), false);
     assert.equal(provisional.session.title, "");
     assert.equal(provisional.entry.titleHistory.length, 0);
     assert.equal(JSON.stringify(provisional).includes(staleTitle), false);
@@ -6672,6 +6710,7 @@ test("live watch history keeps a stale page title provisional when the first flu
     assert.equal(verified.recordId, "live:new-live");
     assert.equal(verified.entry.title, verifiedTitle);
     assert.equal(verified.entry.thumbnailUrl, verifiedThumbnail);
+    assert.equal(Object.hasOwn(verified.entry, "liveUrl"), false);
     assert.equal(verified.session.title, verifiedTitle);
     assert.deepEqual(
         Array.from(verified.entry.titleHistory, (row) => row.title),
@@ -6765,6 +6804,7 @@ test("live watch history stores watch time without a stale page title when live 
     assert.equal(operation.session.watchedSeconds, 60);
     assert.equal(operation.entry.title, "");
     assert.equal(operation.entry.thumbnailUrl, "");
+    assert.equal(Object.hasOwn(operation.entry, "liveUrl"), false);
     assert.equal(operation.session.title, "");
     assert.equal(operation.entry.titleHistory.length, 0);
     assert.equal(JSON.stringify(operation).includes(staleTitle), false);
@@ -8841,6 +8881,59 @@ test("history page loads local watch history state without crashing", async () =
     assert.ok(document.getElementById("calendarDays").children.length >= 28);
     assert.equal(document.getElementById("deleteSelectedHistory").disabled, true);
     assert.equal(chrome.testState.storageChangeListeners.length, 1);
+});
+
+test("history page renders only canonical CHZZK live links from stored rows", async () => {
+    const startedAt = Date.now() - 60000;
+    const dateKey = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const entry = (id, title, liveUrl, channelId = "") => ({
+        id,
+        channelId,
+        channelName: "Security Test Channel",
+        title,
+        liveUrl,
+        firstWatchedAt: startedAt,
+        lastWatchedAt: startedAt + 60000,
+        watchedSeconds: 60,
+        dailySeconds: { [dateKey]: 60 },
+        sessions: 1,
+    });
+    const chrome = createFakeChrome({
+        local: {
+            betterChzzkLiveWatchHistory: {
+                entries: {
+                    "live:trusted": entry(
+                        "live:trusted",
+                        "Trusted legacy link",
+                        "https://chzzk.naver.com/live/trusted-channel?from=legacy#title"
+                    ),
+                    "live:external": entry("live:external", "External link", "https://evil.example/phish"),
+                    "live:script": entry("live:script", "Script link", "javascript:alert(1)"),
+                    "live:channel": entry(
+                        "live:channel",
+                        "Channel-derived link",
+                        "https://evil.example/ignored",
+                        "safe-channel"
+                    ),
+                },
+            },
+        },
+    });
+    const dom = createDom("history.html", "history.html", chrome);
+
+    evalRepoScript(dom, "shared", "data.js");
+    evalRepoScript(dom, "history.js");
+    await waitForAsyncCallbacks();
+
+    const titles = Array.from(dom.window.document.querySelectorAll(".history-item-main > :first-child"));
+    const findTitle = (text) => titles.find((node) => node.textContent === text);
+    assert.ok(findTitle("Trusted legacy link"), dom.window.document.getElementById("historyList").innerHTML);
+    assert.equal(findTitle("Trusted legacy link").href, "https://chzzk.naver.com/live/trusted-channel");
+    assert.equal(findTitle("External link").tagName, "STRONG");
+    assert.equal(findTitle("Script link").tagName, "STRONG");
+    assert.equal(findTitle("Channel-derived link").getAttribute("href"), "#");
+    assert.equal(dom.window.document.getElementById("historyList").innerHTML.includes("evil.example"), false);
+    dom.window.close();
 });
 
 test("history page keeps legacy aggregate rows after an unrelated v2 mutation", async () => {

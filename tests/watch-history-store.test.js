@@ -63,6 +63,55 @@ function createSnapshot(now, overrides = {}) {
     };
 }
 
+test("shared URL helpers allow only trusted CHZZK media, images, and live links", () => {
+    const { context } = loadStore();
+    const utils = context.BetterChzzk.utils;
+
+    assert.equal(
+        utils.normalizeChzzkMediaUrl("https://nvelop-livecloud.pstatic.net/live/playlist.m3u8#fragment"),
+        "https://nvelop-livecloud.pstatic.net/live/playlist.m3u8"
+    );
+    assert.equal(
+        utils.normalizeChzzkImageUrl("https://nng-phinf.pstatic.net/MjAy/image.jpg"),
+        "https://nng-phinf.pstatic.net/MjAy/image.jpg"
+    );
+    assert.equal(utils.normalizeChzzkImageUrl("/assets/image.jpg"), "https://chzzk.naver.com/assets/image.jpg");
+
+    const rejectedUrls = [
+        "javascript:alert(1)",
+        "data:text/plain,unsafe",
+        "blob:https://chzzk.naver.com/id",
+        "ftp://nng-phinf.pstatic.net/image.jpg",
+        "file:///tmp/image.jpg",
+        "http://nng-phinf.pstatic.net/image.jpg",
+        "//evil.example/image.jpg",
+        "https://evil.example/image.jpg",
+        "https://pstatic.net.evil.example/image.jpg",
+        "https://pstatic.net@evil.example/image.jpg",
+        "https://nng-phinf.pstatic.net:444/image.jpg",
+    ];
+    for (const url of rejectedUrls) {
+        assert.equal(utils.normalizeChzzkMediaUrl(url), "", `media URL should be rejected: ${url}`);
+        assert.equal(utils.normalizeChzzkImageUrl(url), "", `image URL should be rejected: ${url}`);
+    }
+
+    assert.equal(utils.buildChzzkLiveUrl("channel_A-1"), "https://chzzk.naver.com/live/channel_A-1");
+    assert.equal(
+        utils.normalizeChzzkLiveUrl("https://chzzk.naver.com/live/channel_A-1?from=history#title"),
+        "https://chzzk.naver.com/live/channel_A-1"
+    );
+    for (const url of [
+        "http://chzzk.naver.com/live/channel-a",
+        "https://evil.example/live/channel-a",
+        "https://chzzk.naver.com.evil.example/live/channel-a",
+        "https://chzzk.naver.com/video/123",
+        "https://chzzk.naver.com/live/channel-a/extra",
+        "https://user@chzzk.naver.com/live/channel-a",
+    ]) {
+        assert.equal(utils.normalizeChzzkLiveUrl(url), "", `live URL should be rejected: ${url}`);
+    }
+});
+
 test("absolute session snapshots survive worker restarts without duplicate totals or field loss", () => {
     const now = Date.parse("2026-07-10T12:00:00+09:00");
     const firstStore = loadStore().store;
@@ -661,12 +710,96 @@ test("mutation schema rejects unsupported operations and malformed record ids", 
     assert.throws(
         () =>
             store.normalizeMutation({
+                kind: "setReplayVideoNo",
+                recordId: `live:${"a".repeat(236)}`,
+                videoNo: "1",
+            }),
+        /record id/
+    );
+    assert.throws(
+        () =>
+            store.normalizeMutation({
                 kind: "migrateRecordId",
                 sourceRecordId: "live:same",
                 targetRecordId: "live:same",
             }),
         /different/
     );
+});
+
+test("stored history drops malformed record ids and keeps record maps prototype-free", () => {
+    const now = Date.parse("2026-07-10T12:00:00+09:00");
+    const { store } = loadStore();
+    const forgedPrototypeEntry = {
+        id: "__proto__",
+        "live:target": {
+            id: "live:forged",
+            firstWatchedAt: now - 60000,
+            lastWatchedAt: now,
+            watchedSeconds: 60,
+        },
+    };
+    const history = store.normalizeStoredHistory({
+        updatedAt: now,
+        entries: [
+            forgedPrototypeEntry,
+            { id: "prototype" },
+            { id: "constructor" },
+            { id: "toString" },
+            { id: "live:normal-id" },
+            { id: "channel:normal-id" },
+        ],
+        tombstones: { "live:normal-id": now },
+        recordAliases: {
+            "channel:normal-id": { targetRecordId: "live:normal-id", migratedAt: now },
+        },
+    });
+
+    assert.equal(Object.getPrototypeOf(history.entries), null);
+    assert.equal(Object.getPrototypeOf(history.tombstones), null);
+    assert.equal(Object.getPrototypeOf(history.recordAliases), null);
+    assert.deepEqual(Object.keys(history.entries).sort(), ["channel:normal-id", "live:normal-id"]);
+    assert.equal(history.entries["live:target"], undefined);
+
+    const outcome = store.applyMutation(
+        { entries: [forgedPrototypeEntry] },
+        { kind: "setReplayVideoNo", recordId: "live:target", videoNo: "777" },
+        now
+    );
+    assert.equal(outcome.result.status, "missing");
+    assert.equal(Object.hasOwn(outcome.history.entries, "live:target"), false);
+    assert.equal(Object.getPrototypeOf(outcome.history.entries), null);
+});
+
+test("stored and incoming live URLs are canonicalized from trusted channel data", () => {
+    const now = Date.parse("2026-07-10T12:00:00+09:00");
+    const { store } = loadStore();
+    const history = store.normalizeStoredHistory({
+        entries: [
+            {
+                id: "live:canonical",
+                channelId: "channel-a",
+                liveUrl: "https://evil.example/phish",
+            },
+            {
+                id: "live:legacy",
+                liveUrl: "https://chzzk.naver.com/live/legacy-channel?from=old#title",
+            },
+            {
+                id: "live:unsafe",
+                liveUrl: "javascript:alert(1)",
+            },
+        ],
+    });
+
+    assert.equal(history.entries["live:canonical"].liveUrl, "https://chzzk.naver.com/live/channel-a");
+    assert.equal(history.entries["live:legacy"].liveUrl, "https://chzzk.naver.com/live/legacy-channel");
+    assert.equal(history.entries["live:unsafe"].liveUrl, "");
+
+    const snapshot = createSnapshot(now);
+    snapshot.entry.liveUrl = "https://evil.example/phish";
+    const outcome = store.applyMutation(undefined, snapshot, now);
+    assert.equal(outcome.history.entries["live:100"].liveUrl, "https://chzzk.naver.com/live/channel-a");
 });
 
 function createBackgroundHarness() {

@@ -86,6 +86,41 @@ const followingPreviewForbiddenPatterns = [
         pattern: new RegExp(`\\bnew\\s+${"Function"}\\b`),
     },
 ];
+const mainWorldForbiddenPatterns = [
+    {
+        label: "extension storage",
+        pattern: /\bchrome(?:\?\.|\.)storage\b/,
+    },
+    {
+        label: "extension messaging",
+        pattern: /\bchrome(?:\?\.|\.)runtime(?:\?\.|\.)(?:sendMessage|connect|connectNative)\s*\(/,
+    },
+    {
+        label: "privileged extension API",
+        pattern:
+            /\bchrome(?:\?\.|\.)(?:downloads|tabs|windows|permissions|scripting|cookies|management|webRequest|declarativeNetRequest)\b/,
+    },
+    {
+        label: "fetch",
+        pattern: /\bfetch\s*\(/,
+    },
+    {
+        label: "XMLHttpRequest",
+        pattern: /\bXMLHttpRequest\b/,
+    },
+    {
+        label: "WebSocket",
+        pattern: /\bWebSocket\b/,
+    },
+    {
+        label: "EventSource",
+        pattern: /\bEventSource\b/,
+    },
+    {
+        label: "sendBeacon",
+        pattern: /\bsendBeacon\s*\(/,
+    },
+];
 
 function readRepoFile(...parts) {
     return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
@@ -176,6 +211,29 @@ test("manifest, extension pages, and background imports resolve to bundled local
         violations,
         [],
         `runtime package references must stay local and present:\n${violations.join("\n")}`
+    );
+});
+
+test("MAIN-world scripts stay behind the unprivileged DOM bridge boundary", () => {
+    const manifest = JSON.parse(readRepoFile("manifest.json"));
+    const mainWorldScripts = (manifest.content_scripts || [])
+        .filter((entry) => entry.world === "MAIN")
+        .flatMap((entry) => entry.js || []);
+    const violations = [];
+
+    assert.ok(mainWorldScripts.length > 0, "manifest must declare the MAIN-world bridge scripts");
+
+    for (const file of mainWorldScripts) {
+        const source = readRepoFile(file);
+        for (const { label, pattern } of mainWorldForbiddenPatterns) {
+            if (pattern.test(source)) violations.push(`${file}: ${label}`);
+        }
+    }
+
+    assert.deepEqual(
+        violations,
+        [],
+        `MAIN-world scripts must not gain privileged or direct network operations:\n${violations.join("\n")}`
     );
 });
 

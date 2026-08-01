@@ -24,6 +24,10 @@
     const DEFAULT_WATCH_RANGE_MERGE_GAP_MS = 2000;
     const COMMENT_API_BASE = "https://apis.naver.com/nng_main/nng_comment_api/v1";
     const COMMENT_DEVICE_ID_STORAGE_KEY = "betterchzzkCommentDeviceId";
+    const CHZZK_WEB_ORIGIN = "https://chzzk.naver.com";
+    const CHZZK_CHANNEL_ID_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
+    const TRUSTED_IMAGE_HOSTS = Object.freeze(["pstatic.net"]);
+    const TRUSTED_MEDIA_HOSTS = Object.freeze(["pstatic.net"]);
     const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
     const DAY_MS = 24 * 60 * 60 * 1000;
     let commentDeviceId = "";
@@ -72,6 +76,92 @@
             if (text) return text;
         }
         return "";
+    }
+
+    function normalizeChzzkChannelId(value) {
+        const channelId = String(value ?? "").trim();
+        return CHZZK_CHANNEL_ID_PATTERN.test(channelId) ? channelId : "";
+    }
+
+    function isSameOrSubdomain(hostname, domain) {
+        const normalizedHostname = String(hostname || "").toLowerCase();
+        const normalizedDomain = String(domain || "").toLowerCase();
+        return normalizedHostname === normalizedDomain || normalizedHostname.endsWith(`.${normalizedDomain}`);
+    }
+
+    function normalizeTrustedHttpsUrl(value, { baseUrl = CHZZK_WEB_ORIGIN, allowedHosts = [] } = {}) {
+        const raw = String(value ?? "").trim();
+        if (!raw) return "";
+
+        let parsed;
+        try {
+            parsed = new URL(raw, baseUrl);
+        } catch {
+            return "";
+        }
+
+        if (
+            parsed.protocol !== "https:" ||
+            parsed.port ||
+            parsed.username ||
+            parsed.password ||
+            !allowedHosts.some((domain) => isSameOrSubdomain(parsed.hostname, domain))
+        ) {
+            return "";
+        }
+
+        parsed.hash = "";
+        return parsed.href;
+    }
+
+    function normalizeChzzkMediaUrl(value, baseUrl = CHZZK_WEB_ORIGIN) {
+        return normalizeTrustedHttpsUrl(value, { baseUrl, allowedHosts: TRUSTED_MEDIA_HOSTS });
+    }
+
+    function normalizeChzzkImageUrl(value, baseUrl = CHZZK_WEB_ORIGIN) {
+        const normalized = normalizeTrustedHttpsUrl(value, {
+            baseUrl,
+            allowedHosts: [...TRUSTED_IMAGE_HOSTS, "chzzk.naver.com"],
+        });
+        return normalized;
+    }
+
+    function buildChzzkLiveUrl(value) {
+        const channelId = normalizeChzzkChannelId(value);
+        return channelId ? `${CHZZK_WEB_ORIGIN}/live/${encodeURIComponent(channelId)}` : "";
+    }
+
+    function normalizeChzzkLiveUrl(value) {
+        const raw = String(value ?? "").trim();
+        if (!raw) return "";
+
+        let parsed;
+        try {
+            parsed = new URL(raw);
+        } catch {
+            return "";
+        }
+
+        if (
+            parsed.protocol !== "https:" ||
+            parsed.hostname.toLowerCase() !== "chzzk.naver.com" ||
+            parsed.port ||
+            parsed.username ||
+            parsed.password
+        ) {
+            return "";
+        }
+
+        const match = parsed.pathname.match(/^\/live\/([^/]+)\/?$/);
+        if (!match) return "";
+
+        let channelId;
+        try {
+            channelId = decodeURIComponent(match[1]);
+        } catch {
+            return "";
+        }
+        return buildChzzkLiveUrl(channelId);
     }
 
     function pickChzzkVideoNo(value) {
@@ -707,6 +797,7 @@
         ...(root.utils || {}),
         addTitleHistory,
         addWatchRangeToRangesByDate,
+        buildChzzkLiveUrl,
         cleanEntryTitle,
         cleanTitle,
         collectWatchSessionRanges,
@@ -732,6 +823,10 @@
         mergeDailySecondsMax,
         mergeWatchRanges,
         normalizeDailySeconds,
+        normalizeChzzkChannelId,
+        normalizeChzzkImageUrl,
+        normalizeChzzkLiveUrl,
+        normalizeChzzkMediaUrl,
         normalizeCompact,
         normalizeForMatch,
         normalizeTitleHistory,

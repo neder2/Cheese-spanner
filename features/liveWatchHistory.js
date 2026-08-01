@@ -154,7 +154,6 @@
             channelName,
             thumbnailUrl,
             liveOpenDate: "",
-            liveUrl: `${location.origin}${location.pathname}`,
         };
     }
 
@@ -184,14 +183,13 @@
                 live.thumbnailImageUrl
             ),
             liveOpenDate: pickString(content.openDate, content.liveOpenDate, live.openDate, live.liveOpenDate),
-            liveUrl: `${location.origin}${location.pathname}`,
         };
     }
 
     function mergeMetadata(target, metadata, { persistThumbnail = false, persistTitle = false } = {}) {
         if (!target || !metadata) return;
         const nextChannelName = pickString(metadata.channelName, target.channelName);
-        for (const key of ["channelId", "liveId", "channelName", "title", "thumbnailUrl", "liveOpenDate", "liveUrl"]) {
+        for (const key of ["channelId", "liveId", "channelName", "title", "thumbnailUrl", "liveOpenDate"]) {
             const value = compactSpaces(metadata[key]);
             if (!value) continue;
             if (key === "title") {
@@ -221,7 +219,6 @@
             channelName: "",
             thumbnailUrl: "",
             liveOpenDate: "",
-            liveUrl: `${location.origin}${location.pathname}`,
         };
     }
 
@@ -351,7 +348,6 @@
                 channelName: current.channelName || "",
                 thumbnailUrl: current.thumbnailUrl || "",
                 liveOpenDate: current.liveOpenDate || "",
-                liveUrl: current.liveUrl || `${location.origin}${location.pathname}`,
                 firstWatchedAt: current.startedAt,
                 lastWatchedAt: current.lastSeenAt || current.lastWatchedAt || Date.now(),
                 titleHistory: storedTitleHistory,

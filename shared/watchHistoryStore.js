@@ -43,9 +43,36 @@
     }
 
     function normalizeRecordId(value) {
-        const id = compactString(value, 240);
-        if (!id || !/^(?:live|channel):/.test(id)) throw new Error("invalid watch history record id");
+        const id = String(value ?? "").trim();
+        if (id.length > 240 || !/^(?:live|channel):[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*$/.test(id)) {
+            throw new Error("invalid watch history record id");
+        }
         return id;
+    }
+
+    function tryNormalizeRecordId(value) {
+        try {
+            return normalizeRecordId(value);
+        } catch {
+            return "";
+        }
+    }
+
+    function createRecordMap(rows = []) {
+        const map = Object.create(null);
+        for (const [key, value] of rows) map[key] = value;
+        return map;
+    }
+
+    function normalizeChannelId(value) {
+        if (typeof utils.normalizeChzzkChannelId !== "function") return "";
+        return utils.normalizeChzzkChannelId(value);
+    }
+
+    function normalizeEntryLiveUrl(source, channelId) {
+        const canonicalUrl = typeof utils.buildChzzkLiveUrl === "function" ? utils.buildChzzkLiveUrl(channelId) : "";
+        if (canonicalUrl) return canonicalUrl;
+        return typeof utils.normalizeChzzkLiveUrl === "function" ? utils.normalizeChzzkLiveUrl(source?.liveUrl) : "";
     }
 
     function normalizeSessionId(value) {
@@ -131,14 +158,15 @@
 
     function normalizeEntryPatch(value = {}) {
         const source = value && typeof value === "object" ? value : {};
+        const channelId = normalizeChannelId(source.channelId);
         return {
-            channelId: compactString(source.channelId, 240),
+            channelId,
             liveId: compactString(source.liveId, 240),
             title: compactString(source.title, 500),
             channelName: compactString(source.channelName, 240),
             thumbnailUrl: compactString(source.thumbnailUrl),
             liveOpenDate: compactString(source.liveOpenDate, 240),
-            liveUrl: compactString(source.liveUrl),
+            liveUrl: normalizeEntryLiveUrl(source, channelId),
             firstWatchedAt: Math.max(0, Math.round(finiteNumber(source.firstWatchedAt))),
             lastWatchedAt: Math.max(0, Math.round(finiteNumber(source.lastWatchedAt))),
             titleHistory: normalizeTitleHistory(source.titleHistory, source.channelName),
@@ -300,17 +328,20 @@
             : source.entries && typeof source.entries === "object"
               ? Object.values(source.entries)
               : [];
-        const entries = {};
+        const entries = createRecordMap();
         for (const rawEntry of rawEntries) {
             if (!rawEntry || typeof rawEntry !== "object") continue;
-            const id = compactString(rawEntry.id, 240);
+            const id = tryNormalizeRecordId(rawEntry.id);
             if (!id) continue;
+            const channelId = normalizeChannelId(rawEntry.channelId);
             const retiredSessionRows = normalizeRetiredSessionCheckpoints(rawEntry.retiredSessionCheckpoints, {
                 retainOverflow: true,
             });
             const entry = {
                 ...rawEntry,
                 id,
+                channelId,
+                liveUrl: normalizeEntryLiveUrl(rawEntry, channelId),
                 dailySeconds: normalizeDailySeconds(rawEntry.dailySeconds),
                 retiredSessionCheckpoints: retiredSessionRows.slice(
                     0,
@@ -335,13 +366,14 @@
             0,
             Math.round(finiteNumber(source.compactedSessionBarrierAt, source.sessionResetAt))
         );
-        const tombstones = {};
+        const tombstones = createRecordMap();
         const normalizedTombstones = [];
         if (source.tombstones && typeof source.tombstones === "object") {
             for (const [id, deletedAt] of Object.entries(source.tombstones)) {
+                const normalizedId = tryNormalizeRecordId(id);
                 const timestamp = Math.max(0, Math.round(finiteNumber(deletedAt)));
-                if (/^(?:live|channel):/.test(id) && timestamp > 0) {
-                    normalizedTombstones.push([id, timestamp]);
+                if (normalizedId && timestamp > 0) {
+                    normalizedTombstones.push([normalizedId, timestamp]);
                 }
             }
         }
@@ -352,14 +384,13 @@
         for (const [, deletedAt] of normalizedTombstones.slice(HISTORY_MAX_TOMBSTONES)) {
             compactedSessionBarrierAt = Math.max(compactedSessionBarrierAt, deletedAt);
         }
-        const recordAliases = {};
+        const recordAliases = createRecordMap();
         const aliases = [];
         if (source.recordAliases && typeof source.recordAliases === "object") {
             for (const [rawSourceId, rawAlias] of Object.entries(source.recordAliases)) {
-                const sourceId = compactString(rawSourceId, 240);
-                const targetId = compactString(
-                    rawAlias && typeof rawAlias === "object" ? rawAlias.targetRecordId : rawAlias,
-                    240
+                const sourceId = tryNormalizeRecordId(rawSourceId);
+                const targetId = tryNormalizeRecordId(
+                    rawAlias && typeof rawAlias === "object" ? rawAlias.targetRecordId : rawAlias
                 );
                 const migratedAt = Math.max(
                     0,
@@ -368,8 +399,8 @@
                     )
                 );
                 if (
-                    !/^(?:live|channel):/.test(sourceId) ||
-                    !/^(?:live|channel):/.test(targetId) ||
+                    !sourceId ||
+                    !targetId ||
                     !sourceId.startsWith("channel:") ||
                     !targetId.startsWith("live:") ||
                     sourceId === targetId ||
@@ -390,7 +421,7 @@
         for (const alias of aliases.slice(HISTORY_MAX_RECORD_ALIASES)) {
             compactedSessionBarrierAt = Math.max(compactedSessionBarrierAt, alias.migratedAt);
         }
-        const flattenedRecordAliases = {};
+        const flattenedRecordAliases = createRecordMap();
         for (const [sourceId, alias] of Object.entries(recordAliases)) {
             const targetRecordId = resolveRecordId({ recordAliases }, sourceId);
             if (!targetRecordId || targetRecordId === sourceId) continue;
@@ -433,14 +464,12 @@
         const beforeBarrier = finiteNumber(history.compactedSessionBarrierAt);
         const previous = history.recordAliases?.[sourceRecordId];
         const alias = previous?.targetRecordId === targetRecordId ? previous : { targetRecordId, migratedAt };
-        const aliases = {
-            ...(history.recordAliases || {}),
-            [sourceRecordId]: alias,
-        };
+        const aliases = createRecordMap(Object.entries(history.recordAliases || {}));
+        aliases[sourceRecordId] = alias;
         const rows = Object.entries(aliases).sort(
             ([, a], [, b]) => finiteNumber(b?.migratedAt) - finiteNumber(a?.migratedAt)
         );
-        history.recordAliases = Object.fromEntries(rows.slice(0, HISTORY_MAX_RECORD_ALIASES));
+        history.recordAliases = createRecordMap(rows.slice(0, HISTORY_MAX_RECORD_ALIASES));
         for (const [, alias] of rows.slice(HISTORY_MAX_RECORD_ALIASES)) {
             history.compactedSessionBarrierAt = Math.max(
                 finiteNumber(history.compactedSessionBarrierAt),
@@ -456,12 +485,10 @@
     function setTombstone(history, recordId, deletedAt) {
         const before = JSON.stringify(history.tombstones || {});
         const beforeBarrier = finiteNumber(history.compactedSessionBarrierAt);
-        const tombstones = {
-            ...(history.tombstones || {}),
-            [recordId]: Math.max(finiteNumber(history.tombstones?.[recordId]), deletedAt),
-        };
+        const tombstones = createRecordMap(Object.entries(history.tombstones || {}));
+        tombstones[recordId] = Math.max(finiteNumber(history.tombstones?.[recordId]), deletedAt);
         const rows = Object.entries(tombstones).sort(([, a], [, b]) => finiteNumber(b) - finiteNumber(a));
-        history.tombstones = Object.fromEntries(rows.slice(0, HISTORY_MAX_TOMBSTONES));
+        history.tombstones = createRecordMap(rows.slice(0, HISTORY_MAX_TOMBSTONES));
         for (const [, cutoffAt] of rows.slice(HISTORY_MAX_TOMBSTONES)) {
             history.compactedSessionBarrierAt = Math.max(
                 finiteNumber(history.compactedSessionBarrierAt),
@@ -701,7 +728,7 @@
 
         const rows = Object.values(entries);
         rows.sort((a, b) => finiteNumber(b.lastWatchedAt) - finiteNumber(a.lastWatchedAt));
-        return Object.fromEntries(rows.slice(0, HISTORY_MAX_ENTRIES).map((entry) => [entry.id, entry]));
+        return createRecordMap(rows.slice(0, HISTORY_MAX_ENTRIES).map((entry) => [entry.id, entry]));
     }
 
     function applySessionSnapshot(history, operation, now) {

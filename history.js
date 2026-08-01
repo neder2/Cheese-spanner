@@ -55,6 +55,7 @@ const storage = globalThis.chrome?.storage?.local;
 const {
     addTitleHistory,
     addWatchRangeToRangesByDate,
+    buildChzzkLiveUrl,
     cleanEntryTitle,
     collectWatchSessionRanges,
     compactSpaces,
@@ -69,6 +70,8 @@ const {
     isSameKstDate,
     mergeDailySeconds: mergeSessionDailySeconds,
     mergeWatchRanges,
+    normalizeChzzkChannelId,
+    normalizeChzzkLiveUrl,
     normalizeDailySeconds,
     normalizeForMatch,
     normalizeTitleHistory,
@@ -313,16 +316,17 @@ function normalizeHistory(raw) {
         .map((row) => {
             const id = pickString(row.id);
             const channelName = pickString(row.channelName) || "알 수 없는 채널";
+            const channelId = normalizeChzzkChannelId(row.channelId);
             const entry = {
                 id,
-                channelId: pickString(row.channelId),
+                channelId,
                 liveId: pickString(row.liveId),
                 replayVideoNo: pickString(row.replayVideoNo, row.videoNo, row.videoId),
                 title: cleanEntryTitle(pickString(row.title), channelName) || "제목 없는 라이브",
                 titleHistory: normalizeTitleHistory(row.titleHistory, channelName),
                 channelName,
                 liveOpenDate: pickString(row.liveOpenDate),
-                liveUrl: pickString(row.liveUrl),
+                liveUrl: buildChzzkLiveUrl(channelId) || normalizeChzzkLiveUrl(row.liveUrl),
                 firstWatchedAt: Number(row.firstWatchedAt) || 0,
                 lastWatchedAt: Number(row.lastWatchedAt) || 0,
                 watchedSeconds: Math.max(0, Number(row.watchedSeconds) || 0),

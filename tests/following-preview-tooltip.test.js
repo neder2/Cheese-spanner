@@ -185,7 +185,7 @@ function createFollowingPreviewDom(chrome = createFakeChrome()) {
             "<ul>",
             '<li class="following_item" id="followingItem">',
             '<a id="liveLink" href="/live/channel-123" aria-label="\uD14C\uC2A4\uD2B8 \uCC44\uB110">',
-            '<img class="live_thumbnail_image" src="https://example.com/dom-thumb.jpg" alt="">',
+            '<img class="live_thumbnail_image" src="https://nng-phinf.pstatic.net/dom-thumb.jpg" alt="">',
             '<span class="name_text">\uD14C\uC2A4\uD2B8 \uCC44\uB110</span>',
             '<span class="live_title">DOM \uBC29\uC1A1 \uC81C\uBAA9</span>',
             "</a>",
@@ -227,7 +227,7 @@ function createInjectedListPreviewDom(chrome = createFakeChrome()) {
             ' data-bcgt-card-id="channel-list" data-bcgt-channel-id="channel-list"',
             ' data-bcgt-live-id="live-list">',
             '<a id="injectedHost" href="/live/channel-list" data-bcgt-live-preview-host="1">',
-            '<img id="injectedThumb" class="live_thumbnail_image" src="https://example.com/list.jpg" alt="">',
+            '<img id="injectedThumb" class="live_thumbnail_image" src="https://nng-phinf.pstatic.net/list.jpg" alt="">',
             '<span id="injectedElapsed" data-bcgt-live-elapsed-badge="1">01:23:45</span>',
             '<span class="name_text">목록 채널</span>',
             '<span class="live_title">목록 방송</span>',
@@ -342,9 +342,9 @@ test("following preview loading card prefers live thumbnails over channel profil
     const liveThumbnail = document.createElement("img");
 
     profileImage.className = "channel_profile_image";
-    profileImage.src = "https://example.com/channel-profile.jpg";
+    profileImage.src = "https://nng-phinf.pstatic.net/channel-profile.jpg";
     liveThumbnail.className = "live_thumbnail_image";
-    liveThumbnail.src = "https://example.com/live-thumbnail.jpg";
+    liveThumbnail.src = "https://nng-phinf.pstatic.net/live-thumbnail.jpg";
     link.insertBefore(liveThumbnail, link.querySelector(".name_text"));
     dom.window.fetch = () => new Promise(() => {});
 
@@ -369,7 +369,7 @@ test("following preview loading card leaves the media area empty when no live th
     const profileImage = link.querySelector("img");
 
     profileImage.className = "channel_profile_image";
-    profileImage.src = "https://example.com/channel-profile.jpg";
+    profileImage.src = "https://nng-phinf.pstatic.net/channel-profile.jpg";
     dom.window.fetch = () => new Promise(() => {});
 
     evalFollowingPreviewTooltipScripts(dom);
@@ -394,10 +394,10 @@ test("following preview loading card does not use verified badges as thumbnails"
     const verifiedBadge = document.createElement("img");
 
     profileImage.className = "channel_profile_image";
-    profileImage.src = "https://example.com/channel-profile.jpg";
+    profileImage.src = "https://nng-phinf.pstatic.net/channel-profile.jpg";
     verifiedBadge.className = "verified_mark_image";
     verifiedBadge.alt = "\uCE58\uC9C0\uC9C1 \uC778\uC99D";
-    verifiedBadge.src = "https://example.com/verified-badge.svg";
+    verifiedBadge.src = "https://nng-phinf.pstatic.net/verified-badge.svg";
     link.insertBefore(verifiedBadge, link.querySelector(".live_title"));
     dom.window.fetch = () => new Promise(() => {});
 
@@ -415,6 +415,29 @@ test("following preview loading card does not use verified badges as thumbnails"
     assert.equal(tip.querySelector(".bcfp-media img"), null);
     assert.equal(tip.querySelector(".bcfp-media-fallback"), null);
     assert.doesNotMatch(tip.textContent, /verified-badge/);
+});
+
+test("following preview does not render untrusted thumbnail URLs", async () => {
+    const chrome = createFakeChrome();
+    const { document, dom, link } = createFollowingPreviewDom(chrome);
+    const thumbnail = link.querySelector("img");
+
+    thumbnail.className = "live_thumbnail_image";
+    thumbnail.src = "https://attacker.example/untrusted-thumbnail.jpg";
+    dom.window.fetch = () => new Promise(() => {});
+
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForFollowingPreviewDelay();
+    await waitForAsyncCallbacks();
+
+    const tip = document.getElementById("betterchzzk-following-preview");
+    assert.ok(tip);
+    assert.equal(tip.dataset.state, "loading");
+    assert.equal(tip.querySelector(".bcfp-media img"), null);
 });
 
 test("following preview prefers low-latency LLHLS in the hover card and reuses cache", async () => {
@@ -444,7 +467,7 @@ test("following preview prefers low-latency LLHLS in the hover card and reuses c
                     content: {
                         liveId: "live-789",
                         liveTitle: "API \uBC29\uC1A1 \uC81C\uBAA9",
-                        liveImageUrl: "https://example.com/live-{type}.jpg",
+                        liveImageUrl: "https://nng-phinf.pstatic.net/live-{type}.jpg",
                         liveCategoryValue: "\uAC8C\uC784",
                         concurrentUserCount: 1234,
                         openDate: new Date(now - (3600 + 120 + 3) * 1000).toISOString(),
@@ -589,7 +612,7 @@ test("following preview falls back to standard HLS when no low-latency source ex
                     content: {
                         liveId: "live-789",
                         liveTitle: "API 방송 제목",
-                        liveImageUrl: "https://example.com/live-{type}.jpg",
+                        liveImageUrl: "https://nng-phinf.pstatic.net/live-{type}.jpg",
                         liveCategoryValue: "게임",
                         openDate: new Date(now - 60 * 1000).toISOString(),
                         channel: { channelName: "API 채널" },
@@ -630,6 +653,61 @@ test("following preview falls back to standard HLS when no low-latency source ex
     assert.equal(hlsState.loadSources[0], "https://nvelop-livecloud.pstatic.net/chzzk/live/master.m3u8");
 });
 
+test("following preview validates HLS candidates before applying low-latency priority", async () => {
+    const { document, dom, thumb } = createInjectedListPreviewDom();
+    const hlsState = installFakeHls(dom);
+    const safeHlsUrl = "https://nvelop-livecloud.pstatic.net/chzzk/live/safe-fallback.m3u8";
+    const playbackJson = JSON.stringify({
+        media: [
+            { mediaId: "LLHLS", path: "https://attacker.example/untrusted-low-latency.m3u8" },
+            { mediaId: "HLS", path: safeHlsUrl },
+        ],
+    });
+    dom.window.fetch = async () => ({
+        ok: true,
+        json: async () => ({ content: { livePlaybackJson: playbackJson } }),
+    });
+
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    thumb.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    assert.deepEqual(hlsState.loadSources, [safeHlsUrl]);
+    assert.equal(hlsState.instances.length, 1);
+    assert.equal(hlsState.instances[0].config.lowLatencyMode, false);
+});
+
+test("following preview never sends untrusted-only HLS candidates to a player sink", async () => {
+    const { document, dom, host, thumb } = createInjectedListPreviewDom();
+    const hlsState = installFakeHls(dom);
+    const playbackJson = JSON.stringify({
+        media: [
+            { mediaId: "LLHLS", path: "https://attacker.example/untrusted.m3u8" },
+            { mediaId: "HLS", path: "data:application/vnd.apple.mpegurl,untrusted" },
+        ],
+    });
+    dom.window.fetch = async () => ({
+        ok: true,
+        json: async () => ({ content: { livePlaybackJson: playbackJson } }),
+    });
+
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    thumb.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const video = host.querySelector("video.bcfp-list-player");
+    assert.ok(video);
+    assert.equal(video.getAttribute("data-bcfp-player-state"), "error");
+    assert.equal(hlsState.instances.length, 0);
+    assert.deepEqual(hlsState.loadSources, []);
+});
+
 function attachMainPlayerVideo(dom, volume) {
     const { document } = dom.window;
     const main = document.querySelector("main") || document.body;
@@ -650,7 +728,7 @@ function attachMainPlayerVideo(dom, volume) {
 
 function createSoundPreviewFetch(dom, { liveId }) {
     const playbackJson = JSON.stringify({
-        media: [{ mediaId: "HLS", path: "https://example.com/live-sound.m3u8" }],
+        media: [{ mediaId: "HLS", path: "https://nvelop-livecloud.pstatic.net/chzzk/live/live-sound.m3u8" }],
     });
 
     return async (url) => {
@@ -661,7 +739,7 @@ function createSoundPreviewFetch(dom, { liveId }) {
                     content: {
                         liveId,
                         liveTitle: "API \uBC29\uC1A1 \uC81C\uBAA9",
-                        liveImageUrl: "https://example.com/live-{type}.jpg",
+                        liveImageUrl: "https://nng-phinf.pstatic.net/live-{type}.jpg",
                         liveCategoryValue: "\uAC8C\uC784",
                         openDate: new Date(Date.now() - 60 * 1000).toISOString(),
                         channel: {
@@ -809,7 +887,7 @@ test("following preview falls back to muted playback and unlocks sound from the 
         },
     });
     const playbackJson = JSON.stringify({
-        media: [{ mediaId: "HLS", path: "https://example.com/live-blocked.m3u8" }],
+        media: [{ mediaId: "HLS", path: "https://nvelop-livecloud.pstatic.net/chzzk/live/live-blocked.m3u8" }],
     });
 
     dom.window.fetch = async (url) => {
@@ -820,7 +898,7 @@ test("following preview falls back to muted playback and unlocks sound from the 
                     content: {
                         liveId: "live-blocked",
                         liveTitle: "API \uBC29\uC1A1 \uC81C\uBAA9",
-                        liveImageUrl: "https://example.com/live-{type}.jpg",
+                        liveImageUrl: "https://nng-phinf.pstatic.net/live-{type}.jpg",
                         liveCategoryValue: "\uAC8C\uC784",
                         openDate: new Date(Date.now() - 60 * 1000).toISOString(),
                         channel: {
@@ -951,7 +1029,7 @@ test("global lives native hover stays site-owned and right click enables sound a
         [
             "<!doctype html><body><main><ul>",
             '<li><a id="nativeHost" href="/live/native-channel">',
-            '<img src="https://example.com/native.jpg" alt=""><video id="nativePreview" muted></video>',
+            '<img src="https://nng-phinf.pstatic.net/native.jpg" alt=""><video id="nativePreview" muted></video>',
             '<span id="nativeElapsed" data-bcgt-live-elapsed-badge="1">01:23:45</span>',
             "</a></li></ul></main></body>",
         ].join(""),
@@ -1086,7 +1164,7 @@ test("filtered injected live cards get a muted hover player and right click enla
     });
     const requests = [];
     const playbackJson = JSON.stringify({
-        media: [{ mediaId: "HLS", path: "https://example.com/list-preview.m3u8" }],
+        media: [{ mediaId: "HLS", path: "https://nvelop-livecloud.pstatic.net/chzzk/live/list-preview.m3u8" }],
     });
     dom.window.fetch = async (url) => {
         requests.push(String(url));
@@ -1110,7 +1188,7 @@ test("filtered injected live cards get a muted hover player and right click enla
     assert.equal(video.volume, 0);
     assert.equal(requests.length, 1);
     assert.match(requests[0], /\/live\/live-list\/auto-play-info$/);
-    assert.deepEqual(hlsState.loadSources, ["https://example.com/list-preview.m3u8"]);
+    assert.deepEqual(hlsState.loadSources, ["https://nvelop-livecloud.pstatic.net/chzzk/live/list-preview.m3u8"]);
     assert.equal(hlsState.instances[0].autoLevelCapping, 1);
     assert.equal(hlsState.instances[0].nextAutoLevel, 1);
     assert.equal(hlsState.instances[0].nextLevel, -1);
@@ -1232,7 +1310,7 @@ test("following preview aborts stale live-detail requests during rapid hover", a
     secondItem.className = "following_item";
     secondItem.innerHTML = [
         '<a id="secondLiveLink" href="/live/channel-456" aria-label="\uB450 \uBC88\uC9F8 \uCC44\uB110">',
-        '<img src="https://example.com/second-thumb.jpg" alt="">',
+        '<img src="https://nng-phinf.pstatic.net/second-thumb.jpg" alt="">',
         '<span class="name_text">\uB450 \uBC88\uC9F8 \uCC44\uB110</span>',
         '<span class="live_title">\uB450 \uBC88\uC9F8 \uBC29\uC1A1</span>',
         "</a>",

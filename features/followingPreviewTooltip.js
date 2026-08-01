@@ -7,7 +7,7 @@
  *   그대로 사용한다. 옵션이 켜진 상태에서 우클릭하면 팔로잉은 소리를 토글하고 목록 미리보기는
  *   소리를 켜면서 CSS로 확대한다. 페이지 이동·포인터 이탈·DOM 제거 시 요청과 플레이어를 정리한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
- *   fetchJson, injectStyleOnce, normSpace, onReady,
+ *   fetchJson, injectStyleOnce, normalizeChzzkImageUrl, normalizeChzzkMediaUrl, normSpace, onReady,
  *   startPageChangeDetection, storageSet), vendor/hls.light.min.js가 제공하는 전역 window.Hls.
  * 옵션 키: followingPreviewTooltipEnabled, followingPreviewSoundEnabled,
  *   followingPreviewVolumePercent, livePreviewRightClickSoundEnabled.
@@ -315,6 +315,8 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         bindFeatureOptions,
         fetchJson: sharedFetchJson,
         injectStyleOnce,
+        normalizeChzzkImageUrl,
+        normalizeChzzkMediaUrl,
         normSpace,
         onReady,
         startPageChangeDetection,
@@ -514,23 +516,12 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         return "";
     }
 
-    function normalizeUrl(value) {
+    function normalizeImageUrl(value) {
         const raw = pickString(value);
         if (!raw) return "";
 
         const withSize = raw.replace(/\{type\}|%7Btype%7D/gi, "480");
-        if (/^(?:https?:|data:|blob:)/i.test(withSize)) return withSize;
-        if (withSize.startsWith("//")) return `${location.protocol}${withSize}`;
-
-        try {
-            return new URL(withSize, location.origin).href;
-        } catch (_) {
-            return withSize;
-        }
-    }
-
-    function normalizeImageUrl(value) {
-        return normalizeUrl(value);
+        return normalizeChzzkImageUrl(withSize, location.origin);
     }
 
     function getBackgroundImageUrl(el) {
@@ -997,11 +988,16 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
     function selectHlsSource(playback) {
         const mediaList = Array.isArray(playback?.media) ? playback.media : [];
-        const hlsMedia = mediaList.filter((media) => {
-            const path = pickRawString(media?.path);
-            const marker = pickString(media?.mediaId, media?.protocol);
-            return path && (/HLS/i.test(marker) || /\.m3u8(?:[?#]|$)/i.test(path));
-        });
+        const hlsMedia = mediaList
+            .map((media) => {
+                const path = pickRawString(media?.path);
+                const marker = pickString(media?.mediaId, media?.protocol);
+                if (!path || !(/HLS/i.test(marker) || /\.m3u8(?:[?#]|$)/i.test(path))) return null;
+
+                const url = normalizeChzzkMediaUrl(path, location.origin);
+                return url ? { media, url } : null;
+            })
+            .filter(Boolean);
 
         if (!hlsMedia.length) return null;
 
@@ -1009,19 +1005,19 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         // 저지연(LLHLS)이 있으면 본방 플레이어처럼 실시간에 붙도록 먼저 고른다.
         const preferred =
             hlsMedia.find(
-                (media) =>
+                ({ media }) =>
                     String(media?.mediaId || "").toUpperCase() === "LLHLS" ||
                     /lowLatency/i.test(String(media?.latency || ""))
             ) ||
-            hlsMedia.find((media) => String(media?.mediaId || "").toUpperCase() === "HLS") ||
-            hlsMedia.find((media) => getMediaHeight(media) && getMediaHeight(media) <= PREVIEW_MAX_HEIGHT) ||
+            hlsMedia.find(({ media }) => String(media?.mediaId || "").toUpperCase() === "HLS") ||
+            hlsMedia.find(({ media }) => getMediaHeight(media) && getMediaHeight(media) <= PREVIEW_MAX_HEIGHT) ||
             hlsMedia[0];
 
         return {
             lowLatency:
-                String(preferred?.mediaId || "").toUpperCase() === "LLHLS" ||
-                /lowLatency/i.test(String(preferred?.latency || "")),
-            url: normalizeUrl(preferred.path),
+                String(preferred.media?.mediaId || "").toUpperCase() === "LLHLS" ||
+                /lowLatency/i.test(String(preferred.media?.latency || "")),
+            url: preferred.url,
         };
     }
 
