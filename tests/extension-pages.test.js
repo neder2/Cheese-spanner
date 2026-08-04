@@ -2327,7 +2327,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.2.7");
+    assert.equal(manifest.version, "1.2.8");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
@@ -2774,6 +2774,105 @@ test("category tools hydrates newly visible follower badges on scroll without a 
             .map((href) => decodeURIComponent(href.match(/\/v1\/channels\/([^/?#]+)/)?.[1] || "")),
         ["channel-a", "channel-b"]
     );
+});
+
+test("global lives loads short cursor pages for new elapsed badges with follower badges disabled", async () => {
+    const chrome = createFakeChrome({ sync: { categoryToolsFollowerBadgesEnabled: false } });
+    const dom = createGlobalLivesDom(chrome);
+    const now = Date.parse("2026-07-10T12:00:00Z");
+    dom.window.Date.now = () => now;
+    const clock = useFakePerformanceNow(dom);
+    const { document } = dom.window;
+    const requests = [];
+
+    const toApiLive = ({ channelId, liveId, openDate, title }) => ({
+        liveId,
+        liveTitle: title,
+        liveImageUrl: `https://nng-phinf.pstatic.net/${channelId}_{type}.jpg`,
+        concurrentUserCount: 10,
+        openDate,
+        adult: false,
+        tags: [],
+        liveCategoryValue: "테스트",
+        channel: { channelId, channelName: channelId, channelImageUrl: "" },
+    });
+    const firstPage = [
+        toApiLive({
+            channelId: "native-a",
+            liveId: 300,
+            openDate: "2026-07-10T09:00:00Z",
+            title: "Native A metadata",
+        }),
+        toApiLive({
+            channelId: "native-b",
+            liveId: 200,
+            openDate: "2026-07-10T10:00:00Z",
+            title: "Native B metadata",
+        }),
+    ];
+    const secondPage = [
+        toApiLive({
+            channelId: "native-c",
+            liveId: 100,
+            openDate: "2026-07-10T11:30:00Z",
+            title: "Native C metadata",
+        }),
+    ];
+
+    dom.window.fetch = async (url) => {
+        const href = String(url);
+        requests.push(href);
+        const parsed = new URL(href);
+        const hasCursor = parsed.searchParams.has("liveId");
+        return {
+            ok: true,
+            json: async () => ({
+                content: {
+                    data: hasCursor ? secondPage : firstPage,
+                    page: hasCursor ? { next: null } : { next: { concurrentUserCount: 10, liveId: 200 } },
+                },
+            }),
+        };
+    };
+
+    await loadCategoryToolsPage(dom);
+
+    try {
+        await waitForCondition(
+            () =>
+                requests.length === 1 &&
+                document.querySelector('#live-card-a [data-bcgt-live-elapsed-badge="1"]') &&
+                document.querySelector('#live-card-b [data-bcgt-live-elapsed-badge="1"]')
+        );
+        assert.equal(firstPage.length < 50, true);
+        assert.equal(requests.length, 1, "the next cursor page must wait until a rendered card needs it");
+
+        const grid = document.getElementById("grid");
+        const sentinel = document.getElementById("native-sentinel");
+        const card = document.getElementById("live-card-b").cloneNode(true);
+        card.id = "live-card-c";
+        for (const anchor of card.querySelectorAll("a[href]")) anchor.setAttribute("href", "/live/native-c");
+        card.querySelector("._live_title").textContent = "Native C";
+        grid.insertBefore(card, sentinel);
+        setElementRect(card, { left: 40, top: 560, width: 320, height: 240 });
+        setElementRect(card.querySelector("a._thumbnail"), { left: 40, top: 560, width: 320, height: 180 });
+        setElementRect(card.querySelector("img"), { left: 40, top: 560, width: 320, height: 180 });
+
+        clock.advance(1000);
+        dom.window.dispatchEvent(new dom.window.Event("scroll"));
+
+        await waitForCondition(
+            () => requests.length === 2 && card.querySelector('[data-bcgt-live-elapsed-badge="1"]'),
+            { timeoutMs: 3000 }
+        );
+
+        assert.equal(new URL(requests[1]).searchParams.get("liveId"), "200");
+        assert.equal(card.querySelector('[data-bcgt-live-elapsed-badge="1"]').textContent, "30:00");
+        assert.equal(card.querySelector('[data-bcgt-follower-badge="1"]'), null);
+        assert.equal(requests.length, 2);
+    } finally {
+        await closeCategoryToolsFixture(dom, chrome);
+    }
 });
 
 test("global lives duration filter uses openDate and keeps the native list path", async () => {

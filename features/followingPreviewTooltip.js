@@ -854,7 +854,8 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
         try {
             const playback = await fetchAutoPlayInfo(meta.liveId, { signal });
-            return normalizeAutoPlayInfo(playback, meta);
+            const normalizedPlayback = normalizeAutoPlayInfo(playback, meta);
+            return getPlaybackSource(normalizedPlayback) ? normalizedPlayback : meta;
         } catch (error) {
             if (isAbortError(error)) throw error;
             return meta;

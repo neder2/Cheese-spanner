@@ -653,50 +653,87 @@ test("following preview falls back to standard HLS when no low-latency source ex
     assert.equal(hlsState.loadSources[0], "https://nvelop-livecloud.pstatic.net/chzzk/live/master.m3u8");
 });
 
-test("following preview keeps trusted navercdn playback from live-detail when auto-play lookup fails", async () => {
-    const chrome = createFakeChrome();
-    const { document, dom, link } = createFollowingPreviewDom(chrome);
-    const hlsState = installFakeHls(dom);
-    const playbackUrl = "https://ex-nlive-streaming.navercdn.com/chzzk/live/master.m3u8";
-    const playbackJson = JSON.stringify({
-        media: [{ mediaId: "HLS", path: playbackUrl }],
-    });
-
-    dom.window.fetch = async (url) => {
-        if (String(url).includes("/live-detail")) {
-            return {
-                ok: true,
-                json: async () => ({
-                    content: {
-                        liveId: "live-navercdn",
-                        liveTitle: "API 방송 제목",
-                        liveImageUrl: "https://nng-phinf.pstatic.net/live-{type}.jpg",
-                        openDate: "2026-06-23T03:01:03Z",
-                        channel: { channelName: "API 채널" },
-                        livePlaybackJson: playbackJson,
+test("following preview keeps live-detail navercdn HLS when auto-play payload is unplayable", async (t) => {
+    const unplayableCases = [
+        { name: "malformed JSON", playbackJson: "not-json" },
+        {
+            name: "no HLS candidate",
+            playbackJson: JSON.stringify({
+                media: [
+                    {
+                        mediaId: "DASH",
+                        path: "https://nvelop-livecloud.pstatic.net/chzzk/live/manifest.mpd",
                     },
-                }),
+                ],
+            }),
+        },
+        {
+            name: "untrusted HLS candidate",
+            playbackJson: JSON.stringify({
+                media: [{ mediaId: "LLHLS", path: "https://attacker.example/untrusted.m3u8" }],
+            }),
+        },
+    ];
+
+    for (const testCase of unplayableCases) {
+        await t.test(testCase.name, async () => {
+            const chrome = createFakeChrome();
+            const { document, dom, link } = createFollowingPreviewDom(chrome);
+            const hlsState = installFakeHls(dom);
+            const requests = [];
+            const playbackUrl = "https://ex-nlive-streaming.navercdn.com/chzzk/live/master.m3u8";
+            const liveDetailPlaybackJson = JSON.stringify({
+                media: [{ mediaId: "HLS", path: playbackUrl }],
+            });
+
+            dom.window.fetch = async (url) => {
+                requests.push(String(url));
+                if (String(url).includes("/live-detail")) {
+                    return {
+                        ok: true,
+                        json: async () => ({
+                            content: {
+                                liveId: "live-navercdn",
+                                liveTitle: "API live title",
+                                liveImageUrl: "https://nng-phinf.pstatic.net/live-{type}.jpg",
+                                openDate: "2026-06-23T03:01:03Z",
+                                channel: { channelName: "API channel" },
+                                livePlaybackJson: liveDetailPlaybackJson,
+                            },
+                        }),
+                    };
+                }
+
+                if (String(url).includes("/auto-play-info")) {
+                    return {
+                        ok: true,
+                        json: async () => ({
+                            content: { livePlaybackJson: testCase.playbackJson },
+                        }),
+                    };
+                }
+
+                throw new Error(`Unexpected URL: ${url}`);
             };
-        }
 
-        if (String(url).includes("/auto-play-info")) throw new Error("auto-play info unavailable");
-        throw new Error(`Unexpected URL: ${url}`);
-    };
+            evalFollowingPreviewTooltipScripts(dom);
+            document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+            await waitForAsyncCallbacks();
 
-    evalFollowingPreviewTooltipScripts(dom);
-    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
-    await waitForAsyncCallbacks();
+            link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+            await waitForFollowingPreviewDelay();
+            await waitForAsyncCallbacks();
+            await waitForFollowingPreviewFetchDelay();
+            await waitForAsyncCallbacks();
+            await waitForAsyncCallbacks();
+            await waitForFollowingPlaybackDelay();
 
-    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    await waitForFollowingPreviewDelay();
-    await waitForAsyncCallbacks();
-    await waitForFollowingPreviewFetchDelay();
-    await waitForAsyncCallbacks();
-    await waitForAsyncCallbacks();
-    await waitForFollowingPlaybackDelay();
-
-    assert.equal(hlsState.instances.length, 1);
-    assert.deepEqual(hlsState.loadSources, [playbackUrl]);
+            assert.equal(requests.length, 2);
+            assert.match(requests[1], /\/auto-play-info$/);
+            assert.equal(hlsState.instances.length, 1);
+            assert.deepEqual(hlsState.loadSources, [playbackUrl]);
+        });
+    }
 });
 
 test("following preview validates HLS candidates before applying low-latency priority", async () => {

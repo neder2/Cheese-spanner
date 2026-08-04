@@ -1501,7 +1501,7 @@
             }
         }
         metadataNext = json?.content?.page?.next || null;
-        metadataComplete = !metadataNext || data.length < API_PAGE_SIZE;
+        metadataComplete = !metadataNext;
         metadataPagesLoaded++;
         return metadataMap;
     }
@@ -1533,6 +1533,31 @@
         if (metadataMap.size || metadataComplete) return metadataMap;
         if (metadataLoading && metadataLoading.key === key) return metadataLoading.promise;
         return loadMetadataPage(route);
+    }
+
+    async function ensureRenderedMetadata(route, entries) {
+        const key = routeKey(route);
+        await ensureMetadata(route);
+
+        const missingIds = new Set(entries.map((entry) => entry?.id).filter((id) => id && !metadataMap.has(id)));
+        while (
+            missingIds.size &&
+            metadataKey === key &&
+            routeKey(getRoute()) === key &&
+            !metadataComplete &&
+            metadataPagesLoaded < getMaxMetadataPages() &&
+            !isMetadataRetryCoolingDown(key)
+        ) {
+            const cursor = metadataNext;
+            if (!cursor) break;
+            const pagesBefore = metadataPagesLoaded;
+            await loadMetadataPage(route, cursor);
+            if (metadataPagesLoaded === pagesBefore) break;
+            for (const id of missingIds) {
+                if (metadataMap.has(id)) missingIds.delete(id);
+            }
+        }
+        return metadataMap;
     }
 
     function isFollowerFetchMiss(value) {
@@ -3593,11 +3618,13 @@
         if (!isFeatureEnabled()) return;
 
         if (!isAutoLoadActive()) {
-            // 필터 미적용: 스크롤로 화면에 새로 들어온 카드의 팔로워 배지만 보충한다.
-            if (!areFollowerBadgesEnabled() || !getRoute()) return;
+            // 필터 미적용: 화면에 새로 들어온 카드의 진행 시간과 팔로워 배지를 보충한다.
+            const route = getRoute();
+            if (!route) return;
             if (now - lastBadgeScrollCheckAt < BADGE_SCROLL_THROTTLE_MS) return;
             lastBadgeScrollCheckAt = now;
             void refreshFollowerHydrationRows();
+            if (route.tab === "lives" && areLiveElapsedBadgesEnabled()) scheduleApply();
             return;
         }
 
@@ -3655,7 +3682,8 @@
             metadataSearchToken++;
             clearFollowerHydrationTimer();
             clearLoading();
-            const metadata = route.tab === "lives" && canUseMetadata ? await ensureMetadata(route) : new Map();
+            const metadata =
+                route.tab === "lives" && canUseMetadata ? await ensureRenderedMetadata(route, entries) : new Map();
             const visibleRows = entries.map((entry) => ({
                 entry,
                 meta: {
