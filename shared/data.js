@@ -28,6 +28,7 @@
     const CHZZK_CHANNEL_ID_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
     const TRUSTED_IMAGE_HOSTS = Object.freeze(["pstatic.net"]);
     const TRUSTED_MEDIA_HOSTS = Object.freeze(["pstatic.net"]);
+    const TRUSTED_EXACT_MEDIA_HOSTS = Object.freeze(["ex-nlive-streaming.navercdn.com"]);
     const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
     const DAY_MS = 24 * 60 * 60 * 1000;
     let commentDeviceId = "";
@@ -89,7 +90,10 @@
         return normalizedHostname === normalizedDomain || normalizedHostname.endsWith(`.${normalizedDomain}`);
     }
 
-    function normalizeTrustedHttpsUrl(value, { baseUrl = CHZZK_WEB_ORIGIN, allowedHosts = [] } = {}) {
+    function normalizeTrustedHttpsUrl(
+        value,
+        { baseUrl = CHZZK_WEB_ORIGIN, allowedHosts = [], allowedExactHosts = [] } = {}
+    ) {
         const raw = String(value ?? "").trim();
         if (!raw) return "";
 
@@ -105,7 +109,8 @@
             parsed.port ||
             parsed.username ||
             parsed.password ||
-            !allowedHosts.some((domain) => isSameOrSubdomain(parsed.hostname, domain))
+            (!allowedHosts.some((domain) => isSameOrSubdomain(parsed.hostname, domain)) &&
+                !allowedExactHosts.some((hostname) => parsed.hostname.toLowerCase() === String(hostname).toLowerCase()))
         ) {
             return "";
         }
@@ -115,7 +120,11 @@
     }
 
     function normalizeChzzkMediaUrl(value, baseUrl = CHZZK_WEB_ORIGIN) {
-        return normalizeTrustedHttpsUrl(value, { baseUrl, allowedHosts: TRUSTED_MEDIA_HOSTS });
+        return normalizeTrustedHttpsUrl(value, {
+            baseUrl,
+            allowedHosts: TRUSTED_MEDIA_HOSTS,
+            allowedExactHosts: TRUSTED_EXACT_MEDIA_HOSTS,
+        });
     }
 
     function normalizeChzzkImageUrl(value, baseUrl = CHZZK_WEB_ORIGIN) {

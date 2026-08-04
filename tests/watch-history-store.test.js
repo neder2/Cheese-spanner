@@ -72,6 +72,12 @@ test("shared URL helpers allow only trusted CHZZK media, images, and live links"
         "https://nvelop-livecloud.pstatic.net/live/playlist.m3u8"
     );
     assert.equal(
+        utils.normalizeChzzkMediaUrl(
+            "https://ex-nlive-streaming.navercdn.com/chzzk/live/playlist.m3u8?token=test#fragment"
+        ),
+        "https://ex-nlive-streaming.navercdn.com/chzzk/live/playlist.m3u8?token=test"
+    );
+    assert.equal(
         utils.normalizeChzzkImageUrl("https://nng-phinf.pstatic.net/MjAy/image.jpg"),
         "https://nng-phinf.pstatic.net/MjAy/image.jpg"
     );
@@ -87,6 +93,8 @@ test("shared URL helpers allow only trusted CHZZK media, images, and live links"
         "//evil.example/image.jpg",
         "https://evil.example/image.jpg",
         "https://pstatic.net.evil.example/image.jpg",
+        "https://preview.ex-nlive-streaming.navercdn.com/live/playlist.m3u8",
+        "https://ex-nlive-streaming.navercdn.com.evil.example/live/playlist.m3u8",
         "https://pstatic.net@evil.example/image.jpg",
         "https://nng-phinf.pstatic.net:444/image.jpg",
     ];

@@ -776,6 +776,8 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         const content = source?.content ?? source ?? {};
         const channel = content.channel || content.channelInfo || content.channelModel || {};
         const channelName = pickString(channel.channelName, channel.name, content.channelName, fallback.channelName);
+        const livePlaybackJson = pickRawString(content.livePlaybackJson);
+        const previewPlaybackJson = pickRawString(content.previewPlaybackJson);
         const title = cleanEntryTitle(
             pickString(content.liveTitle, content.title, content.broadcastTitle, fallback.title),
             channelName
@@ -806,8 +808,13 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             ),
             title: title || fallback.title,
             liveId: pickString(content.liveId, fallback.liveId),
-            playbackJson: pickRawString(fallback.playbackJson),
-            isPreviewPlayback: Boolean(fallback.isPreviewPlayback),
+            playbackJson: pickRawString(
+                livePlaybackJson,
+                previewPlaybackJson,
+                content.playbackJson,
+                fallback.playbackJson
+            ),
+            isPreviewPlayback: !livePlaybackJson && Boolean(previewPlaybackJson || fallback.isPreviewPlayback),
         };
     }
 
