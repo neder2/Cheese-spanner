@@ -7,7 +7,7 @@
  *   관찰해 파이프라인 생존 여부(pipelineState: unknown/alive/dead)를 라우트 진입마다 새로 판정한다. 죽었다고
  *   판정되면 이후 같은 라우트에서는 관찰을 건너뛰고 즉시 버튼 클릭(우선) 또는 video/document API 직접 호출로
  *   폴백한다. Space는 repeat keydown을 무시하며(네이티브와 달리 반복 입력에 반응하지 않음), 편집 가능 대상이나
- *   플레이어 바깥 상호작용 대상에서는 개입하지 않는다.
+ *   실제 상호작용 요소, 플레이어 바깥 상호작용 대상에서는 개입하지 않는다.
  * 의존: 전역 BetterChzzk.utils(getMainVideoElement, getPlayerRoot, isEditableTarget,
  *   isOutsidePlayerInteractiveTarget, isPlaybackRoute, isVisible, normalizeCompact).
  */
@@ -16,6 +16,10 @@
     // 오래 기다리면 복구 자체가 입력 지연처럼 보이므로 짧은 유예만 둔다.
     const PROBE_TIMEOUT_MS = 80;
     const BUTTON_SELECTOR = "button, [role='button']";
+    const INTERACTIVE_TARGET_SELECTOR =
+        "button, [role='button'], a[href], [role='link'], summary, [role='checkbox'], [role='menuitem'], " +
+        "[role='option'], [role='radio'], [role='slider'], [role='switch'], [role='tab'], [role='textbox'], " +
+        "[role='combobox'], [role='searchbox'], [role='spinbutton'], [role='treeitem']";
     const DESCRIPTOR_ATTRS = ["aria-label", "label", "tooltip", "title", "data-testid", "class"];
 
     const {
@@ -108,6 +112,10 @@
         return terms.some((term) => descriptor.includes(normalizeCompact(term)));
     }
 
+    function isInteractiveTarget(target) {
+        return target instanceof Element && Boolean(target.closest(INTERACTIVE_TARGET_SELECTOR));
+    }
+
     function resolveClickTarget(el) {
         if (!(el instanceof HTMLElement)) return null;
         if (el.matches(BUTTON_SELECTOR)) return el;
@@ -194,6 +202,7 @@
         const action = KEY_ACTIONS[event.code];
         if (!action) return;
         if (isEditableTarget(event.target)) return;
+        if (isInteractiveTarget(event.target)) return;
 
         const video = getMainVideoElement();
         if (action.playerTargetOnly && isOutsidePlayerInteractiveTarget(event.target, video)) return;

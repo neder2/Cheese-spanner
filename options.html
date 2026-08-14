@@ -511,7 +511,7 @@
                         <summary>
                             <span class="option-group-title">
                                 <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-keyboard" /></svg>
-                                <span>다시보기·단축키</span>
+                                <span>재생·단축키</span>
                             </span>
                         </summary>
                         <div class="option-group-body">
@@ -520,9 +520,49 @@
                                 <input type="checkbox" data-option="vodBroadcastClockEnabled" />
                             </label>
                             <label class="toggle-row">
-                                <span><strong>다시보기 Space 홀드 2배속</strong></span>
+                                <span><strong>Space 홀드 2배속</strong></span>
                                 <input type="checkbox" data-option="holdSpeedEnabled" />
                             </label>
+                            <label class="toggle-row">
+                                <span><strong>0.5·2배속 단축키</strong></span>
+                                <input type="checkbox" data-option="playbackSpeedShortcutsEnabled" />
+                            </label>
+                            <div class="number-grid shortcut-grid" data-depends-on="playbackSpeedShortcutsEnabled">
+                                <label>
+                                    <span>0.5배속 키</span
+                                    ><input
+                                        type="text"
+                                        value="["
+                                        readonly
+                                        inputmode="none"
+                                        autocomplete="off"
+                                        spellcheck="false"
+                                        data-option="playbackSpeedHalfKeyCode"
+                                        data-shortcut-code
+                                        aria-label="0.5배속 단축키"
+                                        aria-describedby="playbackSpeedShortcutHelp"
+                                    /><em>키</em>
+                                </label>
+                                <label>
+                                    <span>2배속 키</span
+                                    ><input
+                                        type="text"
+                                        value="]"
+                                        readonly
+                                        inputmode="none"
+                                        autocomplete="off"
+                                        spellcheck="false"
+                                        data-option="playbackSpeedDoubleKeyCode"
+                                        data-shortcut-code
+                                        aria-label="2배속 단축키"
+                                        aria-describedby="playbackSpeedShortcutHelp"
+                                    /><em>키</em>
+                                </label>
+                            </div>
+                            <p class="setting-note" id="playbackSpeedShortcutHelp">
+                                키 입력칸을 선택한 뒤 영문·숫자·일부 기호 키를 누르세요. 기존 재생 조작과 겹치는 키는
+                                지정할 수 없으며, 적용된 배속 키를 다시 누르면 1배속으로 돌아옵니다.
+                            </p>
                         </div>
                     </details>
                 </section>

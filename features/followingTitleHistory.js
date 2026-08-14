@@ -22,7 +22,6 @@
         injectStyleOnce,
         isSameKstDate,
         normalizeChzzkChannelId,
-        normalizeForMatch,
         normalizeTitleHistory,
         pickString,
         startPageChangeDetection,
@@ -76,6 +75,10 @@
     function normalizeId(value) {
         const id = pickString(value);
         return /^[A-Za-z0-9_-]{1,100}$/.test(id) ? id : "";
+    }
+
+    function normalizeTitleKey(value) {
+        return pickString(value).normalize("NFC");
     }
 
     function extractChannelId(href) {
@@ -217,15 +220,15 @@
             if (!channelId || !(card instanceof HTMLElement) || !isTitleLink(link, card)) continue;
             const title = getTitleText(link);
             if (!title) continue;
-            byChannel.set(channelId, { card, channelId, link, title, titleNorm: normalizeForMatch(title) });
+            byChannel.set(channelId, { card, channelId, link, title, titleNorm: normalizeTitleKey(title) });
         }
         return Array.from(byChannel.values());
     }
 
     function getPreviousRows(entry, currentTitle) {
-        const currentNorm = normalizeForMatch(currentTitle);
+        const currentNorm = normalizeTitleKey(currentTitle);
         return normalizeTitleHistory(entry?.titleHistory, entry?.channelName, MAX_TITLES_PER_LIVE).filter(
-            (row) => normalizeForMatch(row.title) !== currentNorm
+            (row) => normalizeTitleKey(row.title) !== currentNorm
         );
     }
 
@@ -425,7 +428,7 @@
             .then((json) => normalizeLiveMeta(json, candidate.channelId))
             .then(async (meta) => {
                 if (generation !== runtimeGeneration || controller.signal.aborted) return;
-                if (!meta.liveId || !meta.title || normalizeForMatch(meta.title) !== candidate.titleNorm) return;
+                if (!meta.liveId || !meta.title || normalizeTitleKey(meta.title) !== candidate.titleNorm) return;
                 await loadStore();
                 if (generation !== runtimeGeneration || controller.signal.aborted) return;
                 const entry = await recordVerifiedTitle(meta);

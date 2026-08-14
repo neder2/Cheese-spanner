@@ -8,7 +8,7 @@
  *   FEATURE_KEYS를 파생하고, chrome.storage.sync 기반 옵션 로드·정규화·변경 구독을 제공한다.
  *   새 옵션은 OPTION_SCHEMA에 항목 하나를 추가하면 기본값·정규화·변경 알림이 함께 따라온다.
  * 공개 API: normalizeOptions, getOptions(callback), addOptionsChangeListener(callback),
- *   getStorageLastError, normalizeSkipSeconds, 각종 min/max 상수.
+ *   getStorageLastError, normalizeSkipSeconds, 배속 단축키 검증·표시 도우미, 각종 min/max 상수.
  *   background.js, options.js, 모든 feature가 의존하므로 키 이름과 시그니처를 바꾸지 말 것.
  * 통신: chrome.storage.sync(옵션 저장소), chrome.storage.onChanged 구독.
  */
@@ -28,6 +28,22 @@
     const CHAT_TOOLS_MIN_MODERATOR_MESSAGES = 20;
     const CHAT_TOOLS_MAX_MODERATOR_MESSAGES = 200;
     const LEGACY_CHAT_TOOLS_ENABLED_KEY = "chatToolsEnabled";
+    const DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE = "BracketLeft";
+    const DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE = "BracketRight";
+    const PLAYBACK_SPEED_SHORTCUT_CODE_PATTERN =
+        /^(?:Key[A-Z]|Digit[0-9]|Numpad[0-9]|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Backquote|Minus|Equal|Slash)$/;
+    const RESERVED_PLAYBACK_SPEED_SHORTCUT_CODES = new Set(["KeyF", "KeyJ", "KeyK", "KeyL", "KeyM", "KeyT"]);
+    const PLAYBACK_SPEED_SHORTCUT_CODE_LABELS = Object.freeze({
+        BracketLeft: "[",
+        BracketRight: "]",
+        Backslash: "\\",
+        Semicolon: ";",
+        Quote: "'",
+        Backquote: "`",
+        Minus: "-",
+        Equal: "=",
+        Slash: "/",
+    });
 
     const OPTION_SCHEMA = Object.freeze({
         autoQualityEnabled: { kind: "bool", default: true, feature: true },
@@ -187,6 +203,9 @@
         followingPreviewVolumePercent: { kind: "int", default: 15, min: 1, max: 100 },
         livePreviewRightClickSoundEnabled: { kind: "bool", default: true },
         holdSpeedEnabled: { kind: "bool", default: true, feature: true },
+        playbackSpeedShortcutsEnabled: { kind: "bool", default: true, feature: true },
+        playbackSpeedHalfKeyCode: { kind: "shortcutCode", default: DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE },
+        playbackSpeedDoubleKeyCode: { kind: "shortcutCode", default: DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE },
     });
 
     const OPTION_SPEC = OPTION_SCHEMA;
@@ -235,6 +254,27 @@
         return Math.min(Math.max(Math.round(parsed), SKIP_MIN), SKIP_MAX);
     }
 
+    function isPlaybackSpeedShortcutCode(value) {
+        return (
+            typeof value === "string" &&
+            PLAYBACK_SPEED_SHORTCUT_CODE_PATTERN.test(value) &&
+            !RESERVED_PLAYBACK_SPEED_SHORTCUT_CODES.has(value)
+        );
+    }
+
+    function normalizeShortcutCode(value, fallback) {
+        const code = typeof value === "string" ? value.trim() : "";
+        return isPlaybackSpeedShortcutCode(code) ? code : fallback;
+    }
+
+    function getPlaybackSpeedShortcutLabel(code) {
+        if (PLAYBACK_SPEED_SHORTCUT_CODE_LABELS[code]) return PLAYBACK_SPEED_SHORTCUT_CODE_LABELS[code];
+        if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+        if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+        if (/^Numpad[0-9]$/.test(code)) return `Num ${code.slice(6)}`;
+        return code;
+    }
+
     function normalizeOptionValue(key, value) {
         const spec = OPTION_SCHEMA[key];
         const fallback = DEFAULT_OPTIONS[key];
@@ -243,6 +283,7 @@
         if (spec.kind === "int") return normalizeInteger(value, fallback, spec.min, spec.max);
         if (spec.kind === "number") return normalizeNumber(value, fallback, spec.min, spec.max, spec.step);
         if (spec.kind === "skipSeconds") return normalizeSkipSeconds(value);
+        if (spec.kind === "shortcutCode") return normalizeShortcutCode(value, fallback);
         return fallback;
     }
 
@@ -252,6 +293,11 @@
 
         for (const key of OPTION_KEYS) {
             out[key] = normalizeOptionValue(key, raw[key]);
+        }
+
+        if (out.playbackSpeedHalfKeyCode === out.playbackSpeedDoubleKeyCode) {
+            out.playbackSpeedHalfKeyCode = DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE;
+            out.playbackSpeedDoubleKeyCode = DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE;
         }
 
         if (Object.prototype.hasOwnProperty.call(raw, LEGACY_CHAT_TOOLS_ENABLED_KEY)) {
@@ -363,12 +409,16 @@
         LIVE_WATCH_HISTORY_MIN_MINUTES_MAX,
         CHAT_TOOLS_MIN_MODERATOR_MESSAGES,
         CHAT_TOOLS_MAX_MODERATOR_MESSAGES,
+        DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE,
+        DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE,
         OPTION_SPEC,
         DEFAULT_OPTIONS,
         OPTION_KEYS,
         STORAGE_OPTION_KEYS,
         FEATURE_KEYS,
         normalizeSkipSeconds,
+        isPlaybackSpeedShortcutCode,
+        getPlaybackSpeedShortcutLabel,
         normalizeOptions,
         migrateLegacyChatToolsOption,
         getStorageLastError,

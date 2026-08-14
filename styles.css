@@ -812,9 +812,20 @@ h1 {
     outline: none;
 }
 
+.shortcut-grid input {
+    caret-color: transparent;
+    cursor: pointer;
+    font-weight: 700;
+    text-align: center;
+}
+
 .number-grid input:disabled,
 .quality-option input:disabled + span {
     color: var(--text-dim);
+}
+
+.shortcut-grid input:disabled {
+    cursor: not-allowed;
 }
 
 .number-grid em {

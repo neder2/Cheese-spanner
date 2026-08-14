@@ -88,6 +88,9 @@ const expectedDefaults = {
     followingPreviewVolumePercent: 15,
     livePreviewRightClickSoundEnabled: true,
     holdSpeedEnabled: true,
+    playbackSpeedShortcutsEnabled: true,
+    playbackSpeedHalfKeyCode: "BracketLeft",
+    playbackSpeedDoubleKeyCode: "BracketRight",
 };
 
 test("settings exports the expected option defaults and key order", () => {
@@ -120,6 +123,7 @@ test("feature count keys are derived from feature toggles only", () => {
         "followingRefreshEnabled",
         "followingPreviewTooltipEnabled",
         "holdSpeedEnabled",
+        "playbackSpeedShortcutsEnabled",
     ]);
 });
 
@@ -142,6 +146,8 @@ test("normalizeOptions preserves boolean parsing and integer bounds", () => {
         categoryToolsDurationFilterPreset6: "999",
         categoryToolsFollowerFetchConcurrency: "0",
         followingPreviewVolumePercent: 200,
+        playbackSpeedHalfKeyCode: "KeyQ",
+        playbackSpeedDoubleKeyCode: "KeyW",
     });
 
     assert.equal(normalized.autoQualityEnabled, false);
@@ -161,7 +167,45 @@ test("normalizeOptions preserves boolean parsing and integer bounds", () => {
     assert.equal(normalized.categoryToolsDurationFilterPreset6, 168);
     assert.equal(normalized.categoryToolsFollowerFetchConcurrency, 1);
     assert.equal(normalized.followingPreviewVolumePercent, 100);
+    assert.equal(normalized.playbackSpeedHalfKeyCode, "KeyQ");
+    assert.equal(normalized.playbackSpeedDoubleKeyCode, "KeyW");
     assert.equal(settings.normalizeOptions({ followingPreviewVolumePercent: 0 }).followingPreviewVolumePercent, 1);
+});
+
+test("playback speed shortcut codes reject reserved, invalid, and duplicate keys", () => {
+    assert.equal(settings.isPlaybackSpeedShortcutCode("KeyQ"), true);
+    assert.equal(settings.isPlaybackSpeedShortcutCode("BracketLeft"), true);
+    for (const code of [
+        "Space",
+        "KeyF",
+        "KeyJ",
+        "KeyK",
+        "KeyL",
+        "KeyM",
+        "KeyT",
+        "ArrowLeft",
+        "ArrowRight",
+        "Comma",
+        "Period",
+    ]) {
+        assert.equal(settings.isPlaybackSpeedShortcutCode(code), false, `${code} must stay reserved`);
+    }
+
+    const invalid = settings.normalizeOptions({
+        playbackSpeedHalfKeyCode: " KeyM ",
+        playbackSpeedDoubleKeyCode: "Unidentified",
+    });
+    assert.equal(invalid.playbackSpeedHalfKeyCode, settings.DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE);
+    assert.equal(invalid.playbackSpeedDoubleKeyCode, settings.DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE);
+
+    const duplicate = settings.normalizeOptions({
+        playbackSpeedHalfKeyCode: "KeyQ",
+        playbackSpeedDoubleKeyCode: "KeyQ",
+    });
+    assert.equal(duplicate.playbackSpeedHalfKeyCode, settings.DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE);
+    assert.equal(duplicate.playbackSpeedDoubleKeyCode, settings.DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE);
+    assert.equal(settings.getPlaybackSpeedShortcutLabel("BracketLeft"), "[");
+    assert.equal(settings.getPlaybackSpeedShortcutLabel("Numpad7"), "Num 7");
 });
 
 test("removed chat tools master toggle migrates its previous disabled and enabled states", () => {

@@ -1958,7 +1958,7 @@ test("options player controls merge playback defaults", () => {
         "방송 목록 필터",
     ]);
     assert.equal(section.querySelector("h2").textContent.trim(), "플레이어");
-    assert.deepEqual(groupLabels, ["자동 처리", "시간 이동", "볼륨", "오디오 컴프레서", "다시보기·단축키"]);
+    assert.deepEqual(groupLabels, ["자동 처리", "시간 이동", "볼륨", "오디오 컴프레서", "재생·단축키"]);
     assert.deepEqual(optionOrder, [
         "autoQualityEnabled",
         "rewardAutoCollectEnabled",
@@ -1984,7 +1984,82 @@ test("options player controls merge playback defaults", () => {
         "audioCompressorMakeupGain",
         "vodBroadcastClockEnabled",
         "holdSpeedEnabled",
+        "playbackSpeedShortcutsEnabled",
+        "playbackSpeedHalfKeyCode",
+        "playbackSpeedDoubleKeyCode",
     ]);
+});
+
+test("options captures readable playback speed keys and blocks duplicate or reserved shortcuts", async () => {
+    const chrome = createFakeChrome();
+    const dom = createDom("options.html", "options.html", chrome);
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+
+    const { document } = dom.window;
+    const enabled = queryOption(document, "playbackSpeedShortcutsEnabled");
+    const halfKey = queryOption(document, "playbackSpeedHalfKeyCode");
+    const doubleKey = queryOption(document, "playbackSpeedDoubleKeyCode");
+    const message = document.getElementById("message");
+    const saveButton = document.getElementById("save");
+    const press = (input, code, init = {}) => {
+        const event = new dom.window.KeyboardEvent("keydown", {
+            code,
+            key: init.key || code,
+            bubbles: true,
+            cancelable: true,
+            ...init,
+        });
+        input.dispatchEvent(event);
+        return event;
+    };
+
+    assert.equal(halfKey.value, "[");
+    assert.equal(halfKey.dataset.shortcutCode, "BracketLeft");
+    assert.equal(doubleKey.value, "]");
+    assert.equal(doubleKey.dataset.shortcutCode, "BracketRight");
+
+    enabled.checked = false;
+    dispatch(dom, enabled, "change");
+    assert.equal(halfKey.disabled, true);
+    assert.equal(doubleKey.disabled, true);
+
+    enabled.checked = true;
+    dispatch(dom, enabled, "change");
+    assert.equal(halfKey.disabled, false);
+
+    assert.equal(press(halfKey, "KeyQ", { key: "q" }).defaultPrevented, true);
+    assert.equal(halfKey.value, "Q");
+    assert.equal(halfKey.dataset.shortcutCode, "KeyQ");
+    assert.equal(saveButton.disabled, false);
+
+    const browserShortcut = press(doubleKey, "KeyL", { key: "l", ctrlKey: true });
+    assert.equal(browserShortcut.defaultPrevented, false, "browser and assistive shortcuts must pass through");
+    assert.equal(doubleKey.value, "]");
+
+    const unsupportedKey = press(doubleKey, "F6", { key: "F6" });
+    assert.equal(unsupportedKey.defaultPrevented, false, "unsupported navigation keys must pass through");
+    assert.equal(doubleKey.value, "]");
+
+    press(doubleKey, "KeyQ", { key: "q" });
+    assert.equal(doubleKey.value, "]");
+    assert.match(message.textContent, /서로 다른 키/);
+
+    press(doubleKey, "KeyM", { key: "m" });
+    assert.equal(doubleKey.value, "]");
+    assert.match(message.textContent, /겹쳐 지정할 수 없습니다/);
+
+    press(doubleKey, "KeyW", { key: "w" });
+    assert.equal(doubleKey.value, "W");
+    assert.equal(doubleKey.dataset.shortcutCode, "KeyW");
+
+    saveButton.click();
+    await waitForAsyncCallbacks();
+    assert.equal(saveButton.disabled, true);
+    assert.equal(chrome.testState.sync.playbackSpeedHalfKeyCode, "KeyQ");
+    assert.equal(chrome.testState.sync.playbackSpeedDoubleKeyCode, "KeyW");
 });
 
 test("options places chat tools controls in a dedicated section", () => {
@@ -2327,7 +2402,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.2.8");
+    assert.equal(manifest.version, "1.2.9");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
@@ -2388,6 +2463,9 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     );
     assert.ok(isolatedScript.js.includes("features/holdSpeed.js"));
     assert.ok(isolatedScript.js.includes("features/shortcutRescue.js"));
+    assert.ok(
+        isolatedScript.js.indexOf("features/skipControl.js") < isolatedScript.js.indexOf("features/holdSpeed.js")
+    );
     assert.ok(
         isolatedScript.js.indexOf("features/holdSpeed.js") < isolatedScript.js.indexOf("features/shortcutRescue.js")
     );
@@ -7852,6 +7930,12 @@ async function loadSkipControlPage(dom) {
     await waitForAsyncCallbacks();
 }
 
+async function loadSkipControlBeforeHoldSpeed(dom) {
+    await loadSkipControlPage(dom);
+    evalRepoScript(dom, "features", "holdSpeed.js");
+    await waitForAsyncCallbacks();
+}
+
 function dispatchVideoEvent(dom, video, type) {
     video.dispatchEvent(new dom.window.Event(type, { bubbles: true }));
 }
@@ -8079,6 +8163,110 @@ test("live pause snapshot restores a user-paused time-shift", async () => {
         dispatchVideoEvent(dom, video, "play");
 
         assert.ok(video.currentTime >= 970 && video.currentTime < 972);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live pause snapshot still accepts native Space when hold speed is disabled", async () => {
+    const chrome = createFakeChrome({ sync: { holdSpeedEnabled: false } });
+    const { dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        state.bufferedEnd = 1000;
+        state.currentTime = 970;
+        state.seekableEnd = 1000;
+        await loadSkipControlPage(dom);
+
+        dispatchShortcutKey(dom, "Space", " ");
+        state.paused = true;
+        dispatchVideoEvent(dom, video, "pause");
+        state.paused = false;
+        state.currentTime = 1000;
+        dispatchVideoEvent(dom, video, "play");
+
+        assert.ok(video.currentTime >= 970 && video.currentTime < 972);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live pause snapshot accepts an explicit playback toggle intent from another feature", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        state.bufferedEnd = 1000;
+        state.currentTime = 970;
+        state.seekableEnd = 1000;
+        await loadSkipControlPage(dom);
+
+        assert.equal(typeof dom.window.BetterChzzk.skipControl?.markPlaybackToggleIntent, "function");
+        dom.window.BetterChzzk.skipControl.markPlaybackToggleIntent();
+        state.paused = true;
+        dispatchVideoEvent(dom, video, "pause");
+
+        state.paused = false;
+        state.currentTime = 1000;
+        dispatchVideoEvent(dom, video, "play");
+
+        assert.ok(video.currentTime >= 970 && video.currentTime < 972);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live Space short tap keeps pause restore when skip control registered first", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        state.bufferedEnd = 1000;
+        state.currentTime = 970;
+        state.seekableEnd = 1000;
+        video.pause = () => {
+            state.paused = true;
+            dispatchVideoEvent(dom, video, "pause");
+        };
+        await loadSkipControlBeforeHoldSpeed(dom);
+
+        dispatchShortcutKey(dom, "Space", " ");
+        dispatchShortcutKey(dom, "Space", " ", { type: "keyup" });
+        assert.equal(state.paused, true);
+
+        state.paused = false;
+        state.currentTime = 1000;
+        dispatchVideoEvent(dom, video, "play");
+
+        assert.ok(video.currentTime >= 970 && video.currentTime < 972);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("live Space hold is not misclassified as pause intent when skip control registered first", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+
+    try {
+        state.bufferedEnd = 1000;
+        state.currentTime = 970;
+        state.seekableEnd = 1000;
+        await loadSkipControlBeforeHoldSpeed(dom);
+
+        dispatchShortcutKey(dom, "Space", " ");
+        dispatchShortcutKey(dom, "Space", " ", { repeat: true });
+        assert.equal(video.playbackRate, 2);
+        dispatchShortcutKey(dom, "Space", " ", { type: "keyup" });
+        assert.equal(video.playbackRate, 1);
+
+        state.paused = true;
+        dispatchVideoEvent(dom, video, "pause");
+        state.paused = false;
+        state.currentTime = 1000;
+        dispatchVideoEvent(dom, video, "play");
+
+        assert.equal(video.currentTime, 1000, "a non-user pause after a hold must not restore a snapshot");
     } finally {
         await closeSkipControlPage(dom, chrome);
     }
@@ -8827,7 +9015,7 @@ test("live fast-forward button does not duplicate an external knife button", asy
     }
 });
 
-function setupShortcutRescueDom(chrome, { pageScripts = [] } = {}) {
+function setupShortcutRescueDom(chrome, { pageScripts = [], beforeRescueScripts = [] } = {}) {
     const dom = createPageDom(
         [
             "<!doctype html>",
@@ -8838,6 +9026,7 @@ function setupShortcutRescueDom(chrome, { pageScripts = [] } = {}) {
             '<button class="pzp-pc__playback-switch" id="play" type="button"></button>',
             '<button class="pzp-pc__volume-button" id="mute" type="button" aria-label="음소거"></button>',
             '<button class="pzp-pc__viewmode-button" id="theater" type="button" aria-label="넓은 화면"></button>',
+            '<div id="customTextbox" role="textbox" tabindex="0"></div>',
             "</div>",
             "</div>",
             "</body>",
@@ -8871,25 +9060,104 @@ function setupShortcutRescueDom(chrome, { pageScripts = [] } = {}) {
     for (const pageScript of pageScripts) evalRepoScript(dom, "features", pageScript);
     evalRepoScript(dom, "shared", "settings.js");
     evalContentScripts(dom);
+    for (const featureScript of beforeRescueScripts) evalRepoScript(dom, "features", featureScript);
     evalRepoScript(dom, "features", "shortcutRescue.js");
 
     return { dom, document, video, state };
 }
 
-function dispatchShortcutKey(dom, code, key) {
-    const event = new dom.window.KeyboardEvent("keydown", {
+function dispatchShortcutKey(
+    dom,
+    code,
+    key,
+    { type = "keydown", target = dom.window.document.body, repeat = false } = {}
+) {
+    const event = new dom.window.KeyboardEvent(type, {
         code,
         key,
         bubbles: true,
         cancelable: true,
+        repeat,
     });
-    dom.window.document.body.dispatchEvent(event);
+    target.dispatchEvent(event);
     return event;
 }
 
 function waitForRescueProbe() {
     return new Promise((resolve) => setTimeout(resolve, 150));
 }
+
+test("hold speed owns live Space before shortcut rescue without a second toggle", async () => {
+    const chrome = createFakeChrome();
+    const { dom, state, video } = setupShortcutRescueDom(chrome, {
+        beforeRescueScripts: ["holdSpeed.js"],
+    });
+
+    try {
+        await waitForAsyncCallbacks();
+
+        const holdDown = dispatchShortcutKey(dom, "Space", " ");
+        assert.equal(holdDown.defaultPrevented, true);
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        assert.equal(video.playbackRate, 2);
+        assert.equal(state.paused, true);
+
+        const holdUp = dispatchShortcutKey(dom, "Space", " ", { type: "keyup" });
+        assert.equal(holdUp.defaultPrevented, true);
+        assert.equal(video.playbackRate, 1);
+        assert.equal(state.paused, true);
+
+        dispatchShortcutKey(dom, "Space", " ");
+        dispatchShortcutKey(dom, "Space", " ", { type: "keyup" });
+        await waitForRescueProbe();
+        assert.equal(state.paused, false, "the short Space press must toggle playback once");
+        assert.equal(state.clicks.play, 0, "shortcut rescue must not add a delayed second toggle");
+    } finally {
+        dom.window.close();
+    }
+});
+
+test("shortcut rescue yields Space on player controls while probing or dead", async () => {
+    const unknownChrome = createFakeChrome();
+    const unknown = setupShortcutRescueDom(unknownChrome);
+
+    try {
+        await waitForAsyncCallbacks();
+        const mute = unknown.document.getElementById("mute");
+        const textbox = unknown.document.getElementById("customTextbox");
+        const event = dispatchShortcutKey(unknown.dom, "Space", " ", { target: mute });
+        const textboxEvent = dispatchShortcutKey(unknown.dom, "Space", " ", { target: textbox });
+        await waitForRescueProbe();
+
+        assert.equal(event.defaultPrevented, false);
+        assert.equal(textboxEvent.defaultPrevented, false);
+        assert.equal(unknown.state.clicks.play, 0, "a focused player control must not start a Space probe");
+    } finally {
+        unknown.dom.window.close();
+    }
+
+    const deadChrome = createFakeChrome();
+    const dead = setupShortcutRescueDom(deadChrome);
+
+    try {
+        await waitForAsyncCallbacks();
+        dispatchShortcutKey(dead.dom, "Space", " ");
+        await waitForRescueProbe();
+        assert.equal(dead.state.clicks.play, 1, "the body probe establishes a dead native pipeline");
+        dead.state.clicks.play = 0;
+
+        const mute = dead.document.getElementById("mute");
+        const textbox = dead.document.getElementById("customTextbox");
+        const event = dispatchShortcutKey(dead.dom, "Space", " ", { target: mute });
+        const textboxEvent = dispatchShortcutKey(dead.dom, "Space", " ", { target: textbox });
+
+        assert.equal(event.defaultPrevented, false);
+        assert.equal(textboxEvent.defaultPrevented, false);
+        assert.equal(dead.state.clicks.play, 0, "a dead pipeline must still yield focused player controls");
+    } finally {
+        dead.dom.window.close();
+    }
+});
 
 test("shortcut rescue takes over once the native shortcut pipeline stays unresponsive", async () => {
     const chrome = createFakeChrome();

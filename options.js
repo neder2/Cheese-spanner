@@ -29,6 +29,8 @@ const {
     FEATURE_KEYS,
     OPTION_KEYS,
     STORAGE_OPTION_KEYS,
+    getPlaybackSpeedShortcutLabel,
+    isPlaybackSpeedShortcutCode,
     normalizeOptions,
     migrateLegacyChatToolsOption,
 } = BetterChzzkSettings;
@@ -50,22 +52,35 @@ const NOTICE_STATE_LABELS = {
 // 기능을 켜는 순간에만 요청한다. 이미 허용된 상태의 request는 팝업 없이 승인된다.
 const PREVIEW_HOST_PERMISSION = { origins: ["https://*.pstatic.net/*"] };
 const PREVIEW_PERMISSION_DENIED_MESSAGE = "권한이 거부되어 팔로잉 미리보기를 켜지 않았습니다.";
+const SHORTCUT_KEY_UNAVAILABLE_MESSAGE = "이 키는 기존 재생 조작과 겹쳐 지정할 수 없습니다.";
+const SHORTCUT_KEY_DUPLICATE_MESSAGE = "0.5배속과 2배속은 서로 다른 키로 지정해 주세요.";
 
 let hideMessageTimer = 0;
 let savedOptions = null;
 let saveInFlight = false;
 let optionsLoadState = storage ? "loading" : "ready";
 
+function isShortcutCodeInput(input) {
+    return input?.hasAttribute?.("data-shortcut-code") === true;
+}
+
 function setInputValue(input, value) {
     if (input.type === "checkbox") {
         input.checked = Boolean(value);
+        return;
+    }
+    if (isShortcutCodeInput(input)) {
+        input.dataset.shortcutCode = String(value);
+        input.value = getPlaybackSpeedShortcutLabel(value);
         return;
     }
     input.value = String(value);
 }
 
 function getInputValue(input) {
-    return input.type === "checkbox" ? input.checked : input.value;
+    if (input.type === "checkbox") return input.checked;
+    if (isShortcutCodeInput(input)) return input.dataset.shortcutCode || "";
+    return input.value;
 }
 
 function readOptionsFromForm() {
@@ -148,8 +163,7 @@ function renderOptions(options, { state = "saved" } = {}) {
 function syncNumberInputs(options) {
     for (const input of optionInputs) {
         if (input.type === "checkbox") continue;
-        const normalizedValue = String(options[input.dataset.option]);
-        if (input.value !== normalizedValue) input.value = normalizedValue;
+        setInputValue(input, options[input.dataset.option]);
     }
 }
 
@@ -272,6 +286,36 @@ form.addEventListener("submit", (event) => {
     event.preventDefault();
 });
 
+form.addEventListener("keydown", (event) => {
+    const input = getOptionInput(event.target);
+    if (!isShortcutCodeInput(input) || event.code === "Tab") return;
+
+    if (optionsLoadState !== "ready" || input.disabled || event.repeat || event.isComposing) return;
+    if (event.code === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        input.blur();
+        return;
+    }
+    if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+    if (!isPlaybackSpeedShortcutCode(event.code)) {
+        showMessage(SHORTCUT_KEY_UNAVAILABLE_MESSAGE, "error");
+        return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const otherShortcutInput = optionInputs.find((candidate) => isShortcutCodeInput(candidate) && candidate !== input);
+    if (otherShortcutInput && getInputValue(otherShortcutInput) === event.code) {
+        showMessage(SHORTCUT_KEY_DUPLICATE_MESSAGE, "error");
+        return;
+    }
+
+    setInputValue(input, event.code);
+    renderFormChanges();
+});
+
 form.addEventListener("input", (event) => {
     if (optionsLoadState !== "ready") return;
     const input = getOptionInput(event.target);
@@ -296,7 +340,7 @@ saveButton.addEventListener("click", saveCurrentOptions);
 
 resetButton.addEventListener("click", () => {
     if (optionsLoadState !== "ready") return;
-    if (!window.confirm("모든 설정을 기본값으로 되돌릴까요? 직접 입력한 수치도 함께 초기화됩니다.")) return;
+    if (!window.confirm("모든 설정을 기본값으로 되돌릴까요? 직접 바꾼 키와 수치도 함께 초기화됩니다.")) return;
     renderOptions(DEFAULT_OPTIONS);
     commitSave("기본값으로 복원했습니다.");
 });

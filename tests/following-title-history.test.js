@@ -190,6 +190,29 @@ test("following live title changes are cached per live and previous titles expan
     assert.doesNotMatch(panel.textContent, /두 번째 제목/);
 });
 
+test("visible symbol-only title changes keep the previous title toggle", async () => {
+    const { chrome, document, dom, state } = createFollowingDom({});
+    evalFeatureScripts(dom);
+    await waitFor(() => getStoredEntry(chrome), "initial live title was not stored");
+
+    state.meta.liveTitle = "첫 번째 제목 🔴";
+    document.getElementById("liveTitle").firstChild.nodeValue = "첫 번째 제목 🔴";
+
+    await waitFor(
+        () => getStoredEntry(chrome)?.titleHistory?.length === 2 && document.querySelector("button[data-bcfth-toggle]"),
+        "symbol-only title change was not stored and rendered"
+    );
+
+    assert.deepEqual(
+        getStoredEntry(chrome).titleHistory.map((row) => row.title),
+        ["첫 번째 제목", "첫 번째 제목 🔴"]
+    );
+    assert.equal(
+        document.querySelector("button[data-bcfth-toggle]").getAttribute("aria-label"),
+        "이전 방송 제목 1개 보기"
+    );
+});
+
 test("a new live id replaces the previous broadcast title cache", async () => {
     const oldTime = Date.now() - 60_000;
     const chrome = createFakeChrome({

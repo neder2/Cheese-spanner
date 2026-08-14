@@ -109,6 +109,7 @@ function createFixture({
             '<div id="editable" contenteditable="true">editable</div>',
             '<a id="outside-link" href="/video/999">link</a>',
             '<div id="outside-role" role="button" tabindex="0">role button</div>',
+            '<div id="outside-textbox" role="textbox" tabindex="0">role textbox</div>',
             "</body></html>",
         ].join(""),
         { url, runScripts: "outside-only", pretendToBeVisual: true }
@@ -118,9 +119,16 @@ function createFixture({
     const timers = installFakeTimers(window);
     const video = document.getElementById("video");
     const mediaState = configureVideo(dom, video, { paused, playbackRate });
-    const options = { holdSpeedEnabled: true, ...initialOptions };
+    const options = {
+        holdSpeedEnabled: true,
+        playbackSpeedShortcutsEnabled: true,
+        playbackSpeedHalfKeyCode: "BracketLeft",
+        playbackSpeedDoubleKeyCode: "BracketRight",
+        ...initialOptions,
+    };
     const optionListeners = [];
     const routeListeners = [];
+    let playbackToggleIntentCalls = 0;
     let hidden = false;
 
     Object.defineProperty(document, "visibilityState", {
@@ -132,6 +140,11 @@ function createFixture({
         normalizeOptions: () => ({ ...options }),
     };
     window.BetterChzzk = {
+        skipControl: {
+            markPlaybackToggleIntent() {
+                playbackToggleIntentCalls += 1;
+            },
+        },
         utils: {
             bindFeatureOptions(callback) {
                 optionListeners.push(callback);
@@ -150,6 +163,8 @@ function createFixture({
                 style.textContent = css;
                 document.head.appendChild(style);
             },
+            isLiveRoute: () => /^\/live(?:\/|$)/.test(window.location.pathname),
+            isPlaybackRoute: () => /^\/(?:live|video)(?:\/|$)/.test(window.location.pathname),
             isVodRoute: () => /^\/video(?:\/|$)/.test(window.location.pathname),
             startPageChangeDetection(callback) {
                 routeListeners.push(callback);
@@ -169,6 +184,9 @@ function createFixture({
         timers,
         video,
         window,
+        getPlaybackToggleIntentCalls() {
+            return playbackToggleIntentCalls;
+        },
         emitOptions(patch) {
             Object.assign(options, patch);
             optionListeners.forEach((listener) => listener({ ...options }));
@@ -197,7 +215,24 @@ function dispatchSpace(fixture, type, { target = fixture.document.body, repeat =
     return event;
 }
 
-test("hold speed turns a short VOD Space press into exactly one keyup toggle", (t) => {
+function dispatchKey(
+    fixture,
+    type,
+    { code, key = code, target = fixture.document.body, repeat = false, ...modifiers }
+) {
+    const event = new fixture.window.KeyboardEvent(type, {
+        code,
+        key,
+        bubbles: true,
+        cancelable: true,
+        repeat,
+        ...modifiers,
+    });
+    target.dispatchEvent(event);
+    return event;
+}
+
+test("hold speed turns a short playback Space press into exactly one keyup toggle", (t) => {
     const fixture = createFixture({ paused: false });
     t.after(() => fixture.dom.window.close());
 
@@ -231,6 +266,44 @@ test("hold speed applies fixed 2x without changing playback state and restores t
     assert.equal(fixture.mediaState.paused, false);
     assert.equal(fixture.mediaState.pauseCalls, 0);
     assert.equal(fixture.mediaState.playCalls, 0);
+});
+
+test("hold speed applies on live routes and restores the previous rate on keyup", (t) => {
+    const fixture = createFixture({
+        url: "https://chzzk.naver.com/live/test-channel",
+        paused: false,
+        playbackRate: 1.25,
+    });
+    t.after(() => fixture.dom.window.close());
+
+    const down = dispatchSpace(fixture, "keydown");
+    assert.equal(down.defaultPrevented, true);
+    fixture.timers.advance(350);
+
+    assert.equal(fixture.video.playbackRate, 2);
+    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay")?.textContent, "2배속");
+
+    const up = dispatchSpace(fixture, "keyup");
+    assert.equal(up.defaultPrevented, true);
+    assert.equal(fixture.video.playbackRate, 1.25);
+    assert.equal(fixture.mediaState.paused, false);
+    assert.equal(fixture.getPlaybackToggleIntentCalls(), 0, "a hold must not be reported as pause intent");
+});
+
+test("a short live Space press reports exactly one pause intent", (t) => {
+    const fixture = createFixture({
+        url: "https://chzzk.naver.com/live/test-channel",
+        paused: false,
+    });
+    t.after(() => fixture.dom.window.close());
+
+    dispatchSpace(fixture, "keydown");
+    fixture.timers.advance(200);
+    dispatchSpace(fixture, "keyup");
+
+    assert.equal(fixture.mediaState.paused, true);
+    assert.equal(fixture.mediaState.pauseCalls, 1);
+    assert.equal(fixture.getPlaybackToggleIntentCalls(), 1);
 });
 
 test("hold speed restores a hostile native keydown pause before entering hold mode", (t) => {
@@ -271,17 +344,198 @@ test("hold speed yields native and role-based Space consumers", (t) => {
         "editable",
         "outside-link",
         "outside-role",
+        "outside-textbox",
     ]) {
         const event = dispatchSpace(fixture, "keydown", { target: fixture.document.getElementById(id) });
         assert.equal(event.defaultPrevented, false, `${id} should keep its native Space behavior`);
     }
 
     assert.equal(dispatchSpace(fixture, "keydown", { ctrlKey: true }).defaultPrevented, false);
-    fixture.emitRoute("/live/test-channel");
+    fixture.emitRoute("/home");
     assert.equal(dispatchSpace(fixture, "keydown").defaultPrevented, false);
     fixture.emitRoute("/video/12345");
     fixture.emitOptions({ holdSpeedEnabled: false });
     assert.equal(dispatchSpace(fixture, "keydown").defaultPrevented, false);
+});
+
+test("playback speed shortcuts apply fixed 0.5x and 2x on live and VOD without changing pause state", (t) => {
+    const fixture = createFixture({ url: "https://chzzk.naver.com/live/test-channel", paused: true });
+    t.after(() => fixture.dom.window.close());
+
+    const half = dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[" });
+    assert.equal(half.defaultPrevented, true);
+    assert.equal(fixture.video.playbackRate, 0.5);
+    assert.equal(fixture.mediaState.paused, true);
+    assert.equal(fixture.mediaState.pauseCalls, 0);
+    assert.equal(fixture.mediaState.playCalls, 0);
+    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay")?.textContent, "0.5배속");
+
+    fixture.timers.advance(900);
+    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+
+    fixture.emitRoute("/video/12345");
+    const double = dispatchKey(fixture, "keydown", { code: "BracketRight", key: "]" });
+    assert.equal(double.defaultPrevented, true);
+    assert.equal(fixture.video.playbackRate, 2);
+    assert.equal(fixture.mediaState.paused, true);
+});
+
+test("pressing the selected speed shortcut again resets playback to 1x", (t) => {
+    const fixture = createFixture({ playbackRate: 1 });
+    t.after(() => fixture.dom.window.close());
+
+    dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[" });
+    assert.equal(fixture.video.playbackRate, 0.5);
+    dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[" });
+    assert.equal(fixture.video.playbackRate, 1);
+    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay")?.textContent, "1배속");
+
+    dispatchKey(fixture, "keydown", { code: "BracketRight", key: "]" });
+    assert.equal(fixture.video.playbackRate, 2);
+    dispatchKey(fixture, "keydown", { code: "BracketRight", key: "]" });
+    assert.equal(fixture.video.playbackRate, 1);
+    assert.equal(fixture.mediaState.pauseCalls, 0);
+    assert.equal(fixture.mediaState.playCalls, 0);
+});
+
+test("Space hold and fixed speed shortcuts can be toggled independently and keys update immediately", (t) => {
+    const fixture = createFixture({ options: { holdSpeedEnabled: false } });
+    t.after(() => fixture.dom.window.close());
+
+    assert.equal(dispatchSpace(fixture, "keydown").defaultPrevented, false);
+    assert.equal(dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[" }).defaultPrevented, true);
+    assert.equal(fixture.video.playbackRate, 0.5);
+
+    fixture.emitOptions({
+        holdSpeedEnabled: true,
+        playbackSpeedShortcutsEnabled: false,
+        playbackSpeedHalfKeyCode: "KeyQ",
+        playbackSpeedDoubleKeyCode: "KeyW",
+    });
+    assert.equal(dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[" }).defaultPrevented, false);
+    assert.equal(dispatchKey(fixture, "keydown", { code: "KeyQ", key: "q" }).defaultPrevented, false);
+    assert.equal(dispatchSpace(fixture, "keydown").defaultPrevented, true);
+    dispatchSpace(fixture, "keyup");
+
+    fixture.video.playbackRate = 1;
+    fixture.emitOptions({ playbackSpeedShortcutsEnabled: true });
+    assert.equal(dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[" }).defaultPrevented, false);
+    assert.equal(dispatchKey(fixture, "keydown", { code: "KeyQ", key: "q" }).defaultPrevented, true);
+    assert.equal(fixture.video.playbackRate, 0.5);
+    assert.equal(dispatchKey(fixture, "keydown", { code: "KeyW", key: "w" }).defaultPrevented, true);
+    assert.equal(fixture.video.playbackRate, 2);
+
+    fixture.emitOptions({ holdSpeedEnabled: false, playbackSpeedShortcutsEnabled: false });
+    assert.equal(dispatchSpace(fixture, "keydown").defaultPrevented, false);
+    assert.equal(dispatchKey(fixture, "keydown", { code: "KeyW", key: "w" }).defaultPrevented, false);
+});
+
+test("playback speed shortcuts yield editable targets, modifiers, composition, and unrelated keys", (t) => {
+    const fixture = createFixture();
+    t.after(() => fixture.dom.window.close());
+
+    for (const id of [
+        "outside-button",
+        "outside-input",
+        "outside-summary",
+        "editable",
+        "outside-link",
+        "outside-role",
+        "outside-textbox",
+    ]) {
+        const event = dispatchKey(fixture, "keydown", {
+            code: "BracketLeft",
+            key: "[",
+            target: fixture.document.getElementById(id),
+        });
+        assert.equal(event.defaultPrevented, false, `${id} should keep its keyboard input`);
+    }
+
+    assert.equal(
+        dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[", ctrlKey: true }).defaultPrevented,
+        false
+    );
+    assert.equal(
+        dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[", shiftKey: true }).defaultPrevented,
+        false
+    );
+    assert.equal(
+        dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[", isComposing: true }).defaultPrevented,
+        false
+    );
+    assert.equal(dispatchKey(fixture, "keydown", { code: "KeyA", key: "a" }).defaultPrevented, false);
+
+    const repeated = dispatchKey(fixture, "keydown", {
+        code: "BracketLeft",
+        key: "[",
+        repeat: true,
+    });
+    assert.equal(repeated.defaultPrevented, true, "a matched repeat must not leak to the native player");
+    assert.equal(fixture.video.playbackRate, 1, "repeat alone must not apply a new rate");
+});
+
+test("the 2x shortcut cancels an active Space hold to 1x and keyup keeps the cancellation", (t) => {
+    const fixture = createFixture({ playbackRate: 1.25 });
+    t.after(() => fixture.dom.window.close());
+
+    dispatchSpace(fixture, "keydown");
+    fixture.timers.advance(350);
+    assert.equal(fixture.video.playbackRate, 2);
+
+    dispatchKey(fixture, "keydown", { code: "BracketRight", key: "]" });
+    assert.equal(fixture.video.playbackRate, 1);
+    assert.equal(dispatchSpace(fixture, "keyup").defaultPrevented, true);
+    assert.equal(fixture.video.playbackRate, 1, "Space keyup must not undo the explicit cancellation");
+});
+
+test("the 0.5x shortcut during Space hold stays selected after Space keyup", (t) => {
+    const fixture = createFixture({ playbackRate: 1.25 });
+    t.after(() => fixture.dom.window.close());
+
+    dispatchSpace(fixture, "keydown");
+    fixture.timers.advance(350);
+    dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[" });
+
+    assert.equal(fixture.video.playbackRate, 0.5);
+    dispatchSpace(fixture, "keyup");
+    assert.equal(fixture.video.playbackRate, 0.5);
+});
+
+test("playback speed shortcut feedback cleans up on route exit, visibility change, and option disable", (t) => {
+    const fixture = createFixture();
+    t.after(() => fixture.dom.window.close());
+
+    dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[" });
+    fixture.emitRoute("/home");
+    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+
+    fixture.emitRoute("/video/12345");
+    dispatchKey(fixture, "keydown", { code: "BracketRight", key: "]" });
+    fixture.setHidden(true);
+    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+    fixture.setHidden(false);
+
+    dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[" });
+    fixture.emitOptions({ playbackSpeedShortcutsEnabled: false });
+    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+    assert.equal(fixture.video.playbackRate, 0.5, "disabling shortcuts must not overwrite the selected rate");
+});
+
+test("playback speed shortcut feedback clears when the main video is replaced", async (t) => {
+    const fixture = createFixture();
+    t.after(() => fixture.dom.window.close());
+
+    dispatchKey(fixture, "keydown", { code: "BracketRight", key: "]" });
+    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay")?.textContent, "2배속");
+
+    const replacement = fixture.document.createElement("video");
+    configureVideo(fixture.dom, replacement, { paused: false, playbackRate: 1 });
+    fixture.video.replaceWith(replacement);
+    await Promise.resolve();
+    fixture.timers.advance(0);
+
+    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+    assert.equal(replacement.playbackRate, 1, "a fixed shortcut remains a command for the selected media node");
 });
 
 test("hold speed repeat activation and external rate changes do not duplicate or overwrite state", (t) => {

@@ -17,6 +17,8 @@
  *   injectStyleOnce), chrome.storage.sync.
  * 옵션 키: skipControlEnabled, skipKeyboardEnabled, skipPillEnabled, skipLivePillEnabled,
  *   skipLivePauseResumeEnabled, skipSeconds, skipWheelStep, skipWheelShiftStep, skipWheelAltStep.
+ * 공개 API: BetterChzzk.skipControl.markPlaybackToggleIntent()는 다른 재생 키 소유자가 확정한 라이브
+ *   일시정지 의도를 재개 가드에 전달한다.
  * DOM 마커: id="betterchzzk-skip-pill", id="betterchzzk-live-fast-forward",
  *   id="betterchzzk-skip-style"(주입 스타일), data-bctm-text-patched(라이브 엣지 버튼 패치 표시),
  *   data-bc-placement(pill 배치 모드), data-better-chzzk-live-fast-forward.
@@ -34,6 +36,7 @@
  *   - installRuntime/teardownRuntime/applyOptions: 옵션 변경과 라우트 변경에 따른 전체 생명주기 관리.
  */
 (() => {
+    const root = (window.BetterChzzk = window.BetterChzzk || {});
     const SKIP_PILL_ID = "betterchzzk-skip-pill";
     const LIVE_FAST_FORWARD_BUTTON_ID = "betterchzzk-live-fast-forward";
     const SKIP_STYLE_ID = "betterchzzk-skip-style";
@@ -499,6 +502,12 @@
 
     function markUserPauseIntent() {
         lastUserPauseIntentAt = performance.now();
+    }
+
+    function markPlaybackToggleIntent() {
+        if (!isLiveResumeGuardEnabled() || !isLiveRoute()) return;
+        ensureLiveResumeGuardAttached();
+        if (canUseLiveResumeGuard(attachedVideo)) markUserPauseIntent();
     }
 
     function isRecentUserPauseIntent() {
@@ -1829,7 +1838,8 @@
             return;
         }
 
-        if (event.code === "Space" || event.code === "KeyK" || key === " " || key === "k") {
+        const isSpace = event.code === "Space" || key === " ";
+        if (event.code === "KeyK" || key === "k" || (isSpace && featureOptions.holdSpeedEnabled !== true)) {
             markUserPauseIntent();
         }
     }
@@ -1977,6 +1987,7 @@
         }
     }
 
+    root.skipControl = Object.freeze({ markPlaybackToggleIntent });
     bindFeatureOptions(applyOptions);
 
     onReady(() => {
