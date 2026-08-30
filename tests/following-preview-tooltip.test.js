@@ -923,10 +923,10 @@ test("global lives native hover stays site-owned and right click enables sound a
     assert.equal(fetchCount, 0);
     assert.equal(hlsState.instances.length, 0);
     assert.equal(host.querySelectorAll("video").length, 1);
-    const idleFeedback = host.querySelector("[data-bcfp-sound-feedback='1']");
-    assert.ok(idleFeedback);
-    assert.equal(idleFeedback.getAttribute("data-sound"), "off");
-    assert.equal(idleFeedback.hasAttribute("data-expanded"), false);
+    const listHint = host.querySelector("[data-bcfp-list-hint='1']");
+    assert.ok(listHint);
+    assert.equal(listHint.textContent, "우클릭 시 확대 및 소리 재생");
+    assert.equal(host.querySelector("[data-bcfp-sound-feedback='1']"), null);
 
     const expandEvent = new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 });
     host.dispatchEvent(expandEvent);
@@ -935,6 +935,9 @@ test("global lives native hover stays site-owned and right click enables sound a
     assert.equal(video.muted, false);
     assert.ok(Math.abs(video.volume - 0.42) < 1e-6);
     assert.equal(dom.window.getComputedStyle(elapsed).visibility, "hidden");
+    assert.equal(listHint.isConnected, false);
+    assert.equal(host.querySelector("[data-bcfp-list-hint='1']"), null);
+    assert.equal(host.querySelector("[data-bcfp-sound-feedback='1']"), null);
 
     for (const listener of [...chrome.testState.storageChangeListeners]) {
         listener({ livePreviewRightClickSoundEnabled: { oldValue: true, newValue: false } }, "sync");
@@ -946,6 +949,7 @@ test("global lives native hover stays site-owned and right click enables sound a
     assert.equal(video.volume, 0.7);
     assert.equal(dom.window.getComputedStyle(elapsed).visibility, "hidden");
     assert.equal(host.querySelector("[data-bcfp-sound-feedback='1']"), null);
+    assert.equal(host.querySelector("[data-bcfp-list-hint='1']"), null);
 
     const collapseEvent = new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 });
     host.dispatchEvent(collapseEvent);
@@ -955,6 +959,7 @@ test("global lives native hover stays site-owned and right click enables sound a
     assert.equal(video.defaultMuted, true);
     assert.equal(video.volume, 0.7);
     assert.notEqual(dom.window.getComputedStyle(elapsed).visibility, "hidden");
+    assert.equal(host.querySelector("[data-bcfp-list-hint='1']")?.textContent, "우클릭 시 확대");
 
     const disconnectEvent = new dom.window.MouseEvent("contextmenu", {
         bubbles: true,
@@ -1058,10 +1063,10 @@ test("filtered injected live cards get a muted hover player and right click enla
     assert.equal(hlsState.instances[0].nextAutoLevel, 1);
     assert.equal(hlsState.instances[0].nextLevel, -1);
     assert.equal(hlsState.instances[0].capLevelToPlayerSize, true);
-    const idleFeedback = host.querySelector("[data-bcfp-sound-feedback='1']");
-    assert.ok(idleFeedback);
-    assert.equal(idleFeedback.getAttribute("data-sound"), "off");
-    assert.equal(idleFeedback.hasAttribute("data-expanded"), false);
+    const listHint = host.querySelector("[data-bcfp-list-hint='1']");
+    assert.ok(listHint);
+    assert.equal(listHint.textContent, "우클릭 시 확대 및 소리 재생");
+    assert.equal(host.querySelector("[data-bcfp-sound-feedback='1']"), null);
 
     const expandEvent = new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 });
     video.dispatchEvent(expandEvent);
@@ -1069,8 +1074,9 @@ test("filtered injected live cards get a muted hover player and right click enla
     assert.equal(host.getAttribute("data-bcfp-list-expanded"), "1");
     assert.equal(video.muted, false);
     assert.ok(Math.abs(video.volume - 0.55) < 1e-6);
-    assert.equal(host.querySelector("[data-bcfp-sound-feedback='1']")?.textContent.trim(), "소리 켜짐");
-    assert.equal(host.querySelector("[data-bcfp-sound-feedback='1']")?.getAttribute("data-expanded"), "1");
+    assert.equal(listHint.isConnected, false);
+    assert.equal(host.querySelector("[data-bcfp-list-hint='1']"), null);
+    assert.equal(host.querySelector("[data-bcfp-sound-feedback='1']"), null);
     assert.equal(hlsState.instances[0].autoLevelCapping, 3);
     assert.equal(hlsState.instances[0].nextAutoLevel, 3);
     assert.equal(hlsState.instances[0].nextLevel, -1);
@@ -1083,8 +1089,8 @@ test("filtered injected live cards get a muted hover player and right click enla
     assert.equal(host.hasAttribute("data-bcfp-list-expanded"), false);
     assert.equal(video.muted, true);
     assert.equal(video.volume, 0);
-    assert.equal(host.querySelector("[data-bcfp-sound-feedback='1']")?.textContent.trim(), "소리 꺼짐");
-    assert.equal(host.querySelector("[data-bcfp-sound-feedback='1']")?.getAttribute("data-expanded"), "1");
+    assert.equal(host.querySelector("[data-bcfp-list-hint='1']")?.textContent, "우클릭 시 확대 및 소리 재생");
+    assert.equal(host.querySelector("[data-bcfp-sound-feedback='1']"), null);
     assert.equal(hlsState.instances[0].autoLevelCapping, 1);
     assert.equal(hlsState.instances[0].nextAutoLevel, 1);
     assert.equal(hlsState.instances[0].nextLevel, -1);

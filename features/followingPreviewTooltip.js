@@ -5,15 +5,16 @@
  * 하는 일: 팔로잉 링크는 tooltip 미리보기를 띄우고, categoryTools가 필터 결과로 만든 복제 카드는
  *   auto-play-info의 실제 HLS를 썸네일 안에서 재생한다. 네이티브 목록 미리보기는 치지직 플레이어를
  *   그대로 사용한다. 옵션이 켜진 상태에서 우클릭하면 팔로잉은 소리를 토글하고 목록 미리보기는
- *   소리를 켜면서 CSS로 확대한다. 영상 좌측 하단에는 소리 상태 아이콘을 유지하고, 우클릭 때
- *   소리 켜짐/꺼짐 문구를 잠깐 펼친다. 페이지 이동·포인터 이탈·DOM 제거 시 요청과 플레이어를 정리한다.
+ *   소리를 켜면서 CSS로 확대한다. 팔로잉 영상에는 소리 상태 아이콘과 전환 피드백을 표시하고,
+ *   목록 영상에는 우클릭 동작 안내 툴팁만 표시한다. 페이지 이동·포인터 이탈·DOM 제거 시 정리한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
  *   fetchJson, injectStyleOnce, normalizeChzzkImageUrl, normalizeChzzkMediaUrl, normSpace, onReady,
  *   startPageChangeDetection, storageSet), vendor/hls.light.min.js가 제공하는 전역 window.Hls.
  * 옵션 키: followingPreviewTooltipEnabled, followingPreviewSoundEnabled,
  *   followingPreviewVolumePercent, livePreviewRightClickSoundEnabled.
  * DOM 마커: #betterchzzk-following-preview 툴팁, data-bcfp-tooltip/data-bcfp-active/
- *   data-bcfp-player-mount/data-bcfp-player-state/data-bcfp-sound-feedback 속성, .bcfp-* 클래스.
+ *   data-bcfp-player-mount/data-bcfp-player-state/data-bcfp-sound-feedback/data-bcfp-list-hint 속성,
+ *   .bcfp-* 클래스.
  * 통신: 우클릭으로 바꾼 팔로잉 소리 선호도를 chrome.storage.sync에 저장한다.
  *   livePreviewFastHoverPage.js에는 DOM attribute와 CustomEvent로 활성 상태를 전달한다.
  * 구조:
@@ -95,6 +96,7 @@
     const PLAYER_STATE_ATTR = "data-bcfp-player-state";
     const FORCE_MUTED_ATTR = "data-bcfp-force-muted";
     const LIST_EXPANDED_ATTR = "data-bcfp-list-expanded";
+    const LIST_HINT_ATTR = "data-bcfp-list-hint";
     const SOUND_FEEDBACK_ATTR = "data-bcfp-sound-feedback";
     const SOUND_FEEDBACK_DURATION_MS = 1000;
     const CATEGORY_CARD_ATTR = "data-bcgt-card";
@@ -269,6 +271,39 @@
   transform:translateY(0);
   transition-delay:180ms;
 }
+.bcfp-list-hint-host{
+  position:relative !important;
+}
+.bcfp-list-hint{
+  position:absolute;
+  left:8px;
+  bottom:8px;
+  z-index:2147483647;
+  max-width:calc(100% - 16px);
+  padding:5px 8px;
+  box-sizing:border-box;
+  border:1px solid rgba(255,255,255,0.24);
+  border-radius:6px;
+  background:rgba(5,7,10,0.9);
+  color:#FFFFFF;
+  box-shadow:0 3px 12px rgba(0,0,0,0.34);
+  pointer-events:none;
+  font-family:system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size:11px;
+  font-weight:700;
+  line-height:15px;
+  white-space:nowrap;
+  opacity:0;
+  visibility:hidden;
+  transform:translateY(3px);
+  transition:opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+}
+.bcfp-list-hint-host:hover > .bcfp-list-hint{
+  opacity:1;
+  visibility:visible;
+  transform:translateY(0);
+  transition-delay:180ms;
+}
 .bcfp-sound-feedback .bcfp-sound-feedback-icon{
   display:block;
   width:16px;
@@ -300,7 +335,8 @@
 @media (prefers-reduced-motion: reduce){
   .bcfp-sound-feedback,
   .bcfp-sound-feedback::after,
-  .bcfp-sound-feedback .bcfp-sound-feedback-label{transition:none;}
+  .bcfp-sound-feedback .bcfp-sound-feedback-label,
+  .bcfp-list-hint{transition:none;}
 }
 #${TOOLTIP_ID} .bcfp-body{
   display:flex;
@@ -440,6 +476,8 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     let soundFeedbackEl = null;
     let soundFeedbackSurface = null;
     let soundFeedbackTimer = 0;
+    let listHintEl = null;
+    let listHintSurface = null;
 
     const previewCache = new Map();
     const pendingRequests = new Map();
@@ -1231,7 +1269,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
         if (attemptedSound && isAutoplayBlockedError(error)) {
             applyPreviewAudioState(video, false);
-            syncSoundFeedbackForVideo(video);
+            syncPreviewOverlayForVideo(video);
             showSoundUnlockBadge(video, requestId);
             runPreviewPlay(video, requestId, false);
             return;
@@ -1265,7 +1303,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         if (activeVideoRequestId !== requestId || activeVideoSession?.video !== video || !video.isConnected) return;
 
         applyPreviewAudioState(video, true, { ensureAudible: true });
-        syncSoundFeedbackForVideo(video);
+        syncPreviewOverlayForVideo(video);
         runPreviewPlay(video, requestId, true);
     }
 
@@ -1276,7 +1314,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
         const soundEnabled = shouldStartPreviewWithSound(video);
         applyPreviewAudioState(video, soundEnabled);
-        syncSoundFeedbackForVideo(video);
+        syncPreviewOverlayForVideo(video);
         if (!soundEnabled) removeSoundUnlockBadge(video);
         runPreviewPlay(video, requestId, soundEnabled);
     }
@@ -1429,7 +1467,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         const media = createMedia(meta);
         if (existingMedia) existingMedia.replaceWith(media);
         else tip.prepend(media);
-        syncSoundFeedbackForVideo(media.querySelector("video.bcfp-player"));
+        syncPreviewOverlayForVideo(media.querySelector("video.bcfp-player"));
 
         if (meta.channelId) tip.dataset.channelId = meta.channelId;
         else delete tip.dataset.channelId;
@@ -1542,7 +1580,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         applyPreviewAudioState(video, false);
         info.video = video;
         info.host.appendChild(video);
-        syncSoundFeedbackForVideo(video);
+        syncPreviewOverlayForVideo(video);
         requestPreviewVideo(video, meta, { playbackDelayMs: 0 });
     }
 
@@ -1555,8 +1593,8 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         activeInjectedInfo = null;
         if (!info) return;
 
-        clearSoundFeedback(info.card);
         if (activeListExpansion?.card === info.card) restoreListExpansion();
+        clearListPreviewHint(info.card);
         info.card.removeAttribute(ACTIVE_ATTR);
         const players = Array.from(
             new Set([info.video, ...info.host.querySelectorAll("video.bcfp-list-player")].filter(Boolean))
@@ -1841,11 +1879,13 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         stopListExpansionObserver();
         if (!state) return;
 
-        if (!state.surface?.isConnected) clearSoundFeedback(state.surface);
+        const previewConnected = state.surface?.isConnected && state.video?.isConnected;
+        if (!previewConnected) clearListPreviewHint(state.surface);
         state.surface?.removeAttribute(LIST_EXPANDED_ATTR);
         state.surface?.style?.removeProperty("--bcfp-expand-origin");
         restoreListPreviewQuality(state.quality);
         restoreVideoAudioState(state.video, state.audio);
+        if (previewConnected) ensureListPreviewHint(state.surface, false);
     }
 
     function getExpansionOrigin(surface) {
@@ -1871,6 +1911,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         startListExpansionObserver(activeListExpansion);
         surface.style.setProperty("--bcfp-expand-origin", getExpansionOrigin(surface));
         surface.setAttribute(LIST_EXPANDED_ATTR, "1");
+        ensureListPreviewHint(surface, true);
         applyListFocusQuality(quality);
         if (!soundApplied) return;
 
@@ -1885,7 +1926,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         if (!state?.soundApplied) return;
         state.soundApplied = false;
         restoreVideoAudioState(state.video, state.audio);
-        clearSoundFeedback(state.surface);
+        ensureListPreviewHint(state.surface, true);
     }
 
     function syncAudibleActivePreviewVolume() {
@@ -1920,6 +1961,45 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         soundFeedbackEl?.remove();
         soundFeedbackEl = null;
         soundFeedbackSurface = null;
+    }
+
+    function clearListPreviewHint(container = null) {
+        if (container && listHintEl && !container.contains(listHintEl)) return;
+        listHintSurface?.classList.remove("bcfp-list-hint-host");
+        listHintEl?.remove();
+        listHintEl = null;
+        listHintSurface = null;
+    }
+
+    function getListPreviewHintText() {
+        return isRightClickSoundEnabled() ? "우클릭 시 확대 및 소리 재생" : "우클릭 시 확대";
+    }
+
+    function ensureListPreviewHint(surface, expanded = surface?.hasAttribute?.(LIST_EXPANDED_ATTR)) {
+        if (!(surface instanceof HTMLElement) || !surface.isConnected) return null;
+        if (expanded) {
+            clearListPreviewHint();
+            return null;
+        }
+        if (listHintSurface !== surface || !listHintEl?.isConnected) clearListPreviewHint();
+
+        if (!listHintEl) {
+            const hint = document.createElement("div");
+            hint.className = "bcfp-list-hint";
+            hint.setAttribute(LIST_HINT_ATTR, "1");
+            hint.setAttribute("aria-hidden", "true");
+
+            const surfacePosition = window.getComputedStyle(surface).position;
+            if (!surfacePosition || surfacePosition === "static") {
+                surface.classList.add("bcfp-list-hint-host");
+            }
+            surface.appendChild(hint);
+            listHintEl = hint;
+            listHintSurface = surface;
+        }
+
+        listHintEl.textContent = getListPreviewHintText();
+        return listHintEl;
     }
 
     function createSoundFeedbackIcon(soundOn) {
@@ -1983,11 +2063,19 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         return soundFeedbackEl;
     }
 
-    function syncSoundFeedbackForVideo(video) {
+    function syncPreviewOverlayForVideo(video) {
         if (!(video instanceof HTMLVideoElement) || !video.isConnected) return null;
+        const followingMedia = video.closest(`#${TOOLTIP_ID} .bcfp-media`);
+        if (followingMedia instanceof HTMLElement) {
+            clearListPreviewHint();
+            return ensureSoundFeedback(followingMedia, !video.muted && video.volume > 0);
+        }
+
         const card = findLiveListCard(video);
-        const surface = video.closest(".bcfp-media") || (card ? getListPreviewSurface(card, video) : null);
-        return ensureSoundFeedback(surface, !video.muted && video.volume > 0);
+        const surface = card ? getListPreviewSurface(card, video) : null;
+        if (!(surface instanceof HTMLElement)) return null;
+        clearSoundFeedback();
+        return ensureListPreviewHint(surface);
     }
 
     function showSoundFeedback(surface, soundOn) {
@@ -2044,15 +2132,10 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         event.preventDefault();
         event.stopPropagation();
         if (activeListExpansion?.video === video) {
-            const soundApplied = activeListExpansion.soundApplied;
             restoreListExpansion();
-            if (soundApplied) showSoundFeedback(surface, !video.muted && video.volume > 0);
             return;
         }
         expandListPreview(card, video, surface);
-        if (activeListExpansion?.video === video && activeListExpansion.soundApplied) {
-            showSoundFeedback(surface, !video.muted && video.volume > 0);
-        }
     }
 
     function handleKeyDown(event) {
@@ -2067,6 +2150,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     function handlePageChange() {
         clearSoundFeedback();
         restoreListExpansion();
+        clearListPreviewHint();
         hideInjectedPreview();
         hidePreview();
     }
@@ -2081,7 +2165,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         if (!info) {
             const card = findLiveListCard(event.target);
             const video = card ? findListPreviewVideo(card, event.target) : null;
-            if (video) syncSoundFeedbackForVideo(video);
+            if (video) syncPreviewOverlayForVideo(video);
             return;
         }
         hideInjectedPreview();
@@ -2091,12 +2175,11 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     function handlePointerOut(event) {
         const related = event.relatedTarget;
         if (
-            soundFeedbackSurface?.contains(event.target) &&
-            !(related instanceof Node && soundFeedbackSurface.contains(related)) &&
-            !tooltip?.contains(soundFeedbackSurface) &&
-            !activeInjectedInfo?.card?.contains(soundFeedbackSurface)
+            listHintSurface?.contains(event.target) &&
+            !(related instanceof Node && listHintSurface.contains(related)) &&
+            !activeInjectedInfo?.card?.contains(listHintSurface)
         ) {
-            clearSoundFeedback(soundFeedbackSurface);
+            clearListPreviewHint(listHintSurface);
         }
         if (activeListExpansion && !(related instanceof Node && activeListExpansion.surface?.contains(related))) {
             restoreListExpansion();
@@ -2129,7 +2212,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     }
 
     function handlePreviewPlaying(event) {
-        if (event.target instanceof HTMLVideoElement) syncSoundFeedbackForVideo(event.target);
+        if (event.target instanceof HTMLVideoElement) syncPreviewOverlayForVideo(event.target);
     }
 
     function handleViewportChange() {
@@ -2177,6 +2260,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
         handlePageChange();
         clearSoundFeedback();
+        clearListPreviewHint();
         if (tooltip) {
             tooltip.remove();
             tooltip = null;
@@ -2191,8 +2275,12 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         if (previousOptions.livePreviewRightClickSoundEnabled !== false && !isRightClickSoundEnabled()) {
             disableListExpansionSound();
             clearSoundFeedback();
-        } else if (previousOptions.livePreviewRightClickSoundEnabled === false && isRightClickSoundEnabled()) {
-            syncSoundFeedbackForVideo(activeVideoSession?.video || activeInjectedInfo?.video);
+        }
+        if (previousOptions.livePreviewRightClickSoundEnabled !== options.livePreviewRightClickSoundEnabled) {
+            if (listHintSurface?.isConnected) {
+                ensureListPreviewHint(listHintSurface, activeListExpansion?.surface === listHintSurface);
+            }
+            syncPreviewOverlayForVideo(activeVideoSession?.video || activeInjectedInfo?.video);
         }
         if (previousOptions.followingPreviewVolumePercent !== options.followingPreviewVolumePercent) {
             syncAudibleActivePreviewVolume();
