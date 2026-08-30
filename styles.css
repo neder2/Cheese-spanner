@@ -1841,7 +1841,7 @@ h1 {
 
 .options-body .options-page {
     width: min(1344px, 100%);
-    padding-bottom: 0;
+    padding-bottom: 90px;
 }
 
 .options-body .options-page .icon-sprite {
@@ -1918,10 +1918,10 @@ h1 {
 }
 
 .options-body .options-page .save-button {
-    width: auto;
-    height: 46px;
+    width: 187px;
+    height: 52px;
     flex: none;
-    padding: 0 18px;
+    padding: 0 20px;
     border-radius: 10px;
     font-size: 15px;
     white-space: nowrap;
@@ -2246,14 +2246,14 @@ h1 {
 
 .options-body .options-page .reset-row {
     padding-top: 0;
-    margin-top: -4px;
+    margin-top: 0;
 }
 
 .options-body .options-page .reset-row .secondary-button {
-    width: 187px;
-    height: 52px;
-    gap: 10px;
-    padding: 0 20px;
+    width: auto;
+    height: 46px;
+    gap: 8px;
+    padding: 0 16px;
     border-color: var(--border);
     border-radius: 10px;
     background: var(--surface);
@@ -2277,6 +2277,27 @@ h1 {
     background: var(--accent-weak);
 }
 
+.options-body .options-page .save-row {
+    position: fixed;
+    left: 50%;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    z-index: 50;
+    display: flex;
+    justify-content: flex-end;
+    width: min(1344px, calc(100vw - 48px));
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg-translucent);
+    box-shadow: var(--shadow-2);
+    backdrop-filter: blur(12px);
+    transform: translateX(-50%);
+}
+
+.options-body .options-page .message {
+    bottom: calc(max(12px, env(safe-area-inset-bottom)) + 78px);
+}
+
 @media (max-width: 860px) {
     .options-body {
         padding: 12px;
@@ -2290,7 +2311,7 @@ h1 {
 
     .options-body .options-page {
         width: min(760px, 100%);
-        padding-bottom: 8px;
+        padding-bottom: 72px;
     }
 
     .options-body .options-page .hero {
@@ -2341,10 +2362,10 @@ h1 {
     }
 
     .options-body .options-page .save-button {
-        height: 28px;
-        padding: 0 10px;
+        height: 38px;
+        padding: 0 16px;
         border-radius: 8px;
-        font-size: 11px;
+        font-size: 12px;
     }
 
     .options-body .options-page .settings-toolbar {
@@ -2524,13 +2545,27 @@ h1 {
 
     .options-body .options-page .reset-row .secondary-button {
         width: auto;
-        height: 38px;
-        padding: 0 16px;
-        font-size: 12px;
+        height: 28px;
+        padding: 0 10px;
+        font-size: 11px;
+    }
+
+    .options-body .options-page .reset-row .reset-button svg {
+        width: 16px;
+        height: 16px;
     }
 
     .options-body .options-page .reset-row {
         margin-top: 0;
+    }
+
+    .options-body .options-page .save-row {
+        width: min(760px, calc(100vw - 24px));
+        padding: 7px;
+    }
+
+    .options-body .options-page .message {
+        bottom: calc(max(12px, env(safe-area-inset-bottom)) + 62px);
     }
 }
 
@@ -2631,7 +2666,23 @@ h1 {
         width: 100%;
     }
 
+    .options-body .options-page .hero-actions .reset-button {
+        width: auto;
+        flex: none;
+        white-space: nowrap;
+    }
+
+    .options-body .options-page .save-row {
+        bottom: max(8px, env(safe-area-inset-bottom));
+        width: calc(100vw - 16px);
+    }
+
+    .options-body .options-page .save-row .save-button {
+        width: 100%;
+    }
+
     .options-body .options-page .message {
+        bottom: calc(max(8px, env(safe-area-inset-bottom)) + 62px);
         width: calc(100vw - 16px);
     }
 

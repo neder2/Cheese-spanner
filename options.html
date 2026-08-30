@@ -87,9 +87,12 @@
                     <h1>Better Chzzk <span id="versionBadge" class="version-badge" hidden></span></h1>
                     <p class="subtitle">변경 후 저장 버튼을 눌러 적용합니다.</p>
                 </div>
-                <div class="hero-actions">
+                <div class="hero-actions reset-row">
                     <span id="notice" class="status-pill" aria-live="polite">불러오는 중</span>
-                    <button id="save" class="primary-button save-button" type="button" disabled>옵션 저장</button>
+                    <button id="reset" class="secondary-button reset-button" type="button">
+                        <svg viewBox="0 0 20 20" aria-hidden="true"><use href="#icon-restore" /></svg>
+                        <span>기본값 복원</span>
+                    </button>
                 </div>
             </header>
 
@@ -867,6 +870,30 @@
                         <h2>방송 목록 필터</h2>
                     </div>
 
+                    <details class="option-group" data-option-group="explore-sidebar" open>
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-users" /></svg>
+                                <span>사이드바</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>사이드바 치즈팜 숨김</strong></span>
+                                <input type="checkbox" data-option="sidebarCheeseFarmHidden" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>팔로잉 채널 고정</strong></span>
+                                <input type="checkbox" data-option="followingPinEnabled" />
+                            </label>
+                            <p class="setting-note">팔로잉 새로고침 옆 핀으로 채널을 선택해 고정합니다.</p>
+                            <label class="toggle-row" data-depends-on="followingPinEnabled">
+                                <span><strong>오프라인이어도 최상단 고정</strong></span>
+                                <input type="checkbox" data-option="followingPinOfflineToTopEnabled" />
+                            </label>
+                        </div>
+                    </details>
+
                     <details class="option-group" data-option-group="explore-refresh">
                         <summary>
                             <span class="option-group-title">
@@ -1248,11 +1275,8 @@
                     </details>
                 </section>
 
-                <div class="reset-row">
-                    <button id="reset" class="secondary-button" type="button">
-                        <svg viewBox="0 0 20 20" aria-hidden="true"><use href="#icon-restore" /></svg>
-                        <span>기본값 복원</span>
-                    </button>
+                <div class="save-row">
+                    <button id="save" class="primary-button save-button" type="button" disabled>옵션 저장</button>
                 </div>
 
                 <p id="message" class="message hidden" role="status" aria-live="polite">설정이 저장되었습니다.</p>

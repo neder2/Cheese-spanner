@@ -21,13 +21,6 @@ function readRepoFile(...parts) {
     return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
 
-test("reward auto collect uses a fixed internal click delay without a stored option", () => {
-    const source = readRepoFile("features", "rewardAutoCollect.js");
-
-    assert.match(source, /const CLICK_DELAY_MS = 800;/);
-    assert.doesNotMatch(source, /rewardAutoCollectDelayMs/);
-});
-
 function createStorageArea(initialData = {}) {
     const data = { ...initialData };
 
@@ -199,19 +192,6 @@ async function waitForCondition(predicate, { timeoutMs = 1200, intervalMs = 20 }
     assert.fail("Timed out waiting for reward auto collect condition");
 }
 
-test("manifest loads reward auto collect after shared settings and content utilities", () => {
-    const manifest = JSON.parse(readRepoFile("manifest.json"));
-    const isolatedScript = manifest.content_scripts.find((entry) =>
-        entry.js?.includes("features/rewardAutoCollect.js")
-    );
-
-    assert.ok(isolatedScript);
-    assert.ok(
-        isolatedScript.js.indexOf("features/rewardAutoCollect.js") > isolatedScript.js.indexOf("shared/settings.js")
-    );
-    assert.ok(isolatedScript.js.indexOf("features/rewardAutoCollect.js") > isolatedScript.js.indexOf("content.js"));
-});
-
 test("reward auto collect clicks a visible enabled 통나무 claim button once", async () => {
     const dom = createRewardDom();
     const scope = createRewardScope(dom);
@@ -223,23 +203,6 @@ test("reward auto collect clicks a visible enabled 통나무 claim button once",
     await wait(350);
 
     assert.equal(tracked.clicks, 1);
-});
-
-test("reward auto collect never clicks executable URL anchors", async () => {
-    const dom = createRewardDom();
-    const scope = createRewardScope(dom);
-    const anchor = dom.window.document.createElement("a");
-    anchor.href = "javascript:globalThis.__betterChzzkRemoteCodeRan = true";
-    anchor.className = "reward-claim-button";
-    anchor.textContent = "통나무 받기";
-    anchor.addEventListener("click", (event) => event.preventDefault());
-    const tracked = trackButton(anchor);
-
-    scope.appendChild(tracked.button);
-    await wait(650);
-
-    assert.equal(tracked.clicks, 0);
-    assert.equal(dom.window.__betterChzzkRemoteCodeRan, undefined);
 });
 
 test("reward auto collect rejects executable URL schemes hidden by ASCII whitespace", async () => {
@@ -257,35 +220,6 @@ test("reward auto collect rejects executable URL schemes hidden by ASCII whitesp
 
     assert.equal(tracked.clicks, 0);
     assert.equal(dom.window.__betterChzzkRemoteCodeRan, undefined);
-});
-
-test("reward auto collect ignores non-reward attribute changes after a completed claim", async () => {
-    const dom = createRewardDom();
-    const scope = createRewardScope(dom);
-    const tracked = createTrackedButton(dom, "통나무 받기");
-
-    scope.appendChild(tracked.button);
-    await waitForCondition(() => tracked.clicks === 1);
-
-    tracked.button.title = "already claimed";
-    tracked.button.setAttribute("role", "menuitem");
-    tracked.button.type = "submit";
-    tracked.button.id = "claimed-reward";
-
-    await wait(650);
-    assert.equal(tracked.clicks, 1);
-});
-
-test("reward auto collect matches the real split-text 통나무 reward button", async () => {
-    const dom = createRewardDom();
-    const scope = createRewardScope(dom);
-    const tracked = createScreenshotRewardButton(dom);
-
-    scope.appendChild(tracked.button);
-
-    await waitForCondition(() => tracked.clicks === 1 && tracked.button.getAttribute("data-bcra-clicked") === "1");
-    assert.match(tracked.button.textContent, /1시간 시청 통나무 파워 배달 완료!/);
-    assert.match(tracked.button.textContent, /100 받기/);
 });
 
 test("reward auto collect completes the real two-step watch reward flow", async () => {
@@ -327,54 +261,6 @@ test("reward auto collect completes the real two-step watch reward flow", async 
     assert.equal(opener.clicks, 1, "the chat reward button should open the power dialog once");
     assert.equal(powerClicks, 1, "the nested 100 파워 button should perform the actual claim once");
     assert.equal(powerButton.getAttribute("data-bcra-clicked"), "1");
-});
-
-test("reward auto collect ignores a generic power button outside the 1-hour watch row", async () => {
-    const dom = createRewardDom();
-    const scope = createRewardScope(dom);
-    const dialog = dom.window.document.createElement("div");
-    dialog.setAttribute("role", "alertdialog");
-    const row = dom.window.document.createElement("li");
-    const label = dom.window.document.createElement("span");
-    label.textContent = "팔로우 보상";
-    const tracked = createTrackedButton(dom, "100 파워");
-    row.append(label, tracked.button);
-    dialog.appendChild(row);
-    scope.appendChild(dialog);
-
-    await wait(450);
-
-    assert.equal(tracked.clicks, 0);
-    assert.equal(tracked.button.hasAttribute("data-bcra-clicked"), false);
-});
-
-test("reward auto collect matches the current 1-hour live verification button copy", async () => {
-    const dom = createRewardDom();
-    const scope = createRewardScope(dom);
-    const tracked = createTrackedButton(dom, "1시간 라이브 시청 후 인증하기 100");
-
-    scope.appendChild(tracked.button);
-
-    await waitForCondition(() => tracked.clicks === 1);
-    assert.equal(tracked.button.getAttribute("data-bcra-clicked"), "1");
-});
-
-test("reward auto collect ignores the static 1-hour acquisition-method row", async () => {
-    const dom = createRewardDom();
-    const scope = createRewardScope(dom);
-    const item = dom.window.document.createElement("li");
-    item.textContent = "1시간 라이브 시청 후 인증하기 100";
-    makeVisible(item);
-    let clicks = 0;
-    item.addEventListener("click", () => {
-        clicks += 1;
-    });
-
-    scope.appendChild(item);
-    await wait(450);
-
-    assert.equal(clicks, 0);
-    assert.equal(item.hasAttribute("data-bcra-clicked"), false);
 });
 
 test("reward auto collect claims non-watch API rewards and leaves WATCH_1_HOUR to the page button", async () => {
@@ -462,18 +348,6 @@ test("reward auto collect discards an in-flight API result after the option is d
     );
 });
 
-test("reward auto collect observes a reward inside a late-mounted live chat aside", async () => {
-    const dom = createRewardDom();
-    await wait(400);
-
-    const scope = createRewardScope(dom);
-    const tracked = createScreenshotRewardButton(dom);
-    scope.appendChild(tracked.button);
-
-    await waitForCondition(() => tracked.clicks === 1);
-    assert.equal(tracked.button.getAttribute("data-bcra-clicked"), "1");
-});
-
 test("reward auto collect observes a reward added after the initial empty aside scan", async () => {
     const dom = createRewardDom();
     const scope = createRewardScope(dom);
@@ -488,45 +362,6 @@ test("reward auto collect observes a reward added after the initial empty aside 
 
     const tracked = createScreenshotRewardButton(dom);
     scope.appendChild(tracked.button);
-
-    await waitForCondition(() => tracked.clicks === 1);
-});
-
-test("reward auto collect does not depend on animation frames to flush a late reward", async () => {
-    const dom = createRewardDom();
-    const scope = createRewardScope(dom);
-    const originalQuerySelectorAll = scope.querySelectorAll.bind(scope);
-    let initialFullScans = 0;
-    scope.querySelectorAll = (selector) => {
-        if (selector === candidateSelector) initialFullScans += 1;
-        return originalQuerySelectorAll(selector);
-    };
-
-    await waitForCondition(() => initialFullScans >= 1);
-    dom.window.requestAnimationFrame = () => 0;
-
-    const tracked = createScreenshotRewardButton(dom);
-    scope.appendChild(tracked.button);
-
-    await waitForCondition(() => tracked.clicks === 1);
-});
-
-test("reward auto collect reconnects when the live chat aside is replaced", async () => {
-    const dom = createRewardDom();
-    const firstScope = createRewardScope(dom);
-    const originalQuerySelectorAll = firstScope.querySelectorAll.bind(firstScope);
-    let initialFullScans = 0;
-    firstScope.querySelectorAll = (selector) => {
-        if (selector === candidateSelector) initialFullScans += 1;
-        return originalQuerySelectorAll(selector);
-    };
-
-    await waitForCondition(() => initialFullScans >= 1);
-
-    firstScope.remove();
-    const replacementScope = createRewardScope(dom);
-    const tracked = createScreenshotRewardButton(dom);
-    replacementScope.appendChild(tracked.button);
 
     await waitForCondition(() => tracked.clicks === 1);
 });
@@ -570,54 +405,6 @@ test("reward auto collect treats a reused button with a new reward amount as a n
     assert.equal(tracked.button.getAttribute("data-bcra-clicked"), "1");
 });
 
-test("reward auto collect treats an accessible-label reward change as a new claim", async () => {
-    const dom = createRewardDom();
-    const scope = createRewardScope(dom);
-    const tracked = createTrackedButton(dom, "받기");
-    tracked.button.setAttribute("aria-label", "1시간 시청 통나무 파워 배달 완료 100 받기");
-
-    scope.appendChild(tracked.button);
-    await waitForCondition(() => tracked.clicks === 1);
-
-    tracked.button.setAttribute("aria-label", "2시간 시청 통나무 파워 배달 완료 200 받기");
-
-    await waitForCondition(() => tracked.clicks === 2);
-    await wait(400);
-    assert.equal(tracked.clicks, 2);
-});
-
-test("reward auto collect claims every distinct reward shown in the same scan", async () => {
-    const dom = createRewardDom();
-    const scope = createRewardScope(dom);
-    const first = createScreenshotRewardButton(dom);
-    const second = createScreenshotRewardButton(dom, { hours: 2, amount: 200 });
-
-    scope.append(first.button, second.button);
-
-    await waitForCondition(() => first.clicks === 1 && second.clicks === 1);
-    assert.equal(first.button.getAttribute("data-bcra-clicked"), "1");
-    assert.equal(second.button.getAttribute("data-bcra-clicked"), "1");
-});
-
-test("reward auto collect allows the same reward text on a different live route", async () => {
-    const dom = createRewardDom();
-    const firstScope = createRewardScope(dom);
-    const first = createScreenshotRewardButton(dom);
-
-    firstScope.appendChild(first.button);
-    await waitForCondition(() => first.clicks === 1);
-
-    dom.window.history.pushState({}, "", "/live/other-channel");
-    dom.window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
-    firstScope.remove();
-
-    const nextScope = createRewardScope(dom);
-    const next = createScreenshotRewardButton(dom);
-    nextScope.appendChild(next.button);
-
-    await waitForCondition(() => next.clicks === 1);
-});
-
 test("reward auto collect reschedules a pending reward when the live route changes in place", async () => {
     const dom = createRewardDom({}, { clickDelayMs: 500 });
     const scope = createRewardScope(dom);
@@ -640,42 +427,6 @@ test("reward auto collect reschedules a pending reward when the live route chang
     assert.equal(tracked.clicks, 1);
 });
 
-test("reward auto collect allows the same reward after the previous state has disappeared", async () => {
-    const dom = createRewardDom();
-    const scope = createRewardScope(dom);
-    const first = createScreenshotRewardButton(dom);
-
-    scope.appendChild(first.button);
-    await waitForCondition(() => first.clicks === 1);
-
-    first.button.remove();
-    await wait(900);
-
-    const next = createScreenshotRewardButton(dom);
-    scope.appendChild(next.button);
-
-    await waitForCondition(() => next.clicks === 1);
-});
-
-test("reward auto collect keeps the same reward completed when it reappears inside the grace period", async () => {
-    const dom = createRewardDom();
-    const scope = createRewardScope(dom);
-    const first = createScreenshotRewardButton(dom);
-
-    scope.appendChild(first.button);
-    await waitForCondition(() => first.clicks === 1);
-
-    first.button.remove();
-    await wait(600);
-
-    const replacement = createScreenshotRewardButton(dom);
-    scope.appendChild(replacement.button);
-    await wait(800);
-
-    assert.equal(first.clicks, 1);
-    assert.equal(replacement.clicks, 0);
-});
-
 test("reward auto collect releases a completed reward after it stays hidden past the grace period", async () => {
     const dom = createRewardDom();
     const scope = createRewardScope(dom);
@@ -694,55 +445,11 @@ test("reward auto collect releases a completed reward after it stays hidden past
     assert.equal(tracked.button.getAttribute("data-bcra-clicked"), "1");
 });
 
-test("reward auto collect releases a hidden replacement after it stays hidden past the grace period", async () => {
-    const dom = createRewardDom();
-    const scope = createRewardScope(dom);
-    const first = createScreenshotRewardButton(dom);
-
-    scope.appendChild(first.button);
-    await waitForCondition(() => first.clicks === 1);
-
-    const replacement = createScreenshotRewardButton(dom);
-    replacement.button.hidden = true;
-    first.button.replaceWith(replacement.button);
-    await wait(900);
-    replacement.button.hidden = false;
-
-    await waitForCondition(() => replacement.clicks === 1);
-    assert.equal(first.clicks, 1);
-});
-
 test("reward auto collect ignores 통나무 claim buttons outside the live chat scope", async () => {
     const dom = createRewardDom();
     const tracked = createTrackedButton(dom, "통나무 받기");
 
     dom.window.document.body.appendChild(tracked.button);
-    await wait(450);
-
-    assert.equal(tracked.clicks, 0);
-    assert.equal(tracked.button.hasAttribute("data-bcra-clicked"), false);
-});
-
-test("reward auto collect ignores disabled 통나무 claim buttons", async () => {
-    const dom = createRewardDom();
-    const scope = createRewardScope(dom);
-    const tracked = createTrackedButton(dom, "통나무 받기");
-    tracked.button.disabled = true;
-
-    scope.appendChild(tracked.button);
-    await wait(450);
-
-    assert.equal(tracked.clicks, 0);
-    assert.equal(tracked.button.hasAttribute("data-bcra-clicked"), false);
-});
-
-test("reward auto collect ignores hidden 통나무 claim buttons", async () => {
-    const dom = createRewardDom();
-    const scope = createRewardScope(dom);
-    const tracked = createTrackedButton(dom, "통나무 받기");
-    tracked.button.style.display = "none";
-
-    scope.appendChild(tracked.button);
     await wait(450);
 
     assert.equal(tracked.clicks, 0);

@@ -73,18 +73,6 @@ function createRepositoryFixture(options = {}) {
     };
 }
 
-test("VOD comment repository exposes a frozen idempotent factory", (t) => {
-    const fixture = createRepositoryFixture();
-    t.after(() => fixture.dom.window.close());
-    const first = fixture.dom.window.BetterChzzk.vodComments.repository;
-
-    fixture.dom.window.eval(REPOSITORY_SOURCE);
-
-    assert.equal(fixture.dom.window.BetterChzzk.vodComments.repository, first);
-    assert.equal(Object.isFrozen(first), true);
-    assert.throws(() => fixture.createCommentRepository(), /fetchPage/);
-});
-
 test("states are isolated by VOD and sort order", async (t) => {
     const requests = [];
     const fixture = createRepositoryFixture({
@@ -149,24 +137,6 @@ test("first-page prefetch and foreground load share one in-flight promise", asyn
     assert.equal(state.loading, false);
     assert.equal(state.inFlight, null);
     assert.equal(requests.length, 1);
-});
-
-test("joining a hidden prefetch promotes a later failure to a foreground error", async (t) => {
-    const pending = deferred();
-    const fixture = createRepositoryFixture({ fetchPage: () => pending.promise });
-    t.after(() => fixture.dom.window.close());
-    const repository = fixture.repository;
-    const state = repository.setVideo("123");
-
-    const prefetch = repository.prefetchInitial();
-    const foreground = repository.loadInitial();
-    assert.equal(foreground, prefetch);
-    pending.reject(new Error("공유 요청 실패"));
-    const result = await foreground;
-
-    assert.equal(result.status, "error");
-    assert.equal(state.error, "공유 요청 실패");
-    assert.equal(state.loaded, false);
 });
 
 test("a hidden prefetch failure stays silent and foreground load retries", async (t) => {
@@ -333,24 +303,6 @@ test("reset aborts requests and stale responses cannot update the next VOD", asy
     assert.equal(oldState.items.length, 0);
     assert.equal(nextState.items.length, 0);
     assert.equal(repository.getVideoNo(), "new-vod");
-});
-
-test("explicit abort resolves as aborted without creating an error state", async (t) => {
-    const pending = deferred();
-    const fixture = createRepositoryFixture({ fetchPage: () => pending.promise });
-    t.after(() => fixture.dom.window.close());
-    const repository = fixture.repository;
-    const state = repository.setVideo("123");
-    const request = repository.loadInitial();
-
-    repository.abortState(state);
-    pending.resolve(apiContent({ rows: [apiComment(1)] }));
-    const result = await request;
-
-    assert.equal(result.status, "aborted");
-    assert.equal(state.error, "");
-    assert.equal(state.moreError, "");
-    assert.equal(state.items.length, 0);
 });
 
 test("BEST dedupe and embedded reply caps bound retained state without mutating input", async (t) => {

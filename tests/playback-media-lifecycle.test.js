@@ -5,6 +5,7 @@ const test = require("node:test");
 const { JSDOM, VirtualConsole } = require("jsdom");
 
 const repoRoot = path.join(__dirname, "..");
+const AUDIO_COMPRESSOR_ACTIVE_STORAGE_KEY = "betterchzzk:audio-compressor-active";
 
 function readRepoFile(...parts) {
     return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
@@ -658,12 +659,25 @@ test("audio compressor preserves its graph across SPA mini-player and BFCache tr
 
     document.getElementById("betterchzzk-audio-compressor").click();
     assert.equal(contexts.length, 1);
+    await waitForAsyncCallbacks();
+    assert.equal(chrome.storage.local.data[AUDIO_COMPRESSOR_ACTIVE_STORAGE_KEY], true);
     const context = contexts[0];
+
+    disableOptions(chrome, { audioCompressorEnabled: { oldValue: true, newValue: false } });
+    await waitForAsyncCallbacks();
+    assert.equal(document.getElementById("betterchzzk-audio-compressor"), null);
+    assert.equal(chrome.storage.local.data[AUDIO_COMPRESSOR_ACTIVE_STORAGE_KEY], true);
+    disableOptions(chrome, { audioCompressorEnabled: { oldValue: false, newValue: true } });
+    await waitForCondition(
+        () => document.getElementById("betterchzzk-audio-compressor")?.dataset.betterChzzkAudioCompressor === "1"
+    );
+    assert.equal(contexts.length, 1, "showing the control again must reuse the user's active preference");
 
     dom.window.history.pushState({}, "", "/lives");
     dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
     await waitForAsyncCallbacks();
     assert.equal(context.closeCalls, 0, "the mini-player reuses the media element and still needs its audio graph");
+    assert.equal(chrome.storage.local.data[AUDIO_COMPRESSOR_ACTIVE_STORAGE_KEY], true);
 
     dom.window.history.pushState({}, "", "/live/test-channel");
     dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
@@ -671,11 +685,9 @@ test("audio compressor preserves its graph across SPA mini-player and BFCache tr
     assert.equal(contexts.length, 1, "returning to the same media element must reuse its existing graph");
     const returnedButton = document.getElementById("betterchzzk-audio-compressor");
     assert.ok(returnedButton, "the compressor control should return on the playback route");
-    returnedButton.click();
-    await waitForAsyncCallbacks();
     assert.equal(returnedButton.dataset.betterChzzkAudioCompressor, "1");
     assert.equal(returnedButton.dataset.betterChzzkReady, "1");
-    assert.equal(contexts.length, 1, "reactivating the compressor must reuse the preserved graph");
+    assert.equal(contexts.length, 1, "restoring the compressor must reuse the preserved graph");
     assert.equal(context.closeCalls, 0);
 
     const persistedPageHide = new dom.window.Event("pagehide");
@@ -691,9 +703,125 @@ test("audio compressor preserves its graph across SPA mini-player and BFCache tr
     assert.equal(context.resumeCalls, 1);
     assert.equal(context.closeCalls, 0);
 
+    returnedButton.click();
+    await waitForAsyncCallbacks();
+    assert.equal(returnedButton.dataset.betterChzzkAudioCompressor, "0");
+    assert.equal(chrome.storage.local.data[AUDIO_COMPRESSOR_ACTIVE_STORAGE_KEY], false);
+
+    dom.window.history.pushState({}, "", "/lives");
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    await waitForAsyncCallbacks();
+    dom.window.history.pushState({}, "", "/live/test-channel");
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    await waitForAsyncCallbacks();
+    const disabledButton = document.getElementById("betterchzzk-audio-compressor");
+    assert.equal(disabledButton.dataset.betterChzzkAudioCompressor, "0");
+    assert.equal(contexts.length, 1, "an off preference must not create another graph after navigation");
+
     const finalPageHide = new dom.window.Event("pagehide");
     Object.defineProperty(finalPageHide, "persisted", { value: false });
     dom.window.dispatchEvent(finalPageHide);
     assert.equal(context.closeCalls, 1);
+    dom.window.close();
+});
+
+test("audio compressor restores its active graph from extension storage after reload", async () => {
+    const chrome = createFakeChrome({
+        sync: { audioCompressorEnabled: true },
+        local: { [AUDIO_COMPRESSOR_ACTIVE_STORAGE_KEY]: true },
+    });
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<video id="video"></video>',
+            '<div class="pzp-pc__volume-control" id="volume">',
+            '<button class="pzp-pc__volume-button" id="mute" type="button"></button>',
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const volume = document.getElementById("volume");
+    const mute = document.getElementById("mute");
+    const connections = [];
+
+    class FakeNode {
+        constructor(name) {
+            this.name = name;
+        }
+        connect(node) {
+            connections.push(`${this.name}->${node.name}`);
+        }
+        disconnect() {}
+    }
+    class FakeParam {
+        setTargetAtTime(value) {
+            this.value = value;
+        }
+    }
+    class FakeAudioContext {
+        constructor() {
+            this.currentTime = 0;
+            this.destination = new FakeNode("destination");
+            this.state = "running";
+        }
+        createMediaElementSource() {
+            return new FakeNode("source");
+        }
+        createDynamicsCompressor() {
+            const node = new FakeNode("compressor");
+            node.attack = new FakeParam();
+            node.knee = new FakeParam();
+            node.ratio = new FakeParam();
+            node.release = new FakeParam();
+            node.threshold = new FakeParam();
+            return node;
+        }
+        createGain() {
+            const node = new FakeNode("gain");
+            node.gain = new FakeParam();
+            return node;
+        }
+        close() {
+            this.state = "closed";
+            return Promise.resolve();
+        }
+    }
+
+    dom.window.AudioContext = FakeAudioContext;
+    makeVisibleVideo(video);
+    volume.getBoundingClientRect = () => ({
+        width: 96,
+        height: 40,
+        left: 20,
+        top: 320,
+        right: 116,
+        bottom: 360,
+    });
+    mute.getBoundingClientRect = () => ({
+        width: 40,
+        height: 40,
+        left: 20,
+        top: 320,
+        right: 60,
+        bottom: 360,
+    });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "volumeTooltip.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForCondition(
+        () => document.getElementById("betterchzzk-audio-compressor")?.dataset.betterChzzkAudioCompressor === "1"
+    );
+
+    const button = document.getElementById("betterchzzk-audio-compressor");
+    assert.equal(button.getAttribute("aria-pressed"), "true");
+    assert.equal(button.dataset.betterChzzkReady, "1");
+    assert.deepEqual(connections, ["source->compressor", "compressor->gain", "gain->destination"]);
     dom.window.close();
 });

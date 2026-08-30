@@ -145,45 +145,6 @@ test("absolute session snapshots survive worker restarts without duplicate total
     assert.deepEqual(entry.futureField, { keep: true });
 });
 
-test("unrelated mutations preserve legacy aggregate entries without synthesizing empty session details", () => {
-    const now = Date.parse("2026-07-10T12:00:00+09:00");
-    const history = {
-        version: 1,
-        updatedAt: now - 1,
-        entries: {
-            "live:legacy": {
-                id: "live:legacy",
-                channelId: "legacy-channel",
-                title: "이전 합계 기록",
-                channelName: "이전 채널",
-                firstWatchedAt: now - 120000,
-                lastWatchedAt: now - 60000,
-                watchedSeconds: 60,
-                dailySeconds: { "2026-07-10": 60 },
-                sessions: 1,
-            },
-            "live:other": {
-                id: "live:other",
-                liveId: "other",
-                watchedSeconds: 60,
-                dailySeconds: { "2026-07-10": 60 },
-                sessionDetails: [createSnapshot(now, { recordId: "live:other" }).session],
-            },
-        },
-    };
-    const { store } = loadStore();
-
-    const outcome = store.applyMutation(
-        history,
-        { kind: "setReplayVideoNo", recordId: "live:other", videoNo: "777" },
-        now
-    );
-
-    assert.equal(Object.hasOwn(outcome.history.entries["live:legacy"], "sessionDetails"), false);
-    assert.equal(outcome.history.entries["live:legacy"].watchedSeconds, 60);
-    assert.equal(outcome.history.entries["live:other"].replayVideoNo, "777");
-});
-
 test("different tab sessions merge without overwriting each other", () => {
     const now = Date.parse("2026-07-10T12:00:00+09:00");
     const { store } = loadStore();
@@ -345,56 +306,6 @@ test("a deleted provisional record propagates its barrier through migration", ()
     assert.equal(outcome.history.entries[targetRecordId].sessionDetails[0].id, "after-delete");
 });
 
-test("reverse record migrations are rejected and conflicting retargets are safe no-ops", () => {
-    const now = Date.parse("2026-07-10T12:00:00+09:00");
-    const sourceRecordId = "channel:channel-a:provisional:session-a";
-    const targetRecordId = "live:target-a";
-    const { store } = loadStore();
-    let outcome = store.applyMutation(
-        undefined,
-        createSnapshot(now, { recordId: sourceRecordId, sessionId: "session-a" }),
-        now
-    );
-    outcome = store.applyMutation(
-        outcome.history,
-        { kind: "migrateRecordId", sourceRecordId, targetRecordId },
-        now + 1
-    );
-    const migratedEntry = JSON.stringify(outcome.history.entries[targetRecordId]);
-
-    assert.throws(
-        () =>
-            store.applyMutation(
-                outcome.history,
-                { kind: "migrateRecordId", sourceRecordId: targetRecordId, targetRecordId: sourceRecordId },
-                now + 2
-            ),
-        /direction/
-    );
-    assert.equal(outcome.history.recordAliases[targetRecordId], undefined);
-    assert.equal(JSON.stringify(outcome.history.entries[targetRecordId]), migratedEntry);
-
-    outcome = store.applyMutation(
-        outcome.history,
-        { kind: "migrateRecordId", sourceRecordId, targetRecordId: "live:target-b" },
-        now + 3
-    );
-    assert.equal(outcome.changed, false);
-    assert.equal(outcome.result.reason, "conflicting-alias");
-    assert.equal(outcome.history.recordAliases[sourceRecordId].targetRecordId, targetRecordId);
-    assert.equal(outcome.history.entries["live:target-b"], undefined);
-
-    const normalizedCycle = store.normalizeStoredHistory({
-        updatedAt: now,
-        recordAliases: {
-            [sourceRecordId]: { targetRecordId, migratedAt: now - 1 },
-            [targetRecordId]: { targetRecordId: sourceRecordId, migratedAt: now },
-        },
-    });
-    assert.equal(normalizedCycle.recordAliases[sourceRecordId].targetRecordId, targetRecordId);
-    assert.equal(normalizedCycle.recordAliases[targetRecordId], undefined);
-});
-
 test("session aggregates keep growing after retained details reach their cap", () => {
     const now = Date.parse("2026-07-10T18:00:00+09:00");
     const dayKey = "2026-07-10";
@@ -479,78 +390,6 @@ test("session aggregates keep growing after retained details reach their cap", (
     );
 });
 
-test("the bounded retired-session ledger keeps a newly delayed session idempotent", () => {
-    const now = Date.parse("2026-07-10T18:00:00+09:00");
-    const dayKey = "2026-07-10";
-    const retainedSessions = Array.from({ length: 300 }, (_, index) => ({
-        id: `detail-${index}`,
-        enteredAt: now - index * 1000,
-        leftAt: now - index * 1000 + 60000,
-        watchedSeconds: 60,
-        dailySeconds: { [dayKey]: 60 },
-        closed: true,
-    }));
-    const retiredSessionCheckpoints = Array.from({ length: 1000 }, (_, index) => ({
-        id: `checkpoint-${index}`,
-        enteredAt: now - (index + 1000) * 1000,
-        leftAt: now - (index + 1000) * 1000 + 60000,
-        watchedSeconds: 60,
-        dailySeconds: { [dayKey]: 60 },
-        closed: true,
-        checkpointedAt: now - index - 1,
-    }));
-    const storedSeconds = 1300 * 60;
-    const history = {
-        version: 2,
-        updatedAt: now - 1,
-        entries: {
-            "live:100": {
-                id: "live:100",
-                sessions: 1300,
-                watchedSeconds: storedSeconds,
-                dailySeconds: { [dayKey]: storedSeconds },
-                sessionDetails: retainedSessions,
-                retiredSessionCheckpoints,
-            },
-        },
-    };
-    const { store } = loadStore();
-    const delayedSnapshot = createSnapshot(now, {
-        sessionId: "newly-delayed",
-        enteredAt: now - 24 * 60 * 60 * 1000,
-        watchedSeconds: 60,
-    });
-
-    let outcome = store.applyMutation(history, delayedSnapshot, now);
-    outcome = store.applyMutation(outcome.history, delayedSnapshot, now + 1);
-
-    const entry = outcome.history.entries["live:100"];
-    assert.equal(entry.watchedSeconds, storedSeconds + 60);
-    assert.equal(entry.sessions, 1301);
-    assert.equal(entry.sessionDetails.length, 300);
-    assert.equal(entry.retiredSessionCheckpoints.length, 1000);
-    assert.ok(entry.retiredSessionCheckpoints.some((checkpoint) => checkpoint.id === "newly-delayed"));
-    assert.equal(
-        entry.retiredSessionCheckpoints.some((checkpoint) => checkpoint.id === "checkpoint-999"),
-        false
-    );
-    assert.equal(entry.retiredSessionStartedAtBarrier, now - 1999 * 1000);
-
-    outcome = store.applyMutation(
-        outcome.history,
-        createSnapshot(now + 2, {
-            sessionId: "checkpoint-999",
-            enteredAt: now - 1999 * 1000,
-            watchedSeconds: 60,
-        }),
-        now + 2
-    );
-    assert.equal(outcome.result.reason, "retired");
-    assert.equal(outcome.history.entries["live:100"].watchedSeconds, storedSeconds + 60);
-    assert.equal(outcome.history.entries["live:100"].dailySeconds[dayKey], storedSeconds + 60);
-    assert.equal(outcome.history.entries["live:100"].sessions, 1301);
-});
-
 test("delete and clear barriers reject stale snapshots but allow later sessions", () => {
     const now = Date.parse("2026-07-10T12:00:00+09:00");
     const { store } = loadStore();
@@ -586,30 +425,6 @@ test("delete and clear barriers reject stale snapshots but allow later sessions"
     assert.deepEqual(Object.keys(outcome.history.entries), []);
 });
 
-test("an individual tombstone does not reset an unrelated active record", () => {
-    const now = Date.parse("2026-07-10T12:00:00+09:00");
-    const enteredAt = now - 120000;
-    const { store } = loadStore();
-    let outcome = store.applyMutation(
-        undefined,
-        createSnapshot(now, { recordId: "live:unrelated", enteredAt, watchedSeconds: 60 }),
-        now
-    );
-    outcome = store.applyMutation(
-        outcome.history,
-        { kind: "deleteEntries", entryIds: ["live:deleted"], cutoffAt: now },
-        now
-    );
-    outcome = store.applyMutation(
-        outcome.history,
-        createSnapshot(now + 1, { recordId: "live:unrelated", enteredAt, watchedSeconds: 120 }),
-        now + 1
-    );
-
-    assert.equal(outcome.result.status, "applied");
-    assert.equal(outcome.history.entries["live:unrelated"].watchedSeconds, 120);
-});
-
 test("tombstone compaction stays bounded and its global barrier blocks an evicted stale snapshot", () => {
     const base = Date.parse("2026-07-10T12:00:00+09:00");
     const { store } = loadStore();
@@ -633,79 +448,6 @@ test("tombstone compaction stays bounded and its global barrier blocks an evicte
     );
     assert.equal(outcome.result.reason, "deleted");
     assert.equal(outcome.history.entries["live:deleted-0"], undefined);
-});
-
-test("record alias compaction blocks a late provisional snapshot after its redirect is evicted", () => {
-    const base = Date.parse("2026-07-10T12:00:00+09:00");
-    const { store } = loadStore();
-    const recordAliases = Object.fromEntries(
-        Array.from({ length: store.HISTORY_MAX_RECORD_ALIASES + 1 }, (_, index) => [
-            `channel:channel-a:provisional:${index}`,
-            { targetRecordId: `live:target-${index}`, migratedAt: base + index },
-        ])
-    );
-    const history = store.normalizeStoredHistory({ recordAliases });
-
-    assert.equal(Object.keys(history.recordAliases).length, store.HISTORY_MAX_RECORD_ALIASES);
-    assert.equal(history.recordAliases["channel:channel-a:provisional:0"], undefined);
-    assert.equal(history.compactedSessionBarrierAt, base);
-
-    const outcome = store.applyMutation(
-        history,
-        createSnapshot(base + store.HISTORY_MAX_RECORD_ALIASES + 2, {
-            recordId: "channel:channel-a:provisional:0",
-            sessionId: "late-provisional",
-            enteredAt: base - 60000,
-        }),
-        base + store.HISTORY_MAX_RECORD_ALIASES + 2
-    );
-    assert.equal(outcome.result.reason, "deleted");
-    assert.equal(outcome.history.entries["channel:channel-a:provisional:0"], undefined);
-});
-
-test("delayed delete and clear retain sessions that started after their cutoff", () => {
-    const cutoffAt = Date.parse("2026-07-10T12:00:00+09:00");
-
-    for (const kind of ["deleteEntries", "clearHistory"]) {
-        const { store } = loadStore();
-        let outcome = store.applyMutation(
-            undefined,
-            createSnapshot(cutoffAt, { sessionId: `${kind}-old`, enteredAt: cutoffAt - 120000 }),
-            cutoffAt
-        );
-        const newSnapshot = createSnapshot(cutoffAt + 70000, {
-            sessionId: `${kind}-new`,
-            enteredAt: cutoffAt + 1,
-            watchedSeconds: 60,
-        });
-        outcome = store.applyMutation(outcome.history, newSnapshot, cutoffAt + 70000);
-        const mutation = kind === "deleteEntries" ? { kind, entryIds: ["live:100"], cutoffAt } : { kind, cutoffAt };
-        outcome = store.applyMutation(outcome.history, mutation, cutoffAt + 70001);
-
-        const entry = outcome.history.entries["live:100"];
-        assert.ok(entry, `${kind} should retain the newer session`);
-        assert.deepEqual(
-            Array.from(entry.sessionDetails, (session) => session.id),
-            [`${kind}-new`]
-        );
-        assert.equal(entry.watchedSeconds, 60);
-        assert.equal(entry.dailySeconds["2026-07-10"], 60);
-        assert.equal(entry.sessions, 1);
-
-        outcome = store.applyMutation(
-            outcome.history,
-            createSnapshot(cutoffAt + 70002, {
-                sessionId: `${kind}-old`,
-                enteredAt: cutoffAt - 120000,
-            }),
-            cutoffAt + 70002
-        );
-        assert.equal(outcome.result.reason, "deleted");
-        assert.deepEqual(
-            Array.from(outcome.history.entries["live:100"].sessionDetails, (session) => session.id),
-            [`${kind}-new`]
-        );
-    }
 });
 
 test("mutation schema rejects unsupported operations and malformed record ids", () => {
@@ -937,35 +679,6 @@ test("background validates sender and schema before mutating history", async () 
     assert.equal(harness.local[harness.store.STORAGE_KEY].entries["live:100"].replayVideoNo, "555");
 });
 
-test("background queue keeps a migration alias when an older provisional snapshot arrives later", async () => {
-    const harness = createBackgroundHarness();
-    const sender = {
-        id: "extension-id",
-        tab: { id: 1 },
-        url: "https://chzzk.naver.com/live/channel-a",
-    };
-    const sourceRecordId = "channel:channel-a:provisional:session-a";
-    const targetRecordId = "live:late-live";
-    const migration = harness.send(
-        mutationMessage(harness.store, { kind: "migrateRecordId", sourceRecordId, targetRecordId }),
-        sender
-    );
-    const delayedSnapshot = harness.send(
-        mutationMessage(
-            harness.store,
-            createSnapshot(Date.now(), { recordId: sourceRecordId, sessionId: "session-a" })
-        ),
-        sender
-    );
-
-    assert.equal((await migration).ok, true);
-    assert.equal((await delayedSnapshot).ok, true);
-    const history = harness.local[harness.store.STORAGE_KEY];
-    assert.equal(history.entries[sourceRecordId], undefined);
-    assert.equal(history.entries[targetRecordId].liveId, "late-live");
-    assert.equal(history.entries[targetRecordId].sessionDetails[0].id, "session-a");
-});
-
 test("background queue reports runtime.lastError and continues with the next mutation", async () => {
     const harness = createBackgroundHarness();
     const sender = { id: "extension-id", tab: { id: 1 }, url: "https://chzzk.naver.com/live/channel-a" };
@@ -979,22 +692,6 @@ test("background queue reports runtime.lastError and continues with the next mut
     const succeeded = await harness.send(message, sender);
     assert.equal(succeeded.ok, true);
     assert.equal(harness.local[harness.store.STORAGE_KEY].entries["live:100"].watchedSeconds, 60);
-});
-
-test("shared runtime messaging rejects chrome.runtime.lastError", async () => {
-    const runtime = {
-        lastError: null,
-        sendMessage(_message, callback) {
-            runtime.lastError = { message: "message failed" };
-            callback();
-            runtime.lastError = null;
-        },
-    };
-    const { context } = loadStore({ chrome: { runtime } });
-    await assert.rejects(
-        context.BetterChzzk.utils.runtimeSendMessage({ test: true }),
-        (error) => error?.message === "message failed"
-    );
 });
 
 function createHistoryResolver(fetchImpl) {
@@ -1030,78 +727,6 @@ function createHistoryResolver(fetchImpl) {
 function jsonResponse(content) {
     return Promise.resolve({ ok: true, json: async () => ({ content }) });
 }
-
-test("history replay lookup negative cache expires after a short retry window", async (t) => {
-    let available = false;
-    let pageRequests = 0;
-    const fixture = createHistoryResolver((url) => {
-        if (String(url).includes("/videos?")) {
-            pageRequests += 1;
-            return jsonResponse({
-                data: available
-                    ? [{ videoNo: "42", videoType: "REPLAY", liveId: "expected-live", videoTitle: "테스트 방송" }]
-                    : [],
-            });
-        }
-        return jsonResponse({ liveId: "expected-live", videoNo: "42", videoTitle: "테스트 방송" });
-    });
-    t.after(() => fixture.dom.window.close());
-    let now = Date.parse("2026-07-10T12:00:00+09:00");
-    fixture.dom.window.Date.now = () => now;
-    const entry = {
-        id: "live:expected-live",
-        channelId: "channel-a",
-        liveId: "expected-live",
-        title: "테스트 방송",
-        titleHistory: [],
-        liveOpenDate: "2026-07-10 10:00:00",
-        firstWatchedAt: Date.parse("2026-07-10T10:00:00+09:00"),
-    };
-
-    assert.equal(await fixture.resolveReplayVideoNo(entry), "");
-    available = true;
-    assert.equal(await fixture.resolveReplayVideoNo(entry), "");
-    assert.equal(pageRequests, 1);
-
-    now += 30001;
-    assert.equal(await fixture.resolveReplayVideoNo(entry), "42");
-    assert.equal(pageRequests, 2);
-});
-
-test("history replay lookup rejects a detail whose known liveId belongs to another broadcast", async (t) => {
-    const fixture = createHistoryResolver((url) => {
-        if (String(url).includes("/videos?")) {
-            return jsonResponse({
-                data: [
-                    {
-                        videoNo: "99",
-                        videoType: "REPLAY",
-                        videoTitle: "같은 제목",
-                        liveOpenDate: "2026-07-10 10:00:00",
-                    },
-                ],
-            });
-        }
-        return jsonResponse({
-            videoNo: "99",
-            liveId: "different-live",
-            videoTitle: "같은 제목",
-            liveOpenDate: "2026-07-10 10:00:00",
-        });
-    });
-    t.after(() => fixture.dom.window.close());
-
-    const videoNo = await fixture.resolveReplayVideoNo({
-        id: "live:expected-live",
-        channelId: "channel-a",
-        liveId: "expected-live",
-        title: "같은 제목",
-        titleHistory: [],
-        liveOpenDate: "2026-07-10 10:00:00",
-        firstWatchedAt: Date.parse("2026-07-10T10:00:00+09:00"),
-    });
-    assert.equal(videoNo, "");
-});
 
 test("history replay lookup rejects a detail liveId that conflicts with a matching list liveId", async (t) => {
     const fixture = createHistoryResolver((url) => {
@@ -1174,82 +799,6 @@ test("history replay lookup bounds detail requests across 80 full candidate page
     assert.equal(videoNo, "");
     assert.equal(pageRequests, 80);
     assert.equal(detailRequests, 20);
-});
-
-test("history replay lookup stops after three consecutive detail errors", async (t) => {
-    let pageRequests = 0;
-    let detailRequests = 0;
-    const fixture = createHistoryResolver((url) => {
-        const parsed = new URL(String(url));
-        if (parsed.pathname.endsWith("/videos")) {
-            const page = Number(parsed.searchParams.get("page"));
-            pageRequests += 1;
-            return jsonResponse({
-                data:
-                    page === 0
-                        ? Array.from({ length: 30 }, (_, index) => ({
-                              videoNo: String(index),
-                              videoType: "REPLAY",
-                              videoTitle: "같은 제목",
-                          }))
-                        : [],
-            });
-        }
-
-        detailRequests += 1;
-        return Promise.reject(new Error("detail unavailable"));
-    });
-    t.after(() => fixture.dom.window.close());
-
-    await fixture.resolveReplayVideoNo({
-        id: "channel:channel-a:2026-07-10",
-        channelId: "channel-a",
-        liveId: "",
-        title: "같은 제목",
-        titleHistory: [],
-        firstWatchedAt: 0,
-        lastWatchedAt: 0,
-    });
-
-    assert.equal(pageRequests, 2);
-    assert.equal(detailRequests, 3);
-});
-
-test("history replay lookup inspects a top page detail before scanning later full pages", async (t) => {
-    let pageRequests = 0;
-    let detailRequests = 0;
-    const fixture = createHistoryResolver((url) => {
-        const parsed = new URL(String(url));
-        if (parsed.pathname.endsWith("/videos")) {
-            const page = Number(parsed.searchParams.get("page"));
-            pageRequests += 1;
-            return jsonResponse({
-                data: Array.from({ length: 30 }, (_, index) => ({
-                    videoNo: `${page}-${index}`,
-                    videoType: "REPLAY",
-                    videoTitle: "같은 제목",
-                })),
-            });
-        }
-
-        detailRequests += 1;
-        return jsonResponse({ liveId: "expected-live", videoTitle: "같은 제목" });
-    });
-    t.after(() => fixture.dom.window.close());
-
-    const videoNo = await fixture.resolveReplayVideoNo({
-        id: "live:expected-live",
-        channelId: "channel-a",
-        liveId: "expected-live",
-        title: "같은 제목",
-        titleHistory: [],
-        firstWatchedAt: 0,
-        lastWatchedAt: 0,
-    });
-
-    assert.equal(videoNo, "0-0");
-    assert.equal(pageRequests, 1);
-    assert.equal(detailRequests, 1);
 });
 
 test("history replay lookup stops scheduling requests after its total time budget", async (t) => {

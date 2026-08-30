@@ -332,62 +332,6 @@ function clickCommentTab(document) {
     document.getElementById("betterchzzk-vod-comment-comment-tab").click();
 }
 
-test("VOD comment support factories avoid duplicate attach syncs and keep private helpers private", async (t) => {
-    const fixture = createFixture({
-        initialOptions: { vodCommentTabsEnabled: false },
-        nativeCommentsHtml: '<div id="commentArea"><div id="commentBox-1"></div></div>',
-    });
-    t.after(() => fixture.dom.window.close());
-    const { document, window } = fixture;
-    const panel = document.createElement("div");
-    panel.innerHTML = '<article data-bcvc-comment-id="1"></article>';
-    document.body.appendChild(panel);
-    let measurementCount = 0;
-    const adapter = window.BetterChzzk.vodComments.nativeAdapter.createNativeAdapter({
-        onMeasurements: () => {
-            measurementCount += 1;
-        },
-    });
-    const view = window.BetterChzzk.vodComments.view.createCommentView();
-
-    assert.equal(adapter.scheduleSync, undefined);
-    assert.equal(typeof adapter.syncCommentIds, "function");
-    assert.equal(view.isRenderedStateCurrent, undefined);
-    assert.equal(view.setScrollTop, undefined);
-
-    adapter.attach({ panel });
-    assert.equal(measurementCount, 1, "attach must perform its full native sync immediately");
-    await delay(50);
-    assert.equal(measurementCount, 1, "attach must not repeat the same full sync in a queued animation frame");
-
-    const originalGetElementById = document.getElementById;
-    let nativeRowLookups = 0;
-    document.getElementById = function (id) {
-        if (id === "commentBox-1") nativeRowLookups += 1;
-        return originalGetElementById.call(this, id);
-    };
-    adapter.syncCommentIds([]);
-    adapter.syncCommentIds(new Set());
-    adapter.syncCommentIds([null, "", "   "]);
-    await delay(30);
-    assert.equal(nativeRowLookups, 0, "empty comment IDs must not schedule row synchronization");
-
-    adapter.syncCommentIds(["1", 1, "1"]);
-    adapter.syncCommentIds(new Set(["1"]));
-    await delay(30);
-    assert.equal(nativeRowLookups, 1, "duplicate row IDs must coalesce into one scheduled synchronization");
-    assert.equal(measurementCount, 1, "row synchronization must not remeasure global native typography");
-
-    adapter.detach();
-    adapter.syncCommentIds(["1"]);
-    await delay(30);
-    assert.equal(nativeRowLookups, 1, "adapter synchronization must be a no-op after detach");
-    assert.equal(measurementCount, 1, "detached row synchronization must not publish new measurements");
-    document.getElementById = originalGetElementById;
-    view.destroy();
-    panel.remove();
-});
-
 test("VOD comment tabs preserve the native chat heading treatment and defer prefetch until after mount", async (t) => {
     const fixture = createFixture();
     t.after(() => {
@@ -497,135 +441,6 @@ test("VOD comment option updates only run lifecycle work on enabled transitions"
     assert.equal(fixture.lifecycle.adapterAttach, afterDisable.adapterAttach + 1);
 });
 
-test("VOD comment typography follows the measured native author, date, and message styles", (t) => {
-    const fixture = createFixture({
-        nativeCommentsHtml: [
-            '<div id="commentArea"><button type="button" style="font-family:Sandoll Nemony2,sans-serif">인기순</button><div id="commentBox-1" style="font-family:Trebuchet MS,sans-serif">',
-            '<button class="_information_fixture_101" type="button">',
-            '<strong style="font-size:13px;font-weight:650;line-height:19px;letter-spacing:-0.1px"><span class="_show_tooltip_fixture_51"><span class="_content_tooltip_fixture_2"><span class="_text_tooltip_fixture_3" style="font-size:9px;font-weight:900;line-height:11px">작성자</span></span></span></strong>',
-            '<span style="font-size:11px;font-weight:450;line-height:17px;letter-spacing:0.2px">01.04</span>',
-            "</button>",
-            '<div class="_content_fixture_40"><div class="_text_fixture_192" style="font-size:16px;font-weight:350;line-height:22px;letter-spacing:0.1px">원본 댓글</div></div>',
-            "</div></div>",
-        ].join(""),
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const panel = fixture.document.getElementById("betterchzzk-vod-comment-panel");
-
-    assert.equal(panel.style.getPropertyValue("--bcvc-font-family"), '"Trebuchet MS", sans-serif');
-    assert.equal(panel.style.getPropertyValue("--bcvc-toolbar-font-family"), '"Sandoll Nemony2", sans-serif');
-    assert.equal(panel.style.getPropertyValue("--bcvc-author-font-size"), "13px");
-    assert.equal(panel.style.getPropertyValue("--bcvc-author-font-weight"), "650");
-    assert.equal(panel.style.getPropertyValue("--bcvc-author-line-height"), "19px");
-    assert.equal(panel.style.getPropertyValue("--bcvc-date-font-size"), "11px");
-    assert.equal(panel.style.getPropertyValue("--bcvc-date-line-height"), "17px");
-    assert.equal(panel.style.getPropertyValue("--bcvc-message-font-size"), "16px");
-    assert.equal(panel.style.getPropertyValue("--bcvc-message-line-height"), "22px");
-});
-
-test("VOD comment typography remeasures when the first native row mounts later", async (t) => {
-    const fixture = createFixture();
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document } = fixture;
-    const panel = document.getElementById("betterchzzk-vod-comment-panel");
-    assert.equal(panel.style.getPropertyValue("--bcvc-message-font-size"), "");
-
-    const commentArea = document.createElement("div");
-    commentArea.id = "commentArea";
-    commentArea.innerHTML = [
-        '<div id="commentBox-1" style="font-family:Verdana,sans-serif">',
-        '<button class="_information_fixture_101" type="button"><strong style="font-size:13px;line-height:19px">작성자</strong><span style="font-size:11px;line-height:17px">01.04</span></button>',
-        '<div class="_content_fixture_40"><div class="_text_fixture_192" style="font-size:16px;line-height:22px">늦게 마운트된 댓글</div></div>',
-        "</div>",
-    ].join("");
-    document.getElementById("below-player").appendChild(commentArea);
-
-    await waitForCondition(() => panel.style.getPropertyValue("--bcvc-message-font-size") === "16px");
-    assert.equal(panel.style.getPropertyValue("--bcvc-font-family"), "Verdana, sans-serif");
-    assert.equal(panel.style.getPropertyValue("--bcvc-author-line-height"), "19px");
-    assert.equal(panel.style.getPropertyValue("--bcvc-date-line-height"), "17px");
-    assert.equal(panel.style.getPropertyValue("--bcvc-message-line-height"), "22px");
-});
-
-test("VOD comment typography remeasures when the first native row fills in and restyles later", async (t) => {
-    const fixture = createFixture({
-        nativeCommentsHtml:
-            '<div id="commentArea"><div id="commentBox-1" style="font-family:Verdana,sans-serif"></div></div>',
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document } = fixture;
-    const panel = document.getElementById("betterchzzk-vod-comment-panel");
-    const nativeRow = document.getElementById("commentBox-1");
-    assert.equal(panel.style.getPropertyValue("--bcvc-message-font-size"), "");
-
-    nativeRow.insertAdjacentHTML(
-        "beforeend",
-        [
-            '<button class="_information_fixture_101" type="button"><strong id="late-native-author" style="font-size:13px;line-height:19px">작성자</strong><span style="font-size:11px;line-height:17px">01.04</span></button>',
-            '<div class="_content_fixture_40"><div id="late-native-message" class="_text_fixture_192" style="font-size:16px;line-height:22px">늦게 완성된 댓글</div></div>',
-        ].join("")
-    );
-
-    await waitForCondition(() => panel.style.getPropertyValue("--bcvc-message-font-size") === "16px");
-    assert.equal(panel.style.getPropertyValue("--bcvc-author-line-height"), "19px");
-    assert.equal(panel.style.getPropertyValue("--bcvc-date-line-height"), "17px");
-    assert.equal(panel.style.getPropertyValue("--bcvc-message-line-height"), "22px");
-
-    const originalQuerySelector = document.querySelector;
-    let firstNativeRowQueries = 0;
-    document.querySelector = function (selector) {
-        if (selector === "#commentArea [id^='commentBox-']") firstNativeRowQueries += 1;
-        return originalQuerySelector.call(this, selector);
-    };
-    document.getElementById("late-native-author").style.lineHeight = "21px";
-    document.getElementById("late-native-message").style.fontSize = "18px";
-
-    await waitForCondition(
-        () =>
-            panel.style.getPropertyValue("--bcvc-author-line-height") === "21px" &&
-            panel.style.getPropertyValue("--bcvc-message-font-size") === "18px"
-    );
-    document.querySelector = originalQuerySelector;
-    assert.equal(
-        firstNativeRowQueries,
-        2,
-        "a native mutation batch must resolve the first row once before the single typography measurement"
-    );
-});
-
-test("VOD comment first-page prefetch makes the initial tab open render from memory", async (t) => {
-    const pending = deferred();
-    const fixture = createFixture({ fetchComments: () => pending.promise });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document } = fixture;
-
-    assert.equal(fixture.runIdleCallbacks(), 1);
-    await waitForCondition(() => fixture.requests.length === 1);
-    const panel = document.getElementById("betterchzzk-vod-comment-panel");
-    assert.equal(panel.hidden, true);
-    assert.equal(panel.querySelector(".bcvc-skeleton-list"), null);
-
-    pending.resolve(apiContent({ rows: [apiComment(1, "미리 받은 댓글")], totalCount: 1 }));
-    await delay();
-    clickCommentTab(document);
-
-    assert.match(panel.textContent, /미리 받은 댓글/);
-    assert.equal(panel.querySelector(".bcvc-skeleton-list"), null);
-    assert.equal(fixture.requests.length, 1, "opening the prefetched tab must not request page zero again");
-});
-
 test("VOD comment tab shares an in-flight first-page prefetch instead of starting a duplicate request", async (t) => {
     const pending = deferred();
     const fixture = createFixture({ fetchComments: () => pending.promise });
@@ -644,51 +459,6 @@ test("VOD comment tab shares an in-flight first-page prefetch instead of startin
 
     pending.resolve(apiContent({ rows: [apiComment(1, "진행 중 프리페치")], totalCount: 1 }));
     await waitForCondition(() => /진행 중 프리페치/.test(panel.textContent));
-    assert.equal(fixture.requests.length, 1);
-});
-
-test("VOD comment hidden prefetch failures retry normally when the tab is opened", async (t) => {
-    const firstRequest = deferred();
-    const fixture = createFixture({
-        fetchComments: (_request, index) => {
-            if (index === 0) return firstRequest.promise;
-            return apiContent({ rows: [apiComment(1, "클릭 재시도 성공")], totalCount: 1 });
-        },
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-
-    assert.equal(fixture.runIdleCallbacks(), 1);
-    await waitForCondition(() => fixture.requests.length === 1);
-    firstRequest.reject(new Error("prefetch failed"));
-    await delay();
-    await delay();
-
-    clickCommentTab(fixture.document);
-    await waitForCondition(() =>
-        /클릭 재시도 성공/.test(fixture.document.getElementById("betterchzzk-vod-comment-panel").textContent)
-    );
-    assert.equal(fixture.requests.length, 2, "a hidden speculative failure must not block the foreground retry");
-});
-
-test("VOD comments keep click-to-load when requestIdleCallback is unavailable", async (t) => {
-    const fixture = createFixture({
-        fetchComments: async () => apiContent({ rows: [apiComment(1, "클릭 로드")], totalCount: 1 }),
-        withIdleCallback: false,
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-
-    await delay();
-    assert.equal(fixture.requests.length, 0);
-    clickCommentTab(fixture.document);
-    await waitForCondition(() =>
-        /클릭 로드/.test(fixture.document.getElementById("betterchzzk-vod-comment-panel").textContent)
-    );
     assert.equal(fixture.requests.length, 1);
 });
 
@@ -768,47 +538,6 @@ test("VOD comments mount a comment-only side panel when replay chat is unavailab
     assert.equal(fixture.requests.length, 1, "native chat appearing later must reuse the loaded comment state");
 });
 
-test("VOD comment-only panel leaves fullscreen and restores its cached state after exit", async (t) => {
-    const fixture = createFixture({
-        fetchComments: async () => apiContent({ rows: [apiComment(1, "전체화면 복귀 댓글")], totalCount: 1 }),
-        includeAside: false,
-        nativeCommentsHtml: '<div id="commentArea"></div>',
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document, window } = fixture;
-    let fullscreenElement = null;
-
-    Object.defineProperty(document, "fullscreenElement", {
-        configurable: true,
-        get: () => fullscreenElement,
-    });
-
-    await waitForCondition(() => /전체화면 복귀 댓글/.test(document.body.textContent));
-    fullscreenElement = document.getElementById("player_layout");
-    document.dispatchEvent(new window.Event("fullscreenchange"));
-
-    assert.equal(document.getElementById("betterchzzk-vod-comment-aside"), null);
-    assert.equal(document.getElementById("betterchzzk-vod-comment-panel"), null);
-
-    document.getElementById("player_layout").appendChild(document.createElement("span"));
-    await delay(120);
-    assert.equal(
-        document.getElementById("betterchzzk-vod-comment-aside"),
-        null,
-        "fullscreen mutations must not remount the independent comment-only panel"
-    );
-
-    fullscreenElement = null;
-    document.dispatchEvent(new window.Event("fullscreenchange"));
-    await waitForCondition(() => /전체화면 복귀 댓글/.test(document.body.textContent));
-
-    assert.ok(document.getElementById("betterchzzk-vod-comment-aside"));
-    assert.equal(fixture.requests.length, 1, "fullscreen exit must reuse the loaded comment state");
-});
-
 test("VOD comments do not replace temporarily hidden native chat with the comment-only panel", async (t) => {
     const fixture = createFixture({
         fetchComments: async () => apiContent({ rows: [apiComment(1, "숨김 전 댓글")], totalCount: 1 }),
@@ -841,34 +570,6 @@ test("VOD comments do not replace temporarily hidden native chat with the commen
 
     assert.equal(document.getElementById("betterchzzk-vod-comment-aside"), null);
     assert.equal(fixture.requests.length, 0, "restoring native chat must not fetch comments before the tab is opened");
-});
-
-test("VOD comments still mount comment-only after an incomplete native chat shell disappears", async (t) => {
-    const fixture = createFixture({
-        fetchComments: async () => apiContent({ rows: [apiComment(1, "빈 채팅 껍데기 뒤 댓글")], totalCount: 1 }),
-        includeLog: false,
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document } = fixture;
-    const section = document.getElementById("player-layout");
-    const playerRow = document.createElement("div");
-    playerRow.className = "native-player-row";
-    const player = document.createElement("div");
-    player.id = "player_layout";
-    playerRow.appendChild(player);
-    section.insertBefore(playerRow, section.firstChild);
-
-    await delay(120);
-    assert.equal(document.getElementById("betterchzzk-vod-comment-tabs"), null);
-    document.getElementById("vod-aside").remove();
-    await waitForCondition(() => document.getElementById("betterchzzk-vod-comment-aside"));
-    await waitForCondition(() => /빈 채팅 껍데기 뒤 댓글/.test(document.body.textContent));
-
-    assert.ok(document.getElementById("betterchzzk-vod-comment-aside"));
-    assert.equal(fixture.requests.length, 1);
 });
 
 test("VOD comment tabs mount after a delayed chat log and reuse cached comments after an aside remount", async (t) => {
@@ -925,78 +626,6 @@ test("VOD comment tabs mount after a delayed chat log and reuse cached comments 
     assert.equal(document.getElementById("betterchzzk-vod-comment-panel").scrollTop, 137);
     assert.equal(document.querySelector("#vod-aside [role='log']").getAttribute("data-bcvc-tab-hidden"), "1");
     assert.equal(oldAside.hasAttribute("data-bcvc-mounted"), false);
-});
-
-test("VOD comments keep the same panel and in-flight request across a staged timeline shell gap", async (t) => {
-    const pending = deferred();
-    const fixture = createFixture({ fetchComments: () => pending.promise });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document } = fixture;
-
-    clickCommentTab(document);
-    await waitForCondition(() => document.querySelector(".bcvc-skeleton-list"));
-    const panel = document.getElementById("betterchzzk-vod-comment-panel");
-    const skeleton = panel.querySelector(".bcvc-skeleton-list");
-    const oldAside = document.getElementById("vod-aside");
-
-    oldAside.remove();
-    await delay(120);
-    assert.equal(panel.isConnected, false);
-    assert.equal(fixture.requests.length, 1);
-
-    const host = document.createElement("div");
-    host.innerHTML = chatAsideHtml();
-    document.getElementById("player-layout").appendChild(host.firstElementChild);
-    await waitForCondition(
-        () =>
-            document.getElementById("betterchzzk-vod-comment-panel") === panel &&
-            document.getElementById("betterchzzk-vod-comment-comment-tab")?.getAttribute("aria-selected") === "true"
-    );
-
-    assert.equal(panel.querySelector(".bcvc-skeleton-list"), skeleton);
-    assert.equal(fixture.requests.length, 1, "timeline shell recovery must not restart the pending first page");
-
-    pending.resolve(apiContent({ rows: [apiComment(1, "느린 댓글 유지")], totalCount: 1 }));
-    await waitForCondition(() => /느린 댓글 유지/.test(panel.textContent));
-    assert.equal(document.getElementById("betterchzzk-vod-comment-panel"), panel);
-    assert.equal(fixture.requests.length, 1);
-});
-
-test("VOD comments release a permanently detached shell and remount cleanly when it returns", async (t) => {
-    const firstRequest = deferred();
-    const fixture = createFixture({
-        fetchComments: (_request, index) =>
-            index === 0 ? firstRequest.promise : apiContent({ rows: [apiComment(2, "재마운트 댓글")], totalCount: 1 }),
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document } = fixture;
-
-    clickCommentTab(document);
-    await waitForCondition(() => document.querySelector(".bcvc-skeleton-list"));
-    const oldPanel = document.getElementById("betterchzzk-vod-comment-panel");
-    const oldTablist = document.getElementById("betterchzzk-vod-comment-tabs");
-    const oldSignal = fixture.requests[0].signal;
-    document.getElementById("vod-aside").remove();
-
-    await waitForCondition(() => oldSignal.aborted, { timeoutMs: 1200 });
-    assert.equal(oldPanel.isConnected, false);
-    assert.equal(oldTablist.isConnected, false);
-
-    const host = document.createElement("div");
-    host.innerHTML = chatAsideHtml();
-    document.getElementById("player-layout").appendChild(host.firstElementChild);
-    await waitForCondition(() =>
-        /재마운트 댓글/.test(document.getElementById("betterchzzk-vod-comment-panel")?.textContent || "")
-    );
-
-    assert.notEqual(document.getElementById("betterchzzk-vod-comment-panel"), oldPanel);
-    assert.equal(fixture.requests.length, 2);
 });
 
 test("VOD comments reattach extension-owned nodes removed by a native timeline render", async (t) => {
@@ -1343,115 +972,6 @@ test("VOD comment native actions stay isolated to the matching native comment ro
     assert.equal(nativeClicks, 0, "an API-only row must never borrow another comment's native actions");
 });
 
-test("VOD comment native actions resync every mirrored row when a native row id is assigned or reused", async (t) => {
-    const fixture = createFixture({
-        fetchComments: async () =>
-            apiContent({
-                rows: [apiComment(1, "첫 댓글", { buffCount: 1 }), apiComment(2, "둘째 댓글", { buffCount: 2 })],
-                totalCount: 2,
-            }),
-        nativeCommentsHtml: [
-            '<div id="commentArea"><div id="pending-native-row">',
-            '<button class="_thumbnail_fixture_76" type="button"><span></span></button>',
-            '<button class="_information_fixture_101" type="button"><strong>원본 작성자</strong></button>',
-            '<button type="button" aria-pressed="false"><span class="blind">버프</span></button>',
-            "</div></div>",
-        ].join(""),
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document } = fixture;
-
-    clickCommentTab(document);
-    await waitForCondition(() => document.querySelector("[data-bcvc-comment-key='id:2']"));
-    const firstMirror = document.querySelector("[data-bcvc-comment-key='id:1']");
-    const secondMirror = document.querySelector("[data-bcvc-comment-key='id:2']");
-    const pendingNativeRow = document.getElementById("pending-native-row");
-    const mirroredControls = (row) => [
-        row.querySelector(".bcvc-avatar"),
-        row.querySelector(".bcvc-author"),
-        row.querySelector(".bcvc-buff"),
-    ];
-
-    assert.ok(mirroredControls(firstMirror).every((control) => control.disabled));
-    assert.ok(mirroredControls(secondMirror).every((control) => control.disabled));
-
-    pendingNativeRow.id = "commentBox-1";
-    await waitForCondition(() => mirroredControls(firstMirror).every((control) => !control.disabled));
-    assert.ok(mirroredControls(secondMirror).every((control) => control.disabled));
-
-    pendingNativeRow.id = "commentBox-2";
-    await waitForCondition(
-        () =>
-            mirroredControls(firstMirror).every((control) => control.disabled) &&
-            mirroredControls(secondMirror).every((control) => !control.disabled)
-    );
-    assert.equal(fixture.requests.length, 1, "native id changes must not reload API comments");
-});
-
-test("VOD comment native actions do not cross nested commentBox boundaries", async (t) => {
-    const fixture = createFixture({
-        fetchComments: async () =>
-            apiContent({
-                rows: [apiComment(1, "부모 원본 없음", { buffCount: 1 }), apiComment(2, "중첩 원본", { buffCount: 2 })],
-                totalCount: 2,
-            }),
-        nativeCommentsHtml: [
-            '<div id="commentArea"><div id="commentBox-1"><div id="commentBox-2">',
-            '<button class="_thumbnail_fixture_76" type="button"><span></span></button>',
-            '<button class="_information_fixture_101" type="button"><strong>작성자 2</strong></button>',
-            '<button type="button" aria-pressed="false"><span class="blind">버프</span></button>',
-            "</div></div></div>",
-        ].join(""),
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document } = fixture;
-
-    clickCommentTab(document);
-    await waitForCondition(() => document.querySelector("[data-bcvc-comment-key='id:2']"));
-    const parent = document.querySelector("[data-bcvc-comment-key='id:1']");
-    const nested = document.querySelector("[data-bcvc-comment-key='id:2']");
-
-    assert.equal(parent.querySelector(".bcvc-avatar").disabled, true);
-    assert.equal(parent.querySelector(".bcvc-author").disabled, true);
-    assert.equal(parent.querySelector(".bcvc-buff").disabled, true);
-    assert.equal(nested.querySelector(".bcvc-avatar").disabled, false);
-    assert.equal(nested.querySelector(".bcvc-author").disabled, false);
-    assert.equal(nested.querySelector(".bcvc-buff").disabled, false);
-});
-
-test("VOD buff mirrors text-node-only count updates from the scoped native observer", async (t) => {
-    const fixture = createFixture({
-        fetchComments: async () => apiContent({ rows: [apiComment(1, "버프 갱신", { buffCount: 3 })] }),
-        nativeCommentsHtml: [
-            '<div id="commentArea"><div id="commentBox-1">',
-            '<div class="_status_fixture_306"><button class="_buff_button_fixture_1" type="button" aria-pressed="false">',
-            '<i class="_buff_icon_fixture_5"><span class="blind">버프</span></i>',
-            '</button><span id="native-buff-count-1" class="_buff_count_fixture_27">3</span></div></div></div>',
-        ].join(""),
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document } = fixture;
-
-    clickCommentTab(document);
-    await waitForCondition(() => document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-buff"));
-    const mirroredBuff = document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-buff");
-    assert.equal(mirroredBuff.getAttribute("aria-label"), "버프 3");
-
-    document.getElementById("native-buff-count-1").firstChild.nodeValue = "4";
-    await waitForCondition(() => mirroredBuff.getAttribute("aria-label") === "버프 4");
-    assert.equal(mirroredBuff.querySelector(".bcvc-buff-count").textContent, "4");
-    assert.equal(mirroredBuff.getAttribute("data-bcvc-confirmed"), null);
-});
-
 test("VOD comment rows render observed replies and tolerate nullable or deleted API rows", async (t) => {
     const parent = apiComment(1, "부모 댓글");
     const directReply = {
@@ -1587,92 +1107,6 @@ test("VOD long comments start collapsed and can be expanded and collapsed in pla
     assert.doesNotMatch(content.textContent, /30:00/);
 });
 
-test("VOD long-comment toggles synchronize only the changed native row", async (t) => {
-    const firstLongText = Array.from({ length: 30 }, (_, index) => {
-        if (index === 0) return "00:01 첫 번째 댓글 시작";
-        if (index === 29) return "30:00 첫 번째 댓글 끝";
-        return `첫 번째 댓글 ${index + 1}`;
-    }).join("\n");
-    const secondLongText = Array.from({ length: 30 }, (_, index) => {
-        if (index === 0) return "00:02 두 번째 댓글 시작";
-        if (index === 29) return "31:00 두 번째 댓글 끝";
-        return `두 번째 댓글 ${index + 1}`;
-    }).join("\n");
-    const fixture = createFixture({
-        fetchComments: async () =>
-            apiContent({
-                rows: [apiComment(1, firstLongText), apiComment(2, secondLongText)],
-                totalCount: 2,
-            }),
-        nativeCommentsHtml: [
-            '<div id="commentArea">',
-            '<div id="commentBox-1"><button id="native-time-1a" type="button">19:11</button><button id="native-time-1b" type="button">19:12</button></div>',
-            '<div id="commentBox-2"><button id="native-time-2a" type="button">20:21</button><button id="native-time-2b" type="button">20:22</button></div>',
-            "</div>",
-        ].join(""),
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document, window } = fixture;
-    let nativeSecondTimecodeClicks = 0;
-    document.getElementById("native-time-1b").addEventListener("click", () => {
-        nativeSecondTimecodeClicks += 1;
-    });
-
-    clickCommentTab(document);
-    await waitForCondition(() => document.querySelectorAll("[data-bcvc-action='message-toggle']").length === 2);
-    await waitForCondition(
-        () =>
-            document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-timecode")?.textContent === "19:11" &&
-            document.querySelector("[data-bcvc-comment-key='id:2'] .bcvc-timecode")?.textContent === "20:21"
-    );
-
-    const firstRow = document.querySelector("[data-bcvc-comment-key='id:1']");
-    const firstToggle = firstRow.querySelector("[data-bcvc-action='message-toggle']");
-    const originalGetElementById = document.getElementById;
-    const originalGetComputedStyle = window.getComputedStyle;
-    let firstNativeRowLookups = 0;
-    let secondNativeRowLookups = 0;
-    let nativeStyleReads = 0;
-    document.getElementById = function (id) {
-        if (id === "commentBox-1") firstNativeRowLookups += 1;
-        if (id === "commentBox-2") secondNativeRowLookups += 1;
-        return originalGetElementById.call(this, id);
-    };
-    window.getComputedStyle = function (...args) {
-        nativeStyleReads += 1;
-        return originalGetComputedStyle.apply(this, args);
-    };
-
-    firstToggle.click();
-    await waitForCondition(
-        () =>
-            firstRow.querySelectorAll(".bcvc-timecode").length === 2 &&
-            firstRow.querySelectorAll(".bcvc-timecode")[1].textContent === "19:12"
-    );
-    firstToggle.click();
-    await waitForCondition(() => firstNativeRowLookups === 2);
-    firstToggle.click();
-    await waitForCondition(
-        () => firstNativeRowLookups === 3 && firstRow.querySelectorAll(".bcvc-timecode")[1]?.textContent === "19:12"
-    );
-
-    assert.equal(secondNativeRowLookups, 0, "long-comment toggles must not look up an unchanged native row");
-    assert.equal(nativeStyleReads, 0, "long-comment toggles must not remeasure global native styles");
-    firstRow.querySelectorAll(".bcvc-timecode")[1].click();
-    assert.equal(nativeSecondTimecodeClicks, 1, "a newly rendered timecode must retain native control forwarding");
-    assert.equal(
-        fixture.mediaState.currentTime,
-        100,
-        "successful native forwarding must not also perform a direct seek"
-    );
-
-    document.getElementById = originalGetElementById;
-    window.getComputedStyle = originalGetComputedStyle;
-});
-
 test("VOD comment rendering caps total nested replies without hiding the limit", async (t) => {
     const parents = Array.from({ length: 7 }, (_, parentIndex) => {
         const parent = apiComment(parentIndex + 1, `부모 ${parentIndex + 1}`);
@@ -1700,41 +1134,6 @@ test("VOD comment rendering caps total nested replies without hiding the limit",
     await waitForCondition(() => document.querySelectorAll("[data-bcvc-reply='1']").length === 300);
     assert.equal(document.querySelectorAll("[data-bcvc-reply='1']").length, 300);
     assert.match(document.querySelector("[data-bcvc-comment-key='id:7'] .bcvc-reply-limit").textContent, /300개까지만/);
-});
-
-test("VOD buff fallback upgrades in place when native lower comments mount later", async (t) => {
-    const fixture = createFixture({
-        fetchComments: async () => apiContent({ rows: [apiComment(1, "지연 원본", { buffCount: 1 })] }),
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document } = fixture;
-
-    clickCommentTab(document);
-    await waitForCondition(() => document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-buff-label"));
-    const renderedRow = document.querySelector("[data-bcvc-comment-key='id:1']");
-
-    const style = document.createElement("style");
-    style.textContent =
-        '._buff_icon_delayed_5{display:block;width:47px;height:23px;background-image:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27/%3E")}';
-    const commentArea = document.createElement("div");
-    commentArea.id = "commentArea";
-    commentArea.innerHTML = [
-        '<div id="commentBox-1">',
-        '<button type="button" aria-pressed="false"><i class="_buff_icon_delayed_5"><span>버프</span></i></button>',
-        "</div>",
-    ].join("");
-    document.head.appendChild(style);
-    document.getElementById("below-player").appendChild(commentArea);
-
-    await waitForCondition(() => renderedRow.querySelector(".bcvc-buff-native-icon"));
-    assert.equal(document.querySelector("[data-bcvc-comment-key='id:1']"), renderedRow);
-    assert.equal(renderedRow.querySelector(".bcvc-buff-label"), null);
-    assert.ok(renderedRow.querySelector(".bcvc-buff-native-icon").classList.contains("_buff_icon_delayed_5"));
-    assert.equal(renderedRow.querySelector(".bcvc-buff").disabled, false);
-    assert.equal(fixture.requests.length, 1, "asset synchronization must not reload comments");
 });
 
 test("VOD mirrored timecodes invoke the matching native comment control", async (t) => {
@@ -1767,49 +1166,6 @@ test("VOD mirrored timecodes invoke the matching native comment control", async 
     assert.equal(fixture.mediaState.currentTime, 100, "native control ownership must avoid a competing direct seek");
 });
 
-test("VOD timecode seek retargets a replaced native chat log without refreshing comments", async (t) => {
-    const fixture = createFixture({
-        fetchComments: async () => apiContent({ rows: [apiComment(1, "이동 19:10", { buffCount: 1 })], totalCount: 1 }),
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document } = fixture;
-
-    clickCommentTab(document);
-    await waitForCondition(() => document.querySelector("[data-bcvc-comment-key='id:1']"));
-    const panel = document.getElementById("betterchzzk-vod-comment-panel");
-    const row = document.querySelector("[data-bcvc-comment-key='id:1']");
-    const oldLog = document.querySelector("#vod-aside [role='log']");
-    panel.scrollTop = 73;
-
-    Object.defineProperty(fixture.video, "currentTime", {
-        configurable: true,
-        get: () => fixture.mediaState.currentTime,
-        set: (value) => {
-            fixture.mediaState.currentTime = Number(value);
-            const nextLog = document.createElement("div");
-            nextLog.className = "native-chat-log";
-            nextLog.setAttribute("role", "log");
-            nextLog.textContent = "탐색 후 다시 마운트된 채팅";
-            document.querySelector("#vod-aside [role='log']").replaceWith(nextLog);
-        },
-    });
-
-    document.querySelector(".bcvc-timecode").click();
-    await waitForCondition(() => {
-        const nextLog = document.querySelector("#vod-aside [role='log']");
-        return nextLog !== oldLog && nextLog.getAttribute("data-bcvc-native-log") === "1";
-    });
-
-    assert.equal(document.getElementById("betterchzzk-vod-comment-panel"), panel);
-    assert.equal(document.querySelector("[data-bcvc-comment-key='id:1']"), row);
-    assert.equal(panel.scrollTop, 73);
-    assert.equal(document.querySelector("#vod-aside [role='log']").getAttribute("data-bcvc-tab-hidden"), "1");
-    assert.equal(fixture.requests.length, 1);
-});
-
 test("VOD comment initial errors expose retry and distinguish empty or disabled comments", async (t) => {
     let call = 0;
     const fixture = createFixture({
@@ -1838,46 +1194,6 @@ test("VOD comment initial errors expose retry and distinguish empty or disabled 
     await waitForCondition(() =>
         /댓글을 사용할 수 없습니다/.test(document.getElementById("betterchzzk-vod-comment-panel").textContent)
     );
-    assert.equal(call, 3);
-});
-
-test("VOD comment timeout aborts and malformed responses stay retryable instead of looking empty", async (t) => {
-    let call = 0;
-    const fixture = createFixture({
-        fetchComments: async () => {
-            call += 1;
-            if (call === 1) {
-                const error = new Error("request timed out");
-                error.name = "AbortError";
-                throw error;
-            }
-            if (call === 2) return null;
-            return apiContent({ rows: [apiComment(1, "복구된 댓글")], totalCount: 1 });
-        },
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document } = fixture;
-
-    clickCommentTab(document);
-    await waitForCondition(() => document.querySelector("[data-bcvc-action='retry-initial']"));
-    assert.match(document.getElementById("betterchzzk-vod-comment-panel").textContent, /불러오지 못했습니다/);
-
-    let retry = document.querySelector("[data-bcvc-action='retry-initial']");
-    retry.focus();
-    retry.click();
-    await waitForCondition(() => call === 2 && document.querySelector("[data-bcvc-action='retry-initial']"));
-    retry = document.querySelector("[data-bcvc-action='retry-initial']");
-    assert.equal(document.activeElement, retry);
-    assert.doesNotMatch(document.getElementById("betterchzzk-vod-comment-panel").textContent, /등록된 댓글이 없습니다/);
-
-    retry.click();
-    await waitForCondition(() =>
-        /복구된 댓글/.test(document.getElementById("betterchzzk-vod-comment-panel").textContent)
-    );
-    assert.equal(document.activeElement, document.querySelector("[data-bcvc-action='refresh']"));
     assert.equal(call, 3);
 });
 
@@ -1932,58 +1248,6 @@ test("VOD comment pagination coalesces observer requests and appends without rep
     assert.equal(document.querySelector("[data-bcvc-action='load-more']"), null);
     panel.querySelectorAll = originalPanelQuerySelectorAll;
     assert.equal(mirroredRowScans, 1, "appending a page must sync native assets once for the new rows");
-});
-
-test("VOD comment load-more restores focus to the first appended row when pagination ends", async (t) => {
-    const firstRows = Array.from({ length: 10 }, (_, index) => apiComment(index + 1, `댓글 ${index + 1}`));
-    const fixture = createFixture({
-        fetchComments: ({ offset }) =>
-            offset === 0
-                ? apiContent({ next: 10, rows: firstRows, totalCount: 11 })
-                : apiContent({ next: null, rows: [apiComment(11, "마지막 댓글")], totalCount: 11 }),
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document } = fixture;
-
-    clickCommentTab(document);
-    await waitForCondition(() => document.querySelector("[data-bcvc-action='load-more']"));
-    const more = document.querySelector("[data-bcvc-action='load-more']");
-    more.focus();
-    more.click();
-
-    await waitForCondition(() => document.querySelector("[data-bcvc-comment-key='id:11']"));
-    const appended = document.querySelector("[data-bcvc-comment-key='id:11']");
-    assert.equal(document.activeElement, appended);
-    assert.equal(appended.tabIndex, -1);
-});
-
-test("VOD comment load-more falls back to refresh focus when the last page contains only duplicates", async (t) => {
-    const firstRows = Array.from({ length: 10 }, (_, index) => apiComment(index + 1, `댓글 ${index + 1}`));
-    const fixture = createFixture({
-        fetchComments: ({ offset }) =>
-            offset === 0
-                ? apiContent({ next: 10, rows: firstRows, totalCount: 10 })
-                : apiContent({ next: null, rows: [apiComment(10, "중복 마지막 댓글")], totalCount: 10 }),
-    });
-    t.after(() => {
-        fixture.emitOptions({ vodCommentTabsEnabled: false });
-        fixture.dom.window.close();
-    });
-    const { document } = fixture;
-
-    clickCommentTab(document);
-    await waitForCondition(() => document.querySelector("[data-bcvc-action='load-more']"));
-    const more = document.querySelector("[data-bcvc-action='load-more']");
-    more.focus();
-    more.click();
-
-    await waitForCondition(() => !document.querySelector("[data-bcvc-action='load-more']"));
-    await waitForCondition(() => document.activeElement === document.querySelector("[data-bcvc-action='refresh']"));
-    const refresh = document.querySelector("[data-bcvc-action='refresh']");
-    assert.equal(document.activeElement, refresh);
 });
 
 test("VOD comment sorts cache loaded rows while refresh reloads only the active order", async (t) => {

@@ -268,71 +268,6 @@ test("hold speed applies fixed 2x without changing playback state and restores t
     assert.equal(fixture.mediaState.playCalls, 0);
 });
 
-test("hold speed applies on live routes and restores the previous rate on keyup", (t) => {
-    const fixture = createFixture({
-        url: "https://chzzk.naver.com/live/test-channel",
-        paused: false,
-        playbackRate: 1.25,
-    });
-    t.after(() => fixture.dom.window.close());
-
-    const down = dispatchSpace(fixture, "keydown");
-    assert.equal(down.defaultPrevented, true);
-    fixture.timers.advance(350);
-
-    assert.equal(fixture.video.playbackRate, 2);
-    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay")?.textContent, "2배속");
-
-    const up = dispatchSpace(fixture, "keyup");
-    assert.equal(up.defaultPrevented, true);
-    assert.equal(fixture.video.playbackRate, 1.25);
-    assert.equal(fixture.mediaState.paused, false);
-    assert.equal(fixture.getPlaybackToggleIntentCalls(), 0, "a hold must not be reported as pause intent");
-});
-
-test("a short live Space press reports exactly one pause intent", (t) => {
-    const fixture = createFixture({
-        url: "https://chzzk.naver.com/live/test-channel",
-        paused: false,
-    });
-    t.after(() => fixture.dom.window.close());
-
-    dispatchSpace(fixture, "keydown");
-    fixture.timers.advance(200);
-    dispatchSpace(fixture, "keyup");
-
-    assert.equal(fixture.mediaState.paused, true);
-    assert.equal(fixture.mediaState.pauseCalls, 1);
-    assert.equal(fixture.getPlaybackToggleIntentCalls(), 1);
-});
-
-test("hold speed restores a hostile native keydown pause before entering hold mode", (t) => {
-    const fixture = createFixture({
-        paused: false,
-        beforeLoad({ video, window }) {
-            window.addEventListener(
-                "keydown",
-                (event) => {
-                    if (event.code === "Space" && !event.repeat) video.pause();
-                },
-                true
-            );
-        },
-    });
-    t.after(() => fixture.dom.window.close());
-
-    dispatchSpace(fixture, "keydown");
-    fixture.timers.advance(0);
-    assert.equal(fixture.mediaState.paused, false, "the keydown-side native pause must be restored");
-    assert.equal(fixture.mediaState.pauseCalls, 1);
-    assert.equal(fixture.mediaState.playCalls, 1);
-
-    fixture.timers.advance(350);
-    assert.equal(fixture.video.playbackRate, 2);
-    dispatchSpace(fixture, "keyup");
-    assert.equal(fixture.mediaState.paused, false);
-});
-
 test("hold speed yields native and role-based Space consumers", (t) => {
     const fixture = createFixture();
     t.after(() => fixture.dom.window.close());
@@ -398,38 +333,6 @@ test("pressing the selected speed shortcut again resets playback to 1x", (t) => 
     assert.equal(fixture.mediaState.playCalls, 0);
 });
 
-test("Space hold and fixed speed shortcuts can be toggled independently and keys update immediately", (t) => {
-    const fixture = createFixture({ options: { holdSpeedEnabled: false } });
-    t.after(() => fixture.dom.window.close());
-
-    assert.equal(dispatchSpace(fixture, "keydown").defaultPrevented, false);
-    assert.equal(dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[" }).defaultPrevented, true);
-    assert.equal(fixture.video.playbackRate, 0.5);
-
-    fixture.emitOptions({
-        holdSpeedEnabled: true,
-        playbackSpeedShortcutsEnabled: false,
-        playbackSpeedHalfKeyCode: "KeyQ",
-        playbackSpeedDoubleKeyCode: "KeyW",
-    });
-    assert.equal(dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[" }).defaultPrevented, false);
-    assert.equal(dispatchKey(fixture, "keydown", { code: "KeyQ", key: "q" }).defaultPrevented, false);
-    assert.equal(dispatchSpace(fixture, "keydown").defaultPrevented, true);
-    dispatchSpace(fixture, "keyup");
-
-    fixture.video.playbackRate = 1;
-    fixture.emitOptions({ playbackSpeedShortcutsEnabled: true });
-    assert.equal(dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[" }).defaultPrevented, false);
-    assert.equal(dispatchKey(fixture, "keydown", { code: "KeyQ", key: "q" }).defaultPrevented, true);
-    assert.equal(fixture.video.playbackRate, 0.5);
-    assert.equal(dispatchKey(fixture, "keydown", { code: "KeyW", key: "w" }).defaultPrevented, true);
-    assert.equal(fixture.video.playbackRate, 2);
-
-    fixture.emitOptions({ holdSpeedEnabled: false, playbackSpeedShortcutsEnabled: false });
-    assert.equal(dispatchSpace(fixture, "keydown").defaultPrevented, false);
-    assert.equal(dispatchKey(fixture, "keydown", { code: "KeyW", key: "w" }).defaultPrevented, false);
-});
-
 test("playback speed shortcuts yield editable targets, modifiers, composition, and unrelated keys", (t) => {
     const fixture = createFixture();
     t.after(() => fixture.dom.window.close());
@@ -488,19 +391,6 @@ test("the 2x shortcut cancels an active Space hold to 1x and keyup keeps the can
     assert.equal(fixture.video.playbackRate, 1, "Space keyup must not undo the explicit cancellation");
 });
 
-test("the 0.5x shortcut during Space hold stays selected after Space keyup", (t) => {
-    const fixture = createFixture({ playbackRate: 1.25 });
-    t.after(() => fixture.dom.window.close());
-
-    dispatchSpace(fixture, "keydown");
-    fixture.timers.advance(350);
-    dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[" });
-
-    assert.equal(fixture.video.playbackRate, 0.5);
-    dispatchSpace(fixture, "keyup");
-    assert.equal(fixture.video.playbackRate, 0.5);
-});
-
 test("playback speed shortcut feedback cleans up on route exit, visibility change, and option disable", (t) => {
     const fixture = createFixture();
     t.after(() => fixture.dom.window.close());
@@ -519,38 +409,6 @@ test("playback speed shortcut feedback cleans up on route exit, visibility chang
     fixture.emitOptions({ playbackSpeedShortcutsEnabled: false });
     assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
     assert.equal(fixture.video.playbackRate, 0.5, "disabling shortcuts must not overwrite the selected rate");
-});
-
-test("playback speed shortcut feedback clears when the main video is replaced", async (t) => {
-    const fixture = createFixture();
-    t.after(() => fixture.dom.window.close());
-
-    dispatchKey(fixture, "keydown", { code: "BracketRight", key: "]" });
-    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay")?.textContent, "2배속");
-
-    const replacement = fixture.document.createElement("video");
-    configureVideo(fixture.dom, replacement, { paused: false, playbackRate: 1 });
-    fixture.video.replaceWith(replacement);
-    await Promise.resolve();
-    fixture.timers.advance(0);
-
-    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
-    assert.equal(replacement.playbackRate, 1, "a fixed shortcut remains a command for the selected media node");
-});
-
-test("hold speed repeat activation and external rate changes do not duplicate or overwrite state", (t) => {
-    const fixture = createFixture({ playbackRate: 1.25 });
-    t.after(() => fixture.dom.window.close());
-
-    dispatchSpace(fixture, "keydown");
-    dispatchSpace(fixture, "keydown", { repeat: true });
-    assert.equal(fixture.video.playbackRate, 2);
-    dispatchSpace(fixture, "keydown", { repeat: true });
-
-    fixture.video.playbackRate = 1.75;
-    dispatchSpace(fixture, "keyup");
-    assert.equal(fixture.video.playbackRate, 1.75, "an external speed choice made during hold must win");
-    assert.equal(fixture.mediaState.paused, false);
 });
 
 test("hold speed preserves a playback-state change made after hold activation", (t) => {

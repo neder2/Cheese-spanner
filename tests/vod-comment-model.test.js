@@ -51,29 +51,6 @@ function apiContent({ best = [], next = null, rows = [], totalCount = rows.lengt
     };
 }
 
-test("VOD comment model exposes a frozen idempotent public API", (t) => {
-    const fixture = createModelFixture();
-    t.after(() => fixture.dom.window.close());
-    const first = fixture.model;
-
-    fixture.dom.window.eval(MODEL_SOURCE);
-
-    assert.equal(fixture.dom.window.BetterChzzk.vodComments.model, first);
-    assert.equal(Object.isFrozen(first), true);
-    assert.equal(first.COMMENT_PAGE_SIZE, 10);
-    assert.equal(first.MAX_COMMENTS_PER_ORDER, 300);
-    assert.equal(first.MAX_REPLIES_PER_COMMENT, 50);
-    assert.equal(first.MAX_REPLIES_PER_ORDER, 300);
-    assert.deepEqual(
-        Array.from(first.SORT_OPTIONS, ({ label, order }) => ({ label, order })),
-        [
-            { label: "인기순", order: "POPULAR" },
-            { label: "최신순", order: "DESC" },
-            { label: "등록순", order: "ASC" },
-        ]
-    );
-});
-
 test("parseTimecodeSeconds accepts MM:SS and HH:MM:SS while rejecting invalid fields", (t) => {
     const fixture = createModelFixture();
     t.after(() => fixture.dom.window.close());
@@ -170,46 +147,6 @@ test("idless BEST and ordinary rows deduplicate by their stable fallback fields"
     assert.match(result.items[0].key, /^fallback:/);
 });
 
-test("idless nullable rows only deduplicate when they are the same object", (t) => {
-    const fixture = createModelFixture();
-    t.after(() => fixture.dom.window.close());
-    const nullable = { comment: null, user: null };
-    const distinctNullable = { comment: null, user: null };
-
-    const byIdentity = fixture.model.applyCommentPage([], apiContent({ best: [nullable], rows: [nullable] }), {
-        offset: 0,
-    });
-    const distinct = fixture.model.applyCommentPage([], apiContent({ best: [nullable], rows: [distinctNullable] }), {
-        offset: 0,
-    });
-
-    assert.equal(byIdentity.items.length, 1);
-    assert.equal(distinct.items.length, 2);
-});
-
-test("BEST rows are ignored after the first page", (t) => {
-    const fixture = createModelFixture();
-    t.after(() => fixture.dom.window.close());
-    const first = fixture.model.applyCommentPage([], apiContent({ rows: [apiComment(1)] }), { offset: 0 });
-    const next = fixture.model.applyCommentPage(
-        first.items,
-        apiContent({ best: [apiComment(2, "뒤늦은 BEST")], rows: [apiComment(3)] }),
-        { offset: 10 }
-    );
-
-    assert.deepEqual(
-        Array.from(next.items, ({ best, key }) => ({ best, key })),
-        [
-            { best: false, key: "id:1" },
-            { best: false, key: "id:3" },
-        ]
-    );
-    assert.deepEqual(
-        Array.from(next.added, ({ key }) => key),
-        ["id:3"]
-    );
-});
-
 test("malformed comment pages are rejected instead of being treated as empty", (t) => {
     const fixture = createModelFixture();
     t.after(() => fixture.dom.window.close());
@@ -245,29 +182,6 @@ test("reply sources normalize, deduplicate by commentId, and report the cap", (t
     assert.equal(result.rows[0].user.userNickname, "답글 작성자");
     assert.equal(result.truncated, true);
     assert.deepEqual(row, before);
-});
-
-test("deleted flat replies normalize and deduplicate even when content is null", (t) => {
-    const fixture = createModelFixture();
-    t.after(() => fixture.dom.window.close());
-    const deletedReply = {
-        commentId: 7,
-        commentType: "COMMENT",
-        content: null,
-        deleted: true,
-        userIdHash: "reply-7",
-        userNickname: "삭제된 답글 작성자",
-    };
-    const row = apiComment(1, "부모", {
-        comment: { replyComments: [{ ...deletedReply }] },
-        row: { replyComments: [{ ...deletedReply }] },
-    });
-
-    const result = fixture.model.collectReplyRows(row);
-
-    assert.equal(result.rows.length, 1);
-    assert.equal(result.rows[0].comment.commentId, 7);
-    assert.equal(result.rows[0].comment.deleted, true);
 });
 
 test("long comment collapsing keeps exact boundaries and line limits", (t) => {

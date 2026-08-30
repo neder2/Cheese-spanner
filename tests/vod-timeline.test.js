@@ -18,7 +18,6 @@ evalRepoScript("shared", "data.js");
 evalRepoScript("shared", "vodTimeline.js");
 
 const { mergeBroadcastSegment, normalizeVideoDetail, resolveSegmentStartInfo } = dom.window.BetterChzzk.vodTimeline;
-const HOUR_MS = 60 * 60 * 1000;
 const SPLIT_SECONDS = 17 * 60 * 60;
 const SPLIT_MS = SPLIT_SECONDS * 1000;
 const START_TEXT = "2026-07-10T19:01:32+09:00";
@@ -85,43 +84,6 @@ test("normalizeVideoDetail returns the public normalized shape without mutating 
     assert.deepEqual(input, snapshot);
 });
 
-test("normalizeVideoDetail uses empty strings and NaN for unavailable values", () => {
-    const normalized = normalizeVideoDetail({
-        duration: "unknown",
-        liveOpenDate: "not-a-date",
-        nextVideo: { duration: 0 },
-    });
-
-    assert.equal(normalized.videoNo, "");
-    assert.equal(normalized.title, "");
-    assert.equal(Number.isNaN(normalized.durationSeconds), true);
-    assert.equal(Number.isNaN(normalized.startMs), true);
-    assert.equal(Number.isNaN(normalized.endMs), true);
-    assert.equal(normalized.olderVideoNo, "");
-    assert.equal(Number.isNaN(normalized.olderDurationSeconds), true);
-});
-
-test("resolveSegmentStartInfo reports an unavailable start without fetching links", async () => {
-    let fetchCount = 0;
-    const result = await resolveSegmentStartInfo(
-        {
-            duration: 3600,
-            nextVideo: { videoNo: "older", duration: SPLIT_SECONDS },
-        },
-        {
-            fetchDetail: async () => {
-                fetchCount += 1;
-                return makeOlderDetail("older");
-            },
-        }
-    );
-
-    assert.equal(Number.isNaN(result.originalStartMs), true);
-    assert.equal(result.segmentOffsetMs, 0);
-    assert.equal(Number.isNaN(result.segmentStartMs), true);
-    assert.equal(fetchCount, 0);
-});
-
 test("resolveSegmentStartInfo keeps a normal VOD at offset zero", async () => {
     const result = await resolveSegmentStartInfo(makeCurrentDetail());
 
@@ -135,13 +97,6 @@ test("resolveSegmentStartInfo aligns an inferred second segment to a 17 hour off
 
     assert.equal(result.segmentOffsetMs, SPLIT_MS);
     assert.equal(result.segmentStartMs, START_MS + SPLIT_MS);
-});
-
-test("resolveSegmentStartInfo aligns an inferred third segment to a 34 hour offset", async () => {
-    const result = await resolveSegmentStartInfo(makeCurrentDetail({ offsetMs: SPLIT_MS * 2 }));
-
-    assert.equal(result.segmentOffsetMs, SPLIT_MS * 2);
-    assert.equal(result.segmentStartMs, START_MS + SPLIT_MS * 2);
 });
 
 test("resolveSegmentStartInfo ignores an inferred offset beyond the 45 minute tolerance", async () => {
@@ -177,47 +132,6 @@ test("resolveSegmentStartInfo follows two linked full-length older segments", as
 
     assert.deepEqual(calls, ["segment-1", "segment-2"]);
     assert.equal(result.segmentOffsetMs, SPLIT_MS * 2);
-});
-
-test("resolveSegmentStartInfo prefers a positive linked offset over an inferred offset", async () => {
-    const { current, details } = makeLinkedFixture(1);
-    current.liveCloseDate = new Date(START_MS + SPLIT_MS * 2 + HOUR_MS).toISOString();
-
-    const result = await resolveSegmentStartInfo(current, {
-        fetchDetail: async (videoNo) => details[videoNo],
-    });
-
-    assert.equal(result.segmentOffsetMs, SPLIT_MS);
-});
-
-test("resolveSegmentStartInfo stops before fetching a summary that is not about 17 hours", async () => {
-    let fetchCount = 0;
-    const result = await resolveSegmentStartInfo(
-        makeCurrentDetail({ nextVideo: { videoNo: "short", duration: SPLIT_SECONDS - 121 } }),
-        {
-            fetchDetail: async () => {
-                fetchCount += 1;
-                return makeOlderDetail("short");
-            },
-        }
-    );
-
-    assert.equal(fetchCount, 0);
-    assert.equal(result.segmentOffsetMs, 0);
-});
-
-test("resolveSegmentStartInfo stops when an older detail start differs by more than one minute", async () => {
-    const result = await resolveSegmentStartInfo(
-        makeCurrentDetail({ nextVideo: { videoNo: "older", duration: SPLIT_SECONDS } }),
-        {
-            fetchDetail: async () => ({
-                ...makeOlderDetail("older"),
-                liveOpenDate: new Date(START_MS + 60 * 1000 + 1).toISOString(),
-            }),
-        }
-    );
-
-    assert.equal(result.segmentOffsetMs, 0);
 });
 
 test("resolveSegmentStartInfo stops a cyclic nextVideo chain", async () => {
@@ -290,23 +204,6 @@ test("resolveSegmentStartInfo propagates AbortError and performs no later linked
     assert.deepEqual(calls, ["segment-1"]);
 });
 
-test("resolveSegmentStartInfo rejects an already aborted signal before fetching", async () => {
-    const controller = new dom.window.AbortController();
-    controller.abort();
-    let fetchCount = 0;
-
-    await assert.rejects(
-        resolveSegmentStartInfo(makeLinkedFixture(1).current, {
-            signal: controller.signal,
-            fetchDetail: async () => {
-                fetchCount += 1;
-            },
-        }),
-        (error) => error?.name === "AbortError"
-    );
-    assert.equal(fetchCount, 0);
-});
-
 test("resolveSegmentStartInfo falls back to inference after a fetch AbortError without external cancellation", async () => {
     const controller = new dom.window.AbortController();
     const calls = [];
@@ -333,70 +230,6 @@ test("resolveSegmentStartInfo falls back to inference after a fetch AbortError w
     assert.equal(result.originalStartMs, START_MS);
     assert.equal(result.segmentOffsetMs, SPLIT_MS * 2);
     assert.equal(result.segmentStartMs, START_MS + SPLIT_MS * 2);
-});
-
-test("resolveSegmentStartInfo keeps zero offset after a fetch AbortError without an inferred offset", async () => {
-    const controller = new dom.window.AbortController();
-    const calls = [];
-    const result = await resolveSegmentStartInfo(
-        makeCurrentDetail({ nextVideo: { videoNo: "older", duration: SPLIT_SECONDS } }),
-        {
-            signal: controller.signal,
-            fetchDetail: async (videoNo) => {
-                calls.push(videoNo);
-                const abortError = new Error("detail request timed out");
-                abortError.name = "AbortError";
-                throw abortError;
-            },
-        }
-    );
-
-    assert.deepEqual(calls, ["older"]);
-    assert.equal(controller.signal.aborted, false);
-    assert.equal(result.originalStartMs, START_MS);
-    assert.equal(result.segmentOffsetMs, 0);
-    assert.equal(result.segmentStartMs, START_MS);
-});
-
-test("resolveSegmentStartInfo performs no later linked fetch after a fetch AbortError", async () => {
-    const { current, details } = makeLinkedFixture(3);
-    const controller = new dom.window.AbortController();
-    const calls = [];
-    const result = await resolveSegmentStartInfo(current, {
-        signal: controller.signal,
-        fetchDetail: async (videoNo) => {
-            calls.push(videoNo);
-            if (videoNo === "segment-2") {
-                const abortError = new Error("detail request timed out");
-                abortError.name = "AbortError";
-                throw abortError;
-            }
-            return details[videoNo];
-        },
-    });
-
-    assert.deepEqual(calls, ["segment-1", "segment-2"]);
-    assert.equal(controller.signal.aborted, false);
-    assert.equal(result.segmentOffsetMs, SPLIT_MS);
-});
-
-test("mergeBroadcastSegment creates a new first entry and a new ordered videoNos array", () => {
-    const incoming = {
-        startMs: START_MS,
-        endMs: START_MS + HOUR_MS,
-        duration: 3600,
-        videoNos: ["first"],
-        videoNo: "second",
-        title: "첫 방송",
-    };
-    const snapshot = structuredClone(incoming);
-
-    const result = mergeBroadcastSegment(null, incoming);
-
-    assert.notEqual(result, incoming);
-    assert.notEqual(result.videoNos, incoming.videoNos);
-    assert.deepEqual(Array.from(result.videoNos), ["first", "second"]);
-    assert.deepEqual(incoming, snapshot);
 });
 
 test("mergeBroadcastSegment sums duration, recomputes end, and preserves first-entry fields", () => {

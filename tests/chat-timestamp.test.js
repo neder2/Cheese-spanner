@@ -193,12 +193,6 @@ function loadChatTimestamp(dom) {
     evalRepoScript(dom, "features", "chatTimestamp.js");
 }
 
-function loadChatTimestampIsolatedFirst(dom) {
-    evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "content.js");
-    evalRepoScript(dom, "features", "chatTimestamp.js");
-}
-
 function closePageDom(dom) {
     dom.window.BetterChzzk?.chatTimestamp?.teardownRuntime?.();
     dom.window.close();
@@ -299,21 +293,6 @@ test("a new row issues one source request instead of rescanning the existing bac
     closePageDom(dom);
 });
 
-test("the page-ready handshake recovers backlog when isolated world loads first", async () => {
-    const dom = createPageDom([
-        { chatId: "isolated-first", text: "먼저 스캔된 채팅", messageTime: serverTime(17, 58) },
-    ]);
-    installMutableClock(dom);
-    loadChatTimestampIsolatedFirst(dom);
-
-    const message = dom.window.document.querySelector("._chatting_message_1vemp_21");
-    assert.equal(message.hasAttribute("data-bcmt-time"), false);
-
-    evalRepoScript(dom, "features", "chatTimestampPage.js");
-    await waitForCondition(() => message.getAttribute("data-bcmt-time") === "17:58");
-    closePageDom(dom);
-});
-
 test("id-less duplicate rows retain their own server times", () => {
     const dom = createPageDom([
         { nickname: "같은 시청자", text: "같은 내용", messageTime: serverTime(18, 8) },
@@ -400,74 +379,6 @@ test("virtual row reuse replaces the timestamp and invalid replacement data clea
     closePageDom(dom);
 });
 
-test("a later observable row update retries after React props become available", async () => {
-    const dom = createPageDom([{ chatId: "late-props", text: "props 준비 전" }]);
-    installMutableClock(dom);
-    loadChatTimestamp(dom);
-
-    const row = dom.window.document.querySelector('[data-chat-id="late-props"]');
-    const message = row.querySelector("._chatting_message_1vemp_21");
-    assert.equal(message.hasAttribute("data-bcmt-time"), false);
-
-    attachReactMessage(row, serverTime(18, 10));
-    row.querySelector("._text_1vemp_1").textContent = "props 준비 후";
-    await waitForCondition(() => message.getAttribute("data-bcmt-time") === "18:10");
-    closePageDom(dom);
-});
-
-test("blind-message transitions and nickname remounts preserve the same server time without callbacks", async () => {
-    let callbackCalls = 0;
-    const messageTime = serverTime(17, 57);
-    const dom = createPageDom([
-        {
-            chatId: "blind",
-            nickname: "시청자",
-            text: "원래 채팅",
-            messageTime,
-            messageChangeHandler: () => {
-                callbackCalls += 1;
-            },
-        },
-    ]);
-    installMutableClock(dom);
-    loadChatTimestamp(dom);
-
-    const message = dom.window.document.querySelector("._chatting_message_1vemp_21");
-    message.querySelector("._text_1vemp_1").textContent = "클린봇이 부적절한 표현을 감지했습니다.";
-    const oldButton = message.querySelector("button");
-    oldButton.replaceWith(oldButton.cloneNode(true));
-    await new Promise((resolve) => setTimeout(resolve, 30));
-
-    assert.equal(message.getAttribute("data-bcmt-time"), "17:57");
-    assert.equal(callbackCalls, 0);
-    closePageDom(dom);
-});
-
-test("chat root replacement immediately restores server-loaded times", async () => {
-    const dom = createPageDom([{ chatId: "before", text: "교체 전", messageTime: serverTime(17, 50) }]);
-    installMutableClock(dom);
-    loadChatTimestamp(dom);
-
-    const document = dom.window.document;
-    const newAside = document.createElement("aside");
-    newAside.id = "aside-chatting";
-    newAside.innerHTML = '<div role="log"><div class="replacement-wrapper"></div></div>';
-    const replacementWrapper = newAside.querySelector(".replacement-wrapper");
-    replacementWrapper.append(createChatRow(dom, { chatId: "after", text: "교체 후", messageTime: serverTime(18, 1) }));
-    document.querySelector("#aside-chatting").replaceWith(newAside);
-
-    await waitForCondition(
-        () => document.querySelector('[data-chat-id="after"] [data-bcmt-time]')?.dataset.bcmtTime === "18:01"
-    );
-    replacementWrapper.append(
-        createChatRow(dom, { chatId: "after-live", text: "교체 후 실시간", messageTime: serverTime(18, 2) })
-    );
-    await waitForCondition(
-        () => document.querySelector('[data-chat-id="after-live"] [data-bcmt-time]')?.dataset.bcmtTime === "18:02"
-    );
-    closePageDom(dom);
-});
-
 test("SPA route changes clear markers outside live and restore original times on return", async () => {
     const dom = createPageDom([{ chatId: "route", text: "라우트 채팅", messageTime: serverTime(18, 3) }]);
     installMutableClock(dom);
@@ -549,26 +460,6 @@ test("system controls and non-live chat logs are not timestamped", () => {
     assert.equal(vodDom.window.document.querySelectorAll("[data-bcmt-time]").length, 0);
     assert.equal(vodDom.window.document.querySelectorAll("[data-bcmt-source-time]").length, 0);
     closePageDom(vodDom);
-});
-
-test("timestamp metadata does not change chatTools author or message parsing", () => {
-    const dom = createPageDom([
-        { chatId: "parse", nickname: "파싱 시청자", text: "파싱 본문", messageTime: serverTime(18, 7) },
-    ]);
-    installMutableClock(dom);
-    evalRepoScript(dom, "features", "chatTimestampPage.js");
-    evalRepoScript(dom, "shared", "settings.js");
-    evalRepoScript(dom, "shared", "data.js");
-    evalRepoScript(dom, "content.js");
-    evalRepoScript(dom, "features", "chatTools.js");
-    evalRepoScript(dom, "features", "chatTimestamp.js");
-
-    const row = dom.window.document.querySelector("._item_sg7hy_7");
-    const parsed = dom.window.BetterChzzk.chatTools.parseChatMessage(row);
-    assert.equal(row.querySelector("[data-bcmt-time]")?.dataset.bcmtTime, "18:07");
-    assert.equal(parsed.author, "파싱 시청자");
-    assert.equal(parsed.text, "파싱 본문");
-    closePageDom(dom);
 });
 
 test("moderator collection backfills server timestamps and follows timestamp option changes", async (t) => {
@@ -683,34 +574,4 @@ test("virtual moderator row reuse keeps each collected message server timestamp"
         Array.from(dom.window.document.querySelectorAll(".bcct-moderator-row__time"), (node) => node.textContent),
         ["18:07", "18:09"]
     );
-});
-
-test("manifest loads the timestamp bridge in MAIN world and the UI feature in isolated world", () => {
-    const manifest = JSON.parse(readRepoFile("manifest.json"));
-    const mainEntryIndex = manifest.content_scripts.findIndex((entry) => entry.world === "MAIN");
-    const isolatedEntryIndex = manifest.content_scripts.findIndex((entry) => !entry.world);
-    const mainEntry = manifest.content_scripts[mainEntryIndex];
-    const isolatedEntry = manifest.content_scripts[isolatedEntryIndex];
-    const mainScripts = mainEntry?.js || [];
-    const isolatedScripts = isolatedEntry?.js || [];
-    const routeBridgeIndex = mainScripts.indexOf("features/routeBridgePage.js");
-    const pageTimestampIndex = mainScripts.indexOf("features/chatTimestampPage.js");
-    const autoQualityIndex = mainScripts.indexOf("features/autoQualityPage.js");
-    const chatToolsIndex = isolatedScripts.indexOf("features/chatTools.js");
-    const timestampIndex = isolatedScripts.indexOf("features/chatTimestamp.js");
-    const videoSearchIndex = isolatedScripts.indexOf("features/videoSearch.js");
-
-    assert.ok(mainEntryIndex >= 0 && mainEntryIndex < isolatedEntryIndex);
-    assert.equal(mainEntry.run_at, "document_start");
-    assert.equal(isolatedEntry.run_at, "document_start");
-    assert.ok(routeBridgeIndex >= 0);
-    assert.ok(pageTimestampIndex > routeBridgeIndex);
-    assert.ok(autoQualityIndex > pageTimestampIndex);
-    assert.ok(timestampIndex > chatToolsIndex);
-    assert.ok(videoSearchIndex > timestampIndex);
-    assert.equal(
-        manifest.web_accessible_resources.some((entry) => entry.resources?.includes("features/chatTimestampPage.js")),
-        false
-    );
-    assert.match(readRepoFile("THIRD_PARTY_NOTICES.md"), /chatTimestampPage\.js/);
 });

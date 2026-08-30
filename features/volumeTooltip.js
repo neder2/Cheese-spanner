@@ -8,10 +8,12 @@
  *       표시하고, video의 volumechange 이벤트를 구독해 텍스트를 갱신한다. 전체화면 시 fullscreenElement로 이동.
  *   (2) 오디오 컴프레서(cheese-knife 기반, 출처 주석은 코드 내 유지) — 볼륨 컨트롤 옆에 토글 버튼을 삽입하고,
  *       Web Audio API로 MediaElementSource → DynamicsCompressor → Gain 그래프를 구성/해제한다. MutationObserver와
- *       startPageChangeDetection으로 플레이어 재마운트에 맞춰 버튼과 그래프 상태를 재동기화한다.
+ *       startPageChangeDetection으로 플레이어 재마운트에 맞춰 버튼과 그래프 상태를 재동기화하며,
+ *       chrome.storage.local에 사용자가 마지막으로 선택한 켜짐 상태를 저장한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions, injectStyleOnce,
  *   getMainVideoElement, createMutationObserverSync, createThrottledDomSync, isPlaybackRoute, isVisible,
- *   mutationMatchesSelector, onReady, startPageChangeDetection), 브라우저 Web Audio API(AudioContext).
+ *   mutationMatchesSelector, onReady, startPageChangeDetection, startStorageChangeListener, storageGet, storageSet),
+ *   브라우저 Web Audio API(AudioContext), chrome.storage.local.
  * 옵션 키: volumeTooltipEnabled, audioCompressorEnabled, audioCompressorThreshold, audioCompressorKnee,
  *   audioCompressorRatio, audioCompressorAttack, audioCompressorRelease, audioCompressorMakeupGain.
  * DOM 마커: #betterchzzk-volume-tooltip, #betterchzzk-volume-tooltip-style, #betterchzzk-audio-compressor,
@@ -209,6 +211,7 @@
 (() => {
     const BUTTON_ID = "betterchzzk-audio-compressor";
     const STYLE_ID = "betterchzzk-audio-compressor-style";
+    const ACTIVE_STORAGE_KEY = "betterchzzk:audio-compressor-active";
     const RESUME_EVENTS = ["pointerdown", "keydown", "click"];
     const VOLUME_CONTROL_SELECTOR = [
         ".pzp-pc__volume-control",
@@ -236,10 +239,16 @@
         mutationMatchesSelector,
         onReady,
         startPageChangeDetection,
+        startStorageChangeListener,
+        storageGet,
+        storageSet,
     } = BetterChzzk.utils;
 
     const graphs = new WeakMap();
     let featureOptions = normalizeOptions();
+    let optionsReady = false;
+    let compressorStateReady = false;
+    let compressorStateGeneration = 0;
     let compressorActive = false;
     let activeVideo = null;
     let buttonEl = null;
@@ -253,6 +262,40 @@
 
     function compressorEnabled() {
         return featureEnabled() && compressorActive;
+    }
+
+    function applyCompressorActive(active) {
+        compressorActive = active === true;
+        compressorStateReady = true;
+        syncState();
+    }
+
+    function setCompressorActive(active) {
+        const nextActive = Boolean(active);
+        compressorStateGeneration += 1;
+        compressorActive = nextActive;
+        compressorStateReady = true;
+        syncState();
+        void storageSet(globalThis.chrome?.storage?.local, { [ACTIVE_STORAGE_KEY]: nextActive }).catch(() => {});
+    }
+
+    function restoreCompressorActive() {
+        const generation = ++compressorStateGeneration;
+        void storageGet(globalThis.chrome?.storage?.local, ACTIVE_STORAGE_KEY)
+            .then((data) => {
+                if (generation !== compressorStateGeneration) return;
+                applyCompressorActive(data?.[ACTIVE_STORAGE_KEY]);
+            })
+            .catch(() => {
+                if (generation !== compressorStateGeneration) return;
+                applyCompressorActive(false);
+            });
+    }
+
+    function handleCompressorStorageChange(changes, areaName) {
+        if (areaName !== "local" || !Object.prototype.hasOwnProperty.call(changes, ACTIVE_STORAGE_KEY)) return;
+        compressorStateGeneration += 1;
+        applyCompressorActive(changes[ACTIVE_STORAGE_KEY]?.newValue);
     }
 
     function visibleArea(el) {
@@ -571,8 +614,7 @@
                 event.preventDefault();
                 event.stopPropagation();
                 event.stopImmediatePropagation();
-                compressorActive = !compressorActive && featureEnabled();
-                syncState();
+                setCompressorActive(!compressorActive && featureEnabled());
             },
             true
         );
@@ -616,20 +658,23 @@
     }
 
     function syncDisabledState() {
-        compressorActive = false;
         removeButton();
         bypassActiveGraph();
     }
 
     function syncState() {
+        if (!optionsReady || !compressorStateReady) return;
         if (!featureEnabled()) {
             syncDisabledState();
             return;
         }
-        if (findExternalCompressor()) compressorActive = false;
+        if (findExternalCompressor()) {
+            removeButton();
+            bypassActiveGraph();
+            return;
+        }
         ensureButton();
         if (!isPlaybackRoute()) {
-            compressorActive = false;
             bypassActiveGraph();
             return;
         }
@@ -701,8 +746,12 @@
         });
     }
 
+    startStorageChangeListener(handleCompressorStorageChange);
+    restoreCompressorActive();
+
     bindFeatureOptions((options) => {
         featureOptions = options;
+        optionsReady = true;
         installRuntime();
         syncState();
     });

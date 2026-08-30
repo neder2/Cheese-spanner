@@ -5,14 +5,15 @@
  * 하는 일: 팔로잉 링크는 tooltip 미리보기를 띄우고, categoryTools가 필터 결과로 만든 복제 카드는
  *   auto-play-info의 실제 HLS를 썸네일 안에서 재생한다. 네이티브 목록 미리보기는 치지직 플레이어를
  *   그대로 사용한다. 옵션이 켜진 상태에서 우클릭하면 팔로잉은 소리를 토글하고 목록 미리보기는
- *   소리를 켜면서 CSS로 확대한다. 페이지 이동·포인터 이탈·DOM 제거 시 요청과 플레이어를 정리한다.
+ *   소리를 켜면서 CSS로 확대한다. 영상 좌측 하단에는 소리 상태 아이콘을 유지하고, 우클릭 때
+ *   소리 켜짐/꺼짐 문구를 잠깐 펼친다. 페이지 이동·포인터 이탈·DOM 제거 시 요청과 플레이어를 정리한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
  *   fetchJson, injectStyleOnce, normalizeChzzkImageUrl, normalizeChzzkMediaUrl, normSpace, onReady,
  *   startPageChangeDetection, storageSet), vendor/hls.light.min.js가 제공하는 전역 window.Hls.
  * 옵션 키: followingPreviewTooltipEnabled, followingPreviewSoundEnabled,
  *   followingPreviewVolumePercent, livePreviewRightClickSoundEnabled.
  * DOM 마커: #betterchzzk-following-preview 툴팁, data-bcfp-tooltip/data-bcfp-active/
- *   data-bcfp-player-mount/data-bcfp-player-state 속성, .bcfp-* 클래스.
+ *   data-bcfp-player-mount/data-bcfp-player-state/data-bcfp-sound-feedback 속성, .bcfp-* 클래스.
  * 통신: 우클릭으로 바꾼 팔로잉 소리 선호도를 chrome.storage.sync에 저장한다.
  *   livePreviewFastHoverPage.js에는 DOM attribute와 CustomEvent로 활성 상태를 전달한다.
  * 구조:
@@ -94,6 +95,8 @@
     const PLAYER_STATE_ATTR = "data-bcfp-player-state";
     const FORCE_MUTED_ATTR = "data-bcfp-force-muted";
     const LIST_EXPANDED_ATTR = "data-bcfp-list-expanded";
+    const SOUND_FEEDBACK_ATTR = "data-bcfp-sound-feedback";
+    const SOUND_FEEDBACK_DURATION_MS = 1000;
     const CATEGORY_CARD_ATTR = "data-bcgt-card";
     const CATEGORY_INJECTED_ATTR = "data-bcgt-injected";
     const CATEGORY_LIVE_ID_ATTR = "data-bcgt-live-id";
@@ -209,6 +212,95 @@
 #${TOOLTIP_ID} .bcfp-sound-unlock:focus-visible{
   outline:2px solid #00FFA3;
   outline-offset:2px;
+}
+.bcfp-sound-feedback-host{
+  position:relative !important;
+}
+.bcfp-sound-feedback{
+  position:absolute;
+  left:8px;
+  bottom:8px;
+  z-index:2147483647;
+  display:flex;
+  align-items:center;
+  gap:0;
+  min-width:26px;
+  min-height:26px;
+  padding:5px;
+  box-sizing:border-box;
+  border:1px solid rgba(255,255,255,0.3);
+  border-radius:999px;
+  background:rgba(5,7,10,0.78);
+  color:#FFFFFF;
+  box-shadow:0 3px 12px rgba(0,0,0,0.34);
+  backdrop-filter:blur(6px);
+  pointer-events:auto;
+  font-family:system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size:12px;
+  font-weight:800;
+  line-height:16px;
+  white-space:nowrap;
+  transition:gap 180ms ease, padding-right 180ms ease, background-color 180ms ease;
+}
+.bcfp-sound-feedback::after{
+  content:attr(data-tooltip);
+  position:absolute;
+  left:0;
+  bottom:calc(100% + 6px);
+  width:max-content;
+  max-width:180px;
+  padding:5px 7px;
+  border:1px solid rgba(255,255,255,0.24);
+  border-radius:6px;
+  background:rgba(5,7,10,0.94);
+  color:#FFFFFF;
+  box-shadow:0 3px 12px rgba(0,0,0,0.34);
+  font-size:11px;
+  font-weight:700;
+  line-height:15px;
+  opacity:0;
+  visibility:hidden;
+  transform:translateY(3px);
+  transition:opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+}
+.bcfp-sound-feedback:not([data-expanded="1"]):hover::after{
+  opacity:1;
+  visibility:visible;
+  transform:translateY(0);
+  transition-delay:180ms;
+}
+.bcfp-sound-feedback .bcfp-sound-feedback-icon{
+  display:block;
+  width:16px;
+  height:16px;
+  flex:0 0 auto;
+  color:#D8DCE3;
+}
+.bcfp-sound-feedback[data-sound="on"] .bcfp-sound-feedback-icon{
+  color:#00FFA3;
+}
+.bcfp-sound-feedback .bcfp-sound-feedback-label{
+  display:block;
+  max-width:0;
+  overflow:hidden;
+  opacity:0;
+  transform:translateX(-4px);
+  transition:max-width 180ms ease, opacity 120ms ease, transform 180ms ease;
+}
+.bcfp-sound-feedback[data-expanded="1"]{
+  gap:5px;
+  padding-right:8px;
+  background:rgba(5,7,10,0.88);
+}
+.bcfp-sound-feedback[data-expanded="1"] .bcfp-sound-feedback-label{
+  max-width:80px;
+  opacity:1;
+  transform:translateX(0);
+}
+@media (prefers-reduced-motion: reduce){
+  .bcfp-sound-feedback,
+  .bcfp-sound-feedback::after,
+  .bcfp-sound-feedback .bcfp-sound-feedback-label{transition:none;}
 }
 #${TOOLTIP_ID} .bcfp-body{
   display:flex;
@@ -345,6 +437,9 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     let injectedDisconnectObserver = null;
     let activeListExpansion = null;
     let listExpansionObserver = null;
+    let soundFeedbackEl = null;
+    let soundFeedbackSurface = null;
+    let soundFeedbackTimer = 0;
 
     const previewCache = new Map();
     const pendingRequests = new Map();
@@ -1136,6 +1231,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
         if (attemptedSound && isAutoplayBlockedError(error)) {
             applyPreviewAudioState(video, false);
+            syncSoundFeedbackForVideo(video);
             showSoundUnlockBadge(video, requestId);
             runPreviewPlay(video, requestId, false);
             return;
@@ -1169,6 +1265,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         if (activeVideoRequestId !== requestId || activeVideoSession?.video !== video || !video.isConnected) return;
 
         applyPreviewAudioState(video, true, { ensureAudible: true });
+        syncSoundFeedbackForVideo(video);
         runPreviewPlay(video, requestId, true);
     }
 
@@ -1179,6 +1276,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
         const soundEnabled = shouldStartPreviewWithSound(video);
         applyPreviewAudioState(video, soundEnabled);
+        syncSoundFeedbackForVideo(video);
         if (!soundEnabled) removeSoundUnlockBadge(video);
         runPreviewPlay(video, requestId, soundEnabled);
     }
@@ -1310,7 +1408,6 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
             const video = document.createElement("video");
             video.className = "bcfp-player";
-            video.title = `${meta.channelName || meta.channelId} \uB77C\uC774\uBE0C \uBBF8\uB9AC\uBCF4\uAE30`;
             applyPreviewAudioState(video, shouldStartPreviewWithSound(video));
             video.autoplay = true;
             video.controls = false;
@@ -1332,6 +1429,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         const media = createMedia(meta);
         if (existingMedia) existingMedia.replaceWith(media);
         else tip.prepend(media);
+        syncSoundFeedbackForVideo(media.querySelector("video.bcfp-player"));
 
         if (meta.channelId) tip.dataset.channelId = meta.channelId;
         else delete tip.dataset.channelId;
@@ -1435,7 +1533,6 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         info.host.querySelectorAll("video.bcfp-list-player").forEach((video) => video.remove());
         const video = document.createElement("video");
         video.className = "bcfp-player bcfp-list-player";
-        video.title = `${meta.channelName || info.channelId} 라이브 미리보기`;
         video.autoplay = true;
         video.controls = false;
         video.playsInline = true;
@@ -1445,6 +1542,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         applyPreviewAudioState(video, false);
         info.video = video;
         info.host.appendChild(video);
+        syncSoundFeedbackForVideo(video);
         requestPreviewVideo(video, meta, { playbackDelayMs: 0 });
     }
 
@@ -1457,6 +1555,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         activeInjectedInfo = null;
         if (!info) return;
 
+        clearSoundFeedback(info.card);
         if (activeListExpansion?.card === info.card) restoreListExpansion();
         info.card.removeAttribute(ACTIVE_ATTR);
         const players = Array.from(
@@ -1607,6 +1706,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         activeInfo = null;
 
         if (tooltip) {
+            clearSoundFeedback(tooltip);
             tooltip.removeAttribute("data-show");
             tooltip.removeAttribute("data-state");
             delete tooltip.dataset.channelId;
@@ -1741,11 +1841,11 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         stopListExpansionObserver();
         if (!state) return;
 
+        if (!state.surface?.isConnected) clearSoundFeedback(state.surface);
         state.surface?.removeAttribute(LIST_EXPANDED_ATTR);
         state.surface?.style?.removeProperty("--bcfp-expand-origin");
         restoreListPreviewQuality(state.quality);
         restoreVideoAudioState(state.video, state.audio);
-        if (state.video?.isConnected) state.video.title = state.title;
     }
 
     function getExpansionOrigin(surface) {
@@ -1765,14 +1865,12 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             volume: video.volume,
         };
         const quality = getListExpansionQualityState(video);
-        const title = video.title;
         const soundApplied = isRightClickSoundEnabled();
 
-        activeListExpansion = { audio, card, quality, soundApplied, surface, title, video };
+        activeListExpansion = { audio, card, quality, soundApplied, surface, video };
         startListExpansionObserver(activeListExpansion);
         surface.style.setProperty("--bcfp-expand-origin", getExpansionOrigin(surface));
         surface.setAttribute(LIST_EXPANDED_ATTR, "1");
-        video.title = "우클릭으로 미리보기 집중 모드 끄기";
         applyListFocusQuality(quality);
         if (!soundApplied) return;
 
@@ -1787,6 +1885,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         if (!state?.soundApplied) return;
         state.soundApplied = false;
         restoreVideoAudioState(state.video, state.audio);
+        clearSoundFeedback(state.surface);
     }
 
     function syncAudibleActivePreviewVolume() {
@@ -1811,6 +1910,101 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         void storageSet(globalThis.chrome?.storage?.sync, { followingPreviewSoundEnabled: enabled }).catch(() => {});
     }
 
+    function clearSoundFeedback(container = null) {
+        if (container && soundFeedbackEl && !container.contains(soundFeedbackEl)) return;
+        if (soundFeedbackTimer) {
+            window.clearTimeout(soundFeedbackTimer);
+            soundFeedbackTimer = 0;
+        }
+        soundFeedbackSurface?.classList.remove("bcfp-sound-feedback-host");
+        soundFeedbackEl?.remove();
+        soundFeedbackEl = null;
+        soundFeedbackSurface = null;
+    }
+
+    function createSoundFeedbackIcon(soundOn) {
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.classList.add("bcfp-sound-feedback-icon");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("aria-hidden", "true");
+
+        const speaker = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        speaker.setAttribute("fill", "currentColor");
+        speaker.setAttribute("d", "M4 9v6h4l5 4V5L8 9H4Z");
+        svg.appendChild(speaker);
+
+        const state = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        state.setAttribute("fill", "none");
+        state.setAttribute("stroke", "currentColor");
+        state.setAttribute("stroke-linecap", "round");
+        state.setAttribute("stroke-linejoin", "round");
+        state.setAttribute("stroke-width", "2");
+        state.setAttribute("d", soundOn ? "M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11" : "m16 9 5 5m0-5-5 5");
+        svg.appendChild(state);
+        return svg;
+    }
+
+    function updateSoundFeedbackState(feedback, soundOn) {
+        feedback.setAttribute("data-sound", soundOn ? "on" : "off");
+        feedback.setAttribute("data-tooltip", soundOn ? "우클릭으로 소리 끄기" : "우클릭으로 소리 켜기");
+        feedback.setAttribute(
+            "aria-label",
+            soundOn ? "미리보기 소리 켜짐, 우클릭으로 소리 끄기" : "미리보기 소리 꺼짐, 우클릭으로 소리 켜기"
+        );
+        feedback.querySelector(".bcfp-sound-feedback-icon")?.replaceWith(createSoundFeedbackIcon(soundOn));
+        const label = feedback.querySelector(".bcfp-sound-feedback-label");
+        if (label) label.textContent = soundOn ? "소리 켜짐" : "소리 꺼짐";
+    }
+
+    function ensureSoundFeedback(surface, soundOn) {
+        if (!isRightClickSoundEnabled() || !(surface instanceof HTMLElement) || !surface.isConnected) return null;
+        if (soundFeedbackSurface !== surface || !soundFeedbackEl?.isConnected) clearSoundFeedback();
+
+        if (!soundFeedbackEl) {
+            const feedback = document.createElement("div");
+            feedback.className = "bcfp-sound-feedback";
+            feedback.setAttribute(SOUND_FEEDBACK_ATTR, "1");
+            feedback.setAttribute("aria-atomic", "true");
+
+            const label = document.createElement("span");
+            label.className = "bcfp-sound-feedback-label";
+            feedback.append(createSoundFeedbackIcon(soundOn), label);
+
+            const surfacePosition = window.getComputedStyle(surface).position;
+            if (!surfacePosition || surfacePosition === "static") {
+                surface.classList.add("bcfp-sound-feedback-host");
+            }
+            surface.appendChild(feedback);
+            soundFeedbackEl = feedback;
+            soundFeedbackSurface = surface;
+        }
+
+        updateSoundFeedbackState(soundFeedbackEl, soundOn);
+        return soundFeedbackEl;
+    }
+
+    function syncSoundFeedbackForVideo(video) {
+        if (!(video instanceof HTMLVideoElement) || !video.isConnected) return null;
+        const card = findLiveListCard(video);
+        const surface = video.closest(".bcfp-media") || (card ? getListPreviewSurface(card, video) : null);
+        return ensureSoundFeedback(surface, !video.muted && video.volume > 0);
+    }
+
+    function showSoundFeedback(surface, soundOn) {
+        const feedback = ensureSoundFeedback(surface, soundOn);
+        if (!feedback) return;
+
+        feedback.setAttribute("role", "status");
+        feedback.setAttribute("aria-live", "polite");
+        feedback.setAttribute("data-expanded", "1");
+        if (soundFeedbackTimer) window.clearTimeout(soundFeedbackTimer);
+        soundFeedbackTimer = window.setTimeout(() => {
+            if (soundFeedbackEl !== feedback) return;
+            soundFeedbackTimer = 0;
+            feedback.removeAttribute("data-expanded");
+        }, SOUND_FEEDBACK_DURATION_MS);
+    }
+
     function toggleFollowingPreviewSound(video) {
         const soundOn = !video.muted && video.volume > 0;
         const nextSoundOn = !soundOn;
@@ -1820,9 +2014,9 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         } else if (!nextSoundOn) {
             removeSoundUnlockBadge(video);
         }
-        video.title = nextSoundOn ? "우클릭으로 미리보기 소리 끄기" : "우클릭으로 미리보기 소리 켜기";
         tooltip?.setAttribute("data-sound", nextSoundOn ? "on" : "off");
         persistFollowingPreviewSound(nextSoundOn);
+        return nextSoundOn;
     }
 
     function handleContextMenu(event) {
@@ -1836,7 +2030,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             if (!media || !followingTip.contains(media) || !isVisiblePreviewVideo(video)) return;
             event.preventDefault();
             event.stopPropagation();
-            toggleFollowingPreviewSound(video);
+            showSoundFeedback(media, toggleFollowingPreviewSound(video));
             return;
         }
 
@@ -1850,10 +2044,15 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         event.preventDefault();
         event.stopPropagation();
         if (activeListExpansion?.video === video) {
+            const soundApplied = activeListExpansion.soundApplied;
             restoreListExpansion();
+            if (soundApplied) showSoundFeedback(surface, !video.muted && video.volume > 0);
             return;
         }
         expandListPreview(card, video, surface);
+        if (activeListExpansion?.video === video && activeListExpansion.soundApplied) {
+            showSoundFeedback(surface, !video.muted && video.volume > 0);
+        }
     }
 
     function handleKeyDown(event) {
@@ -1866,6 +2065,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     }
 
     function handlePageChange() {
+        clearSoundFeedback();
         restoreListExpansion();
         hideInjectedPreview();
         hidePreview();
@@ -1878,13 +2078,26 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             return;
         }
         const info = resolveHoverInfo(event.target);
-        if (!info) return;
+        if (!info) {
+            const card = findLiveListCard(event.target);
+            const video = card ? findListPreviewVideo(card, event.target) : null;
+            if (video) syncSoundFeedbackForVideo(video);
+            return;
+        }
         hideInjectedPreview();
         scheduleOpen(info);
     }
 
     function handlePointerOut(event) {
         const related = event.relatedTarget;
+        if (
+            soundFeedbackSurface?.contains(event.target) &&
+            !(related instanceof Node && soundFeedbackSurface.contains(related)) &&
+            !tooltip?.contains(soundFeedbackSurface) &&
+            !activeInjectedInfo?.card?.contains(soundFeedbackSurface)
+        ) {
+            clearSoundFeedback(soundFeedbackSurface);
+        }
         if (activeListExpansion && !(related instanceof Node && activeListExpansion.surface?.contains(related))) {
             restoreListExpansion();
         }
@@ -1915,6 +2128,10 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         hidePreview();
     }
 
+    function handlePreviewPlaying(event) {
+        if (event.target instanceof HTMLVideoElement) syncSoundFeedbackForVideo(event.target);
+    }
+
     function handleViewportChange() {
         restoreListExpansion();
         if (activeInjectedInfo && (!activeInjectedInfo.card.isConnected || !activeInjectedInfo.host.isConnected)) {
@@ -1934,6 +2151,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         document.addEventListener("pointerdown", handlePointerDown, true);
         document.addEventListener("contextmenu", handleContextMenu, true);
         document.addEventListener("keydown", handleKeyDown, true);
+        document.addEventListener("playing", handlePreviewPlaying, true);
         window.addEventListener("scroll", handleViewportChange, true);
         window.addEventListener("resize", handleViewportChange);
         removePageChangeDetection = startPageChangeDetection(handlePageChange);
@@ -1948,6 +2166,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         document.removeEventListener("pointerdown", handlePointerDown, true);
         document.removeEventListener("contextmenu", handleContextMenu, true);
         document.removeEventListener("keydown", handleKeyDown, true);
+        document.removeEventListener("playing", handlePreviewPlaying, true);
         window.removeEventListener("scroll", handleViewportChange, true);
         window.removeEventListener("resize", handleViewportChange);
 
@@ -1957,6 +2176,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         }
 
         handlePageChange();
+        clearSoundFeedback();
         if (tooltip) {
             tooltip.remove();
             tooltip = null;
@@ -1970,6 +2190,9 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         publishFastHoverOptions();
         if (previousOptions.livePreviewRightClickSoundEnabled !== false && !isRightClickSoundEnabled()) {
             disableListExpansionSound();
+            clearSoundFeedback();
+        } else if (previousOptions.livePreviewRightClickSoundEnabled === false && isRightClickSoundEnabled()) {
+            syncSoundFeedbackForVideo(activeVideoSession?.video || activeInjectedInfo?.video);
         }
         if (previousOptions.followingPreviewVolumePercent !== options.followingPreviewVolumePercent) {
             syncAudibleActivePreviewVolume();

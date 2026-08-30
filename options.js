@@ -8,8 +8,8 @@
  * 하는 일: chrome.storage.sync에서 옵션을 불러와 폼에 채우고, 저장 버튼을 누르면 현재 값을 저장한다.
  * 옵션 간 의존 관계(data-depends-on)에 따라 하위 컨트롤을 비활성화하고, 탭 전환과
  * 설정 검색(검색어로 카드 항목 필터링), 기본값 복원 버튼을 처리한다.
- * 의존: BetterChzzkSettings(shared/settings.js가 노출하는 DEFAULT_OPTIONS, FEATURE_KEYS,
- * OPTION_KEYS, normalizeOptions), globalThis.chrome.storage.sync, globalThis.chrome.permissions,
+ * 의존: BetterChzzkSettings(shared/settings.js가 노출하는 DEFAULT_OPTIONS, OPTION_KEYS,
+ * normalizeOptions), globalThis.chrome.storage.sync, globalThis.chrome.permissions,
  * window.localStorage.
  * 통신: chrome.storage.sync에 각 data-option 키를 읽고 쓴다(다른 파일들이 같은 키를 구독해 기능을
  * 켜고 끔). followingPreviewTooltipEnabled를 켤 때만 optional_host_permissions로 선언된
@@ -26,7 +26,6 @@ const messageEl = document.getElementById("message");
 
 const {
     DEFAULT_OPTIONS,
-    FEATURE_KEYS,
     OPTION_KEYS,
     STORAGE_OPTION_KEYS,
     getPlaybackSpeedShortcutLabel,
@@ -104,10 +103,6 @@ function areOptionsEqual(a, b) {
     return OPTION_KEYS.every((key) => a[key] === b[key]);
 }
 
-function getEnabledFeatureCount(options) {
-    return FEATURE_KEYS.filter((key) => Boolean(options[key])).length;
-}
-
 function dependenciesMet(group, options) {
     const keys = String(group.dataset.dependsOn || "")
         .split(/\s+/)
@@ -139,16 +134,16 @@ function applyControlStates(options) {
     saveButton.disabled = optionsUnavailable || saveInFlight || !savedOptions || areOptionsEqual(options, savedOptions);
 }
 
-function renderNotice(options, state) {
+function renderNotice(state) {
     const label = NOTICE_STATE_LABELS[state] || NOTICE_STATE_LABELS.saved;
     noticeEl.dataset.state = state;
-    noticeEl.textContent = options ? `${label} · 기능 ${getEnabledFeatureCount(options)}개` : label;
+    noticeEl.textContent = label;
 }
 
 function renderPageState(options, state = "saved") {
     applyDependencies(options);
     applyControlStates(options);
-    renderNotice(options, state);
+    renderNotice(state);
 }
 
 function renderOptions(options, { state = "saved" } = {}) {
@@ -346,7 +341,7 @@ resetButton.addEventListener("click", () => {
 });
 
 if (storage) {
-    renderNotice(null, "loading");
+    renderNotice("loading");
     applyControlStates(readOptionsFromForm());
     storage.get(STORAGE_OPTION_KEYS, (data) => {
         const error = globalThis.chrome?.runtime?.lastError;

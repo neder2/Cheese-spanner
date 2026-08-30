@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="ko" data-theme="dark">
+    <head>
+        <meta charset="utf-8" />
+        <title>팔로잉 핀 배치 — 로컬 검증 화면</title>
+        <style>
+            :root {
+                color-scheme: dark;
+                --surface: #141517;
+                --text: #b5b9c5;
+                --Content-Accent-Strong: #00c98b;
+            }
+            :root[data-theme="light"] {
+                color-scheme: light;
+                --surface: #fff;
+                --text: #30343c;
+                --Content-Accent-Strong: #087a4b;
+            }
+            body {
+                margin: 24px;
+                background: var(--surface);
+                color: var(--text);
+                font:
+                    14px Arial,
+                    sans-serif;
+            }
+            #sidebar {
+                width: 240px;
+            }
+            header {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            header strong {
+                margin-right: auto;
+            }
+            ul {
+                list-style: none;
+                padding: 0;
+            }
+            li {
+                padding: 12px 4px;
+            }
+            .item {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                position: relative;
+            }
+            .profile {
+                width: 32px;
+                height: 32px;
+                background: #5b6475;
+                border-radius: 50%;
+                flex-shrink: 0;
+            }
+            /* 2026-08-28 public sidebar: information block > strong.name flex row > ellipsis + badge. */
+            .information {
+                flex: 1;
+                min-width: 0;
+                overflow: hidden;
+            }
+            .name {
+                display: flex;
+                align-items: center;
+                min-width: 0;
+                line-height: 20px;
+            }
+            .ellipsis {
+                display: flex;
+                min-width: 0;
+            }
+            .text {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .badge {
+                flex-shrink: 0;
+                margin-left: 4px;
+                color: #00b99a;
+            }
+            .description {
+                display: block;
+                font-size: 12px;
+                margin-top: 2px;
+            }
+            .count {
+                flex-shrink: 0;
+                font-style: normal;
+            }
+            .item-link {
+                position: absolute;
+                inset: 0;
+            }
+        </style>
+    </head>
+    <body>
+        <p>로컬 검증용 예시 채널 · 실제 계정 데이터가 아니에요.</p>
+        <button id="theme" type="button">라이트/다크 전환</button>
+        <aside id="sidebar">
+            <nav>
+                <header><strong>팔로잉 채널</strong><button type="button" aria-label="새로고침">↻</button></header>
+                <ul>
+                    <li id="short-row">
+                        <div class="item">
+                            <span class="profile"></span>
+                            <div class="information">
+                                <strong class="name"
+                                    ><span class="ellipsis"><span class="text">예시 채널</span></span
+                                    ><span class="badge" aria-label="인증 마크">◆</span></strong
+                                ><span class="description">talk</span>
+                            </div>
+                            <em class="count">321</em
+                            ><a class="item-link" href="/live/pinned-short" aria-label="예시 채널"></a>
+                        </div>
+                    </li>
+                    <li id="long-row">
+                        <div class="item">
+                            <span class="profile"></span>
+                            <div class="information">
+                                <strong class="name"
+                                    ><span class="ellipsis"
+                                        ><span class="text">아주 긴 이름의 고정된 예시 채널</span></span
+                                    ><span class="badge" aria-label="인증 마크">◆</span></strong
+                                ><span class="description">게임</span>
+                            </div>
+                            <em class="count">1,234</em
+                            ><a
+                                class="item-link"
+                                href="/live/pinned-long"
+                                aria-label="아주 긴 이름의 고정된 예시 채널"
+                            ></a>
+                        </div>
+                    </li>
+                </ul>
+            </nav>
+        </aside>
+        <script>
+            const fixtureOptions = {
+                followingPinEnabled: true,
+                betterchzzkPinnedFollowingChannelIds: ["pinned-short", "pinned-long"],
+            };
+            window.chrome = {
+                runtime: {},
+                storage: {
+                    sync: {
+                        get(keys, callback) {
+                            callback(fixtureOptions);
+                        },
+                        set(values, callback) {
+                            Object.assign(fixtureOptions, values);
+                            callback?.();
+                        },
+                    },
+                    onChanged: { addListener() {}, removeListener() {} },
+                },
+            };
+            document.getElementById("theme").addEventListener("click", () => {
+                document.documentElement.dataset.theme =
+                    document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+            });
+        </script>
+        <script src="/shared/settings.js"></script>
+        <script src="/shared/data.js"></script>
+        <script src="/shared/selectors.js"></script>
+        <script src="/content.js"></script>
+        <script src="/features/sidebarCustomization.js"></script>
+    </body>
+</html>
