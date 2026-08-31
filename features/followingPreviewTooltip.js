@@ -35,6 +35,8 @@
     const TOOLTIP_ID = "betterchzzk-following-preview";
     const TOOLTIP_ATTR = "data-bcfp-tooltip";
     const ACTIVE_ATTR = "data-bcfp-active";
+    const HOVER_BRIDGE_ATTR = "data-bcfp-hover-bridge";
+    const COLLAPSED_SOURCE_ROW_ATTR = "data-bcsf-source-row";
     const LIVE_LINK_SELECTOR = "a[href*='/live/']";
     const MAIN_CONTENT_SELECTOR = "main, [role='main'], #layout-body";
     const FOLLOWING_HREF_RE = /(^|\/)following(?:[/?#]|$)/i;
@@ -131,6 +133,12 @@
   box-sizing:border-box;
 }
 #${TOOLTIP_ID}[data-show="1"]{display:block;}
+[${HOVER_BRIDGE_ATTR}="1"]{
+  position:fixed;
+  background:transparent;
+  pointer-events:auto;
+  z-index:2147483647;
+}
 #${TOOLTIP_ID} .bcfp-media{
   position:relative;
   aspect-ratio:16 / 9;
@@ -454,6 +462,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     let featureOptions = BetterChzzkSettings.normalizeOptions();
     let listenersInstalled = false;
     let tooltip = null;
+    let hoverBridge = null;
     let activeInfo = null;
     let pendingInfo = null;
     let openTimer = 0;
@@ -1048,6 +1057,45 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         document.body.appendChild(el);
         tooltip = el;
         return el;
+    }
+
+    function clearHoverBridge() {
+        hoverBridge?.remove();
+        hoverBridge = null;
+    }
+
+    function syncHoverBridge(anchorRect, tipRect) {
+        if (!activeInfo?.item?.hasAttribute(COLLAPSED_SOURCE_ROW_ATTR)) {
+            clearHoverBridge();
+            return;
+        }
+
+        let left = 0;
+        let right = 0;
+        if (tipRect.left >= anchorRect.right) {
+            left = anchorRect.right;
+            right = tipRect.left;
+        } else if (tipRect.right <= anchorRect.left) {
+            left = tipRect.right;
+            right = anchorRect.left;
+        }
+        const top = Math.max(anchorRect.top, tipRect.top);
+        const bottom = Math.min(anchorRect.bottom, tipRect.bottom);
+        if (right <= left || bottom <= top) {
+            clearHoverBridge();
+            return;
+        }
+
+        if (!hoverBridge?.isConnected) {
+            hoverBridge = document.createElement("div");
+            hoverBridge.setAttribute(HOVER_BRIDGE_ATTR, "1");
+            hoverBridge.setAttribute("aria-hidden", "true");
+            document.body.appendChild(hoverBridge);
+        }
+        hoverBridge.style.left = `${Math.round(left)}px`;
+        hoverBridge.style.top = `${Math.round(top)}px`;
+        hoverBridge.style.width = `${Math.round(right - left)}px`;
+        hoverBridge.style.height = `${Math.round(bottom - top)}px`;
     }
 
     function clearPlayerStartTimer() {
@@ -1659,6 +1707,12 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         tooltip.style.left = `${Math.round(left)}px`;
         tooltip.style.top = `${Math.round(top)}px`;
         tooltip.style.visibility = "";
+        syncHoverBridge(anchorRect, {
+            bottom: top + height,
+            left,
+            right: left + width,
+            top,
+        });
     }
 
     function clearOpenTimer() {
@@ -1734,6 +1788,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 
     function hidePreview() {
         clearOpenTimer();
+        clearHoverBridge();
         clearPreviewFetchTimer();
         abortActiveFetch();
         stopElapsedTimer();
@@ -2198,6 +2253,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         const current = activeInfo || pendingInfo;
         if (related instanceof Node && current.item?.contains(related)) return;
         if (related instanceof Node && tooltip?.contains(related)) return;
+        if (related instanceof Node && hoverBridge?.contains(related)) return;
 
         const movedToSameItem = related instanceof Element && resolveHoverInfo(related)?.item === current.item;
         if (movedToSameItem) return;
@@ -2208,6 +2264,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
     function handleTooltipPointerLeave(event) {
         const related = event.relatedTarget;
         if (related instanceof Node && activeInfo?.item?.contains(related)) return;
+        if (related instanceof Node && hoverBridge?.contains(related)) return;
         hidePreview();
     }
 

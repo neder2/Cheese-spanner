@@ -189,6 +189,52 @@ test("following pins preserve native row DOM and never request a replacement lis
     assert.ok(manifest.content_scripts.every((entry) => !entry.js.includes("features/followingSnapshotPage.js")));
 });
 
+test("collapsed pinned source rows format viewer counts without a name suffix", async (t) => {
+    const pinnedChannelId = "channel-pinned";
+    const chrome = createFakeChrome({ [STORAGE_KEY]: [pinnedChannelId] });
+    const dom = createSidebarDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    const list = document.getElementById("followingList");
+
+    document.querySelector("#offlineB a").href = "/live/channel-b";
+    document.getElementById("liveA").insertAdjacentHTML("beforeend", '<span class="viewer_count">10</span>');
+    for (const channelId of ["channel-d", "channel-e"]) {
+        const row = document.createElement("li");
+        row.innerHTML = `<a href="/live/${channelId}"><span class="name_text">${channelId}</span></a>`;
+        list.appendChild(row);
+    }
+
+    const liveEntries = [pinnedChannelId, "channel-a", "channel-b", "channel-c", "channel-d", "channel-e"].map(
+        (channelId, index) => ({
+            channel: { channelId, channelName: channelId },
+            liveInfo: {
+                concurrentUserCount: channelId === pinnedChannelId ? 1234 : 100 - index,
+                cvExposure: true,
+                liveCategoryValue: "게임",
+            },
+        })
+    );
+    dom.window.fetch = async (url) => ({
+        ok: true,
+        status: 200,
+        async json() {
+            if (String(url).includes("/followings/live")) return { content: { followingList: liveEntries } };
+            if (String(url).includes("/followings?")) return { content: { followingList: [] } };
+            return { content: { data: [] } };
+        },
+    });
+
+    evalSidebarScripts(dom);
+    const sourceRowSelector = `[data-bcsf-source-row][data-bcsf-channel-id="${pinnedChannelId}"]`;
+    await waitForCondition(() => document.querySelector(sourceRowSelector));
+
+    const sourceViewer = document.querySelector(`${sourceRowSelector} .viewer_count`);
+    assert.ok(sourceViewer);
+    assert.equal(sourceViewer.textContent, "1,234");
+    assert.equal(document.getElementById("liveCViewer").textContent, "321명");
+});
+
 test("offline pins lead their offline group by default and optionally join all pins at the top", async (t) => {
     const pinnedIds = ["channel-h", "channel-d", "channel-b", "channel-a"];
     const chrome = createFakeChrome({ [STORAGE_KEY]: pinnedIds });

@@ -439,7 +439,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         const count = row.querySelector("em[class*='count'], [class*='viewer_count'], [class*='viewerCount']");
         if (count instanceof HTMLElement) {
             if (entry.isLive && entry.cvExposure && entry.concurrentUserCount !== null) {
-                count.textContent = `${entry.concurrentUserCount.toLocaleString("ko-KR")}명`;
+                count.textContent = entry.concurrentUserCount.toLocaleString("ko-KR");
             } else if (entry.isLive) {
                 count.textContent = "LIVE";
             } else {

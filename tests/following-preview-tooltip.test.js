@@ -299,6 +299,43 @@ test("following preview delays live-detail fetches while opening the DOM card im
     assert.equal(calls[0].init.signal.aborted, false);
 });
 
+test("only collapsed pinned following rows bridge the preserved preview gap", async () => {
+    const chrome = createFakeChrome();
+    const { document, dom, item, link } = createFollowingPreviewDom(chrome);
+    dom.window.fetch = () => new Promise(() => {});
+
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+
+    const tip = document.getElementById("betterchzzk-following-preview");
+    assert.ok(tip);
+    assert.equal(tip.getAttribute("data-show"), "1");
+    assert.equal(Number.parseFloat(tip.style.left), item.getBoundingClientRect().right + 10);
+    assert.equal(document.querySelector("[data-bcfp-hover-bridge]"), null);
+
+    link.dispatchEvent(new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
+    item.setAttribute("data-bcsf-source-row", "1");
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+
+    const bridge = document.querySelector("[data-bcfp-hover-bridge='1']");
+    assert.ok(bridge);
+    assert.equal(Number.parseFloat(tip.style.left), item.getBoundingClientRect().right + 10);
+    assert.equal(Number.parseFloat(bridge.style.left), item.getBoundingClientRect().right);
+    assert.equal(Number.parseFloat(bridge.style.width), 10);
+
+    link.dispatchEvent(new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: bridge }));
+    assert.equal(tip.getAttribute("data-show"), "1");
+    bridge.dispatchEvent(new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: tip }));
+    assert.equal(tip.getAttribute("data-show"), "1");
+
+    tip.dispatchEvent(new dom.window.MouseEvent("pointerleave", { bubbles: false, relatedTarget: document.body }));
+    assert.equal(tip.hasAttribute("data-show"), false);
+    assert.equal(document.querySelector("[data-bcfp-hover-bridge]"), null);
+});
+
 test("following preview loading card prefers live thumbnails over channel profile images", async () => {
     const chrome = createFakeChrome();
     const { document, dom, link } = createFollowingPreviewDom(chrome);
