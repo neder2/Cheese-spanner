@@ -22,7 +22,7 @@
  *   상수와 STYLE_TEXT — DOM 마커, 선택자, 판별 정규식, 모아보기 UI CSS.
  *   전역 상태와 파싱 유틸 — 작성자/본문/역할/블라인드 판정, 행 소유 원문 캐시.
  *   모아보기 수집 — 행-메시지 바인딩, 재사용 후보 안정화, 뱃지/색상 백필.
- *   UI — 모아보기 렌더링·패널 토글과 채팅 헤더/트리거/박스 DOM 삽입.
+ *   UI — 닉네임별 목록·미확인 알림·화면에 표시된 채팅 확인 처리와 모아보기 렌더링.
  *   DOM 수명주기 — mutation 기반 dirty row 추적, 행 정규화, observer 재연결.
  *   런타임 — install/uninstallRuntime, 옵션·라우트 반영, root.chatTools 공개.
  */
@@ -79,6 +79,8 @@
         "aria-label",
         "title",
         "aria-hidden",
+        "alt",
+        "aria-expanded",
         CHAT_TIMESTAMP_ATTR,
         ...MESSAGE_ID_ATTRS,
         ...ROW_REUSE_SIGNAL_ATTRIBUTES,
@@ -244,6 +246,11 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
 .bcct-moderator-trigger__count[data-empty="1"]{
   display:none;
 }
+.bcct-moderator-trigger[data-unread="1"]{
+  background:rgba(0,196,113,.14);
+  color:#00a86b;
+  box-shadow:inset 0 0 0 1px rgba(0,196,113,.4);
+}
 .bcct-moderator-actions{
   display:inline-flex!important;
   align-items:center!important;
@@ -265,6 +272,8 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
   margin-bottom:0!important;
 }
 .bcct-moderator-box{
+  display:flex;
+  flex-direction:column;
   position:absolute;
   top:42px;
   right:8px;
@@ -283,6 +292,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
   display:none;
 }
 .bcct-moderator-box__header{
+  flex:none;
   display:flex;
   align-items:center;
   justify-content:space-between;
@@ -349,6 +359,79 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
   max-height:276px;
   overflow:auto;
   overscroll-behavior:contain;
+  min-height:0;
+}
+.bcct-moderator-authors{
+  display:flex;
+  flex:none;
+  flex-wrap:wrap;
+  gap:6px;
+  max-height:84px;
+  overflow:auto;
+  padding:8px 12px;
+  border-bottom:1px solid rgba(128,128,128,.2);
+}
+.bcct-moderator-author,
+.bcct-moderator-bottom{
+  border:1px solid rgba(128,128,128,.35);
+  border-radius:6px;
+  background:transparent;
+  color:inherit;
+  font:inherit;
+  font-size:12px;
+  cursor:pointer;
+  padding:4px 7px;
+}
+.bcct-moderator-author{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  max-width:100%;
+}
+.bcct-moderator-bottom{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  flex:none;
+  width:28px;
+  height:28px;
+  padding:0;
+}
+.bcct-moderator-bottom svg{
+  width:16px;
+  height:16px;
+  pointer-events:none;
+}
+.bcct-moderator-author__name{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.bcct-moderator-author[aria-pressed="true"]{
+  background:rgba(0,196,113,.16);
+  border-color:#00a86b;
+}
+.bcct-moderator-author__unread{
+  flex:none;
+  padding:0 4px;
+  border-radius:4px;
+  background:rgba(0,196,113,.18);
+  font-weight:700;
+}
+.bcct-moderator-summary{
+  display:flex;
+  flex:none;
+  align-items:center;
+  justify-content:space-between;
+  gap:6px;
+  padding:6px 12px;
+  font-size:12px;
+  min-height:28px;
+}
+.bcct-moderator-bottom[hidden],
+.bcct-moderator-row[hidden],
+.bcct-moderator-author__unread[hidden]{
+  display:none!important;
 }
 .bcct-moderator-row{
   display:block;
@@ -357,7 +440,11 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
   border-bottom:1px solid #f1f3f5;
   background:transparent;
   color:inherit;
-  cursor:pointer;
+  cursor:text;
+  flex:none;
+  box-sizing:border-box;
+  -webkit-user-select:text;
+  user-select:text;
   font:inherit;
   padding:7px 12px;
   text-align:left;
@@ -365,6 +452,15 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
 }
 .bcct-moderator-row:hover{
   background:#f4fbf8;
+}
+.bcct-moderator-row[data-unread="1"]{
+  box-shadow:inset 3px 0 #00a86b;
+}
+.bcct-moderator-row:focus-visible,
+.bcct-moderator-author:focus-visible,
+.bcct-moderator-bottom:focus-visible{
+  outline:2px solid #00a86b;
+  outline-offset:-2px;
 }
 .bcct-moderator-row:last-child{
   border-bottom:0;
@@ -507,6 +603,14 @@ body[theme="dark"] .bcct-moderator-box__empty,
     let moderatorCount = null;
     let moderatorToggle = null;
     let moderatorTriggerCount = null;
+    let moderatorAuthors = null;
+    let moderatorSummary = null;
+    let moderatorBottomButton = null;
+    let moderatorAuthorFilter = "";
+    let moderatorReadFrame = null;
+    let moderatorResizeObserver = null;
+    let moderatorActivityRenderKey = "";
+    const moderatorRenderedRows = new Map();
     let moderatorPanelHost = null;
     let moderatorHeader = null;
     let moderatorMenuButton = null;
@@ -530,7 +634,6 @@ body[theme="dark"] .bcct-moderator-box__empty,
     let chatMutationBatchShouldSchedule = false;
     let lastChatRootFindAt = 0;
     let lastChatRootFindResult = null;
-    let moderatorListRenderKeys = [];
     const rowIds = new WeakMap();
     const rowOriginalTexts = new WeakMap();
     let nextRowId = 1;
@@ -1398,14 +1501,6 @@ body[theme="dark"] .bcct-moderator-box__empty,
             .join("\u001f");
     }
 
-    function areArraysEqual(left, right) {
-        if (left.length !== right.length) return false;
-        for (let index = 0; index < left.length; index += 1) {
-            if (left[index] !== right[index]) return false;
-        }
-        return true;
-    }
-
     function buildModeratorSnapshot(parsed) {
         const rowReuseSignal = getCacheRowReuseSignal(parsed.node);
         const identityKey = [parsed.id, rowReuseSignal, parsed.author, parsed.role, parsed.text]
@@ -1672,6 +1767,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
                 timestamp: parsed.timestamp || "",
                 node: parsed.node,
                 sourceIdentityKey: "",
+                unread: true,
             };
             moderatorMessages.push(message);
         }
@@ -1823,9 +1919,14 @@ body[theme="dark"] .bcct-moderator-box__empty,
     }
 
     function scrollToOriginalMessage(message) {
-        if (!message.node?.isConnected) return;
+        if (!message.node?.isConnected || !chatRoot?.contains(message.node)) return;
         const binding = moderatorRowBindings.get(message.node);
         if (binding?.message !== message || binding.messageId !== message.id) return;
+        if (
+            binding.rowReuseSignal !== getCacheRowReuseSignal(message.node) ||
+            !isSameBoundModeratorMessage(binding, parseChatMessage(message.node))
+        )
+            return;
         try {
             message.node.scrollIntoView({ block: "center", behavior: "smooth" });
         } catch (_) {
@@ -1834,10 +1935,12 @@ body[theme="dark"] .bcct-moderator-box__empty,
     }
 
     function buildModeratorRow(message) {
-        const row = document.createElement("button");
-        row.type = "button";
+        const row = document.createElement("div");
+        row.setAttribute("role", "button");
+        row.tabIndex = 0;
         row.className = "bcct-moderator-row";
         row.setAttribute(MODERATOR_ROW_ATTR, message.id);
+        row.title = "클릭하면 원본 채팅으로 이동 · 드래그해서 복사";
 
         const meta = document.createElement("span");
         meta.className = "bcct-moderator-row__meta";
@@ -1861,6 +1964,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
                 icon.alt = normSpace(badge.alt) || roleLabel(message.role);
                 icon.width = 18;
                 icon.height = 18;
+                icon.draggable = false;
                 meta.appendChild(icon);
             }
             meta.appendChild(author);
@@ -1880,55 +1984,207 @@ body[theme="dark"] .bcct-moderator-box__empty,
             timestamp.textContent = message.timestamp;
             row.appendChild(timestamp);
         }
-        row.append(meta, text);
-        row.addEventListener("click", () => scrollToOriginalMessage(message));
+        row.append(meta, " ", text);
+        row.addEventListener("click", () => {
+            if (!hasModeratorTextSelection()) scrollToOriginalMessage(message);
+        });
+        row.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            scrollToOriginalMessage(message);
+        });
         return row;
     }
 
-    function canAppendModeratorRows(nextKeys) {
-        if (!moderatorListRenderKeys.length || nextKeys.length <= moderatorListRenderKeys.length) return false;
-        for (let index = 0; index < moderatorListRenderKeys.length; index += 1) {
-            if (nextKeys[index] !== moderatorListRenderKeys[index]) return false;
+    function hasModeratorTextSelection() {
+        const selection = window.getSelection();
+        if (!selection || selection.isCollapsed || !moderatorList) return false;
+        for (let index = 0; index < selection.rangeCount; index += 1) {
+            if (selection.getRangeAt(index).intersectsNode(moderatorList)) return true;
         }
-        return true;
+        return false;
+    }
+
+    function getModeratorAuthorKey(message) {
+        // 현재 DOM에서 확인한 닉네임으로만 묶는다. 이름 없는 행을 같은 사용자로 추정하지 않는다.
+        return message.author ? `name:${message.author}` : `message:${message.id}`;
+    }
+
+    function getModeratorActors() {
+        const actors = new Map();
+        for (const message of moderatorMessages) {
+            const key = getModeratorAuthorKey(message);
+            let actor = actors.get(key);
+            if (!actor) {
+                actor = { name: message.author || roleLabel(message.role), total: 0, unread: 0 };
+                actors.set(key, actor);
+            }
+            actor.total += 1;
+            if (message.unread) actor.unread += 1;
+        }
+        return actors;
+    }
+
+    function syncModeratorText(element, text) {
+        if (element && element.textContent !== text) element.textContent = text;
+    }
+
+    function renderModeratorActivity(actors = getModeratorActors()) {
+        if (!moderatorAuthors || !moderatorToggle) return;
+        const renderKey = JSON.stringify([
+            moderatorAuthorFilter,
+            moderatorMessages.map((message) => [message.id, message.author, message.role, message.unread]),
+        ]);
+        if (moderatorActivityRenderKey === renderKey) return;
+        moderatorActivityRenderKey = renderKey;
+        const unread = moderatorMessages.filter((message) => message.unread).length;
+        syncModeratorText(moderatorCount, `${moderatorMessages.length}`);
+        syncModeratorText(moderatorTriggerCount, `${unread}`);
+        moderatorTriggerCount.dataset.empty = unread ? "0" : "1";
+        moderatorToggle.dataset.unread = unread ? "1" : "0";
+        const entries = new Map([["", { name: "전체", total: moderatorMessages.length, unread }], ...actors]);
+        const buttons = new Map(Array.from(moderatorAuthors.children, (button) => [button.dataset.authorKey, button]));
+        for (const [key, button] of buttons) {
+            if (!entries.has(key)) button.remove();
+        }
+        for (const [key, actor] of entries) {
+            let button = buttons.get(key);
+            if (!button) {
+                button = document.createElement("button");
+                button.type = "button";
+                button.className = "bcct-moderator-author";
+                button.dataset.authorKey = key;
+                const name = document.createElement("span");
+                name.className = "bcct-moderator-author__name";
+                const badge = document.createElement("span");
+                badge.className = "bcct-moderator-author__unread";
+                badge.setAttribute("aria-hidden", "true");
+                button.append(name, badge);
+                button.addEventListener("click", () => {
+                    moderatorAuthorFilter = key;
+                    renderModeratorList();
+                    scrollModeratorListToBottom();
+                    scheduleModeratorReadCheck();
+                });
+                moderatorAuthors.appendChild(button);
+            }
+            syncModeratorText(button.firstElementChild, actor.name);
+            syncModeratorText(button.lastElementChild, `새 ${actor.unread}`);
+            if (button.lastElementChild.hidden !== !actor.unread) button.lastElementChild.hidden = !actor.unread;
+            const pressed = String(moderatorAuthorFilter === key);
+            if (button.getAttribute("aria-pressed") !== pressed) button.setAttribute("aria-pressed", pressed);
+            const label = `${actor.name}, 보관 ${actor.total}개, 미확인 ${actor.unread}개`;
+            if (button.getAttribute("aria-label") !== label) button.setAttribute("aria-label", label);
+            if (button.title !== label) button.title = label;
+        }
+        const visibleUnread = moderatorMessages.filter(
+            (message) =>
+                message.unread && (!moderatorAuthorFilter || getModeratorAuthorKey(message) === moderatorAuthorFilter)
+        ).length;
+        syncModeratorText(moderatorSummary, visibleUnread ? `미확인 채팅 ${visibleUnread}개` : "새 채팅 없음");
+        for (const { row, message } of moderatorRenderedRows.values()) {
+            const value = message.unread ? "1" : "0";
+            if (row.dataset.unread !== value) row.dataset.unread = value;
+        }
+        setModeratorPanelOpen(moderatorPanelOpen);
+    }
+
+    function scheduleModeratorReadCheck() {
+        if (!moderatorPanelOpen || !moderatorList || moderatorReadFrame !== null) return;
+        moderatorReadFrame = requestAnimationFrame(markVisibleModeratorMessagesRead);
+    }
+
+    function markVisibleModeratorMessagesRead() {
+        moderatorReadFrame = null;
+        if (!moderatorPanelOpen || !moderatorList?.isConnected || document.visibilityState === "hidden") return;
+        syncModeratorBottomButton();
+        const bounds = moderatorList.getBoundingClientRect();
+        const top = Math.max(0, bounds.top);
+        const bottom = Math.min(window.innerHeight, bounds.bottom);
+        const left = Math.max(0, bounds.left);
+        const right = Math.min(window.innerWidth, bounds.right);
+        if (bottom <= top || right <= left) return;
+        let changed = false;
+        for (const { row, message } of moderatorRenderedRows.values()) {
+            if (!message.unread || row.hidden) continue;
+            const rect = row.getBoundingClientRect();
+            if (rect.height <= 0 || rect.right <= left || rect.left >= right) continue;
+            const visibleHeight = Math.min(bottom, rect.bottom) - Math.max(top, rect.top);
+            // 긴 메시지는 목록 높이를 기준으로, 그 외에는 행의 절반 이상이 보여야 확인 처리한다.
+            if (visibleHeight < Math.min(rect.height, bottom - top) / 2) continue;
+            message.unread = false;
+            changed = true;
+        }
+        if (changed) renderModeratorActivity();
+    }
+
+    function syncModeratorBottomButton() {
+        if (!moderatorBottomButton || !moderatorList) return;
+        const hidden = !moderatorPanelOpen || moderatorList.clientHeight <= 0 || isModeratorListNearBottom(2);
+        if (moderatorBottomButton.hidden !== hidden) moderatorBottomButton.hidden = hidden;
+    }
+
+    function updateModeratorRowAppearance(row, message) {
+        // 백필은 본문/닉네임 텍스트 노드를 교체하지 않아 드래그 선택을 유지한다.
+        const fresh = buildModeratorRow(message);
+        const author = row.querySelector(".bcct-moderator-row__author");
+        if (author && message.authorColor) author.style.color = message.authorColor;
+        const meta = row.querySelector(".bcct-moderator-row__meta");
+        if (meta && !meta.querySelector("img") && fresh.querySelector(".bcct-moderator-row__badge")) {
+            for (const node of Array.from(meta.childNodes)) {
+                if (node.nodeType === Node.TEXT_NODE) node.remove();
+            }
+            for (const badge of fresh.querySelectorAll(".bcct-moderator-row__badge")) {
+                meta.insertBefore(badge, author?.parentNode === meta ? author : null);
+            }
+        }
+        const nextTime = fresh.querySelector(".bcct-moderator-row__time");
+        const time = row.querySelector(".bcct-moderator-row__time");
+        if (time && nextTime) syncModeratorText(time, nextTime.textContent);
+        else if (nextTime) row.prepend(nextTime);
+        else time?.remove();
     }
 
     function renderModeratorList() {
         if (!moderatorList || !moderatorCount || !moderatorTriggerCount) return;
-
-        const countText = `${moderatorMessages.length}`;
-        if (moderatorCount.textContent !== countText) moderatorCount.textContent = countText;
-        if (moderatorTriggerCount.textContent !== countText) moderatorTriggerCount.textContent = countText;
-        moderatorTriggerCount.dataset.empty = moderatorMessages.length ? "0" : "1";
-        setModeratorPanelOpen(moderatorPanelOpen);
-
-        const renderKeys = moderatorMessages.map(getModeratorRenderKey);
-        if (areArraysEqual(renderKeys, moderatorListRenderKeys)) return;
-        if (canAppendModeratorRows(renderKeys)) {
-            // 패널이 열려 있고 사용자가 바닥 근처를 보고 있었다면 새 메시지 append 후에도
-            // 바닥으로 따라간다. 위로 스크롤해 과거를 보는 중이면 위치를 건드리지 않는다.
-            const stickToBottom = moderatorPanelOpen && isModeratorListNearBottom();
-            for (const message of moderatorMessages.slice(moderatorListRenderKeys.length)) {
-                moderatorList.appendChild(buildModeratorRow(message));
-            }
-            moderatorListRenderKeys = renderKeys;
-            if (stickToBottom) scrollModeratorListToBottom();
-            return;
+        const actors = getModeratorActors();
+        if (moderatorAuthorFilter && !actors.has(moderatorAuthorFilter)) moderatorAuthorFilter = "";
+        const stickToBottom = moderatorPanelOpen && !hasModeratorTextSelection() && isModeratorListNearBottom();
+        const nextMessages = new Set(moderatorMessages);
+        for (const [id, entry] of moderatorRenderedRows) {
+            if (nextMessages.has(entry.message)) continue;
+            entry.row.remove();
+            moderatorRenderedRows.delete(id);
         }
-        moderatorListRenderKeys = renderKeys;
-        moderatorList.textContent = "";
-
-        if (!moderatorMessages.length) {
-            const empty = document.createElement("div");
+        let changed = false;
+        for (const message of moderatorMessages) {
+            const key = getModeratorRenderKey(message);
+            let entry = moderatorRenderedRows.get(message.id);
+            if (!entry) {
+                entry = { row: buildModeratorRow(message), message, key };
+                moderatorRenderedRows.set(message.id, entry);
+                moderatorList.appendChild(entry.row);
+                changed = true;
+            } else if (entry.key !== key) {
+                updateModeratorRowAppearance(entry.row, message);
+                entry.key = key;
+            }
+            const hidden = Boolean(moderatorAuthorFilter && getModeratorAuthorKey(message) !== moderatorAuthorFilter);
+            if (entry.row.hidden !== hidden) {
+                entry.row.hidden = hidden;
+                changed = true;
+            }
+        }
+        let empty = moderatorList.querySelector(".bcct-moderator-box__empty");
+        if (!moderatorMessages.length && !empty) {
+            empty = document.createElement("div");
             empty.className = "bcct-moderator-box__empty";
             empty.textContent = "아직 수집된 메시지가 없습니다.";
             moderatorList.appendChild(empty);
-            return;
-        }
-
-        for (const message of moderatorMessages) {
-            moderatorList.appendChild(buildModeratorRow(message));
-        }
+        } else if (moderatorMessages.length) empty?.remove();
+        renderModeratorActivity(actors);
+        if (changed && stickToBottom) scrollModeratorListToBottom();
+        scheduleModeratorReadCheck();
     }
 
     function isModeratorListNearBottom(threshold = 40) {
@@ -1940,6 +2196,8 @@ body[theme="dark"] .bcct-moderator-box__empty,
     function scrollModeratorListToBottom() {
         if (!moderatorList) return;
         moderatorList.scrollTop = moderatorList.scrollHeight;
+        syncModeratorBottomButton();
+        scheduleModeratorReadCheck();
     }
 
     function setModeratorPanelOpen(open) {
@@ -1948,7 +2206,8 @@ body[theme="dark"] .bcct-moderator-box__empty,
         if (!moderatorBox || !moderatorToggle) return;
         const openValue = open ? "1" : "0";
         const expandedValue = open ? "true" : "false";
-        const label = `${MODERATOR_TITLE} ${moderatorMessages.length}개 ${open ? "닫기" : "열기"}`;
+        const unread = moderatorMessages.filter((message) => message.unread).length;
+        const label = `${MODERATOR_TITLE} ${moderatorMessages.length}개, 미확인 ${unread}개 ${open ? "닫기" : "열기"}`;
         if (moderatorBox.dataset.open !== openValue) moderatorBox.dataset.open = openValue;
         if (moderatorToggle.getAttribute("aria-expanded") !== expandedValue) {
             moderatorToggle.setAttribute("aria-expanded", expandedValue);
@@ -1958,9 +2217,22 @@ body[theme="dark"] .bcct-moderator-box__empty,
         // display:none 인 동안에는 scrollHeight 가 0 이라 dataset.open="1" 로 표시된
         // 뒤에 실행해야 한다.
         if (open && !wasOpen) scrollModeratorListToBottom();
+        if (open && !wasOpen) scheduleModeratorReadCheck();
+        syncModeratorBottomButton();
+        if (!open && moderatorReadFrame !== null) {
+            cancelAnimationFrame(moderatorReadFrame);
+            moderatorReadFrame = null;
+        }
     }
 
     function removeModeratorBox() {
+        if (moderatorReadFrame !== null) cancelAnimationFrame(moderatorReadFrame);
+        moderatorReadFrame = null;
+        moderatorResizeObserver?.disconnect();
+        moderatorResizeObserver = null;
+        moderatorActivityRenderKey = "";
+        document.removeEventListener("visibilitychange", scheduleModeratorReadCheck);
+        window.removeEventListener("resize", scheduleModeratorReadCheck);
         if (moderatorAnchorObserver) {
             moderatorAnchorObserver.disconnect();
             moderatorAnchorObserver = null;
@@ -1975,7 +2247,10 @@ body[theme="dark"] .bcct-moderator-box__empty,
             moderatorList = null;
             moderatorCount = null;
         }
-        moderatorListRenderKeys = [];
+        moderatorRenderedRows.clear();
+        moderatorAuthors = null;
+        moderatorSummary = null;
+        moderatorBottomButton = null;
         if (moderatorToggle) {
             moderatorToggle.remove();
             moderatorToggle = null;
@@ -2353,18 +2628,58 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
         const list = document.createElement("div");
         list.className = "bcct-moderator-box__list";
+        list.addEventListener("scroll", scheduleModeratorReadCheck, { passive: true });
+        list.addEventListener("focusin", scheduleModeratorReadCheck);
 
-        box.append(headerRow, list);
+        const authors = document.createElement("div");
+        authors.className = "bcct-moderator-authors";
+        authors.setAttribute("role", "group");
+        authors.setAttribute("aria-label", "식별된 사용자별 채팅 보기");
+        const summaryRow = document.createElement("div");
+        summaryRow.className = "bcct-moderator-summary";
+        const summary = document.createElement("span");
+        summary.setAttribute("role", "status");
+        const bottomButton = document.createElement("button");
+        bottomButton.type = "button";
+        bottomButton.className = "bcct-moderator-bottom";
+        bottomButton.setAttribute("aria-label", "맨 아래로");
+        bottomButton.title = "맨 아래로";
+        const chevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        chevron.setAttribute("viewBox", "0 0 24 24");
+        chevron.setAttribute("fill", "none");
+        chevron.setAttribute("stroke", "currentColor");
+        chevron.setAttribute("stroke-width", "2");
+        chevron.setAttribute("stroke-linecap", "round");
+        chevron.setAttribute("stroke-linejoin", "round");
+        chevron.setAttribute("aria-hidden", "true");
+        const chevronPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        chevronPath.setAttribute("d", "M6 9l6 6 6-6");
+        chevron.appendChild(chevronPath);
+        bottomButton.appendChild(chevron);
+        bottomButton.hidden = true;
+        bottomButton.addEventListener("click", scrollModeratorListToBottom);
+        summaryRow.append(summary, bottomButton);
+
+        box.append(headerRow, authors, summaryRow, list);
         host.appendChild(box);
 
         moderatorBox = box;
         moderatorList = list;
         moderatorCount = count;
+        moderatorAuthors = authors;
+        moderatorSummary = summary;
+        moderatorBottomButton = bottomButton;
         moderatorPanelHost = host;
         moderatorHeader = header;
         moderatorMenuButton = menuButton;
         moderatorMenuButtonConfirmed = menuButtonConfirmed;
         document.addEventListener("keydown", onModeratorDocumentKeydown, true);
+        document.addEventListener("visibilitychange", scheduleModeratorReadCheck);
+        window.addEventListener("resize", scheduleModeratorReadCheck);
+        if (typeof ResizeObserver === "function") {
+            moderatorResizeObserver = new ResizeObserver(scheduleModeratorReadCheck);
+            moderatorResizeObserver.observe(list);
+        }
         setModeratorPanelOpen(moderatorPanelOpen);
         renderModeratorList();
         observeProvisionalModeratorAnchor(host, rootEl, menuButtonConfirmed);
@@ -2387,7 +2702,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         moderatorRowBindings = new WeakMap();
         pendingModeratorRemounts = [];
         rowMutationRevisions = new WeakMap();
-        moderatorListRenderKeys = [];
+        moderatorAuthorFilter = "";
         renderModeratorList();
     }
 
@@ -2570,6 +2885,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
     function shouldTrackChatAttributeMutation(mutation, row) {
         const attrName = String(mutation.attributeName || "").toLowerCase();
         if (!CHAT_DIRTY_ATTRIBUTE_FILTER.includes(attrName)) return false;
+        if (attrName === "aria-expanded" && getAttr(mutation.target, "aria-haspopup") === "true") return true;
         if (MESSAGE_ID_ATTRS.includes(attrName)) return true;
         if (ROW_REUSE_SIGNAL_ATTRIBUTES.includes(attrName)) return true;
         if (row?.hasAttribute(BLIND_PROCESSED_ATTR)) return true;
