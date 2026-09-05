@@ -8,6 +8,7 @@
  *   고정 오프라인도 최상단에 모은다. 접힌 목록의 네이티브 상위 5개 밖에 고정 채널이 있으면 치지직이
  *   사용하는 팔로잉 API 순서에서 확인한 채널만 확장 소유 행으로 보충한다. React가 소유한 행은 이동하지
  *   않으며, 목록 갱신·DOM 재마운트·노드 재사용 때 현재 href를 다시 검증한다.
+ *   보충 행의 일반 클릭은 routeBridgePage.js에 DOM 이벤트로 전달해 치지직 라우터로 이동한다.
  * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
  *   createMutationObserverSync, fetchJson, injectStyleOnce, normSpace, normalizeChzzkChannelId,
  *   normalizeChzzkImageUrl,
@@ -904,6 +905,25 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         return event.altKey || event.ctrlKey || event.metaKey || event.shiftKey;
     }
 
+    function navigateSourceLink(event, meta) {
+        const link = event.target.closest("a[href]");
+        if (
+            !meta.row.hasAttribute(SOURCE_ROW_ATTR) ||
+            !(link instanceof HTMLAnchorElement) ||
+            !meta.row.contains(link) ||
+            (link.target && link.target !== "_self") ||
+            link.hasAttribute("download")
+        ) {
+            return;
+        }
+        const handled = !link.dispatchEvent(
+            new CustomEvent("betterchzzk:following-navigate", { bubbles: true, cancelable: true })
+        );
+        if (!handled) return;
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
     function handleClick(event) {
         const button = event.target instanceof Element ? event.target.closest(`[${MODE_BUTTON_ATTR}]`) : null;
         if (button instanceof HTMLButtonElement) {
@@ -921,9 +941,13 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
             const following = findFollowingList(getSidebar());
             if (following?.section.contains(refreshButton)) invalidateSourceSnapshot();
         }
-        if (!pinModeEnabled || event.button !== 0 || hasNavigationModifier(event)) return;
+        if (event.defaultPrevented || event.button !== 0 || hasNavigationModifier(event)) return;
         const meta = getPinTargetMeta(event.target);
         if (!meta) return;
+        if (!pinModeEnabled) {
+            navigateSourceLink(event, meta);
+            return;
+        }
         event.preventDefault();
         event.stopPropagation();
         togglePinned(meta.channelId);

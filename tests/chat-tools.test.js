@@ -161,6 +161,274 @@ function openModeratorPanel(document) {
     return trigger;
 }
 
+function authorButtons(document) {
+    return Array.from(document.querySelectorAll(".bcct-moderator-author"));
+}
+
+function authorButton(document, name) {
+    return authorButtons(document).find((button) => button.firstElementChild.textContent === name);
+}
+
+function unreadCount(document) {
+    return Number(document.querySelector(".bcct-moderator-trigger__count")?.textContent || 0);
+}
+
+function activityChat(id, nickname = "안내 담당", text = id) {
+    return realChzzkChatRow({
+        chatId: id,
+        nickname,
+        text,
+        badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+        nicknameColor: "",
+    });
+}
+
+// jsdom에는 레이아웃이 없으므로 40px 행 하나가 보이는 스크롤 목록을 모델링한다.
+function installModeratorViewport(dom) {
+    const document = dom.window.document;
+    const list = document.querySelector(".bcct-moderator-box__list");
+    const visibleRows = () => moderatorRows(document).filter((row) => !row.hidden);
+    let scrollTop = 0;
+    Object.defineProperties(list, {
+        scrollHeight: { configurable: true, get: () => visibleRows().length * 40 },
+        clientHeight: { configurable: true, get: () => 40 },
+        scrollTop: {
+            configurable: true,
+            get: () => scrollTop,
+            set: (value) => {
+                scrollTop = Math.max(0, Math.min(value, list.scrollHeight - 40));
+            },
+        },
+    });
+    const originalRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
+    dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
+        if (this === list) return { top: 100, bottom: 140, left: 10, right: 330, width: 320, height: 40 };
+        if (this.matches(".bcct-moderator-row")) {
+            const top = 100 + visibleRows().indexOf(this) * 40 - scrollTop;
+            return { top, bottom: top + 40, left: 10, right: 330, width: 320, height: 40 };
+        }
+        return originalRect.call(this);
+    };
+    return list;
+}
+
+test("identified authors show unread counts and only visible filtered messages are acknowledged", async (t) => {
+    const { dom } = createPageDom(
+        activityChat("a1", "첫 운영자") + activityChat("a2", "첫 운영자") + activityChat("b1", "둘째 운영자")
+    );
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 3);
+    assert.deepEqual(
+        authorButtons(document).map((button) => button.firstElementChild.textContent),
+        ["전체", "첫 운영자", "둘째 운영자"]
+    );
+    assert.equal(unreadCount(document), 3);
+    assert.equal(document.querySelector(".bcct-moderator-trigger").dataset.unread, "1");
+    const list = installModeratorViewport(dom);
+    openModeratorPanel(document);
+    await waitForCondition(() => unreadCount(document) === 2);
+    assert.match(authorButton(document, "첫 운영자").getAttribute("aria-label"), /미확인 2개/);
+    assert.match(authorButton(document, "둘째 운영자").getAttribute("aria-label"), /미확인 0개/);
+
+    authorButton(document, "첫 운영자").click();
+    await waitForCondition(() => unreadCount(document) === 1);
+    assert.equal(moderatorRows(document).filter((row) => !row.hidden).length, 2);
+    list.scrollTop = 0;
+    list.dispatchEvent(new dom.window.Event("scroll"));
+    await waitForCondition(() => unreadCount(document) === 0);
+    assert.equal(document.querySelector(".bcct-moderator-trigger__count").dataset.empty, "1");
+    assert.equal(document.querySelector(".bcct-moderator-trigger").dataset.unread, "0");
+    assert.equal(document.querySelector(".bcct-moderator-box__count").textContent, "3");
+
+    document.querySelector(".chat-list").insertAdjacentHTML("beforeend", activityChat("b2", "둘째 운영자"));
+    await waitForCondition(() => moderatorRows(document).length === 4);
+    await new Promise((resolve) => dom.window.requestAnimationFrame(resolve));
+    assert.equal(unreadCount(document), 1, "a hidden author's new message stays unread while the panel is open");
+    assert.match(authorButton(document, "둘째 운영자").getAttribute("aria-label"), /미확인 1개/);
+    authorButton(document, "둘째 운영자").click();
+    await waitForCondition(() => unreadCount(document) === 0);
+});
+
+test("bottom chevron appears only above the bottom and does not acknowledge unseen messages", async (t) => {
+    const { dom } = createPageDom(activityChat("top") + activityChat("middle") + activityChat("bottom", "다른 운영자"));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 3);
+    const list = installModeratorViewport(dom);
+    const button = document.querySelector(".bcct-moderator-bottom");
+    assert.equal(button.hidden, true);
+    assert.equal(button.textContent, "");
+    assert.equal(button.getAttribute("aria-label"), "맨 아래로");
+    assert.ok(button.querySelector("svg path"));
+    openModeratorPanel(document);
+    await waitForCondition(() => unreadCount(document) === 2);
+    assert.equal(list.scrollTop, 80);
+    assert.equal(button.hidden, true);
+    list.scrollTop = 0;
+    list.dispatchEvent(new dom.window.Event("scroll"));
+    await waitForCondition(() => !button.hidden && unreadCount(document) === 1);
+    button.click();
+    assert.equal(list.scrollTop, 80);
+    assert.equal(button.hidden, true);
+    await new Promise((resolve) => dom.window.requestAnimationFrame(resolve));
+    assert.equal(unreadCount(document), 1, "jumping past the middle message must not mark it read");
+    list.scrollTop = 40;
+    list.dispatchEvent(new dom.window.Event("scroll"));
+    await waitForCondition(() => unreadCount(document) === 0);
+    assert.equal(button.hidden, false, "the button depends on scroll position, not unread count");
+    authorButton(document, "다른 운영자").click();
+    assert.equal(button.hidden, true, "a filter with no overflow needs no bottom button");
+    authorButton(document, "전체").click();
+    list.scrollTop = 0;
+    list.dispatchEvent(new dom.window.Event("scroll"));
+    await waitForCondition(() => !button.hidden);
+    Object.defineProperty(list, "clientHeight", { configurable: true, value: 200 });
+    dom.window.dispatchEvent(new dom.window.Event("resize"));
+    await waitForCondition(() => button.hidden);
+    Object.defineProperty(list, "clientHeight", { configurable: true, value: 40 });
+    list.dispatchEvent(new dom.window.Event("scroll"));
+    await waitForCondition(() => !button.hidden);
+    openModeratorPanel(document);
+    assert.equal(button.hidden, true, "closing the panel hides the control immediately");
+});
+
+test("hidden tabs and closed panels retain alerts; duplicate rows and remounts do not restore read alerts", async (t) => {
+    const { dom } = createPageDom(activityChat("read-once"));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 1);
+    installModeratorViewport(dom);
+    let visibility = "hidden";
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
+    openModeratorPanel(document);
+    await new Promise((resolve) => dom.window.requestAnimationFrame(resolve));
+    assert.equal(unreadCount(document), 1);
+    visibility = "visible";
+    document.dispatchEvent(new dom.window.Event("visibilitychange"));
+    await waitForCondition(() => unreadCount(document) === 0);
+    openModeratorPanel(document);
+    const source = document.querySelector('[data-chat-id="read-once"]');
+    source.querySelector("[class*='_nickname_o']").style.color = "rgb(100, 150, 200)";
+    source.after(source.cloneNode(true));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(moderatorRows(document).length, 1);
+    assert.equal(unreadCount(document), 0);
+    const oldList = document.querySelector(".chat-list");
+    oldList.replaceWith(oldList.cloneNode(true));
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    assert.equal(unreadCount(document), 0);
+    document.querySelector(".chat-list").insertAdjacentHTML("beforeend", activityChat("unread-later"));
+    await waitForCondition(() => unreadCount(document) === 1);
+});
+
+test("capacity trimming removes expired authors and alerts, retaining selection in surviving rows", async (t) => {
+    const { dom } = createPageDom(
+        activityChat("old-author", "오래된 운영자") +
+            Array.from({ length: 19 }, (_, index) => activityChat(`kept-${index}`)).join(""),
+        { chatToolsMaxModeratorMessages: 20 }
+    );
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 20);
+    const kept = moderatorRows(document)[10];
+    const range = document.createRange();
+    range.selectNodeContents(kept.querySelector(".bcct-moderator-row__text"));
+    dom.window.getSelection().addRange(range);
+    document.querySelector(".chat-list").insertAdjacentHTML("beforeend", activityChat("new", "새 운영자"));
+    await waitForCondition(() => authorButton(document, "새 운영자"));
+    assert.equal(authorButton(document, "오래된 운영자"), undefined);
+    assert.equal(unreadCount(document), 20);
+    assert.equal(moderatorRows(document)[9], kept);
+    assert.equal(dom.window.getSelection().toString(), "kept-9");
+    authorButton(document, "새 운영자").click();
+    document
+        .querySelector(".chat-list")
+        .insertAdjacentHTML(
+            "beforeend",
+            Array.from({ length: 20 }, (_, index) => activityChat(`replacement-${index}`)).join("")
+        );
+    await waitForCondition(() => !authorButton(document, "새 운영자"));
+    assert.equal(authorButton(document, "전체").getAttribute("aria-pressed"), "true");
+    assert.equal(moderatorRows(document).filter((row) => !row.hidden).length, 20);
+});
+
+test("copy selection survives appearance updates and never navigates to a recycled original", async (t) => {
+    const { dom } = createPageDom(activityChat("copy", "복사할 사용자", "드래그할 안내"));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 1);
+    const collected = moderatorRows(document)[0];
+    const source = document.querySelector('[data-chat-id="copy"]');
+    let scrolls = 0;
+    source.scrollIntoView = () => scrolls++;
+    const range = document.createRange();
+    range.selectNodeContents(collected.querySelector(".bcct-moderator-row__text"));
+    dom.window.getSelection().addRange(range);
+    collected.click();
+    assert.equal(scrolls, 0);
+    source.querySelector("[class*='_nickname_o']").style.color = "rgb(100, 150, 200)";
+    await waitForCondition(() => collected.querySelector(".bcct-moderator-row__author").style.color);
+    assert.equal(dom.window.getSelection().toString(), "드래그할 안내");
+    assert.equal(dom.window.getComputedStyle(collected).userSelect, "text");
+    dom.window.getSelection().removeAllRanges();
+    for (const key of ["Enter", " "])
+        collected.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key, bubbles: true }));
+    assert.equal(scrolls, 2);
+    source.querySelector("[class*='_text_']").textContent = "다른 메시지";
+    collected.click();
+    assert.equal(scrolls, 2);
+});
+
+test("late badge attributes and profile closure refresh identified authors", async (t) => {
+    const { dom } = createPageDom(activityChat("late").replace('alt="채팅 운영자"', 'alt="구독자"'));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => document.querySelector(".bcct-moderator-box"));
+    assert.equal(authorButtons(document).length, 1);
+    const source = document.querySelector('[data-chat-id="late"]');
+    source.querySelector("img").setAttribute("alt", "채팅 운영자");
+    await waitForCondition(() => unreadCount(document) === 1);
+    const next = source.cloneNode(true);
+    next.setAttribute("data-chat-id", "profile-open");
+    next.querySelector("button").setAttribute("aria-expanded", "true");
+    source.after(next);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(unreadCount(document), 1);
+    next.querySelector("button").setAttribute("aria-expanded", "false");
+    await waitForCondition(() => unreadCount(document) === 2);
+});
+
+test("activity UI is cleaned up on option disable and channel navigation", async (t) => {
+    const { dom, chrome } = createPageDom(activityChat("first"));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    evalRepoScript(dom, "features", "routeBridgePage.js");
+    await waitForCondition(() => unreadCount(document) === 1);
+    openModeratorPanel(document);
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener({ chatToolsModeratorBoxEnabled: { oldValue: true, newValue: false } }, "sync");
+    }
+    await waitForCondition(() => !document.querySelector(".bcct-moderator-authors"));
+    dom.window.dispatchEvent(new dom.window.Event("resize"));
+    document.dispatchEvent(new dom.window.Event("visibilitychange"));
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener({ chatToolsModeratorBoxEnabled: { oldValue: false, newValue: true } }, "sync");
+    }
+    await waitForCondition(() => authorButton(document, "안내 담당"));
+    document.querySelector(".chat-list").textContent = "";
+    dom.window.history.pushState({}, "", "/live/next-channel");
+    await waitForCondition(() => moderatorRows(document).length === 0 && authorButtons(document).length === 1);
+    assert.equal(unreadCount(document), 0);
+});
+
 test("welcome message removal stays off by default and survives enable, remount, and re-enable", async (t) => {
     const { chrome, dom } = createPageDom(
         '<div class="_item_8lqsk_7 _big_padding_8lqsk_53">' +

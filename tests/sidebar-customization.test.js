@@ -113,6 +113,7 @@ function evalRepoScript(dom, ...parts) {
 }
 
 function evalSidebarScripts(dom) {
+    evalRepoScript(dom, "features", "routeBridgePage.js");
     evalRepoScript(dom, "shared", "settings.js");
     evalRepoScript(dom, "shared", "data.js");
     evalRepoScript(dom, "shared", "selectors.js");
@@ -233,6 +234,163 @@ test("collapsed pinned source rows format viewer counts without a name suffix", 
     assert.ok(sourceViewer);
     assert.equal(sourceViewer.textContent, "1,234");
     assert.equal(document.getElementById("liveCViewer").textContent, "321명");
+});
+
+async function createCollapsedNavigationDom(t) {
+    const chrome = createFakeChrome({ [STORAGE_KEY]: ["channel-pinned"] });
+    const dom = createSidebarDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    const list = document.getElementById("followingList");
+    for (const id of ["channel-d", "channel-e"]) {
+        list.insertAdjacentHTML("beforeend", `<li><a href="/live/${id}"><span class="name_text">${id}</span></a></li>`);
+    }
+    dom.window.fetch = async (url) => ({
+        ok: true,
+        status: 200,
+        async json() {
+            return {
+                content: {
+                    followingList: String(url).includes("/followings/live")
+                        ? ["channel-pinned", "channel-a", "channel-c", "channel-d", "channel-e"].map((channelId) => ({
+                              channel: { channelId, channelName: channelId },
+                              liveInfo: { concurrentUserCount: 10 },
+                          }))
+                        : [],
+                },
+            };
+        },
+    });
+    const navigations = [];
+    // 2026-09-05 chzzk.naver.com common-vendor-C8-rxCMl.js:
+    // BrowserRouter exposes { basename, navigator } on its NavigationContext provider.
+    // Its navigator.push/replace notifies the router as well as updating browser history.
+    const navigator = {
+        createHref: ({ pathname, search = "", hash = "" }) => pathname + search + hash,
+        go: (delta) => dom.window.history.go(delta),
+        push(to) {
+            navigations.push({ method: "push", to });
+            dom.window.history.pushState({ idx: navigations.length }, "", this.createHref(to));
+            document.querySelector("main").textContent = to.pathname;
+        },
+        replace(to) {
+            navigations.push({ method: "replace", to });
+            dom.window.history.replaceState(dom.window.history.state, "", this.createHref(to));
+            document.querySelector("main").textContent = to.pathname;
+        },
+    };
+    document.getElementById("sidebar").__reactFiber$navigationTest = {
+        return: { memoizedProps: { value: { basename: "/", navigator } } },
+    };
+    evalSidebarScripts(dom);
+    await waitForCondition(() => document.querySelector("[data-bcsf-source-row] a"));
+    return { dom, chrome, navigations, navigator };
+}
+
+test("collapsed source channel clicks use the native router without replacing the document", async (t) => {
+    const { dom, navigations } = await createCollapsedNavigationDom(t);
+    const { document } = dom.window;
+    const sidebar = document.getElementById("sidebar");
+    const link = document.querySelector("[data-bcsf-source-row] a");
+    const routeChanges = [];
+    dom.window.addEventListener("betterchzzk:routechange", (event) => routeChanges.push(event.detail.href));
+    const length = dom.window.history.length;
+
+    assert.equal(dispatchClick(dom, link.querySelector("span")).defaultPrevented, true);
+    await waitForCondition(() => routeChanges.length === 1);
+    assert.equal(navigations.length, 1);
+    assert.equal(navigations[0].method, "push");
+    assert.equal(dom.window.location.pathname, "/live/channel-pinned");
+    assert.equal(document.querySelector("main").textContent, "/live/channel-pinned");
+    assert.equal(document.getElementById("sidebar"), sidebar);
+    assert.equal(dom.window.history.length, length + 1);
+
+    // Enter on an anchor generates a click with detail 0, just like this event.
+    assert.equal(dispatchClick(dom, link, { detail: 0 }).defaultPrevented, true);
+    assert.equal(navigations[1].method, "replace");
+    assert.equal(dom.window.history.length, length + 1);
+
+    dom.window.history.back();
+    await waitForCondition(() => dom.window.location.pathname === "/lives");
+    dom.window.history.forward();
+    await waitForCondition(() => dom.window.location.pathname === "/live/channel-pinned");
+
+    link.href = "/channel-pinned";
+    assert.equal(dispatchClick(dom, link).defaultPrevented, true);
+    assert.equal(dom.window.location.pathname, "/channel-pinned");
+});
+
+test("source navigation preserves native links, modifiers and pin editing, and cleans up on disable", async (t) => {
+    const { dom, chrome, navigations } = await createCollapsedNavigationDom(t);
+    const { document } = dom.window;
+    let link = document.querySelector("[data-bcsf-source-row] a");
+    // Prevent jsdom's unimplemented document navigation only after observing feature cancellation.
+    document.addEventListener("click", (event) => event.preventDefault());
+    function wasIntercepted(element, init = {}) {
+        let intercepted = null;
+        element.addEventListener("click", (event) => (intercepted = event.defaultPrevented), { once: true });
+        dispatchClick(dom, element, init);
+        return intercepted === null;
+    }
+    for (const init of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
+        assert.equal(wasIntercepted(link, init), false);
+    }
+    assert.equal(wasIntercepted(document.querySelector("#liveA a")), false);
+    link.target = "_blank";
+    assert.equal(wasIntercepted(link), false);
+    link.removeAttribute("target");
+    link.setAttribute("download", "");
+    assert.equal(wasIntercepted(link), false);
+    link.removeAttribute("download");
+    link.href = "/live/another-channel";
+    assert.equal(wasIntercepted(link), false, "a reused row cannot navigate using its previous channel marker");
+    link.href = "/live/channel-pinned";
+    assert.equal(navigations.length, 0);
+
+    document.getElementById("betterchzzk-following-pin-mode").click();
+    assert.equal(wasIntercepted(link), true);
+    await waitForCondition(() => chrome.testState.sync[STORAGE_KEY].length === 0);
+    assert.equal(navigations.length, 0, "pin mode toggles the pin without navigating");
+    document.getElementById("betterchzzk-following-pin-mode").click();
+    chrome.testState.emitSync({ [STORAGE_KEY]: { newValue: ["channel-pinned"] } });
+    await waitForCondition(() => document.querySelector("[data-bcsf-source-row] a"));
+    link = document.querySelector("[data-bcsf-source-row] a");
+
+    chrome.testState.emitSync({ followingPinEnabled: { newValue: false } });
+    await waitForCondition(() => !document.querySelector("[data-bcsf-source-row]"));
+    assert.equal(link.isConnected, false);
+    chrome.testState.emitSync({ followingPinEnabled: { newValue: true } });
+    await waitForCondition(() => document.querySelector("[data-bcsf-source-row] a"));
+    assert.equal(wasIntercepted(document.querySelector("[data-bcsf-source-row] a")), true);
+    assert.equal(navigations.length, 1, "reenabling must not duplicate navigation listeners");
+});
+
+test("source navigation resolves the current sidebar router after remount and rejects invalid requests", async (t) => {
+    const { dom, navigations, navigator } = await createCollapsedNavigationDom(t);
+    const { document } = dom.window;
+    const sidebar = document.getElementById("sidebar");
+    const replacement = sidebar.cloneNode(true);
+    sidebar.replaceWith(replacement);
+    const link = replacement.querySelector("[data-bcsf-source-row] a");
+    const request = () =>
+        link.dispatchEvent(
+            new dom.window.CustomEvent("betterchzzk:following-navigate", {
+                bubbles: true,
+                cancelable: true,
+            })
+        );
+    assert.equal(request(), true, "missing router leaves native link behavior available");
+    replacement.__reactFiber$navigationTest = {
+        return: { memoizedProps: { value: { basename: "/", navigator } } },
+    };
+    for (const href of ["https://example.com/live/channel-pinned", "/live/wrong-channel", "/video/123"]) {
+        link.href = href;
+        assert.equal(request(), true);
+    }
+    link.href = "/live/channel-pinned";
+    assert.equal(request(), false);
+    assert.equal(navigations.length, 1);
+    assert.equal(document.getElementById("sidebar"), replacement);
 });
 
 test("offline pins lead their offline group by default and optionally join all pins at the top", async (t) => {
