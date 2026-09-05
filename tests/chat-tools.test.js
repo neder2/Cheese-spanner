@@ -429,6 +429,124 @@ test("activity UI is cleaned up on option disable and channel navigation", async
     assert.equal(unreadCount(document), 0);
 });
 
+test("native moderator highlights follow nickname colors without changing text or collecting viewers", async (t) => {
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            chatId: "highlight-manager",
+            nickname: "운영 담당",
+            text: "일반 채팅에서도 읽을 수 있는 안내",
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            nicknameColor: "rgb(30, 140, 95)",
+        }) +
+            realChzzkChatRow({
+                chatId: "highlight-streamer",
+                nickname: "방송하는 봄",
+                text: "방송자 메시지",
+                badgeImg: '<img src="https://example.test/streamer.png" alt="방송자">',
+                nicknameColor: "rgb(180, 120, 40)",
+            }) +
+            realChzzkChatRow({ chatId: "highlight-viewer", nickname: "시청하는 별", text: "일반 시청자 메시지" })
+    );
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    const manager = document.querySelector('[data-chat-id="highlight-manager"]');
+    manager.style.padding = "3px 7px";
+    manager.style.color = "rgb(30, 32, 35)";
+    const originalText = manager.textContent;
+    loadChatTools(dom);
+    await waitForCondition(() => manager.hasAttribute("data-bcct-moderator-highlight"));
+    assert.equal(manager.style.getPropertyValue("--bcct-moderator-highlight-color"), "rgb(30, 140, 95)");
+    assert.equal(manager.textContent, originalText);
+    assert.equal(manager.style.color, "rgb(30, 32, 35)");
+    assert.equal(manager.style.padding, "3px 7px");
+    assert.equal(document.querySelectorAll('[data-bcct-moderator-highlight="1"]').length, 2);
+    assert.equal(
+        document.querySelector('[data-chat-id="highlight-viewer"]').hasAttribute("data-bcct-moderator-highlight"),
+        false
+    );
+    assert.equal(moderatorRows(document).length, 2);
+    assert.equal(document.querySelector(".bcct-moderator-box").getAttribute("data-open"), "0");
+
+    manager.querySelector("[class*='_nickname_o']").style.color = "rgb(130, 80, 190)";
+    await waitForCondition(
+        () => manager.style.getPropertyValue("--bcct-moderator-highlight-color") === "rgb(130, 80, 190)"
+    );
+    let highlightWrites = 0;
+    const observer = new dom.window.MutationObserver((mutations) => {
+        highlightWrites += mutations.filter(
+            (mutation) => mutation.target === manager && mutation.attributeName === "style"
+        ).length;
+    });
+    observer.observe(manager, { attributes: true, subtree: true });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    observer.disconnect();
+    assert.equal(highlightWrites, 0, "highlight style must settle instead of feeding the chat observer");
+    assert.equal(moderatorRows(document).length, 2);
+});
+
+test("native highlights clean up during row reuse, remount, option changes and channel navigation", async (t) => {
+    const { dom, chrome } = createPageDom(activityChat("highlight-reuse"));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    evalRepoScript(dom, "features", "routeBridgePage.js");
+    let row = document.querySelector('[data-chat-id="highlight-reuse"]');
+    await waitForCondition(() => row.hasAttribute("data-bcct-moderator-highlight"));
+    row.setAttribute("data-chat-id", "highlight-next");
+    row.querySelector("[class*='_text_']").textContent = "다음 메시지";
+    await waitForCondition(() => !row.hasAttribute("data-bcct-moderator-highlight"));
+    row.querySelector("img").setAttribute("alt", "구독자");
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    assert.equal(row.hasAttribute("data-bcct-moderator-highlight"), false);
+    assert.equal(row.style.getPropertyValue("--bcct-moderator-highlight-color"), "");
+    row.querySelector("img").setAttribute("alt", "채팅 운영자");
+    await waitForCondition(() => row.hasAttribute("data-bcct-moderator-highlight"));
+
+    const previousRow = row;
+    row = previousRow.cloneNode(true);
+    previousRow.replaceWith(row);
+    await waitForCondition(
+        () =>
+            !previousRow.hasAttribute("data-bcct-moderator-highlight") &&
+            row.hasAttribute("data-bcct-moderator-highlight")
+    );
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener({ chatToolsModeratorBoxEnabled: { oldValue: true, newValue: false } }, "sync");
+    }
+    await waitForCondition(() => !row.hasAttribute("data-bcct-moderator-highlight"));
+    assert.equal(row.style.getPropertyValue("--bcct-moderator-highlight-color"), "");
+    assert.ok(document.getElementById("betterchzzk-chat-tools-style"), "blind-text feature remains enabled");
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener({ chatToolsModeratorBoxEnabled: { oldValue: false, newValue: true } }, "sync");
+    }
+    await waitForCondition(() => row.hasAttribute("data-bcct-moderator-highlight"));
+    dom.window.history.pushState({}, "", "/video/123");
+    await waitForCondition(() => !row.hasAttribute("data-bcct-moderator-highlight"));
+});
+
+test("capacity eviction keeps visible source highlights and an uncolored nickname follows native text", async (t) => {
+    const { dom } = createPageDom(
+        Array.from({ length: 21 }, (_, index) => activityChat(`highlight-cap-${index}`)).join(""),
+        { chatToolsMaxModeratorMessages: 20 }
+    );
+    t.after(() => closeChatToolsDom(dom));
+    loadChatTools(dom);
+    const document = dom.window.document;
+    await waitForCondition(() => document.querySelectorAll('[data-bcct-moderator-highlight="1"]').length === 21);
+    assert.equal(moderatorRows(document).length, 20);
+    const first = document.querySelector('[data-chat-id="highlight-cap-0"]');
+    assert.equal(first.style.getPropertyValue("--bcct-moderator-highlight-color"), "currentColor");
+    first.querySelector("[class*='_nickname_o']").style.color = "rgb(80, 120, 180)";
+    await waitForCondition(
+        () => first.style.getPropertyValue("--bcct-moderator-highlight-color") === "rgb(80, 120, 180)"
+    );
+    assert.equal(moderatorRows(document).length, 20);
+    assert.equal(
+        moderatorRows(document).some((row) => row.textContent.includes("highlight-cap-0")),
+        false
+    );
+});
+
 test("welcome message removal stays off by default and survives enable, remount, and re-enable", async (t) => {
     const { chrome, dom } = createPageDom(
         '<div class="_item_8lqsk_7 _big_padding_8lqsk_53">' +
