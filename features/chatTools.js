@@ -5,6 +5,7 @@
  * 하는 일: MutationObserver 로 채팅 행을 감지해 작성자/본문/역할/블라인드 여부를 파싱한다.
  *   블라인드 처리된 메시지는 숨겨진 원문을 찾아 취소선 텍스트로 보여주고,
  *   방송자·채팅 운영자 메시지는 별도 패널에 모아 보여주는 트리거 버튼과 박스를 채팅 헤더에 삽입한다.
+ *   모아보기 대상으로 확정된 원본 채팅 행은 닉네임 색의 옅은 배경과 테두리로 강조한다.
  *   옵션 변경(bindFeatureOptions)과 라우트 변경(startPageChangeDetection) 시 런타임을 재시작한다.
  * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
  *   createMutationObserverSync, createThrottledDomSync, injectStyleOnce, isLiveRoute, normSpace,
@@ -35,6 +36,8 @@
     // 않는 data 속성은 유지되므로 클래스 대신 data 속성으로 가림 상태를 표시한다.
     const BLIND_MASKED_ATTR = "data-bcct-blind-masked";
     const MODERATOR_COLLECTED_ATTR = "data-bcct-moderator-collected";
+    const MODERATOR_HIGHLIGHT_ATTR = "data-bcct-moderator-highlight";
+    const MODERATOR_HIGHLIGHT_COLOR = "--bcct-moderator-highlight-color";
     const MODERATOR_BOX_ATTR = "data-bcct-moderator-box";
     const MODERATOR_ROW_ATTR = "data-bcct-moderator-row";
     const MODERATOR_TRIGGER_ATTR = "data-bcct-moderator-trigger";
@@ -178,6 +181,18 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
 }
 `;
     const STYLE_TEXT = `
+[${MODERATOR_HIGHLIGHT_ATTR}="1"]{
+  --bcct-highlight-tint:color-mix(in srgb, var(${MODERATOR_HIGHLIGHT_COLOR}, currentColor) 85%, #000);
+  background-color:color-mix(in srgb, var(--bcct-highlight-tint) 10%, transparent)!important;
+  border-radius:4px;
+  box-shadow:0 0 0 1px color-mix(in srgb, var(--bcct-highlight-tint) 32%, transparent);
+}
+/* 2026-09-05 치지직의 루트 theme_dark 클래스·data-theme 기준. 본문색과 행 크기는 유지한다. */
+html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"]{
+  --bcct-highlight-tint:color-mix(in srgb, var(${MODERATOR_HIGHLIGHT_COLOR}, currentColor) 85%, #fff);
+  background-color:color-mix(in srgb, var(--bcct-highlight-tint) 12%, transparent)!important;
+  box-shadow:0 0 0 1px color-mix(in srgb, var(--bcct-highlight-tint) 40%, transparent);
+}
 [data-bcct-blind-masked="1"]{
   display:none!important;
 }
@@ -1560,10 +1575,36 @@ body[theme="dark"] .bcct-moderator-box__empty,
         moderatorRowTransitions.clear();
     }
 
+    function removeModeratorHighlight(row) {
+        if (!(row instanceof HTMLElement)) return;
+        if (row.hasAttribute(MODERATOR_HIGHLIGHT_ATTR)) row.removeAttribute(MODERATOR_HIGHLIGHT_ATTR);
+        if (row.style.getPropertyValue(MODERATOR_HIGHLIGHT_COLOR)) row.style.removeProperty(MODERATOR_HIGHLIGHT_COLOR);
+    }
+
+    function syncModeratorHighlight(parsed) {
+        const row = parsed.node;
+        if (!(row instanceof HTMLElement)) return;
+        if (!isModeratorBoxEnabled()) {
+            removeModeratorHighlight(row);
+            return;
+        }
+        const color = parsed.authorColor || "currentColor";
+        // style도 원본 채팅 observer가 보므로 실제 색이 달라진 경우에만 쓴다.
+        if (row.style.getPropertyValue(MODERATOR_HIGHLIGHT_COLOR) !== color) {
+            row.style.setProperty(MODERATOR_HIGHLIGHT_COLOR, color);
+        }
+        if (row.getAttribute(MODERATOR_HIGHLIGHT_ATTR) !== "1") row.setAttribute(MODERATOR_HIGHLIGHT_ATTR, "1");
+    }
+
+    function clearModeratorHighlights() {
+        for (const row of document.querySelectorAll(`[${MODERATOR_HIGHLIGHT_ATTR}]`)) removeModeratorHighlight(row);
+    }
+
     function detachModeratorRowBinding(row) {
         const binding = moderatorRowBindings.get(row);
         moderatorRowBindings.delete(row);
         row?.removeAttribute?.(MODERATOR_COLLECTED_ATTR);
+        removeModeratorHighlight(row);
         if (binding?.message?.node === row) binding.message.node = null;
         return binding || null;
     }
@@ -1773,6 +1814,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         }
 
         bindModeratorRow(parsed.node, message, buildModeratorSnapshot(parsed));
+        syncModeratorHighlight(parsed);
         if (added && transition) {
             registerModeratorTransitionOwnership(parsed.node, message, buildModeratorSnapshot(parsed), transition);
         }
@@ -1879,6 +1921,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
             cancelModeratorTransition(row);
             backfillModeratorMessage(binding.message, parsed, { deferRender });
             row.setAttribute(MODERATOR_COLLECTED_ATTR, "1");
+            syncModeratorHighlight(parsed);
             return false;
         }
 
@@ -1914,6 +1957,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
         if (row?.hasAttribute?.(MODERATOR_COLLECTED_ATTR)) {
             row.removeAttribute(MODERATOR_COLLECTED_ATTR);
+            removeModeratorHighlight(row);
         }
         return commitModeratorMessage(parsed, { deferRender });
     }
@@ -2694,6 +2738,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
     function clearModeratorState() {
         clearModeratorTransitions();
         clearModeratorTransitionOwnerships();
+        clearModeratorHighlights();
         for (const row of Array.from(document.querySelectorAll(`[${MODERATOR_COLLECTED_ATTR}]`))) {
             row.removeAttribute(MODERATOR_COLLECTED_ATTR);
         }
@@ -3182,6 +3227,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         if (parsedChatRows.has(row)) return true;
         if (row.hasAttribute(MODERATOR_COLLECTED_ATTR) && !moderatorRowBindings.has(row)) {
             row.removeAttribute(MODERATOR_COLLECTED_ATTR);
+            removeModeratorHighlight(row);
         }
         return row.hasAttribute(BLIND_PROCESSED_ATTR) || moderatorRowBindings.has(row);
     }
@@ -3213,7 +3259,10 @@ body[theme="dark"] .bcct-moderator-box__empty,
             for (const row of rows) {
                 // 닉네임 클릭 프로필 카드 등 팝업이 펼쳐진 행은 팝업 내용이 파싱을
                 // 오염시키므로 팝업이 닫힌 뒤(다음 mutation)에 처리한다.
-                if (row.querySelector("[aria-haspopup='true'][aria-expanded='true']")) continue;
+                if (row.querySelector("[aria-haspopup='true'][aria-expanded='true']")) {
+                    removeModeratorHighlight(row);
+                    continue;
+                }
                 const parsed = parseChatMessage(row);
                 cacheOriginalMessageText(row, parsed);
                 syncBlindReveal(row, parsed);
@@ -3347,6 +3396,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         if (!isModeratorBoxEnabled()) {
             clearModeratorTransitions();
             retractModeratorTransitionOwnerships({ deferRender: true });
+            clearModeratorHighlights();
             removeModeratorBox();
         }
         if (!isBlindRevealEnabled()) removeAllBlindReveals();
