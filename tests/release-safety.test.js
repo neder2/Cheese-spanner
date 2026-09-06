@@ -5,7 +5,14 @@ const test = require("node:test");
 
 const repoRoot = path.join(__dirname, "..");
 
-const runtimeFiles = ["manifest.json", "background.js", "content.js", "history.js", "options.js"];
+const runtimeFiles = [
+    "manifest.json",
+    "background.js",
+    "content.js",
+    "history.js",
+    "options.js",
+    "optionsUpdateGuide.js",
+];
 const runtimeDirs = ["shared", "features", "vendor"];
 const followingPreviewFiles = ["features/followingPreviewTooltip.js"];
 const followingPreviewMuxedMasterManifest = [
@@ -242,8 +249,15 @@ test("following preview must not fall back to popup, window, iframe, or remote J
 
     for (const file of followingPreviewFiles) {
         const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
+        // The requested channel-home anchor is navigation, not a playback fallback.
+        // Exempt only its target assignment; every other forbidden pattern stays guarded.
+        const channelLink = source.match(/ {4}function createChannelLink\(meta\) \{[\s\S]*?\n {4}\}/)?.[0] || "";
+        if (file.endsWith("followingPreviewTooltip.js")) assert.match(channelLink, /link\.target = "_blank";/);
+        const checkedSource = channelLink
+            ? source.replace(channelLink, channelLink.replace('link.target = "_blank";', ""))
+            : source;
         for (const { label, pattern } of followingPreviewForbiddenPatterns) {
-            if (pattern.test(source)) violations.push(`${file}: ${label}`);
+            if (pattern.test(checkedSource)) violations.push(`${file}: ${label}`);
         }
     }
 

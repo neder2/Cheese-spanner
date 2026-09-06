@@ -2,18 +2,21 @@
  * features/sidebarCustomization.js — 치지직 사이드바의 치즈팜 메뉴와 팔로잉 채널 고정을 관리한다.
  *
  * 동작 위치: isolated world, chzzk.naver.com 전역의 #sidebar.
- * 하는 일: 옵션에 따라 사이드바의 /cheezefarm 메뉴만 숨기고, 팔로잉 새로고침 버튼 왼쪽에 고정
+ * 하는 일: 옵션에 따라 사이드바의 /cheezefarm 메뉴와 선택한 구역을 숨기고, 팔로잉 새로고침 버튼 왼쪽에 고정
  *   모드 토글을 붙인다. 고정된 채널명 옆에 상태 핀을 표시하고, 고정 모드에서 채널을 선택해 저장한다.
  *   CSS order로 고정 라이브는 최상단, 고정 오프라인은 오프라인 그룹 상단에 배치한다. 옵션을 켜면
  *   고정 오프라인도 최상단에 모은다. 접힌 목록의 네이티브 상위 5개 밖에 고정 채널이 있으면 치지직이
  *   사용하는 팔로잉 API 순서에서 확인한 채널만 확장 소유 행으로 보충한다. React가 소유한 행은 이동하지
  *   않으며, 목록 갱신·DOM 재마운트·노드 재사용 때 현재 href를 다시 검증한다.
  *   보충 행의 일반 클릭은 routeBridgePage.js에 DOM 이벤트로 전달해 치지직 라우터로 이동한다.
+ *   팔로잉 링크 드래그는 고정 옵션과 독립적으로 URL 데이터를 전달하며, 드래그 종료 때 원래 속성을 복구한다.
  * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
  *   createMutationObserverSync, fetchJson, injectStyleOnce, normSpace, normalizeChzzkChannelId,
  *   normalizeChzzkImageUrl,
- *   startStorageChangeListener, storageGet, storageSet), BetterChzzk.selectors(CHZZK, queryChain).
+ *   startPageChangeDetection, startStorageChangeListener, storageGet, storageSet), BetterChzzk.selectors(CHZZK, queryChain).
  * 옵션 키: sidebarCheeseFarmHidden, followingPinEnabled, followingPinOfflineToTopEnabled.
+ *   sidebarPopularCategoriesHidden, sidebarUpcomingScheduleHidden, sidebarPartnerStreamersHidden,
+ *   sidebarServiceLinksHidden.
  * 저장 키: chrome.storage.sync.betterchzzkPinnedFollowingChannelIds (채널 ID 배열, 최대 64개).
  * DOM 마커: #betterchzzk-sidebar-customization-style, #betterchzzk-following-pin-mode, data-bcsf-* 속성.
  */
@@ -31,6 +34,7 @@
         startStorageChangeListener,
         storageGet,
         storageSet,
+        startPageChangeDetection,
     } = BetterChzzk.utils;
 
     const STORAGE_KEY = "betterchzzkPinnedFollowingChannelIds";
@@ -38,6 +42,13 @@
     const STYLE_ID = "betterchzzk-sidebar-customization-style";
     const MODE_BUTTON_ID = "betterchzzk-following-pin-mode";
     const CHEESE_HIDDEN_ATTR = "data-bcsf-cheese-hidden";
+    const SECTION_HIDDEN_ATTR = "data-bcsf-section-hidden";
+    const SECTION_OPTIONS = new Map([
+        ["인기 카테고리", "sidebarPopularCategoriesHidden"],
+        ["다가오는 방송 일정", "sidebarUpcomingScheduleHidden"],
+        ["파트너 스트리머", "sidebarPartnerStreamersHidden"],
+        ["서비스 바로가기", "sidebarServiceLinksHidden"],
+    ]);
     const LIST_ATTR = "data-bcsf-list";
     const ROW_ATTR = "data-bcsf-row";
     const ORDER_GROUP_ATTR = "data-bcsf-order-group";
@@ -65,6 +76,7 @@
     const FOLLOWING_TEXT_RE = /팔로(잉|우)|following|follow/i;
     const PIN_ICON_SVG =
         '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 4.5 19 9l-2 2-1.1-1.1-3.2 3.2.3 3.4-1.4 1.4-2.8-2.8-3.3 3.3-.9-.9 3.3-3.3-2.8-2.8L6.5 10l3.4.3 3.2-3.2L12 6l2.5-1.5Z"/></svg>';
+    let followingDrag = null;
     const RESERVED_ROOT_PATHS = new Set([
         "category",
         "cheezefarm",
@@ -78,6 +90,9 @@
         "video",
     ]);
     const STYLE_TEXT = `
+#sidebar [${SECTION_HIDDEN_ATTR}="1"]{
+  display:none!important;
+}
 html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar li:has(a[href="/cheezefarm"]),
 html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
   display:none!important;
@@ -164,6 +179,9 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     let persistedChannelIds = [];
     let runtimeInstalled = false;
     let domObserver = null;
+    let sectionObserver = null;
+    let sectionFrame = 0;
+    const hiddenSections = new Set();
     let removeStorageChangeListener = null;
     let syncFrame = 0;
     let runtimeGeneration = 0;
@@ -573,8 +591,59 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     }
 
     function syncStyle() {
-        if (featureOptions.sidebarCheeseFarmHidden || runtimeInstalled) ensureStyle();
+        if (featureOptions.sidebarCheeseFarmHidden || runtimeInstalled || sectionObserver) ensureStyle();
         else document.getElementById(STYLE_ID)?.remove();
+    }
+
+    function syncSections() {
+        sectionFrame = 0;
+        const next = new Set();
+        // 2026-09-06 https://chzzk.naver.com/: 각 구역은 nav > div > strong 제목을 사용한다.
+        // 파트너 제목은 a 안에 있고, 새 창 안내 span은 제목의 정체성에 포함하지 않는다.
+        for (const section of getSidebar()?.querySelectorAll("nav") || []) {
+            const title = section.querySelector(":scope > div > strong");
+            const label = title?.querySelector("a") || title;
+            const text = normSpace(
+                Array.from(label?.childNodes || [])
+                    .filter((node) => node.nodeType === Node.TEXT_NODE)
+                    .map((node) => node.textContent)
+                    .join("")
+            );
+            const key = SECTION_OPTIONS.get(text);
+            if (key && featureOptions[key]) next.add(section);
+        }
+        for (const section of hiddenSections) {
+            if (!next.has(section)) section.removeAttribute(SECTION_HIDDEN_ATTR);
+        }
+        hiddenSections.clear();
+        for (const section of next) {
+            if (section.getAttribute(SECTION_HIDDEN_ATTR) !== "1") section.setAttribute(SECTION_HIDDEN_ATTR, "1");
+            hiddenSections.add(section);
+        }
+    }
+
+    function scheduleSections() {
+        if (!sectionFrame) sectionFrame = window.requestAnimationFrame(syncSections);
+    }
+
+    function applySectionOptions() {
+        if (Array.from(SECTION_OPTIONS.values()).some((key) => featureOptions[key])) {
+            sectionObserver ||= createMutationObserverSync({
+                target: getSidebar,
+                options: { childList: true, subtree: true, characterData: true },
+                schedule: scheduleSections,
+                onObserved: scheduleSections,
+                onBodyReady: scheduleSections,
+            });
+            scheduleSections();
+            return;
+        }
+        sectionObserver?.disconnectAll?.();
+        sectionObserver = null;
+        if (sectionFrame) window.cancelAnimationFrame(sectionFrame);
+        sectionFrame = 0;
+        for (const section of hiddenSections) section.removeAttribute(SECTION_HIDDEN_ATTR);
+        hiddenSections.clear();
     }
 
     function applyCheeseFarmOption() {
@@ -905,6 +974,69 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         return event.altKey || event.ctrlKey || event.metaKey || event.shiftKey;
     }
 
+    function followingDragLink(target) {
+        const link = target instanceof Element && target.closest("a[href]");
+        if (!(link instanceof HTMLAnchorElement) || !getSidebar()?.contains(link)) return null;
+        if (target.closest("button, input, textarea, select, [contenteditable='true']")) return null;
+        const following = findFollowingList(getSidebar());
+        if (!following?.list.contains(link) || !parseChannelHref(link.getAttribute("href"))) return null;
+        const url = new URL(link.href);
+        return url.username || url.password ? null : link;
+    }
+
+    function restoreFollowingDrag() {
+        const active = followingDrag;
+        followingDrag = null;
+        if (!active) return;
+        if (active.link.getAttribute("draggable") === "true")
+            restoreOriginalAttribute(active.link, "draggable", active.draggable);
+        if (active.link.style.getPropertyValue("-webkit-user-drag") === "element") {
+            if (active.style) active.link.style.setProperty("-webkit-user-drag", active.style, active.priority);
+            else active.link.style.removeProperty("-webkit-user-drag");
+        }
+        if (!active.hadStyle && !active.link.style.length) active.link.removeAttribute("style");
+    }
+
+    function prepareFollowingDrag(event) {
+        if (event.button !== 0 || event.isPrimary === false || event.altKey) return;
+        restoreFollowingDrag();
+        const link = followingDragLink(event.target);
+        if (!link) return;
+        // Native channel anchors currently set draggable=false (2026-09-06).
+        // Prepare before the browser's mousedown default action; keep ordinary link navigation.
+        followingDrag = {
+            link,
+            href: link.href,
+            pointerId: event.pointerId,
+            hadStyle: link.hasAttribute("style"),
+            draggable: link.getAttribute("draggable"),
+            style: link.style.getPropertyValue("-webkit-user-drag"),
+            priority: link.style.getPropertyPriority("-webkit-user-drag"),
+            started: false,
+        };
+        link.draggable = true;
+        link.style.setProperty("-webkit-user-drag", "element", "important");
+    }
+
+    function startFollowingDrag(event) {
+        const link = followingDragLink(event.target);
+        if (!link || !event.dataTransfer || event.defaultPrevented) return;
+        if (followingDrag && (followingDrag.link !== link || followingDrag.href !== link.href)) {
+            event.preventDefault();
+            restoreFollowingDrag();
+            return;
+        }
+        if (followingDrag) followingDrag.started = true;
+        event.dataTransfer.setData("text/uri-list", link.href);
+        event.dataTransfer.setData("text/plain", link.href);
+        event.dataTransfer.effectAllowed = "copyLink";
+    }
+
+    function endFollowingPointer(event) {
+        if (followingDrag && event.pointerId === followingDrag.pointerId && !followingDrag.started)
+            restoreFollowingDrag();
+    }
+
     function navigateSourceLink(event, meta) {
         const link = event.target.closest("a[href]");
         if (
@@ -1030,10 +1162,20 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     function applyOptions(options) {
         featureOptions = options;
         applyCheeseFarmOption();
+        applySectionOptions();
         if (featureOptions.followingPinEnabled) installRuntime();
         else uninstallRuntime();
         syncStyle();
     }
 
+    // Link dragging is independent of pinning. Capture before document-level drag blockers.
+    window.addEventListener("pointerdown", prepareFollowingDrag, true);
+    window.addEventListener("pointerup", endFollowingPointer, true);
+    window.addEventListener("pointercancel", endFollowingPointer, true);
+    window.addEventListener("dragstart", startFollowingDrag, true);
+    window.addEventListener("dragend", restoreFollowingDrag, true);
+    window.addEventListener("pagehide", restoreFollowingDrag);
+    window.addEventListener("blur", restoreFollowingDrag);
+    startPageChangeDetection(restoreFollowingDrag);
     bindFeatureOptions(applyOptions);
 })();

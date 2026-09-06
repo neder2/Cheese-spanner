@@ -299,6 +299,93 @@ test("following preview delays live-detail fetches while opening the DOM card im
     assert.equal(calls[0].init.signal.aborted, false);
 });
 
+function previewLinkDefaultPrevented(dom, link, type = "click", init = {}) {
+    let prevented;
+    // Inspect the feature's decision, then suppress jsdom's unsupported navigation.
+    dom.window.addEventListener(
+        type,
+        (event) => {
+            prevented = event.defaultPrevented;
+            event.preventDefault();
+        },
+        { once: true }
+    );
+    link.dispatchEvent(new dom.window.MouseEvent(type, { bubbles: true, cancelable: true, ...init }));
+    return prevented;
+}
+
+test("dragging a following link hides its hover card and cancels pending preview work", async () => {
+    const { document, dom, link } = createFollowingPreviewDom();
+    const requests = [];
+    dom.window.fetch = (url, init) => {
+        requests.push({ url, init });
+        return new Promise(() => {});
+    };
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    document.addEventListener("dragstart", (event) => event.stopPropagation(), true);
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    const tip = document.getElementById("betterchzzk-following-preview");
+    assert.equal(tip.getAttribute("data-show"), "1");
+    link.dispatchEvent(new dom.window.Event("dragstart", { bubbles: true }));
+    await waitForFollowingPreviewFetchDelay();
+    assert.equal(requests.length, 0);
+    assert.equal(tip.hasAttribute("data-show"), false);
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForFollowingPreviewFetchDelay();
+    assert.equal(requests.length, 1);
+    link.dispatchEvent(new dom.window.Event("dragstart", { bubbles: true }));
+    assert.equal(requests[0].init.signal.aborted, true);
+    assert.equal(tip.hasAttribute("data-show"), false);
+});
+
+test("following preview channel name opens channel home in a new tab including ordinary clicks", async () => {
+    const { dom, document, link } = createFollowingPreviewDom(createFakeChrome());
+    dom.window.fetch = () => new Promise(() => {});
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    const name = document.querySelector("#betterchzzk-following-preview .bcfp-channel");
+    assert.equal(name.tagName, "A");
+    assert.equal(name.getAttribute("href"), "/channel-123");
+    assert.equal(name.getAttribute("target"), "_blank");
+    assert.equal(name.getAttribute("rel"), "noopener noreferrer");
+    assert.equal(name.tabIndex, 0);
+    assert.match(name.getAttribute("aria-label"), /채널 홈 새 탭에서 열기$/);
+    const icon = name.querySelector("svg.bcfp-channel-window");
+    assert.ok(icon);
+    assert.equal(icon.getAttribute("aria-hidden"), "true");
+    assert.equal(icon.getAttribute("focusable"), "false");
+    assert.equal(previewLinkDefaultPrevented(dom, icon), false);
+    for (const init of [{}, { ctrlKey: true }, { metaKey: true }, { shiftKey: true }]) {
+        assert.equal(previewLinkDefaultPrevented(dom, name, "click", init), false);
+    }
+    assert.equal(previewLinkDefaultPrevented(dom, name, "auxclick", { button: 1 }), false);
+    assert.equal(link.getAttribute("href"), "/live/channel-123");
+    assert.equal(document.querySelector("#betterchzzk-following-preview .bcfp-title").tagName, "DIV");
+});
+
+test("following preview channel link rejects reused and disconnected source rows", async () => {
+    const { dom, document, item, link } = createFollowingPreviewDom(createFakeChrome());
+    dom.window.fetch = () => new Promise(() => {});
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    const oldName = document.querySelector("#betterchzzk-following-preview .bcfp-channel");
+    link.setAttribute("href", "/live/next-channel");
+    assert.equal(previewLinkDefaultPrevented(dom, oldName), true);
+    assert.equal(document.getElementById("betterchzzk-following-preview").hasAttribute("data-show"), false);
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    const newName = document.querySelector("#betterchzzk-following-preview .bcfp-channel");
+    assert.equal(newName.getAttribute("href"), "/next-channel");
+    assert.equal(previewLinkDefaultPrevented(dom, newName), false);
+    item.remove();
+    assert.equal(previewLinkDefaultPrevented(dom, newName, "auxclick", { button: 1 }), true);
+});
+
 test("only collapsed pinned following rows bridge the preserved preview gap", async () => {
     const chrome = createFakeChrome();
     const { document, dom, item, link } = createFollowingPreviewDom(chrome);

@@ -130,10 +130,38 @@
         }
     }
 
+    function handleMultiviewNavigate(event) {
+        const link = event.target;
+        if (event.defaultPrevented || !event.cancelable || !(link instanceof HTMLAnchorElement)) return;
+        if (
+            !link.closest("#betterchzzk-multiview") ||
+            link.dataset.action !== "main" ||
+            (link.target && link.target !== "_self") ||
+            link.hasAttribute("download")
+        )
+            return;
+        const channelId = link.dataset.channel;
+        if (!/^[a-f0-9]{32}$/.test(channelId || "")) return;
+        try {
+            const url = new URL(link.getAttribute("href"), location.origin);
+            if (url.origin !== location.origin || url.pathname !== "/live/" + channelId || url.search || url.hash)
+                return;
+            const sidebar = document.getElementById("sidebar");
+            if (!sidebar) return;
+            const navigator = getSidebarNavigator(sidebar);
+            if (!navigator) return;
+            navigator.push({ pathname: url.pathname, search: "", hash: "" });
+            event.preventDefault();
+        } catch (error) {
+            console.warn("[Better Chzzk] 멀티뷰 방송 이동 실패", error);
+        }
+    }
+
     wrapHistoryMethod("pushState");
     wrapHistoryMethod("replaceState");
     window.addEventListener("popstate", () => dispatchRouteChange("popstate"), true);
     window.addEventListener("hashchange", () => dispatchRouteChange("hashchange"), true);
     window.addEventListener("pageshow", () => dispatchRouteChange("pageshow"), true);
     window.addEventListener(FOLLOWING_NAVIGATE_EVENT, handleFollowingNavigate, true);
+    window.addEventListener("betterchzzk:multiview-navigate", handleMultiviewNavigate, true);
 })();

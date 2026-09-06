@@ -99,6 +99,8 @@
         "[class*='chat-room']",
         "[class*='chatroom']",
     ];
+    // 2026-09-06 실측: _fixed_는 고정 메시지·미션 UI, _exist_fixed_message_는 목록 전체다.
+    const NATIVE_FIXED_CHAT_SELECTOR = "#aside-chatting [class^='_fixed_'], #aside-chatting [class*=' _fixed_']";
     const CHAT_ROW_SELECTORS = [
         "[data-chat-id]",
         "[data-message-id]",
@@ -643,7 +645,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
     let rowMutationRevisions = new WeakMap();
     let legacyModeratorCachePurged = false;
     const dirtyChatRows = new Set();
-    let parsedChatRows = new WeakSet();
+    let parsedChatRows = new WeakMap();
     let forceFullChatScan = true;
     let forceReparseChatRows = true;
     let chatMutationBatchShouldSchedule = false;
@@ -689,7 +691,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         const el = node instanceof Element ? node : node?.parentElement;
         return Boolean(
             el?.closest(
-                `[${MODERATOR_BOX_ATTR}], [${MODERATOR_TRIGGER_ATTR}], [${MODERATOR_ACTION_GROUP_ATTR}], .bcct-blind-reveal`
+                `[${MODERATOR_BOX_ATTR}], [${MODERATOR_TRIGGER_ATTR}], [${MODERATOR_ACTION_GROUP_ATTR}], #betterchzzk-multiview-chat-settings, .bcct-blind-reveal`
             )
         );
     }
@@ -2138,6 +2140,14 @@ body[theme="dark"] .bcct-moderator-box__empty,
         moderatorReadFrame = requestAnimationFrame(markVisibleModeratorMessagesRead);
     }
 
+    function onModeratorAncestorScroll(event) {
+        // 목록 밖의 스크롤로 패널이 화면 안에 들어와도 읽음 위치를 다시 확인한다.
+        // 원본 채팅 목록처럼 패널을 포함하지 않는 스크롤은 수집 목록을 검사하지 않는다.
+        if (moderatorPanelOpen && event.target instanceof Node && event.target.contains(moderatorList)) {
+            scheduleModeratorReadCheck();
+        }
+    }
+
     function markVisibleModeratorMessagesRead() {
         moderatorReadFrame = null;
         if (!moderatorPanelOpen || !moderatorList?.isConnected || document.visibilityState === "hidden") return;
@@ -2274,6 +2284,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         moderatorReadFrame = null;
         moderatorResizeObserver?.disconnect();
         moderatorResizeObserver = null;
+        document.removeEventListener("scroll", onModeratorAncestorScroll, true);
         moderatorActivityRenderKey = "";
         document.removeEventListener("visibilitychange", scheduleModeratorReadCheck);
         window.removeEventListener("resize", scheduleModeratorReadCheck);
@@ -2371,6 +2382,8 @@ body[theme="dark"] .bcct-moderator-box__empty,
     }
 
     function findChatPanelRoot(rootEl) {
+        const nativePanel = rootEl.closest("aside#aside-chatting");
+        if (nativePanel) return nativePanel;
         let current = rootEl.parentElement || rootEl;
         for (let depth = 0; current && depth < 6; depth += 1, current = current.parentElement) {
             if (!(current instanceof Element) || current === document.body) break;
@@ -2719,6 +2732,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         moderatorMenuButtonConfirmed = menuButtonConfirmed;
         document.addEventListener("keydown", onModeratorDocumentKeydown, true);
         document.addEventListener("visibilitychange", scheduleModeratorReadCheck);
+        document.addEventListener("scroll", onModeratorAncestorScroll, { capture: true, passive: true });
         window.addEventListener("resize", scheduleModeratorReadCheck);
         if (typeof ResizeObserver === "function") {
             moderatorResizeObserver = new ResizeObserver(scheduleModeratorReadCheck);
@@ -2768,6 +2782,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
     }
 
     function normalizeCandidateRow(el, rootEl) {
+        if (el.closest(NATIVE_FIXED_CHAT_SELECTOR)) return null;
         let identityRow = null;
         let structuralRow = null;
         let weakRow = el;
@@ -2829,7 +2844,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
     function resetChatProcessingState({ reparse = true } = {}) {
         dirtyChatRows.clear();
-        parsedChatRows = new WeakSet();
+        parsedChatRows = new WeakMap();
         pendingModeratorRemounts = [];
         forceFullChatScan = true;
         forceReparseChatRows = reparse;
@@ -2859,6 +2874,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
             return { rows: [], overflow: false };
         }
         if (!rootEl.contains(el) || isOwnUi(el)) return { rows: [], overflow: false };
+        if (el.closest(NATIVE_FIXED_CHAT_SELECTOR)) return { rows: [], overflow: false };
 
         const rows = new Set();
         const pending = [el];
@@ -2953,6 +2969,9 @@ body[theme="dark"] .bcct-moderator-box__empty,
         if (row?.hasAttribute(BLIND_PROCESSED_ATTR)) return true;
         // 수집된 행을 계속 추적하는 이유는 shouldTrackChatAttributeMutation 참고.
         if (isModeratorBoxEnabled() && getCollectedModeratorRow(row)) return true;
+        // 배지가 먼저 붙고 빈 본문 텍스트 노드가 나중에 채워지면 아직 수집 binding이 없다.
+        // img alt는 textContent에 없으므로 직전 파싱의 역할도 변경 추적에 사용한다.
+        if (isModeratorBoxEnabled() && parsedChatRows.get(row)) return true;
 
         const signalText = getMutationSignalText(row, mutation.target);
         if (isBlindRevealEnabled() && BLIND_SIGNAL_RE.test(signalText)) return true;
@@ -3121,6 +3140,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
         const rows = new Set();
         for (const child of Array.from(rootEl.children)) {
             if (isOwnUi(child) || !getVisibleText(child)) continue;
+            if (child.closest(NATIVE_FIXED_CHAT_SELECTOR)) continue;
             if (child.querySelector(CHAT_ROW_SELECTORS)) continue;
             rows.add(child);
         }
@@ -3267,7 +3287,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
                 cacheOriginalMessageText(row, parsed);
                 syncBlindReveal(row, parsed);
                 collectModeratorMessage(parsed, { deferRender: true });
-                parsedChatRows.add(row);
+                parsedChatRows.set(row, parsed.role);
             }
         } finally {
             pendingModeratorRemounts = processedChatRows

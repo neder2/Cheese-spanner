@@ -366,6 +366,11 @@
   font-weight:800;
   white-space:nowrap;
 }
+#${TOOLTIP_ID} a.bcfp-channel{display:flex;align-items:center;gap:4px;width:fit-content;max-width:100%;text-decoration:none;cursor:pointer;}
+#${TOOLTIP_ID} .bcfp-channel-name{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+#${TOOLTIP_ID} .bcfp-channel-window{flex:none;width:14px;height:14px;}
+#${TOOLTIP_ID} a.bcfp-channel:hover{text-decoration:underline;}
+#${TOOLTIP_ID} a.bcfp-channel:focus-visible{outline:2px solid currentColor;outline-offset:-2px;text-decoration:underline;}
 #${TOOLTIP_ID} .bcfp-title{
   display:-webkit-box;
   -webkit-box-orient:vertical;
@@ -451,6 +456,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         bindFeatureOptions,
         fetchJson: sharedFetchJson,
         injectStyleOnce,
+        normalizeChzzkChannelId,
         normalizeChzzkImageUrl,
         normalizeChzzkMediaUrl,
         normSpace,
@@ -1521,14 +1527,48 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         else delete tip.dataset.channelId;
     }
 
+    function createChannelLink(meta) {
+        const channelId = normalizeChzzkChannelId(meta.channelId);
+        if (!channelId) return createTextEl("bcfp-channel", meta.channelName);
+        const link = document.createElement("a");
+        link.className = "bcfp-channel";
+        const name = document.createElement("span");
+        name.className = "bcfp-channel-name";
+        name.textContent = meta.channelName;
+        // Chzzk sidebar's 14px new-window glyph, observed 2026-09-06. See THIRD_PARTY_NOTICES.md.
+        const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        icon.setAttribute("class", "bcfp-channel-window");
+        icon.setAttribute("viewBox", "0 0 14 14");
+        icon.setAttribute("aria-hidden", "true");
+        icon.setAttribute("focusable", "false");
+        icon.innerHTML = `<path fill="currentColor" fill-rule="evenodd" d="M3.996 3.004a.992.992 0 0 0-.992.992v6.008c0 .548.444.992.992.992h6.008a.992.992 0 0 0 .992-.992V8.562a.758.758 0 1 1 1.516 0v1.444a2.508 2.508 0 0 1-2.508 2.508H3.996a2.508 2.508 0 0 1-2.509-2.508V3.995a2.508 2.508 0 0 1 2.509-2.508h1.063a.758.758 0 0 1 0 1.516H3.996Z" clip-rule="evenodd"/><path fill="currentColor" fill-rule="evenodd" d="M9.97 3.006H8.05a.758.758 0 0 1 0-1.517h3.704a.758.758 0 0 1 .758.758v3.468a.758.758 0 1 1-1.517 0V4.128l-3.043 3.16A.758.758 0 1 1 6.86 6.238l3.11-3.231Z" clip-rule="evenodd"/>`;
+        link.append(name, icon);
+        link.setAttribute("href", `/${encodeURIComponent(channelId)}`);
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.setAttribute("aria-label", `${meta.channelName} 채널 홈 새 탭에서 열기`);
+        const validateTarget = (event) => {
+            const current = activeInfo?.link?.isConnected ? resolveHoverInfo(activeInfo.link) : null;
+            if (
+                !link.isConnected ||
+                !tooltip?.contains(link) ||
+                !tooltip.hasAttribute("data-show") ||
+                current?.channelId !== channelId ||
+                current?.item !== activeInfo?.item
+            ) {
+                event.preventDefault();
+                if (link.isConnected && tooltip?.contains(link)) hidePreview();
+            }
+        };
+        link.addEventListener("click", validateTarget);
+        link.addEventListener("auxclick", validateTarget);
+        return link;
+    }
+
     function createBody(meta) {
         const body = document.createElement("div");
         body.className = "bcfp-body";
-        body.append(
-            createTextEl("bcfp-channel", meta.channelName),
-            createTextEl("bcfp-title", meta.title),
-            createMetaRow(meta)
-        );
+        body.append(createChannelLink(meta), createTextEl("bcfp-title", meta.title), createMetaRow(meta));
         return body;
     }
 
@@ -2202,6 +2242,10 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         if (!activeListExpansion.surface?.contains(event.target)) restoreListExpansion();
     }
 
+    function handleFollowingDragStart(event) {
+        if (resolveHoverInfo(event.target)) hidePreview();
+    }
+
     function handlePageChange() {
         clearSoundFeedback();
         restoreListExpansion();
@@ -2289,6 +2333,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         document.addEventListener("pointerover", handlePointerOver, true);
         document.addEventListener("pointerout", handlePointerOut, true);
         document.addEventListener("pointerdown", handlePointerDown, true);
+        window.addEventListener("dragstart", handleFollowingDragStart, true);
         document.addEventListener("contextmenu", handleContextMenu, true);
         document.addEventListener("keydown", handleKeyDown, true);
         document.addEventListener("playing", handlePreviewPlaying, true);
@@ -2304,6 +2349,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         document.removeEventListener("pointerover", handlePointerOver, true);
         document.removeEventListener("pointerout", handlePointerOut, true);
         document.removeEventListener("pointerdown", handlePointerDown, true);
+        window.removeEventListener("dragstart", handleFollowingDragStart, true);
         document.removeEventListener("contextmenu", handleContextMenu, true);
         document.removeEventListener("keydown", handleKeyDown, true);
         document.removeEventListener("playing", handlePreviewPlaying, true);

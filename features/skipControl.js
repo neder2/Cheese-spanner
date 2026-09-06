@@ -248,7 +248,7 @@
         if (!target) return false;
         if (target.isContentEditable) return true;
         if (typeof target.closest === "function") {
-            return !!target.closest("input, textarea, select, [contenteditable='true']");
+            return !!target.closest("input, textarea, select, [contenteditable='true'], [role='separator']");
         }
         return false;
     }
@@ -1055,34 +1055,6 @@
   cursor:default;
   pointer-events:none;
 }
-#${LIVE_FAST_FORWARD_BUTTON_ID}[tooltip]:not(:disabled)::after{
-  position:absolute;
-  left:50%;
-  bottom:calc(100% + 12px);
-  z-index:2147483647;
-  display:block;
-  padding:9px 15px;
-  border-radius:9999px;
-  background:rgba(18,18,20,0.92);
-  color:#fff;
-  content:attr(tooltip);
-  font-size:14px;
-  font-weight:400;
-  line-height:18px;
-  letter-spacing:0;
-  white-space:nowrap;
-  opacity:0;
-  visibility:hidden;
-  pointer-events:none;
-  transform:translateX(-50%) translateY(4px);
-  transition:opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
-}
-#${LIVE_FAST_FORWARD_BUTTON_ID}[tooltip]:not(:disabled):hover::after,
-#${LIVE_FAST_FORWARD_BUTTON_ID}[tooltip]:not(:disabled):focus-visible::after{
-  opacity:1;
-  visibility:visible;
-  transform:translateX(-50%) translateY(0);
-}
 #${LIVE_FAST_FORWARD_BUTTON_ID} .bc-live-ff-icon{
   display:inline-flex;
   align-items:center;
@@ -1300,6 +1272,7 @@
         setAttributeIfChanged(button, "label", LIVE_FAST_FORWARD_LABEL);
         setAttributeIfChanged(button, "aria-label", LIVE_FAST_FORWARD_LABEL);
         setAttributeIfChanged(button, "tooltip", LIVE_FAST_FORWARD_LABEL);
+        BetterChzzk.utils.syncPlayerButtonTooltip(button, LIVE_FAST_FORWARD_LABEL);
         if (button.hasAttribute("title")) button.removeAttribute("title");
     }
 

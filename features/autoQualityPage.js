@@ -132,7 +132,8 @@
         "[class*=' pzp']",
     ]);
     const PLAYER_MUTATION_SELECTOR = `video, ${PLAYER_DISCOVERY_SELECTORS.join(", ")}`;
-    const EXTENSION_PREVIEW_VIDEO_SELECTOR = "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip]";
+    const EXTENSION_PREVIEW_VIDEO_SELECTOR =
+        "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip], [data-bcmv-video]";
 
     let cachedPlayer = null;
     let preferredQuality = DEFAULT_QUALITY;

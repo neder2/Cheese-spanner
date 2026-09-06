@@ -257,15 +257,23 @@ function saveCurrentOptions() {
     if (optionsLoadState !== "ready" || saveInFlight) return;
 
     const normalized = readOptionsFromForm();
-    if (normalized.followingPreviewTooltipEnabled && !savedOptions?.followingPreviewTooltipEnabled) {
+    const newlyEnabledMedia = ["followingPreviewTooltipEnabled", "liveMultiviewEnabled"].filter(
+        (key) => normalized[key] && !savedOptions?.[key]
+    );
+    if (newlyEnabledMedia.length) {
         requestPreviewPermission((granted) => {
             if (!granted) {
-                const previewToggle = optionInputs.find(
-                    (input) => input.dataset.option === "followingPreviewTooltipEnabled"
-                );
-                if (previewToggle) previewToggle.checked = false;
+                for (const key of newlyEnabledMedia) {
+                    const toggle = optionInputs.find((input) => input.dataset.option === key);
+                    if (toggle) toggle.checked = false;
+                }
                 renderFormChanges();
-                showMessage(PREVIEW_PERMISSION_DENIED_MESSAGE, "error");
+                showMessage(
+                    newlyEnabledMedia.includes("liveMultiviewEnabled")
+                        ? "영상 호스트 권한이 거부되어 멀티뷰를 켜지 않았습니다."
+                        : PREVIEW_PERMISSION_DENIED_MESSAGE,
+                    "error"
+                );
                 return;
             }
             commitSave("옵션을 저장했습니다.");

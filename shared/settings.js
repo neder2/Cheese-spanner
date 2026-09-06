@@ -47,6 +47,8 @@
 
     const OPTION_SCHEMA = Object.freeze({
         autoQualityEnabled: { kind: "bool", default: true, feature: true },
+        updateNotificationsEnabled: { kind: "bool", default: true },
+        autoQualityPreferred: { kind: "quality", default: DEFAULT_QUALITY },
         rewardAutoCollectEnabled: { kind: "bool", default: true, feature: true },
         skipControlEnabled: { kind: "bool", default: true, feature: true },
         skipKeyboardEnabled: { kind: "bool", default: true },
@@ -60,6 +62,9 @@
         volumeWheelEnabled: { kind: "bool", default: true, feature: true },
         volumeWheelStep: { kind: "int", default: 5, min: 1, max: 50 },
         volumeTooltipEnabled: { kind: "bool", default: false, feature: true },
+        hideLiveBadgeEnabled: { kind: "bool", default: false, feature: true },
+        liveStartTimeEnabled: { kind: "bool", default: false, feature: true },
+        offlineLiveReloadEnabled: { kind: "bool", default: true, feature: true },
         audioCompressorEnabled: { kind: "bool", default: false, feature: true },
         audioCompressorThreshold: { kind: "number", default: -24, min: -60, max: 0, step: 1 },
         audioCompressorKnee: { kind: "number", default: 30, min: 0, max: 40, step: 1 },
@@ -71,6 +76,7 @@
         timeMachineLagLabelEnabled: { kind: "bool", default: true, feature: true },
         adblockPopupEnabled: { kind: "bool", default: true, feature: true },
         monthlyBroadcastTimeEnabled: { kind: "bool", default: true, feature: true },
+        channelChatLinkEnabled: { kind: "bool", default: true, feature: true },
         monthlyBroadcastTimeWindowDays: { kind: "int", default: 30, min: 1, max: 365 },
         monthlyBroadcastTimeMaxPages: { kind: "int", default: 12, min: 1, max: 200 },
         monthlyBroadcastTimeCalendarEnabled: { kind: "bool", default: true },
@@ -194,6 +200,10 @@
         categoryToolsFollowerFetchConcurrency: { kind: "int", default: 2, min: 1, max: 10 },
         categoryToolsFollowerFetchDelayMs: { kind: "int", default: 700, min: 0, max: 5000 },
         sidebarCheeseFarmHidden: { kind: "bool", default: false, feature: true },
+        sidebarPopularCategoriesHidden: { kind: "bool", default: false, feature: true },
+        sidebarUpcomingScheduleHidden: { kind: "bool", default: false, feature: true },
+        sidebarPartnerStreamersHidden: { kind: "bool", default: false, feature: true },
+        sidebarServiceLinksHidden: { kind: "bool", default: false, feature: true },
         followingPinEnabled: { kind: "bool", default: true, feature: true },
         followingPinOfflineToTopEnabled: { kind: "bool", default: false },
         followingTitleHistoryEnabled: { kind: "bool", default: true, feature: true },
@@ -201,6 +211,7 @@
         followingRefreshSeconds: { kind: "int", default: 30, min: 10, max: 600 },
         // 미리보기 HLS가 선택 권한(pstatic.net) 승인을 전제로 하므로, 사용자가
         // 옵션에서 직접 켜면서 권한을 허용하는 흐름이 되도록 기본값은 꺼짐이다.
+        liveMultiviewEnabled: { kind: "bool", default: false, feature: true },
         followingPreviewTooltipEnabled: { kind: "bool", default: false, feature: true },
         followingPreviewSoundEnabled: { kind: "bool", default: true },
         followingPreviewVolumePercent: { kind: "int", default: 15, min: 1, max: 100 },
@@ -283,6 +294,7 @@
         const fallback = DEFAULT_OPTIONS[key];
 
         if (spec.kind === "bool") return normalizeBoolean(value, fallback);
+        if (spec.kind === "quality") return ["1080p", "720p", "480p"].includes(value) ? value : fallback;
         if (spec.kind === "int") return normalizeInteger(value, fallback, spec.min, spec.max);
         if (spec.kind === "number") return normalizeNumber(value, fallback, spec.min, spec.max, spec.step);
         if (spec.kind === "skipSeconds") return normalizeSkipSeconds(value);
