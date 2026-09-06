@@ -325,6 +325,31 @@ test("hidden tabs and closed panels retain alerts; duplicate rows and remounts d
     await waitForCondition(() => unreadCount(document) === 1);
 });
 
+test("scrolling an ancestor into view acknowledges the open moderator panel", async (t) => {
+    const { dom } = createPageDom(activityChat("ancestor-scroll"));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 1);
+    installModeratorViewport(dom);
+    const viewportRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
+    let offset = dom.window.innerHeight;
+    dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
+        const rect = viewportRect.call(this);
+        return { ...rect, top: rect.top + offset, bottom: rect.bottom + offset };
+    };
+    openModeratorPanel(document);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await new Promise((resolve) => dom.window.requestAnimationFrame(resolve));
+    assert.equal(unreadCount(document), 1, "the panel is below the viewport");
+
+    offset = 0;
+    document.querySelector("aside").dispatchEvent(new dom.window.Event("scroll"));
+    await waitForCondition(() => unreadCount(document) === 0);
+    assert.match(authorButton(document, "안내 담당").getAttribute("aria-label"), /미확인 0개/);
+    assert.equal(document.querySelector('[role="status"]').textContent, "새 채팅 없음");
+});
+
 test("capacity trimming removes expired authors and alerts, retaining selection in surviving rows", async (t) => {
     const { dom } = createPageDom(
         activityChat("old-author", "오래된 운영자") +
@@ -403,6 +428,23 @@ test("late badge attributes and profile closure refresh identified authors", asy
     assert.equal(unreadCount(document), 1);
     next.querySelector("button").setAttribute("aria-expanded", "false");
     await waitForCondition(() => unreadCount(document) === 2);
+});
+
+test("a moderator body hydrated through character data is collected after its badge", async (t) => {
+    const { dom } = createPageDom(activityChat("late-body", "안내 담당", ""));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    const source = document.querySelector('[data-chat-id="late-body"]');
+    const body = document.createTextNode("");
+    source.querySelector("._text_1vemp_1").appendChild(body);
+    loadChatTools(dom);
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+    assert.equal(moderatorRows(document).length, 0);
+
+    body.nodeValue = "뒤늦게 완성된 안내";
+    await waitForCondition(() => moderatorRows(document).length === 1);
+    assert.equal(moderatorRows(document)[0].querySelector(".bcct-moderator-row__text").textContent, body.nodeValue);
+    assert.equal(unreadCount(document), 1);
 });
 
 test("activity UI is cleaned up on option disable and channel navigation", async (t) => {
@@ -1058,6 +1100,109 @@ function installRealChzzkPinnedWrapper(document, rows = "") {
         wrapper: root.querySelector("._wrapper_sg7hy_25"),
     };
 }
+
+// 2026-09-06 /live/c0d9723cbb75dc223c6aa8a9d4f56002 실측 구조.
+// 고정 메시지를 펼치면 본문 뒤에 역할 배지·닉네임·고정 안내 footer가 따로 붙는다.
+function installNativePinnedChat(document, rows = "") {
+    const aside = document.querySelector("aside");
+    aside.id = "aside-chatting";
+    aside.className = "_container_b8csn_2";
+    const header = aside.querySelector(".chat-header");
+    header.className = "_container_1e2su_2";
+    const { root, wrapper } = installRealChzzkPinnedWrapper(document, rows);
+    root.className = "_container_8lqsk_1 _exist_fixed_message_8lqsk_12";
+    wrapper.className = "_wrapper_8lqsk_25";
+    const fixed = document.createElement("div");
+    fixed.className = "_fixed_8lqsk_16";
+    fixed.innerHTML =
+        '<div class="_container_85wp6_1"><div class="_wrapper_85wp6_7">' +
+        '<div class="_header_85wp6_30"><div class="_message_85wp6_47">고정할 안내</div>' +
+        '<div class="_control_85wp6_64"><button aria-label="더보기 메뉴">⋮</button>' +
+        '<button aria-label="고정 메시지 펼치기" aria-expanded="false">펼치기</button></div></div></div></div>';
+    root.prepend(fixed);
+    return { aside, header, root, wrapper, fixed };
+}
+
+test("expanding pinned message attribution never collects it as a new broadcaster chat", async (t) => {
+    const { dom } = createPageDom("");
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    const { fixed, root, wrapper, header } = installNativePinnedChat(
+        document,
+        realChzzkChatRow({
+            nickname: "안내 담당",
+            text: "고정 전 안내",
+            badgeImg: '<img alt="채팅 운영자">',
+        })
+    );
+    fixed.remove();
+    root.classList.remove("_exist_fixed_message_8lqsk_12");
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 1);
+    const trigger = document.querySelector(".bcct-moderator-trigger");
+    assert.ok(header.contains(trigger));
+    installModeratorViewport(dom);
+    openModeratorPanel(document);
+    await waitForCondition(() => unreadCount(document) === 0);
+    openModeratorPanel(document);
+
+    root.classList.add("_exist_fixed_message_8lqsk_12");
+    root.prepend(fixed);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(moderatorRows(document).length, 1);
+    assert.equal(unreadCount(document), 0);
+
+    const pinBody = fixed.querySelector("._wrapper_85wp6_7");
+    for (let pass = 0; pass < 2; pass += 1) {
+        const body = document.createElement("div");
+        body.className = "_message_85wp6_47";
+        body.textContent = "고정할 안내";
+        const footer = document.createElement("div");
+        footer.className = "_footer_85wp6_78";
+        footer.innerHTML =
+            '<div class="_cell_85wp6_86"><div class="_name_85wp6_91">' +
+            '<span class="_container_zw6kq_2 _is_ellipsis_zw6kq_86">' +
+            '<img src="https://ssl.pstatic.net/static/nng/glive/icon/streamer.png" alt="스트리머">' +
+            '<span class="_nickname_zw6kq_57">고정 안내 작성자</span></span></div>' +
+            '<span class="_word_85wp6_95">님의 메시지를 고정함</span></div>';
+        pinBody.appendChild(body);
+        pinBody.appendChild(footer);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        assert.equal(moderatorRows(document).length, 1, "pin attribution must never enter the collection");
+        assert.equal(unreadCount(document), 0);
+        assert.equal(document.querySelector(".bcct-moderator-trigger"), trigger);
+        body.remove();
+        footer.remove();
+        await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+
+    wrapper.insertAdjacentHTML("beforeend", activityChat("after-pin"));
+    await waitForCondition(() => moderatorRows(document).length === 2);
+    assert.equal(unreadCount(document), 1);
+    openModeratorPanel(document);
+    await waitForCondition(() => unreadCount(document) === 0);
+    fixed.remove();
+    root.classList.remove("_exist_fixed_message_8lqsk_12");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(moderatorRows(document).length, 2);
+    assert.ok(header.contains(trigger));
+});
+
+test("a pinned native chat without a log role keeps its collection controls in the chat header", async (t) => {
+    const { dom } = createPageDom("");
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    const { root, header, wrapper } = installNativePinnedChat(
+        document,
+        activityChat("first-native") + activityChat("second-native")
+    );
+    root.removeAttribute("role");
+    loadChatTools(dom);
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+    assert.ok(header.contains(document.querySelector(".bcct-moderator-trigger")));
+    assert.equal(wrapper.querySelector("[data-bcct-moderator-actions]"), null);
+    await waitForCondition(() => moderatorRows(document).length === 2);
+});
 
 test("real chzzk pinned root dynamically collects a manager row without data-chat-id", async (t) => {
     const { dom } = createPageDom("");

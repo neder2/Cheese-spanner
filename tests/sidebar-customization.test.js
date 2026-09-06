@@ -7,6 +7,50 @@ const { JSDOM } = require("jsdom");
 const repoRoot = path.join(__dirname, "..");
 const STORAGE_KEY = "betterchzzkPinnedFollowingChannelIds";
 
+test("sidebar sections hide independently, restore reused nodes, and survive sidebar remounts", async (t) => {
+    const entries = [
+        ["sidebarPopularCategoriesHidden", "인기 카테고리"],
+        ["sidebarUpcomingScheduleHidden", "다가오는 방송 일정"],
+        ["sidebarPartnerStreamersHidden", "파트너 스트리머"],
+        ["sidebarServiceLinksHidden", "서비스 바로가기"],
+    ];
+    const chrome = createFakeChrome({ followingPinEnabled: false });
+    const dom = createSidebarDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    // 2026-09-06 https://chzzk.naver.com/에서 확인한 nav/div/strong과 새 창 안내 구조.
+    const markup = entries
+        .map(
+            ([key, title], index) =>
+                `<nav id="${key}"><div><strong>${index === 2 ? `<a href="/partner">${title}<span class="blind">새 창으로 열림</span></a>` : title + (index === 3 ? '<span class="blind">새 창으로 열림</span>' : "")}</strong></div><ul><li>목록</li></ul></nav>`
+        )
+        .join("");
+    document.getElementById("sidebar").insertAdjacentHTML("beforeend", markup);
+    evalSidebarScripts(dom);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(document.querySelector("[data-bcsf-section-hidden]"), null);
+    for (const [key] of entries) {
+        chrome.testState.emitSync({ [key]: { newValue: true } });
+        await waitForCondition(() => document.getElementById(key).hasAttribute("data-bcsf-section-hidden"));
+        assert.equal(dom.window.getComputedStyle(document.getElementById(key)).display, "none");
+        assert.equal(document.querySelectorAll("[data-bcsf-section-hidden]").length, 1);
+        chrome.testState.emitSync({ [key]: { newValue: false } });
+        await waitForCondition(() => !document.querySelector("[data-bcsf-section-hidden]"));
+        assert.notEqual(dom.window.getComputedStyle(document.getElementById(key)).display, "none");
+    }
+    chrome.testState.emitSync(Object.fromEntries(entries.map(([key]) => [key, { newValue: true }])));
+    await waitForCondition(() => document.querySelectorAll("[data-bcsf-section-hidden]").length === 4);
+    const reused = document.getElementById(entries[0][0]);
+    reused.querySelector("strong").firstChild.textContent = "팔로잉 채널";
+    await waitForCondition(() => !reused.hasAttribute("data-bcsf-section-hidden"));
+    assert.equal(document.getElementById("mainMenu").hasAttribute("data-bcsf-section-hidden"), false);
+    document.getElementById("sidebar").outerHTML = `<aside id="sidebar">${markup}</aside>`;
+    await waitForCondition(() => document.querySelectorAll("[data-bcsf-section-hidden]").length === 4);
+    chrome.testState.emitSync(Object.fromEntries(entries.map(([key]) => [key, { newValue: false }])));
+    await waitForCondition(() => !document.querySelector("[data-bcsf-section-hidden]"));
+    assert.equal(document.getElementById("betterchzzk-sidebar-customization-style"), null);
+});
+
 function readRepoFile(...parts) {
     return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
@@ -148,6 +192,115 @@ function getVisualRowIds(dom, list) {
         )
         .map((row) => row.id);
 }
+
+test("following links export native drag URLs with pinning off and restore their original attributes", async (t) => {
+    const chrome = createFakeChrome({ followingPinEnabled: false });
+    const dom = createSidebarDom(chrome);
+    t.after(() => dom.window.close());
+    const d = dom.window.document,
+        link = d.querySelector("#liveA a");
+    // jsdom drops the nonstandard WebKit drag property; retain it on this fixture's style object.
+    const style = link.style,
+        vendor = new Map();
+    const set = style.setProperty.bind(style),
+        get = style.getPropertyValue.bind(style),
+        priority = style.getPropertyPriority.bind(style),
+        remove = style.removeProperty.bind(style);
+    style.setProperty = (name, value, weight) =>
+        name === "-webkit-user-drag" ? vendor.set(name, [value, weight || ""]) : set(name, value, weight);
+    style.getPropertyValue = (name) => (name === "-webkit-user-drag" ? vendor.get(name)?.[0] || "" : get(name));
+    style.getPropertyPriority = (name) => (name === "-webkit-user-drag" ? vendor.get(name)?.[1] || "" : priority(name));
+    style.removeProperty = (name) => (name === "-webkit-user-drag" ? vendor.delete(name) : remove(name));
+    link.draggable = false;
+    link.style.setProperty("-webkit-user-drag", "none", "important");
+    link.style.color = "red";
+    link.insertAdjacentHTML("afterbegin", '<img alt="" draggable="false">');
+    evalSidebarScripts(dom);
+    await waitForSync();
+    const pointer = (type, target = link) =>
+        target.dispatchEvent(new dom.window.MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+    const data = new Map(),
+        transfer = {
+            setData(type, value) {
+                data.set(type, value);
+            },
+            effectAllowed: "uninitialized",
+        };
+    const start = (target) => {
+        const event = new dom.window.Event("dragstart", { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "dataTransfer", { value: transfer });
+        target.dispatchEvent(event);
+        return event;
+    };
+    d.addEventListener("dragstart", (event) => event.stopPropagation(), true);
+    pointer("pointerdown", link.querySelector("img"));
+    assert.equal(link.draggable, true);
+    assert.equal(link.style.getPropertyValue("-webkit-user-drag"), "element");
+    assert.equal(start(link).defaultPrevented, false);
+    assert.equal(data.get("text/uri-list"), "https://chzzk.naver.com/live/channel-a");
+    assert.equal(data.get("text/plain"), data.get("text/uri-list"));
+    assert.equal(transfer.effectAllowed, "copyLink");
+    pointer("pointercancel");
+    assert.equal(link.draggable, true, "native drag pointercancel must not discard the active drag");
+    link.dispatchEvent(new dom.window.Event("dragend", { bubbles: true }));
+    assert.equal(link.draggable, false);
+    assert.equal(link.style.getPropertyValue("-webkit-user-drag"), "none");
+    assert.equal(link.style.getPropertyPriority("-webkit-user-drag"), "important");
+    assert.equal(link.style.color, "red");
+    pointer("pointerdown");
+    pointer("pointerup");
+    assert.equal(link.draggable, false, "ordinary clicks leave no drag override");
+    const owned = d.querySelector("#offlineB").cloneNode(true);
+    owned.setAttribute("data-bcsf-source-row", "1");
+    owned.removeAttribute("id");
+    const ownedLink = owned.querySelector("a");
+    ownedLink.href = "/channel-owned";
+    d.querySelector("#followingList").append(owned);
+    pointer("pointerdown", ownedLink);
+    start(ownedLink);
+    assert.equal(data.get("text/uri-list"), "https://chzzk.naver.com/channel-owned");
+    dom.window.dispatchEvent(new dom.window.Event("pagehide"));
+    assert.equal(ownedLink.hasAttribute("draggable"), false);
+    const outside = d.querySelector("#mainLive a");
+    outside.draggable = false;
+    pointer("pointerdown", outside);
+    data.clear();
+    start(outside);
+    assert.equal(outside.draggable, false);
+    assert.equal(data.size, 0);
+    assert.deepEqual(chrome.testState.sync, { followingPinEnabled: false });
+});
+
+test("following drag rejects a reused link and works again after sidebar replacement", async (t) => {
+    const dom = createSidebarDom(createFakeChrome({ followingPinEnabled: false }));
+    t.after(() => dom.window.close());
+    const d = dom.window.document;
+    evalSidebarScripts(dom);
+    await waitForSync();
+    let link = d.querySelector("#liveA a");
+    link.draggable = false;
+    const prepare = () => link.dispatchEvent(new dom.window.MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+    const data = new Map();
+    const start = () => {
+        const event = new dom.window.Event("dragstart", { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "dataTransfer", { value: { setData: (k, v) => data.set(k, v) } });
+        link.dispatchEvent(event);
+        return event;
+    };
+    prepare();
+    link.href = "/live/channel-next";
+    assert.equal(start().defaultPrevented, true);
+    assert.equal(data.size, 0);
+    assert.equal(link.draggable, false);
+    d.querySelector("#sidebar").replaceWith(d.querySelector("#sidebar").cloneNode(true));
+    link = d.querySelector("#liveA a");
+    prepare();
+    assert.equal(start().defaultPrevented, false);
+    assert.equal(data.get("text/uri-list"), "https://chzzk.naver.com/live/channel-next");
+    dom.window.history.pushState({}, "", "/video/123");
+    await waitForCondition(() => !link.draggable);
+    assert.equal(link.draggable, false);
+});
 
 test("following pins preserve native row DOM and never request a replacement list", async (t) => {
     const savedPins = ["channel-c", "not-rendered-yet"];

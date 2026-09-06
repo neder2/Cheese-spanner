@@ -86,6 +86,15 @@
                 <div>
                     <h1>Better Chzzk <span id="versionBadge" class="version-badge" hidden></span></h1>
                     <p class="subtitle">변경 후 저장 버튼을 눌러 적용합니다.</p>
+                    <button id="guideReplay" class="secondary-button" type="button">기능 안내</button>
+                    <a
+                        class="release-notes-link"
+                        href="https://github.com/neder2/Chzzk/releases"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="릴리즈 노트 (새 탭에서 열기)"
+                        >릴리즈 노트</a
+                    >
                 </div>
                 <div class="hero-actions reset-row">
                     <span id="notice" class="status-pill" aria-live="polite">불러오는 중</span>
@@ -95,6 +104,43 @@
                     </button>
                 </div>
             </header>
+
+            <section id="updateNotice" class="update-notice" aria-labelledby="updateNoticeTitle" hidden>
+                <div>
+                    <strong id="updateNoticeTitle"></strong>
+                    <p>새 기능과 사용법을 짧게 확인해 보세요.</p>
+                </div>
+                <button id="guideOpen" class="primary-button" type="button">새 기능 안내</button>
+            </section>
+            <dialog id="featureGuide" class="feature-guide" aria-labelledby="guideTitle" aria-describedby="guideText">
+                <div class="guide-topline">
+                    <span id="guideProgress" aria-live="polite"></span>
+                    <div class="guide-navigation">
+                        <button
+                            id="guidePrevious"
+                            class="secondary-button"
+                            type="button"
+                            aria-label="이전"
+                            title="이전"
+                        >
+                            ‹
+                        </button>
+                        <button id="guideNext" class="secondary-button" type="button" aria-label="다음" title="다음">
+                            ›
+                        </button>
+                        <button id="guideClose" class="secondary-button" type="button" aria-label="기능 안내 닫기">
+                            닫기
+                        </button>
+                    </div>
+                </div>
+                <h2 id="guideTitle"></h2>
+                <p id="guideText"></p>
+                <p id="guideError" role="status" hidden></p>
+                <div class="guide-actions">
+                    <button id="guideLater" class="secondary-button" type="button">나중에</button>
+                    <button id="guideFinish" class="primary-button" type="button" hidden>확인</button>
+                </div>
+            </dialog>
 
             <form id="optionsForm" class="settings-form" novalidate>
                 <div class="settings-toolbar">
@@ -207,9 +253,9 @@
                             role="tab"
                             data-tab="3"
                             aria-controls="tab-panel-3"
-                            aria-label="팝업"
+                            aria-label="팝업·알림"
                             aria-selected="false"
-                            title="팝업"
+                            title="팝업·알림"
                             tabindex="-1"
                         >
                             <svg
@@ -225,7 +271,7 @@
                                 <path d="M3 9h18" />
                                 <path d="m10.5 12.5 3 3m0-3-3 3" />
                             </svg>
-                            <span>팝업</span>
+                            <span>팝업·알림</span>
                         </button>
                         <button
                             type="button"
@@ -327,10 +373,65 @@
                                 <span><strong>자동 화질 복구</strong></span>
                                 <input type="checkbox" data-option="autoQualityEnabled" />
                             </label>
+                            <label class="toggle-row" data-depends-on="autoQualityEnabled">
+                                <span><strong>고정할 화질</strong></span>
+                                <select class="quality-select" data-option="autoQualityPreferred">
+                                    <option value="1080p">1080p</option>
+                                    <option value="720p">720p</option>
+                                    <option value="480p">480p</option>
+                                </select>
+                            </label>
+                            <p class="setting-note">선택한 화질이 없으면 가능한 가장 높은 하위 화질을 적용합니다.</p>
                             <label class="toggle-row">
                                 <span><strong>통나무 보상 자동 받기</strong></span>
                                 <input type="checkbox" data-option="rewardAutoCollectEnabled" />
                             </label>
+                        </div>
+                    </details>
+
+                    <details class="option-group" data-option-group="player-live-display">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-play" /></svg>
+                                <span>라이브 표시</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>우상단 LIVE 숨기기</strong></span>
+                                <input type="checkbox" data-option="hideLiveBadgeEnabled" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>방송 시작 시각 표시</strong></span>
+                                <input type="checkbox" data-option="liveStartTimeEnabled" />
+                            </label>
+                            <p class="setting-note">스트리밍 중 오른쪽에 한국 시간 기준 시작 시각을 표시합니다.</p>
+                            <label class="toggle-row">
+                                <span><strong>방송 시작 시 자동 새로고침</strong></span>
+                                <input type="checkbox" data-option="offlineLiveReloadEnabled" />
+                            </label>
+                            <p class="setting-note">
+                                방송 종료 화면에서 30초마다 확인하고, 방송이 시작되면 한 번 새로고침합니다.
+                            </p>
+                        </div>
+                    </details>
+
+                    <details class="option-group" data-option-group="player-multiview">
+                        <summary>
+                            <span class="option-group-title"
+                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-play" /></svg
+                                ><span>멀티뷰</span></span
+                            >
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row"
+                                ><span><strong>라이브 멀티뷰</strong></span
+                                ><input type="checkbox" data-option="liveMultiviewEnabled"
+                            /></label>
+                            <p class="setting-note">
+                                최대 6개 방송의 소리를 따로 조절하고, 채널별 딜레이를 저장해 다시 불러옵니다. 켠 뒤
+                                플레이어 하단의 격자 모양 멀티뷰 버튼을 누르세요.
+                            </p>
                         </div>
                     </details>
 
@@ -674,13 +775,44 @@
                         <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <use href="#icon-window" />
                         </svg>
-                        <h2>광고 차단 안내 팝업</h2>
+                        <h2>팝업·알림</h2>
                     </div>
 
-                    <label class="toggle-row">
-                        <span><strong>광고 차단 안내 팝업 숨김</strong></span>
-                        <input type="checkbox" data-option="adblockPopupEnabled" />
-                    </label>
+                    <details class="option-group" data-option-group="popup-adblock" open>
+                        <summary>
+                            <span class="option-group-title"
+                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-window" /></svg
+                                ><span>광고 차단 안내</span></span
+                            >
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>광고 차단 안내 팝업 숨김</strong></span>
+                                <input type="checkbox" data-option="adblockPopupEnabled" />
+                            </label>
+                        </div>
+                    </details>
+                    <details class="option-group" data-option-group="popup-updates" open>
+                        <summary>
+                            <span class="option-group-title"
+                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-refresh" /></svg
+                                ><span>업데이트 알림</span></span
+                            >
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>업데이트 알림</strong></span>
+                                <input type="checkbox" data-option="updateNotificationsEnabled" />
+                            </label>
+                            <p class="setting-note">
+                                치지직 상단의 업데이트 알림과 확장 아이콘의 NEW 배지를 표시합니다.
+                            </p>
+                            <button id="guideTutorialReplay" class="secondary-button" type="button">
+                                튜토리얼 다시보기
+                            </button>
+                            <p id="guideTutorialStatus" class="setting-note" role="status" hidden></p>
+                        </div>
+                    </details>
                 </section>
 
                 <section class="settings-card" id="tab-panel-4" role="tabpanel" aria-labelledby="tab-4">
@@ -870,6 +1002,24 @@
                         <h2>방송 목록 필터</h2>
                     </div>
 
+                    <details class="option-group" data-option-group="explore-channel" open>
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-users" /></svg>
+                                <span>채널</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>채널 채팅 바로가기</strong></span>
+                                <input type="checkbox" data-option="channelChatLinkEnabled" />
+                            </label>
+                            <p class="setting-note">
+                                정보 탭 옆에 방송이 꺼져 있어도 채팅을 볼 수 있는 라이브 화면 바로가기를 표시합니다.
+                            </p>
+                        </div>
+                    </details>
+
                     <details class="option-group" data-option-group="explore-sidebar" open>
                         <summary>
                             <span class="option-group-title">
@@ -881,6 +1031,22 @@
                             <label class="toggle-row">
                                 <span><strong>사이드바 치즈팜 숨김</strong></span>
                                 <input type="checkbox" data-option="sidebarCheeseFarmHidden" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>인기 카테고리 숨기기</strong></span>
+                                <input type="checkbox" data-option="sidebarPopularCategoriesHidden" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>다가오는 방송 일정 숨기기</strong></span>
+                                <input type="checkbox" data-option="sidebarUpcomingScheduleHidden" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>파트너 스트리머 숨기기</strong></span>
+                                <input type="checkbox" data-option="sidebarPartnerStreamersHidden" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>서비스 바로가기 숨기기</strong></span>
+                                <input type="checkbox" data-option="sidebarServiceLinksHidden" />
                             </label>
                             <label class="toggle-row">
                                 <span><strong>팔로잉 채널 고정</strong></span>
@@ -1285,5 +1451,7 @@
 
         <script src="shared/settings.js"></script>
         <script src="options.js"></script>
+        <script src="shared/updateGuide.js"></script>
+        <script src="optionsUpdateGuide.js"></script>
     </body>
 </html>

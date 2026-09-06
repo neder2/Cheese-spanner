@@ -653,6 +653,7 @@ test("audio compressor preserves its graph across SPA mini-player and BFCache tr
 
     evalRepoScript(dom, "shared", "settings.js");
     evalContentScripts(dom);
+    evalRepoScript(dom, "shared", "volumeControls.js");
     evalRepoScript(dom, "features", "volumeTooltip.js");
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForCondition(() => document.getElementById("betterchzzk-audio-compressor"));
@@ -813,6 +814,7 @@ test("audio compressor restores its active graph from extension storage after re
 
     evalRepoScript(dom, "shared", "settings.js");
     evalContentScripts(dom);
+    evalRepoScript(dom, "shared", "volumeControls.js");
     evalRepoScript(dom, "features", "volumeTooltip.js");
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForCondition(

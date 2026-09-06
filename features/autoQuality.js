@@ -36,7 +36,7 @@
     const VOD_SHARED_TIME_APPLY_DELAY_MS = 3600;
     const ADBLOCK_GATE_TIMEOUT_MS = 1200;
     let featureOptions = BetterChzzkSettings.normalizeOptions();
-    const preferredQuality = BetterChzzkSettings.DEFAULT_QUALITY;
+    let preferredQuality = BetterChzzkSettings.DEFAULT_QUALITY;
     let lastUrl = location.href;
     let pageChangeTimer = 0;
     let applyTimer = 0;
@@ -376,6 +376,7 @@
     // bindFeatureOptions가 옵션 변경 시 호출하는 진입점으로, 런타임 설치/해제 여부를 여기서 결정한다.
     function applyOptions(options) {
         featureOptions = options;
+        preferredQuality = options.autoQualityPreferred;
         if (!featureOptions.adblockPopupEnabled || isAdblockReadyForCurrentUrl()) {
             markAdblockReady();
         }

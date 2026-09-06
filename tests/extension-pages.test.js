@@ -279,6 +279,7 @@ function createAudioCompressorFixture({ withExternalCompressor = false } = {}) {
 async function loadAudioCompressorFeature(dom) {
     evalRepoScript(dom, "shared", "settings.js");
     evalContentScripts(dom);
+    evalRepoScript(dom, "shared", "volumeControls.js");
     evalRepoScript(dom, "features", "volumeTooltip.js");
     dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
@@ -323,6 +324,7 @@ function disableAutoQualityPage(dom) {
 }
 
 function evalVolumeWheelScripts(dom) {
+    evalRepoScript(dom, "shared", "volumeControls.js");
     evalRepoScript(dom, "features", "volumeWheelPage.js");
     evalRepoScript(dom, "shared", "settings.js");
     evalContentScripts(dom);
@@ -1115,6 +1117,8 @@ test("options places following controls with exploration controls", () => {
     assert.equal(previewSection, explorationSection);
     assert.equal(followingRefreshSection, explorationSection);
     assert.equal(sidebarSection, explorationSection);
+    assert.equal(queryOption(document, "channelChatLinkEnabled").closest(".settings-card"), explorationSection);
+    assert.equal(queryOption(document, "channelChatLinkEnabled").checked, true);
     assert.equal(queryOption(document, "sidebarCheeseFarmHidden").checked, false);
     assert.equal(queryOption(document, "followingPinEnabled").checked, true);
     const offlineToTop = queryOption(document, "followingPinOfflineToTopEnabled");
@@ -1143,6 +1147,7 @@ test("options places following controls with exploration controls", () => {
             summary.textContent.trim()
         ),
         [
+            "채널",
             "사이드바",
             "목록 새로고침",
             "검색·목록 표시",
@@ -1177,7 +1182,7 @@ test("options groups stay accessible and never disable their own master toggle",
     assert.equal(document.querySelector(".advanced-settings"), null);
     assert.equal(document.querySelector(".section-heading p"), null);
     assert.equal(document.querySelector(".toggle-row small"), null);
-    assert.equal(document.querySelectorAll(".option-group[open]").length, 6);
+    assert.equal(document.querySelectorAll(".option-group[open]").length, 9);
     assert.equal(playerAuto.open, true);
     assert.equal(playerCompressor.open, false);
 
@@ -1416,13 +1421,17 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.3.2");
+    assert.equal(manifest.version, "1.3.3");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
     assert.equal(updateHistory.match(/^##\s+(\d+\.\d+\.\d+)/m)?.[1], manifest.version);
-    assert.deepEqual(manifest.permissions, ["storage"]);
-    assert.deepEqual(manifest.host_permissions, ["https://api.chzzk.naver.com/*", "https://apis.naver.com/*"]);
+    assert.deepEqual(manifest.permissions, ["storage", "scripting"]);
+    assert.deepEqual(manifest.host_permissions, [
+        "https://api.chzzk.naver.com/*",
+        "https://apis.naver.com/*",
+        "https://chzzk.naver.com/*",
+    ]);
     assert.deepEqual(manifest.optional_host_permissions, ["https://*.pstatic.net/*"]);
     assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
     assert.equal(mainScript.js.includes("features/followingPreviewPage.js"), false);
@@ -3111,6 +3120,88 @@ test("audio compressor button tooltip reports graph setup failures", async () =>
     assert.equal(button.dataset.betterChzzkReady, "0");
     assert.equal(button.getAttribute("tooltip"), "오디오 컴프레서(사용할 수 없음)");
     assert.equal(button.getAttribute("aria-label"), "오디오 컴프레서(사용할 수 없음)");
+});
+
+test("quality selection saves, reloads and follows the auto quality toggle", async (t) => {
+    const chrome = createFakeChrome();
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document } = dom.window;
+    const select = queryOption(document, "autoQualityPreferred");
+    assert.equal(select.value, "1080p");
+    assert.deepEqual(
+        Array.from(select.options, (option) => option.value),
+        ["1080p", "720p", "480p"]
+    );
+    select.value = "720p";
+    dispatch(dom, select, "change");
+    document.getElementById("save").click();
+    await waitForAsyncCallbacks();
+    assert.equal(chrome.testState.sync.autoQualityPreferred, "720p");
+    const toggle = queryOption(document, "autoQualityEnabled");
+    toggle.checked = false;
+    dispatch(dom, toggle, "change");
+    assert.equal(select.disabled, true);
+    toggle.checked = true;
+    dispatch(dom, toggle, "change");
+    assert.equal(select.disabled, false);
+    assert.equal(select.value, "720p");
+    const reopened = createDom("options.html", "options.html", chrome);
+    t.after(() => reopened.window.close());
+    evalRepoScript(reopened, "shared", "settings.js");
+    evalRepoScript(reopened, "options.js");
+    await waitForAsyncCallbacks();
+    assert.equal(queryOption(reopened.window.document, "autoQualityPreferred").value, "720p");
+});
+
+test("saved quality changes cross the page bridge and switch existing tracks", async (t) => {
+    const chrome = createFakeChrome({ sync: { autoQualityPreferred: "720p", adblockPopupEnabled: false } });
+    const dom = createPageDom(
+        '<body><video id="video"></video></body>',
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    t.after(() => {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ autoQualityEnabled: { newValue: false } }, "sync");
+        }
+        disableAutoQualityPage(dom);
+        dom.window.close();
+    });
+    const video = dom.window.document.getElementById("video");
+    const tracks = [480, 720, 1080].map((height) => ({
+        id: String(height),
+        label: `${height}p`,
+        height,
+        kind: "main",
+    }));
+    const trackList = createVideoTrackList(tracks, 2);
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+    Object.defineProperty(video, "videoTracks", { configurable: true, get: () => trackList });
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "autoQualityPage.js");
+    evalRepoScript(dom, "features", "autoQuality.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded"));
+    await waitForAsyncCallbacks();
+    assert.equal(trackList.selectedIndex, 1);
+    for (const [quality, index] of [
+        ["480p", 0],
+        ["1080p", 2],
+    ]) {
+        for (const listener of chrome.testState.storageChangeListeners)
+            listener({ autoQualityPreferred: { newValue: quality } }, "sync");
+        await waitForAsyncCallbacks();
+        assert.equal(trackList.selectedIndex, index);
+        const state = JSON.parse(
+            dom.window.document.documentElement.getAttribute("data-betterchzzk-auto-quality-state")
+        );
+        assert.equal(state.quality, quality);
+    }
 });
 
 test("auto quality falls back to the highest selectable lower track", () => {
@@ -4859,13 +4950,16 @@ test("live fast-forward button seeks to the buffered live edge", async () => {
 
         const button = document.getElementById("betterchzzk-live-fast-forward");
         assert.ok(button);
+        assert.equal(button.parentElement, controls);
+        assert.equal(button.previousElementSibling, play, "fast forward keeps its original position after playback");
         assert.equal(button.getAttribute("label"), "\uBE68\uB9AC \uAC10\uAE30");
         assert.equal(button.getAttribute("aria-label"), "\uBE68\uB9AC \uAC10\uAE30");
         assert.equal(button.getAttribute("tooltip"), "\uBE68\uB9AC \uAC10\uAE30");
         assert.equal(button.hasAttribute("title"), false);
         assert.equal(button.classList.contains("knife-ff"), true);
         assert.ok(button.querySelector("ui-next-media-icon.bc-live-ff-icon svg"));
-        assert.equal(button.textContent.trim(), "");
+        assert.equal(button.querySelector(".betterchzzk-player-tooltip").textContent, "빨리 감기");
+        assert.equal(button.querySelector(".bc-live-ff-icon").textContent.trim(), "");
         assert.equal(button.disabled, false);
 
         button.click();
@@ -5285,4 +5379,841 @@ test("history page counts overlapping tab ranges once while keeping a single mer
     assert.equal(document.querySelectorAll(".history-session-item").length, 1);
     assert.match(document.querySelector(".history-session-item").textContent, /시청10분/);
     dom.window.close();
+});
+
+for (const permissionGranted of [false, true]) {
+    test("multiview option handles permission " + (permissionGranted ? "approval" : "denial"), async (t) => {
+        const chrome = createFakeChrome({ sync: { liveMultiviewEnabled: false }, permissionGranted });
+        const dom = createDom("options.html", "options.html", chrome);
+        t.after(() => dom.window.close());
+        evalRepoScript(dom, "shared", "settings.js");
+        evalRepoScript(dom, "options.js");
+        await waitForAsyncCallbacks();
+        const input = queryOption(dom.window.document, "liveMultiviewEnabled");
+        input.checked = true;
+        dispatch(dom, input, "change");
+        dom.window.document.getElementById("save").click();
+        await waitForAsyncCallbacks();
+        assert.equal(chrome.testState.permissionRequests.length, 1);
+        assert.deepEqual(Array.from(chrome.testState.permissionRequests[0].origins), ["https://*.pstatic.net/*"]);
+        assert.equal(input.checked, permissionGranted);
+        assert.equal(chrome.testState.sync.liveMultiviewEnabled, permissionGranted);
+        if (permissionGranted) {
+            const volume = queryOption(dom.window.document, "volumeWheelStep");
+            volume.value = "6";
+            dispatch(dom, volume, "input");
+            dom.window.document.getElementById("save").click();
+            await waitForAsyncCallbacks();
+            assert.equal(chrome.testState.permissionRequests.length, 1, "already enabled media must not request again");
+        }
+    });
+}
+
+test("volume wheel ignores multiview secondary videos when choosing media volume", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<div class="bcfp-player" data-bcfp-player-mount="preview">',
+            '<video id="previewVideo"></video>',
+            "</div>",
+            '<div class="pzp-pc" id="playerRoot">',
+            '<video id="video"></video>',
+            '<div class="pzp-pc__volume-control" id="vol">',
+            '<button class="pzp-pc__volume-button" type="button"></button>',
+            "</div>",
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const previewVideo = document.getElementById("previewVideo");
+    const vol = document.getElementById("vol");
+    previewVideo.parentElement.removeAttribute("class");
+    previewVideo.parentElement.removeAttribute("data-bcfp-player-mount");
+    previewVideo.parentElement.removeAttribute("data-bcfp-tooltip");
+    previewVideo.removeAttribute("class");
+    previewVideo.removeAttribute("data-bcfp-player-mount");
+    previewVideo.setAttribute("data-bcmv-video", "1");
+
+    video.volume = 0.5;
+    previewVideo.volume = 0.1;
+    previewVideo.getBoundingClientRect = () => ({
+        width: 800,
+        height: 450,
+        left: 0,
+        top: 0,
+        right: 800,
+        bottom: 450,
+    });
+    video.getBoundingClientRect = () => ({ width: 320, height: 180, left: 0, top: 0, right: 320, bottom: 180 });
+    vol.getBoundingClientRect = () => ({ width: 40, height: 40, left: 20, top: 320, right: 60, bottom: 360 });
+
+    evalVolumeWheelScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const up = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+    Object.defineProperty(up, "deltaY", { value: -100 });
+    vol.dispatchEvent(up);
+
+    assert.ok(Math.abs(video.volume - 0.55) < 1e-6);
+    assert.ok(Math.abs(previewVideo.volume - 0.1) < 1e-6);
+    assert.equal(up.defaultPrevented, true);
+});
+
+test("auto quality ignores the multiview secondary video when choosing the main player", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<div data-bcfp-tooltip="1"><video id="preview" class="bcfp-player" data-bcfp-player-mount="preview"></video></div>',
+            '<pzp-player><video id="main"></video></pzp-player>',
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/video/12345",
+        chrome
+    );
+    const { document } = dom.window;
+    const preview = document.getElementById("preview");
+    const main = document.getElementById("main");
+    preview.parentElement.removeAttribute("class");
+    preview.parentElement.removeAttribute("data-bcfp-player-mount");
+    preview.parentElement.removeAttribute("data-bcfp-tooltip");
+    preview.removeAttribute("class");
+    preview.removeAttribute("data-bcfp-player-mount");
+    preview.setAttribute("data-bcmv-video", "1");
+    const tracks = [
+        { id: "auto", label: "auto 1080p", height: 1080 },
+        { id: "480", label: "480p", height: 480, kind: "main" },
+        { id: "720", label: "720p", height: 720, kind: "main" },
+    ];
+    const trackList = createVideoTrackList(tracks, 1);
+
+    main.currentTime = 2;
+    preview.currentTime = 5;
+    makeVisibleVideo(main);
+    preview.getBoundingClientRect = () => ({
+        width: 800,
+        height: 450,
+        left: 0,
+        top: 0,
+        right: 800,
+        bottom: 450,
+    });
+    Object.defineProperty(main, "videoTracks", {
+        configurable: true,
+        get: () => trackList,
+    });
+
+    evalRepoScript(dom, "features", "autoQualityPage.js");
+
+    const result = requestAutoQualityApply(dom, "1080p");
+    assert.equal(result.status, "selected");
+    assert.equal(trackList.selectedIndex, 2);
+    assert.equal(preview.currentTime, 5);
+    disableAutoQualityPage(dom);
+    await waitForAsyncCallbacks();
+    dom.window.close();
+});
+
+test("skip controls ignore multiview secondary video when choosing the live player", async () => {
+    const chrome = createFakeChrome({
+        sync: {
+            skipSeconds: 5,
+        },
+    });
+    const { document, dom, state, video } = createLiveTimeShiftGuardDom(chrome);
+    const previewMount = document.createElement("div");
+    const previewVideo = document.createElement("video");
+    const previewState = {
+        bufferedEnd: 80,
+        currentTime: 10,
+        paused: false,
+        seekableEnd: 80,
+    };
+
+    previewMount.className = "bcfp-player";
+    previewMount.setAttribute("data-bcfp-player-mount", "preview");
+    previewMount.appendChild(previewVideo);
+    document.body.prepend(previewMount);
+    previewMount.removeAttribute("class");
+    previewMount.removeAttribute("data-bcfp-player-mount");
+    previewMount.removeAttribute("data-bcfp-tooltip");
+    previewVideo.removeAttribute("class");
+    previewVideo.removeAttribute("data-bcfp-player-mount");
+    previewVideo.setAttribute("data-bcmv-video", "1");
+
+    Object.defineProperty(previewVideo, "currentTime", {
+        configurable: true,
+        get: () => previewState.currentTime,
+        set: (value) => {
+            previewState.currentTime = Number(value);
+        },
+    });
+    Object.defineProperty(previewVideo, "paused", {
+        configurable: true,
+        get: () => previewState.paused,
+    });
+    Object.defineProperty(previewVideo, "buffered", {
+        configurable: true,
+        get: () => createTimeRanges([[0, previewState.bufferedEnd]]),
+    });
+    Object.defineProperty(previewVideo, "seekable", {
+        configurable: true,
+        get: () => createTimeRanges([[0, previewState.seekableEnd]]),
+    });
+    previewVideo.getBoundingClientRect = () => ({
+        width: 800,
+        height: 450,
+        left: 0,
+        top: 0,
+        right: 800,
+        bottom: 450,
+    });
+    video.getBoundingClientRect = () => ({
+        width: 320,
+        height: 180,
+        left: 0,
+        top: 0,
+        right: 320,
+        bottom: 180,
+    });
+
+    try {
+        await loadSkipControlPage(dom);
+
+        const event = new dom.window.KeyboardEvent("keydown", {
+            key: "ArrowRight",
+            code: "ArrowRight",
+            bubbles: true,
+            cancelable: true,
+        });
+        document.body.dispatchEvent(event);
+
+        assert.equal(event.defaultPrevented, true);
+        assert.equal(state.currentTime, 37);
+        assert.equal(previewState.currentTime, 10);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+function changePlayerDisplayOptions(chrome, updates) {
+    Object.assign(chrome.testState.sync, updates);
+    const changes = Object.fromEntries(Object.entries(updates).map(([key, value]) => [key, { newValue: value }]));
+    for (const listener of chrome.testState.storageChangeListeners) listener(changes, "sync");
+}
+
+function registerPlayerDisplayCleanup(t, dom) {
+    const observers = [];
+    const NativeObserver = dom.window.MutationObserver;
+    dom.window.MutationObserver = class extends NativeObserver {
+        constructor(callback) {
+            super(callback);
+            observers.push(this);
+        }
+    };
+    t.after(() => {
+        for (const observer of observers) observer.disconnectAll ? observer.disconnectAll() : observer.disconnect();
+        dom.window.close();
+    });
+}
+
+async function createVolumeTooltipPage(t, pathname = "/live/test-channel") {
+    const chrome = createFakeChrome({ sync: { volumeTooltipEnabled: true, audioCompressorEnabled: true } });
+    const dom = createPageDom(
+        `<!doctype html><body><div class="pzp-pc">
+        <video id="main-video"></video><div class="pzp-pc__volume-control" id="volume-area">
+        <button type="button" class="pzp-pc__volume-button" id="speaker"><span id="speaker-icon"></span></button>
+        <div class="pzp-pc__volume-slider" id="slider"><span id="thumb"></span></div></div>
+        <button type="button" aria-label="음량" id="label-volume"></button>
+        <div class="bcmv-cell"><video data-bcmv-video></video><input type="range" aria-label="볼륨" id="secondary-volume"></div>
+        <button type="button" id="unrelated">재생</button></div></body>`,
+        `https://chzzk.naver.com${pathname}`,
+        chrome
+    );
+    registerPlayerDisplayCleanup(t, dom);
+    const document = dom.window.document;
+    for (const node of document.querySelectorAll("video,button,div,span,input")) {
+        node.getBoundingClientRect = () => ({ left: 0, top: 0, right: 100, bottom: 40, width: 100, height: 40 });
+    }
+    makeVisibleVideo(document.getElementById("main-video"));
+    document.getElementById("main-video").getBoundingClientRect = () => ({
+        left: 100,
+        top: 80,
+        right: 900,
+        bottom: 530,
+        width: 800,
+        height: 450,
+    });
+    document.getElementById("volume-area").getBoundingClientRect = () => ({
+        left: 120,
+        top: 470,
+        right: 400,
+        bottom: 510,
+        width: 280,
+        height: 40,
+    });
+    document.getElementById("slider").getBoundingClientRect = () => ({
+        left: 200,
+        top: 483,
+        right: 280,
+        bottom: 493,
+        width: 80,
+        height: 10,
+    });
+    const nativeRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
+    dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
+        if (this.id !== "betterchzzk-volume-tooltip") return nativeRect.call(this);
+        const left = Number.parseFloat(this.style.left || "0") - 30;
+        const top = Number.parseFloat(this.style.top || "0") - 30;
+        return { left, top, right: left + 60, bottom: top + 30, width: 60, height: 30 };
+    };
+    const secondary = document.querySelector("[data-bcmv-video]");
+    secondary.getBoundingClientRect = () => ({ left: 0, top: 0, right: 2000, bottom: 1000, width: 2000, height: 1000 });
+    evalVolumeWheelScripts(dom);
+    evalRepoScript(dom, "features", "volumeTooltip.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    const hover = (id) =>
+        document.getElementById(id).dispatchEvent(
+            new dom.window.MouseEvent("mouseover", {
+                bubbles: true,
+                clientY: document.getElementById("slider").getBoundingClientRect().top + 5,
+            })
+        );
+    return {
+        dom,
+        document,
+        chrome,
+        hover,
+        video: document.getElementById("main-video"),
+        tooltip: () => document.getElementById("betterchzzk-volume-tooltip"),
+    };
+}
+
+test("volume tooltip covers main volume controls while staying anchored to the slider", async (t) => {
+    const { dom, document, hover, video, tooltip } = await createVolumeTooltipPage(t);
+    video.volume = 0.35;
+    hover("slider");
+    const original = tooltip();
+    assert.equal(original.textContent, "35%");
+    assert.equal(original.style.left, "240px");
+    assert.equal(original.style.top, "473px");
+    document.getElementById("slider").dispatchEvent(
+        new dom.window.MouseEvent("mouseout", {
+            bubbles: true,
+            relatedTarget: document.getElementById("thumb"),
+            clientY: 488,
+        })
+    );
+    assert.equal(tooltip(), original);
+    for (const id of ["slider", "thumb"]) {
+        hover(id);
+        assert.equal(tooltip(), original);
+        const wheel = new dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -100 });
+        document.getElementById(id).dispatchEvent(wheel);
+        assert.equal(wheel.defaultPrevented, true, id);
+        await waitForAsyncCallbacks();
+        assert.equal(tooltip().textContent, `${Math.round(video.volume * 100)}%`);
+    }
+    for (const [volume, muted, label] of [
+        [0, false, "0%"],
+        [1, false, "100%"],
+        [0.8, true, "80%"],
+    ]) {
+        video.volume = volume;
+        video.muted = muted;
+        video.dispatchEvent(new dom.window.Event("volumechange"));
+        assert.equal(tooltip().textContent, label);
+    }
+    document.getElementById("thumb").dispatchEvent(
+        new dom.window.MouseEvent("mouseout", {
+            bubbles: true,
+            relatedTarget: document.getElementById("betterchzzk-audio-compressor"),
+            clientY: 488,
+        })
+    );
+    assert.equal(tooltip(), original);
+    for (const id of ["volume-area", "speaker", "speaker-icon", "betterchzzk-audio-compressor"]) {
+        hover(id);
+        assert.equal(tooltip(), original, id);
+        assert.equal(tooltip().style.left, "240px", id);
+        assert.equal(tooltip().style.top, "473px", id);
+    }
+    for (const id of ["label-volume", "unrelated", "secondary-volume"]) {
+        hover(id);
+        assert.equal(tooltip(), null, id);
+    }
+    // Tooltip hit testing must not change the existing wheel controls.
+    for (const id of ["volume-area", "speaker", "label-volume"]) {
+        const wheel = new dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -100 });
+        document.getElementById(id).dispatchEvent(wheel);
+        assert.equal(wheel.defaultPrevented, true, id);
+        assert.equal(tooltip(), null);
+    }
+    const secondaryWheel = new dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -100 });
+    document.getElementById("secondary-volume").dispatchEvent(secondaryWheel);
+    assert.equal(secondaryWheel.defaultPrevented, false);
+});
+
+test("player tooltips share native typography and percentage follows the native tooltip height", async (t) => {
+    const { dom, document, hover, video, tooltip } = await createVolumeTooltipPage(t);
+    const speaker = document.getElementById("speaker");
+    speaker.getBoundingClientRect = () => ({ left: 120, top: 470, right: 156, bottom: 506, width: 36, height: 36 });
+    const native = document.createElement("span");
+    native.className = "pzp-button__tooltip pzp-button__tooltip--top";
+    native.style.cssText =
+        "font:400 13px Arial;line-height:normal;padding:6px 12px;border-radius:14px;background:rgba(0,0,0,.6);color:white;position:absolute;top:-38px";
+    speaker.append(native);
+    for (const theme of ["theme_light", "theme_dark"]) {
+        document.documentElement.className = theme;
+        hover("slider");
+        const style = dom.window.getComputedStyle(tooltip());
+        assert.equal(style.fontSize, "13px");
+        assert.equal(style.fontWeight, "400");
+        assert.equal(style.padding, "6px 12px");
+        assert.equal(style.borderRadius, "14px");
+        assert.equal(tooltip().style.top, "462px");
+        const compressor = document.querySelector("#betterchzzk-audio-compressor .betterchzzk-player-tooltip");
+        assert.ok(compressor.classList.contains("pzp-button__tooltip--top"));
+        assert.equal(dom.window.getComputedStyle(compressor).fontWeight, "400");
+    }
+    native.style.top = "-52px";
+    video.dispatchEvent(new dom.window.Event("volumechange"));
+    assert.equal(tooltip().style.top, "448px", "native player size changes update the percentage position");
+});
+
+test("volume tooltip leaves with the native volume region even while the bar is still expanded", async (t) => {
+    const { dom, document, hover, tooltip } = await createVolumeTooltipPage(t);
+    const root = document.querySelector(".pzp-pc");
+    const slider = document.getElementById("slider");
+    for (const y of [467, 482, 494, 509]) {
+        hover("slider");
+        assert.ok(tooltip());
+        slider.dispatchEvent(
+            new dom.window.MouseEvent("mouseout", {
+                bubbles: true,
+                relatedTarget: root,
+                clientX: 240,
+                clientY: y,
+            })
+        );
+        assert.equal(tooltip(), null, `native region left at y=${y}`);
+        root.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true, clientX: 240, clientY: y }));
+        root.dispatchEvent(new dom.window.MouseEvent("mousemove", { bubbles: true, clientX: 240, clientY: y }));
+        assert.equal(tooltip(), null, "the collapsing bar must not reopen the tooltip");
+    }
+    for (const id of ["speaker", "betterchzzk-audio-compressor", "thumb"]) {
+        hover(id);
+        assert.ok(tooltip(), id);
+    }
+    slider.dispatchEvent(
+        new dom.window.MouseEvent("mouseout", {
+            bubbles: true,
+            relatedTarget: document.getElementById("volume-area"),
+        })
+    );
+    assert.equal(tooltip(), null, "hide already in the wrapper padding, before native collapse");
+    hover("volume-area");
+    assert.ok(tooltip(), "horizontal wrapper space remains enabled");
+    for (const y of [475, 501, 474, 502]) {
+        document
+            .getElementById("volume-area")
+            .dispatchEvent(new dom.window.MouseEvent("mousemove", { bubbles: true, clientX: 180, clientY: y }));
+        assert.equal(Boolean(tooltip()), y >= 475 && y <= 501, `vertical boundary at ${y}`);
+    }
+    slider.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true, relatedTarget: null }));
+    assert.equal(tooltip(), null);
+});
+
+test("volume tooltip stays inside the main video when its slider moves near an edge or into fullscreen", async (t) => {
+    const { dom, document, hover, video, tooltip } = await createVolumeTooltipPage(t);
+    const slider = document.getElementById("slider");
+    slider.getBoundingClientRect = () => ({ left: 100, top: 95, right: 130, bottom: 105, width: 30, height: 10 });
+    hover("thumb");
+    assert.equal(tooltip().style.left, "130px");
+    assert.equal(tooltip().style.top, "110px");
+    const original = tooltip();
+    slider.getBoundingClientRect = () => ({ left: 870, top: 483, right: 900, bottom: 493, width: 30, height: 10 });
+    video.dispatchEvent(new dom.window.Event("volumechange"));
+    assert.equal(tooltip(), original);
+    assert.equal(tooltip().style.left, "870px");
+    assert.equal(tooltip().style.top, "473px");
+    const root = document.querySelector(".pzp-pc");
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, value: root });
+    document.dispatchEvent(new dom.window.Event("fullscreenchange"));
+    assert.equal(tooltip(), null);
+    hover("slider");
+    assert.equal(tooltip().parentElement, root);
+    assert.equal(tooltip().style.left, "870px");
+    assert.equal(tooltip().style.top, "473px");
+    slider.remove();
+    await waitForAsyncCallbacks();
+    assert.equal(tooltip(), null);
+});
+
+test("volume tooltip cleans up options, routes, fullscreen and replaced video on VOD", async (t) => {
+    const { dom, document, chrome, hover, video, tooltip } = await createVolumeTooltipPage(t, "/video/123");
+    hover("slider");
+    changePlayerDisplayOptions(chrome, { volumeTooltipEnabled: false });
+    await waitForAsyncCallbacks();
+    assert.equal(tooltip(), null);
+    hover("slider");
+    assert.equal(tooltip(), null);
+    changePlayerDisplayOptions(chrome, { volumeTooltipEnabled: true });
+    await waitForAsyncCallbacks();
+    hover("slider");
+    assert.ok(tooltip());
+    const replacement = document.createElement("video");
+    makeVisibleVideo(replacement);
+    replacement.volume = 0.67;
+    video.replaceWith(replacement);
+    await waitForAsyncCallbacks();
+    assert.equal(tooltip(), null);
+    hover("slider");
+    assert.equal(tooltip().textContent, "67%");
+    video.volume = 0.1;
+    video.dispatchEvent(new dom.window.Event("volumechange"));
+    assert.equal(tooltip().textContent, "67%");
+    document.dispatchEvent(new dom.window.Event("fullscreenchange"));
+    assert.equal(tooltip(), null);
+    hover("slider");
+    dom.window.history.pushState({}, "", "/lives");
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    await waitForAsyncCallbacks();
+    assert.equal(tooltip(), null);
+    hover("slider");
+    assert.equal(tooltip(), null);
+});
+
+test("skip amount wheel stays independent from volume when the pill copies volume styling", async (t) => {
+    const { dom, document, hover, video, tooltip } = await createVolumeTooltipPage(t);
+    const controls = document.createElement("div");
+    controls.className = "pzp-pc__bottom-buttons--left";
+    controls.getBoundingClientRect = () => ({ left: 120, top: 470, right: 420, bottom: 510, width: 300, height: 40 });
+    document.querySelector(".pzp-pc").append(controls);
+    controls.append(document.getElementById("volume-area"));
+    evalRepoScript(dom, "features", "skipControl.js");
+    await waitForAsyncCallbacks();
+    const pill = document.getElementById("betterchzzk-skip-pill");
+    assert.ok(pill);
+    assert.ok(pill.className.includes("volume"), "the native reference's volume class is inherited");
+    pill.getBoundingClientRect = controls.getBoundingClientRect;
+    const value = pill.querySelector(".bc-value");
+    value.id = "skip-value-text";
+    video.volume = 0.35;
+    hover("skip-value-text");
+    assert.equal(tooltip(), null, "skip amount must not show a volume tooltip");
+    const before = Number(value.textContent);
+    for (const [target, deltaY, expected] of [
+        [value, -100, before + 1],
+        [pill, 100, before],
+    ]) {
+        const event = new dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY });
+        target.dispatchEvent(event);
+        await waitForAsyncCallbacks();
+        assert.equal(event.defaultPrevented, true);
+        assert.equal(Number(value.textContent), expected);
+        assert.equal(video.volume, 0.35);
+    }
+    hover("speaker");
+    document.getElementById("speaker").dispatchEvent(
+        new dom.window.WheelEvent("wheel", {
+            bubbles: true,
+            cancelable: true,
+            deltaY: -100,
+        })
+    );
+    await waitForAsyncCallbacks();
+    assert.ok(Math.abs(video.volume - 0.4) < 1e-9);
+    assert.equal(Number(value.textContent), before);
+    assert.equal(tooltip().textContent, "40%");
+    hover("slider");
+    assert.equal(tooltip().textContent, "40%");
+});
+
+// Native structure measured on 2026-09-06; hashed suffixes are fixture data only.
+const LIVE_DISPLAY_HTML = `<!doctype html><body><main id="layout-body">
+    <div class="player_header"><div class="header_info"><div class="_box_1m3jr_140">
+    <em id="top-live" class="_live_bhwhs_17 _large_bhwhs_31">LIVE</em></div></div></div>
+    <button type="button" id="live-edge">실시간</button><em id="profile-live" class="_live_bhwhs_17">LIVE</em>
+    <div class="_row_17x81_8 _status_17x81_19"><div class="_data_17x81_70" id="live-status">
+    <strong class="_count_17x81_83">427명 시청 중</strong><span class="_count_17x81_83" id="streaming">06:25:14 스트리밍 중</span>
+    </div></div><div id="chat"></div></main></body>`;
+
+async function createLiveDisplayPage(
+    t,
+    { fetch, options = { hideLiveBadgeEnabled: true, liveStartTimeEnabled: true } } = {}
+) {
+    const chrome = createFakeChrome({ sync: options });
+    const dom = createPageDom(LIVE_DISPLAY_HTML, "https://chzzk.naver.com/live/first-channel", chrome);
+    registerPlayerDisplayCleanup(t, dom);
+    const calls = [];
+    dom.window.fetch = async (url, init) => {
+        calls.push({ url, signal: init.signal });
+        if (fetch) return fetch(url, init);
+        return { ok: true, json: async () => ({ content: { status: "OPEN", openDate: "2026-09-06 06:23:31" } }) };
+    };
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "livePlayerDisplay.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    return {
+        dom,
+        chrome,
+        calls,
+        document: dom.window.document,
+        clock: () => dom.window.document.getElementById("betterchzzk-live-start-time"),
+    };
+}
+
+test("live display hides only header badge and remounts the KST start clock without refetch", async (t) => {
+    const { dom, document, chrome, calls, clock } = await createLiveDisplayPage(t);
+    assert.equal(clock().textContent, "시작 06:23");
+    assert.equal(document.getElementById("streaming").nextElementSibling, clock());
+    assert.equal(dom.window.getComputedStyle(document.getElementById("top-live")).display, "none");
+    assert.notEqual(dom.window.getComputedStyle(document.getElementById("profile-live")).display, "none");
+    assert.notEqual(dom.window.getComputedStyle(document.getElementById("live-edge")).display, "none");
+    const status = document.getElementById("live-status");
+    status.replaceWith(status.cloneNode(true));
+    document.querySelectorAll("#betterchzzk-live-start-time").forEach((node) => node.remove());
+    await waitForAsyncCallbacks();
+    assert.equal(clock().textContent, "시작 06:23");
+    assert.equal(document.querySelectorAll("#betterchzzk-live-start-time").length, 1);
+    for (let index = 0; index < 5; index += 1) {
+        document.getElementById("streaming").textContent = `${index}:00:00 스트리밍 중`;
+        await waitForAsyncCallbacks();
+    }
+    assert.equal(calls.length, 1);
+    changePlayerDisplayOptions(chrome, { hideLiveBadgeEnabled: false });
+    await waitForAsyncCallbacks();
+    assert.notEqual(dom.window.getComputedStyle(document.getElementById("top-live")).display, "none");
+    assert.ok(clock());
+    changePlayerDisplayOptions(chrome, { liveStartTimeEnabled: false });
+    await waitForAsyncCallbacks();
+    assert.equal(clock(), null);
+    assert.equal(document.getElementById("betterchzzk-live-player-display-style"), null);
+    document.getElementById("streaming").textContent = "07:00:00 스트리밍 중";
+    await waitForAsyncCallbacks();
+    assert.equal(clock(), null);
+    assert.equal(calls.length, 1);
+});
+
+test("live start clock aborts old routes and ignores late responses and disabled requests", async (t) => {
+    const pending = [];
+    const { dom, document, chrome, calls, clock } = await createLiveDisplayPage(t, {
+        fetch: () => new Promise((resolve) => pending.push(resolve)),
+    });
+    dom.window.history.pushState({}, "", "/live/second-channel");
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    await waitForAsyncCallbacks();
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].signal.aborted, true);
+    const reply = (openDate) => ({ ok: true, json: async () => ({ content: { status: "OPEN", openDate } }) });
+    pending[1](reply("2026-09-05T15:05:00Z"));
+    await waitForAsyncCallbacks();
+    assert.equal(clock().textContent, "시작 00:05");
+    pending[0](reply("2026-09-06 12:00:00"));
+    await waitForAsyncCallbacks();
+    assert.equal(clock().textContent, "시작 00:05");
+    dom.window.history.pushState({}, "", "/live/third-channel");
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    await waitForAsyncCallbacks();
+    assert.equal(clock(), null);
+    changePlayerDisplayOptions(chrome, { liveStartTimeEnabled: false });
+    await waitForAsyncCallbacks();
+    assert.equal(calls[2].signal.aborted, true);
+    pending[2](reply("2026-09-06 17:00:00"));
+    await waitForAsyncCallbacks();
+    assert.equal(clock(), null);
+    dom.window.history.pushState({}, "", "/video/123");
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    await waitForAsyncCallbacks();
+    assert.equal(document.documentElement.hasAttribute("data-bclpd-hide-live"), false);
+    assert.equal(calls.length, 3);
+});
+
+test("live start clock omits failed, missing, invalid and closed responses without mutation retries", async (t) => {
+    for (const content of [
+        null,
+        { status: "OPEN" },
+        { status: "OPEN", openDate: "invalid" },
+        { status: "CLOSE", openDate: "2026-09-06 06:23:31" },
+    ]) {
+        await t.test(JSON.stringify(content), async (subtest) => {
+            const { document, calls, clock } = await createLiveDisplayPage(subtest, {
+                fetch: async () => {
+                    if (!content) throw new Error("network failure");
+                    return { ok: true, json: async () => ({ content }) };
+                },
+            });
+            document.getElementById("streaming").textContent = "07:00:00 스트리밍 중";
+            await waitForAsyncCallbacks();
+            assert.equal(clock(), null);
+            assert.equal(calls.length, 1);
+        });
+    }
+});
+
+test("live display defaults make no requests and enabling the clock starts one lookup", async (t) => {
+    const { chrome, calls, clock } = await createLiveDisplayPage(t, { options: {} });
+    assert.equal(calls.length, 0);
+    assert.equal(clock(), null);
+    changePlayerDisplayOptions(chrome, { hideLiveBadgeEnabled: true });
+    await waitForAsyncCallbacks();
+    assert.equal(calls.length, 0);
+    changePlayerDisplayOptions(chrome, { liveStartTimeEnabled: true });
+    await waitForAsyncCallbacks();
+    assert.equal(calls.length, 1);
+    assert.equal(clock().textContent, "시작 06:23");
+});
+
+test("volume shared helper is registered before consumers in both worlds", () => {
+    const manifest = JSON.parse(readRepoFile("manifest.json"));
+    for (const entry of manifest.content_scripts) {
+        const consumer = entry.world === "MAIN" ? "features/volumeWheelPage.js" : "features/volumeTooltip.js";
+        const provider = entry.world === "MAIN" ? "shared/volumeControlsPage.js" : "shared/volumeControls.js";
+        assert.ok(entry.js.indexOf(provider) >= 0);
+        assert.ok(entry.js.indexOf(provider) < entry.js.indexOf(consumer));
+    }
+});
+
+test("volume providers survive Chromium's extension-wide script path de-duplication", async (t) => {
+    const main = createAudioCompressorFixture(),
+        isolated = createAudioCompressorFixture();
+    registerPlayerDisplayCleanup(t, main.dom);
+    registerPlayerDisplayCleanup(t, isolated.dom);
+    isolated.chrome.storage.sync.data.volumeTooltipEnabled = true;
+    const worlds = { MAIN: main.dom, ISOLATED: isolated.dom };
+    for (const dom of Object.values(worlds)) {
+        evalRepoScript(dom, "shared", "settings.js");
+        evalContentScripts(dom);
+    }
+    const seen = new Set();
+    // Chromium records executed file paths per extension, before selecting the execution world.
+    for (const entry of JSON.parse(readRepoFile("manifest.json")).content_scripts) {
+        const dom = worlds[entry.world || "ISOLATED"];
+        for (const file of entry.js) {
+            if (seen.has(file)) continue;
+            seen.add(file);
+            if (file === "shared/volumeControls.js" || file === "shared/volumeControlsPage.js") {
+                evalRepoScript(dom, ...file.split("/"));
+            }
+        }
+    }
+    for (const dom of Object.values(worlds))
+        assert.equal(typeof dom.window.BetterChzzkVolumeControls?.getVolumeControlCandidates, "function");
+    evalRepoScript(main.dom, "features", "volumeWheelPage.js");
+    assert.doesNotThrow(() => evalRepoScript(isolated.dom, "features", "volumeTooltip.js"));
+    isolated.dom.window.document.dispatchEvent(new isolated.dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForCondition(() => isolated.document.getElementById("betterchzzk-audio-compressor"));
+    const slider = isolated.document.createElement("div");
+    slider.className = "pzp-pc__volume-slider";
+    slider.getBoundingClientRect = isolated.volumeControl.getBoundingClientRect;
+    isolated.volumeControl.append(slider);
+    const sliderRect = slider.getBoundingClientRect();
+    slider.dispatchEvent(
+        new isolated.dom.window.MouseEvent("mouseover", {
+            bubbles: true,
+            clientY: sliderRect.top + sliderRect.height / 2,
+        })
+    );
+    assert.ok(isolated.document.getElementById("betterchzzk-volume-tooltip"));
+});
+
+test("MAIN volume provider stays identical to the canonical shared implementation", () => {
+    const body = (source) => source.slice(source.indexOf("(() => {"));
+    assert.equal(
+        body(readRepoFile("shared", "volumeControlsPage.js")),
+        body(readRepoFile("shared", "volumeControls.js"))
+    );
+});
+
+test("live start clock waits for delayed status without scanning on unrelated chat mutations", async (t) => {
+    let resolveFetch;
+    const { dom, document, calls, clock } = await createLiveDisplayPage(t, {
+        fetch: () =>
+            new Promise((resolve) => {
+                resolveFetch = resolve;
+            }),
+    });
+    const statusRow = document.getElementById("live-status").parentElement;
+    statusRow.remove();
+    resolveFetch({ ok: true, json: async () => ({ content: { status: "OPEN", openDate: "2026-09-06 06:23:31" } }) });
+    await waitForAsyncCallbacks();
+    assert.equal(clock(), null);
+    let scans = 0;
+    const originalQuery = document.querySelectorAll.bind(document);
+    document.querySelectorAll = (selector) => {
+        if (selector.includes("_status_")) scans += 1;
+        return originalQuery(selector);
+    };
+    document.getElementById("chat").append(document.createElement("span"));
+    await waitForAsyncCallbacks();
+    assert.equal(scans, 0);
+    document.getElementById("layout-body").append(statusRow);
+    await waitForAsyncCallbacks();
+    assert.equal(clock().textContent, "시작 06:23");
+    const layout = document.getElementById("layout-body");
+    const replacement = layout.cloneNode(true);
+    replacement.querySelector("#betterchzzk-live-start-time").remove();
+    layout.replaceWith(replacement);
+    await waitForCondition(() => clock()?.isConnected);
+    assert.equal(calls.length, 1);
+    dom.window.dispatchEvent(new dom.window.Event("pagehide"));
+    assert.equal(clock(), null);
+    dom.window.dispatchEvent(new dom.window.Event("pageshow"));
+    await waitForAsyncCallbacks();
+    assert.equal(calls.length, 2);
+    dom.window.dispatchEvent(new dom.window.Event("pagehide"));
+    assert.equal(calls[1].signal.aborted, true);
+    resolveFetch({ ok: true, json: async () => ({ content: { status: "OPEN", openDate: "2026-09-06 06:23:31" } }) });
+    await waitForAsyncCallbacks();
+    assert.equal(clock(), null);
+});
+
+test("multiview separator arrow keys do not seek the main video", async (t) => {
+    const chrome = createFakeChrome({ sync: { skipSeconds: 5 } });
+    const { dom, document, video } = createLiveTimeShiftGuardDom(chrome);
+    t.after(() => closeSkipControlPage(dom, chrome));
+    await loadSkipControlPage(dom);
+    const baseline = video.currentTime;
+    document.body.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+            key: "ArrowLeft",
+            code: "ArrowLeft",
+            bubbles: true,
+            cancelable: true,
+        })
+    );
+    assert.equal(video.currentTime, baseline - 5, "the ordinary skip shortcut must be active");
+    const separator = document.createElement("div");
+    separator.setAttribute("role", "separator");
+    separator.tabIndex = 0;
+    document.body.append(separator);
+    let resized = false;
+    separator.addEventListener("keydown", (event) => {
+        resized = true;
+        event.preventDefault();
+        event.stopPropagation();
+    });
+    const before = video.currentTime;
+    separator.dispatchEvent(
+        new dom.window.KeyboardEvent("keydown", {
+            key: "ArrowRight",
+            code: "ArrowRight",
+            bubbles: true,
+            cancelable: true,
+        })
+    );
+    assert.equal(resized, true);
+    assert.equal(video.currentTime, before);
 });

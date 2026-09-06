@@ -19,7 +19,8 @@
     const existingUtils = root.utils || {};
     const PAGE_ROUTE_CHANGE_EVENT = "betterchzzk:routechange";
     const FEATURE_ROUTE_CHANGE_EVENT = "betterchzzk:routechange:detected";
-    const EXTENSION_PREVIEW_VIDEO_SELECTOR = "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip]";
+    const EXTENSION_PREVIEW_VIDEO_SELECTOR =
+        "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip], [data-bcmv-video]";
     const INTERACTIVE_SELECTOR =
         "button, [role='button'], a[href], input, textarea, select, summary, [contenteditable='true']";
     const ROUTE_CHECK_DELAYS_MS = [0, 80, 250, 800];
@@ -117,7 +118,7 @@
         if (!target) return false;
         if (target.isContentEditable) return true;
         if (typeof target.closest === "function") {
-            return !!target.closest("input, textarea, select, [contenteditable='true']");
+            return !!target.closest("input, textarea, select, [contenteditable='true'], [role='separator']");
         }
         return false;
     }
@@ -426,6 +427,36 @@
         return observer;
     }
 
+    // 2026-09-06 CHZZK player-vendor CSS: native .pzp-button__tooltip.
+    // Low-specificity defaults also work before the native stylesheet is available.
+    function createPlayerTooltip(label = "") {
+        injectStyleOnce(
+            "betterchzzk-player-tooltip-style",
+            `
+:where(.betterchzzk-player-tooltip){position:absolute;top:-40px;left:50%;transform:translateX(-50%);margin:0;padding:6px 12px;border:0;border-radius:14px;background:rgba(0,0,0,.6);color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI","Malgun Gothic","맑은 고딕",helvetica,Roboto,Arial,sans-serif;font-size:13px;font-weight:400;line-height:normal;letter-spacing:normal;text-align:center;white-space:nowrap;visibility:hidden;-webkit-font-smoothing:antialiased}
+.betterchzzk-player-tooltip{pointer-events:none;z-index:2147483647;font-weight:400}
+[data-bc-player-tooltip]:not(:disabled):hover > .betterchzzk-player-tooltip,
+[data-bc-player-tooltip]:not(:disabled):focus-visible > .betterchzzk-player-tooltip{visibility:visible}
+[data-bc-player-tooltip]:disabled > .betterchzzk-player-tooltip{visibility:hidden!important}
+`
+        );
+        const tooltip = document.createElement("span");
+        tooltip.className = "pzp-button__tooltip pzp-button__tooltip--top betterchzzk-player-tooltip";
+        tooltip.setAttribute("aria-hidden", "true");
+        tooltip.textContent = label;
+        return tooltip;
+    }
+
+    function syncPlayerButtonTooltip(button, label) {
+        if (!button.hasAttribute("data-bc-player-tooltip")) button.setAttribute("data-bc-player-tooltip", "");
+        let tooltip = button.querySelector(":scope > .betterchzzk-player-tooltip");
+        if (!tooltip) {
+            tooltip = createPlayerTooltip(label);
+            button.appendChild(tooltip);
+        } else if (tooltip.textContent !== label) tooltip.textContent = label;
+        button.removeAttribute("title");
+    }
+
     function bindFeatureOptions(applyOptions) {
         BetterChzzkSettings.getOptions(applyOptions);
         return BetterChzzkSettings.addOptionsChangeListener(applyOptions);
@@ -449,6 +480,8 @@
         createThrottledDomSync,
         startPageChangeDetection,
         injectStyleOnce,
+        createPlayerTooltip,
+        syncPlayerButtonTooltip,
         isLastPage,
         getLiveChannelIdFromPath,
         isLiveRoute,

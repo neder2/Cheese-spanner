@@ -607,7 +607,9 @@ function createBackgroundHarness() {
                     ? sources.settings
                     : file === "shared/data.js"
                       ? sources.data
-                      : sources.store;
+                      : file === "shared/updateGuide.js"
+                        ? fs.readFileSync(path.join(repoRoot, file), "utf8")
+                        : sources.store;
             vm.runInContext(source, context, { filename: file });
         }
     };

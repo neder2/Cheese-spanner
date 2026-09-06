@@ -9,6 +9,8 @@ const settings = globalThis.BetterChzzkSettings;
 
 const expectedDefaults = {
     autoQualityEnabled: true,
+    updateNotificationsEnabled: true,
+    autoQualityPreferred: "1080p",
     rewardAutoCollectEnabled: true,
     skipControlEnabled: true,
     skipKeyboardEnabled: true,
@@ -22,6 +24,9 @@ const expectedDefaults = {
     volumeWheelEnabled: true,
     volumeWheelStep: 5,
     volumeTooltipEnabled: false,
+    hideLiveBadgeEnabled: false,
+    liveStartTimeEnabled: false,
+    offlineLiveReloadEnabled: true,
     audioCompressorEnabled: false,
     audioCompressorThreshold: -24,
     audioCompressorKnee: 30,
@@ -33,6 +38,7 @@ const expectedDefaults = {
     timeMachineLagLabelEnabled: true,
     adblockPopupEnabled: true,
     monthlyBroadcastTimeEnabled: true,
+    channelChatLinkEnabled: true,
     monthlyBroadcastTimeWindowDays: 30,
     monthlyBroadcastTimeMaxPages: 12,
     monthlyBroadcastTimeCalendarEnabled: true,
@@ -81,11 +87,16 @@ const expectedDefaults = {
     categoryToolsFollowerFetchConcurrency: 2,
     categoryToolsFollowerFetchDelayMs: 700,
     sidebarCheeseFarmHidden: false,
+    sidebarPopularCategoriesHidden: false,
+    sidebarUpcomingScheduleHidden: false,
+    sidebarPartnerStreamersHidden: false,
+    sidebarServiceLinksHidden: false,
     followingPinEnabled: true,
     followingPinOfflineToTopEnabled: false,
     followingTitleHistoryEnabled: true,
     followingRefreshEnabled: true,
     followingRefreshSeconds: 30,
+    liveMultiviewEnabled: false,
     followingPreviewTooltipEnabled: false,
     followingPreviewSoundEnabled: true,
     followingPreviewVolumePercent: 15,
@@ -108,11 +119,15 @@ test("feature count keys are derived from feature toggles only", () => {
         "skipControlEnabled",
         "volumeWheelEnabled",
         "volumeTooltipEnabled",
+        "hideLiveBadgeEnabled",
+        "liveStartTimeEnabled",
+        "offlineLiveReloadEnabled",
         "audioCompressorEnabled",
         "vodBroadcastClockEnabled",
         "timeMachineLagLabelEnabled",
         "adblockPopupEnabled",
         "monthlyBroadcastTimeEnabled",
+        "channelChatLinkEnabled",
         "liveWatchHistoryEnabled",
         "vodCommentTabsEnabled",
         "chatTimestampEnabled",
@@ -123,13 +138,27 @@ test("feature count keys are derived from feature toggles only", () => {
         "categoryToolsEnabled",
         "titleTooltipEnabled",
         "sidebarCheeseFarmHidden",
+        "sidebarPopularCategoriesHidden",
+        "sidebarUpcomingScheduleHidden",
+        "sidebarPartnerStreamersHidden",
+        "sidebarServiceLinksHidden",
         "followingPinEnabled",
         "followingTitleHistoryEnabled",
         "followingRefreshEnabled",
+        "liveMultiviewEnabled",
         "followingPreviewTooltipEnabled",
         "holdSpeedEnabled",
         "playbackSpeedShortcutsEnabled",
     ]);
+});
+
+test("preferred quality accepts only supported choices and retains the existing default", () => {
+    for (const quality of ["1080p", "720p", "480p"]) {
+        assert.equal(settings.normalizeOptions({ autoQualityPreferred: quality }).autoQualityPreferred, quality);
+    }
+    for (const quality of [undefined, null, "auto", "1440p", 720]) {
+        assert.equal(settings.normalizeOptions({ autoQualityPreferred: quality }).autoQualityPreferred, "1080p");
+    }
 });
 
 test("normalizeOptions preserves boolean parsing and integer bounds", () => {

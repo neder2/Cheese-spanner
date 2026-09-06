@@ -1,10 +1,10 @@
 /**
- * features/volumeTooltip.js — 볼륨 슬라이더 위 hover 시 현재 볼륨(%)을 보여주는 툴팁 + 오디오 컴프레서 버튼.
+ * features/volumeTooltip.js — 볼륨 컨트롤 주변 hover 시 설정된 볼륨(%)을 보여주는 툴팁 + 오디오 컴프레서 버튼.
  *
  * 실행 컨텍스트: isolated world(확장 컨텍스트).
- * 동작 위치: 볼륨 슬라이더(.pzp-pc__volume-slider 계열) 및 볼륨 컨트롤(.pzp-pc__volume-control 계열) 주변.
+ * 동작 위치: 메인 볼륨 컨트롤의 좌우 범위와 볼륨 바 상하 8px. 표시 위치는 볼륨 바 위.
  * 하는 일: 이 파일은 서로 독립된 두 개의 IIFE로 구성된다.
- *   (1) 볼륨 툴팁 — mouseover/mouseout으로 볼륨 슬라이더 hover를 감지해 #betterchzzk-volume-tooltip 요소를
+ *   (1) 볼륨 툴팁 — 공용 판정으로 메인 소속을 확인한 볼륨 컨트롤 주변 hover 시 #betterchzzk-volume-tooltip 요소를
  *       표시하고, video의 volumechange 이벤트를 구독해 텍스트를 갱신한다. 전체화면 시 fullscreenElement로 이동.
  *   (2) 오디오 컴프레서(cheese-knife 기반, 출처 주석은 코드 내 유지) — 볼륨 컨트롤 옆에 토글 버튼을 삽입하고,
  *       Web Audio API로 MediaElementSource → DynamicsCompressor → Gain 그래프를 구성/해제한다. MutationObserver와
@@ -19,9 +19,9 @@
  * DOM 마커: #betterchzzk-volume-tooltip, #betterchzzk-volume-tooltip-style, #betterchzzk-audio-compressor,
  *   #betterchzzk-audio-compressor-style, data-better-chzzk-audio-compressor, data-better-chzzk-ready.
  * 구조:
- *   - 1~173행: 볼륨 툴팁 IIFE (ensureTooltipElement, showTooltip/hideTooltip, watchVideo, applyOptions).
- *   - 175~180행: cheese-knife 출처 라이선스 주석(수정 금지).
- *   - 181행~: 오디오 컴프레서 IIFE.
+ *   - 볼륨 툴팁 IIFE (ensureTooltipElement, showTooltip/hideTooltip, watchVideo, applyOptions).
+ *   - cheese-knife 출처 라이선스 주석(수정 금지).
+ *   - 오디오 컴프레서 IIFE.
  *     - createGraph/graphFor/connectGraph/disconnectGraph: Web Audio 그래프 생성과 압축/우회 모드 전환.
  *     - resumeContext/installResumeHandlers: AudioContext suspended 상태 복구.
  *     - createButton/ensureButton/syncButtonState: 토글 버튼 DOM 삽입과 위치/라벨 동기화.
@@ -31,22 +31,24 @@
 (() => {
     const TOOLTIP_ID = "betterchzzk-volume-tooltip";
     const STYLE_ID = "betterchzzk-volume-tooltip-style";
-    // 스피커 아이콘이 아니라 볼륨 바(슬라이더) 위에서만 툴팁을 띄운다.
-    const VOLUME_SLIDER_SELECTOR = [
-        "[class*='pzp'][class*='volume'][class*='slider']",
-        ".pzp-pc__volume-slider",
-        ".pzp-pc-volume-slider",
-    ].join(", ");
-    const MUTED_LABEL = "음소거";
+    const { getVolumeControlCandidates, getVolumeControlForVideo, getMainVideoElement, isPlaybackRoute } =
+        globalThis.BetterChzzkVolumeControls;
+    // Preserve the control row width; only narrow its vertical hover band.
+    const VOLUME_SLIDER_SELECTOR = ".pzp-pc__volume-slider, .pzp-pc-volume-slider";
+    const HOVER_VERTICAL_PADDING = 8;
+    const EXCLUDED_HOVER_SELECTOR =
+        "#betterchzzk-skip-pill, #betterchzzk-live-fast-forward, [data-bcfp-player-mount], [data-bcfp-tooltip], .bcfp-player, .bcmv-cell";
 
     const { normalizeOptions } = BetterChzzkSettings;
-    const { bindFeatureOptions, injectStyleOnce, getMainVideoElement } = BetterChzzk.utils;
+    const { bindFeatureOptions, injectStyleOnce, startPageChangeDetection } = BetterChzzk.utils;
 
     let featureOptions = normalizeOptions();
     let tooltipEl = null;
     let hoverControl = null;
     let watchedVideo = null;
     let handlersInstalled = false;
+    let removePageChangeDetection = null;
+    let hoverObserver = null;
 
     function isEnabled() {
         return featureOptions.volumeTooltipEnabled;
@@ -59,15 +61,7 @@
 #${TOOLTIP_ID}{
   position:fixed;
   z-index:2147483647;
-  padding:6px 12px;
-  border-radius:9999px;
-  background:rgba(18,18,20,0.92);
-  color:#fff;
-  font-size:13px;
-  font-weight:600;
-  line-height:18px;
-  letter-spacing:0;
-  font-variant-numeric:tabular-nums;
+  visibility:visible;
   white-space:nowrap;
   pointer-events:none;
   transform:translate(-50%, -100%);
@@ -79,7 +73,6 @@
 
     function getVolumeText(video) {
         if (!(video instanceof HTMLVideoElement)) return "";
-        if (video.muted) return MUTED_LABEL;
         const volume = Number(video.volume);
         if (!Number.isFinite(volume)) return "";
         return `${Math.round(volume * 100)}%`;
@@ -93,35 +86,76 @@
         if (tooltipEl?.isConnected && tooltipEl.parentElement === getTooltipMount()) return tooltipEl;
         injectStyle();
         if (!tooltipEl) {
-            tooltipEl = document.createElement("div");
+            tooltipEl = BetterChzzk.utils.createPlayerTooltip();
             tooltipEl.id = TOOLTIP_ID;
         }
         getTooltipMount().appendChild(tooltipEl);
         return tooltipEl;
     }
 
-    function positionTooltip(tooltip, control) {
+    function positionTooltip(tooltip, control, video) {
         const rect = control.getBoundingClientRect();
-        tooltip.style.left = `${rect.left + rect.width / 2}px`;
-        tooltip.style.top = `${rect.top - 10}px`;
+        const videoRect = video.getBoundingClientRect();
+        const nativeTooltip = control
+            .closest(".pzp-pc")
+            ?.querySelector(".pzp-pc__volume-button .pzp-button__tooltip:not(.betterchzzk-player-tooltip)");
+        let tooltipBottom = rect.top - 10;
+        if (nativeTooltip) {
+            const nativeStyle = getComputedStyle(nativeTooltip);
+            for (const property of [
+                "fontFamily",
+                "fontSize",
+                "fontWeight",
+                "lineHeight",
+                "letterSpacing",
+                "padding",
+                "borderRadius",
+                "backgroundColor",
+                "color",
+            ]) {
+                tooltip.style[property] = nativeStyle[property];
+            }
+            const offset = Number.parseFloat(nativeStyle.top);
+            if (Number.isFinite(offset)) {
+                tooltipBottom =
+                    nativeTooltip.parentElement.getBoundingClientRect().top +
+                    offset +
+                    tooltip.getBoundingClientRect().height;
+            }
+        }
+        const tipRect = tooltip.getBoundingClientRect();
+        const left = Math.max(0, videoRect.left);
+        const right = Math.min(window.innerWidth, videoRect.right);
+        const top = Math.max(0, videoRect.top);
+        const bottom = Math.min(window.innerHeight, videoRect.bottom);
+        if (rect.width <= 0 || rect.height <= 0 || right - left < tipRect.width || bottom - top < tipRect.height) {
+            return false;
+        }
+        tooltip.style.left = `${Math.max(left + tipRect.width / 2, Math.min(right - tipRect.width / 2, rect.left + rect.width / 2))}px`;
+        tooltip.style.top = `${Math.max(top + tipRect.height, Math.min(bottom, tooltipBottom))}px`;
+        return true;
     }
 
     function updateTooltipText() {
         if (!tooltipEl?.isConnected || !hoverControl) return;
-        const text = getVolumeText(getMainVideoElement());
+        if (!hoverControl.isConnected || !watchedVideo?.isConnected) {
+            hideTooltip();
+            return;
+        }
+        const text = getVolumeText(watchedVideo);
         if (!text) {
             hideTooltip();
             return;
         }
         if (tooltipEl.textContent !== text) tooltipEl.textContent = text;
+        if (!positionTooltip(tooltipEl, hoverControl, watchedVideo)) hideTooltip();
     }
 
     function onVolumeChange() {
         updateTooltipText();
     }
 
-    function watchVideo() {
-        const video = getMainVideoElement();
+    function watchVideo(video) {
         if (watchedVideo === video) return;
         unwatchVideo();
         if (!(video instanceof HTMLVideoElement)) return;
@@ -135,35 +169,78 @@
         watchedVideo = null;
     }
 
-    function showTooltip(control) {
-        const text = getVolumeText(getMainVideoElement());
+    function showTooltip(control, video) {
+        const text = getVolumeText(video);
         if (!text) return;
 
         hoverControl = control;
         const tooltip = ensureTooltipElement();
         tooltip.textContent = text;
-        positionTooltip(tooltip, control);
+        if (!positionTooltip(tooltip, control, video)) {
+            hideTooltip();
+            return;
+        }
         tooltip.style.opacity = "1";
-        watchVideo();
+        watchVideo(video);
+        if (!hoverObserver) {
+            hoverObserver = new MutationObserver(() => {
+                if (!hoverControl?.isConnected || !watchedVideo?.isConnected) hideTooltip();
+            });
+            hoverObserver.observe(document.body, { childList: true, subtree: true });
+        }
     }
 
     function hideTooltip() {
         hoverControl = null;
         unwatchVideo();
+        hoverObserver?.disconnect();
+        hoverObserver = null;
         if (tooltipEl?.isConnected) tooltipEl.remove();
     }
 
+    function getTooltipSlider(event, video) {
+        const target = event.target;
+        if (!(target instanceof Element) || target.closest(EXCLUDED_HOVER_SELECTOR)) return null;
+        const controls = getVolumeControlCandidates(event);
+        for (const control of controls) {
+            const slider = control.matches(VOLUME_SLIDER_SELECTOR)
+                ? control
+                : control.querySelector(VOLUME_SLIDER_SELECTOR);
+            if (!slider || !getVolumeControlForVideo([slider], video)) continue;
+            const rect = slider.getBoundingClientRect();
+            if (
+                rect.width > 0 &&
+                rect.height > 0 &&
+                event.clientY >= rect.top - HOVER_VERTICAL_PADDING &&
+                event.clientY <= rect.bottom + HOVER_VERTICAL_PADDING
+            )
+                return slider;
+        }
+        return null;
+    }
+
     function handleMouseOver(event) {
-        if (!isEnabled()) return;
-        const control = event.target?.closest?.(VOLUME_SLIDER_SELECTOR);
-        if (!(control instanceof HTMLElement)) return;
-        showTooltip(control);
+        if (!isEnabled() || !isPlaybackRoute()) return;
+        if (!getVolumeControlCandidates(event).length) {
+            if (hoverControl) hideTooltip();
+            return;
+        }
+        const video = watchedVideo || getMainVideoElement();
+        const control = getTooltipSlider(event, video);
+        if (control) showTooltip(control, video);
+        else if (hoverControl) hideTooltip();
     }
 
     function handleMouseOut(event) {
         if (!hoverControl) return;
-        const next = event.relatedTarget;
-        if (next instanceof Element && next.closest?.(VOLUME_SLIDER_SELECTOR)) return;
+        const next = getTooltipSlider(
+            { target: event.relatedTarget, clientX: event.clientX, clientY: event.clientY },
+            watchedVideo
+        );
+        if (next) {
+            showTooltip(next, watchedVideo);
+            return;
+        }
         hideTooltip();
     }
 
@@ -175,18 +252,27 @@
         if (handlersInstalled) return;
         handlersInstalled = true;
         window.addEventListener("mouseover", handleMouseOver, true);
+        window.addEventListener("mousemove", handleMouseOver, true);
         window.addEventListener("mouseout", handleMouseOut, true);
         window.addEventListener("scroll", handleViewportChange, true);
+        window.addEventListener("resize", handleViewportChange, true);
+        window.addEventListener("pagehide", hideTooltip, true);
         document.addEventListener("fullscreenchange", handleViewportChange, true);
+        removePageChangeDetection = startPageChangeDetection(hideTooltip);
     }
 
     function uninstallHandlers() {
         if (!handlersInstalled) return;
         handlersInstalled = false;
         window.removeEventListener("mouseover", handleMouseOver, true);
+        window.removeEventListener("mousemove", handleMouseOver, true);
         window.removeEventListener("mouseout", handleMouseOut, true);
         window.removeEventListener("scroll", handleViewportChange, true);
+        window.removeEventListener("resize", handleViewportChange, true);
+        window.removeEventListener("pagehide", hideTooltip, true);
         document.removeEventListener("fullscreenchange", handleViewportChange, true);
+        removePageChangeDetection?.();
+        removePageChangeDetection = null;
     }
 
     function applyOptions(options) {
@@ -504,16 +590,6 @@
 #${BUTTON_ID}{position:relative;overflow:visible;}
 #${BUTTON_ID}:focus-visible{outline:none;}
 #${BUTTON_ID}:disabled{opacity:0.35;cursor:default;pointer-events:none;}
-#${BUTTON_ID}[tooltip]:not(:disabled)::after{
-  position:absolute;left:50%;bottom:calc(100% + 12px);z-index:2147483647;display:block;
-  padding:9px 15px;border-radius:9999px;background:rgba(18,18,20,0.92);color:#fff;
-  content:attr(tooltip);font-size:14px;font-weight:400;line-height:18px;letter-spacing:0;
-  white-space:nowrap;opacity:0;visibility:hidden;pointer-events:none;
-  transform:translateX(-50%) translateY(4px);
-  transition:opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
-}
-#${BUTTON_ID}[tooltip]:not(:disabled):hover::after,
-#${BUTTON_ID}[tooltip]:not(:disabled):focus-visible::after{opacity:1;visibility:visible;transform:translateX(-50%) translateY(0);}
 #${BUTTON_ID} .bcac-icon{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;flex:0 0 auto;color:currentColor;}
 #${BUTTON_ID} .bcac-icon svg{display:block;width:36px;height:36px;}
 #${BUTTON_ID} .bcac-icon svg.bcac-icon-on{display:none;}
@@ -562,6 +638,7 @@
         button.setAttribute("label", label);
         button.setAttribute("aria-label", label);
         button.setAttribute("tooltip", label);
+        BetterChzzk.utils.syncPlayerButtonTooltip(button, label);
         button.removeAttribute("title");
     }
 
