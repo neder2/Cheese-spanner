@@ -1416,6 +1416,70 @@ test("moderator trigger does not move into the chat input controls", async (t) =
     assert.equal(trigger.nextElementSibling, menuButton);
 });
 
+test("standalone chat places collection on the left without reparenting zoom or menu controls", async (t) => {
+    const { dom, chrome } = createPageDom("");
+    t.after(() => closeChatToolsDom(dom));
+    dom.reconfigure({ url: `https://chzzk.naver.com/live/${"a".repeat(32)}/chat` });
+    const document = dom.window.document;
+    const header = document.querySelector(".chat-header");
+    header.style.position = "relative";
+    header.innerHTML =
+        '<h2>채팅</h2><div class="zoom"><button aria-label="채팅 크기 마이너스">−</button><span>100%</span><button aria-label="채팅 크기 플러스">+</button></div><div class="menu"><button class="chat-more" aria-label="더보기 메뉴">⋮</button></div>';
+    const menu = header.querySelector(".menu");
+    const nativeChildren = [...header.children];
+    const nativeMarkup = header.innerHTML;
+    const more = menu.firstElementChild;
+    loadChatTools(dom);
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+    const trigger = document.querySelector(".bcct-moderator-trigger");
+    assert.equal(trigger.parentElement, header);
+    assert.equal(trigger.dataset.bcctPopup, "1");
+    assert.equal(more.parentElement, menu);
+    assert.deepEqual(
+        [...header.children].filter((node) => node !== trigger),
+        nativeChildren
+    );
+    const style = dom.window.getComputedStyle(trigger);
+    assert.equal(style.position, "absolute");
+    assert.equal(style.left, "8px");
+    assert.equal(style.top, "50%");
+    trigger.click();
+    const box = document.querySelector(".bcct-moderator-box");
+    assert.equal(box.dataset.open, "1");
+    assert.equal(dom.window.getComputedStyle(box).left, "8px");
+    assert.equal(dom.window.getComputedStyle(box).right, "auto");
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener({ chatToolsModeratorBoxEnabled: { newValue: false } }, "sync");
+    }
+    await waitForCondition(() => !document.querySelector(".bcct-moderator-trigger"));
+    assert.deepEqual([...header.children], nativeChildren);
+    assert.equal(more.parentElement, menu);
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener({ chatToolsModeratorBoxEnabled: { newValue: true } }, "sync");
+    }
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+    assert.equal(document.querySelectorAll(".bcct-moderator-trigger").length, 1);
+    assert.equal(document.querySelector(".bcct-moderator-trigger").parentElement, header);
+    const replacement = document.createElement("div");
+    replacement.className = "chat-header";
+    replacement.style.position = "relative";
+    replacement.innerHTML = nativeMarkup;
+    header.replaceWith(replacement);
+    document
+        .querySelector(".chat-list")
+        .insertAdjacentHTML("beforeend", '<div class="chat-row"><span class="message">새 채팅</span></div>');
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger")?.parentElement === replacement);
+    assert.equal(document.querySelectorAll(".bcct-moderator-trigger").length, 1);
+    assert.equal(replacement.querySelector(".chat-more").parentElement.className, "menu");
+    dom.window.history.pushState({}, "", `/live/${"a".repeat(32)}`);
+    await waitForCondition(
+        () =>
+            document.querySelector(".bcct-moderator-trigger")?.nextElementSibling ===
+            replacement.querySelector(".chat-more")
+    );
+    assert.equal(document.querySelector(".bcct-moderator-trigger").hasAttribute("data-bcct-popup"), false);
+});
+
 test("moderator trigger moves to a native chat header that mounts later", async (t) => {
     const { dom } = createPageDom("");
     t.after(() => closeChatToolsDom(dom));

@@ -113,61 +113,27 @@
         host.removeAttribute("data-arrow");
         host.style.width = "";
         host.style.top = "";
-        const target =
-            step === 0
-                ? document.getElementById("sidebar")
-                : step === 1
-                  ? document.getElementById("betterchzzk-multiview-launcher")
-                  : step === 2
-                    ? getSettingsGuideAnchor()
-                    : null;
+        // #search-input inside a form was measured on CHZZK's desktop header (2026-09-06).
+        const search = document.getElementById("search-input")?.closest("form");
+        // 2026-09-08 /live/1ad5aa0f6c6741b072528fad5e5e76b1: header studio link, 114x34px.
+        const studio = step >= 0 ? document.querySelector('#header a[href^="https://studio.chzzk.naver.com/"]') : null;
+        const studioRect = studio?.getBoundingClientRect();
+        const overlapsStudio = studioRect?.width > 0 && studioRect.height > 0;
+        const target = overlapsStudio ? studio : search;
         if (target !== anchor) {
             anchor = target;
             guideResizeObserver?.disconnect();
             if (anchor) guideResizeObserver?.observe(anchor);
             guideResizeObserver?.observe(host);
         }
-        const box = anchor?.getBoundingClientRect();
-        if (box?.width > 0 && box.height > 0) {
-            const width = Math.min(step === 0 && box.width >= 160 ? box.width - 16 : 240, window.innerWidth - 16);
-            host.style.width = `${width}px`;
-            const left = Math.max(
-                8,
-                Math.min(
-                    step === 0
-                        ? box.width >= 160
-                            ? box.left + 8
-                            : box.right + 8
-                        : box.left + box.width / 2 - width / 2,
-                    window.innerWidth - width - 8
-                )
-            );
-            host.style.left = `${left}px`;
+        if (overlapsStudio) {
+            const box = host.getBoundingClientRect();
+            const width = box.width || 240;
+            host.style.left = `${Math.max(8, Math.min(studioRect.right - width - 8, window.innerWidth - width - 8))}px`;
+            host.style.top = `${Math.max(8, Math.min(studioRect.top + 4, window.innerHeight - box.height - 8))}px`;
             host.style.right = "auto";
-            const height = host.getBoundingClientRect().height;
-            const top = step === 0 ? box.top + 8 : step === 2 ? box.bottom + 10 : box.top - height - 26;
-            host.style.top = `${Math.max(8, Math.min(top, window.innerHeight - height - 8))}px`;
-            if (
-                (step === 1 && top >= 8) ||
-                (step === 2 &&
-                    anchor.id === "betterchzzk-multiview-chat-settings" &&
-                    top + height <= window.innerHeight - 8)
-            ) {
-                host.setAttribute("data-arrow", step === 2 ? "top" : "bottom");
-                host.style.setProperty(
-                    "--arrow-x",
-                    `${Math.max(12, Math.min(box.left + box.width / 2 - left, width - 12))}px`
-                );
-            }
             return;
         }
-        if (step === 2) {
-            host.style.left = "";
-            host.style.right = "12px";
-            return;
-        }
-        // #search-input inside a form was measured on CHZZK's desktop header (2026-09-06).
-        const search = document.getElementById("search-input")?.closest("form");
         const rect = search?.getBoundingClientRect();
         if (rect?.width > 0) {
             const width = step < 0 ? 280 : 240;
@@ -177,16 +143,6 @@
             host.style.left = "";
             host.style.right = "";
         }
-    }
-
-    function getSettingsGuideAnchor() {
-        const button = document.getElementById("betterchzzk-multiview-chat-settings");
-        const box = button?.getBoundingClientRect();
-        if (box?.width > 0 && box.height > 0) return button;
-        // 2026-09-06 /live/6c837d7222ccc4431ca7835a4340be8e:
-        // Without multiview, aside#aside-chatting still has a direct h2 "채팅" inside its 44px header.
-        const title = document.querySelector("aside#aside-chatting h2");
-        return title?.textContent.trim() === "채팅" ? title.parentElement : null;
     }
 
     function schedulePosition() {
@@ -206,7 +162,6 @@
         positionFrame = 0;
         anchor = null;
         window.removeEventListener("scroll", schedulePosition, true);
-        document.removeEventListener("click", onMultiviewLauncherClick, true);
     }
 
     function trackGuide() {
@@ -235,19 +190,6 @@
             attributeFilter: ["class", "style", "aria-hidden"],
         });
         window.addEventListener("scroll", schedulePosition, true);
-        document.addEventListener("click", onMultiviewLauncherClick, true);
-    }
-
-    function onMultiviewLauncherClick(event) {
-        if (step !== 1 || busy || destroyed || !host || event.button !== 0) return;
-        const launcher = event.target.closest?.("#betterchzzk-multiview-launcher");
-        if (!launcher || launcher !== document.getElementById("betterchzzk-multiview-launcher") || launcher.disabled)
-            return;
-        const currentHost = host;
-        // The launcher stops bubbling. Observe in capture, then let its native click finish before advancing.
-        window.queueMicrotask(() => {
-            if (host === currentHost && step === 1 && !busy && !destroyed) void act("next", false);
-        });
     }
 
     function syncNavigation() {
@@ -319,8 +261,7 @@
 section{display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid var(--sem-color-border-neutral-base,#d8dde6);border-radius:7px;background:var(--sem-color-surface-neutral-weak,#fff);box-shadow:0 2px 8px #0003}
 :host-context(html.theme_dark) section{background:var(--sem-color-surface-neutral-weak,#202224);border-color:var(--sem-color-border-neutral-base,#4d4d4d)}
 .copy{flex:1;min-width:0}.tag{display:none;color:#008f5b}h2{margin:0;font-size:11px;line-height:15px;text-align:left}p{margin:0;overflow-wrap:anywhere}#text{font-size:10px;line-height:14px}.buttons{display:flex;flex-shrink:0;gap:4px}button{flex:1 0 auto;font:inherit;white-space:nowrap;cursor:pointer;padding:3px 4px;border-radius:4px;border:1px solid var(--sem-color-border-neutral-base,#d8dde6);background:transparent;color:inherit}button.primary{background:#00ffa3;color:#072b20;border-color:#00ffa3;font-weight:700}button:focus-visible{outline:2px solid #00b977;outline-offset:2px}button:disabled{opacity:.5;cursor:default}#error{color:#d54b4b;font-size:11px;margin-top:4px}[hidden]{display:none!important}
-.guide-top{display:none}:host([data-guide]){top:64px;width:min(240px,calc(100vw - 16px));font-size:11px}:host([data-guide]) section{flex-direction:column;align-items:stretch;padding:10px;gap:7px}:host([data-guide]) h2{font-size:12px;line-height:1.5;margin-bottom:4px}:host([data-guide]) #text{font-size:11px;line-height:1.55}:host([data-guide]) .buttons{flex-wrap:wrap;justify-content:flex-end}:host([data-guide]) button{flex:0 0 auto;padding:3px 6px}:host([data-guide]) .guide-top{display:flex;align-items:center;justify-content:space-between;color:var(--sem-color-content-neutral-cool-strong,#697183)}.navigation{display:flex;gap:4px}.navigation button{width:22px;height:22px;padding:0!important;font-size:17px;line-height:18px}.navigation button svg{width:12px;height:12px;display:block;margin:auto;pointer-events:none}
-:host([data-arrow])::after{content:"";position:absolute;width:10px;height:10px;left:calc(var(--arrow-x) - 5px);bottom:-5px;transform:rotate(45deg);background:var(--sem-color-surface-neutral-weak,#fff);border-right:1px solid var(--sem-color-border-neutral-base,#d8dde6);border-bottom:1px solid var(--sem-color-border-neutral-base,#d8dde6)}:host([data-arrow="top"])::after{bottom:auto;top:-5px;transform:rotate(225deg)}:host([data-arrow]):host-context(html.theme_dark)::after{background:var(--sem-color-surface-neutral-weak,#202224);border-color:var(--sem-color-border-neutral-base,#4d4d4d)}
+.guide-top{display:none}:host([data-guide]){top:64px;width:min(240px,calc(100vw - 16px));font-size:11px}:host([data-guide]) section{flex-direction:column;align-items:stretch;padding:10px;gap:7px}:host([data-guide]) h2{font-size:12px;line-height:1.5;margin-bottom:4px}:host([data-guide]) #text{font-size:11px;line-height:1.55}:host([data-guide]) .buttons{flex-wrap:wrap;justify-content:flex-end}:host([data-guide]) button{flex:0 0 auto;padding:3px 6px}:host([data-guide]) .guide-top{display:flex;align-items:center;justify-content:space-between;color:var(--sem-color-content-neutral-cool-strong,#697183)}.navigation{display:flex;gap:4px}.navigation button{width:22px;height:22px;border-radius:50%;padding:0!important;font-size:17px;line-height:18px}.navigation button svg{width:12px;height:12px;display:block;margin:auto;pointer-events:none}
 @keyframes betterchzzk-guide-nudge{0%,72%,100%{transform:translateY(0)}86%{transform:translateY(-2px)}}
 :host([data-guide]){animation:betterchzzk-guide-nudge 3s ease-in-out infinite}
 :host([data-transition]){animation:none}
@@ -346,6 +287,7 @@ section{display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid
             : "BETTER CHZZK UPDATE";
         shadow.getElementById("title").textContent = step < 0 ? "Better Chzzk 업데이트 완료" : steps[step].title;
         shadow.getElementById("progress").textContent = step < 0 ? "" : `${step + 1} / ${steps.length}`;
+        shadow.querySelector(".navigation").hidden = steps.length < 2;
         shadow.getElementById("text").textContent = step < 0 ? "새로고침 후 새 기능을 확인해요." : steps[step].text;
         const buttons = shadow.querySelector(".buttons");
         buttons.replaceChildren();

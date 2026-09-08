@@ -196,6 +196,17 @@ test("worker restart restores unread badge and an older acknowledgement cannot c
     assert.equal(h.badge, "NEW");
 });
 
+// Navigation and animation still support future multi-page guides; production content is tested separately.
+function loadGuideFile(file, context, h) {
+    vm.runInContext(read(file), context, { filename: file });
+    if (file === "shared/updateGuide.js" && h.multiPage) {
+        vm.runInContext(
+            'globalThis.BetterChzzkUpdateGuide = { ...BetterChzzkUpdateGuide, steps: [{title:"테스트 첫 안내",text:"첫 설명"},{title:"테스트 마지막 안내",text:"마지막 설명"}] };',
+            context
+        );
+    }
+}
+
 function page(t, h) {
     const dom = new JSDOM(read("options.html"), {
         url: "https://example.test/options.html",
@@ -209,41 +220,36 @@ function page(t, h) {
     dialog.showModal = () => dialog.setAttribute("open", "");
     dialog.close = () => dialog.removeAttribute("open");
     for (const file of ["shared/settings.js", "options.js", "shared/updateGuide.js", "optionsUpdateGuide.js"])
-        vm.runInContext(read(file), dom.getInternalVMContext(), { filename: file });
+        loadGuideFile(file, dom.getInternalVMContext(), h);
     const get = (id) => dom.window.document.getElementById(id);
     return { dom, get, click: (id) => get(id).click() };
 }
 
-test("update guide explains option locations, defers, reopens and only completion acknowledges", async (t) => {
+test("release guide contains only the experimental ad notice and acknowledges on confirmation", async (t) => {
     const h = chromeHarness({ [UPDATE]: { version: "1.3.3" } });
     worker(h);
     const p = page(t, h);
+    const style = p.dom.window.document.createElement("style");
+    style.textContent = read("styles.css");
+    p.dom.window.document.head.appendChild(style);
     await flush();
-    assert.equal(p.get("updateNotice").hidden, false);
     p.click("guideOpen");
-    assert.equal(p.get("guideProgress").textContent, "1 / 3");
-    assert.match(p.get("guideTitle").textContent, /사이드바/);
-    assert.equal(p.get("guidePrevious").disabled, true);
-    assert.equal(p.get("guideSettings"), null);
-    assert.match(p.get("guideText").textContent, /확장 옵션.*탐색 → 사이드바/);
-    assert.equal(h.local[READ], undefined);
-    p.click("guideNext");
-    assert.equal(p.get("guideProgress").textContent, "2 / 3");
-    assert.match(p.get("guideTitle").textContent, /멀티뷰/);
-    assert.match(p.get("guideText").textContent, /확장 옵션.*플레이어 → 멀티뷰/);
+    assert.equal(p.get("guideProgress").textContent, "1 / 1");
+    assert.equal(p.get("guideTitle").textContent, "광고 차단 기능 추가");
+    assert.equal(
+        p.get("guideText").textContent,
+        "광고 차단, 중간 광고 차단, 배너 광고 차단을 지원해요. 아직 실험적인 기능이라 불완전할 수 있어요."
+    );
+    assert.equal(p.dom.window.getComputedStyle(p.get("guideNext").parentElement).display, "none");
+    assert.notEqual(p.dom.window.getComputedStyle(p.get("guideFinish")).display, "none");
+    assert.equal(p.dom.window.document.activeElement, p.get("guideFinish"));
     p.click("guideLater");
-    assert.equal(p.get("updateNotice").hidden, false);
+    assert.equal(h.local[READ], undefined);
     p.click("guideOpen");
-    assert.equal(p.get("guideProgress").textContent, "1 / 3");
-    p.click("guideNext");
-    p.click("guideNext");
-    assert.equal(p.get("guideFinish").textContent, "확인");
-    assert.equal(p.get("guideNext").disabled, true);
     p.click("guideFinish");
     await flush();
     assert.equal(h.local[READ], "1.3.3");
     assert.equal(h.badge, "");
-    assert.equal(p.get("updateNotice").hidden, true);
     assert.equal(p.get("featureGuide").open, false);
 });
 
@@ -251,7 +257,6 @@ test("failed acknowledgement keeps the notice and can be retried", async (t) => 
     const h = chromeHarness({ [UPDATE]: { version: "1.3.3" } });
     const p = page(t, h);
     p.click("guideOpen");
-    p.click("guideNext");
     p.click("guideNext");
     h.failNextWrite();
     p.click("guideFinish");
@@ -310,9 +315,9 @@ test("tutorial cards never offer a settings shortcut or open options automatical
     await a.click("reload");
     a.load();
     await flush();
-    for (let step = 0; step < 3; step++) {
+    for (let step = 0; step < 1; step++) {
         assert.equal(a.shadow().querySelector('[data-action="settings"]'), null);
-        if (step < 2) await a.click("next");
+        if (step < 1) await a.click("next");
     }
     assert.equal(h.settingsOpened, 0);
 });
@@ -346,7 +351,7 @@ function noticeTab(t, h, session = {}) {
         },
     });
     const load = () => {
-        for (const file of ["shared/updateGuide.js", "features/updateNotice.js"]) vm.runInContext(read(file), context);
+        for (const file of ["shared/updateGuide.js", "features/updateNotice.js"]) loadGuideFile(file, context, h);
     };
     load();
     t.after(() => context.BetterChzzkUpdateNoticeRuntime.destroy());
@@ -368,7 +373,7 @@ function noticeTab(t, h, session = {}) {
     };
 }
 
-test("top notice reloads only the clicked tab and continues the three-step guide", async (t) => {
+test("top notice reloads only the clicked tab and continues the single-page guide", async (t) => {
     const h = chromeHarness({ [UPDATE]: { version: "1.3.3" } });
     worker(h);
     const a = noticeTab(t, h);
@@ -388,15 +393,15 @@ test("top notice reloads only the clicked tab and continues the three-step guide
     a.load();
     await flush();
     assert.equal(a.session.betterchzzkUpdateGuideAfterReload, undefined);
-    assert.equal(a.shadow().getElementById("title").textContent, "사이드바 숨김 기능 추가");
-    assert.equal(a.shadow().getElementById("progress").textContent, "1 / 3");
+    assert.equal(a.shadow().getElementById("title").textContent, "광고 차단 기능 추가");
+    assert.equal(a.shadow().getElementById("progress").textContent, "1 / 1");
     await a.click("next");
-    assert.equal(a.shadow().getElementById("title").textContent, "멀티뷰 기능 추가");
-    assert.equal(a.shadow().activeElement.dataset.action, "next");
+    assert.equal(a.shadow().getElementById("title").textContent, "광고 차단 기능 추가");
+    assert.equal(a.shadow().querySelector(".navigation").hidden, true);
     assert.equal(a.shadow().querySelector('[data-action="settings"]'), null);
     await a.click("next");
-    assert.equal(a.shadow().getElementById("title").textContent, "멀티뷰 설정은 여기 있어요");
-    assert.equal(a.shadow().getElementById("progress").textContent, "3 / 3");
+    assert.equal(a.shadow().getElementById("title").textContent, "광고 차단 기능 추가");
+    assert.equal(a.shadow().getElementById("progress").textContent, "1 / 1");
     await a.click("finish");
     assert.equal(h.local[READ], "1.3.3");
     assert.equal(a.shadow(), undefined);
@@ -469,52 +474,84 @@ test("compact notice anchors beside the header search box and follows viewport c
     assert.equal(host.style.left, `${a.dom.window.innerWidth - 280 - 12}px`);
 });
 
-test("tutorial uses sidebar width, arrow navigation and an anchored multiview speech bubble", async (t) => {
+test("tutorial overlaps the studio button and follows resize, replacement and missing studio", async (t) => {
     const h = chromeHarness({ [UPDATE]: { version: "1.3.3" } });
     const a = noticeTab(t, h, { betterchzzkUpdateGuideAfterReload: "1.3.3" });
     const doc = a.dom.window.document;
+    const header = doc.createElement("header");
+    header.id = "header";
+    header.innerHTML =
+        '<form><input id="search-input"></form><a href="https://studio.chzzk.naver.com/test">스튜디오</a>';
+    header.querySelector("form").getBoundingClientRect = () => ({ width: 400, right: 600 });
+    let right = 960;
+    const bounds = () => ({ left: right - 114, right, top: 13, bottom: 47, width: 114, height: 34 });
+    header.querySelector("a").getBoundingClientRect = bounds;
+    doc.body.append(header);
+    await flush();
+    const host = doc.getElementById("betterchzzk-update-notice");
+    host.getBoundingClientRect = () => ({ width: 240, height: 140 });
+    a.dom.window.dispatchEvent(new a.dom.window.Event("resize"));
+    assert.equal(host.style.left, "712px");
+    assert.equal(host.style.top, "17px");
+    right = 860;
+    a.dom.window.dispatchEvent(new a.dom.window.Event("resize"));
+    assert.equal(host.style.left, "612px");
+    const replacement = header.querySelector("a").cloneNode(true);
+    right = 910;
+    replacement.getBoundingClientRect = bounds;
+    header.querySelector("a").replaceWith(replacement);
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    assert.equal(host.style.left, "662px");
+    right = 100;
+    a.dom.window.dispatchEvent(new a.dom.window.Event("resize"));
+    assert.equal(host.style.left, "8px", "the notice stays inside the viewport");
+    replacement.remove();
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    assert.equal(host.style.left, "612px");
+    assert.equal(host.style.top, "", "missing studio restores the header fallback height");
+});
+
+test("single-page release tutorial follows the header through remounts", async (t) => {
+    const h = chromeHarness({ [UPDATE]: { version: "1.3.3" } });
+    const a = noticeTab(t, h, { betterchzzkUpdateGuideAfterReload: "1.3.3" });
+    const doc = a.dom.window.document;
+    const form = doc.createElement("form");
+    form.innerHTML = '<input id="search-input">';
+    form.getBoundingClientRect = () => ({ width: 400, right: 600 });
     const sidebar = doc.createElement("aside");
     sidebar.id = "sidebar";
     sidebar.getBoundingClientRect = () => ({ left: 0, right: 224, top: 64, width: 224, height: 700 });
     const launcher = doc.createElement("button");
     launcher.id = "betterchzzk-multiview-launcher";
-    let buttonTop = 500;
-    launcher.getBoundingClientRect = () => ({ left: 700, right: 736, top: buttonTop, width: 36, height: 36 });
-    doc.body.append(sidebar, launcher);
+    launcher.getBoundingClientRect = () => ({ left: 700, right: 736, top: 500, width: 36, height: 36 });
+    doc.body.append(form, sidebar, launcher);
     await flush();
     const host = doc.getElementById("betterchzzk-update-notice");
-    host.getBoundingClientRect = () => ({ height: 140 });
     a.dom.window.dispatchEvent(new a.dom.window.Event("resize"));
-    assert.equal(host.style.width, "208px");
-    assert.equal(host.style.left, "8px");
-    assert.equal(host.style.top, "72px");
-    const nav = a.shadow().querySelector(".navigation");
-    assert.equal(nav.querySelector('[aria-label="이전"]').disabled, true);
-    assert.ok(nav.querySelector('[aria-label="다음"] svg'));
-    await a.click("next");
-    assert.equal(host.style.width, "240px");
-    assert.equal(host.style.top, "334px");
-    assert.equal(host.style.left, "598px");
-    assert.equal(host.getAttribute("data-arrow"), "bottom");
-    assert.equal(a.shadow().querySelector('[data-action="next"]').disabled, false);
-    assert.equal(a.shadow().querySelector('[data-action="finish"]'), null);
-    buttonTop = 450;
-    a.dom.window.dispatchEvent(new a.dom.window.Event("resize"));
-    assert.equal(host.style.top, "284px");
-    launcher.remove();
-    await new Promise((resolve) => setTimeout(resolve, 35));
-    assert.equal(host.hasAttribute("data-arrow"), false);
-    doc.body.appendChild(launcher);
-    await new Promise((resolve) => setTimeout(resolve, 35));
-    assert.equal(host.getAttribute("data-arrow"), "bottom");
-    await a.click("previous");
-    assert.equal(host.style.width, "208px");
+    assert.equal(host.style.left, "612px");
     assert.equal(host.hasAttribute("data-arrow"), false);
     assert.equal(a.shadow().querySelector('[data-action="previous"]').disabled, true);
+    await a.click("next");
+    assert.equal(host.style.left, "612px");
+    assert.equal(host.hasAttribute("data-arrow"), false);
+    assert.equal(a.shadow().querySelector('[data-action="next"]').disabled, true);
+    assert.equal(host.style.left, "612px");
+    assert.equal(a.shadow().querySelector('[data-action="finish"]').textContent, "확인");
+    const replacement = doc.createElement("form");
+    replacement.innerHTML = '<input id="search-input">';
+    replacement.getBoundingClientRect = () => ({ width: 400, right: 550 });
+    form.replaceWith(replacement);
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    assert.equal(host.style.left, "562px");
+    replacement.getBoundingClientRect = () => ({ width: 400, right: 600 });
+    a.dom.window.dispatchEvent(new a.dom.window.Event("resize"));
+    assert.equal(host.style.left, "612px");
+    assert.equal(host.hasAttribute("data-arrow"), false);
 });
 
 test("step transition exits before moving, enters at the destination and cancels on dismissal", async (t) => {
     const h = chromeHarness({ [UPDATE]: { version: "1.3.3" } });
+    h.multiPage = true;
     const a = noticeTab(t, h, { betterchzzkUpdateGuideAfterReload: "1.3.3" });
     await flush();
     const host = a.dom.window.document.getElementById("betterchzzk-update-notice");
@@ -540,21 +577,21 @@ test("step transition exits before moving, enters at the destination and cancels
     };
     await a.click("next");
     assert.equal(animations.length, 1);
-    assert.equal(a.shadow().getElementById("progress").textContent, "1 / 3");
+    assert.equal(a.shadow().getElementById("progress").textContent, "1 / 2");
     assert.equal(animations[0].frames[1].transform, "translateY(8px)");
     assert.equal(animations[0].frames[1].opacity, 0);
     assert.equal(a.shadow().querySelector('[data-action="next"]').disabled, true);
     animations[0].finish();
     await flush();
     assert.equal(animations.length, 2);
-    assert.equal(a.shadow().getElementById("progress").textContent, "2 / 3");
+    assert.equal(a.shadow().getElementById("progress").textContent, "2 / 2");
     assert.equal(animations[1].frames[0].opacity, 0);
     assert.equal(animations[1].frames[1].transform, "translateY(0)");
     animations[1].finish();
     await flush();
     assert.equal(host.hasAttribute("data-transition"), false);
-    assert.equal(a.shadow().querySelector('[data-action="next"]').disabled, false);
-    assert.equal(a.shadow().activeElement.dataset.action, "next");
+    assert.equal(a.shadow().querySelector('[data-action="next"]').disabled, true);
+    assert.equal(a.shadow().activeElement.dataset.action, "finish");
     await a.click("previous");
     h.chrome.storage.sync.set({ updateNotificationsEnabled: false }, () => {});
     await flush();
@@ -565,14 +602,15 @@ test("step transition exits before moving, enters at the destination and cancels
 
 test("reduced-motion preference switches tutorial steps immediately without animation", async (t) => {
     const h = chromeHarness({ [UPDATE]: { version: "1.3.3" } });
+    h.multiPage = true;
     const a = noticeTab(t, h, { betterchzzkUpdateGuideAfterReload: "1.3.3" });
     await flush();
     a.dom.window.matchMedia = () => ({ matches: true });
     a.dom.window.document.getElementById("betterchzzk-update-notice").animate = () =>
         assert.fail("motion must be disabled");
     await a.click("next");
-    assert.equal(a.shadow().getElementById("progress").textContent, "2 / 3");
-    assert.equal(a.shadow().querySelector('[data-action="next"]').disabled, false);
+    assert.equal(a.shadow().getElementById("progress").textContent, "2 / 2");
+    assert.equal(a.shadow().querySelector('[data-action="next"]').disabled, true);
 });
 
 test("real-page preview is restricted to options and activates one eligible tab", async () => {
@@ -595,69 +633,7 @@ test("real-page preview is restricted to options and activates one eligible tab"
     assert.deepEqual(h.focusedWindows, [20]);
 });
 
-test("third speech bubble points up at the real multiview settings button and follows remounts", async (t) => {
-    const h = chromeHarness({ [UPDATE]: { version: "1.3.3" } });
-    const a = noticeTab(t, h, { betterchzzkUpdateGuideAfterReload: "1.3.3" });
-    await flush();
-    await a.click("next");
-    await a.click("next");
-    const host = a.dom.window.document.getElementById("betterchzzk-update-notice");
-    host.getBoundingClientRect = () => ({ height: 120 });
-    assert.equal(host.hasAttribute("data-arrow"), false);
-    assert.equal(a.shadow().getElementById("title").textContent, "멀티뷰 설정은 여기 있어요");
-    assert.equal(a.shadow().querySelector('[data-action="next"]').disabled, true);
-    assert.equal(a.shadow().querySelector('[data-action="finish"]').textContent, "확인");
-    const settings = a.dom.window.document.createElement("button");
-    settings.id = "betterchzzk-multiview-chat-settings";
-    settings.getBoundingClientRect = () => ({ left: 870, top: 70, right: 900, bottom: 100, width: 30, height: 30 });
-    a.dom.window.document.body.appendChild(settings);
-    await new Promise((resolve) => setTimeout(resolve, 35));
-    assert.equal(host.style.top, "110px");
-    assert.equal(host.getAttribute("data-arrow"), "top");
-    settings.remove();
-    await new Promise((resolve) => setTimeout(resolve, 35));
-    assert.equal(host.hasAttribute("data-arrow"), false);
-    await a.click("finish");
-    assert.equal(h.local[READ], "1.3.3");
-});
-
-test("settings tutorial stays by the chat header while multiview is off and retargets a newly mounted button", async (t) => {
-    const h = chromeHarness({ [UPDATE]: { version: "1.3.3" } });
-    const a = noticeTab(t, h, { betterchzzkUpdateGuideAfterReload: "1.3.3" });
-    const doc = a.dom.window.document;
-    // Native header shape measured 2026-09-06, with no multiview button present.
-    const chat = doc.createElement("aside");
-    chat.id = "aside-chatting";
-    chat.innerHTML = '<div><h2>채팅</h2><div class="menu"><button aria-label="더보기 메뉴"></button></div></div>';
-    const header = chat.firstElementChild;
-    header.getBoundingClientRect = () => ({ left: 700, right: 1000, top: 60, bottom: 104, width: 300, height: 44 });
-    doc.body.appendChild(chat);
-    await flush();
-    await a.click("next");
-    await a.click("next");
-    const host = doc.getElementById("betterchzzk-update-notice");
-    assert.equal(host.style.left, "730px");
-    assert.equal(host.style.top, "114px");
-    assert.equal(host.hasAttribute("data-arrow"), false, "do not point to a nonexistent settings button");
-    const button = doc.createElement("button");
-    button.id = "betterchzzk-multiview-chat-settings";
-    button.getBoundingClientRect = () => ({ left: 940, right: 970, top: 70, bottom: 100, width: 30, height: 30 });
-    header.querySelector(".menu").appendChild(button);
-    await new Promise((resolve) => setTimeout(resolve, 35));
-    assert.equal(host.style.left, "776px");
-    assert.equal(host.style.top, "110px");
-    assert.equal(host.getAttribute("data-arrow"), "top");
-    button.remove();
-    await new Promise((resolve) => setTimeout(resolve, 35));
-    assert.equal(host.style.left, "730px");
-    assert.equal(host.hasAttribute("data-arrow"), false);
-    chat.remove();
-    await new Promise((resolve) => setTimeout(resolve, 35));
-    assert.equal(host.style.left, "");
-    assert.equal(host.style.right, "12px");
-});
-
-test("clicking the actual multiview launcher on step two advances after its native action", async (t) => {
+test("clicking the multiview launcher preserves the current release step and native action", async (t) => {
     const h = chromeHarness({ [UPDATE]: { version: "1.3.3" } });
     const a = noticeTab(t, h, { betterchzzkUpdateGuideAfterReload: "1.3.3" });
     const document = a.dom.window.document;
@@ -669,7 +645,7 @@ test("clicking the actual multiview launcher on step two advances after its nati
         event.preventDefault();
         event.stopPropagation();
         nativeCalls++;
-        assert.equal(a.shadow().getElementById("progress").textContent, nativeCalls === 1 ? "1 / 3" : "2 / 3");
+        assert.equal(a.shadow().getElementById("progress").textContent, nativeCalls === 1 ? "1 / 1" : "1 / 1");
         if (nativeCalls === 2) {
             const settings = document.createElement("button");
             settings.id = "betterchzzk-multiview-chat-settings";
@@ -692,7 +668,7 @@ test("clicking the actual multiview launcher on step two advances after its nati
     await flush();
     launcher.click();
     await flush();
-    assert.equal(a.shadow().getElementById("progress").textContent, "1 / 3");
+    assert.equal(a.shadow().getElementById("progress").textContent, "1 / 1");
     await a.click("next");
     launcher
         .querySelector("path")
@@ -700,8 +676,8 @@ test("clicking the actual multiview launcher on step two advances after its nati
     await flush();
     assert.equal(nativeCalls, 2);
     assert.equal(document.activeElement.id, "native-multiview-url");
-    assert.equal(a.shadow().getElementById("progress").textContent, "3 / 3");
-    assert.equal(document.getElementById("betterchzzk-update-notice").getAttribute("data-arrow"), "top");
+    assert.equal(a.shadow().getElementById("progress").textContent, "1 / 1");
+    assert.equal(document.getElementById("betterchzzk-update-notice").hasAttribute("data-arrow"), false);
     assert.equal(h.local[READ], undefined);
 });
 
@@ -717,8 +693,7 @@ test("temporary real-page preview bypasses opt-out without changing preferences 
     assert.equal(a.reloads, 1);
     a.load();
     await flush();
-    assert.equal(a.shadow().getElementById("progress").textContent, "1 / 3");
-    await a.click("next");
+    assert.equal(a.shadow().getElementById("progress").textContent, "1 / 1");
     await a.click("next");
     await a.click("finish");
     assert.equal(a.shadow(), undefined);
@@ -740,7 +715,6 @@ test("preview completion does not acknowledge a real pending update", async (t) 
     await a.click("reload");
     a.load();
     await flush();
-    await a.click("next");
     await a.click("next");
     await a.click("finish");
     assert.equal(h.local[READ], undefined);
@@ -776,16 +750,15 @@ test("tutorial replay starts at step one without reload or update state changes"
     const a = noticeTab(t, h);
     await flush();
     assert.equal(a.tutorial(), true);
-    assert.equal(a.shadow().getElementById("progress").textContent, "1 / 3");
+    assert.equal(a.shadow().getElementById("progress").textContent, "1 / 1");
     assert.equal(a.shadow().querySelector(".tag").textContent, "튜토리얼 다시보기");
     assert.equal(a.reloads, 0);
     assert.equal(a.shadow().querySelector('[data-action="reload"]'), null);
     await a.click("next");
-    await a.click("next");
     await a.click("finish");
     assert.equal(h.local[READ], undefined);
     a.tutorial();
-    assert.equal(a.shadow().getElementById("progress").textContent, "1 / 3");
+    assert.equal(a.shadow().getElementById("progress").textContent, "1 / 1");
     await a.click("mute");
     assert.equal(a.shadow(), undefined);
     h.chrome.storage.sync.get("updateNotificationsEnabled", (data) =>

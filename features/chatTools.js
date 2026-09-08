@@ -241,6 +241,18 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
   display:block;
   pointer-events:none;
 }
+.bcct-moderator-trigger[data-bcct-popup="1"]{
+  position:absolute;
+  left:8px;
+  right:auto;
+  top:50%;
+  margin:0;
+  transform:translateY(-50%);
+}
+.bcct-moderator-box[data-bcct-popup="1"]{
+  left:8px;
+  right:auto;
+}
 .bcct-moderator-trigger__count{
   position:absolute;
   top:0;
@@ -2479,6 +2491,11 @@ body[theme="dark"] .bcct-moderator-box__empty,
         return buttons.find(isMenuButton) || buttons[buttons.length - 1] || null;
     }
 
+    function isChatPopup() {
+        // 2026-09-08: the standalone chat header reserves its right side for scale controls.
+        return /^\/live\/[a-f0-9]{32}\/chat\/?$/.test(location.pathname);
+    }
+
     function ensureModeratorActionGroup(menuButton, header) {
         if (!(menuButton instanceof HTMLButtonElement)) return null;
         const existing = menuButton.closest(`[${MODERATOR_ACTION_GROUP_ATTR}]`);
@@ -2576,8 +2593,12 @@ body[theme="dark"] .bcct-moderator-box__empty,
         }
 
         let placementValid = false;
-        if (!moderatorMenuButton) {
-            placementValid = moderatorToggle.parentElement === moderatorHeader;
+        const popup = isChatPopup();
+        if (moderatorToggle.hasAttribute("data-bcct-popup") !== popup) return false;
+        if (popup || !moderatorMenuButton) {
+            placementValid =
+                moderatorToggle.parentElement === moderatorHeader &&
+                (!moderatorMenuButton || moderatorHeader.contains(moderatorMenuButton));
         } else {
             const actionGroup = moderatorToggle.closest(`[${MODERATOR_ACTION_GROUP_ATTR}]`);
             placementValid = Boolean(
@@ -2642,7 +2663,9 @@ body[theme="dark"] .bcct-moderator-box__empty,
             moderatorTriggerCount = count;
         }
 
-        const actionGroup = ensureModeratorActionGroup(menuButton, header);
+        const popup = isChatPopup();
+        if (popup) moderatorToggle.setAttribute("data-bcct-popup", "1");
+        const actionGroup = popup ? null : ensureModeratorActionGroup(menuButton, header);
         if (actionGroup && moderatorToggle.nextElementSibling !== menuButton) {
             actionGroup.insertBefore(moderatorToggle, menuButton);
         } else if (!moderatorToggle.isConnected) {
@@ -2656,6 +2679,7 @@ body[theme="dark"] .bcct-moderator-box__empty,
 
         const box = document.createElement("section");
         box.className = "bcct-moderator-box";
+        if (popup) box.setAttribute("data-bcct-popup", "1");
         box.setAttribute(MODERATOR_BOX_ATTR, "1");
         box.setAttribute("aria-label", MODERATOR_TITLE);
         box.dataset.open = "0";

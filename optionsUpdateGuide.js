@@ -35,6 +35,7 @@
     }
 
     function renderStep() {
+        previous.parentElement.hidden = steps.length < 2;
         document.getElementById("guideTitle").textContent = steps[index].title;
         document.getElementById("guideText").textContent = steps[index].text;
         document.getElementById("guideProgress").textContent = `${index + 1} / ${steps.length}`;
@@ -48,7 +49,7 @@
         index = 0;
         renderStep();
         if (!dialog.open) dialog.showModal();
-        next.focus();
+        (steps.length > 1 ? next : finish).focus();
     }
 
     function closeGuide() {

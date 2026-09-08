@@ -725,6 +725,10 @@ h1 {
     gap: 4px;
     margin-left: auto;
 }
+#featureGuide [hidden] {
+    display: none !important;
+}
+
 #featureGuide button {
     width: auto;
     min-height: 24px;
@@ -737,6 +741,8 @@ h1 {
 #featureGuide #guidePrevious,
 #featureGuide #guideNext {
     width: 24px;
+    height: 24px;
+    border-radius: 50%;
     padding: 0;
     font-size: 18px;
 }
@@ -2030,6 +2036,8 @@ h1 {
 }
 
 .options-body .options-page .brand-mark {
+    display: grid;
+    place-items: center;
     width: 68px;
     height: 68px;
     padding: 0;
@@ -2039,7 +2047,31 @@ h1 {
     box-shadow: var(--shadow-1);
 }
 
+.options-body .options-page .brand-mark img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    /* Center the visual weight of the asymmetric bolt inside its tile. */
+    transform: translate(2%, 7.5%);
+}
+
+.options-body .options-page .hero-copy {
+    display: grid;
+    align-content: center;
+    gap: 4px;
+}
+
+.options-body .options-page .hero-copy .subtitle,
+.options-body .options-page .hero-copy .release-notes-link {
+    margin-top: 0;
+}
+
 .options-body .options-page h1 {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
     font-size: 31px;
     font-weight: 700;
     line-height: 1.2;
@@ -2047,11 +2079,11 @@ h1 {
 }
 
 .options-body .options-page .version-badge {
-    margin-left: 8px;
+    margin-left: 0;
     padding: 3px 10px;
     font-size: 14px;
     font-weight: 650;
-    vertical-align: 4px;
+    vertical-align: middle;
 }
 
 .options-body .options-page .subtitle {
@@ -2083,6 +2115,7 @@ h1 {
     justify-content: flex-end;
     gap: 10px;
     min-width: 0;
+    flex-wrap: wrap;
 }
 
 .options-body .options-page .save-button {
@@ -2190,6 +2223,7 @@ h1 {
 }
 
 .options-body .options-page .section-heading-icon {
+    display: block;
     flex: none;
     width: 24px;
     height: 24px;
@@ -2255,6 +2289,7 @@ h1 {
 }
 
 .options-body .options-page .option-group-title > svg {
+    display: block;
     flex: none;
     width: 20px;
     height: 20px;
@@ -2440,6 +2475,8 @@ h1 {
 }
 
 .options-body .options-page .reset-row .secondary-button svg {
+    display: block;
+    flex: none;
     width: 20px;
     height: 20px;
     fill: none;
@@ -2512,10 +2549,10 @@ h1 {
     }
 
     .options-body .options-page .version-badge {
-        margin-left: 4px;
+        margin-left: 0;
         padding: 2px 8px;
         font-size: 11px;
-        vertical-align: 2px;
+        vertical-align: middle;
     }
 
     .options-body .options-page .subtitle {
@@ -2773,9 +2810,9 @@ h1 {
 
     .options-body .options-page .hero {
         grid-template-columns: 48px minmax(0, 1fr);
-        column-gap: 10px;
-        row-gap: 6px;
-        padding: 9px;
+        column-gap: 12px;
+        row-gap: 8px;
+        padding: 12px;
     }
 
     .options-body .options-page .brand-mark {
@@ -2797,7 +2834,8 @@ h1 {
     }
 
     .options-body .options-page .status-pill {
-        min-height: 25px;
+        min-height: 28px;
+        line-height: 1;
     }
 
     .options-body .options-page .settings-toolbar {
@@ -2842,7 +2880,33 @@ h1 {
     }
 
     .options-body .options-page .settings-card {
-        padding: 9px;
+        padding: 12px;
+    }
+
+    .options-body .options-page .option-group > summary {
+        padding-inline: 12px;
+    }
+
+    .options-body .options-page .toggle-row,
+    .options-body .options-page .option-group-body > .setting-note {
+        padding-inline: 12px;
+    }
+
+    .options-body .options-page .quality-options {
+        margin-inline: 12px;
+    }
+
+    .options-body .options-page .option-group-body > .number-grid label,
+    .options-body .options-page .settings-card > .number-grid label {
+        padding-inline: 12px;
+    }
+
+    .options-body .options-page .section-heading {
+        margin-bottom: 10px;
+    }
+
+    .options-body .options-page .option-group {
+        margin-top: 8px;
     }
 
     .options-body .options-page .reset-row .secondary-button {
@@ -2886,7 +2950,7 @@ h1 {
     .options-body .options-page .option-group-body > .number-grid label,
     .options-body .options-page .settings-card > .number-grid label {
         grid-template-columns: minmax(0, 1fr) 96px 46px;
-        padding-inline: 8px;
+        padding-inline: 12px;
     }
 
     .options-body .options-page .number-grid span {
