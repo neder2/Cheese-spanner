@@ -122,7 +122,7 @@
         getUniqueWatchTotals,
         isLastPage,
         isVisible,
-        mergeWatchRanges,
+        normalizeSessionWatchRanges,
         normSpace,
         normalizeDailySeconds: normalizeWatchDailySeconds,
         onReady,
@@ -356,6 +356,16 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   color:#00a86b;
   font-size:12px;
   font-weight:900;
+}
+#${WIDGET_ID} .bcmb-calendar-limit{
+  display:block;
+  margin-bottom:8px;
+  font-size:11px;
+  line-height:1.5;
+  white-space:normal;
+}
+#${WIDGET_ID} .bcmb-calendar-limit[hidden]{
+  display:none;
 }
 #${WIDGET_ID} .bcmb-nav{
   display:inline-flex;
@@ -681,6 +691,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
     </span>
     <button type="button" class="bcmb-nav" data-bcmb-nav="1" aria-label="다음 달">›</button>
   </span>
+  <span class="bcmb-calendar-limit" hidden>조회 상한에 도달해 일부만 표시해요.</span>
   <span class="bcmb-weekdays" aria-hidden="true"></span>
   <span class="bcmb-days"></span>
   <span class="bcmb-calendar-foot"></span>
@@ -800,6 +811,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         if (selected && selected.year === now.year && selected.month === now.month) return;
 
         setSelectedCalendarMonth(widget, now.year, now.month);
+        cancelCalendarLoad(currentChannelId);
 
         const cached = getCachedMonthInfo(currentChannelId, now.year, now.month);
         if (cached) {
@@ -1020,7 +1032,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
     function removeWidget() {
         if (currentChannelId) {
             abortControllerMap(loadingAbortControllers, currentChannelId);
-            abortControllerMap(calendarLoadingAbortControllers, currentChannelId);
+            loadingTokens.delete(currentChannelId);
+            cancelCalendarLoad(currentChannelId);
         }
         const widget = document.getElementById(WIDGET_ID);
         if (widget) widget.remove();
@@ -1079,10 +1092,6 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         }
     }
 
-    function isAbortError(error) {
-        return error?.name === "AbortError";
-    }
-
     function abortControllerFor(map, channelId) {
         const previous = map.get(channelId);
         if (previous && !previous.signal.aborted) previous.abort();
@@ -1099,6 +1108,11 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         const controller = map.get(channelId);
         if (controller && !controller.signal.aborted) controller.abort();
         map.delete(channelId);
+    }
+
+    function cancelCalendarLoad(channelId) {
+        calendarLoadingTokens.delete(channelId);
+        abortControllerMap(calendarLoadingAbortControllers, channelId);
     }
 
     function abortAllControllers() {
@@ -1136,6 +1150,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
     }
 
     async function fetchVideoPage(channelId, page, { signal } = {}) {
+        await waitBeforeVideoPage(page, signal);
         const params = new URLSearchParams({
             sortType: "LATEST",
             pagingType: "PAGE",
@@ -1152,21 +1167,67 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
 
     async function fetchVideoPageCached(channelId, page, { signal } = {}) {
         const cache = getChannelPageCache(channelId);
-        const cached = cache.get(page);
-        if (cached && Date.now() - cached.fetchedAt < REFRESH_MS) {
-            touchMapEntry(cache, page, cached, MAX_PAGES_PER_CHANNEL_CACHE);
-            return cached.promise;
-        }
+        return fetchCachedRequest(
+            cache,
+            page,
+            (requestSignal) => fetchVideoPage(channelId, page, { signal: requestSignal }),
+            {
+                signal,
+                maxEntries: MAX_PAGES_PER_CHANNEL_CACHE,
+            }
+        );
+    }
 
-        const entry = {
-            fetchedAt: Date.now(),
-            promise: fetchVideoPage(channelId, page, { signal }).catch((error) => {
-                cache.delete(page);
-                throw error;
-            }),
-        };
-        touchMapEntry(cache, page, entry, MAX_PAGES_PER_CHANNEL_CACHE);
-        return entry.promise;
+    // A request belongs to its consumers together, never to the first caller's signal.
+    // The last departing consumer cancels it; settled results expire independently of reads.
+    function fetchCachedRequest(cache, key, request, { signal, maxEntries }) {
+        if (signal?.aborted) return Promise.reject(createAbortError());
+        let entry = cache.get(key);
+        if (
+            !entry ||
+            entry.controller.signal.aborted ||
+            (entry.settled && Date.now() - entry.fetchedAt >= REFRESH_MS)
+        ) {
+            entry = { controller: new AbortController(), consumers: 0, settled: false, fetchedAt: 0 };
+            const pending = entry;
+            pending.promise = Promise.resolve()
+                .then(() => {
+                    if (pending.controller.signal.aborted) throw createAbortError();
+                    return request(pending.controller.signal);
+                })
+                .then((value) => {
+                    pending.settled = true;
+                    pending.fetchedAt = Date.now();
+                    return value;
+                })
+                .catch((error) => {
+                    pending.settled = true;
+                    if (cache.get(key) === pending) cache.delete(key);
+                    throw error;
+                });
+        }
+        touchMapEntry(cache, key, entry, maxEntries);
+        entry.consumers++;
+        return new Promise((resolve, reject) => {
+            let finished = false;
+            const finish = (callback, value) => {
+                if (finished) return;
+                finished = true;
+                signal?.removeEventListener("abort", abort);
+                entry.consumers--;
+                if (!entry.settled && entry.consumers === 0) {
+                    if (cache.get(key) === entry) cache.delete(key);
+                    entry.controller.abort();
+                }
+                callback(value);
+            };
+            const abort = () => finish(reject, createAbortError());
+            signal?.addEventListener("abort", abort, { once: true });
+            entry.promise.then(
+                (value) => finish(resolve, value),
+                (error) => finish(reject, error)
+            );
+        });
     }
 
     function normalizeMatchText(value) {
@@ -1188,7 +1249,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
             .map((session) => {
                 const enteredAt = Number(session.enteredAt) || Number(session.startedAt) || 0;
                 const leftAt = Number(session.leftAt) || Number(session.endedAt) || Number(session.lastWatchedAt) || 0;
-                const watchedRanges = mergeWatchRanges(session.watchedRanges);
+                const watchedRanges = normalizeSessionWatchRanges(session);
                 return {
                     id: normSpace(session.id) || `${enteredAt}:${leftAt}`,
                     enteredAt,
@@ -1423,25 +1484,17 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
     }
 
     async function fetchVideoDetail(videoNo, { signal } = {}) {
-        if (videoDetailCache.has(videoNo)) {
-            const cached = videoDetailCache.get(videoNo);
-            touchMapEntry(videoDetailCache, videoNo, cached, MAX_VIDEO_DETAIL_CACHE_ENTRIES);
-            return cached;
-        }
-
-        const promise = fetchJson(`${VIDEO_DETAIL_API_BASE}/${encodeURIComponent(videoNo)}`, {
-            headers: { Accept: "application/json" },
-            signal,
-            timeoutMs: FETCH_TIMEOUT_MS,
-        })
-            .then((json) => json?.content || null)
-            .catch((error) => {
-                videoDetailCache.delete(videoNo);
-                throw error;
-            });
-
-        touchMapEntry(videoDetailCache, videoNo, promise, MAX_VIDEO_DETAIL_CACHE_ENTRIES);
-        return promise;
+        return fetchCachedRequest(
+            videoDetailCache,
+            videoNo,
+            (requestSignal) =>
+                fetchJson(`${VIDEO_DETAIL_API_BASE}/${encodeURIComponent(videoNo)}`, {
+                    headers: { Accept: "application/json" },
+                    signal: requestSignal,
+                    timeoutMs: FETCH_TIMEOUT_MS,
+                }).then((json) => json?.content || null),
+            { signal, maxEntries: MAX_VIDEO_DETAIL_CACHE_ENTRIES }
+        );
     }
 
     function mergeVideoDetail(video, detail) {
@@ -1669,14 +1722,16 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         delete widget.dataset.calendarMonth;
     }
 
-    function cacheMonthInfo(channelId, monthInfo) {
+    function cacheMonthInfo(channelId, monthInfo, fetchedAt = Date.now()) {
         if (!channelId || !monthInfo) return;
+        const key = formatChannelMonthKey(channelId, monthInfo.year, monthInfo.month);
+        if (Date.now() - fetchedAt >= REFRESH_MS || (channelMonthCache.get(key)?.fetchedAt ?? -1) > fetchedAt) return;
         touchMapEntry(
             channelMonthCache,
-            formatChannelMonthKey(channelId, monthInfo.year, monthInfo.month),
+            key,
             {
                 month: monthInfo,
-                fetchedAt: Date.now(),
+                fetchedAt,
             },
             MAX_MONTH_CACHE_ENTRIES
         );
@@ -1686,6 +1741,10 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         const key = formatChannelMonthKey(channelId, year, month);
         const cached = channelMonthCache.get(key);
         if (!cached) return null;
+        if (Date.now() - cached.fetchedAt >= REFRESH_MS) {
+            channelMonthCache.delete(key);
+            return null;
+        }
         touchMapEntry(channelMonthCache, key, cached, MAX_MONTH_CACHE_ENTRIES);
         return cached.month || null;
     }
@@ -1742,22 +1801,35 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         return monthInfo;
     }
 
+    function pageIsOlderThan(videos, rows, startMs) {
+        // Filtered-out rows cannot prove that the entire source page is older.
+        return (
+            videos.length > 0 &&
+            videos.length === rows.length &&
+            videos.every((video) => {
+                const endMs = getVideoEndMs(video);
+                return endMs !== null && endMs < startMs;
+            })
+        );
+    }
+
     async function calculateCalendarMonth(channelId, year, month, token, { signal } = {}) {
         const now = Date.now();
         const monthInfo = getKstMonthInfo(now, year, month);
         const seen = new Set();
         let pagesLoaded = 0;
-        let reachedOlderThanMonth = false;
+        let complete = false;
         const maxCalendarPages = getMaxCalendarPages();
 
         for (let page = 0; page < maxCalendarPages; page++) {
             if (signal?.aborted) throw createAbortError();
             if (calendarLoadingTokens.get(channelId) !== token) return null;
-            await waitBeforeVideoPage(page, signal);
-
             const json = await fetchVideoPageCached(channelId, page, { signal });
+            const rows = pickArray(json?.content ?? json) || [];
             const videos = extractVideos(json);
             await hydrateVideoStartDetails(videos, monthInfo, channelId, token, calendarLoadingTokens, { signal });
+            if (signal?.aborted) throw createAbortError();
+            if (calendarLoadingTokens.get(channelId) !== token) return null;
             pagesLoaded++;
 
             for (const video of videos) {
@@ -1766,18 +1838,13 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
                 addMonthStart(video, monthInfo, now);
             }
 
-            reachedOlderThanMonth =
-                videos.length > 0 &&
-                videos.every((video) => {
-                    const endMs = getVideoEndMs(video);
-                    return endMs !== null && endMs < monthInfo.startMs;
-                });
-
-            if (isLastPage(json, videos, PAGE_SIZE) || (page > 0 && reachedOlderThanMonth)) break;
+            complete =
+                isLastPage(json, rows, PAGE_SIZE) || (page > 0 && pageIsOlderThan(videos, rows, monthInfo.startMs));
+            if (complete) break;
         }
 
         monthInfo.pagesLoaded = pagesLoaded;
-        monthInfo.partial = pagesLoaded >= maxCalendarPages && !reachedOlderThanMonth;
+        monthInfo.partial = !complete;
         return finalizeMonthInfo(monthInfo);
     }
 
@@ -1786,50 +1853,53 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         const windowDays = getWindowDays();
         const windowStart = now - getWindowMs();
         const maxPages = getMaxPages();
+        const maxMonthPages = isCalendarEnabled() ? getMaxCalendarPages() : maxPages;
         const seen = new Set();
         let totalSeconds = 0;
         let replayCount = 0;
         let pagesLoaded = 0;
-        let oldestEndMs = Number.POSITIVE_INFINITY;
+        let statsComplete = false;
+        let monthComplete = false;
         const monthInfo = getKstMonthInfo(now);
-        const oldestNeededMs = Math.min(windowStart, monthInfo.startMs);
+        monthInfo.pagesLoaded = 0;
 
-        for (let page = 0; page < maxPages; page++) {
+        // Walk the list once, but stop each aggregation at its own boundary and cap.
+        for (let page = 0; page < Math.max(maxPages, maxMonthPages); page++) {
+            const collectStats = !statsComplete && page < maxPages;
+            const collectMonth = !monthComplete && page < maxMonthPages;
+            if (!collectStats && !collectMonth) break;
             if (signal?.aborted) throw createAbortError();
             if (loadingTokens.get(channelId) !== token) return null;
-            await waitBeforeVideoPage(page, signal);
-
             const json = await fetchVideoPageCached(channelId, page, { signal });
+            const rows = pickArray(json?.content ?? json) || [];
             const videos = extractVideos(json);
             await hydrateVideoStartDetails(videos, monthInfo, channelId, token, loadingTokens, { signal });
-            pagesLoaded++;
+            if (signal?.aborted) throw createAbortError();
+            if (loadingTokens.get(channelId) !== token) return null;
+            if (collectStats) pagesLoaded++;
+            if (collectMonth) monthInfo.pagesLoaded++;
 
             for (const video of videos) {
                 if (seen.has(video.videoNo) || !replayOnly(video)) continue;
                 seen.add(video.videoNo);
 
-                const endMs = getVideoEndMs(video);
-                if (endMs === null) continue;
-
-                oldestEndMs = Math.min(oldestEndMs, endMs);
-                const overlapSeconds = estimateOverlapSeconds(video, windowStart, now);
-                if (overlapSeconds >= MINUTE_SECONDS) {
-                    totalSeconds += overlapSeconds;
-                    replayCount++;
+                if (collectStats) {
+                    const overlapSeconds = estimateOverlapSeconds(video, windowStart, now);
+                    if (overlapSeconds >= MINUTE_SECONDS) {
+                        totalSeconds += overlapSeconds;
+                        replayCount++;
+                    }
                 }
 
-                addMonthStart(video, monthInfo, now);
+                if (collectMonth) addMonthStart(video, monthInfo, now);
             }
 
-            const pageIsOlderThanWindow =
-                videos.length > 0 &&
-                videos.every((video) => {
-                    const endMs = getVideoEndMs(video);
-                    return endMs !== null && endMs < oldestNeededMs;
-                });
-            if (isLastPage(json, videos, PAGE_SIZE) || (page > 0 && pageIsOlderThanWindow)) break;
+            const last = isLastPage(json, rows, PAGE_SIZE);
+            if (collectStats) statsComplete = last || (page > 0 && pageIsOlderThan(videos, rows, windowStart));
+            if (collectMonth) monthComplete = last || (page > 0 && pageIsOlderThan(videos, rows, monthInfo.startMs));
         }
 
+        monthInfo.partial = !monthComplete;
         finalizeMonthInfo(monthInfo);
 
         return {
@@ -1837,11 +1907,11 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
             averageSecondsPerDay: totalSeconds / windowDays,
             replayCount,
             pagesLoaded,
-            complete: oldestEndMs < windowStart || pagesLoaded < maxPages,
+            complete: statsComplete,
             month: {
                 ...monthInfo,
             },
-            fetchedAt: now,
+            fetchedAt: Date.now(),
         };
     }
 
@@ -1866,7 +1936,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         } catch (error) {
             if (loadingTokens.get(channelId) !== token) return;
             loadingTokens.delete(channelId);
-            if (controller.signal.aborted || isAbortError(error)) return;
+            if (controller.signal.aborted) return;
             const widget = document.getElementById(WIDGET_ID);
             if (widget && currentChannelId === channelId) {
                 setWidgetState(widget, "error", "계산 실패", error?.message || "다시 시도 예정");
@@ -1885,16 +1955,13 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
             return;
         }
 
-        cacheMonthInfo(channelId, stats.month);
-
-        if (stats.replayCount <= 0 || stats.totalSeconds <= 0) {
-            setSelectedCalendarMonth(widget, stats.month.year, stats.month.month);
-            updateWidgetMonthSummary(widget, stats.month, "empty");
-            renderCalendar(widget, stats.month);
-            return;
-        }
+        cacheMonthInfo(channelId, stats.month, stats.fetchedAt);
 
         if (!isCalendarEnabled()) {
+            if (stats.replayCount <= 0 || stats.totalSeconds <= 0) {
+                updateWidgetMonthSummary(widget, stats.month, "empty");
+                return;
+            }
             const average = formatDuration(stats.averageSecondsPerDay);
             const total = formatDuration(stats.totalSeconds);
             const limited = stats.complete ? "" : "+";
@@ -1904,11 +1971,13 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
             return;
         }
 
+        if (calendarLoadingTokens.has(channelId)) return;
         const selected = getSelectedCalendarMonth(widget);
         if (!selected) {
             setSelectedCalendarMonth(widget, stats.month.year, stats.month.month);
-            updateWidgetMonthSummary(widget, stats.month);
-            renderCalendar(widget, stats.month);
+            const month = getCachedMonthInfo(channelId, stats.month.year, stats.month.month) || stats.month;
+            updateWidgetMonthSummary(widget, month);
+            renderCalendar(widget, month);
             return;
         }
 
@@ -1931,6 +2000,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         if (isFutureMonth(next.year, next.month)) return;
 
         setSelectedCalendarMonth(widget, next.year, next.month);
+        cancelCalendarLoad(currentChannelId);
         const cached = getCachedMonthInfo(currentChannelId, next.year, next.month);
         if (cached) {
             renderCalendar(widget, cached);
@@ -1955,6 +2025,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
             calendarLoadingTokens.delete(channelId);
             cacheMonthInfo(channelId, monthInfo);
 
+            widget = document.getElementById(WIDGET_ID);
+            if (!widget || currentChannelId !== channelId) return;
             const selected = getSelectedCalendarMonth(widget);
             if (selected && selected.year === year && selected.month === month) {
                 renderCalendar(widget, monthInfo);
@@ -1963,6 +2035,10 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
             if (calendarLoadingTokens.get(channelId) !== token) return;
             calendarLoadingTokens.delete(channelId);
             if (controller.signal.aborted) return;
+            widget = document.getElementById(WIDGET_ID);
+            if (!widget || currentChannelId !== channelId) return;
+            const selected = getSelectedCalendarMonth(widget);
+            if (!selected || selected.year !== year || selected.month !== month) return;
             renderCalendarError(widget, year, month);
         } finally {
             clearAbortController(calendarLoadingAbortControllers, channelId, controller);
@@ -1978,6 +2054,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         const daysEl = widget?.querySelector(".bcmb-days");
         if (widget) delete widget.dataset.calendarRenderKey;
         if (calendar) calendar.setAttribute("data-loading", "1");
+        const limitEl = widget?.querySelector(".bcmb-calendar-limit");
+        if (limitEl) limitEl.hidden = true;
         if (monthEl) monthEl.textContent = `${year}.${String(month).padStart(2, "0")}`;
         if (countEl) countEl.textContent = "불러오는 중";
         if (daysEl) renderBlankCalendarDays(daysEl, getKstMonthInfo(Date.now(), year, month));
@@ -1994,6 +2072,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         const footEl = widget?.querySelector(".bcmb-calendar-foot");
         if (widget) delete widget.dataset.calendarRenderKey;
         if (calendar) calendar.setAttribute("data-loading", "0");
+        const limitEl = widget?.querySelector(".bcmb-calendar-limit");
+        if (limitEl) limitEl.hidden = true;
         if (monthEl) monthEl.textContent = `${year}.${String(month).padStart(2, "0")}`;
         if (countEl) countEl.textContent = "조회 실패";
         if (footEl) footEl.textContent = "잠시 후 다시 시도";
@@ -2140,6 +2220,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         const footEl = widget.querySelector(".bcmb-calendar-foot");
         if (!monthEl || !countEl || !weekdaysEl || !daysEl || !footEl) return;
         if (calendar) calendar.setAttribute("data-loading", "0");
+        const limitEl = widget.querySelector(".bcmb-calendar-limit");
+        if (limitEl) limitEl.hidden = !month.partial;
 
         const renderKey = buildCalendarRenderKey(month);
         if (!force && widget.dataset.calendarRenderKey === renderKey) {
@@ -2533,7 +2615,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         if (
             prev.monthlyBroadcastTimeWindowDays !== options.monthlyBroadcastTimeWindowDays ||
             prev.monthlyBroadcastTimeMaxPages !== options.monthlyBroadcastTimeMaxPages ||
-            prev.monthlyBroadcastTimeMaxCalendarPages !== options.monthlyBroadcastTimeMaxCalendarPages
+            prev.monthlyBroadcastTimeMaxCalendarPages !== options.monthlyBroadcastTimeMaxCalendarPages ||
+            prev.monthlyBroadcastTimeCalendarEnabled !== options.monthlyBroadcastTimeCalendarEnabled
         ) {
             channelStatsCache.clear();
             channelMonthCache.clear();
@@ -2541,6 +2624,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
             loadingTokens.clear();
             calendarLoadingTokens.clear();
             abortAllControllers();
+            removeWidgetIfMounted();
         }
 
         if (!isFeatureEnabled()) {

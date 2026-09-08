@@ -49,6 +49,8 @@
         changed: "재생 위치 변경 · 다시 적용 가능",
     };
     const state = model.readSession(window.sessionStorage);
+    // DOM attributes are shared with page scripts; action authority stays in this world.
+    const controlActions = new WeakMap();
     let featureOptions = null;
     let applyingSlotAudio = false;
     let enabled = false,
@@ -220,8 +222,10 @@ html.theme_dark .bcmv-panel{--bcmv-accent:var(--sem-color-content-brand-strong,#
 .bcmv-banner{position:absolute;top:0;left:0;right:0;z-index:6;background:var(--bcmv-surface);padding:8px;pointer-events:auto}
 .bcmv-banner:empty{display:none}
 /* Keep the launcher in the native button flow with its own predictable box. */
-#betterchzzk-multiview-launcher{position:relative;inset:auto;transform:none;display:inline-flex;align-items:center;justify-content:center;flex:none;box-sizing:border-box;width:36px;height:36px;margin:0;padding:6px;border:0;border-radius:4px;background:transparent;color:inherit;cursor:pointer}
+#betterchzzk-multiview-launcher{position:relative;inset:auto;transform:none;display:inline-flex;align-items:center;justify-content:center;flex:none;box-sizing:border-box;width:36px;height:36px;margin:0 0 0 10px;padding:6px;border:0;border-radius:4px;background:transparent;color:inherit;cursor:pointer}
 #betterchzzk-multiview-launcher svg{width:24px;height:24px;pointer-events:none}
+#betterchzzk-multiview-launcher::before{content:"";position:absolute;top:50%;left:50%;width:44px;height:44px;border-radius:50%;transform:translate(-50%,-50%);background:transparent;pointer-events:none}
+#betterchzzk-multiview-launcher:hover::before{background:rgba(255,255,255,.2)}
 #betterchzzk-multiview-launcher[aria-pressed="true"]{color:#00c894;background:rgba(0,200,148,.14)}
 #betterchzzk-multiview-launcher:focus-visible{outline:2px solid #00c894;outline-offset:-2px}
 /* Native pzp buttons fade individually with --controls (2026-09-06 player CSS). */
@@ -250,11 +254,13 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
         node.type = "button";
         node.dataset.action = action;
         if (id) node.dataset.channel = id;
+        controlActions.set(node, { action, channel: id });
         return node;
     }
     function delayButton(delta, id) {
         const control = button(`${delta < 0 ? "−" : "+"}${Math.abs(delta)}s`, "delay", id);
         control.dataset.delta = String(delta);
+        controlActions.set(control, { action: "delay", channel: id, delta });
         control.setAttribute("aria-label", `싱크 ${delta < 0 ? "앞으로" : "늦추기"} ${Math.abs(delta)}s`);
         return control;
     }
@@ -581,7 +587,9 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
     }
     function setDelay(player, value, basis = "live-edge-clock") {
         if (!player?.loaded || !model.validDelay(value)) return;
-        player.delay = Math.round(value * 10) / 10;
+        const rounded = Math.round(value * 10) / 10;
+        if (!model.validDelay(rounded)) return;
+        player.delay = rounded;
         player.delayBasis = basis;
         player.applied = false;
         player.pending = null;
@@ -1264,12 +1272,12 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
             panel.append(form);
         } else {
             const actions = el("div", "bcmv-actions");
-            const equalize = button("보조 방송 정렬", "equalize-layout", id);
+            const equalize = button("보조 방송 정렬", "equalize-layout");
             equalize.prepend(panelIcon("align"));
-            equalize.disabled = !equalLayout(id);
+            equalize.disabled = !equalLayout();
             equalize.title = equalize.disabled
                 ? "같은 영역에 보조 방송이 2개 이상 있을 때 사용할 수 있어요."
-                : "메인 영역을 유지하고 같은 영역의 보조 방송들을 같은 크기로 정렬해요.";
+                : "메인 영역을 유지하고 모든 보조 영역의 방송들을 영역별로 같은 크기로 정렬해요.";
             const reset = button("기본 배치", "reset-layout");
             reset.prepend(panelIcon("layout"));
             actions.append(reset, equalize);
@@ -1443,7 +1451,7 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
             link.dataset.action = "main";
             overlay.append(link);
             if (fromPanel) panelNavigation = { from: routeId, to: id, generation, focusId: a };
-            if (!navigate(link)) panelNavigation = null;
+            if (!navigate(link, id)) panelNavigation = null;
             link.remove();
             return;
         }
@@ -1455,9 +1463,9 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
         positionCells();
         if (panelId) renderPanel(panelId);
     }
-    function navigate(link) {
-        const id = link.dataset.channel;
+    function navigate(link, id = controlActions.get(link)?.channel) {
         if (!state.channels.some((entry) => entry.id === id) || id === routeId) return false;
+        link.href = `/live/${id}`;
         persistSession();
         const accepted = !link.dispatchEvent(
             new CustomEvent("betterchzzk:multiview-navigate", { bubbles: true, cancelable: true })
@@ -1465,9 +1473,19 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
         if (!accepted) notice("페이지 내부 이동을 사용할 수 없어요. 현재 방송은 유지돼요.");
         return accepted;
     }
-    function equalLayout(id) {
+    function equalLayout() {
         const bounds = host?.getBoundingClientRect();
-        return model.equalizeTree(state.dockTree, id, routeId, bounds?.width / bounds?.height);
+        let tree = state.dockTree;
+        const ids = [];
+        // The shared settings action covers every disjoint secondary region once.
+        for (const entry of state.channels) {
+            if (entry.id === routeId || ids.includes(entry.id)) continue;
+            const arranged = model.equalizeTree(tree, entry.id, routeId, bounds?.width / bounds?.height);
+            if (!arranged) continue;
+            tree = arranged.tree;
+            ids.push(...arranged.ids);
+        }
+        return ids.length ? { tree, ids } : null;
     }
     function onClick(event) {
         if (panel?.contains(event.target) && suppressPanelClick && event.detail !== 0) {
@@ -1478,8 +1496,11 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
         }
         const control = event.target.closest("[data-action]");
         if (!control || (control !== chatButton && !overlay?.contains(control) && !panel?.contains(control))) return;
-        const action = control.dataset.action,
-            player = players.get(control.dataset.channel);
+        const binding = controlActions.get(control);
+        if (!binding) return;
+        const { action, channel, delta } = binding;
+        if (["delay", "reset-delay", "apply-delay"].includes(action) && !event.isTrusted) return;
+        const player = players.get(channel);
         if (action === "main") {
             event.preventDefault();
             navigate(control);
@@ -1512,10 +1533,10 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
                 renderPanel(panelId);
                 panel.querySelector('[data-action="reset-layout"]')?.focus({ preventScroll: true });
             }
-        } else if (action === "equalize-layout" && player && !player.main) {
+        } else if (action === "equalize-layout") {
             cancelResize();
             endDrag();
-            const arranged = equalLayout(player.id);
+            const arranged = equalLayout();
             if (!arranged || !model.validTree(arranged.tree, state.channels)) return;
             state.dockTree = arranged.tree;
             state.customLayout = true;
@@ -1555,11 +1576,7 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
             const needsMeasuredTarget = player.delay === 0 || player.delayBasis === "legacy";
             const timing = needsMeasuredTarget && player.applied && !player.pending ? measureTiming(player) : null;
             const measured = timing ? timing.latency : player.delay;
-            setDelay(
-                player,
-                Math.max(0, measured + Number(control.dataset.delta)),
-                timing ? "live-edge-clock" : player.delayBasis
-            );
+            setDelay(player, Math.max(0, measured + delta), timing ? "live-edge-clock" : player.delayBasis);
         } else if (action === "reset-delay" && player) setDelay(player, 0);
         else if (action === "apply-delay" && player) setDelay(player, player.delay, player.delayBasis);
     }

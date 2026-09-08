@@ -37,6 +37,8 @@ const expectedDefaults = {
     vodBroadcastClockEnabled: true,
     timeMachineLagLabelEnabled: true,
     adblockPopupEnabled: true,
+    adVideoEnabled: false,
+    adBannerEnabled: false,
     monthlyBroadcastTimeEnabled: true,
     channelChatLinkEnabled: true,
     monthlyBroadcastTimeWindowDays: 30,
@@ -112,6 +114,17 @@ test("settings exports the expected option defaults and key order", () => {
     assert.deepEqual(settings.OPTION_KEYS, Object.keys(expectedDefaults));
 });
 
+test("unreleased ad auto skip ignores stored opt-ins and stays outside automatic injection", () => {
+    const normalized = settings.normalizeOptions({ adAutoSkipEnabled: true, adVideoEnabled: true });
+    assert.equal(Object.hasOwn(normalized, "adAutoSkipEnabled"), false);
+    assert.equal(normalized.adVideoEnabled, true);
+    const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../manifest.json"), "utf8"));
+    assert.equal(
+        manifest.content_scripts.some((entry) => entry.js?.includes("features/adAutoSkip.js")),
+        false
+    );
+});
+
 test("feature count keys are derived from feature toggles only", () => {
     assert.deepEqual(settings.FEATURE_KEYS, [
         "autoQualityEnabled",
@@ -126,6 +139,8 @@ test("feature count keys are derived from feature toggles only", () => {
         "vodBroadcastClockEnabled",
         "timeMachineLagLabelEnabled",
         "adblockPopupEnabled",
+        "adVideoEnabled",
+        "adBannerEnabled",
         "monthlyBroadcastTimeEnabled",
         "channelChatLinkEnabled",
         "liveWatchHistoryEnabled",

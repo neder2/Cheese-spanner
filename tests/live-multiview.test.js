@@ -215,7 +215,14 @@ function setup(t, { local = {}, savedSession, readFailure = false, writeFailure 
     w.Hls = Hls;
     if (savedSession) w.sessionStorage.setItem("betterChzzkMultiviewSession", JSON.stringify(savedSession));
     evalFile("features/liveMultiview/model.js");
-    evalFile("features/liveMultiview/runtime.js");
+    // jsdom cannot produce trusted browser input. Invoke the real handler with a
+    // trusted event stand-in only for explicit user-action tests; DOM .click()
+    // remains synthetic so the security regression below exercises rejection.
+    const runtimeSource = fs.readFileSync(path.join(repo, "features/liveMultiview/runtime.js"), "utf8");
+    const runtimeEnd = runtimeSource.lastIndexOf("})();");
+    w.eval(`${runtimeSource.slice(0, runtimeEnd)}window.__multiviewClick = onClick;${runtimeSource.slice(runtimeEnd)}`);
+    const trustedClick = (node) =>
+        w.__multiviewClick({ target: node, isTrusted: true, detail: 1, preventDefault() {}, stopPropagation() {} });
     t.after(() => {
         configure({
             liveMultiviewEnabled: false,
@@ -228,7 +235,8 @@ function setup(t, { local = {}, savedSession, readFailure = false, writeFailure 
     const click = (action, id) => {
         const node = w.document.querySelector(`[data-action="${action}"]${id ? `[data-channel="${id}"]` : ""}`);
         assert.ok(node, `missing ${action}`);
-        node.click();
+        if (["delay", "reset-delay", "apply-delay"].includes(action)) trustedClick(node);
+        else node.click();
     };
     async function start() {
         w.document.getElementById("betterchzzk-multiview-launcher")?.click();
@@ -256,6 +264,7 @@ function setup(t, { local = {}, savedSession, readFailure = false, writeFailure 
         start,
         add,
         click,
+        trustedClick,
         evalFile,
         setOptions: configure,
         configure: (value) => configure({ liveMultiviewEnabled: value }),
@@ -275,6 +284,38 @@ async function waitForChatUi(predicate) {
     }
     assert.ok(predicate(), "chat controls did not settle");
 }
+
+test("multiview delay ignores DOM authority changes and rejects synthetic or forged controls", async (t) => {
+    const h = setup(t, { local: { [key(B)]: { version: 2, basis: "live-edge-clock", delaySeconds: 4 } } });
+    await h.start();
+    await h.add(B);
+    const original = h.w.document.querySelector(`[data-channel="${B}"][data-delta="0.1"]`);
+    assert.ok(original);
+    const beforeWrites = h.writes.length;
+    original.click();
+    await tick();
+    assert.equal(h.writes.length, beforeWrites, "synthetic clicks cannot write extension delay settings");
+    original.dataset.delta = "1e308";
+    original.dataset.channel = A;
+    original.dataset.action = "reset-delay";
+    h.trustedClick(original);
+    await tick();
+    assert.equal(h.storage[key(B)].delaySeconds, 4.1, "trusted input uses the original channel and 0.1 increment");
+    assert.equal(h.storage[key(A)], undefined);
+    const forged = original.cloneNode(true);
+    forged.dataset.channel = B;
+    forged.dataset.action = "delay";
+    original.parentElement.append(forged);
+    const afterWrites = h.writes.length;
+    h.trustedClick(forged);
+    await tick();
+    assert.equal(h.writes.length, afterWrites, "cloned controls have no internal authority");
+    const model = h.w.BetterChzzk.multiviewModel;
+    for (const delay of [1e308, Number.MAX_VALUE, Infinity, NaN]) {
+        assert.equal(model.validDelay(delay), false);
+        assert.equal(model.readDelay({ version: 2, basis: "live-edge-clock", delaySeconds: delay }), 0);
+    }
+});
 
 test("chat settings stays beside the native menu with collection off and replaces the channel-name opener", async (t) => {
     const h = setup(t);
@@ -473,11 +514,11 @@ test("secondary bottom controls independently toggle playback, mute and volume",
     assert.equal(fastForward.nextElementSibling.dataset.action, "mute");
     assert.equal(fastForward.getAttribute("aria-label"), "빨리 감기");
     const before = h.storage[key(B)]?.delaySeconds ?? 0;
-    controls.querySelector('[data-delta="0.1"]').click();
+    h.trustedClick(controls.querySelector('[data-delta="0.1"]'));
     await tick();
     assert.ok(h.storage[key(B)].delaySeconds > before);
     const selected = h.storage[key(B)].delaySeconds;
-    controls.querySelector('[data-delta="-0.1"]').click();
+    h.trustedClick(controls.querySelector('[data-delta="-0.1"]'));
     await tick();
     assert.equal(h.storage[key(B)].delaySeconds, Math.round((selected - 0.1) * 10) / 10);
     h.click("toggle-play", B);
@@ -853,8 +894,8 @@ test("popup sync buttons adjust each secondary by 0.1s without starting a row dr
     g.pointer("pointerup", A);
     assert.equal(d.activeElement?.classList.contains("bcmv-stream-move"), false);
     plus.focus();
-    plus.click();
-    plus.click();
+    h.trustedClick(plus);
+    h.trustedClick(plus);
     await tick();
     assert.equal(h.storage[key(B)].delaySeconds, 5.2);
     assert.equal(d.querySelector(`[data-bcmv-channel="${B}"] video`).currentTime, 114.8);
@@ -864,17 +905,17 @@ test("popup sync buttons adjust each secondary by 0.1s without starting a row dr
     assert.equal(h.storage[key(C)].delaySeconds, 7);
     assert.equal(videos[0].currentTime, mainTime);
     assert.equal(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"), before);
-    minus.click();
+    h.trustedClick(minus);
     await tick();
     assert.equal(h.storage[key(B)].delaySeconds, 5.1);
-    d.querySelector(`[data-bcmv-channel="${B}"] [data-delta="-0.1"]`).click();
+    h.trustedClick(d.querySelector(`[data-bcmv-channel="${B}"] [data-delta="-0.1"]`));
     await tick();
     assert.equal(h.storage[key(B)].delaySeconds, 5);
     assert.match(g.row(B).querySelector("[data-bcmv-delay]").textContent, /5.0s/);
     assert.deepEqual([...d.querySelectorAll("video")], videos);
     assert.equal(h.requests.length, requests);
     g.row(B).querySelector('[data-action="remove"]').click();
-    plus.click();
+    h.trustedClick(plus);
     await tick();
     assert.equal(h.storage[key(B)].delaySeconds, 5, "a removed row cannot adjust a stale player");
 });
@@ -1714,6 +1755,126 @@ test("equal alignment divides a secondary region evenly without changing the mai
     assert.equal(m.equalizeTree(branch("columns", 0.7, A, B), B, A), null);
 });
 
+test("equal alignment button arranges every secondary region regardless of the first secondary", async (t) => {
+    const D = "d".repeat(32),
+        E = "e".repeat(32);
+    const branch = (axis, ratio, a, b) => ({ axis, ratio, a, b });
+    for (const scenario of [
+        {
+            name: "right and bottom regions with unused bottom space",
+            ids: [A, B, C, D, E],
+            tree: branch(
+                "rows",
+                0.53,
+                branch("columns", 2 / 3, A, branch("rows", 0.27, B, C)),
+                branch("columns", 0.4, branch("columns", 0.4, D, E), null)
+            ),
+            expected: branch(
+                "rows",
+                0.53,
+                branch("columns", 2 / 3, A, branch("rows", 0.5, B, C)),
+                branch("columns", 0.5, D, E)
+            ),
+            arranged: [B, C, D, E],
+        },
+        {
+            name: "a lone first secondary leaves the bottom pair available",
+            ids: [A, B, C, D],
+            tree: branch(
+                "rows",
+                0.6,
+                branch("columns", 0.65, A, B),
+                branch("columns", 0.2, C, branch("rows", 0.3, null, D))
+            ),
+            expected: branch("rows", 0.6, branch("columns", 0.65, A, B), branch("columns", 0.5, C, D)),
+            arranged: [C, D],
+        },
+        {
+            name: "left and top regions after moving the main",
+            ids: [A, B, C, D, E],
+            tree: branch(
+                "rows",
+                0.35,
+                branch("columns", 0.2, B, C),
+                branch("columns", 0.3, branch("rows", 0.25, D, E), A)
+            ),
+            expected: branch(
+                "rows",
+                0.35,
+                branch("columns", 0.5, B, C),
+                branch("columns", 0.3, branch("rows", 0.5, D, E), A)
+            ),
+            arranged: [B, C, D, E],
+        },
+    ]) {
+        await t.test(scenario.name, async (t) => {
+            const savedSession = {
+                version: 1,
+                layoutVersion: 3,
+                active: true,
+                customLayout: true,
+                channels: scenario.ids.map((id, index) => ({
+                    id,
+                    volume: (index + 1) / 10,
+                    muted: index !== 2,
+                    position: [index % 2, 1],
+                })),
+                dockTree: scenario.tree,
+            };
+            const h = setup(t, { savedSession });
+            await tick();
+            const d = h.w.document,
+                host = d.querySelector("[data-bcmv-host]"),
+                model = h.w.BetterChzzk.multiviewModel;
+            const bounds = () => ({ left: 0, top: 0, width: 900, height: 506.25 });
+            host.getBoundingClientRect = bounds;
+            d.querySelector("video[data-bcmv-video]").dispatchEvent(new h.w.Event("resize"));
+            const mainStyle = host.style.cssText,
+                videos = [...d.querySelectorAll("video")],
+                playback = videos.map((video) => [video.volume, video.muted, video.paused, video.currentTime]),
+                requests = h.requests.length,
+                instances = [...h.instances],
+                writes = h.writes.length;
+            h.click("controls");
+            assert.equal(d.querySelector('[data-action="equalize-layout"]').disabled, false);
+            h.click("equalize-layout");
+            const readSession = () => JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"));
+            const saved = readSession();
+            assert.deepEqual(saved.dockTree, scenario.expected, "one click arranges all secondary groups");
+            assert.equal(model.validTree(saved.dockTree, saved.channels), true);
+            assert.equal(saved.customLayout, true);
+            assert.equal(host.style.cssText, mainStyle, "main video size and position stay unchanged");
+            for (const entry of saved.channels) {
+                const original = savedSession.channels.find((item) => item.id === entry.id);
+                assert.deepEqual(entry, {
+                    ...original,
+                    position: scenario.arranged.includes(entry.id) ? [0.5, 0.5] : original.position,
+                });
+            }
+            assert.deepEqual([...d.querySelectorAll("video")], videos);
+            assert.deepEqual(
+                videos.map((video) => [video.volume, video.muted, video.paused, video.currentTime]),
+                playback
+            );
+            assert.deepEqual(h.instances, instances);
+            assert.equal(h.requests.length, requests);
+            assert.equal(h.writes.length, writes);
+            assert.equal(d.querySelector(".bcmv-panel").hidden, false);
+            assert.equal(d.activeElement.dataset.action, "equalize-layout");
+            h.click("equalize-layout");
+            assert.deepEqual(readSession(), saved, "repeated alignment leaves all groups stable");
+            const styles = () => [...d.querySelectorAll(".bcmv-cell")].map((cell) => cell.style.cssText);
+            const arrangedStyles = styles();
+            h.configure(false);
+            h.configure(true);
+            await tick();
+            d.querySelector("[data-bcmv-host]").getBoundingClientRect = bounds;
+            d.querySelector("video[data-bcmv-video]").dispatchEvent(new h.w.Event("resize"));
+            assert.deepEqual(styles(), arrangedStyles, "remount restores every arranged group");
+        });
+    }
+});
+
 test("equal alignment button fixes uneven secondary videos while preserving playback and restoring the result", async (t) => {
     const D = "d".repeat(32),
         E = "e".repeat(32);
@@ -1753,7 +1914,7 @@ test("equal alignment button fixes uneven secondary videos while preserving play
     const panel = d.querySelector(".bcmv-panel");
     h.click("controls");
     assert.equal(d.querySelector('[data-action="equalize-layout"]').disabled, false);
-    h.click("equalize-layout", B);
+    h.click("equalize-layout");
     assert.equal(panel.hidden, false, "keep the chat popup open after alignment");
     const cells = Array.from(d.querySelectorAll('.bcmv-cell:not([data-main="1"])'));
     for (const cell of cells) {
@@ -2554,7 +2715,7 @@ test("channel delays restore independently, user edits persist, removal retains 
     assert.equal(sub.muted, false);
     assert.equal(main.muted, false);
     h.click("controls");
-    h.w.document.querySelector('[data-delta="0.1"]').click();
+    h.trustedClick(h.w.document.querySelector('[data-delta="0.1"]'));
     await tick();
     assert.equal(h.storage[key(B)].delaySeconds, 8.1);
     assert.equal(h.storage[key(A)].delaySeconds, 3.2);
@@ -2574,7 +2735,7 @@ test("refresh and new broadcast restore channel delays and tab composition; rese
     await first.start();
     await first.add(B);
     first.click("controls");
-    for (let step = 0; step < 10; step++) first.w.document.querySelector('[data-delta="0.1"]').click();
+    for (let step = 0; step < 10; step++) first.trustedClick(first.w.document.querySelector('[data-delta="0.1"]'));
     await tick();
     const savedSession = JSON.parse(first.w.sessionStorage.getItem("betterChzzkMultiviewSession"));
     const second = setup(t, { local: first.storage, savedSession });
@@ -2625,7 +2786,7 @@ test("read and write failures are visible and never claim saved success", async 
     await write.start();
     await write.add(B);
     write.click("controls");
-    write.w.document.querySelector('[data-delta="0.1"]').click();
+    write.trustedClick(write.w.document.querySelector('[data-delta="0.1"]'));
     await tick();
     assert.match(write.w.document.querySelector("[data-bcmv-status]").textContent, /저장 실패/);
     assert.match(write.w.document.querySelector("[data-bcmv-delay]").textContent, /0.0s/);
@@ -2962,7 +3123,7 @@ test("settings show measured delay before the first sync adjustment without savi
     assert.equal(latency(B), "현재 3.0s");
     assert.equal(saved(B), "저장 0.0s");
     assert.equal(h.writes.length, 0, "readiness and playback events never save observations");
-    d.querySelector(`[data-action="delay"][data-channel="${B}"][data-delta="0.1"]`).click();
+    h.trustedClick(d.querySelector(`[data-action="delay"][data-channel="${B}"][data-delta="0.1"]`));
     await tick();
     assert.equal(latency(B), "현재 3.1s");
     assert.equal(saved(B), "저장 3.1s");
@@ -3013,7 +3174,7 @@ test("new delay writes and restores use the compensated edge while legacy settin
     hls.latestLevelDetails.age = 0.6;
     video.dispatchEvent(new h.w.Event("timeupdate"));
     assert.match(h.w.document.querySelector("[data-bcmv-delay]").title, /8.6초/);
-    for (let step = 0; step < 10; step++) h.w.document.querySelector('[data-delta="0.1"]').click();
+    for (let step = 0; step < 10; step++) h.trustedClick(h.w.document.querySelector('[data-delta="0.1"]'));
     await tick();
     assert.equal(video.currentTime, 111);
     assert.equal(h.storage[key(B)].version, 2);
@@ -3046,15 +3207,15 @@ test("delay buttons change the selected target without accumulating observation 
     hls.latestLevelDetails.age = 0.6;
     video.dispatchEvent(new h.w.Event("timeupdate"));
     assert.match(h.w.document.querySelector("[data-bcmv-delay]").title, /5.6초/);
-    h.w.document.querySelector('[data-delta="0.1"]').click();
+    h.trustedClick(h.w.document.querySelector('[data-delta="0.1"]'));
     await tick();
     assert.equal(h.storage[key(B)].delaySeconds, 5.1);
     hls.latestLevelDetails.age = 0.9;
     video.dispatchEvent(new h.w.Event("timeupdate"));
-    h.w.document.querySelector('[data-delta="-0.1"]').click();
+    h.trustedClick(h.w.document.querySelector('[data-delta="-0.1"]'));
     await tick();
     assert.equal(h.storage[key(B)].delaySeconds, 5, "opposite adjustments cancel despite measurement drift");
-    for (let step = 0; step < 20; step++) h.w.document.querySelector('[data-delta="0.1"]').click();
+    for (let step = 0; step < 20; step++) h.trustedClick(h.w.document.querySelector('[data-delta="0.1"]'));
     await tick();
     assert.equal(h.storage[key(B)].delaySeconds, 7, "pending seeks also accumulate only the requested steps");
 });

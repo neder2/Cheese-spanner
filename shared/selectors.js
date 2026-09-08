@@ -100,7 +100,7 @@
             "[class*='resume' i]",
         ],
 
-        // ── 팝업/오버레이 (사용처: adblockPopup, shortcutRescue)
+        // ── 팝업/오버레이 (사용처: adblockPopup)
         popupContainer: [".popup_container__Aqx-3", "[class^='popup_container__']", "[class*=' popup_container__']"],
         popupDimmed: [
             ".popup_dimmed__zs78t",

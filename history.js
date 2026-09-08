@@ -75,6 +75,7 @@ const {
     normalizeDailySeconds,
     normalizeForMatch,
     normalizeTitleHistory,
+    normalizeSessionWatchRanges,
     parseChzzkDate,
     pickArray = () => null,
     pickChzzkVideoNo,
@@ -257,7 +258,7 @@ function normalizeSessionDetails(row, fallbackEntry) {
         .map((session) => {
             const enteredAt = Number(session.enteredAt) || Number(session.startedAt) || 0;
             const leftAt = Number(session.leftAt) || Number(session.endedAt) || Number(session.lastWatchedAt) || 0;
-            const watchedRanges = mergeWatchRanges(session.watchedRanges);
+            const watchedRanges = normalizeSessionWatchRanges(session);
             const watchedSeconds = Math.max(0, Number(session.watchedSeconds) || sumWatchRanges(watchedRanges));
             return {
                 id: pickString(session.id) || `${enteredAt}:${leftAt}`,
@@ -783,15 +784,27 @@ function getStoredWatchSecondsForScope(record, startMs = -Infinity, endMs = Infi
 }
 
 function getUniqueWatchSecondsForScope(startMs = -Infinity, endMs = Infinity) {
-    return entries.reduce((sum, entry) => {
-        const exactSeconds = sumWatchRanges(
-            collectWatchSessionRanges(entry.sessionDetails, {
-                scopeStartMs: startMs,
-                scopeEndMs: endMs,
-            })
+    const allRanges = [];
+    let residualSeconds = 0;
+    for (const entry of entries) {
+        const ranges = getRecordedEntryRangesForScope(entry, startMs, endMs);
+        allRanges.push(...ranges);
+        // Missing/retired ranges cannot prove overlap; preserve their stored duration.
+        residualSeconds += Math.max(
+            0,
+            getStoredWatchSecondsForScope(entry, startMs, endMs) - sumWatchRanges(ranges, 0)
         );
-        return sum + Math.max(exactSeconds, getStoredWatchSecondsForScope(entry, startMs, endMs));
-    }, 0);
+    }
+    return sumWatchRanges(allRanges, 0) + residualSeconds;
+}
+
+function getRecordedEntryRangesForScope(entry, startMs, endMs) {
+    return mergeWatchRanges(
+        (entry.sessionDetails || []).flatMap((session) => session.watchedRanges || []),
+        0
+    )
+        .map((range) => ({ startAt: Math.max(startMs, range.startAt), endAt: Math.min(endMs, range.endAt) }))
+        .filter((range) => range.endAt > range.startAt);
 }
 
 function getUniqueWatchSecondsForMonth(year, month) {
@@ -897,19 +910,15 @@ function buildMonthDayEntryMap(year, month) {
 
 function getDayTotals(year, month) {
     const totals = {};
+    const allRangesByDate = {};
     const { startMs, endMs } = getMonthScopeBounds(year, month);
     for (const entry of entries) {
         const rangesByDate = {};
-        for (const range of collectWatchSessionRanges(entry.sessionDetails, {
-            scopeStartMs: startMs,
-            scopeEndMs: endMs,
-        })) {
-            addWatchRangeToRangesByDate(rangesByDate, range, {
-                scopeStartMs: startMs,
-                scopeEndMs: endMs,
-            });
+        for (const range of getRecordedEntryRangesForScope(entry, startMs, endMs)) {
+            addWatchRangeToRangesByDate(rangesByDate, range);
+            addWatchRangeToRangesByDate(allRangesByDate, range);
         }
-        const exactDailySeconds = sumWatchRangesByDate(rangesByDate);
+        const exactDailySeconds = sumWatchRangesByDate(rangesByDate, 0);
         const dateKeys = new Set([
             ...Object.keys(exactDailySeconds),
             ...Object.keys(entry.dailySeconds || {}).filter((dateKey) =>
@@ -918,12 +927,15 @@ function getDayTotals(year, month) {
         ]);
         for (const dateKey of dateKeys) {
             const seconds = Math.max(
-                Math.max(0, Number(exactDailySeconds[dateKey]) || 0),
-                Math.max(0, Number(entry.dailySeconds?.[dateKey]) || 0)
+                0,
+                (Number(entry.dailySeconds?.[dateKey]) || 0) - (Number(exactDailySeconds[dateKey]) || 0)
             );
             if (seconds <= 0) continue;
             totals[dateKey] = (Number(totals[dateKey]) || 0) + seconds;
         }
+    }
+    for (const [dateKey, seconds] of Object.entries(sumWatchRangesByDate(allRangesByDate, 0))) {
+        totals[dateKey] = (totals[dateKey] || 0) + seconds;
     }
     return totals;
 }

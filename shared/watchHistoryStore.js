@@ -100,7 +100,22 @@
 
     function mergeRanges(value) {
         const merge = typeof utils.mergeWatchRanges === "function" ? utils.mergeWatchRanges : fallbackMergeWatchRanges;
-        return merge(value).slice(-HISTORY_MAX_WATCHED_RANGES_PER_SESSION);
+        return merge((Array.isArray(value) ? value : []).slice(-2 * HISTORY_MAX_WATCHED_RANGES_PER_SESSION)).slice(
+            -HISTORY_MAX_WATCHED_RANGES_PER_SESSION
+        );
+    }
+
+    function normalizeSessionRanges(source, now = Date.now()) {
+        if (typeof utils.normalizeSessionWatchRanges === "function")
+            return utils.normalizeSessionWatchRanges(source, { now });
+        const lower = Math.max(0, finiteNumber(source.enteredAt));
+        const upper = Math.min(now + MAX_FUTURE_SKEW_MS, finiteNumber(source.leftAt) || now);
+        return mergeRanges(source.watchedRanges)
+            .map((range) => ({ startAt: Math.max(lower, range.startAt), endAt: Math.min(upper, range.endAt) }))
+            .filter(
+                (range) =>
+                    range.startAt > 0 && range.endAt > range.startAt && range.endAt - range.startAt <= 366 * 86400000
+            );
     }
 
     function normalizeDailySeconds(value) {
@@ -127,6 +142,7 @@
             return utils.normalizeTitleHistory(value, channelName, TITLE_HISTORY_MAX);
         }
         return (Array.isArray(value) ? value : [])
+            .slice(-200)
             .map((row) => ({
                 title: compactString(row?.title, 500),
                 firstSeenAt: Math.max(0, Math.round(finiteNumber(row?.firstSeenAt))),
@@ -184,7 +200,7 @@
             leftAt,
             watchedSeconds: Math.max(0, Math.round(finiteNumber(source.watchedSeconds))),
             dailySeconds: normalizeDailySeconds(source.dailySeconds),
-            watchedRanges: mergeRanges(source.watchedRanges),
+            watchedRanges: normalizeSessionRanges({ ...source, enteredAt, leftAt }, now),
             closed: source.closed === true,
         };
     }
@@ -239,8 +255,9 @@
         const source = value && typeof value === "object" ? value : {};
         return {
             ...source,
+            title: compactString(source.title, 500),
             dailySeconds: normalizeDailySeconds(source.dailySeconds),
-            watchedRanges: mergeRanges(source.watchedRanges),
+            watchedRanges: normalizeSessionRanges(source),
         };
     }
 
@@ -351,9 +368,8 @@
                     rawEntry.retiredSessionStartedAtBarrier,
                     retiredSessionRows.slice(HISTORY_MAX_RETIRED_SESSION_CHECKPOINTS_PER_ENTRY)
                 ),
-                titleHistory: Array.isArray(rawEntry.titleHistory)
-                    ? rawEntry.titleHistory.map((row) => ({ ...row }))
-                    : [],
+                title: compactString(rawEntry.title, 500),
+                titleHistory: normalizeTitleHistory(rawEntry.titleHistory, rawEntry.channelName),
             };
             if (Array.isArray(rawEntry.sessionDetails)) {
                 entry.sessionDetails = rawEntry.sessionDetails.map(cloneSession);

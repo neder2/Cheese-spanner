@@ -203,7 +203,38 @@ function startSave(normalized, message) {
         return;
     }
     storage.set(normalized, () => {
-        finishSave(normalized, message, globalThis.chrome?.runtime?.lastError);
+        const error = globalThis.chrome?.runtime?.lastError;
+        if (error || savedOptions?.adVideoEnabled === normalized.adVideoEnabled) {
+            finishSave(normalized, message, error);
+            return;
+        }
+        const status = document.getElementById("adVideoStatus");
+        function finishAdVideoSave(result) {
+            if (status) {
+                status.hidden = false;
+                status.textContent =
+                    result?.ok && result.enabled !== normalized.adVideoEnabled
+                        ? "다른 곳에서 광고 설정이 변경됐습니다. 설정을 다시 열어 현재 값을 확인해 주세요."
+                        : result?.ok
+                          ? normalized.adVideoEnabled
+                              ? "적용 준비가 끝났습니다. 치지직 탭을 새로고침해 주세요."
+                              : "동영상 광고 차단을 껐습니다. 이미 반영된 상태는 새로고침하면 복원됩니다."
+                          : "설정은 저장됐지만 적용 준비에 실패했습니다. 확장을 다시 로드한 뒤 설정을 확인해 주세요.";
+            }
+            finishSave(normalized, message);
+        }
+        if (!globalThis.chrome?.runtime?.sendMessage) {
+            finishAdVideoSave({ ok: false });
+            return;
+        }
+        try {
+            chrome.runtime.sendMessage({ type: "betterchzzk:ad-video:sync" }, (result) => {
+                const messageError = chrome.runtime.lastError;
+                finishAdVideoSave(messageError ? null : result);
+            });
+        } catch (_) {
+            finishAdVideoSave(null);
+        }
     });
 }
 

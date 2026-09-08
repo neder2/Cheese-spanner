@@ -4,9 +4,16 @@
  * 하는 일: onInstalled에서 chrome.storage.sync 옵션을 스키마 기준으로 정규화한다. runtime 메시지로 받은
  *   시청 기록 mutation은 발신자·스키마를 검증한 뒤 Promise 큐에서 최신 local 값을 읽어 순차 반영한다.
  *   버전 업데이트의 미확인 안내를 로컬에 저장하고 확장 아이콘의 NEW 배지를 동기화한다.
- * 의존: shared/settings.js, shared/data.js, shared/watchHistoryStore.js, shared/updateGuide.js(importScripts).
+ * 의존: shared/settings.js, shared/data.js, shared/watchHistoryStore.js, shared/updateGuide.js,
+ *   shared/adVideoRegistration.js(importScripts).
  */
-importScripts("shared/settings.js", "shared/data.js", "shared/watchHistoryStore.js", "shared/updateGuide.js");
+importScripts(
+    "shared/settings.js",
+    "shared/data.js",
+    "shared/watchHistoryStore.js",
+    "shared/updateGuide.js",
+    "shared/adVideoRegistration.js"
+);
 
 const { OPTION_KEYS, getStorageLastError, normalizeOptions } = BetterChzzkSettings;
 const {
@@ -19,6 +26,22 @@ const {
 let watchHistoryMutationQueue = Promise.resolve();
 const { UPDATE_KEY, READ_KEY, NOTIFICATIONS_KEY } = globalThis.BetterChzzkUpdateGuide;
 let updateNoticeQueue = Promise.resolve();
+const adVideoRegistration = chrome.scripting?.getRegisteredContentScripts
+    ? globalThis.BetterChzzkAdVideoRegistration.createController({
+          scripting: chrome.scripting,
+          async readEnabled() {
+              return normalizeOptions(await BetterChzzk.utils.storageGet(chrome.storage.sync, "adVideoEnabled"))
+                  .adVideoEnabled;
+          },
+      })
+    : null;
+
+function reconcileAdVideoRegistration() {
+    if (!adVideoRegistration) return;
+    adVideoRegistration.reconcile().catch((error) => {
+        console.warn("[Better Chzzk] 동영상 광고 차단 등록 실패", error);
+    });
+}
 
 async function refreshUpdateBadge() {
     if (!chrome.action) return;
@@ -43,12 +66,15 @@ function enqueueUpdateNotice(task = refreshUpdateBadge) {
 }
 
 chrome.storage.onChanged?.addListener((changes, area) => {
+    if (area === "sync" && Object.hasOwn(changes, "adVideoEnabled")) reconcileAdVideoRegistration();
     if (area === "sync" && Object.hasOwn(changes, NOTIFICATIONS_KEY)) enqueueUpdateNotice();
     if (area === "local" && (Object.hasOwn(changes, UPDATE_KEY) || Object.hasOwn(changes, READ_KEY))) {
         enqueueUpdateNotice();
     }
 });
 enqueueUpdateNotice();
+reconcileAdVideoRegistration();
+chrome.runtime.onStartup?.addListener(reconcileAdVideoRegistration);
 
 function injectUpdateNotice(tabId) {
     return globalThis.BetterChzzkUpdateGuide.injectNotice(tabId);
@@ -131,6 +157,21 @@ function enqueueWatchHistoryMutation(operation) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type === "betterchzzk:ad-video:sync") {
+        if (sender?.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("options.html")) {
+            sendResponse({ ok: false });
+            return false;
+        }
+        if (!adVideoRegistration) {
+            sendResponse({ ok: false });
+            return false;
+        }
+        adVideoRegistration.reconcile().then(
+            ({ enabled }) => sendResponse({ ok: true, enabled }),
+            () => sendResponse({ ok: false })
+        );
+        return true;
+    }
     if (message?.type === "betterchzzk:update:preview") {
         if (sender?.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("options.html")) {
             sendResponse({ ok: false });
@@ -164,6 +205,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.runtime.onInstalled.addListener((details) => {
+    reconcileAdVideoRegistration();
     const version = chrome.runtime.getManifest?.()?.version;
     if (details?.reason === "update" && details.previousVersion && version && details.previousVersion !== version) {
         enqueueUpdateNotice(async () => {

@@ -1,0 +1,10 @@
+{
+    "code": 200,
+    "message": null,
+    "content": {
+        "livePlaybackJson": {
+            "liveId": true,
+            "chatChannelId": true
+        }
+    }
+}

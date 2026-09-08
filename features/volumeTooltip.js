@@ -2,7 +2,7 @@
  * features/volumeTooltip.js — 볼륨 컨트롤 주변 hover 시 설정된 볼륨(%)을 보여주는 툴팁 + 오디오 컴프레서 버튼.
  *
  * 실행 컨텍스트: isolated world(확장 컨텍스트).
- * 동작 위치: 메인 볼륨 컨트롤의 좌우 범위와 볼륨 바 상하 8px. 표시 위치는 볼륨 바 위.
+ * 동작 위치: 메인 볼륨 컨트롤의 좌우 범위와 볼륨 바 상하 8px. 표시 중심은 볼륨 바 시작점에서 오른쪽 40px 위에 고정.
  * 하는 일: 이 파일은 서로 독립된 두 개의 IIFE로 구성된다.
  *   (1) 볼륨 툴팁 — 공용 판정으로 메인 소속을 확인한 볼륨 컨트롤 주변 hover 시 #betterchzzk-volume-tooltip 요소를
  *       표시하고, video의 volumechange 이벤트를 구독해 텍스트를 갱신한다. 전체화면 시 fullscreenElement로 이동.
@@ -36,6 +36,7 @@
     // Preserve the control row width; only narrow its vertical hover band.
     const VOLUME_SLIDER_SELECTOR = ".pzp-pc__volume-slider, .pzp-pc-volume-slider";
     const HOVER_VERTICAL_PADDING = 8;
+    const TOOLTIP_HORIZONTAL_OFFSET = 40;
     const EXCLUDED_HOVER_SELECTOR =
         "#betterchzzk-skip-pill, #betterchzzk-live-fast-forward, [data-bcfp-player-mount], [data-bcfp-tooltip], .bcfp-player, .bcmv-cell";
 
@@ -131,7 +132,8 @@
         if (rect.width <= 0 || rect.height <= 0 || right - left < tipRect.width || bottom - top < tipRect.height) {
             return false;
         }
-        tooltip.style.left = `${Math.max(left + tipRect.width / 2, Math.min(right - tipRect.width / 2, rect.left + rect.width / 2))}px`;
+        // Keep the percentage centered at a fixed offset while the slider expands.
+        tooltip.style.left = `${Math.max(left + tipRect.width / 2, Math.min(right - tipRect.width / 2, rect.left + TOOLTIP_HORIZONTAL_OFFSET))}px`;
         tooltip.style.top = `${Math.max(top + tipRect.height, Math.min(bottom, tooltipBottom))}px`;
         return true;
     }

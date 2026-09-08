@@ -86,7 +86,6 @@
                 <div>
                     <h1>Better Chzzk <span id="versionBadge" class="version-badge" hidden></span></h1>
                     <p class="subtitle">변경 후 저장 버튼을 눌러 적용합니다.</p>
-                    <button id="guideReplay" class="secondary-button" type="button">기능 안내</button>
                     <a
                         class="release-notes-link"
                         href="https://github.com/neder2/Chzzk/releases"
@@ -386,6 +385,31 @@
                                 <span><strong>통나무 보상 자동 받기</strong></span>
                                 <input type="checkbox" data-option="rewardAutoCollectEnabled" />
                             </label>
+                        </div>
+                    </details>
+
+                    <details class="option-group" data-option-group="player-ads">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-window" /></svg>
+                                <span>치지직 광고</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>동영상 광고 차단 — 실험적</strong></span>
+                                <input type="checkbox" data-option="adVideoEnabled" aria-describedby="adVideoNote" />
+                            </label>
+                            <p id="adVideoNote" class="setting-note">
+                                확인된 프리롤·미드롤 광고 표시 응답을 처리합니다. 켜고 저장한 뒤 치지직 탭을 새로고침해
+                                주세요. 끄면 이후 응답 처리를 멈추며, 이미 반영된 상태는 새로고침해야 복원됩니다.
+                            </p>
+                            <p id="adVideoStatus" class="setting-note" role="status" hidden></p>
+                            <label class="toggle-row">
+                                <span><strong>배너 광고 숨기기</strong></span>
+                                <input type="checkbox" data-option="adBannerEnabled" />
+                            </label>
+                            <p class="setting-note">홈·라이브·VOD에서 확인된 광고 배너를 숨깁니다.</p>
                         </div>
                     </details>
 
@@ -696,6 +720,33 @@
                         >
                     </div>
                     <p class="setting-note">이보다 짧게 본 라이브는 제외하며, 기록은 이 브라우저에만 저장합니다.</p>
+
+                    <details class="history-storage-guide">
+                        <summary>시청 기록 저장 위치</summary>
+                        <p>기록은 현재 Chrome 프로필의 확장 저장소에 보관돼요.</p>
+                        <ol>
+                            <li>
+                                주소창에 <code>chrome://version</code>을 입력하고 <strong>프로필 경로</strong>를 확인해
+                                주세요.
+                            </li>
+                            <li>
+                                <code>chrome://extensions</code>에서 <strong>개발자 모드</strong>를 켜고 Better Chzzk의
+                                <strong>ID</strong>를 확인해 주세요.
+                            </li>
+                            <li>
+                                프로필 폴더 안의 <code>Local Extension Settings</code> 폴더에서 해당 ID와 같은 이름의
+                                폴더를 열면 돼요.
+                            </li>
+                        </ol>
+                        <p>Windows에서 찾을 경로</p>
+                        <code class="history-storage-path"
+                            >&lt;프로필 경로&gt;\Local Extension Settings\&lt;Better Chzzk ID&gt;</code
+                        >
+                        <p>
+                            개인별 프로필과 설치 방식에 따라 경로가 달라요. 시청 기록은 별도 문서 파일이 아닌 브라우저
+                            데이터로 저장돼요.
+                        </p>
+                    </details>
 
                     <div class="inline-action-row">
                         <a class="secondary-button" href="history.html" target="_blank" rel="noopener"

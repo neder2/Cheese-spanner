@@ -116,7 +116,7 @@
 - 350ms 전에 keyup이면 재생/일시정지를 정확히 한 번 실행한다.
 - 350ms가 지나면 기존 `playbackRate`를 기억하고 2배로 바꾸며, keyup·blur·탭 숨김·옵션 끄기·SPA 이탈 때 원래 값으로 복원한다.
 - 입력창, textarea, select, summary, 링크, 실제 button, role 기반 컨트롤, contenteditable처럼 Space를 직접 소비하는 대상에는 개입하지 않는다.
-- `features/holdSpeed.js`는 `features/shortcutRescue.js`보다 먼저 로드해 Space를 이중 처리하지 않게 한다. 라이브의 Space·타임시프트 흐름에는 개입하지 않는다.
+- 당시에는 `features/holdSpeed.js`를 단축키 복구보다 먼저 로드하는 계획이었다. 2026-09-08 단축키 복구 기능을 폐기했으며, 현재 로드 순서와 라이브 Space 처리는 manifest와 `features/holdSpeed.js`·관련 테스트를 기준으로 한다.
 
 회귀 기준:
 

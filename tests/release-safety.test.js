@@ -226,6 +226,10 @@ test("MAIN-world scripts stay behind the unprivileged DOM bridge boundary", () =
     const mainWorldScripts = (manifest.content_scripts || [])
         .filter((entry) => entry.world === "MAIN")
         .flatMap((entry) => entry.js || []);
+    require("../shared/adVideoRegistration.js");
+    const adScript = globalThis.BetterChzzkAdVideoRegistration.CONTENT_SCRIPT;
+    assert.equal(adScript.world, "MAIN");
+    mainWorldScripts.push(...adScript.js);
     const violations = [];
 
     assert.ok(mainWorldScripts.length > 0, "manifest must declare the MAIN-world bridge scripts");

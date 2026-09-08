@@ -78,7 +78,6 @@
     }
 
     document.getElementById("guideOpen").addEventListener("click", openGuide);
-    document.getElementById("guideReplay").addEventListener("click", openGuide);
     const replayButton = document.getElementById("guideTutorialReplay");
     replayButton.addEventListener("click", async () => {
         const status = document.getElementById("guideTutorialStatus");

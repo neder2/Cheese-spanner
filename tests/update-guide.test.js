@@ -214,7 +214,7 @@ function page(t, h) {
     return { dom, get, click: (id) => get(id).click() };
 }
 
-test("tutorial explains option locations, defers, replays and only completion acknowledges", async (t) => {
+test("update guide explains option locations, defers, reopens and only completion acknowledges", async (t) => {
     const h = chromeHarness({ [UPDATE]: { version: "1.3.3" } });
     worker(h);
     const p = page(t, h);
@@ -227,15 +227,14 @@ test("tutorial explains option locations, defers, replays and only completion ac
     assert.equal(p.get("guideSettings"), null);
     assert.match(p.get("guideText").textContent, /확장 옵션.*탐색 → 사이드바/);
     assert.equal(h.local[READ], undefined);
-    p.click("guideReplay");
     p.click("guideNext");
     assert.equal(p.get("guideProgress").textContent, "2 / 3");
     assert.match(p.get("guideTitle").textContent, /멀티뷰/);
     assert.match(p.get("guideText").textContent, /확장 옵션.*플레이어 → 멀티뷰/);
-    p.click("guideReplay");
     p.click("guideLater");
     assert.equal(p.get("updateNotice").hidden, false);
-    p.click("guideReplay");
+    p.click("guideOpen");
+    assert.equal(p.get("guideProgress").textContent, "1 / 3");
     p.click("guideNext");
     p.click("guideNext");
     assert.equal(p.get("guideFinish").textContent, "확인");
@@ -245,8 +244,7 @@ test("tutorial explains option locations, defers, replays and only completion ac
     assert.equal(h.local[READ], "1.3.3");
     assert.equal(h.badge, "");
     assert.equal(p.get("updateNotice").hidden, true);
-    p.click("guideReplay");
-    assert.equal(p.get("featureGuide").open, true);
+    assert.equal(p.get("featureGuide").open, false);
 });
 
 test("failed acknowledgement keeps the notice and can be retried", async (t) => {
@@ -748,13 +746,14 @@ test("preview completion does not acknowledge a real pending update", async (t) 
     assert.equal(h.local[READ], undefined);
 });
 
-test("options keep the feature guide usable without the old preview control", (t) => {
+test("options omit the header guide button and keep the tutorial replay in update settings", (t) => {
     const h = chromeHarness();
     const p = page(t, h);
     assert.equal(p.get("guidePagePreview"), null);
     assert.equal(p.get("guidePreviewStatus"), null);
-    p.click("guideReplay");
-    assert.equal(p.get("featureGuide").open, true);
+    assert.equal(p.get("guideReplay"), null);
+    assert.equal(p.get("guideTutorialReplay").closest("details").dataset.optionGroup, "popup-updates");
+    assert.equal(p.get("featureGuide").open, false);
     assert.equal(h.injections.length, 0);
     assert.equal(h.activatedTabs.length, 0);
 });

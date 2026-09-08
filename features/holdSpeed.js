@@ -1,7 +1,7 @@
 /**
  * features/holdSpeed.js — Space 홀드 임시 2배속과 재생 배속 단축키를 처리한다.
  *
- * 실행 컨텍스트: isolated world 콘텐츠 스크립트. content.js 이후, shortcutRescue.js 이전에 로드한다.
+ * 실행 컨텍스트: isolated world 콘텐츠 스크립트. content.js와 skipControl.js 이후에 로드한다.
  * 동작 위치: Space 홀드와 고정 배속 단축키 모두 /live/*와 /video/*.
  * 하는 일: capture 단계에서 Space를 먼저 소유해 짧은 탭은 keyup 시 재생 상태를 한 번만 토글하고,
  *   350ms 이상 홀드는 기존 재생 상태를 유지한 채 2배속을 적용한다. 별도 사용자 지정 키로 0.5배속과
@@ -483,7 +483,7 @@
         if (!areSpeedShortcutsEnabled()) hideOverlay("shortcut");
     }
 
-    // This listener must be registered before shortcutRescue.js so it owns playback Space exclusively.
+    // Capture Space while enabled to distinguish a short press from a speed hold.
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("blur", cancelActivePress);

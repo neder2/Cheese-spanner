@@ -1,5 +1,6 @@
 export default {
     ignoreFiles: [
+        "features/adAutoSkip.js",
         "tests",
         "tests/**",
         "docs",

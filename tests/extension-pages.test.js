@@ -1421,7 +1421,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.3.3");
+    assert.equal(manifest.version, "1.3.4");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
@@ -1490,12 +1490,10 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
             .sort((left, right) => left - right)
     );
     assert.ok(isolatedScript.js.includes("features/holdSpeed.js"));
-    assert.ok(isolatedScript.js.includes("features/shortcutRescue.js"));
+    assert.equal(isolatedScript.js.includes("features/shortcutRescue.js"), false);
+    assert.equal(fs.existsSync(path.join(repoRoot, "features/shortcutRescue.js")), false);
     assert.ok(
         isolatedScript.js.indexOf("features/skipControl.js") < isolatedScript.js.indexOf("features/holdSpeed.js")
-    );
-    assert.ok(
-        isolatedScript.js.indexOf("features/holdSpeed.js") < isolatedScript.js.indexOf("features/shortcutRescue.js")
     );
 });
 
@@ -2490,6 +2488,76 @@ test("options page saves changed toggles and numbers when the save button is cli
 
     assert.equal(skipSeconds.value, "600", "저장 후에는 보정된 숫자를 표시한다");
     assert.equal(chrome.testState.sync.skipSeconds, 600);
+});
+
+test("unreleased ad auto skip is absent from settings and search while old stored opt-ins stay inert", async (t) => {
+    const chrome = createFakeChrome({ sync: { adAutoSkipEnabled: true } });
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document, BetterChzzkSettings } = dom.window;
+    assert.equal(queryOption(document, "adAutoSkipEnabled"), null);
+    assert.equal(
+        Object.hasOwn(BetterChzzkSettings.normalizeOptions(chrome.testState.sync), "adAutoSkipEnabled"),
+        false
+    );
+    assert.equal(document.getElementById("save").disabled, true, "hidden stored values do not make the form dirty");
+    const search = document.getElementById("settingsSearch");
+    search.value = "광고 자동 건너뛰기";
+    dispatch(dom, search, "input");
+    assert.equal(document.getElementById("searchEmpty").classList.contains("hidden"), false);
+    search.value = "";
+    dispatch(dom, search, "input");
+    const banner = queryOption(document, "adBannerEnabled");
+    banner.checked = true;
+    dispatch(dom, banner, "change");
+    document.getElementById("save").click();
+    await waitForAsyncCallbacks();
+    assert.equal(chrome.testState.sync.adBannerEnabled, true);
+    assert.equal(chrome.testState.sync.adVideoEnabled, false);
+    assert.equal(chrome.testState.sync.adAutoSkipEnabled, true, "hiding does not delete the old stored value");
+    assert.equal(
+        Object.hasOwn(BetterChzzkSettings.normalizeOptions(chrome.testState.sync), "adAutoSkipEnabled"),
+        false
+    );
+    assert.equal(document.getElementById("notice").dataset.state, "saved");
+});
+
+test("ad options save independently and wait for registration before reporting readiness", async (t) => {
+    const chrome = createFakeChrome({ sync: { adVideoEnabled: false, adblockPopupEnabled: false } });
+    let reply;
+    chrome.runtime.sendMessage = (message, callback) => {
+        assert.equal(message.type, "betterchzzk:ad-video:sync");
+        reply = callback;
+    };
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document } = dom.window;
+    const input = queryOption(document, "adVideoEnabled");
+    input.checked = true;
+    dispatch(dom, input, "change");
+    document.getElementById("save").click();
+    await waitForAsyncCallbacks();
+    assert.equal(chrome.testState.sync.adVideoEnabled, true);
+    assert.equal(Object.hasOwn(chrome.testState.sync, "adAutoSkipEnabled"), false);
+    assert.equal(chrome.testState.sync.adBannerEnabled, false);
+    assert.equal(chrome.testState.sync.adblockPopupEnabled, false);
+    assert.equal(document.getElementById("notice").dataset.state, "saving");
+    reply({ ok: true, enabled: true });
+    assert.equal(document.getElementById("notice").dataset.state, "saved");
+    assert.match(document.getElementById("adVideoStatus").textContent, /준비가 끝났습니다/);
+    input.checked = false;
+    dispatch(dom, input, "change");
+    document.getElementById("save").click();
+    await waitForAsyncCallbacks();
+    reply({ ok: false });
+    assert.equal(chrome.testState.sync.adVideoEnabled, false);
+    assert.match(document.getElementById("adVideoStatus").textContent, /저장됐지만 적용 준비에 실패/);
 });
 
 test("options reverts the preview toggle when the permission request is denied", async () => {
@@ -5135,7 +5203,7 @@ test("live fast-forward button does not duplicate an external knife button", asy
     }
 });
 
-function setupShortcutRescueDom(chrome, { pageScripts = [], beforeRescueScripts = [] } = {}) {
+function setupPlaybackShortcutDom(chrome) {
     const dom = createPageDom(
         [
             "<!doctype html>",
@@ -5177,11 +5245,9 @@ function setupShortcutRescueDom(chrome, { pageScripts = [], beforeRescueScripts 
         });
     }
 
-    for (const pageScript of pageScripts) evalRepoScript(dom, "features", pageScript);
     evalRepoScript(dom, "shared", "settings.js");
     evalContentScripts(dom);
-    for (const featureScript of beforeRescueScripts) evalRepoScript(dom, "features", featureScript);
-    evalRepoScript(dom, "features", "shortcutRescue.js");
+    evalRepoScript(dom, "features", "holdSpeed.js");
 
     return { dom, document, video, state };
 }
@@ -5203,15 +5269,13 @@ function dispatchShortcutKey(
     return event;
 }
 
-function waitForRescueProbe() {
+function waitForShortcutEffects() {
     return new Promise((resolve) => setTimeout(resolve, 150));
 }
 
-test("hold speed owns live Space before shortcut rescue without a second toggle", async () => {
+test("hold speed preserves live Space hold and short press without a second toggle", async () => {
     const chrome = createFakeChrome();
-    const { dom, state, video } = setupShortcutRescueDom(chrome, {
-        beforeRescueScripts: ["holdSpeed.js"],
-    });
+    const { dom, state, video } = setupPlaybackShortcutDom(chrome);
 
     try {
         await waitForAsyncCallbacks();
@@ -5229,54 +5293,39 @@ test("hold speed owns live Space before shortcut rescue without a second toggle"
 
         dispatchShortcutKey(dom, "Space", " ");
         dispatchShortcutKey(dom, "Space", " ", { type: "keyup" });
-        await waitForRescueProbe();
+        await waitForShortcutEffects();
         assert.equal(state.paused, false, "the short Space press must toggle playback once");
-        assert.equal(state.clicks.play, 0, "shortcut rescue must not add a delayed second toggle");
+        assert.equal(state.clicks.play, 0, "the short press must not also click the native play button");
     } finally {
         dom.window.close();
     }
 });
 
-test("shortcut rescue takes over once the native shortcut pipeline stays unresponsive", async () => {
-    const chrome = createFakeChrome();
-    const { dom, state } = setupShortcutRescueDom(chrome);
+test("native playback shortcuts pass through without synthetic control clicks", async (t) => {
+    const chrome = createFakeChrome({ sync: { holdSpeedEnabled: false } });
+    const { dom, state, video } = setupPlaybackShortcutDom(chrome);
+    t.after(() => dom.window.close());
     await waitForAsyncCallbacks();
-
-    const firstTheater = dispatchShortcutKey(dom, "KeyT", "t");
-    assert.equal(state.clicks.theater, 1, "관찰할 수 없는 화면 전환 키도 첫 입력에서 버튼 클릭으로 처리된다");
-    assert.equal(firstTheater.defaultPrevented, true);
-
-    dispatchShortcutKey(dom, "Space", " ");
-    await waitForRescueProbe();
-    assert.equal(state.clicks.play, 1, "첫 미반응 키는 짧은 프로브 후 소급 실행된다");
-    assert.equal(state.paused, false);
-
-    const immediate = dispatchShortcutKey(dom, "Space", " ");
-    assert.equal(state.clicks.play, 2, "첫 미반응 확정 후에는 지연 없이 즉시 실행된다");
-    assert.equal(state.paused, true);
-    assert.equal(immediate.defaultPrevented, true);
-
-    dispatchShortcutKey(dom, "KeyM", "m");
-    assert.equal(state.clicks.mute, 1);
-});
-
-test("shortcut rescue stays inactive while the native pipeline handles keys", async () => {
-    const chrome = createFakeChrome();
-    const { dom, state } = setupShortcutRescueDom(chrome);
-    await waitForAsyncCallbacks();
-
-    dom.window.addEventListener("keydown", (event) => {
-        if (event.code === "Space") state.paused = !state.paused;
-    });
-
-    dispatchShortcutKey(dom, "Space", " ");
-    await waitForRescueProbe();
-    assert.equal(state.clicks.play, 0, "네이티브가 처리하면 폴백은 개입하지 않는다");
-    assert.equal(state.paused, false);
-
-    dispatchShortcutKey(dom, "Space", " ");
-    await waitForRescueProbe();
-    assert.equal(state.clicks.play, 0, "생존 확정 후에는 프로브도 하지 않는다");
+    for (const target of [dom.window.document.body, video]) {
+        for (const [code, key] of [
+            ["Space", " "],
+            ["KeyM", "m"],
+            ["KeyF", "f"],
+            ["KeyT", "t"],
+        ]) {
+            let received = 0;
+            const nativeHandler = (event) => {
+                if (event.code === code) received++;
+            };
+            dom.window.document.addEventListener("keydown", nativeHandler);
+            const event = dispatchShortcutKey(dom, code, key, { target });
+            assert.equal(event.defaultPrevented, false, `${code} remains available to the native handler`);
+            assert.equal(received, 1);
+            dom.window.document.removeEventListener("keydown", nativeHandler);
+        }
+    }
+    await waitForShortcutEffects();
+    assert.deepEqual(state.clicks, { play: 0, mute: 0, theater: 0 });
     assert.equal(state.paused, true);
 });
 
@@ -5379,6 +5428,164 @@ test("history page counts overlapping tab ranges once while keeping a single mer
     assert.equal(document.querySelectorAll(".history-session-item").length, 1);
     assert.match(document.querySelector(".history-session-item").textContent, /시청10분/);
     dom.window.close();
+});
+
+test("history totals deduplicate recorded time across broadcasts without changing individual durations", async (t) => {
+    const base = Date.parse("2026-06-30T23:00:00+09:00");
+    for (const scenario of [
+        {
+            name: "identical",
+            spans: [
+                [0, 600],
+                [0, 600],
+            ],
+            seconds: 600,
+            june: 600,
+            july: 0,
+        },
+        {
+            name: "partial",
+            spans: [
+                [0, 600],
+                [300, 900],
+            ],
+            seconds: 900,
+            june: 900,
+            july: 0,
+        },
+        {
+            name: "nested",
+            spans: [
+                [0, 1200],
+                [300, 600],
+                [0, 1200],
+            ],
+            seconds: 1200,
+            june: 1200,
+            july: 0,
+        },
+        {
+            name: "disjoint",
+            spans: [
+                [0, 600],
+                [900, 1500],
+            ],
+            seconds: 1200,
+            june: 1200,
+            july: 0,
+        },
+        {
+            name: "short gap",
+            spans: [
+                [0, 600],
+                [601, 1201],
+            ],
+            seconds: 1200,
+            june: 1200,
+            july: 0,
+        },
+        {
+            name: "month boundary",
+            spans: [
+                [3000, 4200],
+                [3300, 4500],
+            ],
+            seconds: 1500,
+            june: 600,
+            july: 900,
+        },
+        {
+            name: "missing ranges",
+            spans: [
+                [0, 600],
+                [0, 600],
+            ],
+            legacy: true,
+            seconds: 1200,
+            june: 1200,
+            july: 0,
+        },
+        {
+            name: "partial ranges",
+            spans: [
+                [0, 600],
+                [0, 600],
+            ],
+            residual: 300,
+            seconds: 900,
+            june: 900,
+            july: 0,
+        },
+    ]) {
+        await t.test(scenario.name, async (t) => {
+            const rows = scenario.spans.map(([start, end], index) => {
+                const startAt = base + start * 1000;
+                const endAt = base + end * 1000;
+                const residual = index === 1 ? scenario.residual || 0 : 0;
+                const watchedSeconds = end - start + residual;
+                const dailySeconds = {};
+                if (start < 3600) dailySeconds["2026-06-30"] = Math.min(end, 3600) - start + residual;
+                if (end > 3600) dailySeconds["2026-07-01"] = end - Math.max(start, 3600);
+                return {
+                    id: `live:overlap-${index}`,
+                    channelId: `channel-${index}`,
+                    channelName: `채널 ${index}`,
+                    title: `방송 ${index}`,
+                    firstWatchedAt: startAt,
+                    lastWatchedAt: endAt,
+                    watchedSeconds,
+                    dailySeconds,
+                    sessionDetails: [
+                        {
+                            id: `session-${index}`,
+                            enteredAt: startAt,
+                            leftAt: endAt,
+                            watchedSeconds,
+                            dailySeconds,
+                            watchedRanges: scenario.legacy && index === 1 ? [] : [{ startAt, endAt }],
+                        },
+                    ],
+                };
+            });
+            const chrome = createFakeChrome({ local: { betterChzzkLiveWatchHistory: { entries: rows } } });
+            const dom = createDom("history.html", "history.html", chrome);
+            t.after(() => dom.window.close());
+            evalRepoScript(dom, "shared", "data.js");
+            evalRepoScript(dom, "history.js");
+            await waitForAsyncCallbacks();
+            const { window } = dom;
+            assert.equal(window.getUniqueWatchSecondsForScope(), scenario.seconds);
+            assert.equal(window.getUniqueWatchSecondsForMonth(2026, 6), scenario.june);
+            assert.equal(window.getUniqueWatchSecondsForMonth(2026, 7), scenario.july);
+            assert.equal(window.getDayTotals(2026, 6)["2026-06-30"] || 0, scenario.june);
+            assert.equal(window.getDayTotals(2026, 7)["2026-07-01"] || 0, scenario.july);
+            assert.equal(
+                window.document.getElementById("totalWatchTime").textContent,
+                window.formatDuration(scenario.seconds)
+            );
+            const normalized = window.normalizeHistory({ entries: rows });
+            assert.deepEqual(
+                Array.from(normalized, (row) => row.watchedSeconds).sort((a, b) => a - b),
+                rows.map((row) => row.watchedSeconds).sort((a, b) => a - b)
+            );
+            const dateKey = scenario.july ? "2026-07-01" : "2026-06-30";
+            const monthSeconds = scenario.july || scenario.june;
+            assert.equal(
+                window.document.getElementById("monthWatchTime").textContent,
+                window.formatDuration(monthSeconds)
+            );
+            assert.ok(
+                window.document
+                    .querySelector(`[data-date="${dateKey}"]`)
+                    .getAttribute("aria-label")
+                    .includes(window.formatDuration(monthSeconds))
+            );
+            assert.deepEqual(
+                Array.from(window.document.querySelectorAll(".history-item-time"), (node) => node.textContent).sort(),
+                rows.map((row) => window.formatDuration(row.dailySeconds[dateKey])).sort()
+            );
+        });
+    }
 });
 
 for (const permissionGranted of [false, true]) {
@@ -5763,6 +5970,25 @@ test("volume tooltip covers main volume controls while staying anchored to the s
     assert.equal(secondaryWheel.defaultPrevented, false);
 });
 
+test("volume percentage stays fixed as the volume bar expands", async (t) => {
+    const { dom, document, hover, video, tooltip } = await createVolumeTooltipPage(t);
+    const slider = document.getElementById("slider");
+    for (const width of [8, 40, 80]) {
+        slider.getBoundingClientRect = () => ({
+            left: 200,
+            top: 483,
+            right: 200 + width,
+            bottom: 493,
+            width,
+            height: 10,
+        });
+        hover("slider");
+        assert.equal(tooltip().style.left, "240px", `bar width ${width}`);
+        video.dispatchEvent(new dom.window.Event("volumechange"));
+        assert.equal(tooltip().style.left, "240px", "volume updates keep the same anchor");
+    }
+});
+
 test("player tooltips share native typography and percentage follows the native tooltip height", async (t) => {
     const { dom, document, hover, video, tooltip } = await createVolumeTooltipPage(t);
     const speaker = document.getElementById("speaker");
@@ -5838,7 +6064,7 @@ test("volume tooltip stays inside the main video when its slider moves near an e
     const slider = document.getElementById("slider");
     slider.getBoundingClientRect = () => ({ left: 100, top: 95, right: 130, bottom: 105, width: 30, height: 10 });
     hover("thumb");
-    assert.equal(tooltip().style.left, "130px");
+    assert.equal(tooltip().style.left, "140px");
     assert.equal(tooltip().style.top, "110px");
     const original = tooltip();
     slider.getBoundingClientRect = () => ({ left: 870, top: 483, right: 900, bottom: 493, width: 30, height: 10 });

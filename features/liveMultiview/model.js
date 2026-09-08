@@ -22,7 +22,12 @@
         }
     }
     function validDelay(value) {
-        return typeof value === "number" && Number.isFinite(value) && value >= 0;
+        return (
+            typeof value === "number" &&
+            Number.isFinite(value) &&
+            value >= 0 &&
+            Number.isSafeInteger(Math.round(value * 10))
+        );
     }
     function splits(value) {
         return Array.isArray(value) &&

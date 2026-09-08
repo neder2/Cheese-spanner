@@ -31,6 +31,12 @@
     const TRUSTED_EXACT_MEDIA_HOSTS = Object.freeze(["ex-nlive-streaming.navercdn.com"]);
     const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
     const DAY_MS = 24 * 60 * 60 * 1000;
+    const MAX_DATE_MS = 8.64e15;
+    const MAX_WATCH_RANGE_DAYS = 366;
+    const MAX_SESSION_WATCH_RANGES = 200;
+    const MAX_FUTURE_WATCH_SKEW_MS = 5 * 60 * 1000;
+    const MAX_TITLE_LENGTH = 500;
+    const MAX_TITLE_HISTORY_INPUT = 200;
     let commentDeviceId = "";
     let commentDeviceIdPromise = null;
 
@@ -336,7 +342,13 @@
             .map((range) => {
                 const startAt = Math.round(Number(range?.startAt) || Number(range?.start) || 0);
                 const endAt = Math.round(Number(range?.endAt) || Number(range?.end) || 0);
-                return startAt > 0 && endAt > startAt ? { startAt, endAt } : null;
+                return Number.isFinite(startAt) &&
+                    Number.isFinite(endAt) &&
+                    startAt > 0 &&
+                    endAt <= MAX_DATE_MS &&
+                    endAt > startAt
+                    ? { startAt, endAt }
+                    : null;
             })
             .filter(Boolean)
             .sort((a, b) => a.startAt - b.startAt || a.endAt - b.endAt);
@@ -358,6 +370,38 @@
             (sum, range) => sum + Math.max(0, range.endAt - range.startAt) / 1000,
             0
         );
+    }
+
+    // Bound untrusted session snapshots before sorting or splitting them into dates.
+    // Clipping preserves the valid portion of an otherwise out-of-session range.
+    function normalizeSessionWatchRanges(
+        session,
+        { now = Date.now(), mergeGapMs = DEFAULT_WATCH_RANGE_MERGE_GAP_MS } = {}
+    ) {
+        const enteredAt = Number(session?.enteredAt) || Number(session?.startedAt) || 0;
+        const leftAt = Number(session?.leftAt) || Number(session?.endedAt) || Number(session?.lastWatchedAt) || 0;
+        const upper = Math.min(now + MAX_FUTURE_WATCH_SKEW_MS, leftAt > 0 ? leftAt : Infinity);
+        const lower = Math.max(0, enteredAt);
+        if (!Number.isFinite(lower) || !Number.isFinite(upper) || upper > MAX_DATE_MS || upper <= lower) return [];
+        const rows = Array.isArray(session?.watchedRanges)
+            ? session.watchedRanges.slice(-MAX_SESSION_WATCH_RANGES)
+            : [];
+        return mergeWatchRanges(rows, 0)
+            .map((range) => ({ startAt: Math.max(lower, range.startAt), endAt: Math.min(upper, range.endAt) }))
+            .filter(
+                (range) => range.endAt > range.startAt && range.endAt - range.startAt <= MAX_WATCH_RANGE_DAYS * DAY_MS
+            )
+            .reduce((merged, range) => {
+                const last = merged[merged.length - 1];
+                if (
+                    last &&
+                    range.startAt <= last.endAt + mergeGapMs &&
+                    range.endAt - last.startAt <= MAX_WATCH_RANGE_DAYS * DAY_MS
+                )
+                    last.endAt = Math.max(last.endAt, range.endAt);
+                else merged.push(range);
+                return merged;
+            }, []);
     }
 
     function normalizeDailySeconds(value) {
@@ -446,9 +490,12 @@
     }
 
     function getWatchSessionRanges(session, mergeGapMs = DEFAULT_WATCH_RANGE_MERGE_GAP_MS) {
-        const ranges = mergeWatchRanges(session?.watchedRanges, mergeGapMs);
+        const ranges = normalizeSessionWatchRanges(session, { mergeGapMs });
         if (ranges.length) return ranges;
-        return getFallbackWatchSessionRanges(session, mergeGapMs);
+        return normalizeSessionWatchRanges(
+            { ...session, watchedRanges: getFallbackWatchSessionRanges(session, mergeGapMs) },
+            { mergeGapMs }
+        );
     }
 
     function collectWatchSessionRanges(
@@ -471,15 +518,22 @@
         range,
         { scopeStartMs = -Infinity, scopeEndMs = Infinity } = {}
     ) {
-        let cursor = Math.max(range.startAt, scopeStartMs);
-        const endAt = Math.min(range.endAt, scopeEndMs);
-        while (cursor < endAt) {
+        let cursor = Math.max(Number(range?.startAt), scopeStartMs);
+        const endAt = Math.min(Number(range?.endAt), scopeEndMs);
+        if (
+            !Number.isFinite(cursor) ||
+            !Number.isFinite(endAt) ||
+            cursor <= 0 ||
+            endAt > MAX_DATE_MS ||
+            endAt - cursor > MAX_WATCH_RANGE_DAYS * DAY_MS
+        )
+            return;
+        for (let day = 0; cursor < endAt && day <= MAX_WATCH_RANGE_DAYS; day++) {
             const dateKey = getKstDateKey(cursor);
             const next = Math.min(endAt, getNextKstDayStartMs(cursor));
-            if (next > cursor) {
-                if (!rangesByDate[dateKey]) rangesByDate[dateKey] = [];
-                rangesByDate[dateKey].push({ startAt: cursor, endAt: next });
-            }
+            if (!Number.isFinite(next) || next <= cursor) return;
+            if (!rangesByDate[dateKey]) rangesByDate[dateKey] = [];
+            rangesByDate[dateKey].push({ startAt: cursor, endAt: next });
             cursor = next;
         }
     }
@@ -510,7 +564,7 @@
 
         for (const session of sessions) {
             const storedSeconds = Math.max(0, Number(session.watchedSeconds) || 0);
-            const ranges = mergeWatchRanges(session.watchedRanges);
+            const ranges = normalizeSessionWatchRanges(session);
             const rangeSeconds = sumWatchRanges(ranges);
             representedSeconds += Math.max(storedSeconds, rangeSeconds);
             residualSeconds += Math.max(0, storedSeconds - rangeSeconds);
@@ -580,7 +634,7 @@
     }
 
     function normalizeTitleHistory(value, channelName = "", maxSize = 20) {
-        const rows = Array.isArray(value) ? value : [];
+        const rows = Array.isArray(value) ? value.slice(-MAX_TITLE_HISTORY_INPUT) : [];
         const byTitle = new Map();
 
         for (const row of rows) {
@@ -589,9 +643,16 @@
             let lastSeenAt = 0;
 
             if (typeof row === "string") {
-                title = cleanEntryTitle(row, channelName);
+                title = cleanEntryTitle(row.slice(0, MAX_TITLE_LENGTH), channelName);
             } else if (row && typeof row === "object") {
-                title = cleanEntryTitle(pickString(row.title, row.name, row.value), channelName);
+                title = cleanEntryTitle(
+                    pickString(
+                        ...[row.title, row.name, row.value].map((value) =>
+                            String(value ?? "").slice(0, MAX_TITLE_LENGTH)
+                        )
+                    ),
+                    channelName
+                );
                 firstSeenAt = Number(row.firstSeenAt) || Number(row.seenAt) || Number(row.createdAt) || 0;
                 lastSeenAt = Number(row.lastSeenAt) || Number(row.updatedAt) || firstSeenAt;
             }
@@ -617,7 +678,7 @@
     function addTitleHistory(target, title, firstSeenAt = Date.now(), lastSeenAt = firstSeenAt, maxSize = 20) {
         if (!target) return;
 
-        const clean = cleanEntryTitle(title, target.channelName);
+        const clean = cleanEntryTitle(String(title ?? "").slice(0, MAX_TITLE_LENGTH), target.channelName);
         if (!clean || clean === "\uC81C\uBAA9 \uC5C6\uB294 \uB77C\uC774\uBE0C") return;
 
         const first = Number(firstSeenAt) || Date.now();
@@ -839,6 +900,7 @@
         normalizeCompact,
         normalizeForMatch,
         normalizeTitleHistory,
+        normalizeSessionWatchRanges,
         pad2,
         parseChzzkDate,
         pickArray,

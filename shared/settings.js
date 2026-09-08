@@ -75,6 +75,8 @@
         vodBroadcastClockEnabled: { kind: "bool", default: true, feature: true },
         timeMachineLagLabelEnabled: { kind: "bool", default: true, feature: true },
         adblockPopupEnabled: { kind: "bool", default: true, feature: true },
+        adVideoEnabled: { kind: "bool", default: false, feature: true },
+        adBannerEnabled: { kind: "bool", default: false, feature: true },
         monthlyBroadcastTimeEnabled: { kind: "bool", default: true, feature: true },
         channelChatLinkEnabled: { kind: "bool", default: true, feature: true },
         monthlyBroadcastTimeWindowDays: { kind: "int", default: 30, min: 1, max: 365 },
