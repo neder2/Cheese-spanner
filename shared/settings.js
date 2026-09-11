@@ -32,7 +32,7 @@
     const DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE = "BracketRight";
     const PLAYBACK_SPEED_SHORTCUT_CODE_PATTERN =
         /^(?:Key[A-Z]|Digit[0-9]|Numpad[0-9]|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Backquote|Minus|Equal|Slash)$/;
-    const RESERVED_PLAYBACK_SPEED_SHORTCUT_CODES = new Set(["KeyF", "KeyJ", "KeyK", "KeyL", "KeyM", "KeyT"]);
+    const RESERVED_PLAYBACK_SPEED_SHORTCUT_CODES = new Set(["KeyC", "KeyF", "KeyJ", "KeyK", "KeyL", "KeyM", "KeyT"]);
     const PLAYBACK_SPEED_SHORTCUT_CODE_LABELS = Object.freeze({
         BracketLeft: "[",
         BracketRight: "]",

@@ -681,72 +681,6 @@ h1 {
     margin: 6px 0 0;
     color: var(--text-muted);
 }
-.feature-guide {
-    box-sizing: border-box;
-    width: min(300px, calc(100vw - 24px));
-    max-height: calc(100dvh - 24px);
-    padding: 14px;
-    overflow-y: auto;
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    background: var(--surface);
-    color: var(--text);
-    box-shadow: var(--shadow-2);
-}
-.feature-guide::backdrop {
-    background: rgba(0, 0, 0, 0.55);
-}
-.feature-guide h2 {
-    font-size: 15px;
-    line-height: 1.5;
-    word-break: keep-all;
-}
-.feature-guide p {
-    font-size: 12px;
-    color: var(--text-muted);
-    line-height: 1.7;
-    word-break: keep-all;
-    overflow-wrap: anywhere;
-}
-.guide-topline,
-.guide-actions {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-.guide-actions {
-    margin-top: 12px;
-}
-
-.guide-navigation {
-    display: flex;
-    gap: 4px;
-    margin-left: auto;
-}
-#featureGuide [hidden] {
-    display: none !important;
-}
-
-#featureGuide button {
-    width: auto;
-    min-height: 24px;
-    padding: 3px 7px;
-    font-size: 11px;
-}
-#featureGuide .guide-navigation button {
-    min-width: 24px;
-}
-#featureGuide #guidePrevious,
-#featureGuide #guideNext {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    padding: 0;
-    font-size: 18px;
-}
-
 .quality-select {
     min-width: 92px;
     min-height: 36px;
@@ -2444,11 +2378,6 @@ h1 {
     line-height: 1.5;
 }
 
-.options-body .options-page #guideTutorialReplay {
-    width: calc(100% - 44px);
-    margin: 10px 22px 2px;
-}
-
 .options-body .options-page .quality-options {
     margin: 12px 22px 6px;
 }
@@ -2748,11 +2677,6 @@ h1 {
     .options-body .options-page .setting-note {
         font-size: 11px;
         line-height: 1.4;
-    }
-
-    .options-body .options-page #guideTutorialReplay {
-        width: calc(100% - 20px);
-        margin: 10px 10px 2px;
     }
 
     .options-body .options-page .quality-options {

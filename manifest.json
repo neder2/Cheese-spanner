@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "Better Chzzk",
-    "version": "1.3.4",
+    "version": "1.3.5",
     "description": "치지직 자동 화질, 재생·채팅 도구, 팔로잉 고정·미리보기, 다시보기 검색·댓글, 방송 목록 필터·통계와 시청 기록을 제공합니다.",
     "icons": {
         "16": "icons/icon16.png",
@@ -35,7 +35,7 @@
                 "shared/data.js",
                 "shared/selectors.js",
                 "content.js",
-                "shared/updateGuide.js",
+                "shared/updateNotice.js",
                 "features/updateNotice.js",
                 "shared/vodTimeline.js",
                 "features/adblockPopup.js",

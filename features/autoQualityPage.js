@@ -786,7 +786,7 @@
     }
 
     function canInstallDefinePatch(current, nativeFn) {
-        return current === nativeFn || isOwnDefinePatch(current);
+        return current === nativeFn || isOwnDefinePatch(current) || current?.__betterChzzkAdVideoDefinePatch === true;
     }
 
     function installQualityTargetInterceptor() {
@@ -797,11 +797,13 @@
             return;
 
         try {
+            const previousDefineProperty = Object.defineProperty;
             Object.defineProperty = markDefinePatch(function (target, prop, descriptor) {
-                if (prop !== "videoTracks") return nativeDefineProperty.call(Object, target, prop, descriptor);
-                if (!isPlaybackRoute()) return nativeDefineProperty.call(Object, target, prop, descriptor);
-                return nativeDefineProperty.call(Object, target, prop, safeWrapQualityDescriptor(prop, descriptor));
-            }, nativeDefineProperty);
+                if (prop !== "videoTracks" || !autoQualityEnabled || !isPlaybackRoute()) {
+                    return previousDefineProperty.call(Object, target, prop, descriptor);
+                }
+                return previousDefineProperty.call(Object, target, prop, safeWrapQualityDescriptor(prop, descriptor));
+            }, previousDefineProperty);
         } catch (_) {
             // If the runtime blocks patching, the normal videoTracks path still runs.
             return;
@@ -810,7 +812,7 @@
         if (nativeDefineProperties) {
             try {
                 Object.defineProperties = markDefinePatch(function (target, descriptors) {
-                    if (descriptors == null || !isPlaybackRoute()) {
+                    if (descriptors == null || !autoQualityEnabled || !isPlaybackRoute()) {
                         return nativeDefineProperties.call(Object, target, descriptors);
                     }
                     let nextDescriptors = descriptors;
@@ -834,7 +836,8 @@
                 Reflect.defineProperty = markDefinePatch(function (target, prop, descriptor) {
                     if (prop !== "videoTracks")
                         return nativeReflectDefineProperty.call(Reflect, target, prop, descriptor);
-                    if (!isPlaybackRoute()) return nativeReflectDefineProperty.call(Reflect, target, prop, descriptor);
+                    if (!autoQualityEnabled || !isPlaybackRoute())
+                        return nativeReflectDefineProperty.call(Reflect, target, prop, descriptor);
                     return nativeReflectDefineProperty.call(
                         Reflect,
                         target,
@@ -909,7 +912,9 @@
 
     function getMainVideo() {
         const videos = Array.from(document.querySelectorAll("video")).filter(
-            (video) => !isExtensionPreviewVideo(video)
+            (video) =>
+                !isExtensionPreviewVideo(video) &&
+                !video.closest('[data-role="imaAdContainerEl"], [data-role="gvAdContainerEl"], #midAdPlayerWrapper')
         );
         if (!videos.length) return null;
         videos.sort((a, b) => visibleArea(b) - visibleArea(a));

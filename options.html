@@ -109,39 +109,9 @@
             <section id="updateNotice" class="update-notice" aria-labelledby="updateNoticeTitle" hidden>
                 <div>
                     <strong id="updateNoticeTitle"></strong>
-                    <p>새 기능과 사용법을 짧게 확인해 보세요.</p>
+                    <p>치지직 탭을 새로고침해서 업데이트를 적용해 주세요.</p>
                 </div>
-                <button id="guideOpen" class="primary-button" type="button">새 기능 안내</button>
             </section>
-            <dialog id="featureGuide" class="feature-guide" aria-labelledby="guideTitle" aria-describedby="guideText">
-                <div class="guide-topline">
-                    <span id="guideProgress" aria-live="polite"></span>
-                    <div class="guide-navigation">
-                        <button
-                            id="guidePrevious"
-                            class="secondary-button"
-                            type="button"
-                            aria-label="이전"
-                            title="이전"
-                        >
-                            ‹
-                        </button>
-                        <button id="guideNext" class="secondary-button" type="button" aria-label="다음" title="다음">
-                            ›
-                        </button>
-                        <button id="guideClose" class="secondary-button" type="button" aria-label="기능 안내 닫기">
-                            닫기
-                        </button>
-                    </div>
-                </div>
-                <h2 id="guideTitle"></h2>
-                <p id="guideText"></p>
-                <p id="guideError" role="status" hidden></p>
-                <div class="guide-actions">
-                    <button id="guideLater" class="secondary-button" type="button">나중에</button>
-                    <button id="guideFinish" class="primary-button" type="button" hidden>확인</button>
-                </div>
-            </dialog>
 
             <form id="optionsForm" class="settings-form" novalidate>
                 <div class="settings-toolbar">
@@ -860,10 +830,6 @@
                             <p class="setting-note">
                                 치지직 상단의 업데이트 알림과 확장 아이콘의 NEW 배지를 표시합니다.
                             </p>
-                            <button id="guideTutorialReplay" class="secondary-button" type="button">
-                                튜토리얼 다시보기
-                            </button>
-                            <p id="guideTutorialStatus" class="setting-note" role="status" hidden></p>
                         </div>
                     </details>
                 </section>
@@ -1509,7 +1475,7 @@
 
         <script src="shared/settings.js"></script>
         <script src="options.js"></script>
-        <script src="shared/updateGuide.js"></script>
-        <script src="optionsUpdateGuide.js"></script>
+        <script src="shared/updateNotice.js"></script>
+        <script src="optionsUpdateNotice.js"></script>
     </body>
 </html>

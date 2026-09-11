@@ -235,6 +235,53 @@ test("category route parsing tolerates malformed percent encoding", () => {
     }
 });
 
+test("video search uses the unselected native pill colors in either theme and after selection changes", (t) => {
+    const { dom, hooks } = evaluateFeature("videoSearch.js", {
+        url: "https://chzzk.naver.com/channel-a/videos",
+        hooks: "{ syncBarWithHostUi }",
+    });
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    document.body.innerHTML = `<nav id="filters">
+        <button aria-selected="true">전체</button>
+        <button aria-selected="false">지난 방송</button>
+        <div id="betterchzzk-video-search-bar"></div>
+    </nav>`;
+    const host = document.getElementById("filters");
+    const bar = document.getElementById("betterchzzk-video-search-bar");
+    const controls = Array.from(host.querySelectorAll("button"));
+    controls.forEach((button) => {
+        button.getBoundingClientRect = () => ({ width: 70, height: 28 });
+    });
+    // 2026-09-11 채널 동영상 탭의 선택/비선택 버튼에서 실측한 색상.
+    for (const theme of [
+        {
+            selectedBg: "rgb(20, 21, 23)",
+            selectedText: "rgb(255, 255, 255)",
+            bg: "rgb(225, 225, 229)",
+            text: "rgb(77, 77, 77)",
+        },
+        {
+            selectedBg: "rgb(223, 226, 234)",
+            selectedText: "rgb(14, 15, 16)",
+            bg: "rgb(46, 48, 51)",
+            text: "rgb(157, 165, 182)",
+        },
+    ]) {
+        for (const selectedIndex of [0, 1]) {
+            controls.forEach((button, index) => {
+                const selected = index === selectedIndex;
+                button.setAttribute("aria-selected", String(selected));
+                button.style.backgroundColor = selected ? theme.selectedBg : theme.bg;
+                button.style.color = selected ? theme.selectedText : theme.text;
+            });
+            hooks.syncBarWithHostUi(bar, host);
+            assert.equal(bar.style.getPropertyValue("--bcvs-bg"), theme.bg);
+            assert.equal(bar.style.getPropertyValue("--bcvs-text"), theme.text);
+        }
+    }
+});
+
 test("video search refreshes a completed index after its freshness window", async () => {
     let requestCount = 0;
     const { dom, hooks } = evaluateFeature("videoSearch.js", {

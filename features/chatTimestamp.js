@@ -58,7 +58,7 @@
     content: attr(${TIMESTAMP_ATTR});
     display: inline-block;
     margin-right: 4px;
-    color: var(--Content-Neutral-Cool-Base, #9da5b6);
+    color: var(--sem-color-content-neutral-cool-base,var(--Content-Neutral-Cool-Base, #9da5b6));
     font-size: inherit;
     font-weight: 400;
     font-variant-numeric: tabular-nums;

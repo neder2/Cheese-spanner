@@ -4,14 +4,14 @@
  * 하는 일: onInstalled에서 chrome.storage.sync 옵션을 스키마 기준으로 정규화한다. runtime 메시지로 받은
  *   시청 기록 mutation은 발신자·스키마를 검증한 뒤 Promise 큐에서 최신 local 값을 읽어 순차 반영한다.
  *   버전 업데이트의 미확인 안내를 로컬에 저장하고 확장 아이콘의 NEW 배지를 동기화한다.
- * 의존: shared/settings.js, shared/data.js, shared/watchHistoryStore.js, shared/updateGuide.js,
+ * 의존: shared/settings.js, shared/data.js, shared/watchHistoryStore.js, shared/updateNotice.js,
  *   shared/adVideoRegistration.js(importScripts).
  */
 importScripts(
     "shared/settings.js",
     "shared/data.js",
     "shared/watchHistoryStore.js",
-    "shared/updateGuide.js",
+    "shared/updateNotice.js",
     "shared/adVideoRegistration.js"
 );
 
@@ -24,7 +24,7 @@ const {
     normalizeMutation: normalizeWatchHistoryMutation,
 } = globalThis.BetterChzzkWatchHistoryStore;
 let watchHistoryMutationQueue = Promise.resolve();
-const { UPDATE_KEY, READ_KEY, NOTIFICATIONS_KEY } = globalThis.BetterChzzkUpdateGuide;
+const { UPDATE_KEY, READ_KEY, NOTIFICATIONS_KEY } = globalThis.BetterChzzkUpdateNotice;
 let updateNoticeQueue = Promise.resolve();
 const adVideoRegistration = chrome.scripting?.getRegisteredContentScripts
     ? globalThis.BetterChzzkAdVideoRegistration.createController({
@@ -55,7 +55,7 @@ async function refreshUpdateBadge() {
     await chrome.action.setBadgeBackgroundColor({ color: "#087a4b" });
     await chrome.action.setBadgeText({ text: unread ? "NEW" : "" });
     await chrome.action.setTitle({
-        title: unread ? `Better Chzzk ${version} 업데이트 · 새 기능 안내` : "Better Chzzk 설정",
+        title: unread ? `Better Chzzk ${version} 업데이트 · 치지직 새로고침` : "Better Chzzk 설정",
     });
 }
 
@@ -77,11 +77,7 @@ reconcileAdVideoRegistration();
 chrome.runtime.onStartup?.addListener(reconcileAdVideoRegistration);
 
 function injectUpdateNotice(tabId) {
-    return globalThis.BetterChzzkUpdateGuide.injectNotice(tabId);
-}
-
-async function previewUpdateNotice() {
-    return globalThis.BetterChzzkUpdateGuide.previewInChzzkTab();
+    return globalThis.BetterChzzkUpdateNotice.injectNotice(tabId);
 }
 
 async function showUpdateInOpenTabs() {
@@ -169,16 +165,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         adVideoRegistration.reconcile().then(
             ({ enabled }) => sendResponse({ ok: true, enabled }),
             () => sendResponse({ ok: false })
-        );
-        return true;
-    }
-    if (message?.type === "betterchzzk:update:preview") {
-        if (sender?.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("options.html")) {
-            sendResponse({ ok: false });
-            return false;
-        }
-        previewUpdateNotice().then(sendResponse, () =>
-            sendResponse({ ok: false, error: "알림을 표시하지 못했어요. 확장을 다시 로드한 뒤 시도해 주세요." })
         );
         return true;
     }

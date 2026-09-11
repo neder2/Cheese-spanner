@@ -252,17 +252,17 @@
 #${GLOBAL_FALLBACK_ID} #${BAR_ID}{margin-left:0;}
 #${BAR_ID}{
   /* 치지직 디자인 토큰 참조(테마 자동 연동) + 토큰이 없을 때의 다크 기준 fallback */
-  --bcgt-accent:var(--Content-Brand-Strong, #00FFA3);
-  --bcgt-bg:var(--Surface-Neutral-Weakest, #111114);
-  --bcgt-bg-hover:var(--Surface-Neutral-Strongest, #DFE2EA);
-  --bcgt-bg-elev:var(--Surface-Neutral-Strongest, #DFE2EA);
-  --bcgt-border:var(--Surface-Neutral-Weakest, #111114);
-  --bcgt-border-strong:var(--Border-Neutral-Strong, #697183);
-  --bcgt-text:var(--Content-Neutral-Cool-Base, #9DA5B6);
-  --bcgt-text-strong:var(--Content-Neutral-Primary, #FFFFFF);
-  --bcgt-text-hover:var(--Content-Neutral-Inverse, #111114);
-  --bcgt-text-focus:var(--Content-Neutral-Inverse, #111114);
-  --bcgt-text-dim:var(--Content-Neutral-Cool-Weak, #697183);
+  --bcgt-accent:var(--sem-color-content-brand-strong,var(--Content-Brand-Strong, #00FFA3));
+  --bcgt-bg:var(--sem-color-surface-neutral-weakest,var(--Surface-Neutral-Weakest, #111114));
+  --bcgt-bg-hover:var(--sem-color-surface-neutral-strongest,var(--Surface-Neutral-Strongest, #DFE2EA));
+  --bcgt-bg-elev:var(--sem-color-surface-neutral-strongest,var(--Surface-Neutral-Strongest, #DFE2EA));
+  --bcgt-border:var(--sem-color-surface-neutral-weakest,var(--Surface-Neutral-Weakest, #111114));
+  --bcgt-border-strong:var(--sem-color-border-neutral-strong,var(--Border-Neutral-Strong, #697183));
+  --bcgt-text:var(--sem-color-content-neutral-cool-base,var(--Content-Neutral-Cool-Base, #9DA5B6));
+  --bcgt-text-strong:var(--sem-color-content-neutral-primary,var(--Content-Neutral-Primary, #FFFFFF));
+  --bcgt-text-hover:var(--sem-color-content-neutral-inverse,var(--Content-Neutral-Inverse, #111114));
+  --bcgt-text-focus:var(--sem-color-content-neutral-inverse,var(--Content-Neutral-Inverse, #111114));
+  --bcgt-text-dim:var(--sem-color-content-neutral-cool-weak,var(--Content-Neutral-Cool-Weak, #697183));
   --bcgt-font-family:inherit;
   --bcgt-font-size:13px;
   --bcgt-font-weight:400;
@@ -361,13 +361,15 @@
 }
 #${BAR_ID} input[type="search"]::-webkit-search-cancel-button{display:none;}
 #${BAR_ID} input[type="search"]::placeholder{color:var(--bcgt-text-dim);}
+#${BAR_ID} .bcgt-input-wrap:hover input[type="search"]::placeholder{color:var(--bcgt-text-hover);}
+#${BAR_ID} .bcgt-input-wrap:focus-within input[type="search"]::placeholder{color:var(--bcgt-text-focus);}
 #${BAR_ID} .bcgt-clear{
   display:none;flex:0 0 auto;width:18px;height:18px;margin-left:6px;
   border:0;background:transparent;color:var(--bcgt-text-dim);
   cursor:pointer;padding:0;border-radius:50%;
   align-items:center;justify-content:center;
 }
-#${BAR_ID} .bcgt-clear:hover{color:var(--bcgt-text-strong);background:var(--Surface-Interaction-Lighten-Hovered, rgba(255,255,255,0.06));}
+#${BAR_ID} .bcgt-clear:hover{color:var(--bcgt-text-strong);background:var(--sem-color-surface-interaction-lighten-hovered,var(--Surface-Interaction-Lighten-Hovered, rgba(255,255,255,0.06)));}
 #${BAR_ID}[data-has-query="1"] .bcgt-clear{display:inline-flex;}
 #${BAR_ID} .bcgt-meter{
   display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;
@@ -376,7 +378,7 @@
 }
 #${BAR_ID} .bcgt-spinner{
   width:12px;height:12px;border-radius:50%;
-  border:2px solid var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.24));
+  border:2px solid var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.24)));
   border-top-color:var(--bcgt-accent);
   animation:bcgt-spin 0.8s linear infinite;flex:0 0 auto;
   visibility:hidden;
@@ -406,19 +408,19 @@
 }
 #${MENU_ID}{
   /* 메뉴는 BAR 밖 fixed 요소라 토큰 변수를 자체적으로 다시 참조한다(fallback은 다크 기준). */
-  --bcgt-menu-bg:var(--Surface-Neutral-Weaker, #1B1D20);
-  --bcgt-menu-border:var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.24));
-  --bcgt-menu-text:var(--Content-Neutral-Primary, #F2F4F7);
-  --bcgt-menu-text-sub:var(--Content-Neutral-Cool-Base, #9DA5B6);
-  --bcgt-menu-text-dim:var(--Content-Neutral-Cool-Weak, #697183);
-  --bcgt-menu-hover:var(--Surface-Interaction-Lighten-Hovered, rgba(255,255,255,0.08));
-  --bcgt-menu-field-bg:var(--Surface-Neutral-Weak, #24262A);
-  --bcgt-menu-button-bg:var(--Surface-Neutral-Subtle, #24262A);
-  --bcgt-menu-checked:var(--Content-Brand-Base, #00E693);
-  --bcgt-menu-checked-bg:var(--Surface-Brand-Alpha-Weak, rgba(0,255,163,0.15));
-  --bcgt-menu-brand-border:var(--Border-Brand-Alpha-Base, rgba(0,255,163,0.3));
-  --bcgt-menu-brand-bg:var(--Surface-Brand-Weaker, #11382C);
-  --bcgt-menu-disabled:var(--Content-Neutral-Cool-Weaker, #545A69);
+  --bcgt-menu-bg:var(--sem-color-surface-neutral-weaker,var(--Surface-Neutral-Weaker, #1B1D20));
+  --bcgt-menu-border:var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.24)));
+  --bcgt-menu-text:var(--sem-color-content-neutral-primary,var(--Content-Neutral-Primary, #F2F4F7));
+  --bcgt-menu-text-sub:var(--sem-color-content-neutral-cool-base,var(--Content-Neutral-Cool-Base, #9DA5B6));
+  --bcgt-menu-text-dim:var(--sem-color-content-neutral-cool-weak,var(--Content-Neutral-Cool-Weak, #697183));
+  --bcgt-menu-hover:var(--sem-color-surface-interaction-lighten-hovered,var(--Surface-Interaction-Lighten-Hovered, rgba(255,255,255,0.08)));
+  --bcgt-menu-field-bg:var(--sem-color-surface-neutral-weak,var(--Surface-Neutral-Weak, #24262A));
+  --bcgt-menu-button-bg:var(--sem-color-surface-neutral-subtle,var(--Surface-Neutral-Subtle, #24262A));
+  --bcgt-menu-checked:var(--sem-color-content-brand-base,var(--Content-Brand-Base, #00E693));
+  --bcgt-menu-checked-bg:var(--sem-color-surface-brand-alpha-weak,var(--Surface-Brand-Alpha-Weak, rgba(0,255,163,0.15)));
+  --bcgt-menu-brand-border:var(--sem-color-border-brand-alpha-base,var(--Border-Brand-Alpha-Base, rgba(0,255,163,0.3)));
+  --bcgt-menu-brand-bg:var(--sem-color-surface-brand-weaker,var(--Surface-Brand-Weaker, #11382C));
+  --bcgt-menu-disabled:var(--sem-color-content-neutral-cool-weaker,var(--Content-Neutral-Cool-Weaker, #545A69));
 
   position:fixed;
   top:0;
@@ -667,7 +669,7 @@
   align-items:center;
   justify-content:center;
   min-height:120px;
-  color:var(--Content-Neutral-Cool-Weak, #697183);
+  color:var(--sem-color-content-neutral-cool-weak,var(--Content-Neutral-Cool-Weak, #697183));
   font:inherit;
   font-weight:700;
 }

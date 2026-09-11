@@ -97,6 +97,8 @@ test("options captures readable playback speed keys and blocks duplicate or rese
     assert.match(message.textContent, /서로 다른 키/);
 
     press(doubleKey, "KeyM", { key: "m" });
+    press(doubleKey, "KeyC", { key: "c" });
+    assert.equal(doubleKey.value, "]", "the native subtitle key must stay reserved");
     assert.equal(doubleKey.value, "]");
     assert.match(message.textContent, /겹쳐 지정할 수 없습니다/);
 

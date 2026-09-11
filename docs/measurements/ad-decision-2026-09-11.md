@@ -40,4 +40,26 @@
 - document_start의 Object.defineProperty 래퍼에서 srcObject 접근자 정의를 포착하고, 실제 할당 때 광고 컨트롤러 메서드와 위 VOD 소스 식별자를 확인한 경우에만 null을 전달한다. 일반 영상 소스와 다른 서비스·라이브 소스는 통과한다.
 - blockedVodSources는 이 연결 차단 횟수다. JSON 응답 처리 횟수 changedParses와 구분한다.
 - 옵션을 끄면 전역 래퍼를 복원하고 이미 정의된 접근자도 원래 setter로 통과한다. 이전에 차단한 소스는 재주입하지 않으므로 새로고침해야 한다.
-- 검증은 배포 코드의 계약을 모델링한 회귀 테스트다. 브라우저 보안 정책으로 확장을 재로드할 수 없어 수정본의 실브라우저 주입·암전 방지는 미검증이다.
+- 초기 검증은 배포 코드의 계약을 모델링한 회귀 테스트였다. 이후 사용자 재로드를 통한 실브라우저 확인 범위는 아래에 기록한다.
+
+## 추가 호환성 구현
+
+동일 배포 코드에서 확인한 `LIVE_CHZZK_NDP_SCH`/`LIVE_CHZZK_NDP_SCH_EVENT` 소스와 네이티브 플레이어의 `glad:` src 입구를 추가했다.
+네이티브 AdsPlayer 생성자는 videoSlot에 본영상 요소를 받으므로 해당 요소가 `.chzzk_player` 아래인지 확인하고 다른 플레이어에는 적용하지 않는다.
+
+별도 라이브 중간 광고의 컨테이너는 `#midAdPlayerWrapper > #midAdVideoContainer`다.
+GFP의 `createAdScheduleManager()`는 이 요소를 키로 WeakMap에 스케줄러를 등록한다.
+등록 후 치지직이 `loadWithAdSchedule`을 호출할 때 `w_live_chzzk_naver_va_mid` 또는 `event_w_live_chzzk_naver_va_mid` 항목의 adSources만 비운다.
+원래 스케줄러는 광고 항목이 없으면 본영상 재개 처리 후 `checkScheduleCompleted()`에서 모든 항목 완료 조건을 만족해 SCHEDULE_COMPLETE를 발생시킨다. 확장이 성공·완료 이벤트를 합성하지 않는다.
+
+추가 진단 필드는 `blockedLiveSources`, `blockedLiveSchedules`이며 실제 변경 횟수만 기록한다.
+목표·진행 상태와 브라우저 재로드 검증은 `docs/chzzk-compatibility-2026-09-11.md`에 기록한다.
+
+## 사용자 재로드 후 실브라우저 검증 (2026-09-11 KST)
+
+- Chrome 확장 ID `oijgeclpcafhkbaameifdomjononepol`, 새 `blockedLiveSources`/`blockedLiveSchedules` 필드와 변경한 테마 CSS로 수정본 주입을 확인했다.
+- `https://chzzk.naver.com/video/15131992` 새로고침 진입: `blockedVodSources=1`, `changedParses=0`. 본영상 1개, readyState=4, 재생 시각 증가, 1080p 트랙 유지. `.pzp-midroll-dimmed`의 opacity는 0이었다.
+- 해당 VOD에서 `https://chzzk.naver.com/live/c100f81959d1c17044be0541eed56f5b`로 네이티브 링크를 통해 SPA 이동: 동일 문서 카운터에 `blockedVodSources=1`, `blockedLiveSources=1`. VOD 댓글 탭은 0개로 정리됐다.
+- 라이브 새로고침 진입: `blockedLiveSources=1`, 본영상 readyState=4, 1080p/12개 트랙. 광고용 `midPlayer`는 readyState=0, paused=true인 별도 요소로 남았으며 본영상이 계속 재생됐다.
+- 위 확인 구간에서 수집된 콘솔 error 로그는 없었다. 라이브 별도 중간 광고 스케줄의 `blockedLiveSchedules`는 0으로, 자연 발생한 해당 광고 차단을 확인한 것은 아니다. 이 경로는 회귀 테스트와 현재 SDK의 실제 스케줄 시작/완료 함수 분리 검증으로 확인했다.
+- 새로고침·화면 이동 직후의 확인이며, 장시간 중간 광고 재현이나 광고 할당 강제 실험은 수행하지 않았다. 사용자 요청으로 중단한 지속 모니터링은 재개하지 않았다.

@@ -109,7 +109,12 @@
 
     function getMainVideoElement() {
         const videos = Array.from(document.querySelectorAll("video")).filter(
-            (video) => !isExtensionPreviewVideo(video)
+            (video) =>
+                !isExtensionPreviewVideo(video) &&
+                !elementOrHostMatches(
+                    video,
+                    '[data-role="imaAdContainerEl"], [data-role="gvAdContainerEl"], #midAdPlayerWrapper'
+                )
         );
         return pickLargestVisible(videos) || videos[0] || null;
     }

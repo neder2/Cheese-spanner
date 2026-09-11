@@ -359,7 +359,7 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
 .bcct-moderator-row__time{
   display:inline;
   margin-right:4px;
-  color:var(--Content-Neutral-Cool-Base,#9da5b6);
+  color:var(--sem-color-content-neutral-cool-base,var(--Content-Neutral-Cool-Base,#9da5b6));
   font-size:12px;
   font-weight:400;
   font-variant-numeric:tabular-nums;

@@ -65,6 +65,147 @@ function createVodAdSource(prepare = () => {}) {
     };
 }
 
+test("known live schedules are blocked independently of VOD schedules", (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    const controller = createAdController(window);
+    for (const adScheduleId of ["LIVE_CHZZK_NDP_SCH", "LIVE_CHZZK_NDP_SCH_EVENT"]) {
+        const live = createVodAdSource();
+        live._videoScheduleInfo = { adScheduleParam: { adScheduleId }, customParam: { svc: "chzzk_live" } };
+        controller.srcObject = live;
+        assert.equal(controller.srcObject, null);
+    }
+    assert.equal(
+        JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status")).blockedLiveSources,
+        2
+    );
+});
+
+test("native glad URI assignments are stopped before the source factory and do not affect media URLs", (t) => {
+    const window = createPage(t, "/video/123");
+    window.document.body.innerHTML = '<div class="chzzk_player"><video></video></div>';
+    window.eval(source);
+    const controller = createAdController(window);
+    controller.videoSlot = window.document.querySelector("video");
+    let factoryCalls = 0;
+    window.Object.defineProperty(controller, "src", {
+        configurable: true,
+        get() {
+            return this._srcUri;
+        },
+        set(value) {
+            factoryCalls++;
+            this._srcUri = value;
+            this._attachSourceObject({ uri: value });
+        },
+    });
+    controller.src = "glad://load";
+    assert.equal(factoryCalls, 0);
+    assert.equal(controller.src, "");
+    assert.equal(controller.srcObject, null);
+    controller.src = "https://media.example/video.m3u8";
+    assert.equal(factoryCalls, 1);
+    assert.equal(controller.src, "https://media.example/video.m3u8");
+    controller.videoSlot.remove();
+    controller.src = "glad://load";
+    assert.equal(factoryCalls, 2, "detached or unrelated players must keep native behavior");
+    setEnabled(window, false);
+    controller.src = "glad://load";
+    assert.equal(factoryCalls, 3);
+});
+
+test("live mid-roll keeps native schedule completion with no creative preparation", (t) => {
+    const window = createPage(t);
+    window.document.body.innerHTML = '<div id="midAdPlayerWrapper"><div id="midAdVideoContainer"></div></div>';
+    const container = window.document.getElementById("midAdVideoContainer");
+    const oldSet = window.WeakMap.prototype.set;
+    window.eval(source);
+    const schedules = [];
+    // 모델링한 네이티브 계약: adSources가 비면 매체 준비 없이 SCHEDULE_COMPLETE로 끝난다.
+    const manager = {
+        loadWithAdSchedule(value) {
+            schedules.push(value);
+            return "native-result";
+        },
+        getAdDisplayContainerInfo() {},
+        startAdSchedule() {
+            return schedules.at(-1).adBreaks.flatMap((entry) => entry.adSources).length === 0
+                ? "SCHEDULE_COMPLETE"
+                : "prepare";
+        },
+    };
+    const map = new window.WeakMap();
+    assert.equal(map.set(container, manager), map);
+    assert.equal(map.get(container), manager);
+    const schedule = {
+        requestId: "preserve",
+        adBreaks: [
+            { id: "id", adUnitId: "w_live_chzzk_naver_va_mid", startDelay: 0, adSources: [{ id: "0", delay: 5000 }] },
+        ],
+    };
+    assert.equal(manager.loadWithAdSchedule(schedule), "native-result");
+    assert.deepEqual(Array.from(schedules[0].adBreaks[0].adSources), []);
+    assert.equal(schedules[0].requestId, "preserve");
+    assert.equal(schedule.adBreaks[0].adSources.length, 1, "caller-owned input is never mutated");
+    assert.equal(manager.startAdSchedule(), "SCHEDULE_COMPLETE");
+    const unknown = { adBreaks: [{ ...schedule.adBreaks[0], adUnitId: "other-service" }] };
+    manager.loadWithAdSchedule(unknown);
+    assert.equal(schedules.at(-1), unknown);
+    container.remove();
+    manager.loadWithAdSchedule(schedule);
+    assert.equal(schedules.at(-1), schedule);
+    window.document.getElementById("midAdPlayerWrapper").append(container);
+    window.history.replaceState(null, "", "/video/123");
+    manager.loadWithAdSchedule(schedule);
+    assert.equal(schedules.at(-1), schedule);
+    window.history.replaceState(null, "", "/live/channel");
+    setEnabled(window, false);
+    assert.equal(window.WeakMap.prototype.set, oldSet);
+    manager.loadWithAdSchedule(schedule);
+    assert.equal(schedules.at(-1), schedule);
+});
+
+test("WeakMap guard preserves unrelated registrations, native errors and later wrappers", (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    const key = {},
+        manager = { loadWithAdSchedule() {} },
+        method = manager.loadWithAdSchedule;
+    const map = new window.WeakMap();
+    map.set(key, manager);
+    assert.equal(manager.loadWithAdSchedule, method);
+    assert.throws(() => map.set(1, manager), { name: "TypeError" });
+    const current = window.WeakMap.prototype.set;
+    const later = function (...args) {
+        return Reflect.apply(current, this, args);
+    };
+    window.WeakMap.prototype.set = later;
+    setEnabled(window, false);
+    assert.equal(window.WeakMap.prototype.set, later);
+    assert.equal(map.set(key, manager), map);
+});
+
+test("source descriptors retain inherited metadata and native invalid-descriptor errors", (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    const target = {};
+    const descriptor = Object.create({
+        enumerable: true,
+        configurable: true,
+        get() {
+            return this.value;
+        },
+        set(value) {
+            this.value = value;
+        },
+    });
+    window.Object.defineProperty(target, "src", descriptor);
+    target.src = "content";
+    assert.equal(target.src, "content");
+    assert.equal(Object.getOwnPropertyDescriptor(target, "src").enumerable, true);
+    assert.throws(() => window.Object.defineProperty({}, "src", { value: 1, set() {} }), { name: "TypeError" });
+});
+
 test("VOD ad sources never reach preparation while main video setters remain untouched", (t) => {
     const window = createPage(t, "/video/15131992");
     window.eval(source);

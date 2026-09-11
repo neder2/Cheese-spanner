@@ -11,7 +11,7 @@ const runtimeFiles = [
     "content.js",
     "history.js",
     "options.js",
-    "optionsUpdateGuide.js",
+    "optionsUpdateNotice.js",
 ];
 const runtimeDirs = ["shared", "features", "vendor"];
 const followingPreviewFiles = ["features/followingPreviewTooltip.js"];

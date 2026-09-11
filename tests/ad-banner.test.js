@@ -39,6 +39,12 @@ test("banner setting hides only measured slots and restores them without touchin
     setOptions({ adBannerEnabled: false, adblockPopupEnabled: true });
     assert.equal(document.querySelector("style"), null);
     setOptions({ adBannerEnabled: true, adblockPopupEnabled: false });
+    for (const id of ["live_rs_banner", "vod_rs_banner"]) {
+        const slot = document.createElement("div");
+        slot.id = id;
+        document.body.append(slot);
+        assert.equal(window.getComputedStyle(slot).display, "none");
+    }
     setOptions({ adBannerEnabled: true });
     assert.equal(document.querySelectorAll("style").length, 1);
     assert.equal(window.getComputedStyle(banner).display, "none");
@@ -55,6 +61,7 @@ test("banner setting hides only measured slots and restores them without touchin
     assert.equal(window.getComputedStyle(replacement).display, "none");
 
     setOptions({ adBannerEnabled: false });
+    assert.notEqual(window.getComputedStyle(document.getElementById("vod_rs_banner")).display, "none");
     assert.equal(document.querySelector("style"), null);
     assert.notEqual(window.getComputedStyle(banner).display, "none");
     assert.notEqual(window.getComputedStyle(replacement).display, "none");

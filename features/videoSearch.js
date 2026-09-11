@@ -143,18 +143,18 @@
             STYLE_ID,
             `
 #${BAR_ID}{
-  --bcvs-accent:var(--Content-Brand-Strong, #00FFA3);
-  --bcvs-bg:var(--Surface-Neutral-Base, #2E3033);
-  --bcvs-bg-hover:var(--Surface-Neutral-Strongest, #DFE2EA);
-  --bcvs-bg-elev:var(--Surface-Neutral-Strongest, #DFE2EA);
-  --bcvs-border:var(--Border-Neutral-Weak, #2E3033);
-  --bcvs-border-strong:var(--Border-Neutral-Strong, #697183);
-  --bcvs-text:var(--Content-Neutral-Cool-Base, #9DA5B6);
-  --bcvs-text-strong:var(--Content-Neutral-Cool-Strong, #C9CEDC);
+  --bcvs-accent:var(--sem-color-content-brand-strong,var(--Content-Brand-Strong, #00FFA3));
+  --bcvs-bg:var(--sem-color-surface-neutral-base,var(--Surface-Neutral-Base, #2E3033));
+  --bcvs-bg-hover:var(--sem-color-surface-neutral-strongest,var(--Surface-Neutral-Strongest, #DFE2EA));
+  --bcvs-bg-elev:var(--sem-color-surface-neutral-strongest,var(--Surface-Neutral-Strongest, #DFE2EA));
+  --bcvs-border:var(--sem-color-border-neutral-weak,var(--Border-Neutral-Weak, #2E3033));
+  --bcvs-border-strong:var(--sem-color-border-neutral-strong,var(--Border-Neutral-Strong, #697183));
+  --bcvs-text:var(--sem-color-content-neutral-cool-base,var(--Content-Neutral-Cool-Base, #9DA5B6));
+  --bcvs-text-strong:var(--sem-color-content-neutral-cool-strong,var(--Content-Neutral-Cool-Strong, #C9CEDC));
   --bcvs-input-text:color-mix(in srgb, var(--bcvs-text-strong) 82%, #FFFFFF);
-  --bcvs-text-hover:var(--Content-Neutral-Inverse, #111114);
-  --bcvs-text-focus:var(--Content-Neutral-Inverse, #111114);
-  --bcvs-text-dim:var(--Content-Neutral-Cool-Weak, #697183);
+  --bcvs-text-hover:var(--sem-color-content-neutral-inverse,var(--Content-Neutral-Inverse, #111114));
+  --bcvs-text-focus:var(--sem-color-content-neutral-inverse,var(--Content-Neutral-Inverse, #111114));
+  --bcvs-text-dim:var(--sem-color-content-neutral-cool-weak,var(--Content-Neutral-Cool-Weak, #697183));
   --bcvs-font-family:inherit;
   --bcvs-font-size:13px;
   --bcvs-font-weight:400;
@@ -223,13 +223,15 @@ body[theme="dark"] #${BAR_ID},
 }
 #${BAR_ID} input[type="search"]::-webkit-search-cancel-button{display:none;}
 #${BAR_ID} input[type="search"]::placeholder{color:var(--bcvs-text-dim);}
+#${BAR_ID} .bcvs-input-wrap:hover input[type="search"]::placeholder{color:var(--bcvs-text-hover);}
+#${BAR_ID} .bcvs-input-wrap:focus-within input[type="search"]::placeholder{color:var(--bcvs-text-focus);}
 #${BAR_ID} .bcvs-clear{
   display:none;flex:0 0 auto;width:18px;height:18px;margin-left:6px;
   border:0;background:transparent;color:var(--bcvs-text-dim);
   cursor:pointer;padding:0;border-radius:50%;
   align-items:center;justify-content:center;
 }
-#${BAR_ID} .bcvs-clear:hover{color:var(--bcvs-text-strong);background:var(--Surface-Interaction-Lighten-Hovered, rgba(255,255,255,0.06));}
+#${BAR_ID} .bcvs-clear:hover{color:var(--bcvs-text-strong);background:var(--sem-color-surface-interaction-lighten-hovered,var(--Surface-Interaction-Lighten-Hovered, rgba(255,255,255,0.06)));}
 #${BAR_ID}[data-has-query="1"] .bcvs-clear{display:inline-flex;}
 #${BAR_ID} .bcvs-meter{
   display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;
@@ -238,7 +240,7 @@ body[theme="dark"] #${BAR_ID},
 }
 #${BAR_ID} .bcvs-spinner{
   width:12px;height:12px;border-radius:50%;
-  border:2px solid var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.24));
+  border:2px solid var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.24)));
   border-top-color:var(--bcvs-accent);
   animation:bcvs-spin 0.8s linear infinite;flex:0 0 auto;
   visibility:hidden;
@@ -255,15 +257,15 @@ body[theme="dark"] #${BAR_ID},
 [${LOAD_MORE_ATTR}] button{
   height:36px;
   padding:0 16px;
-  border:1px solid var(--Border-Neutral-Weak, #2E3033);
+  border:1px solid var(--sem-color-border-neutral-weak,var(--Border-Neutral-Weak, #2E3033));
   border-radius:8px;
-  background:var(--Surface-Neutral-Base, #2E3033);
-  color:var(--Content-Neutral-Cool-Strong, #C9CEDC);
+  background:var(--sem-color-surface-neutral-base,var(--Surface-Neutral-Base, #2E3033));
+  color:var(--sem-color-content-neutral-cool-strong,var(--Content-Neutral-Cool-Strong, #C9CEDC));
   font:inherit;
   cursor:pointer;
 }
 [${LOAD_MORE_ATTR}] button:hover{
-  border-color:var(--Border-Neutral-Strong, #697183);
+  border-color:var(--sem-color-border-neutral-strong,var(--Border-Neutral-Strong, #697183));
   color:#fff;
 }
 .bcvs-comment-card,
@@ -288,10 +290,10 @@ body[theme="dark"] #${BAR_ID},
   max-height:30px !important;
   margin:0 !important;
   padding:0 !important;
-  border:1px solid var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.28));
+  border:1px solid var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.28)));
   border-radius:50%;
-  background:var(--Surface-Neutral-Alpha-Inverse-Strongest, rgba(27,29,32,0.94));
-  color:var(--Content-Neutral-Cool-Base, #9DA5B6);
+  background:var(--sem-color-surface-neutral-alpha-inverse-strongest,var(--Surface-Neutral-Alpha-Inverse-Strongest, rgba(27,29,32,0.94)));
+  color:var(--sem-color-content-neutral-cool-base,var(--Content-Neutral-Cool-Base, #9DA5B6));
   box-shadow:0 2px 8px rgba(0,0,0,0.24);
   box-sizing:border-box;
   cursor:default;
@@ -311,9 +313,9 @@ body[theme="dark"] #${BAR_ID},
 .bcvs-comment-hit:hover,
 .bcvs-comment-hit:focus-visible,
 .bcvs-comment-hit[data-active="1"]{
-  border-color:var(--Border-Brand-Alpha-Base, rgba(0,255,163,0.5));
-  background:var(--Surface-Brand-Alpha-Weak, rgba(0,255,163,0.16));
-  color:var(--Content-Brand-Base, #00E693);
+  border-color:var(--sem-color-border-brand-alpha-base,var(--Border-Brand-Alpha-Base, rgba(0,255,163,0.5)));
+  background:var(--sem-color-surface-brand-alpha-weak,var(--Surface-Brand-Alpha-Weak, rgba(0,255,163,0.16)));
+  color:var(--sem-color-content-brand-base,var(--Content-Brand-Base, #00E693));
   outline:none;
 }
 .bcvs-comment-tooltip{
@@ -324,10 +326,10 @@ body[theme="dark"] #${BAR_ID},
   width:max-content;
   max-width:min(460px, calc(100vw - 32px));
   padding:8px 10px;
-  border:1px solid var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.22));
+  border:1px solid var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.22)));
   border-radius:6px;
-  background:var(--Surface-Neutral-Weaker, #1B1D20);
-  color:var(--Content-Neutral-Primary, #F2F4F7);
+  background:var(--sem-color-surface-neutral-weaker,var(--Surface-Neutral-Weaker, #1B1D20));
+  color:var(--sem-color-content-neutral-primary,var(--Content-Neutral-Primary, #F2F4F7));
   box-shadow:0 10px 30px rgba(0,0,0,0.3);
   font-family:inherit;
   font-size:12px;
@@ -352,9 +354,9 @@ body[theme="dark"] #${BAR_ID},
   box-sizing:border-box;
 }
 .bcvs-comment-tooltip-line[data-hit="1"]{
-  border-color:var(--Border-Brand-Alpha-Base, rgba(0,255,163,0.5));
-  background:var(--Surface-Brand-Alpha-Weak, rgba(0,255,163,0.14));
-  color:var(--Content-Brand-Base, #00E693);
+  border-color:var(--sem-color-border-brand-alpha-base,var(--Border-Brand-Alpha-Base, rgba(0,255,163,0.5)));
+  background:var(--sem-color-surface-brand-alpha-weak,var(--Surface-Brand-Alpha-Weak, rgba(0,255,163,0.14)));
+  color:var(--sem-color-content-brand-base,var(--Content-Brand-Base, #00E693));
 }
 .bcvs-comment-tooltip[data-show="1"]{
   display:block;
@@ -1557,12 +1559,6 @@ body[theme="dark"] #${BAR_ID},
         return !rgb || rgb.a === 0;
     }
 
-    function isDarkColor(value) {
-        const rgb = parseCssRgb(value);
-        if (!rgb) return false;
-        return rgb.r * 0.299 + rgb.g * 0.587 + rgb.b * 0.114 < 96;
-    }
-
     function getVisibleControls(root) {
         if (!root) return [];
         return Array.from(root.querySelectorAll("button, a")).filter((el) => {
@@ -1588,7 +1584,7 @@ body[theme="dark"] #${BAR_ID},
         const styleSource =
             controls.find((el) => {
                 const cs = getComputedStyle(el);
-                return !isTransparentColor(cs.backgroundColor) && !isDarkColor(cs.color);
+                return el.getAttribute("aria-selected") === "false" && !isTransparentColor(cs.backgroundColor);
             }) || controls.find((el) => !isTransparentColor(getComputedStyle(el).backgroundColor));
 
         if (!styleSource) return;
@@ -1599,7 +1595,7 @@ body[theme="dark"] #${BAR_ID},
         if (cs.borderRadius) bar.style.setProperty("--bcvs-radius", cs.borderRadius);
         if (!isTransparentColor(cs.backgroundColor)) {
             bar.style.setProperty("--bcvs-bg", cs.backgroundColor);
-            // hover/focus 반전색은 CSS의 치지직 토큰(--Surface-Neutral-Strongest 등)이
+            // hover/focus 반전색은 CSS의 치지직 토큰(--sem-color-surface-neutral-strongest 등)이
             // 테마에 맞게 처리하므로 여기서 덮어쓰지 않는다.
         }
         if (cs.borderColor) bar.style.setProperty("--bcvs-border", cs.borderColor);

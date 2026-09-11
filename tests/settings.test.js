@@ -228,6 +228,7 @@ test("playback speed shortcut codes reject reserved, invalid, and duplicate keys
     assert.equal(settings.isPlaybackSpeedShortcutCode("BracketLeft"), true);
     for (const code of [
         "Space",
+        "KeyC",
         "KeyF",
         "KeyJ",
         "KeyK",
@@ -246,6 +247,8 @@ test("playback speed shortcut codes reject reserved, invalid, and duplicate keys
         playbackSpeedHalfKeyCode: " KeyM ",
         playbackSpeedDoubleKeyCode: "Unidentified",
     });
+    const previousSubtitleKey = settings.normalizeOptions({ playbackSpeedHalfKeyCode: "KeyC" });
+    assert.equal(previousSubtitleKey.playbackSpeedHalfKeyCode, settings.DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE);
     assert.equal(invalid.playbackSpeedHalfKeyCode, settings.DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE);
     assert.equal(invalid.playbackSpeedDoubleKeyCode, settings.DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE);
 

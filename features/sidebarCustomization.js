@@ -144,7 +144,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
   height:12px;
   margin-inline-start:4px;
   vertical-align:middle;
-  color:var(--Content-Accent-Strong,#087a4b);
+  color:var(--sem-color-content-brand-strong,var(--Content-Accent-Strong,#087a4b));
 }
 #sidebar [${PIN_INDICATOR_ATTR}="1"] svg{
   width:100%;
@@ -157,15 +157,15 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
 }
 #sidebar [${LIST_ATTR}="1"][${PIN_MODE_ATTR}="1"] [${ROW_ATTR}="1"][${PINNED_ATTR}="1"]{
   border-radius:8px;
-  box-shadow:inset 0 0 0 1px var(--Border-Accent-Strong,#087a4b)!important;
+  box-shadow:inset 0 0 0 1px var(--sem-color-border-brand-alpha-base,var(--Border-Accent-Strong,#087a4b))!important;
 }
 #${MODE_BUTTON_ID}{
   align-items:center;
   justify-content:center;
 }
 #${MODE_BUTTON_ID}[aria-pressed="true"]{
-  color:var(--Content-Accent-Strong,#087a4b)!important;
-  box-shadow:inset 0 0 0 1px var(--Border-Accent-Strong,#087a4b)!important;
+  color:var(--sem-color-content-brand-strong,var(--Content-Accent-Strong,#087a4b))!important;
+  box-shadow:inset 0 0 0 1px var(--sem-color-border-brand-alpha-base,var(--Border-Accent-Strong,#087a4b))!important;
 }
 #${MODE_BUTTON_ID} svg{
   width:16px;
