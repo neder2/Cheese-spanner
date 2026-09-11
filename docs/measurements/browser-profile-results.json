@@ -1,0 +1,269 @@
+{
+    "scope": "Whole Whale browser, other tabs remain open; not extension-only",
+    "logicalProcessors": 16,
+    "order": [2, 3, 6, 1],
+    "samples": {
+        "1": {
+            "Samples": [
+                {
+                    "Seconds": 2.0304495,
+                    "CpuPercent": 3.8476701833756515
+                },
+                {
+                    "Seconds": 4.0520626,
+                    "CpuPercent": 7.873894737821
+                },
+                {
+                    "Seconds": 6.0743698,
+                    "CpuPercent": 5.1186894355120724
+                },
+                {
+                    "Seconds": 8.0962326,
+                    "CpuPercent": 6.955219711248458
+                },
+                {
+                    "Seconds": 10.1025319,
+                    "CpuPercent": 4.38073347281734
+                },
+                {
+                    "Seconds": 12.1088466,
+                    "CpuPercent": 3.358536549625043
+                }
+            ],
+            "AvgCpuPercent": 5.255790681733261,
+            "PeakCpuPercent": 7.873894737821,
+            "PrivateWorkingSetMiB": 5381.73046875,
+            "ProcessCount": 28
+        },
+        "2": {
+            "Samples": [
+                {
+                    "Seconds": 2.0317853,
+                    "CpuPercent": 5.575453764726027
+                },
+                {
+                    "Seconds": 4.0557607,
+                    "CpuPercent": 6.224214113471931
+                },
+                {
+                    "Seconds": 6.074985,
+                    "CpuPercent": 5.174867769766837
+                },
+                {
+                    "Seconds": 8.0834068,
+                    "CpuPercent": 4.473350667673492
+                },
+                {
+                    "Seconds": 10.090651,
+                    "CpuPercent": 5.740924547197599
+                },
+                {
+                    "Seconds": 12.1128273,
+                    "CpuPercent": 2.800973634197968
+                }
+            ],
+            "AvgCpuPercent": 4.998297416172309,
+            "PeakCpuPercent": 6.224214113471931,
+            "PrivateWorkingSetMiB": 5170.609375,
+            "ProcessCount": 28
+        },
+        "3": {
+            "Samples": [
+                {
+                    "Seconds": 2.0272579,
+                    "CpuPercent": 5.53973362244636
+                },
+                {
+                    "Seconds": 4.0622826,
+                    "CpuPercent": 6.478345815655212
+                },
+                {
+                    "Seconds": 6.0838487,
+                    "CpuPercent": 7.535927219990481
+                },
+                {
+                    "Seconds": 8.0913699,
+                    "CpuPercent": 5.350970888875295
+                },
+                {
+                    "Seconds": 10.113425,
+                    "CpuPercent": 4.58807663055275
+                },
+                {
+                    "Seconds": 12.136822,
+                    "CpuPercent": 5.019405484934492
+                }
+            ],
+            "AvgCpuPercent": 5.752076610409098,
+            "PeakCpuPercent": 7.535927219990481,
+            "PrivateWorkingSetMiB": 5309.703125,
+            "ProcessCount": 28
+        },
+        "6": {
+            "Samples": [
+                {
+                    "Seconds": 2.0239828,
+                    "CpuPercent": 11.049145896892009
+                },
+                {
+                    "Seconds": 4.0590417,
+                    "CpuPercent": 8.109792915576056
+                },
+                {
+                    "Seconds": 6.0798462,
+                    "CpuPercent": 14.014375215415441
+                },
+                {
+                    "Seconds": 8.0888012,
+                    "CpuPercent": 7.9235068729762475
+                },
+                {
+                    "Seconds": 10.1075027,
+                    "CpuPercent": 5.563214150284233
+                },
+                {
+                    "Seconds": 12.1274118,
+                    "CpuPercent": 4.931379090276881
+                },
+                {
+                    "Seconds": 14.1455556,
+                    "CpuPercent": 9.484272131648899
+                },
+                {
+                    "Seconds": 16.1533856,
+                    "CpuPercent": 13.180818968737391
+                },
+                {
+                    "Seconds": 18.1754727,
+                    "CpuPercent": 13.715717290318501
+                },
+                {
+                    "Seconds": 20.197329,
+                    "CpuPercent": 13.668982681904746
+                },
+                {
+                    "Seconds": 22.2045486,
+                    "CpuPercent": 14.157877269632088
+                },
+                {
+                    "Seconds": 24.2264327,
+                    "CpuPercent": 13.523895855355896
+                },
+                {
+                    "Seconds": 26.2329897,
+                    "CpuPercent": 14.843912358333199
+                },
+                {
+                    "Seconds": 28.2548145,
+                    "CpuPercent": 11.302444455127878
+                },
+                {
+                    "Seconds": 30.277129,
+                    "CpuPercent": 5.698143142424187
+                },
+                {
+                    "Seconds": 32.2840475,
+                    "CpuPercent": 6.666392407065854
+                },
+                {
+                    "Seconds": 34.2919312,
+                    "CpuPercent": 12.061829079044763
+                },
+                {
+                    "Seconds": 36.3138965,
+                    "CpuPercent": 12.798887424032463
+                },
+                {
+                    "Seconds": 38.3212638,
+                    "CpuPercent": 13.816293111878439
+                },
+                {
+                    "Seconds": 40.3434145,
+                    "CpuPercent": 12.749420703412433
+                },
+                {
+                    "Seconds": 42.3501576,
+                    "CpuPercent": 11.825364567093807
+                },
+                {
+                    "Seconds": 44.3567384,
+                    "CpuPercent": 4.72079482171863
+                },
+                {
+                    "Seconds": 46.3633342,
+                    "CpuPercent": 13.578267107904844
+                },
+                {
+                    "Seconds": 48.3702173,
+                    "CpuPercent": 10.364719923148472
+                },
+                {
+                    "Seconds": 50.3769692,
+                    "CpuPercent": 14.355832302936918
+                },
+                {
+                    "Seconds": 52.383551,
+                    "CpuPercent": 11.14496366407789
+                },
+                {
+                    "Seconds": 54.3905083,
+                    "CpuPercent": 12.602644186799568
+                },
+                {
+                    "Seconds": 56.41419,
+                    "CpuPercent": 13.608396271014378
+                },
+                {
+                    "Seconds": 58.4346066,
+                    "CpuPercent": 7.4918800162303
+                },
+                {
+                    "Seconds": 60.456208,
+                    "CpuPercent": 5.120476519258459
+                }
+            ],
+            "AvgCpuPercent": 10.802454680017364,
+            "PeakCpuPercent": 14.843912358333199,
+            "PrivateWorkingSetMiB": 5646.07421875,
+            "ProcessCount": 28
+        }
+    },
+    "resolutions": {
+        "1": ["1920x1080"],
+        "2": ["1920x1080", "640x360"],
+        "3": ["1920x1080", "640x360", "640x360"],
+        "6": ["1920x1080", "640x360", "640x360", "640x360", "640x360", "640x360"]
+    },
+    "afterClose": {
+        "Samples": [
+            {
+                "Seconds": 2.0248467,
+                "CpuPercent": 5.112269733802564
+            },
+            {
+                "Seconds": 4.0468588,
+                "CpuPercent": 12.122439203009716
+            },
+            {
+                "Seconds": 6.0686345,
+                "CpuPercent": 11.061207853076876
+            },
+            {
+                "Seconds": 8.090505,
+                "CpuPercent": 12.316487999602346
+            },
+            {
+                "Seconds": 10.0951732,
+                "CpuPercent": 11.496603278288152
+            },
+            {
+                "Seconds": 12.1044156,
+                "CpuPercent": 13.122949973582084
+            }
+        ],
+        "AvgCpuPercent": 10.871993006893623,
+        "PeakCpuPercent": 13.122949973582084,
+        "PrivateWorkingSetMiB": 5301.30078125,
+        "ProcessCount": 28
+    }
+}

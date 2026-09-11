@@ -7,6 +7,65 @@ const { JSDOM } = require("jsdom");
 const repoRoot = path.join(__dirname, "..");
 const STORAGE_KEY = "betterchzzkPinnedFollowingChannelIds";
 
+test("offline hiding is independent of pinning and follows href reuse, routes, and remounts", async (t) => {
+    const chrome = createFakeChrome({ followingPinEnabled: false, followingOfflineHidden: true });
+    const dom = createSidebarDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    const originalSidebar = document.getElementById("sidebar").outerHTML;
+    let requests = 0;
+    dom.window.fetch = async () => {
+        requests += 1;
+        throw new Error("Unexpected request");
+    };
+    evalSidebarScripts(dom);
+    const hidden = (id) => dom.window.getComputedStyle(document.getElementById(id)).display === "none";
+    await waitForCondition(() => hidden("offlineB"));
+    assert.equal(hidden("liveA"), false);
+    assert.equal(hidden("mainLive"), false);
+    assert.equal(document.querySelector("[data-bcsf-pin-mode-button]"), null);
+    const row = document.getElementById("offlineB");
+    row.querySelector("a").href = "/live/channel-b";
+    await waitForCondition(() => !hidden("offlineB"));
+    row.querySelector("a").href = "/channel-b";
+    await waitForCondition(() => hidden("offlineB"));
+    row.querySelector("a").href = "/video/123";
+    await waitForCondition(() => !hidden("offlineB"));
+    document.getElementById("sidebar").outerHTML = originalSidebar;
+    dom.window.history.pushState({}, "", "/following");
+    await waitForCondition(() => hidden("offlineB"));
+    chrome.testState.emitSync({ followingOfflineHidden: { newValue: false } });
+    await waitForCondition(() => !hidden("offlineB"));
+    assert.equal(document.querySelector("[data-bcsf-offline-hidden]"), null);
+    assert.equal(document.getElementById("betterchzzk-sidebar-customization-style"), null);
+    chrome.testState.emitSync({ followingOfflineHidden: { newValue: true } });
+    await waitForCondition(() => hidden("offlineB"));
+    assert.equal(requests, 0);
+});
+
+test("offline hiding takes precedence over offline pin order without losing saved pins", async (t) => {
+    const pins = ["channel-b"];
+    const chrome = createFakeChrome({
+        followingOfflineHidden: true,
+        followingPinOfflineToTopEnabled: true,
+        [STORAGE_KEY]: pins,
+    });
+    const dom = createSidebarDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    evalSidebarScripts(dom);
+    const row = document.getElementById("offlineB");
+    await waitForCondition(() => row.hasAttribute("data-bcsf-pinned") && row.hasAttribute("data-bcsf-offline-hidden"));
+    assert.equal(dom.window.getComputedStyle(row).display, "none");
+    chrome.testState.emitSync({ followingPinEnabled: { newValue: false } });
+    await waitForCondition(() => !row.hasAttribute("data-bcsf-pinned"));
+    assert.equal(dom.window.getComputedStyle(row).display, "none");
+    chrome.testState.emitSync({ followingPinEnabled: { newValue: true }, followingOfflineHidden: { newValue: false } });
+    await waitForCondition(() => row.hasAttribute("data-bcsf-pinned") && !row.hasAttribute("data-bcsf-offline-hidden"));
+    assert.notEqual(dom.window.getComputedStyle(row).display, "none");
+    assert.deepEqual(chrome.testState.sync[STORAGE_KEY], pins);
+});
+
 test("sidebar sections hide independently, restore reused nodes, and survive sidebar remounts", async (t) => {
     const entries = [
         ["sidebarPopularCategoriesHidden", "인기 카테고리"],
@@ -47,6 +106,36 @@ test("sidebar sections hide independently, restore reused nodes, and survive sid
     document.getElementById("sidebar").outerHTML = `<aside id="sidebar">${markup}</aside>`;
     await waitForCondition(() => document.querySelectorAll("[data-bcsf-section-hidden]").length === 4);
     chrome.testState.emitSync(Object.fromEntries(entries.map(([key]) => [key, { newValue: false }])));
+    await waitForCondition(() => !document.querySelector("[data-bcsf-section-hidden]"));
+    assert.equal(document.getElementById("betterchzzk-sidebar-customization-style"), null);
+});
+
+test("partner section recognizes the current title outside its icon link and clears reused sections", async (t) => {
+    const chrome = createFakeChrome({ sidebarPartnerStreamersHidden: true, followingPinEnabled: false });
+    const dom = createSidebarDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    // 2026-09-11 https://chzzk.naver.com/lives: strong owns the title text; a only owns the icon and blind label.
+    const markup = `<nav id="partnerSection"><div><strong><i></i>파트너 스트리머<a href="/partner" rel="noreferrer" target="_blank"><svg aria-hidden="true"></svg><span class="blind">파트너 스트리머 새 창으로 열림</span></a></strong></div><ul><li>목록</li></ul></nav>`;
+    document.getElementById("sidebar").insertAdjacentHTML("beforeend", markup);
+    evalSidebarScripts(dom);
+    const section = document.getElementById("partnerSection");
+    await waitForCondition(() => section.hasAttribute("data-bcsf-section-hidden"));
+    assert.equal(dom.window.getComputedStyle(section).display, "none");
+    assert.equal(document.getElementById("followingSection").hasAttribute("data-bcsf-section-hidden"), false);
+    chrome.testState.emitSync({ sidebarPartnerStreamersHidden: { newValue: false } });
+    await waitForCondition(() => !section.hasAttribute("data-bcsf-section-hidden"));
+    assert.notEqual(dom.window.getComputedStyle(section).display, "none");
+    chrome.testState.emitSync({ sidebarPartnerStreamersHidden: { newValue: true } });
+    await waitForCondition(() => section.hasAttribute("data-bcsf-section-hidden"));
+    section.querySelector("strong").childNodes[1].textContent = "팔로잉 채널";
+    await waitForCondition(() => !section.hasAttribute("data-bcsf-section-hidden"));
+    section.outerHTML = markup;
+    dom.window.history.pushState({}, "", "/following");
+    await waitForCondition(() => document.getElementById("partnerSection").hasAttribute("data-bcsf-section-hidden"));
+    document.getElementById("sidebar").outerHTML = `<aside id="sidebar">${markup}</aside>`;
+    await waitForCondition(() => document.getElementById("partnerSection").hasAttribute("data-bcsf-section-hidden"));
+    chrome.testState.emitSync({ sidebarPartnerStreamersHidden: { newValue: false } });
     await waitForCondition(() => !document.querySelector("[data-bcsf-section-hidden]"));
     assert.equal(document.getElementById("betterchzzk-sidebar-customization-style"), null);
 });
@@ -341,6 +430,45 @@ test("following pins preserve native row DOM and never request a replacement lis
     assert.deepEqual(chrome.testState.sync[STORAGE_KEY], savedPins);
     const manifest = JSON.parse(readRepoFile("manifest.json"));
     assert.ok(manifest.content_scripts.every((entry) => !entry.js.includes("features/followingSnapshotPage.js")));
+});
+
+test("collapsed offline pins cannot displace live rows while offline hiding is enabled", async (t) => {
+    const chrome = createFakeChrome({
+        [STORAGE_KEY]: ["channel-offline"],
+        followingPinOfflineToTopEnabled: true,
+    });
+    const dom = createSidebarDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    const list = document.getElementById("followingList");
+    list.innerHTML = ["a", "b", "c", "d", "e"]
+        .map((id) => `<li><a href="/live/channel-${id}"><span class="name_text">${id}</span></a></li>`)
+        .join("");
+    const nativeRows = Array.from(list.children);
+    dom.window.fetch = async (url) => ({
+        ok: true,
+        status: 200,
+        async json() {
+            return {
+                content: {
+                    followingList: (String(url).includes("/followings/live")
+                        ? ["a", "b", "c", "d", "e"]
+                        : ["offline"]
+                    ).map((id) => ({ channel: { channelId: `channel-${id}`, channelName: id } })),
+                },
+            };
+        },
+    });
+    evalSidebarScripts(dom);
+    await waitForCondition(() => list.querySelector("[data-bcsf-source-row]"));
+    chrome.testState.emitSync({ followingOfflineHidden: { newValue: true } });
+    await waitForCondition(() => !list.querySelector("[data-bcsf-source-row]"));
+    assert.equal(list.querySelector("[data-bcsf-source-hidden]"), null);
+    assert.deepEqual(Array.from(list.children), nativeRows);
+    for (const row of nativeRows) assert.notEqual(dom.window.getComputedStyle(row).display, "none");
+    chrome.testState.emitSync({ followingOfflineHidden: { newValue: false } });
+    await waitForCondition(() => list.querySelector("[data-bcsf-source-row]"));
+    assert.equal(list.querySelector("[data-bcsf-source-row]").hasAttribute("data-bcsf-offline-hidden"), false);
 });
 
 test("collapsed pinned source rows format viewer counts without a name suffix", async (t) => {

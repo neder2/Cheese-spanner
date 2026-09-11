@@ -8,8 +8,9 @@
  *   소리를 켜면서 CSS로 확대한다. 팔로잉 영상에는 소리 상태 아이콘과 전환 피드백을 표시하고,
  *   목록 영상에는 우클릭 동작 안내 툴팁만 표시한다. 페이지 이동·포인터 이탈·DOM 제거 시 정리한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
- *   fetchJson, injectStyleOnce, normalizeChzzkImageUrl, normalizeChzzkMediaUrl, normSpace, onReady,
- *   startPageChangeDetection, storageSet), vendor/hls.light.min.js가 제공하는 전역 window.Hls.
+ *   cleanEntryTitle, compactSpaces, fetchJson, injectStyleOnce, normalizeChzzkImageUrl,
+ *   normalizeChzzkMediaUrl, normSpace, onReady, parseChzzkDate, startPageChangeDetection,
+ *   storageSet, touchMapEntry), vendor/hls.light.min.js가 제공하는 전역 window.Hls.
  * 옵션 키: followingPreviewTooltipEnabled, followingPreviewSoundEnabled,
  *   followingPreviewVolumePercent, livePreviewRightClickSoundEnabled.
  * DOM 마커: #betterchzzk-following-preview 툴팁, data-bcfp-tooltip/data-bcfp-active/
@@ -19,7 +20,7 @@
  *   livePreviewFastHoverPage.js에는 DOM attribute와 CustomEvent로 활성 상태를 전달한다.
  * 구조:
  *   - 상수/스타일: 셀렉터, 지연 시간, 캐시 TTL, STYLE_TEXT(툴팁 CSS) 정의.
- *   - fetchJson/텍스트 유틸: 문자열 정리, 날짜 파싱, 제목 정리(cleanTitle 등).
+ *   - fetchJson/텍스트 선택: 요청 취소 처리와 원본 메타데이터 문자열 선택. 날짜·제목·캐시는 공용 유틸 재사용.
  *   - DOM 추정: getImageUrl/resolveHoverInfo/extractDomMeta — 호버 링크에서 폴백 메타 추출.
  *   - API 메타: fetchPreviewMeta/fetchAutoPlayInfo/getPreviewMeta — live-detail·auto-play-info
  *     호출과 캐시(previewCache/pendingRequests).
@@ -454,6 +455,8 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
 `;
     const {
         bindFeatureOptions,
+        cleanEntryTitle,
+        compactSpaces,
         fetchJson: sharedFetchJson,
         injectStyleOnce,
         normalizeChzzkChannelId,
@@ -461,8 +464,10 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         normalizeChzzkMediaUrl,
         normSpace,
         onReady,
+        parseChzzkDate,
         startPageChangeDetection,
         storageSet,
+        touchMapEntry,
     } = BetterChzzk.utils;
 
     let featureOptions = BetterChzzkSettings.normalizeOptions();
@@ -524,10 +529,6 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         }
     }
 
-    function compactSpaces(value) {
-        return normSpace(value);
-    }
-
     function pickString(...values) {
         for (const value of values) {
             const text = compactSpaces(value);
@@ -543,54 +544,6 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
             if (text) return text;
         }
         return "";
-    }
-
-    function parseChzzkDate(value) {
-        if (!value) return null;
-        if (typeof value === "number") {
-            const ms = value > 100000000000 ? value : value * 1000;
-            const date = new Date(ms);
-            return Number.isNaN(date.getTime()) ? null : date;
-        }
-
-        const raw = String(value).trim();
-        if (!raw) return null;
-
-        const isoLike = raw.includes("T") ? raw : raw.replace(" ", "T");
-        const withZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(isoLike) ? isoLike : `${isoLike}+09:00`;
-        const date = new Date(withZone);
-        return Number.isNaN(date.getTime()) ? null : date;
-    }
-
-    function cleanTitle(value) {
-        return compactSpaces(value)
-            .replace(/\s*[-|]\s*CHZZK.*$/i, "")
-            .replace(/\s*[-|]\s*\uCE58\uC9C0\uC9C1.*$/i, "")
-            .trim();
-    }
-
-    function escapeRegExp(value) {
-        return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    }
-
-    function cleanEntryTitle(value, channelName = "") {
-        const title = cleanTitle(value);
-        const channel = cleanTitle(channelName);
-        if (!title || !channel) return title;
-
-        const match = title.match(new RegExp(`^${escapeRegExp(channel)}\\s*[-|:\u00B7]\\s*(.+)$`, "i"));
-        return match ? cleanTitle(match[1]) || title : title;
-    }
-
-    function touchMapEntry(map, key, value, maxSize) {
-        map.delete(key);
-        map.set(key, value);
-        while (map.size > maxSize) {
-            const oldestKey = map.keys().next().value;
-            if (oldestKey === undefined) break;
-            map.delete(oldestKey);
-        }
-        return value;
     }
 
     function isFeatureEnabled() {

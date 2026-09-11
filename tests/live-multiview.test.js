@@ -23,6 +23,12 @@ function setup(t, { local = {}, savedSession, readFailure = false, writeFailure 
         writes = [],
         requests = [],
         instances = [];
+    const qualityHandlers = new WeakMap();
+    const addListener = w.EventTarget.prototype.addEventListener;
+    w.EventTarget.prototype.addEventListener = function (type, handler, options) {
+        if (type === "change" && this.tagName === "SELECT") qualityHandlers.set(this, handler);
+        return addListener.call(this, type, handler, options);
+    };
     const listeners = new Set();
     const optionListeners = new Set();
     const routeListeners = new Set();
@@ -180,6 +186,7 @@ function setup(t, { local = {}, savedSession, readFailure = false, writeFailure 
         }
         constructor(config) {
             this.config = config;
+            this.levels = [{ height: 360 }, { height: 720 }, { height: 1080 }];
             this.events = {};
             this.targetLatency = 3;
             this.liveSyncPosition = 117;
@@ -215,6 +222,8 @@ function setup(t, { local = {}, savedSession, readFailure = false, writeFailure 
     w.Hls = Hls;
     if (savedSession) w.sessionStorage.setItem("betterChzzkMultiviewSession", JSON.stringify(savedSession));
     evalFile("features/liveMultiview/model.js");
+    for (const name of ["view", "playback", "layoutControls", "settingsPanel"])
+        evalFile(`features/liveMultiview/${name}.js`);
     // jsdom cannot produce trusted browser input. Invoke the real handler with a
     // trusted event stand-in only for explicit user-action tests; DOM .click()
     // remains synthetic so the security regression below exercises rejection.
@@ -265,6 +274,12 @@ function setup(t, { local = {}, savedSession, readFailure = false, writeFailure 
         add,
         click,
         trustedClick,
+        selectQuality(height, trusted = true) {
+            const select = w.document.querySelector(".bcmv-quality select");
+            select.value = String(height);
+            qualityHandlers.get(select)({ isTrusted: trusted });
+            return select;
+        },
         evalFile,
         setOptions: configure,
         configure: (value) => configure({ liveMultiviewEnabled: value }),
@@ -274,6 +289,7 @@ function setup(t, { local = {}, savedSession, readFailure = false, writeFailure 
         },
         resolve: () => pendingResolve?.(),
         emitStorage: (id, value) => listeners.forEach((fn) => fn({ [key(id)]: { newValue: value } }, "local")),
+        storageListenerCount: () => listeners.size,
     };
 }
 
@@ -382,6 +398,7 @@ test("chat settings cooperates with the real collection feature in either enable
         const h = setup(t),
             d = h.w.document;
         h.setOptions({ chatToolsShowBlindEnabled: false, chatToolsModeratorBoxEnabled: true });
+        for (const name of ["parser", "messageStore", "panel"]) h.evalFile(`features/chatTools/${name}.js`);
         if (collectionFirst) h.evalFile("features/chatTools.js");
         await h.start();
         await h.add(B);
@@ -827,8 +844,9 @@ test("settings popup overlays chat with layout actions and independent secondary
         [...panel.querySelectorAll(".bcmv-actions button")].map((b) => b.textContent),
         ["기본 배치", "보조 방송 정렬"]
     );
-    assert.equal(panel.querySelector("input, select, [data-action='main'], [data-action='reset-delay']"), null);
+    assert.equal(panel.querySelector("input, [data-action='main'], [data-action='reset-delay']"), null);
     assert.equal(panel.querySelectorAll(".bcmv-stream").length, 6);
+    assert.equal(panel.querySelectorAll(".bcmv-quality select").length, 5);
     assert.equal(panel.querySelector(".bcmv-stream").dataset.channel, A);
     assert.equal(panel.querySelector('.bcmv-stream[data-main="1"] [data-action="remove"]'), null);
     assert.equal(panel.querySelector('.bcmv-stream[data-main="1"] [data-bcmv-delay]'), null);
@@ -2820,6 +2838,104 @@ test("remount, mode changes, keyboard resize and disable preserve or clean the r
     assert.equal(h.w.document.querySelector(".chzzk_player"), replacement);
 });
 
+test("Escape coordinates the layout gesture and open settings even when focus moves between their surfaces", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    h.click("controls");
+    const d = h.w.document;
+    const overlay = d.getElementById("betterchzzk-multiview");
+    const panel = d.querySelector(".bcmv-panel");
+    const escape = (target) =>
+        target.dispatchEvent(new h.w.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    escape(overlay);
+    assert.equal(panel.hidden, true, "Escape on the grid closes an open settings panel");
+    const grid = d.querySelector(".bcmv-grid");
+    grid.getBoundingClientRect = () => ({ left: 0, top: 0, width: 900, height: 506.25 });
+    const pointer = (target, type, x) =>
+        target.dispatchEvent(new h.w.MouseEvent(type, { button: 0, clientX: x, bubbles: true, cancelable: true }));
+    pointer(d.querySelector('.bcmv-separator[data-path="ra"]'), "pointerdown", 600);
+    pointer(h.w, "pointermove", 450);
+    h.click("controls");
+    assert.equal(panel.hidden, false);
+    assert.ok(d.querySelector(".bcmv-snap-guide"));
+    escape(panel);
+    assert.equal(d.querySelector(".bcmv-snap-guide"), null);
+    assert.equal(panel.hidden, false, "the active layout preview takes Escape before panel dismissal");
+    escape(panel);
+    assert.equal(panel.hidden, true);
+});
+
+test("player lifecycle owns subscriptions and rejects media or metadata from a cleared session", async (t) => {
+    const h = setup(t, { sourcePending: true });
+    h.configure(false);
+    const baseline = h.storageListenerCount();
+    const root = h.w.BetterChzzk;
+    const state = root.multiviewModel.session({ version: 1, active: true, channels: [{ id: A }, { id: B }] });
+    const changes = [];
+    const players = root.multiviewPlayback.create({
+        state,
+        onChange: (player) => changes.push(player.id),
+        onGeometry() {},
+        persistSession() {},
+    });
+    t.after(() => players.clear(true));
+    const native = h.w.document.querySelector(".chzzk_player");
+    players.reconcile(A, native);
+    await tick();
+    const secondary = players.get(B).video;
+    assert.equal(secondary.muted, true);
+    assert.equal(h.storageListenerCount(), baseline + 1);
+    players.reconcile(A, native);
+    assert.equal(players.get(B).video, secondary);
+    assert.equal(h.requests.length, 2, "reconciliation preserves the existing player requests");
+    assert.equal(h.storageListenerCount(), baseline + 1);
+    players.clear(true);
+    assert.equal(players.size, 0);
+    assert.equal(h.storageListenerCount(), baseline);
+    assert.ok(h.requests.every((request) => request.signal.aborted));
+    const afterClear = changes.length;
+    secondary.dispatchEvent(new h.w.Event("loadedmetadata"));
+    secondary.dispatchEvent(new h.w.Event("volumechange"));
+    h.resolve();
+    await tick();
+    assert.equal(h.instances.length, 0, "late stream metadata cannot construct an HLS player");
+    assert.equal(changes.length, afterClear, "cleared sessions cannot update their former view");
+    players.reconcile(A, native);
+    await tick();
+    assert.notEqual(players.get(B).video, secondary);
+    assert.equal(h.storageListenerCount(), baseline + 1);
+});
+
+test("adding a stream during a divider preview cancels the gesture before changing the channel tree", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    h.click("controls");
+    h.click("add");
+    const d = h.w.document;
+    const grid = d.querySelector(".bcmv-grid");
+    grid.getBoundingClientRect = () => ({ left: 0, top: 0, width: 900, height: 506.25 });
+    const before = h.w.sessionStorage.getItem("betterChzzkMultiviewSession");
+    const pointer = (target, type, x) =>
+        target.dispatchEvent(new h.w.MouseEvent(type, { button: 0, clientX: x, bubbles: true, cancelable: true }));
+    pointer(d.querySelector('.bcmv-separator[data-path="ra"]'), "pointerdown", 600);
+    pointer(h.w, "pointermove", 450);
+    assert.ok(d.querySelector(".bcmv-snap-guide"));
+    assert.equal(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"), before);
+    await h.add(C);
+    const restored = JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"));
+    assert.equal(restored.channels.length, 3);
+    assert.equal(h.w.BetterChzzk.multiviewModel.validTree(restored.dockTree, restored.channels), true);
+    assert.ok(d.querySelector(`[data-bcmv-channel="${C}"] video`));
+    assert.ok(parseFloat(d.querySelector(`[data-bcmv-channel="${C}"]`).style.width) > 0);
+    assert.equal(d.querySelector(".bcmv-snap-guide"), null);
+    const saved = h.w.sessionStorage.getItem("betterChzzkMultiviewSession");
+    pointer(h.w, "pointermove", 700);
+    pointer(h.w, "pointerup", 700);
+    assert.equal(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"), saved);
+});
+
 test("late responses after removal are aborted and cannot mount a new player", async (t) => {
     const h = setup(t, { sourcePending: true });
     await h.start();
@@ -3247,4 +3363,65 @@ test("native corrected restore waits for calibration and remains steady between 
     now = 5100;
     video.dispatchEvent(new h.w.Event("timeupdate"));
     assert.equal(video.currentTime, 117, "stale observations do not seek");
+});
+
+test("multiview quality uses offered levels, persists per channel, and restores automatic capping", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    h.click("controls");
+    const select = h.w.document.querySelector(".bcmv-quality select");
+    assert.deepEqual(
+        [...select.options].map((option) => option.textContent),
+        ["자동", "1080p", "720p"]
+    );
+    assert.equal(h.instances[0].nextLevel, -1);
+    h.selectQuality(1080, false);
+    await tick();
+    assert.equal(h.storage[`betterChzzkMultiviewQuality:${B}`], undefined);
+    h.selectQuality(1080);
+    await tick();
+    assert.equal(h.instances[0].nextLevel, 2);
+    assert.equal(h.instances[0].capLevelToPlayerSize, false);
+    assert.equal(h.storage[`betterChzzkMultiviewQuality:${B}`], 1080);
+    h.selectQuality(0);
+    await tick();
+    assert.equal(h.instances[0].nextLevel, -1);
+    assert.equal(h.instances[0].capLevelToPlayerSize, true);
+    assert.equal(h.storage[`betterChzzkMultiviewQuality:${B}`], 0);
+    const event = new h.w.MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 });
+    select.dispatchEvent(event);
+    assert.equal(event.defaultPrevented, false, "quality selector must not start row dragging");
+});
+
+test("multiview restores quality after recreation and uses automatic when saved resolution is unavailable", async (t) => {
+    const h = setup(t, {
+        local: { [`betterChzzkMultiviewQuality:${B}`]: 720, [`betterChzzkMultiviewQuality:${C}`]: 480 },
+    });
+    await h.start();
+    await h.add(B);
+    assert.equal(h.instances[0].nextLevel, 1);
+    await h.add(C);
+    assert.equal(h.instances[1].nextLevel, -1);
+    h.click("controls");
+    assert.match(h.w.document.querySelector(`[data-channel="${C}"] .bcmv-quality-status`).textContent, /480p 미제공/);
+    h.configure(false);
+    assert.ok(h.instances.every((instance) => instance.destroyed));
+    h.configure(true);
+    await tick();
+    await h.start();
+    assert.equal(h.instances.at(-2).nextLevel, 1);
+    assert.equal(h.instances.at(-1).nextLevel, -1);
+});
+
+test("multiview reports quality save failure without interrupting selected playback", async (t) => {
+    const h = setup(t, { writeFailure: true });
+    await h.start();
+    await h.add(B);
+    h.click("controls");
+    h.selectQuality(720);
+    await tick();
+    assert.equal(h.instances[0].nextLevel, 1);
+    assert.match(h.w.document.querySelector(".bcmv-quality-status").textContent, /화질 저장 실패/);
+    assert.equal(h.storage[`betterChzzkMultiviewQuality:${B}`], undefined);
 });

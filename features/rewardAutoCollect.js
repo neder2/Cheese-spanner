@@ -3,8 +3,8 @@
  *
  * 동작 위치: chzzk.naver.com 전역 중 aside#aside-chatting(채팅 사이드바) 내부.
  * 하는 일:
- *   - aside#aside-chatting 하위의 button/[role="button"]/a[href] 후보를 스캔해 텍스트·속성에서
- *     보상 신호(TARGET_REWARD_SIGNAL_RE)와 수집 동작(CLAIM_ACTION_RE)을 동시에 만족하는 요소만 점수화한다.
+ *   - aside#aside-chatting 하위에서 실측된 시청 보상 알림과 보상 창 수령 버튼만 클릭한다.
+ *     문구만 비슷한 채팅·랭킹·프로필 버튼은 허용하지 않는다.
  *   - 구독/팔로우/로그인/결제 등(BLOCKED_ACTION_RE)에 해당하면 즉시 제외해 오클릭을 막는다.
  *   - 가장 점수가 높은 버튼을 지연 후 클릭하고, 보상 상태 서명당 한 번만 실행해 중복 클릭을 막는다.
  *   - MutationObserver를 채팅 aside에만 연결하고, 변경된 버튼 후보만 모아 증분 검사한다.
@@ -40,13 +40,10 @@
         "inert",
     ]);
 
-    const TARGET_REWARD_SIGNAL_RE = /통나무|timber|wood|rewardlog|logreward|claimlog|logclaim|collectlog|logcollect/;
-    const WATCH_VERIFICATION_SIGNAL_RE = /(?:1시간|60분)(?:라이브)?시청(?:후)?인증/;
-    const WATCH_REWARD_ROW_SIGNAL_RE = /(?:1시간|60분)(?:라이브)?시청(?:후)?(?:보상|인증)/;
+    const WATCH_REWARD_ROW_SIGNAL_RE = /^(?:1시간|60분)(?:라이브)?시청(?:후)?(?:보상|인증)$/;
+    const WATCH_NOTICE_LABEL_RE = /^\d+시간시청통나무파워배달완료!$/;
+    const WATCH_NOTICE_BUTTON_RE = /^\d+시간시청통나무파워배달완료!\d[\d,.]*받기$/;
     const POWER_AMOUNT_BUTTON_RE = /^\d[\d,.]*파워$/;
-    const CLAIM_ACTION_RE = /받기|수집|획득|인증|claim|collect|receive/;
-    const BUTTON_LIKE_ANCHOR_RE = /button|btn|claim|collect|reward/;
-    const EXECUTABLE_URL_SCHEME_RE = /^(?:javascript|data|vbscript):/i;
     const BLOCKED_ACTION_RE =
         /구독|팔로우|로그인|결제|쿠폰|선물|기프트|후원|충전|구매|subscribe|follow|login|payment|pay|coupon|gift|present|donate|donation|purchase|membership/;
 
@@ -94,31 +91,6 @@
         return normSpace(parts.join(" "));
     }
 
-    function isButtonLikeAnchor(anchor, ownCompact) {
-        const href = normSpace(anchor.getAttribute("href") || "");
-        const compactHrefScheme = Array.from(href)
-            .filter((char) => {
-                const code = char.charCodeAt(0);
-                return code > 0x20 && code !== 0x7f;
-            })
-            .join("");
-        const protocol = String(anchor.protocol || "").toLowerCase();
-        if (EXECUTABLE_URL_SCHEME_RE.test(compactHrefScheme) || EXECUTABLE_URL_SCHEME_RE.test(protocol)) return false;
-        if (anchor.getAttribute("role") === "button") return true;
-        if (BUTTON_LIKE_ANCHOR_RE.test(ownCompact)) return true;
-        return href === "#";
-    }
-
-    function isAllowedCandidateElement(el, ownCompact) {
-        if (!(el instanceof HTMLElement)) return false;
-
-        const tagName = el.tagName.toLowerCase();
-        if (tagName === "a") return isButtonLikeAnchor(el, ownCompact);
-        if (tagName === "button") return true;
-        if (el.getAttribute("role") === "button") return true;
-        return false;
-    }
-
     function isUsableButton(el) {
         if (!(el instanceof HTMLElement)) return false;
         if (!el.isConnected) return false;
@@ -130,45 +102,63 @@
         return style.display !== "none" && style.visibility !== "hidden" && style.pointerEvents !== "none";
     }
 
+    function hasClassPrefix(el, prefix) {
+        return Array.from(el.classList).some((name) => name.startsWith(prefix));
+    }
+
     function getWatchRewardRowSignal(el) {
-        if (!(el instanceof HTMLElement)) return "";
-        const row = el.closest("li");
-        if (!(row instanceof HTMLElement) || !row.closest('[role="alertdialog"]')) return "";
-        return compactSignal(`${getElementText(row)} ${getAttributeSignal(row)}`);
+        const row = el?.parentElement;
+        if (row?.tagName !== "LI" || row.parentElement?.tagName !== "UL" || !row.closest('[role="alertdialog"]'))
+            return "";
+        const labels = Array.from(row.children).filter((child) => child.tagName === "SPAN");
+        if (labels.length !== 1) return "";
+        return compactSignal(getElementText(labels[0]));
     }
 
     function isWatchRewardPowerButton(el, ownCompact) {
-        return POWER_AMOUNT_BUTTON_RE.test(ownCompact) && WATCH_REWARD_ROW_SIGNAL_RE.test(getWatchRewardRowSignal(el));
+        return (
+            hasClassPrefix(el, "_button_") &&
+            POWER_AMOUNT_BUTTON_RE.test(ownCompact) &&
+            WATCH_REWARD_ROW_SIGNAL_RE.test(getWatchRewardRowSignal(el))
+        );
+    }
+
+    function isWatchRewardNoticeButton(el, ownCompact) {
+        if (!WATCH_NOTICE_BUTTON_RE.test(ownCompact) || !hasClassPrefix(el, "_button_")) return false;
+        const children = Array.from(el.children);
+        // Recorded watch-reward notice: direct label span, power SVG, then amount/claim text.
+        // Match semantic class prefixes, not the deployment-specific CSS hash or line suffix.
+        return (
+            children.length === 2 &&
+            children[0].tagName === "SPAN" &&
+            hasClassPrefix(children[0], "_text_") &&
+            WATCH_NOTICE_LABEL_RE.test(compactSignal(getElementText(children[0]))) &&
+            children[1].localName === "svg" &&
+            hasClassPrefix(children[1], "icon_power_")
+        );
     }
 
     function scoreRewardButton(el) {
         const ownText = getElementText(el);
+        const ownCompact = compactSignal(`${ownText} ${getAttributeSignal(el)}`);
         const ownTextCompact = compactSignal(ownText);
-        const ownSignal = normSpace(`${ownText} ${getAttributeSignal(el)}`);
-        const ownCompact = compactSignal(ownSignal);
-        const directRewardButton =
-            CLAIM_ACTION_RE.test(ownCompact) &&
-            (TARGET_REWARD_SIGNAL_RE.test(ownCompact) || WATCH_VERIFICATION_SIGNAL_RE.test(ownCompact));
-        const watchRewardPowerButton = isWatchRewardPowerButton(el, ownTextCompact);
-
-        // 일반 채팅 버튼은 레이아웃 조회 전에 빠르게 제외한다.
+        // Only the two recorded native button structures are authorized for automatic collection.
+        // Recheck here at click time as React may reuse a previously valid node.
         if (
-            !isAllowedCandidateElement(el, ownCompact) ||
+            el.tagName !== "BUTTON" ||
+            el.getAttribute("type") !== "button" ||
+            el.hasAttribute("aria-haspopup") ||
+            el.hasAttribute("aria-expanded") ||
+            hasClassPrefix(el, "_ranking_button_") ||
             BLOCKED_ACTION_RE.test(ownCompact) ||
-            (!directRewardButton && !watchRewardPowerButton)
+            (!isWatchRewardNoticeButton(el, ownTextCompact) && !isWatchRewardPowerButton(el, ownTextCompact))
         ) {
             knownRewardCandidates.delete(el);
             return 0;
         }
         knownRewardCandidates.add(el);
         if (!isUsableButton(el)) return 0;
-
-        let score = 1;
-        score += 5;
-        if (watchRewardPowerButton) score += 4;
-        if (WATCH_VERIFICATION_SIGNAL_RE.test(ownCompact)) score += 2;
-        if (/claim|collect|receive/.test(ownCompact)) score += 2;
-        return score;
+        return 6;
     }
 
     function getLiveChannelId() {
@@ -621,6 +611,8 @@
                     "class",
                     "style",
                     "aria-label",
+                    "aria-haspopup",
+                    "aria-expanded",
                     "aria-disabled",
                     "aria-hidden",
                     "disabled",

@@ -112,6 +112,9 @@ function loadChatTools(dom) {
     evalRepoScript(dom, "shared", "settings.js");
     evalRepoScript(dom, "shared", "data.js");
     evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "chatTools", "parser.js");
+    evalRepoScript(dom, "features", "chatTools", "messageStore.js");
+    evalRepoScript(dom, "features", "chatTools", "panel.js");
     evalRepoScript(dom, "features", "chatTools.js");
     dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
 }

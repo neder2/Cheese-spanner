@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const { JSDOM } = require("jsdom");
+const { evalFeatureModules } = require("./helpers/extension-page-fixture.js");
 
 const repoRoot = path.join(__dirname, "..");
 
@@ -120,6 +121,8 @@ function evaluateFeature(fileName, { url, options = {}, utils = {}, namespaces =
         },
     };
 
+    evalFeatureModules(dom, fileName.replace(/\.js$/, ""));
+
     const instrumented = `${source.slice(0, closeIndex)}globalThis.__navigationDataHooks = ${hooks};\n${source.slice(
         closeIndex
     )}`;
@@ -154,12 +157,7 @@ test("category metadata backs off persistent failures and recovers", async () =>
         },
         hooks: `{
             ensureMetadata,
-            getMetadataState: () => ({
-                complete: metadataComplete,
-                size: metadataMap.size,
-                retryAt: metadataRetryAt,
-                retryDelayMs: metadataRetryDelayMs
-            })
+            getMetadataState: () => dataRepository.metadataState()
         }`,
     });
     const route = { scope: "category", categoryType: "game", categoryId: "test", tab: "lives" };
@@ -254,7 +252,7 @@ test("video search refreshes a completed index after its freshness window", asyn
         },
         hooks: `{
             buildIndex,
-            getIndex: (channelId) => channelIndex.get(channelId),
+            getIndex: (channelId) => repository.getIndex(channelId),
             setSearchContext: (channelId, query) => {
                 currentChannelId = channelId;
                 currentQuery = query;
@@ -367,7 +365,7 @@ test("monthly video detail merge reuses the shared timeline normalization withou
                 },
             },
         },
-        hooks: "{ mergeVideoDetail }",
+        hooks: "{ mergeVideoDetail: BetterChzzk.monthlyBroadcastModel.mergeVideoDetail }",
     });
     const video = {
         duration: 1,

@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const { JSDOM } = require("jsdom");
+const { evalFeatureModules } = require("./helpers/extension-page-fixture.js");
 
 const repoRoot = path.join(__dirname, "..");
 const CHANNEL = "a".repeat(32);
@@ -50,6 +51,7 @@ function fixture({ options = {}, fetchJson } = {}) {
             return fetchJson ? fetchJson(url, init) : Promise.resolve({ content: { data: [], last: true } });
         },
     });
+    evalFeatureModules(dom, "monthlyBroadcastTime");
     const source = fs.readFileSync(path.join(repoRoot, "features/monthlyBroadcastTime.js"), "utf8");
     const end = source.lastIndexOf("})();");
     window.eval(
@@ -57,7 +59,8 @@ function fixture({ options = {}, fetchJson } = {}) {
             calculateStats, calculateCalendarMonth, loadStats, createWidget,
             renderCachedStats, navigateCalendarMonth, resetCalendarToCurrentMonth,
             getSelectedCalendarMonth, setSelectedCalendarMonth, getKstMonthInfo,
-            cacheMonthInfo, getCachedMonthInfo, fetchVideoPageCached, fetchVideoDetail,
+            cacheMonthInfo, getCachedMonthInfo,
+            fetchVideoPageCached: repository.fetchVideoPageCached, fetchVideoDetail: repository.fetchVideoDetail,
             channelStatsCache, loadingTokens, calendarLoadingTokens, applyOptions,
             removeWidget, mountWidget,
             configure(options) { featureOptions = BetterChzzkSettings.normalizeOptions(options); },

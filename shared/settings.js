@@ -206,6 +206,7 @@
         sidebarUpcomingScheduleHidden: { kind: "bool", default: false, feature: true },
         sidebarPartnerStreamersHidden: { kind: "bool", default: false, feature: true },
         sidebarServiceLinksHidden: { kind: "bool", default: false, feature: true },
+        followingOfflineHidden: { kind: "bool", default: false, feature: true },
         followingPinEnabled: { kind: "bool", default: true, feature: true },
         followingPinOfflineToTopEnabled: { kind: "bool", default: false },
         followingTitleHistoryEnabled: { kind: "bool", default: true, feature: true },

@@ -10,7 +10,8 @@
  *     방송 경과 시간 배지를 썸네일 위에 표시한다(1초 간격 갱신).
  *   - MutationObserver와 scroll 이벤트로 라우트 변화·무한 스크롤을 감지해 자동으로 다음 메타데이터 페이지를 불러온다.
  *   - 옵션 변경 시(bindFeatureOptions) 런타임을 설치/해체하고 배지·툴바 상태를 다시 동기화한다.
- * 의존: 전역 BetterChzzkSettings.normalizeOptions/bindFeatureOptions, 전역 BetterChzzk.utils
+ * 의존: 전역 BetterChzzkSettings.normalizeOptions/bindFeatureOptions, BetterChzzk.categoryToolsFilterModel,
+ *   BetterChzzk.categoryToolsRepository/categoryToolsSearchController, 전역 BetterChzzk.utils
  *   (createMutationObserverSync, createThrottledDomSync, fetchJson, normSpace, normalizeChzzkImageUrl,
  *   normalizeCompact, onReady, setLoadingReason, sleep, startPageChangeDetection, touchMapEntry, injectStyleOnce).
  * 옵션 키: categoryToolsEnabled, categoryToolsMaxMetadataPages, categoryToolsHideGlobalTagSearch,
@@ -22,13 +23,15 @@
  *   data-bcgt-* 프리픽스 속성들(카드/주입/숨김/순서/배지 마킹용).
  * 구조 (위→아래 순서):
  *   - 상수/전역 상태, BetterChzzk.utils 구조분해, 옵션 게터 함수들.
- *   - 라우트 판별(getRoute/routeKey)과 탭 줄·정렬 줄·콘텐츠 좌표 탐색 함수들.
+ *   - 라우트 판별(getRoute)과 탭 줄·정렬 줄·콘텐츠 좌표 탐색 함수들.
  *   - 카드 링크/그리드 탐색과 카드 엔트리 생성(findGrid, getCardEntries 등).
- *   - API URL 조립과 메타데이터 페이지 로드/병합(apiUrl, mergeMetadataPage, ensureMetadata).
- *   - 팔로워 수 캐시·조회(getFollowerCount)와 필터 상태 관리(followerFilter*, viewFilter*, durationFilter*).
- *   - 필터 프리셋 버튼/드래그 선택, 필터 메뉴 빌드(buildMenu)와 위치 계산(positionMenu).
+ *   - repository.js가 소유하는 메타데이터·팔로워 조회를 화면의 대상 ID와 연결한다.
+ *   - 필터 상태(followerFilter*, viewFilter*, durationFilter*)와 팔로워 배지 갱신 대상 DOM을 관리한다.
+ *   - 필터 모델(categoryTools/filterModel.js)의 수치 계산을 이용한 프리셋 버튼/드래그 선택,
+ *     필터 메뉴 빌드(buildMenu)와 위치 계산(positionMenu).
  *   - 주입 카드 생성(buildInjectedCard/buildInjectedLiveCard)과 팔로워·경과시간 배지 동기화.
  *   - 툴바 빌드/마운트(buildToolbar, mountToolbar)와 메인 적용 루프(applyTools).
+ *     searchController.js는 다음 페이지 탐색·대기·취소를 소유하고 화면은 스크롤 여유를 전달한다.
  *   - MutationObserver 설정(startObserver)과 전역 리스너 설치/해체, 런타임 설치/해체(installRuntime/teardownRuntime).
  *   - 옵션 변경 반영(applyOptions)과 초기 구동(bindFeatureOptions, onReady).
  */
@@ -54,40 +57,8 @@
     const FOLLOWER_BADGE_WRAP_ATTR = "data-bcgt-follower-wrap";
     const LIVE_ELAPSED_BADGE_ATTR = "data-bcgt-live-elapsed-badge";
     const LIVE_THUMB_HOST_ATTR = "data-bcgt-live-thumb-host";
-    const API_BASE = "https://api.chzzk.naver.com/service";
-    const API_PAGE_SIZE = 50;
-    const MAX_FOLLOWER_CACHE_ENTRIES = 1000;
-    const FOLLOWER_NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000;
-    const METADATA_RETRY_INITIAL_MS = 1000;
-    const METADATA_RETRY_MAX_MS = 30000;
     const DEFAULT_PROFILE_IMAGE_URL =
         "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2080%2080'%3E%3Crect%20width='80'%20height='80'%20rx='40'%20fill='%23E7EAEE'/%3E%3Ccircle%20cx='40'%20cy='31'%20r='14'%20fill='%239DA5B6'/%3E%3Cpath%20d='M18%2068c3-15%2015-24%2022-24s19%209%2022%2024'%20fill='%239DA5B6'/%3E%3C/svg%3E";
-    const FOLLOWER_FILTER_PRESET_KEYS = Object.freeze([
-        "categoryToolsFollowerFilterPreset1",
-        "categoryToolsFollowerFilterPreset2",
-        "categoryToolsFollowerFilterPreset3",
-        "categoryToolsFollowerFilterPreset4",
-        "categoryToolsFollowerFilterPreset5",
-        "categoryToolsFollowerFilterPreset6",
-    ]);
-    const VIEW_FILTER_PRESET_KEYS = Object.freeze([
-        "categoryToolsViewFilterPreset1",
-        "categoryToolsViewFilterPreset2",
-        "categoryToolsViewFilterPreset3",
-        "categoryToolsViewFilterPreset4",
-        "categoryToolsViewFilterPreset5",
-        "categoryToolsViewFilterPreset6",
-    ]);
-    const DURATION_FILTER_PRESET_KEYS = Object.freeze([
-        "categoryToolsDurationFilterPreset1",
-        "categoryToolsDurationFilterPreset2",
-        "categoryToolsDurationFilterPreset3",
-        "categoryToolsDurationFilterPreset4",
-        "categoryToolsDurationFilterPreset5",
-        "categoryToolsDurationFilterPreset6",
-    ]);
-    const SECONDS_PER_HOUR = 60 * 60;
-
     let currentQuery = "";
     let followerFilterMin = 0;
     let followerFilterMax = 0;
@@ -104,27 +75,12 @@
     let observer = null;
     let applying = false;
     let applyQueued = false;
+    let applyGeneration = 0;
     let lastUrl = location.href;
     let lastRouteKey = "";
     let orderCounter = 0;
-    let metadataKey = "";
-    let metadataMap = new Map();
-    let metadataLoading = null;
-    let metadataNext = null;
-    let metadataComplete = false;
-    let metadataPagesLoaded = 0;
-    let metadataSearchRunning = false;
-    let metadataSearchToken = 0;
-    let metadataRetryAt = 0;
-    let metadataRetryDelayMs = METADATA_RETRY_INITIAL_MS;
-    let metadataRetryTimer = 0;
-    let followerHydrateTimer = 0;
-    let followerHydrationRefreshing = false;
-    let followerHydrationQueued = false;
-    let followerHydrationRunToken = 0;
     let lastFollowerRefreshRouteKey = "";
     let lastFollowerRefreshRows = [];
-    let lastFollowerHydrateAt = 0;
     let menuPositionScheduled = false;
     let filterOptionDrag = null;
     let suppressNextOptionClick = false;
@@ -137,7 +93,6 @@
     let viewFilterSnapshotNextOrder = 0;
     let lastUserScrollAt = 0;
     let ignoreScrollTrackingUntil = 0;
-    let lastMetadataApplyAt = 0;
     let lastListStateKey = "";
     let cachedGrid = null;
     let cachedGridKey = "";
@@ -145,18 +100,12 @@
     let globalListenersInstalled = false;
     let removePageChangeDetection = null;
 
-    const METADATA_APPLY_INTERVAL_MS = 260;
-    // 검색/필터 자동 탐색은 무한 스크롤처럼 동작한다: 한 번에 이 페이지 수만큼 읽고,
-    // 화면을 채울 만큼 스크롤 여지가 생기면 멈췄다가 바닥 근처에서 이어서 탐색한다.
-    const METADATA_BATCH_PAGES = 2;
+    // 검색/필터 자동 탐색은 화면 아래 여유가 생기면 멈췄다가 바닥 근처에서 이어서 탐색한다.
     const AUTO_LOAD_BOTTOM_MARGIN_PX = 600;
-    const AUTO_LOAD_APPLY_SETTLE_MS = 250;
     const AUTO_LOAD_SCROLL_THROTTLE_MS = 200;
     const BADGE_SCROLL_THROTTLE_MS = 700;
     const UI_YIELD_EVERY_ITEMS = 24;
 
-    const followerCache = new Map();
-    const followerInflight = new Map();
     const loadingReasons = new Set();
     const {
         bindFeatureOptions,
@@ -172,6 +121,36 @@
         startPageChangeDetection,
         touchMapEntry,
     } = BetterChzzk.utils;
+    const {
+        passesCountRange,
+        parseFilterInputForKind,
+        formatFilterInputForKind,
+        getFilterPresetValues,
+        getFilterPresetRanges,
+        formatFilterOptionLabel,
+        combineFilterOptionRanges,
+        hasFilterOptionRange,
+    } = BetterChzzk.categoryToolsFilterModel;
+    const { routeKey } = BetterChzzk.categoryToolsRepository;
+    const dataRepository = BetterChzzk.categoryToolsRepository.createRepository({
+        fetchJson,
+        touchMapEntry,
+        onRetryReady(key) {
+            if (isFeatureEnabled() && routeKey(getRoute()) === key) scheduleApply();
+        },
+        onHydrationNeeded() {
+            if (isFeatureEnabled() && getRoute()) void refreshFollowerHydrationRows();
+        },
+        onFollowerLoading: (on) => setLoading(on, "followers"),
+    });
+    const { ensureMetadata, readFollowerCache, clearFollowerHydrationTimer } = dataRepository;
+    const metadataSearchController = BetterChzzk.categoryToolsSearchController.createSearchController({
+        repository: dataRepository,
+        onApply: scheduleApply,
+        onLoading: (on) => setLoading(on, "metadata"),
+        isRouteCurrent: (route) => isFeatureEnabled() && isAutoLoadActive() && routeKey(getRoute()) === routeKey(route),
+        hasScrollRoom: hasPendingScrollRoom,
+    });
     const scheduleThrottledApply = createThrottledDomSync(runScheduledApply, 160);
 
     function isFeatureEnabled() {
@@ -230,12 +209,6 @@
             categoryId: decodeRouteSegment(match[2]),
             tab: match[3],
         };
-    }
-
-    function routeKey(route) {
-        if (!route) return "";
-        if (route.scope === "global-lives") return "global-lives/lives";
-        return `${route.categoryType}/${route.categoryId}/${route.tab}`;
     }
 
     function hasMountedTools() {
@@ -1344,279 +1317,21 @@
         return video ? parseCount(video[1]) : 0;
     }
 
-    function apiUrl(route, cursor = null) {
-        if (route.scope === "global-lives") {
-            const params = new URLSearchParams({ size: String(API_PAGE_SIZE) });
-            if (cursor?.concurrentUserCount !== undefined && cursor?.concurrentUserCount !== null) {
-                params.set("concurrentUserCount", String(cursor.concurrentUserCount));
-            }
-            if (cursor?.liveId !== undefined && cursor?.liveId !== null) {
-                params.set("liveId", String(cursor.liveId));
-            }
-            return `${API_BASE}/v1/lives?${params.toString()}`;
-        }
-
-        const type = encodeURIComponent(route.categoryType);
-        const id = encodeURIComponent(route.categoryId);
-        const params = new URLSearchParams({ size: String(API_PAGE_SIZE) });
-        if (route.tab === "clips") {
-            params.set("clipUID", cursor?.clipUID ? String(cursor.clipUID) : "");
-            params.set("filterType", "WITHIN_THIRTY_DAYS");
-            params.set("orderType", "POPULAR");
-            params.set(
-                "readCount",
-                cursor?.readCount !== undefined && cursor?.readCount !== null ? String(cursor.readCount) : ""
-            );
-            return `${API_BASE}/v1/categories/${type}/${id}/clips?${params.toString()}`;
-        }
-        if (route.tab === "videos" && cursor) {
-            if (cursor.publishDateAt !== undefined && cursor.publishDateAt !== null)
-                params.set("publishDateAt", String(cursor.publishDateAt));
-            if (cursor.readCount !== undefined && cursor.readCount !== null)
-                params.set("readCount", String(cursor.readCount));
-        }
-        if (route.tab === "lives" && cursor) {
-            if (cursor.concurrentUserCount !== undefined && cursor.concurrentUserCount !== null) {
-                params.set("concurrentUserCount", String(cursor.concurrentUserCount));
-            }
-            if (cursor.liveId !== undefined && cursor.liveId !== null) params.set("liveId", String(cursor.liveId));
-        }
-        return `${API_BASE}/v2/categories/${type}/${id}/${route.tab}?${params.toString()}`;
-    }
-
-    function queueFollowerHydrationPass() {
-        if (followerHydrateTimer) return;
-        followerHydrateTimer = window.setTimeout(() => {
-            followerHydrateTimer = 0;
-            void refreshFollowerHydrationRows();
-        }, getFollowerFetchDelayMs());
-    }
-
-    function clearFollowerHydrationTimer() {
-        if (!followerHydrateTimer) return;
-        window.clearTimeout(followerHydrateTimer);
-        followerHydrateTimer = 0;
-    }
-
-    function mapApiItem(route, item) {
-        if (route.tab === "lives") {
-            const channel = item.channel || {};
-            return {
-                id: String(channel.channelId || ""),
-                channelId: String(channel.channelId || ""),
-                title: item.liveTitle || "",
-                channelName: channel.channelName || "",
-                channelImageUrl: channel.channelImageUrl || "",
-                thumb: item.liveImageUrl || item.defaultThumbnailImageUrl || "",
-                duration: null,
-                publishDate: item.openDate || "",
-                views: Number(item.concurrentUserCount) || 0,
-                categoryName: item.liveCategoryValue || "",
-                tags: item.tags || [],
-                liveId: Number(item.liveId) || 0,
-                adult: Boolean(item.adult),
-            };
-        }
-        if (route.tab === "videos") {
-            const channel = item.channel || {};
-            return {
-                id: String(item.videoNo || ""),
-                channelId: String(channel.channelId || ""),
-                title: item.videoTitle || "",
-                channelName: channel.channelName || "",
-                channelImageUrl: channel.channelImageUrl || "",
-                thumb: item.thumbnailImageUrl || "",
-                duration: typeof item.duration === "number" ? item.duration : null,
-                publishDate: item.publishDate || "",
-                views: Number(item.readCount) || 0,
-                tags: item.tags || [],
-            };
-        }
-        const channel = item.ownerChannel || {};
-        return {
-            id: String(item.clipUID || ""),
-            channelId: String(item.ownerChannelId || channel.channelId || ""),
-            title: item.clipTitle || "",
-            channelName: channel.channelName || "",
-            channelImageUrl: channel.channelImageUrl || "",
-            thumb: item.thumbnailImageUrl || "",
-            duration: typeof item.duration === "number" ? item.duration : null,
-            publishDate: item.createdDate || "",
-            views: Number(item.readCount) || 0,
-            tags: [],
-        };
-    }
-
-    function clearMetadataRetryState() {
-        if (metadataRetryTimer) {
-            window.clearTimeout(metadataRetryTimer);
-            metadataRetryTimer = 0;
-        }
-        metadataRetryAt = 0;
-        metadataRetryDelayMs = METADATA_RETRY_INITIAL_MS;
-    }
-
-    function isMetadataRetryCoolingDown(key) {
-        return metadataKey === key && Date.now() < metadataRetryAt;
-    }
-
-    function scheduleMetadataRetry(key) {
-        const delayMs = metadataRetryDelayMs;
-        metadataRetryAt = Date.now() + delayMs;
-        metadataRetryDelayMs = Math.min(METADATA_RETRY_MAX_MS, delayMs * 2);
-        if (metadataRetryTimer) window.clearTimeout(metadataRetryTimer);
-        metadataRetryTimer = window.setTimeout(() => {
-            metadataRetryTimer = 0;
-            if (metadataKey !== key || !isFeatureEnabled() || routeKey(getRoute()) !== key) return;
-            scheduleApply();
-        }, delayMs);
-    }
-
     function resetMetadata(key = "") {
-        clearMetadataRetryState();
-        metadataKey = key;
-        metadataMap = new Map();
-        metadataNext = null;
-        metadataComplete = false;
-        metadataPagesLoaded = 0;
-        metadataLoading = null;
-        metadataSearchToken++;
-        metadataSearchRunning = false;
+        applyGeneration++;
+        metadataSearchController.reset();
+        dataRepository.resetMetadata(key);
     }
 
-    function mergeMetadataPage(route, json) {
-        clearMetadataRetryState();
-        const data = json?.content?.data || [];
-        for (const item of data) {
-            const mapped = mapApiItem(route, item);
-            if (!mapped.id) continue;
-            delete mapped._bcgtSearchText;
-            if (!metadataMap.has(mapped.id)) {
-                mapped.order = metadataMap.size;
-                metadataMap.set(mapped.id, mapped);
-            } else {
-                const merged = { ...metadataMap.get(mapped.id), ...mapped };
-                delete merged._bcgtSearchText;
-                metadataMap.set(mapped.id, merged);
+    function ensureRenderedMetadata(route, entries) {
+        return dataRepository.ensureRenderedMetadata(
+            route,
+            entries.map((entry) => entry?.id),
+            {
+                maxPages: getMaxMetadataPages(),
+                isCurrent: () => isFeatureEnabled() && routeKey(getRoute()) === routeKey(route),
             }
-        }
-        metadataNext = json?.content?.page?.next || null;
-        metadataComplete = !metadataNext;
-        metadataPagesLoaded++;
-        return metadataMap;
-    }
-
-    async function loadMetadataPage(route, cursor = null) {
-        const key = routeKey(route);
-        if (isMetadataRetryCoolingDown(key)) return metadataMap;
-        metadataLoading = {
-            key,
-            promise: fetchJson(apiUrl(route, cursor), { headers: { Accept: "application/json" } })
-                .then((json) => {
-                    if (metadataKey !== key) return metadataMap;
-                    return mergeMetadataPage(route, json);
-                })
-                .catch(() => {
-                    if (metadataKey === key) scheduleMetadataRetry(key);
-                    return metadataMap;
-                })
-                .finally(() => {
-                    if (metadataLoading?.key === key) metadataLoading = null;
-                }),
-        };
-        return metadataLoading.promise;
-    }
-
-    async function ensureMetadata(route) {
-        const key = routeKey(route);
-        if (metadataKey !== key) resetMetadata(key);
-        if (metadataMap.size || metadataComplete) return metadataMap;
-        if (metadataLoading && metadataLoading.key === key) return metadataLoading.promise;
-        return loadMetadataPage(route);
-    }
-
-    async function ensureRenderedMetadata(route, entries) {
-        const key = routeKey(route);
-        await ensureMetadata(route);
-
-        const missingIds = new Set(entries.map((entry) => entry?.id).filter((id) => id && !metadataMap.has(id)));
-        while (
-            missingIds.size &&
-            metadataKey === key &&
-            routeKey(getRoute()) === key &&
-            !metadataComplete &&
-            metadataPagesLoaded < getMaxMetadataPages() &&
-            !isMetadataRetryCoolingDown(key)
-        ) {
-            const cursor = metadataNext;
-            if (!cursor) break;
-            const pagesBefore = metadataPagesLoaded;
-            await loadMetadataPage(route, cursor);
-            if (metadataPagesLoaded === pagesBefore) break;
-            for (const id of missingIds) {
-                if (metadataMap.has(id)) missingIds.delete(id);
-            }
-        }
-        return metadataMap;
-    }
-
-    function isFollowerFetchMiss(value) {
-        return Boolean(value && typeof value === "object" && value.type === "miss" && Number.isFinite(value.expiresAt));
-    }
-
-    function rememberFollowerFetchMiss(channelId) {
-        const miss = {
-            type: "miss",
-            expiresAt: Date.now() + FOLLOWER_NEGATIVE_CACHE_TTL_MS,
-        };
-        touchMapEntry(followerCache, channelId, miss, MAX_FOLLOWER_CACHE_ENTRIES);
-        return null;
-    }
-
-    function readFollowerCache(channelId) {
-        if (!channelId || !followerCache.has(channelId)) return { hit: false, count: null };
-
-        const cached = followerCache.get(channelId);
-        if (isFollowerFetchMiss(cached)) {
-            if (cached.expiresAt > Date.now()) {
-                touchMapEntry(followerCache, channelId, cached, MAX_FOLLOWER_CACHE_ENTRIES);
-                return { hit: true, count: null };
-            }
-            followerCache.delete(channelId);
-            return { hit: false, count: null };
-        }
-
-        touchMapEntry(followerCache, channelId, cached, MAX_FOLLOWER_CACHE_ENTRIES);
-        return { hit: true, count: cached };
-    }
-
-    async function getFollowerCount(channelId) {
-        if (!channelId) return 0;
-        const cached = readFollowerCache(channelId);
-        if (cached.hit) return cached.count;
-        if (followerInflight.has(channelId)) return followerInflight.get(channelId);
-
-        const promise = fetchJson(`${API_BASE}/v1/channels/${encodeURIComponent(channelId)}`, {
-            headers: { Accept: "application/json" },
-        })
-            .then((json) => {
-                const rawCount = json?.content?.followerCount;
-                if (rawCount === null || rawCount === undefined || rawCount === "")
-                    return rememberFollowerFetchMiss(channelId);
-                const count = Number(rawCount);
-                if (!Number.isFinite(count)) return rememberFollowerFetchMiss(channelId);
-                const safeCount = Math.max(0, Math.floor(count));
-                touchMapEntry(followerCache, channelId, safeCount, MAX_FOLLOWER_CACHE_ENTRIES);
-                return safeCount;
-            })
-            .catch(() => {
-                return rememberFollowerFetchMiss(channelId);
-            })
-            .finally(() => {
-                followerInflight.delete(channelId);
-            });
-        followerInflight.set(channelId, promise);
-        return promise;
+        );
     }
 
     function syncLoadingIndicator() {
@@ -1633,38 +1348,20 @@
         syncLoadingIndicator();
     }
 
+    function getFollowerHydrationOptions(clearWhenDone, force) {
+        return {
+            maxPerPass: getFollowerFetchMaxPerPass(),
+            concurrency: getFollowerFetchConcurrency(),
+            delayMs: getFollowerFetchDelayMs(),
+            clearWhenDone,
+            shouldContinue: () => force || hasFollowerFilter(),
+        };
+    }
+
     async function hydrateFollowerIds(ids, clearWhenDone = true, force = false) {
         if (!force && !hasFollowerFilter()) return false;
         if (force && !hasFollowerFilter() && !areFollowerBadgesEnabled()) return false;
-        const targets = ids.filter((id) => id && !readFollowerCache(id).hit);
-        const unique = Array.from(new Set(targets));
-        if (!unique.length) {
-            if (clearWhenDone) setLoading(false, "followers");
-            return false;
-        }
-
-        const now = Date.now();
-        if (now - lastFollowerHydrateAt < getFollowerFetchDelayMs()) {
-            queueFollowerHydrationPass();
-            return true;
-        }
-        lastFollowerHydrateAt = now;
-
-        const batch = unique.slice(0, getFollowerFetchMaxPerPass());
-        setLoading(true, "followers");
-        try {
-            const concurrency = getFollowerFetchConcurrency();
-            for (let i = 0; i < batch.length; i += concurrency) {
-                await Promise.all(batch.slice(i, i + concurrency).map((id) => getFollowerCount(id)));
-            }
-        } finally {
-            if (unique.length > batch.length && (force || hasFollowerFilter())) {
-                queueFollowerHydrationPass();
-            } else if (clearWhenDone) {
-                setLoading(false, "followers");
-            }
-        }
-        return unique.length > batch.length;
+        return dataRepository.hydrateFollowers(ids, getFollowerHydrationOptions(clearWhenDone, force));
     }
 
     async function hydrateFollowers(rows, clearWhenDone = true, force = false) {
@@ -1712,37 +1409,39 @@
     }
 
     async function refreshFollowerHydrationRows() {
-        if (followerHydrationRefreshing) {
-            followerHydrationQueued = true;
-            return;
-        }
         const route = getRoute();
         const rememberedRows = getRememberedFollowerRefreshRows(route);
         if (!route || !rememberedRows.length) {
             scheduleApply();
             return;
         }
-
+        if (!hasFollowerFilter() && !areFollowerBadgesEnabled()) return;
         const rows = hasFollowerFilter() ? rememberedRows : getRowsNearViewport(rememberedRows);
         if (!rows.length) return;
+        const generation = applyGeneration;
+        const refreshed = await dataRepository.refreshFollowers(
+            rows.map((row) => row.meta?.channelId),
+            getFollowerHydrationOptions(true, true)
+        );
+        if (
+            !refreshed ||
+            generation !== applyGeneration ||
+            !isFeatureEnabled() ||
+            routeKey(getRoute()) !== routeKey(route)
+        )
+            return;
+        const currentRows = rows.filter((row) => isCurrentFollowerRow(route, row));
+        syncFollowerBadges(route, currentRows);
+        syncFollowerVisibilityRows(currentRows);
+    }
 
-        const hydrationRunToken = ++followerHydrationRunToken;
-        followerHydrationRefreshing = true;
-        const hydrationRouteKey = routeKey(route);
-        try {
-            await hydrateFollowers(rows, true, true);
-            const currentRoute = getRoute();
-            if (!isFeatureEnabled() || !currentRoute || routeKey(currentRoute) !== hydrationRouteKey) return;
-            syncFollowerBadges(route, rows);
-            syncFollowerVisibilityRows(rows);
-        } finally {
-            if (hydrationRunToken === followerHydrationRunToken) {
-                followerHydrationRefreshing = false;
-                const shouldRepeat = followerHydrationQueued;
-                followerHydrationQueued = false;
-                if (shouldRepeat && isFeatureEnabled() && getRoute()) queueFollowerHydrationPass();
-            }
-        }
+    function isCurrentFollowerRow(route, row) {
+        const card = row?.entry?.card;
+        if (!card?.isConnected || card.getAttribute(CARD_ID_ATTR) !== row.entry.id) return false;
+        const link = Array.from(card.querySelectorAll("a[href]")).find((item) =>
+            getItemId(route, item.getAttribute("href"))
+        );
+        return getItemId(route, link?.getAttribute("href")) === row.entry.id;
     }
 
     // 필터가 없을 때 팔로워 배지는 화면 근처 카드만 채운다.
@@ -1800,13 +1499,6 @@
 
     function activeFilterCount() {
         return (hasFollowerFilter() ? 1 : 0) + (hasViewFilter() ? 1 : 0) + (hasDurationFilter() ? 1 : 0);
-    }
-
-    function passesCountRange(value, min, max) {
-        const count = Number(value) || 0;
-        if (min > 0 && count < min) return false;
-        if (max > 0 && count > max) return false;
-        return true;
     }
 
     function passesViewFilter(meta) {
@@ -1957,95 +1649,8 @@
         return false;
     }
 
-    function parseFilterInput(value) {
-        const raw = String(value || "")
-            .replace(/,/g, "")
-            .trim();
-        if (!raw) return 0;
-        const match = raw.match(/^(\d+(?:\.\d+)?)\s*(만|천)?/);
-        if (!match) return 0;
-        const base = Number(match[1]);
-        if (!Number.isFinite(base)) return 0;
-        const unit = match[2];
-        if (unit === "만") return Math.max(0, Math.floor(base * 10000));
-        if (unit === "천") return Math.max(0, Math.floor(base * 1000));
-        return Math.max(0, Math.floor(base));
-    }
-
-    function formatFilterInput(value) {
-        const number = Math.max(0, Math.floor(Number(value) || 0));
-        if (!number) return "";
-        if (number >= 10000 && number % 10000 === 0) return `${number / 10000}만`;
-        return number.toLocaleString("ko-KR");
-    }
-
-    function parseDurationFilterInput(value) {
-        const raw = String(value || "")
-            .replace(/,/g, "")
-            .trim();
-        if (!raw) return 0;
-        const match = raw.match(/^(\d+(?:\.\d+)?)/);
-        if (!match) return 0;
-        const hours = Number(match[1]);
-        if (!Number.isFinite(hours) || hours <= 0) return 0;
-        return Math.floor(hours * SECONDS_PER_HOUR);
-    }
-
-    function formatDurationFilterInput(value) {
-        const seconds = Math.max(0, Number(value) || 0);
-        if (!seconds) return "";
-        const hours = seconds / SECONDS_PER_HOUR;
-        return String(Number.isInteger(hours) ? hours : Math.round(hours * 100) / 100);
-    }
-
-    function parseFilterInputForKind(kind, value) {
-        return kind === "duration" ? parseDurationFilterInput(value) : parseFilterInput(value);
-    }
-
-    function formatFilterInputForKind(kind, value) {
-        return kind === "duration" ? formatDurationFilterInput(value) : formatFilterInput(value);
-    }
-
-    function getFilterPresetValues(kind) {
-        const keys =
-            kind === "followers"
-                ? FOLLOWER_FILTER_PRESET_KEYS
-                : kind === "duration"
-                  ? DURATION_FILTER_PRESET_KEYS
-                  : VIEW_FILTER_PRESET_KEYS;
-        const scale = kind === "duration" ? SECONDS_PER_HOUR : 1;
-        const values = keys
-            .map((key) => Math.max(0, Math.floor(Number(featureOptions[key]) || 0)) * scale)
-            .filter((value) => value > 0)
-            .sort((a, b) => a - b);
-        return Array.from(new Set(values));
-    }
-
-    function getFilterPresetRanges(kind) {
-        const values = getFilterPresetValues(kind);
-        const ranges = [{ min: 0, max: 0 }];
-        if (!values.length) return ranges;
-
-        ranges.push({ min: 0, max: values[0] });
-        for (let i = 1; i < values.length; i++) {
-            ranges.push({ min: values[i - 1], max: values[i] });
-        }
-        ranges.push({ min: values[values.length - 1], max: 0 });
-        return ranges;
-    }
-
-    function formatFilterOptionLabel(kind, min, max, unit) {
-        if (min <= 0 && max <= 0) return "전체";
-        if (min <= 0) return `${formatFilterInputForKind(kind, max)}${unit} 이하`;
-        if (max <= 0) {
-            const suffix = kind === "duration" ? " 이상" : " ~ 최대";
-            return `${formatFilterInputForKind(kind, min)}${unit}${suffix}`;
-        }
-        return `${formatFilterInputForKind(kind, min)}${unit} ~ ${formatFilterInputForKind(kind, max)}${unit}`;
-    }
-
     function buildFilterOptionButtons(kind, unit) {
-        return getFilterPresetRanges(kind)
+        return getFilterPresetRanges(kind, featureOptions)
             .map(
                 ({ min, max }) =>
                     `<button type="button" class="bcgt-option" data-filter-kind="${kind}" data-filter-min="${min}" data-filter-max="${max}" role="menuitemradio">${formatFilterOptionLabel(kind, min, max, unit)}</button>`
@@ -2058,9 +1663,9 @@
         const isLiveList = route?.tab === "lives";
         const viewUnit = isLiveList ? "명" : "회";
         const renderKey = [
-            getFilterPresetValues("followers").join(","),
-            getFilterPresetValues("views").join(","),
-            getFilterPresetValues("duration").join(","),
+            getFilterPresetValues("followers", featureOptions).join(","),
+            getFilterPresetValues("views", featureOptions).join(","),
+            getFilterPresetValues("duration", featureOptions).join(","),
             viewUnit,
         ].join("|");
         if (menu.__bcgtFilterOptionsKey === renderKey) return;
@@ -2172,18 +1777,7 @@
     }
 
     function setFilterRangeFromOptions(kind, firstRange, lastRange) {
-        const min = Math.min(firstRange.min, lastRange.min);
-        const includesOpenEnd =
-            (firstRange.max <= 0 && firstRange.min > 0) || (lastRange.max <= 0 && lastRange.min > 0);
-        const max = includesOpenEnd ? 0 : Math.max(firstRange.max || firstRange.min, lastRange.max || lastRange.min);
-        if (min === 0 && max === 0) {
-            setFilterValue(kind, 0, "", 0, "");
-            return;
-        }
-        if (min === max) {
-            setFilterValue(kind, min, min > 0 ? formatFilterInputForKind(kind, min) : "", 0, "");
-            return;
-        }
+        const { min, max } = combineFilterOptionRanges(firstRange, lastRange);
         setFilterValue(
             kind,
             min,
@@ -2205,10 +1799,6 @@
             min: Number(option?.getAttribute("data-filter-min")) || 0,
             max: Number(option?.getAttribute("data-filter-max")) || 0,
         };
-    }
-
-    function hasFilterOptionRange(range) {
-        return Boolean(range && (range.min > 0 || range.max > 0));
     }
 
     function isFilterRangeActive(kind, range) {
@@ -3043,7 +2633,7 @@
         );
     }
 
-    async function syncInjectedCards(route, grid, entries, metadata, query = normalize(currentQuery)) {
+    async function syncInjectedCards(route, grid, entries, metadata, query, isCurrent) {
         if (!isAutoLoadActive()) return [];
 
         if (!canUseMetadataForCurrentList(route)) return [];
@@ -3068,6 +2658,7 @@
             if (builtCount % UI_YIELD_EVERY_ITEMS === 0) {
                 if (fragment.childNodes.length) grid.appendChild(fragment);
                 await yieldToUi();
+                if (!isCurrent()) return [];
             }
         }
 
@@ -3494,7 +3085,7 @@
             resetFilterState();
             resetMetadata("");
             orderCounter = 0;
-            lastFollowerHydrateAt = 0;
+            dataRepository.cancelFollowers();
             clearFollowerHydrationTimer();
             clearLoading();
             const input = bar.querySelector("input");
@@ -3535,30 +3126,17 @@
     }
 
     function queueMetadataSearch(route) {
-        if (
-            !route ||
-            !isAutoLoadActive() ||
-            metadataComplete ||
-            metadataPagesLoaded >= getMaxMetadataPages() ||
-            isMetadataRetryCoolingDown(routeKey(route))
-        ) {
+        if (!route || !isAutoLoadActive()) {
             if (!isAutoLoadActive()) {
-                metadataSearchToken++;
+                metadataSearchController.cancel();
                 clearFollowerHydrationTimer();
                 clearLoading();
             }
             return;
         }
-        const token = ++metadataSearchToken;
-        if (metadataSearchRunning) return;
-
-        metadataSearchRunning = true;
-        runMetadataSearch(route, token).finally(() => {
-            metadataSearchRunning = false;
-            if (token !== metadataSearchToken) {
-                const nextRoute = getRoute();
-                if (nextRoute && isAutoLoadActive()) queueMetadataSearch(nextRoute);
-            }
+        metadataSearchController.request(route, {
+            maxPages: getMaxMetadataPages(),
+            pageDelayMs: hasFollowerFilter() ? 600 : 80,
         });
     }
 
@@ -3569,42 +3147,6 @@
         }
         const doc = document.documentElement;
         return doc.scrollHeight - (window.scrollY + window.innerHeight) > AUTO_LOAD_BOTTOM_MARGIN_PX;
-    }
-
-    async function runMetadataSearch(route, token) {
-        setLoading(true, "metadata");
-        try {
-            await ensureMetadata(route);
-            let pagesThisRun = 0;
-            while (
-                token === metadataSearchToken &&
-                routeKey(route) === routeKey(getRoute()) &&
-                isAutoLoadActive() &&
-                !metadataComplete &&
-                metadataPagesLoaded < getMaxMetadataPages() &&
-                !isMetadataRetryCoolingDown(routeKey(route))
-            ) {
-                if (pagesThisRun >= METADATA_BATCH_PAGES) {
-                    scheduleApply();
-                    await sleep(AUTO_LOAD_APPLY_SETTLE_MS);
-                    if (token !== metadataSearchToken) break;
-                    if (hasPendingScrollRoom()) break;
-                }
-                const cursor = metadataNext;
-                if (!cursor) break;
-                await loadMetadataPage(route, cursor);
-                pagesThisRun += 1;
-                const now = performance.now();
-                if (now - lastMetadataApplyAt >= METADATA_APPLY_INTERVAL_MS) {
-                    lastMetadataApplyAt = now;
-                    scheduleApply();
-                }
-                await sleep(hasFollowerFilter() ? 600 : 80);
-            }
-            scheduleApply();
-        } finally {
-            if (token === metadataSearchToken) setLoading(false, "metadata");
-        }
     }
 
     let lastAutoLoadScrollCheckAt = 0;
@@ -3628,7 +3170,13 @@
             return;
         }
 
-        if (metadataSearchRunning || metadataComplete || metadataPagesLoaded >= getMaxMetadataPages()) return;
+        const metadataState = dataRepository.metadataState();
+        if (
+            metadataSearchController.isRunning() ||
+            metadataState.complete ||
+            metadataState.pagesLoaded >= getMaxMetadataPages()
+        )
+            return;
         if (hasPendingScrollRoom()) return;
 
         const route = getRoute();
@@ -3676,14 +3224,22 @@
             entries = getCardEntries(route, scanContext);
         }
 
+        const generation = applyGeneration;
+        const isCurrent = () =>
+            generation === applyGeneration &&
+            grid.isConnected &&
+            isFeatureEnabled() &&
+            routeKey(getRoute()) === routeKey(route);
+
         if (!isAutoLoadActive()) {
             resetViewFilterSnapshot();
             clearInjectedCards(grid);
-            metadataSearchToken++;
+            metadataSearchController.cancel();
             clearFollowerHydrationTimer();
             clearLoading();
             const metadata =
                 route.tab === "lives" && canUseMetadata ? await ensureRenderedMetadata(route, entries) : new Map();
+            if (!isCurrent()) return;
             const visibleRows = entries.map((entry) => ({
                 entry,
                 meta: {
@@ -3696,6 +3252,7 @@
             syncFollowerBadges(route, visibleRows);
             const nearViewportRows = getRowsNearViewport(visibleRows);
             await hydrateFollowers(nearViewportRows, true, true);
+            if (!isCurrent()) return;
             syncFollowerBadges(route, nearViewportRows);
             for (const entry of entries) setCardHidden(entry.card, false);
             removeEmptyMessage(grid);
@@ -3704,6 +3261,7 @@
         }
 
         const metadata = canUseMetadata ? await ensureMetadata(route) : new Map();
+        if (!isCurrent()) return;
         scheduleDurationFilterRefresh(metadata.values());
         const query = normalize(currentQuery);
         syncViewFilterSnapshot(route, query);
@@ -3717,11 +3275,13 @@
         let followerHydrationPending = false;
         if (hasFollowerFilter()) {
             followerHydrationPending = await hydrateMetadataFollowers(metadataCandidates.filter(isFollowerCandidate));
+            if (!isCurrent()) return;
         }
 
         const scrollAnchor = captureScrollAnchor(grid);
-        const injectedEntries = await syncInjectedCards(route, grid, entries, metadata, query);
+        const injectedEntries = await syncInjectedCards(route, grid, entries, metadata, query, isCurrent);
         await yieldToUi();
+        if (!isCurrent()) return;
         if (injectedEntries.length) entries = entries.concat(injectedEntries);
         const rows = entries.map((entry) => {
             const meta = metadata.get(entry.id) || {};
@@ -3747,11 +3307,15 @@
                 candidateRows.push(row);
             }
             checkedRows++;
-            if (checkedRows % UI_YIELD_EVERY_ITEMS === 0) await yieldToUi();
+            if (checkedRows % UI_YIELD_EVERY_ITEMS === 0) {
+                await yieldToUi();
+                if (!isCurrent()) return;
+            }
         }
 
         await hydrateFollowers(rows, !followerHydrationPending, true);
         await yieldToUi();
+        if (!isCurrent()) return;
 
         const visible = candidateRows
             .filter((row) => passesStickyFilters(row))
@@ -3771,7 +3335,7 @@
         updateStatus(visible.length, Math.max(rows.length, metadataCandidates.length));
         if (canUseMetadata) queueMetadataSearch(route);
         else {
-            metadataSearchToken++;
+            metadataSearchController.cancel();
             clearLoading();
         }
     }
@@ -3816,13 +3380,9 @@
         cachedGridKey = "";
         resetMetadata("");
         orderCounter = 0;
-        lastFollowerHydrateAt = 0;
-        followerHydrationRunToken++;
-        followerHydrationRefreshing = false;
-        followerHydrationQueued = false;
+        dataRepository.cancelFollowers();
         lastFollowerRefreshRouteKey = "";
         lastFollowerRefreshRows = [];
-        lastMetadataApplyAt = 0;
         clearFollowerHydrationTimer();
         clearDurationFilterRefreshTimer();
         clearLoading();
@@ -3974,7 +3534,9 @@
         const menu = document.getElementById(MENU_ID);
         if (!bar && !menu && getRoute()?.scope !== "global-lives") return;
         handleGlobalSortClick(event);
-        if (bar && !bar.contains(event.target) && (!menu || !menu.contains(event.target))) closeMenu();
+        // Automatic sidebar refresh also emits clicks; only user input dismisses the filter menu.
+        const filterButton = bar?.querySelector(".bcgt-filter");
+        if (event.isTrusted && !filterButton?.contains(event.target) && !menu?.contains(event.target)) closeMenu();
     }
 
     function installGlobalListeners() {
@@ -3982,10 +3544,18 @@
         globalListenersInstalled = true;
         document.addEventListener("click", handleDocumentClick, true);
         document.addEventListener("visibilitychange", handleVisibilityChange, true);
-        removePageChangeDetection = startPageChangeDetection(scheduleApply);
+        removePageChangeDetection = startPageChangeDetection(handlePageChange);
         window.addEventListener("resize", handleViewportChange, true);
         window.addEventListener("scroll", handleScrollPositionMenu, true);
         window.addEventListener("scroll", handleAutoLoadScroll, { capture: true, passive: true });
+    }
+
+    function handlePageChange() {
+        if (location.href !== lastUrl) {
+            lastUrl = location.href;
+            removeToolsIfMounted();
+        }
+        scheduleApply();
     }
 
     function uninstallGlobalListeners() {
@@ -4013,9 +3583,8 @@
     function teardownRuntime() {
         runtimeInstalled = false;
         applyQueued = false;
-        metadataSearchToken++;
-        metadataSearchRunning = false;
-        clearMetadataRetryState();
+        resetMetadata("");
+        dataRepository.cancelFollowers();
         clearFollowerHydrationTimer();
         clearLiveElapsedTimer();
         clearDurationFilterRefreshTimer();
@@ -4031,7 +3600,7 @@
         updateUiState();
 
         if (prev.categoryToolsMaxMetadataPages !== options.categoryToolsMaxMetadataPages) {
-            resetMetadata(metadataKey);
+            resetMetadata(dataRepository.metadataState().key);
         }
 
         clearFollowerHydrationTimer();

@@ -14,7 +14,7 @@
  *   createMutationObserverSync, fetchJson, injectStyleOnce, normSpace, normalizeChzzkChannelId,
  *   normalizeChzzkImageUrl,
  *   startPageChangeDetection, startStorageChangeListener, storageGet, storageSet), BetterChzzk.selectors(CHZZK, queryChain).
- * 옵션 키: sidebarCheeseFarmHidden, followingPinEnabled, followingPinOfflineToTopEnabled.
+ * 옵션 키: sidebarCheeseFarmHidden, followingPinEnabled, followingPinOfflineToTopEnabled, followingOfflineHidden.
  *   sidebarPopularCategoriesHidden, sidebarUpcomingScheduleHidden, sidebarPartnerStreamersHidden,
  *   sidebarServiceLinksHidden.
  * 저장 키: chrome.storage.sync.betterchzzkPinnedFollowingChannelIds (채널 ID 배열, 최대 64개).
@@ -43,6 +43,7 @@
     const MODE_BUTTON_ID = "betterchzzk-following-pin-mode";
     const CHEESE_HIDDEN_ATTR = "data-bcsf-cheese-hidden";
     const SECTION_HIDDEN_ATTR = "data-bcsf-section-hidden";
+    const OFFLINE_HIDDEN_ATTR = "data-bcsf-offline-hidden";
     const SECTION_OPTIONS = new Map([
         ["인기 카테고리", "sidebarPopularCategoriesHidden"],
         ["다가오는 방송 일정", "sidebarUpcomingScheduleHidden"],
@@ -90,6 +91,7 @@
         "video",
     ]);
     const STYLE_TEXT = `
+#sidebar [${OFFLINE_HIDDEN_ATTR}="1"],
 #sidebar [${SECTION_HIDDEN_ATTR}="1"]{
   display:none!important;
 }
@@ -182,6 +184,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     let sectionObserver = null;
     let sectionFrame = 0;
     const hiddenSections = new Set();
+    const hiddenOfflineRows = new Set();
     let removeStorageChangeListener = null;
     let syncFrame = 0;
     let runtimeGeneration = 0;
@@ -312,6 +315,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
 
     function getDesiredCollapsedEntries() {
         return sourceSnapshot
+            .filter((entry) => !featureOptions.followingOfflineHidden || entry.isLive)
             .map((entry, index) => ({ entry, index, rank: getSourceOrderRank(entry) }))
             .sort((left, right) => left.rank - right.rank || left.index - right.index)
             .slice(0, COLLAPSED_ROW_COUNT)
@@ -420,6 +424,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         cleanupRow(row);
         row.removeAttribute("id");
         row.removeAttribute(SOURCE_HIDDEN_ATTR);
+        row.removeAttribute(OFFLINE_HIDDEN_ATTR);
         row.setAttribute(SOURCE_ROW_ATTR, "1");
         row.setAttribute(SOURCE_FINGERPRINT_ATTR, getSourceFingerprint(entry));
         row.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
@@ -511,7 +516,8 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
                 console.warn("[Better Chzzk] 팔로잉 고정용 전체 목록 조회 실패", error);
             })
             .finally(() => {
-                if (sourceFetchController === controller) sourceFetchController = null;
+                if (sourceFetchController !== controller) return;
+                sourceFetchController = null;
                 sourceFetchPromise = null;
                 if (runtimeInstalled && generation === runtimeGeneration) scheduleSync();
             });
@@ -595,20 +601,23 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         else document.getElementById(STYLE_ID)?.remove();
     }
 
+    function getDirectSectionText(element) {
+        return normSpace(
+            Array.from(element?.childNodes || [])
+                .filter((node) => node.nodeType === Node.TEXT_NODE)
+                .map((node) => node.textContent)
+                .join("")
+        );
+    }
+
     function syncSections() {
         sectionFrame = 0;
         const next = new Set();
-        // 2026-09-06 https://chzzk.naver.com/: 각 구역은 nav > div > strong 제목을 사용한다.
-        // 파트너 제목은 a 안에 있고, 새 창 안내 span은 제목의 정체성에 포함하지 않는다.
+        // 2026-09-11 https://chzzk.naver.com/lives: 파트너 제목은 strong의 직접 텍스트이고 a는 아이콘 링크다.
+        // strong에 텍스트가 없을 때만 이전 링크형 제목을 읽어 새 창 안내 span과 구분한다.
         for (const section of getSidebar()?.querySelectorAll("nav") || []) {
             const title = section.querySelector(":scope > div > strong");
-            const label = title?.querySelector("a") || title;
-            const text = normSpace(
-                Array.from(label?.childNodes || [])
-                    .filter((node) => node.nodeType === Node.TEXT_NODE)
-                    .map((node) => node.textContent)
-                    .join("")
-            );
+            const text = getDirectSectionText(title) || getDirectSectionText(title?.querySelector("a"));
             const key = SECTION_OPTIONS.get(text);
             if (key && featureOptions[key]) next.add(section);
         }
@@ -878,8 +887,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         syncPinIndicator(meta, isPinned);
     }
 
-    function syncUi() {
-        syncFrame = 0;
+    function syncPinUi() {
         if (!runtimeInstalled || !featureOptions.followingPinEnabled) {
             cleanupUi();
             return;
@@ -915,6 +923,37 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     function scheduleSync() {
         if (syncFrame || !runtimeInstalled) return;
         syncFrame = window.requestAnimationFrame(syncUi);
+    }
+
+    function syncOfflineRows(rows = []) {
+        // 2026-09-11 /lives expanded following sidebar: offline rows link to /{channelId},
+        // while live rows link to /live/{channelId}; reuse the pinning parser for both states.
+        const next = new Set(
+            featureOptions.followingOfflineHidden ? rows.filter((meta) => !meta.isLive).map((meta) => meta.row) : []
+        );
+        for (const row of hiddenOfflineRows) {
+            if (!next.has(row)) row.removeAttribute(OFFLINE_HIDDEN_ATTR);
+        }
+        hiddenOfflineRows.clear();
+        for (const row of next) {
+            if (row.getAttribute(OFFLINE_HIDDEN_ATTR) !== "1") row.setAttribute(OFFLINE_HIDDEN_ATTR, "1");
+            hiddenOfflineRows.add(row);
+        }
+    }
+
+    function syncUi() {
+        syncFrame = 0;
+        syncPinUi();
+        if (!featureOptions.followingOfflineHidden) {
+            syncOfflineRows();
+            return;
+        }
+        const following = findFollowingList(getSidebar());
+        // Re-read hrefs after pin supplementation; DOM rows may have been reused or replaced.
+        const rows = following
+            ? [...following.rows, ...getDirectSourceRows(following.list).map(getRowMeta).filter(Boolean)]
+            : [];
+        syncOfflineRows(rows);
     }
 
     function setPinnedIds(value, { persisted = false } = {}) {
@@ -1156,6 +1195,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         document.removeEventListener("click", handleClick, true);
         document.removeEventListener("keydown", handleKeyDown, true);
         cleanupUi({ resetMode: true });
+        syncOfflineRows();
         resetSourceSnapshot();
     }
 
@@ -1163,7 +1203,11 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         featureOptions = options;
         applyCheeseFarmOption();
         applySectionOptions();
-        if (featureOptions.followingPinEnabled) installRuntime();
+        if (!featureOptions.followingPinEnabled) {
+            pinModeEnabled = false;
+            resetSourceSnapshot();
+        }
+        if (featureOptions.followingPinEnabled || featureOptions.followingOfflineHidden) installRuntime();
         else uninstallRuntime();
         syncStyle();
     }

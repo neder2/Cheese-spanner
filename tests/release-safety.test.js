@@ -278,8 +278,16 @@ test("following preview hls.light fixture must stay on muxed master audio", () =
 });
 
 test("low-risk fallback reductions stay removed", () => {
-    const videoSearchSource = fs.readFileSync(path.join(repoRoot, "features/videoSearch.js"), "utf8");
-    const categoryToolsSource = fs.readFileSync(path.join(repoRoot, "features/categoryTools.js"), "utf8");
+    const videoSearchSource = [
+        "features/videoSearch.js",
+        "features/videoSearch/model.js",
+        "features/videoSearch/repository.js",
+    ]
+        .map((file) => fs.readFileSync(path.join(repoRoot, file), "utf8"))
+        .join("\n");
+    const categoryToolsSource = ["features/categoryTools.js", "features/categoryTools/repository.js"]
+        .map((file) => fs.readFileSync(path.join(repoRoot, file), "utf8"))
+        .join("\n");
 
     assert.doesNotMatch(videoSearchSource, /COMMENT_MATCH_FALLBACK_TEXT/);
     assert.doesNotMatch(videoSearchSource, /createFallbackPlaybackProgress/);

@@ -1,0 +1,266 @@
+{
+    "date": "2026-09-09T10:12:30.165Z",
+    "node": "v24.18.0",
+    "platform": "win32",
+    "fixture": "synthetic representative metadata, no real networking/decoder/GPU",
+    "samples": [
+        {
+            "scenario": "index-600",
+            "channels": 1,
+            "records": 600,
+            "comments": false,
+            "retainedMiB": 1.1335525512695312,
+            "afterClearMiB": 0.22539520263671875,
+            "cpuMs": 15,
+            "elapsedMs": 10.9574
+        },
+        {
+            "scenario": "index-600",
+            "channels": 1,
+            "records": 600,
+            "comments": false,
+            "retainedMiB": 1.1241989135742188,
+            "afterClearMiB": 0.22454833984375,
+            "cpuMs": 15,
+            "elapsedMs": 8.1021
+        },
+        {
+            "scenario": "index-600",
+            "channels": 1,
+            "records": 600,
+            "comments": false,
+            "retainedMiB": 1.1242904663085938,
+            "afterClearMiB": 0.22454833984375,
+            "cpuMs": 15,
+            "elapsedMs": 6.931699999999999
+        },
+        {
+            "scenario": "index-2400",
+            "channels": 1,
+            "records": 2400,
+            "comments": false,
+            "retainedMiB": 3.8432235717773438,
+            "afterClearMiB": 0.22454833984375,
+            "cpuMs": 16,
+            "elapsedMs": 22.197100000000006
+        },
+        {
+            "scenario": "index-2400",
+            "channels": 1,
+            "records": 2400,
+            "comments": false,
+            "retainedMiB": 3.8431930541992188,
+            "afterClearMiB": 0.22454833984375,
+            "cpuMs": 47,
+            "elapsedMs": 35.0647
+        },
+        {
+            "scenario": "index-2400",
+            "channels": 1,
+            "records": 2400,
+            "comments": false,
+            "retainedMiB": 3.8431015014648438,
+            "afterClearMiB": 0.22454833984375,
+            "cpuMs": 31,
+            "elapsedMs": 22.895000000000003
+        },
+        {
+            "scenario": "index-8x2400",
+            "channels": 8,
+            "records": 19200,
+            "comments": false,
+            "retainedMiB": 28.887161254882812,
+            "afterClearMiB": 0.22063446044921875,
+            "cpuMs": 219,
+            "elapsedMs": 137.2798
+        },
+        {
+            "scenario": "index-8x2400",
+            "channels": 8,
+            "records": 19200,
+            "comments": false,
+            "retainedMiB": 28.885009765625,
+            "afterClearMiB": 0.22055816650390625,
+            "cpuMs": 234,
+            "elapsedMs": 140.31920000000002
+        },
+        {
+            "scenario": "index-8x2400",
+            "channels": 8,
+            "records": 19200,
+            "comments": false,
+            "retainedMiB": 28.883506774902344,
+            "afterClearMiB": 0.21929931640625,
+            "cpuMs": 328,
+            "elapsedMs": 139.8244
+        },
+        {
+            "scenario": "month-60",
+            "channels": 1,
+            "pages": 60,
+            "rawRows": 1800,
+            "retainedMiB": 1.223785400390625,
+            "afterClearMiB": 0.23969268798828125,
+            "cpuMs": 0,
+            "elapsedMs": 95.60159999999999
+        },
+        {
+            "scenario": "month-60",
+            "channels": 1,
+            "pages": 60,
+            "rawRows": 1800,
+            "retainedMiB": 1.223785400390625,
+            "afterClearMiB": 0.23969268798828125,
+            "cpuMs": 0,
+            "elapsedMs": 94.3514
+        },
+        {
+            "scenario": "month-60",
+            "channels": 1,
+            "pages": 60,
+            "rawRows": 1800,
+            "retainedMiB": 1.223785400390625,
+            "afterClearMiB": 0.23969268798828125,
+            "cpuMs": 0,
+            "elapsedMs": 97.8218
+        },
+        {
+            "scenario": "month-8x120",
+            "channels": 8,
+            "pages": 960,
+            "rawRows": 28800,
+            "retainedMiB": 15.542404174804688,
+            "afterClearMiB": 0.2929840087890625,
+            "cpuMs": 109,
+            "elapsedMs": 122.96889999999999
+        },
+        {
+            "scenario": "month-8x120",
+            "channels": 8,
+            "pages": 960,
+            "rawRows": 28800,
+            "retainedMiB": 15.542404174804688,
+            "afterClearMiB": 0.2929840087890625,
+            "cpuMs": 142,
+            "elapsedMs": 124.7662
+        },
+        {
+            "scenario": "month-8x120",
+            "channels": 8,
+            "pages": 960,
+            "rawRows": 28800,
+            "retainedMiB": 15.468948364257812,
+            "afterClearMiB": 0.28829193115234375,
+            "cpuMs": 94,
+            "elapsedMs": 123.5882
+        },
+        {
+            "scenario": "chat-100",
+            "retainedMessages": 100,
+            "incomingMessages": 100,
+            "includesPanel": false,
+            "domEmulation": "jsdom",
+            "publishedMessages": 100,
+            "retainedMiB": 5.5917510986328125,
+            "afterClearMiB": 5.2757415771484375,
+            "cpuMs": 610,
+            "elapsedMs": 365.2477999999992
+        },
+        {
+            "scenario": "chat-100",
+            "retainedMessages": 100,
+            "incomingMessages": 100,
+            "includesPanel": false,
+            "domEmulation": "jsdom",
+            "publishedMessages": 100,
+            "retainedMiB": 5.60662841796875,
+            "afterClearMiB": 5.2747802734375,
+            "cpuMs": 516,
+            "elapsedMs": 318.96609999999987
+        },
+        {
+            "scenario": "chat-100",
+            "retainedMessages": 100,
+            "incomingMessages": 100,
+            "includesPanel": false,
+            "domEmulation": "jsdom",
+            "publishedMessages": 100,
+            "retainedMiB": 5.606529235839844,
+            "afterClearMiB": 5.274681091308594,
+            "cpuMs": 500,
+            "elapsedMs": 307.8457000000001
+        },
+        {
+            "scenario": "chat-200",
+            "retainedMessages": 200,
+            "incomingMessages": 200,
+            "includesPanel": false,
+            "domEmulation": "jsdom",
+            "publishedMessages": 200,
+            "retainedMiB": 6.9530792236328125,
+            "afterClearMiB": 6.261512756347656,
+            "cpuMs": 828,
+            "elapsedMs": 540.6146000000001
+        },
+        {
+            "scenario": "chat-200",
+            "retainedMessages": 200,
+            "incomingMessages": 200,
+            "includesPanel": false,
+            "domEmulation": "jsdom",
+            "publishedMessages": 200,
+            "retainedMiB": 6.93133544921875,
+            "afterClearMiB": 6.260284423828125,
+            "cpuMs": 812,
+            "elapsedMs": 514.8474000000001
+        },
+        {
+            "scenario": "chat-200",
+            "retainedMessages": 200,
+            "incomingMessages": 200,
+            "includesPanel": false,
+            "domEmulation": "jsdom",
+            "publishedMessages": 200,
+            "retainedMiB": 6.946052551269531,
+            "afterClearMiB": 6.2545318603515625,
+            "cpuMs": 671,
+            "elapsedMs": 489.4131
+        },
+        {
+            "scenario": "chat-stream-2000",
+            "retainedMessages": 100,
+            "incomingMessages": 2000,
+            "includesPanel": false,
+            "domEmulation": "jsdom",
+            "publishedMessages": 100,
+            "retainedMiB": 7.2334442138671875,
+            "afterClearMiB": 6.8868255615234375,
+            "cpuMs": 3750,
+            "elapsedMs": 3551.6051000000007
+        },
+        {
+            "scenario": "chat-stream-2000",
+            "retainedMessages": 100,
+            "incomingMessages": 2000,
+            "includesPanel": false,
+            "domEmulation": "jsdom",
+            "publishedMessages": 100,
+            "retainedMiB": 7.597625732421875,
+            "afterClearMiB": 7.2641448974609375,
+            "cpuMs": 3890,
+            "elapsedMs": 3709.0164999999997
+        },
+        {
+            "scenario": "chat-stream-2000",
+            "retainedMessages": 100,
+            "incomingMessages": 2000,
+            "includesPanel": false,
+            "domEmulation": "jsdom",
+            "publishedMessages": 100,
+            "retainedMiB": 7.632789611816406,
+            "afterClearMiB": 7.281883239746094,
+            "cpuMs": 4032,
+            "elapsedMs": 3636.6885999999995
+        }
+    ]
+}

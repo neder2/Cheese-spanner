@@ -6,7 +6,7 @@
  *   기존 그리드 카드를 템플릿으로 복제해 검색 결과 카드를 만들고, 원본 카드는 숨긴다.
  *   댓글 검색은 별도로 영상별 인기 댓글을 지연 로딩하며, 댓글 히트 아이콘과 툴팁을 붙인다.
  *   MutationObserver와 라우트 변경 감지로 SPA 네비게이션에도 검색 바를 재마운트한다.
- * 의존: BetterChzzkSettings(shared/settings.js), BetterChzzk.utils(content.js)
+ * 의존: BetterChzzkSettings, BetterChzzk.utils, BetterChzzk.videoSearchModel/videoSearchRepository
  * 옵션 키: videoSearchEnabled, videoSearchCommentEnabled, videoSearchMaxPages,
  *   videoSearchRenderBatchSize, videoSearchCommentDelayMs, videoSearchCommentMaxVideos,
  *   videoSearchCommentMaxPagesPerVideo
@@ -15,8 +15,8 @@
  *   data-bcvs-comment-video-no
  * 구조:
  *   - 옵션/상태 변수 선언, BetterChzzk.utils 구조분해 (파일 상단)
- *   - 채널 영상 인덱스 구축: fetchPage, extractVideos, buildIndex, applyFilterDuringIndex
- *   - 댓글 검색: fetchCommentPage, hydrateVideoComments, scheduleCommentSearch, runCommentSearch
+ *   - videoSearch/model.js: 영상·댓글 정규화, 검색 일치와 시청 진행률 계산.
+ *   - videoSearch/repository.js: 채널 인덱스·캐시·요청 취소·댓글 검색. 런타임은 변경 콜백으로 렌더링.
  *   - 카드 템플릿 캡처/적용: captureTemplate, buildInjectedCard, applyPlaybackProgress
  *   - 검색 바 UI: buildBar, findFilterPillGroup, syncBarWithHostUi
  *   - 필터 적용/렌더: applyFilter, buildLoadMoreControl, updateStatus
@@ -35,26 +35,15 @@
     const COMMENT_TOOLTIP_ATTR = "data-bcvs-comment-tooltip";
     const COMMENT_VIDEO_ATTR = "data-bcvs-comment-video-no";
 
-    const API_BASE = "https://api.chzzk.naver.com/service/v1/channels";
-    const PAGE_SIZE = 30;
-    const COMMENT_PAGE_SIZE = 30;
-    const COMMENT_FETCH_CONCURRENCY = 3;
     const INDEX_APPLY_INTERVAL_MS = 260;
-    const INDEX_CACHE_TTL_MS = 5 * 60 * 1000;
-    const MAX_INDEX_CACHE_CHANNELS = 8;
 
-    const channelIndex = new Map();
     const loadingReasons = new Set();
     let featureOptions = BetterChzzkSettings.normalizeOptions();
     let currentChannelId = null;
     let currentQuery = "";
     let observer = null;
     let lastUrl = location.href;
-    let activeFetchToken = 0;
-    let commentSearchTimer = 0;
-    let commentSearchToken = 0;
-    let commentSearchRunning = false;
-    let commentSearchPending = false;
+
     let currentGrid = null;
     let cardTemplate = null;
     let lastFilterKey = null;
@@ -67,8 +56,7 @@
     let lastCommentApplyAt = 0;
     let commentApplyTimer = 0;
     let commentAlignFrame = 0;
-    let activeIndexAbortController = null;
-    let activeCommentAbortController = null;
+
     let runtimeInstalled = false;
     let routeListenersInstalled = false;
     let removePageChangeDetection = null;
@@ -80,16 +68,38 @@
         createThrottledDomSync,
         fetchChzzkCommentPage,
         fetchJson,
-        isLastPage,
         normSpace,
         normalizeCompact: normalize,
         onReady,
-        pickArray,
-        pickChzzkVideoNo,
         setLoadingReason,
-        sleep,
         startPageChangeDetection,
     } = BetterChzzk.utils;
+    const { filterVideosByNormalizedQuery, hasCommentMatchNorm, getCommentMatchText, getWatchProgressRatio } =
+        BetterChzzk.videoSearchModel;
+    const repository = BetterChzzk.videoSearchRepository.createRepository({
+        fetchJson,
+        fetchChzzkCommentPage,
+        onLoading: setLoading,
+        onIndexStart: () => {
+            lastIndexApplyAt = 0;
+        },
+        onIndexProgress: applyFilterDuringIndex,
+        onIndexSettled: () => {
+            updateStatus();
+            applyFilter();
+        },
+        onCommentProgress: scheduleCommentSearchFilterApply,
+    });
+    const { shouldStartIndexBuild } = repository;
+    function syncSearchContext() {
+        repository.setContext(currentChannelId, currentQuery, featureOptions);
+    }
+    function clearCommentApplyTimer() {
+        if (commentApplyTimer) {
+            window.clearTimeout(commentApplyTimer);
+            commentApplyTimer = 0;
+        }
+    }
     const scheduleThrottledMount = createThrottledDomSync(runScheduledMount, 160);
 
     function isFeatureEnabled() {
@@ -100,24 +110,8 @@
         return isFeatureEnabled() && featureOptions.videoSearchCommentEnabled;
     }
 
-    function getMaxPages() {
-        return featureOptions.videoSearchMaxPages;
-    }
-
     function getRenderBatchSize() {
         return featureOptions.videoSearchRenderBatchSize;
-    }
-
-    function getCommentDelayMs() {
-        return featureOptions.videoSearchCommentDelayMs;
-    }
-
-    function getCommentMaxVideos() {
-        return featureOptions.videoSearchCommentMaxVideos;
-    }
-
-    function getCommentMaxPagesPerVideo() {
-        return featureOptions.videoSearchCommentMaxPagesPerVideo;
     }
 
     function isVideosTab() {
@@ -421,264 +415,9 @@ body[theme="dark"] #${BAR_ID},
         return grid;
     }
 
-    function pickPublishDate(video) {
-        return video.publishDate || video.publishDateAt || video.liveOpenDate || "";
-    }
-
-    function extractVideos(json) {
-        const content = json?.content ?? json;
-        const arr = pickArray(content);
-        if (!arr) return [];
-        return arr
-            .map((v) => {
-                const videoNo = pickChzzkVideoNo(v);
-                const title = v.videoTitle ?? v.title ?? v.subject ?? "";
-                if (!videoNo || !title) return null;
-                const readCount = v.readCount ?? v.videoReadCount ?? v.viewCount ?? null;
-                const readCountNumber =
-                    readCount === null || readCount === undefined || readCount === "" ? null : Number(readCount);
-                const livePv = v.livePv ?? v.livePlaybackCount ?? v.liveViewCount ?? null;
-                const livePvNumber = livePv === null || livePv === undefined || livePv === "" ? null : Number(livePv);
-                return {
-                    videoNo,
-                    title: String(title),
-                    titleNorm: normalize(title),
-                    thumb: v.thumbnailImageUrl || v.thumbnailUrl || v.thumbnail || "",
-                    duration: typeof v.duration === "number" ? v.duration : null,
-                    publishDate: pickPublishDate(v),
-                    readCount: Number.isFinite(readCountNumber) ? readCountNumber : null,
-                    livePv: Number.isFinite(livePvNumber) ? livePvNumber : null,
-                    watchTimeline: v.watchTimeline || null,
-                    progressRatio: getWatchProgressRatio(v.watchTimeline, v.duration),
-                    type: v.videoType || v.type || "",
-                    commentActive: v.commentActive !== false,
-                    commentTexts: [],
-                    commentNorm: "",
-                    commentFetched: v.commentActive === false,
-                    commentLoading: false,
-                    commentError: null,
-                };
-            })
-            .filter(Boolean);
-    }
-
-    function abortController(controller) {
-        try {
-            controller?.abort();
-        } catch (_) {
-            // Already aborted or unavailable.
-        }
-    }
-
-    function isCompleteIndexFresh(entry, now = Date.now()) {
-        const completedAt = Number(entry?.completedAt) || 0;
-        const age = now - completedAt;
-        return Boolean(entry?.complete && completedAt > 0 && age >= 0 && age < INDEX_CACHE_TTL_MS);
-    }
-
-    function shouldStartIndexBuild(entry) {
-        return !entry || (!isCompleteIndexFresh(entry) && (!entry.loading || entry.loadingToken !== activeFetchToken));
-    }
-
-    function touchChannelIndex(channelId, entry) {
-        if (!channelId || !entry) return;
-        channelIndex.delete(channelId);
-        channelIndex.set(channelId, entry);
-        while (channelIndex.size > MAX_INDEX_CACHE_CHANNELS) {
-            const oldestKey = channelIndex.keys().next().value;
-            if (!oldestKey) break;
-            channelIndex.delete(oldestKey);
-        }
-    }
-
-    async function fetchPage(channelId, page, signal = undefined) {
-        const url = `${API_BASE}/${encodeURIComponent(channelId)}/videos?sortType=LATEST&pagingType=PAGE&page=${page}&size=${PAGE_SIZE}`;
-        return fetchJson(url, {
-            headers: { Accept: "application/json" },
-            signal,
-        });
-    }
-
-    async function fetchCommentPage(videoNo, offset, signal = undefined) {
-        return fetchChzzkCommentPage({
-            limit: COMMENT_PAGE_SIZE,
-            objectId: videoNo,
-            offset,
-            orderType: "POPULAR",
-            signal,
-        });
-    }
-
-    function collectCommentTexts(value, out = []) {
-        if (!value) return out;
-        if (Array.isArray(value)) {
-            for (const item of value) collectCommentTexts(item, out);
-            return out;
-        }
-        if (typeof value !== "object") return out;
-
-        const comment = value.comment;
-        if (comment && typeof comment === "object" && typeof comment.content === "string") {
-            out.push(comment.content);
-        } else if (typeof value.content === "string" && value.commentType) {
-            out.push(value.content);
-        }
-
-        if (Array.isArray(value.replyComments)) collectCommentTexts(value.replyComments, out);
-        return out;
-    }
-
-    function cleanCommentText(text) {
-        return String(text || "")
-            .replace(/\r\n?/g, "\n")
-            .split("\n")
-            .map((line) => line.replace(/[ \t\f\v]+/g, " ").trim())
-            .join("\n")
-            .replace(/\n{3,}/g, "\n\n")
-            .trim();
-    }
-
-    function uniqueCommentTexts(texts) {
-        const seen = new Set();
-        const out = [];
-        for (const text of texts) {
-            const cleaned = cleanCommentText(text);
-            if (!cleaned) continue;
-            const key = normalize(cleaned);
-            if (seen.has(key)) continue;
-            seen.add(key);
-            out.push(cleaned);
-        }
-        return out;
-    }
-
-    function extractCommentTexts(content) {
-        const texts = [];
-        collectCommentTexts(content?.bestComments, texts);
-        collectCommentTexts(content?.comments?.data, texts);
-        return uniqueCommentTexts(texts);
-    }
-
-    async function hydrateVideoComments(video, token, signal = undefined) {
-        if (!isCommentSearchEnabled()) return;
-        if (!video || video.commentFetched || video.commentLoading || video.commentActive === false) return;
-
-        video.commentLoading = true;
-        let shouldMarkFetched = true;
-        try {
-            const texts = [];
-            for (let page = 0; page < getCommentMaxPagesPerVideo(); page++) {
-                if (token !== commentSearchToken || signal?.aborted) {
-                    shouldMarkFetched = false;
-                    break;
-                }
-                const content = await fetchCommentPage(video.videoNo, page * COMMENT_PAGE_SIZE, signal);
-                const pageTexts = extractCommentTexts(content);
-                texts.push(...pageTexts);
-
-                const rows = content?.comments?.data;
-                if (!Array.isArray(rows) || rows.length < COMMENT_PAGE_SIZE) break;
-            }
-            video.commentTexts = uniqueCommentTexts(texts);
-            video.commentNorm = normalize(video.commentTexts.join(" "));
-            video.commentError = null;
-        } catch (e) {
-            if (signal?.aborted || e?.name === "AbortError") {
-                shouldMarkFetched = false;
-                return;
-            }
-            video.commentError = e.message || String(e);
-        } finally {
-            if (shouldMarkFetched) video.commentFetched = true;
-            video.commentLoading = false;
-        }
-    }
-
-    async function buildIndex(channelId) {
-        const existing = channelIndex.get(channelId);
-        if (isCompleteIndexFresh(existing)) {
-            touchChannelIndex(channelId, existing);
-            return existing;
-        }
-        if (existing && existing.loading && existing.loadingToken === activeFetchToken) return existing;
-
-        abortController(activeIndexAbortController);
-        activeIndexAbortController = new AbortController();
-        const signal = activeIndexAbortController.signal;
-        const token = ++activeFetchToken;
-        const entry =
-            existing && !existing.complete
-                ? existing
-                : {
-                      videos: [],
-                      seen: new Set(),
-                      complete: false,
-                      completedAt: 0,
-                      error: null,
-                      loading: false,
-                      loadingToken: 0,
-                  };
-        let reachedBoundary = false;
-        let failed = false;
-        entry.complete = false;
-        entry.completedAt = 0;
-        entry.error = null;
-        entry.failedAt = 0;
-        entry.loading = true;
-        entry.loadingToken = token;
-        touchChannelIndex(channelId, entry);
-
-        setLoading(true);
-        lastIndexApplyAt = 0;
-        try {
-            for (let page = 0; page < getMaxPages(); page++) {
-                if (token !== activeFetchToken) return entry;
-                let json;
-                try {
-                    json = await fetchPage(channelId, page, signal);
-                } catch (e) {
-                    if (signal.aborted || e?.name === "AbortError") return entry;
-                    entry.error = e.message || String(e);
-                    entry.failedAt = Date.now();
-                    failed = true;
-                    break;
-                }
-                if (token !== activeFetchToken || !currentQuery) return entry;
-                const videos = extractVideos(json);
-                if (!videos.length && page === 0) {
-                    entry.error = "no-data";
-                    reachedBoundary = true;
-                    break;
-                }
-                for (const v of videos) {
-                    if (entry.seen.has(v.videoNo)) continue;
-                    entry.seen.add(v.videoNo);
-                    entry.videos.push(v);
-                }
-                applyFilterDuringIndex();
-                if (isLastPage(json, videos, PAGE_SIZE)) {
-                    reachedBoundary = true;
-                    break;
-                }
-                if (page === getMaxPages() - 1) reachedBoundary = true;
-            }
-            entry.complete = !failed && reachedBoundary;
-            entry.completedAt = entry.complete ? Date.now() : 0;
-        } finally {
-            if (entry.loadingToken === token) {
-                entry.loading = false;
-                entry.loadingToken = 0;
-            }
-            if (activeIndexAbortController?.signal === signal) {
-                activeIndexAbortController = null;
-            }
-            if (token === activeFetchToken) {
-                setLoading(false);
-                updateStatus();
-                applyFilter();
-            }
-        }
-        return entry;
+    function buildIndex(channelId) {
+        syncSearchContext();
+        return repository.buildIndex(channelId);
     }
 
     function applyFilterDuringIndex() {
@@ -698,48 +437,19 @@ body[theme="dark"] #${BAR_ID},
     }
 
     function stopActiveFetch() {
-        activeFetchToken++;
-        abortController(activeIndexAbortController);
-        activeIndexAbortController = null;
-        setLoading(false, "index");
-        cancelCommentSearch();
+        syncSearchContext();
+        clearCommentApplyTimer();
+        repository.stopActiveFetch();
     }
 
     function getEntry() {
-        return currentChannelId ? channelIndex.get(currentChannelId) : null;
-    }
-
-    function filterVideosByNormalizedQuery(videos, normalizedQuery) {
-        if (!normalizedQuery) return videos;
-        return videos.filter((v) => v.titleNorm.includes(normalizedQuery) || hasCommentMatchNorm(v, normalizedQuery));
-    }
-
-    function hasCommentMatchNorm(video, normalizedQuery) {
-        return Boolean(normalizedQuery && video?.commentNorm && video.commentNorm.includes(normalizedQuery));
-    }
-
-    function getCommentMatchText(video, query) {
-        const q = normalize(query);
-        if (!q || !Array.isArray(video?.commentTexts)) return "";
-        const text = video.commentTexts.find((item) => normalize(item).includes(q));
-        if (text) return cleanCommentText(text);
-        return "";
+        return currentChannelId ? repository.getIndex(currentChannelId) : null;
     }
 
     function cancelCommentSearch() {
-        commentSearchToken++;
-        commentSearchPending = false;
-        if (commentSearchTimer) {
-            window.clearTimeout(commentSearchTimer);
-            commentSearchTimer = 0;
-        }
-        if (commentApplyTimer) {
-            window.clearTimeout(commentApplyTimer);
-            commentApplyTimer = 0;
-        }
-        abortController(activeCommentAbortController);
-        activeCommentAbortController = null;
-        setLoading(false, "comments");
+        syncSearchContext();
+        clearCommentApplyTimer();
+        repository.cancelCommentSearch();
     }
 
     function applyCommentSearchFilter() {
@@ -770,99 +480,9 @@ body[theme="dark"] #${BAR_ID},
         commentApplyTimer = window.setTimeout(applyCommentSearchFilter, remaining);
     }
 
-    function shouldFetchCommentsForQuery(video, query) {
-        if (!video || !query) return false;
-        if (video.titleNorm.includes(query)) return false;
-        if (video.commentFetched || video.commentLoading || video.commentActive === false) return false;
-        return true;
-    }
-
     function scheduleCommentSearch() {
-        if (!isCommentSearchEnabled()) {
-            cancelCommentSearch();
-            return;
-        }
-
-        const query = normalize(currentQuery);
-        if (!query) {
-            cancelCommentSearch();
-            return;
-        }
-
-        if (commentSearchTimer) window.clearTimeout(commentSearchTimer);
-        const token = ++commentSearchToken;
-        abortController(activeCommentAbortController);
-        activeCommentAbortController = null;
-        commentSearchTimer = window.setTimeout(() => {
-            commentSearchTimer = 0;
-            startCommentSearch(token);
-        }, getCommentDelayMs());
-    }
-
-    function startCommentSearch(token) {
-        if (commentSearchRunning) {
-            commentSearchPending = true;
-            return;
-        }
-        runCommentSearch(token).catch(() => {});
-    }
-
-    async function runCommentSearch(token) {
-        commentSearchRunning = true;
-        abortController(activeCommentAbortController);
-        activeCommentAbortController = new AbortController();
-        const signal = activeCommentAbortController.signal;
-        setLoading(true, "comments");
-        let fetchedCount = 0;
-
-        try {
-            while (
-                token === commentSearchToken &&
-                currentChannelId &&
-                isCommentSearchEnabled() &&
-                fetchedCount < getCommentMaxVideos()
-            ) {
-                const query = normalize(currentQuery);
-                if (!query) break;
-
-                const entry = getEntry();
-                if (!entry) break;
-
-                const remaining = getCommentMaxVideos() - fetchedCount;
-                const targets = entry.videos
-                    .filter((video) => shouldFetchCommentsForQuery(video, query))
-                    .slice(0, remaining);
-
-                if (!targets.length) {
-                    if (entry.loading && !entry.complete) {
-                        await sleep(250);
-                        continue;
-                    }
-                    break;
-                }
-
-                for (let i = 0; i < targets.length; i += COMMENT_FETCH_CONCURRENCY) {
-                    if (token !== commentSearchToken || !normalize(currentQuery)) return;
-                    if (signal.aborted) return;
-                    const batch = targets.slice(i, i + COMMENT_FETCH_CONCURRENCY);
-                    await Promise.all(batch.map((video) => hydrateVideoComments(video, token, signal)));
-                    fetchedCount += batch.length;
-                    scheduleCommentSearchFilterApply();
-                    if (fetchedCount >= getCommentMaxVideos()) break;
-                }
-            }
-        } finally {
-            if (token === commentSearchToken && normalize(currentQuery)) {
-                scheduleCommentSearchFilterApply({ force: true });
-            }
-            if (activeCommentAbortController?.signal === signal) activeCommentAbortController = null;
-            commentSearchRunning = false;
-            setLoading(false, "comments");
-            if ((commentSearchPending || token !== commentSearchToken) && normalize(currentQuery)) {
-                commentSearchPending = false;
-                startCommentSearch(commentSearchToken);
-            }
-        }
+        syncSearchContext();
+        repository.scheduleCommentSearch();
     }
 
     function updateStatus() {
@@ -1052,87 +672,6 @@ body[theme="dark"] #${BAR_ID},
             return replaced === original ? `${countText}회 시청된 라이브` : replaced;
         }
         return `${countText}회 시청된 라이브`;
-    }
-
-    function getNumber(value) {
-        if (value === null || value === undefined || value === "") return null;
-        const n = Number(value);
-        return Number.isFinite(n) ? n : null;
-    }
-
-    function getObjectNumberByKeys(obj, keys, depth = 0) {
-        if (!obj || typeof obj !== "object" || depth > 4) return null;
-        const wanted = new Set(keys.map((k) => k.toLowerCase()));
-
-        for (const [key, value] of Object.entries(obj)) {
-            const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
-            if (wanted.has(normalizedKey)) {
-                const n = getNumber(value);
-                if (n !== null) return n;
-            }
-        }
-
-        for (const value of Object.values(obj)) {
-            if (value && typeof value === "object") {
-                const n = getObjectNumberByKeys(value, keys, depth + 1);
-                if (n !== null) return n;
-            }
-        }
-
-        return null;
-    }
-
-    function getWatchProgressRatio(watchTimeline, duration) {
-        if (!watchTimeline) return null;
-
-        const durationNumber = getNumber(duration);
-        const ratioFromNumber = (value) => {
-            const n = getNumber(value);
-            if (n === null || n <= 0) return null;
-            if (n <= 1) return Math.min(n, 1);
-            if (n <= 100) return Math.min(n / 100, 1);
-            if (durationNumber && durationNumber > 0) return Math.min(n / durationNumber, 1);
-            return null;
-        };
-
-        if (typeof watchTimeline !== "object") return ratioFromNumber(watchTimeline);
-
-        const ratio = getObjectNumberByKeys(watchTimeline, [
-            "progress",
-            "progressrate",
-            "progressratio",
-            "watchratio",
-            "playedratio",
-            "percent",
-            "percentage",
-        ]);
-        const ratioValue = ratioFromNumber(ratio);
-        if (ratioValue !== null) return ratioValue;
-
-        const seconds = getObjectNumberByKeys(watchTimeline, [
-            "watchtime",
-            "watchsecond",
-            "watchseconds",
-            "lastwatchtime",
-            "lastwatchsecond",
-            "lastwatchseconds",
-            "lastplaybacktime",
-            "lastplaybacksecond",
-            "lastplaybackseconds",
-            "lastplaybackposition",
-            "lastplaytime",
-            "currenttime",
-            "currentsecond",
-            "currentseconds",
-            "playtime",
-            "playseconds",
-            "position",
-            "offset",
-            "timeline",
-        ]);
-
-        if (seconds === null || !durationNumber || durationNumber <= 0) return null;
-        return Math.min(seconds / durationNumber, 1);
     }
 
     function getPlaybackStateElements(card) {
@@ -2142,8 +1681,7 @@ body[theme="dark"] #${BAR_ID},
         cardTemplate = null;
         filterPillGroupCache = null;
         lastFilterKey = null;
-        activeFetchToken++;
-        cancelCommentSearch();
+        stopActiveFetch();
     }
 
     function isOurNode(node) {
@@ -2307,8 +1845,7 @@ body[theme="dark"] #${BAR_ID},
         }
 
         if (previousOptions.videoSearchMaxPages !== options.videoSearchMaxPages) {
-            channelIndex.clear();
-            activeFetchToken++;
+            repository.clearIndex();
             lastFilterKey = null;
         }
 
@@ -2319,15 +1856,7 @@ body[theme="dark"] #${BAR_ID},
 
         if (commentLimitsChanged) {
             cancelCommentSearch();
-            for (const entry of channelIndex.values()) {
-                for (const video of entry.videos || []) {
-                    video.commentTexts = [];
-                    video.commentNorm = "";
-                    video.commentFetched = video.commentActive === false;
-                    video.commentLoading = false;
-                    video.commentError = null;
-                }
-            }
+            repository.resetComments();
             lastFilterKey = null;
         }
 

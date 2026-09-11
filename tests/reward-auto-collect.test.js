@@ -192,10 +192,10 @@ async function waitForCondition(predicate, { timeoutMs = 1200, intervalMs = 20 }
     assert.fail("Timed out waiting for reward auto collect condition");
 }
 
-test("reward auto collect clicks a visible enabled 통나무 claim button once", async () => {
+test("reward auto collect clicks a visible verified watch reward button once", async () => {
     const dom = createRewardDom();
     const scope = createRewardScope(dom);
-    const tracked = createTrackedButton(dom, "통나무 받기");
+    const tracked = createScreenshotRewardButton(dom);
 
     scope.appendChild(tracked.button);
 
@@ -447,7 +447,7 @@ test("reward auto collect releases a completed reward after it stays hidden past
 
 test("reward auto collect ignores 통나무 claim buttons outside the live chat scope", async () => {
     const dom = createRewardDom();
-    const tracked = createTrackedButton(dom, "통나무 받기");
+    const tracked = createScreenshotRewardButton(dom);
 
     dom.window.document.body.appendChild(tracked.button);
     await wait(450);
@@ -516,13 +516,13 @@ test("reward auto collect scans only mutated candidates after the initial aside 
 test("reward auto collect does not immediately repeat the same re-rendered reward", async () => {
     const dom = createRewardDom();
     const scope = createRewardScope(dom);
-    const first = createTrackedButton(dom, "통나무 받기");
+    const first = createScreenshotRewardButton(dom);
 
     scope.appendChild(first.button);
     await waitForCondition(() => first.clicks === 1);
 
     first.button.remove();
-    const second = createTrackedButton(dom, "통나무 받기");
+    const second = createScreenshotRewardButton(dom);
     scope.appendChild(second.button);
     await wait(450);
 
@@ -533,7 +533,7 @@ test("reward auto collect does not immediately repeat the same re-rendered rewar
 test("reward auto collect stops observer and pending clicks when the option is disabled", async () => {
     const dom = createRewardDom({}, { clickDelayMs: 500 });
     const scope = createRewardScope(dom);
-    const first = createTrackedButton(dom, "통나무 받기");
+    const first = createScreenshotRewardButton(dom);
     const originalQuerySelectorAll = scope.querySelectorAll.bind(scope);
     let initialFullScans = 0;
     scope.querySelectorAll = (selector) => {
@@ -547,7 +547,7 @@ test("reward auto collect stops observer and pending clicks when the option is d
     dom.window.chrome.testState.emitSyncChange({ rewardAutoCollectEnabled: false });
     await wait(650);
 
-    const second = createTrackedButton(dom, "통나무 받기");
+    const second = createScreenshotRewardButton(dom);
     scope.appendChild(second.button);
     await wait(450);
 
@@ -555,4 +555,70 @@ test("reward auto collect stops observer and pending clicks when the option is d
     assert.equal(second.clicks, 0);
     assert.equal(first.button.hasAttribute("data-bcra-clicked"), false);
     assert.equal(second.button.hasAttribute("data-bcra-clicked"), false);
+});
+
+test("reward auto collect leaves the observed collapsed ranking and verification badges alone", async () => {
+    const dom = createRewardDom();
+    const scope = createRewardScope(dom);
+    // 2026-09-09 Flame live: the collapsed button contains both ranking slides,
+    // including a verified channel badge and the log-power ranking text.
+    const ranking = createTrackedButton(
+        dom,
+        "0등강소연인증 마크치즈60,0001등라이트닝카운텨치즈50,0002등DK99치즈44,8700등섹시여캠이호종통나무 파워4,032"
+    );
+    ranking.button.className = "_ranking_button_wl8bq_141 _is_shrunk_wl8bq_148";
+    ranking.button.setAttribute("aria-expanded", "false");
+    const badge = createTrackedButton(dom, "통나무 인증 마크");
+    const reward = createScreenshotRewardButton(dom);
+    scope.append(ranking.button, badge.button, reward.button);
+    await waitForCondition(() => reward.clicks === 1);
+    await wait(350);
+    assert.equal(ranking.clicks, 0);
+    assert.equal(badge.clicks, 0);
+    assert.equal(ranking.button.hasAttribute("data-bcra-clicked"), false);
+    ranking.button.remove();
+    const remounted = trackButton(ranking.button.cloneNode(true));
+    remounted.button.textContent += " 1등통나무받기통나무 파워3,668";
+    scope.append(remounted.button);
+    await wait(650);
+    assert.equal(remounted.clicks, 0, "a ranking nickname containing claim words must not trigger collection");
+    assert.equal(remounted.button.getAttribute("aria-expanded"), "false");
+});
+
+test("reward auto collect rejects matching words outside verified reward structures", async () => {
+    const dom = createRewardDom();
+    const scope = createRewardScope(dom);
+    const impostors = ["통나무 받기", "1시간 시청 인증", "1시간 시청 통나무 파워 배달 완료!100 받기"].map((text) =>
+        createTrackedButton(dom, text)
+    );
+    const nickname = createScreenshotRewardButton(dom);
+    nickname.button.setAttribute("aria-haspopup", "true");
+    impostors.push(nickname);
+    const dialog = dom.window.document.createElement("div");
+    dialog.setAttribute("role", "alertdialog");
+    dialog.innerHTML =
+        '<ul><li><span>닉네임 1시간 시청 보상</span><button type="button" class="_button_nsb6t_140">100 파워</button></li></ul>';
+    const fakePower = trackButton(dialog.querySelector("button"));
+    impostors.push(fakePower);
+    scope.append(...impostors.slice(0, -1).map((item) => item.button), dialog);
+    const real = createScreenshotRewardButton(dom);
+    scope.append(real.button);
+    await waitForCondition(() => real.clicks === 1);
+    await wait(350);
+    for (const item of impostors) {
+        assert.equal(item.clicks, 0);
+        assert.equal(item.button.hasAttribute("data-bcra-clicked"), false);
+    }
+});
+
+test("reward auto collect revalidates reward structure before a delayed click", async () => {
+    const dom = createRewardDom({}, { clickDelayMs: 500 });
+    const scope = createRewardScope(dom);
+    const reward = createScreenshotRewardButton(dom);
+    scope.append(reward.button);
+    await wait(300);
+    reward.button.querySelector("svg").remove();
+    await wait(650);
+    assert.equal(reward.clicks, 0);
+    assert.equal(reward.button.hasAttribute("data-bcra-clicked"), false);
 });

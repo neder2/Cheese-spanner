@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const { JSDOM } = require("jsdom");
+const { waitForCondition } = require("./helpers/extension-page-fixture.js");
 
 const repoRoot = path.join(__dirname, "..");
 const openDoms = new Set();
@@ -477,7 +478,7 @@ test("following preview does not render untrusted thumbnail URLs", async () => {
 test("following preview prefers low-latency LLHLS in the hover card and reuses cache", async () => {
     const chrome = createFakeChrome();
     const { document, dom, item, link } = createFollowingPreviewDom(chrome);
-    const hlsState = installFakeHls(dom);
+    const hlsState = installFakeHls(dom, { playHandler: () => Promise.resolve() });
     const calls = [];
     let now = Date.parse("2026-06-23T03:02:03Z");
     const playbackJson = JSON.stringify({
@@ -533,8 +534,6 @@ test("following preview prefers low-latency LLHLS in the hover card and reuses c
     await waitForAsyncCallbacks();
 
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    await waitForFollowingPreviewDelay();
-    await waitForAsyncCallbacks();
 
     let tip = document.getElementById("betterchzzk-following-preview");
     assert.ok(tip);
@@ -560,9 +559,7 @@ test("following preview prefers low-latency LLHLS in the hover card and reuses c
     assert.equal(item.getAttribute("data-bcfp-active"), "1");
     assert.equal(calls.length, 0);
 
-    await waitForFollowingPreviewFetchDelay();
-    await waitForAsyncCallbacks();
-    await waitForAsyncCallbacks();
+    await waitForCondition(() => document.getElementById("betterchzzk-following-preview")?.dataset.state === "ready");
 
     tip = document.getElementById("betterchzzk-following-preview");
     assert.equal(tip.dataset.state, "ready");
@@ -588,7 +585,7 @@ test("following preview prefers low-latency LLHLS in the hover card and reuses c
     assert.equal(calls[1].url, "https://api.chzzk.naver.com/service/v1/live/live-789/auto-play-info");
     assert.equal(calls[1].init.credentials, "include");
 
-    await waitForFollowingPlaybackDelay();
+    await waitForCondition(() => hlsState.playCalls.length === 1);
 
     assert.equal(hlsState.instances.length, 1);
     assert.equal(hlsState.instances[0].config.enableWorker, false);
@@ -598,6 +595,7 @@ test("following preview prefers low-latency LLHLS in the hover card and reuses c
     assert.equal(hlsState.instances[0].nextLevel, -1, "preview quality must stay in ABR mode");
     assert.equal(hlsState.loadSources[0], "https://nvelop-livecloud.pstatic.net/chzzk/live/ll.m3u8");
     assert.equal(hlsState.playCalls[0], video);
+    video.dispatchEvent(new dom.window.Event("playing"));
     assert.equal(video.getAttribute("data-bcfp-player-state"), "ready");
 
     now += 2000;
