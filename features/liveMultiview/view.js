@@ -57,12 +57,9 @@
         svg.setAttribute("stroke", "currentColor");
         svg.setAttribute("stroke-width", "1.6");
         for (const [x, y, width, height] of [
-            [3, 3, 11, 11],
-            [17, 3, 4, 4],
-            [17, 10, 4, 4],
-            [3, 17, 4, 4],
-            [10, 17, 4, 4],
-            [17, 17, 4, 4],
+            [3, 5, 11, 14],
+            [17, 5, 4, 5],
+            [17, 14, 4, 5],
         ]) {
             const rect = document.createElementNS(svg.namespaceURI, "rect");
             for (const [name, value] of Object.entries({ x, y, width, height, rx: 0.6 }))

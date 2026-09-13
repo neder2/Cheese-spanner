@@ -106,13 +106,6 @@
                 </div>
             </header>
 
-            <section id="updateNotice" class="update-notice" aria-labelledby="updateNoticeTitle" hidden>
-                <div>
-                    <strong id="updateNoticeTitle"></strong>
-                    <p>치지직 탭을 새로고침해서 업데이트를 적용해 주세요.</p>
-                </div>
-            </section>
-
             <form id="optionsForm" class="settings-form" novalidate>
                 <div class="settings-toolbar">
                     <div class="search-field">
@@ -444,10 +437,6 @@
                                 <input type="checkbox" data-option="skipControlEnabled" />
                             </label>
                             <label class="toggle-row" data-depends-on="skipControlEnabled">
-                                <span><strong>방향키·프레임 이동</strong></span>
-                                <input type="checkbox" data-option="skipKeyboardEnabled" />
-                            </label>
-                            <label class="toggle-row" data-depends-on="skipControlEnabled">
                                 <span><strong>일시정지 중 실시간 복귀 방지</strong></span>
                                 <input type="checkbox" data-option="skipLivePauseResumeEnabled" />
                             </label>
@@ -456,12 +445,16 @@
                                 <input type="checkbox" data-option="timeMachineLagLabelEnabled" />
                             </label>
                             <label class="toggle-row" data-depends-on="skipControlEnabled">
-                                <span><strong>스킵 버튼 표시</strong></span>
+                                <span><strong>스킵 시간 조절 버튼 표시</strong></span>
                                 <input type="checkbox" data-option="skipPillEnabled" />
                             </label>
                             <label class="toggle-row" data-depends-on="skipControlEnabled skipPillEnabled">
-                                <span><strong>라이브에도 스킵 버튼 표시</strong></span>
+                                <span><strong>라이브에도 스킵 시간 조절 버튼 표시</strong></span>
                                 <input type="checkbox" data-option="skipLivePillEnabled" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="skipControlEnabled">
+                                <span><strong>방향키·프레임 이동</strong></span>
+                                <input type="checkbox" data-option="skipKeyboardEnabled" />
                             </label>
                             <div class="number-grid" data-depends-on="skipControlEnabled">
                                 <label
@@ -498,7 +491,8 @@
                                 >
                             </div>
                             <p class="setting-note">
-                                왼쪽·오른쪽 방향키로 스킵하고, 일시정지 중 쉼표·마침표 키로 프레임을 이동합니다.
+                                왼쪽·오른쪽 방향키로 스킵합니다. 일시정지 중에는 쉼표(,)로 이전 프레임, 마침표(.)로 다음
+                                프레임을 봅니다.
                             </p>
                         </div>
                     </details>
@@ -554,7 +548,7 @@
                                     /><em>dB</em></label
                                 >
                                 <label
-                                    ><span>무릎</span
+                                    ><span>압축 전환 폭</span
                                     ><input
                                         type="number"
                                         min="0"
@@ -624,12 +618,12 @@
                                 <input type="checkbox" data-option="holdSpeedEnabled" />
                             </label>
                             <label class="toggle-row">
-                                <span><strong>0.5·2배속 단축키</strong></span>
+                                <span><strong>배속 조절 단축키</strong></span>
                                 <input type="checkbox" data-option="playbackSpeedShortcutsEnabled" />
                             </label>
                             <div class="number-grid shortcut-grid" data-depends-on="playbackSpeedShortcutsEnabled">
                                 <label>
-                                    <span>0.5배속 키</span
+                                    <span>배속 감소 키</span
                                     ><input
                                         type="text"
                                         value="["
@@ -639,12 +633,12 @@
                                         spellcheck="false"
                                         data-option="playbackSpeedHalfKeyCode"
                                         data-shortcut-code
-                                        aria-label="0.5배속 단축키"
+                                        aria-label="배속 감소 단축키"
                                         aria-describedby="playbackSpeedShortcutHelp"
                                     /><em>키</em>
                                 </label>
                                 <label>
-                                    <span>2배속 키</span
+                                    <span>배속 증가 키</span
                                     ><input
                                         type="text"
                                         value="]"
@@ -654,14 +648,31 @@
                                         spellcheck="false"
                                         data-option="playbackSpeedDoubleKeyCode"
                                         data-shortcut-code
-                                        aria-label="2배속 단축키"
+                                        aria-label="배속 증가 단축키"
+                                        aria-describedby="playbackSpeedShortcutHelp"
+                                    /><em>키</em>
+                                </label>
+                                <label>
+                                    <span>1배속 복원 키</span
+                                    ><input
+                                        type="text"
+                                        value="\"
+                                        readonly
+                                        inputmode="none"
+                                        autocomplete="off"
+                                        spellcheck="false"
+                                        data-option="playbackSpeedResetKeyCode"
+                                        data-shortcut-code
+                                        aria-label="1배속 복원 단축키"
                                         aria-describedby="playbackSpeedShortcutHelp"
                                     /><em>키</em>
                                 </label>
                             </div>
                             <p class="setting-note" id="playbackSpeedShortcutHelp">
                                 키 입력칸을 선택한 뒤 영문·숫자·일부 기호 키를 누르세요. 기존 재생 조작과 겹치는 키는
-                                지정할 수 없으며, 적용된 배속 키를 다시 누르면 1배속으로 돌아옵니다.
+                                지정할 수 없습니다. 배속은 0.25배씩 조절하며 최소 0.25배, 최대 4배입니다. 복원 키를
+                                누르면 1배속으로 돌아옵니다. 감소·증가 키를 꾹 누르면 연속 조절합니다. 단축키만 변경할
+                                수 있습니다.
                             </p>
                         </div>
                     </details>
@@ -752,6 +763,15 @@
                                 <input type="checkbox" data-option="chatTimestampEnabled" />
                             </label>
                             <label class="toggle-row">
+                                <span><strong>주간 후원 랭킹 숨기기</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="chatWeeklyRankingHidden"
+                                    aria-describedby="chat-ranking-help"
+                                />
+                            </label>
+                            <p class="setting-note" id="chat-ranking-help">통나무 파워 랭킹도 함께 숨깁니다.</p>
+                            <label class="toggle-row">
                                 <span><strong>채팅방 환영 메시지 제거</strong></span>
                                 <input type="checkbox" data-option="chatWelcomeMessageRemovalEnabled" />
                             </label>
@@ -813,23 +833,6 @@
                                 <span><strong>광고 차단 안내 팝업 숨김</strong></span>
                                 <input type="checkbox" data-option="adblockPopupEnabled" />
                             </label>
-                        </div>
-                    </details>
-                    <details class="option-group" data-option-group="popup-updates" open>
-                        <summary>
-                            <span class="option-group-title"
-                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-refresh" /></svg
-                                ><span>업데이트 알림</span></span
-                            >
-                        </summary>
-                        <div class="option-group-body">
-                            <label class="toggle-row">
-                                <span><strong>업데이트 알림</strong></span>
-                                <input type="checkbox" data-option="updateNotificationsEnabled" />
-                            </label>
-                            <p class="setting-note">
-                                치지직 상단의 업데이트 알림과 확장 아이콘의 NEW 배지를 표시합니다.
-                            </p>
                         </div>
                     </details>
                 </section>
@@ -1067,6 +1070,11 @@
                                 <span><strong>서비스 바로가기 숨기기</strong></span>
                                 <input type="checkbox" data-option="sidebarServiceLinksHidden" />
                             </label>
+                            <label class="toggle-row">
+                                <span><strong>팔로잉 목록 상태 기억</strong></span>
+                                <input type="checkbox" data-option="followingListStateEnabled" />
+                            </label>
+                            <p class="setting-note">목록을 펼치거나 접은 마지막 상태를 유지해요.</p>
                             <label class="toggle-row">
                                 <span><strong>팔로잉 채널 고정</strong></span>
                                 <input type="checkbox" data-option="followingPinEnabled" />
@@ -1475,7 +1483,5 @@
 
         <script src="shared/settings.js"></script>
         <script src="options.js"></script>
-        <script src="shared/updateNotice.js"></script>
-        <script src="optionsUpdateNotice.js"></script>
     </body>
 </html>

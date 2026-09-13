@@ -185,6 +185,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     let sectionFrame = 0;
     const hiddenSections = new Set();
     const hiddenOfflineRows = new Set();
+    let offlineList = null;
     let removeStorageChangeListener = null;
     let syncFrame = 0;
     let runtimeGeneration = 0;
@@ -941,19 +942,63 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         }
     }
 
-    function syncUi() {
-        syncFrame = 0;
-        syncPinUi();
-        if (!featureOptions.followingOfflineHidden) {
-            syncOfflineRows();
-            return;
-        }
-        const following = findFollowingList(getSidebar());
-        // Re-read hrefs after pin supplementation; DOM rows may have been reused or replaced.
+    function syncOfflineVisibility() {
+        const following = featureOptions.followingOfflineHidden ? findFollowingList(getSidebar()) : null;
+        offlineList = following?.list || null;
         const rows = following
             ? [...following.rows, ...getDirectSourceRows(following.list).map(getRowMeta).filter(Boolean)]
             : [];
         syncOfflineRows(rows);
+    }
+
+    function syncMutatedOfflineRows(mutations) {
+        if (!featureOptions.followingOfflineHidden) return;
+        if (!offlineList?.isConnected) {
+            syncOfflineVisibility();
+            return;
+        }
+        const rows = new Set();
+        const addRow = (node) => {
+            let row = node instanceof Element ? node : node?.parentElement;
+            while (row && row !== offlineList && row.parentElement !== offlineList) row = row.parentElement;
+            if (row?.parentElement === offlineList) rows.add(row);
+        };
+        for (const mutation of mutations) {
+            if (mutation.type === "attributes" && mutation.attributeName === "href") addRow(mutation.target);
+            if (mutation.type !== "childList") continue;
+            addRow(mutation.target);
+            if (mutation.target === offlineList) {
+                for (const node of mutation.addedNodes) addRow(node);
+                for (const node of mutation.removedNodes) {
+                    if (node.parentElement === offlineList) continue;
+                    if (hiddenOfflineRows.delete(node)) node.removeAttribute(OFFLINE_HIDDEN_ATTR);
+                }
+            }
+        }
+        // Apply only affected rows during mutation delivery, before the browser paints.
+        // Pin layout still runs in RAF; our marker is not an observed attribute.
+        for (const row of rows) {
+            const meta = getRowMeta(row);
+            if (meta && !meta.isLive) {
+                if (row.getAttribute(OFFLINE_HIDDEN_ATTR) !== "1") row.setAttribute(OFFLINE_HIDDEN_ATTR, "1");
+                hiddenOfflineRows.add(row);
+            } else {
+                hiddenOfflineRows.delete(row);
+                if (row.hasAttribute(OFFLINE_HIDDEN_ATTR)) row.removeAttribute(OFFLINE_HIDDEN_ATTR);
+            }
+        }
+    }
+
+    function observeSidebar() {
+        syncOfflineVisibility();
+        scheduleSync();
+    }
+
+    function syncUi() {
+        syncFrame = 0;
+        syncPinUi();
+        // Re-read hrefs after pin supplementation; DOM rows may have been reused or replaced.
+        syncOfflineVisibility();
     }
 
     function setPinnedIds(value, { persisted = false } = {}) {
@@ -1166,8 +1211,9 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
                 attributeFilter: ["href", "class", "aria-expanded"],
             },
             schedule: scheduleSync,
-            onObserved: scheduleSync,
-            onBodyReady: scheduleSync,
+            onMutations: syncMutatedOfflineRows,
+            onObserved: observeSidebar,
+            onBodyReady: observeSidebar,
         });
         storageGet(storage, STORAGE_KEY)
             .then((data) => {
@@ -1196,6 +1242,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         document.removeEventListener("keydown", handleKeyDown, true);
         cleanupUi({ resetMode: true });
         syncOfflineRows();
+        offlineList = null;
         resetSourceSnapshot();
     }
 

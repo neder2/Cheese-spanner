@@ -85,6 +85,14 @@
             ) {
                 return;
             }
+            if (
+                running &&
+                requested &&
+                routeKey(requested.route) === routeKey(route) &&
+                requested.maxPages === maxPages &&
+                requested.pageDelayMs === pageDelayMs
+            )
+                return;
             requested = { route, maxPages, pageDelayMs };
             start();
         }

@@ -134,7 +134,7 @@
             hasClassPrefix(children[0], "_text_") &&
             WATCH_NOTICE_LABEL_RE.test(compactSignal(getElementText(children[0]))) &&
             children[1].localName === "svg" &&
-            hasClassPrefix(children[1], "icon_power_")
+            (hasClassPrefix(children[1], "_icon_power_") || hasClassPrefix(children[1], "icon_power_"))
         );
     }
 

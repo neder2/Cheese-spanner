@@ -89,6 +89,75 @@ function fixture(fetchJson, callbacks = {}) {
 
 const hydration = { maxPerPass: 3, concurrency: 2, delayMs: 700, clearWhenDone: true, shouldContinue: () => true };
 
+test("global live count shares metadata, deduplicates broadcasts and stops below ten viewers", async () => {
+    const requests = [];
+    const row = (id, viewers) => ({ ...live(String(id)), liveId: id, concurrentUserCount: viewers });
+    const { repository, advance } = fixture((url) => {
+        const pending = deferred();
+        requests.push({ url, ...pending });
+        return pending.promise;
+    });
+    const route = { scope: "global-lives", tab: "lives" };
+    const metadata = repository.ensureMetadata(route);
+    const count = repository.countGlobalLives();
+    const sharedCount = repository.countGlobalLives();
+    assert.equal(requests.length, 1);
+    requests[0].resolve(page([row(1, 20), row(2, 10)], nextCursor));
+    await metadata;
+    await flush();
+    assert.equal(requests.length, 2);
+    requests[1].resolve(page([row(2, 10), row(3, 10), row(4, 9)], { liveId: 4, concurrentUserCount: 9 }));
+    assert.equal((await count).count, 3);
+    assert.equal((await count).totalViewers, 40);
+    assert.equal((await sharedCount).count, 3);
+    assert.equal((await sharedCount).totalViewers, 40);
+    repository.resetMetadata();
+    assert.equal((await repository.countGlobalLives()).count, 3);
+    assert.equal((await repository.countGlobalLives()).totalViewers, 40);
+    assert.equal(requests.length, 2);
+    advance(5 * 60 * 1000);
+    const refreshed = repository.countGlobalLives();
+    assert.equal(requests.length, 3);
+    requests[2].resolve(page([]));
+    assert.equal((await refreshed).count, 0);
+    assert.equal((await refreshed).totalViewers, 0);
+});
+
+test("global viewer total replaces duplicate values and excludes broadcasts below ten", async () => {
+    const row = (id, viewers) => ({ ...live(String(id)), liveId: id, concurrentUserCount: viewers });
+    let requests = 0;
+    const { repository } = fixture(async () =>
+        ++requests === 1
+            ? page([row(1, 50), row(2, 20)], nextCursor)
+            : page([row(1, 40), row(2, 9), row(3, 10), row(4, 0)], nextCursor)
+    );
+    const result = await repository.countGlobalLives();
+    assert.equal(result.count, 2);
+    assert.equal(result.totalViewers, 50);
+    assert.equal(requests, 2, "the existing page walk supplies both aggregates");
+});
+
+test("global live count rejects failures and late responses after route cancellation", async () => {
+    const requests = [];
+    const { repository } = fixture((url, options) => {
+        const pending = deferred();
+        requests.push({ ...options, ...pending });
+        return pending.promise;
+    });
+    const cancelled = repository.countGlobalLives();
+    repository.resetMetadata();
+    assert.equal(requests[0].signal.aborted, true);
+    requests[0].resolve(page([]));
+    await assert.rejects(cancelled, /cancelled/);
+    const failed = repository.countGlobalLives();
+    requests[1].reject(new Error("offline"));
+    await assert.rejects(failed, /unavailable/);
+    repository.resetMetadata();
+    const invalid = repository.countGlobalLives();
+    requests[2].resolve({ code: 500, content: { data: [], page: { next: null } } });
+    await assert.rejects(invalid, /unavailable/);
+});
+
 test("category metadata shares a page request and ignores a late result after a reset to the same route", async () => {
     const requests = [];
     const { repository } = fixture((url, options) => {
@@ -288,7 +357,9 @@ test("category follower hydration respects batch size, concurrency and delayed c
     let nextPasses = 0;
     const env = fixture(
         (url) => {
-            const request = { ...deferred(), id: new URL(url).pathname.split("/").at(-1) };
+            const match = new URL(url).pathname.match(/^\/service\/v1\/channels\/([^/]+)\/followers\/count$/);
+            assert.ok(match, "follower hydration uses the measured count-only endpoint");
+            const request = { ...deferred(), id: match[1] };
             requests.push(request);
             return request.promise;
         },
@@ -394,4 +465,28 @@ test("category metadata search cancellation removes waits and cannot clear a new
     assert.equal(requests, 4);
     assert.equal(await env.nextTimer(), 600);
     assert.equal(controller.isRunning(), false);
+});
+
+test("repeated metadata requests do not restart an identical running search", async () => {
+    const env = fixture(async () => page([live("a")], nextCursor));
+    await env.repository.ensureMetadata(liveRoute);
+    const loading = [];
+    const controller = env.searchController({
+        onApply() {},
+        onLoading: (value) => loading.push(value),
+        isRouteCurrent: () => true,
+        hasScrollRoom: () => true,
+    });
+    const options = { maxPages: 10, pageDelayMs: 80 };
+    controller.request(liveRoute, options);
+    await flush();
+    controller.request(liveRoute, options);
+    controller.request(liveRoute, options);
+    await env.nextTimer();
+    await env.nextTimer();
+    await env.nextTimer();
+    assert.equal(env.repository.metadataState().pagesLoaded, 3);
+    assert.equal(controller.isRunning(), false);
+    assert.deepEqual(loading, [true, false]);
+    controller.reset();
 });

@@ -661,26 +661,6 @@ h1 {
         color 120ms ease;
 }
 
-.update-notice {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 16px;
-    padding: 16px;
-    border: 1px solid var(--success-border);
-    border-radius: 12px;
-    background: var(--success-bg);
-}
-
-.update-notice[hidden] {
-    display: none;
-}
-.update-notice p {
-    margin: 6px 0 0;
-    color: var(--text-muted);
-}
 .quality-select {
     min-width: 92px;
     min-height: 36px;

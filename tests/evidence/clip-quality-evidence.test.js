@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 
-const fixtureDir = path.join(__dirname, "fixtures", "clip-quality");
+const fixtureDir = path.join(__dirname, "..", "fixtures", "clip-quality");
 const cardFixturePath = path.join(fixtureDir, "observed-card-playback-2026-07-14.json");
 const masterFixturePath = path.join(fixtureDir, "observed-master-2026-07-14.m3u8");
 

@@ -108,11 +108,22 @@ function evalRepoScript(dom, ...parts) {
     dom.window.eval(readRepoFile(...parts));
 }
 
-function loadChatTools(dom) {
+function loadChatTools(dom, { onParse } = {}) {
     evalRepoScript(dom, "shared", "settings.js");
     evalRepoScript(dom, "shared", "data.js");
     evalRepoScript(dom, "content.js");
     evalRepoScript(dom, "features", "chatTools", "parser.js");
+    if (onParse) {
+        const namespace = dom.window.BetterChzzk.chatTools;
+        const parser = namespace.parser;
+        namespace.parser = {
+            ...parser,
+            parseChatRow(row) {
+                onParse(row);
+                return parser.parseChatRow(row);
+            },
+        };
+    }
     evalRepoScript(dom, "features", "chatTools", "messageStore.js");
     evalRepoScript(dom, "features", "chatTools", "panel.js");
     evalRepoScript(dom, "features", "chatTools.js");
@@ -1527,8 +1538,15 @@ test("added chat rows are processed without reparsing the whole list", async (t)
     );
     t.after(() => closeChatToolsDom(dom));
 
-    loadChatTools(dom);
+    let oldRowParses = 0;
+    loadChatTools(dom, {
+        onParse: (row) => {
+            if (row.dataset.chatId === "normal-before-add") oldRowParses++;
+        },
+    });
     await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-box"));
+    assert.ok(oldRowParses > 0, "initial rows are parsed before measuring incremental work");
+    oldRowParses = 0;
 
     dom.window.document
         .querySelector(".chat-list")
@@ -1546,6 +1564,7 @@ test("added chat rows are processed without reparsing the whole list", async (t)
     await waitForCondition(() => moderatorRows(dom.window.document).length === 1);
 
     assert.match(moderatorRows(dom.window.document)[0].textContent, /증분 추가 수집/);
+    assert.equal(oldRowParses, 0, "existing rows are not parsed again while collecting the added row");
 });
 
 test("panel toggles do not create a mutation feedback loop on the broad chat root", async (t) => {
@@ -1788,4 +1807,113 @@ test("moderator collection reconnects after a pinned chat root is wholly replace
     const collected = moderatorRows(document)[0];
     assert.equal(collected.querySelector(".bcct-moderator-row__author").textContent, "교체 후 매니저");
     assert.equal(collected.querySelector(".bcct-moderator-row__text").textContent, "교체 후 실제 수집");
+});
+
+test("blind originals retain role words, including exact role names", async (t) => {
+    for (const text of ["운영자 뭐함", "방송자", "manager"]) {
+        const { dom } = createPageDom(
+            '<div class="chat-row" data-chat-id="role-original"><span class="nickname">viewer</span><span class="message">블라인드 처리된 메시지입니다.</span><span class="original-text" hidden>' +
+                text +
+                '</span><span class="nickname" hidden>다른 배지 설명</span></div>'
+        );
+        t.after(() => closeChatToolsDom(dom));
+        loadChatTools(dom);
+        await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+        assert.equal(dom.window.document.querySelector(".bcct-blind-reveal")?.textContent, text);
+    }
+});
+
+test("late original attributes reveal and update only the affected blind row", async (t) => {
+    const { dom } = createPageDom(
+        '<div class="chat-row" data-chat-id="late-original"><span class="nickname">viewer</span><span class="message">블라인드 처리된 메시지입니다.</span></div>'
+    );
+    t.after(() => closeChatToolsDom(dom));
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+    const row = dom.window.document.querySelector('[data-chat-id="late-original"]');
+    row.setAttribute("data-message-original", "뒤늦게 전달된 원문");
+    await waitForCondition(() => row.querySelector(".bcct-blind-reveal")?.textContent === "뒤늦게 전달된 원문");
+    row.setAttribute("data-message-original", "변경된 원문");
+    await waitForCondition(() => row.querySelector(".bcct-blind-reveal")?.textContent === "변경된 원문");
+    row.removeAttribute("data-message-original");
+    await waitForCondition(() => !row.querySelector(".bcct-blind-reveal"));
+    assert.equal(row.querySelector("[data-bcct-blind-masked]"), null);
+});
+
+test("blind originals survive row replacement only with matching message identity and author", async (t) => {
+    for (const variant of ["same", "different-id", "different-author", "no-id", "different-index"]) {
+        const id = variant === "no-id" ? "" : 'data-chat-id="remount-original"';
+        const { dom } = createPageDom(
+            '<div class="chat-row" ' +
+                id +
+                ' data-index="1"><span class="nickname">viewer</span><span class="message">교체 전 원문</span></div>'
+        );
+        t.after(() => closeChatToolsDom(dom));
+        loadChatTools(dom);
+        await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+        const row = dom.window.document.querySelector(".chat-row");
+        const replacement = row.cloneNode(true);
+        replacement.querySelector(".message").textContent = "블라인드 처리된 메시지입니다.";
+        if (variant === "different-id") replacement.dataset.chatId = "another";
+        if (variant === "different-author") replacement.querySelector(".nickname").textContent = "another viewer";
+        if (variant === "different-index") replacement.dataset.index = "2";
+        row.replaceWith(replacement);
+        // Observer sync is throttled at 120ms; wait beyond it for negative assertions.
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        assert.equal(
+            replacement.querySelector(".bcct-blind-reveal")?.textContent || null,
+            variant === "same" ? "교체 전 원문" : null,
+            variant
+        );
+    }
+});
+
+test("original cache is bounded and is cleared on root replacement and runtime reset", async (t) => {
+    const { dom } = createPageDom("");
+    t.after(() => closeChatToolsDom(dom));
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+    const store = dom.window.BetterChzzk.chatTools.createMessageStore();
+    const list = dom.window.document.querySelector(".chat-list");
+    store.adoptRoot(list);
+    const row = dom.window.document.createElement("div");
+    row.innerHTML = '<span class="message"></span>';
+    const textEl = row.firstElementChild;
+    for (let index = 0; index <= 500; index++) {
+        row.dataset.chatId = String(index);
+        store.cacheOriginal(row, { author: "viewer", text: "원문 " + index, textEl, isBlind: false });
+    }
+    const replacement = row.cloneNode(true);
+    const parsed = { author: "viewer", textEl: replacement.firstElementChild, isBlind: true };
+    replacement.dataset.chatId = "0";
+    assert.equal(store.originalText(replacement, parsed), "", "oldest identity is evicted");
+    replacement.dataset.chatId = "500";
+    assert.equal(store.originalText(replacement, parsed), "원문 500");
+    store.resetRoot();
+    store.adoptRoot(list);
+    assert.equal(store.originalText(replacement, parsed), "", "reset cannot reuse the old session");
+    store.cacheOriginal(row, { author: "viewer", text: "새 원문", textEl, isBlind: false });
+    store.adoptRoot(dom.window.document.createElement("div"));
+    assert.equal(store.originalText(replacement, parsed), "", "another root cannot reuse an original");
+});
+
+test("changing only a message ID cannot seed the next identity with the old original", async (t) => {
+    const { dom } = createPageDom(
+        '<div class="chat-row" data-chat-id="old"><span class="message">이전 원문</span></div>'
+    );
+    t.after(() => closeChatToolsDom(dom));
+    loadChatTools(dom);
+    await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
+    const store = dom.window.BetterChzzk.chatTools.createMessageStore();
+    store.adoptRoot(dom.window.document.querySelector(".chat-list"));
+    const row = dom.window.document.querySelector(".chat-row");
+    const parsed = { author: "viewer", text: "이전 원문", textEl: row.firstElementChild, isBlind: false };
+    store.cacheOriginal(row, parsed);
+    row.dataset.chatId = "new";
+    store.cacheOriginal(row, parsed);
+    const replacement = row.cloneNode(true);
+    assert.equal(
+        store.originalText(replacement, { ...parsed, isBlind: true, textEl: replacement.firstElementChild }),
+        ""
+    );
 });

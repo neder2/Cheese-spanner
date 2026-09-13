@@ -637,7 +637,7 @@
             const text = normSpace(candidate);
             if (!text || seen.has(text)) continue;
             seen.add(text);
-            if (isBlindNoticeText(text) || isRoleOnlyText(text)) continue;
+            if (isBlindNoticeText(text)) continue;
             if (author && text === author) continue;
             if (visibleText && text === visibleText) continue;
             if (text.length > best.length) best = text;

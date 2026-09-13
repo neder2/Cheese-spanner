@@ -116,6 +116,11 @@
         let metadataComplete = false;
         let metadataPagesLoaded = 0;
         let metadataLoading = null;
+        let liveViewerCounts = new Map();
+        let liveCountBoundary = false;
+        let liveCountInvalid = false;
+        let liveCountRequest = null;
+        let liveCountCache = null;
         let metadataGeneration = 0;
         let metadataRetryAt = 0;
         let metadataRetryDelayMs = METADATA_RETRY_INITIAL_MS;
@@ -173,9 +178,30 @@
             metadataComplete = false;
             metadataPagesLoaded = 0;
             metadataLoading = null;
+            liveViewerCounts = new Map();
+            liveCountBoundary = false;
+            liveCountInvalid = false;
+            liveCountRequest = null;
         }
 
         function mergeMetadataPage(route, json) {
+            if (route.scope === "global-lives") {
+                const rows = json?.content?.data;
+                if (
+                    (json.code !== undefined && json.code !== 200) ||
+                    !Array.isArray(rows) ||
+                    rows.some((item) => !Number.isFinite(item.concurrentUserCount) || !item.liveId)
+                )
+                    liveCountInvalid = true;
+                for (const item of rows || []) {
+                    if (item.concurrentUserCount >= 10) liveViewerCounts.set(item.liveId, item.concurrentUserCount);
+                    else {
+                        liveViewerCounts.delete(item.liveId);
+                        liveCountBoundary = true;
+                    }
+                }
+                if (!rows?.length) liveCountBoundary = true;
+            }
             clearMetadataRetryState();
             const data = json?.content?.data || [];
             for (const item of data) {
@@ -229,6 +255,41 @@
             if (metadataKey !== key) resetMetadata(key);
             if (metadataMap.size || metadataComplete) return metadataMap;
             return loadMetadataPage(route);
+        }
+
+        async function countGlobalLives() {
+            if (liveCountCache && Date.now() - liveCountCache.measuredAt < 5 * 60 * 1000) return liveCountCache;
+            if (liveCountRequest) return liveCountRequest;
+            const route = { scope: "global-lives", tab: "lives" };
+            const initial = ensureMetadata(route);
+            const generation = metadataGeneration;
+            const pending = (async () => {
+                await initial;
+                const cursors = new Set();
+                for (let pages = 0; pages < 200; pages++) {
+                    if (generation !== metadataGeneration) throw new Error("Live count cancelled");
+                    if (metadataRetryAt || liveCountInvalid) throw new Error("Live count unavailable");
+                    if (liveCountBoundary || metadataComplete) {
+                        liveCountCache = {
+                            count: liveViewerCounts.size,
+                            totalViewers: [...liveViewerCounts.values()].reduce((sum, viewers) => sum + viewers, 0),
+                            measuredAt: Date.now(),
+                        };
+                        return liveCountCache;
+                    }
+                    const key = JSON.stringify(metadataNext);
+                    if (!metadataNext || cursors.has(key)) throw new Error("Invalid live list cursor");
+                    cursors.add(key);
+                    await loadNextMetadata(route);
+                }
+                throw new Error("Live count page limit reached");
+            })();
+            liveCountRequest = pending;
+            try {
+                return await pending;
+            } finally {
+                if (liveCountRequest === pending) liveCountRequest = null;
+            }
         }
 
         async function loadNextMetadata(route) {
@@ -295,7 +356,7 @@
             if (cached.hit) return cached.count;
             if (followerInflight.has(channelId)) return followerInflight.get(channelId).promise;
             const request = { generation: followerGeneration, controller: new AbortController(), promise: null };
-            request.promise = fetchJson(`${API_BASE}/v1/channels/${encodeURIComponent(channelId)}`, {
+            request.promise = fetchJson(`${API_BASE}/v1/channels/${encodeURIComponent(channelId)}/followers/count`, {
                 headers: { Accept: "application/json" },
                 signal: request.controller.signal,
             })
@@ -392,6 +453,7 @@
         }
 
         return Object.freeze({
+            countGlobalLives,
             metadataState,
             isMetadataRetryCoolingDown,
             resetMetadata,

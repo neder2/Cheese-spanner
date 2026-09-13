@@ -33,6 +33,7 @@ function createFixture(t) {
         rect(card.querySelector("a"), 24 + index * 340, 120, 320, 180);
     });
     const requests = [];
+    let scheduledApplies = 0;
     const timers = new Map();
     let timerId = 0;
     const load = (file) => window.eval(fs.readFileSync(path.join(__dirname, "..", file), "utf8"));
@@ -47,7 +48,7 @@ function createFixture(t) {
     Object.assign(window.BetterChzzk.utils, {
         bindFeatureOptions() {},
         createMutationObserverSync: () => ({ disconnect() {} }),
-        createThrottledDomSync: () => () => {},
+        createThrottledDomSync: () => () => scheduledApplies++,
         fetchJson(url, options) {
             return new Promise((resolve) => requests.push({ url, ...options, resolve }));
         },
@@ -70,12 +71,18 @@ function createFixture(t) {
     assert.ok(end >= 0);
     window.eval(`${source.slice(0, end)}
         globalThis.categoryLifecycle = {
+            mountCount: () => {
+                if (!document.getElementById(BAR_ID)) document.body.appendChild(buildToolbar());
+                syncGlobalLiveCount({ scope: "global-lives", tab: "lives" });
+            },
             setFollowerMinimum: (min) => setFilterValue("followers", min),
             remember: (card) => rememberFollowerRefreshRows(getRoute(), [{
                 entry: { card, id: "channel-a", domText: "Alpha" },
                 meta: { channelId: "channel-a", views: 10 }
             }]),
             refresh: refreshFollowerHydrationRows,
+            search: (query) => { mountToolbar(getRoute()); currentQuery = query; },
+            scroll: handleAutoLoadScroll,
             apply: applyTools,
             disable: () => applyOptions(BetterChzzkSettings.normalizeOptions({ categoryToolsEnabled: false })),
             pageChange: handlePageChange
@@ -84,8 +91,139 @@ function createFixture(t) {
     const card = window.document.getElementById("card");
     window.categoryLifecycle.setFollowerMinimum(1000);
     window.categoryLifecycle.remember(card);
-    return { dom, card, requests, timers, hooks: window.categoryLifecycle };
+    return { dom, card, requests, timers, hooks: window.categoryLifecycle, scheduledApplies: () => scheduledApplies };
 }
+
+test("category search displays matching cards while follower badges are still loading", async (t) => {
+    const { dom, card, requests, hooks } = createFixture(t);
+    hooks.search("Alpha");
+    const applying = hooks.apply();
+    requests[0].resolve({
+        content: {
+            data: [
+                { liveTitle: "Alpha", channel: { channelId: "channel-a", channelName: "Alpha" } },
+                { liveTitle: "Beta", channel: { channelId: "channel-b", channelName: "Beta" } },
+            ],
+            page: { next: null },
+        },
+    });
+    let applied = false;
+    void applying.then(() => {
+        applied = true;
+    });
+    for (let i = 0; i < 40; i++) await Promise.resolve();
+    assert.equal(applied, true, "display must not wait for a badge response");
+    assert.equal(card.hasAttribute("data-bcgt-hide"), false);
+    assert.equal(dom.window.document.getElementById("card-b").getAttribute("data-bcgt-hide"), "1");
+    assert.equal(requests.length, 2, "only the matching visible channel needs a follower badge");
+    hooks.disable();
+    requests[1].resolve({ content: { followerCount: 100 } });
+    await applying;
+});
+
+test("category scrolling with elapsed badges enabled does not schedule a full list apply", async (t) => {
+    const env = createFixture(t);
+    env.hooks.setFollowerMinimum(0);
+    Object.defineProperty(env.dom.window.performance, "now", { value: () => 10000 });
+    const before = env.scheduledApplies();
+    env.hooks.scroll();
+    assert.equal(env.scheduledApplies(), before, "scroll should only refresh remembered rows");
+    env.hooks.disable();
+    for (const request of env.requests) request.resolve({ content: { followerCount: 100 } });
+});
+
+test("category follower lookup failures are distinguished from an empty search result", async (t) => {
+    const { dom, requests, hooks } = createFixture(t);
+    hooks.search("");
+    hooks.setFollowerMinimum(1);
+    const applying = hooks.apply();
+    requests[0].resolve({
+        content: {
+            data: [
+                { liveTitle: "Alpha", channel: { channelId: "channel-a" } },
+                { liveTitle: "Beta", channel: { channelId: "channel-b" } },
+            ],
+            page: { next: null },
+        },
+    });
+    await applying;
+    assert.match(dom.window.document.querySelector('[data-bcgt-empty="1"]').textContent, /확인하고/);
+    requests[1].resolve({ content: {} });
+    requests[2].resolve({ content: {} });
+    for (let i = 0; i < 40; i++) await Promise.resolve();
+    await hooks.apply();
+    assert.equal(
+        dom.window.document.querySelector('[data-bcgt-empty="1"]').textContent,
+        "팔로워 정보를 확인하지 못했어요."
+    );
+    assert.equal(requests.length, 3, "failed lookups retain the existing retry cooldown");
+    hooks.disable();
+});
+
+test("category keeps one trailing scroll check and cancels it when disabled", async (t) => {
+    const env = createFixture(t);
+    env.hooks.setFollowerMinimum(0);
+    let now = 10000;
+    Object.defineProperty(env.dom.window.performance, "now", { value: () => now });
+    env.hooks.scroll();
+    now += 100;
+    env.hooks.scroll();
+    env.hooks.scroll();
+    assert.equal(env.timers.size, 1, "the end of a scroll burst must not be dropped");
+    env.hooks.disable();
+    assert.equal(env.timers.size, 0);
+    for (const request of env.requests) request.resolve({ content: { followerCount: 100 } });
+});
+
+test("global count label survives toolbar remount without duplicate requests and cleans up on disable", async (t) => {
+    const { dom, requests, hooks } = createFixture(t);
+    hooks.mountCount();
+    hooks.mountCount();
+    assert.equal(requests.length, 1);
+    assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /집계 중/);
+    requests[0].resolve({ content: { data: [], page: { next: null } } });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /방송 0개/);
+    assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /시청자 합계 0명/);
+    dom.window.document.getElementById("betterchzzk-category-tools").remove();
+    hooks.mountCount();
+    assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /방송 0개/);
+    assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /시청자 합계 0명/);
+    assert.equal(requests.length, 1);
+    hooks.disable();
+    assert.equal(dom.window.document.querySelector(".bcgt-live-count"), null);
+});
+
+test("global count label displays the viewer total with its threshold and counting scope", async (t) => {
+    const { dom, requests, hooks } = createFixture(t);
+    hooks.mountCount();
+    requests[0].resolve({
+        content: {
+            data: [
+                { liveId: 1, concurrentUserCount: 12345, channel: { channelId: "a" } },
+                { liveId: 2, concurrentUserCount: 10, channel: { channelId: "b" } },
+                { liveId: 3, concurrentUserCount: 9, channel: { channelId: "c" } },
+            ],
+            page: { next: null },
+        },
+    });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    const label = dom.window.document.querySelector(".bcgt-live-count");
+    assert.equal(label.textContent, "시청자 10명 이상 · 방송 2개 · 시청자 합계 12,355명");
+    assert.match(label.title, /중복 시청자를 제거한 인원 수는 아니에요/);
+    assert.equal(requests.length, 1);
+    hooks.disable();
+});
+
+test("global count cancellation cannot restore its label after disable", async (t) => {
+    const { dom, requests, hooks } = createFixture(t);
+    hooks.mountCount();
+    hooks.disable();
+    assert.equal(requests[0].signal.aborted, true);
+    requests[0].resolve({ content: { data: [], page: { next: null } } });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    assert.equal(dom.window.document.querySelector(".bcgt-live-count"), null);
+});
 
 test("category follower refresh applies the count to the same card identity", async (t) => {
     const { card, requests, hooks } = createFixture(t);

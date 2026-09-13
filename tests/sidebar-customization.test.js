@@ -43,6 +43,46 @@ test("offline hiding is independent of pinning and follows href reuse, routes, a
     assert.equal(requests, 0);
 });
 
+test("offline rows stay hidden before the next frame during repeated native row replacement", async (t) => {
+    const dom = createSidebarDom(createFakeChrome({ followingOfflineHidden: true }));
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    evalSidebarScripts(dom);
+    await waitForCondition(() => document.getElementById("offlineB").hasAttribute("data-bcsf-offline-hidden"));
+    // Hold the next animation frame: native DOM replacement must be filtered before paint.
+    dom.window.requestAnimationFrame = () => 12345;
+    const list = document.getElementById("followingList");
+    for (let update = 0; update < 3; update += 1) {
+        list.innerHTML =
+            '<li><a href="/live/channel-a">Live</a></li>' +
+            ["b", "c", "d"].map((id) => `<li><a href="/channel-${id}">${id}</a></li>`).join("");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assert.equal(list.firstElementChild.hasAttribute("data-bcsf-offline-hidden"), false);
+        for (const row of Array.from(list.children).slice(1)) {
+            assert.equal(dom.window.getComputedStyle(row).display, "none", "replacement must not wait for RAF");
+        }
+    }
+    const reused = list.lastElementChild;
+    reused.querySelector("a").href = "/live/channel-d";
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(reused.hasAttribute("data-bcsf-offline-hidden"), false);
+    reused.querySelector("a").href = "/channel-d";
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(reused.getAttribute("data-bcsf-offline-hidden"), "1");
+    const liveClone = reused.cloneNode(true);
+    liveClone.querySelector("a").href = "/live/channel-e";
+    list.append(liveClone);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(liveClone.hasAttribute("data-bcsf-offline-hidden"), false);
+
+    const replacementList = list.cloneNode(true);
+    for (const row of replacementList.children) row.removeAttribute("data-bcsf-offline-hidden");
+    list.replaceWith(replacementList);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(replacementList.children[1].getAttribute("data-bcsf-offline-hidden"), "1");
+    assert.equal(replacementList.lastElementChild.hasAttribute("data-bcsf-offline-hidden"), false);
+});
+
 test("offline hiding takes precedence over offline pin order without losing saved pins", async (t) => {
     const pins = ["channel-b"];
     const chrome = createFakeChrome({

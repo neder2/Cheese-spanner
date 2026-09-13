@@ -183,6 +183,24 @@ function wait(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+test("reward auto collect accepts the current native power icon class and still ignores rankings", async () => {
+    const dom = createRewardDom();
+    const scope = createRewardScope(dom);
+    // 2026-09-12 native notice component: _icon_power_1v78k_17.
+    const reward = createScreenshotRewardButton(dom);
+    reward.button.querySelector("svg").setAttribute("class", "_icon_power_1v78k_17");
+    const ranking = createScreenshotRewardButton(dom);
+    ranking.button.querySelector("svg").setAttribute("class", "_icon_power_1v78k_17");
+    ranking.button.classList.add("_ranking_button_wl8bq_141");
+    ranking.button.setAttribute("aria-expanded", "false");
+    scope.append(reward.button, ranking.button);
+    await waitForCondition(() => reward.clicks === 1);
+    await wait(350);
+    assert.equal(reward.clicks, 1);
+    assert.equal(ranking.clicks, 0);
+    assert.equal(ranking.button.hasAttribute("data-bcra-clicked"), false);
+});
+
 async function waitForCondition(predicate, { timeoutMs = 1200, intervalMs = 20 } = {}) {
     const startedAt = Date.now();
     while (Date.now() - startedAt <= timeoutMs) {

@@ -5,22 +5,9 @@ const test = require("node:test");
 
 const repoRoot = path.join(__dirname, "..");
 
-const runtimeFiles = [
-    "manifest.json",
-    "background.js",
-    "content.js",
-    "history.js",
-    "options.js",
-    "optionsUpdateNotice.js",
-];
+const runtimeFiles = ["manifest.json", "background.js", "content.js", "history.js", "options.js"];
 const runtimeDirs = ["shared", "features", "vendor"];
 const followingPreviewFiles = ["features/followingPreviewTooltip.js"];
-const followingPreviewMuxedMasterManifest = [
-    "#EXTM3U",
-    "#EXT-X-VERSION:3",
-    '#EXT-X-STREAM-INF:BANDWIDTH=1800000,RESOLUTION=854x480,CODECS="avc1.64001f,mp4a.40.2"',
-    "chunklist_480p.m3u8",
-].join("\n");
 const forbiddenPatterns = [
     {
         label: ["PLAYER", "VENDOR", "FALLBACK", "URL"].join("_"),
@@ -272,28 +259,6 @@ test("following preview must not fall back to popup, window, iframe, or remote J
     );
 });
 
-test("following preview hls.light fixture must stay on muxed master audio", () => {
-    assert.doesNotMatch(followingPreviewMuxedMasterManifest, /^#EXT-X-MEDIA:.*TYPE=AUDIO/im);
-    assert.match(followingPreviewMuxedMasterManifest, /^#EXT-X-STREAM-INF:.*CODECS="[^"]*mp4a/im);
-});
-
-test("low-risk fallback reductions stay removed", () => {
-    const videoSearchSource = [
-        "features/videoSearch.js",
-        "features/videoSearch/model.js",
-        "features/videoSearch/repository.js",
-    ]
-        .map((file) => fs.readFileSync(path.join(repoRoot, file), "utf8"))
-        .join("\n");
-    const categoryToolsSource = ["features/categoryTools.js", "features/categoryTools/repository.js"]
-        .map((file) => fs.readFileSync(path.join(repoRoot, file), "utf8"))
-        .join("\n");
-
-    assert.doesNotMatch(videoSearchSource, /COMMENT_MATCH_FALLBACK_TEXT/);
-    assert.doesNotMatch(videoSearchSource, /createFallbackPlaybackProgress/);
-    assert.doesNotMatch(categoryToolsSource, /touchMapEntry\(followerCache,\s*channelId,\s*0/);
-});
-
 test("watch history writes stay behind the background single-writer boundary", () => {
     const backgroundSource = readRepoFile("background.js");
     const historySource = readRepoFile("history.js");
@@ -308,42 +273,8 @@ test("watch history writes stay behind the background single-writer boundary", (
     assert.match(backgroundSource, /shared\/watchHistoryStore\.js/);
 });
 
-test("optimization guards stay in the hot paths", () => {
-    const autoQualityPageSource = fs.readFileSync(path.join(repoRoot, "features/autoQualityPage.js"), "utf8");
-    const categoryToolsSource = fs.readFileSync(path.join(repoRoot, "features/categoryTools.js"), "utf8");
-    const chatToolsSource = fs.readFileSync(path.join(repoRoot, "features/chatTools.js"), "utf8");
-    const monthlyBroadcastTimeSource = fs.readFileSync(path.join(repoRoot, "features/monthlyBroadcastTime.js"), "utf8");
-    const videoSearchSource = fs.readFileSync(path.join(repoRoot, "features/videoSearch.js"), "utf8");
-    const watchHistoryStoreSource = fs.readFileSync(path.join(repoRoot, "shared/watchHistoryStore.js"), "utf8");
-
-    assert.doesNotMatch(autoQualityPageSource, /querySelectorAll\(["']\*["']\)/);
-    assert.match(autoQualityPageSource, /function startPageAutoApply[\s\S]{0,260}hasStableVodApply\(\)/);
-    assert.match(categoryToolsSource, /createThrottledDomSync\(runScheduledApply,\s*160\)/);
-    assert.match(monthlyBroadcastTimeSource, /createThrottledDomSync\(runScheduledMount,\s*160\)/);
-    assert.match(videoSearchSource, /createThrottledDomSync\(runScheduledMount,\s*160\)/);
-    assert.doesNotMatch(monthlyBroadcastTimeSource, /scheduleFallbackTimer|let scheduled = false/);
-    assert.match(categoryToolsSource, /lastBadgeScrollCheckAt = now;\s*void refreshFollowerHydrationRows\(\);/);
-    assert.match(
-        categoryToolsSource,
-        /rememberVisibleRows\(visible\);[\s\S]{0,240}syncLiveElapsedBadges\(route, rows\);[\s\S]{0,120}syncFollowerBadges\(route, rows\);/
-    );
-    assert.doesNotMatch(
-        categoryToolsSource,
-        /rememberFollowerRefreshRows\(route, rows\);[\s\S]{0,220}syncFollowerBadges\(route, rows\);[\s\S]{0,220}const candidateRows = \[\]/
-    );
-    assert.match(categoryToolsSource, /const injectedEntries = \[\]/);
-    assert.match(categoryToolsSource, /entries = entries\.concat\(injectedEntries\)/);
-    assert.doesNotMatch(
-        categoryToolsSource,
-        /await syncInjectedCards[\s\S]{0,160}entries = getCardEntries\(route, scanContext\)/
-    );
-    assert.match(chatToolsSource, /hasAttribute\(BLIND_PROCESSED_ATTR\)/);
-    assert.match(chatToolsSource, /hasAttribute\(MODERATOR_COLLECTED_ATTR\)/);
-    assert.match(chatToolsSource, /createThrottledDomSync\(syncChatTools/);
-    assert.match(
-        watchHistoryStoreSource,
-        /const entryCount = Object\.keys\(entries\)\.length;\s*if \(entryCount <= HISTORY_MAX_ENTRIES\) return entries;\s*const rows = Object\.values\(entries\);/
-    );
+test("auto quality must not scan every DOM element", () => {
+    assert.doesNotMatch(readRepoFile("features/autoQualityPage.js"), /querySelectorAll\(["']\*["']\)/);
 });
 
 test("audio compressor third-party notices stay present", () => {

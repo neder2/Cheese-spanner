@@ -7,7 +7,7 @@ const { JSDOM } = require("jsdom");
 const {
     readRepoFile,
     createFakeChrome,
-    createDom,
+    createDom: createExtensionDom,
     evalRepoScript,
     evalFeatureModules,
     dispatch,
@@ -18,14 +18,45 @@ const {
 
 const repoRoot = path.join(__dirname, "..");
 
+// These tests run sequentially; close every fixture even when an assertion fails.
+const openDoms = new Set();
+test.afterEach((t) => {
+    t.after(() => {
+        for (const dom of openDoms) dom.window.close();
+        openDoms.clear();
+    });
+});
+
+function createDom(...args) {
+    const dom = createExtensionDom(...args);
+    openDoms.add(dom);
+    return dom;
+}
+
 function createPageDom(html, url, chrome) {
     const dom = new JSDOM(html, {
         url,
         runScripts: "outside-only",
         pretendToBeVisual: true,
     });
+    openDoms.add(dom);
 
     dom.window.chrome = chrome;
+    const observers = new Set();
+    const NativeObserver = dom.window.MutationObserver;
+    dom.window.MutationObserver = class extends NativeObserver {
+        constructor(callback) {
+            super(callback);
+            observers.add(this);
+        }
+    };
+    const close = dom.window.close.bind(dom.window);
+    dom.window.close = () => {
+        for (const observer of observers) observer.disconnect();
+        observers.clear();
+        openDoms.delete(dom);
+        close();
+    };
     dom.window.fetch = async () => {
         throw new Error("Unexpected network request in page test");
     };
@@ -920,7 +951,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.3.5");
+    assert.equal(manifest.version, "1.3.6");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
@@ -1374,7 +1405,157 @@ test("category filter stays open during automatic refresh and closes only on use
     }
 });
 
-test("category tools hydrates newly visible follower badges on scroll without a full apply pass", async () => {
+test("category injected search results join the current pass without rescanning the card list", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            categoryToolsFollowerBadgesEnabled: true,
+            categoryToolsFollowerFetchDelayMs: 0,
+            categoryToolsLiveElapsedEnabled: true,
+        },
+    });
+    const dom = createGlobalLivesDom(chrome);
+    t.after(() => closeCategoryToolsFixture(dom, chrome));
+    const { document } = dom.window;
+    const response = createGlobalLivesApiMock(
+        ["a", "b", "c"].map((id, index) => ({
+            liveId: 100 + index,
+            openDate: "2026-07-10 10:00:00",
+            channelId: "native-" + id,
+            channelName: "Channel " + id,
+            title: "Match " + id,
+            views: 10,
+        }))
+    );
+    dom.window.fetch = async (url) => ({
+        ok: true,
+        json: async () =>
+            String(url).includes("/v1/channels/") ? { content: { followerCount: 100 } } : response(String(url)),
+    });
+    await loadCategoryToolsPage(dom);
+    await waitForCondition(() => document.querySelectorAll('[data-bcgt-card="1"]').length === 2);
+    await waitForCondition(
+        () => document.querySelector('#live-card-a [data-bcgt-follower-badge="1"]')?.title === "팔로워 100명"
+    );
+    const badgeWrap = document.querySelector('#live-card-a [data-bcgt-follower-wrap="1"]');
+    const queryBadge = badgeWrap.querySelector.bind(badgeWrap);
+    let badgeReads = 0;
+    badgeWrap.querySelector = (selector) => {
+        const result = queryBadge(selector);
+        if (result?.getAttribute("data-bcgt-follower-badge") === "1") badgeReads++;
+        return result;
+    };
+    const thumbnail = document.querySelector("#live-card-a ._thumbnail");
+    const queryElapsed = thumbnail.querySelector.bind(thumbnail);
+    let elapsedReads = 0;
+    thumbnail.querySelector = (selector) => {
+        const result = queryElapsed(selector);
+        if (result?.getAttribute("data-bcgt-live-elapsed-badge") === "1") elapsedReads++;
+        return result;
+    };
+    const grid = document.getElementById("grid");
+    const append = grid.appendChild.bind(grid);
+    let inserted = false;
+    let rescans = 0;
+    grid.appendChild = (node) => {
+        if (node.querySelector?.('[data-bcgt-injected="1"]')) inserted = true;
+        return append(node);
+    };
+    for (const root of [grid, ...grid.querySelectorAll("article")]) {
+        const queryAll = root.querySelectorAll.bind(root);
+        root.querySelectorAll = (selector) => {
+            const result = queryAll(selector);
+            if (inserted && result.length && [...result].every((node) => node.tagName === "A")) rescans++;
+            return result;
+        };
+    }
+    const input = document.querySelector('#betterchzzk-category-tools input[type="search"]');
+    input.value = "Match";
+    dispatch(dom, input, "input");
+    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "3 / 3");
+    assert.equal(inserted, true);
+    assert.equal(elapsedReads, 1, "the elapsed badge is synchronized once per filtered apply");
+    assert.equal(badgeReads, 1, "a filtered apply visits the existing badge once after computing its rows");
+    assert.equal(rescans, 0, "new cards are consumed directly, without another full card enumeration");
+    const injected = document.querySelector('[data-bcgt-injected="1"]');
+    assert.equal(injected.getAttribute("data-bcgt-card-id"), "native-c");
+    assert.notEqual(injected.getAttribute("data-bcgt-hide"), "1");
+});
+
+test("category search bounds injected cards and continues cached results on scroll", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            categoryToolsFollowerBadgesEnabled: false,
+            categoryToolsLiveElapsedEnabled: false,
+        },
+    });
+    const dom = createGlobalLivesDom(chrome);
+    t.after(() => closeCategoryToolsFixture(dom, chrome));
+    const clock = useFakePerformanceNow(dom);
+    const { document } = dom.window;
+    const grid = document.getElementById("grid");
+    setElementRect(grid, { left: 32, top: 280, width: 1120, height: 4000 });
+    setElementRect(document.getElementById("global-section"), { left: 16, top: 96, width: 1160, height: 4600 });
+    const thumbnail =
+        "https://livecloud-thumb.akamaized.net/chzzk/livecloud/KR/stream/26428721/live/21061396/record/58999967/thumbnail/image_{type}.jpg";
+    const response = createGlobalLivesApiMock(
+        Array.from({ length: 150 }, (_, index) => ({
+            liveId: 1000 - index,
+            channelId: index === 0 ? "native-a" : index === 1 ? "native-b" : `match-${index}`,
+            title: `Match ${index}`,
+            views: 20,
+            imageUrl: thumbnail,
+            channelImageUrl: "https://nng-phinf.pstatic.net/MjAy/image.png",
+        }))
+    );
+    let requests = 0;
+    dom.window.fetch = async (url) => {
+        requests++;
+        return { ok: true, json: async () => response(String(url)) };
+    };
+    await loadCategoryToolsPage(dom);
+    await waitForCondition(() => document.querySelector(".bcgt-live-count")?.textContent.includes("150"));
+    const input = document.querySelector('#betterchzzk-category-tools input[type="search"]');
+    input.value = "Match";
+    dispatch(dom, input, "input");
+    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent.endsWith(" / 150"));
+    const injected = () => [...grid.querySelectorAll('[data-bcgt-injected="1"]')];
+    const firstCount = injected().length;
+    assert.ok(firstCount > 0 && firstCount <= 24, `first render should be bounded, got ${firstCount}`);
+    const image = injected()[0].querySelector("a._thumbnail img");
+    assert.equal(image.getAttribute("src"), thumbnail.replace("{type}", "720"));
+    assert.equal(image.getAttribute("loading"), "lazy");
+    assert.equal(image.getAttribute("decoding"), "async");
+    assert.equal(
+        injected()[0].querySelector("img._profile").getAttribute("src"),
+        "https://nng-phinf.pstatic.net/MjAy/image.png?type=f160_160_na"
+    );
+    const requestsBeforeScroll = requests;
+    let previousCount = firstCount;
+    grid.getBoundingClientRect = () => ({
+        left: 32,
+        top: 0,
+        width: 1120,
+        height: 200,
+        bottom: injected().length > previousCount ? 4000 : 200,
+        right: 1152,
+    });
+    while (injected().length < 148) {
+        previousCount = injected().length;
+        clock.advance(1000);
+        dom.window.dispatchEvent(new dom.window.Event("scroll"));
+        await waitForCondition(() => injected().length > previousCount);
+        assert.ok(injected().length <= previousCount + 24, "scroll adds only one bounded render batch");
+    }
+    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "150 / 150");
+    assert.equal(new Set(injected().map((card) => card.getAttribute("data-bcgt-card-id"))).size, 148);
+    assert.equal(requests, requestsBeforeScroll, "cached pages should not be fetched again");
+    input.value = "No matching broadcast";
+    dispatch(dom, input, "input");
+    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent.startsWith("0 /"));
+    assert.equal(injected().length, 0, "a new query discards obsolete extension-owned cards");
+});
+
+test("category tools hydrates newly visible follower badges on scroll without a full apply pass", async (t) => {
     const chrome = createFakeChrome({
         sync: {
             categoryToolsFollowerFetchDelayMs: 0,
@@ -1382,6 +1563,7 @@ test("category tools hydrates newly visible follower badges on scroll without a 
         },
     });
     const dom = createCategoryToolsDom(chrome);
+    t.after(() => closeCategoryToolsFixture(dom, chrome));
     const clock = useFakePerformanceNow(dom);
     const { document } = dom.window;
     const requests = [];
@@ -1433,6 +1615,16 @@ test("category tools hydrates newly visible follower badges on scroll without a 
         false
     );
 
+    let cardScans = 0;
+    for (const root of [document.getElementById("grid"), ...document.querySelectorAll("#grid article")]) {
+        const queryAll = root.querySelectorAll.bind(root);
+        root.querySelectorAll = (selector) => {
+            const result = queryAll(selector);
+            if (result.length && [...result].every((node) => node.tagName === "A")) cardScans++;
+            return result;
+        };
+    }
+
     clock.advance(1000);
     setElementRect(document.getElementById("card-b"), { left: 24, top: 220, width: 320, height: 180 });
     setElementRect(document.querySelector('#card-b a[href="/live/channel-b"]'), {
@@ -1444,12 +1636,103 @@ test("category tools hydrates newly visible follower badges on scroll without a 
     dom.window.dispatchEvent(new dom.window.Event("scroll"));
 
     await waitForCondition(() => requests.some((href) => href.includes("/v1/channels/channel-b")));
+    assert.equal(cardScans, 0, "scroll hydration uses the remembered rows instead of scanning the card list");
     assert.equal(requests.filter((href) => href.includes("/v2/categories/")).length, 1);
     assert.deepEqual(
         requests
             .filter((href) => href.includes("/v1/channels/"))
             .map((href) => decodeURIComponent(href.match(/\/v1\/channels\/([^/?#]+)/)?.[1] || "")),
         ["channel-a", "channel-b"]
+    );
+});
+
+test("category follower filtering continues candidates that do not yet have a DOM card", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            categoryToolsFollowerBadgesEnabled: false,
+            categoryToolsLiveElapsedEnabled: false,
+            categoryToolsFollowerFetchMaxPerPass: 2,
+            categoryToolsFollowerFetchDelayMs: 0,
+        },
+    });
+    const dom = createGlobalLivesDom(chrome);
+    t.after(() => closeCategoryToolsFixture(dom, chrome));
+    const { document } = dom.window;
+    const counts = new Map();
+    const response = createGlobalLivesApiMock(
+        ["native-a", "native-b", "candidate-c"].map((channelId, i) => ({
+            channelId,
+            liveId: 300 - i,
+            title: channelId,
+            views: 10,
+        }))
+    );
+    dom.window.fetch = async (url) => {
+        const match = String(url).match(/\/channels\/([^/]+)\/followers\/count/);
+        if (!match) return { ok: true, json: async () => response(String(url)) };
+        assert.equal(counts.has(match[1]), false, "a channel lookup is not duplicated");
+        return new Promise((resolve) =>
+            counts.set(match[1], (count) =>
+                resolve({ ok: true, json: async () => ({ content: { followerCount: count } }) })
+            )
+        );
+    };
+    await loadCategoryToolsPage(dom);
+    await waitForCondition(() => document.querySelector('[data-filter-min-input="followers"]'));
+    const minimum = document.querySelector('[data-filter-min-input="followers"]');
+    minimum.value = "1";
+    dispatch(dom, minimum, "input");
+    await waitForCondition(() => counts.size === 2);
+    assert.match(document.querySelector('[data-bcgt-empty="1"]').textContent, /확인하고/);
+    counts.get("native-a")(0);
+    counts.get("native-b")(0);
+    await waitForCondition(() => counts.has("candidate-c"));
+    counts.get("candidate-c")(1000);
+    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "1 / 3");
+    assert.ok(document.querySelector('[data-bcgt-injected="1"][data-bcgt-card-id="candidate-c"]'));
+    assert.equal(document.querySelector(".bcgt-status").textContent, "1 / 3");
+    assert.equal(counts.size, 3);
+});
+
+test("category tools respect the currently observed viewer-order tab labels", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            categoryToolsFollowerBadgesEnabled: false,
+            categoryToolsLiveElapsedEnabled: false,
+        },
+    });
+    const dom = createGlobalLivesDom(chrome);
+    t.after(() => closeCategoryToolsFixture(dom, chrome));
+    const { document } = dom.window;
+    const sortRow = document.getElementById("sort-row");
+    sortRow.innerHTML = ["시청자순", "시청자역순", "최신순", "추천순"]
+        .map((label, i) => `<button role="tab" aria-selected="${i === 0}">${label}</button>`)
+        .join("");
+    const tabs = [...sortRow.children];
+    tabs.forEach((tab, i) => setElementRect(tab, { left: 40 + i * 100, top: 215, width: 90, height: 32 }));
+    const response = createGlobalLivesApiMock(
+        ["native-a", "native-b", "native-c"].map((channelId, i) => ({
+            channelId,
+            liveId: 500 - i,
+            title: `Native ${i}`,
+            views: 10,
+        }))
+    );
+    dom.window.fetch = async (url) => ({ ok: true, json: async () => response(String(url)) });
+    await loadCategoryToolsPage(dom);
+    await waitForCondition(() => document.querySelector("#betterchzzk-category-tools input"));
+    const input = document.querySelector("#betterchzzk-category-tools input");
+    input.value = "Native";
+    dispatch(dom, input, "input");
+    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "3 / 3");
+    tabs[0].setAttribute("aria-selected", "false");
+    tabs[1].setAttribute("aria-selected", "true");
+    tabs[1].click();
+    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "2 / 2");
+    assert.equal(
+        document.querySelector('[data-bcgt-injected="1"]'),
+        null,
+        "a popularity API card must not be inserted into the reversed native list"
     );
 });
 
@@ -1641,7 +1924,7 @@ test("global lives duration filter uses openDate and keeps the native list path"
                 document.getElementById("live-card-b").getAttribute("data-bcgt-hide") !== "1" &&
                 missingDateCard.getAttribute("data-bcgt-hide") === "1" &&
                 futureDateCard.getAttribute("data-bcgt-hide") === "1" &&
-                injected.getAttribute("data-bcgt-hide") === "1",
+                !injected.isConnected,
             { timeoutMs: 3000 }
         );
         assert.equal(toolbar.querySelector(".bcgt-filter-label").textContent, "필터 1");
@@ -2462,6 +2745,37 @@ test("volume wheel ignores non-volume areas and disabled option", async () => {
     assert.equal(outsideSlider.value, "70");
 });
 
+test("volume wheel keeps muted playback unchanged outside actual volume controls", async () => {
+    const dom = createPageDom(
+        '<body><div class="pzp pzp-pc pzp-pc--muted"><video></video><div id="canvas"></div><button id="play" type="button">재생</button><button id="sound" type="button" aria-label="음소거 해제"></button></div></body>',
+        "https://chzzk.naver.com/live/test-channel",
+        createFakeChrome()
+    );
+    const { document } = dom.window;
+    const video = document.querySelector("video");
+    for (const element of document.querySelectorAll("body *")) makeVisibleVideo(element);
+    video.volume = 0.6;
+    video.muted = true;
+    evalVolumeWheelScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    for (const target of [video, document.getElementById("canvas"), document.getElementById("play")]) {
+        for (const deltaY of [-100, 100]) {
+            const event = new dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY });
+            target.dispatchEvent(event);
+            assert.equal(event.defaultPrevented, false, "ordinary scrolling stays available while muted");
+            assert.equal(video.muted, true);
+            assert.equal(video.volume, 0.6);
+        }
+    }
+    const volumeWheel = new dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -100 });
+    document.getElementById("sound").dispatchEvent(volumeWheel);
+    assert.equal(volumeWheel.defaultPrevented, true);
+    assert.equal(video.muted, false);
+    assert.ok(Math.abs(video.volume - 0.05) < 1e-6);
+});
+
 test("audio compressor button yields to an existing external cheese-knife compressor", async () => {
     const { dom, document } = createAudioCompressorFixture({ withExternalCompressor: true });
 
@@ -2470,7 +2784,7 @@ test("audio compressor button yields to an existing external cheese-knife compre
     assert.equal(document.getElementById("betterchzzk-audio-compressor"), null);
 });
 
-test("audio compressor button mounts next to the volume button when no external compressor exists", async () => {
+test("audio compressor has its own control after the native volume control", async () => {
     const { dom, document, volumeControl, volumeButton } = createAudioCompressorFixture();
 
     await loadAudioCompressorFeature(dom);
@@ -2478,8 +2792,12 @@ test("audio compressor button mounts next to the volume button when no external 
     await waitForCondition(() => document.getElementById("betterchzzk-audio-compressor"));
     const button = document.getElementById("betterchzzk-audio-compressor");
 
-    assert.equal(button.parentElement, volumeControl);
-    assert.equal(button.previousElementSibling, volumeButton);
+    const control = document.getElementById("betterchzzk-audio-compressor-control");
+    assert.equal(control.previousElementSibling, volumeControl);
+    assert.equal(button.parentElement, control);
+    assert.equal(control.firstElementChild, button);
+    assert.equal(volumeButton.parentElement, volumeControl);
+    assert.ok(button.nextElementSibling.contains(document.getElementById("betterchzzk-audio-compressor-volume")));
     assert.equal(button.classList.contains(["knife", "audio", "compressor"].join("-")), false);
 });
 
@@ -2679,6 +2997,10 @@ test("auto quality reopens VOD page apply when the stable video is replaced", ()
         { id: "1080", label: "1080p", height: 1080, kind: "main", selected: true },
     ];
 
+    const trackCallbacks = new Set();
+    const trackList = createVideoTrackList(tracks, 1);
+    trackList.addEventListener = (_type, callback) => trackCallbacks.add(callback);
+
     video.currentTime = 2;
     makeVisibleVideo(video);
     Object.defineProperty(video, "duration", {
@@ -2687,7 +3009,7 @@ test("auto quality reopens VOD page apply when the stable video is replaced", ()
     });
     Object.defineProperty(video, "videoTracks", {
         configurable: true,
-        get: () => createVideoTrackList(tracks, 1),
+        get: () => trackList,
     });
 
     evalRepoScript(dom, "features", "autoQualityPage.js");
@@ -2704,6 +3026,9 @@ test("auto quality reopens VOD page apply when the stable video is replaced", ()
 
     dom.window.dispatchEvent(new dom.window.Event("betterchzzk:auto-quality:state"));
     assert.equal(scheduledTimers.length, 0);
+    assert.ok(trackCallbacks.size > 0, "quality discovery subscribes to the native track list");
+    for (const callback of trackCallbacks) callback(new dom.window.Event("change"));
+    assert.equal(scheduledTimers.length, 0, "a late track notification does not restart a stable VOD");
 
     const replacement = document.createElement("video");
     replacement.currentTime = 2;
@@ -5267,14 +5592,20 @@ test("volume tooltip covers main volume controls while staying anchored to the s
             clientY: 488,
         })
     );
-    assert.equal(tooltip(), original);
-    for (const id of ["volume-area", "speaker", "speaker-icon", "betterchzzk-audio-compressor"]) {
+    assert.equal(tooltip(), null, "the compressor has its own output percentage");
+    for (const id of ["volume-area", "speaker", "speaker-icon"]) {
         hover(id);
         assert.equal(tooltip(), original, id);
         assert.equal(tooltip().style.left, "240px", id);
         assert.equal(tooltip().style.top, "473px", id);
     }
-    for (const id of ["label-volume", "unrelated", "secondary-volume"]) {
+    for (const id of [
+        "label-volume",
+        "unrelated",
+        "secondary-volume",
+        "betterchzzk-audio-compressor",
+        "betterchzzk-audio-compressor-volume",
+    ]) {
         hover(id);
         assert.equal(tooltip(), null, id);
     }
@@ -5356,10 +5687,12 @@ test("volume tooltip leaves with the native volume region even while the bar is 
         root.dispatchEvent(new dom.window.MouseEvent("mousemove", { bubbles: true, clientX: 240, clientY: y }));
         assert.equal(tooltip(), null, "the collapsing bar must not reopen the tooltip");
     }
-    for (const id of ["speaker", "betterchzzk-audio-compressor", "thumb"]) {
+    for (const id of ["speaker", "thumb"]) {
         hover(id);
         assert.ok(tooltip(), id);
     }
+    hover("betterchzzk-audio-compressor");
+    assert.equal(tooltip(), null, "the playback percentage is not shown over the compressor");
     slider.dispatchEvent(
         new dom.window.MouseEvent("mouseout", {
             bubbles: true,

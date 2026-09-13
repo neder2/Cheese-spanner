@@ -9,7 +9,6 @@ const settings = globalThis.BetterChzzkSettings;
 
 const expectedDefaults = {
     autoQualityEnabled: true,
-    updateNotificationsEnabled: true,
     autoQualityPreferred: "1080p",
     rewardAutoCollectEnabled: true,
     skipControlEnabled: true,
@@ -50,6 +49,7 @@ const expectedDefaults = {
     liveWatchHistoryMinMinutes: 1,
     vodCommentTabsEnabled: true,
     chatTimestampEnabled: false,
+    chatWeeklyRankingHidden: false,
     chatWelcomeMessageRemovalEnabled: false,
     chatToolsShowBlindEnabled: false,
     chatToolsModeratorBoxEnabled: false,
@@ -97,6 +97,7 @@ const expectedDefaults = {
     followingPinEnabled: true,
     followingPinOfflineToTopEnabled: false,
     followingTitleHistoryEnabled: true,
+    followingListStateEnabled: false,
     followingRefreshEnabled: true,
     followingRefreshSeconds: 30,
     liveMultiviewEnabled: false,
@@ -108,6 +109,7 @@ const expectedDefaults = {
     playbackSpeedShortcutsEnabled: true,
     playbackSpeedHalfKeyCode: "BracketLeft",
     playbackSpeedDoubleKeyCode: "BracketRight",
+    playbackSpeedResetKeyCode: "Backslash",
 };
 
 test("settings exports the expected option defaults and key order", () => {
@@ -147,6 +149,7 @@ test("feature count keys are derived from feature toggles only", () => {
         "liveWatchHistoryEnabled",
         "vodCommentTabsEnabled",
         "chatTimestampEnabled",
+        "chatWeeklyRankingHidden",
         "chatWelcomeMessageRemovalEnabled",
         "chatToolsShowBlindEnabled",
         "chatToolsModeratorBoxEnabled",
@@ -161,6 +164,7 @@ test("feature count keys are derived from feature toggles only", () => {
         "followingOfflineHidden",
         "followingPinEnabled",
         "followingTitleHistoryEnabled",
+        "followingListStateEnabled",
         "followingRefreshEnabled",
         "liveMultiviewEnabled",
         "followingPreviewTooltipEnabled",
@@ -288,4 +292,32 @@ test("options.html data-option keys match the settings keys", () => {
 
     assert.equal(dataOptionKeys.length, uniqueDataOptionKeys.length);
     assert.deepEqual(uniqueDataOptionKeys.sort(), [...settings.OPTION_KEYS].sort());
+});
+
+test("speed reset key is customizable and all key pairs reject collisions", () => {
+    assert.equal(settings.normalizeOptions({ playbackSpeedResetKeyCode: "KeyR" }).playbackSpeedResetKeyCode, "KeyR");
+    assert.equal(
+        settings.normalizeOptions({ playbackSpeedResetKeyCode: "KeyC" }).playbackSpeedResetKeyCode,
+        "Backslash"
+    );
+    const keys = ["playbackSpeedHalfKeyCode", "playbackSpeedDoubleKeyCode", "playbackSpeedResetKeyCode"];
+    for (let i = 0; i < keys.length; i++) {
+        for (let j = i + 1; j < keys.length; j++) {
+            const options = settings.normalizeOptions({ [keys[i]]: "KeyQ", [keys[j]]: "KeyQ" });
+            assert.deepEqual(
+                keys.map((key) => options[key]),
+                ["BracketLeft", "BracketRight", "Backslash"]
+            );
+        }
+    }
+    const legacy = settings.normalizeOptions({ playbackSpeedHalfKeyCode: "KeyQ", playbackSpeedDoubleKeyCode: "KeyW" });
+    assert.deepEqual(
+        keys.map((key) => legacy[key]),
+        ["KeyQ", "KeyW", "Backslash"]
+    );
+    const legacyConflict = settings.normalizeOptions({ playbackSpeedHalfKeyCode: "Backslash" });
+    assert.deepEqual(
+        keys.map((key) => legacyConflict[key]),
+        ["BracketLeft", "BracketRight", "Backslash"]
+    );
 });

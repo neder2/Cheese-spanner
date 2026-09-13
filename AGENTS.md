@@ -123,17 +123,19 @@
 Windows PowerShell에서는 실행 정책에 막힐 수 있는 `npm.ps1` 대신 `npm.cmd`로 npm 스크립트를 실행한다.
 
 ```powershell
-npm.cmd test
+npm.cmd run test:all
 npm.cmd run lint
 npm.cmd run format:check
 ```
 
 - 저장소 전체 `format:check`가 범위 밖의 기존 Prettier drift 때문에 실패하면 변경 파일만 `npx.cmd prettier --check path/to/file...`로 다시 검사한다. 전체 검사 실패와 범위 밖 원인을 별도로 보고하고, 이를 해소하려고 범위 밖 파일을 포맷하지 않는다.
 - 구현을 통과시키기 위해 기존 테스트를 삭제하거나 assertion을 느슨하게 만들지 않는다. 의도된 동작 계약이 바뀌어 테스트 수정이 필요하면 변경 이유와 대체 회귀 범위를 함께 보고한다.
-- 테스트는 가능하면 함수명·정확한 소스 배치보다 사용자에게 보이는 동작, 상태 전이, 호출 횟수와 부작용을 검증한다. 다만 원격 코드·권한·패키징·금지 경로·성능 hot path처럼 정적 정책 검사가 목적이면 소스 가드를 유지한다.
-- `npm.cmd test`는 공용 유틸, 옵션·기록 페이지, 주요 feature와 릴리스 안전 규칙을 포함한다.
+- 테스트는 가능하면 함수명·정확한 소스 배치보다 사용자에게 보이는 동작, 상태 전이, 호출 횟수와 부작용을 검증한다. 성능은 중복 예약·요청·파싱·전체 목록 재스캔 여부로 검증하고 코드 간 문자 수나 특정 함수명에 고정하지 않는다. 원격 코드·권한·패키징·금지 경로·단일 writer 경계 같은 정적 정책 검사는 유지한다.
+- `npm.cmd test`는 `tests/*.test.js`의 공용 유틸, 옵션·기록 페이지, 공개 feature와 릴리스 안전 규칙을 실행한다. 미공개 기능의 자동 주입·기존 저장값 활성화 방지도 기본 테스트에 남긴다.
+- `npm.cmd run test:development`는 `tests/development/`의 미공개 기능 동작 검사를, `npm.cmd run test:evidence`는 `tests/evidence/`의 실측 자료 검사를 실행한다. 전체 검증에는 이 두 범주까지 자동 탐색하는 `npm.cmd run test:all`을 사용한다.
 - `tests/release-safety.test.js`는 원문 텍스트를 정규식으로 검사하므로 주석도 실패 원인이 될 수 있다.
-- 일부 성능 가드는 코드 사이 최대 문자 수를 검사한다. hot path를 수정하기 전에 assertion을 읽고, 테스트를 느슨하게 만들지 말고 의도를 보존한다.
+- 중복·구현 결합 검사를 정리할 때는 기존 보호 범위와 대체 동작 테스트를 함께 기록한다. 옵션 UI는 장식용 픽셀값·그룹 개수·배치 순서보다 의존성·접근성·좁은 팝업 사용성을 검증한다.
+- JSDOM fixture는 실패 시에도 종료하고 observer·비동기 작업을 먼저 정리한다. 성공을 기다릴 때는 조건 대기를 우선하고, 동작이 없어야 하는 시간 구간을 확인하는 대기는 근거를 남긴다.
 - `features/followingPreviewTooltip.js`에는 새 창·팝업·iframe·원격 실행 계열 대체 경로를 막는 별도 검사가 있다.
 - `features/volumeTooltip.js`, `features/chatTimestampPage.js`의 cheese-knife/jebibot 표기와 `THIRD_PARTY_NOTICES.md`는 함께 유지한다.
 

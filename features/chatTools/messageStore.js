@@ -21,6 +21,7 @@
         getCacheRowReuseSignal,
     } = namespace.parser;
     const DEFAULT_MAX_MODERATOR_MESSAGES = 100;
+    const MAX_ORIGINAL_MESSAGES = 500;
 
     const MODERATOR_REUSE_STABILITY_CHECK_MS = 100;
 
@@ -39,7 +40,15 @@
         const moderatorTransitionOwnerships = new Map();
         let rowMutationRevisions = new WeakMap();
         const rowIds = new WeakMap();
-        const rowOriginalTexts = new WeakMap();
+        let rowOriginalTexts = new WeakMap();
+        // Same-root remounts may reuse an explicit message ID. Keep only text and identity,
+        // never detached DOM nodes, and discard this bounded cache with the root/session.
+        const originalMessages = new Map();
+
+        function clearOriginalMessages() {
+            rowOriginalTexts = new WeakMap();
+            originalMessages.clear();
+        }
         let nextRowId = 1;
         let nextModeratorTransitionId = 1;
         let nextRecordId = 1;
@@ -89,9 +98,10 @@
             if (parsed.isBlind || !parsed.text || isBlindNoticeText(parsed.text)) return;
             const rowReuseSignal = getCacheRowReuseSignal(row);
             const cached = rowOriginalTexts.get(row);
+            const identity = getCacheMessageIdentity(row, parsed.textEl);
             if (
                 cached &&
-                cached.rowReuseSignal !== rowReuseSignal &&
+                (cached.rowReuseSignal !== rowReuseSignal || cached.identity !== identity) &&
                 cached.author === parsed.author &&
                 cached.sourceTextEl === parsed.textEl &&
                 cached.text === parsed.text
@@ -99,7 +109,15 @@
                 // 재사용 표식만 먼저 바뀐 행을 기존 메시지 상태로 다시 파싱해도
                 // 낡은 원문을 새 행 소유 캐시로 덮어쓰지 않는다.
                 rowOriginalTexts.delete(row);
+                if (cached.identity) originalMessages.delete(cached.identity);
                 return;
+            }
+            if (identity && parsed.author) {
+                originalMessages.delete(identity);
+                originalMessages.set(identity, { author: parsed.author, rowReuseSignal, text: parsed.text });
+                if (originalMessages.size > MAX_ORIGINAL_MESSAGES) {
+                    originalMessages.delete(originalMessages.keys().next().value);
+                }
             }
             rowOriginalTexts.set(row, {
                 author: parsed.author,
@@ -113,9 +131,15 @@
 
         function lookupCachedOriginalText(row, parsed) {
             const cached = rowOriginalTexts.get(row);
-            if (!cached) return "";
-
             const identity = getCacheMessageIdentity(row, parsed.textEl);
+            if (!cached) {
+                const original = identity && originalMessages.get(identity);
+                return original &&
+                    original.author === parsed.author &&
+                    original.rowReuseSignal === getCacheRowReuseSignal(row)
+                    ? original.text
+                    : "";
+            }
             const hasIdentityMismatch = cached.identity || identity ? cached.identity !== identity : false;
             const hasRowReuseSignalMismatch = cached.rowReuseSignal !== getCacheRowReuseSignal(row);
             const hasAuthorMismatch = cached.author && parsed.author && cached.author !== parsed.author;
@@ -132,6 +156,7 @@
                 hasUnownedTextElement
             ) {
                 rowOriginalTexts.delete(row);
+                if (cached.identity) originalMessages.delete(cached.identity);
                 return "";
             }
 
@@ -605,6 +630,7 @@
         }
 
         function clearModeratorState() {
+            clearOriginalMessages();
             clearModeratorTransitions();
             clearModeratorTransitionOwnerships();
             clearModeratorHighlights();
@@ -687,6 +713,7 @@
         function adoptObservedChatRoot(node) {
             const rootChanged = chatRoot !== node;
             if (rootChanged) {
+                clearOriginalMessages();
                 clearModeratorTransitions();
                 clearModeratorTransitionOwnerships();
                 pendingModeratorRemounts = [];
@@ -770,6 +797,7 @@
         }
 
         function resetRoot() {
+            clearOriginalMessages();
             cancelPending();
             chatRoot = null;
         }
@@ -810,6 +838,7 @@
             parseChatMessage,
             collect: collectModeratorMessage,
             cacheOriginal: cacheOriginalMessageText,
+            clearOriginals: clearOriginalMessages,
             originalText: lookupCachedOriginalText,
             removeHighlight: removeModeratorHighlight,
             collectedRow: getCollectedModeratorRow,

@@ -4,7 +4,8 @@
         "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip], [data-bcmv-video]";
     // Skip controls copy native button classes for appearance, including volume classes.
     // Their identity takes precedence over those copied classes in both execution worlds.
-    const NON_VOLUME_CONTROL_SELECTOR = "#betterchzzk-skip-pill, #betterchzzk-live-fast-forward";
+    const NON_VOLUME_CONTROL_SELECTOR =
+        "#betterchzzk-skip-pill, #betterchzzk-live-fast-forward, #betterchzzk-audio-compressor-control, #betterchzzk-audio-compressor";
     const VOLUME_CONTROL_SELECTOR = [
         "[class*='pzp'][class*='volume']",
         ".pzp-pc__volume",
@@ -96,7 +97,8 @@
             return buttonMatch;
         }
 
-        if (el instanceof HTMLElement && isVisible(el) && hasVolumeTerm(el)) return el;
+        // Player state classes such as pzp-pc--muted do not identify a volume control.
+        // Descriptor matching is limited to the interactive controls above.
         return null;
     }
 

@@ -3,9 +3,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const { JSDOM } = require("jsdom");
+const { waitForCondition } = require("../helpers/extension-page-fixture.js");
 
-const contentSource = fs.readFileSync(path.join(__dirname, "../content.js"), "utf8");
-const source = fs.readFileSync(path.join(__dirname, "../features/adAutoSkip.js"), "utf8");
+const contentSource = fs.readFileSync(path.join(__dirname, "../../content.js"), "utf8");
+const source = fs.readFileSync(path.join(__dirname, "../../features/adAutoSkip.js"), "utf8");
 // 2026-09-08 실제 라이브에서 관측한 광고 DOM 구조. 광고 주소와 추적 요소는 제외한다.
 const playerHtml = `<div class="chzzk_player"><div class="pzp-pc">
 <video class="webplayer-internal-video"></video>
@@ -170,7 +171,7 @@ test("initial mount and player replacement reconnect while route exit and disabl
     h.button().addEventListener("click", () => clicks++);
     h.player().classList.add("pzp-pc--adbreak");
     h.button().classList.remove("hide");
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await waitForCondition(() => clicks === 2);
     assert.equal(clicks, 2);
     h.window.history.replaceState(null, "", "/category");
     h.window.dispatchEvent(new h.window.Event("betterchzzk:routechange:detected"));
@@ -196,6 +197,7 @@ test("disabling while waiting for mount or remount never reconnects or clicks la
         h.button().classList.remove("hide");
         h.player().classList.add("pzp-pc--adbreak");
         h.button().addEventListener("click", () => clicks++);
+        // Negative assertion: allow the shared observer reconnect window to elapse.
         await new Promise((resolve) => setTimeout(resolve, 200));
         assert.equal(h.observed.size, 0);
         assert.equal(clicks, 0);

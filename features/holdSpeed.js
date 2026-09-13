@@ -2,16 +2,16 @@
  * features/holdSpeed.js — Space 홀드 임시 2배속과 재생 배속 단축키를 처리한다.
  *
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트. content.js와 skipControl.js 이후에 로드한다.
- * 동작 위치: Space 홀드와 고정 배속 단축키 모두 /live/*와 /video/*.
+ * 동작 위치: Space 홀드와 배속 조절 단축키 모두 /live/*와 /video/*.
  * 하는 일: capture 단계에서 Space를 먼저 소유해 짧은 탭은 keyup 시 재생 상태를 한 번만 토글하고,
- *   350ms 이상 홀드는 기존 재생 상태를 유지한 채 2배속을 적용한다. 별도 사용자 지정 키로 0.5배속과
- *   2배속을 고정 적용하며, keyup, blur, 문서 숨김, 옵션 비활성화, SPA 이탈, 비디오 교체 시 임시
+ *   350ms 이상 홀드는 기존 재생 상태를 유지한 채 2배속을 적용한다. 별도 사용자 지정 키로
+ *   0.25~4배속을 0.25씩 조절하거나 1배속으로 복원하며, keyup, blur, 문서 숨김, 옵션 비활성화, SPA 이탈, 비디오 교체 시 임시
  *   홀드 상태와 안내 오버레이를 정리한다.
  * 의존: BetterChzzkSettings, BetterChzzk.skipControl(markPlaybackToggleIntent),
  *   BetterChzzk.utils(getMainVideoElement, injectStyleOnce, isLiveRoute, isPlaybackRoute,
  *   bindFeatureOptions, startPageChangeDetection).
  * 옵션 키: holdSpeedEnabled, playbackSpeedShortcutsEnabled, playbackSpeedHalfKeyCode,
- *   playbackSpeedDoubleKeyCode.
+ *   playbackSpeedDoubleKeyCode, playbackSpeedResetKeyCode. 기존 Half/Double 저장 키는 감소/증가용으로 유지한다.
  */
 (() => {
     "use strict";
@@ -400,27 +400,29 @@
         syncPressPausedState(press);
     }
 
-    function getSpeedShortcutRate(event) {
+    function getSpeedShortcutAction(event) {
         if (!areSpeedShortcutsEnabled() || !isPlaybackRoute()) return null;
         if (event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return null;
         if (isSpaceConsumerTarget(event.target)) return null;
 
-        const halfKeyCode = featureOptions.playbackSpeedHalfKeyCode;
-        const doubleKeyCode = featureOptions.playbackSpeedDoubleKeyCode;
-        if (!halfKeyCode || halfKeyCode === doubleKeyCode) return null;
-        if (event.code === halfKeyCode) return 0.5;
-        if (event.code === doubleKeyCode) return 2;
+        if (event.code === featureOptions.playbackSpeedHalfKeyCode) return "decrease";
+        if (event.code === featureOptions.playbackSpeedDoubleKeyCode) return "increase";
+        if (event.code === featureOptions.playbackSpeedResetKeyCode) return "reset";
         return null;
     }
 
-    function applySpeedShortcut(event, rate) {
+    function applySpeedShortcut(event, action) {
         const video = getMainVideoElement();
         if (!(video instanceof HTMLVideoElement) || !video.isConnected) return;
 
         stopKeyboardEvent(event);
-        if (event.repeat) return;
-        const nextRate = video.playbackRate === rate ? 1 : rate;
+        if (event.repeat && action === "reset") return;
         if (activePress) cancelActivePress();
+        const nextRate =
+            action === "reset"
+                ? 1
+                : Math.min(4, Math.max(0.25, video.playbackRate + (action === "decrease" ? -0.25 : 0.25)));
+        if (event.repeat && nextRate === video.playbackRate) return;
 
         try {
             video.playbackRate = nextRate;
@@ -436,8 +438,8 @@
             return;
         }
 
-        const rate = getSpeedShortcutRate(event);
-        if (rate !== null) applySpeedShortcut(event, rate);
+        const action = getSpeedShortcutAction(event);
+        if (action !== null) applySpeedShortcut(event, action);
     }
 
     function onKeyUp(event) {

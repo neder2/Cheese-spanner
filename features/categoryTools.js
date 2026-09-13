@@ -6,7 +6,8 @@
  *   - 탭/정렬 줄 옆에 검색 입력과 필터(팔로워 수, 조회수/시청자 수, 진행 시간 범위) 버튼이 있는 툴바를 DOM에 삽입한다.
  *   - Chzzk API(v1/v2 lives, videos, clips, channels)에서 메타데이터를 페이지네이션으로 받아 캐싱하고,
  *     검색어/필터 조건에 맞는 카드를 기존 DOM 카드를 템플릿 삼아 추가로 주입한 뒤 조건에 안 맞는 카드는 숨긴다.
- *   - 화면에 보이는 채널에 대해 팔로워 수를 조회해 프로필 이미지 옆에 배지로 표시하고, 라이브 카드에는
+ *   - 검색 결과 카드는 24개 단위로 추가하고 바닥 근처에서 이어서 표시한다. 썸네일은 브라우저 지연 로딩을 사용한다.
+ *   - 화면 근처 채널의 팔로워 수를 결과 표시와 별도로 조회해 프로필 이미지 옆에 배지로 표시하고, 라이브 카드에는
  *     방송 경과 시간 배지를 썸네일 위에 표시한다(1초 간격 갱신).
  *   - MutationObserver와 scroll 이벤트로 라우트 변화·무한 스크롤을 감지해 자동으로 다음 메타데이터 페이지를 불러온다.
  *   - 옵션 변경 시(bindFeatureOptions) 런타임을 설치/해체하고 배지·툴바 상태를 다시 동기화한다.
@@ -57,6 +58,15 @@
     const FOLLOWER_BADGE_WRAP_ATTR = "data-bcgt-follower-wrap";
     const LIVE_ELAPSED_BADGE_ATTR = "data-bcgt-live-elapsed-badge";
     const LIVE_THUMB_HOST_ATTR = "data-bcgt-live-thumb-host";
+    const GLOBAL_SORT_LABELS = Object.freeze({
+        인기: "인기",
+        시청자순: "인기",
+        시청자역순: "시청자역순",
+        최신: "최신",
+        최신순: "최신",
+        추천: "추천",
+        추천순: "추천",
+    });
     const DEFAULT_PROFILE_IMAGE_URL =
         "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2080%2080'%3E%3Crect%20width='80'%20height='80'%20rx='40'%20fill='%23E7EAEE'/%3E%3Ccircle%20cx='40'%20cy='31'%20r='14'%20fill='%239DA5B6'/%3E%3Cpath%20d='M18%2068c3-15%2015-24%2022-24s19%209%2022%2024'%20fill='%239DA5B6'/%3E%3C/svg%3E";
     let currentQuery = "";
@@ -99,12 +109,16 @@
     let runtimeInstalled = false;
     let globalListenersInstalled = false;
     let removePageChangeDetection = null;
+    let injectedRenderKey = "";
+    let injectedRenderLimit = 24;
+    let pendingInjectedRender = false;
 
     // 검색/필터 자동 탐색은 화면 아래 여유가 생기면 멈췄다가 바닥 근처에서 이어서 탐색한다.
     const AUTO_LOAD_BOTTOM_MARGIN_PX = 600;
     const AUTO_LOAD_SCROLL_THROTTLE_MS = 200;
     const BADGE_SCROLL_THROTTLE_MS = 700;
     const UI_YIELD_EVERY_ITEMS = 24;
+    const INJECTED_RENDER_BATCH_SIZE = 24;
 
     const loadingReasons = new Set();
     const {
@@ -139,11 +153,43 @@
             if (isFeatureEnabled() && routeKey(getRoute()) === key) scheduleApply();
         },
         onHydrationNeeded() {
-            if (isFeatureEnabled() && getRoute()) void refreshFollowerHydrationRows();
+            if (!isFeatureEnabled() || !getRoute()) return;
+            if (hasFollowerFilter()) scheduleApply();
+            else void refreshFollowerHydrationRows();
         },
         onFollowerLoading: (on) => setLoading(on, "followers"),
     });
     const { ensureMetadata, readFollowerCache, clearFollowerHydrationTimer } = dataRepository;
+    let liveCountGeneration = 0;
+    let liveCountStarted = false;
+    let liveCountLabel = "시청자 10명 이상 · 집계 중…";
+    let liveCountTitle = "전체 방송 목록 기준이며 검색·필터와 무관해요.";
+
+    function syncGlobalLiveCount(route) {
+        const label = document.querySelector(`#${BAR_ID} .bcgt-live-count`);
+        if (!label) return;
+        label.hidden = route.scope !== "global-lives";
+        if (label.hidden) return;
+        if (label.textContent !== liveCountLabel) label.textContent = liveCountLabel;
+        if (label.title !== liveCountTitle) label.title = liveCountTitle;
+        if (liveCountStarted) return;
+        liveCountStarted = true;
+        const generation = liveCountGeneration;
+        void dataRepository.countGlobalLives().then(
+            ({ count, totalViewers, measuredAt }) => {
+                if (generation !== liveCountGeneration) return;
+                liveCountLabel = `시청자 10명 이상 · 방송 ${count.toLocaleString("ko-KR")}개 · 시청자 합계 ${totalViewers.toLocaleString("ko-KR")}명`;
+                liveCountTitle = `전체 방송 목록 기준 · ${new Date(measuredAt).toLocaleTimeString("ko-KR")} 집계 · 검색·필터와 무관해요. 방송별 동시 시청자 수의 합계로, 중복 시청자를 제거한 인원 수는 아니에요.`;
+                syncGlobalLiveCount(route);
+            },
+            () => {
+                if (generation !== liveCountGeneration) return;
+                liveCountLabel = "방송 수 집계 실패";
+                liveCountTitle = "전체 방송 탭에 다시 진입하면 집계를 다시 시도해요.";
+                syncGlobalLiveCount(route);
+            }
+        );
+    }
     const metadataSearchController = BetterChzzk.categoryToolsSearchController.createSearchController({
         repository: dataRepository,
         onApply: scheduleApply,
@@ -296,6 +342,9 @@
   max-width:100%;
   margin-left:auto;
 }
+#${BAR_ID}:has(.bcgt-live-count:not([hidden])){flex-wrap:wrap;}
+#${BAR_ID} .bcgt-live-count{max-width:100%;white-space:normal;color:var(--bcgt-text);font-size:12px;line-height:20px;}
+#${BAR_ID} .bcgt-live-count[hidden]{display:none;}
 #${BAR_ID}[data-mode="category-inline"]{
   align-self:center;
   flex:0 0 auto;
@@ -772,9 +821,9 @@
 
     function getGlobalSortControls(context = null) {
         if (context?.globalSortControls) return context.globalSortControls;
-        const labels = ["인기", "최신", "추천"];
+        const labels = Object.keys(GLOBAL_SORT_LABELS);
         const byLabel = new Map();
-        for (const el of document.querySelectorAll("button, a, [role='button']")) {
+        for (const el of document.querySelectorAll("button, a, [role='button'], [role='tab']")) {
             if (!(el instanceof HTMLElement)) continue;
             if (el.closest(`#${BAR_ID}`) || el.closest(`#${MENU_ID}`)) continue;
             const text = normSpace(el.textContent);
@@ -832,7 +881,7 @@
             .map((control) => ({ control, score: activeGlobalSortScore(control) }))
             .filter((entry) => entry.score > 0)
             .sort((a, b) => b.score - a.score)[0]?.control;
-        const key = normSpace((active || controls[0])?.textContent) || "인기";
+        const key = GLOBAL_SORT_LABELS[normSpace((active || controls[0])?.textContent)] || "인기";
         if (context) context.globalSortKey = key;
         return key;
     }
@@ -855,7 +904,7 @@
         let depth = 0;
         while (node instanceof HTMLElement && depth < 5) {
             if (node.closest(`#${BAR_ID}`) || node.closest(`#${MENU_ID}`)) return false;
-            if (["인기", "최신", "추천"].includes(normSpace(node.textContent))) return true;
+            if (Object.hasOwn(GLOBAL_SORT_LABELS, normSpace(node.textContent))) return true;
             node = node.parentElement;
             depth++;
         }
@@ -1320,6 +1369,16 @@
     }
 
     function resetMetadata(key = "") {
+        if (autoLoadScrollTimer) window.clearTimeout(autoLoadScrollTimer);
+        autoLoadScrollTimer = 0;
+        lastAutoLoadScrollCheckAt = 0;
+        injectedRenderKey = "";
+        injectedRenderLimit = INJECTED_RENDER_BATCH_SIZE;
+        pendingInjectedRender = false;
+        liveCountGeneration++;
+        liveCountStarted = false;
+        liveCountLabel = "시청자 10명 이상 · 집계 중…";
+        liveCountTitle = "전체 방송 목록 기준이며 검색·필터와 무관해요.";
         applyGeneration++;
         metadataSearchController.reset();
         dataRepository.resetMetadata(key);
@@ -1358,20 +1417,6 @@
             clearWhenDone,
             shouldContinue: () => force || hasFollowerFilter(),
         };
-    }
-
-    async function hydrateFollowerIds(ids, clearWhenDone = true, force = false) {
-        if (!force && !hasFollowerFilter()) return false;
-        if (force && !hasFollowerFilter() && !areFollowerBadgesEnabled()) return false;
-        return dataRepository.hydrateFollowers(ids, getFollowerHydrationOptions(clearWhenDone, force));
-    }
-
-    async function hydrateFollowers(rows, clearWhenDone = true, force = false) {
-        return hydrateFollowerIds(
-            rows.map((row) => row.meta?.channelId),
-            clearWhenDone,
-            force
-        );
     }
 
     function rememberFollowerRefreshRows(route, rows) {
@@ -1413,14 +1458,14 @@
     async function refreshFollowerHydrationRows() {
         const route = getRoute();
         const rememberedRows = getRememberedFollowerRefreshRows(route);
-        if (!route || !rememberedRows.length) {
-            scheduleApply();
-            return;
-        }
+        if (!route || !rememberedRows.length) return;
         if (!hasFollowerFilter() && !areFollowerBadgesEnabled()) return;
-        const rows = hasFollowerFilter() ? rememberedRows : getRowsNearViewport(rememberedRows);
+        const rows = (hasFollowerFilter() ? rememberedRows : getRowsNearViewport(rememberedRows)).filter(
+            (row) => !readFollowerCache(row.meta.channelId).hit
+        );
         if (!rows.length) return;
         const generation = applyGeneration;
+        const filterKey = getActiveFilterKey();
         const refreshed = await dataRepository.refreshFollowers(
             rows.map((row) => row.meta?.channelId),
             getFollowerHydrationOptions(true, true)
@@ -1428,13 +1473,34 @@
         if (
             !refreshed ||
             generation !== applyGeneration ||
+            filterKey !== getActiveFilterKey() ||
             !isFeatureEnabled() ||
             routeKey(getRoute()) !== routeKey(route)
         )
             return;
-        const currentRows = rows.filter((row) => isCurrentFollowerRow(route, row));
+        const currentRows = rows.filter(
+            (row) => readFollowerCache(row.meta.channelId).hit && isCurrentFollowerRow(route, row)
+        );
         syncFollowerBadges(route, currentRows);
         syncFollowerVisibilityRows(currentRows);
+    }
+
+    function hydrateFilteredCandidates(route, metas, isCurrent) {
+        const ids = [...new Set(metas.map((meta) => meta?.channelId).filter(Boolean))].filter(
+            (id) => !readFollowerCache(id).hit
+        );
+        if (!ids.length) return false;
+        void dataRepository.refreshFollowers(ids, getFollowerHydrationOptions(true, false)).then((refreshed) => {
+            // A cooldown can finish without fetching anything. Only new answers require another apply.
+            if (
+                refreshed &&
+                isCurrent() &&
+                routeKey(getRoute()) === routeKey(route) &&
+                ids.some((id) => readFollowerCache(id).hit)
+            )
+                scheduleApply();
+        });
+        return true;
     }
 
     function isCurrentFollowerRow(route, row) {
@@ -1458,14 +1524,6 @@
             if (rect.width <= 0 || rect.height <= 0) return false;
             return rect.bottom >= viewTop && rect.top <= viewBottom;
         });
-    }
-
-    async function hydrateMetadataFollowers(metas, clearWhenDone = true, force = false) {
-        return hydrateFollowerIds(
-            metas.map((meta) => meta?.channelId),
-            clearWhenDone,
-            force
-        );
     }
 
     function buildSearchText(row) {
@@ -1642,13 +1700,6 @@
         if (!passesViewFilter(meta) && !isViewFilterSnapshotId(meta?.id)) return false;
         if (!passesDurationFilter(meta)) return false;
         return passesFollowerFilter(meta);
-    }
-
-    function isFollowerCandidate(meta) {
-        if (hasFollowerFilter()) {
-            return Boolean(meta?.channelId);
-        }
-        return false;
     }
 
     function buildFilterOptionButtons(kind, unit) {
@@ -1925,6 +1976,9 @@
             }
             return false;
         }
+        img.setAttribute("loading", "lazy");
+        img.setAttribute("decoding", "async");
+        img.removeAttribute("fetchpriority");
         img.setAttribute("src", normalizedUrl);
         img.removeAttribute("srcset");
         for (const attr of ["data-src", "data-original", "data-lazy-src", "data-srcset", "data-lazy-srcset"]) {
@@ -2058,7 +2112,14 @@
     }
 
     function profileImageUrl(meta) {
-        return normalizeImageUrl(meta?.channelImageUrl) || DEFAULT_PROFILE_IMAGE_URL;
+        const url = normalizeImageUrl(meta?.channelImageUrl);
+        if (!url) return DEFAULT_PROFILE_IMAGE_URL;
+        const parsed = new URL(url);
+        // Match the measured native avatar size instead of decoding multi-megapixel profile originals.
+        if (parsed.hostname === "nng-phinf.pstatic.net" && !parsed.searchParams.has("type")) {
+            parsed.searchParams.set("type", "f160_160_na");
+        }
+        return parsed.href;
     }
 
     function updateProfileImage(pairs, card, thumbImg, meta) {
@@ -2636,6 +2697,7 @@
     }
 
     async function syncInjectedCards(route, grid, entries, metadata, query, isCurrent) {
+        pendingInjectedRender = false;
         if (!isAutoLoadActive()) return [];
 
         if (!canUseMetadataForCurrentList(route)) return [];
@@ -2646,11 +2708,16 @@
         const renderedIds = new Set(entries.map((entry) => entry.id));
         const fragment = document.createDocumentFragment();
         const injectedEntries = [];
+        const existingCount = entries.filter((entry) => entry.card.getAttribute(INJECTED_ATTR) === "1").length;
         let builtCount = 0;
 
         for (const meta of metadata.values()) {
             if (!meta.id || renderedIds.has(meta.id)) continue;
             if (!passesMetaFilters(meta, query)) continue;
+            if (existingCount + builtCount >= injectedRenderLimit) {
+                pendingInjectedRender = true;
+                break;
+            }
             const card = buildInjectedCard(route, template, meta);
             fragment.appendChild(card);
             injectedEntries.push(createCardEntry(card, meta.id, meta));
@@ -2857,7 +2924,7 @@
         if (menu && event?.target instanceof Node && menu.contains(event.target)) return;
         const now = performance.now();
         if (now > ignoreScrollTrackingUntil) lastUserScrollAt = now;
-        positionMenu();
+        if (menu.getAttribute("data-open") === "1") scheduleMenuPosition();
     }
 
     function handleViewportChange() {
@@ -2930,6 +2997,7 @@
         bar.setAttribute("data-has-query", "0");
         bar.setAttribute("data-menu-open", "0");
         bar.innerHTML = `
+<span class="bcgt-live-count" hidden aria-live="polite"></span>
 <div class="bcgt-input-wrap">
   <svg class="bcgt-icon" viewBox="0 0 24 24" aria-hidden="true">
     <path fill="currentColor" d="M10 4a6 6 0 1 0 3.74 10.7l4.28 4.29 1.42-1.42-4.29-4.28A6 6 0 0 0 10 4Zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/>
@@ -3101,14 +3169,14 @@
         return true;
     }
 
-    function ensureEmptyMessage(grid) {
+    function ensureEmptyMessage(grid, message = "조건에 맞는 결과가 없습니다.") {
         let empty = grid.querySelector(`:scope > [${EMPTY_ATTR}="1"]`);
         if (!empty) {
             empty = document.createElement("div");
             empty.setAttribute(EMPTY_ATTR, "1");
-            empty.textContent = "조건에 맞는 결과가 없습니다.";
             grid.appendChild(empty);
         }
+        if (empty.textContent !== message) empty.textContent = message;
         return empty;
     }
 
@@ -3127,6 +3195,19 @@
         return Boolean(normalize(currentQuery)) || hasActiveFilters();
     }
 
+    function getActiveFilterKey() {
+        return [
+            lastListStateKey,
+            normalize(currentQuery),
+            followerFilterMin,
+            followerFilterMax,
+            viewFilterMin,
+            viewFilterMax,
+            durationFilterMin,
+            durationFilterMax,
+        ].join("|");
+    }
+
     function queueMetadataSearch(route) {
         if (!route || !isAutoLoadActive()) {
             if (!isAutoLoadActive()) {
@@ -3136,6 +3217,7 @@
             }
             return;
         }
+        if (pendingInjectedRender || hasPendingScrollRoom()) return;
         metadataSearchController.request(route, {
             maxPages: getMaxMetadataPages(),
             pageDelayMs: hasFollowerFilter() ? 600 : 80,
@@ -3153,10 +3235,22 @@
 
     let lastAutoLoadScrollCheckAt = 0;
     let lastBadgeScrollCheckAt = 0;
+    let autoLoadScrollTimer = 0;
 
     function handleAutoLoadScroll() {
+        if (!isFeatureEnabled()) return;
+        const remaining = AUTO_LOAD_SCROLL_THROTTLE_MS - (performance.now() - lastAutoLoadScrollCheckAt);
+        if (remaining > 0) {
+            if (!autoLoadScrollTimer) autoLoadScrollTimer = window.setTimeout(checkAutoLoadScroll, remaining);
+            return;
+        }
+        if (autoLoadScrollTimer) window.clearTimeout(autoLoadScrollTimer);
+        checkAutoLoadScroll();
+    }
+
+    function checkAutoLoadScroll() {
+        autoLoadScrollTimer = 0;
         const now = performance.now();
-        if (now - lastAutoLoadScrollCheckAt < AUTO_LOAD_SCROLL_THROTTLE_MS) return;
         lastAutoLoadScrollCheckAt = now;
 
         if (!isFeatureEnabled()) return;
@@ -3168,7 +3262,13 @@
             if (now - lastBadgeScrollCheckAt < BADGE_SCROLL_THROTTLE_MS) return;
             lastBadgeScrollCheckAt = now;
             void refreshFollowerHydrationRows();
-            if (route.tab === "lives" && areLiveElapsedBadgesEnabled()) scheduleApply();
+            return;
+        }
+
+        if (hasPendingScrollRoom()) return;
+        if (pendingInjectedRender) {
+            injectedRenderLimit += INJECTED_RENDER_BATCH_SIZE;
+            scheduleApply();
             return;
         }
 
@@ -3179,8 +3279,6 @@
             metadataState.pagesLoaded >= getMaxMetadataPages()
         )
             return;
-        if (hasPendingScrollRoom()) return;
-
         const route = getRoute();
         if (route) queueMetadataSearch(route);
     }
@@ -3208,7 +3306,10 @@
         if (!hasDurationFilter()) clearDurationFilterRefreshTimer();
 
         let entries = getCardEntries(route, scanContext);
-        if (!entries.length) return;
+        if (!entries.length) {
+            syncGlobalLiveCount(route);
+            return;
+        }
         const grid = entries[0].card.parentElement;
         if (!grid) return;
 
@@ -3227,13 +3328,18 @@
         }
 
         const generation = applyGeneration;
+        const filterKey = getActiveFilterKey();
+        syncGlobalLiveCount(route);
         const isCurrent = () =>
             generation === applyGeneration &&
+            filterKey === getActiveFilterKey() &&
             grid.isConnected &&
             isFeatureEnabled() &&
             routeKey(getRoute()) === routeKey(route);
 
         if (!isAutoLoadActive()) {
+            injectedRenderKey = "";
+            pendingInjectedRender = false;
             resetViewFilterSnapshot();
             clearInjectedCards(grid);
             metadataSearchController.cancel();
@@ -3252,13 +3358,10 @@
             rememberFollowerRefreshRows(route, visibleRows);
             syncLiveElapsedBadges(route, visibleRows);
             syncFollowerBadges(route, visibleRows);
-            const nearViewportRows = getRowsNearViewport(visibleRows);
-            await hydrateFollowers(nearViewportRows, true, true);
-            if (!isCurrent()) return;
-            syncFollowerBadges(route, nearViewportRows);
             for (const entry of entries) setCardHidden(entry.card, false);
             removeEmptyMessage(grid);
             updateStatus(entries.length, entries.length);
+            void refreshFollowerHydrationRows();
             return;
         }
 
@@ -3267,18 +3370,19 @@
         scheduleDurationFilterRefresh(metadata.values());
         const query = normalize(currentQuery);
         syncViewFilterSnapshot(route, query);
+        const renderKey = getActiveFilterKey();
+        if (renderKey !== injectedRenderKey) {
+            injectedRenderKey = renderKey;
+            injectedRenderLimit = INJECTED_RENDER_BATCH_SIZE;
+            clearInjectedCards(grid);
+            entries = entries.filter((entry) => entry.card.isConnected);
+        }
         const metadataCandidates = Array.from(metadata.values()).filter((meta) => {
             if (!meta?.id) return false;
             if (query && !buildMetaSearchText(meta).includes(query)) return false;
             if (!passesDurationFilter(meta)) return false;
             return passesViewFilter(meta) || isViewFilterSnapshotId(meta.id);
         });
-
-        let followerHydrationPending = false;
-        if (hasFollowerFilter()) {
-            followerHydrationPending = await hydrateMetadataFollowers(metadataCandidates.filter(isFollowerCandidate));
-            if (!isCurrent()) return;
-        }
 
         const scrollAnchor = captureScrollAnchor(grid);
         const injectedEntries = await syncInjectedCards(route, grid, entries, metadata, query, isCurrent);
@@ -3296,8 +3400,6 @@
                 meta: { ...meta, channelId: meta.channelId || inferChannelIdFromCard(route, entry), views },
             };
         });
-        rememberFollowerRefreshRows(route, rows);
-
         const candidateRows = [];
         let checkedRows = 0;
         for (const row of rows) {
@@ -3315,14 +3417,11 @@
             }
         }
 
-        await hydrateFollowers(rows, !followerHydrationPending, true);
-        await yieldToUi();
-        if (!isCurrent()) return;
-
         const visible = candidateRows
             .filter((row) => passesStickyFilters(row))
             .sort((a, b) => getStableVisibleOrder(a) - getStableVisibleOrder(b));
         rememberVisibleRows(visible);
+        rememberFollowerRefreshRows(route, visible);
 
         const visibleSet = new Set(visible.map((row) => row.entry.card));
         syncLiveElapsedBadges(route, rows);
@@ -3331,14 +3430,38 @@
             setCardHidden(row.entry.card, !visibleSet.has(row.entry.card));
         }
 
+        const followerCandidates = hasFollowerFilter()
+            ? [...metadataCandidates, ...candidateRows.map((row) => row.meta)]
+            : [];
+        const followerHydrationPending =
+            hasFollowerFilter() && hydrateFilteredCandidates(route, followerCandidates, isCurrent);
+        const followerLookupFailed = followerCandidates.some((meta) => {
+            const cached = readFollowerCache(meta.channelId);
+            return cached.hit && cached.count === null;
+        });
+        const metadataState = dataRepository.metadataState();
+        const metadataPending =
+            canUseMetadata && !metadataState.complete && metadataState.pagesLoaded < getMaxMetadataPages();
         if (visible.length) removeEmptyMessage(grid);
-        else ensureEmptyMessage(grid);
+        else
+            ensureEmptyMessage(
+                grid,
+                followerHydrationPending || metadataPending
+                    ? "조건에 맞는 방송을 확인하고 있어요…"
+                    : followerLookupFailed
+                      ? "팔로워 정보를 확인하지 못했어요."
+                      : "조건에 맞는 결과가 없습니다."
+            );
         restoreScrollAnchor(scrollAnchor);
-        updateStatus(visible.length, Math.max(rows.length, metadataCandidates.length));
-        if (canUseMetadata) queueMetadataSearch(route);
+        updateStatus(visible.length, Math.max(rows.length, metadata.size));
+        if (!hasFollowerFilter()) void refreshFollowerHydrationRows();
+        if (pendingInjectedRender && !hasPendingScrollRoom()) {
+            injectedRenderLimit += INJECTED_RENDER_BATCH_SIZE;
+            scheduleApply();
+        } else if (canUseMetadata && !pendingInjectedRender) queueMetadataSearch(route);
         else {
             metadataSearchController.cancel();
-            clearLoading();
+            setLoading(false, "metadata");
         }
     }
 

@@ -30,6 +30,7 @@
     const LEGACY_CHAT_TOOLS_ENABLED_KEY = "chatToolsEnabled";
     const DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE = "BracketLeft";
     const DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE = "BracketRight";
+    const DEFAULT_PLAYBACK_SPEED_RESET_KEY_CODE = "Backslash";
     const PLAYBACK_SPEED_SHORTCUT_CODE_PATTERN =
         /^(?:Key[A-Z]|Digit[0-9]|Numpad[0-9]|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Backquote|Minus|Equal|Slash)$/;
     const RESERVED_PLAYBACK_SPEED_SHORTCUT_CODES = new Set(["KeyC", "KeyF", "KeyJ", "KeyK", "KeyL", "KeyM", "KeyT"]);
@@ -47,7 +48,6 @@
 
     const OPTION_SCHEMA = Object.freeze({
         autoQualityEnabled: { kind: "bool", default: true, feature: true },
-        updateNotificationsEnabled: { kind: "bool", default: true },
         autoQualityPreferred: { kind: "quality", default: DEFAULT_QUALITY },
         rewardAutoCollectEnabled: { kind: "bool", default: true, feature: true },
         skipControlEnabled: { kind: "bool", default: true, feature: true },
@@ -98,6 +98,7 @@
         },
         vodCommentTabsEnabled: { kind: "bool", default: true, feature: true },
         chatTimestampEnabled: { kind: "bool", default: false, feature: true },
+        chatWeeklyRankingHidden: { kind: "bool", default: false, feature: true },
         chatWelcomeMessageRemovalEnabled: { kind: "bool", default: false, feature: true },
         chatToolsShowBlindEnabled: { kind: "bool", default: false, feature: true },
         chatToolsModeratorBoxEnabled: { kind: "bool", default: false, feature: true },
@@ -210,6 +211,7 @@
         followingPinEnabled: { kind: "bool", default: true, feature: true },
         followingPinOfflineToTopEnabled: { kind: "bool", default: false },
         followingTitleHistoryEnabled: { kind: "bool", default: true, feature: true },
+        followingListStateEnabled: { kind: "bool", default: false, feature: true },
         followingRefreshEnabled: { kind: "bool", default: true, feature: true },
         followingRefreshSeconds: { kind: "int", default: 30, min: 10, max: 600 },
         // 미리보기 HLS가 선택 권한(pstatic.net) 승인을 전제로 하므로, 사용자가
@@ -222,7 +224,9 @@
         holdSpeedEnabled: { kind: "bool", default: true, feature: true },
         playbackSpeedShortcutsEnabled: { kind: "bool", default: true, feature: true },
         playbackSpeedHalfKeyCode: { kind: "shortcutCode", default: DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE },
+        // 기존 사용자 지정 키를 유지하며 Half/Double을 감소/증가 키로 사용한다.
         playbackSpeedDoubleKeyCode: { kind: "shortcutCode", default: DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE },
+        playbackSpeedResetKeyCode: { kind: "shortcutCode", default: DEFAULT_PLAYBACK_SPEED_RESET_KEY_CODE },
     });
 
     const OPTION_SPEC = OPTION_SCHEMA;
@@ -313,9 +317,13 @@
             out[key] = normalizeOptionValue(key, raw[key]);
         }
 
-        if (out.playbackSpeedHalfKeyCode === out.playbackSpeedDoubleKeyCode) {
+        if (
+            new Set([out.playbackSpeedHalfKeyCode, out.playbackSpeedDoubleKeyCode, out.playbackSpeedResetKeyCode])
+                .size < 3
+        ) {
             out.playbackSpeedHalfKeyCode = DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE;
             out.playbackSpeedDoubleKeyCode = DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE;
+            out.playbackSpeedResetKeyCode = DEFAULT_PLAYBACK_SPEED_RESET_KEY_CODE;
         }
 
         if (Object.prototype.hasOwnProperty.call(raw, LEGACY_CHAT_TOOLS_ENABLED_KEY)) {
@@ -429,6 +437,7 @@
         CHAT_TOOLS_MAX_MODERATOR_MESSAGES,
         DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE,
         DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE,
+        DEFAULT_PLAYBACK_SPEED_RESET_KEY_CODE,
         OPTION_SPEC,
         DEFAULT_OPTIONS,
         OPTION_KEYS,

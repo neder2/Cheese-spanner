@@ -15,6 +15,7 @@
  * 켜고 끔). followingPreviewTooltipEnabled를 켤 때만 optional_host_permissions로 선언된
  * PREVIEW_HOST_PERMISSION(https://*.pstatic.net/*)을 chrome.permissions.request로 요청한다.
  * 마지막으로 본 탭 인덱스는 window.localStorage 키 "betterChzzkOptionsLastTab"에 저장한다.
+ * 옵션 묶음의 펼침/접힘 선택은 chrome.storage.local에 묶음 ID별로 자동 저장한다.
  */
 const form = document.getElementById("optionsForm");
 const optionInputs = Array.from(document.querySelectorAll("[data-option]"));
@@ -52,7 +53,7 @@ const NOTICE_STATE_LABELS = {
 const PREVIEW_HOST_PERMISSION = { origins: ["https://*.pstatic.net/*"] };
 const PREVIEW_PERMISSION_DENIED_MESSAGE = "권한이 거부되어 팔로잉 미리보기를 켜지 않았습니다.";
 const SHORTCUT_KEY_UNAVAILABLE_MESSAGE = "이 키는 기존 재생 조작과 겹쳐 지정할 수 없습니다.";
-const SHORTCUT_KEY_DUPLICATE_MESSAGE = "0.5배속과 2배속은 서로 다른 키로 지정해 주세요.";
+const SHORTCUT_KEY_DUPLICATE_MESSAGE = "배속 감소·증가·초기화는 서로 다른 키로 지정해 주세요.";
 
 let hideMessageTimer = 0;
 let savedOptions = null;
@@ -340,8 +341,10 @@ form.addEventListener("keydown", (event) => {
     event.preventDefault();
     event.stopPropagation();
 
-    const otherShortcutInput = optionInputs.find((candidate) => isShortcutCodeInput(candidate) && candidate !== input);
-    if (otherShortcutInput && getInputValue(otherShortcutInput) === event.code) {
+    const duplicateShortcut = optionInputs.some(
+        (candidate) => isShortcutCodeInput(candidate) && candidate !== input && getInputValue(candidate) === event.code
+    );
+    if (duplicateShortcut) {
         showMessage(SHORTCUT_KEY_DUPLICATE_MESSAGE, "error");
         return;
     }
@@ -482,6 +485,69 @@ const searchEmptyEl = document.getElementById("searchEmpty");
 const searchStatusEl = document.getElementById("searchStatus");
 const optionGroups = Array.from(form.querySelectorAll(".option-group"));
 let searchOpenSnapshot = null;
+const groupStateStorage = globalThis.chrome?.storage?.local;
+const groupStates = new Map(
+    optionGroups.map((group) => [
+        group,
+        { key: `betterChzzkOptionsGroupOpen:${group.dataset.optionGroup}`, open: group.open, changed: false },
+    ])
+);
+
+function setGroupOpen(group, open) {
+    // details의 toggle은 비동기로 전달되므로 검색·복원으로 바꾼 상태를 먼저 기록한다.
+    groupStates.get(group).open = open;
+    group.open = open;
+}
+
+function rememberGroupOpen(group) {
+    const state = groupStates.get(group);
+    if (state.open === group.open) return;
+    state.open = group.open;
+    state.changed = true;
+    if (searchOpenSnapshot) {
+        if (group.open) searchOpenSnapshot.add(group);
+        else searchOpenSnapshot.delete(group);
+    }
+    try {
+        groupStateStorage?.set({ [state.key]: group.open }, () => {
+            const error = globalThis.chrome?.runtime?.lastError;
+            if (error) console.warn("[BetterChzzk] 옵션 묶음 상태 저장 실패:", error.message);
+        });
+    } catch (error) {
+        console.warn("[BetterChzzk] 옵션 묶음 상태 저장 실패:", error);
+    }
+}
+
+for (const group of optionGroups) {
+    group.addEventListener("toggle", () => rememberGroupOpen(group));
+}
+// 팝업을 바로 닫거나 검색을 시작해도 아직 전달되지 않은 사용자 toggle을 보존한다.
+window.addEventListener("pagehide", () => optionGroups.forEach(rememberGroupOpen));
+try {
+    groupStateStorage?.get(
+        Array.from(groupStates.values(), (state) => state.key),
+        (stored) => {
+            const error = globalThis.chrome?.runtime?.lastError;
+            if (error) {
+                console.warn("[BetterChzzk] 옵션 묶음 상태 불러오기 실패:", error.message);
+                return;
+            }
+            for (const [group, state] of groupStates) {
+                rememberGroupOpen(group);
+                const open = stored?.[state.key];
+                if (state.changed || typeof open !== "boolean") continue;
+                if (searchOpenSnapshot) {
+                    if (open) searchOpenSnapshot.add(group);
+                    else searchOpenSnapshot.delete(group);
+                } else {
+                    setGroupOpen(group, open);
+                }
+            }
+        }
+    );
+} catch (error) {
+    console.warn("[BetterChzzk] 옵션 묶음 상태 불러오기 실패:", error);
+}
 
 function normalizeSearchText(text) {
     return String(text).toLowerCase().replace(/\s+/g, "");
@@ -560,6 +626,7 @@ function includeSearchContext(directMatches) {
 
 function applySearch(query) {
     if (!searchInput) return;
+    optionGroups.forEach(rememberGroupOpen);
     const normalized = normalizeSearchText(query);
     const searching = normalized.length > 0;
     form.classList.toggle("is-searching", searching);
@@ -569,7 +636,7 @@ function applySearch(query) {
         for (const group of optionGroups) group.classList.remove("search-miss");
         for (const section of tabSections) section.classList.remove("search-miss");
         if (searchOpenSnapshot) {
-            for (const group of optionGroups) group.open = searchOpenSnapshot.has(group);
+            for (const group of optionGroups) setGroupOpen(group, searchOpenSnapshot.has(group));
             searchOpenSnapshot = null;
         }
         searchEmptyEl?.classList.add("hidden");
@@ -597,7 +664,7 @@ function applySearch(query) {
         matchedSections.add(unit.section);
         if (unit.group) {
             matchedGroups.add(unit.group);
-            unit.group.open = true;
+            setGroupOpen(unit.group, true);
         }
     }
     for (const group of optionGroups) group.classList.toggle("search-miss", !matchedGroups.has(group));

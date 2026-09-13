@@ -27,6 +27,7 @@
     const CHZZK_WEB_ORIGIN = "https://chzzk.naver.com";
     const CHZZK_CHANNEL_ID_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
     const TRUSTED_IMAGE_HOSTS = Object.freeze(["pstatic.net"]);
+    const TRUSTED_EXACT_IMAGE_HOSTS = Object.freeze(["livecloud-thumb.akamaized.net"]);
     const TRUSTED_MEDIA_HOSTS = Object.freeze(["pstatic.net"]);
     const TRUSTED_EXACT_MEDIA_HOSTS = Object.freeze(["ex-nlive-streaming.navercdn.com"]);
     const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
@@ -137,6 +138,7 @@
         const normalized = normalizeTrustedHttpsUrl(value, {
             baseUrl,
             allowedHosts: [...TRUSTED_IMAGE_HOSTS, "chzzk.naver.com"],
+            allowedExactHosts: TRUSTED_EXACT_IMAGE_HOSTS,
         });
         return normalized;
     }

@@ -63,6 +63,41 @@ function createSnapshot(now, overrides = {}) {
     };
 }
 
+for (const initialCount of [1999, 2000]) {
+    test(`history capacity with ${initialCount} entries only materializes pruning rows on overflow`, () => {
+        const { context, store } = loadStore();
+        vm.runInContext(
+            `
+            globalThis.entryEnumerations = 0;
+            const originalValues = Object.values;
+            Object.values = function (value) {
+                const keys = Object.keys(value);
+                if (keys.length && keys.every((key) => key.startsWith("live:"))) entryEnumerations++;
+                return originalValues(value);
+            };
+        `,
+            context
+        );
+        const base = Date.parse("2026-07-10T00:00:00Z");
+        const entries = Array.from({ length: initialCount }, (_, index) => ({
+            id: `live:old-${index}`,
+            channelId: "channel-a",
+            lastWatchedAt: base + index,
+        }));
+        const result = store.applyMutation(
+            { entries },
+            createSnapshot(base + 300000, { recordId: "live:new" }),
+            base + 300000
+        );
+        assert.equal(result.changed, true);
+        assert.equal(Object.keys(result.history.entries).length, 2000);
+        assert.ok(result.history.entries["live:new"]);
+        assert.ok(result.history.entries[`live:old-${initialCount - 1}`]);
+        assert.equal(Object.hasOwn(result.history.entries, "live:old-0"), initialCount === 1999);
+        assert.equal(context.entryEnumerations, initialCount === 1999 ? 0 : 1);
+    });
+}
+
 test("shared URL helpers allow only trusted CHZZK media, images, and live links", () => {
     const { context } = loadStore();
     const utils = context.BetterChzzk.utils;
@@ -82,6 +117,10 @@ test("shared URL helpers allow only trusted CHZZK media, images, and live links"
         "https://nng-phinf.pstatic.net/MjAy/image.jpg"
     );
     assert.equal(utils.normalizeChzzkImageUrl("/assets/image.jpg"), "https://chzzk.naver.com/assets/image.jpg");
+    const liveThumbnail =
+        "https://livecloud-thumb.akamaized.net/chzzk/livecloud/KR/stream/26428721/live/21061396/record/58999967/thumbnail/image_720.jpg";
+    assert.equal(utils.normalizeChzzkImageUrl(liveThumbnail), liveThumbnail);
+    assert.equal(utils.normalizeChzzkMediaUrl(liveThumbnail), "", "the thumbnail host is image-only");
 
     const rejectedUrls = [
         "javascript:alert(1)",
@@ -93,6 +132,9 @@ test("shared URL helpers allow only trusted CHZZK media, images, and live links"
         "//evil.example/image.jpg",
         "https://evil.example/image.jpg",
         "https://pstatic.net.evil.example/image.jpg",
+        "https://livecloud-thumb.akamaized.net.evil.example/image.jpg",
+        "https://other.akamaized.net/image.jpg",
+        "https://preview.livecloud-thumb.akamaized.net/image.jpg",
         "https://preview.ex-nlive-streaming.navercdn.com/live/playlist.m3u8",
         "https://ex-nlive-streaming.navercdn.com.evil.example/live/playlist.m3u8",
         "https://pstatic.net@evil.example/image.jpg",
@@ -607,9 +649,7 @@ function createBackgroundHarness() {
                     ? sources.settings
                     : file === "shared/data.js"
                       ? sources.data
-                      : file === "shared/updateNotice.js"
-                        ? fs.readFileSync(path.join(repoRoot, file), "utf8")
-                        : sources.store;
+                      : sources.store;
             vm.runInContext(source, context, { filename: file });
         }
     };

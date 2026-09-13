@@ -1,19 +1,14 @@
 /**
- * background.js — MV3 service worker. 옵션 정규화와 시청 기록 단일 writer를 담당한다.
+ * background.js — MV3 service worker. 옵션 정규화, 탭별 컴프레서 상태와 시청 기록 단일 writer를 담당한다.
  *
  * 하는 일: onInstalled에서 chrome.storage.sync 옵션을 스키마 기준으로 정규화한다. runtime 메시지로 받은
  *   시청 기록 mutation은 발신자·스키마를 검증한 뒤 Promise 큐에서 최신 local 값을 읽어 순차 반영한다.
- *   버전 업데이트의 미확인 안내를 로컬에 저장하고 확장 아이콘의 NEW 배지를 동기화한다.
- * 의존: shared/settings.js, shared/data.js, shared/watchHistoryStore.js, shared/updateNotice.js,
+ *   폐기한 업데이트 알림의 저장값과 확장 아이콘 배지를 정리한다.
+ *   컴프레서 상태는 발신 탭 ID별로 저장하고 탭 종료·브라우저 시작 시 정리한다.
+ * 의존: shared/settings.js, shared/data.js, shared/watchHistoryStore.js,
  *   shared/adVideoRegistration.js(importScripts).
  */
-importScripts(
-    "shared/settings.js",
-    "shared/data.js",
-    "shared/watchHistoryStore.js",
-    "shared/updateNotice.js",
-    "shared/adVideoRegistration.js"
-);
+importScripts("shared/settings.js", "shared/data.js", "shared/watchHistoryStore.js", "shared/adVideoRegistration.js");
 
 const { OPTION_KEYS, getStorageLastError, normalizeOptions } = BetterChzzkSettings;
 const {
@@ -24,8 +19,10 @@ const {
     normalizeMutation: normalizeWatchHistoryMutation,
 } = globalThis.BetterChzzkWatchHistoryStore;
 let watchHistoryMutationQueue = Promise.resolve();
-const { UPDATE_KEY, READ_KEY, NOTIFICATIONS_KEY } = globalThis.BetterChzzkUpdateNotice;
-let updateNoticeQueue = Promise.resolve();
+const COMPRESSOR_STATE_MESSAGE = "betterchzzk:audio-compressor-state";
+const COMPRESSOR_TABS_KEY = "betterchzzk:audio-compressor-tabs";
+const MAX_COMPRESSOR_TABS = 128;
+let compressorStateQueue = Promise.resolve();
 const adVideoRegistration = chrome.scripting?.getRegisteredContentScripts
     ? globalThis.BetterChzzkAdVideoRegistration.createController({
           scripting: chrome.scripting,
@@ -43,63 +40,32 @@ function reconcileAdVideoRegistration() {
     });
 }
 
-async function refreshUpdateBadge() {
-    if (!chrome.action) return;
-    const [data, options] = await Promise.all([
-        storageLocalGet([UPDATE_KEY, READ_KEY]),
-        BetterChzzk.utils.storageGet(chrome.storage.sync, NOTIFICATIONS_KEY),
-    ]);
-    const version = chrome.runtime.getManifest().version;
-    const unread =
-        options[NOTIFICATIONS_KEY] !== false && data[UPDATE_KEY]?.version === version && data[READ_KEY] !== version;
-    await chrome.action.setBadgeBackgroundColor({ color: "#087a4b" });
-    await chrome.action.setBadgeText({ text: unread ? "NEW" : "" });
-    await chrome.action.setTitle({
-        title: unread ? `Better Chzzk ${version} 업데이트 · 치지직 새로고침` : "Better Chzzk 설정",
-    });
-}
-
-function enqueueUpdateNotice(task = refreshUpdateBadge) {
-    updateNoticeQueue = updateNoticeQueue.then(task).catch((error) => {
-        console.warn("[Better Chzzk] 업데이트 안내 상태 처리 실패", error);
-    });
+function clearLegacyUpdateNotice() {
+    for (const [area, keys] of [
+        [
+            chrome.storage.local,
+            ["betterchzzkUpdateNotice", "betterchzzkUpdateReadVersion", "betterChzzkOptionsGroupOpen:popup-updates"],
+        ],
+        [chrome.storage.sync, ["updateNotificationsEnabled"]],
+    ]) {
+        area.remove?.(keys, () => {
+            getStorageLastError();
+        });
+    }
+    if (chrome.action) {
+        Promise.all([
+            chrome.action.setBadgeText({ text: "" }),
+            chrome.action.setTitle({ title: "Better Chzzk 설정" }),
+        ]).catch((error) => console.warn("[BetterChzzk] 이전 알림 배지 정리 실패", error));
+    }
 }
 
 chrome.storage.onChanged?.addListener((changes, area) => {
     if (area === "sync" && Object.hasOwn(changes, "adVideoEnabled")) reconcileAdVideoRegistration();
-    if (area === "sync" && Object.hasOwn(changes, NOTIFICATIONS_KEY)) enqueueUpdateNotice();
-    if (area === "local" && (Object.hasOwn(changes, UPDATE_KEY) || Object.hasOwn(changes, READ_KEY))) {
-        enqueueUpdateNotice();
-    }
 });
-enqueueUpdateNotice();
+clearLegacyUpdateNotice();
 reconcileAdVideoRegistration();
 chrome.runtime.onStartup?.addListener(reconcileAdVideoRegistration);
-
-function injectUpdateNotice(tabId) {
-    return globalThis.BetterChzzkUpdateNotice.injectNotice(tabId);
-}
-
-async function showUpdateInOpenTabs() {
-    const options = await BetterChzzk.utils.storageGet(chrome.storage.sync, NOTIFICATIONS_KEY);
-    if (options[NOTIFICATIONS_KEY] === false) return;
-    const tabs = await chrome.tabs.query({ url: "https://chzzk.naver.com/*" });
-    await Promise.all(
-        tabs
-            .filter(
-                (tab) =>
-                    Number.isInteger(tab.id) && !tab.discarded && /^https:\/\/chzzk\.naver\.com\//.test(tab.url || "")
-            )
-            .map(async (tab) => {
-                try {
-                    await injectUpdateNotice(tab.id);
-                } catch (error) {
-                    // A tab can navigate or close between the query and injection.
-                    console.warn("[Better Chzzk] 열린 탭 업데이트 안내 표시 실패", error);
-                }
-            })
-    );
-}
 
 function storageLocalGet(key) {
     return new Promise((resolve, reject) => {
@@ -120,6 +86,63 @@ function storageLocalSet(value) {
         });
     });
 }
+
+function enqueueCompressorState(task) {
+    const pending = compressorStateQueue.then(async () => {
+        const data = await storageLocalGet(COMPRESSOR_TABS_KEY);
+        const states = Array.isArray(data[COMPRESSOR_TABS_KEY]) ? data[COMPRESSOR_TABS_KEY] : [];
+        return task(states.slice(-MAX_COMPRESSOR_TABS));
+    });
+    compressorStateQueue = pending.catch(() => {});
+    return pending;
+}
+
+function isCompressorState(state) {
+    return (
+        typeof state?.active === "boolean" && Number.isFinite(state.volume) && state.volume >= 0 && state.volume <= 1
+    );
+}
+
+function handleCompressorState(message, sender) {
+    if (
+        sender?.id !== chrome.runtime.id ||
+        !Number.isInteger(sender.tab?.id) ||
+        sender.tab.id < 0 ||
+        sender.frameId !== 0
+    ) {
+        return Promise.reject(new Error("Untrusted compressor sender"));
+    }
+    try {
+        if (new URL(sender.url).origin !== "https://chzzk.naver.com") throw new Error();
+    } catch (_) {
+        return Promise.reject(new Error("Untrusted compressor sender"));
+    }
+    if (message.kind !== "get" && (message.kind !== "set" || !isCompressorState(message.state))) {
+        return Promise.reject(new Error("Invalid compressor state"));
+    }
+    return enqueueCompressorState(async (states) => {
+        if (message.kind === "get") {
+            const saved = states.find((state) => state?.tabId === sender.tab.id && isCompressorState(state));
+            return saved ? { active: saved.active, volume: saved.volume } : { active: false, volume: 1 };
+        }
+        const state = { active: message.state.active, volume: Math.round(message.state.volume * 100) / 100 };
+        const next = states.filter((saved) => saved?.tabId !== sender.tab.id && isCompressorState(saved));
+        next.push({ tabId: sender.tab.id, ...state });
+        await storageLocalSet({ [COMPRESSOR_TABS_KEY]: next.slice(-MAX_COMPRESSOR_TABS) });
+        return state;
+    });
+}
+
+chrome.tabs?.onRemoved?.addListener((tabId) => {
+    void enqueueCompressorState(async (states) => {
+        const next = states.filter((state) => state?.tabId !== tabId);
+        if (next.length !== states.length) await storageLocalSet({ [COMPRESSOR_TABS_KEY]: next });
+    }).catch(() => {});
+});
+chrome.runtime.onStartup?.addListener(() => {
+    // Tab IDs belong to one browser session; never apply old IDs after a restart.
+    void enqueueCompressorState(() => storageLocalSet({ [COMPRESSOR_TABS_KEY]: [] })).catch(() => {});
+});
 
 function isTrustedWatchHistorySender(operation, sender) {
     if (!sender || sender.id !== chrome.runtime.id || !sender.url) return false;
@@ -153,6 +176,13 @@ function enqueueWatchHistoryMutation(operation) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type === COMPRESSOR_STATE_MESSAGE) {
+        handleCompressorState(message, sender).then(
+            (state) => sendResponse({ ok: true, state }),
+            (error) => sendResponse({ ok: false, error: error.message })
+        );
+        return true;
+    }
     if (message?.type === "betterchzzk:ad-video:sync") {
         if (sender?.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("options.html")) {
             sendResponse({ ok: false });
@@ -190,16 +220,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
 });
 
-chrome.runtime.onInstalled.addListener((details) => {
+chrome.runtime.onInstalled.addListener(() => {
     reconcileAdVideoRegistration();
-    const version = chrome.runtime.getManifest?.()?.version;
-    if (details?.reason === "update" && details.previousVersion && version && details.previousVersion !== version) {
-        enqueueUpdateNotice(async () => {
-            await storageLocalSet({ [UPDATE_KEY]: { version, previousVersion: details.previousVersion } });
-            await refreshUpdateBadge();
-            await showUpdateInOpenTabs();
-        });
-    }
+    clearLegacyUpdateNotice();
     chrome.storage.sync.get(OPTION_KEYS, (data) => {
         if (getStorageLastError()) return;
 

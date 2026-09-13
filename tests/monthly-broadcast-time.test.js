@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const { JSDOM } = require("jsdom");
-const { evalFeatureModules } = require("./helpers/extension-page-fixture.js");
+const { evalFeatureModules, waitForCondition } = require("./helpers/extension-page-fixture.js");
 
 const repoRoot = path.join(__dirname, "..");
 const CHANNEL = "a".repeat(32);
@@ -437,7 +437,9 @@ test("monthly applying a new page limit remounts and reloads without duplicating
         });
         f.hooks.applyOptions(options);
         assert.equal(oldWidget.isConnected, false);
-        await new Promise((resolve) => setTimeout(resolve, 120));
+        await waitForCondition(
+            () => f.window.document.getElementById("betterchzzk-monthly-broadcast-time")?.dataset.state === "ready"
+        );
         const widgets = f.window.document.querySelectorAll("#betterchzzk-monthly-broadcast-time");
         assert.equal(widgets.length, 1);
         assert.equal(widgets[0].dataset.state, "ready");

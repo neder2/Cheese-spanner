@@ -9,14 +9,14 @@
  *   (2) 오디오 컴프레서(cheese-knife 기반, 출처 주석은 코드 내 유지) — 볼륨 컨트롤 옆에 토글 버튼을 삽입하고,
  *       Web Audio API로 MediaElementSource → DynamicsCompressor → Gain 그래프를 구성/해제한다. MutationObserver와
  *       startPageChangeDetection으로 플레이어 재마운트에 맞춰 버튼과 그래프 상태를 재동기화하며,
- *       chrome.storage.local에 사용자가 마지막으로 선택한 켜짐 상태를 저장한다.
+ *       버튼 오른쪽 볼륨바로 압축 후 출력 크기를 조절하며, background를 통해 현재 탭의 켜짐 상태와 볼륨을 저장한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions, injectStyleOnce,
  *   getMainVideoElement, createMutationObserverSync, createThrottledDomSync, isPlaybackRoute, isVisible,
- *   mutationMatchesSelector, onReady, startPageChangeDetection, startStorageChangeListener, storageGet, storageSet),
- *   브라우저 Web Audio API(AudioContext), chrome.storage.local.
+ *   mutationMatchesSelector, onReady, startPageChangeDetection, runtimeSendMessage), 브라우저 Web Audio API(AudioContext).
  * 옵션 키: volumeTooltipEnabled, audioCompressorEnabled, audioCompressorThreshold, audioCompressorKnee,
  *   audioCompressorRatio, audioCompressorAttack, audioCompressorRelease, audioCompressorMakeupGain.
  * DOM 마커: #betterchzzk-volume-tooltip, #betterchzzk-volume-tooltip-style, #betterchzzk-audio-compressor,
+ *   #betterchzzk-audio-compressor-control, #betterchzzk-audio-compressor-volume,
  *   #betterchzzk-audio-compressor-style, data-better-chzzk-audio-compressor, data-better-chzzk-ready.
  * 구조:
  *   - 볼륨 툴팁 IIFE (ensureTooltipElement, showTooltip/hideTooltip, watchVideo, applyOptions).
@@ -298,8 +298,10 @@
  */
 (() => {
     const BUTTON_ID = "betterchzzk-audio-compressor";
+    const CONTROL_ID = "betterchzzk-audio-compressor-control";
+    const SLIDER_ID = "betterchzzk-audio-compressor-volume";
     const STYLE_ID = "betterchzzk-audio-compressor-style";
-    const ACTIVE_STORAGE_KEY = "betterchzzk:audio-compressor-active";
+    const STATE_MESSAGE = "betterchzzk:audio-compressor-state";
     const RESUME_EVENTS = ["pointerdown", "keydown", "click"];
     const VOLUME_CONTROL_SELECTOR = [
         ".pzp-pc__volume-control",
@@ -326,20 +328,19 @@
         isVisible,
         mutationMatchesSelector,
         onReady,
+        runtimeSendMessage,
         startPageChangeDetection,
-        startStorageChangeListener,
-        storageGet,
-        storageSet,
     } = BetterChzzk.utils;
 
     const graphs = new WeakMap();
     let featureOptions = normalizeOptions();
     let optionsReady = false;
-    let compressorStateReady = false;
-    let compressorStateGeneration = 0;
+    let stateReady = false;
     let compressorActive = false;
+    let compressorVolume = 1;
     let activeVideo = null;
     let buttonEl = null;
+    let controlEl = null;
     let runtimeInstalled = false;
     let removePageChangeDetection = null;
     const scheduleSync = createThrottledDomSync(syncState, 240);
@@ -352,38 +353,49 @@
         return featureEnabled() && compressorActive;
     }
 
-    function applyCompressorActive(active) {
-        compressorActive = active === true;
-        compressorStateReady = true;
-        syncState();
+    function saveCompressorState() {
+        void runtimeSendMessage({
+            type: STATE_MESSAGE,
+            kind: "set",
+            state: { active: compressorActive, volume: compressorVolume },
+        }).catch(() => {});
     }
 
     function setCompressorActive(active) {
-        const nextActive = Boolean(active);
-        compressorStateGeneration += 1;
-        compressorActive = nextActive;
-        compressorStateReady = true;
+        compressorActive = Boolean(active);
+        saveCompressorState();
         syncState();
-        void storageSet(globalThis.chrome?.storage?.local, { [ACTIVE_STORAGE_KEY]: nextActive }).catch(() => {});
     }
 
-    function restoreCompressorActive() {
-        const generation = ++compressorStateGeneration;
-        void storageGet(globalThis.chrome?.storage?.local, ACTIVE_STORAGE_KEY)
-            .then((data) => {
-                if (generation !== compressorStateGeneration) return;
-                applyCompressorActive(data?.[ACTIVE_STORAGE_KEY]);
-            })
-            .catch(() => {
-                if (generation !== compressorStateGeneration) return;
-                applyCompressorActive(false);
-            });
+    async function restoreCompressorState() {
+        try {
+            const response = await runtimeSendMessage({ type: STATE_MESSAGE, kind: "get" });
+            const state = response?.ok ? response.state : null;
+            compressorActive = state?.active === true;
+            if (typeof state?.volume === "number" && Number.isFinite(state.volume)) {
+                compressorVolume = normalizeCompressorVolume(state.volume);
+            }
+        } catch (_) {
+            compressorActive = false;
+        } finally {
+            stateReady = true;
+            syncState();
+        }
     }
 
-    function handleCompressorStorageChange(changes, areaName) {
-        if (areaName !== "local" || !Object.prototype.hasOwnProperty.call(changes, ACTIVE_STORAGE_KEY)) return;
-        compressorStateGeneration += 1;
-        applyCompressorActive(changes[ACTIVE_STORAGE_KEY]?.newValue);
+    function normalizeCompressorVolume(value) {
+        return Math.round(Math.min(1, Math.max(0, value)) * 100) / 100;
+    }
+
+    function setCompressorVolume(value) {
+        if (!Number.isFinite(value)) return;
+        compressorVolume = normalizeCompressorVolume(value);
+        saveCompressorState();
+        const graph = activeVideo ? graphs.get(activeVideo) : null;
+        if (graph?.mode === "compressed") {
+            setParam(graph.gain.gain, featureOptions.audioCompressorMakeupGain * compressorVolume, graph.context);
+        }
+        syncVolumeControl();
     }
 
     function visibleArea(el) {
@@ -445,7 +457,7 @@
         setParam(graph.compressor.ratio, featureOptions.audioCompressorRatio, graph.context);
         setParam(graph.compressor.attack, featureOptions.audioCompressorAttack, graph.context);
         setParam(graph.compressor.release, featureOptions.audioCompressorRelease, graph.context);
-        setParam(graph.gain.gain, featureOptions.audioCompressorMakeupGain, graph.context);
+        setParam(graph.gain.gain, featureOptions.audioCompressorMakeupGain * compressorVolume, graph.context);
     }
 
     function disconnectGraph(graph) {
@@ -597,6 +609,20 @@
 #${BUTTON_ID} .bcac-icon svg.bcac-icon-on{display:none;}
 #${BUTTON_ID}[aria-pressed="true"] .bcac-icon svg.bcac-icon-on{display:block;}
 #${BUTTON_ID}[aria-pressed="true"] .bcac-icon svg.bcac-icon-off{display:none;}
+#${CONTROL_ID}{position:relative;display:flex;align-items:center;flex:0 0 auto;color:inherit;}
+#${CONTROL_ID} .bcac-volume{position:relative;display:flex;align-items:center;width:0;margin-right:0;opacity:0;pointer-events:none;transition:width .23s cubic-bezier(.33,1,.68,1),opacity .15s;}
+#${CONTROL_ID}:hover .bcac-volume,#${CONTROL_ID}:focus-within .bcac-volume{width:72px;margin-right:10px;opacity:1;pointer-events:auto;}
+#${SLIDER_ID}{appearance:none;-webkit-appearance:none;flex:0 0 72px;width:72px;height:14px;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:inherit;cursor:pointer;}
+#${SLIDER_ID}::-webkit-slider-runnable-track{height:2px;background:linear-gradient(to right,var(--bcac-fill,#fff) var(--bcac-volume,100%),var(--bcac-track,rgba(255,255,255,.5)) var(--bcac-volume,100%));}
+#${SLIDER_ID}::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:10px;height:10px;margin-top:-4px;border:0;border-radius:50%;background:var(--bcac-fill,#fff);}
+#${SLIDER_ID}::-moz-range-track{height:2px;background:var(--bcac-track,rgba(255,255,255,.5));}
+#${SLIDER_ID}::-moz-range-progress{height:2px;background:var(--bcac-fill,#fff);}
+#${SLIDER_ID}::-moz-range-thumb{width:10px;height:10px;border:0;border-radius:50%;background:var(--bcac-fill,#fff);}
+#${BUTTON_ID}:focus-visible,#${SLIDER_ID}:focus-visible{outline:2px solid var(--sem-color-content-brand-strong,var(--Content-Brand-Strong,#00ffa3));outline-offset:3px;}
+#${SLIDER_ID}:disabled{opacity:.35;cursor:default;}
+#${CONTROL_ID} .bcac-volume:hover > .betterchzzk-player-tooltip,#${CONTROL_ID} .bcac-volume:focus-within > .betterchzzk-player-tooltip{visibility:visible;}
+#${CONTROL_ID}:has(.bcac-volume:hover,.bcac-volume:focus-within) #${BUTTON_ID} > .betterchzzk-player-tooltip{visibility:hidden;}
+@media(prefers-reduced-motion:reduce){#${CONTROL_ID} .bcac-volume{transition:none;}}
 `
         );
     }
@@ -605,6 +631,7 @@
         const video = getMainVideoElement?.();
         const candidates = [];
         for (const el of document.querySelectorAll(VOLUME_CONTROL_SELECTOR)) {
+            if (el.id === CONTROL_ID || controlEl?.contains(el)) continue;
             if (!(el instanceof HTMLElement) || visibleArea(el) <= 0) continue;
             if (video instanceof HTMLVideoElement && !isControlNearVideo(el, video)) continue;
             const rect = el.getBoundingClientRect();
@@ -623,7 +650,7 @@
     }
 
     function currentButton() {
-        if (buttonEl?.isConnected) return buttonEl;
+        if (buttonEl && (buttonEl.isConnected || controlEl?.contains(buttonEl))) return buttonEl;
         buttonEl = document.getElementById(BUTTON_ID);
         return buttonEl;
     }
@@ -667,6 +694,76 @@
         button.dataset.betterChzzkAudioCompressor = active ? "1" : "0";
         button.dataset.betterChzzkReady = failed ? "0" : "1";
         syncButtonLabels(button, failed);
+        syncVolumeControl();
+    }
+
+    function syncVolumeControl() {
+        const slider = controlEl?.querySelector("input");
+        if (!slider) return;
+        const percent = String(Math.round(compressorVolume * 100));
+        if (slider.value !== percent) slider.value = percent;
+        if (slider.style.getPropertyValue("--bcac-volume") !== `${percent}%`) {
+            slider.style.setProperty("--bcac-volume", `${percent}%`);
+        }
+        slider.setAttribute("aria-valuetext", `${percent}%`);
+        slider.disabled = Boolean(buttonEl?.disabled) || buttonEl?.dataset.betterChzzkReady === "0";
+        const tooltip = controlEl.querySelector(".bcac-volume .betterchzzk-player-tooltip");
+        const text = `컴프레서 볼륨 ${percent}%`;
+        if (tooltip && tooltip.textContent !== text) tooltip.textContent = text;
+    }
+
+    function createControl(button) {
+        const control = document.createElement("div");
+        control.id = CONTROL_ID;
+        const volume = document.createElement("div");
+        volume.className = "bcac-volume";
+        const slider = document.createElement("input");
+        slider.id = SLIDER_ID;
+        slider.type = "range";
+        slider.min = "0";
+        slider.max = "100";
+        slider.step = "1";
+        slider.setAttribute("aria-label", "컴프레서 볼륨");
+        slider.addEventListener("input", () => setCompressorVolume(Number(slider.value) / 100));
+        volume.append(slider, BetterChzzk.utils.createPlayerTooltip());
+        control.append(button, volume);
+        for (const eventName of ["pointerdown", "pointerup", "click", "keydown", "keyup"]) {
+            volume.addEventListener(eventName, (event) => event.stopPropagation());
+        }
+        control.addEventListener(
+            "wheel",
+            (event) => {
+                if (
+                    !featureOptions.volumeWheelEnabled ||
+                    slider.disabled ||
+                    !Number.isFinite(event.deltaY) ||
+                    !event.deltaY
+                )
+                    return;
+                event.preventDefault();
+                event.stopPropagation();
+                setCompressorVolume(
+                    compressorVolume + ((event.deltaY < 0 ? 1 : -1) * featureOptions.volumeWheelStep) / 100
+                );
+            },
+            { passive: false }
+        );
+        controlEl = control;
+        return control;
+    }
+
+    function syncControlAppearance(container) {
+        if (controlEl.className !== container.className) controlEl.className = container.className;
+        // 2026-09-11: CHZZK's volume track and thumb stay white over the video in both themes.
+        const fill = container.querySelector(".pzp-ui-progress__volume");
+        const track = container.querySelector(".pzp-ui-progress__entire-background");
+        for (const [property, node] of [
+            ["--bcac-fill", fill],
+            ["--bcac-track", track],
+        ]) {
+            const color = node ? getComputedStyle(node).backgroundColor : "";
+            if (controlEl.style.getPropertyValue(property) !== color) controlEl.style.setProperty(property, color);
+        }
     }
 
     function createButton() {
@@ -704,6 +801,8 @@
     function removeButton() {
         const button = currentButton();
         if (button) button.remove();
+        controlEl?.remove();
+        controlEl = null;
         buttonEl = null;
     }
 
@@ -723,16 +822,12 @@
         }
         const button = currentButton() || createButton();
         syncButtonClass(button, container);
-        const reference = findVolumeButton(container);
-        if (reference?.parentElement === container) {
-            if (button.parentElement !== container || button.previousElementSibling !== reference) {
-                if (button.parentElement) button.remove();
-                reference.insertAdjacentElement("afterend", button);
-            }
-        } else if (button.parentElement !== container) {
-            if (button.parentElement) button.remove();
-            container.appendChild(button);
+        const control = controlEl || createControl(button);
+        if (button.parentElement !== control) control.prepend(button);
+        if (control.previousElementSibling !== container || control.parentElement !== container.parentElement) {
+            container.insertAdjacentElement("afterend", control);
         }
+        syncControlAppearance(container);
         syncButtonState(button);
     }
 
@@ -742,7 +837,7 @@
     }
 
     function syncState() {
-        if (!optionsReady || !compressorStateReady) return;
+        if (!optionsReady || !stateReady) return;
         if (!featureEnabled()) {
             syncDisabledState();
             return;
@@ -787,9 +882,8 @@
     function isOwnButtonMutation(mutation) {
         // syncState가 매번 버튼의 class/style을 다시 쓰므로, 자기 자신이 만든
         // attribute mutation으로 sync가 다시 깨어나는 자기 루프를 끊는다.
-        const button = currentButton();
-        if (!button || !(mutation.target instanceof Node)) return false;
-        return mutation.target === button || button.contains(mutation.target);
+        if (!controlEl || !(mutation.target instanceof Node)) return false;
+        return mutation.target === controlEl || controlEl.contains(mutation.target);
     }
 
     function installRuntime() {
@@ -825,8 +919,7 @@
         });
     }
 
-    startStorageChangeListener(handleCompressorStorageChange);
-    restoreCompressorActive();
+    void restoreCompressorState();
 
     bindFeatureOptions((options) => {
         featureOptions = options;

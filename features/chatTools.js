@@ -72,6 +72,7 @@
         "aria-hidden",
         "alt",
         "aria-expanded",
+        "data-message-original",
         CHAT_TIMESTAMP_ATTR,
         ...MESSAGE_ID_ATTRS,
         ...ROW_REUSE_SIGNAL_ATTRIBUTES,
@@ -665,7 +666,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
                     continue;
                 }
                 const parsed = parseChatMessage(row);
-                cacheOriginalMessageText(row, parsed);
+                if (isBlindRevealEnabled()) cacheOriginalMessageText(row, parsed);
                 syncBlindReveal(row, parsed);
                 collectModeratorMessage(parsed, { deferNotify: true });
                 parsedChatRows.set(row, parsed.role);
@@ -755,7 +756,10 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         if (!isModeratorBoxEnabled()) {
             removeModeratorBox();
         }
-        if (!isBlindRevealEnabled()) removeAllBlindReveals();
+        if (!isBlindRevealEnabled()) {
+            removeAllBlindReveals();
+            store.clearOriginals();
+        }
         scheduleSync();
     }
 

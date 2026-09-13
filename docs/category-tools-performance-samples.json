@@ -1,0 +1,1434 @@
+{
+    "apiMeasuredAt": "2026-09-12T13:19:04.3149276+09:00",
+    "comparisonMeasuredAt": "2026-09-12T04:23:40.066Z",
+    "branch": "1.3.6",
+    "head": "a2d83eb",
+    "sourceHashes": {
+        "features/categoryTools.js": "e2b41e91d3c86ccad46810ced70159ba1ff2f8ce4a29efc035294f22512870a2",
+        "features/categoryTools/repository.js": "60963b462d27f0b2e4a822f06c75990d97fb17610e8ccc2987777fec24553bbf",
+        "features/categoryTools/searchController.js": "90b0387604871f93365d77cbfbe30d18771d8abd31177feee7cb4b52987c523e",
+        "shared/settings.js": "d319fc99c4c0f9fd74bb2ceee55b8245effa9c2b7b67efa6f388427e0249e4e4"
+    },
+    "method": "Isolated existing applyTools in JSDOM, 12 actual captured broadcasts, replayed paired measured API latency, default batching (6/2/700ms). Input debounce and Chrome rendering excluded. Prototype patches exist in memory only. Final visible IDs asserted equal.",
+    "metadataSampleMs": 305.4847,
+    "apiWarmups": [
+        {
+            "kind": "channel",
+            "ms": 35.5507
+        },
+        {
+            "kind": "count",
+            "ms": 29.1455
+        }
+    ],
+    "apiSamples": [
+        {
+            "round": 0,
+            "index": 0,
+            "kind": "channel",
+            "status": 200,
+            "ms": 25.5677,
+            "bytes": 802,
+            "followerCount": 137269
+        },
+        {
+            "round": 0,
+            "index": 0,
+            "kind": "count",
+            "status": 200,
+            "ms": 24.1629,
+            "bytes": 62,
+            "followerCount": 137269
+        },
+        {
+            "round": 0,
+            "index": 1,
+            "kind": "count",
+            "status": 200,
+            "ms": 27.7253,
+            "bytes": 62,
+            "followerCount": 191179
+        },
+        {
+            "round": 0,
+            "index": 1,
+            "kind": "channel",
+            "status": 200,
+            "ms": 30.4401,
+            "bytes": 732,
+            "followerCount": 191179
+        },
+        {
+            "round": 0,
+            "index": 2,
+            "kind": "channel",
+            "status": 200,
+            "ms": 36.8382,
+            "bytes": 851,
+            "followerCount": 73998
+        },
+        {
+            "round": 0,
+            "index": 2,
+            "kind": "count",
+            "status": 200,
+            "ms": 32.4988,
+            "bytes": 61,
+            "followerCount": 73998
+        },
+        {
+            "round": 0,
+            "index": 3,
+            "kind": "count",
+            "status": 200,
+            "ms": 23.1781,
+            "bytes": 62,
+            "followerCount": 128529
+        },
+        {
+            "round": 0,
+            "index": 3,
+            "kind": "channel",
+            "status": 200,
+            "ms": 26.9844,
+            "bytes": 719,
+            "followerCount": 128529
+        },
+        {
+            "round": 0,
+            "index": 4,
+            "kind": "channel",
+            "status": 200,
+            "ms": 25.807,
+            "bytes": 701,
+            "followerCount": 76027
+        },
+        {
+            "round": 0,
+            "index": 4,
+            "kind": "count",
+            "status": 200,
+            "ms": 21.6073,
+            "bytes": 61,
+            "followerCount": 76027
+        },
+        {
+            "round": 0,
+            "index": 5,
+            "kind": "count",
+            "status": 200,
+            "ms": 24.7849,
+            "bytes": 61,
+            "followerCount": 38785
+        },
+        {
+            "round": 0,
+            "index": 5,
+            "kind": "channel",
+            "status": 200,
+            "ms": 29.4268,
+            "bytes": 780,
+            "followerCount": 38785
+        },
+        {
+            "round": 0,
+            "index": 6,
+            "kind": "channel",
+            "status": 200,
+            "ms": 29.9993,
+            "bytes": 861,
+            "followerCount": 108759
+        },
+        {
+            "round": 0,
+            "index": 6,
+            "kind": "count",
+            "status": 200,
+            "ms": 19.7249,
+            "bytes": 62,
+            "followerCount": 108759
+        },
+        {
+            "round": 0,
+            "index": 7,
+            "kind": "count",
+            "status": 200,
+            "ms": 21.2113,
+            "bytes": 61,
+            "followerCount": 72877
+        },
+        {
+            "round": 0,
+            "index": 7,
+            "kind": "channel",
+            "status": 200,
+            "ms": 26.8153,
+            "bytes": 772,
+            "followerCount": 72877
+        },
+        {
+            "round": 0,
+            "index": 8,
+            "kind": "channel",
+            "status": 200,
+            "ms": 33.9707,
+            "bytes": 714,
+            "followerCount": 43307
+        },
+        {
+            "round": 0,
+            "index": 8,
+            "kind": "count",
+            "status": 200,
+            "ms": 26.0703,
+            "bytes": 61,
+            "followerCount": 43307
+        },
+        {
+            "round": 0,
+            "index": 9,
+            "kind": "count",
+            "status": 200,
+            "ms": 22.1133,
+            "bytes": 61,
+            "followerCount": 48809
+        },
+        {
+            "round": 0,
+            "index": 9,
+            "kind": "channel",
+            "status": 200,
+            "ms": 20.3287,
+            "bytes": 720,
+            "followerCount": 48809
+        },
+        {
+            "round": 0,
+            "index": 10,
+            "kind": "channel",
+            "status": 200,
+            "ms": 38.2883,
+            "bytes": 696,
+            "followerCount": 24943
+        },
+        {
+            "round": 0,
+            "index": 10,
+            "kind": "count",
+            "status": 200,
+            "ms": 22.7322,
+            "bytes": 61,
+            "followerCount": 24943
+        },
+        {
+            "round": 0,
+            "index": 11,
+            "kind": "count",
+            "status": 200,
+            "ms": 17.5577,
+            "bytes": 62,
+            "followerCount": 119680
+        },
+        {
+            "round": 0,
+            "index": 11,
+            "kind": "channel",
+            "status": 200,
+            "ms": 19.3513,
+            "bytes": 715,
+            "followerCount": 119680
+        },
+        {
+            "round": 1,
+            "index": 0,
+            "kind": "count",
+            "status": 200,
+            "ms": 24.4306,
+            "bytes": 62,
+            "followerCount": 137269
+        },
+        {
+            "round": 1,
+            "index": 0,
+            "kind": "channel",
+            "status": 200,
+            "ms": 30.1649,
+            "bytes": 802,
+            "followerCount": 137269
+        },
+        {
+            "round": 1,
+            "index": 1,
+            "kind": "channel",
+            "status": 200,
+            "ms": 22.407,
+            "bytes": 732,
+            "followerCount": 191179
+        },
+        {
+            "round": 1,
+            "index": 1,
+            "kind": "count",
+            "status": 200,
+            "ms": 18.5266,
+            "bytes": 62,
+            "followerCount": 191179
+        },
+        {
+            "round": 1,
+            "index": 2,
+            "kind": "count",
+            "status": 200,
+            "ms": 18.7479,
+            "bytes": 61,
+            "followerCount": 73999
+        },
+        {
+            "round": 1,
+            "index": 2,
+            "kind": "channel",
+            "status": 200,
+            "ms": 26.2776,
+            "bytes": 851,
+            "followerCount": 73999
+        },
+        {
+            "round": 1,
+            "index": 3,
+            "kind": "channel",
+            "status": 200,
+            "ms": 22.3669,
+            "bytes": 719,
+            "followerCount": 128529
+        },
+        {
+            "round": 1,
+            "index": 3,
+            "kind": "count",
+            "status": 200,
+            "ms": 17.8799,
+            "bytes": 62,
+            "followerCount": 128529
+        },
+        {
+            "round": 1,
+            "index": 4,
+            "kind": "count",
+            "status": 200,
+            "ms": 17.861,
+            "bytes": 61,
+            "followerCount": 76027
+        },
+        {
+            "round": 1,
+            "index": 4,
+            "kind": "channel",
+            "status": 200,
+            "ms": 34.1109,
+            "bytes": 701,
+            "followerCount": 76027
+        },
+        {
+            "round": 1,
+            "index": 5,
+            "kind": "channel",
+            "status": 200,
+            "ms": 27.1676,
+            "bytes": 780,
+            "followerCount": 38785
+        },
+        {
+            "round": 1,
+            "index": 5,
+            "kind": "count",
+            "status": 200,
+            "ms": 23.1632,
+            "bytes": 61,
+            "followerCount": 38785
+        },
+        {
+            "round": 1,
+            "index": 6,
+            "kind": "count",
+            "status": 200,
+            "ms": 18.5865,
+            "bytes": 62,
+            "followerCount": 108759
+        },
+        {
+            "round": 1,
+            "index": 6,
+            "kind": "channel",
+            "status": 200,
+            "ms": 24.6827,
+            "bytes": 861,
+            "followerCount": 108759
+        },
+        {
+            "round": 1,
+            "index": 7,
+            "kind": "channel",
+            "status": 200,
+            "ms": 34.1655,
+            "bytes": 772,
+            "followerCount": 72877
+        },
+        {
+            "round": 1,
+            "index": 7,
+            "kind": "count",
+            "status": 200,
+            "ms": 16.4104,
+            "bytes": 61,
+            "followerCount": 72877
+        },
+        {
+            "round": 1,
+            "index": 8,
+            "kind": "count",
+            "status": 200,
+            "ms": 17.8632,
+            "bytes": 61,
+            "followerCount": 43307
+        },
+        {
+            "round": 1,
+            "index": 8,
+            "kind": "channel",
+            "status": 200,
+            "ms": 25.3994,
+            "bytes": 714,
+            "followerCount": 43307
+        },
+        {
+            "round": 1,
+            "index": 9,
+            "kind": "channel",
+            "status": 200,
+            "ms": 27.3302,
+            "bytes": 720,
+            "followerCount": 48809
+        },
+        {
+            "round": 1,
+            "index": 9,
+            "kind": "count",
+            "status": 200,
+            "ms": 18.5209,
+            "bytes": 61,
+            "followerCount": 48809
+        },
+        {
+            "round": 1,
+            "index": 10,
+            "kind": "count",
+            "status": 200,
+            "ms": 22.0726,
+            "bytes": 61,
+            "followerCount": 24943
+        },
+        {
+            "round": 1,
+            "index": 10,
+            "kind": "channel",
+            "status": 200,
+            "ms": 20.0255,
+            "bytes": 696,
+            "followerCount": 24943
+        },
+        {
+            "round": 1,
+            "index": 11,
+            "kind": "channel",
+            "status": 200,
+            "ms": 24.4979,
+            "bytes": 715,
+            "followerCount": 119680
+        },
+        {
+            "round": 1,
+            "index": 11,
+            "kind": "count",
+            "status": 200,
+            "ms": 22.6091,
+            "bytes": 62,
+            "followerCount": 119680
+        },
+        {
+            "round": 2,
+            "index": 0,
+            "kind": "channel",
+            "status": 200,
+            "ms": 23.244,
+            "bytes": 802,
+            "followerCount": 137269
+        },
+        {
+            "round": 2,
+            "index": 0,
+            "kind": "count",
+            "status": 200,
+            "ms": 20.8286,
+            "bytes": 62,
+            "followerCount": 137269
+        },
+        {
+            "round": 2,
+            "index": 1,
+            "kind": "count",
+            "status": 200,
+            "ms": 17.4505,
+            "bytes": 62,
+            "followerCount": 191179
+        },
+        {
+            "round": 2,
+            "index": 1,
+            "kind": "channel",
+            "status": 200,
+            "ms": 20.0017,
+            "bytes": 732,
+            "followerCount": 191179
+        },
+        {
+            "round": 2,
+            "index": 2,
+            "kind": "channel",
+            "status": 200,
+            "ms": 23.9367,
+            "bytes": 851,
+            "followerCount": 73999
+        },
+        {
+            "round": 2,
+            "index": 2,
+            "kind": "count",
+            "status": 200,
+            "ms": 17.0008,
+            "bytes": 61,
+            "followerCount": 73999
+        },
+        {
+            "round": 2,
+            "index": 3,
+            "kind": "count",
+            "status": 200,
+            "ms": 21.0718,
+            "bytes": 62,
+            "followerCount": 128529
+        },
+        {
+            "round": 2,
+            "index": 3,
+            "kind": "channel",
+            "status": 200,
+            "ms": 31.1397,
+            "bytes": 719,
+            "followerCount": 128529
+        },
+        {
+            "round": 2,
+            "index": 4,
+            "kind": "channel",
+            "status": 200,
+            "ms": 26.4803,
+            "bytes": 701,
+            "followerCount": 76027
+        },
+        {
+            "round": 2,
+            "index": 4,
+            "kind": "count",
+            "status": 200,
+            "ms": 20.9588,
+            "bytes": 61,
+            "followerCount": 76027
+        },
+        {
+            "round": 2,
+            "index": 5,
+            "kind": "count",
+            "status": 200,
+            "ms": 18.5831,
+            "bytes": 61,
+            "followerCount": 38785
+        },
+        {
+            "round": 2,
+            "index": 5,
+            "kind": "channel",
+            "status": 200,
+            "ms": 23.8864,
+            "bytes": 780,
+            "followerCount": 38785
+        },
+        {
+            "round": 2,
+            "index": 6,
+            "kind": "channel",
+            "status": 200,
+            "ms": 22.6757,
+            "bytes": 861,
+            "followerCount": 108759
+        },
+        {
+            "round": 2,
+            "index": 6,
+            "kind": "count",
+            "status": 200,
+            "ms": 18.886,
+            "bytes": 62,
+            "followerCount": 108759
+        },
+        {
+            "round": 2,
+            "index": 7,
+            "kind": "count",
+            "status": 200,
+            "ms": 21.3557,
+            "bytes": 61,
+            "followerCount": 72877
+        },
+        {
+            "round": 2,
+            "index": 7,
+            "kind": "channel",
+            "status": 200,
+            "ms": 20.1988,
+            "bytes": 772,
+            "followerCount": 72877
+        },
+        {
+            "round": 2,
+            "index": 8,
+            "kind": "channel",
+            "status": 200,
+            "ms": 25.7941,
+            "bytes": 714,
+            "followerCount": 43307
+        },
+        {
+            "round": 2,
+            "index": 8,
+            "kind": "count",
+            "status": 200,
+            "ms": 21.6518,
+            "bytes": 61,
+            "followerCount": 43307
+        },
+        {
+            "round": 2,
+            "index": 9,
+            "kind": "count",
+            "status": 200,
+            "ms": 21.4179,
+            "bytes": 61,
+            "followerCount": 48809
+        },
+        {
+            "round": 2,
+            "index": 9,
+            "kind": "channel",
+            "status": 200,
+            "ms": 29.1825,
+            "bytes": 720,
+            "followerCount": 48809
+        },
+        {
+            "round": 2,
+            "index": 10,
+            "kind": "channel",
+            "status": 200,
+            "ms": 32.0854,
+            "bytes": 696,
+            "followerCount": 24943
+        },
+        {
+            "round": 2,
+            "index": 10,
+            "kind": "count",
+            "status": 200,
+            "ms": 24.4055,
+            "bytes": 61,
+            "followerCount": 24943
+        },
+        {
+            "round": 2,
+            "index": 11,
+            "kind": "count",
+            "status": 200,
+            "ms": 19.7573,
+            "bytes": 62,
+            "followerCount": 119680
+        },
+        {
+            "round": 2,
+            "index": 11,
+            "kind": "channel",
+            "status": 200,
+            "ms": 21.8954,
+            "bytes": 715,
+            "followerCount": 119680
+        },
+        {
+            "round": 3,
+            "index": 0,
+            "kind": "count",
+            "status": 200,
+            "ms": 34.653,
+            "bytes": 62,
+            "followerCount": 137269
+        },
+        {
+            "round": 3,
+            "index": 0,
+            "kind": "channel",
+            "status": 200,
+            "ms": 25.9146,
+            "bytes": 802,
+            "followerCount": 137269
+        },
+        {
+            "round": 3,
+            "index": 1,
+            "kind": "channel",
+            "status": 200,
+            "ms": 17.5594,
+            "bytes": 732,
+            "followerCount": 191179
+        },
+        {
+            "round": 3,
+            "index": 1,
+            "kind": "count",
+            "status": 200,
+            "ms": 16.6012,
+            "bytes": 62,
+            "followerCount": 191179
+        },
+        {
+            "round": 3,
+            "index": 2,
+            "kind": "count",
+            "status": 200,
+            "ms": 16.4614,
+            "bytes": 61,
+            "followerCount": 73999
+        },
+        {
+            "round": 3,
+            "index": 2,
+            "kind": "channel",
+            "status": 200,
+            "ms": 17.3051,
+            "bytes": 851,
+            "followerCount": 73999
+        },
+        {
+            "round": 3,
+            "index": 3,
+            "kind": "channel",
+            "status": 200,
+            "ms": 35.1181,
+            "bytes": 719,
+            "followerCount": 128529
+        },
+        {
+            "round": 3,
+            "index": 3,
+            "kind": "count",
+            "status": 200,
+            "ms": 25.2285,
+            "bytes": 62,
+            "followerCount": 128529
+        },
+        {
+            "round": 3,
+            "index": 4,
+            "kind": "count",
+            "status": 200,
+            "ms": 18.5945,
+            "bytes": 61,
+            "followerCount": 76027
+        },
+        {
+            "round": 3,
+            "index": 4,
+            "kind": "channel",
+            "status": 200,
+            "ms": 24.0296,
+            "bytes": 701,
+            "followerCount": 76027
+        },
+        {
+            "round": 3,
+            "index": 5,
+            "kind": "channel",
+            "status": 200,
+            "ms": 22.1276,
+            "bytes": 780,
+            "followerCount": 38785
+        },
+        {
+            "round": 3,
+            "index": 5,
+            "kind": "count",
+            "status": 200,
+            "ms": 20.4496,
+            "bytes": 61,
+            "followerCount": 38785
+        },
+        {
+            "round": 3,
+            "index": 6,
+            "kind": "count",
+            "status": 200,
+            "ms": 22.8198,
+            "bytes": 62,
+            "followerCount": 108759
+        },
+        {
+            "round": 3,
+            "index": 6,
+            "kind": "channel",
+            "status": 200,
+            "ms": 19.2164,
+            "bytes": 861,
+            "followerCount": 108759
+        },
+        {
+            "round": 3,
+            "index": 7,
+            "kind": "channel",
+            "status": 200,
+            "ms": 25.2516,
+            "bytes": 772,
+            "followerCount": 72877
+        },
+        {
+            "round": 3,
+            "index": 7,
+            "kind": "count",
+            "status": 200,
+            "ms": 17.1237,
+            "bytes": 61,
+            "followerCount": 72877
+        },
+        {
+            "round": 3,
+            "index": 8,
+            "kind": "count",
+            "status": 200,
+            "ms": 25.444,
+            "bytes": 61,
+            "followerCount": 43307
+        },
+        {
+            "round": 3,
+            "index": 8,
+            "kind": "channel",
+            "status": 200,
+            "ms": 23.286,
+            "bytes": 714,
+            "followerCount": 43307
+        },
+        {
+            "round": 3,
+            "index": 9,
+            "kind": "channel",
+            "status": 200,
+            "ms": 29.7042,
+            "bytes": 720,
+            "followerCount": 48809
+        },
+        {
+            "round": 3,
+            "index": 9,
+            "kind": "count",
+            "status": 200,
+            "ms": 17.8072,
+            "bytes": 61,
+            "followerCount": 48809
+        },
+        {
+            "round": 3,
+            "index": 10,
+            "kind": "count",
+            "status": 200,
+            "ms": 17.7613,
+            "bytes": 61,
+            "followerCount": 24943
+        },
+        {
+            "round": 3,
+            "index": 10,
+            "kind": "channel",
+            "status": 200,
+            "ms": 22.7072,
+            "bytes": 696,
+            "followerCount": 24943
+        },
+        {
+            "round": 3,
+            "index": 11,
+            "kind": "channel",
+            "status": 200,
+            "ms": 27.6536,
+            "bytes": 715,
+            "followerCount": 119680
+        },
+        {
+            "round": 3,
+            "index": 11,
+            "kind": "count",
+            "status": 200,
+            "ms": 18.1616,
+            "bytes": 62,
+            "followerCount": 119680
+        }
+    ],
+    "comparisonSummary": [
+        {
+            "scenario": "search-cold",
+            "variant": "current",
+            "n": 4,
+            "firstResultMs": 467.92615000000023,
+            "completeMs": 476.90800000000036,
+            "followerRequests": 6,
+            "firstVisible": [1, 1, 1, 1],
+            "finalVisible": 1
+        },
+        {
+            "scenario": "search-cold",
+            "variant": "prototype",
+            "n": 4,
+            "firstResultMs": 361.3497499999994,
+            "completeMs": 419.32434999999987,
+            "followerRequests": 1,
+            "firstVisible": [1, 1, 1, 1],
+            "finalVisible": 1
+        },
+        {
+            "scenario": "search-warm",
+            "variant": "current",
+            "n": 4,
+            "firstResultMs": 38.03789999999981,
+            "completeMs": 46.41600000000017,
+            "followerRequests": 0,
+            "firstVisible": [1, 1, 1, 1],
+            "finalVisible": 1
+        },
+        {
+            "scenario": "search-warm",
+            "variant": "prototype",
+            "n": 4,
+            "firstResultMs": 47.56479999999965,
+            "completeMs": 54.21965,
+            "followerRequests": 0,
+            "firstVisible": [1, 1, 1, 1],
+            "finalVisible": 1
+        },
+        {
+            "scenario": "follower-cold",
+            "variant": "current",
+            "n": 4,
+            "firstResultMs": 465.88064999999915,
+            "completeMs": 1252.2199499999988,
+            "followerRequests": 12,
+            "firstVisible": [6, 6, 6, 6],
+            "finalVisible": 12
+        },
+        {
+            "scenario": "follower-cold",
+            "variant": "prototype",
+            "n": 4,
+            "firstResultMs": 452.9178500000007,
+            "completeMs": 1244.3754999999992,
+            "followerRequests": 12,
+            "firstVisible": [6, 6, 6, 6],
+            "finalVisible": 12
+        },
+        {
+            "scenario": "follower-warm",
+            "variant": "current",
+            "n": 4,
+            "firstResultMs": 38.464200000000346,
+            "completeMs": 46.349600000001374,
+            "followerRequests": 0,
+            "firstVisible": [12, 12, 12, 12],
+            "finalVisible": 12
+        },
+        {
+            "scenario": "follower-warm",
+            "variant": "prototype",
+            "n": 4,
+            "firstResultMs": 38.74039999999877,
+            "completeMs": 46.93544999999904,
+            "followerRequests": 0,
+            "firstVisible": [12, 12, 12, 12],
+            "finalVisible": 12
+        },
+        {
+            "scenario": "search-metadata-ready",
+            "variant": "current",
+            "n": 4,
+            "firstResultMs": 146.27150000000006,
+            "completeMs": 155.3363499999998,
+            "followerRequests": 6,
+            "firstVisible": [1, 1, 1, 1],
+            "finalVisible": 1
+        },
+        {
+            "scenario": "search-metadata-ready",
+            "variant": "prototype",
+            "n": 4,
+            "firstResultMs": 43.52375000000029,
+            "completeMs": 100.32089999999994,
+            "followerRequests": 1,
+            "firstVisible": [1, 1, 1, 1],
+            "finalVisible": 1
+        }
+    ],
+    "comparisonRuns": [
+        {
+            "variant": "current",
+            "scenario": "search-cold",
+            "round": 0,
+            "firstResultMs": 480.03499999999985,
+            "firstVisible": 1,
+            "completeMs": 486.58460000000014,
+            "finalVisible": 1,
+            "metadataRequests": 1,
+            "followerRequests": 6
+        },
+        {
+            "variant": "prototype",
+            "scenario": "search-cold",
+            "round": 0,
+            "firstResultMs": 353.0798999999997,
+            "firstVisible": 1,
+            "completeMs": 409.0754999999999,
+            "finalVisible": 1,
+            "metadataRequests": 1,
+            "followerRequests": 1
+        },
+        {
+            "variant": "current",
+            "scenario": "search-warm",
+            "round": 0,
+            "firstResultMs": 38.61970000000019,
+            "firstVisible": 1,
+            "completeMs": 46.41150000000016,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "prototype",
+            "scenario": "search-warm",
+            "round": 0,
+            "firstResultMs": 55.32470000000012,
+            "firstVisible": 1,
+            "completeMs": 62.01560000000063,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "current",
+            "scenario": "follower-cold",
+            "round": 0,
+            "firstResultMs": 470.71090000000004,
+            "firstVisible": 6,
+            "completeMs": 1272.4054999999998,
+            "finalVisible": 12,
+            "metadataRequests": 1,
+            "followerRequests": 12
+        },
+        {
+            "variant": "prototype",
+            "scenario": "follower-cold",
+            "round": 0,
+            "firstResultMs": 449.9199000000008,
+            "firstVisible": 6,
+            "completeMs": 1259.3569000000007,
+            "finalVisible": 12,
+            "metadataRequests": 1,
+            "followerRequests": 12
+        },
+        {
+            "variant": "current",
+            "scenario": "follower-warm",
+            "round": 0,
+            "firstResultMs": 39.012800000000425,
+            "firstVisible": 12,
+            "completeMs": 46.4387999999999,
+            "finalVisible": 12,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "prototype",
+            "scenario": "follower-warm",
+            "round": 0,
+            "firstResultMs": 53.28610000000117,
+            "firstVisible": 12,
+            "completeMs": 61.89520000000084,
+            "finalVisible": 12,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "prototype",
+            "scenario": "search-cold",
+            "round": 1,
+            "firstResultMs": 360.09709999999905,
+            "firstVisible": 1,
+            "completeMs": 418.53179999999884,
+            "finalVisible": 1,
+            "metadataRequests": 1,
+            "followerRequests": 1
+        },
+        {
+            "variant": "current",
+            "scenario": "search-cold",
+            "round": 1,
+            "firstResultMs": 470.2037,
+            "firstVisible": 1,
+            "completeMs": 477.73279999999977,
+            "finalVisible": 1,
+            "metadataRequests": 1,
+            "followerRequests": 6
+        },
+        {
+            "variant": "prototype",
+            "scenario": "search-warm",
+            "round": 1,
+            "firstResultMs": 56.41889999999876,
+            "firstVisible": 1,
+            "completeMs": 61.48139999999876,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "current",
+            "scenario": "search-warm",
+            "round": 1,
+            "firstResultMs": 53.740999999999985,
+            "firstVisible": 1,
+            "completeMs": 61.56469999999899,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "prototype",
+            "scenario": "follower-cold",
+            "round": 1,
+            "firstResultMs": 455.9158000000007,
+            "firstVisible": 6,
+            "completeMs": 1237.0036999999993,
+            "finalVisible": 12,
+            "metadataRequests": 1,
+            "followerRequests": 12
+        },
+        {
+            "variant": "current",
+            "scenario": "follower-cold",
+            "round": 1,
+            "firstResultMs": 463.9346999999998,
+            "firstVisible": 6,
+            "completeMs": 1251.0725999999995,
+            "finalVisible": 12,
+            "metadataRequests": 1,
+            "followerRequests": 12
+        },
+        {
+            "variant": "prototype",
+            "scenario": "follower-warm",
+            "round": 1,
+            "firstResultMs": 37.51250000000073,
+            "firstVisible": 12,
+            "completeMs": 46.90380000000005,
+            "finalVisible": 12,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "current",
+            "scenario": "follower-warm",
+            "round": 1,
+            "firstResultMs": 37.49880000000121,
+            "firstVisible": 12,
+            "completeMs": 46.32760000000053,
+            "finalVisible": 12,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "current",
+            "scenario": "search-cold",
+            "round": 2,
+            "firstResultMs": 448.1331999999984,
+            "firstVisible": 1,
+            "completeMs": 458.34949999999844,
+            "finalVisible": 1,
+            "metadataRequests": 1,
+            "followerRequests": 6
+        },
+        {
+            "variant": "prototype",
+            "scenario": "search-cold",
+            "round": 2,
+            "firstResultMs": 362.60239999999976,
+            "firstVisible": 1,
+            "completeMs": 420.1169000000009,
+            "finalVisible": 1,
+            "metadataRequests": 1,
+            "followerRequests": 1
+        },
+        {
+            "variant": "current",
+            "scenario": "search-warm",
+            "round": 2,
+            "firstResultMs": 37.456099999999424,
+            "firstVisible": 1,
+            "completeMs": 46.420500000000175,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "prototype",
+            "scenario": "search-warm",
+            "round": 2,
+            "firstResultMs": 38.107200000002194,
+            "firstVisible": 1,
+            "completeMs": 46.40730000000258,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "current",
+            "scenario": "follower-cold",
+            "round": 2,
+            "firstResultMs": 466.2037999999993,
+            "firstVisible": 6,
+            "completeMs": 1253.367299999998,
+            "finalVisible": 12,
+            "metadataRequests": 1,
+            "followerRequests": 12
+        },
+        {
+            "variant": "prototype",
+            "scenario": "follower-cold",
+            "round": 2,
+            "firstResultMs": 449.8192999999992,
+            "firstVisible": 6,
+            "completeMs": 1235.3269,
+            "finalVisible": 12,
+            "metadataRequests": 1,
+            "followerRequests": 12
+        },
+        {
+            "variant": "current",
+            "scenario": "follower-warm",
+            "round": 2,
+            "firstResultMs": 37.91560000000027,
+            "firstVisible": 12,
+            "completeMs": 46.366100000002916,
+            "finalVisible": 12,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "prototype",
+            "scenario": "follower-warm",
+            "round": 2,
+            "firstResultMs": 37.9445999999989,
+            "firstVisible": 12,
+            "completeMs": 40.54530000000159,
+            "finalVisible": 12,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "prototype",
+            "scenario": "search-cold",
+            "round": 3,
+            "firstResultMs": 364.7554999999993,
+            "firstVisible": 1,
+            "completeMs": 437.77449999999953,
+            "finalVisible": 1,
+            "metadataRequests": 1,
+            "followerRequests": 1
+        },
+        {
+            "variant": "current",
+            "scenario": "search-cold",
+            "round": 3,
+            "firstResultMs": 465.64860000000044,
+            "firstVisible": 1,
+            "completeMs": 476.08320000000094,
+            "finalVisible": 1,
+            "metadataRequests": 1,
+            "followerRequests": 6
+        },
+        {
+            "variant": "prototype",
+            "scenario": "search-warm",
+            "round": 3,
+            "firstResultMs": 39.80489999999918,
+            "firstVisible": 1,
+            "completeMs": 46.957900000001246,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "current",
+            "scenario": "search-warm",
+            "round": 3,
+            "firstResultMs": 36.3198999999986,
+            "firstVisible": 1,
+            "completeMs": 46.32849999999962,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "prototype",
+            "scenario": "follower-cold",
+            "round": 3,
+            "firstResultMs": 464.2016000000003,
+            "firstVisible": 6,
+            "completeMs": 1251.747299999999,
+            "finalVisible": 12,
+            "metadataRequests": 1,
+            "followerRequests": 12
+        },
+        {
+            "variant": "current",
+            "scenario": "follower-cold",
+            "round": 3,
+            "firstResultMs": 465.557499999999,
+            "firstVisible": 6,
+            "completeMs": 1237.277900000001,
+            "finalVisible": 12,
+            "metadataRequests": 1,
+            "followerRequests": 12
+        },
+        {
+            "variant": "prototype",
+            "scenario": "follower-warm",
+            "round": 3,
+            "firstResultMs": 39.536199999998644,
+            "firstVisible": 12,
+            "completeMs": 46.96709999999803,
+            "finalVisible": 12,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "current",
+            "scenario": "follower-warm",
+            "round": 3,
+            "firstResultMs": 40.212100000000646,
+            "firstVisible": 12,
+            "completeMs": 46.33309999999983,
+            "finalVisible": 12,
+            "metadataRequests": 0,
+            "followerRequests": 0
+        },
+        {
+            "variant": "current",
+            "scenario": "search-metadata-ready",
+            "round": 0,
+            "firstResultMs": 163.3699999999999,
+            "firstVisible": 1,
+            "completeMs": 170.36519999999973,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 6
+        },
+        {
+            "variant": "prototype",
+            "scenario": "search-metadata-ready",
+            "round": 0,
+            "firstResultMs": 36.38540000000012,
+            "firstVisible": 1,
+            "completeMs": 76.81989999999996,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 1
+        },
+        {
+            "variant": "prototype",
+            "scenario": "search-metadata-ready",
+            "round": 1,
+            "firstResultMs": 35.03409999999985,
+            "firstVisible": 1,
+            "completeMs": 92.39859999999999,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 1
+        },
+        {
+            "variant": "current",
+            "scenario": "search-metadata-ready",
+            "round": 1,
+            "firstResultMs": 145.38830000000007,
+            "firstVisible": 1,
+            "completeMs": 154.99209999999994,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 6
+        },
+        {
+            "variant": "current",
+            "scenario": "search-metadata-ready",
+            "round": 2,
+            "firstResultMs": 131.16319999999996,
+            "firstVisible": 1,
+            "completeMs": 139.2561999999998,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 6
+        },
+        {
+            "variant": "prototype",
+            "scenario": "search-metadata-ready",
+            "round": 2,
+            "firstResultMs": 52.0666999999994,
+            "firstVisible": 1,
+            "completeMs": 108.24319999999989,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 1
+        },
+        {
+            "variant": "prototype",
+            "scenario": "search-metadata-ready",
+            "round": 3,
+            "firstResultMs": 50.662100000000464,
+            "firstVisible": 1,
+            "completeMs": 123.04180000000088,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 1
+        },
+        {
+            "variant": "current",
+            "scenario": "search-metadata-ready",
+            "round": 3,
+            "firstResultMs": 147.15470000000005,
+            "firstVisible": 1,
+            "completeMs": 155.68059999999969,
+            "finalVisible": 1,
+            "metadataRequests": 0,
+            "followerRequests": 6
+        }
+    ]
+}
