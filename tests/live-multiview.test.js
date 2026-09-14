@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
+const { waitForCondition } = require("./helpers/extension-page-fixture.js");
 const repo = path.join(__dirname, "..");
 const A = "a".repeat(32),
     B = "b".repeat(32),
@@ -293,6 +294,22 @@ function setup(t, { local = {}, savedSession, readFailure = false, writeFailure 
     };
 }
 
+test("multiview launcher inherits native fade timing as player controls toggle", (t) => {
+    const { w } = setup(t);
+    const style = w.document.createElement("style");
+    style.textContent = ".pzp-button{transition:opacity .2s ease-in}";
+    w.document.head.prepend(style);
+    const launcher = w.document.getElementById("betterchzzk-multiview-launcher");
+    const player = launcher.closest(".pzp-pc");
+    assert.equal(w.getComputedStyle(launcher).transition, "opacity .2s ease-in");
+    player.classList.remove("pzp-pc--controls");
+    assert.equal(w.getComputedStyle(launcher).opacity, "0");
+    player.classList.add("pzp-pc--controls");
+    assert.equal(w.getComputedStyle(launcher).opacity, "1");
+    style.textContent = ".pzp-button{transition:opacity .3s linear}";
+    assert.equal(w.getComputedStyle(launcher).transition, "opacity .3s linear");
+});
+
 async function waitForChatUi(predicate) {
     for (let attempt = 0; attempt < 30; attempt++) {
         if (predicate()) return;
@@ -300,6 +317,231 @@ async function waitForChatUi(predicate) {
     }
     assert.ok(predicate(), "chat controls did not settle");
 }
+
+function submitMultiviewSearch(h, value) {
+    const input = h.w.document.querySelector('input[name="liveUrl"]');
+    input.value = value;
+    input.dispatchEvent(new h.w.Event("input", { bubbles: true }));
+    input.form.dispatchEvent(new h.w.Event("submit", { bubbles: true, cancelable: true }));
+    return input;
+}
+
+function channelSearchResponse(channels, next = null) {
+    return { code: 200, content: { data: channels.map((channel) => ({ channel })), page: { next } } };
+}
+
+test("nickname search shows profile, live state and viewer counts, and selection uses normal muted addition", async (t) => {
+    const h = setup(t);
+    await h.start();
+    const calls = [];
+    h.w.BetterChzzk.utils.fetchJson = async (url, { signal }) => {
+        calls.push({ url, signal });
+        if (url.includes("/search/"))
+            return channelSearchResponse([
+                {
+                    channelId: B,
+                    channelName: "방송인 & 이름",
+                    openLive: true,
+                    channelImageUrl: "https://nng-phinf.pstatic.net/profile.png",
+                },
+                { channelId: C, channelName: "오프라인 방송인", openLive: false },
+            ]);
+        return { code: 200, content: { channel: { channelId: B }, status: "OPEN", concurrentUserCount: 1234 } };
+    };
+    submitMultiviewSearch(h, " 방송인 & 이름 ");
+    await waitForChatUi(() => h.w.document.querySelector(".bcmv-search-detail")?.textContent.includes("1,234"));
+    assert.equal(calls.length, 2, "one search and one live detail, no offline detail or profile API");
+    const url = new URL(calls[0].url);
+    assert.equal(url.searchParams.get("keyword"), "방송인 & 이름");
+    assert.equal(url.searchParams.get("withFirstChannelContent"), "false");
+    const rows = h.w.document.querySelectorAll(".bcmv-search-result");
+    assert.equal(rows[0].textContent, "방송인 & 이름방송 중 · 시청자 1,234명");
+    assert.equal(rows[1].textContent, "오프라인 방송인오프라인");
+    assert.equal(rows[1].disabled, true);
+    const image = rows[0].querySelector("img");
+    assert.equal(image.alt, "");
+    assert.equal(image.loading, "lazy");
+    assert.equal(image.decoding, "async");
+    assert.equal(image.referrerPolicy, "no-referrer");
+    image.dispatchEvent(new h.w.Event("error"));
+    assert.equal(rows[0].querySelector("img"), null);
+    rows[1].click();
+    assert.equal(h.instances.length, 0);
+    rows[0].click();
+    await tick();
+    assert.equal(h.instances.length, 1);
+    assert.equal(h.instances[0].video.muted, true);
+    assert.equal(h.w.document.querySelector(".bcmv-panel").hidden, true);
+});
+
+test("nickname search caps and deduplicates results, rejects malformed identities and keeps names as text", async (t) => {
+    const h = setup(t);
+    await h.start();
+    let details = 0;
+    const channels = [
+        {
+            channelId: B,
+            channelName: "<img src=x onerror=alert(1)>",
+            openLive: true,
+            channelImageUrl: "javascript:alert(1)",
+        },
+        { channelId: B, channelName: "duplicate", openLive: true },
+        { channelId: "invalid", channelName: "invalid", openLive: true },
+        ...Array.from({ length: 20 }, (_, i) => ({
+            channelId: i.toString(16).padStart(32, "0"),
+            channelName: `결과 ${i}`,
+            openLive: false,
+        })),
+    ];
+    h.w.BetterChzzk.utils.fetchJson = async (url) => {
+        if (url.includes("/search/")) return channelSearchResponse(channels, { offset: 5 });
+        details += 1;
+        return { code: 200, content: { channel: { channelId: B }, status: "OPEN", concurrentUserCount: 0 } };
+    };
+    submitMultiviewSearch(h, "이름");
+    await waitForChatUi(() => h.w.document.querySelector(".bcmv-search-detail")?.textContent.includes("0명"));
+    assert.equal(details, 1);
+    assert.equal(h.w.document.querySelectorAll(".bcmv-search-result").length, 3);
+    assert.equal(h.w.document.querySelector(".bcmv-search-name").textContent, channels[0].channelName);
+    assert.equal(h.w.document.querySelector(".bcmv-search-results img"), null);
+    assert.match(h.w.document.querySelector("[data-bcmv-notice]").textContent, /상위 5개/);
+});
+
+test("nickname search requests only five matches and orders them by follower count without showing it", async (t) => {
+    const h = setup(t);
+    await h.start();
+    h.w.BetterChzzk.utils.fetchJson = async (url) => {
+        assert.equal(new URL(url).searchParams.get("size"), "5");
+        return channelSearchResponse(
+            [300, 800, 0, 1500, 100].map((followerCount, i) => ({
+                channelId: i.toString(16).padStart(32, "0"),
+                channelName: `방송인 ${i}`,
+                openLive: false,
+                followerCount,
+            })),
+            { offset: 5 }
+        );
+    };
+    submitMultiviewSearch(h, "방송인");
+    await waitForChatUi(() => h.w.document.querySelectorAll(".bcmv-search-result").length === 5);
+    assert.deepEqual(
+        Array.from(h.w.document.querySelectorAll(".bcmv-search-name"), (node) => node.textContent),
+        ["방송인 3", "방송인 1", "방송인 0", "방송인 4", "방송인 2"]
+    );
+    assert.doesNotMatch(h.w.document.querySelector(".bcmv-search-results").textContent, /팔로워|1500|1,500/);
+});
+
+test("search errors remain retryable and optional viewer lookup failure preserves observed live results", async (t) => {
+    const h = setup(t);
+    await h.start();
+    h.w.BetterChzzk.utils.fetchJson = async () => {
+        throw new Error("network unavailable");
+    };
+    submitMultiviewSearch(h, "이름");
+    await waitForChatUi(() =>
+        h.w.document.querySelector("[data-bcmv-notice]").textContent.includes("검색하지 못했어요")
+    );
+    assert.equal(h.w.document.querySelector('[data-action="submit-add"]').disabled, false);
+    h.w.BetterChzzk.utils.fetchJson = async () => channelSearchResponse([]);
+    submitMultiviewSearch(h, "없는 이름");
+    await waitForChatUi(() => h.w.document.querySelector("[data-bcmv-notice]").textContent === "검색 결과가 없어요.");
+    h.w.BetterChzzk.utils.fetchJson = async (url) => {
+        if (url.includes("/search/"))
+            return channelSearchResponse([{ channelId: B, channelName: "방송인", openLive: true }]);
+        throw new Error("viewer count unavailable");
+    };
+    submitMultiviewSearch(h, "방송인");
+    await waitForChatUi(() => h.w.document.querySelector(".bcmv-search-detail")?.textContent.includes("확인 불가"));
+    assert.equal(h.w.document.querySelector(".bcmv-search-result").disabled, false);
+    assert.match(h.w.document.querySelector(".bcmv-search-detail").textContent, /^방송 중/);
+    h.click("close-panel");
+    h.click("controls");
+    h.click("add");
+    assert.equal(h.w.document.querySelector("[data-bcmv-notice]").textContent, "");
+    assert.equal(h.w.document.querySelector(".bcmv-search-result"), null);
+});
+
+test("search rejects stale responses, cancels on edit and does not duplicate a pending submission", async (t) => {
+    const h = setup(t);
+    await h.start();
+    const pending = [];
+    h.w.BetterChzzk.utils.fetchJson = (url, { signal }) => new Promise((resolve) => pending.push({ signal, resolve }));
+    const input = submitMultiviewSearch(h, "첫 이름");
+    input.form.dispatchEvent(new h.w.Event("submit", { bubbles: true, cancelable: true }));
+    assert.equal(pending.length, 1);
+    submitMultiviewSearch(h, "두 번째 이름");
+    assert.equal(pending[0].signal.aborted, true);
+    pending[1].resolve(channelSearchResponse([{ channelId: C, channelName: "새 결과", openLive: false }]));
+    await waitForChatUi(() => h.w.document.querySelector(".bcmv-search-name")?.textContent === "새 결과");
+    pending[0].resolve(channelSearchResponse([{ channelId: B, channelName: "오래된 결과", openLive: true }]));
+    await tick();
+    assert.equal(h.w.document.querySelector(".bcmv-search-name").textContent, "새 결과");
+    assert.equal(pending.length, 2, "stale search cannot start detail lookups");
+});
+
+test("search and viewer lookups cancel when closing, disabling, navigating or remounting", async (t) => {
+    for (const mode of ["close", "disable", "route", "remount"]) {
+        await t.test(mode, async (t) => {
+            const h = setup(t);
+            await h.start();
+            const pending = [];
+            h.w.BetterChzzk.utils.fetchJson = async (url, { signal }) => {
+                if (url.includes("/search/"))
+                    return channelSearchResponse([{ channelId: B, channelName: "방송인", openLive: true }]);
+                return new Promise((resolve) => pending.push({ signal, resolve }));
+            };
+            submitMultiviewSearch(h, "방송인");
+            await waitForChatUi(() => pending.length === 1);
+            if (mode === "close") h.click("close-panel");
+            if (mode === "disable") h.configure(false);
+            if (mode === "route") h.navigate(C);
+            if (mode === "remount") {
+                const native = h.w.document.querySelector(".chzzk_player.type_live");
+                native.replaceWith(native.cloneNode(true));
+            }
+            await waitForChatUi(() => pending[0].signal.aborted);
+            pending[0].resolve({
+                code: 200,
+                content: { channel: { channelId: B }, status: "OPEN", concurrentUserCount: 999 },
+            });
+            await tick();
+            assert.equal(h.w.document.querySelector(".bcmv-search-detail"), null);
+        });
+    }
+});
+
+test("search disables already added and ended broadcasts and preserves the six-channel limit", async (t) => {
+    const h = setup(t);
+    await h.start();
+    h.w.BetterChzzk.utils.fetchJson = async (url) =>
+        url.includes("/search/")
+            ? channelSearchResponse([
+                  { channelId: A, channelName: "메인", openLive: true },
+                  { channelId: B, channelName: "종료됨", openLive: true },
+              ])
+            : { code: 200, content: null };
+    submitMultiviewSearch(h, "이름");
+    await waitForChatUi(() => h.w.document.querySelectorAll(".bcmv-search-result:disabled").length === 2);
+    await waitForChatUi(() => !h.w.document.querySelector('[data-action="submit-add"]').disabled);
+    assert.match(h.w.document.querySelectorAll(".bcmv-search-result")[1].textContent, /오프라인/);
+    for (const id of [B, C, "d".repeat(32), "e".repeat(32), "f".repeat(32)]) await h.add(id);
+    h.click("controls");
+    h.click("add");
+    h.w.BetterChzzk.utils.fetchJson = async (url) =>
+        url.includes("/search/")
+            ? channelSearchResponse([{ channelId: "1".repeat(32), channelName: "일곱 번째", openLive: true }])
+            : {
+                  code: 200,
+                  content: { channel: { channelId: "1".repeat(32) }, status: "OPEN", concurrentUserCount: 1 },
+              };
+    submitMultiviewSearch(h, "일곱 번째");
+    await waitForChatUi(() => h.w.document.querySelector(".bcmv-search-result"));
+    const row = h.w.document.querySelector(".bcmv-search-result");
+    assert.equal(row.disabled, true);
+    assert.match(row.title, /최대 6개/);
+    row.click();
+    assert.equal(h.instances.length, 5);
+});
 
 test("multiview delay ignores DOM authority changes and rejects synthetic or forged controls", async (t) => {
     const h = setup(t, { local: { [key(B)]: { version: 2, basis: "live-edge-clock", delaySeconds: 4 } } });
@@ -1466,7 +1708,7 @@ test("secondary right-click audio survives a document capture blocker and leaves
     assert.equal(video.muted, true);
     h.click("controls");
     h.click("add");
-    const input = d.querySelector('.bcmv-panel input[type="url"]');
+    const input = d.querySelector('.bcmv-panel input[name="liveUrl"]');
     assert.equal(input.dispatchEvent(context()), true);
     assert.equal(main.dispatchEvent(context()), true);
     assert.equal(blocked, 2, "settings inputs and native main keep their original event flow");
@@ -2791,6 +3033,72 @@ test("insufficient ranges wait without truncating saved delay; readiness restore
     assert.equal(video.currentTime, 69);
 });
 
+test("a sub-screen retries unread saved delays without restarting other broadcasts or overwriting storage", async (t) => {
+    const h = setup(t, {
+        local: {
+            [key(B)]: { version: 1, delaySeconds: 9 },
+            [key(C)]: { version: 1, delaySeconds: 4 },
+        },
+    });
+    const get = h.w.chrome.storage.local.get.bind(h.w.chrome.storage.local);
+    let failRead = true;
+    const reads = [];
+    h.w.chrome.storage.local.get = (keys, callback) => {
+        reads.push([...keys]);
+        if (!keys.includes(key(B)) || !failRead) return get(keys, callback);
+        queueMicrotask(() => {
+            h.w.chrome.runtime.lastError = { message: "read failed" };
+            try {
+                callback({});
+            } finally {
+                delete h.w.chrome.runtime.lastError;
+            }
+        });
+    };
+    await h.start();
+    await h.add(B);
+    await h.add(C);
+    const document = h.w.document;
+    const cell = (id) => document.querySelector(`[data-bcmv-channel="${id}"]`);
+    const error = () => cell(B).querySelector(".bcmv-error");
+    const retry = () => error().querySelector('[data-action="retry"]');
+    const readCount = (id) => reads.filter((keys) => keys.includes(key(id))).length;
+    await waitForCondition(() => error().textContent.includes("저장된 딜레이를 읽지 못했어요"));
+    assert.equal(error().hidden, false);
+    assert.equal(retry().hidden, false);
+    assert.equal(retry().disabled, false);
+    assert.equal(error().querySelector('[data-action="apply-delay"]').hidden, true);
+    assert.equal(cell(B).querySelector("[data-delta]").disabled, true);
+
+    const mainVideo = cell(A).querySelector("video"),
+        otherVideo = cell(C).querySelector("video"),
+        originalPlayer = h.instances.find((instance) => instance.video === cell(B).querySelector("video"));
+    const otherTime = otherVideo.currentTime;
+    const firstRetry = retry();
+    firstRetry.click();
+    firstRetry.click(); // The detached old control must not start another request.
+    await waitForCondition(() => readCount(B) === 2 && !error().hidden);
+    assert.equal(retry().hidden, false, "a repeated read failure remains retryable");
+    assert.equal(cell(B).querySelector("[data-delta]").disabled, true);
+    assert.equal(originalPlayer.destroyed, true);
+    assert.equal(h.writes.length, 0);
+
+    failRead = false;
+    retry().click();
+    await waitForCondition(
+        () => readCount(B) === 3 && error().hidden && cell(B).querySelector("video").currentTime === 111
+    );
+    assert.equal(retry().hidden, true);
+    assert.equal(cell(B).querySelector("[data-delta]").disabled, false);
+    assert.equal(cell(A).querySelector("video"), mainVideo);
+    assert.equal(cell(C).querySelector("video"), otherVideo);
+    assert.equal(otherVideo.currentTime, otherTime);
+    assert.deepEqual([readCount(A), readCount(B), readCount(C)], [1, 3, 1]);
+    assert.equal(h.requests.filter((request) => request.id === B).length, 3);
+    assert.equal(h.storage[key(B)].delaySeconds, 9);
+    assert.equal(h.writes.length, 0, "retry must read the stored delay without replacing it with zero");
+});
+
 test("read and write failures are visible and never claim saved success", async (t) => {
     const read = setup(t, { readFailure: true });
     await read.start();
@@ -2807,6 +3115,9 @@ test("read and write failures are visible and never claim saved success", async 
     write.trustedClick(write.w.document.querySelector('[data-delta="0.1"]'));
     await tick();
     assert.match(write.w.document.querySelector("[data-bcmv-status]").textContent, /저장 실패/);
+    const writeError = write.w.document.querySelector(`[data-bcmv-channel="${B}"] .bcmv-error`);
+    assert.equal(writeError.querySelector('[data-action="retry"]').hidden, true);
+    assert.equal(writeError.querySelector('[data-action="apply-delay"]').hidden, false);
     assert.match(write.w.document.querySelector("[data-bcmv-delay]").textContent, /0.0s/);
     assert.equal(write.w.document.querySelector("[data-bcmv-latency]").textContent, "현재 3.1s");
     assert.equal(write.storage[key(B)], undefined);

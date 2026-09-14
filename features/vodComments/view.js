@@ -227,7 +227,7 @@
   --bcvc-date-letter-spacing:normal;
   --bcvc-message-font-size:15px;
   --bcvc-message-font-weight:400;
-  --bcvc-message-line-height:20px;
+  --bcvc-message-line-height:1.5;
   --bcvc-message-letter-spacing:normal;
   --bcvc-surface:var(--Background-Neutral-Base,var(--sem-color-surface-neutral-weakest,var(--Surface-Neutral-Weakest,#fff)));
   --bcvc-surface-raised:var(--sem-color-surface-neutral-weakest,var(--Surface-Neutral-Weakest,#f7f8fa));
@@ -308,7 +308,7 @@
   padding:4px 6px;
   background:transparent;
   color:var(--bcvc-text-weak);
-  font-size:11px;
+  font-size:12px;
   font-weight:600;
   line-height:18px;
   white-space:nowrap;
@@ -364,7 +364,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
 .bcvc-date{flex:0 0 auto;color:var(--bcvc-text-weak);font-family:inherit;font-size:var(--bcvc-date-font-size,12px);font-weight:var(--bcvc-date-font-weight,400);line-height:var(--bcvc-date-line-height,18px);letter-spacing:var(--bcvc-date-letter-spacing,normal);white-space:nowrap}
 .bcvc-badge{flex:0 0 auto;border-radius:4px;padding:0 4px;font-family:inherit;font-size:9px;font-weight:700;line-height:15px}
 .bcvc-writer{background:var(--sem-color-surface-brand-alpha-weaker,var(--Surface-Brand-Alpha-Weaker,rgba(0,230,147,.12)));color:var(--bcvc-brand)}
-.bcvc-message{min-width:0;margin-top:2px;color:var(--bcvc-text);font-family:inherit;font-size:var(--bcvc-message-font-size,15px);font-weight:var(--bcvc-message-font-weight,400);line-height:var(--bcvc-message-line-height,20px);letter-spacing:var(--bcvc-message-letter-spacing,normal);overflow-wrap:anywhere;white-space:pre-wrap}
+.bcvc-message{min-width:0;margin-top:2px;color:var(--bcvc-text);font-family:inherit;font-size:var(--bcvc-message-font-size,15px);font-weight:var(--bcvc-message-font-weight,400);line-height:var(--bcvc-message-line-height,1.5);letter-spacing:var(--bcvc-message-letter-spacing,normal);overflow-wrap:anywhere;white-space:pre-wrap}
 .bcvc-message-content{display:inline}
 .bcvc-message-toggle{display:block;min-height:24px;border:0;padding:2px 0;background:transparent;color:var(--bcvc-brand);font-family:inherit;font-size:12px;font-weight:600;line-height:20px;text-align:left;cursor:pointer}
 .bcvc-message-toggle:hover{text-decoration:underline}
@@ -389,7 +389,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
 .bcvc-replies[hidden]{display:none!important}
 .bcvc-replies .bcvc-comment{padding:9px 0 5px 30px}
 .bcvc-replies .bcvc-avatar{top:9px;width:22px;height:22px}
-.bcvc-replies .bcvc-message{font-size:14px;line-height:18px}
+.bcvc-replies .bcvc-message{font-size:14px;line-height:1.5}
 .bcvc-mention{display:inline-block;margin-right:5px;color:var(--sem-color-content-brand-base,var(--Content-Brand-Base,var(--bcvc-brand)));font-size:15px;font-weight:700;line-height:20px}
 .bcvc-reply-limit{margin:3px 0 4px 20px;color:var(--bcvc-text-weak);font-size:12px;line-height:18px}
 .bcvc-reply-limit[hidden]{display:none!important}

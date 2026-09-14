@@ -3,69 +3,49 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Better Chzzk 시청 기록</title>
+        <title>치즈 스패너 시청 기록</title>
         <link rel="stylesheet" href="styles.css" />
+        <link rel="stylesheet" href="options-brand.css" />
     </head>
-    <body>
+    <body class="history-body">
         <main class="options-page history-page">
             <header class="hero">
-                <img class="brand-mark" src="icons/icon128.png" alt="" aria-hidden="true" />
+                <img class="brand-mark" src="icons/cheese-spanner128.png" alt="" aria-hidden="true" />
                 <div>
-                    <p class="eyebrow">Better Chzzk</p>
+                    <p class="eyebrow">치즈 스패너</p>
                     <h1>시청 기록</h1>
-                    <p class="subtitle">이 브라우저에 저장된 라이브 시청 시간과 월별 기록을 확인합니다.</p>
+                    <p class="subtitle">이 브라우저에서 시청한 라이브를 모아 봐요.</p>
                 </div>
                 <span id="notice" class="status-pill" aria-live="polite">불러오는 중</span>
             </header>
 
+            <details class="history-storage-warning">
+                <summary>시청 기록 삭제 주의</summary>
+                <p role="note">
+                    시청 기록은 이 브라우저에만 저장되며 자동 백업되지 않아요. 확장 프로그램을 삭제하거나 브라우저
+                    프로필·확장 데이터를 지우면 기록도 함께 삭제돼요. 별도 백업이 없으면 재설치해도 복구할 수 없어요.
+                </p>
+            </details>
+
+            <section class="settings-card history-summary-card" aria-label="시청 시간 요약">
+                <div class="history-summary">
+                    <div class="history-stat">
+                        <span>누적 시청 시간</span>
+                        <strong id="totalWatchTime">-</strong>
+                    </div>
+                    <div class="history-stat">
+                        <span>시청한 라이브</span>
+                        <strong id="totalLiveCount">-</strong>
+                    </div>
+                    <div class="history-stat">
+                        <span id="monthWatchLabel">선택한 달</span>
+                        <strong id="monthWatchTime">-</strong>
+                    </div>
+                </div>
+            </section>
+
             <div class="history-workspace">
                 <div class="history-side">
-                    <section class="settings-card history-summary-card">
-                        <div class="history-summary">
-                            <div class="history-stat">
-                                <span>총 시청</span>
-                                <strong id="totalWatchTime">-</strong>
-                            </div>
-                            <div class="history-stat">
-                                <span>라이브</span>
-                                <strong id="totalLiveCount">-</strong>
-                            </div>
-                            <div class="history-stat">
-                                <span>이번 달</span>
-                                <strong id="monthWatchTime">-</strong>
-                            </div>
-                        </div>
-                    </section>
-
-                    <section class="settings-card">
-                        <details class="history-storage-guide">
-                            <summary>시청 기록 저장 위치</summary>
-                            <p>기록은 현재 Chrome 프로필의 확장 저장소에 보관돼요.</p>
-                            <ol>
-                                <li>
-                                    주소창에 <code>chrome://version</code>을 입력하고 <strong>프로필 경로</strong>를
-                                    확인해 주세요.
-                                </li>
-                                <li>
-                                    <code>chrome://extensions</code>에서 <strong>개발자 모드</strong>를 켜고 Better
-                                    Chzzk의 <strong>ID</strong>를 확인해 주세요.
-                                </li>
-                                <li>
-                                    프로필 폴더 안의 <code>Local Extension Settings</code> 폴더에서 해당 ID와 같은
-                                    이름의 폴더를 열면 돼요.
-                                </li>
-                            </ol>
-                            <p>Windows에서 찾을 경로</p>
-                            <code class="history-storage-path"
-                                >&lt;프로필 경로&gt;\Local Extension Settings\&lt;Better Chzzk ID&gt;</code
-                            >
-                            <p>
-                                개인별 프로필과 설치 방식에 따라 경로가 달라요. 시청 기록은 별도 문서 파일이 아닌
-                                브라우저 데이터로 저장돼요.
-                            </p>
-                        </details>
-                    </section>
-
                     <section class="settings-card history-calendar-card">
                         <div class="history-toolbar">
                             <button
@@ -101,20 +81,61 @@
                         <p id="calendarFoot" class="history-calendar-foot">
                             날짜를 선택하면 해당 날짜에 본 라이브만 표시합니다.
                         </p>
+                        <button
+                            id="clearDateFilter"
+                            class="secondary-button history-month-button"
+                            type="button"
+                            disabled
+                        >
+                            이 달 전체 보기
+                        </button>
+                    </section>
+
+                    <section class="settings-card">
+                        <details class="history-storage-guide">
+                            <summary>시청 기록 저장 위치</summary>
+                            <p>기록은 현재 Chrome 프로필의 확장 저장소에 보관돼요.</p>
+                            <ol>
+                                <li>
+                                    주소창에 <code>chrome://version</code>을 입력하고 <strong>프로필 경로</strong>를
+                                    확인해 주세요.
+                                </li>
+                                <li>
+                                    <code>chrome://extensions</code>에서 <strong>개발자 모드</strong>를 켜고 치즈
+                                    스패너의 <strong>ID</strong>를 확인해 주세요.
+                                </li>
+                                <li>
+                                    프로필 폴더 안의 <code>Local Extension Settings</code> 폴더에서 해당 ID와 같은
+                                    이름의 폴더를 열면 돼요.
+                                </li>
+                            </ol>
+                            <p>Windows에서 찾을 경로</p>
+                            <code class="history-storage-path"
+                                >&lt;프로필 경로&gt;\Local Extension Settings\&lt;치즈 스패너 ID&gt;</code
+                            >
+                            <p>
+                                개인별 프로필과 설치 방식에 따라 경로가 달라요. 시청 기록은 별도 문서 파일이 아닌
+                                브라우저 데이터로 저장돼요.
+                            </p>
+                        </details>
                     </section>
                 </div>
 
                 <section class="settings-card history-list-card">
                     <div class="history-list-header">
-                        <div class="section-heading">
-                            <h2>라이브 내역</h2>
-                            <p id="listDescription">선택한 월의 라이브 시청 기록입니다.</p>
+                        <div class="history-list-heading">
+                            <div class="section-heading">
+                                <h2>라이브 내역</h2>
+                                <p id="listDescription">선택한 월의 라이브 시청 기록입니다.</p>
+                            </div>
+                            <button id="refresh" class="secondary-button" type="button">새로고침</button>
                         </div>
                         <div class="history-filter-row">
                             <input
                                 id="historySearch"
                                 type="search"
                                 placeholder="제목 또는 채널 검색"
+                                aria-label="시청 기록 검색"
                                 autocomplete="off"
                             />
                             <select id="historySort" aria-label="정렬 기준">
@@ -125,34 +146,43 @@
                                 <option value="desc">내림차순</option>
                                 <option value="asc">오름차순</option>
                             </select>
-                            <button id="refresh" class="secondary-button" type="button">새로고침</button>
-                            <button id="clearHistory" class="secondary-button danger-button" type="button">
-                                전체 삭제
-                            </button>
                         </div>
                         <div class="history-selection-row">
                             <label class="history-select-all">
                                 <input id="selectVisibleHistory" type="checkbox" />
                                 <span>현재 목록 선택</span>
                             </label>
-                            <span id="selectionStatus" class="history-selection-status">선택 0개</span>
-                            <button
-                                id="deleteSelectedHistory"
-                                class="secondary-button danger-button"
-                                type="button"
-                                disabled
+                            <span id="selectionStatus" class="history-selection-status" role="status" aria-live="polite"
+                                >선택 0개</span
                             >
-                                선택 삭제
-                            </button>
+                            <div class="history-selection-actions">
+                                <button id="clearSelection" class="secondary-button" type="button" disabled>
+                                    선택 해제
+                                </button>
+                                <button
+                                    id="deleteSelectedHistory"
+                                    class="secondary-button danger-button"
+                                    type="button"
+                                    disabled
+                                >
+                                    선택 삭제
+                                </button>
+                            </div>
                         </div>
                     </div>
                     <div id="historyList" class="history-list"></div>
+                    <div class="history-list-footer">
+                        <span>전체 삭제는 모든 달의 기록에 적용돼요.</span>
+                        <button id="clearHistory" class="secondary-button danger-button" type="button">
+                            전체 삭제
+                        </button>
+                    </div>
                 </section>
             </div>
 
             <div class="action-bar">
                 <a class="secondary-button" href="options.html">설정으로 돌아가기</a>
-                <a class="primary-button" href="https://chzzk.naver.com/lives" target="_blank" rel="noopener"
+                <a class="secondary-button" href="https://chzzk.naver.com/lives" target="_blank" rel="noopener"
                     >라이브 보러가기</a
                 >
             </div>

@@ -112,7 +112,16 @@
     const UNKNOWN_TITLE = "\uC81C\uBAA9 \uC5C6\uB294 \uB77C\uC774\uBE0C";
     const LOADING_TITLE = "\uBBF8\uB9AC\uBCF4\uAE30 \uBD88\uB7EC\uC624\uB294 \uC911";
     const ERROR_TITLE = "\uBBF8\uB9AC\uBCF4\uAE30\uB97C \uBD88\uB7EC\uC62C \uC218 \uC5C6\uC2B5\uB2C8\uB2E4";
+    const PREVIEW_FONT_URL = chrome.runtime.getURL("vendor/fonts/PretendardVariable.woff2");
     const STYLE_TEXT = `
+/* Pretendard 1.3.9, SIL OFL 1.1: vendor/fonts/Pretendard.LICENSE.txt */
+@font-face{
+  font-family:"BetterChzzk Pretendard";
+  src:url("${PREVIEW_FONT_URL}") format("woff2");
+  font-style:normal;
+  font-weight:100 900;
+  font-display:swap;
+}
 #${TOOLTIP_ID}{
   position:fixed;
   left:0;
@@ -123,10 +132,10 @@
   overflow:hidden;
   border:1px solid rgba(17,17,20,0.16);
   border-radius:8px;
-  background:#FFFFFF;
+  background:var(--sem-color-background-neutral-base,#FFFFFF);
   color:#111114;
-  box-shadow:0 18px 48px rgba(0,0,0,0.26);
-  font-family:system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  box-shadow:0 8px 24px rgba(0,0,0,0.16);
+  font-family:"BetterChzzk Pretendard", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size:12px;
   line-height:1.35;
   z-index:2147483647;
@@ -246,9 +255,9 @@
   box-shadow:0 3px 12px rgba(0,0,0,0.34);
   backdrop-filter:blur(6px);
   pointer-events:auto;
-  font-family:system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family:"BetterChzzk Pretendard", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size:12px;
-  font-weight:800;
+  font-weight:500;
   line-height:16px;
   white-space:nowrap;
   transition:gap 180ms ease, padding-right 180ms ease, background-color 180ms ease;
@@ -266,7 +275,7 @@
   background:rgba(5,7,10,0.94);
   color:#FFFFFF;
   box-shadow:0 3px 12px rgba(0,0,0,0.34);
-  font-size:11px;
+  font-size:12px;
   font-weight:700;
   line-height:15px;
   opacity:0;
@@ -297,8 +306,8 @@
   color:#FFFFFF;
   box-shadow:0 3px 12px rgba(0,0,0,0.34);
   pointer-events:none;
-  font-family:system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size:11px;
+  font-family:"BetterChzzk Pretendard", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size:12px;
   font-weight:700;
   line-height:15px;
   white-space:nowrap;
@@ -342,6 +351,7 @@
   transform:translateX(0);
 }
 @media (prefers-reduced-motion: reduce){
+  #${TOOLTIP_ID},
   .bcfp-sound-feedback,
   .bcfp-sound-feedback::after,
   .bcfp-sound-feedback .bcfp-sound-feedback-label,
@@ -350,21 +360,22 @@
 #${TOOLTIP_ID} .bcfp-body{
   display:flex;
   flex-direction:column;
-  gap:3px;
+  gap:6px;
   min-width:0;
-  padding:8px 10px 9px;
+  padding:12px;
 }
 #${TOOLTIP_ID} .bcfp-channel,
 #${TOOLTIP_ID} .bcfp-title,
 #${TOOLTIP_ID} .bcfp-meta{
+  font-variant-numeric:tabular-nums;
   min-width:0;
   overflow:hidden;
   text-overflow:ellipsis;
 }
 #${TOOLTIP_ID} .bcfp-channel{
-  color:#697183;
-  font-size:11px;
-  font-weight:800;
+  color:var(--sem-color-content-neutral-warm-strong,#697183);
+  font-size:12px;
+  font-weight:500;
   white-space:nowrap;
 }
 #${TOOLTIP_ID} a.bcfp-channel{display:flex;align-items:center;gap:4px;width:fit-content;max-width:100%;text-decoration:none;cursor:pointer;}
@@ -378,8 +389,8 @@
   -webkit-line-clamp:2;
   color:#111114;
   font-size:14px;
-  font-weight:900;
-  line-height:1.3;
+  font-weight:600;
+  line-height:1.5;
   overflow:hidden;
   word-break:keep-all;
   overflow-wrap:anywhere;
@@ -389,19 +400,48 @@
   align-items:center;
   gap:5px;
   color:#697183;
-  font-size:11px;
-  font-weight:800;
+  font-size:12px;
+  font-weight:500;
   white-space:nowrap;
 }
-#${TOOLTIP_ID} .bcfp-meta span:not(:first-child)::before{
-  content:"";
-  display:inline-block;
-  width:3px;
-  height:3px;
-  margin:0 6px 2px 0;
-  border-radius:50%;
-  background:currentColor;
-  opacity:0.72;
+#${TOOLTIP_ID} .bcfp-category{
+  display:inline-flex;
+  align-items:center;
+  min-width:0;
+  min-height:24px;
+  max-width:100%;
+  padding:1px 9px;
+  box-sizing:border-box;
+  border:1px solid var(--sem-color-surface-brand-strongest-static,#00ffa3);
+  border-radius:6px;
+  background:var(--sem-color-surface-brand-strongest-static,#00ffa3);
+  color:var(--sem-color-content-neutral-inverse-static,#0e0f10);
+  font:inherit;
+  line-height:1.5;
+  text-decoration:none;
+  white-space:normal;
+  word-break:keep-all;
+  overflow-wrap:anywhere;
+  cursor:pointer;
+}
+#${TOOLTIP_ID} .bcfp-category:hover{
+  border-color:var(--sem-color-surface-brand-stronger-static,#00e693);
+  background:var(--sem-color-surface-brand-stronger-static,#00e693);
+}
+#${TOOLTIP_ID} .bcfp-category:focus-visible{outline:2px solid currentColor;outline-offset:-2px;}
+#${TOOLTIP_ID} .bcfp-meta > span:not([data-bcfp-elapsed]){
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+#${TOOLTIP_ID} [data-bcfp-elapsed]{
+  flex:none;
+  margin-left:auto;
+  color:#111114;
+  font-size:13px;
+  font-weight:600;
+  line-height:1.5;
+  text-align:right;
 }
 #${TOOLTIP_ID}[data-state="loading"] .bcfp-title,
 #${TOOLTIP_ID}[data-state="error"] .bcfp-title{
@@ -414,36 +454,39 @@
 }
 html[dark] #${TOOLTIP_ID},
 body[theme="dark"] #${TOOLTIP_ID},
-[class*="dark"] #${TOOLTIP_ID}{
+html.theme_dark #${TOOLTIP_ID}{
   border-color:rgba(157,165,182,0.22);
-  background:#1B1D20;
+  background:var(--sem-color-background-neutral-base,#1B1D20);
   color:#F2F4F7;
-  box-shadow:0 20px 54px rgba(0,0,0,0.42);
+  box-shadow:0 8px 24px rgba(0,0,0,0.28);
 }
 html[dark] #${TOOLTIP_ID} .bcfp-channel,
 body[theme="dark"] #${TOOLTIP_ID} .bcfp-channel,
-[class*="dark"] #${TOOLTIP_ID} .bcfp-channel,
+html.theme_dark #${TOOLTIP_ID} .bcfp-channel,
 html[dark] #${TOOLTIP_ID} .bcfp-meta,
 body[theme="dark"] #${TOOLTIP_ID} .bcfp-meta,
-[class*="dark"] #${TOOLTIP_ID} .bcfp-meta{
+html.theme_dark #${TOOLTIP_ID} .bcfp-meta{
   color:#9DA5B6;
 }
 html[dark] #${TOOLTIP_ID} .bcfp-title,
 body[theme="dark"] #${TOOLTIP_ID} .bcfp-title,
-[class*="dark"] #${TOOLTIP_ID} .bcfp-title{
+html.theme_dark #${TOOLTIP_ID} .bcfp-title,
+html[dark] #${TOOLTIP_ID} [data-bcfp-elapsed],
+body[theme="dark"] #${TOOLTIP_ID} [data-bcfp-elapsed],
+html.theme_dark #${TOOLTIP_ID} [data-bcfp-elapsed]{
   color:#F2F4F7;
 }
 html[dark] #${TOOLTIP_ID}[data-state="loading"] .bcfp-title,
 body[theme="dark"] #${TOOLTIP_ID}[data-state="loading"] .bcfp-title,
-[class*="dark"] #${TOOLTIP_ID}[data-state="loading"] .bcfp-title,
+html.theme_dark #${TOOLTIP_ID}[data-state="loading"] .bcfp-title,
 html[dark] #${TOOLTIP_ID}[data-state="error"] .bcfp-title,
 body[theme="dark"] #${TOOLTIP_ID}[data-state="error"] .bcfp-title,
-[class*="dark"] #${TOOLTIP_ID}[data-state="error"] .bcfp-title{
+html.theme_dark #${TOOLTIP_ID}[data-state="error"] .bcfp-title{
   color:#C6CCD6;
 }
 html[dark] [${ACTIVE_ATTR}="1"],
 body[theme="dark"] [${ACTIVE_ATTR}="1"],
-[class*="dark"] [${ACTIVE_ATTR}="1"]{
+html.theme_dark [${ACTIVE_ATTR}="1"]{
   background:rgba(0,255,163,0.16) !important;
   box-shadow:0 0 0 1px rgba(0,255,163,0.4);
 }
@@ -873,6 +916,24 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         return [hours, minutes, seconds].map((part) => String(part).padStart(2, "0")).join(":");
     }
 
+    function getCategoryHref(type, id) {
+        if (
+            typeof type !== "string" ||
+            !/^[A-Z][A-Z0-9_]*$/.test(type) ||
+            typeof id !== "string" ||
+            !id.trim() ||
+            id === "." ||
+            id === ".."
+        )
+            return "";
+        try {
+            // 2026-09-14 live-detail fields match the native /category/GAME|ETC/<id>/lives links.
+            return `/category/${encodeURIComponent(type)}/${encodeURIComponent(id)}/lives`;
+        } catch (_) {
+            return "";
+        }
+    }
+
     function normalizePreviewMeta(source, fallback = {}) {
         const content = source?.content ?? source ?? {};
         const channel = content.channel || content.channelInfo || content.channelModel || {};
@@ -894,6 +955,7 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
                 content.categoryName,
                 fallback.category
             ),
+            categoryHref: getCategoryHref(content.categoryType, content.liveCategory),
             channelId: fallback.channelId,
             channelName,
             elapsedStartMs,
@@ -1419,9 +1481,17 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         const row = document.createElement("div");
         row.className = "bcfp-meta";
 
-        for (const text of [meta.category].filter(Boolean)) {
-            const item = document.createElement("span");
-            item.textContent = text;
+        if (meta.category) {
+            const channelId = normalizeChzzkChannelId(meta.channelId);
+            const linked = Boolean(meta.categoryHref && channelId);
+            const item = document.createElement(linked ? "a" : "span");
+            item.textContent = meta.category;
+            if (linked) {
+                item.className = "bcfp-category";
+                item.setAttribute("href", meta.categoryHref);
+                item.setAttribute("aria-label", `${meta.category} 카테고리 방송 보기`);
+                bindPreviewLink(item, channelId);
+            }
             row.appendChild(item);
         }
 
@@ -1500,6 +1570,10 @@ body[theme="dark"] [${ACTIVE_ATTR}="1"],
         link.target = "_blank";
         link.rel = "noopener noreferrer";
         link.setAttribute("aria-label", `${meta.channelName} 채널 홈 새 탭에서 열기`);
+        return bindPreviewLink(link, channelId);
+    }
+
+    function bindPreviewLink(link, channelId) {
         const validateTarget = (event) => {
             const current = activeInfo?.link?.isConnected ? resolveHoverInfo(activeInfo.link) : null;
             if (

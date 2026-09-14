@@ -740,7 +740,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
                 }
             }
             if (!isCalendarEnabled()) return;
-            if (event.key === "Enter" || event.key === " ") {
+            if ((event.key === "Enter" || event.key === " ") && event.target === widget) {
                 event.preventDefault();
                 setCalendarOpen(widget, widget.getAttribute("data-open") !== "1");
                 return;

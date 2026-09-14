@@ -1,15 +1,17 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+require("../shared/settings.js");
 require("../shared/adVideoRegistration.js");
 const { CONTENT_SCRIPT, createController } = globalThis.BetterChzzkAdVideoRegistration;
 
-function createRegistration(enabled = false) {
+function createRegistration(enabled) {
     let desired = enabled;
     let scripts = [];
     const mutations = [];
     let beforeRegister = async () => {};
     const controller = createController({
-        readEnabled: async () => desired,
+        readEnabled: async () =>
+            globalThis.BetterChzzkSettings.normalizeOptions({ adVideoEnabled: desired }).adVideoEnabled,
         scripting: {
             async getRegisteredContentScripts({ ids }) {
                 assert.deepEqual(ids, [CONTENT_SCRIPT.id]);
@@ -49,11 +51,8 @@ function createRegistration(enabled = false) {
     };
 }
 
-test("registration is off by default and only injects the packaged MAIN script at document_start", async () => {
+test("registration follows the enabled default and preserves a saved opt-out", async () => {
     const state = createRegistration();
-    await state.controller.reconcile();
-    assert.deepEqual(state.mutations, []);
-    state.setEnabled(true);
     await state.controller.reconcile();
     assert.deepEqual(state.scripts, [CONTENT_SCRIPT]);
     assert.deepEqual(CONTENT_SCRIPT.js, ["features/adVideoPage.js"]);
@@ -67,6 +66,10 @@ test("registration is off by default and only injects the packaged MAIN script a
     state.setEnabled(false);
     await state.controller.reconcile();
     assert.deepEqual(state.mutations, ["register", "unregister"]);
+    const optedOut = createRegistration(false);
+    await optedOut.controller.reconcile();
+    assert.deepEqual(optedOut.scripts, []);
+    assert.deepEqual(optedOut.mutations, []);
 });
 
 test("rapid setting changes during registration converge to the last saved value", async () => {
@@ -93,7 +96,7 @@ test("rapid setting changes during registration converge to the last saved value
 });
 
 test("startup removes a stale registration, updates old descriptors, and recovers after an API failure", async () => {
-    const state = createRegistration();
+    const state = createRegistration(false);
     state.setScripts([{ ...CONTENT_SCRIPT }]);
     await state.controller.reconcile();
     assert.deepEqual(state.scripts, []);

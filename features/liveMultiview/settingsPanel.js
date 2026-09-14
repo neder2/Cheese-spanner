@@ -14,7 +14,7 @@
         onSwap: swap,
         equalLayout,
         onAction,
-        onSubmit,
+        onAdd,
         onVisibility,
         cancelLayout,
     }) {
@@ -35,6 +35,196 @@
         let suppressPanelClick = false,
             generation = 0,
             message = "";
+        let searchController = null;
+        const searchResults = new Map();
+        function cancelSearch() {
+            searchController?.abort();
+            searchController = null;
+            searchResults.clear();
+        }
+        function searchNotice(value) {
+            message = value;
+            text(panel?.querySelector("[data-bcmv-notice]"), value);
+            positionPanel();
+        }
+        function onSearchInput(event) {
+            if (event.target.name !== "liveUrl") return;
+            cancelSearch();
+            panel?.querySelector(".bcmv-search-results")?.replaceChildren();
+            const submit = panel?.querySelector('[data-action="submit-add"]');
+            if (submit) {
+                submit.disabled = false;
+                text(submit, model.channelFromUrl(event.target.value.trim()) ? "추가" : "검색");
+            }
+            searchNotice("");
+        }
+        async function onSubmit(event) {
+            event.preventDefault();
+            if (panelId !== "add" || !panel?.contains(event.target)) return;
+            const input = panel.querySelector('input[name="liveUrl"]');
+            const keyword = input.value.trim();
+            if (searchController) return;
+            cancelSearch();
+            const list = panel.querySelector(".bcmv-search-results");
+            list.replaceChildren();
+            if (!keyword) {
+                searchNotice("방송인 닉네임이나 라이브 URL을 입력해 주세요.");
+                return;
+            }
+            if (model.channelFromUrl(keyword) || /^(?:https?:\/\/|chzzk\.naver\.com\/)/i.test(keyword)) {
+                onAdd(keyword);
+                return;
+            }
+            const controller = new AbortController();
+            searchController = controller;
+            const submit = panel.querySelector('[data-action="submit-add"]');
+            submit.disabled = true;
+            searchNotice("검색 중이에요…");
+            const current = () => searchController === controller && !controller.signal.aborted;
+            try {
+                const params = new URLSearchParams({
+                    keyword,
+                    offset: "0",
+                    size: "5",
+                    withFirstChannelContent: "false",
+                });
+                const response = await root.utils.fetchJson(
+                    `https://api.chzzk.naver.com/service/v1/search/channels?${params}`,
+                    { signal: controller.signal }
+                );
+                if (!current()) return;
+                if (response?.code !== 200 || !Array.isArray(response.content?.data))
+                    throw new Error("Invalid channel search response");
+                const seen = new Set();
+                const channels = response.content.data
+                    .slice(0, 5)
+                    .map((item) => item?.channel)
+                    .filter((channel) => {
+                        if (
+                            !/^[a-f0-9]{32}$/.test(channel?.channelId) ||
+                            typeof channel.channelName !== "string" ||
+                            !channel.channelName.trim() ||
+                            seen.has(channel.channelId)
+                        )
+                            return false;
+                        seen.add(channel.channelId);
+                        return true;
+                    })
+                    .sort((a, b) => {
+                        const count = (channel) =>
+                            Number.isInteger(channel.followerCount) && channel.followerCount >= 0
+                                ? channel.followerCount
+                                : -1;
+                        return count(b) - count(a);
+                    });
+                for (const channel of channels) {
+                    const id = channel.channelId;
+                    const row = button("", "add-search-result", id);
+                    row.className = "bcmv-search-result";
+                    const detail = el("span", "bcmv-search-detail");
+                    const avatar = el("span", "bcmv-search-avatar");
+                    const imageUrl = root.utils.normalizeChzzkImageUrl(channel.channelImageUrl);
+                    if (imageUrl) {
+                        const image = el("img");
+                        image.alt = "";
+                        image.width = image.height = 32;
+                        image.loading = "lazy";
+                        image.decoding = "async";
+                        image.referrerPolicy = "no-referrer";
+                        image.addEventListener("error", () => image.remove(), { once: true });
+                        image.src = imageUrl;
+                        avatar.append(image);
+                    }
+                    const info = el("span", "bcmv-search-info");
+                    info.append(el("span", "bcmv-search-name", channel.channelName), detail);
+                    row.append(avatar, info);
+                    const result = {
+                        id,
+                        row,
+                        detail,
+                        live: channel.openLive,
+                        viewers: null,
+                        loading: channel.openLive === true,
+                    };
+                    searchResults.set(id, result);
+                    updateSearchResult(result);
+                    const item = el("li");
+                    item.append(row);
+                    list.append(item);
+                }
+                searchNotice(
+                    channels.length
+                        ? response.content.page?.next
+                            ? "팔로워순 상위 5개 결과예요. 닉네임을 더 자세히 입력하면 찾기 쉬워요."
+                            : "추가할 방송을 선택해 주세요."
+                        : "검색 결과가 없어요."
+                );
+                // Search exposes openLive but no viewer count. Only live matches need a detail request.
+                await Promise.allSettled(
+                    Array.from(searchResults.values())
+                        .filter((result) => result.live === true)
+                        .map(async (result) => {
+                            try {
+                                const response = await root.utils.fetchJson(
+                                    `https://api.chzzk.naver.com/service/v2/channels/${result.id}/live-detail`,
+                                    { signal: controller.signal }
+                                );
+                                if (!current()) return;
+                                const live = response?.content;
+                                if (response?.code === 200 && live === null) {
+                                    result.live = false;
+                                    return;
+                                }
+                                if (response?.code !== 200 || live?.channel?.channelId !== result.id) return;
+                                if (live.status === "CLOSE") result.live = false;
+                                if (
+                                    live.status === "OPEN" &&
+                                    Number.isInteger(live.concurrentUserCount) &&
+                                    live.concurrentUserCount >= 0
+                                )
+                                    result.viewers = live.concurrentUserCount;
+                            } catch {
+                                // Keep the observed search state when the optional viewer lookup fails.
+                            } finally {
+                                if (current()) {
+                                    result.loading = false;
+                                    updateSearchResult(result);
+                                }
+                            }
+                        })
+                );
+            } catch {
+                if (current()) searchNotice("검색하지 못했어요. 잠시 후 다시 검색해 주세요.");
+            } finally {
+                if (current()) {
+                    searchController = null;
+                    submit.disabled = false;
+                    positionPanel();
+                }
+            }
+        }
+        function updateSearchResult(result) {
+            const { row, detail, live, viewers, id, loading } = result;
+            const problem =
+                live !== true
+                    ? "방송 중인 채널만 추가할 수 있어요."
+                    : state.channels.some((entry) => entry.id === id)
+                      ? "이미 추가된 방송이에요."
+                      : state.channels.length >= 6
+                        ? "방송은 최대 6개까지 추가할 수 있어요."
+                        : "";
+            row.disabled = Boolean(problem);
+            row.title = problem || "방송 추가";
+            row.dataset.live = String(live === true);
+            text(
+                detail,
+                live === true
+                    ? `방송 중 · ${loading ? "시청자 수 확인 중…" : viewers === null ? "시청자 수 확인 불가" : `시청자 ${viewers.toLocaleString("ko-KR")}명`}`
+                    : live === false
+                      ? "오프라인"
+                      : "방송 여부 확인 불가"
+            );
+        }
         function panelCells(cells = model.treeLayout(state.dockTree).cells) {
             return (
                 cells
@@ -362,6 +552,8 @@
             (chatButton || launcher)?.focus({ preventScroll: true });
         }
         function renderPanel(id, focus = false) {
+            cancelSearch();
+            if (panelId === "add" || id === "add") message = "";
             panelId = id;
             chatButton?.setAttribute("aria-expanded", String(Boolean(id)));
             onVisibility(Boolean(id));
@@ -392,17 +584,21 @@
             panel.append(header);
             if (id === "add") {
                 const form = el("form"),
-                    label = el("label", "", "라이브 URL"),
+                    label = el("label", "", "방송인 닉네임 또는 라이브 URL"),
                     input = el("input");
-                input.type = "url";
+                input.type = "text";
                 input.required = true;
                 input.name = "liveUrl";
-                input.placeholder = "https://chzzk.naver.com/live/…";
+                input.placeholder = "닉네임 또는 https://chzzk.naver.com/live/…";
+                input.autocomplete = "off";
                 label.append(input);
-                const submit = button("추가", "submit-add");
+                const submit = button("검색", "submit-add");
                 submit.type = "submit";
                 form.append(label, submit);
                 panel.append(form);
+                const results = el("ul", "bcmv-search-results");
+                results.setAttribute("aria-label", "방송인 검색 결과");
+                panel.append(results);
             } else {
                 const actions = el("div", "bcmv-actions");
                 const equalize = button("보조 방송 정렬", "equalize-layout");
@@ -595,19 +791,25 @@
             panel.setAttribute("aria-labelledby", PANEL_ID + "-title");
             panel.addEventListener("click", onClick, true);
             panel.addEventListener("submit", onSubmit);
+            panel.addEventListener("input", onSearchInput);
             panel.addEventListener("keydown", onKey);
             panel.addEventListener("pointerdown", onPanelPointerDown, true);
             document.body.append(panel);
         }
         function setContext(context) {
-            if (routeId !== context.routeId) endPanelDrag();
+            if (routeId !== context.routeId) {
+                endPanelDrag();
+                cancelSearch();
+            }
             ({ host, routeId, chatButton, chatHeader, launcher } = context);
             positionPanel();
         }
         function release() {
+            cancelSearch();
             stopPanelTracking();
             panel?.removeEventListener("click", onClick, true);
             panel?.removeEventListener("submit", onSubmit);
+            panel?.removeEventListener("input", onSearchInput);
             panel?.removeEventListener("keydown", onKey);
             panel?.removeEventListener("pointerdown", onPanelPointerDown, true);
             panel?.remove();
@@ -641,6 +843,18 @@
             return true;
         }
         return {
+            addSearchResult(id) {
+                const result = searchResults.get(id);
+                if (
+                    panelId !== "add" ||
+                    !result ||
+                    !panel?.contains(result.row) ||
+                    result.live !== true ||
+                    result.row.disabled
+                )
+                    return;
+                onAdd(`https://chzzk.naver.com/live/${id}`);
+            },
             mount,
             setContext,
             release,

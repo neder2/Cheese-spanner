@@ -6,7 +6,11 @@
  *   chrome API가 보이지 않는 순수 페이지 컨텍스트로 나머지 로직 전체가 실행된다.
  * 동작 위치: PLAYBACK_ROUTE_RE(/^\/(?:live|video)(?:\/|$)/)에 매칭하는 라이브/VOD 재생 라우트의 video 및
  *   pzp 계열 플레이어 요소.
- * 하는 일: 페이지 컨텍스트에서만 접근 가능한 플레이어 객체(_corePlayer 등)와 videoTracks를 탐색해
+ * 하는 일: 라이브의 검증된 React 소유 플레이어와 화질 메뉴를 먼저 찾고, 메뉴의 선택 이벤트를 통해
+ *   화질을 적용한다. 실측한 1080p·720p 저지연 선택의 취소 결과만 보정하며 재생 메타데이터는 바꾸지 않는다.
+ *   첫 재생 전 자동 선택은 playing까지 기다려 네이티브 초기 play 요청과 겹치지 않게 한다.
+ *   첫 재생·선택 Promise 대기 중에는 완료 신호로 재개하고, 두 world의 반복 조회를 중단한다.
+ *   그 밖의 기존 플레이어 객체(_corePlayer 등)와 videoTracks를 탐색해
  *   원하는 해상도 트랙을 직접 선택한다. 화질 전환 후 재생 시간/재생 상태를 복원하고, VOD 시작 시점의
  *   이어보기 유도 UI, URL의 currentTime 파라미터, 댓글 타임라인 클릭 탐색과 화질 적용 타이밍이 겹치지
  *   않도록 여러 지연/재시도 창을 관리한다. Object.defineProperty 등을 패치해 플레이어가 나중에
@@ -20,18 +24,8 @@
  *   betterchzzk:auto-quality:apply(요청 트리거)를 수신한다. 활성화 상태는
  *   data-betterchzzk-auto-quality-state 속성 + betterchzzk:auto-quality:state 이벤트로 받는다.
  *   라우트 변경은 features/routeBridgePage.js가 보내는 betterchzzk:routechange 이벤트로 받는다.
- * 구조(행 번호는 이 헤더를 포함한 파일 기준):
- *   35-61행: chrome.runtime 감지 시 자기 자신을 페이지에 재주입하는 부트스트랩, 이후 중복 실행 가드.
- *   63-168행: 이벤트/속성 이름, 타이밍 상수, 플레이어 탐색 셀렉터, 상태 변수 선언.
- *   177-194행: 라우트 캐시(refreshRouteCache/isPlaybackRoute/isVodRoute).
- *   194-440행: 댓글 타임라인 클릭 탐색, URL currentTime 파라미터 탐색의 감지·보정·취소 로직.
- *   483-549행: 확장 측이 보낸 활성화 상태 읽기(readAutoQualityState)와 리스너 설치/해제.
- *   558-800행: 플레이어 객체 내 videoTracks 탐색용 추적 목록 및 Object.defineProperty 인터셉터.
- *   801-804행: syncAutoQualityState 최초 호출과 state/routechange/pageshow 리스너 등록.
- *   806-1497행: 플레이어/비디오 요소 탐색(getPlayer 등), VOD 시작 게이트, 트랙 점수화·선택 로직.
- *   1500-1553행: applyQualityToPlayer/applyQuality — 실제 트랙 전환과 재생 상태 복원 진입점.
- *   1562-1734행: 트랙 리스트 이벤트 바인딩과 재적용 예약/타이머(schedulePageApply 계열).
- *   1736-1798행: 요청 읽기(REQUEST_ATTR)와 결과/상태 쓰기, betterchzzk:auto-quality:apply 리스너.
+ * 주요 진입점: syncAutoQualityState(설정/라우트), getLiveQualityPlayer(라이브 연결),
+ *   applyLiveQualitySelection(메뉴 선택), applyQualityToPlayer(기존 트랙), clearPageAutoApply(정리).
  */
 (() => {
     const INSTALL_FLAG = "__betterChzzkAutoQualityPageInstalled";
@@ -136,8 +130,11 @@
         "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip], [data-bcmv-video]";
 
     let cachedPlayer = null;
+    let liveQualityBinding = null;
+    let nativeLivePlayerSeen = false;
     let preferredQuality = DEFAULT_QUALITY;
     let pageApplyTimer = 0;
+    let pageApplyDueAt = 0;
     let pageApplyStartedAt = 0;
     let pageApplyDeadline = 0;
     let observedTrackList = null;
@@ -191,6 +188,8 @@
     }
 
     function clearQualityTargetRouteState() {
+        detachLiveQualityBinding();
+        nativeLivePlayerSeen = false;
         cachedPlayer = null;
         trackedQualityTargets.length = 0;
         lastFullPlayerScanAt = 0;
@@ -527,6 +526,7 @@
     function syncAutoQualityState() {
         syncQualityTargetRouteState();
         readAutoQualityState();
+        if (!autoQualityEnabled || !isPlaybackRoute() || isVodRoute()) detachLiveQualityBinding();
         if (autoQualityEnabled && isPlaybackRoute()) installQualityTargetInterceptor();
         else uninstallQualityTargetInterceptor();
 
@@ -647,7 +647,15 @@
     }
 
     function findVideoTrackListTarget(player, includeTracked = true) {
+        if (!isElement(player) || player.isConnected) {
+            const directTracks = getTrackListFromTarget(player);
+            if (directTracks) {
+                rememberQualityTarget(player);
+                return { target: player, trackList: directTracks };
+            }
+        }
         for (const target of collectQualityTargets(player, includeTracked)) {
+            if (target === player) continue;
             if (isElement(target) && !target.isConnected) continue;
             const trackList = getTrackListFromTarget(target);
             if (!trackList) continue;
@@ -1066,6 +1074,14 @@
         if (!isPlaybackRoute()) return null;
 
         const video = getMainVideoForContext(context);
+        if (
+            !isVodRoute() &&
+            video?.matches("video.webplayer-internal-video") &&
+            video.closest(".chzzk_player.type_live")
+        )
+            nativeLivePlayerSeen = true;
+        const livePlayer = getLiveQualityPlayer(video);
+        if (livePlayer || (nativeLivePlayerSeen && !isVodRoute())) return livePlayer;
         if (!video) {
             if (hasQualityControlTarget(cachedPlayer)) return cachedPlayer;
             cachedPlayer = findTrackedQualityTarget() || findPlayerBySelectorOnly();
@@ -1081,6 +1097,187 @@
 
         cachedPlayer = findPlayerFromAncestors(video) || findTrackedQualityTarget() || findPlayerFromDocument(video);
         return cachedPlayer;
+    }
+
+    function isCurrentLiveQualityBinding(binding) {
+        if (!binding || !autoQualityEnabled || !isPlaybackRoute() || isVodRoute()) return false;
+        try {
+            return (
+                binding.route === location.pathname &&
+                binding.host.isConnected &&
+                binding.host.contains(binding.video) &&
+                binding.host.querySelector("video.webplayer-internal-video") === binding.video &&
+                binding.player.shadowRoot.contains(binding.video) &&
+                binding.player.querySelector("pzp-setting-quality-pane") === binding.pane &&
+                readLooseProp(binding.player, "srcObject") === binding.provider
+            );
+        } catch {
+            return false;
+        }
+    }
+
+    function detachLiveQualityBinding() {
+        const binding = liveQualityBinding;
+        liveQualityBinding = null;
+        if (binding?.onPlaying) binding.video.removeEventListener("playing", binding.onPlaying, true);
+        if (!binding || binding.pane.$dispatch !== binding.wrapper) return;
+        try {
+            if (binding.descriptor) nativeDefineProperty(binding.pane, "$dispatch", binding.descriptor);
+            else delete binding.pane.$dispatch;
+        } catch (_) {
+            // 다른 코드가 속성을 잠갔더라도 남은 래퍼는 binding 동일성 검사로 개입을 멈춘다.
+        }
+    }
+
+    function getLiveQualityPlayer(video) {
+        if (!autoQualityEnabled || !isPlaybackRoute() || isVodRoute()) return null;
+        if (isCurrentLiveQualityBinding(liveQualityBinding) && liveQualityBinding.video === video)
+            return liveQualityBinding.player;
+        detachLiveQualityBinding();
+        const host = video?.closest?.(".chzzk_player.type_live");
+        if (!host || !video.matches("video.webplayer-internal-video")) return null;
+
+        const key = Object.getOwnPropertyNames(host).find((name) => name.startsWith("__reactFiber$"));
+        const seen = new Set();
+        const matches = [];
+        const consider = (player) => {
+            if (!player || typeof player !== "object" || seen.has(player)) return;
+            seen.add(player);
+            try {
+                if (
+                    typeof player.getPreProcessorControl !== "function" ||
+                    typeof player.querySelector !== "function" ||
+                    !(player.shadowRoot instanceof Element) ||
+                    !player.shadowRoot.contains(video)
+                )
+                    return;
+                const pane = player.querySelector("pzp-setting-quality-pane");
+                if (
+                    typeof pane?.$dispatch === "function" &&
+                    typeof pane.selectVideoTrack === "function" &&
+                    !matches.some((match) => match.pane === pane)
+                )
+                    matches.push({ player, pane });
+            } catch (_) {
+                // 접근할 수 없는 후보는 채택하지 않는다.
+            }
+        };
+        let owner = key ? host[key] : null;
+        for (let depth = 0; owner && depth < 8; depth++, owner = readLooseProp(owner, "return")) {
+            for (const fiber of [owner, readLooseProp(owner, "alternate")]) {
+                let hook = readLooseProp(fiber, "memoizedState");
+                for (let index = 0; hook && index < 48; index++, hook = readLooseProp(hook, "next")) {
+                    const value = readLooseProp(hook, "memoizedState");
+                    consider(value);
+                    consider(readLooseProp(value, "current"));
+                }
+            }
+        }
+        if (matches.length !== 1) return null;
+        const { player, pane } = matches[0];
+        const descriptor = nativeGetOwnPropertyDescriptor(pane, "$dispatch");
+        if (descriptor && !descriptor.configurable) return null;
+        const binding = {
+            player,
+            pane,
+            host,
+            video,
+            descriptor,
+            route: location.pathname,
+            provider: readLooseProp(player, "srcObject"),
+            original: pane.$dispatch,
+            wrapper: null,
+            pending: null,
+            failed: null,
+            applying: false,
+            started: video.played.length > 0,
+            onPlaying: null,
+        };
+        binding.onPlaying = () => {
+            if (liveQualityBinding !== binding || !isCurrentLiveQualityBinding(binding)) return;
+            binding.started = true;
+            startPageAutoApply(TRACK_RECOVERY_WINDOW_MS);
+        };
+        binding.wrapper = function (...args) {
+            if (liveQualityBinding !== binding || !isCurrentLiveQualityBinding(binding)) {
+                if (liveQualityBinding === binding) detachLiveQualityBinding();
+                return Reflect.apply(binding.original, this, args);
+            }
+            const track = args[1]?.track;
+            if (!binding.applying && this === pane && args[0] === "change") binding.failed = null;
+            const result = Reflect.apply(binding.original, this, args);
+            const requestedHeight = getPreferredHeight(preferredQuality);
+            const measuredTrack =
+                (track?.width === 1920 && track?.height === 1080 && track?.dataset?.encodingTrackId === "1080p") ||
+                (track?.width === 1280 && track?.height === 720 && track?.dataset?.encodingTrackId === "720p");
+            if (
+                liveQualityBinding === binding &&
+                isCurrentLiveQualityBinding(binding) &&
+                this === pane &&
+                args[0] === "change" &&
+                measuredTrack &&
+                (track.height === requestedHeight || (binding.applying && track.height < requestedHeight)) &&
+                track?.kind === "low-latency" &&
+                result === false
+            )
+                return true;
+            return result;
+        };
+        try {
+            nativeDefineProperty(pane, "$dispatch", { configurable: true, writable: true, value: binding.wrapper });
+            liveQualityBinding = binding;
+            if (!binding.started) video.addEventListener("playing", binding.onPlaying, { capture: true, once: true });
+            return player;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function applyLiveQualitySelection(binding, track, quality) {
+        if (!isCurrentLiveQualityBinding(binding) || typeof track.id !== "string" || !track.id)
+            return { status: "blocked", reason: "native-quality-unavailable" };
+        // 현재 공식 코드의 loadedmetadata → CY → Vf는 초기 play를 요청한다. 트랙 변경이
+        // 겹쳐 AbortError가 나면 네이티브에서 재시도하지 않으므로 첫 playing 이후에 선택한다.
+        if (!binding.started) return { status: "pending", reason: "native-playback-start", waitForEvent: true };
+        if (binding.pending) return { status: "pending", reason: "native-quality-pending", waitForEvent: true };
+        if (binding.failed?.trackId === track.id && binding.failed.quality === quality)
+            return { status: "blocked", reason: binding.failed.reason };
+        binding.failed = null;
+        binding.applying = true;
+        let selection;
+        try {
+            if (!binding.pane.$dispatch("change", { track })) {
+                binding.failed = { trackId: track.id, quality, reason: "native-quality-cancelled" };
+                return { status: "blocked", reason: binding.failed.reason };
+            }
+            if (!isCurrentLiveQualityBinding(binding)) {
+                detachLiveQualityBinding();
+                return { status: "blocked", reason: "native-player-changed" };
+            }
+            selection = binding.pane.selectVideoTrack(track.id);
+        } catch (_) {
+            binding.failed = { trackId: track.id, quality, reason: "native-quality-failed" };
+            return { status: "blocked", reason: binding.failed.reason };
+        } finally {
+            binding.applying = false;
+        }
+        const pending = Promise.resolve(selection);
+        binding.pending = pending;
+        const settle = (failed) => {
+            if (liveQualityBinding !== binding || binding.pending !== pending || !isCurrentLiveQualityBinding(binding))
+                return;
+            binding.pending = null;
+            const list = getTrackListFromTarget(binding.player);
+            const selected = getSelectedTrack(toTrackArray(list), list);
+            if (failed || selected?.id !== track.id)
+                binding.failed = { trackId: track.id, quality, reason: "native-quality-unconfirmed" };
+            startPageAutoApply(TRACK_RECOVERY_WINDOW_MS);
+        };
+        pending.then(
+            () => settle(false),
+            () => settle(true)
+        );
+        return { status: "pending", reason: "native-quality-pending", waitForEvent: true };
     }
 
     function toTrackArray(trackList) {
@@ -1617,7 +1814,7 @@
         return String(target.constructor?.name || typeof target);
     }
 
-    function applyQualityToPlayer(player, quality, context = null) {
+    function applyQualityToPlayer(player, quality, context, trackTarget) {
         if (!player) return { status: "pending", reason: "player-missing" };
 
         ensureVodPlaybackGuardAttached(context);
@@ -1626,7 +1823,6 @@
         const currentTime = Number(video?.currentTime);
         const wasPaused = video?.paused !== false;
         const shouldResume = shouldResumeAfterQualityChange(video, wasPaused);
-        const trackTarget = findVideoTrackListTarget(player);
         const trackList = trackTarget?.trackList || null;
         const tracks = toTrackArray(trackList);
         if (!tracks.length) {
@@ -1645,6 +1841,13 @@
         }
 
         const targetHeight = getTrackHeight(targetTrack, context);
+        if (
+            liveQualityBinding?.player === player &&
+            liveQualityBinding.failed?.trackId === targetTrack.id &&
+            liveQualityBinding.failed.quality === quality
+        ) {
+            return { status: "blocked", reason: liveQualityBinding.failed.reason };
+        }
         if (selectedTrack && trackMatchesQuality(selectedTrack, targetHeight, context)) {
             return {
                 status: "already",
@@ -1654,6 +1857,15 @@
             };
         }
 
+        if (liveQualityBinding?.player === player) {
+            return {
+                ...applyLiveQualitySelection(liveQualityBinding, targetTrack, quality),
+                selected: describeTrack(selectedTrack, context),
+                requested: describeTrack(targetTrack, context),
+                targetType: "native-live-quality-pane",
+                trackCount: tracks.length,
+            };
+        }
         const selected = selectTrack(trackList, tracks, targetTrack);
         if (selected) {
             restorePlaybackAfterQualityChange(video, isVodRoute() ? currentTime : NaN, shouldResume);
@@ -1675,8 +1887,21 @@
         }
 
         const player = getPlayer(context);
-        bindTrackList(player);
-        return applyQualityToPlayer(player, quality, context);
+        if (!player) {
+            bindTrackList(null);
+            return { status: "pending", reason: "player-missing" };
+        }
+        if (liveQualityBinding?.player === player) {
+            if (!liveQualityBinding.started) {
+                bindTrackList(null);
+                return { status: "pending", reason: "native-playback-start", waitForEvent: true };
+            }
+            if (liveQualityBinding.pending)
+                return { status: "pending", reason: "native-quality-pending", waitForEvent: true };
+        }
+        const trackTarget = findVideoTrackListTarget(player);
+        bindTrackList(trackTarget?.trackList || null);
+        return applyQualityToPlayer(player, quality, context, trackTarget);
     }
 
     function removeTrackListListeners() {
@@ -1686,8 +1911,7 @@
         observedTrackList.removeEventListener("removetrack", onTrackListChanged, true);
     }
 
-    function bindTrackList(player) {
-        const trackList = findVideoTrackListTarget(player)?.trackList || null;
+    function bindTrackList(trackList) {
         if (observedTrackList === trackList) return;
 
         removeTrackListListeners();
@@ -1704,6 +1928,7 @@
             clearTimeout(pageApplyTimer);
             pageApplyTimer = 0;
         }
+        pageApplyDueAt = 0;
 
         pageApplyStartedAt = 0;
         pageApplyDeadline = 0;
@@ -1734,6 +1959,7 @@
             clearTimeout(pageApplyTimer);
             pageApplyTimer = 0;
         }
+        pageApplyDueAt = 0;
         pageApplyStartedAt = 0;
         pageApplyDeadline = 0;
         if (stopTrackList) {
@@ -1749,11 +1975,13 @@
             return;
         }
 
+        const dueAt = performance.now() + delayMs;
         if (pageApplyTimer) {
-            if (delayMs > 0) return;
+            if (pageApplyDueAt <= dueAt) return;
             clearTimeout(pageApplyTimer);
         }
 
+        pageApplyDueAt = dueAt;
         pageApplyTimer = setTimeout(runPageApply, delayMs);
     }
 
@@ -1780,6 +2008,10 @@
     }
 
     function scheduleNextPageApply(result) {
+        if (result.status === "blocked" || result.waitForEvent) {
+            settlePageApplyWindow();
+            return;
+        }
         if (result.status === "already") {
             rememberStableVodApply(result);
             settlePageApplyWindow({ stopObserver: isVodRoute(), stopTrackList: isVodRoute() });
@@ -1801,6 +2033,7 @@
 
     function runPageApply() {
         pageApplyTimer = 0;
+        pageApplyDueAt = 0;
         if (!isPlaybackRoute()) {
             clearPageAutoApply();
             return;
@@ -1834,6 +2067,7 @@
         if (pageObserver || !document.documentElement) return;
 
         pageObserver = new MutationObserver((mutations) => {
+            if (liveQualityBinding && !isCurrentLiveQualityBinding(liveQualityBinding)) detachLiveQualityBinding();
             if (!isPlaybackRoute()) {
                 clearPageAutoApply();
                 return;
@@ -1901,7 +2135,7 @@
                 requestId: request.requestId,
                 ...result,
             });
-            if (result.status === "already") {
+            if (result.status === "already" || result.status === "blocked" || result.waitForEvent) {
                 rememberStableVodApply(result);
                 settlePageApplyWindow({ stopObserver: isVodRoute(), stopTrackList: isVodRoute() });
             }

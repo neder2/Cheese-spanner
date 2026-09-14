@@ -95,6 +95,30 @@ function flush() {
     return new Promise((resolve) => setImmediate(resolve));
 }
 
+test("calendar navigation keys keep the calendar open and allow native button activation", async (t) => {
+    const f = fixture();
+    t.after(() => {
+        f.hooks.removeWidget();
+        f.dom.window.close();
+    });
+    const widget = mount(f);
+    f.hooks.setSelectedCalendarMonth(widget, 2026, 7);
+    f.hooks.cacheMonthInfo(CHANNEL, f.hooks.getKstMonthInfo(NOW, 2026, 6));
+    widget.click();
+    assert.equal(widget.getAttribute("data-open"), "1");
+    const previous = widget.querySelector('[data-bcmb-nav="-1"]');
+    for (const key of ["Enter", " "]) {
+        const event = new f.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+        previous.dispatchEvent(event);
+        assert.equal(event.defaultPrevented, false, "native navigation activation must remain available");
+        assert.equal(widget.getAttribute("data-open"), "1");
+    }
+    previous.click();
+    await flush();
+    assert.equal(widget.querySelector(".bcmb-calendar-month").textContent, "2026.06");
+    assert.equal(widget.getAttribute("data-open"), "1");
+});
+
 for (const [averageLimit, calendarLimit] of [
     [1, 3],
     [3, 1],

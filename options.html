@@ -3,14 +3,19 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Better Chzzk 설정</title>
+        <title>치즈 스패너 설정</title>
         <link rel="stylesheet" href="styles.css" />
+        <link rel="stylesheet" href="options-brand.css" />
     </head>
     <body class="options-body">
         <main class="options-page">
             <svg class="icon-sprite" aria-hidden="true">
                 <symbol id="icon-play" viewBox="0 0 24 24">
                     <path d="m9.5 7.5 7 4.5-7 4.5z" fill="currentColor" stroke="none" />
+                </symbol>
+                <symbol id="icon-video" viewBox="0 0 24 24">
+                    <rect x="3" y="5" width="18" height="14" rx="2" />
+                    <path d="m10 9 5 3-5 3z" fill="currentColor" stroke="none" />
                 </symbol>
                 <symbol id="icon-clock" viewBox="0 0 24 24">
                     <circle cx="12" cy="12" r="9" />
@@ -83,27 +88,37 @@
             </svg>
             <header class="hero">
                 <span class="brand-mark" aria-hidden="true">
-                    <img src="icons/icon128.png" alt="" />
+                    <img src="icons/cheese-spanner128.png" alt="" />
                 </span>
                 <div class="hero-copy">
-                    <h1>Better Chzzk <span id="versionBadge" class="version-badge" hidden></span></h1>
-                    <p class="subtitle">변경 후 저장 버튼을 눌러 적용합니다.</p>
-                    <a
-                        class="release-notes-link"
-                        href="https://github.com/neder2/Chzzk/releases"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        aria-label="릴리즈 노트 (새 탭에서 열기)"
-                        >릴리즈 노트</a
-                    >
+                    <h1>
+                        <span class="brand-name">치즈 스패너</span>
+                        <span id="versionBadge" class="version-badge" hidden></span>
+                    </h1>
                 </div>
-                <div class="hero-actions reset-row">
-                    <span id="notice" class="status-pill" aria-live="polite">불러오는 중</span>
-                    <button id="reset" class="secondary-button reset-button" type="button">
-                        <svg viewBox="0 0 20 20" aria-hidden="true"><use href="#icon-restore" /></svg>
-                        <span>기본값 복원</span>
-                    </button>
-                </div>
+                <details id="headerMenu" class="header-menu">
+                    <summary aria-label="설정 더보기">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <circle cx="5" cy="12" r="1.8" />
+                            <circle cx="12" cy="12" r="1.8" />
+                            <circle cx="19" cy="12" r="1.8" />
+                        </svg>
+                    </summary>
+                    <div class="header-menu-content hero-actions reset-row">
+                        <a
+                            class="release-notes-link"
+                            href="https://github.com/neder2/Chzzk/releases"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label="릴리즈 노트 (새 탭에서 열기)"
+                            >릴리즈 노트</a
+                        >
+                        <button id="reset" class="secondary-button reset-button" type="button">
+                            <svg viewBox="0 0 20 20" aria-hidden="true"><use href="#icon-restore" /></svg>
+                            <span>기본값 복원</span>
+                        </button>
+                    </div>
+                </details>
             </header>
 
             <form id="optionsForm" class="settings-form" novalidate>
@@ -124,7 +139,7 @@
                         <input
                             id="settingsSearch"
                             type="search"
-                            placeholder="설정 검색 (예: 화질, 볼륨, 채팅)"
+                            placeholder="화질, 볼륨, 채팅 등 설정 검색"
                             autocomplete="off"
                             aria-label="설정 검색"
                         />
@@ -270,9 +285,9 @@
                             role="tab"
                             data-tab="5"
                             aria-controls="tab-panel-5"
-                            aria-label="검색"
+                            aria-label="다시보기"
                             aria-selected="false"
-                            title="검색"
+                            title="다시보기"
                             tabindex="-1"
                         >
                             <svg
@@ -284,10 +299,9 @@
                                 stroke-linejoin="round"
                                 aria-hidden="true"
                             >
-                                <circle cx="11" cy="11" r="7" />
-                                <path d="m16.5 16.5 4.5 4.5" />
+                                <use href="#icon-video" />
                             </svg>
-                            <span>검색</span>
+                            <span>다시보기</span>
                         </button>
                         <button
                             type="button"
@@ -345,11 +359,21 @@
                                     <option value="480p">480p</option>
                                 </select>
                             </label>
-                            <p class="setting-note">선택한 화질이 없으면 가능한 가장 높은 하위 화질을 적용합니다.</p>
+                            <p class="setting-note">
+                                선택한 화질이 없으면 가능한 가장 높은 하위 화질을 적용합니다. 지원되는 라이브에서는
+                                프로그램 미설치로 취소되던 1080p·720p 선택을 유지합니다.
+                            </p>
                             <label class="toggle-row">
                                 <span><strong>통나무 보상 자동 받기</strong></span>
                                 <input type="checkbox" data-option="rewardAutoCollectEnabled" />
                             </label>
+                            <label class="toggle-row">
+                                <span><strong>방송 시작 시 자동 새로고침</strong></span>
+                                <input type="checkbox" data-option="offlineLiveReloadEnabled" />
+                            </label>
+                            <p class="setting-note">
+                                방송 종료 화면에서 30초마다 확인하고, 방송이 시작되면 한 번 새로고침합니다.
+                            </p>
                         </div>
                     </details>
 
@@ -396,11 +420,21 @@
                             </label>
                             <p class="setting-note">스트리밍 중 오른쪽에 한국 시간 기준 시작 시각을 표시합니다.</p>
                             <label class="toggle-row">
-                                <span><strong>방송 시작 시 자동 새로고침</strong></span>
-                                <input type="checkbox" data-option="offlineLiveReloadEnabled" />
+                                <span><strong>스트림 정보 버튼</strong></span>
+                                <input type="checkbox" data-option="streamInfoEnabled" />
+                            </label>
+                            <p class="setting-note">해상도, 라이브 비트레이트 설정값, 지연과 재생 부하를 확인합니다.</p>
+                            <label class="toggle-row">
+                                <span><strong>클립 버튼 숨기기</strong></span>
+                                <input type="checkbox" data-option="playerClipHidden" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>PIP 버튼 숨기기</strong></span>
+                                <input type="checkbox" data-option="playerPipHidden" />
                             </label>
                             <p class="setting-note">
-                                방송 종료 화면에서 30초마다 확인하고, 방송이 시작되면 한 번 새로고침합니다.
+                                라이브·다시보기 플레이어의 클립 만들기·PIP(작은 화면) 버튼을 각각 숨깁니다. 끄면 다시
+                                표시됩니다.
                             </p>
                         </div>
                     </details>
@@ -610,8 +644,11 @@
                         </summary>
                         <div class="option-group-body">
                             <label class="toggle-row">
-                                <span><strong>다시보기에 당시 시간 표시</strong></span>
-                                <input type="checkbox" data-option="vodBroadcastClockEnabled" />
+                                <span
+                                    ><strong>기본 단축키 복구</strong
+                                    ><small>Space·M·F·T 키가 안 될 때만 켜세요. 기본값은 꺼짐이에요.</small></span
+                                >
+                                <input type="checkbox" data-option="screenShortcutsEnabled" />
                             </label>
                             <label class="toggle-row">
                                 <span><strong>Space 홀드 2배속</strong></span>
@@ -704,6 +741,13 @@
                     </div>
                     <p class="setting-note">이보다 짧게 본 라이브는 제외하며, 기록은 이 브라우저에만 저장합니다.</p>
 
+                    <p class="history-storage-warning" role="note">
+                        <strong>시청 기록 삭제 주의</strong>
+                        시청 기록은 이 브라우저에만 저장되며 자동 백업되지 않아요. 확장 프로그램을 삭제하거나 브라우저
+                        프로필·확장 데이터를 지우면 기록도 함께 삭제돼요. 별도 백업이 없으면 재설치해도 복구할 수
+                        없어요.
+                    </p>
+
                     <details class="history-storage-guide">
                         <summary>시청 기록 저장 위치</summary>
                         <p>기록은 현재 Chrome 프로필의 확장 저장소에 보관돼요.</p>
@@ -713,7 +757,7 @@
                                 주세요.
                             </li>
                             <li>
-                                <code>chrome://extensions</code>에서 <strong>개발자 모드</strong>를 켜고 Better Chzzk의
+                                <code>chrome://extensions</code>에서 <strong>개발자 모드</strong>를 켜고 치즈 스패너의
                                 <strong>ID</strong>를 확인해 주세요.
                             </li>
                             <li>
@@ -723,7 +767,7 @@
                         </ol>
                         <p>Windows에서 찾을 경로</p>
                         <code class="history-storage-path"
-                            >&lt;프로필 경로&gt;\Local Extension Settings\&lt;Better Chzzk ID&gt;</code
+                            >&lt;프로필 경로&gt;\Local Extension Settings\&lt;치즈 스패너 ID&gt;</code
                         >
                         <p>
                             개인별 프로필과 설치 방식에 따라 경로가 달라요. 시청 기록은 별도 문서 파일이 아닌 브라우저
@@ -750,14 +794,10 @@
                         <summary>
                             <span class="option-group-title">
                                 <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-chat" /></svg>
-                                <span>댓글·표시</span>
+                                <span>채팅 표시</span>
                             </span>
                         </summary>
                         <div class="option-group-body">
-                            <label class="toggle-row">
-                                <span><strong>다시보기 채팅창 댓글 탭</strong></span>
-                                <input type="checkbox" data-option="vodCommentTabsEnabled" />
-                            </label>
                             <label class="toggle-row">
                                 <span><strong>타임스탬프 표시</strong></span>
                                 <input type="checkbox" data-option="chatTimestampEnabled" />
@@ -821,18 +861,43 @@
                         <h2>팝업·알림</h2>
                     </div>
 
+                    <details class="option-group" data-option-group="header-buttons" open>
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-window" /></svg>
+                                <span>상단 버튼</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>스튜디오 버튼 숨기기</strong></span>
+                                <input type="checkbox" data-option="headerStudioHidden" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>치즈 버튼 숨기기</strong></span>
+                                <input type="checkbox" data-option="headerCheeseHidden" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>알림 버튼 숨기기</strong></span>
+                                <input type="checkbox" data-option="headerNotificationHidden" />
+                            </label>
+                            <p class="setting-note">치지직 상단의 버튼을 각각 숨깁니다. 끄면 다시 표시됩니다.</p>
+                        </div>
+                    </details>
+
                     <details class="option-group" data-option-group="popup-adblock" open>
                         <summary>
                             <span class="option-group-title"
                                 ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-window" /></svg
-                                ><span>광고 차단 안내</span></span
+                                ><span>시청 팝업</span></span
                             >
                         </summary>
                         <div class="option-group-body">
                             <label class="toggle-row">
-                                <span><strong>광고 차단 안내 팝업 숨김</strong></span>
+                                <span><strong>시청 방해 팝업 제거</strong></span>
                                 <input type="checkbox" data-option="adblockPopupEnabled" />
                             </label>
+                            <p class="setting-note">시청에 방해되는 팝업을 제거합니다.</p>
                         </div>
                     </details>
                 </section>
@@ -924,16 +989,35 @@
                 <section class="settings-card" id="tab-panel-5" role="tabpanel" aria-labelledby="tab-5">
                     <div class="section-heading">
                         <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
-                            <use href="#icon-search" />
+                            <use href="#icon-video" />
                         </svg>
-                        <h2>다시보기 검색</h2>
+                        <h2>다시보기</h2>
                     </div>
+
+                    <details class="option-group" data-option-group="vod-display" open>
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-video" /></svg>
+                                <span>시청 화면</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>다시보기에 당시 시간 표시</strong></span>
+                                <input type="checkbox" data-option="vodBroadcastClockEnabled" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>다시보기 채팅창 댓글 탭</strong></span>
+                                <input type="checkbox" data-option="vodCommentTabsEnabled" />
+                            </label>
+                        </div>
+                    </details>
 
                     <details class="option-group" data-option-group="search-basic" open>
                         <summary>
                             <span class="option-group-title">
                                 <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-search" /></svg>
-                                <span>기본 검색</span>
+                                <span>영상 검색</span>
                             </span>
                         </summary>
                         <div class="option-group-body">
@@ -1474,7 +1558,14 @@
                 </section>
 
                 <div class="save-row">
-                    <button id="save" class="primary-button save-button" type="button" disabled>옵션 저장</button>
+                    <div class="save-feedback">
+                        <span id="notice" class="status-pill" aria-live="polite">불러오는 중</span>
+                    </div>
+                    <button id="discardChanges" class="discard-button" type="button" disabled>변경 취소</button>
+                    <button id="save" class="primary-button save-button" type="button" disabled>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7" /></svg>
+                        <span>옵션 저장</span>
+                    </button>
                 </div>
 
                 <p id="message" class="message hidden" role="status" aria-live="polite">설정이 저장되었습니다.</p>

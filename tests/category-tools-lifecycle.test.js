@@ -7,7 +7,7 @@ const { JSDOM } = require("jsdom");
 function createFixture(t) {
     const dom = new JSDOM(
         '<body><nav id="tabs"><button>라이브</button><button>동영상</button><button>클립</button></nav><main id="grid"><article id="card" data-bcgt-card="1" data-bcgt-card-id="channel-a"><a href="/live/channel-a">Alpha</a></article><article id="card-b"><a href="/live/channel-b">Beta</a></article></main></body>',
-        { url: "https://chzzk.naver.com/category/game/test/lives", runScripts: "outside-only" }
+        { url: "https://chzzk.naver.com/category/game/test/lives", runScripts: "outside-only", pretendToBeVisual: true }
     );
     t.after(() => dom.window.close());
     const { window } = dom;
@@ -93,6 +93,30 @@ function createFixture(t) {
     window.categoryLifecycle.remember(card);
     return { dom, card, requests, timers, hooks: window.categoryLifecycle, scheduledApplies: () => scheduledApplies };
 }
+
+test("filter keyboard dismissal preserves values and returns focus to its trigger", (t) => {
+    const { dom, hooks } = createFixture(t);
+    hooks.search("");
+    const { document, KeyboardEvent, Event } = dom.window;
+    const trigger = document.querySelector(".bcgt-filter");
+    trigger.click();
+    const panel = document.getElementById(trigger.getAttribute("aria-controls"));
+    assert.equal(trigger.getAttribute("aria-expanded"), "true");
+    assert.ok(panel.contains(document.activeElement));
+    assert.equal(panel.getAttribute("role"), "group");
+    const input = panel.querySelector('[data-filter-min-input="followers"]');
+    assert.equal(input.getAttribute("aria-label"), "최소 팔로워 수");
+    input.value = "2500";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus();
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    assert.equal(panel.getAttribute("data-open"), "0");
+    assert.equal(trigger.getAttribute("aria-expanded"), "false");
+    assert.equal(document.activeElement, trigger);
+    trigger.click();
+    assert.equal(input.value, "2500", "closing filters must not erase the entered range");
+    hooks.disable();
+});
 
 test("category search displays matching cards while follower badges are still loading", async (t) => {
     const { dom, card, requests, hooks } = createFixture(t);

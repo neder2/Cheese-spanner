@@ -39,7 +39,7 @@
 
 ## 커밋·버전·릴리스
 
-- 2026-09-08 사용자 요청으로 단축키 복구 기능을 폐기하고 `features/shortcutRescue.js`와 manifest 로드 항목을 제거했다. 과거 문서의 임시 비활성화·재활성화 기록을 근거로 복구 기능을 다시 도입하지 않는다. Space 홀드 배속·고정 배속 단축키와 시간 이동 기능은 별도로 유지한다.
+- 2026-09-08 사용자 요청으로 기존 `features/shortcutRescue.js`를 폐기했다. 2026-09-14 사용자 요청으로 Space·M·F·T 선택 기능을 `features/screenShortcuts.js`에 추가했다. `screenShortcutsEnabled` 기본값은 false이며 과거 `shortcutRescueEnabled` 값으로 활성화하지 않는다. 기존 자동 실패 감지는 다시 도입하지 않는다. Space 홀드 배속이 켜져 있으면 Space는 해당 기능에 맡긴다. Space 홀드 배속·고정 배속 단축키와 시간 이동 기능은 별도로 유지한다.
 - 커밋을 요청받으면 제목 첫 줄은 프로젝트 규칙인 `Better Chzzk <version>` 형식을 사용한다. 예: `Better Chzzk 1.2.0`
 - 버전을 올릴 때는 `manifest.json`과 `package.json`을 함께 변경하고 값이 같은지 확인한다.
 - 릴리스 또는 버전 업데이트를 요청받으면 `docs/update-history.md`를 갱신한다.
@@ -99,6 +99,8 @@
 
 ## UI 구현
 
+- 치지직 페이지에 삽입되는 기능 UI는 치지직 네이티브 디자인과 기존 시맨틱 색상·테마를 따른다.
+- 설정 팝업·옵션 페이지와 시청 기록 페이지는 좁은 팝업과 긴 한글 문구에 맞게 여백·글자 크기를 조정하고, 기존 기능·접근성·라이트·다크 모드를 유지한다.
 - 새 UI와 변경 UI는 라이트·다크 모드를 모두 확인한다.
 - 치지직 UI를 따르는 요소는 현재 페이지에서 실제로 노출되는 `--Surface-*`, `--Content-*`, `--Border-*` 계열 시맨틱 CSS 변수를 우선 검토하고, 토큰이 없는 테스트 환경을 위한 정적 기본값을 함께 둔다. 현재 예시는 `features/videoSearch.js`를 참고하되 토큰 이름을 불변으로 가정하지 않는다.
 - 네이티브 요소와 정확히 같아야 하고 적절한 토큰이 없으면 `getComputedStyle()` 복사를 검토한다. 복사 값은 테마 전환과 DOM 교체 때 다시 동기화한다.
@@ -178,5 +180,4 @@ npm.cmd run format:check
 - `docs/update-history.md` — 릴리스별 변경 내역과 Release 본문 원본
 - `tests/extension-pages.test.js`와 기능별 테스트 — 현재 동작 계약
 - `tests/release-safety.test.js` — 스토어 정책·금지 경로·성능 hot path 가드
-- `docs/refactoring-guide.md` — 리팩토링 배경과 스모크 항목 참고용. 과거 규모·진행 상태·“테스트 없음” 설명은 현재 사실로 간주하지 않는다.
 - `PRIVACY.md`, `THIRD_PARTY_NOTICES.md` — 개인정보와 서드파티 고지

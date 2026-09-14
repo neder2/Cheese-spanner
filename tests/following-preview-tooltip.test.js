@@ -42,7 +42,9 @@ function createFakeChrome({ sync = {} } = {}) {
     const storageChangeListeners = [];
 
     return {
-        runtime: {},
+        runtime: {
+            getURL: (resource) => `chrome-extension://better-chzzk/${resource}`,
+        },
         storage: {
             sync: syncArea,
             onChanged: {
@@ -251,6 +253,62 @@ function createInjectedListPreviewDom(chrome = createFakeChrome()) {
     return { card, document, dom, host, thumb };
 }
 
+test("preview fonts use a bundled CHZZK-only resource and follow the feature lifetime", async () => {
+    const chrome = createFakeChrome({ sync: { followingPreviewTooltipEnabled: false } });
+    const readOptions = chrome.storage.sync.get.bind(chrome.storage.sync);
+    const initialOptionsApplied = new Promise((resolve) => {
+        chrome.storage.sync.get = (keys, callback) =>
+            readOptions(keys, (data) => {
+                callback(data);
+                resolve();
+            });
+    });
+    const { document, dom, link } = createFollowingPreviewDom(chrome);
+    document.body.style.fontFamily = "serif";
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await initialOptionsApplied;
+    assert.equal(document.getElementById("betterchzzk-following-preview-style"), null);
+
+    const setEnabled = (enabled) => {
+        for (const listener of [...chrome.testState.storageChangeListeners]) {
+            listener({ followingPreviewTooltipEnabled: { newValue: enabled } }, "sync");
+        }
+    };
+    for (let cycle = 0; cycle < 2; cycle++) {
+        setEnabled(true);
+        await waitForCondition(() => document.getElementById("betterchzzk-following-preview-style"));
+        const styles = document.querySelectorAll("#betterchzzk-following-preview-style");
+        assert.equal(styles.length, 1);
+        const faces = Array.from(styles[0].sheet.cssRules).filter((rule) => rule.type === 5);
+        assert.equal(faces.length, 1);
+        // JSDOM omits font source and variable-weight descriptors from CSSFontFaceRule.
+        const fontDeclaration = styles[0].textContent.match(/@font-face\s*\{([^}]+)\}/)[1];
+        const url = new URL(fontDeclaration.match(/src:\s*url\(["']?([^"')]+)/)[1]);
+        assert.equal(url.protocol, "chrome-extension:");
+        const resource = url.pathname.slice(1);
+        assert.equal(url.href, chrome.runtime.getURL(resource));
+        assert.equal(path.extname(resource), ".woff2");
+        assert.equal(fs.readFileSync(path.join(repoRoot, resource)).subarray(0, 4).toString(), "wOF2");
+        const manifest = JSON.parse(readRepoFile("manifest.json"));
+        const access = manifest.web_accessible_resources.filter((entry) => entry.resources.includes(resource));
+        assert.equal(access.length, 1);
+        assert.deepEqual(access[0].matches, ["https://chzzk.naver.com/*"]);
+        assert.match(fontDeclaration, /font-weight:\s*100 900\s*;/);
+
+        link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+        const tip = document.getElementById("betterchzzk-following-preview");
+        assert.ok(tip);
+        const family = faces[0].style.getPropertyValue("font-family").replace(/["']/g, "");
+        assert.ok(dom.window.getComputedStyle(tip).fontFamily.includes(family));
+        assert.equal(dom.window.getComputedStyle(document.body).fontFamily, "serif");
+
+        setEnabled(false);
+        await waitForCondition(() => !document.getElementById("betterchzzk-following-preview-style"));
+        assert.equal(document.getElementById("betterchzzk-following-preview"), null);
+    }
+});
+
 test("following preview delays live-detail fetches while opening the DOM card immediately", async () => {
     const chrome = createFakeChrome();
     const { document, dom, item, link } = createFollowingPreviewDom(chrome);
@@ -385,6 +443,88 @@ test("following preview channel link rejects reused and disconnected source rows
     assert.equal(previewLinkDefaultPrevented(dom, newName), false);
     item.remove();
     assert.equal(previewLinkDefaultPrevented(dom, newName, "auxclick", { button: 1 }), true);
+});
+
+test("following preview category chips link observed GAME and ETC categories in the current tab", async () => {
+    for (const [categoryType, liveCategory, liveCategoryValue] of [
+        ["GAME", "Marvels_Wolverine", "마블 울버린"],
+        ["ETC", "talk", "talk"],
+    ]) {
+        const { dom, document, link } = createFollowingPreviewDom();
+        const calls = [];
+        dom.window.fetch = async (url) => {
+            calls.push(url);
+            return { ok: true, json: async () => ({ content: { categoryType, liveCategory, liveCategoryValue } }) };
+        };
+        evalFollowingPreviewTooltipScripts(dom);
+        document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+        await waitForCondition(() => document.getElementById("betterchzzk-following-preview-style"));
+        link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+        await waitForCondition(
+            () => document.getElementById("betterchzzk-following-preview")?.dataset.state === "ready"
+        );
+        const category = document.querySelector(".bcfp-category");
+        assert.ok(category, "a resolved category has a visible navigation chip");
+        assert.equal(category.tagName, "A");
+        assert.equal(category.textContent, liveCategoryValue);
+        assert.equal(category.getAttribute("href"), `/category/${categoryType}/${liveCategory}/lives`);
+        assert.equal(category.target, "");
+        assert.equal(category.tabIndex, 0);
+        assert.equal(category.getAttribute("aria-label"), `${liveCategoryValue} 카테고리 방송 보기`);
+        category.focus();
+        assert.equal(document.activeElement, category);
+        for (const init of [{}, { ctrlKey: true }, { metaKey: true }, { shiftKey: true }])
+            assert.equal(previewLinkDefaultPrevented(dom, category, "click", init), false);
+        assert.equal(previewLinkDefaultPrevented(dom, category, "auxclick", { button: 1 }), false);
+        assert.equal(calls.length, 1, "category links reuse the existing live-detail response");
+    }
+});
+
+test("category names without valid navigation metadata remain plain text", async () => {
+    for (const fields of [
+        {},
+        { liveCategory: "talk" },
+        { categoryType: "ETC" },
+        { categoryType: "../outside", liveCategory: "talk" },
+        { categoryType: "ETC", liveCategory: ".." },
+        { categoryType: "ETC", liveCategory: { id: "talk" } },
+    ]) {
+        const { dom, document, link } = createFollowingPreviewDom();
+        dom.window.fetch = async () => ({
+            ok: true,
+            json: async () => ({ content: { ...fields, liveCategoryValue: "카테고리 이름" } }),
+        });
+        evalFollowingPreviewTooltipScripts(dom);
+        document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+        await waitForCondition(() => document.getElementById("betterchzzk-following-preview-style"));
+        link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+        await waitForCondition(
+            () => document.getElementById("betterchzzk-following-preview")?.dataset.state === "ready"
+        );
+        assert.equal(document.querySelector(".bcfp-meta").textContent, "카테고리 이름");
+        assert.equal(document.querySelector(".bcfp-meta a, .bcfp-meta button"), null);
+        assert.equal(document.querySelector(".bcfp-category"), null);
+    }
+});
+
+test("category navigation rejects a reused source row and a hidden preview", async () => {
+    const { dom, document, link } = createFollowingPreviewDom();
+    dom.window.fetch = async () => ({
+        ok: true,
+        json: async () => ({ content: { categoryType: "ETC", liveCategory: "talk", liveCategoryValue: "talk" } }),
+    });
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForCondition(() => document.getElementById("betterchzzk-following-preview-style"));
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForCondition(() => document.querySelector(".bcfp-category"));
+    const category = document.querySelector(".bcfp-category");
+    link.setAttribute("href", "/live/next-channel");
+    assert.equal(previewLinkDefaultPrevented(dom, category), true);
+    assert.equal(document.getElementById("betterchzzk-following-preview").hasAttribute("data-show"), false);
+    const staleClick = new dom.window.MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+    category.dispatchEvent(staleClick);
+    assert.equal(staleClick.defaultPrevented, true, "a detached preview link cannot navigate either");
 });
 
 test("only collapsed pinned following rows bridge the preserved preview gap", async () => {
@@ -546,7 +686,7 @@ test("following preview prefers low-latency LLHLS in the hover card and reuses c
     assert.match(source, /LIVE_AUTO_PLAY_API_BASE/);
     assert.match(source, /auto-play-info/);
     assert.match(source, /PREVIEW_PLAYBACK_DELAY_MS = 300/);
-    assert.match(source, /font-family:system-ui/);
+    assert.match(dom.window.getComputedStyle(tip).fontFamily, /^"BetterChzzk Pretendard", system-ui/);
     assert.doesNotMatch(source, /following-preview:play/);
     assert.doesNotMatch(source, /webpackChunkglive_fe_pc/);
     assert.doesNotMatch(source, /LiveProvider\.fromJSON/);

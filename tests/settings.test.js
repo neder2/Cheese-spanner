@@ -24,6 +24,8 @@ const expectedDefaults = {
     volumeWheelStep: 5,
     volumeTooltipEnabled: false,
     hideLiveBadgeEnabled: false,
+    playerClipHidden: false,
+    playerPipHidden: false,
     liveStartTimeEnabled: false,
     offlineLiveReloadEnabled: true,
     audioCompressorEnabled: false,
@@ -35,8 +37,12 @@ const expectedDefaults = {
     audioCompressorMakeupGain: 1,
     vodBroadcastClockEnabled: true,
     timeMachineLagLabelEnabled: true,
+    streamInfoEnabled: true,
     adblockPopupEnabled: true,
-    adVideoEnabled: false,
+    headerStudioHidden: false,
+    headerCheeseHidden: false,
+    headerNotificationHidden: false,
+    adVideoEnabled: true,
     adBannerEnabled: false,
     monthlyBroadcastTimeEnabled: true,
     channelChatLinkEnabled: true,
@@ -105,6 +111,7 @@ const expectedDefaults = {
     followingPreviewSoundEnabled: true,
     followingPreviewVolumePercent: 15,
     livePreviewRightClickSoundEnabled: true,
+    screenShortcutsEnabled: false,
     holdSpeedEnabled: true,
     playbackSpeedShortcutsEnabled: true,
     playbackSpeedHalfKeyCode: "BracketLeft",
@@ -115,6 +122,8 @@ const expectedDefaults = {
 test("settings exports the expected option defaults and key order", () => {
     assert.deepEqual(settings.DEFAULT_OPTIONS, expectedDefaults);
     assert.deepEqual(settings.OPTION_KEYS, Object.keys(expectedDefaults));
+    assert.equal(settings.normalizeOptions({}).adVideoEnabled, true);
+    assert.equal(settings.normalizeOptions({ adVideoEnabled: false }).adVideoEnabled, false);
 });
 
 test("unreleased ad auto skip ignores stored opt-ins and stays outside automatic injection", () => {
@@ -128,6 +137,18 @@ test("unreleased ad auto skip ignores stored opt-ins and stays outside automatic
     );
 });
 
+test("the unified popup preference preserves the existing value and ignores the retired guide option", () => {
+    for (const enabled of [false, true]) {
+        const normalized = settings.normalizeOptions({
+            adblockPopupEnabled: enabled,
+            autoQualityEnabled: false,
+            autoQualityDismissInstallGuide: !enabled,
+        });
+        assert.equal(normalized.adblockPopupEnabled, enabled);
+        assert.equal(Object.hasOwn(normalized, "autoQualityDismissInstallGuide"), false);
+    }
+});
+
 test("feature count keys are derived from feature toggles only", () => {
     assert.deepEqual(settings.FEATURE_KEYS, [
         "autoQualityEnabled",
@@ -136,12 +157,18 @@ test("feature count keys are derived from feature toggles only", () => {
         "volumeWheelEnabled",
         "volumeTooltipEnabled",
         "hideLiveBadgeEnabled",
+        "playerClipHidden",
+        "playerPipHidden",
         "liveStartTimeEnabled",
         "offlineLiveReloadEnabled",
         "audioCompressorEnabled",
         "vodBroadcastClockEnabled",
         "timeMachineLagLabelEnabled",
+        "streamInfoEnabled",
         "adblockPopupEnabled",
+        "headerStudioHidden",
+        "headerCheeseHidden",
+        "headerNotificationHidden",
         "adVideoEnabled",
         "adBannerEnabled",
         "monthlyBroadcastTimeEnabled",
@@ -168,6 +195,7 @@ test("feature count keys are derived from feature toggles only", () => {
         "followingRefreshEnabled",
         "liveMultiviewEnabled",
         "followingPreviewTooltipEnabled",
+        "screenShortcutsEnabled",
         "holdSpeedEnabled",
         "playbackSpeedShortcutsEnabled",
     ]);

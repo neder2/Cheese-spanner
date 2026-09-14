@@ -65,6 +65,192 @@ function createVodAdSource(prepare = () => {}) {
     };
 }
 
+function createWrappedLiveSource(adScheduleId = "LIVE_CHZZK_NDP_SCH") {
+    // 2026-09-14 배포 SDK의 계약 모델: 내부 요청이 없어도 바깥 클라이언트 초기화는 계속된다.
+    const calls = [];
+    const linearClient = { kind: "linear-ad-client" };
+    const inner = {
+        _videoScheduleInfo: { adScheduleParam: { adScheduleId }, customParam: { svc: "chzzk_live" } },
+        setVideoScheduleInfo() {},
+        async initAd(...args) {
+            calls.push(args);
+            return linearClient;
+        },
+    };
+    class WrappedLiveRequest {
+        static Constants = { NLIVECAST_ID: "ncast.advertisement" };
+        constructor() {
+            this._init = {
+                playerType: "LIVE_PW",
+                uiElements: ["uiClickThrough"],
+                disableTrackingCors: false,
+                linearAdRequest: inner,
+            };
+        }
+        async handshakeVersion() {
+            return "1";
+        }
+        async initAd(...args) {
+            let client;
+            try {
+                client = await this._init.linearAdRequest?.initAd(...args);
+            } catch (_) {
+                // 원래 SDK도 내부 광고 요청 실패를 흡수하고 바깥 클라이언트를 만든다.
+            }
+            return {
+                client,
+                playerType: this._init.playerType,
+                uiElements: this._init.uiElements,
+                disableTrackingCors: this._init.disableTrackingCors,
+            };
+        }
+    }
+    return { wrapped: new WrappedLiveRequest(), inner, calls, linearClient };
+}
+
+function createWrappedLiveController(window) {
+    const root = window.document.createElement("div");
+    root.className = "chzzk_player";
+    const video = root.appendChild(window.document.createElement("video"));
+    window.document.body.append(root);
+    const controller = createAdController(window);
+    controller.videoSlot = video;
+    return controller;
+}
+
+test("wrapped live requests keep their outer client and only omit the identified inner ad request", async (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    const controller = createWrappedLiveController(window);
+    controller.videoSlot.currentTime = 123;
+    for (const id of ["LIVE_CHZZK_NDP_SCH", "LIVE_CHZZK_NDP_SCH_EVENT"]) {
+        const { wrapped, inner, calls } = createWrappedLiveSource(id);
+        const init = wrapped._init;
+        const initAd = wrapped.initAd;
+        const handshake = wrapped.handshakeVersion;
+        controller.srcObject = wrapped;
+        controller.srcObject = wrapped;
+        assert.equal(controller.srcObject, wrapped);
+        assert.equal(wrapped._init, init);
+        assert.equal(wrapped.initAd, initAd);
+        assert.equal(wrapped.handshakeVersion, handshake);
+        assert.equal(await wrapped.handshakeVersion(), "1");
+        assert.deepEqual(await wrapped.initAd("native-argument"), {
+            client: undefined,
+            playerType: "LIVE_PW",
+            uiElements: init.uiElements,
+            disableTrackingCors: false,
+        });
+        assert.equal(calls.length, 0);
+        assert.equal(inner._videoScheduleInfo.adScheduleParam.adScheduleId, id);
+        assert.equal(controller.videoSlot.currentTime, 123);
+    }
+    const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    assert.equal(status.blockedWrappedLiveRequests, 2, "reassigning a source must not stack request guards");
+    assert.equal(status.blockedLiveSources, 0, "the outer source stays attached");
+});
+
+test("wrapped live filtering passes through unmeasured wrappers, sources, containers and property shapes", async (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    const variants = [
+        ({ wrapped }) => (wrapped.constructor.Constants.NLIVECAST_ID = "other"),
+        ({ wrapped }) => (wrapped._init.playerType = "LIVE_MW"),
+        ({ wrapped }) => (wrapped._init.extra = true),
+        ({ wrapped }) => (wrapped.handshakeVersion = undefined),
+        ({ inner }) => (inner._videoScheduleInfo.customParam.svc = "other"),
+        ({ inner }) => (inner._videoScheduleInfo.adScheduleParam.adScheduleId = "unknown"),
+        ({ inner }) => (inner._videoScheduleInfo.adScheduleParam.adScheduleId = "CHZZK_NDP_SCH"),
+        ({ wrapped }) => Object.freeze(wrapped._init),
+        ({ wrapped }) => Object.defineProperty(wrapped._init, "linearAdRequest", { writable: false }),
+        ({ wrapped, inner }) =>
+            Object.defineProperty(wrapped._init, "linearAdRequest", { get: () => inner, configurable: true }),
+        (_state, controller) => controller.videoSlot.parentElement.remove(),
+        (_state, controller) => (controller.videoSlot.parentElement.className = "other-player"),
+        (_state, controller) => (controller.stopAd = undefined),
+    ];
+    for (const change of variants) {
+        const controller = createWrappedLiveController(window);
+        const state = createWrappedLiveSource();
+        change(state, controller);
+        const before = Object.getOwnPropertyDescriptor(state.wrapped._init, "linearAdRequest");
+        controller.srcObject = state.wrapped;
+        const result = await state.wrapped.initAd("unchanged");
+        assert.equal(result.client, state.linearClient);
+        assert.deepEqual(state.calls, [["unchanged"]]);
+        assert.equal(controller.srcObject, state.wrapped);
+        assert.deepEqual(Object.getOwnPropertyDescriptor(state.wrapped._init, "linearAdRequest"), before);
+    }
+    const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    assert.equal(status.blockedWrappedLiveRequests, 0);
+});
+
+test("wrapped live request guards recheck routes, ownership, remounts and replaced inner requests", async (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    let controller = createWrappedLiveController(window);
+    const state = createWrappedLiveSource();
+    controller.srcObject = state.wrapped;
+    window.history.replaceState(null, "", "/video/123");
+    assert.equal((await state.wrapped.initAd()).client, state.linearClient);
+    window.history.replaceState(null, "", "/live/next");
+    controller.videoSlot.remove();
+    assert.equal((await state.wrapped.initAd()).client, state.linearClient);
+    controller = createWrappedLiveController(window);
+    controller.srcObject = state.wrapped;
+    assert.equal((await state.wrapped.initAd()).client, undefined);
+    const unknown = createWrappedLiveSource("unmeasured");
+    state.wrapped._init.linearAdRequest = unknown.inner;
+    assert.equal((await state.wrapped.initAd()).client, unknown.linearClient);
+    state.wrapped._init.linearAdRequest = state.inner;
+    controller.srcObject = null;
+    assert.equal((await state.wrapped.initAd()).client, state.linearClient);
+    controller.srcObject = state.wrapped;
+    state.wrapped._init.playerType = "other";
+    assert.equal((await state.wrapped.initAd()).client, state.linearClient);
+    state.wrapped._init.playerType = "LIVE_PW";
+    assert.equal((await state.wrapped.initAd()).client, undefined);
+    setEnabled(window, false);
+    assert.equal(state.wrapped._init.linearAdRequest, state.inner);
+    const inheritedInit = Object.create(state.wrapped._init);
+    inheritedInit.linearAdRequest = unknown.inner;
+    assert.equal(inheritedInit.linearAdRequest, unknown.inner);
+    assert.equal(
+        state.wrapped._init.linearAdRequest,
+        state.inner,
+        "inherited writes cannot replace the owner's request"
+    );
+    assert.equal((await state.wrapped.initAd()).client, state.linearClient);
+    setEnabled(window, true);
+    assert.equal((await state.wrapped.initAd()).client, state.linearClient, "reactivation still requires a reload");
+    const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    assert.equal(status.blockedWrappedLiveRequests, 2);
+    assert.equal(status.reloadRequired, true);
+});
+
+test("wrapped live requests preserve outer error handling and stay untouched until settings are confirmed", async (t) => {
+    const window = createPage(t, "/live/channel", null);
+    window.eval(source);
+    const controller = createWrappedLiveController(window);
+    const state = createWrappedLiveSource();
+    const original = Object.getOwnPropertyDescriptor(state.wrapped._init, "linearAdRequest");
+    controller.srcObject = state.wrapped;
+    assert.equal((await state.wrapped.initAd()).client, state.linearClient);
+    assert.deepEqual(Object.getOwnPropertyDescriptor(state.wrapped._init, "linearAdRequest"), original);
+    setEnabled(window, true);
+    controller.srcObject = state.wrapped;
+    assert.equal((await state.wrapped.initAd()).client, undefined);
+    setEnabled(window, false);
+    const failure = new Error("native request failure");
+    let failedCalls = 0;
+    state.inner.initAd = async () => {
+        failedCalls++;
+        throw failure;
+    };
+    assert.equal((await state.wrapped.initAd()).client, undefined);
+    assert.equal(failedCalls, 1, "the original outer method still handles a failed inner request");
+});
+
 test("known live schedules are blocked independently of VOD schedules", (t) => {
     const window = createPage(t);
     window.eval(source);
@@ -408,6 +594,40 @@ test("real playback data, unmeasured shapes, errors, revivers, and unrelated rou
     assert.deepEqual(parse(window, measured), measured);
     window.history.replaceState(null, "", "/video/123");
     assert.equal(parse(window, measured).content.livePlaybackJson.liveId, false);
+});
+
+test("retired grid settings leave P2P playback metadata unchanged with ads enabled or disabled", (t) => {
+    for (const gridEnabled of [false, true]) {
+        for (const adsEnabled of [false, true]) {
+            const window = createPage(t);
+            window.document.documentElement.setAttribute("data-betterchzzk-grid-bypass-state", gridEnabled ? "1" : "0");
+            const originalParse = window.JSON.parse;
+            if (adsEnabled) window.eval(source);
+            const playback = {
+                meta: { p2p: true },
+                media: [
+                    {
+                        mediaId: "HLS",
+                        protocol: "HLS",
+                        path: "https://livecloud.pstatic.net/master.m3u8",
+                        p2pPath: "nliveconnector://master",
+                        encodingTrack: [{ videoHeight: 1080 }],
+                    },
+                ],
+            };
+            assert.equal(parse(window, measured).content.livePlaybackJson.liveId, !adsEnabled);
+            const result = parse(window, playback);
+            assert.equal(result.meta.p2p, true);
+            assert.equal(result.media[0].path, playback.media[0].path);
+            assert.deepEqual(result.media[0].encodingTrack, playback.media[0].encodingTrack);
+            if (adsEnabled) {
+                setEnabled(window, false);
+                assert.equal(window.JSON.parse, originalParse);
+                assert.deepEqual(parse(window, measured), measured);
+                assert.equal(parse(window, playback).meta.p2p, true);
+            }
+        }
+    }
 });
 
 test("disable preserves a later wrapper and requires reload before reactivation", (t) => {

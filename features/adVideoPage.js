@@ -5,6 +5,7 @@
  * 2026-09-11 배포 클라이언트에서 확인한 playerAdDisplayResponse.preRoll/midRoll도 처리한다.
  * 일반 재생 정보와 구분하기 위해 확인한 키와 타입이 모두 맞을 때만 바꾼다.
  * 확인한 라이브/VOD 소스는 연결 전에 비우고 라이브 중간 광고 스케줄에서 광고 항목을 제외한다.
+ * NLiveCast 래퍼는 유지하고 확인된 라이브 내부 요청만 전달하지 않는다.
  * 본영상 srcObject와 암호화 바이트는 건드리지 않는다.
  */
 (() => {
@@ -26,6 +27,8 @@
     let blockedVodSources = 0;
     let blockedLiveSources = 0;
     let blockedLiveSchedules = 0;
+    let blockedWrappedLiveRequests = 0;
+    const wrappedLiveRequests = new WeakMap();
 
     function publishStatus() {
         document.documentElement?.setAttribute(
@@ -36,6 +39,7 @@
                 blockedVodSources,
                 blockedLiveSources,
                 blockedLiveSchedules,
+                blockedWrappedLiveRequests,
                 reloadRequired,
             })
         );
@@ -64,21 +68,107 @@
         );
     }
 
-    function isNativeAdUri(controller, value) {
-        if (
-            !active ||
-            !/^\/(?:live|video)\//.test(location.pathname) ||
-            !isAdController(controller) ||
-            typeof value !== "string" ||
-            !value.startsWith("glad:")
-        )
-            return false;
+    function hasChzzkPlayerSlot(controller) {
         let element = controller.videoSlot;
         for (let depth = 0; element instanceof Element && depth < 16; depth++) {
             if (element.matches(".chzzk_player")) return true;
             element = element.parentElement || element.getRootNode()?.host;
         }
         return false;
+    }
+
+    function isNativeAdUri(controller, value) {
+        return (
+            active &&
+            /^\/(?:live|video)\//.test(location.pathname) &&
+            isAdController(controller) &&
+            typeof value === "string" &&
+            value.startsWith("glad:") &&
+            hasChzzkPlayerSlot(controller)
+        );
+    }
+
+    function getWrappedLiveInit(controller, source) {
+        if (
+            !active ||
+            !/^\/live\//.test(location.pathname) ||
+            !isAdController(controller) ||
+            source?.constructor?.Constants?.NLIVECAST_ID !== "ncast.advertisement" ||
+            Object.getPrototypeOf(source) !== source.constructor.prototype ||
+            typeof source.handshakeVersion !== "function" ||
+            typeof source.initAd !== "function" ||
+            !controller.videoSlot?.isConnected ||
+            !hasChzzkPlayerSlot(controller)
+        )
+            return null;
+        const init = Object.getOwnPropertyDescriptor(source, "_init")?.value;
+        if (!init || typeof init !== "object" || Array.isArray(init)) return null;
+        const fields = Object.getOwnPropertyDescriptors(init);
+        if (
+            Reflect.ownKeys(fields).length !== 4 ||
+            fields.playerType?.value !== "LIVE_PW" ||
+            !Array.isArray(fields.uiElements?.value) ||
+            typeof fields.disableTrackingCors?.value !== "boolean" ||
+            !fields.linearAdRequest
+        )
+            return null;
+        return init;
+    }
+
+    // 2026-09-14 배포 NLiveCastAdRequest는 내부 요청이 없으면 바깥 클라이언트 초기화를 계속한다.
+    // 외부 객체·메서드와 원래 요청은 유지한다. WeakMap은 살아 있는 래퍼의 중복 등록만 구분한다.
+    function guardWrappedLiveRequest(controller, source) {
+        const init = getWrappedLiveInit(controller, source);
+        if (!init) return;
+        const descriptor = Object.getOwnPropertyDescriptor(init, "linearAdRequest");
+        const existing = wrappedLiveRequests.get(source);
+        if (existing?.init === init && descriptor.get === existing.get) {
+            existing.controller = controller;
+            return;
+        }
+        if (
+            !Object.hasOwn(descriptor, "value") ||
+            !descriptor.configurable ||
+            !descriptor.writable ||
+            typeof descriptor.value?.initAd !== "function" ||
+            !isKnownAdSource(controller, descriptor.value)
+        )
+            return;
+        const state = { init, controller, request: descriptor.value };
+        state.get = function () {
+            try {
+                if (
+                    this === init &&
+                    getWrappedLiveInit(state.controller, source) === init &&
+                    state.controller.srcObject === source &&
+                    typeof state.request?.initAd === "function" &&
+                    isKnownAdSource(state.controller, state.request)
+                ) {
+                    blockedWrappedLiveRequests++;
+                    publishStatus();
+                    return null;
+                }
+            } catch (_) {
+                // 조건이 달라진 래퍼는 원래 요청을 전달한다.
+            }
+            return state.request;
+        };
+        previousDefineProperty(init, "linearAdRequest", {
+            configurable: descriptor.configurable,
+            enumerable: descriptor.enumerable,
+            get: state.get,
+            set(value) {
+                if (this === init) state.request = value;
+                else
+                    previousDefineProperty(this, "linearAdRequest", {
+                        value,
+                        writable: true,
+                        enumerable: true,
+                        configurable: true,
+                    });
+            },
+        });
+        wrappedLiveRequests.set(source, state);
     }
 
     function recordBlockedSource() {
@@ -184,6 +274,12 @@
                     const result = Reflect.apply(originalSet, this, [block ? null : value]);
                     if (block) {
                         recordBlockedSource();
+                    } else if (key === "srcObject") {
+                        try {
+                            guardWrappedLiveRequest(this, value);
+                        } catch (_) {
+                            // 쓰기 불가 등 미확인 구조는 연결된 원래 소스를 유지한다.
+                        }
                     }
                     return result;
                 };
@@ -245,7 +341,11 @@
             if (Object.defineProperty === wrappedDefineProperty) Object.defineProperty = previousDefineProperty;
             if (WeakMap.prototype.set === wrappedWeakMapSet) WeakMap.prototype.set = previousWeakMapSet;
             reloadRequired =
-                changedParses > 0 || blockedVodSources > 0 || blockedLiveSources > 0 || blockedLiveSchedules > 0;
+                changedParses > 0 ||
+                blockedVodSources > 0 ||
+                blockedLiveSources > 0 ||
+                blockedLiveSchedules > 0 ||
+                blockedWrappedLiveRequests > 0;
         } else if (state === "1") {
             if (stopped) reloadRequired = true;
             else active = true;

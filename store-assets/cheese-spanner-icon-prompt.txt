@@ -1,0 +1,13 @@
+Generated with the built-in image_gen tool on 2026-09-14.
+Master: cheese-spanner-logo.png
+Extension assets: ../icons/cheese-spanner16.png, ../icons/cheese-spanner48.png, ../icons/cheese-spanner128.png
+The extension assets are resized PNG copies of the master, with its alpha channel preserved.
+
+Final edit prompt (built-in image_gen):
+Use case: precise-object-edit. Edit the supplied Cheese Spanner icon. Change ONLY the dark gray border of the silver metal spanner: make it an even, uniform-width dark gray outline all the way around the handle, round handle end, shoulders, both jaw tips and inside the open jaw. Use a consistent moderate stroke width, approximately 18 pixels at this source resolution, with smooth rounded joins. Remove the uneven thick bottom/right extrusion appearance so the tool looks like a flat silver spanner with a regular outline. Keep the spanner's hole and give its inner rim that same consistent stroke weight. Preserve the cheese exactly: its shape, placement, yellow and orange colors, two holes and side face. Preserve the overall composition, tool angle, size and position, silver fill, transparent background, canvas dimensions and margins. No redesign, no additional objects, no text, no shadow. Preserve true alpha transparency.
+
+Final transparency cleanup (built-in image_gen):
+Remove the checkerboard background using true PNG alpha, including the handle hole and jaw opening. Preserve the cheese and silver spanner with its uniform dark gray outline, composition, colors and smooth edges.
+
+Original generation prompt:
+Use case: logo-brand. Create a new polished minimalist Chrome extension icon for Cheese Spanner. One compact golden-yellow triangular cheese wedge with just two large circular orange holes, accompanied by a distinctly separate small steel-gray open-ended spanner laid diagonally across the lower-right foreground. Cheese is the dominant silhouette, metal spanner is a secondary tool accent approximately half the cheese size. The wrench is solid cool silver gray with a darker gray edge, absolutely no cheese holes on the wrench. Flat vector-style graphic, precise rounded geometric forms, only 2 flat shades per object, restrained contemporary app branding, clean and confident. Orthographic view with just a simple flat side face to suggest the cheese thickness. No gradients, no glossy rendering, no 3D bevels, no shadows, no outlines around cheese, no mascot, no face, no text, no watermark, no enclosing square or circle. Single centered icon filling 80 percent of square canvas with generous balanced transparent margin. True transparent background and alpha. Strong silhouette readable at 16 and 48 pixels, on light or dark toolbar. 1024x1024.

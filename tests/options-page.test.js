@@ -24,6 +24,7 @@ test("options page renders defaults and dependency-disabled controls without ext
     assert.equal(optionInputs.length, BetterChzzkSettings.OPTION_KEYS.length);
     assert.equal(queryOption(document, "skipSeconds").value, String(BetterChzzkSettings.DEFAULT_OPTIONS.skipSeconds));
     assert.equal(queryOption(document, "vodBroadcastClockEnabled").checked, true);
+    assert.equal(queryOption(document, "adVideoEnabled").checked, true);
     assert.equal(document.getElementById("save").disabled, true, "변경 전에는 저장 버튼이 비활성화된다");
     assert.equal(notice.dataset.state, "saved");
     assert.equal(notice.textContent, "저장됨");
@@ -269,14 +270,13 @@ test("options retain responsive popup controls and visible keyboard focus", (t) 
         return result;
     }
 
-    for (const width of [360, 420]) {
+    for (const width of [320, 360, 420]) {
         const tabs = declarations(".options-body .options-page .tab-bar", width);
-        const tabCount = document.querySelectorAll('[role="tab"]').length;
-        assert.equal(
-            tabs.get("grid-template-columns"),
-            `repeat(${tabCount}, minmax(0, 1fr))`,
-            "each popup tab keeps a share of the available width"
-        );
+        assert.equal(tabs.get("display"), "flex");
+        assert.equal(tabs.get("flex-wrap"), "nowrap", "categories remain in a single row");
+        assert.equal(tabs.get("overflow-x"), "auto", "narrow popups can reach every category by scrolling");
+        assert.equal(declarations(".options-body .options-page .tab", width).get("flex"), "0 0 auto");
+        assert.equal(declarations(".options-body .tab span", width).get("white-space"), "nowrap");
         assert.equal(
             declarations(".options-body .options-page .option-group-body > .number-grid", width).get(
                 "grid-template-columns"
@@ -304,6 +304,45 @@ test("options retain responsive popup controls and visible keyboard focus", (t) 
             selector
         );
     }
+});
+
+test("restored and keyboard-selected tabs scroll into view without moving the page", (t) => {
+    const dom = createDom("options.html", "options.html");
+    t.after(() => dom.window.close());
+    dom.reconfigure({ url: "https://example.test/options.html" });
+    const { document } = dom.window;
+    const bar = document.querySelector(".tab-bar");
+    const tabs = Array.from(bar.querySelectorAll(".tab"));
+    Object.defineProperties(bar, { clientWidth: { value: 160 }, scrollWidth: { value: tabs.length * 80 } });
+    bar.getBoundingClientRect = () => ({ left: 0, right: 160 });
+    tabs.forEach((tab, index) => {
+        tab.getBoundingClientRect = () => ({
+            left: index * 80 - bar.scrollLeft,
+            right: (index + 1) * 80 - bar.scrollLeft,
+        });
+    });
+    dom.window.localStorage.setItem("betterChzzkOptionsLastTab", String(tabs.length - 1));
+    const pageScrolls = [];
+    dom.window.scrollTo = (options) => pageScrolls.push(options);
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    function assertSelectedVisible(tab) {
+        assert.equal(tab.getAttribute("aria-selected"), "true");
+        const rect = tab.getBoundingClientRect();
+        assert.ok(rect.left >= 0 && rect.right <= bar.clientWidth);
+    }
+    assertSelectedVisible(tabs.at(-1));
+    tabs.at(-1).focus();
+    for (const [key, tab] of [
+        ["Home", tabs[0]],
+        ["End", tabs.at(-1)],
+        ["ArrowRight", tabs[0]],
+    ]) {
+        document.activeElement.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key, bubbles: true }));
+        assertSelectedVisible(tab);
+        assert.equal(document.activeElement, tab);
+    }
+    assert.deepEqual(pageScrolls, []);
 });
 
 test("options search keeps dependency controls visible and restores previous group state", (t) => {
@@ -475,7 +514,7 @@ test("unreleased ad auto skip is absent from settings and search while old store
     document.getElementById("save").click();
     await waitForAsyncCallbacks();
     assert.equal(chrome.testState.sync.adBannerEnabled, true);
-    assert.equal(chrome.testState.sync.adVideoEnabled, false);
+    assert.equal(chrome.testState.sync.adVideoEnabled, true);
     assert.equal(chrome.testState.sync.adAutoSkipEnabled, true, "hiding does not delete the old stored value");
     assert.equal(
         Object.hasOwn(BetterChzzkSettings.normalizeOptions(chrome.testState.sync), "adAutoSkipEnabled"),
@@ -498,6 +537,7 @@ test("ad options save independently and wait for registration before reporting r
     await waitForAsyncCallbacks();
     const { document } = dom.window;
     const input = queryOption(document, "adVideoEnabled");
+    assert.equal(input.checked, false, "a saved opt-out takes precedence over the enabled default");
     input.checked = true;
     dispatch(dom, input, "change");
     document.getElementById("save").click();

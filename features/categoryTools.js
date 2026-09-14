@@ -413,13 +413,15 @@
 #${BAR_ID} .bcgt-input-wrap:hover input[type="search"]::placeholder{color:var(--bcgt-text-hover);}
 #${BAR_ID} .bcgt-input-wrap:focus-within input[type="search"]::placeholder{color:var(--bcgt-text-focus);}
 #${BAR_ID} .bcgt-clear{
-  display:none;flex:0 0 auto;width:18px;height:18px;margin-left:6px;
+  display:none;flex:0 0 auto;width:24px;height:24px;margin-left:6px;
   border:0;background:transparent;color:var(--bcgt-text-dim);
   cursor:pointer;padding:0;border-radius:50%;
   align-items:center;justify-content:center;
 }
 #${BAR_ID} .bcgt-clear:hover{color:var(--bcgt-text-strong);background:var(--sem-color-surface-interaction-lighten-hovered,var(--Surface-Interaction-Lighten-Hovered, rgba(255,255,255,0.06)));}
 #${BAR_ID}[data-has-query="1"] .bcgt-clear{display:inline-flex;}
+#${BAR_ID} :is(.bcgt-clear,.bcgt-filter):focus-visible{outline:2px solid var(--bcgt-accent);outline-offset:2px;}
+#${BAR_ID} .bcgt-status{font-variant-numeric:tabular-nums;}
 #${BAR_ID} .bcgt-meter{
   display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;
   color:var(--bcgt-text-dim);white-space:nowrap;
@@ -434,6 +436,7 @@
 }
 #${BAR_ID}[data-loading="1"] .bcgt-spinner{visibility:visible;}
 @keyframes bcgt-spin{to{transform:rotate(360deg);}}
+@media (prefers-reduced-motion:reduce){#${BAR_ID} .bcgt-spinner{animation:none;}}
 #${BAR_ID} .bcgt-filter-wrap{position:relative;display:inline-flex;margin-left:auto;}
 #${BAR_ID} .bcgt-filter{
   display:inline-flex;
@@ -542,7 +545,7 @@
   touch-action:none;
 }
 #${MENU_ID} .bcgt-option:hover{background:var(--bcgt-menu-hover);}
-#${MENU_ID} .bcgt-option[aria-checked="true"]{color:var(--bcgt-menu-checked);background:var(--bcgt-menu-checked-bg);}
+#${MENU_ID} .bcgt-option[aria-pressed="true"]{color:var(--bcgt-menu-checked);background:var(--bcgt-menu-checked-bg);}
 #${MENU_ID} .bcgt-option[data-in-range="1"]{
   color:var(--bcgt-menu-checked);
   background:var(--bcgt-menu-checked-bg);
@@ -591,6 +594,7 @@
   font-weight:700;
 }
 #${MENU_ID} .bcgt-custom input::placeholder{color:var(--bcgt-menu-text-dim);}
+#${MENU_ID} :is(button,input):focus-visible{outline:2px solid var(--bcgt-menu-checked);outline-offset:2px;}
 #${MENU_ID} .bcgt-reset-row{
   display:flex;
   justify-content:flex-end;
@@ -1706,7 +1710,7 @@
         return getFilterPresetRanges(kind, featureOptions)
             .map(
                 ({ min, max }) =>
-                    `<button type="button" class="bcgt-option" data-filter-kind="${kind}" data-filter-min="${min}" data-filter-max="${max}" role="menuitemradio">${formatFilterOptionLabel(kind, min, max, unit)}</button>`
+                    `<button type="button" class="bcgt-option" data-filter-kind="${kind}" data-filter-min="${min}" data-filter-max="${max}" aria-pressed="false">${formatFilterOptionLabel(kind, min, max, unit)}</button>`
             )
             .join("");
     }
@@ -2739,42 +2743,43 @@
         const menu = document.createElement("div");
         menu.id = MENU_ID;
         menu.className = "bcgt-menu";
-        menu.setAttribute("role", "menu");
+        menu.setAttribute("role", "group");
+        menu.setAttribute("aria-label", "목록 필터");
         menu.setAttribute("data-open", "0");
         menu.innerHTML = `
 <div class="bcgt-filter-groups">
   <section class="bcgt-filter-group" aria-label="팔로워 수">
     <div class="bcgt-filter-title">팔로워 수</div>
     <div class="bcgt-option-list" data-filter-options="followers"></div>
-    <label class="bcgt-custom" data-custom-kind="followers">
+    <div class="bcgt-custom" data-custom-kind="followers">
       <span>직접</span>
-      <input type="text" inputmode="numeric" data-filter-min-input="followers" placeholder="최소" />
+      <input type="text" inputmode="numeric" data-filter-min-input="followers" aria-label="최소 팔로워 수" placeholder="최소" />
       <span>~</span>
-      <input type="text" inputmode="numeric" data-filter-max-input="followers" placeholder="최대" />
+      <input type="text" inputmode="numeric" data-filter-max-input="followers" aria-label="최대 팔로워 수" placeholder="최대" />
       <span>명</span>
-    </label>
+    </div>
   </section>
   <section class="bcgt-filter-group" aria-label="조회수" data-filter-group="views">
     <div class="bcgt-filter-title" data-view-filter-title>조회수</div>
     <div class="bcgt-option-list" data-filter-options="views"></div>
-    <label class="bcgt-custom" data-custom-kind="views">
+    <div class="bcgt-custom" data-custom-kind="views">
       <span>직접</span>
-      <input type="text" inputmode="numeric" data-filter-min-input="views" placeholder="최소" />
+      <input type="text" inputmode="numeric" data-filter-min-input="views" aria-label="최소 조회수 또는 시청자 수" placeholder="최소" />
       <span>~</span>
-      <input type="text" inputmode="numeric" data-filter-max-input="views" placeholder="최대" />
+      <input type="text" inputmode="numeric" data-filter-max-input="views" aria-label="최대 조회수 또는 시청자 수" placeholder="최대" />
       <span data-view-filter-unit>회</span>
-    </label>
+    </div>
   </section>
   <section class="bcgt-filter-group" aria-label="진행 시간" data-filter-group="duration">
     <div class="bcgt-filter-title">진행 시간</div>
     <div class="bcgt-option-list" data-filter-options="duration"></div>
-    <label class="bcgt-custom" data-custom-kind="duration">
+    <div class="bcgt-custom" data-custom-kind="duration">
       <span>직접</span>
-      <input type="text" inputmode="decimal" data-filter-min-input="duration" placeholder="최소" />
+      <input type="text" inputmode="decimal" data-filter-min-input="duration" aria-label="최소 진행 시간" placeholder="최소" />
       <span>~</span>
-      <input type="text" inputmode="decimal" data-filter-max-input="duration" placeholder="최대" />
+      <input type="text" inputmode="decimal" data-filter-max-input="duration" aria-label="최대 진행 시간" placeholder="최대" />
       <span>시간</span>
-    </label>
+    </div>
   </section>
 </div>
 <div class="bcgt-reset-row">
@@ -2844,18 +2849,14 @@
                 updateUiState();
                 scheduleApply();
             });
-            input.addEventListener("keydown", (e) => {
-                if (e.key === "Escape") {
-                    const isMax = input.hasAttribute("data-filter-max-input");
-                    const kind = input.getAttribute(isMax ? "data-filter-max-input" : "data-filter-min-input");
-                    input.value = "";
-                    if (isMax) setFilterMax(kind, 0, "");
-                    else setFilterMin(kind, 0, "");
-                    updateUiState();
-                    scheduleApply();
-                }
-            });
         }
+        menu.addEventListener("keydown", (event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            closeMenu();
+            document.getElementById(BAR_ID)?.querySelector(".bcgt-filter")?.focus();
+        });
         return menu;
     }
 
@@ -2871,7 +2872,10 @@
     function closeMenu() {
         const bar = document.getElementById(BAR_ID);
         const menu = document.getElementById(MENU_ID);
-        if (bar) bar.setAttribute("data-menu-open", "0");
+        if (bar) {
+            bar.setAttribute("data-menu-open", "0");
+            bar.querySelector(".bcgt-filter")?.setAttribute("aria-expanded", "false");
+        }
         if (menu) menu.setAttribute("data-open", "0");
     }
 
@@ -2950,6 +2954,15 @@
         syncFilterOptionButtons(menu, route);
         const viewFilterGroup = menu?.querySelector('[data-filter-group="views"]');
         if (viewFilterGroup) viewFilterGroup.setAttribute("aria-label", viewFilterLabel);
+        for (const [bound, label] of [
+            ["min", "최소"],
+            ["max", "최대"],
+        ]) {
+            menu?.querySelector(`[data-filter-${bound}-input="views"]`)?.setAttribute(
+                "aria-label",
+                `${label} ${viewFilterLabel}`
+            );
+        }
         const durationFilterGroup = menu?.querySelector('[data-filter-group="duration"]');
         if (durationFilterGroup) {
             durationFilterGroup.hidden = !isLiveList || !canUseMetadataForCurrentList(route);
@@ -2970,7 +2983,7 @@
             const stateEnd = state.max > 0 ? state.max : Number.POSITIVE_INFINITY;
             const inRange = hasRange && optionHasRange && min >= state.min && optionEnd <= stateEnd;
             const isEdge = inRange && (min === state.min || optionEnd === stateEnd);
-            option.setAttribute("aria-checked", state.min === min && state.max === optionMax ? "true" : "false");
+            option.setAttribute("aria-pressed", state.min === min && state.max === optionMax ? "true" : "false");
             option.setAttribute("data-in-range", inRange ? "1" : "0");
             option.setAttribute("data-range-edge", isEdge ? "1" : "0");
         }
@@ -3002,8 +3015,8 @@
   <svg class="bcgt-icon" viewBox="0 0 24 24" aria-hidden="true">
     <path fill="currentColor" d="M10 4a6 6 0 1 0 3.74 10.7l4.28 4.29 1.42-1.42-4.29-4.28A6 6 0 0 0 10 4Zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/>
   </svg>
-  <input type="search" placeholder="현재 목록 검색" autocomplete="off" spellcheck="false" />
-  <button type="button" class="bcgt-clear" aria-label="지우기" tabindex="-1">
+  <input type="search" aria-label="현재 목록 검색" placeholder="현재 목록 검색" autocomplete="off" spellcheck="false" />
+  <button type="button" class="bcgt-clear" aria-label="검색어 지우기">
     <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
       <path fill="currentColor" d="M18.3 5.71 12 12.01l-6.3-6.3-1.41 1.41 6.3 6.3-6.3 6.3 1.41 1.41 6.3-6.3 6.3 6.3 1.41-1.41-6.3-6.3 6.3-6.3z"/>
     </svg>
@@ -3014,7 +3027,7 @@
   <span class="bcgt-status" aria-live="polite"></span>
 </span>
 <span class="bcgt-filter-wrap">
-  <button type="button" class="bcgt-filter" aria-haspopup="menu">
+  <button type="button" class="bcgt-filter" aria-expanded="false" aria-controls="${MENU_ID}">
     <span class="bcgt-filter-label">필터</span>
     <span aria-hidden="true">▴</span>
   </button>
@@ -3072,9 +3085,11 @@
             } else {
                 const menu = ensureMenu();
                 bar.setAttribute("data-menu-open", "1");
+                filter.setAttribute("aria-expanded", "true");
                 menu.setAttribute("data-open", "1");
                 updateUiState();
                 scheduleMenuPosition();
+                menu.querySelector("button")?.focus();
             }
         });
         updateUiState();

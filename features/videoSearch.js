@@ -226,13 +226,15 @@ body[theme="dark"] #${BAR_ID},
 #${BAR_ID} .bcvs-input-wrap:hover input[type="search"]::placeholder{color:var(--bcvs-text-hover);}
 #${BAR_ID} .bcvs-input-wrap:focus-within input[type="search"]::placeholder{color:var(--bcvs-text-focus);}
 #${BAR_ID} .bcvs-clear{
-  display:none;flex:0 0 auto;width:18px;height:18px;margin-left:6px;
+  display:none;flex:0 0 auto;width:24px;height:24px;margin-left:6px;
   border:0;background:transparent;color:var(--bcvs-text-dim);
   cursor:pointer;padding:0;border-radius:50%;
   align-items:center;justify-content:center;
 }
 #${BAR_ID} .bcvs-clear:hover{color:var(--bcvs-text-strong);background:var(--sem-color-surface-interaction-lighten-hovered,var(--Surface-Interaction-Lighten-Hovered, rgba(255,255,255,0.06)));}
 #${BAR_ID}[data-has-query="1"] .bcvs-clear{display:inline-flex;}
+#${BAR_ID} .bcvs-clear:focus-visible{outline:2px solid var(--bcvs-accent);outline-offset:2px;}
+#${BAR_ID} .bcvs-status{font-variant-numeric:tabular-nums;}
 #${BAR_ID} .bcvs-meter{
   display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;
   color:var(--bcvs-text-dim);white-space:nowrap;
@@ -247,6 +249,7 @@ body[theme="dark"] #${BAR_ID},
 }
 #${BAR_ID}[data-loading="1"] .bcvs-spinner{visibility:visible;}
 @keyframes bcvs-spin{to{transform:rotate(360deg);}}
+@media (prefers-reduced-motion:reduce){#${BAR_ID} .bcvs-spinner{animation:none;}}
 [${HIDE_ATTR}="1"]{display:none !important;}
 [${LOAD_MORE_ATTR}]{
   display:flex;
@@ -1451,8 +1454,8 @@ body[theme="dark"] #${BAR_ID},
   <svg class="bcvs-icon" viewBox="0 0 24 24" aria-hidden="true">
     <path fill="currentColor" d="M10 4a6 6 0 1 0 3.74 10.7l4.28 4.29 1.42-1.42-4.29-4.28A6 6 0 0 0 10 4Zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/>
   </svg>
-  <input type="search" placeholder="이 채널의 영상 제목 검색" autocomplete="off" spellcheck="false" />
-  <button type="button" class="bcvs-clear" aria-label="지우기" tabindex="-1">
+  <input type="search" aria-label="이 채널의 영상 제목 검색" placeholder="이 채널의 영상 제목 검색" autocomplete="off" spellcheck="false" />
+  <button type="button" class="bcvs-clear" aria-label="검색어 지우기">
     <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
       <path fill="currentColor" d="M18.3 5.71 12 12.01l-6.3-6.3-1.41 1.41 6.3 6.3-6.3 6.3 1.41 1.41 6.3-6.3 6.3 6.3 1.41-1.41-6.3-6.3 6.3-6.3z"/>
     </svg>

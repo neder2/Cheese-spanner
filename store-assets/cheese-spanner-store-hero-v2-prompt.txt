@@ -1,0 +1,4 @@
+Tool: built-in image_gen
+Reference: cheese-spanner-store-hero.png
+
+Edit the provided store promotional image. Change ONLY the typography of the small bottom Korean tagline "더 편안한 치지직 시청을 위한 확장 프로그램". Use a visibly softer, friendlier rounded Korean sans-serif with gently rounded stroke terminals, natural comfortable spacing, and lighter regular-to-medium weight. It should feel warm and relaxed but remain highly readable and professional, not childish or handwritten. Keep the tagline centered on one line in the same location and approximately the same size, warm dark gray. Preserve exactly the existing cheese-and-wrench icon, huge bold "치즈 스패너" title, background, composition, canvas dimensions, colors and all other elements. Exact tagline text must remain "더 편안한 치지직 시청을 위한 확장 프로그램". No added elements.

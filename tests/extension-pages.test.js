@@ -863,7 +863,15 @@ test("adblock popup suppresses the current chzzk alertdialog modal after it appe
     makeVisibleElement(modal);
     document.body.appendChild(dimmed);
 
-    await waitForAsyncCallbacks();
+    // The mutation observer hides the popup before a separate timer unlocks scrolling.
+    // Wait for both effects; 20 ms does not guarantee that timer has run under suite load.
+    await waitForCondition(
+        () =>
+            getAdblockSuppressAttr(modal) === "1" &&
+            getAdblockSuppressAttr(dimmed) === "1" &&
+            document.body.style.overflow === "" &&
+            document.body.style.paddingRight === ""
+    );
 
     assert.equal(getAdblockSuppressAttr(modal), "1");
     assert.equal(getAdblockSuppressAttr(dimmed), "1");
@@ -951,7 +959,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.3.6");
+    assert.equal(manifest.version, "1.3.7");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
@@ -963,6 +971,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
         "https://chzzk.naver.com/*",
     ]);
     assert.deepEqual(manifest.optional_host_permissions, ["https://*.pstatic.net/*"]);
+    assert.equal(mainScript.js.includes("features/gridBypassPage.js"), false);
     assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
     assert.equal(mainScript.js.includes("features/followingPreviewPage.js"), false);
     assert.ok(
@@ -973,11 +982,14 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
         mainScript.js.indexOf("features/volumeWheelPage.js") > mainScript.js.indexOf("features/autoQualityPage.js")
     );
     assert.ok(isolatedScript.js.includes("features/volumeWheel.js"));
+    assert.ok(isolatedScript.js.indexOf("features/qualityInstallGuide.js") > isolatedScript.js.indexOf("content.js"));
     assert.ok(isolatedScript.js.includes("features/sidebarCustomization.js"));
     assert.ok(
         isolatedScript.js.indexOf("features/sidebarCustomization.js") <
             isolatedScript.js.indexOf("features/followingRefresh.js")
     );
+    assert.equal(isolatedScript.js.includes("features/gridBypass.js"), false);
+    assert.ok(isolatedScript.js.includes("features/updateNotice.js"));
     assert.ok(isolatedScript.js.includes("vendor/hls.light.min.js"));
     assert.ok(isolatedScript.js.includes("features/followingPreviewTooltip.js"));
     assert.ok(isolatedScript.js.includes("shared/selectors.js"));
@@ -2828,7 +2840,7 @@ test("audio compressor button tooltip reports graph setup failures", async () =>
     assert.equal(button.getAttribute("aria-label"), "오디오 컴프레서(사용할 수 없음)");
 });
 
-test("quality selection saves, reloads and follows the auto quality toggle", async (t) => {
+test("quality and unified popup preferences save independently", async (t) => {
     const chrome = createFakeChrome();
     const dom = createDom("options.html", "options.html", chrome);
     t.after(() => dom.window.close());
@@ -2837,6 +2849,14 @@ test("quality selection saves, reloads and follows the auto quality toggle", asy
     await waitForAsyncCallbacks();
     const { document } = dom.window;
     const select = queryOption(document, "autoQualityPreferred");
+    const dismissGuide = queryOption(document, "adblockPopupEnabled");
+    assert.equal(queryOption(document, "autoQualityDismissInstallGuide"), null);
+    assert.equal(
+        document.querySelector('[data-option-group="popup-adblock"] .setting-note').textContent.trim(),
+        "시청에 방해되는 팝업을 제거합니다."
+    );
+    assert.equal(dismissGuide.checked, true);
+    assert.equal(dismissGuide.disabled, false);
     assert.equal(select.value, "1080p");
     assert.deepEqual(
         Array.from(select.options, (option) => option.value),
@@ -2844,16 +2864,21 @@ test("quality selection saves, reloads and follows the auto quality toggle", asy
     );
     select.value = "720p";
     dispatch(dom, select, "change");
+    dismissGuide.checked = false;
+    dispatch(dom, dismissGuide, "change");
     document.getElementById("save").click();
     await waitForAsyncCallbacks();
     assert.equal(chrome.testState.sync.autoQualityPreferred, "720p");
+    assert.equal(chrome.testState.sync.adblockPopupEnabled, false);
     const toggle = queryOption(document, "autoQualityEnabled");
     toggle.checked = false;
     dispatch(dom, toggle, "change");
     assert.equal(select.disabled, true);
+    assert.equal(dismissGuide.disabled, false, "popup removal does not depend on auto quality");
     toggle.checked = true;
     dispatch(dom, toggle, "change");
     assert.equal(select.disabled, false);
+    assert.equal(dismissGuide.disabled, false);
     assert.equal(select.value, "720p");
     const reopened = createDom("options.html", "options.html", chrome);
     t.after(() => reopened.window.close());
@@ -2861,6 +2886,7 @@ test("quality selection saves, reloads and follows the auto quality toggle", asy
     evalRepoScript(reopened, "options.js");
     await waitForAsyncCallbacks();
     assert.equal(queryOption(reopened.window.document, "autoQualityPreferred").value, "720p");
+    assert.equal(queryOption(reopened.window.document, "adblockPopupEnabled").checked, false);
 });
 
 test("saved quality changes cross the page bridge and switch existing tracks", async (t) => {
@@ -4622,6 +4648,12 @@ test("live fast-forward button seeks to the buffered live edge", async () => {
     const video = document.getElementById("video");
     const controls = document.getElementById("controls");
     const play = document.getElementById("play");
+    document.body.classList.add("pzp-pc");
+    play.classList.add("pzp-button");
+    const nativeFade = document.createElement("style");
+    nativeFade.textContent =
+        ".pzp-button{transition:opacity .2s ease-in}.pzp-pc__playback-switch{opacity:0}.pzp-pc--controls .pzp-pc__playback-switch{opacity:1}";
+    document.head.append(nativeFade);
 
     video.currentTime = 12;
     video.getBoundingClientRect = () => ({
@@ -4674,6 +4706,18 @@ test("live fast-forward button seeks to the buffered live edge", async () => {
         assert.equal(button.querySelector(".betterchzzk-player-tooltip").textContent, "빨리 감기");
         assert.equal(button.querySelector(".bc-live-ff-icon").textContent.trim(), "");
         assert.equal(button.disabled, false);
+
+        const pill = document.getElementById("betterchzzk-skip-pill");
+        assert.ok(pill);
+        for (const control of [button, pill]) {
+            assert.equal(control.style.opacity, "", "native fades must not be frozen at their sampled opacity");
+            assert.equal(dom.window.getComputedStyle(control).transition, dom.window.getComputedStyle(play).transition);
+            assert.equal(dom.window.getComputedStyle(control).opacity, "0");
+        }
+        document.body.classList.add("pzp-pc--controls");
+        for (const control of [button, pill]) assert.equal(dom.window.getComputedStyle(control).opacity, "1");
+        document.body.classList.remove("pzp-pc--controls");
+        for (const control of [button, pill]) assert.equal(dom.window.getComputedStyle(control).opacity, "0");
 
         button.click();
 

@@ -40,6 +40,7 @@
     let lastUrl = location.href;
     let pageChangeTimer = 0;
     let applyTimer = 0;
+    let applyDueAt = 0;
     let applyBurstStartedAt = 0;
     let applyBurstDeadline = 0;
     let applyInProgress = false;
@@ -234,7 +235,7 @@
 
         try {
             const result = applyQualityInPageContext();
-            return result.status || "pending";
+            return result.waitForEvent ? "waiting" : result.status || "pending";
         } finally {
             applyInProgress = false;
             if (applyAgainRequested && isEnabled()) scheduleQualityApplyRun(0);
@@ -243,12 +244,14 @@
 
     function scheduleQualityApplyRun(delayMs) {
         delayMs = getStartupApplyDelay(delayMs);
+        const dueAt = performance.now() + delayMs;
 
         if (applyTimer) {
-            if (delayMs > 0) return;
+            if (applyDueAt <= dueAt) return;
             clearTimeout(applyTimer);
         }
 
+        applyDueAt = dueAt;
         applyTimer = setTimeout(runQualityApply, delayMs);
     }
 
@@ -263,12 +266,13 @@
 
     async function runQualityApply() {
         applyTimer = 0;
+        applyDueAt = 0;
         if (!isEnabled()) return;
 
         const result = await applyPreferredQuality();
         if (!isEnabled()) return;
 
-        if (result === "already") return;
+        if (result === "already" || result === "blocked" || result === "waiting") return;
         if (performance.now() >= applyBurstDeadline) return;
 
         const elapsed = performance.now() - applyBurstStartedAt;
@@ -282,6 +286,7 @@
             clearTimeout(applyTimer);
             applyTimer = 0;
         }
+        applyDueAt = 0;
         if (pageChangeTimer) {
             clearTimeout(pageChangeTimer);
             pageChangeTimer = 0;

@@ -22,6 +22,8 @@ const optionInputs = Array.from(document.querySelectorAll("[data-option]"));
 const dependencyGroups = Array.from(document.querySelectorAll("[data-depends-on]"));
 const resetButton = document.getElementById("reset");
 const saveButton = document.getElementById("save");
+const discardButton = document.getElementById("discardChanges");
+const headerMenu = document.getElementById("headerMenu");
 const noticeEl = document.getElementById("notice");
 const messageEl = document.getElementById("message");
 
@@ -104,6 +106,10 @@ function areOptionsEqual(a, b) {
     return OPTION_KEYS.every((key) => a[key] === b[key]);
 }
 
+function countChangedOptions(options) {
+    return savedOptions ? OPTION_KEYS.filter((key) => options[key] !== savedOptions[key]).length : 0;
+}
+
 function dependenciesMet(group, options) {
     const keys = String(group.dataset.dependsOn || "")
         .split(/\s+/)
@@ -133,18 +139,19 @@ function applyControlStates(options) {
     }
     resetButton.disabled = optionsUnavailable || saveInFlight;
     saveButton.disabled = optionsUnavailable || saveInFlight || !savedOptions || areOptionsEqual(options, savedOptions);
+    discardButton.disabled = optionsUnavailable || saveInFlight || countChangedOptions(options) === 0;
 }
 
-function renderNotice(state) {
+function renderNotice(state, changedCount = 0) {
     const label = NOTICE_STATE_LABELS[state] || NOTICE_STATE_LABELS.saved;
     noticeEl.dataset.state = state;
-    noticeEl.textContent = label;
+    noticeEl.textContent = state === "dirty" ? `변경 ${changedCount}개` : label;
 }
 
 function renderPageState(options, state = "saved") {
     applyDependencies(options);
     applyControlStates(options);
-    renderNotice(state);
+    renderNotice(state, countChangedOptions(options));
 }
 
 function renderOptions(options, { state = "saved" } = {}) {
@@ -163,17 +170,41 @@ function syncNumberInputs(options) {
     }
 }
 
+function hideMessage() {
+    clearTimeout(hideMessageTimer);
+    hideMessageTimer = 0;
+    const hadFocus = messageEl.contains(document.activeElement);
+    messageEl.classList.remove("is-visible");
+    messageEl.classList.add("hidden");
+    if (hadFocus) (saveButton.disabled ? document.getElementById("settingsSearch") : saveButton)?.focus();
+}
+
 function showMessage(text, type = "success") {
     clearTimeout(hideMessageTimer);
-    messageEl.textContent = text;
+    hideMessageTimer = 0;
+    const hadFocus = messageEl.contains(document.activeElement);
+    const copy = document.createElement("span");
+    copy.className = "message-text";
+    copy.textContent = text;
+    messageEl.replaceChildren(copy);
+    if (type === "error") {
+        const dismiss = document.createElement("button");
+        dismiss.type = "button";
+        dismiss.className = "message-close";
+        dismiss.setAttribute("aria-label", "오류 안내 닫기");
+        dismiss.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>';
+        dismiss.addEventListener("click", hideMessage);
+        messageEl.append(dismiss);
+    }
     messageEl.dataset.type = type;
     messageEl.classList.remove("hidden");
     messageEl.classList.add("is-visible");
+    if (hadFocus) {
+        const fallback = saveButton.disabled ? document.getElementById("settingsSearch") : saveButton;
+        (messageEl.querySelector(".message-close") || fallback)?.focus({ preventScroll: true });
+    }
 
-    hideMessageTimer = setTimeout(() => {
-        messageEl.classList.remove("is-visible");
-        messageEl.classList.add("hidden");
-    }, 1800);
+    if (type !== "error") hideMessageTimer = setTimeout(hideMessage, 1800);
 }
 
 function finishSave(normalized, message, error) {
@@ -185,6 +216,7 @@ function finishSave(normalized, message, error) {
     }
 
     savedOptions = normalized;
+    hideMessage();
     const current = readOptionsFromForm();
     if (!areOptionsEqual(current, normalized)) {
         renderPageState(current, "dirty");
@@ -293,8 +325,11 @@ function saveCurrentOptions() {
         (key) => normalized[key] && !savedOptions?.[key]
     );
     if (newlyEnabledMedia.length) {
+        saveInFlight = true;
+        renderPageState(normalized, "saving");
         requestPreviewPermission((granted) => {
             if (!granted) {
+                saveInFlight = false;
                 for (const key of newlyEnabledMedia) {
                     const toggle = optionInputs.find((input) => input.dataset.option === key);
                     if (toggle) toggle.checked = false;
@@ -308,7 +343,7 @@ function saveCurrentOptions() {
                 );
                 return;
             }
-            commitSave("옵션을 저장했습니다.");
+            startSave(normalized, "옵션을 저장했습니다.");
         });
         return;
     }
@@ -375,9 +410,32 @@ form.addEventListener("change", (event) => {
 
 saveButton.addEventListener("click", saveCurrentOptions);
 
+discardButton.addEventListener("click", () => {
+    if (optionsLoadState !== "ready" || saveInFlight || !savedOptions) return;
+    const hadFocus = document.activeElement === discardButton;
+    renderOptions(savedOptions);
+    hideMessage();
+    if (hadFocus) document.querySelector('.tab[aria-selected="true"]')?.focus({ preventScroll: true });
+});
+
+headerMenu.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !headerMenu.open) return;
+    event.preventDefault();
+    headerMenu.open = false;
+    headerMenu.querySelector("summary").focus();
+});
+headerMenu.addEventListener("focusout", (event) => {
+    if (headerMenu.open && event.relatedTarget && !headerMenu.contains(event.relatedTarget)) headerMenu.open = false;
+});
+document.addEventListener("click", (event) => {
+    if (headerMenu.open && !headerMenu.contains(event.target)) headerMenu.open = false;
+});
+
 resetButton.addEventListener("click", () => {
-    if (optionsLoadState !== "ready") return;
+    if (optionsLoadState !== "ready" || saveInFlight) return;
     if (!window.confirm("모든 설정을 기본값으로 되돌릴까요? 직접 바꾼 키와 수치도 함께 초기화됩니다.")) return;
+    headerMenu.open = false;
+    headerMenu.querySelector("summary").focus();
     renderOptions(DEFAULT_OPTIONS);
     commitSave("기본값으로 복원했습니다.");
 });
@@ -442,15 +500,25 @@ function alignCompactTabPanel(index) {
     window.scrollTo({ top: Math.max(0, sectionTop - toolbarHeight - 8), behavior: "auto" });
 }
 
+function revealTab(button) {
+    if (!tabBar || !button || tabBar.scrollWidth <= tabBar.clientWidth) return;
+    const barRect = tabBar.getBoundingClientRect();
+    const buttonRect = button.getBoundingClientRect();
+    // Scroll only the category strip so restoring a tab does not move the page.
+    if (buttonRect.left < barRect.left + 4) tabBar.scrollLeft += buttonRect.left - barRect.left - 4;
+    else if (buttonRect.right > barRect.right - 4) tabBar.scrollLeft += buttonRect.right - barRect.right + 4;
+}
+
 function activateTab(index, { focus = false, align = false } = {}) {
     tabButtons.forEach((btn, i) => {
         const active = i === index;
         btn.classList.toggle("is-active", active);
         btn.setAttribute("aria-selected", active ? "true" : "false");
         btn.tabIndex = active ? 0 : -1;
-        if (active && focus) btn.focus();
+        if (active && focus) btn.focus({ preventScroll: true });
     });
     tabSections.forEach((sec, i) => sec.classList.toggle("is-active", i === index));
+    revealTab(tabButtons[index]);
     storeTabIndex(index);
     if (align) alignCompactTabPanel(index);
 }

@@ -93,10 +93,12 @@ const noticeEl = document.getElementById("notice");
 const totalWatchTimeEl = document.getElementById("totalWatchTime");
 const totalLiveCountEl = document.getElementById("totalLiveCount");
 const monthWatchTimeEl = document.getElementById("monthWatchTime");
+const monthWatchLabelEl = document.getElementById("monthWatchLabel");
 const calendarTitleEl = document.getElementById("calendarTitle");
 const weekdaysEl = document.getElementById("weekdays");
 const calendarDaysEl = document.getElementById("calendarDays");
 const calendarFootEl = document.getElementById("calendarFoot");
+const clearDateFilterButton = document.getElementById("clearDateFilter");
 const listDescriptionEl = document.getElementById("listDescription");
 const historyListEl = document.getElementById("historyList");
 const historySearchEl = document.getElementById("historySearch");
@@ -110,6 +112,7 @@ const clearHistoryButton = document.getElementById("clearHistory");
 const selectVisibleHistoryEl = document.getElementById("selectVisibleHistory");
 const selectionStatusEl = document.getElementById("selectionStatus");
 const deleteSelectedHistoryButton = document.getElementById("deleteSelectedHistory");
+const clearSelectionButton = document.getElementById("clearSelection");
 const messageEl = document.getElementById("message");
 
 let entries = [];
@@ -980,7 +983,10 @@ function renderWeekdays() {
 }
 
 function renderCalendar() {
+    clearDateFilterButton.disabled = !selectedDateKey;
     renderWeekdays();
+    const focusedDate = calendarDaysEl.contains(document.activeElement) ? document.activeElement.dataset.date : null;
+    let focusTarget = null;
 
     const monthKey = formatMonthKey(selectedYear, selectedMonth);
     const totals = getDayTotals(selectedYear, selectedMonth);
@@ -1008,12 +1014,17 @@ function renderCalendar() {
         item.type = "button";
         item.className = "history-day";
         item.dataset.date = dateKey;
+        item.setAttribute("aria-pressed", String(selectedDateKey === dateKey));
+        if (dateKey === focusedDate) focusTarget = item;
         item.setAttribute(
             "aria-label",
             `${formatDateLabel(dateKey)} ${seconds > 0 ? formatDuration(seconds) : "시청 기록 없음"}`
         );
 
-        if (today.year === selectedYear && today.month === selectedMonth && today.day === day) item.dataset.today = "1";
+        if (today.year === selectedYear && today.month === selectedMonth && today.day === day) {
+            item.dataset.today = "1";
+            item.setAttribute("aria-current", "date");
+        }
         if (selectedDateKey === dateKey) item.dataset.selected = "1";
 
         appendText(item, "history-day-number", String(day));
@@ -1035,12 +1046,13 @@ function renderCalendar() {
     }
 
     calendarDaysEl.replaceChildren(fragment);
+    if (focusedDate) (focusTarget || calendarRefreshButton).focus({ preventScroll: true });
 
     const monthSeconds = getUniqueWatchSecondsForMonth(selectedYear, selectedMonth);
     const selectedText = selectedDateKey
         ? `${formatDateLabel(selectedDateKey)} 선택됨 · 다시 누르면 해제됩니다.`
         : "날짜를 선택하면 해당 날짜에 본 라이브만 표시합니다.";
-    calendarFootEl.textContent = `${selectedText} 이번 달 총 ${formatDuration(monthSeconds)}.`;
+    calendarFootEl.textContent = `${selectedText} ${selectedYear}년 ${selectedMonth}월 총 ${formatDuration(monthSeconds)}.`;
 }
 
 function getVisibleRows() {
@@ -1094,8 +1106,10 @@ function renderSelectionControls(rows = getVisibleRows()) {
     selectVisibleHistoryEl.checked = visibleIds.length > 0 && visibleSelectedCount === visibleIds.length;
     selectVisibleHistoryEl.indeterminate = visibleSelectedCount > 0 && visibleSelectedCount < visibleIds.length;
 
-    selectionStatusEl.textContent = selectedCount > 0 ? `선택 ${selectedCount}개` : "선택 0개";
+    const hiddenCount = selectedCount - visibleSelectedCount;
+    selectionStatusEl.textContent = `선택 ${selectedCount}개${hiddenCount > 0 ? ` · 현재 목록 밖 ${hiddenCount}개` : ""}`;
     deleteSelectedHistoryButton.disabled = selectedCount === 0;
+    clearSelectionButton.disabled = selectedCount === 0;
     clearHistoryButton.disabled = entries.length === 0;
 }
 
@@ -1337,6 +1351,11 @@ function buildSessionList(row) {
 }
 
 function renderList() {
+    // Capture focus when rendering, not when an earlier async request started.
+    const active = document.activeElement;
+    const hadListFocus = historyListEl.contains(active);
+    const focusedEntryId = hadListFocus ? active.closest(".history-item")?.dataset.entryId : null;
+    let focusTarget = null;
     const rows = getVisibleRows();
     const fragment = document.createDocumentFragment();
     const scopeText = selectedDateKey
@@ -1351,6 +1370,7 @@ function renderList() {
         empty.textContent = entries.length ? "조건에 맞는 시청 기록이 없습니다." : "아직 저장된 시청 기록이 없습니다.";
         fragment.appendChild(empty);
         historyListEl.replaceChildren(fragment);
+        if (hadListFocus) historySearchEl.focus({ preventScroll: true });
         return;
     }
 
@@ -1359,6 +1379,7 @@ function renderList() {
         const expanded = expandedEntryIds.has(entry.id);
         const item = document.createElement("div");
         item.className = "history-item";
+        item.dataset.entryId = entry.id;
         item.dataset.selected = selectedEntryIds.has(entry.id) ? "1" : "0";
         item.dataset.expanded = expanded ? "1" : "0";
 
@@ -1423,6 +1444,13 @@ function renderList() {
         deleteButton.addEventListener("click", () => deleteSingleEntry(entry));
         actions.append(time, expandButton, deleteButton);
 
+        if (entry.id === focusedEntryId) {
+            if (active.matches(".history-item-select input")) focusTarget = selectInput;
+            else if (active.matches(".history-entry-detail")) focusTarget = expandButton;
+            else if (active.matches(".history-entry-delete")) focusTarget = deleteButton;
+            else if (active.matches(".history-item-title-link") && title.tagName === "A") focusTarget = title;
+        }
+
         item.append(selectLabel, body, actions);
         if (expanded) {
             const titleHistoryList = buildTitleHistoryList(entry);
@@ -1433,6 +1461,7 @@ function renderList() {
     }
 
     historyListEl.replaceChildren(fragment);
+    if (hadListFocus) (focusTarget || historySearchEl).focus({ preventScroll: true });
 }
 
 function renderSummary() {
@@ -1442,6 +1471,7 @@ function renderSummary() {
     totalWatchTimeEl.textContent = formatDuration(totalSeconds);
     totalLiveCountEl.textContent = `${entries.length}개`;
     monthWatchTimeEl.textContent = formatDuration(monthSeconds);
+    monthWatchLabelEl.textContent = `${selectedYear}년 ${selectedMonth}월`;
 
     if (storage) {
         noticeEl.dataset.state = "saved";
@@ -1456,17 +1486,39 @@ function renderAll() {
     renderList();
 }
 
-function showMessage(text, type = "success") {
+function hideMessage() {
     clearTimeout(hideMessageTimer);
-    messageEl.textContent = text;
+    hideMessageTimer = 0;
+    const hadFocus = messageEl.contains(document.activeElement);
+    messageEl.classList.remove("is-visible");
+    messageEl.classList.add("hidden");
+    if (hadFocus) refreshButton.focus({ preventScroll: true });
+}
+
+function showMessage(text, type = "success", source = "") {
+    clearTimeout(hideMessageTimer);
+    hideMessageTimer = 0;
+    const hadFocus = messageEl.contains(document.activeElement);
+    const copy = document.createElement("span");
+    copy.className = "message-text";
+    copy.textContent = text;
+    messageEl.replaceChildren(copy);
+    if (type === "error") {
+        const dismiss = document.createElement("button");
+        dismiss.type = "button";
+        dismiss.className = "message-close";
+        dismiss.setAttribute("aria-label", "오류 안내 닫기");
+        dismiss.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>';
+        dismiss.addEventListener("click", hideMessage);
+        messageEl.append(dismiss);
+    }
     messageEl.dataset.type = type;
+    messageEl.dataset.source = source;
     messageEl.classList.remove("hidden");
     messageEl.classList.add("is-visible");
+    if (hadFocus) (messageEl.querySelector(".message-close") || refreshButton).focus({ preventScroll: true });
 
-    hideMessageTimer = setTimeout(() => {
-        messageEl.classList.remove("is-visible");
-        messageEl.classList.add("hidden");
-    }, 1800);
+    if (type !== "error") hideMessageTimer = setTimeout(hideMessage, 1800);
 }
 
 async function loadHistory({ resetToLatest = false, silent = false } = {}) {
@@ -1496,11 +1548,12 @@ async function loadHistory({ resetToLatest = false, silent = false } = {}) {
         }
         ensureSelectedMonth({ resetToLatest });
         renderAll();
+        if (messageEl.dataset.type === "error" && messageEl.dataset.source === "load") hideMessage();
         return true;
     } catch (_) {
         noticeEl.dataset.state = "dirty";
         noticeEl.textContent = "불러오기 실패";
-        showMessage("시청 기록을 불러오지 못했습니다.", "error");
+        showMessage("시청 기록을 불러오지 못했습니다. 새로고침 버튼을 눌러 다시 시도해 주세요.", "error", "load");
         return false;
     }
 }
@@ -1564,7 +1617,10 @@ async function deleteEntriesByIds(ids, successMessage) {
 async function deleteSelectedEntries() {
     const count = selectedEntryIds.size;
     if (count <= 0) return;
-    if (!confirm(`선택한 시청 기록 ${count}개를 삭제할까요?`)) return;
+    const visibleIds = new Set(getVisibleEntryIds());
+    const hiddenCount = Array.from(selectedEntryIds).filter((id) => !visibleIds.has(id)).length;
+    const hiddenNotice = hiddenCount > 0 ? ` 현재 목록 밖의 기록 ${hiddenCount}개도 함께 삭제됩니다.` : "";
+    if (!confirm(`선택한 시청 기록 ${count}개를 삭제할까요?${hiddenNotice}`)) return;
 
     await deleteEntriesByIds(selectedEntryIds, `선택한 시청 기록 ${count}개를 삭제했습니다.`);
 }
@@ -1577,6 +1633,12 @@ async function deleteSingleEntry(entry) {
 }
 
 prevMonthButton.addEventListener("click", () => shiftSelectedMonth(-1));
+clearDateFilterButton.addEventListener("click", () => {
+    const previousDateKey = selectedDateKey;
+    selectedDateKey = "";
+    renderAll();
+    calendarDaysEl.querySelector(`[data-date="${previousDateKey}"]`)?.focus({ preventScroll: true });
+});
 calendarRefreshButton.addEventListener("click", refreshHistory);
 nextMonthButton.addEventListener("click", () => {
     if (!nextMonthButton.disabled) shiftSelectedMonth(1);
@@ -1588,6 +1650,11 @@ historySortEl.addEventListener("change", renderList);
 historySortDirectionEl.addEventListener("change", renderList);
 selectVisibleHistoryEl.addEventListener("change", () => setVisibleEntriesSelected(selectVisibleHistoryEl.checked));
 deleteSelectedHistoryButton.addEventListener("click", deleteSelectedEntries);
+clearSelectionButton.addEventListener("click", () => {
+    selectedEntryIds.clear();
+    renderList();
+    (selectVisibleHistoryEl.disabled ? historySearchEl : selectVisibleHistoryEl).focus({ preventScroll: true });
+});
 
 if (globalThis.chrome?.storage?.onChanged) {
     chrome.storage.onChanged.addListener((changes, areaName) => {

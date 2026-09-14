@@ -150,11 +150,10 @@ function waitForAsyncCallbacks() {
 
 async function waitForCondition(predicate, { timeoutMs = 1000, intervalMs = 20 } = {}) {
     const startedAt = Date.now();
-    while (Date.now() - startedAt <= timeoutMs) {
-        if (predicate()) return;
+    while (!predicate()) {
+        if (Date.now() - startedAt > timeoutMs) assert.fail("Timed out waiting for condition");
         await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
-    assert.fail("Timed out waiting for condition");
 }
 
 module.exports = {

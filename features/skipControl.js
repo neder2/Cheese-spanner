@@ -311,6 +311,14 @@
 
     function syncLiveInlineControlVisibility(control, reference) {
         if (!(control instanceof HTMLElement) || !(reference instanceof HTMLElement)) return;
+        // Copied native classes own the fade. Sampling animated opacity here can
+        // pin the new control at zero when --controls has already changed.
+        if (reference.closest(".pzp-pc") && reference.matches(".pzp-pc__playback-switch, .pzp-pc__volume-button")) {
+            control.style.opacity = reference.style.opacity;
+            control.style.visibility = reference.style.visibility;
+            control.style.pointerEvents = reference.style.pointerEvents;
+            return;
+        }
         const state = getEffectiveControlState(reference);
         control.style.opacity = state.opacity;
         control.style.visibility = state.visibility;
@@ -1002,7 +1010,6 @@
   pointer-events:auto;
   flex:0 0 auto;
   align-self:center;
-  transition:opacity 120ms ease, background-color 120ms ease, border-color 120ms ease;
   position:relative;
   z-index:2;
   box-sizing:border-box;

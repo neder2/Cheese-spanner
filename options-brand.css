@@ -1,0 +1,91 @@
+/* Pretendard 1.3.9: vendor/fonts/Pretendard.LICENSE.txt (SIL OFL 1.1). */
+@font-face {
+    font-family: "Pretendard Variable";
+    src: url("vendor/fonts/PretendardVariable.woff2") format("woff2");
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+}
+
+.options-body,
+.history-body {
+    --options-font: "Pretendard Variable", system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    --options-text-title: 22px;
+    --options-text-section: 17px;
+    --options-text-body: 14px;
+    --options-text-caption: 13px;
+    --options-text-meta: 12px;
+    font-family: var(--options-font);
+    font-size: var(--options-text-body);
+    font-weight: 400;
+    line-height: 1.55;
+    letter-spacing: 0;
+}
+
+.options-body :is(button, input, select, textarea, h1),
+.history-body :is(button, input, select, textarea, h1) {
+    font-family: var(--options-font);
+}
+
+.options-body .hero {
+    column-gap: 6px;
+}
+
+.options-body .hero h1 {
+    font-size: var(--options-text-title);
+    font-weight: 750;
+    line-height: 1.2;
+    letter-spacing: -0.025em;
+}
+
+.options-body .hero .version-badge {
+    font-size: var(--options-text-meta);
+    font-weight: 550;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.5;
+    letter-spacing: 0.02em;
+}
+
+.options-body .section-heading h2 {
+    font-size: var(--options-text-section);
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.options-body .option-group > summary {
+    font-size: var(--options-text-body);
+    font-weight: 650;
+}
+
+.options-body .toggle-row strong {
+    font-size: var(--options-text-body);
+    font-weight: 500;
+    line-height: 1.5;
+}
+
+.options-body :is(.toggle-row small, .setting-note, .number-grid span, .number-grid em, .subtitle) {
+    font-size: var(--options-text-caption);
+    line-height: 1.6;
+    letter-spacing: 0;
+}
+
+.options-body .options-page .tab {
+    font-size: var(--options-text-caption);
+    font-weight: 500;
+    line-height: 1.5;
+}
+
+.options-body .options-page .tab.is-active {
+    font-weight: 650;
+}
+
+.options-body :is(.search-field input, .number-grid input, .quality-select, textarea) {
+    font-size: var(--options-text-body);
+    line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+    .options-body {
+        --options-text-title: 20px;
+    }
+}
