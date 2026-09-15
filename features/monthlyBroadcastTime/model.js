@@ -150,6 +150,7 @@
             firstWeekday: getKstParts(startMs).weekday,
             daysInMonth,
             dailySeconds: {},
+            broadcastSecondsByDate: {},
             startsByDate: {},
             startKeyIndex: {},
         };
@@ -157,7 +158,7 @@
 
     function addMonthStart(video, monthInfo, nowMs) {
         const startMs = getVideoStartMs(video);
-        if (startMs === null || startMs < monthInfo.startMs || startMs >= monthInfo.nextStartMs || startMs > nowMs) {
+        if (startMs === null || startMs >= monthInfo.nextStartMs || startMs > nowMs) {
             return;
         }
 
@@ -179,26 +180,40 @@
             titleKey,
         };
 
-        monthInfo.dailySeconds[key] = (monthInfo.dailySeconds[key] || 0) + duration;
-        monthInfo.startsByDate[key] = monthInfo.startsByDate[key] || [];
         const existing = monthInfo.startKeyIndex[startKey];
         const entry = BetterChzzk.vodTimeline.mergeBroadcastSegment(existing, incoming);
+        monthInfo.startKeyIndex[startKey] = entry;
+        // Earlier starts can cover this month; their duration total stays in the start month.
+        if (startMs < monthInfo.startMs) return;
+
+        monthInfo.dailySeconds[key] = (monthInfo.dailySeconds[key] || 0) + duration;
+        monthInfo.startsByDate[key] = monthInfo.startsByDate[key] || [];
         if (existing) {
             const existingIndex = monthInfo.startsByDate[key].indexOf(existing);
             if (existingIndex >= 0) monthInfo.startsByDate[key][existingIndex] = entry;
             else monthInfo.startsByDate[key].push(entry);
-            monthInfo.startKeyIndex[startKey] = entry;
             return;
         }
 
         monthInfo.startsByDate[key].push(entry);
-        monthInfo.startKeyIndex[startKey] = entry;
     }
 
-    function finalizeMonthInfo(monthInfo) {
-        monthInfo.broadcastDayCount = Object.values(monthInfo.dailySeconds).filter(
-            (seconds) => seconds >= MINUTE_SECONDS
-        ).length;
+    function finalizeMonthInfo(monthInfo, nowMs = Date.now()) {
+        const coverage = {};
+        // Split VODs must be merged before spreading their covered interval across KST dates.
+        for (const start of Object.values(monthInfo.startKeyIndex)) {
+            const from = Math.max(start.startMs, monthInfo.startMs);
+            const to = Math.min(start.endMs, monthInfo.nextStartMs, nowMs);
+            if (to <= from) continue;
+            const firstDayMs = Math.floor((from + KST_OFFSET_MS) / DAY_MS) * DAY_MS - KST_OFFSET_MS;
+            for (let dayMs = firstDayMs; dayMs < to; dayMs += DAY_MS) {
+                const seconds = (Math.min(to, dayMs + DAY_MS) - Math.max(from, dayMs)) / 1000;
+                const key = getKstDateKey(dayMs);
+                coverage[key] = (coverage[key] || 0) + seconds;
+            }
+        }
+        monthInfo.broadcastSecondsByDate = coverage;
+        monthInfo.broadcastDayCount = Object.values(coverage).filter((seconds) => seconds >= MINUTE_SECONDS).length;
         return monthInfo;
     }
 

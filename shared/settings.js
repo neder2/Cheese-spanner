@@ -62,6 +62,8 @@
         volumeWheelEnabled: { kind: "bool", default: true, feature: true },
         volumeWheelStep: { kind: "int", default: 5, min: 1, max: 50 },
         volumeTooltipEnabled: { kind: "bool", default: false, feature: true },
+        playerZoomEnabled: { kind: "bool", default: false, feature: true },
+        playerZoomMode: { kind: "zoomMode", default: "manual" },
         hideLiveBadgeEnabled: { kind: "bool", default: false, feature: true },
         playerClipHidden: { kind: "bool", default: false, feature: true },
         playerPipHidden: { kind: "bool", default: false, feature: true },
@@ -309,6 +311,7 @@
 
         if (spec.kind === "bool") return normalizeBoolean(value, fallback);
         if (spec.kind === "quality") return ["1080p", "720p", "480p"].includes(value) ? value : fallback;
+        if (spec.kind === "zoomMode") return ["manual", "always"].includes(value) ? value : fallback;
         if (spec.kind === "int") return normalizeInteger(value, fallback, spec.min, spec.max);
         if (spec.kind === "number") return normalizeNumber(value, fallback, spec.min, spec.max, spec.step);
         if (spec.kind === "skipSeconds") return normalizeSkipSeconds(value);

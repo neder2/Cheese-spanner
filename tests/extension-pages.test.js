@@ -959,7 +959,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.3.7");
+    assert.equal(manifest.version, "1.3.8");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
@@ -989,7 +989,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
             isolatedScript.js.indexOf("features/followingRefresh.js")
     );
     assert.equal(isolatedScript.js.includes("features/gridBypass.js"), false);
-    assert.ok(isolatedScript.js.includes("features/updateNotice.js"));
+    assert.equal(isolatedScript.js.includes("features/updateNotice.js"), false);
     assert.ok(isolatedScript.js.includes("vendor/hls.light.min.js"));
     assert.ok(isolatedScript.js.includes("features/followingPreviewTooltip.js"));
     assert.ok(isolatedScript.js.includes("shared/selectors.js"));
@@ -4625,6 +4625,50 @@ test("live timeshift guard ignores non-seek slider gestures for forced live-edge
     }
 });
 
+for (const route of ["live", "video"]) {
+    test(`${route} skip controls settle without self-triggered mutations and keep native fade classes`, async (t) => {
+        const chrome = createFakeChrome({ sync: { skipLivePauseResumeEnabled: false } });
+        const { dom, document, play, controls } = createLiveTimeShiftGuardDom(chrome);
+        t.after(() => closeSkipControlPage(dom, chrome));
+        dom.reconfigure({ url: `https://chzzk.naver.com/${route}/test-channel` });
+        // The current native container uses one hyphen before "left".
+        controls.className = "pzp-pc__bottom-buttons-left";
+        play.classList.add("pzp-button");
+        const style = document.createElement("style");
+        style.textContent =
+            ".pzp-button{transition:opacity .2s ease-in}.pzp-pc__playback-switch{opacity:0}.pzp-pc.pzp-pc--controls .pzp-pc__playback-switch{opacity:1}";
+        document.head.append(style);
+        await loadSkipControlPage(dom);
+        const pill = document.getElementById("betterchzzk-skip-pill");
+        assert.ok(pill);
+        const changes = [];
+        const observer = new dom.window.MutationObserver((records) => changes.push(...records));
+        observer.observe(controls, { subtree: true, attributes: true, attributeOldValue: true, childList: true });
+        t.after(() => observer.disconnect());
+        // Let the 800ms startup sync and 160ms/240ms queued visibility work finish.
+        await new Promise((resolve) => setTimeout(resolve, 1300));
+        changes.length = 0;
+        // Two throttle windows expose a feedback loop even when nothing else changes.
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        assert.equal(changes.length, 0, "extension writes must not schedule another control synchronization");
+        document.getElementById("playerRoot").classList.add("pzp-pc--controls");
+        play.setAttribute("aria-label", "일시 정지");
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        const classChanges = changes.filter((record) => record.target === pill && record.attributeName === "class");
+        assert.equal(classChanges.length, 0, "native control updates must not remove and reapply the fade class");
+        assert.equal(dom.window.getComputedStyle(pill).opacity, "1");
+        document.getElementById("playerRoot").classList.remove("pzp-pc--controls");
+        assert.equal(dom.window.getComputedStyle(pill).opacity, "0");
+        assert.equal(dom.window.getComputedStyle(pill).transition, dom.window.getComputedStyle(play).transition);
+        const next = controls.cloneNode(false);
+        controls.replaceWith(next);
+        next.getBoundingClientRect = controls.getBoundingClientRect;
+        next.append(play);
+        await waitForCondition(() => document.getElementById("betterchzzk-skip-pill")?.parentElement === next);
+        assert.equal(document.querySelectorAll("#betterchzzk-skip-pill").length, 1);
+    });
+}
+
 test("live fast-forward button seeks to the buffered live edge", async () => {
     const chrome = createFakeChrome({
         sync: {
@@ -5873,11 +5917,16 @@ const LIVE_DISPLAY_HTML = `<!doctype html><body><main id="layout-body">
 
 async function createLiveDisplayPage(
     t,
-    { fetch, options = { hideLiveBadgeEnabled: true, liveStartTimeEnabled: true } } = {}
+    {
+        fetch,
+        options = { hideLiveBadgeEnabled: true, liveStartTimeEnabled: true },
+        now = () => Date.parse("2026-09-06T12:00:00+09:00"),
+    } = {}
 ) {
     const chrome = createFakeChrome({ sync: options });
     const dom = createPageDom(LIVE_DISPLAY_HTML, "https://chzzk.naver.com/live/first-channel", chrome);
     registerPlayerDisplayCleanup(t, dom);
+    dom.window.Date.now = now;
     const calls = [];
     dom.window.fetch = async (url, init) => {
         calls.push({ url, signal: init.signal });
@@ -5900,7 +5949,7 @@ async function createLiveDisplayPage(
 
 test("live display hides only header badge and remounts the KST start clock without refetch", async (t) => {
     const { dom, document, chrome, calls, clock } = await createLiveDisplayPage(t);
-    assert.equal(clock().textContent, "시작 06:23");
+    assert.equal(clock().textContent, "06:23 시작");
     assert.equal(document.getElementById("streaming").nextElementSibling, clock());
     assert.equal(dom.window.getComputedStyle(document.getElementById("top-live")).display, "none");
     assert.notEqual(dom.window.getComputedStyle(document.getElementById("profile-live")).display, "none");
@@ -5909,7 +5958,7 @@ test("live display hides only header badge and remounts the KST start clock with
     status.replaceWith(status.cloneNode(true));
     document.querySelectorAll("#betterchzzk-live-start-time").forEach((node) => node.remove());
     await waitForAsyncCallbacks();
-    assert.equal(clock().textContent, "시작 06:23");
+    assert.equal(clock().textContent, "06:23 시작");
     assert.equal(document.querySelectorAll("#betterchzzk-live-start-time").length, 1);
     for (let index = 0; index < 5; index += 1) {
         document.getElementById("streaming").textContent = `${index}:00:00 스트리밍 중`;
@@ -5930,6 +5979,101 @@ test("live display hides only header badge and remounts the KST start clock with
     assert.equal(calls.length, 1);
 });
 
+test("live start clock includes the start date only when it differs from today in KST", async (t) => {
+    const cases = [
+        ["2026-09-06T00:15:00+09:00", "2026-09-05T15:05:00Z", "00:05 시작"],
+        ["2026-09-06T00:15:00+09:00", "2026-09-05T14:59:00Z", "2026.09.05 23:59 시작"],
+        ["2026-09-15T12:00:00+09:00", "2026-09-12 19:00:00", "2026.09.12 19:00 시작"],
+        ["2026-01-01T00:01:00+09:00", "2025-12-31 23:30:00", "2025.12.31 23:30 시작"],
+    ];
+    for (const [now, openDate, expected] of cases) {
+        await t.test(`${openDate} at ${now}`, async (subtest) => {
+            const { document, calls, clock } = await createLiveDisplayPage(subtest, {
+                now: () => Date.parse(now),
+                fetch: async () => ({ ok: true, json: async () => ({ content: { status: "OPEN", openDate } }) }),
+            });
+            assert.equal(clock().textContent, expected);
+            assert.equal(document.getElementById("streaming").nextElementSibling, clock());
+            assert.equal(calls.length, 1);
+        });
+    }
+});
+
+test("live start clock updates at KST midnight without refetch and clears date timers on teardown", async (t) => {
+    let now = Date.parse("2026-09-06T23:50:00+09:00");
+    const { dom, document, chrome, calls, clock } = await createLiveDisplayPage(t, {
+        options: {},
+        now: () => now,
+    });
+    const timers = new Map();
+    const nativeSetTimeout = dom.window.setTimeout.bind(dom.window);
+    const nativeClearTimeout = dom.window.clearTimeout.bind(dom.window);
+    let scheduled = 0;
+    dom.window.setTimeout = (callback, delay, ...args) => {
+        // Keep short infrastructure callbacks real; advance only the date-boundary timer.
+        if (delay < 60_000) return nativeSetTimeout(callback, delay, ...args);
+        const id = 100_000 + ++scheduled;
+        timers.set(id, { callback: () => callback(...args), delay });
+        return id;
+    };
+    dom.window.clearTimeout = (id) => {
+        if (!timers.delete(id)) nativeClearTimeout(id);
+    };
+    changePlayerDisplayOptions(chrome, { liveStartTimeEnabled: true });
+    await waitForAsyncCallbacks();
+    assert.equal(clock().textContent, "06:23 시작");
+    assert.equal(timers.size, 1);
+    assert.equal([...timers.values()][0].delay, 10 * 60_000);
+    for (let index = 0; index < 3; index += 1) {
+        document.getElementById("streaming").textContent = `${index}:00:00 스트리밍 중`;
+        await waitForAsyncCallbacks();
+    }
+    assert.equal(scheduled, 1, "native counter updates must not repeatedly schedule the date change");
+    const [[timerId, timer]] = timers;
+    timers.delete(timerId);
+    now = Date.parse("2026-09-07T00:00:00+09:00");
+    timer.callback();
+    await waitForAsyncCallbacks();
+    assert.equal(clock().textContent, "2026.09.06 06:23 시작");
+    assert.equal(timers.size, 0);
+    assert.equal(calls.length, 1);
+
+    now = Date.parse("2026-09-06T23:50:00+09:00");
+    document.getElementById("streaming").textContent = "17:26:30 스트리밍 중";
+    await waitForAsyncCallbacks();
+    assert.equal(clock().textContent, "06:23 시작");
+    assert.equal(timers.size, 1);
+    const row = document.getElementById("live-status").parentElement;
+    row.remove();
+    await waitForAsyncCallbacks();
+    assert.equal(clock(), null);
+    assert.equal(timers.size, 0);
+    document.getElementById("layout-body").append(row);
+    await waitForAsyncCallbacks();
+    assert.equal(clock().textContent, "06:23 시작");
+    assert.equal(timers.size, 1);
+    assert.equal(calls.length, 1);
+
+    changePlayerDisplayOptions(chrome, { liveStartTimeEnabled: false });
+    await waitForAsyncCallbacks();
+    assert.equal(clock(), null);
+    assert.equal(timers.size, 0);
+    changePlayerDisplayOptions(chrome, { liveStartTimeEnabled: true });
+    await waitForAsyncCallbacks();
+    assert.equal(timers.size, 1);
+    dom.window.dispatchEvent(new dom.window.Event("pagehide"));
+    assert.equal(clock(), null);
+    assert.equal(timers.size, 0);
+    dom.window.dispatchEvent(new dom.window.Event("pageshow"));
+    await waitForAsyncCallbacks();
+    assert.equal(timers.size, 1);
+    dom.window.history.pushState({}, "", "/video/123");
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    await waitForAsyncCallbacks();
+    assert.equal(clock(), null);
+    assert.equal(timers.size, 0);
+});
+
 test("live start clock aborts old routes and ignores late responses and disabled requests", async (t) => {
     const pending = [];
     const { dom, document, chrome, calls, clock } = await createLiveDisplayPage(t, {
@@ -5943,10 +6087,10 @@ test("live start clock aborts old routes and ignores late responses and disabled
     const reply = (openDate) => ({ ok: true, json: async () => ({ content: { status: "OPEN", openDate } }) });
     pending[1](reply("2026-09-05T15:05:00Z"));
     await waitForAsyncCallbacks();
-    assert.equal(clock().textContent, "시작 00:05");
+    assert.equal(clock().textContent, "00:05 시작");
     pending[0](reply("2026-09-06 12:00:00"));
     await waitForAsyncCallbacks();
-    assert.equal(clock().textContent, "시작 00:05");
+    assert.equal(clock().textContent, "00:05 시작");
     dom.window.history.pushState({}, "", "/live/third-channel");
     dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
     await waitForAsyncCallbacks();
@@ -5996,7 +6140,7 @@ test("live display defaults make no requests and enabling the clock starts one l
     changePlayerDisplayOptions(chrome, { liveStartTimeEnabled: true });
     await waitForAsyncCallbacks();
     assert.equal(calls.length, 1);
-    assert.equal(clock().textContent, "시작 06:23");
+    assert.equal(clock().textContent, "06:23 시작");
 });
 
 test("volume shared helper is registered before consumers in both worlds", () => {
@@ -6084,7 +6228,7 @@ test("live start clock waits for delayed status without scanning on unrelated ch
     assert.equal(scans, 0);
     document.getElementById("layout-body").append(statusRow);
     await waitForAsyncCallbacks();
-    assert.equal(clock().textContent, "시작 06:23");
+    assert.equal(clock().textContent, "06:23 시작");
     const layout = document.getElementById("layout-body");
     const replacement = layout.cloneNode(true);
     replacement.querySelector("#betterchzzk-live-start-time").remove();

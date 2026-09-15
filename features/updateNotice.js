@@ -1,4 +1,5 @@
-// 1.3.7 업데이트의 방식 변경 안내. 현재 페이지에서 한 번 표시하며 페이지를 자동 이동하지 않는다.
+// 공지 형식 보관용. 현재 manifest와 background에서는 로드하지 않는다.
+// 다음 공지에서 재사용할 때 본문·버전과 표시 조건을 함께 갱신한다.
 (() => {
     const FLAG = "__betterChzzkQualityUpdateNotice";
     const KEY = "betterchzzk:quality-update-notice";

@@ -62,11 +62,26 @@
         persistSession,
         onOrder: (cells) => settingsPanel.syncOrder(cells),
         onSwap: swap,
+        onLayerChange: () => {
+            hideAddDropHint();
+            settingsPanel.syncLayer();
+            document.dispatchEvent(new CustomEvent("betterchzzk:multiview-layer-change"));
+        },
+        onError: notice,
     });
     const css = `
 [data-bcmv-host],#${PANEL_ID}{isolation:isolate;--bcmv-font:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic","맑은 고딕",sans-serif;--bcmv-fallback-surface:#fff;--bcmv-fallback-content:#202124;--bcmv-fallback-border:#d2d4d6;--bcmv-surface:var(--sem-color-surface-neutral-weaker,var(--Surface-neutral,var(--bcmv-fallback-surface)));--bcmv-content:var(--sem-color-content-neutral-primary,var(--Content-emphasized,var(--bcmv-fallback-content)));--bcmv-border:var(--sem-color-border-neutral-base,var(--Border-neutral,var(--bcmv-fallback-border)))}
 html.theme_dark :is([data-bcmv-host],#${PANEL_ID}){--bcmv-fallback-surface:#23252b;--bcmv-fallback-content:#eee;--bcmv-fallback-border:#5e6069}
 [data-bcmv-host="active"] > [data-bcmv-native]{position:absolute!important;left:var(--bcmv-main-left,0)!important;top:var(--bcmv-main-top,0)!important;width:var(--bcmv-main-width)!important;height:calc(100% * var(--bcmv-main-height))!important;min-width:0!important;min-height:0!important}
+[data-bcmv-viewport][popover]{position:fixed!important;inset:0!important;margin:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;padding:0!important;border:0!important;background:transparent!important;overflow:visible!important;pointer-events:none}
+[data-bcmv-viewport]::backdrop,.bcmv-panel[popover]::backdrop{background:transparent;pointer-events:none}
+[data-bcmv-viewport] > [data-bcmv-native]{pointer-events:auto}
+.bcmv-panel[popover]{inset:auto;margin:0;max-width:none}
+[data-bcmv-free] > [data-bcmv-native]{z-index:var(--bcmv-main-layer,2)!important}
+[data-bcmv-free] > #${ID}{z-index:auto}
+[data-bcmv-free] .bcmv-cell{box-shadow:0 3px 14px #0005}
+[data-bcmv-free] .bcmv-cell[data-main="1"]{box-shadow:none}
+[data-bcmv-free] :is(.bcmv-add-drop,.bcmv-banner,.bcmv-position-guide){z-index:30}
 [data-bcmv-host="active"] [data-bcmv-native] :is(.pzp-pc__video,.webplayer-internal-video){touch-action:none;-webkit-user-drag:none}
 [data-bcmv-host="active"] > [data-bcmv-native] .pzp-pc__mute-indicator{display:none!important}
 #${ID}{position:absolute;inset:0;z-index:20;pointer-events:none;color:var(--bcmv-content);font:12px/1.4 var(--bcmv-font)}
@@ -75,6 +90,11 @@ html.theme_dark :is([data-bcmv-host],#${PANEL_ID}){--bcmv-fallback-surface:#2325
 :is(#${ID},#${PANEL_ID}) :is(button,a){border:1px solid var(--bcmv-border);border-radius:4px;background:var(--bcmv-surface);padding:3px 6px;cursor:pointer;text-decoration:none;white-space:nowrap}
 :is(#${ID},#${PANEL_ID}) :focus-visible{outline:2px solid #00c894;outline-offset:-2px}
 :is(#${ID},#${PANEL_ID}) button:disabled{opacity:.55;cursor:default}
+.bcmv-layout-option{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--bcmv-border);margin-bottom:10px}
+.bcmv-layout-option p{margin:4px 0 0;font-size:12px;line-height:1.5;opacity:.8;white-space:normal;word-break:keep-all}
+#${PANEL_ID} .bcmv-layout-toggle{flex:none;min-width:52px;min-height:32px;font-weight:600}
+#${PANEL_ID} .bcmv-layout-toggle[aria-checked="true"]{background:var(--bcmv-brand-fill);color:var(--sem-color-content-neutral-inverse-static,#0e0f10);border-color:var(--bcmv-brand-fill)}
+#${PANEL_ID} .bcmv-layout-toggle[aria-checked="true"]:hover{background:var(--sem-color-surface-brand-stronger-static,#00e693)}
 .bcmv-grid{position:absolute;inset:0;pointer-events:none}
 .bcmv-position-guide{position:absolute;pointer-events:none;border:2px dashed #00c894;background:rgba(0,200,148,.06);z-index:4;color:#fff;text-shadow:0 1px 3px #000;padding:6px}
 [data-bcmv-positioning] video{cursor:grabbing}
@@ -98,6 +118,7 @@ html.theme_dark :is([data-bcmv-host],#${PANEL_ID}){--bcmv-fallback-surface:#2325
 .bcmv-drop-preview span{padding:5px 10px;background:rgba(0,0,0,.7);border-radius:12px}
 .bcmv-drop-preview[hidden]{display:none}
 .bcmv-add-drop{position:absolute;inset:0;z-index:7;pointer-events:none;display:flex;align-items:center;justify-content:center;border:2px solid #00c894;background:rgba(0,200,148,.12);color:#fff;font-size:14px;font-weight:600}
+.bcmv-add-drop[data-floating]{inset:auto;box-sizing:border-box;border-radius:4px;box-shadow:0 4px 20px #0003}
 .bcmv-add-drop span{max-width:90%;padding:8px 14px;border-radius:16px;background:rgba(0,0,0,.8);text-align:center}
 .bcmv-add-drop[data-invalid="1"]{border-color:#a6acb8;background:rgba(0,0,0,.18)}
 .bcmv-snap-guide{position:absolute;z-index:4;pointer-events:none;background:#00ffa3}
@@ -245,6 +266,9 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
     }
     function persistSession() {
         try {
+            const windows = model.normalizeWindows(state.freeWindows, state.channels);
+            if (!model.sameWindows(state.freeWindows, windows)) state.freeWindows = windows;
+            if (state.freeLayoutEnabled) layout.rememberWindows();
             sessionStorage.setItem(model.SESSION_KEY, JSON.stringify(state));
         } catch {
             notice("탭 구성을 저장하지 못했어요. 새로고침 후 구성이 복원되지 않을 수 있어요.");
@@ -383,9 +407,19 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
             return;
         }
         const next = model.dockTree(state.dockTree, a, b, "center", routeId);
-        players.moveSlotAudio(state.dockTree, next, a, b, "center");
-        state.dockTree = next;
-        state.customLayout = true;
+        if (state.freeLayoutEnabled) {
+            players.transferSlotAudio([
+                [a, b],
+                [b, a],
+            ]);
+            state.freeWindows = model
+                .freeLayout(state)
+                .cells.map((cell) => ({ ...cell, id: cell.id === a ? b : cell.id === b ? a : cell.id }));
+        } else {
+            players.moveSlotAudio(state.dockTree, next, a, b, "center");
+            state.dockTree = next;
+            state.customLayout = true;
+        }
         persistSession();
         layout.position();
         if (settingsPanel.id) settingsPanel.show(settingsPanel.id);
@@ -408,6 +442,7 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
         return accepted;
     }
     function equalLayout() {
+        if (state.freeLayoutEnabled) return null;
         const bounds = host?.getBoundingClientRect();
         let tree = state.dockTree;
         const ids = [];
@@ -453,15 +488,24 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
             persistSession();
             teardown(false);
             mount();
+        } else if (action === "free-layout") {
+            event.preventDefault();
+            event.stopPropagation();
+            settingsPanel.cancelPointer();
+            layout.setFreeMode(!state.freeLayoutEnabled);
+            settingsPanel.show(settingsPanel.id);
+            settingsPanel.focusAction("free-layout");
         } else if (action === "reset-layout") {
             layout.cancelResize();
             layout.cancelDrag();
             Object.assign(state, model.autoSplits(state.channels.length));
             state.dockTree = model.defaultTree(state.channels);
             state.customLayout = false;
+            state.freeWindows = [];
             for (const entry of state.channels) entry.position = [0.5, 0.5];
-            layout.position();
+            // Normalize player-relative defaults into viewport coordinates before painting free windows.
             persistSession();
+            layout.position();
             if (settingsPanel.id) {
                 settingsPanel.show(settingsPanel.id);
                 settingsPanel.focusAction("reset-layout");
@@ -519,7 +563,7 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
         if (state.channels.length >= 6) return "방송은 최대 6개까지 추가할 수 있어요.";
         return "";
     }
-    function addStreamFromUrl(value) {
+    function addStreamFromUrl(value, freeRect = null) {
         if (!enabled || !state.active || !routeId || !host) return false;
         notice("");
         const id = model.channelFromUrl(value),
@@ -535,6 +579,7 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
         state.dockTree = state.customLayout
             ? model.addTree(state.dockTree, id, routeId)
             : model.defaultTree(state.channels);
+        if (freeRect && layout.viewportActive) state.freeWindows.push({ id, rect: [...freeRect] });
         settingsPanel.show(null);
         persistSession();
         players.reconcile(routeId, native);
@@ -581,8 +626,22 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
             return "방송 구성이 바뀌었어요. 링크를 다시 끌어 주세요.";
         return addProblem(model.channelFromUrl(incomingDrag.href));
     }
+    function acceptsAddDrop(event) {
+        if (!enabled || !state.active || !overlay || layout.busy || !isLinkTransfer(event.dataTransfer)) return false;
+        const target = event.target;
+        if (!(target instanceof Element) || !target.isConnected) return false;
+        if (!layout.viewportActive) return host?.contains(target);
+        if (target.closest(`#${PANEL_ID}, input, textarea, [contenteditable]:not([contenteditable="false"])`))
+            return false;
+        // Ordinary page links keep their native drop behavior outside the player.
+        if (incomingDrag?.href && !model.channelFromUrl(incomingDrag.href) && !host?.contains(target)) return false;
+        return Boolean(layout.incomingWindowRect(event.clientX, event.clientY));
+    }
     function onAddDragOver(event) {
-        if (!enabled || !state.active || !overlay || layout.busy || !isLinkTransfer(event.dataTransfer)) return;
+        if (!acceptsAddDrop(event)) {
+            hideAddDropHint();
+            return;
+        }
         event.preventDefault();
         event.stopPropagation();
         // The URL itself is protected until drop for drags from another tab/app.
@@ -599,26 +658,42 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
             addDropHint.append(el("span"));
             overlay.append(addDropHint);
         }
+        const rect = layout.incomingWindowRect(event.clientX, event.clientY);
+        addDropHint.toggleAttribute("data-floating", Boolean(rect));
+        if (rect) {
+            const [x, y, width, height] = rect;
+            Object.assign(addDropHint.style, {
+                left: x * 100 + "%",
+                top: y * 100 + "%",
+                width: width * 100 + "%",
+                height: height * 100 + "%",
+            });
+        } else addDropHint.style.cssText = "";
         addDropHint.dataset.invalid = problem ? "1" : "0";
         text(addDropHint.firstElementChild, problem || "여기에 놓아 방송 추가");
     }
     function onAddDragLeave(event) {
-        if (!host?.contains(event.relatedTarget)) hideAddDropHint();
+        const region = layout.viewportActive ? document.documentElement : host;
+        if (!(event.relatedTarget instanceof Node) || !region?.contains(event.relatedTarget)) hideAddDropHint();
     }
     function onAddDrop(event) {
-        if (!enabled || !state.active || layout.busy || !isLinkTransfer(event.dataTransfer)) return;
+        if (!acceptsAddDrop(event)) {
+            clearIncomingDrag();
+            return;
+        }
         event.preventDefault();
         event.stopPropagation();
         const value = transferredUrl(event.dataTransfer),
             problem = incomingDragProblem();
         const changed =
             incomingDrag && !problem && model.channelFromUrl(value) !== model.channelFromUrl(incomingDrag.href);
+        const freeRect = layout.incomingWindowRect(event.clientX, event.clientY);
         clearIncomingDrag();
         if (problem || changed) {
             notice(problem || "끌어온 방송 주소가 바뀌었어요. 다시 끌어 주세요.");
             return;
         }
-        addStreamFromUrl(value);
+        addStreamFromUrl(value, freeRect);
     }
     function onVolumeWheel(event) {
         if (!enabled || !state.active || !featureOptions?.volumeWheelEnabled) return;
@@ -661,7 +736,7 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
         players.captureAudio(player);
     }
     function onContextMenu(event) {
-        if (settingsPanel.cancelPointer() || layout.cancelPointer()) {
+        if (settingsPanel.cancelPointer() || layout.cancelGesture()) {
             event.preventDefault();
             event.stopPropagation();
             return;
@@ -686,10 +761,6 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
         sizeObserver?.disconnect();
         sizeObserver = null;
         layout.release();
-        host?.removeEventListener("dragenter", onAddDragOver, true);
-        host?.removeEventListener("dragover", onAddDragOver, true);
-        host?.removeEventListener("dragleave", onAddDragLeave, true);
-        host?.removeEventListener("drop", onAddDrop, true);
         overlay?.removeEventListener("keydown", onOverlayKey);
         overlay?.remove();
         launcher?.remove();
@@ -720,6 +791,10 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
             state.dockTree = model.mapTree(state.dockTree, (id) =>
                 id === previous ? routeId : id === routeId ? previous : id
             );
+            state.freeWindows = state.freeWindows.map((cell) => ({
+                ...cell,
+                id: cell.id === previous ? routeId : cell.id === routeId ? previous : cell.id,
+            }));
             [state.channels[0], state.channels[index]] = [state.channels[index], state.channels[0]];
         } else if (index < 0) {
             const video = document.querySelector(`${NATIVE} video.webplayer-internal-video`);
@@ -824,13 +899,9 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
             releaseHost();
             host = nextHost;
             native = nextNative;
-            host.addEventListener("dragenter", onAddDragOver, true);
-            host.addEventListener("dragover", onAddDragOver, true);
-            host.addEventListener("dragleave", onAddDragLeave, true);
-            host.addEventListener("drop", onAddDrop, true);
             if (typeof ResizeObserver === "function") {
                 sizeObserver = new ResizeObserver(() => {
-                    if (!state.active) return;
+                    if (!state.active || layout.viewportActive) return;
                     layout.cancelResize();
                     layout.cancelDrag();
                     layout.position();
@@ -888,6 +959,10 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
             document.removeEventListener("loadedmetadata", scheduleMount, true);
             window.removeEventListener("dragstart", trackIncomingDrag, true);
             window.removeEventListener("dragend", clearIncomingDrag, true);
+            window.removeEventListener("dragenter", onAddDragOver, true);
+            window.removeEventListener("dragover", onAddDragOver, true);
+            window.removeEventListener("dragleave", onAddDragLeave, true);
+            window.removeEventListener("drop", onAddDrop, true);
             window.removeEventListener("pagehide", clearIncomingDrag);
             if (frame) cancelAnimationFrame(frame);
             frame = 0;
@@ -925,6 +1000,10 @@ html.theme_dark #${CHAT_BUTTON_ID}{--bcmv-chat-fallback:#9da5b6}
         document.addEventListener("loadedmetadata", scheduleMount, true);
         window.addEventListener("dragstart", trackIncomingDrag, true);
         window.addEventListener("dragend", clearIncomingDrag, true);
+        window.addEventListener("dragenter", onAddDragOver, true);
+        window.addEventListener("dragover", onAddDragOver, true);
+        window.addEventListener("dragleave", onAddDragLeave, true);
+        window.addEventListener("drop", onAddDrop, true);
         window.addEventListener("pagehide", clearIncomingDrag);
         stopRoute = startPageChangeDetection(onRoute);
         mount();

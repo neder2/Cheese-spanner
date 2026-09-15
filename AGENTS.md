@@ -1,4 +1,4 @@
-# Better Chzzk — 에이전트 작업 지침
+# 치즈 스패너 — 에이전트 작업 지침
 
 이 문서는 대화 맥락 없이 저장소를 다루는 에이전트가 지켜야 할 **지속 규칙**이다.
 현재 구조·버전·권한·로드 순서는 항상 `manifest.json`, `package.json`, 실제 소스와 테스트를 기준으로 판단한다. 이 문서의 예시나 과거 문서가 현재 코드와 다르면 현재 저장소를 우선한다.
@@ -40,18 +40,22 @@
 ## 커밋·버전·릴리스
 
 - 2026-09-08 사용자 요청으로 기존 `features/shortcutRescue.js`를 폐기했다. 2026-09-14 사용자 요청으로 Space·M·F·T 선택 기능을 `features/screenShortcuts.js`에 추가했다. `screenShortcutsEnabled` 기본값은 false이며 과거 `shortcutRescueEnabled` 값으로 활성화하지 않는다. 기존 자동 실패 감지는 다시 도입하지 않는다. Space 홀드 배속이 켜져 있으면 Space는 해당 기능에 맡긴다. Space 홀드 배속·고정 배속 단축키와 시간 이동 기능은 별도로 유지한다.
-- 커밋을 요청받으면 제목 첫 줄은 프로젝트 규칙인 `Better Chzzk <version>` 형식을 사용한다. 예: `Better Chzzk 1.2.0`
+- 현재 제품명은 **치즈 스패너**, 영문명은 **Cheese Spanner**, 개발 패키지명은 `cheese-spanner`다. 새 커밋·릴리스·작업 제목과 현재 제품을 설명하는 문서에는 이 이름을 사용한다.
+- 커밋을 요청받으면 제목 첫 줄은 영문 `Cheese Spanner <version>` 형식을 사용한다. 예: `Cheese Spanner 1.3.8`
+- 과거 버전의 변경 이력과 출처 표기는 당시 이름을 유지할 수 있다. `BetterChzzk` 네임스페이스, `betterchzzk-*` DOM 마커와 기존 저장 키는 동작·데이터 호환성에 관계된 식별자이므로 제품명 변경만을 이유로 일괄 치환하지 않는다.
 - 버전을 올릴 때는 `manifest.json`과 `package.json`을 함께 변경하고 값이 같은지 확인한다.
 - 릴리스 또는 버전 업데이트를 요청받으면 `docs/update-history.md`를 갱신한다.
 - 사용자에게 보이는 기능·옵션·조작법·권한이 바뀌면 같은 릴리스에서 `README.md`를 갱신한다.
 - 데이터 처리 방식이 바뀌면 `PRIVACY.md`, 서드파티 코드·라이선스가 바뀌면 `THIRD_PARTY_NOTICES.md`와 해당 소스 고지를 확인한다.
 - 스토어 등록 문구 변경이 필요한 경우 저장소 밖 작업으로 누락하지 말고 필요한 변경 내용을 보고한다.
 - GitHub Release는 명시적인 릴리스 요청이 있을 때만 만들고 본문은 `docs/update-history.md`와 맞춘다.
+- 릴리스 노트(`docs/update-history.md`, GitHub Release 본문, `README.md`의 최신 변경 요약)는 **직전 배포 버전과 이번 버전의 최종 사용자 동작 차이**를 기준으로 작성한다. 새 기능은 완성된 기능과 조작법으로 한 번에 설명하고, 개발 단계별 추가·변경·수정을 나열하지 않는다.
+- **같은 버전을 개발하는 도중 생겼다가 해결된 문제를 릴리스의 버그 수정 항목으로 적지 않는다.** 버그 수정 항목은 직전 배포 버전에 존재하던 문제에 한정한다. 새 기능 개발 중의 문제와 해결 과정은 별도 작업·실측 문서에 기록한다.
 - 릴리스 본문과 `docs/update-history.md`에는 사용자에게 보이는 기능 변경·수정 사항·조작법을 적는다. 테스트 개수, lint·포맷 검사, ZIP 구성 확인, 실브라우저 검증 결과, 문서·버전 동기화 같은 개발 작업 보고는 넣지 않는다. 검증 근거와 한계는 별도 작업·실측 문서에 기록한다.
 
 ## 프로젝트 구조와 실행 컨텍스트
 
-- Better Chzzk는 `chzzk.naver.com`용 Chrome Manifest V3 확장이다.
+- 치즈 스패너는 `chzzk.naver.com`용 Chrome Manifest V3 확장이다.
 - 런타임은 순수 vanilla JS이며 빌드 단계가 없다. `package.json`은 개발·검증과 vendored 의존성 관리에 사용한다.
 - 별도 아키텍처 변경 요청이 없으면 번들러, 런타임 ESM, `import`/`export`, 생성된 배포 산출물을 도입하지 않는다.
 - `manifest.json`의 `content_scripts[].js` 배열 순서가 런타임 의존성 순서다. 공용 파일을 추가하면 소비자보다 먼저 로드되도록 등록한다.

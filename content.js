@@ -6,6 +6,7 @@
  *   - 라우트 감지: routeBridgePage.js(MAIN world)가 쏘는 "betterchzzk:routechange"와 popstate/click 등을 모아
  *     "betterchzzk:routechange:detected"로 feature들에 재배포한다 (startPageChangeDetection).
  *   - getMainVideoElement: 확장이 만든 미리보기 video(data-bcfp-* 계열)를 제외하고 가장 큰 가시 video를 고른다.
+ *   - getVideoViewportRect/setVideoViewportTransform: 확장 확대 변환을 기록·해제하고 컨트롤용 표시 영역을 구한다.
  *   - createMutationObserverSync: 대상 노드 대기(startBodyWatch)와 분리 후 재연결 감시가 붙은 옵저버 팩토리.
  *   - bindFeatureOptions: 옵션 최초 로드 + 변경 구독을 한 번에 거는 헬퍼.
  * 의존: BetterChzzkSettings(shared/settings.js). shared/data.js가 먼저 등록한 utils는 스프레드로 보존·재사용한다.
@@ -25,6 +26,7 @@
         "button, [role='button'], a[href], input, textarea, select, summary, [contenteditable='true']";
     const ROUTE_CHECK_DELAYS_MS = [0, 80, 250, 800];
     const RECONNECT_CHECK_THROTTLE_MS = 160;
+    const videoViewportTransforms = new WeakMap();
     let routeDetectionUsers = 0;
     let routeDetectionInstalled = false;
     let routeDetectionLastHref = location.href;
@@ -53,6 +55,28 @@
 
     function sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    // Owned visual zoom changes the media rect, but controls stay in its original viewport.
+    function setVideoViewportTransform(video, transform) {
+        if (!transform) {
+            videoViewportTransforms.delete(video);
+            return;
+        }
+        const { scale, x, y } = transform;
+        if (![scale, x, y].every(Number.isFinite) || scale <= 0) return;
+        videoViewportTransforms.set(video, { scale, x, y });
+    }
+
+    function getVideoViewportRect(video) {
+        const rect = video.getBoundingClientRect();
+        const transform = videoViewportTransforms.get(video);
+        if (!transform) return rect;
+        const left = rect.left - transform.x;
+        const top = rect.top - transform.y;
+        const width = rect.width / transform.scale;
+        const height = rect.height / transform.scale;
+        return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height };
     }
 
     function isVisible(el) {
@@ -476,6 +500,8 @@
         isVisible,
         pickLargestVisible,
         getMainVideoElement,
+        getVideoViewportRect,
+        setVideoViewportTransform,
         isExtensionPreviewVideo,
         isEditableTarget,
         getPlayerRoot,

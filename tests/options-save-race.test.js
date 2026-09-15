@@ -84,6 +84,46 @@ async function createOptionsFixture(t, initial = { autoQualityEnabled: true }, {
     };
 }
 
+test("playback shortcut reset is blocked while settings load, on load failure, and during a save", async (t) => {
+    const customKeys = {
+        playbackSpeedHalfKeyCode: "KeyQ",
+        playbackSpeedDoubleKeyCode: "KeyW",
+        playbackSpeedResetKeyCode: "KeyR",
+    };
+    const { dom, setCalls, completeLoad } = await createOptionsFixture(t, customKeys, { deferLoad: true });
+    const { document } = dom.window;
+    const reset = document.getElementById("resetPlaybackSpeedShortcuts");
+    assert.ok(reset);
+    assert.equal(reset.disabled, true);
+    reset.dispatchEvent(new dom.window.Event("click", { bubbles: true }));
+    assert.equal(setCalls.length, 0);
+    assert.equal(document.getElementById("notice").dataset.state, "loading");
+    completeLoad();
+    assert.equal(reset.disabled, false);
+
+    const halfKey = document.querySelector('[data-option="playbackSpeedHalfKeyCode"]');
+    halfKey.dispatchEvent(new dom.window.KeyboardEvent("keydown", { code: "KeyE", bubbles: true }));
+    document.getElementById("save").click();
+    assert.equal(reset.disabled, true);
+    reset.dispatchEvent(new dom.window.Event("click", { bubbles: true }));
+    assert.equal(halfKey.value, "E");
+    assert.equal(setCalls.length, 1);
+    setCalls[0].complete();
+    assert.equal(reset.disabled, false);
+    reset.click();
+    assert.equal(halfKey.value, "[");
+    assert.equal(setCalls.length, 1, "restoring keys after the save leaves a new draft");
+    assert.equal(document.getElementById("notice").dataset.state, "dirty");
+
+    const failed = await createOptionsFixture(t, customKeys, { deferLoad: true });
+    failed.completeLoad("initial read failed");
+    const failedReset = failed.dom.window.document.getElementById("resetPlaybackSpeedShortcuts");
+    assert.equal(failedReset.disabled, true);
+    failedReset.dispatchEvent(new failed.dom.window.Event("click", { bubbles: true }));
+    assert.equal(failed.setCalls.length, 0);
+    assert.equal(failed.dom.window.document.getElementById("notice").dataset.state, "error");
+});
+
 test("options blocks edits until the initial settings load completes", async (t) => {
     const { dom, setCalls, stored, completeLoad } = await createOptionsFixture(
         t,

@@ -11,7 +11,7 @@
  *       startPageChangeDetection으로 플레이어 재마운트에 맞춰 버튼과 그래프 상태를 재동기화하며,
  *       버튼 오른쪽 볼륨바로 압축 후 출력 크기를 조절하며, background를 통해 현재 탭의 켜짐 상태와 볼륨을 저장한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions, injectStyleOnce,
- *   getMainVideoElement, createMutationObserverSync, createThrottledDomSync, isPlaybackRoute, isVisible,
+ *   getMainVideoElement, getVideoViewportRect, createMutationObserverSync, createThrottledDomSync, isPlaybackRoute, isVisible,
  *   mutationMatchesSelector, onReady, startPageChangeDetection, runtimeSendMessage), 브라우저 Web Audio API(AudioContext).
  * 옵션 키: volumeTooltipEnabled, audioCompressorEnabled, audioCompressorThreshold, audioCompressorKnee,
  *   audioCompressorRatio, audioCompressorAttack, audioCompressorRelease, audioCompressorMakeupGain.
@@ -41,7 +41,7 @@
         "#betterchzzk-skip-pill, #betterchzzk-live-fast-forward, [data-bcfp-player-mount], [data-bcfp-tooltip], .bcfp-player, .bcmv-cell";
 
     const { normalizeOptions } = BetterChzzkSettings;
-    const { bindFeatureOptions, injectStyleOnce, startPageChangeDetection } = BetterChzzk.utils;
+    const { bindFeatureOptions, getVideoViewportRect, injectStyleOnce, startPageChangeDetection } = BetterChzzk.utils;
 
     let featureOptions = normalizeOptions();
     let tooltipEl = null;
@@ -96,7 +96,7 @@
 
     function positionTooltip(tooltip, control, video) {
         const rect = control.getBoundingClientRect();
-        const videoRect = video.getBoundingClientRect();
+        const videoRect = getVideoViewportRect(video);
         const nativeTooltip = control
             .closest(".pzp-pc")
             ?.querySelector(".pzp-pc__volume-button .pzp-button__tooltip:not(.betterchzzk-player-tooltip)");
@@ -323,6 +323,7 @@
         createMutationObserverSync,
         createThrottledDomSync,
         getMainVideoElement,
+        getVideoViewportRect,
         injectStyleOnce,
         isPlaybackRoute,
         isVisible,
@@ -409,7 +410,7 @@
     function isControlNearVideo(el, video) {
         if (!(el instanceof HTMLElement) || !(video instanceof HTMLVideoElement) || !isVisible?.(video)) return false;
         const controlRect = el.getBoundingClientRect();
-        const videoRect = video.getBoundingClientRect();
+        const videoRect = getVideoViewportRect(video);
         const centerX = controlRect.left + controlRect.width / 2;
         const centerY = controlRect.top + controlRect.height / 2;
         return (

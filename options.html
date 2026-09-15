@@ -418,12 +418,18 @@
                                 <span><strong>방송 시작 시각 표시</strong></span>
                                 <input type="checkbox" data-option="liveStartTimeEnabled" />
                             </label>
-                            <p class="setting-note">스트리밍 중 오른쪽에 한국 시간 기준 시작 시각을 표시합니다.</p>
+                            <p class="setting-note">
+                                스트리밍 중 오른쪽에 한국 시간 기준 시작 시각을 표시하며, 오늘 시작한 방송이 아니면
+                                날짜도 표시합니다.
+                            </p>
                             <label class="toggle-row">
-                                <span><strong>스트림 정보 버튼</strong></span>
+                                <span><strong>스트림 정보</strong></span>
                                 <input type="checkbox" data-option="streamInfoEnabled" />
                             </label>
-                            <p class="setting-note">해상도, 라이브 비트레이트 설정값, 지연과 재생 부하를 확인합니다.</p>
+                            <p class="setting-note">
+                                영상의 톱니바퀴 설정 메뉴에서 스트림 정보 열기를 선택해 해상도, 비트레이트, 버퍼와 FPS를
+                                확인합니다.
+                            </p>
                             <label class="toggle-row">
                                 <span><strong>클립 버튼 숨기기</strong></span>
                                 <input type="checkbox" data-option="playerClipHidden" />
@@ -635,6 +641,32 @@
                         </div>
                     </details>
 
+                    <details class="option-group" data-option-group="player-zoom">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-search" /></svg>
+                                <span>화면 확대</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>휠로 화면 확대</strong></span>
+                                <input type="checkbox" data-option="playerZoomEnabled" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="playerZoomEnabled">
+                                <span><strong>확대 적용 방식</strong></span>
+                                <select class="quality-select" data-option="playerZoomMode">
+                                    <option value="manual">확대 버튼을 켠 동안</option>
+                                    <option value="always">영상 위에서 항상</option>
+                                </select>
+                            </label>
+                            <p class="setting-note">
+                                휠은 커서 중심으로 확대하고, 슬라이더는 1% 단위로 조절합니다. 최대 5배까지 확대하며,
+                                드래그 이동과 원래 크기 복원을 지원합니다.
+                            </p>
+                        </div>
+                    </details>
+
                     <details class="option-group" data-option-group="player-vod">
                         <summary>
                             <span class="option-group-title">
@@ -646,12 +678,15 @@
                             <label class="toggle-row">
                                 <span
                                     ><strong>기본 단축키 복구</strong
-                                    ><small>Space·M·F·T 키가 안 될 때만 켜세요. 기본값은 꺼짐이에요.</small></span
+                                    ><small>Space·M·F·T 키가 안 될 때만 켜주세요.</small></span
                                 >
                                 <input type="checkbox" data-option="screenShortcutsEnabled" />
                             </label>
                             <label class="toggle-row">
-                                <span><strong>Space 홀드 2배속</strong></span>
+                                <span
+                                    ><strong>Space·좌클릭 홀드 2배속</strong
+                                    ><small>Space 또는 영상 화면 좌클릭을 길게 눌러주세요.</small></span
+                                >
                                 <input type="checkbox" data-option="holdSpeedEnabled" />
                             </label>
                             <label class="toggle-row">
@@ -704,12 +739,17 @@
                                         aria-describedby="playbackSpeedShortcutHelp"
                                     /><em>키</em>
                                 </label>
+                                <button
+                                    id="resetPlaybackSpeedShortcuts"
+                                    class="secondary-button shortcut-reset-button"
+                                    type="button"
+                                    disabled
+                                >
+                                    단축키 기본값 복원
+                                </button>
                             </div>
                             <p class="setting-note" id="playbackSpeedShortcutHelp">
-                                키 입력칸을 선택한 뒤 영문·숫자·일부 기호 키를 누르세요. 기존 재생 조작과 겹치는 키는
-                                지정할 수 없습니다. 배속은 0.25배씩 조절하며 최소 0.25배, 최대 4배입니다. 복원 키를
-                                누르면 1배속으로 돌아옵니다. 감소·증가 키를 꾹 누르면 연속 조절합니다. 단축키만 변경할
-                                수 있습니다.
+                                입력칸을 선택한 뒤 원하는 키를 눌러주세요. 배속은 0.25~4배 사이에서 0.25배씩 조절돼요.
                             </p>
                         </div>
                     </details>

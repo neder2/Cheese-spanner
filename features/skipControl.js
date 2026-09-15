@@ -12,7 +12,7 @@
  *   - MutationObserver와 페이지 전환 감지로 라우트가 바뀔 때마다 pill/버튼/가드를 재부착한다.
  * 의존: 전역 BetterChzzkSettings(DEFAULT_SKIP_SECONDS, getStorageLastError, normalizeSkipSeconds,
  *   normalizeOptions), 전역 BetterChzzk.utils(bindFeatureOptions, createMutationObserverSync,
- *   createThrottledDomSync, isLiveRoute, isPlaybackRoute, isVisible, isExtensionPreviewVideo,
+ *   createThrottledDomSync, getVideoViewportRect, isLiveRoute, isPlaybackRoute, isVisible, isExtensionPreviewVideo,
  *   mutationMatchesSelector, normalizeCompact, onReady, pickLargestVisible, startPageChangeDetection,
  *   injectStyleOnce), chrome.storage.sync.
  * 옵션 키: skipControlEnabled, skipKeyboardEnabled, skipPillEnabled, skipLivePillEnabled,
@@ -89,6 +89,7 @@
         bindFeatureOptions,
         createMutationObserverSync,
         createThrottledDomSync,
+        getVideoViewportRect,
         isLiveRoute,
         isPlaybackRoute,
         isVisible,
@@ -452,7 +453,7 @@
         if (!isVisible?.(video)) return false;
 
         const elRect = el.getBoundingClientRect();
-        const videoRect = video.getBoundingClientRect();
+        const videoRect = getVideoViewportRect(video);
         if (elRect.width <= 0 || elRect.height <= 0) return false;
 
         const centerX = elRect.left + elRect.width / 2;
@@ -471,7 +472,7 @@
         const clientY = Number(event?.clientY);
         if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return false;
 
-        const videoRect = video.getBoundingClientRect();
+        const videoRect = getVideoViewportRect(video);
         return (
             clientX >= videoRect.left &&
             clientX <= videoRect.right &&
@@ -1024,7 +1025,6 @@
 #${SKIP_PILL_ID}:hover{
   background-color:rgba(255,255,255,0.14) !important;
   border-color:rgba(255,255,255,0.22);
-  opacity:1;
 }
 #${SKIP_PILL_ID}:active{
   opacity:0.78;
@@ -1476,9 +1476,15 @@
         syncPillTypography(pill, anchorEl);
         skipPillAnchorEl = anchorEl;
 
-        resetPillPlacementStyles(pill);
-        if (anchorEl.matches?.(LIVE_LEFT_BUTTONS_SELECTOR)) {
-            pill.setAttribute("data-bc-placement", isLiveRoute() ? "live-inline" : "vod-inline");
+        const placement = anchorEl.matches?.(LIVE_LEFT_BUTTONS_SELECTOR)
+            ? isLiveRoute()
+                ? "live-inline"
+                : "vod-inline"
+            : "";
+        // Removing the native class restarts its opacity transition on every sync.
+        if ((pill.getAttribute("data-bc-placement") || "") !== placement) resetPillPlacementStyles(pill);
+        if (placement) {
+            setAttributeIfChanged(pill, "data-bc-placement", placement);
             return mountLivePillInLeftButtons(pill, anchorEl);
         }
 
@@ -1651,6 +1657,13 @@
     }
 
     function mutationCouldAffectExtension(mutation) {
+        // Ignore our own styling/text changes, but still notice removal of a control
+        // from its native parent so React remounts can be repaired.
+        if (
+            mutation.target instanceof Element &&
+            mutation.target.closest(`#${SKIP_PILL_ID}, #${LIVE_FAST_FORWARD_BUTTON_ID}`)
+        )
+            return false;
         if (
             mutation.type === "attributes" &&
             mutation.target instanceof HTMLElement &&

@@ -8,6 +8,7 @@ const {
     dispatch,
     queryOption,
     waitForAsyncCallbacks,
+    waitForCondition,
 } = require("./helpers/extension-page-fixture.js");
 
 test("options page renders defaults and dependency-disabled controls without extension storage", (t) => {
@@ -128,6 +129,109 @@ test("options captures readable playback speed keys and blocks duplicate or rese
     assert.equal(chrome.testState.sync.playbackSpeedHalfKeyCode, "KeyQ");
     assert.equal(chrome.testState.sync.playbackSpeedDoubleKeyCode, "KeyW");
     assert.equal(chrome.testState.sync.playbackSpeedResetKeyCode, "KeyR");
+});
+
+test("playback shortcut reset restores only the three keys and keeps changes pending until save", async (t) => {
+    const customKeys = {
+        playbackSpeedHalfKeyCode: "KeyQ",
+        playbackSpeedDoubleKeyCode: "KeyW",
+        playbackSpeedResetKeyCode: "KeyR",
+    };
+    const chrome = createFakeChrome({ sync: { ...customKeys, skipSeconds: 17, holdSpeedEnabled: false } });
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    const { document, BetterChzzkSettings } = dom.window;
+    await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
+
+    const reset = document.getElementById("resetPlaybackSpeedShortcuts");
+    assert.ok(reset, "the playback shortcuts expose a local reset action");
+    assert.equal(reset.type, "button");
+    assert.equal(reset.textContent.trim(), "단축키 기본값 복원");
+    const storedBeforeReset = { ...chrome.testState.sync };
+    let writes = 0;
+    const write = chrome.storage.sync.set.bind(chrome.storage.sync);
+    chrome.storage.sync.set = (values, callback) => {
+        writes += 1;
+        write(values, callback);
+    };
+    const skip = queryOption(document, "skipSeconds");
+    skip.value = "29";
+    dispatch(dom, skip, "input");
+
+    reset.focus();
+    reset.click();
+    for (const key of Object.keys(customKeys)) {
+        const input = queryOption(document, key);
+        const defaultCode = BetterChzzkSettings.DEFAULT_OPTIONS[key];
+        assert.equal(input.dataset.shortcutCode, defaultCode);
+        assert.equal(input.value, BetterChzzkSettings.getPlaybackSpeedShortcutLabel(defaultCode));
+    }
+    assert.equal(skip.value, "29", "unrelated unsaved edits survive the local reset");
+    assert.equal(queryOption(document, "holdSpeedEnabled").checked, false);
+    assert.equal(queryOption(document, "playbackSpeedShortcutsEnabled").checked, true);
+    assert.equal(document.activeElement, reset, "the action keeps keyboard focus");
+    assert.equal(document.getElementById("notice").textContent, "변경 4개");
+    assert.equal(writes, 0);
+    assert.deepEqual(chrome.testState.sync, storedBeforeReset);
+
+    document.getElementById("discardChanges").click();
+    for (const [key, code] of Object.entries(customKeys)) {
+        assert.equal(queryOption(document, key).dataset.shortcutCode, code);
+    }
+    assert.equal(skip.value, "17");
+    assert.equal(writes, 0, "discard can undo the shortcut reset without writing");
+
+    reset.click();
+    document.getElementById("save").click();
+    await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
+    for (const key of Object.keys(customKeys)) {
+        assert.equal(chrome.testState.sync[key], BetterChzzkSettings.DEFAULT_OPTIONS[key]);
+    }
+    assert.equal(chrome.testState.sync.skipSeconds, 17);
+    assert.equal(chrome.testState.sync.holdSpeedEnabled, false);
+    assert.equal(writes, 1);
+    reset.click();
+    assert.equal(document.getElementById("save").disabled, true, "resetting defaults again leaves no pending edit");
+    assert.equal(writes, 1);
+});
+
+test("playback shortcut reset follows its toggle and stays with the keys in search results", (t) => {
+    const dom = createDom("options.html", "options.html");
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    const { document } = dom.window;
+    const reset = document.getElementById("resetPlaybackSpeedShortcuts");
+    assert.ok(reset);
+    const halfKey = queryOption(document, "playbackSpeedHalfKeyCode");
+    const enabled = queryOption(document, "playbackSpeedShortcutsEnabled");
+    halfKey.dispatchEvent(new dom.window.KeyboardEvent("keydown", { code: "KeyQ", bubbles: true }));
+    assert.equal(halfKey.value, "Q");
+    enabled.checked = false;
+    dispatch(dom, enabled, "change");
+    assert.equal(reset.disabled, true);
+    dispatch(dom, reset, "click");
+    assert.equal(halfKey.value, "Q", "a disabled reset keeps the customized keys");
+
+    const search = document.getElementById("settingsSearch");
+    for (const query of ["배속 감소 키", "단축키 기본값 복원"]) {
+        search.value = query;
+        dispatch(dom, search, "input");
+        for (const control of [reset, halfKey, enabled]) {
+            assert.equal(control.closest(".search-miss"), null, "reset, keys, and the master toggle remain reachable");
+        }
+    }
+    enabled.checked = true;
+    dispatch(dom, enabled, "change");
+    assert.equal(reset.disabled, false);
+    reset.click();
+    assert.equal(halfKey.value, "[");
+    assert.equal(document.getElementById("notice").dataset.state, "saved");
+
+    halfKey.dispatchEvent(new dom.window.KeyboardEvent("keydown", { code: "KeyQ", bubbles: true }));
+    assert.equal(halfKey.value, "Q", "key capture remains usable after reset");
 });
 
 test("options places following controls with exploration controls", (t) => {
@@ -343,6 +447,54 @@ test("restored and keyboard-selected tabs scroll into view without moving the pa
         assert.equal(document.activeElement, tab);
     }
     assert.deepEqual(pageScrolls, []);
+});
+
+test("category wheel scrolls horizontally only when it can consume a vertical step", (t) => {
+    const dom = createDom("options.html", "options.html");
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    const { document } = dom.window;
+    const bar = document.querySelector(".tab-bar");
+    Object.defineProperties(bar, {
+        clientWidth: { value: 200 },
+        scrollWidth: { value: 700, configurable: true },
+    });
+    bar.style.lineHeight = "20px";
+    const selected = bar.querySelector('[aria-selected="true"]');
+    const wheel = (init, target = selected) => {
+        const event = new dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, ...init });
+        target.dispatchEvent(event);
+        return event;
+    };
+    assert.equal(wheel({ deltaY: 100 }).defaultPrevented, true);
+    assert.equal(bar.scrollLeft, 100);
+    assert.equal(wheel({ deltaY: -2, deltaMode: 1 }).defaultPrevented, true);
+    assert.equal(bar.scrollLeft, 60);
+    assert.equal(wheel({ deltaY: 1, deltaMode: 2 }).defaultPrevented, true);
+    assert.equal(bar.scrollLeft, 260);
+    for (const init of [
+        { deltaX: 100 },
+        { deltaX: 120, deltaY: 10 },
+        { deltaY: 100, shiftKey: true },
+        { deltaY: 100, ctrlKey: true },
+        { deltaY: 100, metaKey: true },
+        { deltaY: 0 },
+    ]) {
+        assert.equal(wheel(init).defaultPrevented, false);
+        assert.equal(bar.scrollLeft, 260);
+    }
+    assert.equal(wheel({ deltaY: 100 }, document.querySelector(".settings-card")).defaultPrevented, false);
+    assert.equal(bar.scrollLeft, 260);
+    assert.equal(wheel({ deltaY: 1000 }).defaultPrevented, true);
+    assert.equal(bar.scrollLeft, 500);
+    assert.equal(wheel({ deltaY: 100 }).defaultPrevented, false);
+    assert.equal(wheel({ deltaY: -1000 }).defaultPrevented, true);
+    assert.equal(bar.scrollLeft, 0);
+    assert.equal(wheel({ deltaY: -100 }).defaultPrevented, false);
+    Object.defineProperty(bar, "scrollWidth", { value: 200 });
+    assert.equal(wheel({ deltaY: 100 }).defaultPrevented, false);
+    assert.equal(bar.querySelector('[aria-selected="true"]'), selected);
 });
 
 test("options search keeps dependency controls visible and restores previous group state", (t) => {

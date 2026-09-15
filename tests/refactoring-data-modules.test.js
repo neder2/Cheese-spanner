@@ -76,8 +76,10 @@ test("broadcast model computes KST month and watch matches without DOM or runtim
     assert.equal(videos[0].title, "Test broadcast");
     model.addMonthStart(videos[0], month, now);
     model.finalizeMonthInfo(month);
-    assert.equal(month.broadcastDayCount, 1);
+    assert.equal(month.broadcastDayCount, 2);
     assert.equal(month.dailySeconds["2026-07-10"], 3600);
+    assert.equal(month.broadcastSecondsByDate["2026-07-10"], 1800);
+    assert.equal(month.broadcastSecondsByDate["2026-07-11"], 1800);
     const entries = model.normalizeWatchHistory({
         entries: [{ id: "live:A", channelId: "a", liveId: "A", replayVideoNo: "12", watchedSeconds: 180 }],
     });

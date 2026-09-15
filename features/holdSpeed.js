@@ -1,14 +1,15 @@
 /**
- * features/holdSpeed.js — Space 홀드 임시 2배속과 재생 배속 단축키를 처리한다.
+ * features/holdSpeed.js — Space·좌클릭 홀드 임시 2배속과 재생 배속 단축키를 처리한다.
  *
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트. content.js와 skipControl.js 이후에 로드한다.
- * 동작 위치: Space 홀드와 배속 조절 단축키 모두 /live/*와 /video/*.
+ * 동작 위치: 홀드와 배속 조절 단축키 모두 /live/*와 /video/*.
  * 하는 일: capture 단계에서 Space를 먼저 소유해 짧은 탭은 keyup 시 재생 상태를 한 번만 토글하고,
- *   350ms 이상 홀드는 기존 재생 상태를 유지한 채 2배속을 적용한다. 별도 사용자 지정 키로
- *   0.25~4배속을 0.25씩 조절하거나 1배속으로 복원하며, keyup, blur, 문서 숨김, 옵션 비활성화, SPA 이탈, 비디오 교체 시 임시
+ *   영상 화면 좌클릭도 같은 옵션으로 350ms 이상 홀드하면 재생 상태를 유지한 채 2배속을 적용한다.
+ *   짧은 클릭은 네이티브에 맡기고, 드래그는 홀드를 취소한다. 별도 사용자 지정 키로
+ *   0.25~4배속을 0.25씩 조절하거나 1배속으로 복원하며, 입력 해제, blur, 문서 숨김, 옵션 비활성화, SPA 이탈, 비디오 교체 시 임시
  *   홀드 상태와 안내 오버레이를 정리한다.
  * 의존: BetterChzzkSettings, BetterChzzk.skipControl(markPlaybackToggleIntent),
- *   BetterChzzk.utils(getMainVideoElement, injectStyleOnce, isLiveRoute, isPlaybackRoute,
+ *   BetterChzzk.utils(getMainVideoElement, getPlayerRoot, getVideoViewportRect, injectStyleOnce, isLiveRoute, isPlaybackRoute,
  *   bindFeatureOptions, startPageChangeDetection).
  * 옵션 키: holdSpeedEnabled, playbackSpeedShortcutsEnabled, playbackSpeedHalfKeyCode,
  *   playbackSpeedDoubleKeyCode, playbackSpeedResetKeyCode. 기존 Half/Double 저장 키는 감소/증가용으로 유지한다.
@@ -23,6 +24,7 @@
     const STYLE_ID = "betterchzzk-hold-speed-style";
     const HOLD_THRESHOLD_MS = 350;
     const HOLD_RATE = 2;
+    const POINTER_DRAG_DISTANCE = 4;
     const SHORTCUT_OVERLAY_MS = 900;
     const RECENT_MEDIA_CHANGE_MS = 40;
     const NATIVE_SPACE_GUARD_MS = 140;
@@ -36,6 +38,8 @@
     const {
         bindFeatureOptions,
         getMainVideoElement,
+        getPlayerRoot,
+        getVideoViewportRect,
         injectStyleOnce,
         isLiveRoute,
         isPlaybackRoute,
@@ -44,6 +48,8 @@
 
     let featureOptions = BetterChzzkSettings.normalizeOptions();
     let activePress = null;
+    let suppressedSpacePress = false;
+    let suppressedPointerClick = null;
     let lastPlaybackRouteKey = getPlaybackRouteKey();
     let overlayHideTimer = 0;
     let overlayOwner = "";
@@ -215,7 +221,7 @@
         overlay.textContent = label;
         if (hideAfterMs > 0) observeOverlayVideo(video, owner);
         else clearOverlayVideoObserver();
-        const rect = video?.getBoundingClientRect?.();
+        const rect = video ? getVideoViewportRect(video) : null;
         if (rect && rect.width > 0 && rect.height > 0) {
             overlay.style.left = `${rect.left + rect.width / 2}px`;
             overlay.style.top = `${rect.top + Math.max(24, rect.height * 0.14)}px`;
@@ -253,8 +259,10 @@
         if (!press) return;
         press.detachVideoListeners?.();
         press.detachDomObserver?.();
+        press.detachPointerListeners?.();
         press.detachVideoListeners = null;
         press.detachDomObserver = null;
+        press.detachPointerListeners = null;
     }
 
     function attachPressListeners(press) {
@@ -262,13 +270,20 @@
         if (!(video instanceof HTMLVideoElement)) return;
 
         const onStateChange = () => syncPressPausedState(press);
+        const onSourceChange = () => {
+            if (activePress === press) cancelActivePress();
+        };
         video.addEventListener("pause", onStateChange);
         video.addEventListener("play", onStateChange);
         video.addEventListener("playing", onStateChange);
+        video.addEventListener("emptied", onSourceChange);
+        video.addEventListener("loadstart", onSourceChange);
         press.detachVideoListeners = () => {
             video.removeEventListener("pause", onStateChange);
             video.removeEventListener("play", onStateChange);
             video.removeEventListener("playing", onStateChange);
+            video.removeEventListener("emptied", onSourceChange);
+            video.removeEventListener("loadstart", onSourceChange);
         };
 
         const observer = new MutationObserver(() => {
@@ -302,11 +317,14 @@
         }
 
         clearPressTimer(press);
+        if (press.input === "pointer" && press.mode === "hold") {
+            suppressedPointerClick = { video: press.video, player: press.player, pointerId: press.pointerId };
+        }
         restoreHold(press);
         detachPressListeners(press);
         hideOverlay();
 
-        if (keepCancelled) {
+        if (keepCancelled && press.input === "keyboard") {
             // Keep swallowing repeats and the matching keyup after a lost-focus or route cancellation.
             press.mode = "cancelled";
             return;
@@ -317,6 +335,7 @@
     function syncPressPausedState(press) {
         if (
             !press ||
+            press.input !== "keyboard" ||
             activePress !== press ||
             press.mode !== "pending" ||
             press.restoringPaused ||
@@ -365,6 +384,13 @@
     }
 
     function onSpaceKeyDown(event) {
+        if (!event.repeat) suppressedSpacePress = false;
+        if (suppressedSpacePress || (activePress?.input === "pointer" && !getStartBlockReason(event))) {
+            suppressedSpacePress = true;
+            stopKeyboardEvent(event);
+            return;
+        }
+        if (activePress?.input === "pointer") return;
         if (activePress) {
             if (activePress.mode === "cancelled" && !event.repeat) {
                 activePress = null;
@@ -380,11 +406,16 @@
         if (!(video instanceof HTMLVideoElement)) return;
 
         stopKeyboardEvent(event);
+        startPress(video, event, "keyboard");
+    }
+
+    function startPress(video, event, input) {
         hideOverlay("shortcut");
         const press = {
             video,
+            input,
             mode: "pending",
-            pausedAtStart: getPausedAtPressStart(video, event),
+            pausedAtStart: input === "keyboard" ? getPausedAtPressStart(video, event) : video.paused,
             originalRate: null,
             appliedRate: null,
             externalRestoreCount: 0,
@@ -398,6 +429,104 @@
         press.timerId = window.setTimeout(() => activateHold(press), HOLD_THRESHOLD_MS);
         attachPressListeners(press);
         syncPressPausedState(press);
+        return press;
+    }
+
+    function onPointerDown(event) {
+        suppressedPointerClick = null;
+        if (
+            event.defaultPrevented ||
+            event.pointerType !== "mouse" ||
+            event.button !== 0 ||
+            event.buttons !== 1 ||
+            event.isPrimary === false ||
+            getStartBlockReason(event)
+        )
+            return;
+        if (activePress && activePress.mode !== "cancelled") return;
+
+        const video = getMainVideoElement();
+        if (!(video instanceof HTMLVideoElement) || !video.isConnected) return;
+        const player = getPlayerRoot(video);
+        const target = event.composedPath()[0] || event.target;
+        // Only the main video or a wrapper containing it can begin a hold; controls and overlays yield.
+        if (
+            !(target instanceof Element) ||
+            !player?.contains(target) ||
+            (target !== video && !target.contains(video)) ||
+            target.closest("[role='menu'], [role='dialog'], [role='separator'], [draggable='true']")
+        )
+            return;
+        const rect = getVideoViewportRect(video);
+        if (
+            rect.width <= 0 ||
+            rect.height <= 0 ||
+            event.clientX < rect.left ||
+            event.clientX > rect.right ||
+            event.clientY < rect.top ||
+            event.clientY > rect.bottom
+        )
+            return;
+
+        if (activePress?.input === "keyboard") suppressedSpacePress = true;
+        const press = startPress(video, event, "pointer");
+        press.player = player;
+        press.pointerId = event.pointerId;
+        press.startX = event.clientX;
+        press.startY = event.clientY;
+        // Observe without capturing the pointer or stopping propagation, so native clicks and panning remain available.
+        window.addEventListener("pointermove", onPointerMove, true);
+        window.addEventListener("pointerup", onPointerEnd, true);
+        window.addEventListener("pointercancel", onPointerEnd, true);
+        window.addEventListener("lostpointercapture", onPointerEnd, true);
+        window.addEventListener("dragstart", onPointerDragStart, true);
+        press.detachPointerListeners = () => {
+            window.removeEventListener("pointermove", onPointerMove, true);
+            window.removeEventListener("pointerup", onPointerEnd, true);
+            window.removeEventListener("pointercancel", onPointerEnd, true);
+            window.removeEventListener("lostpointercapture", onPointerEnd, true);
+            window.removeEventListener("dragstart", onPointerDragStart, true);
+        };
+    }
+
+    function onPointerMove(event) {
+        const press = activePress;
+        if (press?.input !== "pointer" || event.pointerId !== press.pointerId) return;
+        if (
+            !(event.buttons & 1) ||
+            Math.hypot(event.clientX - press.startX, event.clientY - press.startY) >= POINTER_DRAG_DISTANCE
+        )
+            cancelActivePress();
+    }
+
+    function onPointerEnd(event) {
+        if (activePress?.input !== "pointer" || event.pointerId !== activePress.pointerId) return;
+        cancelActivePress();
+    }
+
+    function onPointerDragStart() {
+        if (activePress?.input === "pointer") cancelActivePress();
+    }
+
+    function onPointerClick(event) {
+        const suppressed = suppressedPointerClick;
+        if (!suppressed || event.button !== 0 || event.detail === 0) return;
+        if (!suppressed.video.isConnected || !suppressed.player.contains(suppressed.video)) {
+            suppressedPointerClick = null;
+            return;
+        }
+        const target = event.composedPath()[0] || event.target;
+        if (
+            !(target instanceof Element) ||
+            !suppressed.player.contains(target) ||
+            (target !== suppressed.video && !target.contains(suppressed.video)) ||
+            (event.pointerId != null && event.pointerId !== suppressed.pointerId)
+        )
+            return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        // A second held click can also produce dblclick immediately after click.
+        if (event.type === "dblclick" || event.detail < 2) suppressedPointerClick = null;
     }
 
     function getSpeedShortcutAction(event) {
@@ -443,7 +572,13 @@
     }
 
     function onKeyUp(event) {
-        if (!isSpaceKey(event) || !activePress) return;
+        if (!isSpaceKey(event)) return;
+        if (suppressedSpacePress) {
+            suppressedSpacePress = false;
+            stopKeyboardEvent(event);
+            return;
+        }
+        if (activePress?.input !== "keyboard") return;
         stopKeyboardEvent(event);
 
         const press = activePress;
@@ -488,6 +623,9 @@
     // Capture Space while enabled to distinguish a short press from a speed hold.
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("click", onPointerClick, true);
+    window.addEventListener("dblclick", onPointerClick, true);
     window.addEventListener("blur", cancelActivePress);
     document.addEventListener("visibilitychange", onVisibilityChange, true);
     document.addEventListener("pause", onObservedMediaState, true);

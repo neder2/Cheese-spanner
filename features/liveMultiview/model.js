@@ -61,6 +61,9 @@
             version: 1,
             layoutVersion: 3,
             active: value?.version === 1 && value.active === true,
+            freeLayoutEnabled: value?.version === 1 && value.freeLayoutEnabled === true,
+            freeWindowSpace: value?.freeWindowSpace === "viewport" ? "viewport" : "player",
+            freeWindows: normalizeWindows(value?.freeWindows, channels),
             channels,
             columns: value?.layoutVersion === 2 ? splits(value.columns) : autoSplits(channels.length).columns,
             rows: value?.layoutVersion === 2 ? splits(value.rows) : autoSplits(channels.length).rows,
@@ -76,6 +79,80 @@
         };
     }
     const branch = (axis, ratio, a, b) => ({ axis, ratio, a, b });
+    function normalizeWindows(value, channels) {
+        const windows = [];
+        if (!Array.isArray(value)) return windows;
+        for (const item of value.slice(0, 6)) {
+            const rect = item?.rect;
+            if (
+                !channels.some((entry) => entry.id === item?.id) ||
+                windows.some((entry) => entry.id === item.id) ||
+                !Array.isArray(rect) ||
+                rect.length !== 4 ||
+                !rect.every(Number.isFinite)
+            )
+                continue;
+            const [x, y, w, h] = rect;
+            if (x < 0 || y < 0 || w <= 0 || h <= 0 || w > 1 || h > 1 || x + w > 1 + 1e-8 || y + h > 1 + 1e-8) continue;
+            windows.push({ id: item.id, rect: [Math.min(x, 1 - w), Math.min(y, 1 - h), w, h] });
+        }
+        return windows;
+    }
+    function freeLayout(state) {
+        const cells = normalizeWindows(state.freeWindows, state.channels);
+        for (const leaf of treeLayout(state.dockTree).cells) {
+            if (leaf.id && !cells.some((cell) => cell.id === leaf.id))
+                cells.push({ id: leaf.id, rect: [...leaf.rect] });
+        }
+        return { cells, handles: [] };
+    }
+    function sameWindows(a, b) {
+        return (
+            a.length === b.length &&
+            a.every(
+                (cell, index) =>
+                    cell.id === b[index].id && cell.rect.every((value, axis) => value === b[index].rect[axis])
+            )
+        );
+    }
+    function layout(state) {
+        return state.freeLayoutEnabled ? freeLayout(state) : treeLayout(state.dockTree);
+    }
+    function moveWindow(rect, dx, dy) {
+        const [x, y, w, h] = rect;
+        return [Math.max(0, Math.min(1 - w, x + dx)), Math.max(0, Math.min(1 - h, y + dy)), w, h];
+    }
+    function toViewportWindow(rect, source, viewport) {
+        const [x, y, w, h] = rect;
+        const scale = Math.min(1, viewport.width / (w * source.width), viewport.height / (h * source.height));
+        const width = (w * source.width * scale) / viewport.width;
+        const height = (h * source.height * scale) / viewport.height;
+        return moveWindow(
+            [
+                (source.left + x * source.width) / viewport.width,
+                (source.top + y * source.height) / viewport.height,
+                width,
+                height,
+            ],
+            0,
+            0
+        );
+    }
+    function resizeWindow(rect, corner, dx, dy, bounds) {
+        if (!bounds?.width || !bounds.height) return [...rect];
+        const [x, y, w, h] = rect;
+        const east = corner.includes("e"),
+            south = corner.includes("s");
+        const horizontal = (dx * (east ? 1 : -1)) / w;
+        const vertical = (dy * (south ? 1 : -1)) / h;
+        const scale = 1 + (Math.abs(horizontal) >= Math.abs(vertical) ? horizontal : vertical);
+        const maximum = Math.min((east ? 1 - x : x + w) / w, (south ? 1 - y : y + h) / h);
+        const minimum = Math.min(maximum, Math.max(120 / bounds.width / w, 68 / bounds.height / h));
+        const size = Math.max(minimum, Math.min(maximum, scale));
+        const width = w * size,
+            height = h * size;
+        return [east ? x : Math.max(0, x + w - width), south ? y : Math.max(0, y + h - height), width, height];
+    }
     function defaultTree(channels, columns = DEFAULT_SPLITS, rows = DEFAULT_SPLITS) {
         const ids = channels.map((entry) => entry.id);
         if (ids.length < 2) return ids[0] || null;
@@ -387,6 +464,13 @@
         defaultTree,
         validTree,
         treeLayout,
+        layout,
+        freeLayout,
+        normalizeWindows,
+        sameWindows,
+        moveWindow,
+        toViewportWindow,
+        resizeWindow,
         mapTree,
         removeTree,
         resizeTree,

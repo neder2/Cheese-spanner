@@ -14,14 +14,19 @@
         bindFeatureOptions,
         createMutationObserverSync,
         fetchJson,
+        formatKstDateTime,
+        formatKstTime,
+        getNextKstDayStartMs,
         injectStyleOnce,
+        isSameKstDate,
         parseChzzkDate,
         startPageChangeDetection,
     } = BetterChzzk.utils;
     let options = BetterChzzkSettings.normalizeOptions();
     let channelId = "";
     let request = null;
-    let clockText = "";
+    let startMs = null;
+    let dateTimer = 0;
     let clockEl = null;
     let anchorEl = null;
     let observer = null;
@@ -32,7 +37,13 @@
         return location.pathname.match(/^\/live\/([a-zA-Z0-9_-]+)\/?$/)?.[1] || "";
     }
 
+    function clearDateTimer() {
+        if (dateTimer) clearTimeout(dateTimer);
+        dateTimer = 0;
+    }
+
     function removeClock() {
+        clearDateTimer();
         clockEl?.remove();
         clockEl = null;
         anchorEl = null;
@@ -43,7 +54,7 @@
     }
 
     function renderClock() {
-        if (!clockText || !channelId || getChannelId() !== channelId || !options.liveStartTimeEnabled) {
+        if (startMs === null || !channelId || getChannelId() !== channelId || !options.liveStartTimeEnabled) {
             removeClock();
             return;
         }
@@ -59,8 +70,21 @@
             clockEl = document.createElement("span");
             clockEl.id = CLOCK_ID;
         }
+        const now = Date.now();
+        const startedToday = isSameKstDate(startMs, now);
+        const clockText = `${startedToday ? formatKstTime(startMs) : formatKstDateTime(startMs)} 시작`;
         if (clockEl.textContent !== clockText) clockEl.textContent = clockText;
         if (anchor.nextElementSibling !== clockEl) anchor.insertAdjacentElement("afterend", clockEl);
+        if (startedToday && !dateTimer) {
+            // Reformat once at midnight even when the native streaming counter is idle.
+            dateTimer = setTimeout(
+                () => {
+                    dateTimer = 0;
+                    renderClock();
+                },
+                getNextKstDayStartMs(now) - now
+            );
+        } else if (!startedToday) clearDateTimer();
     }
 
     function touchesStatus(node) {
@@ -85,7 +109,7 @@
                 attributeFilter: ["class"],
             },
             onMutations(mutations) {
-                if (!clockText) return;
+                if (startMs === null) return;
                 if (
                     (anchorEl && !isAnchor(anchorEl)) ||
                     (clockEl && !clockEl.isConnected) ||
@@ -107,7 +131,7 @@
         request?.abort();
         request = null;
         channelId = "";
-        clockText = "";
+        startMs = null;
         observer?.disconnectAll();
         observer = null;
         removeClock();
@@ -124,13 +148,7 @@
             if (content?.status !== "OPEN") return;
             const start = parseChzzkDate(content.openDate);
             if (!start) return;
-            const time = new Intl.DateTimeFormat("en-GB", {
-                timeZone: "Asia/Seoul",
-                hour: "2-digit",
-                minute: "2-digit",
-                hourCycle: "h23",
-            }).format(start);
-            clockText = `시작 ${time}`;
+            startMs = start.getTime();
             observeClock();
             renderClock();
         } catch {

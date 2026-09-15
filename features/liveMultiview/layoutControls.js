@@ -3,7 +3,7 @@
     const root = (window.BetterChzzk = window.BetterChzzk || {});
     const model = root.multiviewModel;
     const { el, text } = root.multiviewView;
-    function create({ state, players, persistSession, onOrder: syncPanelOrder, onSwap: swap }) {
+    function create({ state, players, persistSession, onOrder: syncPanelOrder, onSwap: swap, onLayerChange, onError }) {
         const { current, moveSlotAudio } = players;
         let host = null,
             native = null,
@@ -14,7 +14,64 @@
             pointerDrag = null,
             suppressDragClick = false,
             resize = null;
-        function boxRect(id, rect, bounds = host?.getBoundingClientRect()) {
+        let viewportLayer = false,
+            ownsPopover = false,
+            dockBounds = null;
+        const viewportBounds = () => ({ left: 0, top: 0, width: window.innerWidth, height: window.innerHeight });
+        const layoutBounds = () => (viewportLayer ? viewportBounds() : host?.getBoundingClientRect());
+        const freeActive = () => state.freeLayoutEnabled && viewportLayer && !document.fullscreenElement;
+        function closeViewportLayer() {
+            viewportLayer = false;
+            if (!ownsPopover) return;
+            ownsPopover = false;
+            try {
+                host?.hidePopover();
+            } catch {
+                // React may already have detached the host or the browser may have closed its top layer.
+            }
+            if (host?.getAttribute("popover") === "manual") host.removeAttribute("popover");
+            host?.removeAttribute("data-bcmv-viewport");
+            onLayerChange();
+        }
+        function syncViewportLayer() {
+            if (!state.freeLayoutEnabled || document.fullscreenElement) {
+                closeViewportLayer();
+                return false;
+            }
+            if (viewportLayer) return false;
+            const bounds = host.getBoundingClientRect();
+            if (!bounds.width || !bounds.height || !window.innerWidth || !window.innerHeight) return false;
+            if (typeof host.togglePopover !== "function" || host.hasAttribute("popover")) {
+                state.freeLayoutEnabled = false;
+                onError("현재 브라우저나 플레이어에서는 페이지 전체 자유 배치를 사용할 수 없어요.");
+                return false;
+            }
+            dockBounds = bounds;
+            const previous = { windows: state.freeWindows, space: state.freeWindowSpace };
+            const changed = rememberWindows(bounds);
+            host.setAttribute("data-bcmv-viewport", "");
+            host.setAttribute("popover", "manual");
+            ownsPopover = true;
+            try {
+                if (!host.togglePopover(true)) throw new Error("Popover opening was cancelled");
+                viewportLayer = true;
+                onLayerChange();
+                return changed;
+            } catch {
+                closeViewportLayer();
+                state.freeLayoutEnabled = false;
+                state.freeWindows = previous.windows;
+                state.freeWindowSpace = previous.space;
+                onError("자유 배치를 열지 못했어요. 현재 방송은 그대로 유지해요.");
+                return false;
+            }
+        }
+        function onViewportChange() {
+            if (!host || !state.freeLayoutEnabled) return;
+            cancelGesture();
+            positionCells();
+        }
+        function boxRect(id, rect, bounds = layoutBounds()) {
             const video = players.get(id)?.video;
             if (!bounds?.width || !bounds.height) return rect;
             const ratio =
@@ -22,19 +79,41 @@
             const [x, y, w, h] = rect;
             const width = Math.min(w, (h * bounds.height * ratio) / bounds.width);
             const height = Math.min(h, (w * bounds.width) / ratio / bounds.height);
-            const position = (pointerDrag?.player.id === id && pointerDrag.position) ||
-                state.channels.find((entry) => entry.id === id)?.position || [0.5, 0.5];
+            const position = freeActive()
+                ? [0.5, 0.5]
+                : (pointerDrag?.player.id === id && pointerDrag.position) ||
+                  state.channels.find((entry) => entry.id === id)?.position || [0.5, 0.5];
             return [x + (w - width) * position[0], y + (h - height) * position[1], width, height];
         }
         function positionCells(tree = state.dockTree) {
             if (!overlay || !host || !tree) return;
-            const layout = model.treeLayout(tree);
-            const bounds = host.getBoundingClientRect();
+            const migrated = syncViewportLayer();
+            const free = freeActive();
+            const layout = free ? model.freeLayout(state) : model.treeLayout(tree);
+            const bounds = layoutBounds();
+            host.toggleAttribute("data-bcmv-free", free);
             for (const cell of overlay.querySelectorAll(".bcmv-cell")) {
                 const id = cell.dataset.bcmvChannel,
                     leaf = layout.cells.find((item) => item.id === id);
                 if (!leaf) continue;
-                const [x, y, w, h] = boxRect(id, leaf.rect, bounds);
+                const preview =
+                    (pointerDrag?.player.id === id && pointerDrag.freeRect) ||
+                    (resize?.free && resize.player.id === id && resize.preview);
+                const [x, y, w, h] = preview || boxRect(id, leaf.rect, bounds);
+                const layer = 2 + layout.cells.indexOf(leaf) * 2;
+                const name = cell.querySelector(".bcmv-name");
+                const hint = free
+                    ? "우클릭으로 음소거 전환 · 드래그로 자유 이동 · 모서리로 크기 조절"
+                    : "우클릭으로 음소거 전환 · 드래그하여 위치 이동 · Alt + 드래그로 박스 안 이동";
+                if (name && name.title !== hint) name.title = hint;
+                cell.style.zIndex = free ? String(layer + Number(id === routeId)) : "";
+                if (free) {
+                    cell.tabIndex = 0;
+                    cell.setAttribute("aria-label", `${players.get(id)?.name || id.slice(0, 8)} 화면 · 방향키로 이동`);
+                } else {
+                    cell.removeAttribute("tabindex");
+                    cell.removeAttribute("aria-label");
+                }
                 Object.assign(cell.style, {
                     left: x * 100 + "%",
                     top: y * 100 + "%",
@@ -46,11 +125,13 @@
                     host.style.setProperty("--bcmv-main-top", y * 100 + "%");
                     host.style.setProperty("--bcmv-main-width", w * 100 + "%");
                     host.style.setProperty("--bcmv-main-height", String(h));
+                    if (free) host.style.setProperty("--bcmv-main-layer", String(layer));
+                    else host.style.removeProperty("--bcmv-main-layer");
                 }
                 if (!dragState) {
                     for (const corner of ["nw", "ne", "sw", "se"]) {
                         const existing = cell.querySelector(`[data-corner="${corner}"]`);
-                        if (!cornerEdges(id, corner, tree).length) {
+                        if (!free && !cornerEdges(id, corner, tree).length) {
                             existing?.remove();
                             continue;
                         }
@@ -112,6 +193,87 @@
                 );
             }
             if (!pointerDrag && !resize && tree === state.dockTree) syncPanelOrder(layout.cells);
+            if (migrated) persistSession();
+        }
+        function rememberWindows(source = viewportLayer ? dockBounds : host?.getBoundingClientRect()) {
+            if (
+                !host ||
+                document.fullscreenElement ||
+                !source?.width ||
+                !source.height ||
+                !window.innerWidth ||
+                !window.innerHeight
+            )
+                return false;
+            const legacy = state.freeWindowSpace !== "viewport";
+            const stored = new Set(state.freeWindows.map((cell) => cell.id));
+            const windows = model.freeLayout(state).cells.map(({ id, rect }) => ({
+                id,
+                rect:
+                    !legacy && stored.has(id)
+                        ? rect
+                        : model.toViewportWindow(boxRect(id, rect, source), source, viewportBounds()),
+            }));
+            const changed = legacy || !model.sameWindows(state.freeWindows, windows);
+            if (!model.sameWindows(state.freeWindows, windows)) state.freeWindows = windows;
+            state.freeWindowSpace = "viewport";
+            return changed;
+        }
+        function setFreeMode(enabled) {
+            cancelGesture();
+            state.freeLayoutEnabled = enabled;
+            positionCells();
+            persistSession();
+        }
+        function incomingWindowRect(clientX, clientY) {
+            const bounds = viewportBounds();
+            if (
+                !freeActive() ||
+                !dockBounds?.width ||
+                !dockBounds.height ||
+                !bounds.width ||
+                !bounds.height ||
+                !Number.isFinite(clientX) ||
+                !Number.isFinite(clientY) ||
+                clientX < 0 ||
+                clientY < 0 ||
+                clientX >= bounds.width ||
+                clientY >= bounds.height
+            )
+                return null;
+            const { columns, rows } = model.autoSplits();
+            const rect = boxRect(null, [0, 0, 1 - columns[1], rows[0]], dockBounds);
+            const [, , width, height] = model.toViewportWindow(rect, dockBounds, bounds);
+            return model.moveWindow(
+                [clientX / bounds.width - width / 2, clientY / bounds.height - height / 2, width, height],
+                0,
+                0
+            );
+        }
+        function setWindowRect(id, rect) {
+            state.freeWindows = model
+                .freeLayout(state)
+                .cells.map((cell) => (cell.id === id ? { id, rect: [...rect] } : cell));
+        }
+        function raiseWindow(id) {
+            if (!freeActive()) return;
+            const cells = model.freeLayout(state).cells;
+            const index = cells.findIndex((cell) => cell.id === id);
+            if (index < 0 || index === cells.length - 1) return;
+            cells.push(...cells.splice(index, 1));
+            state.freeWindows = cells;
+            positionCells();
+            persistSession();
+        }
+        function onFocus(event) {
+            if (!freeActive()) return;
+            const id =
+                event.target.closest(".bcmv-cell")?.dataset.bcmvChannel ||
+                (native?.contains(event.target) ? routeId : null);
+            if (id) raiseWindow(id);
+        }
+        function onVisibility() {
+            if (document.hidden) cancelGesture();
         }
         function cornerEdges(id, corner, tree = state.dockTree) {
             const layout = model.treeLayout(tree),
@@ -147,7 +309,7 @@
             positionCells();
         }
         function endDrag() {
-            const active = Boolean(dragState || pointerDrag?.position);
+            const active = Boolean(dragState || pointerDrag?.position || pointerDrag?.freeRect);
             if (active) suppressDragClick = true;
             const gesture = pointerDrag;
             pointerDrag = null;
@@ -171,6 +333,7 @@
         function onPointerDown(event) {
             if (!state.active || !overlay) return;
             suppressDragClick = false;
+            if (event.button === 0) onFocus(event);
             if (event.target.closest(".bcmv-corner")) {
                 onCornerStart(event);
                 return;
@@ -193,20 +356,30 @@
             )
                 origin = native;
             const player = origin && players.get(origin === native ? routeId : origin.dataset.channel);
-            if (!player || (player.main && !event.altKey && state.channels.length < 2) || !current(player)) return;
+            if (
+                !player ||
+                (player.main && !event.altKey && !freeActive() && state.channels.length < 2) ||
+                !current(player)
+            )
+                return;
             endDrag();
-            const bounds = host.getBoundingClientRect(),
-                leaf = model.treeLayout(state.dockTree).cells.find((item) => item.id === player.id);
+            const bounds = layoutBounds(),
+                leaf = (freeActive() ? model.freeLayout(state) : model.treeLayout(state.dockTree)).cells.find(
+                    (item) => item.id === player.id
+                );
             const entry = state.channels.find((item) => item.id === player.id);
             const fitted = leaf && boxRect(player.id, leaf.rect, bounds);
-            if (event.altKey && (!fitted || !bounds.width || !bounds.height)) return;
+            if ((event.altKey || freeActive()) && (!fitted || !bounds.width || !bounds.height)) return;
             pointerDrag = {
                 player,
                 x: event.clientX,
                 y: event.clientY,
                 pointerId: event.pointerId,
                 started: false,
-                internal: event.altKey,
+                internal: event.altKey && !freeActive(),
+                free: freeActive(),
+                bounds,
+                initialRect: fitted,
                 initial: [...(entry.position || [0.5, 0.5])],
                 space: fitted && [
                     (leaf.rect[2] - fitted[2]) * bounds.width,
@@ -365,7 +538,8 @@
             if (!gesture.started) {
                 if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) < 5) return;
                 gesture.started = true;
-                if (gesture.internal) {
+                if (gesture.free) host.setAttribute("data-bcmv-positioning", "");
+                else if (gesture.internal) {
                     const [x, y, width, height] = gesture.region;
                     gesture.guide = el("div", "bcmv-position-guide", "박스 안 이동 · 우클릭 취소");
                     Object.assign(gesture.guide.style, {
@@ -382,7 +556,14 @@
             }
             event.preventDefault();
             event.stopPropagation();
-            if (gesture.internal) moveWithinBox(event);
+            if (gesture.free) {
+                gesture.freeRect = model.moveWindow(
+                    gesture.initialRect,
+                    (event.clientX - gesture.x) / gesture.bounds.width,
+                    (event.clientY - gesture.y) / gesture.bounds.height
+                );
+                positionCells();
+            } else if (gesture.internal) moveWithinBox(event);
             else previewDrop(dragTarget(event));
         }
         function onPointerCancel(event) {
@@ -390,6 +571,17 @@
         }
         function onPointerUp(event) {
             if (!pointerDrag || pointerDrag.pointerId !== event.pointerId) return;
+            if (pointerDrag.free) {
+                const gesture = pointerDrag;
+                const commit = gesture.started && current(gesture.player);
+                if (commit) {
+                    onPointerMove(event);
+                    setWindowRect(gesture.player.id, gesture.freeRect);
+                }
+                endDrag();
+                if (commit) persistSession();
+                return;
+            }
             if (pointerDrag.internal) {
                 const gesture = pointerDrag;
                 if (gesture.started && current(gesture.player)) {
@@ -455,9 +647,36 @@
             window.addEventListener("blur", cancelResize);
         }
         function onCornerStart(event) {
-            if (event.button !== 0 || dragId) return;
+            if (event.button !== 0 || event.isPrimary === false || dragId) return;
             const corner = event.target.closest(".bcmv-corner"),
                 id = corner.closest(".bcmv-cell").dataset.bcmvChannel;
+            if (freeActive()) {
+                const player = players.get(id),
+                    bounds = layoutBounds();
+                if (!player || !current(player) || !bounds.width || !bounds.height) return;
+                cancelResize();
+                event.preventDefault();
+                event.stopPropagation();
+                corner.focus({ preventScroll: true });
+                resize = {
+                    free: true,
+                    player,
+                    corner: corner.dataset.corner,
+                    leaf: boxRect(id, model.freeLayout(state).cells.find((cell) => cell.id === id).rect, bounds),
+                    rect: bounds,
+                    startX: event.clientX,
+                    startY: event.clientY,
+                    pointerId: event.pointerId,
+                    capture: overlay,
+                };
+                overlay.addEventListener("lostpointercapture", cancelResize);
+                if (typeof overlay.setPointerCapture === "function") overlay.setPointerCapture(event.pointerId);
+                window.addEventListener("pointermove", onResizeMove);
+                window.addEventListener("pointerup", endResize);
+                window.addEventListener("pointercancel", cancelResize);
+                window.addEventListener("blur", cancelResize);
+                return;
+            }
             const edges = cornerEdges(id, corner.dataset.corner);
             if (!edges.length) return;
             event.preventDefault();
@@ -527,6 +746,22 @@
         }
         function onResizeMove(event) {
             if (!resize || event.pointerId !== resize.pointerId) return;
+            if (resize.free) {
+                if (!current(resize.player)) {
+                    cancelResize();
+                    return;
+                }
+                event.preventDefault();
+                resize.preview = model.resizeWindow(
+                    resize.leaf,
+                    resize.corner,
+                    (event.clientX - resize.startX) / resize.rect.width,
+                    (event.clientY - resize.startY) / resize.rect.height,
+                    resize.rect
+                );
+                positionCells();
+                return;
+            }
             if (resize.corner) {
                 onCornerMove(event);
                 return;
@@ -548,21 +783,39 @@
             adjustSplit(handle.key, result.value);
         }
         function cancelResize(event) {
-            if (resize && event?.type === "pointercancel" && event.pointerId !== resize.pointerId) return;
+            if (
+                resize &&
+                ["pointercancel", "lostpointercapture"].includes(event?.type) &&
+                event.pointerId !== resize.pointerId
+            )
+                return;
             if (resize) {
-                state.dockTree = resize.tree;
-                state.customLayout = resize.custom;
+                if (resize.free) resize.preview = null;
+                else {
+                    state.dockTree = resize.tree;
+                    state.customLayout = resize.custom;
+                }
                 positionCells();
             }
             endResize(false);
         }
         function endResize(commit = true) {
             if (resize && typeof commit === "object" && commit.pointerId !== resize.pointerId) return;
+            if (resize?.free && typeof commit === "object" && resize.preview) onResizeMove(commit);
+            if (resize?.free && commit !== false && resize.preview && current(resize.player))
+                setWindowRect(resize.player.id, resize.preview);
             const changed = resize && commit !== false;
             if (changed) persistSession();
-            resize?.guide.remove();
+            const gesture = resize;
+            resize?.guide?.remove();
             resize = null;
-            if (changed) syncPanelOrder();
+            gesture?.capture?.removeEventListener("lostpointercapture", cancelResize);
+            if (gesture?.capture?.hasPointerCapture?.(gesture.pointerId))
+                gesture.capture.releasePointerCapture(gesture.pointerId);
+            if (changed) {
+                positionCells();
+                syncPanelOrder();
+            }
             window.removeEventListener("pointermove", onResizeMove);
             window.removeEventListener("pointerup", endResize);
             window.removeEventListener("pointercancel", cancelResize);
@@ -580,6 +833,32 @@
                 return;
             }
             const corner = event.target.closest(".bcmv-corner");
+            const direction = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[
+                event.key
+            ];
+            if (
+                freeActive() &&
+                direction &&
+                !event.altKey &&
+                !event.ctrlKey &&
+                !event.metaKey &&
+                (corner || event.target.matches(".bcmv-cell"))
+            ) {
+                event.preventDefault();
+                event.stopPropagation();
+                const id = event.target.closest(".bcmv-cell").dataset.bcmvChannel;
+                const rect = boxRect(id, model.freeLayout(state).cells.find((cell) => cell.id === id).rect);
+                const [dx, dy] = direction.map((value) => value * (event.shiftKey ? 0.05 : 0.01));
+                setWindowRect(
+                    id,
+                    corner
+                        ? model.resizeWindow(rect, corner.dataset.corner, dx, dy, layoutBounds())
+                        : model.moveWindow(rect, dx, dy)
+                );
+                positionCells();
+                persistSession();
+                return;
+            }
             if (corner && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
                 const id = corner.closest(".bcmv-cell").dataset.bcmvChannel;
                 const axis = event.key === "ArrowLeft" || event.key === "ArrowRight" ? "columns" : "rows";
@@ -597,23 +876,31 @@
             }
             const handle = event.target.closest(".bcmv-separator");
             if (!handle) return;
-            const direction = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[event.key];
-            if (!direction) return;
+            const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[event.key];
+            if (!step) return;
             event.preventDefault();
             event.stopPropagation();
             const item = model.treeLayout(state.dockTree).handles.find((entry) => entry.key === handle.dataset.path);
-            if (item) adjustSplit(item.key, item.value + direction * 0.01);
+            if (item) adjustSplit(item.key, item.value + step * 0.01);
             persistSession();
         }
 
         function release() {
             cancelResize();
             endDrag();
+            window.removeEventListener("resize", onViewportChange);
+            document.removeEventListener("fullscreenchange", onViewportChange);
+            closeViewportLayer();
             host?.removeEventListener("pointerdown", onPointerDown, true);
             host?.removeEventListener("click", onHostClick, true);
             host?.removeEventListener("dragstart", onNativeDragStart, true);
+            host?.removeEventListener("focusin", onFocus);
+            document.removeEventListener("visibilitychange", onVisibility);
+            host?.removeAttribute("data-bcmv-free");
+            host?.style.removeProperty("--bcmv-main-layer");
             overlay?.removeEventListener("keydown", onKey);
             host = native = overlay = null;
+            dockBounds = null;
         }
         function mount(nextHost, nextNative, nextOverlay, mainId) {
             release();
@@ -624,6 +911,10 @@
             host.addEventListener("pointerdown", onPointerDown, true);
             host.addEventListener("click", onHostClick, true);
             host.addEventListener("dragstart", onNativeDragStart, true);
+            host.addEventListener("focusin", onFocus);
+            document.addEventListener("visibilitychange", onVisibility);
+            window.addEventListener("resize", onViewportChange);
+            document.addEventListener("fullscreenchange", onViewportChange);
             overlay.addEventListener("keydown", onKey);
         }
         function cancelPointer() {
@@ -645,6 +936,12 @@
             cancelResize,
             cancelPointer,
             cancelGesture,
+            setFreeMode,
+            incomingWindowRect,
+            rememberWindows,
+            get viewportActive() {
+                return viewportLayer;
+            },
             get busy() {
                 return Boolean(pointerDrag || resize);
             },

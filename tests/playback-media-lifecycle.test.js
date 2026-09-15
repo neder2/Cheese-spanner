@@ -170,8 +170,18 @@ async function createCompressorPage(
         chrome,
         tabId
     );
+    const observers = [];
+    const NativeObserver = dom.window.MutationObserver;
+    dom.window.MutationObserver = class extends NativeObserver {
+        constructor(callback) {
+            super(callback);
+            observers.push(this);
+        }
+    };
     t.after(() => {
         dom.window.dispatchEvent(new dom.window.Event("pagehide"));
+        // Closing JSDOM removes its document; stop observers before they can inspect that removal.
+        for (const observer of observers) observer.disconnectAll ? observer.disconnectAll() : observer.disconnect();
         dom.window.close();
     });
     if (initialState !== null)

@@ -8,7 +8,7 @@ const root = path.join(__dirname, "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-function harness({ failRemoval = false, version = "1.3.7", noticeState } = {}) {
+function harness({ failRemoval = false, version = "1.3.8", noticeState } = {}) {
     const local = {
         betterchzzkUpdateNotice: { version: "1.3.5" },
         betterchzzkUpdateReadVersion: "1.3.4",
@@ -29,6 +29,7 @@ function harness({ failRemoval = false, version = "1.3.7", noticeState } = {}) {
     let installed;
     let messageHandler;
     const injections = [];
+    const tabQueries = [];
     let lastError;
     let errorReads = 0;
     const chrome = {
@@ -53,6 +54,7 @@ function harness({ failRemoval = false, version = "1.3.7", noticeState } = {}) {
         },
         tabs: {
             async query(query) {
+                tabQueries.push(query);
                 assert.deepEqual(JSON.parse(JSON.stringify(query)), { url: "https://chzzk.naver.com/*" });
                 return [{ id: 1 }, { id: 2 }];
             },
@@ -107,6 +109,7 @@ function harness({ failRemoval = false, version = "1.3.7", noticeState } = {}) {
         badges,
         titles,
         injections,
+        tabQueries,
         message: (
             message,
             sender = { id: chrome.runtime.id, frameId: 0, tab: { id: 1 }, url: "https://chzzk.naver.com/live/measured" }
@@ -119,20 +122,26 @@ function harness({ failRemoval = false, version = "1.3.7", noticeState } = {}) {
     };
 }
 
-test("startup removes legacy notice state and clears NEW without touching other data", async () => {
-    const h = harness();
-    await flush();
-    assert.deepEqual(h.local, { unrelated: 123 });
-    assert.deepEqual(h.sync, { adblockPopupEnabled: false, holdSpeedEnabled: false });
-    assert.deepEqual(h.badges, [""]);
-    assert.deepEqual(h.titles, ["치즈 스패너 설정"]);
-});
+for (const pending of [true, false]) {
+    test(`startup removes the 1.3.7 notice with pending=${pending} without touching other data`, async () => {
+        const h = harness({ noticeState: { version: "1.3.7", pending, token: "old" } });
+        await flush();
+        assert.deepEqual(h.local, { unrelated: 123 });
+        assert.deepEqual(h.sync, { adblockPopupEnabled: false, holdSpeedEnabled: false });
+        assert.deepEqual(h.badges, [""]);
+        assert.deepEqual(h.titles, ["치즈 스패너 설정"]);
+        assert.equal((await h.message({ type: "betterchzzk:quality-update-notice", action: "claim" })).show, false);
+    });
+}
 
 test("install, same-version reload and browser updates never recreate legacy update UI", async () => {
     const h = harness();
     for (const details of [
         { reason: "install" },
+        { reason: "update", previousVersion: "1.3.5" },
+        { reason: "update", previousVersion: "1.3.6" },
         { reason: "update", previousVersion: "1.3.7" },
+        { reason: "update", previousVersion: "1.3.8" },
         { reason: "update", previousVersion: "1.4.0" },
         { reason: "chrome_update" },
     ]) {
@@ -148,6 +157,8 @@ test("install, same-version reload and browser updates never recreate legacy upd
     await flush();
     assert.ok(h.badges.every((text) => text === ""));
     assert.ok(h.titles.every((title) => title === "치즈 스패너 설정"));
+    assert.deepEqual(h.injections, []);
+    assert.deepEqual(h.tabQueries, []);
 });
 
 test("legacy storage cleanup consumes errors and still clears the badge and normalizes options", async () => {
@@ -159,7 +170,7 @@ test("legacy storage cleanup consumes errors and still clears the badge and norm
     assert.equal(h.sync.holdSpeedEnabled, false);
 });
 
-test("only the dedicated version-change notice is loaded; legacy settings and tutorial stay removed", (t) => {
+test("retired update notices, settings and tutorials stay absent from extension entry points", (t) => {
     const dom = new JSDOM(read("options.html"));
     t.after(() => dom.window.close());
     const document = dom.window.document;
@@ -175,7 +186,7 @@ test("only the dedicated version-change notice is loaded; legacy settings and tu
         ...manifest.content_scripts.flatMap((s) => s.js || []),
         ...Array.from(document.scripts, (s) => s.getAttribute("src")),
     ];
-    assert.ok(loaded.includes("features/updateNotice.js"));
+    assert.equal(loaded.includes("features/updateNotice.js"), false);
     assert.ok(loaded.includes("features/qualityInstallGuide.js"));
     // 설치 안내 닫기는 네이티브 안내 처리이며, 폐기한 확장 튜토리얼이 아니다.
     assert.ok(loaded.every((file) => file === "features/qualityInstallGuide.js" || !/tutorial|guide/i.test(file)));
@@ -183,57 +194,61 @@ test("only the dedicated version-change notice is loaded; legacy settings and tu
         assert.equal(fs.existsSync(path.join(root, file)), false);
 });
 
-test("upgrade to 1.3.7 creates one notice and concurrent tabs cannot both claim it", async () => {
-    const h = harness();
+test("the development manifest version cannot recreate or inject the retired notice", async () => {
+    const h = harness({ version: JSON.parse(read("manifest.json")).version });
     h.install({ reason: "update", previousVersion: "1.3.6" });
     await flush();
     const key = "betterchzzk:quality-update-notice";
-    assert.equal(h.local[key].pending, true);
-    assert.equal(h.injections.length, 2);
-    assert.ok(
-        h.injections.every(
-            (item) =>
-                item.world === "ISOLATED" && item.files.length === 1 && item.files[0] === "features/updateNotice.js"
-        )
-    );
+    assert.equal(h.local[key], undefined);
+    assert.deepEqual(h.injections, []);
+    assert.deepEqual(h.tabQueries, []);
     const claims = await Promise.all([
         h.message({ type: key, action: "claim" }),
         h.message({ type: key, action: "claim" }),
     ]);
-    assert.equal(claims.filter((result) => result.show).length, 1);
-    assert.equal(h.local[key].pending, false);
-    h.install({ reason: "update", previousVersion: "1.3.6" });
-    await flush();
-    assert.equal((await h.message({ type: key, action: "claim" })).show, false);
+    assert.ok(claims.every((result) => result.show === false));
+    assert.equal(h.local[key], undefined);
     assert.equal(h.sync.gridBypassEnabled, undefined);
     assert.equal(h.sync.holdSpeedEnabled, false);
 });
 
-test("display failures can release their claim while forged senders and stale tokens cannot", async () => {
-    const key = "betterchzzk:quality-update-notice";
-    const h = harness({ noticeState: { version: "1.3.7", pending: true } });
-    const bad = await h.message(
-        { type: key, action: "claim" },
-        { id: "other", frameId: 0, tab: { id: 1 }, url: "https://chzzk.naver.com/" }
-    );
-    assert.equal(bad.show, false);
-    const claim = await h.message({ type: key, action: "claim" });
-    await h.message({ type: key, action: "release", token: "stale" });
-    assert.equal(h.local[key].pending, false);
-    await h.message({ type: key, action: "release", token: claim.token });
-    assert.equal(h.local[key].pending, true);
-    assert.equal((await h.message({ type: key, action: "claim" })).show, true);
-});
+for (const pending of [true, false]) {
+    test(`old tabs cannot claim or release a notice with pending=${pending} even if cleanup fails`, async () => {
+        const key = "betterchzzk:quality-update-notice";
+        const noticeState = { version: "1.3.7", pending, token: "old" };
+        const h = harness({ failRemoval: true, noticeState });
+        const messages = [
+            { type: key, action: "claim" },
+            { type: key, action: "release", token: "old" },
+            { type: key, action: "release", token: "stale" },
+            { type: key, action: "claim" },
+        ];
+        const replies = await Promise.all(messages.map((message) => h.message(message)));
+        assert.ok(replies.every((result) => result.show === false));
+        assert.deepEqual(h.local[key], noticeState);
+        const untrusted = await h.message(messages[0], {
+            id: "other",
+            frameId: 0,
+            tab: { id: 1 },
+            url: "https://chzzk.naver.com/",
+        });
+        assert.equal(untrusted.show, false);
+        assert.deepEqual(h.local[key], noticeState);
+        assert.deepEqual(h.injections, []);
+        assert.deepEqual(h.tabQueries, []);
+    });
+}
 
-test("worker startup preserves a previously displayed version notice", async () => {
+test("a release from an old tab cannot recreate a notice after successful cleanup", async () => {
     const key = "betterchzzk:quality-update-notice";
     const h = harness({ noticeState: { version: "1.3.7", pending: false, token: "old" } });
     await flush();
-    assert.equal(h.local[key].pending, false);
+    assert.equal((await h.message({ type: key, action: "release", token: "old" })).show, false);
     assert.equal((await h.message({ type: key, action: "claim" })).show, false);
+    assert.equal(h.local[key], undefined);
 });
 
-test("version notice displays accurate copy, closes on confirmation and restores focus", (t) => {
+test("saved notice template preserves copy, confirmation and focus restoration", (t) => {
     const dom = new JSDOM('<!doctype html><head></head><body><button id="previous">이전</button></body>', {
         url: "https://chzzk.naver.com/live/measured",
         runScripts: "outside-only",
@@ -293,7 +308,7 @@ test("version notice displays accurate copy, closes on confirmation and restores
     assert.equal(w.document.querySelector("dialog"), null);
 });
 
-test("a tab hidden while claiming the notice releases it and can display it when visible again", (t) => {
+test("saved notice template preserves visibility handling for future reuse", (t) => {
     const dom = new JSDOM("<!doctype html><head></head><body></body>", {
         url: "https://chzzk.naver.com/live/measured",
         runScripts: "outside-only",

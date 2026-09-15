@@ -23,14 +23,14 @@ function pageRows(page) {
     return Array.from({ length: 30 }, (_, index) => replay(page * 30 + index + 1, 10 - page));
 }
 
-function fixture({ options = {}, fetchJson } = {}) {
+function fixture({ options = {}, fetchJson, nowMs = NOW } = {}) {
     const dom = new JSDOM("<!doctype html><body></body>", {
         url: `https://chzzk.naver.com/${CHANNEL}`,
         runScripts: "outside-only",
         pretendToBeVisual: true,
     });
     const { window } = dom;
-    window.Date.now = () => NOW;
+    window.Date.now = () => nowMs;
     window.HTMLCanvasElement.prototype.getContext = () => null;
     for (const file of ["shared/settings.js", "shared/data.js", "shared/vodTimeline.js"]) {
         window.eval(fs.readFileSync(path.join(repoRoot, file), "utf8"));
@@ -57,7 +57,7 @@ function fixture({ options = {}, fetchJson } = {}) {
     window.eval(
         `${source.slice(0, end)}window.hooks = {
             calculateStats, calculateCalendarMonth, loadStats, createWidget,
-            renderCachedStats, navigateCalendarMonth, resetCalendarToCurrentMonth,
+            renderCachedStats, renderCalendar, navigateCalendarMonth, resetCalendarToCurrentMonth,
             getSelectedCalendarMonth, setSelectedCalendarMonth, getKstMonthInfo,
             cacheMonthInfo, getCachedMonthInfo,
             fetchVideoPageCached: repository.fetchVideoPageCached, fetchVideoDetail: repository.fetchVideoDetail,
@@ -94,6 +94,112 @@ function mount(f) {
 function flush() {
     return new Promise((resolve) => setImmediate(resolve));
 }
+
+for (const calculate of [stats, calendar]) {
+    test(`monthly ${calculate.name} colors the days covered by Arisa's split replays while keeping totals on the start date`, async (t) => {
+        // Public API fields measured on 2026-09-15; publication time is not the broadcast end.
+        const videos = [
+            { videoNo: 15195598, duration: 61201, publishDate: "2026-09-15 07:37:03" },
+            { videoNo: 15188564, duration: 61200, publishDate: "2026-09-14 13:00:01" },
+            { videoNo: 15173970, duration: 61199, publishDate: "2026-09-13 12:17:10" },
+        ].map((video) => ({ ...video, videoType: "REPLAY" }));
+        const f = fixture({
+            nowMs: Date.parse("2026-09-15T15:00:00+09:00"),
+            fetchJson: async (url) => {
+                if (url.includes("/service/v2/videos/")) {
+                    const video = videos.find((row) => String(row.videoNo) === url.split("/").pop());
+                    assert.ok(video);
+                    return { content: { ...video, liveOpenDate: "2026-09-12 19:00:57" } };
+                }
+                return { content: { data: videos, last: true } };
+            },
+        });
+        t.after(() => {
+            f.hooks.removeWidget();
+            f.dom.window.close();
+        });
+        const result = await calculate(f, 2026, 9);
+        const month = calculate === stats ? result.month : result;
+        const widget = mount(f);
+        f.hooks.renderCalendar(widget, month);
+
+        for (const day of [12, 13, 14]) {
+            assert.equal(
+                widget.querySelector(`[data-date-key="2026-09-${day}"]`).dataset.hasBroadcast,
+                "1",
+                `September ${day} must be colored`
+            );
+        }
+        for (const day of [11, 15, 16]) {
+            assert.equal(widget.querySelector(`[data-date-key="2026-09-${day}"]`).dataset.hasBroadcast, undefined);
+        }
+        assert.equal(month.broadcastDayCount, 3);
+        assert.deepEqual(JSON.parse(JSON.stringify(month.dailySeconds)), { "2026-09-12": 51 * 3600 });
+        const startDay = widget.querySelector('[data-date-key="2026-09-12"]');
+        assert.equal(startDay.querySelectorAll(".bcmb-day-tip-item").length, 1);
+        assert.match(startDay.textContent, /19:00 - 22:00 \(9\/14\) · 51시간/);
+        assert.equal(startDay.dataset.videoNo, "15173970");
+        assert.equal(widget.querySelector(".bcmb-calendar-count").textContent, "총 방송 51시간");
+        assert.equal(widget.querySelector('[data-date-key="2026-09-13"]').dataset.level, "9");
+        assert.equal(f.calls.length, 4, "coverage must reuse the existing list and detail requests");
+    });
+}
+
+test("monthly calendar carries split broadcast colors across months without moving the start-date totals", async (t) => {
+    const f = fixture({
+        fetchJson: async () => ({
+            content: {
+                data: [3, 2, 1].map((videoNo) => ({
+                    videoNo,
+                    videoType: "REPLAY",
+                    duration: 17 * 3600,
+                    liveOpenDate: "2026-06-29 19:00:00",
+                })),
+                last: true,
+            },
+        }),
+    });
+    t.after(() => {
+        f.hooks.removeWidget();
+        f.dom.window.close();
+    });
+    const widget = mount(f);
+    const june = await calendar(f, 2026, 6);
+    const july = await calendar(f);
+    f.hooks.renderCalendar(widget, july);
+    assert.equal(widget.querySelector('[data-date-key="2026-07-01"]').dataset.hasBroadcast, "1");
+    assert.equal(widget.querySelector('[data-date-key="2026-07-02"]').dataset.hasBroadcast, undefined);
+    assert.equal(july.broadcastDayCount, 1);
+    assert.equal(july.dailySeconds["2026-07-01"], undefined);
+    assert.equal(july.startsByDate["2026-07-01"], undefined);
+    assert.equal(june.dailySeconds["2026-06-29"], 51 * 3600);
+    assert.equal(june.broadcastDayCount, 2);
+    assert.equal(f.calls.length, 1, "changing months must reuse the fetched page");
+});
+
+test("monthly broadcast coverage excludes the ending midnight and future dates", (t) => {
+    const f = fixture();
+    t.after(() => f.dom.window.close());
+    const model = f.window.BetterChzzk.monthlyBroadcastModel;
+    const month = model.getKstMonthInfo();
+    const videos = model.extractVideos({
+        content: {
+            data: [
+                { ...replay(1), liveOpenDate: "2026-07-10 23:00:00", duration: 3600 },
+                { ...replay(2), liveOpenDate: "2026-07-20 11:00:00", duration: 48 * 3600 },
+            ],
+        },
+    });
+    for (const video of videos) model.addMonthStart(video, month, NOW);
+    model.finalizeMonthInfo(month);
+    const widget = mount(f);
+    f.hooks.renderCalendar(widget, month);
+    assert.equal(widget.querySelector('[data-date-key="2026-07-10"]').dataset.hasBroadcast, "1");
+    assert.equal(widget.querySelector('[data-date-key="2026-07-11"]').dataset.hasBroadcast, undefined);
+    assert.equal(widget.querySelector('[data-date-key="2026-07-20"]').dataset.hasBroadcast, "1");
+    assert.equal(widget.querySelector('[data-date-key="2026-07-21"]').dataset.hasBroadcast, undefined);
+    assert.equal(month.broadcastDayCount, 2);
+});
 
 test("calendar navigation keys keep the calendar open and allow native button activation", async (t) => {
     const f = fixture();

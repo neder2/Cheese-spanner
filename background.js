@@ -3,7 +3,7 @@
  *
  * 하는 일: onInstalled에서 chrome.storage.sync 옵션을 스키마 기준으로 정규화한다. runtime 메시지로 받은
  *   시청 기록 mutation은 발신자·스키마를 검증한 뒤 Promise 큐에서 최신 local 값을 읽어 순차 반영한다.
- *   폐기한 설정·알림을 정리하고 1.3.7 방식 변경 안내를 한 번 전달한다.
+ *   폐기한 설정·알림과 1.3.7 방식 변경 안내의 저장값을 정리한다.
  *   컴프레서 상태는 발신 탭 ID별로 저장하고 탭 종료·브라우저 시작 시 정리한다.
  * 의존: shared/settings.js, shared/data.js, shared/watchHistoryStore.js,
  *   shared/adVideoRegistration.js(importScripts).
@@ -23,11 +23,7 @@ const COMPRESSOR_STATE_MESSAGE = "betterchzzk:audio-compressor-state";
 const COMPRESSOR_TABS_KEY = "betterchzzk:audio-compressor-tabs";
 const MAX_COMPRESSOR_TABS = 128;
 let compressorStateQueue = Promise.resolve();
-const QUALITY_NOTICE_KEY = "betterchzzk:quality-update-notice";
-const QUALITY_NOTICE_MESSAGE = "betterchzzk:quality-update-notice";
-const QUALITY_NOTICE_VERSION = "1.3.7";
-let qualityNoticeQueue = Promise.resolve();
-let qualityNoticeClaimSeq = 0;
+const RETIRED_QUALITY_NOTICE_KEY = "betterchzzk:quality-update-notice";
 const adVideoRegistration = chrome.scripting?.getRegisteredContentScripts
     ? globalThis.BetterChzzkAdVideoRegistration.createController({
           scripting: chrome.scripting,
@@ -49,7 +45,12 @@ function clearLegacyUpdateNotice() {
     for (const [area, keys] of [
         [
             chrome.storage.local,
-            ["betterchzzkUpdateNotice", "betterchzzkUpdateReadVersion", "betterChzzkOptionsGroupOpen:popup-updates"],
+            [
+                "betterchzzkUpdateNotice",
+                "betterchzzkUpdateReadVersion",
+                "betterChzzkOptionsGroupOpen:popup-updates",
+                RETIRED_QUALITY_NOTICE_KEY,
+            ],
         ],
         [chrome.storage.sync, ["updateNotificationsEnabled", "gridBypassEnabled", "autoQualityDismissInstallGuide"]],
     ]) {
@@ -89,73 +90,6 @@ function storageLocalSet(value) {
             if (error) reject(error);
             else resolve();
         });
-    });
-}
-
-function enqueueQualityNotice(task) {
-    const pending = qualityNoticeQueue.then(task);
-    qualityNoticeQueue = pending.catch(() => {});
-    return pending;
-}
-
-function isBeforeQualityNoticeVersion(version) {
-    if (typeof version !== "string" || !/^\d+(?:\.\d+){2,3}$/.test(version)) return false;
-    const parts = version.split(".").map(Number);
-    const target = QUALITY_NOTICE_VERSION.split(".").map(Number);
-    for (let index = 0; index < 4; index++) {
-        const delta = (parts[index] || 0) - (target[index] || 0);
-        if (delta) return delta < 0;
-    }
-    return false;
-}
-
-async function prepareQualityUpdateNotice(details) {
-    if (
-        details?.reason !== "update" ||
-        chrome.runtime.getManifest().version !== QUALITY_NOTICE_VERSION ||
-        !isBeforeQualityNoticeVersion(details.previousVersion)
-    )
-        return;
-    await enqueueQualityNotice(async () => {
-        const data = await storageLocalGet([QUALITY_NOTICE_KEY]);
-        if (data[QUALITY_NOTICE_KEY]?.version === QUALITY_NOTICE_VERSION) return;
-        await storageLocalSet({ [QUALITY_NOTICE_KEY]: { version: QUALITY_NOTICE_VERSION, pending: true } });
-    });
-    if (!chrome.tabs?.query || !chrome.scripting?.executeScript) return;
-    const tabs = await chrome.tabs.query({ url: "https://chzzk.naver.com/*" });
-    await Promise.allSettled(
-        tabs
-            .filter((tab) => Number.isInteger(tab.id))
-            .map((tab) =>
-                chrome.scripting.executeScript({
-                    target: { tabId: tab.id },
-                    world: "ISOLATED",
-                    files: ["features/updateNotice.js"],
-                })
-            )
-    );
-}
-
-function handleQualityUpdateNotice(message, sender) {
-    if (sender?.id !== chrome.runtime.id || !Number.isInteger(sender.tab?.id) || sender.frameId !== 0)
-        return Promise.resolve({ show: false });
-    try {
-        if (new URL(sender.url).origin !== "https://chzzk.naver.com") return Promise.resolve({ show: false });
-    } catch (_) {
-        return Promise.resolve({ show: false });
-    }
-    return enqueueQualityNotice(async () => {
-        const data = await storageLocalGet([QUALITY_NOTICE_KEY]);
-        const notice = data[QUALITY_NOTICE_KEY];
-        if (notice?.version !== QUALITY_NOTICE_VERSION) return { show: false };
-        if (message.action === "release" && typeof message.token === "string" && message.token === notice.token) {
-            await storageLocalSet({ [QUALITY_NOTICE_KEY]: { version: QUALITY_NOTICE_VERSION, pending: true } });
-            return { show: false };
-        }
-        if (message.action !== "claim" || notice.pending !== true) return { show: false };
-        const token = `${Date.now()}:${++qualityNoticeClaimSeq}`;
-        await storageLocalSet({ [QUALITY_NOTICE_KEY]: { version: QUALITY_NOTICE_VERSION, pending: false, token } });
-        return { show: true, version: QUALITY_NOTICE_VERSION, token };
     });
 }
 
@@ -248,12 +182,10 @@ function enqueueWatchHistoryMutation(operation) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message?.type === QUALITY_NOTICE_MESSAGE) {
-        handleQualityUpdateNotice(message, sender).then(
-            (result) => sendResponse(result),
-            () => sendResponse({ show: false })
-        );
-        return true;
+    if (message?.type === RETIRED_QUALITY_NOTICE_KEY) {
+        // 새로고침하지 않은 이전 탭의 공지 요청도 표시·재예약하지 않는다.
+        sendResponse({ show: false });
+        return false;
     }
     if (message?.type === COMPRESSOR_STATE_MESSAGE) {
         handleCompressorState(message, sender).then(
@@ -299,12 +231,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
 });
 
-chrome.runtime.onInstalled.addListener((details) => {
+chrome.runtime.onInstalled.addListener(() => {
     reconcileAdVideoRegistration();
     clearLegacyUpdateNotice();
-    prepareQualityUpdateNotice(details).catch((error) =>
-        console.warn("[Better Chzzk] 방식 변경 안내 준비 실패", error)
-    );
     chrome.storage.sync.get(OPTION_KEYS, (data) => {
         if (getStorageLastError()) return;
 

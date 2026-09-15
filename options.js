@@ -21,6 +21,8 @@ const form = document.getElementById("optionsForm");
 const optionInputs = Array.from(document.querySelectorAll("[data-option]"));
 const dependencyGroups = Array.from(document.querySelectorAll("[data-depends-on]"));
 const resetButton = document.getElementById("reset");
+const shortcutResetButton = document.getElementById("resetPlaybackSpeedShortcuts");
+const playbackSpeedShortcutInputs = optionInputs.filter(isShortcutCodeInput);
 const saveButton = document.getElementById("save");
 const discardButton = document.getElementById("discardChanges");
 const headerMenu = document.getElementById("headerMenu");
@@ -138,6 +140,8 @@ function applyControlStates(options) {
         control.disabled = optionsUnavailable || isDisabledByDependency(control, options);
     }
     resetButton.disabled = optionsUnavailable || saveInFlight;
+    shortcutResetButton.disabled =
+        optionsUnavailable || saveInFlight || isDisabledByDependency(shortcutResetButton, options);
     saveButton.disabled = optionsUnavailable || saveInFlight || !savedOptions || areOptionsEqual(options, savedOptions);
     discardButton.disabled = optionsUnavailable || saveInFlight || countChangedOptions(options) === 0;
 }
@@ -410,6 +414,15 @@ form.addEventListener("change", (event) => {
 
 saveButton.addEventListener("click", saveCurrentOptions);
 
+shortcutResetButton.addEventListener("click", () => {
+    if (optionsLoadState !== "ready" || saveInFlight || shortcutResetButton.disabled) return;
+    for (const input of playbackSpeedShortcutInputs) {
+        setInputValue(input, DEFAULT_OPTIONS[input.dataset.option]);
+    }
+    hideMessage();
+    renderFormChanges();
+});
+
 discardButton.addEventListener("click", () => {
     if (optionsLoadState !== "ready" || saveInFlight || !savedOptions) return;
     const hadFocus = document.activeElement === discardButton;
@@ -545,6 +558,26 @@ tabBar?.addEventListener("keydown", (event) => {
     clearSearch();
     activateTab(nextIndex, { focus: true, align: true });
 });
+
+tabBar?.addEventListener(
+    "wheel",
+    (event) => {
+        if (event.ctrlKey || event.metaKey || event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+        const maxScroll = tabBar.scrollWidth - tabBar.clientWidth;
+        if (maxScroll <= 0 || !event.deltaY) return;
+        const step =
+            event.deltaMode === 1
+                ? parseFloat(getComputedStyle(tabBar).lineHeight) || 16
+                : event.deltaMode === 2
+                  ? tabBar.clientWidth
+                  : 1;
+        const next = Math.max(0, Math.min(maxScroll, tabBar.scrollLeft + event.deltaY * step));
+        if (next === tabBar.scrollLeft) return;
+        event.preventDefault();
+        tabBar.scrollLeft = next;
+    },
+    { passive: false }
+);
 
 if (tabButtons.length) activateTab(readStoredTabIndex());
 

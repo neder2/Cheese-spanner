@@ -37,6 +37,7 @@
     const TOOLTIP_ATTR = "data-bcfp-tooltip";
     const ACTIVE_ATTR = "data-bcfp-active";
     const HOVER_BRIDGE_ATTR = "data-bcfp-hover-bridge";
+    const MULTIVIEW_LAYER_EVENT = "betterchzzk:multiview-layer-change";
     const COLLAPSED_SOURCE_ROW_ATTR = "data-bcsf-source-row";
     const LIVE_LINK_SELECTOR = "a[href*='/live/']";
     const MAIN_CONTENT_SELECTOR = "main, [role='main'], #layout-body";
@@ -143,9 +144,13 @@
   box-sizing:border-box;
 }
 #${TOOLTIP_ID}[data-show="1"]{display:block;}
+#${TOOLTIP_ID}[popover],[${HOVER_BRIDGE_ATTR}][popover]{inset:auto;margin:0;padding:0;max-height:none;}
+#${TOOLTIP_ID}::backdrop,[${HOVER_BRIDGE_ATTR}]::backdrop{background:transparent;pointer-events:none;}
 [${HOVER_BRIDGE_ATTR}="1"]{
   position:fixed;
   background:transparent;
+  border:0;
+  box-sizing:border-box;
   pointer-events:auto;
   z-index:2147483647;
 }
@@ -1081,8 +1086,36 @@ html.theme_dark [${ACTIVE_ATTR}="1"]{
     }
 
     function clearHoverBridge() {
+        setPreviewLayer(hoverBridge, false);
         hoverBridge?.remove();
         hoverBridge = null;
+    }
+
+    function setPreviewLayer(node, raised, refresh = false) {
+        if (!node) return;
+        try {
+            if (raised && node.isConnected && typeof node.togglePopover === "function") {
+                if (refresh && node.hasAttribute("popover")) node.hidePopover();
+                node.setAttribute("popover", "manual");
+                node.togglePopover(true);
+                return;
+            }
+            if (node.hasAttribute("popover")) node.hidePopover?.();
+        } catch {
+            // Detached preview nodes must still release their layer attributes during cleanup.
+        }
+        node.removeAttribute("popover");
+    }
+
+    function syncPreviewLayer(refresh = false) {
+        const raised = Boolean(tooltip?.hasAttribute("data-show") && document.querySelector("[data-bcmv-viewport]"));
+        setPreviewLayer(hoverBridge, raised, refresh);
+        setPreviewLayer(tooltip, raised, refresh);
+    }
+
+    function handleMultiviewLayerChange() {
+        if (activeInfo && !activeInfo.item?.isConnected) hidePreview();
+        else syncPreviewLayer(true);
     }
 
     function syncHoverBridge(anchorRect, tipRect) {
@@ -1780,6 +1813,7 @@ html.theme_dark [${ACTIVE_ATTR}="1"]{
             right: left + width,
             top,
         });
+        syncPreviewLayer();
     }
 
     function clearOpenTimer() {
@@ -1868,6 +1902,7 @@ html.theme_dark [${ACTIVE_ATTR}="1"]{
         if (tooltip) {
             clearSoundFeedback(tooltip);
             tooltip.removeAttribute("data-show");
+            setPreviewLayer(tooltip, false);
             tooltip.removeAttribute("data-state");
             delete tooltip.dataset.channelId;
             tooltip.replaceChildren();
@@ -2366,6 +2401,7 @@ html.theme_dark [${ACTIVE_ATTR}="1"]{
         document.addEventListener("playing", handlePreviewPlaying, true);
         window.addEventListener("scroll", handleViewportChange, true);
         window.addEventListener("resize", handleViewportChange);
+        document.addEventListener(MULTIVIEW_LAYER_EVENT, handleMultiviewLayerChange);
         removePageChangeDetection = startPageChangeDetection(handlePageChange);
     }
 
@@ -2382,6 +2418,7 @@ html.theme_dark [${ACTIVE_ATTR}="1"]{
         document.removeEventListener("playing", handlePreviewPlaying, true);
         window.removeEventListener("scroll", handleViewportChange, true);
         window.removeEventListener("resize", handleViewportChange);
+        document.removeEventListener(MULTIVIEW_LAYER_EVENT, handleMultiviewLayerChange);
 
         if (removePageChangeDetection) {
             removePageChangeDetection();

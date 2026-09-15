@@ -21,6 +21,5 @@ export default {
         "eslint.config.js",
         ".prettierrc.json",
         "web-ext-config.mjs",
-        ".claude/**",
     ],
 };

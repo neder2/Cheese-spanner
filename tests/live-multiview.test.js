@@ -24,6 +24,19 @@ function setup(t, { local = {}, savedSession, readFailure = false, writeFailure 
         writes = [],
         requests = [],
         instances = [];
+    // jsdom has no top layer. Model the API's connected/manual state here;
+    // clipping, stacking and hit testing are checked separately in Chrome.
+    const popovers = new Set();
+    w.HTMLElement.prototype.togglePopover = function (force) {
+        if (!this.isConnected || this.getAttribute("popover") !== "manual") throw new Error("Invalid popover");
+        const open = force ?? !popovers.has(this);
+        if (open) popovers.add(this);
+        else popovers.delete(this);
+        return open;
+    };
+    w.HTMLElement.prototype.hidePopover = function () {
+        popovers.delete(this);
+    };
     const qualityHandlers = new WeakMap();
     const addListener = w.EventTarget.prototype.addEventListener;
     w.EventTarget.prototype.addEventListener = function (type, handler, options) {
@@ -291,6 +304,7 @@ function setup(t, { local = {}, savedSession, readFailure = false, writeFailure 
         resolve: () => pendingResolve?.(),
         emitStorage: (id, value) => listeners.forEach((fn) => fn({ [key(id)]: { newValue: value } }, "local")),
         storageListenerCount: () => listeners.size,
+        popovers,
     };
 }
 
@@ -2697,6 +2711,559 @@ test("right click cancels main and secondary drags without muting or saving the 
     assert.equal(context(main, true), true, "disabling the feature removes the cancellation listener");
 });
 
+function freeWindowControls(
+    h,
+    { left = 0, top = 0, width = 900, height = 506.25, viewportWidth = 900, viewportHeight = 506.25 } = {}
+) {
+    const d = h.w.document;
+    const host = d.querySelector("[data-bcmv-host]");
+    Object.defineProperties(h.w, {
+        innerWidth: { configurable: true, value: viewportWidth },
+        innerHeight: { configurable: true, value: viewportHeight },
+    });
+    const bounds = { left, top, right: left + width, bottom: top + height, width, height };
+    host.getBoundingClientRect = () =>
+        host.hasAttribute("data-bcmv-viewport")
+            ? {
+                  left: 0,
+                  top: 0,
+                  right: h.w.innerWidth,
+                  bottom: h.w.innerHeight,
+                  width: h.w.innerWidth,
+                  height: h.w.innerHeight,
+              }
+            : bounds;
+    d.querySelector(".bcmv-grid").getBoundingClientRect = host.getBoundingClientRect;
+    const cell = (id) => d.querySelector(`[data-bcmv-channel="${id}"]`);
+    const video = (id) => (id === A ? d.querySelector(".webplayer-internal-video") : cell(id).querySelector("video"));
+    for (const element of d.querySelectorAll("video")) {
+        Object.defineProperties(element, {
+            videoWidth: { configurable: true, value: 1920 },
+            videoHeight: { configurable: true, value: 1080 },
+        });
+        element.dispatchEvent(new h.w.Event("resize"));
+    }
+    const pointer = (target, type, x, y, pointerId = 1) => {
+        const event = new h.w.MouseEvent(type, { button: 0, bubbles: true, cancelable: true, clientX: x, clientY: y });
+        Object.defineProperty(event, "pointerId", { value: pointerId });
+        target.dispatchEvent(event);
+        return event;
+    };
+    const rect = (id) => ["left", "top", "width", "height"].map((name) => parseFloat(cell(id).style[name]) / 100);
+    const saved = () => JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"));
+    const toggle = () => {
+        if (d.querySelector(".bcmv-panel").hidden) h.click("controls");
+        h.click("free-layout");
+    };
+    return { d, host, bounds, cell, video, pointer, rect, saved, toggle };
+}
+
+test("free layout switch preserves dock layout and playback while independent windows move, overlap and restore", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    await h.add(C);
+    const f = freeWindowControls(h);
+    const initial = [A, B, C].map(f.rect),
+        dock = f.saved().dockTree;
+    const videos = [A, B, C].map(f.video),
+        requests = h.requests.length,
+        players = h.instances.length;
+    assert.equal(f.saved().freeLayoutEnabled, false);
+    f.toggle();
+    const toggle = f.d.querySelector('[role="switch"][aria-label="자유 배치"]');
+    assert.equal(toggle.getAttribute("aria-checked"), "true");
+    assert.equal(f.d.activeElement, toggle);
+    assert.equal(f.d.querySelectorAll(".bcmv-separator").length, 0);
+    assert.equal(f.d.querySelectorAll(".bcmv-corner").length, 12);
+    assert.deepEqual([A, B, C].map(f.rect), initial);
+    f.pointer(f.video(B), "pointerdown", 750, 80);
+    const before = f.saved().freeWindows;
+    f.pointer(h.w, "pointermove", 300, 220);
+    assert.deepEqual(f.saved().freeWindows, before, "moving previews must not be saved");
+    assert.deepEqual(f.rect(A), initial[0]);
+    assert.deepEqual(f.rect(C), initial[2]);
+    assert.ok(f.rect(B)[0] < initial[0][2], "windows may overlap the main without docking");
+    f.pointer(h.w, "pointerup", 300, 220);
+    const moved = f.rect(B),
+        windows = f.saved().freeWindows;
+    assert.deepEqual(f.saved().dockTree, dock);
+    assert.equal(f.saved().freeWindows.at(-1).id, B);
+    f.toggle();
+    assert.equal(f.host.hasAttribute("data-bcmv-free"), false);
+    assert.deepEqual([A, B, C].map(f.rect), initial);
+    f.toggle();
+    assert.deepEqual(f.rect(B), moved);
+    assert.deepEqual(f.saved().freeWindows, windows);
+    assert.deepEqual([A, B, C].map(f.video), videos);
+    assert.equal(h.requests.length, requests);
+    assert.equal(h.instances.length, players);
+    const restored = setup(t, { savedSession: f.saved() });
+    await tick();
+    const next = freeWindowControls(restored);
+    assert.equal(next.saved().freeLayoutEnabled, true);
+    assert.deepEqual(next.rect(B), moved);
+});
+
+test("resetting enlarged free windows restores player-sized geometry immediately and keeps it through redraw and restore", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    await h.add(C);
+    const bounds = { left: 240, top: 60, viewportWidth: 1600, viewportHeight: 1000 };
+    const f = freeWindowControls(h, bounds);
+    const ids = [A, B, C],
+        dockRects = ids.map(f.rect),
+        videos = ids.map(f.video),
+        requests = h.requests.length,
+        players = h.instances.length;
+    f.toggle();
+    const initial = ids.map(f.rect);
+    for (const [index, id] of ids.entries()) {
+        const [left, top, width, height] = f.rect(id);
+        const x = (left + width) * bounds.viewportWidth,
+            y = (top + height) * bounds.viewportHeight;
+        f.pointer(f.cell(id).querySelector('[data-corner="se"]'), "pointerdown", x, y);
+        f.pointer(h.w, "pointermove", x + 160, y + 90);
+        f.pointer(h.w, "pointerup", x + 160, y + 90);
+        assert.ok(f.rect(id)[2] > initial[index][2], "each window is enlarged before resetting");
+    }
+    const audio = videos.map((video) => ({ volume: video.volume, muted: video.muted }));
+    const assertRects = (controls, expected, message) => {
+        for (const [index, id] of ids.entries())
+            assert.ok(
+                controls.rect(id).every((value, axis) => Math.abs(value - expected[index][axis]) < 1e-8),
+                `${id[0]} ${message}: ${controls.rect(id)} instead of ${expected[index]}`
+            );
+    };
+    h.click("controls");
+    h.click("reset-layout");
+    assertRects(f, initial, "reset applies the final position and size before any later event");
+    assert.equal(f.saved().freeLayoutEnabled, true);
+    assert.equal(f.d.activeElement.dataset.action, "reset-layout");
+    for (const [index, id] of ids.entries()) {
+        const saved = f.saved().freeWindows.find((entry) => entry.id === id).rect;
+        assert.ok(saved.every((value, axis) => Math.abs(value - initial[index][axis]) < 1e-8));
+        f.video(id).dispatchEvent(new h.w.Event("resize"));
+    }
+    assertRects(f, initial, "a later video resize cannot shrink or move the reset windows again");
+    f.toggle();
+    assertRects(f, dockRects, "disabling free mode restores the default split layout");
+    f.toggle();
+    assertRects(f, initial, "reenabling free mode restores the reset windows");
+    assert.deepEqual(ids.map(f.video), videos);
+    assert.deepEqual(
+        videos.map((video) => ({ volume: video.volume, muted: video.muted })),
+        audio
+    );
+    assert.equal(h.requests.length, requests);
+    assert.equal(h.instances.length, players);
+    const restored = setup(t, { savedSession: f.saved() });
+    await tick();
+    assertRects(freeWindowControls(restored, bounds), initial, "a refreshed tab keeps the reset geometry");
+});
+
+test("free window corners resize one video within bounds, keep aspect and allow keyboard moves", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    const f = freeWindowControls(h);
+    f.toggle();
+    const main = f.rect(A);
+    f.pointer(f.cell(B).querySelector('[data-corner="sw"]'), "pointerdown", 600, 168.75);
+    const before = f.saved().freeWindows;
+    f.pointer(h.w, "pointermove", 450, 253.125);
+    assert.deepEqual(f.saved().freeWindows, before);
+    assert.ok(f.rect(B)[2] > 1 / 3);
+    assert.deepEqual(f.rect(A), main);
+    f.pointer(h.w, "pointerup", 450, 253.125);
+    const [x, y, w, height] = f.rect(B);
+    assert.ok(Math.abs((w * f.bounds.width) / (height * f.bounds.height) - 16 / 9) < 1e-8);
+    assert.ok(x >= 0 && y >= 0 && x + w <= 1 && y + height <= 1);
+    f.cell(A).focus();
+    assert.ok(Number(f.host.style.getPropertyValue("--bcmv-main-layer")) > Number(f.cell(B).style.zIndex));
+    const key = (target, name) =>
+        target.dispatchEvent(new h.w.KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true }));
+    key(f.cell(A), "ArrowRight");
+    assert.ok(f.rect(A)[0] > main[0]);
+    const width = f.rect(A)[2];
+    key(f.cell(A).querySelector('[data-corner="se"]'), "ArrowLeft");
+    assert.ok(f.rect(A)[2] < width);
+    f.pointer(f.video(B), "pointerdown", 700, 100);
+    f.pointer(h.w, "pointermove", 9000, -9000);
+    f.pointer(h.w, "pointerup", 9000, -9000);
+    assert.ok(Math.abs(f.rect(B)[0] + f.rect(B)[2] - 1) < 1e-8);
+    assert.equal(f.rect(B)[1], 0);
+    for (const corner of ["nw", "ne", "sw", "se"]) {
+        const resized = h.w.BetterChzzk.multiviewModel.resizeWindow([0.2, 0.2, 0.3, 0.3], corner, -20, 20, f.bounds);
+        assert.ok(resized.every(Number.isFinite));
+        assert.ok(
+            resized[0] >= 0 &&
+                resized[1] >= 0 &&
+                resized[0] + resized[2] <= 1 + 1e-8 &&
+                resized[1] + resized[3] <= 1 + 1e-8
+        );
+        assert.ok(Math.abs(resized[2] / resized[3] - 1) < 1e-8);
+    }
+});
+
+test("free window previews cancel on Escape, right click, pointer loss, blur and disabling without saving geometry", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    const f = freeWindowControls(h);
+    f.toggle();
+    for (const kind of ["move", "resize"]) {
+        for (const cancel of ["Escape", "contextmenu", "pointercancel", "lostpointercapture", "blur", "hidden"]) {
+            const origin = kind === "move" ? f.video(B) : f.cell(B).querySelector('[data-corner="sw"]');
+            f.pointer(origin, "pointerdown", 600, 168.75);
+            const before = f.saved().freeWindows,
+                rect = f.rect(B),
+                muted = f.video(B).muted;
+            f.pointer(h.w, "pointermove", 480, 235);
+            if (cancel === "Escape")
+                origin.dispatchEvent(
+                    new h.w.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })
+                );
+            else if (cancel === "contextmenu")
+                origin.dispatchEvent(new h.w.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+            else if (cancel === "pointercancel") f.pointer(h.w, cancel, 480, 235);
+            else if (cancel === "lostpointercapture")
+                f.pointer(f.d.querySelector(".bcmv-grid").parentElement, cancel, 480, 235);
+            else if (cancel === "hidden") {
+                Object.defineProperty(f.d, "hidden", { configurable: true, value: true });
+                f.d.dispatchEvent(new h.w.Event("visibilitychange"));
+                Object.defineProperty(f.d, "hidden", { configurable: true, value: false });
+            } else h.w.dispatchEvent(new h.w.Event("blur"));
+            f.pointer(h.w, "pointerup", 480, 235);
+            assert.deepEqual(f.rect(B), rect, `${kind} ${cancel} restores the starting box`);
+            assert.deepEqual(f.saved().freeWindows, before);
+            assert.equal(f.video(B).muted, muted);
+        }
+    }
+    f.pointer(f.video(B), "pointerdown", 650, 80);
+    const before = f.saved().freeWindows;
+    f.pointer(h.w, "pointermove", 500, 250);
+    f.toggle();
+    f.pointer(h.w, "pointerup", 500, 250);
+    assert.deepEqual(f.saved().freeWindows, before);
+    assert.equal(f.saved().freeLayoutEnabled, false);
+    f.toggle();
+    f.pointer(f.video(B), "pointerdown", 650, 80);
+    f.pointer(h.w, "pointermove", 500, 250);
+    h.configure(false);
+    f.pointer(h.w, "pointerup", 500, 250);
+    assert.equal(f.d.querySelector("[data-bcmv-free]"), null);
+    assert.equal(f.host.style.getPropertyValue("--bcmv-main-layer"), "");
+    assert.deepEqual(f.saved().freeWindows, before);
+});
+
+test("free windows retain positions through stream addition, removal, remount and main promotion", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    const f = freeWindowControls(h);
+    f.toggle();
+    f.pointer(f.video(B), "pointerdown", 700, 80);
+    f.pointer(h.w, "pointermove", 500, 220);
+    f.pointer(h.w, "pointerup", 500, 220);
+    const moved = f.rect(B),
+        main = f.rect(A),
+        original = f.video(B);
+    await h.add(C);
+    assert.deepEqual(f.rect(B), moved);
+    assert.equal(f.video(B), original);
+    h.click("remove", C);
+    assert.deepEqual(f.rect(B), moved);
+    assert.equal(
+        f.saved().freeWindows.some((entry) => entry.id === C),
+        false
+    );
+    const native = f.d.querySelector(".chzzk_player"),
+        replacement = native.cloneNode(true);
+    native.replaceWith(replacement);
+    await tick();
+    assert.deepEqual(f.rect(B), moved);
+    assert.equal(f.video(B), original);
+    h.navigate(B);
+    await tick();
+    const promoted = f.saved();
+    assert.equal(promoted.freeLayoutEnabled, true);
+    for (const [id, expected] of [
+        [B, main],
+        [A, moved],
+    ]) {
+        const actual = promoted.freeWindows.find((entry) => entry.id === id).rect;
+        assert.ok(actual.every((value, axis) => Math.abs(value - expected[axis]) < 1e-8));
+    }
+});
+
+test("free mode list moves retain window geometry and transfer sound to the new occupants", async (t) => {
+    const D = "d".repeat(32);
+    const h = setup(t);
+    await h.start();
+    for (const id of [B, C, D]) await h.add(id);
+    const f = freeWindowControls(h);
+    f.toggle();
+    const g = panelGestures(h);
+    const ids = g.order().slice(1);
+    ids.forEach((id, index) => {
+        f.video(id).volume = (index + 1) / 10;
+    });
+    const boxes = ids.map(f.rect),
+        dock = f.saved().dockTree;
+    g.start(ids[2]);
+    f.video(ids[0]).muted = !f.video(ids[0]).muted;
+    g.pointer("pointermove", ids[0]);
+    g.pointer("pointerup", ids[0]);
+    const next = g.order().slice(1);
+    assert.deepEqual(next, [ids[2], ids[0], ids[1]]);
+    assert.deepEqual(next.map(f.rect), boxes);
+    assert.deepEqual(
+        next.map((id) => f.video(id).volume),
+        [0.1, 0.2, 0.3]
+    );
+    assert.deepEqual(f.saved().dockTree, dock);
+});
+
+test("free windows leave the player for the sidebar and chat without moving the native DOM", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    const f = freeWindowControls(h, { left: 240, top: 60, viewportWidth: 1600, viewportHeight: 1000 });
+    const native = f.d.querySelector(".chzzk_player"),
+        parent = native.parentElement;
+    const before = [A, B].map(f.rect),
+        dock = f.saved().dockTree;
+    const videos = [A, B].map(f.video),
+        requests = h.requests.length;
+    parent.style.overflow = "hidden";
+    parent.parentElement.style.transform = "translateX(0px)";
+    f.toggle();
+    assert.equal(f.saved().freeWindowSpace, "viewport");
+    assert.equal(h.popovers.has(parent), true);
+    assert.equal(h.popovers.has(f.d.querySelector(".bcmv-panel")), true);
+    const source = f.rect(B);
+    assert.ok(Math.abs(source[0] * 1600 - (240 + before[1][0] * 900)) < 1e-8);
+    assert.ok(Math.abs(source[1] * 1000 - (60 + before[1][1] * 506.25)) < 1e-8);
+    f.pointer(f.video(B), "pointerdown", 990, 150);
+    f.pointer(h.w, "pointermove", 1450, 300);
+    f.pointer(h.w, "pointerup", 1450, 300);
+    assert.ok(f.rect(B)[0] * 1600 > f.bounds.right, "the secondary reaches the chat beyond the player");
+    f.pointer(f.video(A), "pointerdown", 400, 200);
+    f.pointer(h.w, "pointermove", 20, 300);
+    f.pointer(h.w, "pointerup", 20, 300);
+    assert.equal(f.rect(A)[0], 0, "the native main can reach the sidebar");
+    assert.equal(native.parentElement, parent);
+    assert.equal(parent.style.overflow, "hidden", "do not rewrite the site's clipping rules");
+    assert.equal(parent.parentElement.style.transform, "translateX(0px)");
+    assert.deepEqual([A, B].map(f.video), videos);
+    assert.equal(h.requests.length, requests);
+    const windows = f.saved().freeWindows;
+    f.toggle();
+    assert.equal(h.popovers.has(parent), false);
+    assert.equal(parent.hasAttribute("popover"), false);
+    assert.equal(parent.hasAttribute("data-bcmv-viewport"), false);
+    assert.deepEqual(f.saved().dockTree, dock);
+    assert.deepEqual([A, B].map(f.rect), before);
+    f.toggle();
+    assert.deepEqual(f.saved().freeWindows, windows);
+});
+
+test("viewport free layout migrates old player coordinates once and preserves them across fullscreen and resize", async (t) => {
+    const savedSession = {
+        version: 1,
+        active: true,
+        freeLayoutEnabled: true,
+        channels: [A, B].map((id) => ({ id })),
+        freeWindows: [
+            { id: A, rect: [0, 0, 0.5, 0.5] },
+            { id: B, rect: [0.6, 0.6, 0.3, 0.3] },
+        ],
+    };
+    const h = setup(t, { savedSession });
+    await tick();
+    const f = freeWindowControls(h, { left: 240, top: 60, viewportWidth: 1600, viewportHeight: 1000 });
+    const migrated = f.saved();
+    assert.equal(migrated.freeWindowSpace, "viewport");
+    assert.ok(Math.abs(migrated.freeWindows[0].rect[0] - 240 / 1600) < 1e-8);
+    assert.ok(Math.abs(migrated.freeWindows[1].rect[0] - 780 / 1600) < 1e-8);
+    h.click("controls");
+    let fullscreen = f.d.querySelector(".pzp-pc");
+    Object.defineProperty(f.d, "fullscreenElement", { configurable: true, get: () => fullscreen });
+    f.d.dispatchEvent(new h.w.Event("fullscreenchange"));
+    assert.equal(h.popovers.size, 0);
+    assert.equal(f.d.querySelector(".bcmv-panel").hidden, true);
+    assert.equal(f.host.hasAttribute("data-bcmv-viewport"), false);
+    assert.equal(f.saved().freeLayoutEnabled, true);
+    assert.deepEqual(f.saved().freeWindows, migrated.freeWindows);
+    fullscreen = null;
+    f.d.dispatchEvent(new h.w.Event("fullscreenchange"));
+    assert.equal(h.popovers.has(f.host), true);
+    assert.deepEqual(f.saved().freeWindows, migrated.freeWindows);
+    Object.defineProperties(h.w, {
+        innerWidth: { configurable: true, value: 800 },
+        innerHeight: { configurable: true, value: 600 },
+    });
+    h.w.dispatchEvent(new h.w.Event("resize"));
+    for (const id of [A, B]) {
+        const [x, y, width, height] = f.rect(id);
+        assert.ok(x >= 0 && y >= 0 && x + width <= 1 + 1e-8 && y + height <= 1 + 1e-8);
+    }
+    assert.deepEqual(
+        f.saved().freeWindows,
+        migrated.freeWindows,
+        "viewport changes must not overwrite the saved layout"
+    );
+    h.configure(false);
+    assert.equal(h.popovers.size, 0);
+    assert.equal(f.host.hasAttribute("popover"), false);
+    const next = setup(t, { savedSession: migrated });
+    await tick();
+    const restored = freeWindowControls(next, { left: 240, top: 60, viewportWidth: 1600, viewportHeight: 1000 });
+    assert.deepEqual(
+        restored.saved().freeWindows,
+        migrated.freeWindows,
+        "viewport coordinates are never migrated twice"
+    );
+});
+
+test("a failed page layer leaves playback intact and reports that free layout could not open", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    const f = freeWindowControls(h),
+        video = f.video(B),
+        requests = h.requests.length;
+    for (const togglePopover of [
+        undefined,
+        () => false,
+        () => {
+            throw new Error("closed");
+        },
+    ]) {
+        f.host.togglePopover = togglePopover;
+        f.toggle();
+        assert.equal(f.saved().freeLayoutEnabled, false);
+        assert.equal(f.host.hasAttribute("popover"), false);
+        assert.equal(f.host.hasAttribute("data-bcmv-viewport"), false);
+        assert.equal(f.video(B), video);
+        assert.equal(h.requests.length, requests);
+        assert.match(f.d.querySelector(".bcmv-panel").textContent, /자유 배치를.*(못했|없어요)/);
+    }
+});
+
+test("following preview and its hover bridge stay above free windows through layer changes without restarting playback", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    const f = freeWindowControls(h, { left: 240, top: 60, viewportWidth: 1600, viewportHeight: 1000 });
+    const D = "d".repeat(32);
+    f.d.getElementById("sidebar").innerHTML =
+        `<nav><section id="following"><strong>팔로잉 채널</strong><ul>` +
+        `<li class="following_item" data-bcsf-source-row="1"><a href="/live/${D}">` +
+        `<span class="name_text">미리보기 채널</span><span class="live_title">미리보기 방송</span>` +
+        `</a></li></ul></section></nav>`;
+    const link = f.d.querySelector("#following a"),
+        item = link.closest("li");
+    item.getBoundingClientRect = () => ({ left: 12, top: 80, right: 196, bottom: 132, width: 184, height: 52 });
+    link.getBoundingClientRect = item.getBoundingClientRect;
+    h.w.chrome.runtime.getURL = (path) => `chrome-extension://fixture/${path}`;
+    const fetchJson = h.w.BetterChzzk.utils.fetchJson;
+    const requests = [];
+    h.w.BetterChzzk.utils.fetchJson = (url, options) => {
+        if (!url.includes(`/channels/${D}/`) && !url.includes("/auto-play-info")) return fetchJson(url, options);
+        requests.push(url);
+        return Promise.resolve({
+            content: {
+                status: "OPEN",
+                liveId: 123,
+                liveTitle: "미리보기 방송",
+                channel: { channelId: D, channelName: "미리보기 채널" },
+                livePlaybackJson: JSON.stringify({
+                    media: [{ mediaId: "LLHLS", path: "https://nvelop-livecloud.pstatic.net/preview.m3u8" }],
+                }),
+            },
+        });
+    };
+    h.evalFile("features/followingPreviewTooltip.js");
+    h.setOptions({ followingPreviewTooltipEnabled: true });
+    link.dispatchEvent(new h.w.Event("pointerover", { bubbles: true }));
+    await waitForCondition(() => {
+        const video = f.d.querySelector("#betterchzzk-following-preview video.bcfp-player");
+        return video && h.instances.some((instance) => instance.video === video);
+    });
+    const tip = f.d.getElementById("betterchzzk-following-preview"),
+        bridge = f.d.querySelector("[data-bcfp-hover-bridge]"),
+        video = tip.querySelector("video"),
+        previewPlayer = h.instances.find((instance) => instance.video === video),
+        calls = requests.length;
+    assert.ok(bridge);
+    assert.ok(previewPlayer);
+    assert.equal(tip.hasAttribute("popover"), false, "ordinary following previews keep their existing layer");
+    const aboveFreeWindows = () => {
+        const layers = [...h.popovers];
+        assert.equal(tip.getAttribute("popover"), "manual");
+        assert.equal(bridge.getAttribute("popover"), "manual");
+        assert.ok(layers.indexOf(bridge) > layers.indexOf(f.host), "the pointer corridor is above free windows");
+        assert.ok(layers.indexOf(tip) > layers.indexOf(bridge), "the preview is above its corridor");
+        assert.equal(tip.querySelector("video"), video);
+        assert.equal(previewPlayer.destroyed, undefined);
+        assert.equal(requests.length, calls, "layer changes do not refetch preview metadata");
+    };
+    f.toggle();
+    aboveFreeWindows();
+    f.toggle();
+    assert.equal(tip.hasAttribute("popover"), false);
+    assert.equal(bridge.hasAttribute("popover"), false);
+    assert.equal(h.popovers.has(tip), false);
+    assert.equal(h.popovers.has(bridge), false);
+    assert.equal(tip.getAttribute("data-show"), "1");
+    f.toggle();
+    aboveFreeWindows();
+    const native = f.d.querySelector(".chzzk_player");
+    native.replaceWith(native.cloneNode(true));
+    await tick();
+    aboveFreeWindows();
+    link.dispatchEvent(new h.w.MouseEvent("pointerout", { bubbles: true, relatedTarget: bridge }));
+    bridge.dispatchEvent(new h.w.MouseEvent("pointerout", { bubbles: true, relatedTarget: tip }));
+    assert.equal(tip.getAttribute("data-show"), "1");
+    tip.dispatchEvent(new h.w.MouseEvent("pointerleave", { relatedTarget: f.d.body }));
+    assert.equal(h.popovers.has(tip), false);
+    assert.equal(h.popovers.has(bridge), false);
+    assert.equal(previewPlayer.destroyed, true);
+    link.dispatchEvent(new h.w.Event("pointerover", { bubbles: true }));
+    assert.equal(h.popovers.has(tip), true, "reopening in free mode raises the preview immediately");
+    const nextBridge = f.d.querySelector("[data-bcfp-hover-bridge]");
+    h.setOptions({ followingPreviewTooltipEnabled: false });
+    assert.equal(f.d.getElementById("betterchzzk-following-preview"), null);
+    assert.equal(h.popovers.has(tip), false);
+    assert.equal(h.popovers.has(nextBridge), false);
+});
+
+test("free layout ignores malformed session geometry and remains opt-in for existing tabs", (t) => {
+    const h = setup(t),
+        model = h.w.BetterChzzk.multiviewModel;
+    const base = { version: 1, channels: [A, B].map((id) => ({ id })) };
+    assert.equal(model.session(base).freeLayoutEnabled, false);
+    const state = model.session({
+        ...base,
+        freeLayoutEnabled: true,
+        freeWindows: [
+            { id: A, rect: [0.1, 0.2, 0.4, 0.4] },
+            { id: A, rect: [0, 0, 1, 1] },
+            { id: B, rect: [0, 0, Infinity, 1] },
+            { id: C, rect: [0, 0, 1, 1] },
+            { id: B, rect: [0.8, 0, 0.8, 1] },
+            { id: B, rect: [0, 0, -1, 0.1] },
+        ],
+    });
+    assert.equal(state.freeWindows.length, 1);
+    assert.equal(model.layout(state).cells.length, 2);
+    assert.equal(model.layout(state).handles.length, 0);
+    assert.deepEqual(Array.from(state.freeWindows[0].rect), [0.1, 0.2, 0.4, 0.4]);
+});
+
 test("invalid or old session positions default to centered without invalidating the layout", (t) => {
     const m = setup(t).w.BetterChzzk.multiviewModel;
     for (const position of [undefined, null, [NaN, Infinity], [-0.1, 1.1], ["0", "1"]]) {
@@ -2844,13 +3411,13 @@ function linkTransfer(h, value, { type = "text/uri-list", files = false } = {}) 
     };
     return {
         data,
-        send(eventType, target, relatedTarget = null) {
+        send(eventType, target, relatedTarget = null, { x = 100, y = 100 } = {}) {
             data.readable = eventType === "drop";
             const event = new h.w.MouseEvent(eventType, {
                 bubbles: true,
                 cancelable: true,
-                clientX: 100,
-                clientY: 100,
+                clientX: x,
+                clientY: y,
                 relatedTarget,
             });
             Object.defineProperty(event, "dataTransfer", { value: data });
@@ -2859,6 +3426,148 @@ function linkTransfer(h, value, { type = "text/uri-list", files = false } = {}) 
         },
     };
 }
+
+test("free layout URL drag previews a default secondary at the pointer and drops outside existing windows", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    const f = freeWindowControls(h, { left: 240, top: 60, viewportWidth: 1600, viewportHeight: 1000 });
+    f.toggle();
+    f.pointer(f.cell(B).querySelector('[data-corner="se"]'), "pointerdown", 1140, 228.75);
+    f.pointer(h.w, "pointermove", 1320, 330);
+    f.pointer(h.w, "pointerup", 1320, 330);
+    const before = f.saved(),
+        boxes = [A, B].map(f.rect),
+        videos = [A, B].map(f.video),
+        requests = h.requests.length,
+        instances = h.instances.length;
+    const link = f.d.createElement("a");
+    link.href = `https://chzzk.naver.com/live/${C}`;
+    f.d.getElementById("sidebar").append(link);
+    const transfer = linkTransfer(h, link.href);
+    transfer.send("dragstart", link);
+    assert.equal(transfer.send("dragenter", f.d.body, null, { x: 800, y: 720 }).defaultPrevented, true);
+    const hint = f.d.querySelector(".bcmv-add-drop");
+    assert.ok(hint);
+    const hintRect = () => ["left", "top", "width", "height"].map((name) => parseFloat(hint.style[name]) / 100);
+    const assertRect = (actual, expected) =>
+        assert.ok(
+            actual.every((value, axis) => Math.abs(value - expected[axis]) < 1e-8),
+            `${actual} != ${expected}`
+        );
+    assertRect(hintRect(), [650 / 1600, 635.625 / 1000, 300 / 1600, 168.75 / 1000]);
+    assert.equal(transfer.data.reads, 0);
+    assert.equal(transfer.data.dropEffect, "copy");
+    transfer.send("dragleave", f.d.body, f.d.getElementById("aside-chatting"));
+    transfer.send("dragover", f.d.getElementById("aside-chatting"), null, { x: 1420, y: 350 });
+    assert.equal(f.d.querySelector(".bcmv-add-drop"), hint, "pointer moves reuse one preview");
+    const target = [1270 / 1600, 265.625 / 1000, 300 / 1600, 168.75 / 1000];
+    assertRect(hintRect(), target);
+    assert.deepEqual(f.saved(), before, "preview does not save or rearrange the current windows");
+    assert.equal(h.requests.length, requests, "preview never starts playback or a metadata request");
+    assert.equal(h.instances.length, instances);
+    transfer.send("drop", f.d.getElementById("aside-chatting"), null, { x: 1420, y: 350 });
+    await tick();
+    assert.equal(f.d.querySelector(".bcmv-add-drop"), null);
+    assertRect(f.rect(C), target);
+    assert.deepEqual([A, B].map(f.rect), boxes);
+    assert.deepEqual([A, B].map(f.video), videos);
+    assert.equal(f.video(C).muted, true);
+    assert.equal(f.saved().freeWindows.at(-1).id, C, "the added window starts in front");
+    assert.equal(h.requests.length, requests + 1);
+    assert.equal(h.instances.length, instances + 1);
+    assert.equal(h.w.location.href, `https://chzzk.naver.com/live/${A}`);
+    const restored = setup(t, { savedSession: f.saved() });
+    await tick();
+    const next = freeWindowControls(restored, { left: 240, top: 60, viewportWidth: 1600, viewportHeight: 1000 });
+    assertRect(next.rect(C), target);
+});
+
+test("free layout URL preview stays on screen and cancels without intercepting editors or inactive page drops", async (t) => {
+    const h = setup(t);
+    await h.start();
+    h.click("controls");
+    const f = freeWindowControls(h, { left: 240, top: 60, viewportWidth: 1600, viewportHeight: 1000 });
+    f.toggle();
+    const transfer = linkTransfer(h, `https://chzzk.naver.com/live/${B}`);
+    const before = f.saved();
+    for (const point of [
+        { x: 0, y: 0 },
+        { x: 1599, y: 999 },
+    ]) {
+        assert.equal(transfer.send("dragover", f.d.body, null, point).defaultPrevented, true);
+        const hint = f.d.querySelector(".bcmv-add-drop");
+        const [x, y, width, height] = ["left", "top", "width", "height"].map(
+            (name) => parseFloat(hint.style[name]) / 100
+        );
+        assert.ok(x >= 0 && y >= 0 && x + width <= 1 + 1e-8 && y + height <= 1 + 1e-8);
+        assert.ok(Math.abs(width * 1600 - 300) < 1e-8 && Math.abs(height * 1000 - 168.75) < 1e-8);
+    }
+    transfer.send("dragleave", f.d.body);
+    assert.equal(f.d.querySelector(".bcmv-add-drop"), null);
+    transfer.send("dragover", f.d.body);
+    transfer.send("dragend", f.d.body);
+    assert.equal(f.d.querySelector(".bcmv-add-drop"), null);
+    for (const tag of ["input", "textarea", "div"]) {
+        const editor = f.d.createElement(tag);
+        if (tag === "div") editor.setAttribute("contenteditable", "true");
+        f.d.body.append(editor);
+        transfer.send("dragover", f.d.body);
+        assert.equal(transfer.send("dragover", editor).defaultPrevented, false);
+        assert.equal(transfer.send("drop", editor).defaultPrevented, false);
+        assert.equal(f.d.querySelector(".bcmv-add-drop"), null);
+        editor.remove();
+    }
+    const files = linkTransfer(h, `https://chzzk.naver.com/live/${B}`, { files: true });
+    assert.equal(files.send("drop", f.d.body).defaultPrevented, false);
+    assert.equal(files.data.reads, 0);
+    assert.deepEqual(f.saved(), before);
+    assert.equal(h.requests.length, 1);
+    transfer.send("dragover", f.d.body);
+    f.toggle();
+    assert.equal(f.d.querySelector(".bcmv-add-drop"), null);
+    assert.equal(transfer.send("drop", f.d.body).defaultPrevented, false);
+    f.toggle();
+    transfer.send("dragover", f.d.body);
+    h.configure(false);
+    assert.equal(f.d.querySelector(".bcmv-add-drop"), null);
+    assert.equal(transfer.send("drop", f.d.body).defaultPrevented, false);
+});
+
+test("free page drops reject reused sidebar links, remounted players and duplicate channels", async (t) => {
+    const h = setup(t);
+    await h.start();
+    h.click("controls");
+    const f = freeWindowControls(h, { left: 240, top: 60, viewportWidth: 1600, viewportHeight: 1000 });
+    f.toggle();
+    const link = f.d.createElement("a");
+    link.href = `https://chzzk.naver.com/live/${B}`;
+    f.d.getElementById("sidebar").append(link);
+    const transfer = linkTransfer(h, link.href);
+    transfer.send("dragstart", link);
+    transfer.send("dragover", f.d.body);
+    link.href = `https://chzzk.naver.com/live/${C}`;
+    transfer.send("drop", f.d.body);
+    assert.equal(h.requests.length, 1);
+    assert.equal(f.d.querySelector(".bcmv-add-drop"), null);
+    link.href = `https://chzzk.naver.com/live/${B}`;
+    transfer.send("dragstart", link);
+    transfer.send("dragover", f.d.body);
+    const native = f.d.querySelector(".chzzk_player");
+    native.replaceWith(native.cloneNode(true));
+    await tick();
+    transfer.send("drop", f.d.body);
+    assert.equal(f.d.querySelector(`[data-bcmv-channel="${B}"]`), null);
+    transfer.send("dragend", f.d.body);
+    const duplicate = linkTransfer(h, `https://chzzk.naver.com/live/${A}`);
+    link.href = `https://chzzk.naver.com/live/${A}`;
+    duplicate.send("dragstart", link);
+    duplicate.send("dragover", f.d.body);
+    assert.equal(duplicate.data.dropEffect, "none");
+    assert.match(f.d.querySelector(".bcmv-add-drop").textContent, /이미 추가/);
+    duplicate.send("drop", f.d.body);
+    assert.equal(f.d.querySelectorAll(".bcmv-cell").length, 1);
+});
 
 test("dropping a live URL into multiview uses the normal add flow and never navigates the page", async (t) => {
     const h = setup(t, { local: { [key(B)]: { version: 2, basis: "live-edge-clock", delaySeconds: 5 } } });

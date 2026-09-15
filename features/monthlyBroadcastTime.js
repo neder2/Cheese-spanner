@@ -43,6 +43,19 @@
     const REFRESH_MS = 10 * 60 * 1000;
 
     const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
+    const CALENDAR_LEVEL_HOURS = 3;
+    // Perceptual green ramps; each pair is [background, text/watch marker].
+    const CALENDAR_LEVEL_COLORS = [
+        { light: ["#dff9e9", "#07150f"], dark: ["#1e3327", "#ffffff"] },
+        { light: ["#b4eecc", "#07150f"], dark: ["#274b37", "#ffffff"] },
+        { light: ["#7edfaa", "#07150f"], dark: ["#2a6547", "#ffffff"] },
+        { light: ["#38cf8a", "#07150f"], dark: ["#318058", "#ffffff"] },
+        { light: ["#03b875", "#07150f"], dark: ["#319c69", "#07150f"] },
+        { light: ["#0a9c62", "#07150f"], dark: ["#2dba7a", "#07150f"] },
+        { light: ["#0c8051", "#ffffff"], dark: ["#2fd78d", "#07150f"] },
+        { light: ["#11623e", "#ffffff"], dark: ["#4deba0", "#07150f"] },
+        { light: ["#11452c", "#ffffff"], dark: ["#80fbba", "#07150f"] },
+    ];
 
     const WATCH_HISTORY_STORAGE_KEY = "betterChzzkLiveWatchHistory";
     const MAX_STATS_CACHE_CHANNELS = 8;
@@ -208,6 +221,9 @@
   align-items:center !important;
 }
 #${WIDGET_ID}{
+  ${CALENDAR_LEVEL_COLORS.map(
+      ({ light }, index) => `--bcmb-duration-${index + 1}-bg:${light[0]};--bcmb-duration-${index + 1}-fg:${light[1]};`
+  ).join("\n  ")}
   position:relative;
   display:inline-flex;
   align-items:center;
@@ -256,6 +272,9 @@
 html[dark] #${WIDGET_ID},
 body[theme="dark"] #${WIDGET_ID},
 [class*="dark"] #${WIDGET_ID}{
+  ${CALENDAR_LEVEL_COLORS.map(
+      ({ dark }, index) => `--bcmb-duration-${index + 1}-bg:${dark[0]};--bcmb-duration-${index + 1}-fg:${dark[1]};`
+  ).join("\n  ")}
   border-color:rgba(157,165,182,0.18);
   background:#24262a;
   color:#f2f4f7;
@@ -526,8 +545,8 @@ body[theme="dark"] #${WIDGET_ID}:hover,
 }
 #${WIDGET_ID} .bcmb-day[data-has-broadcast="1"],
 #${WIDGET_ID} .bcmb-day[data-live="1"]{
-  color:#07150f;
-  background:rgba(0,255,163,0.24);
+  color:var(--bcmb-duration-fg, #07150f);
+  background:var(--bcmb-duration-bg, #dff9e9);
 }
 #${WIDGET_ID} .bcmb-day[data-watch="1"]::before{
   content:"";
@@ -537,16 +556,16 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   width:5px;
   height:5px;
   border-radius:50%;
-  background:#07150f;
+  background:currentColor;
 }
-#${WIDGET_ID} .bcmb-day[data-level="2"]{
-  background:rgba(0,255,163,0.38);
-}
-#${WIDGET_ID} .bcmb-day[data-level="3"]{
-  background:#00ffa3;
-}
+${CALENDAR_LEVEL_COLORS.map(
+    (_, index) => `#${WIDGET_ID} [data-level="${index + 1}"]{
+  --bcmb-duration-bg:var(--bcmb-duration-${index + 1}-bg);
+  --bcmb-duration-fg:var(--bcmb-duration-${index + 1}-fg);
+}`
+).join("\n")}
 #${WIDGET_ID} .bcmb-day[data-today="1"]{
-  box-shadow:inset 0 0 0 2px #111114;
+  box-shadow:inset 0 0 0 2px currentColor;
 }
 #${WIDGET_ID} .bcmb-day[data-future="1"]{
   color:#c9cedc;
@@ -561,6 +580,25 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   font-size:${CALENDAR_FOOT_NOTE_MAX_FONT_PX}px;
   font-weight:800;
   line-height:14px;
+}
+#${WIDGET_ID} .bcmb-calendar-legend{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:6px;
+  margin-top:10px;
+  font-size:10px;
+  line-height:14px;
+}
+#${WIDGET_ID} .bcmb-calendar-legend-scale{
+  display:flex;
+  gap:2px;
+}
+#${WIDGET_ID} .bcmb-calendar-legend-step{
+  width:8px;
+  height:8px;
+  border-radius:2px;
+  background:var(--bcmb-duration-bg, #dff9e9);
 }
 #${WIDGET_ID} .bcmb-calendar-foot-note{
   flex:0 1 auto;
@@ -601,31 +639,19 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-nav:disabled,
 [class*="dark"] #${WIDGET_ID} .bcmb-nav:disabled{
   color:#697183;
 }
-html[dark] #${WIDGET_ID} .bcmb-day[data-today="1"],
-body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-today="1"],
-[class*="dark"] #${WIDGET_ID} .bcmb-day[data-today="1"]{
-  box-shadow:inset 0 0 0 2px #f2f4f7;
-}
 html[dark] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
 body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
 [class*="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before{
   background:#00ffa3;
 }
-/* 다크에서 방송이 있던 날은 셀 배경이 민트 계열이라 민트 점이 묻힌다.
-   반투명 민트(레벨 1~2)는 다크 배경과 섞여 어두워지므로 밝은 점,
-   순수 민트(레벨 3)는 어두운 점이 가장 잘 보인다. */
+/* 시청 점도 각 단계의 날짜 글자색을 따라 배경과 대비를 유지한다. */
 html[dark] #${WIDGET_ID} .bcmb-day[data-has-broadcast="1"][data-watch="1"]::before,
 body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-has-broadcast="1"][data-watch="1"]::before,
 [class*="dark"] #${WIDGET_ID} .bcmb-day[data-has-broadcast="1"][data-watch="1"]::before,
 html[dark] #${WIDGET_ID} .bcmb-day[data-live="1"][data-watch="1"]::before,
 body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-live="1"][data-watch="1"]::before,
 [class*="dark"] #${WIDGET_ID} .bcmb-day[data-live="1"][data-watch="1"]::before{
-  background:#f2f4f7;
-}
-html[dark] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::before,
-body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::before,
-[class*="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::before{
-  background:#07150f;
+  background:currentColor;
 }
 #${WIDGET_ID}[data-state="loading"] .bcmb-icon svg{
   animation:bcmb-spin 0.8s linear infinite;
@@ -687,6 +713,13 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
   <span class="bcmb-calendar-limit" hidden>조회 상한에 도달해 일부만 표시해요.</span>
   <span class="bcmb-weekdays" aria-hidden="true"></span>
   <span class="bcmb-days"></span>
+  <span class="bcmb-calendar-legend" role="img" aria-label="방송 시간에 따라 3시간 단위로 9단계로 표시하며, 가장 진한 색은 24시간 이상입니다.">
+    <span aria-hidden="true">3시간 단위</span>
+    <span class="bcmb-calendar-legend-scale" aria-hidden="true">${CALENDAR_LEVEL_COLORS.map(
+        (_, index) => `<span class="bcmb-calendar-legend-step" data-level="${index + 1}"></span>`
+    ).join("")}</span>
+    <span aria-hidden="true">24시간+</span>
+  </span>
   <span class="bcmb-calendar-foot"></span>
 </span>
 `;
@@ -1476,6 +1509,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
             : [];
         const seconds = Math.round(
             Number(month.dailySeconds?.[key]) ||
+                Number(month.broadcastSecondsByDate?.[key]) ||
                 starts.reduce((sum, start) => sum + Math.max(0, Number(start.duration) || 0), 0)
         );
 
@@ -1487,6 +1521,10 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
     }
 
     function buildCalendarRenderKey(month) {
+        const coverageKey = Object.entries(month.broadcastSecondsByDate || {})
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([key, seconds]) => `${key}:${Math.round(Number(seconds) || 0)}`)
+            .join("|");
         const dailyKey = Object.entries(month.dailySeconds || {})
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([key, seconds]) => `${key}:${Math.round(Number(seconds) || 0)}`)
@@ -1514,11 +1552,13 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
             currentChannelId || "",
             month.year,
             month.month,
+            month.today,
             month.pagesLoaded || 0,
             month.partial ? 1 : 0,
             month.broadcastDayCount || 0,
             watchKey,
             dailyKey,
+            coverageKey,
             startKey,
         ].join("::");
     }
@@ -1644,7 +1684,9 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
                         `${month.month}월 ${day}일 ${buildDayAriaLabel(starts)}${primaryVideoNo ? ", 클릭하면 다시보기로 이동" : ""}`
                     );
                 } else {
-                    item.setAttribute("aria-label", `${month.month}월 ${day}일 방송 기록 있음`);
+                    const continuedText = `이전 날짜에서 이어진 방송 ${formatDuration(seconds)}`;
+                    item.title = continuedText;
+                    item.setAttribute("aria-label", `${month.month}월 ${day}일 ${continuedText}`);
                 }
             } else {
                 item.setAttribute("aria-label", `${month.month}월 ${day}일 방송 없음`);
@@ -1686,14 +1728,15 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
         noteEl.textContent = `월평균 ${formatDuration(getMonthCalendarAverageSeconds(month))}${month.partial ? "+" : ""}/일`;
         if (month.partial) noteEl.title = "조회 상한으로 일부 방송 기록만 반영됨";
 
-        if (!isWatchDisplayEnabled()) {
+        const watchSeconds = isWatchDisplayEnabled() ? getChannelWatchSeconds(currentChannelId) : 0;
+        if (watchSeconds <= 0) {
             footEl.replaceChildren(noteEl);
             return;
         }
 
         const totalEl = document.createElement("span");
         totalEl.className = "bcmb-calendar-watch-total";
-        totalEl.textContent = `내 시청 시간 ${formatDuration(getChannelWatchSeconds(currentChannelId))}`;
+        totalEl.textContent = `내 시청 시간 ${formatDuration(watchSeconds)}`;
 
         fitCalendarFootNoteFont(noteEl, totalEl);
         footEl.replaceChildren(noteEl, totalEl);
@@ -1743,7 +1786,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
             appendTipRow(item, "방송", broadcastText, "broadcast");
             if (isWatchDisplayEnabled()) {
                 const watchInfo = getStartWatchInfo(currentChannelId, start);
-                appendTipRow(item, "내 시청", formatWatchInfo(watchInfo), "watch");
+                if (watchInfo?.seconds > 0) appendTipRow(item, "내 시청", formatWatchInfo(watchInfo), "watch");
             }
             fragment.appendChild(item);
         }
@@ -1775,6 +1818,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
                 const base = `${start.time} 시작, ${endText} 종료, ${formatDuration(start.duration)} 진행`;
                 if (!isWatchDisplayEnabled()) return base;
                 const watchInfo = getStartWatchInfo(currentChannelId, start);
+                if (!(watchInfo?.seconds > 0)) return base;
                 return `${base}, 내 시청 ${formatWatchInfo(watchInfo)}`;
             })
             .join(", ");
@@ -1791,9 +1835,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-level="3"][data-watch="1"]::befo
     }
 
     function getCalendarLevel(seconds) {
-        if (seconds >= 8 * 60 * 60) return "3";
-        if (seconds >= 3 * 60 * 60) return "2";
-        return "1";
+        const level = Math.floor(Math.max(0, Number(seconds) || 0) / (CALENDAR_LEVEL_HOURS * 60 * 60)) + 1;
+        return String(Math.min(CALENDAR_LEVEL_COLORS.length, level));
     }
 
     function isOurNode(node) {

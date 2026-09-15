@@ -225,7 +225,7 @@
                       : "방송 여부 확인 불가"
             );
         }
-        function panelCells(cells = model.treeLayout(state.dockTree).cells) {
+        function panelCells(cells = model.layout(state).cells) {
             return (
                 cells
                     .filter((cell) => cell.id)
@@ -267,6 +267,8 @@
                 panelDrag.generation === generation &&
                 panelDrag.mainId === routeId &&
                 panelDrag.tree === state.dockTree &&
+                panelDrag.free === state.freeLayoutEnabled &&
+                panelDrag.windows === state.freeWindows &&
                 panel.contains(panelDrag.row)
             );
         }
@@ -312,6 +314,8 @@
                 generation,
                 mainId: routeId,
                 tree: state.dockTree,
+                free: state.freeLayoutEnabled,
+                windows: state.freeWindows,
             };
             focusPanelStream(panelDrag.source);
             window.addEventListener("keydown", onPanelDragKey, true);
@@ -442,10 +446,17 @@
                 const ordered = [...ids];
                 ordered.splice(ids.indexOf(target), 0, ordered.splice(ids.indexOf(source), 1)[0]);
                 const positions = new Map(ids.map((id, index) => [id, ordered[index]]));
-                const next = model.mapTree(state.dockTree, (id) => positions.get(id) || id);
-                moveSlotAudio(state.dockTree, next, source, target, "center");
-                state.dockTree = next;
-                state.customLayout = true;
+                if (state.freeLayoutEnabled) {
+                    players.transferSlotAudio([...positions].map(([from, to]) => [to, from]));
+                    state.freeWindows = model
+                        .freeLayout(state)
+                        .cells.map((cell) => ({ ...cell, id: positions.get(cell.id) || cell.id }));
+                } else {
+                    const next = model.mapTree(state.dockTree, (id) => positions.get(id) || id);
+                    moveSlotAudio(state.dockTree, next, source, target, "center");
+                    state.dockTree = next;
+                    state.customLayout = true;
+                }
                 persistSession();
                 positionCells();
             }
@@ -551,6 +562,20 @@
             renderPanel(null);
             (chatButton || launcher)?.focus({ preventScroll: true });
         }
+        function syncLayer() {
+            if (!panel?.isConnected) return;
+            if (document.fullscreenElement && panelId) {
+                renderPanel(null);
+                return;
+            }
+            if (panelId && host?.hasAttribute("data-bcmv-viewport")) {
+                panel.setAttribute("popover", "manual");
+                panel.togglePopover(true);
+            } else if (panel.hasAttribute("popover")) {
+                panel.hidePopover();
+                panel.removeAttribute("popover");
+            }
+        }
         function renderPanel(id, focus = false) {
             cancelSearch();
             if (panelId === "add" || id === "add") message = "";
@@ -562,6 +587,7 @@
             panel.replaceChildren();
             panel.hidden = !id;
             if (!id) {
+                syncLayer();
                 panelNavigation = panelFocusId = null;
                 return;
             }
@@ -600,13 +626,32 @@
                 results.setAttribute("aria-label", "방송인 검색 결과");
                 panel.append(results);
             } else {
+                const option = el("div", "bcmv-layout-option");
+                const description = el("div");
+                const help = el(
+                    "p",
+                    "",
+                    "창을 사이드바·채팅 위까지 옮기고 크기를 조절해요. 끄면 분할 배치로 돌아가요."
+                );
+                help.id = PANEL_ID + "-free-help";
+                description.append(el("strong", "", "자유 배치"), help);
+                const toggle = button(state.freeLayoutEnabled ? "켜짐" : "꺼짐", "free-layout");
+                toggle.className = "bcmv-layout-toggle";
+                toggle.setAttribute("role", "switch");
+                toggle.setAttribute("aria-label", "자유 배치");
+                toggle.setAttribute("aria-checked", String(state.freeLayoutEnabled));
+                toggle.setAttribute("aria-describedby", help.id);
+                option.append(description, toggle);
+                panel.append(option);
                 const actions = el("div", "bcmv-actions");
                 const equalize = button("보조 방송 정렬", "equalize-layout");
                 equalize.prepend(panelIcon("align"));
                 equalize.disabled = !equalLayout();
-                equalize.title = equalize.disabled
-                    ? "같은 영역에 보조 방송이 2개 이상 있을 때 사용할 수 있어요."
-                    : "메인 영역을 유지하고 모든 보조 영역의 방송들을 영역별로 같은 크기로 정렬해요.";
+                equalize.title = state.freeLayoutEnabled
+                    ? "자유 배치를 끄면 분할 영역별로 정렬할 수 있어요."
+                    : equalize.disabled
+                      ? "같은 영역에 보조 방송이 2개 이상 있을 때 사용할 수 있어요."
+                      : "메인 영역을 유지하고 모든 보조 영역의 방송들을 영역별로 같은 크기로 정렬해요.";
                 const reset = button("기본 배치", "reset-layout");
                 reset.prepend(panelIcon("layout"));
                 actions.append(reset, equalize);
@@ -683,6 +728,7 @@
             status.setAttribute("role", "status");
             panel.append(status);
             positionPanel();
+            syncLayer();
             window.addEventListener("resize", positionPanel);
             window.addEventListener("scroll", onPanelScroll, true);
             window.addEventListener("pointerdown", onPanelOutside, true);
@@ -812,6 +858,7 @@
             panel?.removeEventListener("input", onSearchInput);
             panel?.removeEventListener("keydown", onKey);
             panel?.removeEventListener("pointerdown", onPanelPointerDown, true);
+            if (panel?.hasAttribute("popover")) panel.hidePopover();
             panel?.remove();
             panel = null;
             host = chatButton = chatHeader = launcher = null;
@@ -863,6 +910,7 @@
             close: closePanel,
             position: positionPanel,
             syncOrder: syncPanelOrder,
+            syncLayer,
             updatePlayer,
             cancelPointer,
             prepareNavigation,
