@@ -96,29 +96,53 @@
                         <span id="versionBadge" class="version-badge" hidden></span>
                     </h1>
                 </div>
-                <details id="headerMenu" class="header-menu">
-                    <summary aria-label="설정 더보기">
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <circle cx="5" cy="12" r="1.8" />
-                            <circle cx="12" cy="12" r="1.8" />
-                            <circle cx="19" cy="12" r="1.8" />
-                        </svg>
-                    </summary>
-                    <div class="header-menu-content hero-actions reset-row">
-                        <a
-                            class="release-notes-link"
-                            href="https://github.com/neder2/Chzzk/releases"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            aria-label="릴리즈 노트 (새 탭에서 열기)"
-                            >릴리즈 노트</a
+                <div class="header-controls">
+                    <button
+                        id="optionsTheme"
+                        class="theme-toggle"
+                        data-option="optionsTheme"
+                        form="optionsForm"
+                        type="button"
+                        value="system"
+                        aria-label="화면 테마: 시스템 설정"
+                        title="화면 테마: 시스템 설정"
+                    >
+                        <svg
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.7"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
                         >
-                        <button id="reset" class="secondary-button reset-button" type="button">
-                            <svg viewBox="0 0 20 20" aria-hidden="true"><use href="#icon-restore" /></svg>
-                            <span>기본값 복원</span>
-                        </button>
-                    </div>
-                </details>
+                            <path id="optionsThemeIcon" d="M4 4h16v12H4z M8 20h8 M12 16v4" />
+                        </svg>
+                    </button>
+                    <details id="headerMenu" class="header-menu">
+                        <summary aria-label="설정 더보기">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <circle cx="5" cy="12" r="1.8" />
+                                <circle cx="12" cy="12" r="1.8" />
+                                <circle cx="19" cy="12" r="1.8" />
+                            </svg>
+                        </summary>
+                        <div class="header-menu-content hero-actions reset-row">
+                            <a
+                                class="release-notes-link"
+                                href="https://github.com/neder2/Chzzk/releases"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label="릴리즈 노트 (새 탭에서 열기)"
+                                >릴리즈 노트</a
+                            >
+                            <button id="reset" class="secondary-button reset-button" type="button">
+                                <svg viewBox="0 0 20 20" aria-hidden="true"><use href="#icon-restore" /></svg>
+                                <span>기본값 복원</span>
+                            </button>
+                        </div>
+                    </details>
+                </div>
             </header>
 
             <form id="optionsForm" class="settings-form" novalidate>
@@ -328,6 +352,31 @@
                                 <path d="m14.8 9.2-1.6 4-4 1.6 1.6-4z" />
                             </svg>
                             <span>탐색</span>
+                        </button>
+                        <button
+                            type="button"
+                            class="tab"
+                            id="tab-7"
+                            role="tab"
+                            data-tab="7"
+                            aria-controls="tab-panel-7"
+                            aria-label="방송 알림"
+                            aria-selected="false"
+                            title="방송 알림"
+                            tabindex="-1"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+                            </svg>
+                            <span>방송 알림</span>
                         </button>
                     </nav>
                 </div>
@@ -1250,78 +1299,6 @@
                         </div>
                     </details>
 
-                    <details class="option-group" data-option-group="explore-live-start" data-search-together>
-                        <summary>
-                            <span class="option-group-title">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-activity" /></svg>
-                                <span>방송 시작 알림·자동 열기</span>
-                            </span>
-                        </summary>
-                        <div class="option-group-body">
-                            <label class="toggle-row">
-                                <span><strong>방송 시작 데스크톱 알림</strong></span>
-                                <input
-                                    type="checkbox"
-                                    data-option="liveStartNotificationsEnabled"
-                                    aria-describedby="liveStartHelp"
-                                />
-                            </label>
-                            <label class="toggle-row">
-                                <span><strong>지정 채널 자동 탭 열기</strong></span>
-                                <input
-                                    type="checkbox"
-                                    data-option="liveStartAutoOpenEnabled"
-                                    aria-describedby="liveStartHelp"
-                                />
-                            </label>
-                            <p class="setting-note" id="liveStartHelp">
-                                옵션을 저장하면 선택한 채널을 약 1분마다 확인해요. 새 방송은 배경 탭으로 열며, 이미 열린
-                                방송 탭은 유지해요. 처음 켜거나 브라우저를 시작할 때 진행 중인 방송은 건너뛰어요.
-                                브라우저가 종료된 동안에는 확인하지 않아요.
-                            </p>
-                            <div id="liveStartChannels" class="live-start-channels">
-                                <label for="liveStartChannelInput">대상 채널 추가</label>
-                                <div class="live-start-add">
-                                    <input
-                                        id="liveStartChannelInput"
-                                        type="text"
-                                        placeholder="치지직 채널 주소 또는 채널 ID"
-                                        autocomplete="off"
-                                        maxlength="250"
-                                        aria-describedby="liveStartChannelHelp"
-                                        disabled
-                                    />
-                                    <button id="liveStartChannelAdd" type="button" class="secondary-button" disabled>
-                                        추가
-                                    </button>
-                                </div>
-                                <p class="setting-note" id="liveStartChannelHelp">
-                                    최대 32개까지 등록할 수 있어요. 채널별 선택과 삭제는 이 기기에 즉시 저장돼요.
-                                </p>
-                                <p
-                                    id="liveStartChannelMessage"
-                                    class="setting-note"
-                                    role="status"
-                                    aria-live="polite"
-                                ></p>
-                                <ul
-                                    id="liveStartChannelList"
-                                    class="live-start-list"
-                                    aria-label="방송 시작 알림 대상 채널"
-                                ></ul>
-                                <p
-                                    id="liveStartMonitorStatus"
-                                    class="setting-note"
-                                    role="status"
-                                    aria-live="polite"
-                                ></p>
-                                <button id="liveStartPermission" type="button" class="secondary-button" hidden>
-                                    알림 권한 허용
-                                </button>
-                            </div>
-                        </div>
-                    </details>
-
                     <details class="option-group" data-option-group="explore-refresh">
                         <summary>
                             <span class="option-group-title">
@@ -1699,6 +1676,100 @@
                             <p class="setting-note">
                                 추가 조회 페이지를 늘리면 더 많은 방송을 확인하지만 느려질 수 있습니다.
                             </p>
+                        </div>
+                    </details>
+                </section>
+
+                <section class="settings-card" id="tab-panel-7" role="tabpanel" aria-labelledby="tab-7">
+                    <div class="section-heading">
+                        <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+                        </svg>
+                        <h2>방송 알림</h2>
+                    </div>
+
+                    <details class="option-group" data-option-group="explore-live-start" data-search-together open>
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-activity" /></svg>
+                                <span>방송 시작 알림·자동 열기</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>방송 시작 데스크톱 알림</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="liveStartNotificationsEnabled"
+                                    aria-describedby="liveStartHelp"
+                                />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>지정 채널 자동 탭 열기</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="liveStartAutoOpenEnabled"
+                                    aria-describedby="liveStartHelp"
+                                />
+                            </label>
+                            <p class="setting-note" id="liveStartHelp">
+                                옵션을 저장하면 선택한 채널을 약 1분마다 확인해요. 새 방송은 배경 탭으로 열며, 이미 열린
+                                방송 탭은 유지해요. 처음 켜거나 브라우저를 시작할 때 진행 중인 방송은 건너뛰어요.
+                                브라우저가 종료된 동안에는 확인하지 않아요.
+                            </p>
+                            <label class="toggle-row">
+                                <span><strong>상단 방송 알림 버튼 표시</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="liveStartButtonEnabled"
+                                    aria-describedby="liveStartButtonHelp"
+                                />
+                            </label>
+                            <p class="setting-note" id="liveStartButtonHelp">
+                                치지직 우측 상단에서 채널명을 검색해 데스크톱 알림·자동 입장을 각각 선택해요. 버튼을
+                                숨겨도 등록한 채널의 알림과 자동 열기는 유지돼요.
+                            </p>
+                            <div id="liveStartChannels" class="live-start-channels">
+                                <label for="liveStartChannelInput">대상 채널 추가</label>
+                                <div class="live-start-add">
+                                    <input
+                                        id="liveStartChannelInput"
+                                        type="text"
+                                        placeholder="치지직 채널 주소 또는 채널 ID"
+                                        autocomplete="off"
+                                        maxlength="250"
+                                        aria-describedby="liveStartChannelHelp"
+                                        disabled
+                                    />
+                                    <button id="liveStartChannelAdd" type="button" class="secondary-button" disabled>
+                                        추가
+                                    </button>
+                                </div>
+                                <p class="setting-note" id="liveStartChannelHelp">
+                                    최대 32개까지 등록할 수 있어요. 채널별 선택과 삭제는 이 기기에 즉시 저장돼요. 치지직
+                                    우측 상단의 ‘방송 알림’ 버튼에서 채널명을 검색해 추가할 수도 있어요.
+                                </p>
+                                <p
+                                    id="liveStartChannelMessage"
+                                    class="setting-note"
+                                    role="status"
+                                    aria-live="polite"
+                                ></p>
+                                <ul
+                                    id="liveStartChannelList"
+                                    class="live-start-list"
+                                    aria-label="방송 시작 알림 대상 채널"
+                                ></ul>
+                                <p
+                                    id="liveStartMonitorStatus"
+                                    class="setting-note"
+                                    role="status"
+                                    aria-live="polite"
+                                ></p>
+                                <button id="liveStartPermission" type="button" class="secondary-button" hidden>
+                                    알림 권한 허용
+                                </button>
+                            </div>
                         </div>
                     </details>
                 </section>

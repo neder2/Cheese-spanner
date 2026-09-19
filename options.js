@@ -153,6 +153,23 @@ function renderNotice(state, changedCount = 0) {
 }
 
 function renderPageState(options, state = "saved") {
+    if (options.optionsTheme === "system") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = options.optionsTheme;
+    const themes = {
+        system: { label: "시스템 설정", next: "화이트", icon: "M4 4h16v12H4z M8 20h8 M12 16v4" },
+        light: {
+            label: "화이트",
+            next: "다크",
+            icon: "M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M12 2v2 M12 20v2 M2 12h2 M20 12h2 M5 5l1.5 1.5 M17.5 17.5 19 19 M5 19l1.5-1.5 M17.5 6.5 19 5",
+        },
+        dark: { label: "다크", next: "시스템 설정", icon: "M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z" },
+    };
+    const theme = themes[options.optionsTheme];
+    const themeButton = document.getElementById("optionsTheme");
+    const themeLabel = `화면 테마: ${theme.label}. 누르면 ${theme.next}`;
+    themeButton.setAttribute("aria-label", themeLabel);
+    themeButton.title = themeLabel;
+    document.getElementById("optionsThemeIcon").setAttribute("d", theme.icon);
     applyDependencies(options);
     applyControlStates(options);
     renderNotice(state, countChangedOptions(options));
@@ -423,6 +440,14 @@ form.addEventListener("change", (event) => {
 });
 
 saveButton.addEventListener("click", saveCurrentOptions);
+// The appearance control lives in the header, outside the form's event subtree.
+document.getElementById("optionsTheme").addEventListener("click", (event) => {
+    if (optionsLoadState !== "ready") return;
+    const themes = ["system", "light", "dark"];
+    const button = event.currentTarget;
+    button.value = themes[(themes.indexOf(button.value) + 1) % themes.length];
+    renderFormChanges();
+});
 
 shortcutResetButton.addEventListener("click", () => {
     if (optionsLoadState !== "ready" || saveInFlight || shortcutResetButton.disabled) return;
@@ -493,6 +518,45 @@ const tabButtons = Array.from(document.querySelectorAll(".tab"));
 const tabSections = Array.from(form.querySelectorAll(".settings-card"));
 const tabBar = document.querySelector(".tab-bar");
 const LAST_TAB_STORAGE_KEY = "betterChzzkOptionsLastTab";
+const reducedTabMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+let tabScrollTarget = null;
+
+function tabScrollBehavior(animate = true) {
+    return animate && !reducedTabMotion?.matches ? "smooth" : "instant";
+}
+
+function tabScrollBounds() {
+    const max = Math.max(0, tabBar.scrollWidth - tabBar.clientWidth);
+    return getComputedStyle(tabBar).direction === "rtl" ? { min: -max, max: 0 } : { min: 0, max };
+}
+
+function scrollTabBar(left, animate = true) {
+    const bounds = tabScrollBounds();
+    const target = Math.max(bounds.min, Math.min(bounds.max, left));
+    if (typeof tabBar.scrollTo !== "function") {
+        tabScrollTarget = null;
+        tabBar.scrollLeft = target;
+        return;
+    }
+    const behavior = tabScrollBehavior(animate);
+    tabScrollTarget = behavior === "smooth" && Math.abs(target - tabBar.scrollLeft) > 0.5 ? target : null;
+    tabBar.scrollTo({ left: target, behavior });
+}
+
+function stopTabScroll() {
+    if (tabScrollTarget === null) return;
+    tabScrollTarget = null;
+    tabBar.scrollTo?.({ left: tabBar.scrollLeft, behavior: "instant" });
+}
+
+tabBar?.addEventListener("scrollend", () => {
+    tabScrollTarget = null;
+});
+tabBar?.addEventListener("pointerdown", stopTabScroll);
+window.addEventListener("pagehide", stopTabScroll);
+reducedTabMotion?.addEventListener("change", () => {
+    if (reducedTabMotion.matches && tabScrollTarget !== null) scrollTabBar(tabScrollTarget, false);
+});
 
 function readStoredTabIndex() {
     try {
@@ -520,16 +584,19 @@ function alignCompactTabPanel(index) {
     const toolbarIsSticky = viewportWidth <= 480 || (toolbar && getComputedStyle(toolbar).position === "sticky");
     const toolbarHeight = toolbar && toolbarIsSticky ? toolbar.getBoundingClientRect().height : 0;
     const sectionTop = section.getBoundingClientRect().top + window.scrollY;
-    window.scrollTo({ top: Math.max(0, sectionTop - toolbarHeight - 8), behavior: "auto" });
+    window.scrollTo({ top: Math.max(0, sectionTop - toolbarHeight - 8), behavior: tabScrollBehavior() });
 }
 
-function revealTab(button) {
+function revealTab(button, animate) {
     if (!tabBar || !button || tabBar.scrollWidth <= tabBar.clientWidth) return;
     const barRect = tabBar.getBoundingClientRect();
     const buttonRect = button.getBoundingClientRect();
     // Scroll only the category strip so restoring a tab does not move the page.
-    if (buttonRect.left < barRect.left + 4) tabBar.scrollLeft += buttonRect.left - barRect.left - 4;
-    else if (buttonRect.right > barRect.right - 4) tabBar.scrollLeft += buttonRect.right - barRect.right + 4;
+    if (buttonRect.left < barRect.left + 4)
+        scrollTabBar(tabBar.scrollLeft + buttonRect.left - barRect.left - 4, animate);
+    else if (buttonRect.right > barRect.right - 4)
+        scrollTabBar(tabBar.scrollLeft + buttonRect.right - barRect.right + 4, animate);
+    else stopTabScroll();
 }
 
 function activateTab(index, { focus = false, align = false } = {}) {
@@ -541,7 +608,7 @@ function activateTab(index, { focus = false, align = false } = {}) {
         if (active && focus) btn.focus({ preventScroll: true });
     });
     tabSections.forEach((sec, i) => sec.classList.toggle("is-active", i === index));
-    revealTab(tabButtons[index]);
+    revealTab(tabButtons[index], focus || align);
     storeTabIndex(index);
     if (align) alignCompactTabPanel(index);
 }
@@ -572,7 +639,10 @@ tabBar?.addEventListener("keydown", (event) => {
 tabBar?.addEventListener(
     "wheel",
     (event) => {
-        if (event.ctrlKey || event.metaKey || event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+        if (event.ctrlKey || event.metaKey || event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+            stopTabScroll();
+            return;
+        }
         const maxScroll = tabBar.scrollWidth - tabBar.clientWidth;
         if (maxScroll <= 0 || !event.deltaY) return;
         const step =
@@ -581,10 +651,16 @@ tabBar?.addEventListener(
                 : event.deltaMode === 2
                   ? tabBar.clientWidth
                   : 1;
-        const next = Math.max(0, Math.min(maxScroll, tabBar.scrollLeft + event.deltaY * step));
-        if (next === tabBar.scrollLeft) return;
+        const bounds = tabScrollBounds();
+        const direction = bounds.min < 0 ? -1 : 1;
+        const next = Math.max(
+            bounds.min,
+            Math.min(bounds.max, (tabScrollTarget ?? tabBar.scrollLeft) + event.deltaY * step * direction)
+        );
+        if (Math.abs(next - tabBar.scrollLeft) < 0.5 && tabScrollTarget === null) return;
         event.preventDefault();
-        tabBar.scrollLeft = next;
+        if (next === tabScrollTarget) return;
+        scrollTabBar(next);
     },
     { passive: false }
 );

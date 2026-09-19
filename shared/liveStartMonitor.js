@@ -279,10 +279,26 @@
     });
     chrome.runtime.onStartup?.addListener(() => refresh({ baseline: true }));
     chrome.runtime.onInstalled.addListener(() => refresh({ baseline: true }));
+    function registrationKey(kind) {
+        return kind === "set-notify" ? "notify" : kind === "set-auto-open" ? "autoOpen" : null;
+    }
+    function isChannelRegistration(message, sender) {
+        const key = registrationKey(message.kind);
+        if (message.kind !== "remove" && (!key || typeof message.channel?.[key] !== "boolean")) return false;
+        if (!Number.isInteger(sender?.tab?.id) || sender.tab.id < 0 || sender.frameId !== 0) return false;
+        try {
+            // Search registration can target any channel. The context URL can also
+            // predate SPA navigation, so authorize the origin rather than its route.
+            return new URL(sender.url).origin === "https://chzzk.naver.com";
+        } catch {
+            return false;
+        }
+    }
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (message?.type !== "betterchzzk:live-start:channels") return undefined;
-        if (sender?.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("options.html")) {
-            sendResponse({ ok: false, error: "설정 화면에서 다시 시도해 주세요." });
+        const fromOptions = sender?.url === chrome.runtime.getURL("options.html");
+        if (sender?.id !== chrome.runtime.id || (!fromOptions && !isChannelRegistration(message, sender))) {
+            sendResponse({ ok: false, error: "알림 설정 요청의 출처를 확인하지 못했어요." });
             return false;
         }
         // Stop outstanding reads as soon as the user edits a channel rule.
@@ -290,16 +306,46 @@
         controller?.abort();
         void enqueue(async () => {
             const id = message.channel?.channelId;
+            const key = registrationKey(message.kind);
             if (
                 typeof id !== "string" ||
                 !/^[a-f0-9]{32}$/.test(id) ||
-                !["add", "update", "remove"].includes(message.kind)
+                (!key && !["add", "update", "remove"].includes(message.kind)) ||
+                (key && typeof message.channel[key] !== "boolean")
             )
                 throw new Error("올바른 채널 설정이 아니에요.");
             const data = await storageGet(chrome.storage.local, CHANNELS_KEY);
             let channels = normalizeChannels(data[CHANNELS_KEY]);
             const existing = channels.find((channel) => channel.channelId === id);
-            if (message.kind === "remove") {
+            if (key) {
+                if (existing) existing[key] = message.channel[key];
+                else if (message.channel[key]) {
+                    if (channels.length >= globalThis.BetterChzzkLiveStart.MAX_CHANNELS)
+                        throw new Error("채널은 최대 32개까지 등록할 수 있어요.");
+                    const json = await fetchJson(`https://api.chzzk.naver.com/service/v1/channels/${id}`, {
+                        timeoutMs: 8000,
+                    });
+                    if (
+                        json?.code !== 200 ||
+                        json.content?.channelId !== id ||
+                        typeof json.content.channelName !== "string" ||
+                        !json.content.channelName.trim()
+                    )
+                        throw new Error("채널 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.");
+                    channels.push(
+                        normalizeChannels([
+                            {
+                                channelId: id,
+                                channelName: json.content.channelName,
+                                channelImageUrl: json.content.channelImageUrl,
+                                notify: false,
+                                autoOpen: false,
+                                [key]: true,
+                            },
+                        ])[0]
+                    );
+                }
+            } else if (message.kind === "remove") {
                 channels = channels.filter((channel) => channel.channelId !== id);
             } else if (message.kind === "add") {
                 if (existing) throw new Error("이미 등록한 채널이에요.");

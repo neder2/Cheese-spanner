@@ -4,7 +4,9 @@
     const root = globalThis;
     const utils = root.BetterChzzk?.utils || {};
     const PORT_NAME = "betterchzzk:donation-history-import";
-    const MAX_MONTHS = 12;
+    // The native purchase-history year selector starts at 2023 (measured 2026-09-19).
+    const FIRST_MONTH = "2023-01";
+    const MAX_MONTHS = 120;
     const MAX_ROWS = 3000;
     const PAGE_SIZE = 10;
     const OWNER_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -22,7 +24,7 @@
         const current = utils.getKstParts(now);
         if (first > last || last > current.year * 12 + current.month - 1)
             throw new Error("시작 월부터 이번 달 사이의 기간을 선택해 주세요.");
-        if (last - first + 1 > MAX_MONTHS) throw new Error("한 번에 최대 12개월까지 가져올 수 있어요.");
+        if (last - first + 1 > MAX_MONTHS) throw new Error("후원 내역의 지원 조회 범위를 초과했어요.");
         return Array.from({ length: last - first + 1 }, (_, index) => {
             const value = first + index;
             return `${Math.floor(value / 12)}-${String((value % 12) + 1).padStart(2, "0")}`;
@@ -97,13 +99,21 @@
         if (!value || !OWNER_PATTERN.test(value.owner || "")) throw new Error("로그인 계정을 확인하지 못했어요.");
         if (!Number.isSafeInteger(value.startedAt) || value.startedAt <= 0 || value.startedAt > now)
             throw new Error("가져오기 시작 시각이 올바르지 않아요.");
-        const months = getMonths(value.startMonth, value.endMonth, now);
+        const range = getMonths(value.startMonth, value.endMonth, now);
+        const months = Object.keys(value.months || {}).sort();
+        if (
+            !months.length ||
+            months[0] !== range[0] ||
+            months.at(-1) !== range.at(-1) ||
+            months.some((month) => !range.includes(month))
+        )
+            throw new Error("갱신한 후원 내역의 월 범위를 확인하지 못했어요.");
         const normalized = Object.create(null);
         let count = 0;
         for (const month of months) {
             const rows = value.months?.[month];
             if (!Array.isArray(rows) || (count += rows.length) > MAX_ROWS)
-                throw new Error("가져올 후원 내역이 너무 많아요. 기간을 줄여 주세요.");
+                throw new Error("후원 내역이 보관 한도 3,000건을 넘어 갱신하지 못했어요. 기존 기록은 유지돼요.");
             normalized[month] = rows.map((row) => normalizeRow(row, month));
         }
         if (
@@ -142,9 +152,7 @@
             Object.keys(months).length > 120 ||
             Object.values(months).reduce((sum, rows) => sum + rows.length, 0) > MAX_ROWS
         )
-            throw new Error(
-                "가져온 후원은 최대 3,000개까지 보관해요. 기존 가져온 내역을 삭제하거나 기간을 줄여 주세요."
-            );
+            throw new Error("후원 내역이 보관 한도 3,000건을 넘어 갱신하지 못했어요. 기존 기록은 유지돼요.");
         const monthStartedAt = Object.assign(Object.create(null), old.monthStartedAt);
         for (const month of Object.keys(next.months)) monthStartedAt[month] = next.startedAt;
         return { owner: next.owner, updatedAt: now, months, monthStartedAt };
@@ -160,19 +168,29 @@
         return Object.keys(ledger.months).length ? ledger : null;
     }
 
-    async function collect({
-        startMonth,
-        endMonth,
-        identify,
-        requestPage,
-        signal,
-        onProgress = () => {},
-        now = Date.now,
-    }) {
+    function getRefreshMonths(previous, now = Date.now()) {
+        const ledger = normalizeLedger(previous);
+        return getMonths(FIRST_MONTH, utils.getKstDateKey(now).slice(0, 7), now).filter((month) => {
+            const checkedAt = ledger.monthStartedAt[month];
+            // Recheck an open month once after it closes. Empty completed months also count as coverage.
+            return (
+                !Object.hasOwn(ledger.months, month) ||
+                !Number.isSafeInteger(checkedAt) ||
+                checkedAt <= 0 ||
+                checkedAt > now ||
+                utils.getKstDateKey(checkedAt).slice(0, 7) <= month
+            );
+        });
+    }
+
+    async function collect({ previous, identify, requestPage, signal, onProgress = () => {}, now = Date.now }) {
         const startedAt = now();
-        const months = getMonths(startMonth, endMonth, startedAt);
+        const months = getRefreshMonths(previous, startedAt);
         const owner = await identify();
         if (!OWNER_PATTERN.test(owner || "")) throw new Error("치지직에 로그인한 뒤 다시 시도해 주세요.");
+        const old = normalizeLedger(previous);
+        if (old.owner && old.owner !== owner)
+            throw new Error("다른 계정의 후원 내역이 저장되어 있어요. 가져온 내역을 삭제한 뒤 다시 시도해 주세요.");
         const result = Object.create(null);
         let scanned = 0;
         let requests = 0;
@@ -180,11 +198,12 @@
         const ensureActive = () => {
             if (signal?.aborted) throw new Error("가져오기를 취소했어요.");
             if (now() - startedAt > 120000)
-                throw new Error("가져오기가 오래 걸리고 있어요. 기간을 줄여 다시 시도해 주세요.");
+                throw new Error("조회 시간이 초과되어 갱신하지 못했어요. 기존 기록은 유지돼요.");
         };
         const readPage = async (month, page) => {
             ensureActive();
-            if (++requests > 300) throw new Error("가져올 내역이 많아요. 기간을 줄여 다시 시도해 주세요.");
+            if (++requests > 300)
+                throw new Error("후원 내역의 조회 한도를 넘어 갱신하지 못했어요. 기존 기록은 유지돼요.");
             const response = await requestPage(month, page, PAGE_SIZE, signal);
             ensureActive();
             const content = response?.content;
@@ -212,10 +231,11 @@
                 )
                     throw new Error("가져오는 동안 사용 내역이 바뀌었어요. 다시 가져와 주세요.");
                 if ((scanned += current.data.length) > MAX_ROWS)
-                    throw new Error("가져올 내역이 3,000개를 넘어요. 기간을 줄여 주세요.");
+                    throw new Error("사용 내역이 조회 한도 3,000건을 넘어 갱신하지 못했어요. 기존 기록은 유지돼요.");
                 for (const item of current.data) {
                     const row = readApiRow(item, month, now());
-                    if (row) rows.push(row);
+                    // Keep a fixed boundary so live records after the refresh starts can supplement this snapshot.
+                    if (row && row.at <= startedAt) rows.push(row);
                 }
                 onProgress({
                     month,
@@ -240,14 +260,19 @@
         ensureActive();
         if ((await identify()) !== owner) throw new Error("로그인 계정이 바뀌었어요. 다시 가져와 주세요.");
         ensureActive();
-        return normalizeSnapshot({ owner, startedAt, startMonth, endMonth, months: result }, now());
+        return normalizeSnapshot(
+            { owner, startedAt, startMonth: months[0], endMonth: months.at(-1), months: result },
+            now()
+        );
     }
 
     root.BetterChzzkDonationHistory = {
         PORT_NAME,
+        FIRST_MONTH,
         MAX_MONTHS,
         MAX_ROWS,
         getMonths,
+        getRefreshMonths,
         normalizeLedger,
         normalizeSnapshot,
         mergeSnapshot,

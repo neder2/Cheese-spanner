@@ -499,6 +499,9 @@ test("history ranks channels by unique time and shows safe transcripts, counts, 
     document.querySelector('[data-entry-id="live:100"] .history-entry-detail').click();
     document.querySelector('[data-entry-id="live:100"] .history-entry-delete').click();
     await waitForCondition(() => document.querySelectorAll(".history-item").length === 2);
+    assert.match(document.getElementById("activitySummary").textContent, /내 후원 0치즈/);
+    document.getElementById("activityType").value = "chat";
+    dispatch(dom, document.getElementById("activityType"), "change");
     assert.match(document.getElementById("activitySummary").textContent, /내 채팅 0개.*0치즈/);
 });
 

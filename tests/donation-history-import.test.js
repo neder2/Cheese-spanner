@@ -44,13 +44,191 @@ const snapshot = (changes = {}) => ({
 });
 const collect = (changes = {}) =>
     data.collect({
-        startMonth: MONTH,
-        endMonth: MONTH,
+        previous: coveredLedger(),
         now: () => NOW,
         identify: async () => "viewer",
         requestPage: async () => response([apiRow()]),
         ...changes,
     });
+
+function coveredLedger() {
+    return data.mergeSnapshot(
+        null,
+        snapshot({
+            startMonth: data.FIRST_MONTH,
+            months: Object.fromEntries(data.getMonths(data.FIRST_MONTH, MONTH, NOW).map((month) => [month, []])),
+        }),
+        NOW - 500
+    );
+}
+
+test("first refresh covers every native month including gaps; repeat refresh only requests the open month", async () => {
+    const requests = [];
+    const requestPage = async (month) => {
+        requests.push(month);
+        return response(month === "2023-02" ? [apiRow(0, { purchaseDate: "2023-02-01T12:00:00+09:00" })] : [], 1);
+    };
+    const first = await collect({ previous: undefined, requestPage });
+    assert.deepEqual(requests, data.getMonths("2023-01", MONTH, NOW));
+    assert.equal(first.months["2023-02"].length, 1);
+    let ledger = data.mergeSnapshot(null, first, NOW);
+    requests.length = 0;
+    const second = await collect({ previous: ledger, now: () => NOW + 1000, requestPage });
+    assert.deepEqual(requests, [MONTH]);
+    ledger = data.mergeSnapshot(ledger, second, NOW + 1000);
+    assert.equal(ledger.months["2023-02"].length, 1);
+    assert.equal(ledger.monthStartedAt["2023-02"], NOW);
+});
+
+test("refresh finishes the previous open month across a KST month boundary, then skips it", async () => {
+    let ledger = coveredLedger();
+    const october = Date.parse("2026-09-30T15:00:00Z");
+    const calls = [];
+    const run = (time) =>
+        collect({
+            previous: ledger,
+            now: () => time,
+            requestPage: async (month) => {
+                calls.push(month);
+                return response(month === MONTH ? [apiRow()] : [], 1);
+            },
+        });
+    ledger = data.mergeSnapshot(ledger, await run(october), october);
+    assert.deepEqual(calls, ["2026-09", "2026-10"]);
+    assert.equal(ledger.months[MONTH].length, 1);
+    calls.length = 0;
+    ledger = data.mergeSnapshot(ledger, await run(october + 1000), october + 1000);
+    assert.deepEqual(calls, ["2026-10"]);
+    assert.equal(ledger.months[MONTH].length, 1);
+});
+
+test("legacy partial imports fill missing months without fetching completed months or losing them", async () => {
+    const previous = coveredLedger();
+    delete previous.months["2024-02"];
+    delete previous.months["2025-08"];
+    previous.months["2025-09"] = [{ ...snapshot().months[MONTH][0], at: Date.parse("2025-09-01T00:00:00+09:00") }];
+    const calls = [];
+    const next = await collect({
+        previous,
+        requestPage: async (month) => {
+            calls.push(month);
+            return response([], 0);
+        },
+    });
+    assert.deepEqual(calls, ["2024-02", "2025-08", MONTH]);
+    const ledger = data.mergeSnapshot(previous, next, NOW);
+    assert.equal(ledger.months["2025-09"].length, 1);
+    assert.deepEqual(data.getRefreshMonths(ledger, NOW + 1000), [MONTH]);
+    assert.throws(() => data.normalizeSnapshot({ ...next, startMonth: "2025-08" }, NOW), /월 범위/);
+});
+
+test("failed incremental refresh does not advance coverage and a different account cannot reuse it", async () => {
+    const previous = coveredLedger();
+    const before = JSON.stringify(previous);
+    let requests = 0;
+    await assert.rejects(
+        collect({
+            previous,
+            requestPage: async () => {
+                requests++;
+                throw new Error("HTTP 503");
+            },
+        }),
+        /503/
+    );
+    assert.equal(JSON.stringify(previous), before);
+    assert.deepEqual(data.getRefreshMonths(previous, NOW), [MONTH]);
+    await assert.rejects(
+        collect({
+            previous,
+            identify: async () => "other",
+            requestPage: async () => {
+                requests++;
+            },
+        }),
+        /다른 계정/
+    );
+    assert.equal(requests, 1);
+    previous.monthStartedAt["2025-01"] = NOW + 1;
+    assert.deepEqual(data.getRefreshMonths(previous, NOW), ["2025-01", MONTH]);
+});
+
+test("refresh snapshots stop at request start so concurrent live donations can be shown without overlap", async () => {
+    let time = NOW;
+    const result = await collect({
+        now: () => time,
+        requestPage: async () => {
+            time = NOW + 2000;
+            return response([apiRow(), apiRow(1, { purchaseDate: new Date(NOW + 1000).toISOString() })]);
+        },
+    });
+    assert.equal(result.startedAt, NOW);
+    assert.equal(result.months[MONTH].length, 1);
+});
+
+test("one donation view uses refreshed coverage and later live rows without duplicating genuine purchases", async (t) => {
+    const at = NOW - 1000;
+    const newAt = NOW + 1000;
+    const oldAt = Date.parse("2026-08-03T10:00:00+09:00");
+    const liveRow = (time, amount) => ({ id: `viewer:${time}:10`, kind: "donation", at: time, amount, text: "" });
+    const record = {
+        id: "live:100",
+        channelId: "channel-a",
+        channelName: "검증 채널",
+        title: "검증 방송",
+        firstWatchedAt: oldAt,
+        lastWatchedAt: newAt,
+        watchedSeconds: 60,
+        dailySeconds: { "2026-09-19": 60 },
+        activityDaily: {
+            "2026-08-03": { donationCount: 4, donationCheese: 8000, chatCount: 0 },
+            "2026-09-19": { donationCount: 2, donationCheese: 1500, chatCount: 0 },
+        },
+        activities: [liveRow(oldAt, 2000), liveRow(at, 1000), liveRow(newAt, 500)],
+    };
+    const api = { ...snapshot().months[MONTH][0], at, text: "" };
+    const imported = snapshot({ startedAt: NOW, months: { [MONTH]: [api, api] } });
+    const history = store.applyMutation(
+        { entries: { "live:100": record } },
+        { kind: "replaceDonationMonths", snapshot: imported },
+        NOW
+    ).history;
+    const chrome = createFakeChrome({ local: { [store.STORAGE_KEY]: history } });
+    const dom = createDom("history.html", "history.html", chrome);
+    t.after(() => dom.window.close());
+    dom.window.Date.now = () => NOW + 2000;
+    for (const file of ["shared/data.js", "shared/donationHistory.js", "history.js"]) evalRepoScript(dom, file);
+    const document = dom.window.document;
+    await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
+    document.getElementById("activityType").value = "donation";
+    dispatch(dom, document.getElementById("activityType"), "change");
+    assert.match(document.getElementById("activitySummary").textContent, /내 후원 2,500치즈 \(3회\)/);
+    assert.equal(document.querySelectorAll("#activityList li").length, 3);
+    document.getElementById("historyScope").value = "all";
+    dispatch(dom, document.getElementById("historyScope"), "change");
+    assert.match(document.getElementById("activitySummary").textContent, /10,500치즈 \(7회\)/);
+    assert.equal(document.querySelectorAll("#activityList li").length, 4);
+    assert.match(document.getElementById("channelRanking").textContent, /10,500치즈 \(7회\)/);
+    chrome.testState.local[store.STORAGE_KEY] = store.applyMutation(
+        history,
+        {
+            kind: "replaceDonationMonths",
+            snapshot: {
+                ...imported,
+                startedAt: NOW + 3000,
+                months: { [MONTH]: [api, api, { ...api, at: newAt, amount: 500 }] },
+            },
+        },
+        NOW + 3000
+    ).history;
+    document.getElementById("refresh").click();
+    await waitForCondition(() => document.getElementById("message").textContent.includes("새로고침했습니다"));
+    assert.match(document.getElementById("activitySummary").textContent, /10,500치즈 \(7회\)/);
+    assert.equal(document.querySelectorAll("#activityList li").length, 4);
+    document.getElementById("historySearch").value = "없는 채널";
+    dispatch(dom, document.getElementById("historySearch"), "input");
+    assert.match(document.getElementById("activitySummary").textContent, /0치즈 \(0회\)/);
+});
 
 test("donation import reads complete monthly pages, retains empty text, and preserves genuine identical purchases", async () => {
     const calls = [],
@@ -131,7 +309,8 @@ test("donation import rejects incomplete pages, changing accounts, changed pagin
 
 test("import ranges and response sizes are bounded and an empty month remains a complete snapshot", async () => {
     assert.deepEqual(data.getMonths("2025-12", "2026-02", NOW), ["2025-12", "2026-01", "2026-02"]);
-    assert.throws(() => data.getMonths("2025-01", MONTH, NOW), /12개월/);
+    assert.equal(data.getMonths("2025-01", MONTH, NOW).length, 21);
+    assert.throws(() => data.getMonths("2000-01", MONTH, NOW), /조회 범위/);
     assert.throws(() => data.getMonths("2026-10", "2026-11", NOW), /기간/);
     assert.throws(() => data.getMonths("2026-13", MONTH, NOW), /연월/);
     await assert.rejects(collect({ requestPage: async () => response([], 301) }), /응답/);
@@ -216,15 +395,15 @@ function events() {
     };
 }
 
-function importController(t, { requestPage, owner = "viewer" } = {}) {
+function importController(t, { requestPage, owner = "viewer", history = { donationImport: coveredLedger() } } = {}) {
     const onConnect = events();
-    let stored = {},
+    let stored = history,
         writes = 0,
         requests = 0;
     const original = globalThis.BetterChzzk.utils.fetchJson;
-    globalThis.BetterChzzk.utils.fetchJson = async (_url, options) => {
+    globalThis.BetterChzzk.utils.fetchJson = async (url, options) => {
         requests++;
-        return requestPage ? requestPage(options) : response([apiRow()]);
+        return requestPage ? requestPage(options, new URL(url)) : response([apiRow()]);
     };
     t.after(() => {
         globalThis.BetterChzzk.utils.fetchJson = original;
@@ -260,7 +439,7 @@ function importController(t, { requestPage, owner = "viewer" } = {}) {
         return {
             port,
             messages,
-            start: () => port.onMessage.emit({ type: "start", startMonth: MONTH, endMonth: MONTH }),
+            start: () => port.onMessage.emit({ type: "start" }),
         };
     }
     return { connect, stats: () => ({ writes, requests, stored }) };
@@ -312,7 +491,7 @@ test("disconnect aborts an import and a failed fetch never changes stored histor
     assert.equal(h.stats().writes, 0);
 });
 
-test("history import UI starts only on submit, displays saved totals separately, and can delete imports", async (t) => {
+test("history refresh starts with one click, ignores display filters, shows one donation view, and resets imports", async (t) => {
     const chrome = createFakeChrome();
     const incoming = events(),
         disconnect = events(),
@@ -333,14 +512,15 @@ test("history import UI starts only on submit, displays saved totals separately,
     const document = dom.window.document;
     await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
     document.getElementById("activityViewTab").click();
-    document.getElementById("donationImportToggle").click();
-    assert.equal(document.getElementById("donationImportForm").hidden, false);
     assert.equal(sent.length, 0);
-    assert.equal(document.activeElement.id, "donationImportStart");
-    dispatch(dom, document.getElementById("donationImportForm"), "submit");
-    dispatch(dom, document.getElementById("donationImportForm"), "submit");
+    assert.equal(document.querySelector('input[type="month"]'), null);
+    document.getElementById("historySearch").value = "필터와 무관한 전체 갱신";
+    document.getElementById("donationImportRefresh").click();
+    document.getElementById("donationImportRefresh").click();
     assert.equal(sent.length, 1);
-    assert.equal(document.getElementById("donationImportSubmit").disabled, true);
+    assert.equal(JSON.stringify(sent[0]), JSON.stringify({ type: "start" }));
+    assert.equal(document.getElementById("donationImportRefresh").disabled, true);
+    document.getElementById("historySearch").value = "";
     incoming.emit({ type: "progress", month: MONTH, monthIndex: 1, monthCount: 1, page: 1, pages: 2, count: 10 });
     assert.match(document.getElementById("donationImportStatus").textContent, /1\/2페이지/);
     const rows = [
@@ -352,9 +532,12 @@ test("history import UI starts only on submit, displays saved totals separately,
         { kind: "replaceDonationMonths", snapshot: snapshot({ months: { [MONTH]: rows } }) },
         NOW
     ).history;
-    incoming.emit({ type: "done", count: 2, startMonth: MONTH, endMonth: MONTH });
+    incoming.emit({ type: "done", count: 2, monthCount: 1 });
     await waitForCondition(() => document.getElementById("activitySummary").textContent.includes("3,000치즈 (2회)"));
-    assert.equal(document.getElementById("activityType").value, "imported");
+    assert.equal(document.getElementById("activityType").value, "donation");
+    assert.equal(document.querySelector('#activityType option[value="imported"]'), null);
+    await waitForCondition(() => document.activeElement.id === "donationImportRefresh");
+    assert.match(document.getElementById("donationImportUpdated").textContent, /마지막 갱신/);
     assert.equal(document.querySelector("#activityList img"), null);
     assert.match(document.getElementById("activityList").textContent, /메시지 없는 후원/);
     assert.equal(document.getElementById("totalWatchTime").textContent, "0초");
@@ -363,7 +546,7 @@ test("history import UI starts only on submit, displays saved totals separately,
     const activityType = document.getElementById("activityType");
     activityType.value = "donation";
     dispatch(dom, activityType, "change");
-    assert.match(document.getElementById("activitySummary").textContent, /0치즈 \(0회\)/);
+    assert.match(document.getElementById("activitySummary").textContent, /3,000치즈 \(2회\)/);
     document.getElementById("clearDonationImport").click();
     await waitForCondition(() => document.getElementById("clearDonationImport").disabled);
     assert.equal(chrome.testState.local[store.STORAGE_KEY].donationImport, undefined);

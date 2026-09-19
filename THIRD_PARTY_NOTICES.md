@@ -7,7 +7,7 @@
 - 출처: [원본 프로젝트](https://github.com/orioncactus/pretendard), npm `pretendard@1.3.9` 배포본
 - 저작권: Copyright (c) 2021, Kil Hyung-jin
 - 라이선스: SIL Open Font License 1.1
-- 사용 범위: 옵션 창·시청 기록 페이지 (`options-brand.css`), 팔로잉 미리보기 카드와 미리보기 소리·우클릭 안내 (`features/followingPreviewTooltip.js`)
+- 사용 범위: 옵션 창·시청 기록 페이지 (`options-brand.css`), 팔로잉 미리보기 카드와 미리보기 소리·우클릭 안내 (`features/followingPreviewTooltip.js`), 상단 방송 알림 버튼·검색 패널 (`features/liveStartRegistration.js`)
 - 원본 가변 폰트를 수정하지 않고 `vendor/fonts/PretendardVariable.woff2`에 포함했습니다. 외부 폰트 서버에 접속하지 않습니다.
 - 라이선스 전문: [`vendor/fonts/Pretendard.LICENSE.txt`](vendor/fonts/Pretendard.LICENSE.txt)
 

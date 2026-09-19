@@ -180,6 +180,7 @@
             channels = await sendChange("add", {
                 channelId,
                 channelName: json.content.channelName,
+                channelImageUrl: json.content.channelImageUrl,
                 notify: true,
                 autoOpen: false,
             });

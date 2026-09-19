@@ -449,6 +449,93 @@ test("restored and keyboard-selected tabs scroll into view without moving the pa
     assert.deepEqual(pageScrolls, []);
 });
 
+test("category scroll animates accumulated wheel input, reversals, and respects reduced motion", (t) => {
+    const dom = createDom("options.html", "options.html");
+    t.after(() => dom.window.close());
+    const bar = dom.window.document.querySelector(".tab-bar");
+    Object.defineProperties(bar, { clientWidth: { value: 200 }, scrollWidth: { value: 700 } });
+    const calls = [];
+    bar.scrollTo = (options) => {
+        calls.push({ ...options });
+        if (options.behavior === "instant") bar.scrollLeft = options.left;
+    };
+    const media = {
+        matches: false,
+        addEventListener(_type, listener) {
+            this.changed = listener;
+        },
+    };
+    dom.window.matchMedia = () => media;
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    const wheel = (deltaY) => {
+        const event = new dom.window.WheelEvent("wheel", { deltaY, bubbles: true, cancelable: true });
+        bar.dispatchEvent(event);
+        return event;
+    };
+    wheel(100);
+    wheel(100);
+    assert.equal(bar.scrollLeft, 0, "a smooth request does not jump straight to its destination");
+    assert.deepEqual(calls.at(-1), { left: 200, behavior: "smooth" });
+    assert.equal(wheel(-200).defaultPrevented, true, "a full reversal cancels the pending destination");
+    assert.deepEqual(calls.at(-1), { left: 0, behavior: "smooth" });
+    wheel(100);
+    media.matches = true;
+    media.changed();
+    assert.equal(bar.scrollLeft, 100);
+    assert.equal(calls.at(-1).behavior, "instant");
+    wheel(1000);
+    assert.equal(bar.scrollLeft, 500);
+    assert.equal(wheel(100).defaultPrevented, false, "page scrolling remains available at the settled edge");
+    media.matches = false;
+    wheel(-100);
+    bar.dispatchEvent(new dom.window.Event("pointerdown"));
+    assert.equal(calls.at(-1).behavior, "instant", "direct manipulation stops the animation");
+    bar.scrollLeft = 250;
+    bar.dispatchEvent(new dom.window.Event("scrollend"));
+    wheel(-50);
+    assert.deepEqual(calls.at(-1), { left: 200, behavior: "smooth" });
+});
+
+test("options theme previews, discards, persists after save, and can follow the system again", async (t) => {
+    const chrome = createFakeChrome({ sync: { optionsTheme: "dark" } });
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    const { document } = dom.window;
+    const theme = queryOption(document, "optionsTheme");
+    const selectTheme = (value) => {
+        for (let i = 0; i < 3 && theme.value !== value; i++) theme.click();
+        assert.equal(theme.value, value);
+    };
+    await waitForCondition(() => !theme.disabled);
+    assert.equal(document.documentElement.dataset.theme, "dark");
+    assert.equal(theme.tagName, "BUTTON");
+    assert.equal(theme.nextElementSibling.id, "headerMenu");
+    assert.match(theme.getAttribute("aria-label"), /다크.*시스템 설정/);
+    selectTheme("light");
+    assert.equal(document.documentElement.dataset.theme, "light");
+    assert.equal(chrome.testState.sync.optionsTheme, "dark");
+    document.getElementById("discardChanges").click();
+    assert.equal(document.documentElement.dataset.theme, "dark");
+    selectTheme("light");
+    document.getElementById("save").click();
+    await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
+    assert.equal(chrome.testState.sync.optionsTheme, "light");
+    const reopened = createDom("options.html", "options.html", chrome);
+    t.after(() => reopened.window.close());
+    evalRepoScript(reopened, "shared", "settings.js");
+    evalRepoScript(reopened, "options.js");
+    await waitForCondition(() => reopened.window.document.documentElement.dataset.theme === "light");
+    selectTheme("system");
+    assert.equal(document.documentElement.hasAttribute("data-theme"), false);
+    document.getElementById("save").click();
+    await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
+    assert.equal(chrome.testState.sync.optionsTheme, "system");
+    assert.equal(dom.window.BetterChzzkSettings.normalizeOptions({ optionsTheme: "invalid" }).optionsTheme, "system");
+});
+
 test("category wheel scrolls horizontally only when it can consume a vertical step", (t) => {
     const dom = createDom("options.html", "options.html");
     t.after(() => dom.window.close());

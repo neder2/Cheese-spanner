@@ -8,6 +8,7 @@ require("../shared/settings.js");
 const settings = globalThis.BetterChzzkSettings;
 
 const expectedDefaults = {
+    optionsTheme: "system",
     autoQualityEnabled: true,
     autoQualityPreferred: "1080p",
     rewardAutoCollectEnabled: true,
@@ -113,6 +114,7 @@ const expectedDefaults = {
     followingRefreshSeconds: 30,
     liveStartNotificationsEnabled: false,
     liveStartAutoOpenEnabled: false,
+    liveStartButtonEnabled: true,
     liveMultiviewEnabled: false,
     followingPreviewTooltipEnabled: false,
     followingPreviewSoundEnabled: true,
@@ -206,6 +208,7 @@ test("feature count keys are derived from feature toggles only", () => {
         "followingRefreshEnabled",
         "liveStartNotificationsEnabled",
         "liveStartAutoOpenEnabled",
+        "liveStartButtonEnabled",
         "liveMultiviewEnabled",
         "followingPreviewTooltipEnabled",
         "screenShortcutsEnabled",

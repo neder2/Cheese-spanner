@@ -24,7 +24,7 @@
  * - 렌더링 함수 (renderCalendar, renderList, renderSummary, renderAll)
  * - 채널별 시청 순위와 내 채팅·일반 후원 집계/보관 내역 (renderRanking, renderActivity)
  * - 기본 라이브 내역, 순위, 활동 탭과 공통 기간·검색, 10개 단위 페이지 이동
- * - 사용자가 선택한 월의 과거 후원 가져오기·취소와 사용 내역 기준의 별도 집계
+ * - 전체 후원 내역의 증분 갱신과 실시간 기록을 내 후원으로 통합하며 완료된 과거 달은 재조회하지 않음
  * - storage 로드/새로고침과 background 삭제 액션 (loadHistory, refreshHistory, clearHistory,
  *   deleteEntriesByIds)
  * - 이벤트 리스너 등록과 초기 로드 호출 (파일 최하단)
@@ -65,6 +65,7 @@ const {
     formatKstDateTime,
     formatKstMonthKey: formatMonthKey,
     formatKstTime,
+    getKstDateKey,
     getKstDateScopeBounds: getDateScopeBounds,
     getKstMonthStartMs,
     getKstParts,
@@ -112,11 +113,8 @@ const activityTypeEl = document.getElementById("activityType");
 const activityListEl = document.getElementById("activityList");
 const activitySummaryEl = document.getElementById("activitySummary");
 const donationHistory = globalThis.BetterChzzkDonationHistory;
-const donationImportToggle = document.getElementById("donationImportToggle");
-const donationImportForm = document.getElementById("donationImportForm");
-const donationImportStart = document.getElementById("donationImportStart");
-const donationImportEnd = document.getElementById("donationImportEnd");
-const donationImportSubmit = document.getElementById("donationImportSubmit");
+const donationImportRefresh = document.getElementById("donationImportRefresh");
+const donationImportControls = document.getElementById("donationImportControls");
 const donationImportCancel = document.getElementById("donationImportCancel");
 const donationImportStatus = document.getElementById("donationImportStatus");
 const clearDonationImportButton = document.getElementById("clearDonationImport");
@@ -203,9 +201,10 @@ function matchesHistoryQuery(entry) {
 }
 
 function renderResults() {
+    const donations = getDonationView();
     renderList();
-    renderRanking();
-    renderActivity();
+    renderRanking(donations);
+    renderActivity(donations);
 }
 
 async function sendWatchHistoryMutation(operation) {
@@ -420,6 +419,7 @@ function normalizeHistory(raw) {
                 dailySeconds: normalizeDailySeconds(row.dailySeconds),
                 activities: Array.isArray(row.activities) ? row.activities : [],
                 activityDaily: row.activityDaily && typeof row.activityDaily === "object" ? row.activityDaily : {},
+                activityCutoffAt: Number(row.activityCutoffAt) || 0,
             };
             const sourceSessionDetails = normalizeSessionDetails(row, entry);
             const uniqueTotals = getUniqueWatchTotals(entry, sourceSessionDetails);
@@ -1617,7 +1617,7 @@ function renderList() {
             appendText(
                 activityMeta,
                 "history-activity-meta",
-                `일반 후원 ${activityCounts.donationCheese.toLocaleString()}치즈 (${activityCounts.donationCount.toLocaleString()}회)`
+                `내 후원 ${activityCounts.donationCheese.toLocaleString()}치즈 (${activityCounts.donationCount.toLocaleString()}회)`
             );
         }
         activityMeta.hidden = chatButton.hidden && !activityCounts.donationCount;
@@ -1711,6 +1711,9 @@ function renderSummary() {
     totalLiveCountEl.textContent = `${entries.filter((entry) => entry.watchedSeconds > 0).length}개`;
     monthWatchTimeEl.textContent = formatDuration(monthSeconds);
     monthWatchLabelEl.textContent = `${selectedYear}년 ${selectedMonth}월`;
+    document.getElementById("donationImportUpdated").textContent = importedDonations?.updatedAt
+        ? `마지막 갱신: ${formatKstDateTime(importedDonations.updatedAt)}`
+        : "아직 갱신한 내역이 없어요.";
 
     if (storage) {
         noticeEl.dataset.state = "saved";
@@ -1747,7 +1750,79 @@ function hasActivityCounts(entry, bounds) {
     return counts.chatCount > 0 || counts.donationCount > 0;
 }
 
-function renderRanking() {
+function getDonationView() {
+    const bounds = getHistoryScopeBounds();
+    const query = compactSpaces(historySearchEl.value).toLowerCase();
+    const rows = [];
+    const groups = new Map();
+    const cutoffs = new Map();
+    let incomplete = false;
+    const add = (id, count, amount) => {
+        const total = groups.get(id) || { count: 0, amount: 0 };
+        total.count += Number.isSafeInteger(count) && count > 0 ? count : 0;
+        total.amount += Number.isSafeInteger(amount) && amount > 0 ? amount : 0;
+        groups.set(id, total);
+    };
+    for (const [month, imported] of Object.entries(importedDonations?.months || {})) {
+        // Older saved snapshots may also include purchases made during the request.
+        cutoffs.set(month, Math.max(importedDonations.monthStartedAt[month] || 0, ...imported.map((row) => row.at)));
+        for (const row of imported) {
+            if (
+                row.at < bounds.startMs ||
+                row.at >= bounds.endMs ||
+                (query && !row.channelName.toLowerCase().includes(query))
+            )
+                continue;
+            rows.push(row);
+            add(row.channelId, 1, row.amount);
+        }
+    }
+    for (const entry of entries) {
+        if (query && !entry.channelName.toLowerCase().includes(query)) continue;
+        const id = entry.channelId || `entry:${entry.id}`;
+        const retained = new Map();
+        for (const activity of getEntryActivitiesForScope(entry, "donation", bounds)) {
+            if (!Number.isSafeInteger(activity.amount) || activity.amount <= 0) continue;
+            const date = getKstDateKey(activity.at);
+            const cutoff = cutoffs.get(date.slice(0, 7));
+            const covered =
+                cutoff !== undefined &&
+                activity.at <= cutoff &&
+                String(activity.id || "").startsWith(`${importedDonations.owner}:`);
+            if (covered) continue;
+            rows.push({ ...activity, channelId: entry.channelId, channelName: entry.channelName });
+            const daily = retained.get(date) || { count: 0, amount: 0 };
+            daily.count++;
+            daily.amount += activity.amount;
+            retained.set(date, daily);
+        }
+        for (const [date, daily] of Object.entries(entry.activityDaily || {})) {
+            const day = getDateScopeBounds(date);
+            if (!day || day.startMs < bounds.startMs || day.endMs > bounds.endMs) continue;
+            const cutoff = cutoffs.get(date.slice(0, 7));
+            if (cutoff === undefined || day.startMs > cutoff) {
+                add(id, daily.donationCount || 0, daily.donationCheese || 0);
+            } else {
+                const current = retained.get(date);
+                if (current) add(id, current.count, current.amount);
+                if (
+                    day.endMs > cutoff &&
+                    entry.activityCutoffAt > cutoff &&
+                    daily.donationCount > (current?.count || 0)
+                )
+                    incomplete = true;
+            }
+        }
+    }
+    rows.sort((a, b) => b.at - a.at);
+    const totals = Array.from(groups.values()).reduce(
+        (sum, group) => ({ count: sum.count + group.count, amount: sum.amount + group.amount }),
+        { count: 0, amount: 0 }
+    );
+    return { rows, groups, incomplete, ...totals };
+}
+
+function renderRanking(donations = getDonationView()) {
     const bounds = getHistoryScopeBounds();
     const groups = new Map();
     for (const entry of entries) {
@@ -1788,10 +1863,9 @@ function renderRanking() {
         appendText(copy, "history-ranking-name", group.name);
         const meta = [`${group.count}개 방송`];
         if (group.chatCount) meta.push(`내 채팅 ${group.chatCount.toLocaleString()}개`);
-        if (group.donationCount)
-            meta.push(
-                `일반 후원 ${group.donationCheese.toLocaleString()}치즈 (${group.donationCount.toLocaleString()}회)`
-            );
+        const donated = donations.groups.get(group.id);
+        if (donated?.count)
+            meta.push(`내 후원 ${donated.amount.toLocaleString()}치즈 (${donated.count.toLocaleString()}회)`);
         appendText(copy, "history-activity-meta", meta.join(" · "));
         item.appendChild(copy);
         appendText(item, "history-ranking-time", formatDuration(group.seconds));
@@ -1806,28 +1880,17 @@ function renderRanking() {
     channelRankingEl.replaceChildren(fragment);
 }
 
-function renderActivity() {
+function renderActivity(donations = getDonationView()) {
     const bounds = getHistoryScopeBounds();
-    const imported = activityTypeEl.value === "imported";
-    document.getElementById("donationImportDescription").hidden = !imported;
-    if (imported) {
-        const monthCount = Object.keys(importedDonations?.months || {}).length;
-        document.getElementById("donationImportDescription").textContent =
-            `가져온 ${monthCount}개월의 치지직 사용 내역 기준이에요. 실시간 수집분과 합산하지 않으며, 방송별 시청 시간에는 영향을 주지 않아요.`;
-        const query = compactSpaces(historySearchEl.value).toLowerCase();
-        const matching = Object.values(importedDonations?.months || {})
-            .flat()
-            .filter(
-                (row) =>
-                    row.at >= bounds.startMs &&
-                    row.at < bounds.endMs &&
-                    (!query || row.channelName.toLowerCase().includes(query))
-            )
-            .sort((a, b) => b.at - a.at);
-        const amount = matching.reduce((sum, row) => sum + row.amount, 0);
-        activitySummaryEl.textContent = `가져온 일반 후원 ${amount.toLocaleString()}치즈 (${matching.length.toLocaleString()}회)`;
+    const isDonation = activityTypeEl.value === "donation";
+    document.getElementById("donationImportDescription").hidden = !isDonation;
+    if (isDonation) {
+        document.getElementById("donationImportDescription").textContent = donations.incomplete
+            ? "갱신 이후 후원 일부의 상세 기록이 정리되어 합계에 빠질 수 있어요. 후원 내역을 갱신해 주세요."
+            : "갱신한 내역과 이후 새 후원을 함께 보여 줘요. 같은 기간을 중복해서 더하지 않으며, 후원은 채널명으로 검색해요.";
+        activitySummaryEl.textContent = `내 후원 ${donations.amount.toLocaleString()}치즈 (${donations.count.toLocaleString()}회)`;
         const fragment = document.createDocumentFragment();
-        for (const row of getPageRows("activity", matching)) {
+        for (const row of getPageRows("activity", donations.rows)) {
             const item = document.createElement("li");
             appendText(
                 item,
@@ -1838,12 +1901,10 @@ function renderActivity() {
             appendText(item, "history-activity-text", row.text || "메시지 없는 후원");
             fragment.appendChild(item);
         }
-        if (!matching.length) {
+        if (!donations.rows.length) {
             const empty = document.createElement("li");
             empty.className = "history-empty";
-            empty.textContent = importedDonations?.owner
-                ? "이 조건에 가져온 후원이 없어요."
-                : "과거 후원 가져오기로 치지직 사용 내역을 불러와 주세요.";
+            empty.textContent = "이 조건에 보관된 후원이 없어요. 후원 내역 갱신으로 확인할 수 있어요.";
             fragment.appendChild(empty);
         }
         activityListEl.replaceChildren(fragment);
@@ -1858,7 +1919,7 @@ function renderActivity() {
         },
         { chatCount: 0, donationCount: 0, donationCheese: 0 }
     );
-    activitySummaryEl.textContent = `수집된 내 채팅 ${totals.chatCount.toLocaleString()}개 · 확인된 일반 후원 ${totals.donationCheese.toLocaleString()}치즈 (${totals.donationCount.toLocaleString()}회)`;
+    activitySummaryEl.textContent = `수집된 내 채팅 ${totals.chatCount.toLocaleString()}개 · 내 후원 ${donations.amount.toLocaleString()}치즈 (${donations.count.toLocaleString()}회)`;
     const rows = matching
         .flatMap((entry) =>
             getEntryActivitiesForScope(entry, activityTypeEl.value, bounds).map((activity) => ({ entry, activity }))
@@ -2133,9 +2194,8 @@ if (globalThis.chrome?.storage?.onChanged) {
 }
 
 function setDonationImportBusy(busy) {
-    donationImportForm.setAttribute("aria-busy", String(busy));
-    for (const control of [donationImportStart, donationImportEnd, donationImportSubmit, donationImportToggle])
-        control.disabled = busy;
+    donationImportControls.setAttribute("aria-busy", String(busy));
+    donationImportRefresh.disabled = busy;
     donationImportCancel.hidden = !busy;
     donationImportCancel.disabled = !busy;
 }
@@ -2145,26 +2205,9 @@ function showDonationImportStatus(text, error = false) {
     donationImportStatus.dataset.error = String(error);
 }
 
-donationImportToggle.addEventListener("click", () => {
-    const open = donationImportForm.hidden;
-    donationImportForm.hidden = !open;
-    donationImportToggle.setAttribute("aria-expanded", String(open));
-    if (open) {
-        const today = getKstParts();
-        const current = `${today.year}-${String(today.month).padStart(2, "0")}`;
-        for (const input of [donationImportStart, donationImportEnd]) {
-            input.max = current;
-            if (!input.value) input.value = `${selectedYear}-${String(selectedMonth).padStart(2, "0")}`;
-        }
-        donationImportStart.focus();
-    }
-});
-
-donationImportForm.addEventListener("submit", (event) => {
-    event.preventDefault();
+donationImportRefresh.addEventListener("click", () => {
     if (donationImportPort) return;
     try {
-        donationHistory.getMonths(donationImportStart.value, donationImportEnd.value);
         const generation = ++donationImportGeneration;
         const port = chrome.runtime.connect({ name: donationHistory.PORT_NAME });
         donationImportPort = port;
@@ -2200,19 +2243,17 @@ donationImportForm.addEventListener("submit", (event) => {
                 showDonationImportStatus(message.message, true);
             } else if (message.type === "done") {
                 finish();
-                activityTypeEl.value = "imported";
+                activityTypeEl.value = "donation";
                 historyScopeEl.value = "all";
                 selectedDateKey = "";
                 resetViewPages();
                 await loadHistory({ silent: true });
                 if (generation !== donationImportGeneration) return;
-                showDonationImportStatus(
-                    `${message.startMonth} ~ ${message.endMonth} 일반 후원 ${message.count.toLocaleString()}건을 가져왔어요.`
-                );
-                donationImportSubmit.focus({ preventScroll: true });
+                showDonationImportStatus(`${message.monthCount}개월을 확인해 후원 내역을 갱신했어요.`);
+                donationImportRefresh.focus({ preventScroll: true });
             }
         });
-        port.postMessage({ type: "start", startMonth: donationImportStart.value, endMonth: donationImportEnd.value });
+        port.postMessage({ type: "start" });
     } catch (error) {
         donationImportPort?.disconnect();
         donationImportPort = null;
@@ -2228,13 +2269,13 @@ donationImportCancel.addEventListener("click", () => {
 });
 window.addEventListener("pagehide", () => donationImportPort?.disconnect());
 clearDonationImportButton.addEventListener("click", async () => {
-    if (!confirm("사용 내역에서 가져온 후원 기록을 삭제할까요?")) return;
+    if (!confirm("갱신으로 받은 후원 내역과 조회 상태를 초기화할까요? 실시간으로 저장한 기록은 유지돼요.")) return;
     try {
         await sendWatchHistoryMutation({ kind: "clearDonationImport", cutoffAt: Date.now() });
         await loadHistory({ silent: true });
-        showMessage("가져온 후원 내역을 삭제했어요.");
+        showMessage("후원 갱신 기록을 초기화했어요. 다음 갱신은 전체 기간을 조회해요.");
     } catch (_) {
-        showMessage("가져온 후원 내역을 삭제하지 못했어요.", "error");
+        showMessage("후원 갱신 기록을 초기화하지 못했어요.", "error");
     }
 });
 

@@ -388,6 +388,257 @@ test("channel mutations serialize, reject untrusted senders, and remove stale po
     assert.equal((await m.send("add", rule(SECOND))).ok, false);
 });
 
+test("a channel page can register notifications with a verified name without enabling global options", async () => {
+    const m = monitor({ local: {}, sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false } });
+    await flush();
+    m.setFetch(async (url) => {
+        assert.equal(url, `https://api.chzzk.naver.com/service/v1/channels/${CHANNEL}`);
+        return { code: 200, content: { channelId: CHANNEL, channelName: "확인된 채널" } };
+    });
+    const sender = { id: "test", tab: { id: 1 }, frameId: 0, url: `https://chzzk.naver.com/live/${CHANNEL}` };
+    const replies = await Promise.all([
+        m.send(
+            "set-notify",
+            { channelId: CHANNEL, notify: true, channelName: "믿지 않는 이름", autoOpen: true },
+            sender
+        ),
+        m.send("set-notify", { channelId: CHANNEL, notify: true }, sender),
+    ]);
+    assert.ok(replies.every((reply) => reply.ok));
+    assert.deepEqual(m.local[CHANNELS], [
+        { channelId: CHANNEL, channelName: "확인된 채널", notify: true, autoOpen: false },
+    ]);
+    assert.equal(m.requests.length, 1, "concurrent registrations reuse the saved channel instead of fetching twice");
+    assert.equal(m.sync.liveStartNotificationsEnabled, false);
+    assert.equal(m.sync.liveStartAutoOpenEnabled, false);
+    await m.send("update", { channelId: CHANNEL, autoOpen: true });
+    const result = await m.send(
+        "set-notify",
+        { channelId: CHANNEL, notify: false },
+        {
+            ...sender,
+            url: `https://chzzk.naver.com/${CHANNEL}/videos`,
+        }
+    );
+    assert.equal(result.ok, true);
+    assert.equal(m.local[CHANNELS][0].notify, false);
+    assert.equal(m.local[CHANNELS][0].autoOpen, true);
+});
+
+test("registration preserves verified profile images through normalization and later edits", async () => {
+    const m = monitor({ local: {}, sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false } });
+    await flush();
+    const image = "https://nng-phinf.pstatic.net/channel/profile.png";
+    m.setFetch(async () => ({
+        code: 200,
+        content: { channelId: CHANNEL, channelName: "사진 채널", channelImageUrl: image },
+    }));
+    const sender = { id: "test", tab: { id: 1 }, frameId: 0, url: "https://chzzk.naver.com/" };
+    assert.equal(
+        (
+            await m.send(
+                "set-notify",
+                { channelId: CHANNEL, notify: true, channelImageUrl: "https://evil.example/fake.png" },
+                sender
+            )
+        ).ok,
+        true
+    );
+    assert.equal(m.local[CHANNELS][0].channelImageUrl, image);
+    await m.send("update", { channelId: CHANNEL, autoOpen: true });
+    assert.equal(m.local[CHANNELS][0].channelImageUrl, image);
+    assert.equal((await m.send("add", { ...rule(SECOND), channelImageUrl: image })).ok, true);
+    assert.equal(m.local[CHANNELS][1].channelImageUrl, image);
+    assert.equal(
+        m.model.normalizeChannels([{ ...rule(), channelImageUrl: "https://evil.example/fake.png" }])[0].channelImageUrl,
+        undefined
+    );
+    assert.deepEqual(clone(m.model.normalizeChannels([rule()])), [rule()], "legacy entries remain valid");
+});
+
+test("page registration independently saves auto-open and notification selections in the same queue", async () => {
+    const m = monitor({ local: {}, sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false } });
+    await flush();
+    m.setFetch(async () => ({ code: 200, content: { channelId: CHANNEL, channelName: "확인된 채널" } }));
+    const sender = { id: "test", tab: { id: 1 }, frameId: 0, url: "https://chzzk.naver.com/" };
+    assert.equal((await m.send("set-auto-open", { channelId: CHANNEL, autoOpen: false }, sender)).ok, true);
+    assert.deepEqual(m.local[CHANNELS], []);
+    const added = await m.send("set-auto-open", { channelId: CHANNEL, autoOpen: true, notify: true }, sender);
+    assert.equal(added.ok, true);
+    assert.deepEqual(m.local[CHANNELS], [
+        { channelId: CHANNEL, channelName: "확인된 채널", notify: false, autoOpen: true },
+    ]);
+    const replies = await Promise.all([
+        m.send("set-notify", { channelId: CHANNEL, notify: true }, sender),
+        m.send("set-auto-open", { channelId: CHANNEL, autoOpen: false }, sender),
+    ]);
+    assert.ok(replies.every((reply) => reply.ok));
+    assert.equal(m.local[CHANNELS][0].notify, true);
+    assert.equal(m.local[CHANNELS][0].autoOpen, false);
+    assert.equal(m.requests.length, 1);
+    assert.equal(m.sync.liveStartNotificationsEnabled, false);
+    assert.equal(m.sync.liveStartAutoOpenEnabled, false);
+});
+
+test("page registration follows the clicked channel even when the sender retains an earlier SPA URL", async () => {
+    for (const url of ["https://chzzk.naver.com/", `https://chzzk.naver.com/live/${SECOND}`]) {
+        const m = monitor({
+            local: { [CHANNELS]: [{ ...rule(SECOND), notify: false }] },
+            sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false },
+        });
+        await flush();
+        m.setFetch(async () => ({ code: 200, content: { channelId: CHANNEL, channelName: "선택한 채널" } }));
+        const sender = { id: "test", tab: { id: 1 }, frameId: 0, url };
+        const registered = await m.send("set-notify", { channelId: CHANNEL, notify: true }, sender);
+        assert.equal(registered.ok, true);
+        assert.deepEqual(m.local[CHANNELS], [
+            { ...rule(SECOND), notify: false },
+            { channelId: CHANNEL, channelName: "선택한 채널", notify: true, autoOpen: false },
+        ]);
+        assert.equal(m.requests.length, 1);
+        const removed = await m.send("set-notify", { channelId: CHANNEL, notify: false }, sender);
+        assert.equal(removed.ok, true);
+        assert.equal(m.local[CHANNELS][1].notify, false);
+        assert.equal(m.requests.length, 1);
+    }
+});
+
+test("page registration rejects other origins, frames, invalid channels and mutation kinds", async () => {
+    const m = monitor({ local: {}, sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false } });
+    await flush();
+    const sender = { id: "test", tab: { id: 1 }, frameId: 0, url: `https://chzzk.naver.com/${CHANNEL}` };
+    for (const invalid of [
+        { ...sender, id: "other" },
+        { ...sender, url: `https://evil.example/${CHANNEL}` },
+        { ...sender, url: `https://chzzk.naver.com.evil.example/${CHANNEL}` },
+        { ...sender, url: `http://chzzk.naver.com/${CHANNEL}` },
+        { ...sender, url: CHANNEL },
+        { ...sender, frameId: 2 },
+        { ...sender, tab: undefined },
+    ]) {
+        assert.equal((await m.send("set-notify", { channelId: CHANNEL, notify: true }, invalid)).ok, false);
+        assert.equal((await m.send("set-auto-open", { channelId: CHANNEL, autoOpen: true }, invalid)).ok, false);
+        assert.equal((await m.send("remove", { channelId: CHANNEL }, invalid)).ok, false);
+    }
+    assert.equal((await m.send("add", rule(), sender)).ok, false);
+    assert.equal((await m.send("update", { channelId: CHANNEL, autoOpen: true }, sender)).ok, false);
+    assert.equal((await m.send("set-notify", { channelId: CHANNEL, notify: "true" }, sender)).ok, false);
+    assert.equal((await m.send("set-auto-open", { channelId: CHANNEL, autoOpen: "true" }, sender)).ok, false);
+    for (const channelId of ["", "../channels", "z".repeat(32), [CHANNEL]]) {
+        assert.equal((await m.send("set-notify", { channelId, notify: true }, sender)).ok, false);
+        assert.equal((await m.send("set-auto-open", { channelId, autoOpen: true }, sender)).ok, false);
+        assert.equal((await m.send("remove", { channelId }, sender)).ok, false);
+    }
+    assert.equal(m.local[CHANNELS], undefined);
+    assert.equal(m.requests.length, 0);
+});
+
+test("the trusted page can unregister a channel and stop both live-start actions", async () => {
+    const m = monitor();
+    await flush();
+    const sender = { id: "test", tab: { id: 1 }, frameId: 0, url: "https://chzzk.naver.com/" };
+    const reply = await m.send("remove", { channelId: CHANNEL }, sender);
+    assert.equal(reply.ok, true);
+    await flush();
+    assert.deepEqual(m.local[CHANNELS], []);
+    assert.equal(m.local[STATE].channels[CHANNEL], undefined);
+    assert.equal(m.alarms.size, 0);
+    m.setResponse(snapshot(11, true));
+    await m.tick();
+    assert.equal(m.notifications.length, 0);
+    assert.equal(m.opened.length, 0);
+    assert.equal(m.sync.liveStartNotificationsEnabled, true);
+    assert.equal(m.sync.liveStartAutoOpenEnabled, true);
+});
+
+test("page registration preserves the list on failed lookups and skips the already running broadcast", async () => {
+    const m = monitor({ local: {}, sync: { liveStartAutoOpenEnabled: false } });
+    await flush();
+    const sender = { id: "test", tab: { id: 1 }, frameId: 0, url: `https://chzzk.naver.com/${CHANNEL}` };
+    m.setFetch(async () => ({ code: 200, content: { channelId: SECOND, channelName: "다른 채널" } }));
+    assert.equal((await m.send("set-notify", { channelId: CHANNEL, notify: true }, sender)).ok, false);
+    assert.equal(m.local[CHANNELS], undefined);
+    let liveId = 11;
+    m.setFetch(async (url) =>
+        url.endsWith("/live-detail")
+            ? snapshot(liveId, true)
+            : { code: 200, content: { channelId: CHANNEL, channelName: "확인된 채널" } }
+    );
+    assert.equal((await m.send("set-notify", { channelId: CHANNEL, notify: true }, sender)).ok, true);
+    await flush();
+    assert.equal(m.notifications.length, 0);
+    liveId = 12;
+    await m.tick();
+    assert.equal(m.notifications.length, 1);
+});
+
+test("page registration enforces the channel limit and does not acknowledge failed storage", async () => {
+    const sender = { id: "test", tab: { id: 1 }, frameId: 0, url: `https://chzzk.naver.com/live/${CHANNEL}` };
+    const full = Array.from({ length: 32 }, (_, index) => rule(index.toString(16).padStart(32, "0")));
+    const limited = monitor({
+        local: { [CHANNELS]: full },
+        sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false },
+    });
+    await flush();
+    const rejected = await limited.send("set-notify", { channelId: CHANNEL, notify: true }, sender);
+    assert.equal(rejected.ok, false);
+    assert.match(rejected.error, /32개/);
+    assert.equal(limited.requests.length, 0);
+    assert.deepEqual(limited.local[CHANNELS], full);
+    const m = monitor({ local: {}, sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false } });
+    await flush();
+    m.setFetch(async () => ({ code: 200, content: { channelId: CHANNEL, channelName: "확인된 채널" } }));
+    const save = m.chrome.storage.local.set;
+    m.chrome.storage.local.set = (values, callback) => {
+        if (!Object.hasOwn(values, CHANNELS)) return save(values, callback);
+        queueMicrotask(() => {
+            m.chrome.runtime.lastError = { message: "storage failed" };
+            callback();
+            m.chrome.runtime.lastError = null;
+        });
+    };
+    assert.equal((await m.send("set-notify", { channelId: CHANNEL, notify: true }, sender)).ok, false);
+    assert.equal(m.local[CHANNELS], undefined);
+});
+
+test("live-start controls have their own accessible options tab", async (t) => {
+    const chrome = createFakeChrome();
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    const doc = dom.window.document;
+    const tab = doc.querySelector('[role="tab"][aria-label="방송 알림"]');
+    assert.ok(tab);
+    const panel = doc.getElementById(tab.getAttribute("aria-controls"));
+    assert.equal(panel.getAttribute("aria-labelledby"), tab.id);
+    for (const key of ["liveStartNotificationsEnabled", "liveStartAutoOpenEnabled", "liveStartButtonEnabled"]) {
+        assert.equal(doc.querySelectorAll(`[data-option="${key}"]`).length, 1);
+        assert.ok(panel.contains(queryOption(doc, key)));
+    }
+    assert.ok(panel.contains(doc.getElementById("liveStartChannels")));
+    await waitForCondition(() => queryOption(doc, "liveStartButtonEnabled").checked);
+    assert.equal(queryOption(doc, "liveStartButtonEnabled").checked, true);
+    assert.equal(queryOption(doc, "liveStartButtonEnabled").disabled, false);
+    tab.click();
+    assert.equal(tab.getAttribute("aria-selected"), "true");
+    assert.equal(panel.classList.contains("is-active"), true);
+    tab.focus();
+    tab.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    assert.notEqual(doc.activeElement, tab);
+    assert.equal(doc.activeElement.getAttribute("role"), "tab");
+});
+
+test("hiding the registration button leaves monitoring and channel rules active", async () => {
+    const m = monitor({ sync: { liveStartButtonEnabled: false } });
+    await flush();
+    m.setResponse(snapshot(11, true));
+    await m.tick();
+    assert.equal(m.notifications.length, 1);
+    assert.equal(m.opened.length, 1);
+    assert.deepEqual(m.local[CHANNELS], [rule()]);
+});
+
 test("rapid disable and re-enable keeps the next observation silent", async () => {
     const m = monitor();
     await flush();

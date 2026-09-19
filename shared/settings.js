@@ -47,6 +47,7 @@
     });
 
     const OPTION_SCHEMA = Object.freeze({
+        optionsTheme: { kind: "theme", default: "system" },
         autoQualityEnabled: { kind: "bool", default: true, feature: true },
         autoQualityPreferred: { kind: "quality", default: DEFAULT_QUALITY },
         rewardAutoCollectEnabled: { kind: "bool", default: true, feature: true },
@@ -227,6 +228,7 @@
         followingRefreshSeconds: { kind: "int", default: 30, min: 10, max: 600 },
         liveStartNotificationsEnabled: { kind: "bool", default: false, feature: true },
         liveStartAutoOpenEnabled: { kind: "bool", default: false, feature: true },
+        liveStartButtonEnabled: { kind: "bool", default: true, feature: true },
         // 미리보기 HLS가 선택 권한(pstatic.net) 승인을 전제로 하므로, 사용자가
         // 옵션에서 직접 켜면서 권한을 허용하는 흐름이 되도록 기본값은 꺼짐이다.
         liveMultiviewEnabled: { kind: "bool", default: false, feature: true },
@@ -315,6 +317,7 @@
         const fallback = DEFAULT_OPTIONS[key];
 
         if (spec.kind === "bool") return normalizeBoolean(value, fallback);
+        if (spec.kind === "theme") return ["system", "light", "dark"].includes(value) ? value : fallback;
         if (spec.kind === "quality") return ["1080p", "720p", "480p"].includes(value) ? value : fallback;
         if (spec.kind === "zoomMode") return ["manual", "always"].includes(value) ? value : fallback;
         if (spec.kind === "int") return normalizeInteger(value, fallback, spec.min, spec.max);

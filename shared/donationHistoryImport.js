@@ -69,7 +69,6 @@
                 active = job;
                 void (async () => {
                     try {
-                        data.getMonths(message.startMonth, message.endMonth);
                         if (sender.tab?.incognito) throw new Error("일반 브라우저 창에서 후원 내역을 가져와 주세요.");
                         const tabs = await chrome.tabs.query({ url: "https://chzzk.naver.com/*" });
                         const tab = tabs
@@ -89,8 +88,7 @@
                             return owner;
                         };
                         const snapshot = await data.collect({
-                            startMonth: message.startMonth,
-                            endMonth: message.endMonth,
+                            previous,
                             identify,
                             signal: job.controller.signal,
                             onProgress: (progress) => send({ type: "progress", ...progress }),
@@ -117,8 +115,7 @@
                         send({
                             type: "done",
                             count: Object.values(snapshot.months).reduce((sum, rows) => sum + rows.length, 0),
-                            startMonth: snapshot.startMonth,
-                            endMonth: snapshot.endMonth,
+                            monthCount: Object.keys(snapshot.months).length,
                         });
                     } catch (error) {
                         const message = job.controller.signal.aborted

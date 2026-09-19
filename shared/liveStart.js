@@ -1,4 +1,4 @@
-/* Channel rules shared by the options page and the live-start service worker. */
+/* Channel rules shared by options, page registration controls and the live-start service worker. */
 (() => {
     const CHANNELS_KEY = "betterchzzk:live-start-channels";
     const STATE_KEY = "betterchzzk:live-start-state";
@@ -33,10 +33,12 @@
             )
                 continue;
             const channelId = item.channelId.toLowerCase();
+            const channelImageUrl = BetterChzzk.utils.normalizeChzzkImageUrl(item.channelImageUrl);
             seen.add(channelId);
             result.push({
                 channelId,
                 channelName: typeof item.channelName === "string" ? item.channelName.trim().slice(0, 100) : "",
+                ...(channelImageUrl ? { channelImageUrl } : {}),
                 notify: item.notify === true,
                 autoOpen: item.autoOpen === true,
             });

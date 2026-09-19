@@ -234,37 +234,24 @@
                             <p id="activitySummary" class="history-activity-summary" role="status"></p>
                             <select id="activityType" aria-label="내 활동 종류">
                                 <option value="chat">내 채팅</option>
-                                <option value="donation">내 일반 후원</option>
-                                <option value="imported">가져온 후원</option>
+                                <option value="donation">내 후원</option>
                             </select>
                             <button
-                                id="donationImportToggle"
+                                id="donationImportRefresh"
                                 class="secondary-button"
                                 type="button"
-                                aria-expanded="false"
-                                aria-controls="donationImportForm"
+                                aria-describedby="donationImportHint"
                             >
-                                과거 후원 가져오기
+                                후원 내역 갱신
                             </button>
                         </div>
-                        <form id="donationImportForm" class="history-donation-import" hidden>
-                            <p>치지직에 로그인된 탭을 열어 두세요. 사용 내역의 일반 채팅 후원을 가져와요.</p>
-                            <div class="history-import-fields">
-                                <label for="donationImportStart"
-                                    >시작 월<input id="donationImportStart" type="month" min="2020-01" required
-                                /></label>
-                                <label for="donationImportEnd"
-                                    >마지막 월<input id="donationImportEnd" type="month" min="2020-01" required
-                                /></label>
-                            </div>
-                            <p class="setting-note">
-                                한 번에 최대 12개월, 총 3,000개까지 보관해요. 같은 기간을 다시 가져오면 최신 내역으로
-                                갱신해요.
+                        <div id="donationImportControls" class="history-donation-import">
+                            <p id="donationImportHint">
+                                처음에는 전체 기간을, 이후에는 새 내역이 생길 수 있는 달과 아직 확인하지 않은 달만
+                                조회해요. 치지직에 로그인된 탭을 열어 두세요. 일반 후원을 최대 3,000개까지 보관해요.
                             </p>
+                            <p id="donationImportUpdated" class="setting-note"></p>
                             <div class="history-import-actions">
-                                <button id="donationImportSubmit" class="secondary-button" type="submit">
-                                    선택 기간 가져오기
-                                </button>
                                 <button id="donationImportCancel" class="secondary-button" type="button" hidden>
                                     취소
                                 </button>
@@ -275,11 +262,8 @@
                                 role="status"
                                 aria-live="polite"
                             ></p>
-                        </form>
-                        <p id="donationImportDescription" class="history-result-description" hidden>
-                            치지직 사용 내역 기준이에요. 실시간 수집분과 합산하지 않으며, 방송별 시청 시간에는 영향을
-                            주지 않아요.
-                        </p>
+                        </div>
+                        <p id="donationImportDescription" class="history-result-description" hidden></p>
                         <ol id="activityList" class="history-activity-list"></ol>
                         <nav class="history-pagination" aria-label="내 활동 페이지">
                             <button
@@ -305,7 +289,7 @@
                             <p class="setting-note">
                                 <a href="options.html">설정</a>에서 기록 저장을 켠 뒤 확인한 내역만 포함해요. 위
                                 기간·날짜·검색 조건을 적용하며 실시간 수집에서는 익명·미션·외부 후원과 과거 내역을
-                                제외해요. 과거 일반 후원은 가져오기 버튼으로 따로 조회할 수 있어요.
+                                제외해요. 과거 일반 후원은 후원 내역 갱신 버튼으로 따로 조회할 수 있어요.
                             </p>
                             <p class="setting-note">
                                 내용은 방송별 최근 500개, 전체 최근 3,000개까지 보관해요. 오래된 내용이 정리되어도 채팅
@@ -353,9 +337,9 @@
                         </p>
                     </details>
                     <div class="history-list-footer">
-                        <span>사용 내역에서 가져온 후원 기록을 삭제해요.</span>
+                        <span>후원 갱신 내역과 조회 상태를 초기화해요. 실시간 저장 기록은 유지해요.</span>
                         <button id="clearDonationImport" class="secondary-button danger-button" type="button" disabled>
-                            가져온 후원 삭제
+                            후원 갱신 초기화
                         </button>
                     </div>
                     <div class="history-list-footer">

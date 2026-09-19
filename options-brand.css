@@ -29,6 +29,7 @@
 
 .options-body .hero {
     column-gap: 6px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .options-body .hero h1 {
@@ -77,6 +78,37 @@
 
 .options-body .options-page .tab.is-active {
     font-weight: 650;
+}
+
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.options-body .options-page .theme-toggle {
+    display: grid;
+    place-items: center;
+    flex: 0 0 28px;
+    width: 28px;
+    min-height: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    box-shadow: none;
+}
+
+.options-body .options-page .theme-toggle:hover {
+    background: var(--surface-2);
+    color: var(--text);
+}
+
+.theme-toggle svg {
+    width: 14px;
+    height: 14px;
 }
 
 .options-body :is(.search-field input, .number-grid input, .quality-select, textarea) {
