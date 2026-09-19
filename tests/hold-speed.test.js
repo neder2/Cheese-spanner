@@ -618,6 +618,26 @@ test("playback speed shortcuts step by 0.25 on live and VOD without changing pau
     assert.equal(fixture.mediaState.paused, true);
 });
 
+test("speed shortcuts normalize fractional media rates before stepping and displaying them", (t) => {
+    const fixture = createFixture();
+    t.after(() => fixture.dom.window.close());
+    for (const [rate, code, expected] of [
+        [1.03, "BracketRight", 1.25],
+        [1.25005, "BracketLeft", 1],
+        [1.00005, "BracketRight", 1.25],
+        [0.99995, "BracketLeft", 0.75],
+        [1.28, "BracketRight", 1.5],
+        [1.28, "BracketLeft", 1],
+        [0.25005, "BracketLeft", 0.25],
+        [3.99995, "BracketRight", 4],
+    ]) {
+        fixture.video.playbackRate = rate;
+        dispatchKey(fixture, "keydown", { code });
+        assert.equal(fixture.video.playbackRate, expected);
+        assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay")?.textContent, `${expected}배속`);
+    }
+});
+
 test("speed keys repeatedly step within 0.25 to 4 and reset explicitly to 1x", (t) => {
     const fixture = createFixture();
     t.after(() => fixture.dom.window.close());

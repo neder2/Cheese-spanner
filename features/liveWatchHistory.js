@@ -3,6 +3,7 @@
  *
  * 실행 컨텍스트: https://chzzk.naver.com/live/{channelId}의 isolated content script.
  * 하는 일: 실제 media time이 전진한 구간만 누적하고 15초 간격·가시성 변경·pagehide에 flush한다.
+ *   본인 채팅·일반 후원은 확인 즉시 저장하며, 최소 시청 시간에 미달하면 활동만 저장한다.
  * 의존: BetterChzzkSettings와 BetterChzzk.utils의 DOM, 날짜, 범위 병합, runtime 메시지 유틸.
  * 통신: 누적 절대값 세션 스냅샷과 provisional→live ID migration을 background 단일 writer에 보낸다.
  * 삭제 barrier 응답을 받으면 기존 세션을 버리고 현재 시각부터 새 세션으로 다시 추적한다.
@@ -55,6 +56,35 @@
     let runtimeInstalled = false;
     let lifecycleListenersInstalled = false;
     const pendingClosedSessions = new Set();
+    const activityCollector = BetterChzzk.watchActivity?.createCollector((activity, channelId) => {
+        const current = session;
+        if (!current || current.closed || current.channelId !== channelId || activity.at < current.enteredAt) return;
+        if (
+            activity.kind === "chat"
+                ? !featureOptions.liveWatchHistoryChatEnabled
+                : !featureOptions.liveWatchHistoryDonationEnabled
+        )
+            return;
+        if (current.seenActivityIds.has(activity.id)) return;
+        current.seenActivityIds.add(activity.id);
+        if (current.seenActivityIds.size > 1000)
+            current.seenActivityIds.delete(current.seenActivityIds.values().next().value);
+        current.activities.push(activity);
+        if (current.activities.length > 500) current.activities.shift();
+        current.lastSeenAt = Math.max(current.lastSeenAt, Date.now());
+        void flushSession({ target: current });
+    });
+
+    function syncActivityCollector() {
+        activityCollector?.configure(
+            session && {
+                channelId: session.channelId,
+                since: session.enteredAt,
+                chat: isFeatureEnabled() && featureOptions.liveWatchHistoryChatEnabled,
+                donations: isFeatureEnabled() && featureOptions.liveWatchHistoryDonationEnabled,
+            }
+        );
+    }
 
     const scheduleDomSync = createThrottledDomSync(syncTrackingState, 250);
 
@@ -262,6 +292,7 @@
             mergeMetadata(current, pageMetadata);
             mergeMetadata(current, nextMetadata, { persistThumbnail: true, persistTitle: true });
             await promoteSessionRecordId(current);
+            if (current.activities.length) void flushSession({ target: current });
         } catch (_) {
             if (isCurrentMetadataRequest(current, requestId, channelId)) mergeMetadata(current, pageMetadata);
         } finally {
@@ -341,6 +372,7 @@
         return {
             kind: "upsertSessionSnapshot",
             recordId: getRecordId(current),
+            activities: getRecordId(current).startsWith("live:") ? current.activities.slice() : [],
             entry: {
                 channelId: current.channelId || "",
                 liveId: current.liveId || "",
@@ -437,6 +469,8 @@
         current.pendingSeconds = 0;
         current.pendingByDate = {};
         current.pendingRanges = [];
+        current.activities = [];
+        current.seenActivityIds = new Set();
         current.storageSessionRecorded = false;
         current.storageClosed = false;
         current.storageLeftAt = 0;
@@ -449,6 +483,7 @@
         if (current.titleVerified) addTitleHistory(current, current.title, now);
         current.recordId = "";
         current.recordId = getRecordId(current);
+        syncActivityCollector();
     }
 
     function clearFlushRetryTimer(current) {
@@ -502,7 +537,9 @@
         if (session === current && current.closed !== true) accrueWatchTime();
 
         const totalWatched = Math.floor(current.watchedSeconds);
-        if (totalWatched < getMinSessionSeconds()) {
+        const hasActivities = current.activities.length > 0 && getRecordId(current).startsWith("live:");
+        const activityOnly = totalWatched < getMinSessionSeconds();
+        if (activityOnly && !hasActivities) {
             if (force && current.closed === true) finalizeClosedSession(current);
             return;
         }
@@ -511,7 +548,7 @@
         const rangeSnapshot = takePendingRangeSnapshot(current);
         const deltaSeconds = pendingTotal(snapshot);
         const shouldUpdateSession = (force || current.closed === true) && hasStoredSessionStateChange(current);
-        if (deltaSeconds <= 0 && !shouldUpdateSession && !current.pendingRecordMigrationSource) {
+        if (deltaSeconds <= 0 && !shouldUpdateSession && !current.pendingRecordMigrationSource && !hasActivities) {
             if (current.closed === true && current.storageSessionRecorded && current.storageClosed === true) {
                 finalizeClosedSession(current);
             }
@@ -525,6 +562,7 @@
         let flushFailed = false;
         if (current.pendingRecordMigrationSource) await promoteSessionRecordId(current);
         const operation = buildSessionSnapshot(current);
+        if (activityOnly) operation.kind = "appendActivities";
 
         try {
             const result = await sendWatchHistoryMutation(operation);
@@ -538,9 +576,13 @@
                 current.flushAgainRequested = true;
                 current.flushAgainForce = current.flushAgainForce || force;
             } else {
-                current.storageSessionRecorded = true;
-                current.storageLeftAt = operation.session.leftAt;
-                current.storageClosed = operation.session.closed;
+                if (!activityOnly) {
+                    current.storageSessionRecorded = true;
+                    current.storageLeftAt = operation.session.leftAt;
+                    current.storageClosed = operation.session.closed;
+                }
+                const savedActivityIds = new Set(operation.activities.map((activity) => activity.id));
+                current.activities = current.activities.filter((activity) => !savedActivityIds.has(activity.id));
                 flushFailed = Boolean(current.pendingRecordMigrationSource);
             }
         } catch (_) {
@@ -615,6 +657,8 @@
             pendingSeconds: 0,
             pendingByDate: {},
             pendingRanges: [],
+            activities: [],
+            seenActivityIds: new Set(),
             storageSessionRecorded: false,
             lastTickAt: performance.now(),
             lastMediaTime: getVideoMediaTime(attachedVideo),
@@ -625,6 +669,7 @@
             mergeMetadata(session, initialMetadata, { persistThumbnail: true, persistTitle: true });
         }
         session.recordId = getRecordId(session);
+        syncActivityCollector();
 
         ensureTimers();
         scheduleMetadataRefresh(0);
@@ -637,6 +682,7 @@
         current.closed = true;
         current.lastSeenAt = Date.now();
         session = null;
+        activityCollector?.stop();
         pendingClosedSessions.add(current);
         void flushSession({ force: true, target: current });
         if (metadataTimer) {
@@ -719,6 +765,12 @@
         ensureTimers();
         const video = getMainVideoElement?.();
         attachVideo(video);
+        if (
+            !session &&
+            (featureOptions.liveWatchHistoryChatEnabled || featureOptions.liveWatchHistoryDonationEnabled)
+        ) {
+            startSession();
+        }
         if (isVideoActive(video)) {
             if (!session) startSession();
             else accrueWatchTime();
@@ -837,6 +889,7 @@
             void flushSession({ force: true, target: current });
         }
         syncTrackingState();
+        syncActivityCollector();
     }
 
     bindFeatureOptions(applyOptions);

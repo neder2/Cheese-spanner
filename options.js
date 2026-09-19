@@ -297,17 +297,17 @@ function commitSave(message) {
     startSave(normalized, message);
 }
 
-function requestPreviewPermission(callback) {
+function requestOptionalPermissions(spec, callback) {
     const permissions = globalThis.chrome?.permissions;
     // 권한 API가 없는 환경(테스트, 구형 브라우저)에서는 기존처럼 그대로 저장한다.
     if (typeof permissions?.request !== "function") {
-        callback(true);
+        callback(!spec.permissions?.includes("notifications"));
         return;
     }
-    permissions.request(PREVIEW_HOST_PERMISSION, (granted) => {
+    permissions.request(spec, (granted) => {
         // 사용자가 팝업에서 거부해도 lastError가 남을 수 있어 읽어서 경고를 지운다.
-        void globalThis.chrome?.runtime?.lastError;
-        callback(Boolean(granted));
+        const error = globalThis.chrome?.runtime?.lastError;
+        callback(!error && Boolean(granted));
     });
 }
 
@@ -328,21 +328,31 @@ function saveCurrentOptions() {
     const newlyEnabledMedia = ["followingPreviewTooltipEnabled", "liveMultiviewEnabled"].filter(
         (key) => normalized[key] && !savedOptions?.[key]
     );
-    if (newlyEnabledMedia.length) {
+    const needsNotifications = normalized.liveStartNotificationsEnabled;
+    if (newlyEnabledMedia.length || needsNotifications) {
+        const permissionSpec = {
+            ...(newlyEnabledMedia.length ? PREVIEW_HOST_PERMISSION : {}),
+            ...(needsNotifications ? { permissions: ["notifications"] } : {}),
+        };
         saveInFlight = true;
         renderPageState(normalized, "saving");
-        requestPreviewPermission((granted) => {
+        requestOptionalPermissions(permissionSpec, (granted) => {
             if (!granted) {
                 saveInFlight = false;
-                for (const key of newlyEnabledMedia) {
+                for (const key of [
+                    ...newlyEnabledMedia,
+                    ...(needsNotifications ? ["liveStartNotificationsEnabled"] : []),
+                ]) {
                     const toggle = optionInputs.find((input) => input.dataset.option === key);
                     if (toggle) toggle.checked = false;
                 }
                 renderFormChanges();
                 showMessage(
-                    newlyEnabledMedia.includes("liveMultiviewEnabled")
-                        ? "영상 호스트 권한이 거부되어 멀티뷰를 켜지 않았습니다."
-                        : PREVIEW_PERMISSION_DENIED_MESSAGE,
+                    needsNotifications
+                        ? "권한이 거부되어 저장하지 않았어요. 데스크톱 알림을 끈 상태로 다른 옵션을 저장할 수 있어요."
+                        : newlyEnabledMedia.includes("liveMultiviewEnabled")
+                          ? "영상 호스트 권한이 거부되어 멀티뷰를 켜지 않았습니다."
+                          : PREVIEW_PERMISSION_DENIED_MESSAGE,
                     "error"
                 );
                 return;
@@ -704,7 +714,7 @@ function includeSearchContext(directMatches) {
 
     // 안내문만 검색된 경우에도 관련 설정을 함께 보여 줘 문맥과 조작 경로를 남긴다.
     for (const unit of directMatches) {
-        if (!unit.element.matches(".setting-note")) continue;
+        if (!unit.element.matches(".setting-note") && !unit.group?.hasAttribute("data-search-together")) continue;
         for (const candidate of searchUnits) {
             const sameContext = unit.group ? candidate.group === unit.group : candidate.section === unit.section;
             if (sameContext) visibleUnits.add(candidate);

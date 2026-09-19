@@ -812,7 +812,7 @@ function getAdblockSuppressAttr(el) {
     return el.getAttribute(AD_SUPPRESS_ATTR);
 }
 
-test("adblock popup runs an initial pass before DOMContentLoaded", () => {
+test("adblock popup closes through its button before DOMContentLoaded", (t) => {
     const chrome = createFakeChrome();
     const dom = createPageDom(
         [
@@ -821,6 +821,7 @@ test("adblock popup runs an initial pass before DOMContentLoaded", () => {
             '<div class="_dimmed_10ysp_2" id="dimmed">',
             '<div class="_container_10ysp_20 _modal_10ysp_27" id="modal" role="alertdialog" aria-modal="true">',
             ADBLOCK_POPUP_TITLE,
+            '<button type="button" aria-label="닫기">닫기</button>',
             "</div>",
             "</div>",
             "</body>",
@@ -834,16 +835,22 @@ test("adblock popup runs an initial pass before DOMContentLoaded", () => {
     makeVisibleElement(dimmed, 1000, 800);
     makeVisibleElement(modal);
 
+    t.after(async () => {
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    });
+    modal.querySelector("button").addEventListener("click", () => dimmed.remove());
     evalAdblockPopupScripts(dom);
 
-    assert.equal(getAdblockSuppressAttr(modal), "1");
-    assert.equal(getAdblockSuppressAttr(dimmed), "1");
+    assert.equal(modal.isConnected, false);
+    assert.equal(dimmed.isConnected, false);
 });
 
-test("adblock popup suppresses the current chzzk alertdialog modal after it appears", async () => {
+test("adblock popup closes a newly mounted modal through native cleanup", async (t) => {
     const chrome = createFakeChrome();
     const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/live/test-channel", chrome);
     const { document } = dom.window;
+    t.after(() => dom.window.close());
     document.body.style.overflow = "hidden";
     document.body.style.paddingRight = "15px";
 
@@ -858,23 +865,22 @@ test("adblock popup suppresses the current chzzk alertdialog modal after it appe
     modal.setAttribute("role", "alertdialog");
     modal.setAttribute("aria-modal", "true");
     modal.innerHTML = `<strong>${ADBLOCK_POPUP_TITLE}</strong><p>\uAD11\uACE0 \uCC28\uB2E8 \uD504\uB85C\uADF8\uB7A8 \uC0AC\uC6A9 \uC2DC \uC7AC\uC0DD \uD658\uACBD\uC5D0 \uC601\uD5A5\uC744 \uBBF8\uCE60 \uC218 \uC788\uC2B5\uB2C8\uB2E4.</p>`;
+    const close = document.createElement("button");
+    close.type = "button";
+    close.setAttribute("aria-label", "닫기");
+    close.addEventListener("click", () => {
+        dimmed.remove();
+        document.body.style.overflow = "";
+        document.body.style.paddingRight = "";
+    });
+    modal.append(close);
     dimmed.appendChild(modal);
     makeVisibleElement(dimmed, 1000, 800);
     makeVisibleElement(modal);
     document.body.appendChild(dimmed);
 
-    // The mutation observer hides the popup before a separate timer unlocks scrolling.
-    // Wait for both effects; 20 ms does not guarantee that timer has run under suite load.
-    await waitForCondition(
-        () =>
-            getAdblockSuppressAttr(modal) === "1" &&
-            getAdblockSuppressAttr(dimmed) === "1" &&
-            document.body.style.overflow === "" &&
-            document.body.style.paddingRight === ""
-    );
-
-    assert.equal(getAdblockSuppressAttr(modal), "1");
-    assert.equal(getAdblockSuppressAttr(dimmed), "1");
+    await waitForCondition(() => !modal.isConnected);
+    assert.equal(dimmed.isConnected, false);
     assert.equal(document.body.style.overflow, "");
     assert.equal(document.body.style.paddingRight, "");
 });
@@ -959,12 +965,13 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.3.8");
+    assert.equal(manifest.version, "1.3.9");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
     assert.equal(updateHistory.match(/^##\s+(\d+\.\d+\.\d+)/m)?.[1], manifest.version);
-    assert.deepEqual(manifest.permissions, ["storage", "scripting"]);
+    assert.deepEqual(manifest.permissions, ["storage", "scripting", "alarms"]);
+    assert.deepEqual(manifest.optional_permissions, ["notifications"]);
     assert.deepEqual(manifest.host_permissions, [
         "https://api.chzzk.naver.com/*",
         "https://apis.naver.com/*",
@@ -5824,6 +5831,30 @@ test("volume tooltip stays inside the main video when its slider moves near an e
     slider.remove();
     await waitForAsyncCallbacks();
     assert.equal(tooltip(), null);
+});
+
+test("volume percentage follows native rendered scale and resets after fullscreen", async (t) => {
+    const { dom, document, hover, video, tooltip } = await createVolumeTooltipPage(t);
+    const native = document.createElement("span");
+    native.className = "pzp-button__tooltip";
+    native.style.cssText = "font-size:13px;top:-40px;padding:6px 12px";
+    document.getElementById("speaker").append(native);
+    Object.defineProperty(native, "offsetWidth", { value: 100 });
+    let scale = 1;
+    native.getBoundingClientRect = () => ({ width: 100 * scale, height: 30 * scale });
+    hover("slider");
+    assert.equal(tooltip().style.transform, "translate(-50%, -100%) scale(1)");
+    scale = 1.5;
+    video.dispatchEvent(new dom.window.Event("volumechange"));
+    assert.equal(tooltip().style.transform, "translate(-50%, -100%) scale(1.5)");
+    assert.equal(tooltip().style.left, "260px", "the logical anchor scales with the native control row");
+    scale = 1.25;
+    video.dispatchEvent(new dom.window.Event("volumechange"));
+    assert.equal(tooltip().style.transform, "translate(-50%, -100%) scale(1.25)");
+    scale = 1;
+    video.dispatchEvent(new dom.window.Event("volumechange"));
+    assert.equal(tooltip().style.transform, "translate(-50%, -100%) scale(1)");
+    assert.equal(tooltip().style.left, "240px");
 });
 
 test("volume tooltip cleans up options, routes, fullscreen and replaced video on VOD", async (t) => {

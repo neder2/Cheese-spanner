@@ -22,6 +22,9 @@
  * - 목록 정렬/필터/선택 상태 (getVisibleRows, renderSelectionControls, setEntrySelected 등)
  * - 다시보기 열기 흐름 (persistReplayVideoNo, openUrlInNewTab, handleTitleClick)
  * - 렌더링 함수 (renderCalendar, renderList, renderSummary, renderAll)
+ * - 채널별 시청 순위와 내 채팅·일반 후원 집계/보관 내역 (renderRanking, renderActivity)
+ * - 기본 라이브 내역, 순위, 활동 탭과 공통 기간·검색, 10개 단위 페이지 이동
+ * - 사용자가 선택한 월의 과거 후원 가져오기·취소와 사용 내역 기준의 별도 집계
  * - storage 로드/새로고침과 background 삭제 액션 (loadHistory, refreshHistory, clearHistory,
  *   deleteEntriesByIds)
  * - 이벤트 리스너 등록과 초기 로드 호출 (파일 최하단)
@@ -49,7 +52,6 @@ const TARGET_WINDOW_MS = 7 * DAY_MS;
 const MAX_REPLAY_LOOKUP_CACHE_ENTRIES = 80;
 const DISPLAY_WATCH_RANGE_MERGE_GAP_MS = 5 * 60 * 1000;
 const SESSION_MERGE_GAP_MS = 60 * 1000;
-const STORAGE_CHANGE_RELOAD_DEBOUNCE_MS = 2000;
 
 const storage = globalThis.chrome?.storage?.local;
 const {
@@ -104,6 +106,27 @@ const historyListEl = document.getElementById("historyList");
 const historySearchEl = document.getElementById("historySearch");
 const historySortEl = document.getElementById("historySort");
 const historySortDirectionEl = document.getElementById("historySortDirection");
+const historyScopeEl = document.getElementById("historyScope");
+const channelRankingEl = document.getElementById("channelRanking");
+const activityTypeEl = document.getElementById("activityType");
+const activityListEl = document.getElementById("activityList");
+const activitySummaryEl = document.getElementById("activitySummary");
+const donationHistory = globalThis.BetterChzzkDonationHistory;
+const donationImportToggle = document.getElementById("donationImportToggle");
+const donationImportForm = document.getElementById("donationImportForm");
+const donationImportStart = document.getElementById("donationImportStart");
+const donationImportEnd = document.getElementById("donationImportEnd");
+const donationImportSubmit = document.getElementById("donationImportSubmit");
+const donationImportCancel = document.getElementById("donationImportCancel");
+const donationImportStatus = document.getElementById("donationImportStatus");
+const clearDonationImportButton = document.getElementById("clearDonationImport");
+const viewTabs = Array.from(document.querySelectorAll("[data-history-view]"));
+const viewNames = ["history", "ranking", "activity"];
+const selectionToggle = document.getElementById("historySelectionToggle");
+const selectionControls = document.getElementById("historySelectionControls");
+const historySortControls = document.getElementById("historySortControls");
+const VIEW_PAGE_SIZE = 10;
+const viewPages = { history: 0, ranking: 0, activity: 0 };
 const prevMonthButton = document.getElementById("prevMonth");
 const calendarRefreshButton = document.getElementById("calendarRefresh");
 const nextMonthButton = document.getElementById("nextMonth");
@@ -120,11 +143,70 @@ let selectedYear = 0;
 let selectedMonth = 0;
 let selectedDateKey = "";
 let hideMessageTimer = 0;
-let storageChangeReloadTimer = 0;
+let storageChangeReloadScheduled = false;
+let historyLoadGeneration = 0;
+let activeHistoryView = "history";
+let selectionMode = false;
+let importedDonations = null;
+let donationImportPort = null;
+let donationImportGeneration = 0;
 const selectedEntryIds = new Set();
 const expandedEntryIds = new Set();
+const expandedChatLimits = new Map();
+const ENTRY_CHAT_PAGE_SIZE = 50;
 const replayLookupCache = new Map();
 const resolvingReplayEntryIds = new Set();
+
+function resetViewPages() {
+    for (const view of viewNames) viewPages[view] = 0;
+}
+
+function getPageRows(view, rows) {
+    const pageCount = Math.max(1, Math.ceil(rows.length / VIEW_PAGE_SIZE));
+    viewPages[view] = Math.max(0, Math.min(viewPages[view], pageCount - 1));
+    const previous = document.getElementById(`${view}PrevPage`);
+    const next = document.getElementById(`${view}NextPage`);
+    const status = document.getElementById(`${view}PageStatus`);
+    previous.disabled = viewPages[view] === 0;
+    next.disabled = viewPages[view] === pageCount - 1;
+    previous.closest("nav").hidden = rows.length <= VIEW_PAGE_SIZE;
+    const label = `${viewPages[view] + 1} / ${pageCount}페이지 · 총 ${rows.length.toLocaleString()}개`;
+    if (status.textContent !== label) status.textContent = label;
+    const start = viewPages[view] * VIEW_PAGE_SIZE;
+    return rows.slice(start, start + VIEW_PAGE_SIZE);
+}
+
+function setHistoryView(view, { focus = false } = {}) {
+    if (!viewNames.includes(view)) return;
+    activeHistoryView = view;
+    for (const tab of viewTabs) {
+        const selected = tab.dataset.historyView === view;
+        tab.setAttribute("aria-selected", String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+        document.getElementById(tab.getAttribute("aria-controls")).hidden = !selected;
+        if (selected && focus) tab.focus({ preventScroll: true });
+    }
+    historySortControls.hidden = view !== "history";
+    selectionToggle.hidden = view !== "history";
+}
+
+function getScopeLabel() {
+    if (historyScopeEl.value === "all") return "전체 기간";
+    return selectedDateKey
+        ? formatDateLabel(selectedDateKey)
+        : `${selectedYear}.${String(selectedMonth).padStart(2, "0")}`;
+}
+
+function matchesHistoryQuery(entry) {
+    const query = compactSpaces(historySearchEl.value).toLowerCase();
+    return !query || `${getEntryTitles(entry).join(" ")} ${entry.channelName}`.toLowerCase().includes(query);
+}
+
+function renderResults() {
+    renderList();
+    renderRanking();
+    renderActivity();
+}
 
 async function sendWatchHistoryMutation(operation) {
     const response = await runtimeSendMessage({
@@ -336,6 +418,8 @@ function normalizeHistory(raw) {
                 watchedSeconds: Math.max(0, Number(row.watchedSeconds) || 0),
                 sessions: Math.max(1, Math.round(Number(row.sessions) || 1)),
                 dailySeconds: normalizeDailySeconds(row.dailySeconds),
+                activities: Array.isArray(row.activities) ? row.activities : [],
+                activityDaily: row.activityDaily && typeof row.activityDaily === "object" ? row.activityDaily : {},
             };
             const sourceSessionDetails = normalizeSessionDetails(row, entry);
             const uniqueTotals = getUniqueWatchTotals(entry, sourceSessionDetails);
@@ -359,7 +443,7 @@ function normalizeHistory(raw) {
             addTitleHistory(entry, entry.title, entry.firstWatchedAt || entry.lastWatchedAt);
             return entry;
         })
-        .filter((entry) => entry.id && entry.sessionDetails.length > 0)
+        .filter((entry) => entry.id && (entry.sessionDetails.length > 0 || hasActivityCounts(entry)))
         .sort((a, b) => b.lastWatchedAt - a.lastWatchedAt);
 }
 
@@ -815,10 +899,13 @@ function getUniqueWatchSecondsForMonth(year, month) {
     return getUniqueWatchSecondsForScope(startMs, endMs);
 }
 
+function getHistoryScopeBounds() {
+    if (historyScopeEl?.value === "all") return { startMs: -Infinity, endMs: Infinity };
+    return selectedDateKey ? getDateScopeBounds(selectedDateKey) : getMonthScopeBounds(selectedYear, selectedMonth);
+}
+
 function getEntrySessionsForScope(entry) {
-    const bounds = selectedDateKey
-        ? getDateScopeBounds(selectedDateKey)
-        : getMonthScopeBounds(selectedYear, selectedMonth);
+    const bounds = getHistoryScopeBounds();
 
     return (entry.sessionDetails || [])
         .map((session) => {
@@ -887,7 +974,10 @@ function compareVisibleRows(a, b) {
 }
 
 function getMonthEntries() {
-    return entries.filter((entry) => getEntrySecondsForMonth(entry, selectedYear, selectedMonth) > 0);
+    const bounds = getMonthScopeBounds(selectedYear, selectedMonth);
+    return entries.filter(
+        (entry) => getEntrySecondsForMonth(entry, selectedYear, selectedMonth) > 0 || hasActivityCounts(entry, bounds)
+    );
 }
 
 function buildMonthDayEntryMap(year, month) {
@@ -950,6 +1040,8 @@ function getCalendarLevel(seconds) {
 }
 
 function shiftSelectedMonth(delta) {
+    resetViewPages();
+    historyScopeEl.value = "month";
     const index = selectedYear * 12 + (selectedMonth - 1) + delta;
     selectedYear = Math.floor(index / 12);
     selectedMonth = (index % 12) + 1;
@@ -983,6 +1075,9 @@ function renderWeekdays() {
 }
 
 function renderCalendar() {
+    historyScopeEl.options[0].textContent = selectedDateKey
+        ? formatDateLabel(selectedDateKey)
+        : `${selectedYear}.${String(selectedMonth).padStart(2, "0")}`;
     clearDateFilterButton.disabled = !selectedDateKey;
     renderWeekdays();
     const focusedDate = calendarDaysEl.contains(document.activeElement) ? document.activeElement.dataset.date : null;
@@ -1039,8 +1134,11 @@ function renderCalendar() {
         }
 
         item.addEventListener("click", () => {
+            resetViewPages();
+            historyScopeEl.value = "month";
             selectedDateKey = selectedDateKey === dateKey ? "" : dateKey;
             renderAll();
+            calendarDaysEl.querySelector(`[data-date="${dateKey}"]`)?.focus({ preventScroll: true });
         });
         fragment.appendChild(item);
     }
@@ -1056,11 +1154,8 @@ function renderCalendar() {
 }
 
 function getVisibleRows() {
-    const query = compactSpaces(historySearchEl.value).toLowerCase();
-    const scopeBounds = selectedDateKey
-        ? getDateScopeBounds(selectedDateKey)
-        : getMonthScopeBounds(selectedYear, selectedMonth);
-    const rows = (selectedDateKey ? entries : getMonthEntries())
+    const scopeBounds = getHistoryScopeBounds();
+    const rows = (selectedDateKey || historyScopeEl?.value === "all" ? entries : getMonthEntries())
         .map((entry) => {
             const sessionsForScope = getEntrySessionsForScope(entry);
             const sessionSeconds = sessionsForScope.reduce((sum, session) => sum + session.scopeSeconds, 0);
@@ -1070,15 +1165,9 @@ function getVisibleRows() {
             );
             return { entry, seconds, sessionsForScope };
         })
-        .filter((row) => row.seconds > 0);
+        .filter((row) => row.seconds > 0 || hasActivityCounts(row.entry, scopeBounds));
 
-    return rows
-        .filter((row) => {
-            if (!query) return true;
-            const haystack = `${getEntryTitles(row.entry).join(" ")} ${row.entry.channelName}`.toLowerCase();
-            return haystack.includes(query);
-        })
-        .sort(compareVisibleRows);
+    return rows.filter((row) => matchesHistoryQuery(row.entry)).sort(compareVisibleRows);
 }
 
 function pruneSelectedEntryIds() {
@@ -1089,20 +1178,26 @@ function pruneSelectedEntryIds() {
     for (const id of expandedEntryIds) {
         if (!existingIds.has(id)) expandedEntryIds.delete(id);
     }
+    for (const id of expandedChatLimits.keys()) {
+        if (!existingIds.has(id)) expandedChatLimits.delete(id);
+    }
 }
 
-function getVisibleEntryIds(rows = getVisibleRows()) {
+function getVisibleEntryIds(rows = getPageRows("history", getVisibleRows())) {
     return rows.map((row) => row.entry.id).filter(Boolean);
 }
 
-function renderSelectionControls(rows = getVisibleRows()) {
+function renderSelectionControls(rows = getPageRows("history", getVisibleRows())) {
     pruneSelectedEntryIds();
 
     const visibleIds = getVisibleEntryIds(rows);
     const visibleSelectedCount = visibleIds.filter((id) => selectedEntryIds.has(id)).length;
     const selectedCount = selectedEntryIds.size;
 
-    selectVisibleHistoryEl.disabled = visibleIds.length === 0;
+    selectVisibleHistoryEl.disabled = !selectionMode || visibleIds.length === 0;
+    selectionControls.hidden = !selectionMode;
+    selectionToggle.setAttribute("aria-pressed", String(selectionMode));
+    selectionToggle.textContent = selectionMode ? "선택 취소" : "선택";
     selectVisibleHistoryEl.checked = visibleIds.length > 0 && visibleSelectedCount === visibleIds.length;
     selectVisibleHistoryEl.indeterminate = visibleSelectedCount > 0 && visibleSelectedCount < visibleIds.length;
 
@@ -1110,7 +1205,8 @@ function renderSelectionControls(rows = getVisibleRows()) {
     selectionStatusEl.textContent = `선택 ${selectedCount}개${hiddenCount > 0 ? ` · 현재 목록 밖 ${hiddenCount}개` : ""}`;
     deleteSelectedHistoryButton.disabled = selectedCount === 0;
     clearSelectionButton.disabled = selectedCount === 0;
-    clearHistoryButton.disabled = entries.length === 0;
+    clearHistoryButton.disabled = entries.length === 0 && !importedDonations?.owner;
+    clearDonationImportButton.disabled = !importedDonations?.owner;
 }
 
 function setEntrySelected(id, selected) {
@@ -1134,6 +1230,88 @@ function toggleEntryExpanded(id) {
     if (expandedEntryIds.has(id)) expandedEntryIds.delete(id);
     else expandedEntryIds.add(id);
     renderList();
+}
+
+function toggleEntryChats(id) {
+    if (expandedChatLimits.has(id)) expandedChatLimits.delete(id);
+    else expandedChatLimits.set(id, ENTRY_CHAT_PAGE_SIZE);
+    renderList();
+}
+
+function getEntryActivitiesForScope(entry, kind, bounds = getHistoryScopeBounds()) {
+    return entry.activities.filter(
+        (row) =>
+            row &&
+            row.kind === kind &&
+            Number.isSafeInteger(row.at) &&
+            row.at >= bounds.startMs &&
+            row.at < bounds.endMs
+    );
+}
+
+function buildEntryChatPanel(entry, counts, panelId) {
+    const panel = document.createElement("section");
+    panel.id = panelId;
+    panel.className = "history-entry-chat-panel";
+    panel.setAttribute("aria-label", `${entry.title} 내 채팅`);
+    panel.hidden = !expandedChatLimits.has(entry.id);
+    if (panel.hidden) return panel;
+
+    const chats = getEntryActivitiesForScope(entry, "chat").sort(
+        (a, b) => b.at - a.at || String(a.id).localeCompare(String(b.id))
+    );
+    const limit = expandedChatLimits.get(entry.id);
+    appendText(
+        panel,
+        "history-activity-meta",
+        `내 채팅 ${counts.chatCount.toLocaleString()}개 · 내용 보관 ${chats.length.toLocaleString()}개 · 최근 작성순`
+    );
+    if (!chats.length) {
+        const empty = document.createElement("p");
+        empty.className = "history-entry-chat-empty";
+        empty.textContent =
+            counts.chatCount > 0
+                ? "이 기간에 보관된 채팅 내용이 없어요. 누적 개수는 유지돼요."
+                : "이 기간에 저장된 내 채팅이 없어요.";
+        panel.appendChild(empty);
+        return panel;
+    }
+
+    const list = document.createElement("ol");
+    list.className = "history-entry-chat-list";
+    list.tabIndex = 0;
+    list.setAttribute("aria-label", `${entry.title}의 보관된 내 채팅`);
+    for (const chat of chats.slice(0, limit)) {
+        const item = document.createElement("li");
+        item.dataset.chatId = String(chat.id);
+        item.tabIndex = -1;
+        const time = document.createElement("time");
+        time.className = "history-activity-meta";
+        time.dateTime = new Date(chat.at).toISOString();
+        time.textContent = formatKstDateTime(chat.at, { seconds: true });
+        item.appendChild(time);
+        appendText(item, "history-activity-text", String(chat.text || "") || "내용 없는 채팅");
+        list.appendChild(item);
+    }
+    panel.appendChild(list);
+    if (chats.length > limit) {
+        const more = document.createElement("button");
+        more.type = "button";
+        more.className = "secondary-button history-entry-chat-more";
+        more.textContent = `채팅 더 보기 (${Math.min(limit, chats.length)}/${chats.length})`;
+        more.setAttribute("aria-label", `${entry.title} 내 채팅 더 보기`);
+        more.addEventListener("click", () => {
+            expandedChatLimits.set(entry.id, limit + ENTRY_CHAT_PAGE_SIZE);
+            renderList();
+            const next = document.getElementById(panelId)?.querySelector("ol")?.children[limit];
+            if (next) {
+                next.parentElement.scrollTop = next.offsetTop;
+                next.focus({ preventScroll: true });
+            }
+        });
+        panel.appendChild(more);
+    }
+    return panel;
 }
 
 async function persistReplayVideoNo(entry, videoNo) {
@@ -1355,13 +1533,19 @@ function renderList() {
     const active = document.activeElement;
     const hadListFocus = historyListEl.contains(active);
     const focusedEntryId = hadListFocus ? active.closest(".history-item")?.dataset.entryId : null;
+    const focusedChatId = hadListFocus ? active.closest("[data-chat-id]")?.dataset.chatId : null;
+    const chatScrollPositions = new Map(
+        Array.from(historyListEl.querySelectorAll(".history-entry-chat-panel")).map((panel) => [
+            panel.id,
+            panel.querySelector("ol")?.scrollTop || 0,
+        ])
+    );
     let focusTarget = null;
-    const rows = getVisibleRows();
+    const allRows = getVisibleRows();
+    const rows = getPageRows("history", allRows);
+    historyListEl.dataset.selectionMode = String(selectionMode);
     const fragment = document.createDocumentFragment();
-    const scopeText = selectedDateKey
-        ? `${formatDateLabel(selectedDateKey)} 시청 기록`
-        : `${selectedYear}.${String(selectedMonth).padStart(2, "0")} 시청 기록`;
-    listDescriptionEl.textContent = scopeText;
+    listDescriptionEl.textContent = `${getScopeLabel()} · ${allRows.length.toLocaleString()}개 기록`;
     renderSelectionControls(rows);
 
     if (!rows.length) {
@@ -1385,9 +1569,11 @@ function renderList() {
 
         const selectLabel = document.createElement("label");
         selectLabel.className = "history-item-select";
+        selectLabel.hidden = !selectionMode;
         selectLabel.setAttribute("aria-label", `${entry.title} 선택`);
         const selectInput = document.createElement("input");
         selectInput.type = "checkbox";
+        selectInput.disabled = !selectionMode;
         selectInput.checked = selectedEntryIds.has(entry.id);
         selectInput.addEventListener("change", () => setEntrySelected(entry.id, selectInput.checked));
         selectLabel.appendChild(selectInput);
@@ -1407,31 +1593,53 @@ function renderList() {
             if (resolvingReplayEntryIds.has(entry.id)) title.dataset.loading = "1";
         }
         title.textContent = entry.title;
+        if (title.tagName === "A") title.title = `${entry.title} · ${title.title}`;
         const meta = document.createElement("small");
-        meta.textContent = `${entry.channelName} · ${getEntryDateLabel(entry)} · ${row.sessionsForScope.length}회 입장`;
+        const visitText = row.sessionsForScope.length ? `${row.sessionsForScope.length}회 입장` : "채팅·후원 기록";
+        meta.textContent = `${entry.channelName} · ${getEntryDateLabel(entry)} · ${visitText}`;
         body.append(title, meta);
-        const titleHistorySummary = getTitleHistorySummary(entry);
-        if (titleHistorySummary) {
-            const titleHistory = document.createElement("small");
-            titleHistory.className = "history-title-history";
-            titleHistory.textContent = titleHistorySummary;
-            titleHistory.title = getEntryTitleRows(entry)
-                .map((row) => `${formatTitleSeenRange(row)} · ${row.title}`)
-                .join("\n");
-            body.appendChild(titleHistory);
+        const activityCounts = getActivityCounts(entry, getHistoryScopeBounds());
+        const chatPanelId = `history-chats-${encodeURIComponent(entry.id)}`;
+        const chatButton = document.createElement("button");
+        chatButton.type = "button";
+        chatButton.className = "history-entry-chats";
+        const chatsExpanded = expandedChatLimits.has(entry.id);
+        chatButton.hidden = !activityCounts.chatCount && !chatsExpanded && !expanded;
+        chatButton.textContent = `내 채팅 ${activityCounts.chatCount.toLocaleString()}개 ${chatsExpanded ? "접기" : "보기"}`;
+        chatButton.setAttribute("aria-expanded", String(chatsExpanded));
+        chatButton.setAttribute("aria-controls", chatPanelId);
+        chatButton.setAttribute("aria-label", `${entry.title} 내 채팅 ${chatsExpanded ? "접기" : "보기"}`);
+        chatButton.addEventListener("click", () => toggleEntryChats(entry.id));
+        const activityMeta = document.createElement("span");
+        activityMeta.className = "history-entry-activity";
+        activityMeta.appendChild(chatButton);
+        if (activityCounts.donationCount) {
+            appendText(
+                activityMeta,
+                "history-activity-meta",
+                `일반 후원 ${activityCounts.donationCheese.toLocaleString()}치즈 (${activityCounts.donationCount.toLocaleString()}회)`
+            );
         }
-
+        activityMeta.hidden = chatButton.hidden && !activityCounts.donationCount;
         const time = document.createElement("span");
         time.className = "history-item-time";
-        time.textContent = formatDuration(row.seconds);
+        time.textContent = row.seconds > 0 ? formatDuration(row.seconds) : "활동만 기록";
+        const watchMeta = document.createElement("span");
+        watchMeta.className = "history-item-watch";
+        if (row.seconds > 0) watchMeta.append("시청 ");
+        watchMeta.appendChild(time);
+        meta.appendChild(watchMeta);
 
-        const actions = document.createElement("div");
+        const actions = document.createElement("span");
         actions.className = "history-item-actions";
 
         const expandButton = document.createElement("button");
         expandButton.className = "history-entry-detail";
         expandButton.type = "button";
         expandButton.textContent = expanded ? "접기" : "세부";
+        expandButton.title = getTitleHistorySummary(entry) || "방제 이력·입장 기록·삭제";
+        const detailPanelId = `history-details-${encodeURIComponent(entry.id)}`;
+        expandButton.setAttribute("aria-controls", detailPanelId);
         expandButton.setAttribute("aria-expanded", expanded ? "true" : "false");
         expandButton.setAttribute("aria-label", `${entry.title} 입장 기록 ${expanded ? "접기" : "보기"}`);
         expandButton.addEventListener("click", () => toggleEntryExpanded(entry.id));
@@ -1440,27 +1648,58 @@ function renderList() {
         deleteButton.className = "history-entry-delete";
         deleteButton.type = "button";
         deleteButton.textContent = "삭제";
+        deleteButton.disabled = !expanded;
         deleteButton.setAttribute("aria-label", `${entry.title} 기록 삭제`);
         deleteButton.addEventListener("click", () => deleteSingleEntry(entry));
-        actions.append(time, expandButton, deleteButton);
+        actions.append(activityMeta, expandButton);
+        meta.appendChild(actions);
 
         if (entry.id === focusedEntryId) {
             if (active.matches(".history-item-select input")) focusTarget = selectInput;
             else if (active.matches(".history-entry-detail")) focusTarget = expandButton;
+            else if (active.matches(".history-entry-chats"))
+                focusTarget = chatButton.hidden ? expandButton : chatButton;
             else if (active.matches(".history-entry-delete")) focusTarget = deleteButton;
             else if (active.matches(".history-item-title-link") && title.tagName === "A") focusTarget = title;
         }
 
-        item.append(selectLabel, body, actions);
-        if (expanded) {
-            const titleHistoryList = buildTitleHistoryList(entry);
-            if (titleHistoryList) item.appendChild(titleHistoryList);
-            item.appendChild(buildSessionList(row));
+        item.append(selectLabel, body);
+        const chatPanel = buildEntryChatPanel(entry, activityCounts, chatPanelId);
+        item.appendChild(chatPanel);
+        if (entry.id === focusedEntryId) {
+            if (active.matches(".history-entry-chat-more"))
+                focusTarget = chatPanel.querySelector(".history-entry-chat-more") || chatButton;
+            else if (active.matches(".history-entry-chat-list"))
+                focusTarget = chatPanel.querySelector("ol") || chatButton;
+            else if (focusedChatId)
+                focusTarget =
+                    Array.from(chatPanel.querySelectorAll("[data-chat-id]")).find(
+                        (row) => row.dataset.chatId === focusedChatId
+                    ) || chatButton;
         }
+        const detailPanel = document.createElement("section");
+        detailPanel.id = detailPanelId;
+        detailPanel.className = "history-entry-details";
+        detailPanel.hidden = !expanded;
+        detailPanel.setAttribute("aria-label", `${entry.title} 세부 기록`);
+        if (expanded) {
+            const fullTitle = document.createElement("strong");
+            fullTitle.textContent = entry.title;
+            detailPanel.appendChild(fullTitle);
+            const titleHistoryList = buildTitleHistoryList(entry);
+            if (titleHistoryList) detailPanel.appendChild(titleHistoryList);
+            if (row.sessionsForScope.length) detailPanel.appendChild(buildSessionList(row));
+        }
+        detailPanel.appendChild(deleteButton);
+        item.appendChild(detailPanel);
         fragment.appendChild(item);
     }
 
     historyListEl.replaceChildren(fragment);
+    for (const [panelId, scrollTop] of chatScrollPositions) {
+        const list = document.getElementById(panelId)?.querySelector("ol");
+        if (list && scrollTop > 0) list.scrollTop = scrollTop;
+    }
     if (hadListFocus) (focusTarget || historySearchEl).focus({ preventScroll: true });
 }
 
@@ -1469,13 +1708,18 @@ function renderSummary() {
     const monthSeconds = getUniqueWatchSecondsForMonth(selectedYear, selectedMonth);
 
     totalWatchTimeEl.textContent = formatDuration(totalSeconds);
-    totalLiveCountEl.textContent = `${entries.length}개`;
+    totalLiveCountEl.textContent = `${entries.filter((entry) => entry.watchedSeconds > 0).length}개`;
     monthWatchTimeEl.textContent = formatDuration(monthSeconds);
     monthWatchLabelEl.textContent = `${selectedYear}년 ${selectedMonth}월`;
 
     if (storage) {
         noticeEl.dataset.state = "saved";
-        noticeEl.textContent = `로컬 기록 · ${entries.length}개`;
+        const importedCount = Object.values(importedDonations?.months || {}).reduce(
+            (sum, rows) => sum + rows.length,
+            0
+        );
+        noticeEl.textContent =
+            !entries.length && importedCount ? `로컬 후원 · ${importedCount}건` : `로컬 기록 · ${entries.length}개`;
     }
 }
 
@@ -1483,7 +1727,167 @@ function renderAll() {
     ensureSelectedMonth();
     renderSummary();
     renderCalendar();
-    renderList();
+    renderResults();
+}
+
+function getActivityCounts(entry, { startMs = -Infinity, endMs = Infinity } = {}) {
+    const result = { chatCount: 0, donationCount: 0, donationCheese: 0 };
+    for (const [date, counts] of Object.entries(entry.activityDaily || {})) {
+        const bounds = getDateScopeBounds(date);
+        if (!bounds || bounds.startMs < startMs || bounds.endMs > endMs) continue;
+        for (const key of Object.keys(result)) {
+            if (Number.isSafeInteger(counts?.[key]) && counts[key] > 0) result[key] += counts[key];
+        }
+    }
+    return result;
+}
+
+function hasActivityCounts(entry, bounds) {
+    const counts = getActivityCounts(entry, bounds);
+    return counts.chatCount > 0 || counts.donationCount > 0;
+}
+
+function renderRanking() {
+    const bounds = getHistoryScopeBounds();
+    const groups = new Map();
+    for (const entry of entries) {
+        if (!matchesHistoryQuery(entry)) continue;
+        const seconds = getStoredWatchSecondsForScope(entry, bounds.startMs, bounds.endMs);
+        if (seconds <= 0) continue;
+        const id = entry.channelId || `entry:${entry.id}`;
+        if (!groups.has(id))
+            groups.set(id, {
+                id,
+                name: entry.channelName,
+                count: 0,
+                ranges: [],
+                residual: 0,
+                ...getActivityCounts({}),
+            });
+        const group = groups.get(id);
+        const ranges = getRecordedEntryRangesForScope(entry, bounds.startMs, bounds.endMs);
+        group.ranges.push(...ranges);
+        group.residual += Math.max(0, seconds - sumWatchRanges(ranges, 0));
+        group.count += 1;
+        const counts = getActivityCounts(entry, bounds);
+        for (const key of Object.keys(counts)) group[key] += counts[key];
+    }
+    const ranked = Array.from(groups.values())
+        .map((group) => ({ ...group, seconds: sumWatchRanges(group.ranges, 0) + group.residual }))
+        .sort((a, b) => b.seconds - a.seconds || a.name.localeCompare(b.name, "ko") || a.id.localeCompare(b.id));
+    const fragment = document.createDocumentFragment();
+    document.getElementById("rankingDescription").textContent =
+        `${getScopeLabel()} · ${ranked.length}개 채널 · 시청 시간순 (같은 채널의 겹친 시간 제외)`;
+    const pageRows = getPageRows("ranking", ranked);
+    channelRankingEl.start = viewPages.ranking * VIEW_PAGE_SIZE + 1;
+    pageRows.forEach((group, index) => {
+        const item = document.createElement("li");
+        item.dataset.channelId = group.id;
+        appendText(item, "history-ranking-position", String(viewPages.ranking * VIEW_PAGE_SIZE + index + 1));
+        const copy = document.createElement("div");
+        appendText(copy, "history-ranking-name", group.name);
+        const meta = [`${group.count}개 방송`];
+        if (group.chatCount) meta.push(`내 채팅 ${group.chatCount.toLocaleString()}개`);
+        if (group.donationCount)
+            meta.push(
+                `일반 후원 ${group.donationCheese.toLocaleString()}치즈 (${group.donationCount.toLocaleString()}회)`
+            );
+        appendText(copy, "history-activity-meta", meta.join(" · "));
+        item.appendChild(copy);
+        appendText(item, "history-ranking-time", formatDuration(group.seconds));
+        fragment.appendChild(item);
+    });
+    if (!ranked.length) {
+        const empty = document.createElement("li");
+        empty.className = "history-empty";
+        empty.textContent = "이 기간에 저장된 시청 기록이 없어요.";
+        fragment.appendChild(empty);
+    }
+    channelRankingEl.replaceChildren(fragment);
+}
+
+function renderActivity() {
+    const bounds = getHistoryScopeBounds();
+    const imported = activityTypeEl.value === "imported";
+    document.getElementById("donationImportDescription").hidden = !imported;
+    if (imported) {
+        const monthCount = Object.keys(importedDonations?.months || {}).length;
+        document.getElementById("donationImportDescription").textContent =
+            `가져온 ${monthCount}개월의 치지직 사용 내역 기준이에요. 실시간 수집분과 합산하지 않으며, 방송별 시청 시간에는 영향을 주지 않아요.`;
+        const query = compactSpaces(historySearchEl.value).toLowerCase();
+        const matching = Object.values(importedDonations?.months || {})
+            .flat()
+            .filter(
+                (row) =>
+                    row.at >= bounds.startMs &&
+                    row.at < bounds.endMs &&
+                    (!query || row.channelName.toLowerCase().includes(query))
+            )
+            .sort((a, b) => b.at - a.at);
+        const amount = matching.reduce((sum, row) => sum + row.amount, 0);
+        activitySummaryEl.textContent = `가져온 일반 후원 ${amount.toLocaleString()}치즈 (${matching.length.toLocaleString()}회)`;
+        const fragment = document.createDocumentFragment();
+        for (const row of getPageRows("activity", matching)) {
+            const item = document.createElement("li");
+            appendText(
+                item,
+                "history-activity-meta",
+                `${row.channelName} · ${formatKstDateTime(row.at, { seconds: true })}`
+            );
+            appendText(item, "history-ranking-time", `${row.amount.toLocaleString()}치즈`);
+            appendText(item, "history-activity-text", row.text || "메시지 없는 후원");
+            fragment.appendChild(item);
+        }
+        if (!matching.length) {
+            const empty = document.createElement("li");
+            empty.className = "history-empty";
+            empty.textContent = importedDonations?.owner
+                ? "이 조건에 가져온 후원이 없어요."
+                : "과거 후원 가져오기로 치지직 사용 내역을 불러와 주세요.";
+            fragment.appendChild(empty);
+        }
+        activityListEl.replaceChildren(fragment);
+        return;
+    }
+    const matching = entries.filter(matchesHistoryQuery);
+    const totals = matching.reduce(
+        (sum, entry) => {
+            const counts = getActivityCounts(entry, bounds);
+            for (const key of Object.keys(sum)) sum[key] += counts[key];
+            return sum;
+        },
+        { chatCount: 0, donationCount: 0, donationCheese: 0 }
+    );
+    activitySummaryEl.textContent = `수집된 내 채팅 ${totals.chatCount.toLocaleString()}개 · 확인된 일반 후원 ${totals.donationCheese.toLocaleString()}치즈 (${totals.donationCount.toLocaleString()}회)`;
+    const rows = matching
+        .flatMap((entry) =>
+            getEntryActivitiesForScope(entry, activityTypeEl.value, bounds).map((activity) => ({ entry, activity }))
+        )
+        .sort((a, b) => b.activity.at - a.activity.at || String(a.activity.id).localeCompare(String(b.activity.id)));
+    const fragment = document.createDocumentFragment();
+    for (const { entry, activity } of getPageRows("activity", rows)) {
+        const item = document.createElement("li");
+        appendText(
+            item,
+            "history-activity-meta",
+            `${entry.channelName} · ${formatKstDateTime(activity.at, { seconds: true })} · ${entry.title}`
+        );
+        if (activity.kind === "donation")
+            appendText(item, "history-ranking-time", `${Number(activity.amount).toLocaleString()}치즈`);
+        appendText(
+            item,
+            "history-activity-text",
+            String(activity.text || "") || (activity.kind === "donation" ? "메시지 없는 후원" : "내용 없는 채팅")
+        );
+        fragment.appendChild(item);
+    }
+    if (!rows.length) {
+        const empty = document.createElement("li");
+        empty.className = "history-empty";
+        empty.textContent = "이 조건에 보관된 내역이 없어요.";
+        fragment.appendChild(empty);
+    }
+    activityListEl.replaceChildren(fragment);
 }
 
 function hideMessage() {
@@ -1522,6 +1926,7 @@ function showMessage(text, type = "success", source = "") {
 }
 
 async function loadHistory({ resetToLatest = false, silent = false } = {}) {
+    const generation = ++historyLoadGeneration;
     if (!storage) {
         noticeEl.dataset.state = "dirty";
         noticeEl.textContent = "저장소 사용 불가";
@@ -1537,20 +1942,25 @@ async function loadHistory({ resetToLatest = false, silent = false } = {}) {
 
     try {
         const data = await storageGet(storage, STORAGE_KEY);
+        if (generation !== historyLoadGeneration) return false;
         entries = normalizeHistory(data[STORAGE_KEY]);
+        importedDonations = donationHistory?.normalizeLedger(data[STORAGE_KEY]?.donationImport) || null;
         pruneSelectedEntryIds();
         if (resetToLatest) {
+            resetViewPages();
             selectedYear = 0;
             selectedMonth = 0;
             selectedDateKey = "";
             selectedEntryIds.clear();
             expandedEntryIds.clear();
+            expandedChatLimits.clear();
         }
         ensureSelectedMonth({ resetToLatest });
         renderAll();
         if (messageEl.dataset.type === "error" && messageEl.dataset.source === "load") hideMessage();
         return true;
     } catch (_) {
+        if (generation !== historyLoadGeneration) return false;
         noticeEl.dataset.state = "dirty";
         noticeEl.textContent = "불러오기 실패";
         showMessage("시청 기록을 불러오지 못했습니다. 새로고침 버튼을 눌러 다시 시도해 주세요.", "error", "load");
@@ -1559,11 +1969,12 @@ async function loadHistory({ resetToLatest = false, silent = false } = {}) {
 }
 
 function scheduleStorageChangeReload() {
-    if (storageChangeReloadTimer) window.clearTimeout(storageChangeReloadTimer);
-    storageChangeReloadTimer = window.setTimeout(() => {
-        storageChangeReloadTimer = 0;
+    if (storageChangeReloadScheduled) return;
+    storageChangeReloadScheduled = true;
+    queueMicrotask(() => {
+        storageChangeReloadScheduled = false;
         loadHistory({ silent: true });
-    }, STORAGE_CHANGE_RELOAD_DEBOUNCE_MS);
+    });
 }
 
 async function refreshHistory() {
@@ -1578,9 +1989,12 @@ async function clearHistory() {
     try {
         await sendWatchHistoryMutation({ kind: "clearHistory", cutoffAt: Date.now() });
         entries = [];
+        importedDonations = null;
+        resetViewPages();
         selectedDateKey = "";
         selectedEntryIds.clear();
         expandedEntryIds.clear();
+        expandedChatLimits.clear();
         ensureSelectedMonth({ resetToLatest: true });
         renderAll();
         showMessage("시청 기록을 삭제했습니다.");
@@ -1603,6 +2017,7 @@ async function deleteEntriesByIds(ids, successMessage) {
         for (const id of targets) {
             selectedEntryIds.delete(id);
             expandedEntryIds.delete(id);
+            expandedChatLimits.delete(id);
         }
         pruneSelectedEntryIds();
         renderAll();
@@ -1634,10 +2049,14 @@ async function deleteSingleEntry(entry) {
 
 prevMonthButton.addEventListener("click", () => shiftSelectedMonth(-1));
 clearDateFilterButton.addEventListener("click", () => {
-    const previousDateKey = selectedDateKey;
+    const previousDate = selectedDateKey;
+    resetViewPages();
+    historyScopeEl.value = "month";
     selectedDateKey = "";
     renderAll();
-    calendarDaysEl.querySelector(`[data-date="${previousDateKey}"]`)?.focus({ preventScroll: true });
+    (calendarDaysEl.querySelector(`[data-date="${previousDate}"]`) || calendarRefreshButton).focus({
+        preventScroll: true,
+    });
 });
 calendarRefreshButton.addEventListener("click", refreshHistory);
 nextMonthButton.addEventListener("click", () => {
@@ -1645,9 +2064,59 @@ nextMonthButton.addEventListener("click", () => {
 });
 refreshButton.addEventListener("click", refreshHistory);
 clearHistoryButton.addEventListener("click", clearHistory);
-historySearchEl.addEventListener("input", renderList);
-historySortEl.addEventListener("change", renderList);
-historySortDirectionEl.addEventListener("change", renderList);
+historySearchEl.addEventListener("input", () => {
+    resetViewPages();
+    renderResults();
+});
+for (const control of [historySortEl, historySortDirectionEl])
+    control.addEventListener("change", () => {
+        viewPages.history = 0;
+        renderList();
+    });
+historyScopeEl.addEventListener("change", () => {
+    selectedDateKey = "";
+    resetViewPages();
+    renderAll();
+});
+activityTypeEl.addEventListener("change", () => {
+    viewPages.activity = 0;
+    renderActivity();
+});
+selectionToggle.addEventListener("click", () => {
+    selectionMode = !selectionMode;
+    if (!selectionMode) selectedEntryIds.clear();
+    renderList();
+    selectionToggle.focus({ preventScroll: true });
+});
+
+for (const tab of viewTabs) {
+    tab.addEventListener("click", () => setHistoryView(tab.dataset.historyView));
+    tab.addEventListener("keydown", (event) => {
+        const index = viewTabs.indexOf(tab);
+        const rtl = getComputedStyle(document.documentElement).direction === "rtl";
+        const step = event.key === "ArrowRight" ? (rtl ? -1 : 1) : event.key === "ArrowLeft" ? (rtl ? 1 : -1) : 0;
+        let next = step ? (index + step + viewTabs.length) % viewTabs.length : null;
+        if (event.key === "Home") next = 0;
+        if (event.key === "End") next = viewTabs.length - 1;
+        if (next === null) return;
+        event.preventDefault();
+        setHistoryView(viewTabs[next].dataset.historyView, { focus: true });
+    });
+}
+for (const view of viewNames) {
+    for (const [suffix, step] of [
+        ["PrevPage", -1],
+        ["NextPage", 1],
+    ]) {
+        document.getElementById(`${view}${suffix}`).addEventListener("click", () => {
+            viewPages[view] += step;
+            renderResults();
+            const panel = document.getElementById(`${view}Panel`);
+            panel.focus({ preventScroll: true });
+            panel.scrollIntoView?.({ block: "start" });
+        });
+    }
+}
 selectVisibleHistoryEl.addEventListener("change", () => setVisibleEntriesSelected(selectVisibleHistoryEl.checked));
 deleteSelectedHistoryButton.addEventListener("click", deleteSelectedEntries);
 clearSelectionButton.addEventListener("click", () => {
@@ -1663,4 +2132,111 @@ if (globalThis.chrome?.storage?.onChanged) {
     });
 }
 
+function setDonationImportBusy(busy) {
+    donationImportForm.setAttribute("aria-busy", String(busy));
+    for (const control of [donationImportStart, donationImportEnd, donationImportSubmit, donationImportToggle])
+        control.disabled = busy;
+    donationImportCancel.hidden = !busy;
+    donationImportCancel.disabled = !busy;
+}
+
+function showDonationImportStatus(text, error = false) {
+    donationImportStatus.textContent = text;
+    donationImportStatus.dataset.error = String(error);
+}
+
+donationImportToggle.addEventListener("click", () => {
+    const open = donationImportForm.hidden;
+    donationImportForm.hidden = !open;
+    donationImportToggle.setAttribute("aria-expanded", String(open));
+    if (open) {
+        const today = getKstParts();
+        const current = `${today.year}-${String(today.month).padStart(2, "0")}`;
+        for (const input of [donationImportStart, donationImportEnd]) {
+            input.max = current;
+            if (!input.value) input.value = `${selectedYear}-${String(selectedMonth).padStart(2, "0")}`;
+        }
+        donationImportStart.focus();
+    }
+});
+
+donationImportForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (donationImportPort) return;
+    try {
+        donationHistory.getMonths(donationImportStart.value, donationImportEnd.value);
+        const generation = ++donationImportGeneration;
+        const port = chrome.runtime.connect({ name: donationHistory.PORT_NAME });
+        donationImportPort = port;
+        setDonationImportBusy(true);
+        showDonationImportStatus("로그인 상태와 후원 내역을 확인하고 있어요.");
+        const finish = () => {
+            if (donationImportPort !== port) return;
+            donationImportPort = null;
+            setDonationImportBusy(false);
+            port.disconnect();
+        };
+        port.onDisconnect.addListener(() => {
+            const error = chrome.runtime.lastError;
+            if (donationImportPort !== port) return;
+            donationImportPort = null;
+            setDonationImportBusy(false);
+            showDonationImportStatus(
+                error ? "가져오기 연결이 끊겼어요. 다시 시도해 주세요." : "가져오기가 중단됐어요. 다시 시도해 주세요.",
+                true
+            );
+        });
+        port.onMessage.addListener(async (message) => {
+            if (donationImportPort !== port) return;
+            if (message.type === "progress") {
+                showDonationImportStatus(
+                    `${message.month} · ${message.monthIndex}/${message.monthCount}개월 · ${message.page}/${message.pages}페이지 · 일반 후원 ${message.count}건 확인`
+                );
+            } else if (message.type === "saving") {
+                donationImportCancel.disabled = true;
+                showDonationImportStatus("확인한 후원 내역을 저장하고 있어요.");
+            } else if (message.type === "error") {
+                finish();
+                showDonationImportStatus(message.message, true);
+            } else if (message.type === "done") {
+                finish();
+                activityTypeEl.value = "imported";
+                historyScopeEl.value = "all";
+                selectedDateKey = "";
+                resetViewPages();
+                await loadHistory({ silent: true });
+                if (generation !== donationImportGeneration) return;
+                showDonationImportStatus(
+                    `${message.startMonth} ~ ${message.endMonth} 일반 후원 ${message.count.toLocaleString()}건을 가져왔어요.`
+                );
+                donationImportSubmit.focus({ preventScroll: true });
+            }
+        });
+        port.postMessage({ type: "start", startMonth: donationImportStart.value, endMonth: donationImportEnd.value });
+    } catch (error) {
+        donationImportPort?.disconnect();
+        donationImportPort = null;
+        setDonationImportBusy(false);
+        showDonationImportStatus(error.message || "가져오기를 시작하지 못했어요.", true);
+    }
+});
+
+donationImportCancel.addEventListener("click", () => {
+    donationImportPort?.postMessage({ type: "cancel" });
+    donationImportCancel.disabled = true;
+    showDonationImportStatus("가져오기를 취소하고 있어요.");
+});
+window.addEventListener("pagehide", () => donationImportPort?.disconnect());
+clearDonationImportButton.addEventListener("click", async () => {
+    if (!confirm("사용 내역에서 가져온 후원 기록을 삭제할까요?")) return;
+    try {
+        await sendWatchHistoryMutation({ kind: "clearDonationImport", cutoffAt: Date.now() });
+        await loadHistory({ silent: true });
+        showMessage("가져온 후원 내역을 삭제했어요.");
+    } catch (_) {
+        showMessage("가져온 후원 내역을 삭제하지 못했어요.", "error");
+    }
+});
+
+setHistoryView(activeHistoryView);
 loadHistory({ resetToLatest: true });

@@ -118,6 +118,141 @@ function createWrappedLiveController(window) {
     return controller;
 }
 
+function wrapControllerVideoSlot(window, controller) {
+    // 2026-09-19 CHZZK adapter: a plain object delegates to its own video inside shadowRoot (an Element).
+    const video = controller.videoSlot;
+    const root = window.document.createElement("div");
+    video.replaceWith(root);
+    root.append(video);
+    const slot = {
+        _videoElement: video,
+        shadowRoot: root,
+        get video() {
+            return this._videoElement;
+        },
+        get isConnected() {
+            return this._videoElement.isConnected;
+        },
+    };
+    controller.videoSlot = slot;
+    controller.contentVideoElement = slot;
+    return { slot, video, root };
+}
+
+test("object video slots block the measured Asian Games pre-roll without replacing the content adapter", async (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    const controller = createWrappedLiveController(window);
+    const { slot, video } = wrapControllerVideoSlot(window, controller);
+    video.currentTime = 125;
+    const state = createWrappedLiveSource("LIVE_CHZZK_NDP_SCH_EVENT");
+    controller.srcObject = state.wrapped;
+    controller.srcObject = state.wrapped;
+    const client = await state.wrapped.initAd("native-argument");
+    assert.equal(state.calls.length, 0);
+    assert.equal(client.client, undefined);
+    assert.equal(client.playerType, "LIVE_PW");
+    assert.equal(controller.srcObject, state.wrapped);
+    assert.equal(controller.videoSlot, slot);
+    assert.equal(controller.contentVideoElement, slot);
+    assert.equal(slot.video, video);
+    assert.equal(video.currentTime, 125);
+    const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    assert.equal(status.blockedWrappedLiveRequests, 1);
+    assert.equal(status.blockedLiveSources, 0);
+});
+
+test("object video slot ownership follows native video replacement, detachment, routes and options", async (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    const controller = createWrappedLiveController(window);
+    const { slot, video, root } = wrapControllerVideoSlot(window, controller);
+    const state = createWrappedLiveSource("LIVE_CHZZK_NDP_SCH_EVENT");
+    controller.srcObject = state.wrapped;
+    assert.equal((await state.wrapped.initAd()).client, undefined);
+    const parent = root.parentElement;
+    root.remove();
+    assert.equal((await state.wrapped.initAd()).client, state.linearClient);
+    parent.append(root);
+    assert.equal((await state.wrapped.initAd()).client, undefined);
+    const nextVideo = window.document.createElement("video");
+    video.replaceWith(nextVideo);
+    assert.equal((await state.wrapped.initAd()).client, state.linearClient, "the detached original video is stale");
+    slot._videoElement = nextVideo;
+    assert.equal((await state.wrapped.initAd()).client, undefined);
+    window.history.pushState({}, "", "/video/123");
+    assert.equal((await state.wrapped.initAd()).client, state.linearClient);
+    window.history.pushState({}, "", "/live/next");
+    assert.equal((await state.wrapped.initAd()).client, undefined);
+    setEnabled(window, false);
+    assert.equal((await state.wrapped.initAd()).client, state.linearClient);
+    setEnabled(window, true);
+    assert.equal(
+        (await state.wrapped.initAd()).client,
+        state.linearClient,
+        "re-enabling still requires a new document"
+    );
+});
+
+test("unmeasured or inconsistent object video slots keep their native ad request", async (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    const variants = [
+        ({ slot }) => delete slot.video,
+        ({ slot }) => Object.defineProperty(slot, "video", { value: window.document.createElement("video") }),
+        ({ slot }) => (slot.shadowRoot = window.document.createElement("div")),
+        ({ slot, root }) => (slot._videoElement = root),
+        ({ slot }) =>
+            Object.defineProperty(slot, "_videoElement", {
+                get: () => {
+                    throw new Error("not a data field");
+                },
+            }),
+        ({ controller }) => (controller.contentVideoElement = {}),
+        ({ root }) => root.parentElement.remove(),
+    ];
+    for (const mutate of variants) {
+        const controller = createWrappedLiveController(window);
+        const parts = wrapControllerVideoSlot(window, controller);
+        mutate({ ...parts, controller });
+        const state = createWrappedLiveSource("LIVE_CHZZK_NDP_SCH_EVENT");
+        controller.srcObject = state.wrapped;
+        assert.equal((await state.wrapped.initAd()).client, state.linearClient);
+        assert.equal(state.calls.length, 1);
+        assert.equal(controller.srcObject, state.wrapped);
+        parts.root.parentElement?.remove();
+    }
+});
+
+test("native glad URI filtering recognizes the same object video slot and preserves media URLs", (t) => {
+    const window = createPage(t, "/video/123");
+    window.eval(source);
+    const controller = createWrappedLiveController(window);
+    const { slot, root } = wrapControllerVideoSlot(window, controller);
+    let factoryCalls = 0;
+    window.Object.defineProperty(controller, "src", {
+        configurable: true,
+        get() {
+            return this._srcUri;
+        },
+        set(value) {
+            factoryCalls++;
+            this._srcUri = value;
+            this._attachSourceObject({ uri: value });
+        },
+    });
+    controller.src = "glad://load";
+    assert.equal(factoryCalls, 0);
+    assert.equal(controller.srcObject, null);
+    assert.equal(controller.videoSlot, slot);
+    controller.src = "https://media.example/video.m3u8";
+    assert.equal(factoryCalls, 1);
+    assert.equal(controller.srcObject.uri, "https://media.example/video.m3u8");
+    root.parentElement.remove();
+    controller.src = "glad://load";
+    assert.equal(factoryCalls, 2, "a detached player tree no longer owns a native ad slot");
+});
+
 test("wrapped live requests keep their outer client and only omit the identified inner ad request", async (t) => {
     const window = createPage(t);
     window.eval(source);

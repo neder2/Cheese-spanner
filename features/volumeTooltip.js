@@ -23,7 +23,7 @@
  *   - cheese-knife 출처 라이선스 주석(수정 금지).
  *   - 오디오 컴프레서 IIFE.
  *     - createGraph/graphFor/connectGraph/disconnectGraph: Web Audio 그래프 생성과 압축/우회 모드 전환.
- *     - resumeContext/installResumeHandlers: AudioContext suspended 상태 복구.
+ *     - resumeContext/installResumeHandlers: 오디오 상태 변화·탭 복귀·사용자 조작 시 중단 상태 복구.
  *     - createButton/ensureButton/syncButtonState: 토글 버튼 DOM 삽입과 위치/라벨 동기화.
  *     - syncState: 옵션/라우트/비디오 변경에 따른 전체 상태 재계산 진입점.
  *     - installRuntime: MutationObserver + 페이지 변경 감지 설치(1회).
@@ -66,6 +66,7 @@
   white-space:nowrap;
   pointer-events:none;
   transform:translate(-50%, -100%);
+  transform-origin:50% 100%;
   transition:opacity 100ms ease;
 }
 `
@@ -100,7 +101,13 @@
         const nativeTooltip = control
             .closest(".pzp-pc")
             ?.querySelector(".pzp-pc__volume-button .pzp-button__tooltip:not(.betterchzzk-player-tooltip)");
-        let tooltipBottom = rect.top - 10;
+        // This tooltip is mounted outside the scaled native control row. Copy its rendered scale too.
+        const scaleTarget = nativeTooltip?.offsetWidth > 0 ? nativeTooltip : control;
+        const ratio =
+            scaleTarget.offsetWidth > 0 ? scaleTarget.getBoundingClientRect().width / scaleTarget.offsetWidth : 1;
+        const scale = Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+        tooltip.style.transform = `translate(-50%, -100%) scale(${scale})`;
+        let tooltipBottom = rect.top - 10 * scale;
         if (nativeTooltip) {
             const nativeStyle = getComputedStyle(nativeTooltip);
             for (const property of [
@@ -120,7 +127,7 @@
             if (Number.isFinite(offset)) {
                 tooltipBottom =
                     nativeTooltip.parentElement.getBoundingClientRect().top +
-                    offset +
+                    offset * scale +
                     tooltip.getBoundingClientRect().height;
             }
         }
@@ -133,7 +140,7 @@
             return false;
         }
         // Keep the percentage centered at a fixed offset while the slider expands.
-        tooltip.style.left = `${Math.max(left + tipRect.width / 2, Math.min(right - tipRect.width / 2, rect.left + TOOLTIP_HORIZONTAL_OFFSET))}px`;
+        tooltip.style.left = `${Math.max(left + tipRect.width / 2, Math.min(right - tipRect.width / 2, rect.left + TOOLTIP_HORIZONTAL_OFFSET * scale))}px`;
         tooltip.style.top = `${Math.max(top + tipRect.height, Math.min(bottom, tooltipBottom))}px`;
         return true;
     }
@@ -340,6 +347,10 @@
     let compressorActive = false;
     let compressorVolume = 1;
     let activeVideo = null;
+    let audioContext = null;
+    let pendingResume = null;
+    let removeResumeHandlers = null;
+    let audioRecoveryStopped = false;
     let buttonEl = null;
     let controlEl = null;
     let runtimeInstalled = false;
@@ -488,44 +499,69 @@
         }
     }
 
-    function cleanupResumeHandlers(graph) {
-        if (!graph?.removeResumeHandlers) return;
-        graph.removeResumeHandlers();
-        graph.removeResumeHandlers = null;
+    function cleanupResumeHandlers() {
+        removeResumeHandlers?.();
+        removeResumeHandlers = null;
     }
 
-    function installResumeHandlers(graph) {
-        if (!graph || graph.removeResumeHandlers || graph.context?.state === "running") return;
-        const resume = () => resumeContext(graph);
+    function installResumeHandlers() {
+        if (
+            audioRecoveryStopped ||
+            !audioContext ||
+            removeResumeHandlers ||
+            audioContext.state === "running" ||
+            audioContext.state === "closed"
+        )
+            return;
+        const resume = () => resumeContext(true);
         for (const eventName of RESUME_EVENTS) window.addEventListener(eventName, resume, true);
-        graph.removeResumeHandlers = () => {
+        removeResumeHandlers = () => {
             for (const eventName of RESUME_EVENTS) window.removeEventListener(eventName, resume, true);
         };
     }
 
-    function resumeContext(graph) {
-        const context = graph?.context;
-        if (!context || context.state === "closed") return;
-        if (context.state === "running") {
-            cleanupResumeHandlers(graph);
+    function resumeContext(fromGesture = false) {
+        const context = audioContext;
+        if (audioRecoveryStopped || !context) return;
+        if (context.state === "running" || context.state === "closed") {
+            cleanupResumeHandlers();
             return;
         }
+        installResumeHandlers();
+        // A pending autoplay request may need a real user gesture. Allow that one
+        // escalation, but share repeated focus/visibility/mutation requests.
+        if (pendingResume && (!fromGesture || pendingResume.fromGesture)) return;
+        const request = { fromGesture };
+        pendingResume = request;
+        const settle = () => {
+            if (audioRecoveryStopped || pendingResume !== request) return;
+            pendingResume = null;
+            if (context.state === "running" || context.state === "closed") cleanupResumeHandlers();
+            else installResumeHandlers();
+        };
         try {
-            const result = context.resume?.();
-            if (result && typeof result.then === "function") {
-                result.then(() => cleanupResumeHandlers(graph)).catch(() => installResumeHandlers(graph));
-            }
+            Promise.resolve(context.resume()).then(settle, settle);
         } catch (_) {
-            installResumeHandlers(graph);
+            settle();
         }
-        if (context.state !== "running") installResumeHandlers(graph);
+    }
+
+    function handleAudioStateChange() {
+        resumeContext();
+    }
+
+    function handleAudioVisibility() {
+        if (!document.hidden) resumeContext();
+    }
+
+    function handleAudioFocus() {
+        resumeContext();
     }
 
     function markFailed(video, graph = null) {
         if (graph) {
             connectGraph(graph, "bypass");
             graph.failed = true;
-            cleanupResumeHandlers(graph);
             return graph;
         }
         graphs.set(video, { failed: true });
@@ -537,7 +573,15 @@
         if (!AudioContextConstructor) return markFailed(video);
         let context = null;
         try {
-            context = new AudioContextConstructor();
+            // MediaElementSource ownership lasts for the element's lifetime, including
+            // native mini-player reparenting. Keep one context for this document.
+            if (!audioContext) {
+                audioContext = new AudioContextConstructor();
+                audioContext.addEventListener?.("statechange", handleAudioStateChange);
+                document.addEventListener("visibilitychange", handleAudioVisibility);
+                window.addEventListener("focus", handleAudioFocus);
+            }
+            context = audioContext;
             const graph = {
                 context,
                 source: context.createMediaElementSource(video),
@@ -545,16 +589,11 @@
                 gain: context.createGain(),
                 mode: "",
                 failed: false,
-                removeResumeHandlers: null,
             };
             graphs.set(video, graph);
             return graph;
         } catch (_) {
-            try {
-                context?.close?.();
-            } catch (_) {
-                // Ignore close failures after setup failure.
-            }
+            // Another media element may already be using this document's context.
             return markFailed(video);
         }
     }
@@ -565,20 +604,11 @@
         return createGraph(video);
     }
 
-    function closeGraph(graph) {
-        cleanupResumeHandlers(graph);
-        disconnectGraph(graph);
-        try {
-            graph?.context?.close?.();
-        } catch (_) {
-            // Best effort only.
-        }
-    }
-
     function releaseActiveGraph() {
         if (!activeVideo) return;
-        closeGraph(graphs.get(activeVideo));
-        graphs.delete(activeVideo);
+        // Losing the main-player role does not mean the native video is destroyed.
+        // Preserve its source in the WeakMap so the same element can return safely.
+        bypassActiveGraph();
         activeVideo = null;
     }
 
@@ -586,16 +616,32 @@
         const graph = activeVideo ? graphs.get(activeVideo) : null;
         if (!graph || graph.failed) return;
         connectGraph(graph, "bypass");
-        resumeContext(graph);
+        resumeContext();
     }
 
     function handlePageHide(event) {
         if (event?.persisted) return;
-        releaseActiveGraph();
+        const graph = activeVideo ? graphs.get(activeVideo) : null;
+        audioRecoveryStopped = true;
+        pendingResume = null;
+        cleanupResumeHandlers();
+        audioContext?.removeEventListener?.("statechange", handleAudioStateChange);
+        document.removeEventListener("visibilitychange", handleAudioVisibility);
+        window.removeEventListener("focus", handleAudioFocus);
+        disconnectGraph(graph);
+        activeVideo = null;
+        try {
+            audioContext?.close?.();
+        } catch (_) {
+            // Only final document teardown can close the shared audio context.
+        }
     }
 
     function handlePageShow(event) {
-        if (event?.persisted) syncState();
+        if (event?.persisted) {
+            resumeContext();
+            syncState();
+        }
     }
 
     function injectButtonStyle() {
@@ -613,12 +659,14 @@
 #${CONTROL_ID}{position:relative;display:flex;align-items:center;flex:0 0 auto;color:inherit;}
 #${CONTROL_ID} .bcac-volume{position:relative;display:flex;align-items:center;width:0;margin-right:0;opacity:0;pointer-events:none;transition:width .23s cubic-bezier(.33,1,.68,1),opacity .15s;}
 #${CONTROL_ID}:hover .bcac-volume,#${CONTROL_ID}:focus-within .bcac-volume{width:72px;margin-right:10px;opacity:1;pointer-events:auto;}
-#${SLIDER_ID}{appearance:none;-webkit-appearance:none;flex:0 0 72px;width:72px;height:14px;margin:0;padding:0;border:0;border-radius:0;background:transparent;color:inherit;cursor:pointer;}
-#${SLIDER_ID}::-webkit-slider-runnable-track{height:2px;background:linear-gradient(to right,var(--bcac-fill,#fff) var(--bcac-volume,100%),var(--bcac-track,rgba(255,255,255,.5)) var(--bcac-volume,100%));}
-#${SLIDER_ID}::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:10px;height:10px;margin-top:-4px;border:0;border-radius:50%;background:var(--bcac-fill,#fff);}
-#${SLIDER_ID}::-moz-range-track{height:2px;background:var(--bcac-track,rgba(255,255,255,.5));}
-#${SLIDER_ID}::-moz-range-progress{height:2px;background:var(--bcac-fill,#fff);}
-#${SLIDER_ID}::-moz-range-thumb{width:10px;height:10px;border:0;border-radius:50%;background:var(--bcac-fill,#fff);}
+#${SLIDER_ID}{appearance:none;-webkit-appearance:none;flex:0 0 72px;width:72px;height:max(14px,var(--bcac-thumb-size,10px));margin:0;padding:0;border:0;border-radius:0;background:transparent;color:inherit;cursor:pointer;}
+#${SLIDER_ID}::-webkit-slider-runnable-track{height:var(--bcac-track-height,2px);background:linear-gradient(to right,var(--bcac-fill,#fff) var(--bcac-volume,100%),var(--bcac-track,rgba(255,255,255,.5)) var(--bcac-volume,100%));}
+#${SLIDER_ID}::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:var(--bcac-thumb-size,10px);height:var(--bcac-thumb-size,10px);margin-top:calc((var(--bcac-track-height,2px) - var(--bcac-thumb-size,10px))/2);border:0;border-radius:50%;background:var(--bcac-fill,#fff);}
+#${SLIDER_ID}::-moz-range-track{height:var(--bcac-track-height,2px);background:var(--bcac-track,rgba(255,255,255,.5));}
+#${SLIDER_ID}::-moz-range-progress{height:var(--bcac-track-height,2px);background:var(--bcac-fill,#fff);}
+#${SLIDER_ID}::-moz-range-thumb{width:var(--bcac-thumb-size,10px);height:var(--bcac-thumb-size,10px);border:0;border-radius:50%;background:var(--bcac-fill,#fff);}
+#${SLIDER_ID}:is(:hover,:focus-visible,:active)::-webkit-slider-thumb{transform:scale(1.4);}
+#${SLIDER_ID}:is(:hover,:focus-visible,:active)::-moz-range-thumb{transform:scale(1.4);}
 #${BUTTON_ID}:focus-visible,#${SLIDER_ID}:focus-visible{outline:2px solid var(--sem-color-content-brand-strong,var(--Content-Brand-Strong,#00ffa3));outline-offset:3px;}
 #${SLIDER_ID}:disabled{opacity:.35;cursor:default;}
 #${CONTROL_ID} .bcac-volume:hover > .betterchzzk-player-tooltip,#${CONTROL_ID} .bcac-volume:focus-within > .betterchzzk-player-tooltip{visibility:visible;}
@@ -755,6 +803,20 @@
 
     function syncControlAppearance(container) {
         if (controlEl.className !== container.className) controlEl.className = container.className;
+        // Read untransformed dimensions: the shared native row already applies its fullscreen scale.
+        for (const [property, selector, dimension] of [
+            ["--bcac-thumb-size", ".pzp-ui-slider__handler-wrap", "width"],
+            ["--bcac-track-height", ".pzp-ui-progress", "height"],
+        ]) {
+            const node = container.querySelector(selector);
+            const value = node ? getComputedStyle(node)[dimension] : "";
+            const size = Number.parseFloat(value);
+            const next = Number.isFinite(size) && size > 0 && value.endsWith("px") ? value : "";
+            if (controlEl.style.getPropertyValue(property) !== next) {
+                if (next) controlEl.style.setProperty(property, next);
+                else controlEl.style.removeProperty(property);
+            }
+        }
         // 2026-09-11: CHZZK's volume track and thumb stay white over the video in both themes.
         const fill = container.querySelector(".pzp-ui-progress__volume");
         const track = container.querySelector(".pzp-ui-progress__entire-background");
@@ -862,8 +924,9 @@
         if (!compressorEnabled()) {
             const existing = graphs.get(video);
             if (existing && !existing.failed) {
+                activeVideo = video;
                 connectGraph(existing, "bypass");
-                resumeContext(existing);
+                resumeContext();
             }
             syncButtonState();
             return;
@@ -876,7 +939,7 @@
         }
         applyGraphOptions(graph);
         if (!connectGraph(graph, "compressed")) markFailed(video, graph);
-        resumeContext(graph);
+        resumeContext();
         syncButtonState();
     }
 
@@ -908,6 +971,12 @@
                         (mutation) =>
                             !isOwnButtonMutation(mutation) &&
                             (mutationMatchesSelector(mutation, "video") ||
+                                (mutation.target instanceof Element &&
+                                    mutation.target.closest(VOLUME_CONTROL_SELECTOR) &&
+                                    mutationMatchesSelector(
+                                        mutation,
+                                        ".pzp-ui-slider__handler-wrap, .pzp-ui-progress"
+                                    )) ||
                                 mutationMatchesSelector(mutation, VOLUME_CONTROL_SELECTOR) ||
                                 mutationMatchesSelector(mutation, VOLUME_BUTTON_SELECTOR) ||
                                 mutationMatchesSelector(mutation, EXTERNAL_COMPRESSOR_SELECTOR))

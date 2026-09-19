@@ -779,7 +779,30 @@
                             /><em>분</em></label
                         >
                     </div>
-                    <p class="setting-note">이보다 짧게 본 라이브는 제외하며, 기록은 이 브라우저에만 저장합니다.</p>
+                    <p class="setting-note">
+                        최소 저장 시간은 시청 시간 집계에만 적용해요. 기록은 이 브라우저에만 저장해요.
+                    </p>
+
+                    <div data-depends-on="liveWatchHistoryEnabled">
+                        <label class="toggle-row">
+                            <span
+                                ><strong>내 채팅 기록 저장</strong
+                                ><small>채팅 내용과 작성 시각을 저장하고 채팅 수를 집계해요.</small></span
+                            >
+                            <input type="checkbox" data-option="liveWatchHistoryChatEnabled" />
+                        </label>
+                        <label class="toggle-row">
+                            <span
+                                ><strong>내 일반 후원 기록 저장</strong
+                                ><small>채팅에 표시된 본인 일반 후원의 횟수와 치즈를 집계해요.</small></span
+                            >
+                            <input type="checkbox" data-option="liveWatchHistoryDonationEnabled" />
+                        </label>
+                    </div>
+                    <p class="setting-note">
+                        켜 둔 동안 로그인한 계정의 라이브 채팅에서 전송이 확인되면 바로 저장해요. 최소 시청 시간이나
+                        영상 재생 여부와 관계없이 기록하며, 과거 내역·익명 후원·미션·외부 후원은 포함하지 않아요.
+                    </p>
 
                     <p class="history-storage-warning" role="note">
                         <strong>시청 기록 삭제 주의</strong>
@@ -839,9 +862,20 @@
                         </summary>
                         <div class="option-group-body">
                             <label class="toggle-row">
-                                <span><strong>타임스탬프 표시</strong></span>
+                                <span><strong>라이브 채팅 타임스탬프 표시</strong></span>
                                 <input type="checkbox" data-option="chatTimestampEnabled" />
                             </label>
+                            <label class="toggle-row">
+                                <span><strong>다시보기 채팅 타임스탬프 표시</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="vodChatTimestampEnabled"
+                                    aria-describedby="vod-chat-timestamp-help"
+                                />
+                            </label>
+                            <p class="setting-note" id="vod-chat-timestamp-help">
+                                방송 당시 채팅이 작성된 시각을 표시합니다.
+                            </p>
                             <label class="toggle-row">
                                 <span><strong>주간 후원 랭킹 숨기기</strong></span>
                                 <input
@@ -1213,6 +1247,78 @@
                                 <input type="checkbox" data-option="followingOfflineHidden" />
                             </label>
                             <p class="setting-note">사이드바에서 고정 여부와 관계없이 오프라인 채널을 숨깁니다.</p>
+                        </div>
+                    </details>
+
+                    <details class="option-group" data-option-group="explore-live-start" data-search-together>
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-activity" /></svg>
+                                <span>방송 시작 알림·자동 열기</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>방송 시작 데스크톱 알림</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="liveStartNotificationsEnabled"
+                                    aria-describedby="liveStartHelp"
+                                />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>지정 채널 자동 탭 열기</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="liveStartAutoOpenEnabled"
+                                    aria-describedby="liveStartHelp"
+                                />
+                            </label>
+                            <p class="setting-note" id="liveStartHelp">
+                                옵션을 저장하면 선택한 채널을 약 1분마다 확인해요. 새 방송은 배경 탭으로 열며, 이미 열린
+                                방송 탭은 유지해요. 처음 켜거나 브라우저를 시작할 때 진행 중인 방송은 건너뛰어요.
+                                브라우저가 종료된 동안에는 확인하지 않아요.
+                            </p>
+                            <div id="liveStartChannels" class="live-start-channels">
+                                <label for="liveStartChannelInput">대상 채널 추가</label>
+                                <div class="live-start-add">
+                                    <input
+                                        id="liveStartChannelInput"
+                                        type="text"
+                                        placeholder="치지직 채널 주소 또는 채널 ID"
+                                        autocomplete="off"
+                                        maxlength="250"
+                                        aria-describedby="liveStartChannelHelp"
+                                        disabled
+                                    />
+                                    <button id="liveStartChannelAdd" type="button" class="secondary-button" disabled>
+                                        추가
+                                    </button>
+                                </div>
+                                <p class="setting-note" id="liveStartChannelHelp">
+                                    최대 32개까지 등록할 수 있어요. 채널별 선택과 삭제는 이 기기에 즉시 저장돼요.
+                                </p>
+                                <p
+                                    id="liveStartChannelMessage"
+                                    class="setting-note"
+                                    role="status"
+                                    aria-live="polite"
+                                ></p>
+                                <ul
+                                    id="liveStartChannelList"
+                                    class="live-start-list"
+                                    aria-label="방송 시작 알림 대상 채널"
+                                ></ul>
+                                <p
+                                    id="liveStartMonitorStatus"
+                                    class="setting-note"
+                                    role="status"
+                                    aria-live="polite"
+                                ></p>
+                                <button id="liveStartPermission" type="button" class="secondary-button" hidden>
+                                    알림 권한 허용
+                                </button>
+                            </div>
                         </div>
                     </details>
 
@@ -1614,5 +1720,8 @@
 
         <script src="shared/settings.js"></script>
         <script src="options.js"></script>
+        <script src="shared/data.js"></script>
+        <script src="shared/liveStart.js"></script>
+        <script src="optionsLiveStart.js"></script>
     </body>
 </html>

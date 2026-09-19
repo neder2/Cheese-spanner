@@ -2335,12 +2335,189 @@ h1 {
     text-underline-offset: 4px;
 }
 
+.history-insights {
+    margin-block: 16px;
+}
+
+.history-entry-activity {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    margin-top: 6px;
+}
+
+.history-entry-chats {
+    min-height: 32px;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-2);
+    color: var(--accent-text);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.history-entry-chats[aria-expanded="true"] {
+    border-color: var(--success-border);
+    background: var(--accent-weak);
+}
+
+.history-entry-chat-panel {
+    grid-column: 1 / -1;
+    min-width: 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+}
+
+.history-entry-chat-panel[hidden] {
+    display: none;
+}
+
+.history-entry-chat-list {
+    position: relative;
+    max-height: 360px;
+    overflow-y: auto;
+    margin: 8px 0;
+    padding: 0 8px;
+    list-style: none;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-2);
+}
+
+.history-entry-chat-list li {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.history-entry-chat-list li:last-child {
+    border-bottom: 0;
+}
+
+.history-entry-chat-list:focus-visible,
+.history-entry-chat-list li:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: -2px;
+}
+
+.history-entry-chat-empty {
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+.history-insights [hidden] {
+    display: none;
+}
+
+.history-insight-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.history-insight-heading h2 {
+    margin: 0;
+    font-size: 17px;
+}
+
+.history-insight-heading select {
+    min-height: 40px;
+    max-width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+}
+
+.history-ranking,
+.history-activity-list {
+    margin: 12px 0;
+    padding: 0;
+    list-style: none;
+}
+
+.history-ranking li {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.history-ranking-position {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.history-ranking .history-empty {
+    display: block;
+}
+
+.history-ranking li:focus-visible,
+.history-activity-list li:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+}
+
+.history-ranking-name,
+.history-ranking-time {
+    font-weight: 650;
+    overflow-wrap: anywhere;
+}
+
+.history-ranking-time {
+    color: var(--accent-text);
+    font-variant-numeric: tabular-nums;
+}
+
+.history-activity-meta {
+    display: block;
+    margin-top: 4px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.history-activity-list li {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.history-activity-text {
+    display: block;
+    margin-top: 6px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.history-activity-summary {
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+}
+
 .history-page :is(button, a, input, select, summary):focus-visible {
     outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
 }
 
 @media (max-width: 640px) {
+    .history-ranking li {
+        grid-template-columns: 24px minmax(0, 1fr);
+    }
+
+    .history-ranking-time {
+        grid-column: 2;
+    }
+
     .history-body {
         padding: 20px 12px;
     }

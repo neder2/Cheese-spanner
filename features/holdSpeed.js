@@ -550,7 +550,10 @@
         const nextRate =
             action === "reset"
                 ? 1
-                : Math.min(4, Math.max(0.25, video.playbackRate + (action === "decrease" ? -0.25 : 0.25)));
+                : Math.min(
+                      4,
+                      Math.max(0.25, (Math.round(video.playbackRate * 4) + (action === "decrease" ? -1 : 1)) / 4)
+                  );
         if (event.repeat && nextRate === video.playbackRate) return;
 
         try {

@@ -1,48 +1,13 @@
 /**
- * features/adblockPopup.js — CHZZK의 광고 차단 안내 팝업(및 배경 dimmed 오버레이)을 숨긴다.
- *
- * 동작 위치: isolated world, chzzk.naver.com 전역. MutationObserver + URL 변경 감지로 SPA
- *   네비게이션 전반에서 동작한다.
- * 하는 일: [role="alertdialog"]/[role="dialog"]/[aria-modal="true"] 및 popup_container__ 계열
- *   후보를 스캔해 텍스트에 "adblock"/"광고 차단" 등이 있으면 CSS로 display:none 처리(제거는 하지
- *   않음)한다. 팝업이 body 스크롤을 잠갔던 경우 지연 후 overflow 잠금을 해제한다. 옵션이 꺼지면
- *   숨겼던 요소를 모두 복원한다.
- * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
- *   createMutationObserverSync, mutationMatchesSelector, normalizeCompact, onReady,
- *   startPageChangeDetection, injectStyleOnce).
- * 옵션 키: adblockPopupEnabled.
- * DOM 마커: data-betterchzzk-suppress-adblock-popup 속성, #betterchzzk-adblock-popup-style
- *   스타일 태그, document.documentElement[data-betterchzzk-adblock-popup-ready] 속성.
- * 통신: window에 betterchzzk:adblock-popup:ready CustomEvent를 매 패스마다 dispatch한다.
+ * 광고 차단 안내를 잠시 숨긴 뒤 실제 닫기 버튼으로 네이티브 모달 상태도 정리한다.
+ * isolated world. 다음 프레임까지 남은 안내는 다시 표시하고 스크롤 잠금은 건드리지 않는다.
+ * 옵션·라우트·DOM 수명주기에 맞춰 중복 클릭을 막는다.
  */
 (() => {
-    const LEGACY_AD_POPUP_SELECTOR = [
-        ".popup_container__Aqx-3",
-        '[class^="popup_container__"]',
-        '[class*=" popup_container__"]',
-    ].join(",");
-    const LEGACY_AD_DIMMED_SELECTOR = [
-        ".popup_dimmed__zs78t",
-        '[class^="popup_dimmed__"]',
-        '[class*=" popup_dimmed__"]',
-    ].join(",");
-    const POPUP_CANDIDATE_SELECTOR = [
-        LEGACY_AD_POPUP_SELECTOR,
-        '[role="alertdialog"]',
-        '[role="dialog"]',
-        '[aria-modal="true"]',
-    ].join(",");
-    const POPUP_BACKDROP_SELECTOR = [
-        LEGACY_AD_DIMMED_SELECTOR,
-        '[class*="dimmed"]',
-        '[class*="backdrop"]',
-        '[class*="overlay"]',
-    ].join(",");
-    const AD_SUPPRESS_ATTR = "data-betterchzzk-suppress-adblock-popup";
-    const AD_STYLE_ID = "betterchzzk-adblock-popup-style";
-    const READY_EVENT = "betterchzzk:adblock-popup:ready";
-    const READY_ATTR = "data-betterchzzk-adblock-popup-ready";
-    const SCROLL_UNLOCK_DELAYS_MS = [0, 80, 250, 800];
+    const POPUP =
+        '[role="alertdialog"], [role="dialog"], [aria-modal="true"], [class^="popup_container__"], [class*=" popup_container__"]';
+    const CLOSING_ATTR = "data-betterchzzk-adblock-popup-closing";
+    const BACKDROP = '[class^="_dimmed_"], [class*=" _dimmed_"]';
     const {
         bindFeatureOptions,
         createMutationObserverSync,
@@ -50,381 +15,204 @@
         normalizeCompact,
         onReady,
         startPageChangeDetection,
+        injectStyleOnce,
     } = BetterChzzk.utils;
-
+    let options = BetterChzzkSettings.normalizeOptions();
+    let observer = null;
+    let removeRouteListener = null;
     let lastUrl = location.href;
-    let pageChangeTimer = null;
-    let scrollUnlockScheduled = false;
-    let featureOptions = BetterChzzkSettings.normalizeOptions();
-    let domObserver = null;
-    let removePageChangeDetection = null;
-    let runtimeInstalled = false;
-    let bodyScrollRestore = null;
+    const attempts = new Map();
+    const concealed = new Map();
+    let restoreFrame = 0;
 
-    function isEnabled() {
-        return featureOptions.adblockPopupEnabled;
+    function restoreConcealment(popup) {
+        for (const node of concealed.get(popup) || []) node.removeAttribute(CLOSING_ATTR);
+        concealed.delete(popup);
+        if (!concealed.size && restoreFrame) {
+            cancelAnimationFrame(restoreFrame);
+            restoreFrame = 0;
+        }
+    }
+
+    function restoreAllConcealment() {
+        for (const popup of concealed.keys()) restoreConcealment(popup);
+    }
+
+    function concealForClose(popup) {
+        injectStyleOnce(
+            "betterchzzk-adblock-popup-style",
+            `
+[${CLOSING_ATTR}="1"] { visibility:hidden !important; opacity:0 !important; pointer-events:none !important; }
+`
+        );
+        const nodes = [popup];
+        const backdrop = popup.parentElement?.closest(BACKDROP);
+        // Never conceal another dialog sharing the same backdrop.
+        if (backdrop && backdrop.querySelectorAll(POPUP).length === 1) nodes.push(backdrop);
+        concealed.set(popup, nodes);
+        for (const node of nodes) node.setAttribute(CLOSING_ATTR, "1");
+        if (!restoreFrame) {
+            restoreFrame = requestAnimationFrame(() => {
+                restoreFrame = 0;
+                restoreAllConcealment();
+            });
+        }
     }
 
     function publishReady() {
         document.documentElement.setAttribute(
-            READY_ATTR,
-            JSON.stringify({
-                href: location.href,
-                at: Date.now(),
-            })
+            "data-betterchzzk-adblock-popup-ready",
+            JSON.stringify({ href: location.href, at: Date.now() })
         );
-        window.dispatchEvent(new Event(READY_EVENT));
+        window.dispatchEvent(new Event("betterchzzk:adblock-popup:ready"));
     }
 
-    function injectAdblockPopupStyleOnce() {
-        BetterChzzk.utils.injectStyleOnce(
-            AD_STYLE_ID,
-            `
-[${AD_SUPPRESS_ATTR}="1"]{
-  display:none !important;
-  pointer-events:none !important;
-  visibility:hidden !important;
-}
-`
-        );
-    }
-
-    function getClassText(el) {
-        const raw = el?.getAttribute?.("class") || el?.className || "";
-        return typeof raw === "string" ? raw.toLowerCase() : "";
-    }
-
-    function isBackdropLike(el) {
-        const classText = getClassText(el);
-        return classText.includes("dimmed") || classText.includes("backdrop") || classText.includes("overlay");
-    }
-
-    function isAdblockPopupLike(el) {
-        if (!(el instanceof HTMLElement)) return false;
-
-        const t = normalizeCompact(el.textContent || "");
+    function isAdblockPopupLike(popup) {
+        if (!(popup instanceof HTMLElement)) return false;
+        const text = normalizeCompact(popup.textContent || "");
         return (
-            t.includes("adblock") ||
-            t.includes("adblocker") ||
-            t.includes("\uAD11\uACE0\uCC28\uB2E8") ||
-            (t.includes("\uAD11\uACE0") && t.includes("\uCC28\uB2E8")) ||
-            (t.includes("\uD655\uC7A5") &&
-                t.includes("\uAE30\uB2A5") &&
-                t.includes("\uC885\uB8CC") &&
-                t.includes("\uAD11\uACE0"))
+            text.includes("adblock") ||
+            (text.includes("광고") && text.includes("차단")) ||
+            (text.includes("확장") && text.includes("기능") && text.includes("종료") && text.includes("광고"))
         );
     }
 
-    function getPopupCandidates() {
-        return Array.from(document.querySelectorAll(POPUP_CANDIDATE_SELECTOR)).filter(
-            (popup) => popup instanceof HTMLElement
-        );
-    }
-
-    function getPopupBackdrop(popup) {
-        const legacyDimmed = popup?.closest?.(LEGACY_AD_DIMMED_SELECTOR);
-        if (legacyDimmed instanceof HTMLElement) return legacyDimmed;
-
-        for (
-            let parent = popup?.parentElement;
-            parent && parent !== document.body && parent !== document.documentElement;
-            parent = parent.parentElement
-        ) {
-            if (isBackdropLike(parent)) return parent;
+    function isShown(element) {
+        if (!element.isConnected) return false;
+        for (let node = element; node instanceof HTMLElement; node = node.parentElement) {
+            if (node.hidden || node.getAttribute("aria-hidden") === "true") return false;
+            const style = getComputedStyle(node);
+            if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse")
+                return false;
         }
-
-        return null;
+        return true;
     }
 
-    function getPopupBackdrops() {
-        const backdrops = new Set();
-
-        for (const dimmed of document.querySelectorAll(LEGACY_AD_DIMMED_SELECTOR)) {
-            if (dimmed instanceof HTMLElement) backdrops.add(dimmed);
+    function closeAdsPopups() {
+        if (!options.adblockPopupEnabled) return;
+        const popups = new Set(document.querySelectorAll(POPUP));
+        for (const popup of attempts.keys()) {
+            if (!popups.has(popup)) attempts.delete(popup);
         }
-
-        for (const popup of getPopupCandidates()) {
-            const backdrop = getPopupBackdrop(popup);
-            if (backdrop) backdrops.add(backdrop);
-        }
-
-        return Array.from(backdrops);
-    }
-
-    function isSuppressed(el) {
-        return el?.getAttribute?.(AD_SUPPRESS_ATTR) === "1";
-    }
-
-    function isRendered(el) {
-        if (!(el instanceof HTMLElement)) return false;
-        const style = getComputedStyle(el);
-        if (style.display === "none" || style.visibility === "hidden") return false;
-        const rect = el.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-    }
-
-    function hasSuppressedAdblockPopup() {
-        return getPopupCandidates().some(isSuppressed);
-    }
-
-    function hasActiveUnsuppressedPopup() {
-        for (const popup of getPopupCandidates()) {
-            if (isSuppressed(popup) || isSuppressed(getPopupBackdrop(popup))) continue;
-            if (isRendered(popup)) return true;
-        }
-
-        return false;
-    }
-
-    function snapshotInlineStyles(style, properties) {
-        return properties.map((property) => ({
-            property,
-            value: style.getPropertyValue(property),
-            priority: style.getPropertyPriority(property),
-        }));
-    }
-
-    function inlineStyleSnapshotsMatch(left, right) {
-        return left.every(
-            (entry, index) => entry.value === right[index]?.value && entry.priority === right[index]?.priority
-        );
-    }
-
-    function rememberBodyScrollChanges(body, beforeGroups, afterGroups) {
-        if (!bodyScrollRestore || bodyScrollRestore.body !== body) {
-            bodyScrollRestore = { body, groups: [] };
-        }
-
-        for (let index = 0; index < beforeGroups.length; index++) {
-            const before = beforeGroups[index];
-            const after = afterGroups[index];
-            if (inlineStyleSnapshotsMatch(before, after)) continue;
-
-            const properties = before.map((entry) => entry.property);
-            const key = properties.join("|");
-            const existing = bodyScrollRestore.groups.find((group) => group.key === key);
-            if (existing) existing.after = after;
-            else bodyScrollRestore.groups.push({ key, properties, before, after });
-        }
-    }
-
-    function restoreBodyScrollStyles() {
-        const restore = bodyScrollRestore;
-        bodyScrollRestore = null;
-        if (!restore?.body) return;
-
-        const style = restore.body.style;
-        for (const group of restore.groups) {
-            const current = snapshotInlineStyles(style, group.properties);
-            if (!inlineStyleSnapshotsMatch(current, group.after)) continue;
-
-            for (const property of group.properties) style.removeProperty(property);
-            for (const entry of group.before) {
-                if (entry.value) style.setProperty(entry.property, entry.value, entry.priority);
-            }
-        }
-
-        if (!restore.body.getAttribute("style")?.trim()) {
-            restore.body.removeAttribute("style");
-        }
-    }
-
-    function discardBodyScrollRestoreIfPopupGone() {
-        if (hasSuppressedAdblockPopup()) return;
-        bodyScrollRestore = null;
-    }
-
-    function unlockBodyScrollIfOnlySuppressedPopups() {
-        if (!document.body || !hasSuppressedAdblockPopup() || hasActiveUnsuppressedPopup()) return;
-
-        const style = document.body.style;
-        const hadScrollLock = style.overflow === "hidden" || style.overflowY === "hidden";
-        if (!hadScrollLock) return;
-
-        const styleGroups = [["overflow", "overflow-x", "overflow-y"], ["padding-right"]];
-        const beforeGroups = styleGroups.map((properties) => snapshotInlineStyles(style, properties));
-
-        if (style.overflow === "hidden") style.removeProperty("overflow");
-        if (style.overflowY === "hidden") style.removeProperty("overflow-y");
-        style.removeProperty("padding-right");
-        const afterGroups = styleGroups.map((properties) => snapshotInlineStyles(style, properties));
-        rememberBodyScrollChanges(document.body, beforeGroups, afterGroups);
-
-        if (!document.body.getAttribute("style")?.trim()) {
-            document.body.removeAttribute("style");
-        }
-    }
-
-    function scheduleScrollUnlock() {
-        if (scrollUnlockScheduled) return;
-        scrollUnlockScheduled = true;
-
-        for (const delay of SCROLL_UNLOCK_DELAYS_MS) {
-            setTimeout(unlockBodyScrollIfOnlySuppressedPopups, delay);
-        }
-
-        setTimeout(
-            () => {
-                scrollUnlockScheduled = false;
-            },
-            Math.max(...SCROLL_UNLOCK_DELAYS_MS) + 50
-        );
-    }
-
-    function syncBackdropSuppression() {
-        const popups = getPopupCandidates();
-
-        for (const backdrop of getPopupBackdrops()) {
-            const containedPopups = popups.filter((popup) => backdrop.contains(popup));
-            const shouldSuppress = containedPopups.length > 0 && containedPopups.every(isSuppressed);
-            if (shouldSuppress) backdrop.setAttribute(AD_SUPPRESS_ATTR, "1");
-            else backdrop.removeAttribute(AD_SUPPRESS_ATTR);
-        }
-    }
-
-    function removeAdsPopup() {
-        if (!isEnabled()) {
-            restoreAdsPopups();
-            return;
-        }
-
-        const popups = getPopupCandidates();
-        if (!popups.length) {
-            discardBodyScrollRestoreIfPopupGone();
-            unlockBodyScrollIfOnlySuppressedPopups();
-            return;
-        }
-
-        injectAdblockPopupStyleOnce();
-        let suppressedCount = 0;
-
         for (const popup of popups) {
-            const isAdblock = isAdblockPopupLike(popup);
-
-            if (isAdblock) {
-                popup.setAttribute(AD_SUPPRESS_ATTR, "1");
-                suppressedCount += 1;
-            } else {
-                popup.removeAttribute(AD_SUPPRESS_ATTR);
+            if (concealed.has(popup)) continue;
+            const rect = popup.getBoundingClientRect();
+            if (
+                popup.querySelector(POPUP) ||
+                !isAdblockPopupLike(popup) ||
+                !isShown(popup) ||
+                rect.width <= 0 ||
+                rect.height <= 0
+            ) {
+                attempts.delete(popup);
+                continue;
+            }
+            // CHZZK's modal close control uses aria-label from popup.close.
+            // Generic confirmation, installation and navigation controls are not close controls.
+            const buttons = Array.from(popup.querySelectorAll("button[aria-label]")).filter(
+                (button) =>
+                    button.closest(POPUP) === popup && normalizeCompact(button.getAttribute("aria-label")) === "닫기"
+            );
+            if (buttons.length !== 1) continue;
+            const button = buttons[0];
+            if (button.disabled || button.getAttribute("aria-disabled") === "true" || !isShown(button)) continue;
+            const text = normalizeCompact(popup.textContent || "");
+            const previous = attempts.get(popup);
+            if (previous?.button === button && previous.text === text) continue;
+            attempts.set(popup, { button, text });
+            concealForClose(popup);
+            try {
+                button.click();
+            } catch (_) {
+                // Leave failed notices available for manual dismissal, without repeated clicks.
+                restoreConcealment(popup);
+            }
+            if (!popup.isConnected) {
+                restoreConcealment(popup);
+                attempts.delete(popup);
             }
         }
-
-        syncBackdropSuppression();
-        if (suppressedCount > 0) scheduleScrollUnlock();
-        else discardBodyScrollRestoreIfPopupGone();
-    }
-
-    function runPopupPass() {
-        if (isEnabled()) removeAdsPopup();
-        else restoreAdsPopups();
-        publishReady();
-    }
-
-    function restoreAdsPopups() {
-        document.querySelectorAll(`[${AD_SUPPRESS_ATTR}="1"]`).forEach((el) => {
-            el.removeAttribute(AD_SUPPRESS_ATTR);
-        });
-        restoreBodyScrollStyles();
-    }
-
-    function mutationCouldAffectPopup(mutation) {
-        if (mutation.type === "attributes" && mutation.target === document.body && mutation.attributeName === "style") {
-            return hasSuppressedAdblockPopup();
-        }
-
-        if (mutation.target instanceof Element) {
-            if (mutation.target.closest?.(POPUP_CANDIDATE_SELECTOR) || isBackdropLike(mutation.target)) return true;
-        }
-
-        return mutationMatchesSelector(mutation, `${POPUP_CANDIDATE_SELECTOR}, ${POPUP_BACKDROP_SELECTOR}`);
     }
 
     function handlePageChange() {
         if (location.href === lastUrl) return;
         lastUrl = location.href;
-        if (!isEnabled()) {
-            restoreAdsPopups();
-            publishReady();
-            return;
-        }
-
-        if (pageChangeTimer) clearTimeout(pageChangeTimer);
-        pageChangeTimer = setTimeout(() => {
-            pageChangeTimer = null;
-            runPopupPass();
-        }, 500);
-    }
-
-    function startDomObserver() {
-        if (domObserver) return;
-
-        const config = {
-            attributes: true,
-            attributeFilter: ["aria-modal", "class", "role", "style"],
-            childList: true,
-            subtree: true,
-        };
-
-        domObserver = createMutationObserverSync({
-            options: config,
-            onMutations(mutations) {
-                handlePageChange();
-                if (mutations.some(mutationCouldAffectPopup)) removeAdsPopup();
-            },
-            onBodyReady: removeAdsPopup,
-        });
-    }
-
-    function stopDomObserver() {
-        if (domObserver) {
-            domObserver.disconnectAll?.();
-            domObserver.disconnect();
-            domObserver = null;
-        }
-    }
-
-    function clearRuntimeTimers() {
-        if (!pageChangeTimer) return;
-        clearTimeout(pageChangeTimer);
-        pageChangeTimer = null;
-    }
-
-    function installRuntime() {
-        if (runtimeInstalled) return;
-        runtimeInstalled = true;
-        if (!removePageChangeDetection) {
-            removePageChangeDetection = startPageChangeDetection(handlePageChange);
-        }
-        startDomObserver();
-        runPopupPass();
-    }
-
-    function teardownRuntime() {
-        runtimeInstalled = false;
-        clearRuntimeTimers();
-        stopDomObserver();
-        if (removePageChangeDetection) {
-            removePageChangeDetection();
-            removePageChangeDetection = null;
-        }
-        restoreAdsPopups();
+        restoreAllConcealment();
+        attempts.clear();
+        closeAdsPopups();
         publishReady();
     }
 
-    function syncRuntimeFromOptions() {
-        if (isEnabled()) installRuntime();
-        else teardownRuntime();
+    function mutationCouldAffectPopup(mutation) {
+        if (mutation.target instanceof Element && mutation.target.closest(POPUP)) return true;
+        if (mutation.target.parentElement?.closest(POPUP)) return true;
+        if (mutation.type === "attributes" && mutation.target.querySelector?.(POPUP)) return true;
+        return mutationMatchesSelector(mutation, POPUP);
     }
 
-    bindFeatureOptions((options) => {
-        featureOptions = options;
+    function syncRuntimeFromOptions() {
+        if (!options.adblockPopupEnabled) {
+            restoreAllConcealment();
+            observer?.disconnectAll?.();
+            observer?.disconnect();
+            observer = null;
+            removeRouteListener?.();
+            removeRouteListener = null;
+            attempts.clear();
+            publishReady();
+            return;
+        }
+        if (!removeRouteListener) removeRouteListener = startPageChangeDetection(handlePageChange);
+        if (!observer) {
+            observer = createMutationObserverSync({
+                options: {
+                    attributes: true,
+                    attributeFilter: [
+                        "aria-modal",
+                        "class",
+                        "role",
+                        "style",
+                        "hidden",
+                        "aria-hidden",
+                        "disabled",
+                        "aria-disabled",
+                        "aria-label",
+                    ],
+                    childList: true,
+                    characterData: true,
+                    subtree: true,
+                },
+                onMutations(mutations) {
+                    // Removal also signals reuse when React reinserts the same node within one batch.
+                    for (const mutation of mutations) {
+                        for (const removed of mutation.removedNodes || []) {
+                            for (const [popup, attempt] of attempts) {
+                                if (
+                                    removed === popup ||
+                                    removed.contains?.(popup) ||
+                                    removed === attempt.button ||
+                                    removed.contains?.(attempt.button)
+                                ) {
+                                    restoreConcealment(popup);
+                                    attempts.delete(popup);
+                                }
+                            }
+                        }
+                    }
+                    handlePageChange();
+                    if (mutations.some(mutationCouldAffectPopup)) closeAdsPopups();
+                },
+                onBodyReady: closeAdsPopups,
+            });
+        }
+        closeAdsPopups();
+        publishReady();
+    }
+
+    bindFeatureOptions((next) => {
+        options = next;
         syncRuntimeFromOptions();
     });
-
     syncRuntimeFromOptions();
-
-    onReady(() => {
-        if (runtimeInstalled) runPopupPass();
-        else syncRuntimeFromOptions();
-    });
+    onReady(syncRuntimeFromOptions);
 })();

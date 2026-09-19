@@ -111,7 +111,8 @@ test("one popup option controls both the adblock notice and connector guide with
     const ad = f.w.document.createElement("div");
     ad.setAttribute("role", "alertdialog");
     ad.setAttribute("aria-modal", "true");
-    ad.textContent = "광고 차단 프로그램을 사용 중이신가요?";
+    ad.innerHTML = '광고 차단 프로그램을 사용 중이신가요?<button aria-label="닫기">닫기</button>';
+    ad.querySelector("button").addEventListener("click", () => ad.remove());
     ad.getBoundingClientRect = () => ({ width: 400, height: 200 });
     f.w.document.body.append(ad);
     const first = f.guide();
@@ -124,7 +125,7 @@ test("one popup option controls both the adblock notice and connector guide with
     f.options({ adblockPopupEnabled: true, autoQualityEnabled: false });
     await flush();
     assert.equal(first.calls.decline, 1);
-    assert.equal(ad.getAttribute("data-betterchzzk-suppress-adblock-popup"), "1");
+    assert.equal(ad.isConnected, false);
     f.options({ adblockPopupEnabled: false, autoQualityEnabled: false });
     const next = f.guide();
     next.mount();

@@ -83,6 +83,152 @@ test("offline rows stay hidden before the next frame during repeated native row 
     assert.equal(replacementList.lastElementChild.hasAttribute("data-bcsf-offline-hidden"), false);
 });
 
+test("expanded following pins recover replaced rows before RAF without changing saved pins", async (t) => {
+    const pins = ["channel-b", "channel-c"];
+    const chrome = createFakeChrome({ [STORAGE_KEY]: pins });
+    const dom = createSidebarDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    const list = document.getElementById("followingList");
+    list.insertAdjacentHTML(
+        "beforeend",
+        ["d", "e", "f", "g", "h"]
+            .map((id) => `<li><a href="/live/channel-${id}"><span class="name_text">${id}</span></a></li>`)
+            .join("")
+    );
+    const nativeRows = list.innerHTML;
+    let writes = 0;
+    let requests = 0;
+    chrome.storage.sync.set = () => writes++;
+    dom.window.fetch = () => {
+        requests++;
+        throw new Error("Expanded pin repair must not fetch a replacement list");
+    };
+    evalSidebarScripts(dom);
+    await waitForCondition(() => document.getElementById("liveC").hasAttribute("data-bcsf-pinned"));
+    // Let frames already queued by initial icon insertion drain before replacing RAF.
+    await new Promise((resolve) => dom.window.requestAnimationFrame(() => dom.window.requestAnimationFrame(resolve)));
+    // Deliberately hold RAF so this checks mutation delivery, not eventual restoration.
+    dom.window.requestAnimationFrame = () => 12345;
+    for (let update = 0; update < 3; update++) {
+        list.innerHTML = nativeRows;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assert.equal(document.getElementById("liveC").getAttribute("data-bcsf-order-group"), "pinned");
+        assert.equal(document.getElementById("offlineB").getAttribute("data-bcsf-order-group"), "offline-pinned");
+        assert.equal(list.querySelectorAll("[data-bcsf-pin-indicator]").length, 2);
+        assert.equal(dom.window.getComputedStyle(document.getElementById("liveC")).order, "-3");
+    }
+
+    const untouched = document.getElementById("liveA");
+    const query = untouched.querySelectorAll.bind(untouched);
+    let untouchedReads = 0;
+    untouched.querySelectorAll = (...args) => {
+        untouchedReads++;
+        return query(...args);
+    };
+    const row = document.getElementById("liveC");
+    row.querySelector(".name_text").outerHTML = '<span class="name_text">감마 갱신</span>';
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const icon = row.querySelector("[data-bcsf-pin-indicator]");
+    assert.ok(icon, "a replaced name restores its pin before RAF");
+    document.getElementById("liveCViewer").textContent = "456명";
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(row.querySelector("[data-bcsf-pin-indicator]"), icon);
+    assert.equal(untouchedReads, 0, "row updates must not immediately rescan the full list");
+    assert.equal(requests, 0);
+    assert.equal(writes, 0);
+    assert.deepEqual(chrome.testState.sync[STORAGE_KEY], pins);
+});
+
+test("immediate pin repair revalidates reused links and restores replaced lists", async (t) => {
+    const chrome = createFakeChrome({ [STORAGE_KEY]: ["channel-c"], followingOfflineHidden: true });
+    const dom = createSidebarDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    const nativeSidebar = document.getElementById("sidebar").outerHTML;
+    evalSidebarScripts(dom);
+    await waitForCondition(() => document.getElementById("liveC").hasAttribute("data-bcsf-pinned"));
+    document.getElementById("betterchzzk-following-pin-mode").click();
+    await waitForCondition(() => document.querySelector("#liveC a").getAttribute("aria-pressed") === "true");
+    dom.window.requestAnimationFrame = () => 12345;
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const row = document.getElementById("liveC");
+    const link = row.querySelector("a");
+    link.href = "/live/channel-z";
+    await tick();
+    assert.equal(row.hasAttribute("data-bcsf-pinned"), false);
+    assert.equal(link.getAttribute("aria-pressed"), "false");
+    assert.equal(row.querySelector("[data-bcsf-pin-indicator]"), null);
+    link.href = "/channel-c";
+    await tick();
+    assert.equal(row.getAttribute("data-bcsf-order-group"), "offline-pinned");
+    assert.equal(link.getAttribute("aria-pressed"), "true");
+    assert.equal(row.getAttribute("data-bcsf-offline-hidden"), "1");
+    link.href = "/video/123";
+    await tick();
+    assert.equal(row.hasAttribute("data-bcsf-pinned"), false);
+    assert.equal(link.hasAttribute("role"), false);
+    assert.equal(row.hasAttribute("data-bcsf-offline-hidden"), false);
+
+    const list = document.getElementById("followingList");
+    const replacement = document.createElement("ul");
+    replacement.innerHTML =
+        '<li id="replacementPin"><a href="/live/channel-c"><span class="name_text">감마</span></a></li>';
+    list.replaceWith(replacement);
+    await tick();
+    assert.equal(replacement.getAttribute("data-bcsf-list"), "1");
+    assert.equal(document.getElementById("replacementPin").getAttribute("data-bcsf-pinned"), "1");
+    assert.equal(document.querySelector("#replacementPin a").getAttribute("aria-pressed"), "true");
+    document.getElementById("sidebar").outerHTML = nativeSidebar;
+    dom.window.history.pushState({}, "", "/following");
+    await waitForCondition(() => document.getElementById("liveC").getAttribute("data-bcsf-pinned") === "1");
+    assert.equal(document.querySelectorAll("#liveC [data-bcsf-pin-indicator]").length, 1);
+});
+
+test("initial saved pins apply without RAF and immediate repair stops when pinning is disabled", async (t) => {
+    const chrome = createFakeChrome({ [STORAGE_KEY]: ["channel-c"], followingOfflineHidden: true });
+    const dom = createSidebarDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    const read = chrome.storage.sync.get.bind(chrome.storage.sync);
+    let finishPinRead;
+    chrome.storage.sync.get = (keys, callback) => {
+        if (keys === STORAGE_KEY) finishPinRead = () => callback({ [STORAGE_KEY]: ["channel-c"] });
+        else read(keys, callback);
+    };
+    const frames = new Map();
+    let nextFrame = 0;
+    dom.window.requestAnimationFrame = (callback) => {
+        frames.set(++nextFrame, callback);
+        return nextFrame;
+    };
+    dom.window.cancelAnimationFrame = (id) => frames.delete(id);
+    const flushFrame = () => {
+        const pending = Array.from(frames.values());
+        frames.clear();
+        pending.forEach((callback) => callback());
+    };
+    evalSidebarScripts(dom);
+    await waitForCondition(() => finishPinRead);
+    flushFrame();
+    assert.equal(document.getElementById("betterchzzk-following-pin-mode"), null);
+    finishPinRead();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(document.getElementById("liveC").getAttribute("data-bcsf-pinned"), "1");
+    chrome.testState.emitSync({ followingPinEnabled: { newValue: false } });
+    flushFrame();
+    const row = document.getElementById("liveC");
+    row.querySelector(".name_text").textContent = "감마 갱신";
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(row.hasAttribute("data-bcsf-pinned"), false);
+    assert.equal(row.querySelector("[data-bcsf-pin-indicator]"), null);
+    assert.equal(document.getElementById("betterchzzk-following-pin-mode"), null);
+    chrome.testState.emitSync({ followingPinEnabled: { newValue: true } });
+    flushFrame();
+    assert.equal(row.getAttribute("data-bcsf-pinned"), "1");
+    assert.equal(row.querySelectorAll("[data-bcsf-pin-indicator]").length, 1);
+});
+
 test("offline hiding takes precedence over offline pin order without losing saved pins", async (t) => {
     const pins = ["channel-b"];
     const chrome = createFakeChrome({

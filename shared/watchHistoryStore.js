@@ -19,6 +19,8 @@
     const MAX_ENTRY_IDS_PER_MUTATION = 2000;
     const MAX_STRING_LENGTH = 2000;
     const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
+    const MAX_ACTIVITIES_PER_ENTRY = 500;
+    const MAX_ACTIVITIES_TOTAL = 3000;
     const utils = globalThis.BetterChzzk?.utils || {};
 
     function compactString(value, maxLength = MAX_STRING_LENGTH) {
@@ -205,16 +207,107 @@
         };
     }
 
+    function normalizeActivities(value, now = Date.now()) {
+        const byId = new Map();
+        for (const row of (Array.isArray(value) ? value : []).slice(-MAX_ACTIVITIES_PER_ENTRY)) {
+            if (!row || !["chat", "donation"].includes(row.kind)) continue;
+            if (!Number.isSafeInteger(row.at) || row.at < Date.UTC(2020, 0, 1) || row.at > now + MAX_FUTURE_SKEW_MS)
+                continue;
+            const id = compactString(row.id, 180);
+            const match = id.match(/^([A-Za-z0-9_-]{1,128}):(\d{13}):(1|10)$/);
+            if (!match || Number(match[2]) !== row.at || (match[3] === "1") !== (row.kind === "chat")) continue;
+            if (typeof row.text !== "string") continue;
+            if (row.kind === "donation" && (!Number.isSafeInteger(row.amount) || row.amount <= 0)) continue;
+            byId.set(id, {
+                id,
+                at: row.at,
+                kind: row.kind,
+                text: row.text.slice(0, 400),
+                amount: row.kind === "donation" ? row.amount : 0,
+                ...(Number.isSafeInteger(row.sessionStartedAt) &&
+                row.sessionStartedAt > 0 &&
+                row.sessionStartedAt <= row.at
+                    ? { sessionStartedAt: row.sessionStartedAt }
+                    : {}),
+            });
+        }
+        return Array.from(byId.values()).sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+    }
+
+    function normalizeActivityDaily(value) {
+        const out = {};
+        for (const [date, counts] of Object.entries(value && typeof value === "object" ? value : {}).slice(-400)) {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+            out[date] = {};
+            for (const key of ["chatCount", "donationCount", "donationCheese"]) {
+                out[date][key] = Number.isSafeInteger(counts?.[key]) && counts[key] >= 0 ? counts[key] : 0;
+            }
+        }
+        return out;
+    }
+
+    function countActivity(daily, activity) {
+        const date = utils.getKstDateKey(activity.at);
+        const counts = daily[date] || (daily[date] = { chatCount: 0, donationCount: 0, donationCheese: 0 });
+        if (activity.kind === "chat") counts.chatCount += 1;
+        else {
+            counts.donationCount += 1;
+            counts.donationCheese = Math.min(Number.MAX_SAFE_INTEGER, counts.donationCheese + activity.amount);
+        }
+    }
+
+    function mergeActivities(entry, activities, session) {
+        // Provisional records deliberately wait for a verified live ID before accepting activity.
+        if (!entry.id.startsWith("live:") || !activities.length) return;
+        const previous = normalizeActivities(entry.activities);
+        const byId = new Map(previous.map((row) => [row.id, row]));
+        const daily = normalizeActivityDaily(entry.activityDaily);
+        const cutoff = finiteNumber(entry.activityCutoffAt);
+        for (const activity of activities) {
+            if (activity.at < session.enteredAt || activity.at > session.leftAt + MAX_FUTURE_SKEW_MS) continue;
+            if (activity.at <= cutoff || byId.has(activity.id)) continue;
+            byId.set(activity.id, { ...activity, sessionStartedAt: session.enteredAt });
+            countActivity(daily, activity);
+        }
+        const rows = Array.from(byId.values()).sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+        const retired = rows.slice(0, Math.max(0, rows.length - MAX_ACTIVITIES_PER_ENTRY));
+        entry.activityCutoffAt = Math.max(cutoff, ...retired.map((row) => row.at));
+        entry.activities = rows.slice(-MAX_ACTIVITIES_PER_ENTRY);
+        entry.activityDaily = daily;
+    }
+
+    function pruneActivityTranscripts(entries) {
+        const rows = Object.values(entries).flatMap((entry) =>
+            (entry.activities || []).map((activity) => ({ entry, activity }))
+        );
+        if (rows.length <= MAX_ACTIVITIES_TOTAL) return;
+        rows.sort((a, b) => b.activity.at - a.activity.at || a.activity.id.localeCompare(b.activity.id));
+        const retiredByEntry = new Map();
+        for (const { entry, activity } of rows.slice(MAX_ACTIVITIES_TOTAL)) {
+            if (!retiredByEntry.has(entry)) retiredByEntry.set(entry, new Set());
+            retiredByEntry.get(entry).add(activity.id);
+            entry.activityCutoffAt = Math.max(finiteNumber(entry.activityCutoffAt), activity.at);
+        }
+        for (const [entry, ids] of retiredByEntry)
+            entry.activities = entry.activities.filter((row) => !ids.has(row.id));
+    }
+
     function normalizeMutation(value, now = Date.now()) {
         if (!value || typeof value !== "object") throw new Error("watch history mutation is required");
         const kind = compactString(value.kind, 80);
 
-        if (kind === "upsertSessionSnapshot") {
+        if (kind === "upsertSessionSnapshot" || kind === "appendActivities") {
+            const activities = normalizeActivities(value.activities, now);
+            if (kind === "appendActivities" && !String(value.recordId).startsWith("live:")) {
+                throw new Error("activity requires a verified live record id");
+            }
+            if (kind === "appendActivities" && !activities.length) throw new Error("activity is required");
             return {
                 kind,
                 recordId: normalizeRecordId(value.recordId),
                 entry: normalizeEntryPatch(value.entry),
                 session: normalizeSessionSnapshot(value.session, now),
+                activities,
             };
         }
         if (kind === "migrateRecordId") {
@@ -242,7 +335,10 @@
                 cutoffAt: normalizeTimestamp(value.cutoffAt, { required: true, now }),
             };
         }
-        if (kind === "clearHistory") {
+        if (kind === "replaceDonationMonths") {
+            return { kind, snapshot: globalThis.BetterChzzkDonationHistory.normalizeSnapshot(value.snapshot, now) };
+        }
+        if (kind === "clearHistory" || kind === "clearDonationImport") {
             return {
                 kind,
                 cutoffAt: normalizeTimestamp(value.cutoffAt, { required: true, now }),
@@ -375,6 +471,11 @@
                 entry.sessionDetails = rawEntry.sessionDetails.map(cloneSession);
             } else {
                 delete entry.sessionDetails;
+            }
+            if (rawEntry.activities || rawEntry.activityDaily) {
+                entry.activities = normalizeActivities(rawEntry.activities);
+                entry.activityDaily = normalizeActivityDaily(rawEntry.activityDaily);
+                entry.activityCutoffAt = Math.max(0, finiteNumber(rawEntry.activityCutoffAt));
             }
             entries[id] = entry;
         }
@@ -551,7 +652,10 @@
             (session) => finiteNumber(session.enteredAt) > cutoffAt && !retainedDetailIds.has(session.id)
         );
         const aggregateSessions = [...sessionDetails, ...retiredSessionCheckpoints];
-        if (!aggregateSessions.length) return null;
+        const activities = normalizeActivities(entry.activities).filter(
+            (row) => row.at > cutoffAt && (!row.sessionStartedAt || row.sessionStartedAt > cutoffAt)
+        );
+        if (!aggregateSessions.length && !activities.length) return null;
 
         const dailySeconds = {};
         let watchedSeconds = 0;
@@ -572,10 +676,18 @@
             }
         }
 
-        const latestSession = aggregateSessions.reduce((latest, session) =>
-            finiteNumber(session.enteredAt) > finiteNumber(latest?.enteredAt) ? session : latest
+        const latestSession = aggregateSessions.reduce(
+            (latest, session) => (finiteNumber(session.enteredAt) > finiteNumber(latest?.enteredAt) ? session : latest),
+            null
         );
         const latestTitle = compactString(latestSession?.title, 500);
+        if (activities.length) {
+            const firstActivityAt = Math.min(...activities.map((row) => row.sessionStartedAt || row.at));
+            firstWatchedAt = firstWatchedAt ? Math.min(firstWatchedAt, firstActivityAt) : firstActivityAt;
+            lastWatchedAt = Math.max(lastWatchedAt, ...activities.map((row) => row.at));
+        }
+        const activityDaily = {};
+        for (const activity of activities) countActivity(activityDaily, activity);
         return {
             ...entry,
             ...(latestTitle ? { title: latestTitle } : {}),
@@ -587,6 +699,13 @@
             titleHistory: mergeTitleHistory([], titleHistory, entry.channelName),
             firstWatchedAt,
             lastWatchedAt,
+            ...(entry.activityDaily
+                ? {
+                      activities,
+                      activityDaily,
+                      activityCutoffAt: Math.max(cutoffAt, finiteNumber(entry.activityCutoffAt)),
+                  }
+                : {}),
         };
     }
 
@@ -814,6 +933,23 @@
             entry.liveId = operation.recordId.slice("live:".length);
         }
 
+        if (operation.kind === "appendActivities") {
+            mergeActivities(entry, operation.activities, operation.session);
+            if (!previousEntry && !entry.activities?.length) {
+                return { changed: false, result: { status: "ignored", reason: "empty" } };
+            }
+            // Activity must not turn legacy aggregate watch time into an empty session list.
+            if (previousEntry && !Array.isArray(previousEntry.sessionDetails)) delete entry.sessionDetails;
+            entry.firstWatchedAt = finiteNumber(entry.firstWatchedAt) || operation.session.enteredAt;
+            entry.lastWatchedAt = Math.max(finiteNumber(entry.lastWatchedAt), ...entry.activities.map((row) => row.at));
+            history.entries[operation.recordId] = entry;
+            history.entries = pruneEntries(history.entries);
+            return {
+                changed: before !== JSON.stringify(entry),
+                result: { status: "applied", recordId: operation.recordId },
+            };
+        }
+
         const previousSession =
             sessionIndex >= 0
                 ? cloneSession(entry.sessionDetails[sessionIndex])
@@ -890,6 +1026,7 @@
             previousSessionCount + (isNewSession ? 1 : 0),
             entry.sessionDetails.length + entry.retiredSessionCheckpoints.length
         );
+        mergeActivities(entry, operation.activities, operation.session);
         history.entries[operation.recordId] = entry;
         history.entries = pruneEntries(history.entries);
 
@@ -904,8 +1041,34 @@
         const history = normalizeStoredHistory(value);
         let outcome;
 
-        if (operation.kind === "upsertSessionSnapshot") {
+        if (operation.kind === "upsertSessionSnapshot" || operation.kind === "appendActivities") {
             outcome = applySessionSnapshot(history, operation, now);
+        } else if (operation.kind === "replaceDonationMonths") {
+            if (
+                operation.snapshot.startedAt <=
+                Math.max(history.clearedAt, finiteNumber(history.donationImportClearedAt))
+            ) {
+                outcome = { changed: false, result: { status: "ignored", reason: "deleted" } };
+            } else {
+                history.donationImport = globalThis.BetterChzzkDonationHistory.mergeSnapshot(
+                    history.donationImport,
+                    operation.snapshot,
+                    now
+                );
+                outcome = { changed: true, result: { status: "applied" } };
+            }
+        } else if (operation.kind === "clearDonationImport") {
+            const remaining = globalThis.BetterChzzkDonationHistory.clearBefore(
+                history.donationImport,
+                operation.cutoffAt
+            );
+            if (remaining) history.donationImport = remaining;
+            else delete history.donationImport;
+            history.donationImportClearedAt = Math.max(
+                finiteNumber(history.donationImportClearedAt),
+                operation.cutoffAt
+            );
+            outcome = { changed: true, result: { status: "applied" } };
         } else if (operation.kind === "migrateRecordId") {
             const sourceRecordId = operation.sourceRecordId;
             const targetRecordId = resolveRecordId(history, operation.targetRecordId);
@@ -994,6 +1157,19 @@
             outcome = { changed, result: { status: changed ? "applied" : "unchanged" } };
         } else {
             let changed = false;
+            if (history.donationImport && globalThis.BetterChzzkDonationHistory) {
+                const remaining = globalThis.BetterChzzkDonationHistory.clearBefore(
+                    history.donationImport,
+                    operation.cutoffAt
+                );
+                if (remaining) history.donationImport = remaining;
+                else delete history.donationImport;
+                history.donationImportClearedAt = Math.max(
+                    finiteNumber(history.donationImportClearedAt),
+                    operation.cutoffAt
+                );
+                changed = true;
+            }
             for (const [id, entry] of Object.entries(history.entries)) {
                 if (getEntryStartedAt(entry) <= operation.cutoffAt) {
                     const retainedEntry = retainEntrySessionsAfter(entry, operation.cutoffAt);
@@ -1014,7 +1190,14 @@
             outcome = { changed, result: { status: changed ? "applied" : "unchanged" } };
         }
 
-        if (outcome.changed) history.updatedAt = Math.max(Math.round(now), history.updatedAt + 1);
+        if (outcome.changed) {
+            if (
+                (operation.kind === "upsertSessionSnapshot" || operation.kind === "appendActivities") &&
+                operation.activities.length
+            )
+                pruneActivityTranscripts(history.entries);
+            history.updatedAt = Math.max(Math.round(now), history.updatedAt + 1);
+        }
         return { history, ...outcome };
     }
 

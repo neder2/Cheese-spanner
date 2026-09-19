@@ -330,8 +330,8 @@ test("video search refreshes a completed index after its freshness window", asyn
     }
 });
 
-test("adblock popup restores only scroll styles that it changed", () => {
-    let applyOptions = null;
+test("adblock popup leaves native scroll ownership intact across option changes", () => {
+    let applyOptions;
     const { dom, hooks } = evaluateFeature("adblockPopup.js", {
         url: "https://chzzk.naver.com/live/channel-a",
         utils: {
@@ -339,33 +339,20 @@ test("adblock popup restores only scroll styles that it changed", () => {
                 applyOptions = callback;
             },
         },
-        hooks: "{ unlockBodyScrollIfOnlySuppressedPopups }",
+        hooks: "{ closeAdsPopups }",
     });
     const { document } = dom.window;
-    const popup = document.createElement("div");
-    popup.setAttribute("role", "alertdialog");
-    popup.setAttribute("data-betterchzzk-suppress-adblock-popup", "1");
-    document.body.appendChild(popup);
-
     try {
-        document.body.style.cssText = "overflow: hidden; padding-right: 17px; color: red";
-        hooks.unlockBodyScrollIfOnlySuppressedPopups();
-        assert.equal(document.body.style.overflow, "");
-        assert.equal(document.body.style.paddingRight, "");
-
+        document.body.innerHTML = '<div role="alertdialog">광고 차단 안내</div>';
+        document.body.style.cssText = "overflow:hidden;padding-right:17px;color:red";
+        hooks.closeAdsPopups();
         applyOptions({ adblockPopupEnabled: false });
         assert.equal(document.body.style.overflow, "hidden");
         assert.equal(document.body.style.paddingRight, "17px");
-        assert.equal(document.body.style.color, "red");
-
         applyOptions({ adblockPopupEnabled: true });
-        popup.setAttribute("data-betterchzzk-suppress-adblock-popup", "1");
-        hooks.unlockBodyScrollIfOnlySuppressedPopups();
         document.body.style.overflowY = "auto";
         document.body.style.paddingRight = "23px";
-
         applyOptions({ adblockPopupEnabled: false });
-        assert.equal(document.body.style.overflow, "");
         assert.equal(document.body.style.overflowY, "auto");
         assert.equal(document.body.style.paddingRight, "23px");
         assert.equal(document.body.style.color, "red");

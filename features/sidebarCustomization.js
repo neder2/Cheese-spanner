@@ -178,6 +178,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     const storage = globalThis.chrome?.storage?.sync;
     let featureOptions = normalizeOptions();
     let pinnedChannelIds = new Set();
+    let pinnedIdsLoaded = false;
     let persistedChannelIds = [];
     let runtimeInstalled = false;
     let domObserver = null;
@@ -186,6 +187,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     const hiddenSections = new Set();
     const hiddenOfflineRows = new Set();
     let offlineList = null;
+    let pinList = null;
     let removeStorageChangeListener = null;
     let syncFrame = 0;
     let runtimeGeneration = 0;
@@ -890,12 +892,15 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
 
     function syncPinUi() {
         if (!runtimeInstalled || !featureOptions.followingPinEnabled) {
+            pinList = null;
             cleanupUi();
             return;
         }
+        if (!pinnedIdsLoaded) return;
 
         const sidebar = getSidebar();
         const following = findFollowingList(sidebar);
+        pinList = following?.list || null;
         const rows = following ? syncCollapsedSourceRows(following) : [];
         const activeRows = new Set(rows.map((meta) => meta.row));
 
@@ -951,35 +956,47 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         syncOfflineRows(rows);
     }
 
-    function syncMutatedOfflineRows(mutations) {
-        if (!featureOptions.followingOfflineHidden) return;
-        if (!offlineList?.isConnected) {
+    function syncMutatedFollowingRows(mutations) {
+        const list = featureOptions.followingPinEnabled ? pinList : offlineList;
+        const section = list?.closest("nav, section");
+        const sectionChanged = mutations.some((mutation) => {
+            const target = mutation.target instanceof Element ? mutation.target : mutation.target.parentElement;
+            return mutation.type !== "attributes" && section?.contains(target) && !list.contains(target);
+        });
+        if (!list?.isConnected || !getSidebar()?.contains(list) || sectionChanged) {
+            // Discover a replacement list once; ordinary row changes stay scoped below.
+            syncPinUi();
             syncOfflineVisibility();
             return;
         }
         const rows = new Set();
         const addRow = (node) => {
             let row = node instanceof Element ? node : node?.parentElement;
-            while (row && row !== offlineList && row.parentElement !== offlineList) row = row.parentElement;
-            if (row?.parentElement === offlineList) rows.add(row);
+            while (row && row !== list && row.parentElement !== list) row = row.parentElement;
+            if (row?.parentElement === list) rows.add(row);
         };
         for (const mutation of mutations) {
-            if (mutation.type === "attributes" && mutation.attributeName === "href") addRow(mutation.target);
+            if (mutation.type === "attributes" || mutation.type === "characterData") addRow(mutation.target);
             if (mutation.type !== "childList") continue;
             addRow(mutation.target);
-            if (mutation.target === offlineList) {
+            if (mutation.target === list) {
                 for (const node of mutation.addedNodes) addRow(node);
                 for (const node of mutation.removedNodes) {
-                    if (node.parentElement === offlineList) continue;
+                    if (node.parentElement === list) continue;
+                    if (featureOptions.followingPinEnabled) cleanupRow(node);
                     if (hiddenOfflineRows.delete(node)) node.removeAttribute(OFFLINE_HIDDEN_ATTR);
                 }
             }
         }
         // Apply only affected rows during mutation delivery, before the browser paints.
-        // Pin layout still runs in RAF; our marker is not an observed attribute.
+        // Our attributes are not observed; syncPinIndicator reuses an existing icon.
         for (const row of rows) {
             const meta = getRowMeta(row);
-            if (meta && !meta.isLive) {
+            if (featureOptions.followingPinEnabled) {
+                if (meta) syncRow(meta);
+                else cleanupRow(row);
+            }
+            if (featureOptions.followingOfflineHidden && meta && !meta.isLive) {
                 if (row.getAttribute(OFFLINE_HIDDEN_ATTR) !== "1") row.setAttribute(OFFLINE_HIDDEN_ATTR, "1");
                 hiddenOfflineRows.add(row);
             } else {
@@ -990,6 +1007,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     }
 
     function observeSidebar() {
+        syncPinUi();
         syncOfflineVisibility();
         scheduleSync();
     }
@@ -1004,6 +1022,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     function setPinnedIds(value, { persisted = false } = {}) {
         const normalized = normalizePinnedIds(value);
         pinnedChannelIds = new Set(normalized);
+        pinnedIdsLoaded = true;
         if (persisted) persistedChannelIds = normalized;
         scheduleSync();
         return normalized;
@@ -1211,7 +1230,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
                 attributeFilter: ["href", "class", "aria-expanded"],
             },
             schedule: scheduleSync,
-            onMutations: syncMutatedOfflineRows,
+            onMutations: syncMutatedFollowingRows,
             onObserved: observeSidebar,
             onBodyReady: observeSidebar,
         });
@@ -1219,10 +1238,12 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
             .then((data) => {
                 if (!runtimeInstalled || generation !== runtimeGeneration) return;
                 setPinnedIds(data?.[STORAGE_KEY], { persisted: true });
+                if (featureOptions.followingPinEnabled) syncPinUi();
             })
             .catch((error) => {
                 if (!runtimeInstalled || generation !== runtimeGeneration) return;
                 console.warn("[Better Chzzk] 팔로잉 채널 고정 목록 로드 실패", error);
+                pinnedIdsLoaded = true;
                 scheduleSync();
             });
         scheduleSync();
@@ -1231,6 +1252,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     function uninstallRuntime() {
         if (!runtimeInstalled) return;
         runtimeInstalled = false;
+        pinnedIdsLoaded = false;
         runtimeGeneration += 1;
         if (syncFrame) window.cancelAnimationFrame(syncFrame);
         syncFrame = 0;
@@ -1241,6 +1263,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         document.removeEventListener("click", handleClick, true);
         document.removeEventListener("keydown", handleKeyDown, true);
         cleanupUi({ resetMode: true });
+        pinList = null;
         syncOfflineRows();
         offlineList = null;
         resetSourceSnapshot();

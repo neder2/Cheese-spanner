@@ -160,6 +160,30 @@ function createChatRow(dom, options) {
     return row;
 }
 
+// 2026-09-16 /video/15210930: the VOD log has the same row props contract as live,
+// inside #vod-aside with the following native classes (see the measurement note).
+function useVodChatMarkup(aside) {
+    aside.id = "vod-aside";
+    const classes = {
+        _container_sg7hy_1: "_content_189hq_63",
+        _wrapper_sg7hy_25: "_list_189hq_70",
+        _item_sg7hy_7: "_item_189hq_85",
+        _container_1vemp_1: "_container_w9pvh_1",
+        _chatting_message_1vemp_21: "_chatting_message_w9pvh_21",
+        _nickname_1vemp_37: "_nickname_w9pvh_33",
+        _text_1vemp_1: "_text_w9pvh_1",
+    };
+    for (const [liveClass, vodClass] of Object.entries(classes)) {
+        for (const element of aside.querySelectorAll(`.${liveClass}`)) element.classList.replace(liveClass, vodClass);
+    }
+}
+
+function createVodPageDom(rows, sync = { vodChatTimestampEnabled: true }) {
+    const dom = createPageDom(rows, { url: "https://chzzk.naver.com/video/15210930", sync });
+    useVodChatMarkup(dom.window.document.querySelector("aside"));
+    return dom;
+}
+
 function installMutableClock(dom, initialDate = new Date(2026, 6, 10, 20, 0, 0)) {
     const NativeDate = dom.window.Date;
     let currentTime = initialDate.getTime();
@@ -433,7 +457,7 @@ test("the independent default-off option stamps existing server rows when enable
     closePageDom(dom);
 });
 
-test("system controls and non-live chat logs are not timestamped", () => {
+test("system controls and VOD logs with only the live option enabled are not timestamped", () => {
     const liveDom = createPageDom([
         { chatId: "live-message", text: "일반 라이브 채팅", messageTime: serverTime(18, 6) },
     ]);
@@ -451,8 +475,8 @@ test("system controls and non-live chat logs are not timestamped", () => {
     );
     closePageDom(liveDom);
 
-    const vodDom = createPageDom([{ chatId: "vod", text: "다시보기 채팅", messageTime: serverTime(18, 6) }], {
-        url: "https://chzzk.naver.com/video/1234",
+    const vodDom = createVodPageDom([{ chatId: "vod", text: "다시보기 채팅", messageTime: serverTime(18, 6) }], {
+        chatTimestampEnabled: true,
     });
     installMutableClock(vodDom);
     loadChatTimestamp(vodDom);
@@ -460,6 +484,140 @@ test("system controls and non-live chat logs are not timestamped", () => {
     assert.equal(vodDom.window.document.querySelectorAll("[data-bcmt-time]").length, 0);
     assert.equal(vodDom.window.document.querySelectorAll("[data-bcmt-source-time]").length, 0);
     closePageDom(vodDom);
+});
+
+test("VOD timestamps use original message times, never player offsets or the current clock", (t) => {
+    const originalTime = 1789450754114;
+    const dom = createVodPageDom([
+        { chatId: "recorded", messageTime: originalTime },
+        { chatId: "offset-only", messageTime: 60114 },
+        { chatId: "missing" },
+        { chatId: "string", messageTime: String(originalTime) },
+        { chatId: "future", messageTime: Date.now() + 86400000 },
+    ]);
+    t.after(() => closePageDom(dom));
+    for (const row of dom.window.document.querySelectorAll("._item_189hq_85")) {
+        const message = row[REACT_PROPS_KEY]?.children.props.chatMessage;
+        if (message) message.playerMessageTime = 60114;
+    }
+    loadChatTimestamp(dom);
+
+    const message = dom.window.document.querySelector('[data-chat-id="recorded"] [data-bcmt-time]');
+    const date = new Date(originalTime);
+    const expectedTime = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+    assert.equal(message?.dataset.bcmtTime, expectedTime);
+    assert.equal(message?.getAttribute("data-bcmt-source-time"), String(originalTime));
+    assert.equal(dom.window.document.querySelectorAll("[data-bcmt-time]").length, 1);
+    assert.equal(dom.window.document.querySelectorAll("[data-bcmt-source-time]").length, 1);
+});
+
+test("the VOD option defaults off and toggles immediately while live timestamps stay enabled", async (t) => {
+    const dom = createVodPageDom([{ chatId: "recorded", messageTime: serverTime(18, 4) }], {
+        chatTimestampEnabled: true,
+    });
+    t.after(() => closePageDom(dom));
+    installMutableClock(dom);
+    loadChatTimestamp(dom);
+    const document = dom.window.document;
+    const message = document.querySelector("[class*='chatting_message']");
+    assert.equal(dom.window.BetterChzzkSettings.DEFAULT_OPTIONS.vodChatTimestampEnabled, false);
+    assert.ok(dom.window.BetterChzzkSettings.FEATURE_KEYS.includes("vodChatTimestampEnabled"));
+    assert.equal(message.hasAttribute("data-bcmt-time"), false);
+
+    dom.window.chrome.testState.setSync({ vodChatTimestampEnabled: true });
+    assert.equal(message.dataset.bcmtTime, "18:04");
+    dom.window.chrome.testState.setSync({ vodChatTimestampEnabled: false });
+    assert.equal(document.querySelector("[data-bcmt-time], [data-bcmt-source-time]"), null);
+    let sourceRequests = 0;
+    document.addEventListener(SOURCE_REQUEST_EVENT, () => sourceRequests++, true);
+    message.querySelector("span[class*='_text_']").textContent = "꺼진 동안 갱신";
+    // Deliver the queued mutation batch before asserting the disabled observer stays quiet.
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+    assert.equal(sourceRequests, 0);
+    dom.window.chrome.testState.setSync({ vodChatTimestampEnabled: true });
+    assert.equal(message.dataset.bcmtTime, "18:04");
+    assert.equal(sourceRequests, 1);
+    dom.window.chrome.testState.setSync({ chatTimestampEnabled: false, vodChatTimestampEnabled: false });
+    assert.equal(document.getElementById("betterchzzk-chat-timestamp-style"), null);
+
+    const optionsDom = new JSDOM(readRepoFile("options.html"));
+    t.after(() => optionsDom.window.close());
+    const input = optionsDom.window.document.querySelector('[data-option="vodChatTimestampEnabled"]');
+    assert.match(input.closest("label").textContent, /다시보기 채팅 타임스탬프 표시/);
+    assert.equal(input.hasAttribute("data-depends-on"), false);
+    assert.match(
+        optionsDom.window.document.getElementById(input.getAttribute("aria-describedby")).textContent,
+        /작성된 시각/
+    );
+});
+
+test("VOD append and row reuse update only the affected row and clear invalid replacement times", async (t) => {
+    const dom = createVodPageDom(
+        Array.from({ length: 30 }, (_, i) => ({ chatId: `old-${i}`, messageTime: serverTime(17, i) }))
+    );
+    t.after(() => closePageDom(dom));
+    installMutableClock(dom);
+    loadChatTimestamp(dom);
+    let requests = 0;
+    dom.window.document.addEventListener(SOURCE_REQUEST_EVENT, () => requests++, true);
+    const list = dom.window.document.querySelector("._list_189hq_70");
+    const row = createChatRow(dom, { chatId: "new", messageTime: serverTime(18, 1) });
+    const holder = dom.window.document.createElement("aside");
+    holder.append(row);
+    useVodChatMarkup(holder);
+    list.prepend(row);
+    const message = row.querySelector("[class*='chatting_message']");
+    await waitForCondition(() => message.dataset.bcmtTime === "18:01");
+    assert.equal(requests, 1);
+
+    replaceReactMessage(row, serverTime(18, 2));
+    row.setAttribute("data-chat-id", "reused");
+    row.querySelector("._text_w9pvh_1").textContent = "탐색 후 채팅";
+    await waitForCondition(() => message.dataset.bcmtTime === "18:02");
+    assert.equal(requests, 2);
+    replaceReactMessage(row, undefined);
+    row.setAttribute("data-chat-id", "missing-time");
+    await waitForCondition(() => !message.hasAttribute("data-bcmt-time"));
+    assert.equal(message.hasAttribute("data-bcmt-source-time"), false);
+    assert.equal(requests, 3);
+});
+
+test("VOD remount, SPA video changes, and return from live preserve the independent route options", async (t) => {
+    const dom = createVodPageDom([{ chatId: "old-video", messageTime: serverTime(18, 1) }]);
+    t.after(() => closePageDom(dom));
+    installMutableClock(dom);
+    loadChatTimestamp(dom);
+    const document = dom.window.document;
+    const navigate = (path) => {
+        dom.window.history.pushState({}, "", path);
+        dom.window.dispatchEvent(new dom.window.CustomEvent("betterchzzk:routechange"));
+    };
+    const remountedLog = document.querySelector("[role='log']").cloneNode(false);
+    const newRow = createChatRow(dom, { chatId: "remounted", messageTime: serverTime(18, 2) });
+    remountedLog.append(newRow);
+    document.querySelector("[role='log']").replaceWith(remountedLog);
+    useVodChatMarkup(document.querySelector("aside"));
+    const message = newRow.querySelector("[class*='chatting_message']");
+    await waitForCondition(() => message.dataset.bcmtTime === "18:02");
+
+    navigate("/video/15195591");
+    replaceReactMessage(newRow, serverTime(18, 3));
+    newRow.setAttribute("data-chat-id", "next-video");
+    await waitForCondition(() => message.dataset.bcmtTime === "18:03");
+    navigate("/live/test-channel");
+    document.querySelector("aside").id = "aside-chatting";
+    await waitForCondition(() => !message.hasAttribute("data-bcmt-time"));
+    assert.equal(message.hasAttribute("data-bcmt-source-time"), false);
+    dom.window.chrome.testState.setSync({ chatTimestampEnabled: true });
+    assert.equal(message.dataset.bcmtTime, "18:03");
+
+    navigate("/");
+    await waitForCondition(() => !message.hasAttribute("data-bcmt-time"));
+    document.querySelector("aside").id = "vod-aside";
+    navigate("/video/15210930");
+    await waitForCondition(() => message.dataset.bcmtTime === "18:03");
+    dom.window.chrome.testState.setSync({ chatTimestampEnabled: false });
+    assert.equal(message.dataset.bcmtTime, "18:03");
 });
 
 test("moderator collection backfills server timestamps and follows timestamp option changes", async (t) => {

@@ -6,6 +6,7 @@
         <title>치즈 스패너 시청 기록</title>
         <link rel="stylesheet" href="styles.css" />
         <link rel="stylesheet" href="options-brand.css" />
+        <link rel="stylesheet" href="history-layout.css" />
     </head>
     <body class="history-body">
         <main class="options-page history-page">
@@ -14,39 +15,12 @@
                 <div>
                     <p class="eyebrow">치즈 스패너</p>
                     <h1>시청 기록</h1>
-                    <p class="subtitle">이 브라우저에서 시청한 라이브를 모아 봐요.</p>
                 </div>
                 <span id="notice" class="status-pill" aria-live="polite">불러오는 중</span>
             </header>
-
-            <details class="history-storage-warning">
-                <summary>시청 기록 삭제 주의</summary>
-                <p role="note">
-                    시청 기록은 이 브라우저에만 저장되며 자동 백업되지 않아요. 확장 프로그램을 삭제하거나 브라우저
-                    프로필·확장 데이터를 지우면 기록도 함께 삭제돼요. 별도 백업이 없으면 재설치해도 복구할 수 없어요.
-                </p>
-            </details>
-
-            <section class="settings-card history-summary-card" aria-label="시청 시간 요약">
-                <div class="history-summary">
-                    <div class="history-stat">
-                        <span>누적 시청 시간</span>
-                        <strong id="totalWatchTime">-</strong>
-                    </div>
-                    <div class="history-stat">
-                        <span>시청한 라이브</span>
-                        <strong id="totalLiveCount">-</strong>
-                    </div>
-                    <div class="history-stat">
-                        <span id="monthWatchLabel">선택한 달</span>
-                        <strong id="monthWatchTime">-</strong>
-                    </div>
-                </div>
-            </section>
-
-            <div class="history-workspace">
-                <div class="history-side">
-                    <section class="settings-card history-calendar-card">
+            <div class="history-layout">
+                <aside class="history-overview" aria-label="달력과 시청 요약">
+                    <section class="settings-card history-calendar-card" aria-label="날짜 선택">
                         <div class="history-toolbar">
                             <button
                                 id="prevMonth"
@@ -79,7 +53,7 @@
                             <div id="calendarDays" class="history-days"></div>
                         </div>
                         <p id="calendarFoot" class="history-calendar-foot">
-                            날짜를 선택하면 해당 날짜에 본 라이브만 표시합니다.
+                            날짜를 선택하면 해당 날짜의 기록을 표시해요.
                         </p>
                         <button
                             id="clearDateFilter"
@@ -90,54 +64,66 @@
                             이 달 전체 보기
                         </button>
                     </section>
-
-                    <section class="settings-card">
-                        <details class="history-storage-guide">
-                            <summary>시청 기록 저장 위치</summary>
-                            <p>기록은 현재 Chrome 프로필의 확장 저장소에 보관돼요.</p>
-                            <ol>
-                                <li>
-                                    주소창에 <code>chrome://version</code>을 입력하고 <strong>프로필 경로</strong>를
-                                    확인해 주세요.
-                                </li>
-                                <li>
-                                    <code>chrome://extensions</code>에서 <strong>개발자 모드</strong>를 켜고 치즈
-                                    스패너의 <strong>ID</strong>를 확인해 주세요.
-                                </li>
-                                <li>
-                                    프로필 폴더 안의 <code>Local Extension Settings</code> 폴더에서 해당 ID와 같은
-                                    이름의 폴더를 열면 돼요.
-                                </li>
-                            </ol>
-                            <p>Windows에서 찾을 경로</p>
-                            <code class="history-storage-path"
-                                >&lt;프로필 경로&gt;\Local Extension Settings\&lt;치즈 스패너 ID&gt;</code
-                            >
-                            <p>
-                                개인별 프로필과 설치 방식에 따라 경로가 달라요. 시청 기록은 별도 문서 파일이 아닌
-                                브라우저 데이터로 저장돼요.
-                            </p>
-                        </details>
-                    </section>
-                </div>
-
-                <section class="settings-card history-list-card">
-                    <div class="history-list-header">
-                        <div class="history-list-heading">
-                            <div class="section-heading">
-                                <h2>라이브 내역</h2>
-                                <p id="listDescription">선택한 월의 라이브 시청 기록입니다.</p>
+                    <section class="settings-card history-summary-card" aria-label="시청 시간 요약">
+                        <div class="history-summary">
+                            <div class="history-stat"><span>누적 시청</span><strong id="totalWatchTime">-</strong></div>
+                            <div class="history-stat">
+                                <span>시청한 라이브</span><strong id="totalLiveCount">-</strong>
                             </div>
-                            <button id="refresh" class="secondary-button" type="button">새로고침</button>
+                            <div class="history-stat">
+                                <span id="monthWatchLabel">선택한 달</span><strong id="monthWatchTime">-</strong>
+                            </div>
                         </div>
-                        <div class="history-filter-row">
-                            <input
-                                id="historySearch"
-                                type="search"
-                                placeholder="제목 또는 채널 검색"
-                                aria-label="시청 기록 검색"
-                                autocomplete="off"
-                            />
+                    </section>
+                </aside>
+                <section class="settings-card history-browser" aria-label="기록 탐색">
+                    <div class="history-view-tabs" role="tablist" aria-label="기록 보기">
+                        <button
+                            id="historyViewTab"
+                            type="button"
+                            role="tab"
+                            aria-selected="true"
+                            aria-controls="historyPanel"
+                            data-history-view="history"
+                        >
+                            라이브 내역
+                        </button>
+                        <button
+                            id="rankingViewTab"
+                            type="button"
+                            role="tab"
+                            aria-selected="false"
+                            aria-controls="rankingPanel"
+                            tabindex="-1"
+                            data-history-view="ranking"
+                        >
+                            많이 본 채널
+                        </button>
+                        <button
+                            id="activityViewTab"
+                            type="button"
+                            role="tab"
+                            aria-selected="false"
+                            aria-controls="activityPanel"
+                            tabindex="-1"
+                            data-history-view="activity"
+                        >
+                            내 채팅·후원
+                        </button>
+                    </div>
+                    <div class="history-filter-row">
+                        <input
+                            id="historySearch"
+                            type="search"
+                            placeholder="제목 또는 채널 검색"
+                            aria-label="시청 기록 검색"
+                            autocomplete="off"
+                        />
+                        <select id="historyScope" aria-label="기록 기간">
+                            <option value="month">선택한 달</option>
+                            <option value="all">전체 기간</option>
+                        </select>
+                        <div id="historySortControls" class="history-sort-controls">
                             <select id="historySort" aria-label="정렬 기준">
                                 <option value="watchTime">시청시간 순</option>
                                 <option value="actualTime">실제시간 순</option>
@@ -147,11 +133,25 @@
                                 <option value="asc">오름차순</option>
                             </select>
                         </div>
-                        <div class="history-selection-row">
-                            <label class="history-select-all">
-                                <input id="selectVisibleHistory" type="checkbox" />
-                                <span>현재 목록 선택</span>
-                            </label>
+                        <button id="refresh" class="secondary-button" type="button">새로고침</button>
+                        <button id="historySelectionToggle" class="secondary-button" type="button" aria-pressed="false">
+                            선택
+                        </button>
+                    </div>
+                    <section
+                        id="historyPanel"
+                        class="history-panel"
+                        role="tabpanel"
+                        aria-labelledby="historyViewTab"
+                        tabindex="-1"
+                    >
+                        <p id="listDescription" class="history-result-description">선택한 기간의 라이브 내역입니다.</p>
+                        <div id="historySelectionControls" class="history-selection-row" hidden>
+                            <label class="history-select-all"
+                                ><input id="selectVisibleHistory" type="checkbox" /><span
+                                    >이 페이지 전체 선택</span
+                                ></label
+                            >
                             <span id="selectionStatus" class="history-selection-status" role="status" aria-live="polite"
                                 >선택 0개</span
                             >
@@ -169,28 +169,213 @@
                                 </button>
                             </div>
                         </div>
-                    </div>
-                    <div id="historyList" class="history-list"></div>
+                        <div id="historyList" class="history-list"></div>
+                        <nav class="history-pagination" aria-label="라이브 내역 페이지">
+                            <button
+                                id="historyPrevPage"
+                                class="secondary-button"
+                                type="button"
+                                aria-label="이전 라이브 내역 페이지"
+                            >
+                                이전
+                            </button>
+                            <span id="historyPageStatus" role="status" aria-live="polite"></span>
+                            <button
+                                id="historyNextPage"
+                                class="secondary-button"
+                                type="button"
+                                aria-label="다음 라이브 내역 페이지"
+                            >
+                                다음
+                            </button>
+                        </nav>
+                    </section>
+                    <section
+                        id="rankingPanel"
+                        class="history-panel"
+                        role="tabpanel"
+                        aria-labelledby="rankingViewTab"
+                        tabindex="-1"
+                        hidden
+                    >
+                        <p id="rankingDescription" class="history-result-description">
+                            선택한 기간에 많이 본 채널이에요. 같은 채널의 겹친 시청 시간은 한 번만 계산해요.
+                        </p>
+                        <ol id="channelRanking" class="history-ranking" aria-label="많이 본 채널 순위"></ol>
+                        <nav class="history-pagination" aria-label="채널 순위 페이지">
+                            <button
+                                id="rankingPrevPage"
+                                class="secondary-button"
+                                type="button"
+                                aria-label="이전 채널 순위 페이지"
+                            >
+                                이전
+                            </button>
+                            <span id="rankingPageStatus" role="status" aria-live="polite"></span>
+                            <button
+                                id="rankingNextPage"
+                                class="secondary-button"
+                                type="button"
+                                aria-label="다음 채널 순위 페이지"
+                            >
+                                다음
+                            </button>
+                        </nav>
+                    </section>
+                    <section
+                        id="activityPanel"
+                        class="history-panel"
+                        role="tabpanel"
+                        aria-labelledby="activityViewTab"
+                        tabindex="-1"
+                        hidden
+                    >
+                        <div class="history-activity-heading">
+                            <p id="activitySummary" class="history-activity-summary" role="status"></p>
+                            <select id="activityType" aria-label="내 활동 종류">
+                                <option value="chat">내 채팅</option>
+                                <option value="donation">내 일반 후원</option>
+                                <option value="imported">가져온 후원</option>
+                            </select>
+                            <button
+                                id="donationImportToggle"
+                                class="secondary-button"
+                                type="button"
+                                aria-expanded="false"
+                                aria-controls="donationImportForm"
+                            >
+                                과거 후원 가져오기
+                            </button>
+                        </div>
+                        <form id="donationImportForm" class="history-donation-import" hidden>
+                            <p>치지직에 로그인된 탭을 열어 두세요. 사용 내역의 일반 채팅 후원을 가져와요.</p>
+                            <div class="history-import-fields">
+                                <label for="donationImportStart"
+                                    >시작 월<input id="donationImportStart" type="month" min="2020-01" required
+                                /></label>
+                                <label for="donationImportEnd"
+                                    >마지막 월<input id="donationImportEnd" type="month" min="2020-01" required
+                                /></label>
+                            </div>
+                            <p class="setting-note">
+                                한 번에 최대 12개월, 총 3,000개까지 보관해요. 같은 기간을 다시 가져오면 최신 내역으로
+                                갱신해요.
+                            </p>
+                            <div class="history-import-actions">
+                                <button id="donationImportSubmit" class="secondary-button" type="submit">
+                                    선택 기간 가져오기
+                                </button>
+                                <button id="donationImportCancel" class="secondary-button" type="button" hidden>
+                                    취소
+                                </button>
+                            </div>
+                            <p
+                                id="donationImportStatus"
+                                class="history-import-status"
+                                role="status"
+                                aria-live="polite"
+                            ></p>
+                        </form>
+                        <p id="donationImportDescription" class="history-result-description" hidden>
+                            치지직 사용 내역 기준이에요. 실시간 수집분과 합산하지 않으며, 방송별 시청 시간에는 영향을
+                            주지 않아요.
+                        </p>
+                        <ol id="activityList" class="history-activity-list"></ol>
+                        <nav class="history-pagination" aria-label="내 활동 페이지">
+                            <button
+                                id="activityPrevPage"
+                                class="secondary-button"
+                                type="button"
+                                aria-label="이전 내 활동 페이지"
+                            >
+                                이전
+                            </button>
+                            <span id="activityPageStatus" role="status" aria-live="polite"></span>
+                            <button
+                                id="activityNextPage"
+                                class="secondary-button"
+                                type="button"
+                                aria-label="다음 내 활동 페이지"
+                            >
+                                다음
+                            </button>
+                        </nav>
+                        <details class="history-activity-guide">
+                            <summary>채팅·후원 기록 안내</summary>
+                            <p class="setting-note">
+                                <a href="options.html">설정</a>에서 기록 저장을 켠 뒤 확인한 내역만 포함해요. 위
+                                기간·날짜·검색 조건을 적용하며 실시간 수집에서는 익명·미션·외부 후원과 과거 내역을
+                                제외해요. 과거 일반 후원은 가져오기 버튼으로 따로 조회할 수 있어요.
+                            </p>
+                            <p class="setting-note">
+                                내용은 방송별 최근 500개, 전체 최근 3,000개까지 보관해요. 오래된 내용이 정리되어도 채팅
+                                수와 후원 합계는 유지해요. 방송 기록을 삭제하면 함께 삭제돼요.
+                            </p>
+                        </details>
+                    </section>
+                </section>
+            </div>
+            <details class="history-management">
+                <summary>기록 관리·삭제 안내</summary>
+                <div class="history-management-content">
+                    <details class="history-storage-warning">
+                        <summary>시청 기록 삭제 주의</summary>
+                        <p role="note">
+                            시청 기록은 이 브라우저에만 저장되며 자동 백업되지 않아요. 확장 프로그램을 삭제하거나
+                            브라우저 프로필·확장 데이터를 지우면 기록도 함께 삭제돼요. 별도 백업이 없으면 재설치해도
+                            복구할 수 없어요.
+                        </p>
+                    </details>
+                    <details class="history-storage-guide">
+                        <summary>시청 기록 저장 위치</summary>
+                        <p>기록은 현재 Chrome 프로필의 확장 저장소에 보관돼요.</p>
+                        <ol>
+                            <li>
+                                주소창에 <code>chrome://version</code>을 입력하고 <strong>프로필 경로</strong>를 확인해
+                                주세요.
+                            </li>
+                            <li>
+                                <code>chrome://extensions</code>에서 <strong>개발자 모드</strong>를 켜고 치즈 스패너의
+                                <strong>ID</strong>를 확인해 주세요.
+                            </li>
+                            <li>
+                                프로필 폴더 안의 <code>Local Extension Settings</code> 폴더에서 해당 ID와 같은 이름의
+                                폴더를 열면 돼요.
+                            </li>
+                        </ol>
+                        <p>Windows에서 찾을 경로</p>
+                        <code class="history-storage-path"
+                            >&lt;프로필 경로&gt;\Local Extension Settings\&lt;치즈 스패너 ID&gt;</code
+                        >
+                        <p>
+                            개인별 프로필과 설치 방식에 따라 경로가 달라요. 시청 기록은 별도 문서 파일이 아닌 브라우저
+                            데이터로 저장돼요.
+                        </p>
+                    </details>
                     <div class="history-list-footer">
-                        <span>전체 삭제는 모든 달의 기록에 적용돼요.</span>
-                        <button id="clearHistory" class="secondary-button danger-button" type="button">
+                        <span>사용 내역에서 가져온 후원 기록을 삭제해요.</span>
+                        <button id="clearDonationImport" class="secondary-button danger-button" type="button" disabled>
+                            가져온 후원 삭제
+                        </button>
+                    </div>
+                    <div class="history-list-footer">
+                        <span>전체 삭제는 모든 달의 시청·채팅·후원 기록에 적용돼요.</span
+                        ><button id="clearHistory" class="secondary-button danger-button" type="button">
                             전체 삭제
                         </button>
                     </div>
-                </section>
-            </div>
-
+                </div>
+            </details>
             <div class="action-bar">
                 <a class="secondary-button" href="options.html">설정으로 돌아가기</a>
                 <a class="secondary-button" href="https://chzzk.naver.com/lives" target="_blank" rel="noopener"
                     >라이브 보러가기</a
                 >
             </div>
-
             <p id="message" class="message hidden" role="status" aria-live="polite"></p>
         </main>
-
         <script src="shared/data.js"></script>
+        <script src="shared/donationHistory.js"></script>
         <script src="history.js"></script>
     </body>
 </html>

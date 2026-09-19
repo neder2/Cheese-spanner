@@ -694,7 +694,7 @@ test("VOD broadcast clock aborts pending metadata before switching to another VO
     dom.window.close();
 });
 
-test("audio compressor preserves its graph across SPA mini-player and BFCache transitions", async () => {
+test("audio compressor preserves its graph across SPA mini-player reparenting, replacement and BFCache", async (t) => {
     const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true } });
     const dom = createPageDom(
         [
@@ -714,18 +714,27 @@ test("audio compressor preserves its graph across SPA mini-player and BFCache tr
     const volume = document.getElementById("volume");
     const mute = document.getElementById("mute");
     const contexts = [];
+    const attachedVideos = new WeakSet();
+    const sources = new WeakMap();
+    t.after(() => dom.window.close());
 
     class FakeNode {
-        connect() {}
-        disconnect() {}
+        connections = [];
+        connect(node) {
+            this.connections.push(node);
+        }
+        disconnect() {
+            this.connections = [];
+        }
     }
     class FakeParam {
         setTargetAtTime(value) {
             this.value = value;
         }
     }
-    class FakeAudioContext {
+    class FakeAudioContext extends dom.window.EventTarget {
         constructor() {
+            super();
             this.closeCalls = 0;
             this.currentTime = 0;
             this.destination = new FakeNode();
@@ -733,8 +742,12 @@ test("audio compressor preserves its graph across SPA mini-player and BFCache tr
             this.state = "running";
             contexts.push(this);
         }
-        createMediaElementSource() {
-            return new FakeNode();
+        createMediaElementSource(element) {
+            if (attachedVideos.has(element)) throw new Error("Media element already has an audio source");
+            attachedVideos.add(element);
+            const source = new FakeNode();
+            sources.set(element, source);
+            return source;
         }
         createDynamicsCompressor() {
             const node = new FakeNode();
@@ -757,6 +770,7 @@ test("audio compressor preserves its graph across SPA mini-player and BFCache tr
         }
         resume() {
             this.resumeCalls += 1;
+            if (this.resumeOverride) return this.resumeOverride();
             this.state = "running";
             return Promise.resolve();
         }
@@ -822,9 +836,17 @@ test("audio compressor preserves its graph across SPA mini-player and BFCache tr
         true
     );
 
+    // The native mini-player moves the same element after the playback route changes.
+    // A temporary missing video must not permanently close its audio connection.
+    video.remove();
     dom.window.history.pushState({}, "", "/live/test-channel");
     dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
     await waitForAsyncCallbacks();
+    assert.equal(context.closeCalls, 0, "a temporary DOM gap does not dispose a reusable media source");
+    document.body.prepend(video);
+    await waitForCondition(
+        () => document.getElementById("betterchzzk-audio-compressor")?.dataset.betterChzzkReady === "1"
+    );
     assert.equal(contexts.length, 1, "returning to the same media element must reuse its existing graph");
     const returnedButton = document.getElementById("betterchzzk-audio-compressor");
     assert.ok(returnedButton, "the compressor control should return on the playback route");
@@ -832,6 +854,24 @@ test("audio compressor preserves its graph across SPA mini-player and BFCache tr
     assert.equal(returnedButton.dataset.betterChzzkReady, "1");
     assert.equal(contexts.length, 1, "restoring the compressor must reuse the preserved graph");
     assert.equal(context.closeCalls, 0);
+
+    const replacement = document.createElement("video");
+    makeVisibleVideo(replacement);
+    video.replaceWith(replacement);
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    await waitForCondition(() => attachedVideos.has(replacement));
+    assert.ok(attachedVideos.has(replacement), "the replacement gets its own media source");
+    assert.equal(context.closeCalls, 0, "a replaced element can still return from the native mini-player");
+    assert.equal(
+        sources.get(video).connections[0].connections[0],
+        context.destination,
+        "inactive video retains an audible bypass"
+    );
+    replacement.replaceWith(video);
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    await waitForCondition(() => sources.get(video).connections[0]?.threshold);
+    assert.equal(document.getElementById("betterchzzk-audio-compressor").dataset.betterChzzkReady, "1");
+    assert.equal(contexts.length, 1, "media sources share one document audio context across replacements");
 
     const persistedPageHide = new dom.window.Event("pagehide");
     Object.defineProperty(persistedPageHide, "persisted", { value: true });
@@ -845,6 +885,53 @@ test("audio compressor preserves its graph across SPA mini-player and BFCache tr
     await waitForAsyncCallbacks();
     assert.equal(context.resumeCalls, 1);
     assert.equal(context.closeCalls, 0);
+
+    await t.test("tab visibility and window focus recover audio without DOM changes", async () => {
+        let hidden = true;
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+        context.state = "suspended";
+        const before = context.resumeCalls;
+        document.dispatchEvent(new dom.window.Event("visibilitychange"));
+        assert.equal(context.resumeCalls, before, "hiding a tab alone does not request resume");
+        hidden = false;
+        document.dispatchEvent(new dom.window.Event("visibilitychange"));
+        assert.equal(context.state, "running", "returning to the tab resumes the existing context");
+        await waitForAsyncCallbacks();
+        context.state = "suspended";
+        dom.window.dispatchEvent(new dom.window.Event("focus"));
+        assert.equal(context.state, "running");
+        assert.equal(contexts.length, 1);
+        await waitForAsyncCallbacks();
+    });
+
+    await t.test("later audio suspension is detected and pending resumes are shared", async () => {
+        let resolve;
+        context.resumeOverride = () =>
+            new Promise((done) => {
+                resolve = done;
+            });
+        context.state = "suspended";
+        const before = context.resumeCalls;
+        context.dispatchEvent(new dom.window.Event("statechange"));
+        dom.window.dispatchEvent(new dom.window.Event("focus"));
+        document.dispatchEvent(new dom.window.Event("visibilitychange"));
+        assert.equal(context.resumeCalls, before + 1);
+        context.state = "running";
+        resolve();
+        await waitForAsyncCallbacks();
+        delete context.resumeOverride;
+    });
+
+    await t.test("a resume that stays suspended retains the user gesture recovery", async () => {
+        context.resumeOverride = () => Promise.resolve();
+        context.state = "suspended";
+        context.dispatchEvent(new dom.window.Event("statechange"));
+        await waitForAsyncCallbacks();
+        delete context.resumeOverride;
+        dom.window.dispatchEvent(new dom.window.Event("pointerdown"));
+        assert.equal(context.state, "running", "a fulfilled Promise alone is not proof of resumed audio");
+        await waitForAsyncCallbacks();
+    });
 
     returnedButton.click();
     await waitForAsyncCallbacks();
@@ -865,10 +952,60 @@ test("audio compressor preserves its graph across SPA mini-player and BFCache tr
     assert.equal(disabledButton.dataset.betterChzzkAudioCompressor, "0");
     assert.equal(contexts.length, 1, "an off preference must not create another graph after navigation");
 
+    await t.test("rejected resumes recover on user input even with compression off", async () => {
+        context.resumeOverride = () => Promise.reject(new Error("activation required"));
+        context.state = "suspended";
+        context.dispatchEvent(new dom.window.Event("statechange"));
+        await waitForAsyncCallbacks();
+        delete context.resumeOverride;
+        dom.window.dispatchEvent(new dom.window.Event("keydown"));
+        assert.equal(context.state, "running");
+        assert.equal(disabledButton.dataset.betterChzzkAudioCompressor, "0");
+        await waitForAsyncCallbacks();
+    });
+
+    await t.test("one user gesture can unblock a pending autoplay resume without a request storm", async () => {
+        let resolve;
+        context.resumeOverride = () =>
+            new Promise((done) => {
+                resolve = done;
+            });
+        context.state = "suspended";
+        context.dispatchEvent(new dom.window.Event("statechange"));
+        const before = context.resumeCalls;
+        const originalResolve = resolve;
+        dom.window.dispatchEvent(new dom.window.Event("pointerdown"));
+        dom.window.dispatchEvent(new dom.window.Event("click"));
+        dom.window.dispatchEvent(new dom.window.Event("focus"));
+        assert.equal(context.resumeCalls, before + 1);
+        context.state = "running";
+        originalResolve();
+        resolve();
+        await waitForAsyncCallbacks();
+        delete context.resumeOverride;
+    });
+
+    let resolveAfterTeardown;
+    context.resumeOverride = () =>
+        new Promise((done) => {
+            resolveAfterTeardown = done;
+        });
+    context.state = "suspended";
+    context.dispatchEvent(new dom.window.Event("statechange"));
+
     const finalPageHide = new dom.window.Event("pagehide");
     Object.defineProperty(finalPageHide, "persisted", { value: false });
     dom.window.dispatchEvent(finalPageHide);
     assert.equal(context.closeCalls, 1);
+    resolveAfterTeardown();
+    await waitForAsyncCallbacks();
+    const finalResumeCalls = context.resumeCalls;
+    context.state = "suspended";
+    context.dispatchEvent(new dom.window.Event("statechange"));
+    document.dispatchEvent(new dom.window.Event("visibilitychange"));
+    dom.window.dispatchEvent(new dom.window.Event("focus"));
+    dom.window.dispatchEvent(new dom.window.Event("pointerdown"));
+    assert.equal(context.resumeCalls, finalResumeCalls, "final teardown removes audio recovery listeners");
     dom.window.close();
 });
 
@@ -1007,6 +1144,36 @@ test("audio compressor state stays independent across tabs and ignores the old s
         true,
         "tab choices never overwrite the old shared preference"
     );
+});
+
+test("compressor volume dimensions follow native fullscreen sizing and remounts", async (t) => {
+    const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true } });
+    const page = await createCompressorPage(t, chrome);
+    const { document } = page;
+    const style = document.createElement("style");
+    style.textContent = `.pzp-ui-slider__handler-wrap{width:10px;height:10px}
+        .pzp-ui-progress{height:2px}
+        .pzp-pc--fullscreen .pzp-ui-slider__handler-wrap{width:15px;height:15px}
+        .pzp-pc--fullscreen .pzp-ui-progress{height:3px}`;
+    document.head.append(style);
+    const native = document.createElement("div");
+    native.innerHTML = '<div class="pzp-ui-slider__handler-wrap"></div><div class="pzp-ui-progress"></div>';
+    document.getElementById("volume").append(native);
+    const control = document.getElementById("betterchzzk-audio-compressor-control");
+    await waitForCondition(() => control.style.getPropertyValue("--bcac-thumb-size") === "10px");
+    assert.equal(control.style.getPropertyValue("--bcac-track-height"), "2px");
+    const root = document.querySelector(".pzp-pc");
+    root.classList.add("pzp-pc--fullscreen");
+    await waitForCondition(() => control.style.getPropertyValue("--bcac-thumb-size") === "15px");
+    assert.equal(control.style.getPropertyValue("--bcac-track-height"), "3px");
+    root.classList.remove("pzp-pc--fullscreen");
+    await waitForCondition(() => control.style.getPropertyValue("--bcac-thumb-size") === "10px");
+    const replacement = native.cloneNode(true);
+    replacement.firstElementChild.style.width = "12px";
+    native.replaceWith(replacement);
+    await waitForCondition(() => control.style.getPropertyValue("--bcac-thumb-size") === "12px");
+    replacement.remove();
+    await waitForCondition(() => control.style.getPropertyValue("--bcac-thumb-size") === "");
 });
 
 test("audio compressor has a separate output slider and wheel without changing playback volume", async (t) => {

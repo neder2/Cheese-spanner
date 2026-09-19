@@ -1,15 +1,15 @@
 /**
- * features/chatTimestamp.js — 라이브 채팅 닉네임 왼쪽에 서버 작성 시각을 붙인다.
+ * features/chatTimestamp.js — 라이브·다시보기 채팅 닉네임 왼쪽에 서버 작성 시각을 붙인다.
  *
  * 실행 컨텍스트: isolated world. 옵션·DOM 관찰·표시를 담당하며 React 내부 값은 직접 읽지 않는다.
- * 동작 위치: chzzk.naver.com/live/* 의 aside#aside-chatting 내부.
+ * 동작 위치: /live/* 의 aside#aside-chatting, /video/* 의 aside#vod-aside 내부.
  * 하는 일:
  *   - 현재 표시된 채팅과 새로 추가·재사용된 채팅마다 MAIN-world 브리지에 원본 시각을 요청한다.
  *   - 검증된 millisecond epoch를 브라우저 현지 HH:MM으로 바꿔 data-bcmt-time + ::before로 표시한다.
  *   - 원본 서버 시각이 없거나 잘못된 행에는 현재 시각을 대신 붙이지 않는다.
  * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions, createMutationObserverSync,
- *   injectStyleOnce, isLiveRoute, startPageChangeDetection).
- * 옵션 키: chatTimestampEnabled(기본값 false).
+ *   injectStyleOnce, isLiveRoute, isVodRoute, startPageChangeDetection).
+ * 옵션 키: chatTimestampEnabled, vodChatTimestampEnabled(각 기본값 false).
  * 통신: betterchzzk:chat-timestamp-source-request/page-ready 이벤트와 data-bcmt-source-time DOM 속성.
  * DOM 마커: data-bcmt-time(표시용 HH:MM), data-bcmt-source-time(검증된 원본 millisecond epoch).
  */
@@ -20,14 +20,21 @@
     if (root.chatTimestamp) return;
 
     const { normalizeOptions } = BetterChzzkSettings;
-    const { bindFeatureOptions, createMutationObserverSync, injectStyleOnce, isLiveRoute, startPageChangeDetection } =
-        root.utils;
+    const {
+        bindFeatureOptions,
+        createMutationObserverSync,
+        injectStyleOnce,
+        isLiveRoute,
+        isVodRoute,
+        startPageChangeDetection,
+    } = root.utils;
     const SOURCE_REQUEST_EVENT = "betterchzzk:chat-timestamp-source-request";
     const PAGE_READY_EVENT = "betterchzzk:chat-timestamp-page-ready";
     const SOURCE_TIME_ATTR = "data-bcmt-source-time";
     const TIMESTAMP_ATTR = "data-bcmt-time";
     const STYLE_ID = "betterchzzk-chat-timestamp-style";
-    const CHAT_LOG_SELECTOR = "aside#aside-chatting [role='log']";
+    const LIVE_CHAT_LOG_SELECTOR = "aside#aside-chatting [role='log']";
+    const VOD_CHAT_LOG_SELECTOR = "aside#vod-aside [role='log']";
     const NICKNAME_BUTTON_SELECTOR = "button[aria-haspopup='true']";
     const MESSAGE_CONTAINER_SELECTOR = "[class*='chatting_message'], [class*='chat-message']";
     const EARLIEST_MESSAGE_TIME_MS = Date.UTC(2020, 0, 1);
@@ -91,12 +98,18 @@
     }
 
     function isEnabled() {
-        return featureOptions.chatTimestampEnabled === true;
+        return featureOptions.chatTimestampEnabled === true || featureOptions.vodChatTimestampEnabled === true;
+    }
+
+    function getChatLogSelector() {
+        if (isLiveRoute() && featureOptions.chatTimestampEnabled) return LIVE_CHAT_LOG_SELECTOR;
+        if (isVodRoute() && featureOptions.vodChatTimestampEnabled) return VOD_CHAT_LOG_SELECTOR;
+        return "";
     }
 
     function getChatLog() {
-        if (typeof isLiveRoute === "function" && !isLiveRoute()) return null;
-        return document.querySelector(CHAT_LOG_SELECTOR);
+        const selector = getChatLogSelector();
+        return selector ? document.querySelector(selector) : null;
     }
 
     function isNicknameButton(button, messageContainer = button?.parentElement) {
@@ -186,6 +199,7 @@
     }
 
     function startObserver() {
+        if (!getChatLogSelector()) return;
         observer = createMutationObserverSync({
             target: getChatLog,
             options: {
@@ -197,7 +211,6 @@
             },
             onMutations: handleChatMutations,
             onObserved: (_observer, chatLog) => syncChatLog(chatLog),
-            onBodyReady: (_observer, chatLog) => syncChatLog(chatLog),
         });
     }
 
@@ -220,7 +233,7 @@
     }
 
     function installRuntime() {
-        if (!isEnabled() || observer) return;
+        if (!isEnabled() || removePageChangeDetection) return;
         if (!document.documentElement) {
             if (!installPending) {
                 installPending = true;
@@ -238,6 +251,8 @@
     }
 
     function teardownRuntime() {
+        document.removeEventListener("DOMContentLoaded", installRuntime);
+        installPending = false;
         stopObserver();
         removePageChangeDetection?.();
         removePageChangeDetection = null;
@@ -246,9 +261,13 @@
     }
 
     function applyOptions(options) {
+        const changed =
+            featureOptions.chatTimestampEnabled !== options.chatTimestampEnabled ||
+            featureOptions.vodChatTimestampEnabled !== options.vodChatTimestampEnabled;
         featureOptions = options;
-        if (isEnabled()) installRuntime();
-        else teardownRuntime();
+        if (!isEnabled()) teardownRuntime();
+        else if (!removePageChangeDetection) installRuntime();
+        else if (changed) restartRuntime();
     }
 
     window.addEventListener(PAGE_READY_EVENT, () => {

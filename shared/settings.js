@@ -98,6 +98,8 @@
             max: MONTHLY_CALENDAR_MAX_PAGES,
         },
         liveWatchHistoryEnabled: { kind: "bool", default: true, feature: true },
+        liveWatchHistoryChatEnabled: { kind: "bool", default: false, feature: true },
+        liveWatchHistoryDonationEnabled: { kind: "bool", default: false, feature: true },
         liveWatchHistoryMinMinutes: {
             kind: "int",
             default: 1,
@@ -106,6 +108,7 @@
         },
         vodCommentTabsEnabled: { kind: "bool", default: true, feature: true },
         chatTimestampEnabled: { kind: "bool", default: false, feature: true },
+        vodChatTimestampEnabled: { kind: "bool", default: false, feature: true },
         chatWeeklyRankingHidden: { kind: "bool", default: false, feature: true },
         chatWelcomeMessageRemovalEnabled: { kind: "bool", default: false, feature: true },
         chatToolsShowBlindEnabled: { kind: "bool", default: false, feature: true },
@@ -222,6 +225,8 @@
         followingListStateEnabled: { kind: "bool", default: false, feature: true },
         followingRefreshEnabled: { kind: "bool", default: true, feature: true },
         followingRefreshSeconds: { kind: "int", default: 30, min: 10, max: 600 },
+        liveStartNotificationsEnabled: { kind: "bool", default: false, feature: true },
+        liveStartAutoOpenEnabled: { kind: "bool", default: false, feature: true },
         // 미리보기 HLS가 선택 권한(pstatic.net) 승인을 전제로 하므로, 사용자가
         // 옵션에서 직접 켜면서 권한을 허용하는 흐름이 되도록 기본값은 꺼짐이다.
         liveMultiviewEnabled: { kind: "bool", default: false, feature: true },

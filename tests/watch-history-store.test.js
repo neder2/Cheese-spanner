@@ -649,7 +649,9 @@ function createBackgroundHarness() {
                     ? sources.settings
                     : file === "shared/data.js"
                       ? sources.data
-                      : sources.store;
+                      : file === "shared/watchHistoryStore.js"
+                        ? sources.store
+                        : fs.readFileSync(path.join(repoRoot, file), "utf8");
             vm.runInContext(source, context, { filename: file });
         }
     };
@@ -719,6 +721,42 @@ test("background validates sender and schema before mutating history", async () 
         true
     );
     assert.equal(harness.local[harness.store.STORAGE_KEY].entries["live:100"].replayVideoNo, "555");
+    const forgedImport = await harness.send(
+        mutationMessage(harness.store, {
+            kind: "replaceDonationMonths",
+            snapshot: {
+                owner: "viewer",
+                startedAt: Date.now() - 1000,
+                startMonth: "2026-01",
+                endMonth: "2026-01",
+                months: { "2026-01": [] },
+            },
+        }),
+        { id: "extension-id", url: "chrome-extension://extension-id/history.html" }
+    );
+    assert.equal(forgedImport.ok, false, "only the background API importer may create purchase snapshots");
+    assert.equal(harness.local[harness.store.STORAGE_KEY].donationImport, undefined);
+});
+
+test("background accepts immediate activity only from trusted CHZZK tabs", async () => {
+    const harness = createBackgroundHarness();
+    const now = Date.now();
+    const operation = {
+        ...createSnapshot(now),
+        kind: "appendActivities",
+        activities: [{ id: `viewer:${now}:1`, at: now, kind: "chat", text: "즉시 저장", amount: 0 }],
+    };
+    const liveSender = { id: "extension-id", tab: { id: 1 }, url: "https://chzzk.naver.com/live/channel-a" };
+    const denied = await harness.send(mutationMessage(harness.store, operation), {
+        ...liveSender,
+        url: "https://example.com/",
+    });
+    assert.equal(denied.ok, false);
+    const accepted = await harness.send(mutationMessage(harness.store, operation), liveSender);
+    assert.equal(accepted.ok, true);
+    const entry = harness.local[harness.store.STORAGE_KEY].entries["live:100"];
+    assert.equal(entry.activities.length, 1);
+    assert.equal(entry.watchedSeconds, 0);
 });
 
 test("background queue reports runtime.lastError and continues with the next mutation", async () => {

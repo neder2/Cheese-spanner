@@ -70,6 +70,22 @@
 
     function hasChzzkPlayerSlot(controller) {
         let element = controller.videoSlot;
+        if (!(element instanceof Element)) {
+            // 2026-09-19 CHZZK's media adapter owns a video inside an Element-valued shadowRoot.
+            const slot = element;
+            if (!slot || typeof slot !== "object" || controller.contentVideoElement !== slot) return false;
+            const video = Object.getOwnPropertyDescriptor(slot, "_videoElement")?.value;
+            const root = Object.getOwnPropertyDescriptor(slot, "shadowRoot")?.value;
+            if (
+                !(video instanceof HTMLVideoElement) ||
+                !(root instanceof Element) ||
+                !root.contains(video) ||
+                slot.video !== video
+            )
+                return false;
+            element = video;
+        }
+        if (!element.isConnected) return false;
         for (let depth = 0; element instanceof Element && depth < 16; depth++) {
             if (element.matches(".chzzk_player")) return true;
             element = element.parentElement || element.getRootNode()?.host;
@@ -97,7 +113,6 @@
             Object.getPrototypeOf(source) !== source.constructor.prototype ||
             typeof source.handshakeVersion !== "function" ||
             typeof source.initAd !== "function" ||
-            !controller.videoSlot?.isConnected ||
             !hasChzzkPlayerSlot(controller)
         )
             return null;

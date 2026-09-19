@@ -5,7 +5,14 @@ const test = require("node:test");
 
 const repoRoot = path.join(__dirname, "..");
 
-const runtimeFiles = ["manifest.json", "background.js", "content.js", "history.js", "options.js"];
+const runtimeFiles = [
+    "manifest.json",
+    "background.js",
+    "content.js",
+    "history.js",
+    "options.js",
+    "optionsLiveStart.js",
+];
 const runtimeDirs = ["shared", "features", "vendor"];
 const followingPreviewFiles = ["features/followingPreviewTooltip.js"];
 const forbiddenPatterns = [

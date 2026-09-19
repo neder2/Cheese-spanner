@@ -5,10 +5,21 @@
  *   시청 기록 mutation은 발신자·스키마를 검증한 뒤 Promise 큐에서 최신 local 값을 읽어 순차 반영한다.
  *   폐기한 설정·알림과 1.3.7 방식 변경 안내의 저장값을 정리한다.
  *   컴프레서 상태는 발신 탭 ID별로 저장하고 탭 종료·브라우저 시작 시 정리한다.
+ *   방송 시작 알림·자동 열기는 shared/liveStartMonitor.js의 독립 큐와 alarm으로 처리한다.
+ *   과거 후원 가져오기는 history 페이지의 요청으로 조회하고, 같은 시청 기록 writer 큐에 월별 스냅샷을 저장한다.
  * 의존: shared/settings.js, shared/data.js, shared/watchHistoryStore.js,
- *   shared/adVideoRegistration.js(importScripts).
+ *   shared/adVideoRegistration.js, shared/liveStart.js, shared/liveStartMonitor.js,
+ *   shared/donationHistory.js, shared/donationHistoryImport.js(importScripts).
  */
-importScripts("shared/settings.js", "shared/data.js", "shared/watchHistoryStore.js", "shared/adVideoRegistration.js");
+importScripts(
+    "shared/settings.js",
+    "shared/data.js",
+    "shared/donationHistory.js",
+    "shared/watchHistoryStore.js",
+    "shared/adVideoRegistration.js"
+);
+importScripts("shared/liveStart.js", "shared/liveStartMonitor.js");
+importScripts("shared/donationHistoryImport.js");
 
 const { OPTION_KEYS, getStorageLastError, normalizeOptions } = BetterChzzkSettings;
 const {
@@ -152,6 +163,8 @@ chrome.runtime.onStartup?.addListener(() => {
 
 function isTrustedWatchHistorySender(operation, sender) {
     if (!sender || sender.id !== chrome.runtime.id || !sender.url) return false;
+    // API snapshots are committed only by the background importer after all pages and identity checks succeed.
+    if (operation.kind === "replaceDonationMonths") return false;
 
     let senderUrl;
     try {
@@ -160,7 +173,11 @@ function isTrustedWatchHistorySender(operation, sender) {
         return false;
     }
 
-    if (operation.kind === "upsertSessionSnapshot" || operation.kind === "migrateRecordId") {
+    if (
+        operation.kind === "upsertSessionSnapshot" ||
+        operation.kind === "appendActivities" ||
+        operation.kind === "migrateRecordId"
+    ) {
         return Boolean(sender.tab) && senderUrl.protocol === "https:" && senderUrl.hostname === "chzzk.naver.com";
     }
 
@@ -180,6 +197,12 @@ function enqueueWatchHistoryMutation(operation) {
     watchHistoryMutationQueue = task.catch(() => {});
     return task;
 }
+
+globalThis.BetterChzzkDonationHistoryImport.install({
+    chrome,
+    readHistory: async () => (await storageLocalGet(WATCH_HISTORY_STORAGE_KEY))[WATCH_HISTORY_STORAGE_KEY],
+    writeHistory: enqueueWatchHistoryMutation,
+});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === RETIRED_QUALITY_NOTICE_KEY) {
