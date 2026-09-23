@@ -57,6 +57,25 @@
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
+    // Inspect native hiding attributes, including a hide/reveal within one observer batch.
+    // Extension concealment markers and arbitrary class changes are not display cycles.
+    function hasNativeHideMutation(mutations, element) {
+        let oldStyle;
+        const hides = (style) =>
+            style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse";
+        return mutations.some(({ type, target, attributeName, oldValue }) => {
+            if (type !== "attributes" || !(target instanceof HTMLElement) || !target.contains(element)) return false;
+            if (attributeName === "hidden") return oldValue !== null || target.hasAttribute("hidden");
+            if (attributeName === "aria-hidden")
+                return oldValue === "true" || target.getAttribute("aria-hidden") === "true";
+            if (attributeName !== "style") return false;
+            if (hides(target.style)) return true;
+            oldStyle ||= document.createElement("span").style;
+            oldStyle.cssText = oldValue || "";
+            return hides(oldStyle);
+        });
+    }
+
     // Owned visual zoom changes the media rect, but controls stay in its original viewport.
     function setVideoViewportTransform(video, transform) {
         if (!transform) {
@@ -494,6 +513,7 @@
     root.utils = {
         ...(root.utils || {}),
         onReady,
+        hasNativeHideMutation,
         normSpace,
         normalizeCompact,
         sleep,

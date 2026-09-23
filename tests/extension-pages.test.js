@@ -812,8 +812,12 @@ function getAdblockSuppressAttr(el) {
     return el.getAttribute(AD_SUPPRESS_ATTR);
 }
 
-test("adblock popup closes through its button before DOMContentLoaded", (t) => {
+test("adblock popup waits for saved options then closes before DOMContentLoaded", (t) => {
     const chrome = createFakeChrome();
+    let deliverOptions;
+    chrome.storage.sync.get = (_keys, callback) => {
+        deliverOptions = () => callback({ adblockPopupEnabled: true });
+    };
     const dom = createPageDom(
         [
             "<!doctype html>",
@@ -834,6 +838,7 @@ test("adblock popup closes through its button before DOMContentLoaded", (t) => {
     const modal = document.getElementById("modal");
     makeVisibleElement(dimmed, 1000, 800);
     makeVisibleElement(modal);
+    makeVisibleElement(modal.querySelector("button"), 80, 30);
 
     t.after(async () => {
         await waitForAsyncCallbacks();
@@ -842,6 +847,9 @@ test("adblock popup closes through its button before DOMContentLoaded", (t) => {
     modal.querySelector("button").addEventListener("click", () => dimmed.remove());
     evalAdblockPopupScripts(dom);
 
+    assert.equal(modal.isConnected, true, "default options must not dismiss a modal before storage responds");
+    assert.equal(document.readyState, "loading");
+    deliverOptions();
     assert.equal(modal.isConnected, false);
     assert.equal(dimmed.isConnected, false);
 });
@@ -874,6 +882,7 @@ test("adblock popup closes a newly mounted modal through native cleanup", async 
         document.body.style.paddingRight = "";
     });
     modal.append(close);
+    makeVisibleElement(close, 80, 30);
     dimmed.appendChild(modal);
     makeVisibleElement(dimmed, 1000, 800);
     makeVisibleElement(modal);
@@ -965,7 +974,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.3.9");
+    assert.equal(manifest.version, "1.4.0");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);

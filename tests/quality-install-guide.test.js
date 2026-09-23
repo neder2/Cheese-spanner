@@ -13,6 +13,7 @@ function fixture(t, pathname = "/live/measured") {
         pretendToBeVisual: true,
     });
     const w = dom.window;
+    w.HTMLButtonElement.prototype.getBoundingClientRect = () => ({ width: 180, height: 40 });
     const active = new Set();
     const NativeObserver = w.MutationObserver;
     w.MutationObserver = class extends NativeObserver {
@@ -346,4 +347,147 @@ test("document-start waits for the body and closes a later mounted guide", async
     await flush();
     assert.equal(g.calls.decline, 1);
     assert.equal(f.active.size, 1);
+});
+
+for (const [name, hide] of Object.entries({
+    hidden: (el, hidden) => {
+        el.hidden = hidden;
+    },
+    aria: (el, hidden) => {
+        el.setAttribute("aria-hidden", String(hidden));
+    },
+    display: (el, hidden) => {
+        el.style.display = hidden ? "none" : "";
+    },
+    visibility: (el, hidden) => {
+        el.style.visibility = hidden ? "hidden" : "";
+    },
+})) {
+    test(`guide observes distant ancestor ${name} changes and batched display cycles`, async (t) => {
+        const f = fixture(t);
+        const g = f.guide({ remove: false });
+        const ancestor = f.w.document.createElement("section");
+        ancestor.append(g.parent);
+        hide(ancestor, true);
+        f.w.document.body.append(ancestor);
+        f.options();
+        await flush();
+        assert.equal(g.calls.decline, 0);
+        hide(ancestor, false);
+        await flush();
+        assert.equal(g.calls.decline, 1);
+        hide(ancestor, true);
+        hide(ancestor, false);
+        await flush();
+        assert.equal(g.calls.decline, 2);
+        hide(g.root, true);
+        hide(g.root, false);
+        await flush();
+        assert.equal(g.calls.decline, 3);
+        ancestor.className = "still-visible";
+        await flush();
+        assert.equal(g.calls.decline, 3);
+        f.options({ adblockPopupEnabled: false });
+        assert.equal(f.active.size, 0);
+    });
+}
+
+test("an existing guide is discovered when only its parent becomes a player", async (t) => {
+    const f = fixture(t);
+    const g = f.guide();
+    g.parent.className = "pending-player";
+    g.mount();
+    f.options();
+    await flush();
+    assert.equal(g.calls.decline, 0);
+    g.parent.className = "_player_measured";
+    await flush();
+    assert.equal(g.calls.decline, 1);
+    assert.equal(f.active.size, 1);
+});
+
+test("a hidden decline control waits until it is visible", async (t) => {
+    const f = fixture(t);
+    const g = f.guide();
+    g.decline.hidden = true;
+    g.mount();
+    f.options();
+    await flush();
+    assert.equal(g.calls.decline, 0);
+    g.decline.hidden = false;
+    await flush();
+    assert.equal(g.calls.decline, 1);
+    assert.equal(g.calls.install, 0);
+});
+
+test("invalid candidates cannot block a later complete guide", async (t) => {
+    const f = fixture(t);
+    const invalid = Array.from({ length: 4 }, () => f.guide());
+    invalid.forEach((g) => {
+        g.layer.querySelector("p").textContent = "다른 안내";
+        g.mount();
+    });
+    const g = f.guide();
+    g.decline.disabled = true;
+    g.mount();
+    f.options();
+    await flush();
+    assert.equal(g.calls.decline, 0);
+    assert.ok(f.active.size <= 5, "candidate observation remains bounded");
+    g.decline.disabled = false;
+    await flush();
+    assert.equal(g.calls.decline, 1);
+    assert.equal(g.calls.install, 0);
+});
+
+test("ancestor CSS visibility and remounts update scoped observation without stale clicks", async (t) => {
+    const f = fixture(t);
+    const g = f.guide({ remove: false });
+    const style = f.w.document.createElement("style");
+    style.textContent = ".native-hidden { display: none; }";
+    f.w.document.head.append(style);
+    const oldParent = f.w.document.createElement("section");
+    oldParent.className = "native-hidden";
+    oldParent.append(g.parent);
+    f.w.document.body.append(oldParent);
+    f.options();
+    await flush();
+    assert.equal(g.calls.decline, 0);
+    oldParent.className = "";
+    await flush();
+    assert.equal(g.calls.decline, 1);
+    const nextParent = f.w.document.createElement("section");
+    nextParent.hidden = true;
+    f.w.document.body.append(nextParent);
+    nextParent.append(g.parent);
+    await flush();
+    assert.equal(g.calls.decline, 1);
+    nextParent.hidden = false;
+    await flush();
+    assert.equal(g.calls.decline, 2);
+    assert.equal(f.active.size, 2, "one discovery observer and one scoped guide observer");
+    oldParent.hidden = true;
+    oldParent.hidden = false;
+    nextParent.style.color = "red";
+    nextParent.style.color = "blue";
+    await flush();
+    assert.equal(g.calls.decline, 2);
+    nextParent.remove();
+    await flush();
+    assert.equal(f.active.size, 1);
+});
+
+test("a zero-size decline control is not clicked until native layout makes it visible", async (t) => {
+    const f = fixture(t);
+    const g = f.guide();
+    let width = 0;
+    g.decline.getBoundingClientRect = () => ({ width, height: 30 });
+    g.mount();
+    f.options();
+    await flush();
+    assert.equal(g.calls.decline, 0);
+    width = 180;
+    g.decline.style.width = "180px";
+    await flush();
+    assert.equal(g.calls.decline, 1);
 });

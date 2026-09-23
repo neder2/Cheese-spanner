@@ -4,7 +4,7 @@
  * livePlaybackJson.liveId/chatChannelId가 각각 프리롤/미드롤 boolean이다.
  * 2026-09-11 배포 클라이언트에서 확인한 playerAdDisplayResponse.preRoll/midRoll도 처리한다.
  * 일반 재생 정보와 구분하기 위해 확인한 키와 타입이 모두 맞을 때만 바꾼다.
- * 확인한 라이브/VOD 소스는 연결 전에 비우고 라이브 중간 광고 스케줄에서 광고 항목을 제외한다.
+ * 확인한 라이브/VOD 소스는 연결 전에 비우고 라이브 입장·중간 광고 스케줄에서 광고 항목을 제외한다.
  * NLiveCast 래퍼는 유지하고 확인된 라이브 내부 요청만 전달하지 않는다.
  * 본영상 srcObject와 암호화 바이트는 건드리지 않는다.
  */
@@ -27,6 +27,7 @@
     let blockedVodSources = 0;
     let blockedLiveSources = 0;
     let blockedLiveSchedules = 0;
+    let blockedLivePreRollSchedules = 0;
     let blockedWrappedLiveRequests = 0;
     const wrappedLiveRequests = new WeakMap();
 
@@ -39,6 +40,7 @@
                 blockedVodSources,
                 blockedLiveSources,
                 blockedLiveSchedules,
+                blockedLivePreRollSchedules,
                 blockedWrappedLiveRequests,
                 reloadRequired,
             })
@@ -192,40 +194,66 @@
         publishStatus();
     }
 
+    const LIVE_PRE_ROLL_UNITS = new Set(["w_live_chzzk_naver_va", "event_w_live_chzzk_naver_va"]);
+    const LIVE_MID_ROLL_UNITS = new Set(["w_live_chzzk_naver_va_mid", "event_w_live_chzzk_naver_va_mid"]);
+
+    function ownsAdContainer(container, manager, connected) {
+        // 2026-09-23 GFP의 공개 API: 표시 정보가 컨테이너와 contentVideo를 직접 소유한다.
+        // 입장·중간 광고의 서로 다른 DOM ID 대신 이 관계와 실제 광고 단위 ID를 확인한다.
+        const info = manager.getAdDisplayContainerInfo();
+        return (
+            info?.adVideoContainer === container &&
+            container.ownerDocument === document &&
+            info.contentVideo instanceof HTMLVideoElement &&
+            info.contentVideo.ownerDocument === document &&
+            (!connected || (container.isConnected && info.contentVideo.isConnected))
+        );
+    }
+
     function wrapLiveSchedule(container, manager) {
         const load = manager?.loadWithAdSchedule;
         if (
             typeof load !== "function" ||
             load.__betterChzzkLiveAdSchedule ||
             typeof manager.startAdSchedule !== "function" ||
-            typeof manager.getAdDisplayContainerInfo !== "function"
+            typeof manager.getAdDisplayContainerInfo !== "function" ||
+            !ownsAdContainer(container, manager, false)
         )
             return;
         const wrappedLoad = function (schedule, ...rest) {
             let filtered = schedule;
-            if (
-                active &&
-                /^\/live\//.test(location.pathname) &&
-                container.isConnected &&
-                container.closest("#midAdPlayerWrapper") &&
-                Array.isArray(schedule?.adBreaks)
-            ) {
-                let removed = false;
-                const adBreaks = schedule.adBreaks.map((entry) => {
-                    if (
-                        !["w_live_chzzk_naver_va_mid", "event_w_live_chzzk_naver_va_mid"].includes(entry?.adUnitId) ||
-                        !Array.isArray(entry.adSources) ||
-                        entry.adSources.length === 0
-                    )
-                        return entry;
-                    removed = true;
-                    return { ...entry, adSources: [] };
-                });
-                if (removed) {
-                    filtered = { ...schedule, adBreaks };
-                    blockedLiveSchedules++;
-                    publishStatus();
+            try {
+                if (
+                    active &&
+                    this === manager &&
+                    /^\/live\//.test(location.pathname) &&
+                    Array.isArray(schedule?.adBreaks) &&
+                    ownsAdContainer(container, manager, true)
+                ) {
+                    let removed = false;
+                    let removedPreRoll = false;
+                    const adBreaks = schedule.adBreaks.map((entry) => {
+                        const preRoll = LIVE_PRE_ROLL_UNITS.has(entry?.adUnitId);
+                        if (
+                            (!preRoll && !LIVE_MID_ROLL_UNITS.has(entry?.adUnitId)) ||
+                            !Array.isArray(entry.adSources) ||
+                            entry.adSources.length === 0
+                        )
+                            return entry;
+                        removed = true;
+                        removedPreRoll ||= preRoll;
+                        return { ...entry, adSources: [] };
+                    });
+                    if (removed) {
+                        filtered = { ...schedule, adBreaks };
+                        blockedLiveSchedules++;
+                        if (removedPreRoll) blockedLivePreRollSchedules++;
+                        publishStatus();
+                    }
                 }
+            } catch (_) {
+                // SDK 소유 관계나 스케줄을 확인할 수 없으면 원래 입력을 전달한다.
+                filtered = schedule;
             }
             // 빈 광고 항목의 완료 처리는 네이티브 스케줄러가 수행한다.
             return Reflect.apply(load, this, [filtered, ...rest]);
@@ -239,17 +267,11 @@
     }
 
     // 현재 GFP는 광고 컨테이너를 키로 WeakMap에 스케줄러를 등록한 후 loadWithAdSchedule을 호출한다.
-    // DOM 탐색은 실측한 단일 ID에 해당할 때만 수행한다. 별도 맵이나 타이머는 유지하지 않는다.
+    // Element 키와 SDK 메서드부터 확인하며 DOM 검색·별도 맵·타이머는 사용하지 않는다.
     const wrappedWeakMapSet = function (key, value) {
         const result = Reflect.apply(previousWeakMapSet, this, arguments);
         try {
-            if (
-                active &&
-                key instanceof Element &&
-                key.id === "midAdVideoContainer" &&
-                key.closest("#midAdPlayerWrapper")
-            )
-                wrapLiveSchedule(key, value);
+            if (active && key instanceof Element) wrapLiveSchedule(key, value);
         } catch (_) {
             // 지원하지 않는 스케줄러는 원래 등록 결과를 유지한다.
         }

@@ -437,7 +437,8 @@ test("native glad URI assignments are stopped before the source factory and do n
 
 test("live mid-roll keeps native schedule completion with no creative preparation", (t) => {
     const window = createPage(t);
-    window.document.body.innerHTML = '<div id="midAdPlayerWrapper"><div id="midAdVideoContainer"></div></div>';
+    window.document.body.innerHTML =
+        '<div id="midAdPlayerWrapper"><video></video><div id="midAdVideoContainer"></div></div>';
     const container = window.document.getElementById("midAdVideoContainer");
     const oldSet = window.WeakMap.prototype.set;
     window.eval(source);
@@ -448,7 +449,9 @@ test("live mid-roll keeps native schedule completion with no creative preparatio
             schedules.push(value);
             return "native-result";
         },
-        getAdDisplayContainerInfo() {},
+        getAdDisplayContainerInfo() {
+            return { adVideoContainer: container, contentVideo: window.document.querySelector("video") };
+        },
         startAdSchedule() {
             return schedules.at(-1).adBreaks.flatMap((entry) => entry.adSources).length === 0
                 ? "SCHEDULE_COMPLETE"
@@ -484,6 +487,184 @@ test("live mid-roll keeps native schedule completion with no creative preparatio
     assert.equal(window.WeakMap.prototype.set, oldSet);
     manager.loadWithAdSchedule(schedule);
     assert.equal(schedules.at(-1), schedule);
+});
+
+function createScheduleHarness(window) {
+    const root = window.document.createElement("section");
+    // SDK의 공개 소유 관계를 모델링한다. 페이지 컨테이너 ID에 의존하지 않는다.
+    root.innerHTML = '<video></video><div class="ad-slot"></div>';
+    window.document.body.append(root);
+    const container = root.querySelector("div");
+    const video = root.querySelector("video");
+    const info = { adVideoContainer: container, contentVideo: video };
+    const calls = [];
+    const manager = {
+        getAdDisplayContainerInfo: () => info,
+        loadWithAdSchedule(schedule, ...rest) {
+            calls.push({ schedule, rest, receiver: this });
+            return "loaded";
+        },
+        // 실제 SDK는 빈 광고 항목을 정상 완료하며 페이지는 NO_ADS로 본방송에 진입한다.
+        startAdSchedule() {
+            return calls.at(-1).schedule.adBreaks.some((entry) => entry.adSources.length)
+                ? "prepare"
+                : "SCHEDULE_COMPLETE";
+        },
+    };
+    return { root, container, video, info, manager, calls };
+}
+
+function liveSchedule(adUnitId = "w_live_chzzk_naver_va") {
+    // 2026-09-23 배포 페이지의 입장 광고 스케줄 생성 계약. 서버 응답 fixture가 아니다.
+    return {
+        adBreaks: [
+            { id: "id", adUnitId, startDelay: 0, adSources: [{ id: "0", withRemindAd: 0, delay: 0 }], preFetch: 0 },
+        ],
+        head: { description: "", version: "" },
+        requestId: "preserve-request",
+        videoAdScheduleId: "",
+    };
+}
+
+test("live pre-roll and mid-roll use SDK ownership and known units independently of DOM names", (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    const map = new window.WeakMap();
+    for (const unit of [
+        "w_live_chzzk_naver_va",
+        "event_w_live_chzzk_naver_va",
+        "w_live_chzzk_naver_va_mid",
+        "event_w_live_chzzk_naver_va_mid",
+    ]) {
+        const h = createScheduleHarness(window);
+        const schedule = liveSchedule(unit);
+        Object.freeze(schedule.adBreaks[0].adSources);
+        Object.freeze(schedule.adBreaks[0]);
+        Object.freeze(schedule.adBreaks);
+        Object.freeze(schedule);
+        map.set(h.container, h.manager);
+        const installed = h.manager.loadWithAdSchedule;
+        map.set(h.container, h.manager);
+        assert.equal(h.manager.loadWithAdSchedule, installed, "repeated registration does not stack wrappers");
+        assert.equal(h.manager.loadWithAdSchedule(schedule, "extra"), "loaded");
+        const { schedule: result, rest, receiver } = h.calls.at(-1);
+        assert.equal(result.adBreaks[0].adSources.length, 0);
+        assert.equal(result.head, schedule.head);
+        assert.equal(result.requestId, schedule.requestId);
+        assert.equal(result.adBreaks[0].preFetch, 0);
+        assert.equal(schedule.adBreaks[0].adSources.length, 1);
+        assert.deepEqual(rest, ["extra"]);
+        assert.equal(receiver, h.manager);
+        assert.equal(h.manager.startAdSchedule(), "SCHEDULE_COMPLETE");
+        h.root.remove();
+    }
+    const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    assert.equal(status.blockedLiveSchedules, 4);
+    assert.equal(status.blockedLivePreRollSchedules, 2);
+});
+
+test("live schedule filtering rechecks routes, ownership, remounts and option lifetime", (t) => {
+    const window = createPage(t, "/");
+    window.eval(source);
+    const h = createScheduleHarness(window);
+    new window.WeakMap().set(h.container, h.manager);
+    const schedule = liveSchedule();
+    const assertPass = () => {
+        h.manager.loadWithAdSchedule(schedule);
+        assert.equal(h.calls.at(-1).schedule, schedule);
+    };
+    const assertBlock = () => {
+        h.manager.loadWithAdSchedule(schedule);
+        assert.equal(h.calls.at(-1).schedule.adBreaks[0].adSources.length, 0);
+    };
+    assertPass();
+    window.history.replaceState(null, "", "/live/channel");
+    assertBlock();
+    h.container.id = "renamed-container";
+    h.root.id = "renamed-wrapper";
+    assertBlock();
+    h.video.remove();
+    assertPass();
+    h.root.prepend(h.video);
+    assertBlock();
+    h.info.adVideoContainer = h.root;
+    assertPass();
+    h.info.adVideoContainer = h.container;
+    h.root.remove();
+    assertPass();
+    window.document.body.append(h.root);
+    assertBlock();
+    const replacement = window.document.createElement("video");
+    h.video.replaceWith(replacement);
+    assertPass();
+    h.info.contentVideo = replacement;
+    assertBlock();
+    window.history.replaceState(null, "", "/video/123");
+    assertPass();
+    window.history.replaceState(null, "", "/live/next-channel");
+    assertBlock();
+    setEnabled(window, false);
+    assertPass();
+    setEnabled(window, true);
+    assertPass();
+    assert.equal(
+        JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status")).reloadRequired,
+        true
+    );
+});
+
+test("live schedule filtering preserves unknown entries, mismatched managers and native failures", (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    const h = createScheduleHarness(window);
+    const map = new window.WeakMap();
+    map.set(h.container, h.manager);
+    for (const input of [
+        null,
+        {},
+        { adBreaks: null },
+        liveSchedule("other-service"),
+        liveSchedule("w_live_chzzk_naver_va_new"),
+    ]) {
+        h.manager.loadWithAdSchedule(input);
+        assert.equal(h.calls.at(-1).schedule, input);
+    }
+    const unknown = liveSchedule("other-service").adBreaks[0];
+    const empty = { ...liveSchedule().adBreaks[0], adSources: [] };
+    const malformed = { ...liveSchedule().adBreaks[0], adSources: null };
+    const input = { ...liveSchedule(), adBreaks: [unknown, empty, malformed, ...liveSchedule().adBreaks] };
+    h.manager.loadWithAdSchedule(input);
+    const output = h.calls.at(-1).schedule;
+    assert.equal(output.adBreaks[0], unknown);
+    assert.equal(output.adBreaks[1], empty);
+    assert.equal(output.adBreaks[2], malformed);
+    assert.equal(output.adBreaks[3].adSources.length, 0);
+    h.manager.loadWithAdSchedule.call({}, input);
+    assert.equal(h.calls.at(-1).schedule, input, "borrowed methods retain native receiver behavior");
+    h.manager.getAdDisplayContainerInfo = () => {
+        throw new Error("unknown SDK state");
+    };
+    h.manager.loadWithAdSchedule(input);
+    assert.equal(h.calls.at(-1).schedule, input, "inspection failure must not stop native loading");
+
+    const other = createScheduleHarness(window);
+    const original = other.manager.loadWithAdSchedule;
+    map.set(h.container, other.manager);
+    assert.equal(other.manager.loadWithAdSchedule, original);
+    Object.freeze(other.manager);
+    assert.equal(map.set(other.container, other.manager), map);
+    assert.equal(other.manager.loadWithAdSchedule, original);
+
+    const failing = createScheduleHarness(window);
+    const error = new Error("native load failure");
+    failing.manager.loadWithAdSchedule = () => {
+        throw error;
+    };
+    map.set(failing.container, failing.manager);
+    assert.throws(
+        () => failing.manager.loadWithAdSchedule(liveSchedule()),
+        (value) => value === error
+    );
 });
 
 test("WeakMap guard preserves unrelated registrations, native errors and later wrappers", (t) => {

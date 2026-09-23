@@ -1,7 +1,7 @@
 /**
  * 통합 팝업 제거 옵션의 커넥터 설치 안내 닫기. 측정한 안내의 '설치없이 일반 화질 시청'만 선택한다.
  * isolated world. 설정이 로드된 뒤 라이브에서 동작하며 설치·재생 버튼이나 메타데이터는 다루지 않는다.
- * 전역 감시는 추가/제거된 하위 트리만 확인하고, 안내 내부 변경은 최대 4개의 좁은 observer로 관찰한다.
+ * 전역 감시는 추가/제거된 하위 트리만 확인하고, 최대 4개의 안내와 조상 표시 속성만 관찰한다.
  */
 (() => {
     const BACKDROP = '[class^="_dimmed_"], [class*=" _dimmed_"]';
@@ -11,8 +11,13 @@
     const MESSAGE = "고화질시청을위해서는네이버라이브스트리밍커넥터가필요합니다.";
     const DECLINE = "설치없이일반화질시청";
     const INSTALL = "설치하고고화질시청";
-    const { bindFeatureOptions, createMutationObserverSync, normalizeCompact, startPageChangeDetection } =
-        BetterChzzk.utils;
+    const {
+        bindFeatureOptions,
+        createMutationObserverSync,
+        normalizeCompact,
+        startPageChangeDetection,
+        hasNativeHideMutation,
+    } = BetterChzzk.utils;
     const entries = new Map();
     let options = null;
     let observer = null;
@@ -40,7 +45,7 @@
         entries.delete(root);
     }
 
-    function rendered(root) {
+    function shown(root) {
         if (!root.isConnected) return false;
         for (let node = root; node instanceof HTMLElement; node = node.parentElement) {
             if (node.hidden || node.getAttribute("aria-hidden") === "true") return false;
@@ -48,14 +53,34 @@
             if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse")
                 return false;
         }
+        return true;
+    }
+
+    function rendered(root) {
         const rect = root.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
+        return shown(root) && rect.width > 0 && rect.height > 0;
+    }
+
+    function getDeclineButton(root) {
+        if (!root.matches(BACKDROP) || !root.parentElement?.matches(PLAYER)) return null;
+        const layers = Array.from(root.children).filter((child) => child.matches(LAYER));
+        const layer = layers.length === 1 ? layers[0] : null;
+        const buttons = Array.from(layer?.querySelectorAll("button") || []);
+        const button = buttons.find((item) => normalizeCompact(item.textContent) === DECLINE);
+        return button &&
+            buttons.length === 2 &&
+            buttons.every((item) => item.closest(BACKDROP) === root) &&
+            buttons.filter((item) => normalizeCompact(item.textContent) === DECLINE).length === 1 &&
+            buttons.filter((item) => normalizeCompact(item.textContent) === INSTALL).length === 1 &&
+            Array.from(layer.querySelectorAll("p")).some((item) => normalizeCompact(item.textContent) === MESSAGE)
+            ? button
+            : null;
     }
 
     function inspect(entry) {
         if (!running || !enabled() || route !== location.pathname) return;
         const { root, parent } = entry;
-        if (!root.isConnected || root.parentElement !== parent || !parent.matches(PLAYER) || !root.matches(BACKDROP)) {
+        if (!root.isConnected || root.parentElement !== parent) {
             drop(root);
             return;
         }
@@ -64,23 +89,14 @@
             entry.button = null;
             return;
         }
-        const layers = Array.from(root.children).filter((child) => child.matches(LAYER));
-        const layer = layers.length === 1 ? layers[0] : null;
-        const buttons = Array.from(layer?.querySelectorAll("button") || []);
-        const button = buttons.find((item) => normalizeCompact(item.textContent) === DECLINE);
-        const valid =
-            button &&
-            buttons.length === 2 &&
-            buttons.filter((item) => normalizeCompact(item.textContent) === DECLINE).length === 1 &&
-            buttons.filter((item) => normalizeCompact(item.textContent) === INSTALL).length === 1 &&
-            Array.from(layer.querySelectorAll("p")).some((item) => normalizeCompact(item.textContent) === MESSAGE);
-        if (!valid) {
+        const button = getDeclineButton(root);
+        if (!button) {
             entry.handled = false;
             entry.button = null;
             return;
         }
         if (entry.handled && entry.button === button) return;
-        if (button.disabled || button.getAttribute("aria-disabled") === "true") return;
+        if (button.disabled || button.getAttribute("aria-disabled") === "true" || !rendered(button)) return;
         entry.handled = true;
         entry.button = button;
         attempts++;
@@ -98,17 +114,28 @@
             !running ||
             !enabled() ||
             !(root instanceof HTMLElement) ||
+            !root.isConnected ||
             !root.matches(BACKDROP) ||
-            !root.parentElement?.matches(PLAYER)
+            !(root.parentElement?.matches(PLAYER) || Array.from(root.children).some((child) => child.matches(LAYER)))
         )
             return;
         if (entries.has(root)) {
             inspect(entries.get(root));
             return;
         }
-        if (entries.size >= 4) return;
+        if (entries.size >= 4) {
+            // A complete measured guide takes priority over incomplete candidates, even while disabled.
+            if (!getDeclineButton(root)) return;
+            const invalid = Array.from(entries.keys()).find((candidate) => !getDeclineButton(candidate));
+            if (!invalid) return;
+            drop(invalid);
+        }
         const entry = { root, parent: root.parentElement, observer: null, button: null, handled: false };
         entry.observer = new MutationObserver((mutations) => {
+            if (hasNativeHideMutation(mutations, root)) {
+                entry.handled = false;
+                entry.button = null;
+            }
             if (
                 entry.button &&
                 mutations.some((mutation) =>
@@ -126,12 +153,16 @@
             subtree: true,
             characterData: true,
             attributes: true,
+            attributeOldValue: true,
             attributeFilter: ["class", "style", "hidden", "aria-hidden", "disabled", "aria-disabled"],
         });
-        entry.observer.observe(entry.parent, {
-            attributes: true,
-            attributeFilter: ["class", "style", "hidden", "aria-hidden"],
-        });
+        for (let ancestor = entry.parent; ancestor; ancestor = ancestor.parentElement) {
+            entry.observer.observe(ancestor, {
+                attributes: true,
+                attributeOldValue: true,
+                attributeFilter: ["class", "style", "hidden", "aria-hidden"],
+            });
+        }
         inspect(entry);
     }
 

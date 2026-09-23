@@ -16,8 +16,9 @@
         onReady,
         startPageChangeDetection,
         injectStyleOnce,
+        hasNativeHideMutation,
     } = BetterChzzk.utils;
-    let options = BetterChzzkSettings.normalizeOptions();
+    let options = null;
     let observer = null;
     let removeRouteListener = null;
     let lastUrl = location.href;
@@ -54,7 +55,10 @@
         if (!restoreFrame) {
             restoreFrame = requestAnimationFrame(() => {
                 restoreFrame = 0;
+                const closingPopups = Array.from(concealed.keys());
                 restoreAllConcealment();
+                // Native CSS hiding can be masked by our temporary visibility rule.
+                for (const popup of closingPopups) if (!isShown(popup)) attempts.delete(popup);
             });
         }
     }
@@ -89,7 +93,7 @@
     }
 
     function closeAdsPopups() {
-        if (!options.adblockPopupEnabled) return;
+        if (!options?.adblockPopupEnabled) return;
         const popups = new Set(document.querySelectorAll(POPUP));
         for (const popup of attempts.keys()) {
             if (!popups.has(popup)) attempts.delete(popup);
@@ -109,13 +113,20 @@
             }
             // CHZZK's modal close control uses aria-label from popup.close.
             // Generic confirmation, installation and navigation controls are not close controls.
-            const buttons = Array.from(popup.querySelectorAll("button[aria-label]")).filter(
-                (button) =>
-                    button.closest(POPUP) === popup && normalizeCompact(button.getAttribute("aria-label")) === "닫기"
-            );
+            const buttons = Array.from(popup.querySelectorAll("button[aria-label]")).filter((button) => {
+                const rect = button.getBoundingClientRect();
+                return (
+                    button.closest(POPUP) === popup &&
+                    normalizeCompact(button.getAttribute("aria-label")) === "닫기" &&
+                    !button.disabled &&
+                    button.getAttribute("aria-disabled") !== "true" &&
+                    isShown(button) &&
+                    rect.width > 0 &&
+                    rect.height > 0
+                );
+            });
             if (buttons.length !== 1) continue;
             const button = buttons[0];
-            if (button.disabled || button.getAttribute("aria-disabled") === "true" || !isShown(button)) continue;
             const text = normalizeCompact(popup.textContent || "");
             const previous = attempts.get(popup);
             if (previous?.button === button && previous.text === text) continue;
@@ -151,6 +162,7 @@
     }
 
     function syncRuntimeFromOptions() {
+        if (!options) return;
         if (!options.adblockPopupEnabled) {
             restoreAllConcealment();
             observer?.disconnectAll?.();
@@ -167,6 +179,7 @@
             observer = createMutationObserverSync({
                 options: {
                     attributes: true,
+                    attributeOldValue: true,
                     attributeFilter: [
                         "aria-modal",
                         "class",
@@ -183,6 +196,12 @@
                     subtree: true,
                 },
                 onMutations(mutations) {
+                    for (const popup of attempts.keys()) {
+                        if (hasNativeHideMutation(mutations, popup)) {
+                            restoreConcealment(popup);
+                            attempts.delete(popup);
+                        }
+                    }
                     // Removal also signals reuse when React reinserts the same node within one batch.
                     for (const mutation of mutations) {
                         for (const removed of mutation.removedNodes || []) {

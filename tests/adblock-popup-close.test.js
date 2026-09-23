@@ -6,13 +6,14 @@ const path = require("node:path");
 const read = (file) => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-function fixture(t) {
+function fixture(t, { defaultEnabled = false } = {}) {
     const dom = new JSDOM("<!doctype html><body></body>", {
         url: "https://chzzk.naver.com/live/test",
         runScripts: "outside-only",
         pretendToBeVisual: true,
     });
     const w = dom.window;
+    w.HTMLButtonElement.prototype.getBoundingClientRect = () => ({ width: 80, height: 30 });
     const frames = new Map();
     let frameId = 0;
     w.requestAnimationFrame = (callback) => {
@@ -22,7 +23,7 @@ function fixture(t) {
     w.cancelAnimationFrame = (id) => frames.delete(id);
     const listeners = new Set();
     w.BetterChzzkSettings = {
-        normalizeOptions: () => ({ adblockPopupEnabled: false }),
+        normalizeOptions: () => ({ adblockPopupEnabled: defaultEnabled }),
         getOptions(callback) {
             listeners.add(callback);
         },
@@ -58,6 +59,115 @@ function fixture(t) {
     };
     return { w, options, popup, frame };
 }
+
+test("saved options load before any default-enabled popup action", async (t) => {
+    const f = fixture(t, { defaultEnabled: true });
+    const p = f.popup();
+    await flush();
+    assert.equal(p.clicks(), 0);
+    assert.equal(p.el.hasAttribute("data-betterchzzk-adblock-popup-closing"), false);
+    f.options(false);
+    await flush();
+    assert.equal(p.clicks(), 0);
+    f.options(true);
+    assert.equal(p.clicks(), 1);
+});
+
+const visibilityCycles = {
+    hidden: (el, hidden) => {
+        el.hidden = hidden;
+    },
+    aria: (el, hidden) => {
+        el.setAttribute("aria-hidden", String(hidden));
+    },
+    display: (el, hidden) => {
+        el.style.display = hidden ? "none" : "";
+    },
+    visibility: (el, hidden) => {
+        el.style.visibility = hidden ? "hidden" : "";
+    },
+};
+
+for (const [name, hide] of Object.entries(visibilityCycles)) {
+    test(`native ${name} close during concealment permits the next display cycle`, async (t) => {
+        const f = fixture(t);
+        const p = f.popup({ close: false });
+        p.button.addEventListener("click", () => hide(p.el, true));
+        f.options(true);
+        await flush();
+        f.frame();
+        hide(p.el, false);
+        await flush();
+        assert.equal(p.clicks(), 2);
+        f.frame();
+        await flush();
+        assert.equal(p.clicks(), 2);
+    });
+
+    test(`batched ancestor ${name} hide and reveal permits only one new attempt`, async (t) => {
+        const f = fixture(t);
+        const p = f.popup({ close: false });
+        const ancestor = f.w.document.createElement("section");
+        f.w.document.body.append(ancestor);
+        ancestor.append(p.el);
+        f.options(true);
+        await flush();
+        // Keep the extension's concealment active during the native display cycle.
+        hide(ancestor, true);
+        hide(ancestor, false);
+        await flush();
+        f.frame();
+        await flush();
+        assert.equal(p.clicks(), 2);
+        p.el.className = "unrelated-visible-change";
+        await flush();
+        assert.equal(p.clicks(), 2);
+    });
+}
+
+test("only visible enabled close controls count toward ambiguity", async (t) => {
+    const f = fixture(t);
+    const p = f.popup();
+    for (const setup of [
+        (button) => {
+            button.hidden = true;
+        },
+        (button) => {
+            button.disabled = true;
+        },
+        (button) => {
+            button.style.display = "none";
+        },
+        (button) => {
+            button.getBoundingClientRect = () => ({ width: 0, height: 0 });
+        },
+    ]) {
+        const copy = p.button.cloneNode(true);
+        setup(copy);
+        copy.addEventListener("click", () => assert.fail("inactive close control clicked"));
+        p.el.append(copy);
+    }
+    f.options(true);
+    await flush();
+    assert.equal(p.clicks(), 1);
+});
+
+test("native class hiding during concealment resets the attempt after the frame", async (t) => {
+    const f = fixture(t);
+    const p = f.popup({ close: false });
+    const style = f.w.document.createElement("style");
+    style.textContent = ".native-closed { visibility: hidden; }";
+    f.w.document.head.append(style);
+    p.button.addEventListener("click", () => {
+        p.el.className = "native-closed";
+    });
+    f.options(true);
+    await flush();
+    f.frame();
+    p.el.className = "";
+    await flush();
+    assert.equal(p.clicks(), 2);
+});
 
 test("adblock notice closes through its handler so modal state releases native shortcuts", async (t) => {
     const f = fixture(t);
