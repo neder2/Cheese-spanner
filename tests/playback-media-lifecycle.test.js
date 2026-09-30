@@ -3,10 +3,13 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const { JSDOM, VirtualConsole } = require("jsdom");
+const { waitForCondition: waitForSharedCondition } = require("./helpers/wait-for-condition.js");
+const { createAudioCompressorWorker } = require("./helpers/audio-compressor-worker.js");
 
 const repoRoot = path.join(__dirname, "..");
 const AUDIO_COMPRESSOR_ACTIVE_STORAGE_KEY = "betterchzzk:audio-compressor-active";
 const AUDIO_COMPRESSOR_TABS_STORAGE_KEY = "betterchzzk:audio-compressor-tabs";
+const AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY = "betterchzzk:audio-compressor-preference";
 
 function readRepoFile(...parts) {
     return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
@@ -86,16 +89,12 @@ function createPageDom(html, url, chrome, tabId = ++chrome.testState.nextTabId) 
         runtime: {
             ...chrome.runtime,
             sendMessage(message, callback) {
-                assert.equal(message.type, "betterchzzk:audio-compressor-state");
-                const states = chrome.storage.local.data[AUDIO_COMPRESSOR_TABS_STORAGE_KEY] || [];
-                let state = states.find((saved) => saved.tabId === tabId) || { active: false, volume: 1 };
-                if (message.kind === "set") {
-                    state = { tabId, ...message.state };
-                    chrome.storage.local.data[AUDIO_COMPRESSOR_TABS_STORAGE_KEY] = states
-                        .filter((saved) => saved.tabId !== tabId)
-                        .concat(state);
-                }
-                setTimeout(() => callback({ ok: true, state }), 0);
+                chrome.testState.compressorWorker ||= createAudioCompressorWorker(chrome);
+                chrome.testState.compressorWorker.sendMessage(
+                    message,
+                    { id: chrome.runtime.id, tab: { id: tabId }, frameId: 0, url: dom.window.location.href },
+                    callback
+                );
             },
         },
     };
@@ -119,13 +118,12 @@ function waitForAsyncCallbacks(delayMs = 30) {
     return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
-async function waitForCondition(predicate, { timeoutMs = 1500, intervalMs = 20 } = {}) {
-    const startedAt = Date.now();
-    while (Date.now() - startedAt <= timeoutMs) {
-        if (predicate()) return;
-        await waitForAsyncCallbacks(intervalMs);
-    }
-    assert.fail("Timed out waiting for playback lifecycle condition");
+function waitForCondition(predicate, { timeoutMs = 1500, intervalMs = 20 } = {}) {
+    return waitForSharedCondition(predicate, {
+        timeoutMs,
+        intervalMs,
+        message: "Timed out waiting for playback lifecycle condition",
+    });
 }
 
 function makeVisibleVideo(video) {
@@ -162,11 +160,20 @@ function disableOptions(chrome, changes) {
 async function createCompressorPage(
     t,
     chrome,
-    { channel = "test-channel", tabId, initialState = null, storageUnavailable = false } = {}
+    {
+        channel = "test-channel",
+        initialPath = `/live/${channel}`,
+        tabId,
+        responseState = null,
+        storageUnavailable = false,
+        waitForControl = true,
+        nativeVolume = 1,
+        nativeMuted = false,
+    } = {}
 ) {
     const dom = createPageDom(
         '<body><div class="pzp-pc"><video id="video"></video><div class="pzp-pc__volume-control" id="volume"><button class="pzp-pc__volume-button" id="mute" type="button"></button></div></div></body>',
-        `https://chzzk.naver.com/live/${channel}`,
+        `https://chzzk.naver.com${initialPath}`,
         chrome,
         tabId
     );
@@ -178,18 +185,29 @@ async function createCompressorPage(
             observers.push(this);
         }
     };
-    t.after(() => {
+    let closed = false;
+    const close = () => {
+        if (closed) return;
+        closed = true;
         dom.window.dispatchEvent(new dom.window.Event("pagehide"));
         // Closing JSDOM removes its document; stop observers before they can inspect that removal.
         for (const observer of observers) observer.disconnectAll ? observer.disconnectAll() : observer.disconnect();
         dom.window.close();
-    });
-    if (initialState !== null)
-        chrome.storage.local.data[AUDIO_COMPRESSOR_TABS_STORAGE_KEY] = [{ tabId: dom.testTabId, ...initialState }];
+    };
+    t.after(close);
+    if (responseState !== null) {
+        const sendMessage = dom.window.chrome.runtime.sendMessage;
+        dom.window.chrome.runtime.sendMessage = (message, callback) =>
+            sendMessage(message, (response) =>
+                callback(message.kind === "get" ? { ok: true, state: responseState } : response)
+            );
+    }
     if (storageUnavailable)
         dom.window.chrome.runtime.sendMessage = (_message, callback) => setTimeout(() => callback({ ok: false }), 0);
     const { document } = dom.window;
     const video = document.getElementById("video");
+    video.volume = nativeVolume;
+    video.muted = nativeMuted;
     const contexts = [];
     class AudioNode {
         constructor(name) {
@@ -258,12 +276,13 @@ async function createCompressorPage(
     evalRepoScript(dom, "shared", "volumeControls.js");
     evalRepoScript(dom, "features", "volumeTooltip.js");
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
-    await waitForCondition(() => document.getElementById("betterchzzk-audio-compressor"));
+    if (waitForControl) await waitForCondition(() => document.getElementById("betterchzzk-audio-compressor"));
     return {
         dom,
         document,
         video,
         contexts,
+        close,
         button: () => document.getElementById("betterchzzk-audio-compressor"),
         tabId: dom.testTabId,
     };
@@ -811,6 +830,10 @@ test("audio compressor preserves its graph across SPA mini-player reparenting, r
         true
     );
     const context = contexts[0];
+    const worker = chrome.testState.compressorWorker;
+    const passiveWriteCount = worker.writes.length;
+    const passiveMessageCount = worker.messages.filter(({ message }) => message.kind === "set").length;
+    const explicitPreference = structuredClone(chrome.storage.local.data[AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY]);
 
     disableOptions(chrome, { audioCompressorEnabled: { oldValue: true, newValue: false } });
     await waitForAsyncCallbacks();
@@ -932,6 +955,10 @@ test("audio compressor preserves its graph across SPA mini-player reparenting, r
         assert.equal(context.state, "running", "a fulfilled Promise alone is not proof of resumed audio");
         await waitForAsyncCallbacks();
     });
+
+    assert.equal(worker.writes.length, passiveWriteCount, "lifecycle and graph recovery never store a choice");
+    assert.equal(worker.messages.filter(({ message }) => message.kind === "set").length, passiveMessageCount);
+    assert.deepEqual(chrome.storage.local.data[AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY], explicitPreference);
 
     returnedButton.click();
     await waitForAsyncCallbacks();
@@ -1132,7 +1159,7 @@ test("audio compressor state stays independent across tabs and ignores the old s
     dispatchStorageChange(chrome, { [AUDIO_COMPRESSOR_ACTIVE_STORAGE_KEY]: { newValue: true } }, "local");
     assert.equal(b.button().getAttribute("aria-pressed"), "false");
     const c = await createCompressorPage(t, chrome, { channel: "channel-c" });
-    assert.equal(c.button().getAttribute("aria-pressed"), "false");
+    assert.equal(c.button().getAttribute("aria-pressed"), "true");
     const reloadedA = await createCompressorPage(t, chrome, { channel: "channel-a", tabId: a.tabId });
     assert.equal(reloadedA.button().getAttribute("aria-pressed"), "true");
     assert.equal(a.video.volume, 0.2);
@@ -1144,6 +1171,298 @@ test("audio compressor state stays independent across tabs and ignores the old s
         true,
         "tab choices never overwrite the old shared preference"
     );
+});
+
+test("browse-first compressor tabs inherit the choice at their first playback entry", async (t) => {
+    const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true } });
+    const worker = createAudioCompressorWorker(chrome);
+    chrome.testState.compressorWorker = worker;
+    const browse = await createCompressorPage(t, chrome, { initialPath: "/lives", waitForControl: false });
+    await waitForAsyncCallbacks();
+    await worker.idle();
+    assert.equal(browse.button(), null);
+    const playing = await createCompressorPage(t, chrome, { channel: "already-playing" });
+    playing.button().click();
+    const slider = playing.document.getElementById("betterchzzk-audio-compressor-volume");
+    slider.value = "57";
+    slider.dispatchEvent(new playing.dom.window.Event("input", { bubbles: true }));
+    await worker.idle();
+
+    browse.dom.window.history.pushState({}, "", "/live/from-list");
+    browse.dom.window.dispatchEvent(new browse.dom.window.Event("betterchzzk:routechange"));
+    await waitForCondition(() => browse.button());
+    assert.equal(browse.button().getAttribute("aria-pressed"), "true");
+    assert.equal(browse.document.getElementById("betterchzzk-audio-compressor-volume").value, "57");
+    assert.equal(browse.contexts[0].gain.gain.value, 0.57);
+
+    playing.button().click();
+    await worker.idle();
+    browse.dom.window.history.pushState({}, "", "/lives");
+    browse.dom.window.dispatchEvent(new browse.dom.window.Event("betterchzzk:routechange"));
+    assert.equal(browse.button(), null);
+    browse.dom.window.history.pushState({}, "", "/live/another-channel");
+    browse.dom.window.dispatchEvent(new browse.dom.window.Event("betterchzzk:routechange"));
+    await waitForCondition(() => browse.button());
+    assert.equal(
+        browse.button().getAttribute("aria-pressed"),
+        "true",
+        "a tab that has entered playback retains its snapshot"
+    );
+    assert.equal(browse.document.getElementById("betterchzzk-audio-compressor-volume").value, "57");
+});
+
+test("non-playback compressor pages do not register a snapshot before entering playback", async (t) => {
+    for (const initialPath of ["/", "/lives", "/category/GAME/test/lives"]) {
+        const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true } });
+        const worker = createAudioCompressorWorker(chrome);
+        chrome.testState.compressorWorker = worker;
+        const page = await createCompressorPage(t, chrome, { initialPath, waitForControl: false });
+        await waitForAsyncCallbacks();
+        await worker.idle();
+        assert.equal(worker.messages.length, 0, initialPath);
+        assert.equal(chrome.storage.local.data[AUDIO_COMPRESSOR_TABS_STORAGE_KEY], undefined, initialPath);
+        assert.equal(page.button(), null);
+        assert.equal(page.contexts.length, 0);
+    }
+});
+
+test("first playback restoration is shared across route syncs and cannot revive a closed document", async (t) => {
+    const chrome = createFakeChrome({
+        sync: { audioCompressorEnabled: true },
+        local: { [AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY]: { active: true, volume: 0.57 } },
+    });
+    const worker = createAudioCompressorWorker(chrome);
+    chrome.testState.compressorWorker = worker;
+    const page = await createCompressorPage(t, chrome, { initialPath: "/lives", waitForControl: false });
+    await waitForAsyncCallbacks();
+    const gate = worker.pauseNextGet();
+    page.dom.window.history.pushState({}, "", "/live/first-entry");
+    page.dom.window.dispatchEvent(new page.dom.window.Event("betterchzzk:routechange"));
+    await gate.started;
+    for (let index = 0; index < 3; index++) {
+        page.dom.window.dispatchEvent(new page.dom.window.Event("betterchzzk:routechange"));
+    }
+    assert.equal(worker.messages.length, 1);
+    assert.equal(page.button(), null);
+    page.close();
+    gate.release();
+    await worker.idle();
+    await waitForAsyncCallbacks();
+    assert.equal(worker.messages.length, 1);
+    assert.equal(page.contexts.length, 0, "a late restore cannot create an audio graph after pagehide");
+});
+
+test("new compressor pages inherit the last explicit choice while registered tabs retain their snapshots", async (t) => {
+    const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true } });
+    const a = await createCompressorPage(t, chrome, { channel: "channel-a", nativeVolume: 0.2, nativeMuted: true });
+    const b = await createCompressorPage(t, chrome, { channel: "channel-b", nativeVolume: 0.8 });
+    const worker = chrome.testState.compressorWorker;
+    a.button().click();
+    const slider = a.document.getElementById("betterchzzk-audio-compressor-volume");
+    slider.value = "30";
+    slider.dispatchEvent(new a.dom.window.Event("input", { bubbles: true }));
+    await worker.idle();
+
+    const c = await createCompressorPage(t, chrome, { channel: "channel-c", nativeVolume: 0.4, nativeMuted: true });
+    assert.equal(c.button().getAttribute("aria-pressed"), "true");
+    assert.equal(c.document.getElementById("betterchzzk-audio-compressor-volume").value, "30");
+    assert.equal(b.button().getAttribute("aria-pressed"), "false");
+    assert.equal(b.document.getElementById("betterchzzk-audio-compressor-volume").value, "100");
+    assert.equal(c.contexts[0].gain.gain.value, 0.3);
+    assert.deepEqual(chrome.storage.local.data[AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY], { active: true, volume: 0.3 });
+    assert.deepEqual(
+        chrome.storage.local.data[AUDIO_COMPRESSOR_TABS_STORAGE_KEY].find((state) => state.tabId === c.tabId),
+        { tabId: c.tabId, active: true, volume: 0.3 }
+    );
+
+    a.button().click();
+    slider.value = "80";
+    slider.dispatchEvent(new a.dom.window.Event("input", { bubbles: true }));
+    await worker.idle();
+    c.close();
+    const reloadedC = await createCompressorPage(t, chrome, { tabId: c.tabId });
+    const d = await createCompressorPage(t, chrome, { channel: "channel-d" });
+    assert.equal(reloadedC.button().getAttribute("aria-pressed"), "true");
+    assert.equal(reloadedC.document.getElementById("betterchzzk-audio-compressor-volume").value, "30");
+    assert.equal(d.button().getAttribute("aria-pressed"), "false");
+    assert.equal(d.document.getElementById("betterchzzk-audio-compressor-volume").value, "80");
+    assert.equal(d.contexts.length, 0, "inherited OFF creates no audio graph");
+    assert.deepEqual(chrome.storage.local.data[AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY], {
+        active: false,
+        volume: 0.8,
+    });
+    dispatchStorageChange(
+        chrome,
+        { [AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY]: { newValue: { active: false, volume: 0.8 } } },
+        "local"
+    );
+    assert.equal(reloadedC.button().getAttribute("aria-pressed"), "true", "local changes do not synchronize open tabs");
+    assert.equal(a.video.volume, 0.2);
+    assert.equal(a.video.muted, true);
+    assert.equal(b.video.volume, 0.8);
+    assert.equal(b.video.muted, false);
+    assert.equal(reloadedC.video.volume, 1);
+    assert.equal(reloadedC.video.muted, false);
+});
+
+test("compressor page choices inherit OFF, zero and full output through tab close and worker/browser restart", async (t) => {
+    const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true } });
+    const writer = await createCompressorPage(t, chrome);
+    const inherited = [];
+    const slider = writer.document.getElementById("betterchzzk-audio-compressor-volume");
+    for (const [active, percent] of [
+        [false, 0],
+        [true, 0],
+        [false, 100],
+        [true, 100],
+    ]) {
+        if ((writer.button().getAttribute("aria-pressed") === "true") !== active) writer.button().click();
+        slider.value = String(percent);
+        slider.dispatchEvent(new writer.dom.window.Event("input", { bubbles: true }));
+        await chrome.testState.compressorWorker.idle();
+        const page = await createCompressorPage(t, chrome, { nativeVolume: 0.35, nativeMuted: true });
+        inherited.push(page);
+        assert.equal(page.button().getAttribute("aria-pressed"), String(active));
+        assert.equal(page.document.getElementById("betterchzzk-audio-compressor-volume").value, String(percent));
+        assert.equal(page.contexts.length, Number(active));
+        if (active) assert.equal(page.contexts[0].gain.gain.value, percent / 100);
+        assert.equal(page.video.volume, 0.35);
+        assert.equal(page.video.muted, true);
+    }
+    slider.value = "30";
+    slider.dispatchEvent(new writer.dom.window.Event("input", { bubbles: true }));
+    await chrome.testState.compressorWorker.idle();
+    writer.close();
+    chrome.testState.compressorWorker.closeTab(writer.tabId);
+    await chrome.testState.compressorWorker.idle();
+    assert.equal(
+        chrome.storage.local.data[AUDIO_COMPRESSOR_TABS_STORAGE_KEY].some((state) => state.tabId === writer.tabId),
+        false
+    );
+    assert.deepEqual(chrome.storage.local.data[AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY], { active: true, volume: 0.3 });
+
+    chrome.testState.compressorWorker = createAudioCompressorWorker(chrome);
+    const afterWorkerRestart = await createCompressorPage(t, chrome);
+    assert.equal(afterWorkerRestart.button().getAttribute("aria-pressed"), "true");
+    assert.equal(afterWorkerRestart.document.getElementById("betterchzzk-audio-compressor-volume").value, "30");
+    const existing = await createCompressorPage(t, chrome, { tabId: inherited[0].tabId });
+    assert.equal(existing.button().getAttribute("aria-pressed"), "false");
+    assert.equal(existing.document.getElementById("betterchzzk-audio-compressor-volume").value, "0");
+
+    for (const page of [...inherited, afterWorkerRestart, existing]) page.close();
+    chrome.testState.compressorWorker = createAudioCompressorWorker(chrome);
+    chrome.testState.compressorWorker.startup();
+    await chrome.testState.compressorWorker.idle();
+    assert.deepEqual(chrome.storage.local.data[AUDIO_COMPRESSOR_TABS_STORAGE_KEY], []);
+    assert.equal(
+        chrome.storage.local.data["betterchzzk:audio-compressor-cleanup-pending"],
+        false,
+        "the session-less fixture completes the local startup guard"
+    );
+    const afterBrowserRestart = await createCompressorPage(t, chrome, { tabId: inherited[0].tabId });
+    assert.equal(afterBrowserRestart.button().getAttribute("aria-pressed"), "true");
+    assert.equal(afterBrowserRestart.document.getElementById("betterchzzk-audio-compressor-volume").value, "30");
+});
+
+test("external compressors and page control remounts preserve the last explicit preference", async (t) => {
+    const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true } });
+    const page = await createCompressorPage(t, chrome, { nativeVolume: 0.45, nativeMuted: true });
+    page.button().click();
+    const slider = page.document.getElementById("betterchzzk-audio-compressor-volume");
+    slider.value = "30";
+    slider.dispatchEvent(new page.dom.window.Event("input", { bubbles: true }));
+    const worker = chrome.testState.compressorWorker;
+    await worker.idle();
+    const saved = structuredClone(chrome.storage.local.data);
+    const messageCount = worker.messages.length;
+    const writeCount = worker.writes.length;
+    const external = page.document.createElement("button");
+    external.className = "knife-comp";
+    page.document.getElementById("volume").append(external);
+    await waitForCondition(() => page.button() === null);
+    assert.equal(page.contexts[0].gain.gain.value, 1);
+    external.remove();
+    await waitForCondition(() => page.button()?.getAttribute("aria-pressed") === "true");
+    assert.equal(page.document.getElementById("betterchzzk-audio-compressor-volume").value, "30");
+    assert.equal(page.contexts[0].gain.gain.value, 0.3);
+    const control = page.document.getElementById("betterchzzk-audio-compressor-control");
+    control.remove();
+    await waitForCondition(() => page.document.getElementById("betterchzzk-audio-compressor-control"));
+    disableOptions(chrome, { audioCompressorEnabled: { newValue: false } });
+    disableOptions(chrome, { audioCompressorEnabled: { newValue: true } });
+    assert.deepEqual(chrome.storage.local.data, saved);
+    assert.equal(worker.messages.length, messageCount);
+    assert.equal(worker.writes.length, writeCount);
+    assert.equal(page.video.volume, 0.45);
+    assert.equal(page.video.muted, true);
+});
+
+test("compressor controls await the initial worker response and inherit its tab snapshot", async (t) => {
+    const chrome = createFakeChrome({
+        sync: { audioCompressorEnabled: true },
+        local: { [AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY]: { active: true, volume: 0.3 } },
+    });
+    const worker = createAudioCompressorWorker(chrome);
+    chrome.testState.compressorWorker = worker;
+    const gate = worker.pauseNextGet();
+    const page = await createCompressorPage(t, chrome, { waitForControl: false, nativeVolume: 0.5, nativeMuted: true });
+    await gate.started;
+    disableOptions(chrome, { audioCompressorEnabled: { newValue: false } });
+    disableOptions(chrome, { audioCompressorEnabled: { newValue: true } });
+    page.dom.window.dispatchEvent(new page.dom.window.Event("betterchzzk:routechange"));
+    assert.equal(page.button(), null, "explicit compressor actions are unavailable until the initial state settles");
+    assert.equal(page.contexts.length, 0);
+    assert.equal(worker.messages.length, 1);
+    assert.equal(worker.messages[0].message.kind, "get");
+    gate.release();
+    await waitForCondition(() => page.button()?.getAttribute("aria-pressed") === "true");
+    assert.equal(page.document.getElementById("betterchzzk-audio-compressor-volume").value, "30");
+    assert.equal(page.video.volume, 0.5);
+    assert.equal(page.video.muted, true);
+    page.button().click();
+    await worker.idle();
+    assert.deepEqual(chrome.storage.local.data[AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY], {
+        active: false,
+        volume: 0.3,
+    });
+});
+
+test("failed compressor reads and writes leave direct page actions available without claiming persistence", async (t) => {
+    const preference = { active: false, volume: 0.8 };
+    const chrome = createFakeChrome({
+        sync: { audioCompressorEnabled: true },
+        local: { [AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY]: preference },
+    });
+    const worker = createAudioCompressorWorker(chrome);
+    chrome.testState.compressorWorker = worker;
+    worker.failNextGet();
+    const page = await createCompressorPage(t, chrome);
+    assert.equal(page.button().getAttribute("aria-pressed"), "false");
+    assert.equal(worker.writes.length, 0, "a failed read cannot register a fabricated default snapshot");
+    worker.failNextSet();
+    page.button().click();
+    await worker.idle();
+    assert.equal(page.button().getAttribute("aria-pressed"), "true");
+    assert.deepEqual(chrome.storage.local.data[AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY], preference);
+    assert.equal(worker.writes.length, 0);
+    const slider = page.document.getElementById("betterchzzk-audio-compressor-volume");
+    slider.value = "25";
+    slider.dispatchEvent(new page.dom.window.Event("input", { bubbles: true }));
+    await worker.idle();
+    disableOptions(chrome, { audioCompressorEnabled: { newValue: false } });
+    disableOptions(chrome, { audioCompressorEnabled: { newValue: true } });
+    assert.equal(page.button().getAttribute("aria-pressed"), "true");
+    assert.equal(page.document.getElementById("betterchzzk-audio-compressor-volume").value, "25");
+    assert.equal(page.contexts[0].gain.gain.value, 0.25);
+    assert.equal(
+        worker.messages.filter(({ message }) => message.kind === "get").length,
+        1,
+        "passive restoration never issues a late query that can undo direct actions"
+    );
+    assert.deepEqual(chrome.storage.local.data[AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY], {
+        active: true,
+        volume: 0.25,
+    });
 });
 
 test("compressor volume dimensions follow native fullscreen sizing and remounts", async (t) => {
@@ -1253,14 +1572,14 @@ test("audio compressor output survives tab reload, options and remounts without 
 
 test("audio compressor validates tab state and works when extension storage is unavailable", async (t) => {
     const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true } });
-    for (const [initialState, expectedVolume] of [
+    for (const [responseState, expectedVolume] of [
         [{ active: "true" }, "100"],
         [{ active: false, volume: -4 }, "0"],
         [{ volume: 4 }, "100"],
         [{ volume: 0.333 }, "33"],
         [{ volume: "0.5" }, "100"],
     ]) {
-        const page = await createCompressorPage(t, chrome, { initialState });
+        const page = await createCompressorPage(t, chrome, { responseState });
         assert.equal(page.button().getAttribute("aria-pressed"), "false");
         assert.equal(page.document.getElementById("betterchzzk-audio-compressor-volume").value, expectedVolume);
     }

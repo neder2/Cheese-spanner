@@ -30,7 +30,13 @@ function defineTracks(window) {
 }
 
 function assignAdSource(window) {
+    const host = window.document.createElement("div");
+    host.className = "chzzk_player";
+    const video = host.appendChild(window.document.createElement("video"));
+    window.document.body.append(host);
     const controller = {
+        videoSlot: video,
+        contentVideoElement: video,
         _attachSourceObject(value) {
             this.value = value;
         },
@@ -48,6 +54,8 @@ function assignAdSource(window) {
     });
     controller.srcObject = {
         setVideoScheduleInfo() {},
+        handshakeVersion() {},
+        initAd() {},
         _videoScheduleInfo: { adScheduleParam: { adScheduleId: "CHZZK_NDP_SCH" }, customParam: { svc: "chzzk_video" } },
     };
     return controller.value;

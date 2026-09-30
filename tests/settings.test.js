@@ -9,6 +9,7 @@ const settings = globalThis.BetterChzzkSettings;
 
 const expectedDefaults = {
     optionsTheme: "system",
+    updateGuideEnabled: true,
     autoQualityEnabled: true,
     autoQualityPreferred: "1080p",
     rewardAutoCollectEnabled: true,
@@ -59,6 +60,7 @@ const expectedDefaults = {
     liveWatchHistoryDonationEnabled: false,
     liveWatchHistoryMinMinutes: 1,
     vodCommentTabsEnabled: true,
+    chatResizeEnabled: true,
     chatTimestampEnabled: false,
     vodChatTimestampEnabled: false,
     chatWeeklyRankingHidden: false,
@@ -74,6 +76,7 @@ const expectedDefaults = {
     videoSearchCommentMaxVideos: 60,
     videoSearchCommentMaxPagesPerVideo: 1,
     categoryToolsEnabled: true,
+    globalLiveCountEnabled: false,
     titleTooltipEnabled: true,
     categoryToolsMaxMetadataPages: 12,
     categoryToolsHideGlobalTagSearch: true,
@@ -100,6 +103,7 @@ const expectedDefaults = {
     categoryToolsFollowerFetchMaxPerPass: 6,
     categoryToolsFollowerFetchConcurrency: 2,
     categoryToolsFollowerFetchDelayMs: 700,
+    sidebarResizeEnabled: true,
     sidebarCheeseFarmHidden: false,
     sidebarPopularCategoriesHidden: false,
     sidebarUpcomingScheduleHidden: false,
@@ -187,6 +191,7 @@ test("feature count keys are derived from feature toggles only", () => {
         "liveWatchHistoryChatEnabled",
         "liveWatchHistoryDonationEnabled",
         "vodCommentTabsEnabled",
+        "chatResizeEnabled",
         "chatTimestampEnabled",
         "vodChatTimestampEnabled",
         "chatWeeklyRankingHidden",
@@ -195,7 +200,9 @@ test("feature count keys are derived from feature toggles only", () => {
         "chatToolsModeratorBoxEnabled",
         "videoSearchEnabled",
         "categoryToolsEnabled",
+        "globalLiveCountEnabled",
         "titleTooltipEnabled",
+        "sidebarResizeEnabled",
         "sidebarCheeseFarmHidden",
         "sidebarPopularCategoriesHidden",
         "sidebarUpcomingScheduleHidden",
@@ -215,6 +222,21 @@ test("feature count keys are derived from feature toggles only", () => {
         "holdSpeedEnabled",
         "playbackSpeedShortcutsEnabled",
     ]);
+});
+
+test("panel resize defaults on for empty and legacy settings and keeps independent explicit opt-outs", () => {
+    for (const raw of [{}, { chatToolsEnabled: false, followingPinEnabled: false, vodCommentTabsEnabled: false }]) {
+        const normalized = settings.normalizeOptions(raw);
+        assert.equal(normalized.chatResizeEnabled, true);
+        assert.equal(normalized.sidebarResizeEnabled, true);
+    }
+    for (const chat of [false, true]) {
+        for (const sidebar of [false, true]) {
+            const normalized = settings.normalizeOptions({ chatResizeEnabled: chat, sidebarResizeEnabled: sidebar });
+            assert.equal(normalized.chatResizeEnabled, chat);
+            assert.equal(normalized.sidebarResizeEnabled, sidebar);
+        }
+    }
 });
 
 test("preferred quality accepts only supported choices and retains the existing default", () => {

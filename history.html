@@ -300,19 +300,92 @@
                 </section>
             </div>
             <details class="history-management">
-                <summary>기록 관리·삭제 안내</summary>
+                <summary>기록 백업·관리·삭제 안내</summary>
                 <div class="history-management-content">
+                    <section id="historyBackup" class="history-backup" aria-labelledby="historyBackupTitle">
+                        <h2 id="historyBackupTitle">시청 기록·내 채팅 백업</h2>
+                        <p id="historyBackupScope">
+                            화면의 기간·검색·선택과 관계없이 전체 기간의 시청 기록과 내 채팅을 JSON 파일로 저장해요.
+                            실시간·갱신 후원 기록은 모두 제외해요. 기록 수집을 꺼도 사용할 수 있어요.
+                        </p>
+                        <p id="historyBackupPrivacy">
+                            파일에는 시청 이력·채팅 본문·작성자 식별 정보가 암호화 없이 담겨요. 안전한 곳에 보관해
+                            주세요. 로그인이나 인터넷 조회 없이 이 기기에서 처리해요.
+                        </p>
+                        <div class="history-backup-actions">
+                            <button
+                                id="historyBackupExport"
+                                class="secondary-button"
+                                type="button"
+                                aria-describedby="historyBackupScope historyBackupPrivacy"
+                            >
+                                백업 파일 저장
+                            </button>
+                            <button
+                                id="historyBackupImport"
+                                class="secondary-button"
+                                type="button"
+                                aria-describedby="historyBackupScope historyBackupPrivacy"
+                            >
+                                백업 파일 불러오기
+                            </button>
+                            <input
+                                id="historyBackupFile"
+                                type="file"
+                                accept=".json,application/json"
+                                aria-label="시청 기록 백업 파일"
+                                hidden
+                            />
+                        </div>
+                        <section
+                            id="historyBackupPreview"
+                            class="history-backup-preview"
+                            aria-labelledby="historyBackupPreviewTitle"
+                            hidden
+                        >
+                            <h3 id="historyBackupPreviewTitle" tabindex="-1">불러오기 미리보기</h3>
+                            <p id="historyBackupFilename" class="history-backup-filename"></p>
+                            <dl id="historyBackupSummary" class="history-backup-summary"></dl>
+                            <p>현재 기록에 중복 없이 합쳐요. 현재 후원 기록은 그대로 유지해요.</p>
+                            <p id="historyBackupRestore" role="note"></p>
+                            <details id="historyBackupSkipped" hidden open>
+                                <summary id="historyBackupSkippedTitle">건너뛸 방송</summary>
+                                <ul id="historyBackupSkippedList"></ul>
+                            </details>
+                            <button
+                                id="historyBackupApply"
+                                class="secondary-button"
+                                type="button"
+                                aria-describedby="historyBackupRestore historyBackupSkippedTitle"
+                                disabled
+                            >
+                                기록 합치기
+                            </button>
+                        </section>
+                        <button id="historyBackupCancel" class="secondary-button" type="button" hidden>취소</button>
+                        <p
+                            id="historyBackupStatus"
+                            class="history-import-status"
+                            role="status"
+                            aria-live="polite"
+                            aria-atomic="true"
+                        ></p>
+                    </section>
                     <details class="history-storage-warning">
                         <summary>시청 기록 삭제 주의</summary>
                         <p role="note">
                             시청 기록은 이 브라우저에만 저장되며 자동 백업되지 않아요. 확장 프로그램을 삭제하거나
                             브라우저 프로필·확장 데이터를 지우면 기록도 함께 삭제돼요. 별도 백업이 없으면 재설치해도
-                            복구할 수 없어요.
+                            복구할 수 없어요. 삭제하기 전에 위의 백업 파일 저장으로 시청 기록과 내 채팅을 보관할 수
+                            있어요. 후원 기록은 백업에 포함되지 않아요.
                         </p>
                     </details>
                     <details class="history-storage-guide">
-                        <summary>시청 기록 저장 위치</summary>
-                        <p>기록은 현재 Chrome 프로필의 확장 저장소에 보관돼요.</p>
+                        <summary>개발자용 시청 기록 저장 위치</summary>
+                        <p>
+                            파일 백업은 위의 백업 파일 저장을 이용해 주세요. 아래는 현재 Chrome 프로필의 확장 저장소
+                            위치예요.
+                        </p>
                         <ol>
                             <li>
                                 주소창에 <code>chrome://version</code>을 입력하고 <strong>프로필 경로</strong>를 확인해
@@ -360,6 +433,8 @@
         </main>
         <script src="shared/data.js"></script>
         <script src="shared/donationHistory.js"></script>
+        <script src="shared/watchHistoryBackup.js"></script>
+        <script src="historyBackup.js"></script>
         <script src="history.js"></script>
     </body>
 </html>

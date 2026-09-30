@@ -27,7 +27,7 @@ test("options count unsaved changes across categories and discard without writin
     const skip = queryOption(document, "skipSeconds");
     quality.checked = false;
     dispatch(dom, quality, "change");
-    document.getElementById("tab-1").click();
+    document.querySelector('[data-tab="history"]').click();
     skip.value = "30";
     dispatch(dom, skip, "input");
     assert.equal(document.getElementById("notice").textContent, "변경 2개");
@@ -40,11 +40,54 @@ test("options count unsaved changes across categories and discard without writin
     document.getElementById("discardChanges").click();
     assert.equal(skip.value, "15", "discard restores the saved custom value, not the default");
     assert.equal(search.value, "스킵");
-    assert.equal(document.getElementById("tab-1").getAttribute("aria-selected"), "true");
+    assert.equal(document.querySelector('[data-tab="history"]').getAttribute("aria-selected"), "true");
     assert.equal(document.getElementById("notice").dataset.state, "saved");
     assert.equal(document.getElementById("save").disabled, true);
     assert.equal(document.getElementById("discardChanges").disabled, true);
     assert.equal(writes, 0);
+});
+
+test("new sound and filter categories preserve drafts through search, disclosure, discard and explicit save", async (t) => {
+    const { dom, chrome, document } = await openOptions(t);
+    const sound = queryOption(document, "volumeWheelStep");
+    const filter = queryOption(document, "categoryToolsFollowerFilterPreset1");
+    const originals = [sound.value, filter.value];
+    const writes = [];
+    const save = chrome.storage.sync.set.bind(chrome.storage.sync);
+    chrome.storage.sync.set = (values, callback) => {
+        writes.push(values);
+        save(values, callback);
+    };
+    function editBoth() {
+        document.querySelector('[data-tab="sound"]').click();
+        sound.value = "7";
+        dispatch(dom, sound, "input");
+        document.querySelector('[data-tab="search-filter"]').click();
+        const presets = filter.closest(".option-group");
+        if (!presets.open) presets.firstElementChild.click();
+        filter.value = "345";
+        dispatch(dom, filter, "input");
+    }
+    editBoth();
+    const search = document.getElementById("settingsSearch");
+    search.value = "팔로워 필터";
+    dispatch(dom, search, "input");
+    document.querySelector('[data-tab="sound"]').click();
+    assert.equal(search.value, "");
+    assert.equal(sound.value, "7");
+    assert.equal(filter.value, "345");
+    assert.equal(document.getElementById("notice").textContent, "변경 2개");
+    assert.equal(writes.length, 0);
+    document.getElementById("discardChanges").click();
+    assert.deepEqual([sound.value, filter.value], originals);
+    assert.equal(writes.length, 0);
+    editBoth();
+    document.getElementById("save").click();
+    await waitForAsyncCallbacks();
+    assert.equal(writes.length, 1);
+    assert.equal(chrome.testState.sync.volumeWheelStep, 7);
+    assert.equal(chrome.testState.sync.categoryToolsFollowerFilterPreset1, 345);
+    assert.equal(document.getElementById("notice").dataset.state, "saved");
 });
 
 test("discard is unavailable during a write and later restores the newly saved snapshot", async (t) => {

@@ -2911,6 +2911,19 @@ h1 {
     padding: 0 16px 12px;
 }
 
+.options-body .option-subheading {
+    margin: 16px 0 6px;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.options-body .option-subheading:first-child {
+    margin-top: 0;
+}
+
 .options-body .toggle-row {
     min-height: 46px;
     margin: 0;

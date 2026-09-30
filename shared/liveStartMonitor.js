@@ -296,7 +296,7 @@
     }
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (message?.type !== "betterchzzk:live-start:channels") return undefined;
-        const fromOptions = sender?.url === chrome.runtime.getURL("options.html");
+        const fromOptions = BetterChzzkSettings.isOptionsPageSender(sender);
         if (sender?.id !== chrome.runtime.id || (!fromOptions && !isChannelRegistration(message, sender))) {
             sendResponse({ ok: false, error: "알림 설정 요청의 출처를 확인하지 못했어요." });
             return false;

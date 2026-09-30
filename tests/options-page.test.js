@@ -11,6 +11,117 @@ const {
     waitForCondition,
 } = require("./helpers/extension-page-fixture.js");
 
+test("last category restores every legacy index by meaning without rewriting the legacy value", async (t) => {
+    const legacyTabs = ["player", "history", "chat", "appearance", "broadcast-time", "vod", "explore", "live-start"];
+    for (const [index, id] of legacyTabs.entries()) {
+        await t.test(`${index} restores ${id}`, (t) => {
+            const dom = createDom("options.html", "options.html");
+            t.after(() => dom.window.close());
+            dom.reconfigure({ url: "https://example.test/options.html" });
+            dom.window.localStorage.setItem("betterChzzkOptionsLastTab", String(index));
+            evalRepoScript(dom, "shared", "settings.js");
+            evalRepoScript(dom, "options.js");
+            const selected = dom.window.document.querySelector('.tab[aria-selected="true"]');
+            assert.equal(selected.dataset.tab, id);
+            assert.equal(dom.window.localStorage.getItem("betterChzzkOptionsLastTabId"), id);
+            assert.equal(dom.window.localStorage.getItem("betterChzzkOptionsLastTab"), String(index));
+        });
+    }
+});
+
+test("last category prefers valid stable IDs and rejects malformed legacy indices", async (t) => {
+    for (const [stable, legacy, expected] of [
+        ["sound", "7", "sound"],
+        ["search-filter", "1", "search-filter"],
+        ["missing", "3", "appearance"],
+        ["", "6", "explore"],
+        [null, "8", "player"],
+        [null, "-1", "player"],
+        [null, "2abc", "player"],
+        [null, "1.5", "player"],
+        [null, "", "player"],
+        ["missing", null, "player"],
+    ]) {
+        await t.test(`${stable}/${legacy} restores ${expected}`, (t) => {
+            const dom = createDom("options.html", "options.html");
+            t.after(() => dom.window.close());
+            dom.reconfigure({ url: "https://example.test/options.html" });
+            if (stable !== null) dom.window.localStorage.setItem("betterChzzkOptionsLastTabId", stable);
+            if (legacy !== null) dom.window.localStorage.setItem("betterChzzkOptionsLastTab", legacy);
+            evalRepoScript(dom, "shared", "settings.js");
+            evalRepoScript(dom, "options.js");
+            assert.equal(dom.window.document.querySelector('.tab[aria-selected="true"]').dataset.tab, expected);
+            assert.equal(dom.window.localStorage.getItem("betterChzzkOptionsLastTabId"), expected);
+            assert.equal(dom.window.localStorage.getItem("betterChzzkOptionsLastTab"), legacy);
+        });
+    }
+});
+
+test("category navigation stays usable when remembering the last category is denied", async (t) => {
+    for (const failure of ["get", "set"]) {
+        await t.test(failure, (t) => {
+            const dom = createDom("options.html", "options.html");
+            t.after(() => dom.window.close());
+            Object.defineProperty(dom.window, "localStorage", {
+                value: {
+                    getItem() {
+                        if (failure === "get") throw new Error("Storage unavailable");
+                        return "sound";
+                    },
+                    setItem() {
+                        throw new Error("Storage write denied");
+                    },
+                },
+            });
+            evalRepoScript(dom, "shared", "settings.js");
+            evalRepoScript(dom, "options.js");
+            const { document } = dom.window;
+            assert.equal(
+                document.querySelector('.tab[aria-selected="true"]').dataset.tab,
+                failure === "get" ? "player" : "sound"
+            );
+            const tab = document.querySelector('[data-tab="search-filter"]');
+            tab.click();
+            assert.equal(tab.getAttribute("aria-selected"), "true");
+            assert.equal(
+                document.getElementById(tab.getAttribute("aria-controls")).classList.contains("is-active"),
+                true
+            );
+        });
+    }
+});
+
+test("new categories support keyboard navigation and search never overwrites the last chosen category", (t) => {
+    const dom = createDom("options.html", "options.html");
+    t.after(() => dom.window.close());
+    dom.reconfigure({ url: "https://example.test/options.html" });
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    const { document } = dom.window;
+    document.querySelector('[data-tab="player"]').focus();
+    for (const [key, id] of [
+        ["ArrowRight", "sound"],
+        ["End", "live-start"],
+        ["ArrowLeft", "search-filter"],
+        ["Home", "player"],
+        ["ArrowLeft", "live-start"],
+    ]) {
+        document.activeElement.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key, bubbles: true }));
+        assert.equal(document.activeElement.dataset.tab, id);
+        assert.equal(document.activeElement.getAttribute("aria-selected"), "true");
+        assert.equal(dom.window.localStorage.getItem("betterChzzkOptionsLastTabId"), id);
+    }
+    const search = document.getElementById("settingsSearch");
+    search.value = "볼륨";
+    dispatch(dom, search, "input");
+    assert.equal(queryOption(document, "volumeWheelEnabled").closest(".search-miss"), null);
+    assert.equal(dom.window.localStorage.getItem("betterChzzkOptionsLastTabId"), "live-start");
+    document.querySelector('[data-tab="sound"]').click();
+    assert.equal(search.value, "");
+    assert.equal(dom.window.localStorage.getItem("betterChzzkOptionsLastTabId"), "sound");
+    assert.equal(dom.window.localStorage.getItem("betterChzzkOptionsLastTab"), null);
+});
+
 test("options page renders defaults and dependency-disabled controls without extension storage", (t) => {
     const dom = createDom("options.html", "options.html");
     t.after(() => dom.window.close());
@@ -22,7 +133,11 @@ test("options page renders defaults and dependency-disabled controls without ext
     const optionInputs = Array.from(document.querySelectorAll("[data-option]"));
     const notice = document.getElementById("notice");
 
-    assert.equal(optionInputs.length, BetterChzzkSettings.OPTION_KEYS.length);
+    assert.deepEqual(
+        optionInputs.map((input) => input.dataset.option).sort(),
+        [...BetterChzzkSettings.OPTION_KEYS].sort(),
+        "each schema option must appear exactly once"
+    );
     assert.equal(queryOption(document, "skipSeconds").value, String(BetterChzzkSettings.DEFAULT_OPTIONS.skipSeconds));
     assert.equal(queryOption(document, "vodBroadcastClockEnabled").checked, true);
     assert.equal(queryOption(document, "adVideoEnabled").checked, true);
@@ -40,6 +155,109 @@ test("options page renders defaults and dependency-disabled controls without ext
     assert.equal(skipKeyboard.disabled, true);
     assert.equal(skipSeconds.disabled, true);
     assert.equal(skipKeyboard.closest("[data-depends-on]").classList.contains("is-disabled"), true);
+});
+
+test("panel resize settings explain their boundaries and remain independently usable", async (t) => {
+    const chrome = createFakeChrome({
+        sync: { chatToolsEnabled: false, followingPinEnabled: false, vodCommentTabsEnabled: false },
+    });
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document } = dom.window;
+    const chat = queryOption(document, "chatResizeEnabled");
+    const sidebar = queryOption(document, "sidebarResizeEnabled");
+    for (const [input, group, expectedHelp] of [
+        [
+            chat,
+            "chat-display",
+            "채팅·댓글 왼쪽 가장자리를 마우스로 잡아 끌어 조절해요. 더블클릭하면 기본 너비로 돌아가요.",
+        ],
+        [
+            sidebar,
+            "appearance-page",
+            "펼친 사이드바 오른쪽 가장자리를 마우스로 잡아 끌어 조절해요. 더블클릭하면 기본 너비로 돌아가요.",
+        ],
+    ]) {
+        assert.ok(input);
+        assert.equal(input.checked, true);
+        assert.equal(input.disabled, false);
+        assert.equal(input.closest("[data-depends-on]"), null);
+        assert.equal(input.closest(".option-group").dataset.optionGroup, group);
+        const help = document.getElementById(input.getAttribute("aria-describedby"));
+        assert.ok(help);
+        assert.equal(help.textContent.trim().replace(/\s+/g, " "), expectedHelp);
+        input.focus();
+        assert.equal(document.activeElement, input);
+    }
+    chat.checked = false;
+    dispatch(dom, chat, "change");
+    document.getElementById("save").click();
+    await waitForAsyncCallbacks();
+    assert.equal(chrome.testState.sync.chatResizeEnabled, false);
+    assert.equal(chrome.testState.sync.sidebarResizeEnabled, true);
+    assert.equal(sidebar.disabled, false);
+    assert.equal(queryOption(document, "followingPinEnabled").checked, false);
+    assert.equal(queryOption(document, "vodCommentTabsEnabled").checked, false);
+    sidebar.checked = false;
+    dispatch(dom, sidebar, "change");
+    document.getElementById("save").click();
+    await waitForAsyncCallbacks();
+    assert.equal(chrome.testState.sync.chatResizeEnabled, false);
+    assert.equal(chrome.testState.sync.sidebarResizeEnabled, false);
+    dom.window.confirm = () => true;
+    document.getElementById("reset").click();
+    await waitForAsyncCallbacks();
+    assert.equal(chat.checked, true);
+    assert.equal(sidebar.checked, true);
+    assert.equal(chrome.testState.sync.chatResizeEnabled, true);
+    assert.equal(chrome.testState.sync.sidebarResizeEnabled, true);
+});
+
+test("panel resize saved opt-outs remain off when the options page loads", async (t) => {
+    const chrome = createFakeChrome({ sync: { chatResizeEnabled: false, sidebarResizeEnabled: false } });
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    for (const key of ["chatResizeEnabled", "sidebarResizeEnabled"]) {
+        assert.equal(queryOption(dom.window.document, key).checked, false);
+        assert.equal(queryOption(dom.window.document, key).disabled, false);
+    }
+});
+
+test("global live count is an independent searchable setting with a disabled default", (t) => {
+    const dom = createDom("options.html", "options.html");
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    const { document } = dom.window;
+    const aggregate = queryOption(document, "globalLiveCountEnabled");
+    assert.ok(aggregate);
+    assert.equal(aggregate.checked, false);
+    assert.equal(aggregate.closest("[data-depends-on]"), null);
+    const row = aggregate.closest(".toggle-row");
+    assert.match(row.textContent, /전체 방송 집계 표시/);
+    assert.match(row.textContent, /10명 이상/);
+    assert.match(row.textContent, /방송 수/);
+    assert.match(row.textContent, /합계/);
+    assert.match(row.closest(".option-group").querySelector("summary").textContent, /검색·목록 표시/);
+    const category = queryOption(document, "categoryToolsEnabled");
+    category.checked = false;
+    dispatch(dom, category, "change");
+    assert.equal(aggregate.disabled, false);
+    aggregate.checked = true;
+    dispatch(dom, aggregate, "change");
+    assert.equal(category.checked, false);
+    const search = document.getElementById("settingsSearch");
+    for (const query of ["동시접속자", "동시 시청자", "집계"]) {
+        search.value = query;
+        dispatch(dom, search, "input");
+        assert.equal(aggregate.closest(".search-miss"), null);
+    }
 });
 
 test("options captures readable playback speed keys and blocks duplicate or reserved shortcuts", async (t) => {
@@ -234,7 +452,7 @@ test("playback shortcut reset follows its toggle and stays with the keys in sear
     assert.equal(halfKey.value, "Q", "key capture remains usable after reset");
 });
 
-test("options places following controls with exploration controls", (t) => {
+test("options keeps following controls together and separates list filters from page appearance", (t) => {
     const dom = createDom("options.html", "options.html");
     t.after(() => dom.window.close());
 
@@ -243,13 +461,17 @@ test("options places following controls with exploration controls", (t) => {
 
     const { document } = dom.window;
     const previewSection = queryOption(document, "followingPreviewTooltipEnabled").closest(".settings-card");
-    const explorationSection = queryOption(document, "categoryToolsEnabled").closest(".settings-card");
+    const explorationSection = document.getElementById("tab-panel-explore");
+    const filterSection = queryOption(document, "categoryToolsEnabled").closest(".settings-card");
     const followingRefreshSection = queryOption(document, "followingRefreshEnabled").closest(".settings-card");
     const sidebarSection = queryOption(document, "sidebarCheeseFarmHidden").closest(".settings-card");
 
     assert.equal(previewSection, explorationSection);
     assert.equal(followingRefreshSection, explorationSection);
-    assert.equal(sidebarSection, explorationSection);
+    assert.equal(sidebarSection.id, "tab-panel-appearance");
+    assert.equal(filterSection.id, "tab-panel-search-filter");
+    assert.equal(queryOption(document, "followingPreviewSoundEnabled").closest(".settings-card"), explorationSection);
+    assert.equal(queryOption(document, "videoSearchEnabled").closest(".settings-card").id, "tab-panel-vod");
     assert.equal(queryOption(document, "channelChatLinkEnabled").closest(".settings-card"), explorationSection);
     assert.equal(queryOption(document, "channelChatLinkEnabled").checked, true);
     assert.equal(queryOption(document, "sidebarCheeseFarmHidden").checked, false);
@@ -425,7 +647,7 @@ test("restored and keyboard-selected tabs scroll into view without moving the pa
             right: (index + 1) * 80 - bar.scrollLeft,
         });
     });
-    dom.window.localStorage.setItem("betterChzzkOptionsLastTab", String(tabs.length - 1));
+    dom.window.localStorage.setItem("betterChzzkOptionsLastTabId", tabs.at(-1).dataset.tab);
     const pageScrolls = [];
     dom.window.scrollTo = (options) => pageScrolls.push(options);
     evalRepoScript(dom, "shared", "settings.js");
@@ -584,6 +806,108 @@ test("category wheel scrolls horizontally only when it can consume a vertical st
     assert.equal(bar.querySelector('[aria-selected="true"]'), selected);
 });
 
+test("merged filter headings and former titles keep their inputs, context and parent toggle searchable", (t) => {
+    const dom = createDom("options.html", "options.html");
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    const { document } = dom.window;
+    const parent = queryOption(document, "categoryToolsEnabled");
+    parent.checked = false;
+    dispatch(dom, parent, "change");
+    const search = document.getElementById("settingsSearch");
+    const presets = document.querySelector('[data-option-group="explore-presets"]');
+    for (const [query, prefix, heading] of [
+        ["팔로워 필터", "categoryToolsFollowerFilterPreset", "팔로워"],
+        ["시청자·조회수", "categoryToolsViewFilterPreset", "시청자·조회수"],
+        ["진행 시간 필터", "categoryToolsDurationFilterPreset", "진행 시간"],
+        ["categoryToolsFollowerFilterPreset3", "categoryToolsFollowerFilterPreset", "팔로워"],
+    ]) {
+        search.value = query;
+        dispatch(dom, search, "input");
+        assert.equal(presets.open, true);
+        const title = [...presets.querySelectorAll(".option-subheading")].find(
+            (node) => node.textContent.trim() === heading
+        );
+        assert.equal(title.closest(".search-miss"), null, `${query} retains its subsection heading`);
+        assert.equal(title.nextElementSibling.closest(".search-miss"), null, `${query} retains range guidance`);
+        for (let index = 1; index <= 6; index += 1) {
+            const input = queryOption(document, prefix + index);
+            assert.equal(input.closest(".search-miss"), null, `${query}: input ${index}`);
+            assert.equal(input.disabled, true);
+        }
+        assert.equal(parent.closest(".search-miss"), null);
+        assert.equal(parent.disabled, false);
+    }
+    parent.checked = true;
+    dispatch(dom, parent, "change");
+    assert.equal(queryOption(document, "categoryToolsFollowerFilterPreset3").disabled, false);
+    search.value = "";
+    dispatch(dom, search, "input");
+    assert.equal(presets.open, false);
+});
+
+test("merged video and following searches retain former headings and dependency chains", (t) => {
+    const dom = createDom("options.html", "options.html");
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    const { document } = dom.window;
+    const search = document.getElementById("settingsSearch");
+    const video = queryOption(document, "videoSearchEnabled");
+    video.checked = false;
+    dispatch(dom, video, "change");
+    for (const query of ["댓글 검색", "videoSearchCommentDelayMs"]) {
+        search.value = query;
+        dispatch(dom, search, "input");
+        for (const key of [
+            "videoSearchEnabled",
+            "videoSearchCommentEnabled",
+            "videoSearchCommentDelayMs",
+            "videoSearchCommentMaxVideos",
+            "videoSearchCommentMaxPagesPerVideo",
+        ]) {
+            assert.equal(queryOption(document, key).closest(".search-miss"), null, `${query}: ${key}`);
+        }
+        const title = [...document.querySelectorAll('[data-option-group="search-video"] .option-subheading')].find(
+            (node) => node.textContent.trim() === "댓글 검색"
+        );
+        assert.equal(title.closest(".search-miss"), null);
+        assert.equal(video.disabled, false);
+    }
+    search.value = "목록 새로고침";
+    dispatch(dom, search, "input");
+    for (const key of ["followingTitleHistoryEnabled", "followingRefreshEnabled", "followingRefreshSeconds"]) {
+        assert.equal(queryOption(document, key).closest(".search-miss"), null, key);
+    }
+});
+
+test("broadcast alert searches retain registration actions, results and immediate-save guidance together", (t) => {
+    const dom = createDom("options.html", "options.html");
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    const { document } = dom.window;
+    const search = document.getElementById("settingsSearch");
+    for (const query of ["32개", "즉시 저장", "대상 채널 추가", "liveStartAutoOpenEnabled"]) {
+        search.value = query;
+        dispatch(dom, search, "input");
+        for (const id of [
+            "liveStartHelp",
+            "liveStartChannelInput",
+            "liveStartChannelAdd",
+            "liveStartChannelHelp",
+            "liveStartChannelMessage",
+            "liveStartChannelList",
+        ]) {
+            assert.equal(document.getElementById(id).closest(".search-miss"), null, `${query}: ${id}`);
+        }
+        for (const key of ["liveStartNotificationsEnabled", "liveStartAutoOpenEnabled", "liveStartButtonEnabled"]) {
+            assert.equal(queryOption(document, key).closest(".search-miss"), null, `${query}: ${key}`);
+        }
+    }
+});
+
 test("options search keeps dependency controls visible and restores previous group state", (t) => {
     const dom = createDom("options.html", "options.html");
     t.after(() => dom.window.close());
@@ -649,6 +973,72 @@ test("options search keeps dependency controls visible and restores previous gro
     assert.equal(playerAuto.open, true);
     assert.equal(playerCompressor.open, false);
     assert.equal(document.querySelector(".option-group.search-miss"), null);
+});
+
+test("history searches keep the master toggle reachable while only its child settings are disabled", (t) => {
+    const dom = createDom("options.html", "options.html");
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    const { document } = dom.window;
+    const search = document.getElementById("settingsSearch");
+    const enabled = queryOption(document, "liveWatchHistoryEnabled");
+    const children = [
+        ["최소 저장 시간", "liveWatchHistoryMinMinutes"],
+        ["내 채팅 기록 저장", "liveWatchHistoryChatEnabled"],
+        ["내 일반 후원 기록 저장", "liveWatchHistoryDonationEnabled"],
+    ];
+    enabled.checked = false;
+    dispatch(dom, enabled, "change");
+    for (const [query, optionKey] of children) {
+        const input = queryOption(document, optionKey);
+        search.value = query;
+        dispatch(dom, search, "input");
+        assert.equal(input.disabled, true);
+        assert.equal(input.closest(".search-miss"), null);
+        assert.equal(enabled.disabled, false);
+        assert.equal(enabled.closest(".search-miss"), null, "the matching child retains its enable action");
+        const settingsGroup = enabled.closest(".option-group");
+        assert.ok(settingsGroup, "history settings support the shared searchable disclosure");
+        assert.equal(settingsGroup.open, true);
+        assert.equal(settingsGroup.firstElementChild.closest(".is-disabled"), null);
+    }
+    search.value = "";
+    dispatch(dom, search, "input");
+    const link = document.querySelector('#tab-panel-history a[href="history.html"]');
+    assert.equal(link.closest(".is-disabled, .search-miss"), null);
+    link.focus();
+    assert.equal(document.activeElement, link, "existing history stays reachable with collection off");
+    enabled.checked = true;
+    dispatch(dom, enabled, "change");
+    for (const [, optionKey] of children) assert.equal(queryOption(document, optionKey).disabled, false);
+    assert.equal(document.getElementById("notice").dataset.state, "saved");
+});
+
+test("history management searches keep backup, deletion, storage guidance and the history link together", (t) => {
+    const dom = createDom("options.html", "options.html");
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    const { document } = dom.window;
+    const search = document.getElementById("settingsSearch");
+    const guide = document.getElementById("historyBackupGuide");
+    const link = document.querySelector('#tab-panel-history a[href="history.html"]');
+    const warning = document.querySelector("#tab-panel-history .history-storage-warning");
+    const storage = document.querySelector("#tab-panel-history .history-storage-guide");
+    for (const query of ["백업·불러오기", "시청 기록 보기", "삭제 주의", "Local Extension Settings"]) {
+        search.value = query;
+        dispatch(dom, search, "input");
+        for (const element of [guide, link, warning, storage]) {
+            assert.equal(element.closest(".search-miss"), null, `${query} keeps guidance and its action visible`);
+        }
+        assert.equal(storage.open, false, "search leaves the optional storage instructions collapsed");
+        storage.firstElementChild.click();
+        assert.equal(storage.open, true, "the storage details remain independently usable");
+        storage.firstElementChild.click();
+    }
+    assert.equal(link.getAttribute("aria-describedby"), guide.id);
+    assert.equal(document.getElementById("notice").dataset.state, "saved");
 });
 
 test("options search finds the offline pin option together with its parent feature", (t) => {

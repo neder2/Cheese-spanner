@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const { JSDOM } = require("jsdom");
+const { waitForCondition } = require("./helpers/wait-for-condition.js");
 
 const repoRoot = path.join(__dirname, "..");
 const STORAGE_KEY = "betterchzzkFollowingLiveTitleHistory";
@@ -127,13 +128,8 @@ function waitForFeature() {
     return new Promise((resolve) => setTimeout(resolve, 100));
 }
 
-async function waitFor(predicate, message, timeoutMs = 3000) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        if (predicate()) return;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    assert.fail(message);
+function waitFor(predicate, message, timeoutMs = 3000) {
+    return waitForCondition(predicate, { timeoutMs, intervalMs: 20, message });
 }
 
 function getStoredEntry(chrome) {

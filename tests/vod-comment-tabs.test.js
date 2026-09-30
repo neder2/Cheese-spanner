@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
+const { waitForCondition: waitForSharedCondition } = require("./helpers/wait-for-condition.js");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -319,13 +320,8 @@ function delay(ms = 0) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForCondition(predicate, { timeoutMs = 1000, intervalMs = 10 } = {}) {
-    const startedAt = Date.now();
-    while (Date.now() - startedAt <= timeoutMs) {
-        if (predicate()) return;
-        await delay(intervalMs);
-    }
-    assert.fail("Timed out waiting for condition");
+function waitForCondition(predicate, { timeoutMs = 1000, intervalMs = 10 } = {}) {
+    return waitForSharedCondition(predicate, { timeoutMs, intervalMs });
 }
 
 function clickCommentTab(document) {

@@ -173,10 +173,10 @@
                         <button
                             type="button"
                             class="tab"
-                            id="tab-0"
+                            id="tab-player"
                             role="tab"
-                            data-tab="0"
-                            aria-controls="tab-panel-0"
+                            data-tab="player"
+                            aria-controls="tab-panel-player"
                             aria-label="플레이어"
                             aria-selected="false"
                             title="플레이어"
@@ -199,10 +199,34 @@
                         <button
                             type="button"
                             class="tab"
-                            id="tab-1"
+                            id="tab-sound"
                             role="tab"
-                            data-tab="1"
-                            aria-controls="tab-panel-1"
+                            data-tab="sound"
+                            aria-controls="tab-panel-sound"
+                            aria-label="소리"
+                            aria-selected="false"
+                            title="소리"
+                            tabindex="-1"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <use href="#icon-volume" /></svg
+                            ><span>소리</span>
+                        </button>
+                        <button
+                            type="button"
+                            class="tab"
+                            id="tab-history"
+                            role="tab"
+                            data-tab="history"
+                            aria-controls="tab-panel-history"
                             aria-label="시청 기록"
                             aria-selected="false"
                             title="시청 기록"
@@ -225,10 +249,10 @@
                         <button
                             type="button"
                             class="tab"
-                            id="tab-2"
+                            id="tab-chat"
                             role="tab"
-                            data-tab="2"
-                            aria-controls="tab-panel-2"
+                            data-tab="chat"
+                            aria-controls="tab-panel-chat"
                             aria-label="채팅"
                             aria-selected="false"
                             title="채팅"
@@ -252,13 +276,13 @@
                         <button
                             type="button"
                             class="tab"
-                            id="tab-3"
+                            id="tab-appearance"
                             role="tab"
-                            data-tab="3"
-                            aria-controls="tab-panel-3"
-                            aria-label="팝업·알림"
+                            data-tab="appearance"
+                            aria-controls="tab-panel-appearance"
+                            aria-label="화면 정리"
                             aria-selected="false"
-                            title="팝업·알림"
+                            title="화면 정리"
                             tabindex="-1"
                         >
                             <svg
@@ -274,15 +298,15 @@
                                 <path d="M3 9h18" />
                                 <path d="m10.5 12.5 3 3m0-3-3 3" />
                             </svg>
-                            <span>팝업·알림</span>
+                            <span>화면 정리</span>
                         </button>
                         <button
                             type="button"
                             class="tab"
-                            id="tab-4"
+                            id="tab-broadcast-time"
                             role="tab"
-                            data-tab="4"
-                            aria-controls="tab-panel-4"
+                            data-tab="broadcast-time"
+                            aria-controls="tab-panel-broadcast-time"
                             aria-label="방송 시간"
                             aria-selected="false"
                             title="방송 시간"
@@ -305,10 +329,10 @@
                         <button
                             type="button"
                             class="tab"
-                            id="tab-5"
+                            id="tab-vod"
                             role="tab"
-                            data-tab="5"
-                            aria-controls="tab-panel-5"
+                            data-tab="vod"
+                            aria-controls="tab-panel-vod"
                             aria-label="다시보기"
                             aria-selected="false"
                             title="다시보기"
@@ -330,10 +354,10 @@
                         <button
                             type="button"
                             class="tab"
-                            id="tab-6"
+                            id="tab-explore"
                             role="tab"
-                            data-tab="6"
-                            aria-controls="tab-panel-6"
+                            data-tab="explore"
+                            aria-controls="tab-panel-explore"
                             aria-label="탐색"
                             aria-selected="false"
                             title="탐색"
@@ -356,10 +380,34 @@
                         <button
                             type="button"
                             class="tab"
-                            id="tab-7"
+                            id="tab-search-filter"
                             role="tab"
-                            data-tab="7"
-                            aria-controls="tab-panel-7"
+                            data-tab="search-filter"
+                            aria-controls="tab-panel-search-filter"
+                            aria-label="검색·필터"
+                            aria-selected="false"
+                            title="검색·필터"
+                            tabindex="-1"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                            >
+                                <use href="#icon-search" /></svg
+                            ><span>검색·필터</span>
+                        </button>
+                        <button
+                            type="button"
+                            class="tab"
+                            id="tab-live-start"
+                            role="tab"
+                            data-tab="live-start"
+                            aria-controls="tab-panel-live-start"
                             aria-label="방송 알림"
                             aria-selected="false"
                             title="방송 알림"
@@ -383,17 +431,16 @@
 
                 <p id="searchEmpty" class="search-empty hidden" role="status"></p>
 
-                <section class="settings-card" id="tab-panel-0" role="tabpanel" aria-labelledby="tab-0">
+                <section class="settings-card" id="tab-panel-player" role="tabpanel" aria-labelledby="tab-player">
                     <div class="section-heading">
                         <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <use href="#icon-play" />
                         </svg>
                         <h2>플레이어</h2>
                     </div>
-
                     <details class="option-group" data-option-group="player-auto" open>
                         <summary>
-                            <span class="option-group-title"><span>자동 처리</span></span>
+                            <span class="option-group-title"><span>재생·자동 처리</span></span>
                         </summary>
                         <div class="option-group-body">
                             <label class="toggle-row">
@@ -426,12 +473,17 @@
                         </div>
                     </details>
 
-                    <details class="option-group" data-option-group="player-ads">
+                    <details
+                        class="option-group"
+                        data-option-group="appearance-blocking"
+                        data-search-terms="치지직 광고 시청 팝업"
+                        open
+                    >
                         <summary>
-                            <span class="option-group-title">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-window" /></svg>
-                                <span>치지직 광고</span>
-                            </span>
+                            <span class="option-group-title"
+                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-window" /></svg
+                                ><span>광고·팝업</span></span
+                            >
                         </summary>
                         <div class="option-group-body">
                             <label class="toggle-row">
@@ -448,21 +500,26 @@
                                 <input type="checkbox" data-option="adBannerEnabled" />
                             </label>
                             <p class="setting-note">홈·라이브·VOD에서 확인된 광고 배너를 숨깁니다.</p>
+                            <label class="toggle-row">
+                                <span><strong>시청 방해 팝업 제거</strong></span>
+                                <input type="checkbox" data-option="adblockPopupEnabled" />
+                            </label>
+                            <p class="setting-note">시청에 방해되는 팝업을 제거합니다.</p>
                         </div>
                     </details>
 
-                    <details class="option-group" data-option-group="player-live-display">
+                    <details
+                        class="option-group"
+                        data-option-group="player-view"
+                        data-search-terms="라이브 표시 화면 확대"
+                    >
                         <summary>
-                            <span class="option-group-title">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-play" /></svg>
-                                <span>라이브 표시</span>
-                            </span>
+                            <span class="option-group-title"
+                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-play" /></svg
+                                ><span>시청 화면·멀티뷰</span></span
+                            >
                         </summary>
                         <div class="option-group-body">
-                            <label class="toggle-row">
-                                <span><strong>우상단 LIVE 숨기기</strong></span>
-                                <input type="checkbox" data-option="hideLiveBadgeEnabled" />
-                            </label>
                             <label class="toggle-row">
                                 <span><strong>방송 시작 시각 표시</strong></span>
                                 <input type="checkbox" data-option="liveStartTimeEnabled" />
@@ -479,29 +536,6 @@
                                 영상의 톱니바퀴 설정 메뉴에서 스트림 정보 열기를 선택해 해상도, 비트레이트, 버퍼와 FPS를
                                 확인합니다.
                             </p>
-                            <label class="toggle-row">
-                                <span><strong>클립 버튼 숨기기</strong></span>
-                                <input type="checkbox" data-option="playerClipHidden" />
-                            </label>
-                            <label class="toggle-row">
-                                <span><strong>PIP 버튼 숨기기</strong></span>
-                                <input type="checkbox" data-option="playerPipHidden" />
-                            </label>
-                            <p class="setting-note">
-                                라이브·다시보기 플레이어의 클립 만들기·PIP(작은 화면) 버튼을 각각 숨깁니다. 끄면 다시
-                                표시됩니다.
-                            </p>
-                        </div>
-                    </details>
-
-                    <details class="option-group" data-option-group="player-multiview">
-                        <summary>
-                            <span class="option-group-title"
-                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-play" /></svg
-                                ><span>멀티뷰</span></span
-                            >
-                        </summary>
-                        <div class="option-group-body">
                             <label class="toggle-row"
                                 ><span><strong>라이브 멀티뷰</strong></span
                                 ><input type="checkbox" data-option="liveMultiviewEnabled"
@@ -509,6 +543,21 @@
                             <p class="setting-note">
                                 최대 6개 방송의 소리를 따로 조절하고, 채널별 딜레이를 저장해 다시 불러옵니다. 켠 뒤
                                 플레이어 하단의 격자 모양 멀티뷰 버튼을 누르세요.
+                            </p>
+                            <label class="toggle-row">
+                                <span><strong>휠로 화면 확대</strong></span>
+                                <input type="checkbox" data-option="playerZoomEnabled" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="playerZoomEnabled">
+                                <span><strong>확대 적용 방식</strong></span>
+                                <select class="quality-select" data-option="playerZoomMode">
+                                    <option value="manual">확대 버튼을 켠 동안</option>
+                                    <option value="always">영상 위에서 항상</option>
+                                </select>
+                            </label>
+                            <p class="setting-note">
+                                휠은 커서 중심으로 확대하고, 슬라이더는 1% 단위로 조절합니다. 최대 5배까지 확대하며,
+                                드래그 이동과 원래 크기 복원을 지원합니다.
                             </p>
                         </div>
                     </details>
@@ -586,7 +635,102 @@
                         </div>
                     </details>
 
-                    <details class="option-group" data-option-group="player-volume">
+                    <details class="option-group" data-option-group="player-vod">
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-keyboard" /></svg>
+                                <span>배속·단축키</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span
+                                    ><strong>기본 단축키 복구</strong
+                                    ><small>Space·M·F·T 키가 안 될 때만 켜주세요.</small></span
+                                >
+                                <input type="checkbox" data-option="screenShortcutsEnabled" />
+                            </label>
+                            <label class="toggle-row">
+                                <span
+                                    ><strong>Space·좌클릭 홀드 2배속</strong
+                                    ><small>Space 또는 영상 화면 좌클릭을 길게 눌러주세요.</small></span
+                                >
+                                <input type="checkbox" data-option="holdSpeedEnabled" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>배속 조절 단축키</strong></span>
+                                <input type="checkbox" data-option="playbackSpeedShortcutsEnabled" />
+                            </label>
+                            <div class="number-grid shortcut-grid" data-depends-on="playbackSpeedShortcutsEnabled">
+                                <label>
+                                    <span>배속 감소 키</span
+                                    ><input
+                                        type="text"
+                                        value="["
+                                        readonly
+                                        inputmode="none"
+                                        autocomplete="off"
+                                        spellcheck="false"
+                                        data-option="playbackSpeedHalfKeyCode"
+                                        data-shortcut-code
+                                        aria-label="배속 감소 단축키"
+                                        aria-describedby="playbackSpeedShortcutHelp"
+                                    /><em>키</em>
+                                </label>
+                                <label>
+                                    <span>배속 증가 키</span
+                                    ><input
+                                        type="text"
+                                        value="]"
+                                        readonly
+                                        inputmode="none"
+                                        autocomplete="off"
+                                        spellcheck="false"
+                                        data-option="playbackSpeedDoubleKeyCode"
+                                        data-shortcut-code
+                                        aria-label="배속 증가 단축키"
+                                        aria-describedby="playbackSpeedShortcutHelp"
+                                    /><em>키</em>
+                                </label>
+                                <label>
+                                    <span>1배속 복원 키</span
+                                    ><input
+                                        type="text"
+                                        value="\"
+                                        readonly
+                                        inputmode="none"
+                                        autocomplete="off"
+                                        spellcheck="false"
+                                        data-option="playbackSpeedResetKeyCode"
+                                        data-shortcut-code
+                                        aria-label="1배속 복원 단축키"
+                                        aria-describedby="playbackSpeedShortcutHelp"
+                                    /><em>키</em>
+                                </label>
+                                <button
+                                    id="resetPlaybackSpeedShortcuts"
+                                    class="secondary-button shortcut-reset-button"
+                                    type="button"
+                                    disabled
+                                >
+                                    단축키 기본값 복원
+                                </button>
+                            </div>
+                            <p class="setting-note" id="playbackSpeedShortcutHelp">
+                                입력칸을 선택한 뒤 원하는 키를 눌러주세요. 배속은 0.25~4배 사이에서 0.25배씩 조절돼요.
+                            </p>
+                        </div>
+                    </details>
+                </section>
+
+                <section class="settings-card" id="tab-panel-sound" role="tabpanel" aria-labelledby="tab-sound">
+                    <div class="section-heading">
+                        <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <use href="#icon-volume" />
+                        </svg>
+                        <h2>소리</h2>
+                    </div>
+                    <details class="option-group" data-option-group="player-volume" open>
                         <summary>
                             <span class="option-group-title">
                                 <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-volume" /></svg>
@@ -689,219 +833,134 @@
                             </div>
                         </div>
                     </details>
-
-                    <details class="option-group" data-option-group="player-zoom">
-                        <summary>
-                            <span class="option-group-title">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-search" /></svg>
-                                <span>화면 확대</span>
-                            </span>
-                        </summary>
-                        <div class="option-group-body">
-                            <label class="toggle-row">
-                                <span><strong>휠로 화면 확대</strong></span>
-                                <input type="checkbox" data-option="playerZoomEnabled" />
-                            </label>
-                            <label class="toggle-row" data-depends-on="playerZoomEnabled">
-                                <span><strong>확대 적용 방식</strong></span>
-                                <select class="quality-select" data-option="playerZoomMode">
-                                    <option value="manual">확대 버튼을 켠 동안</option>
-                                    <option value="always">영상 위에서 항상</option>
-                                </select>
-                            </label>
-                            <p class="setting-note">
-                                휠은 커서 중심으로 확대하고, 슬라이더는 1% 단위로 조절합니다. 최대 5배까지 확대하며,
-                                드래그 이동과 원래 크기 복원을 지원합니다.
-                            </p>
-                        </div>
-                    </details>
-
-                    <details class="option-group" data-option-group="player-vod">
-                        <summary>
-                            <span class="option-group-title">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-keyboard" /></svg>
-                                <span>재생·단축키</span>
-                            </span>
-                        </summary>
-                        <div class="option-group-body">
-                            <label class="toggle-row">
-                                <span
-                                    ><strong>기본 단축키 복구</strong
-                                    ><small>Space·M·F·T 키가 안 될 때만 켜주세요.</small></span
-                                >
-                                <input type="checkbox" data-option="screenShortcutsEnabled" />
-                            </label>
-                            <label class="toggle-row">
-                                <span
-                                    ><strong>Space·좌클릭 홀드 2배속</strong
-                                    ><small>Space 또는 영상 화면 좌클릭을 길게 눌러주세요.</small></span
-                                >
-                                <input type="checkbox" data-option="holdSpeedEnabled" />
-                            </label>
-                            <label class="toggle-row">
-                                <span><strong>배속 조절 단축키</strong></span>
-                                <input type="checkbox" data-option="playbackSpeedShortcutsEnabled" />
-                            </label>
-                            <div class="number-grid shortcut-grid" data-depends-on="playbackSpeedShortcutsEnabled">
-                                <label>
-                                    <span>배속 감소 키</span
-                                    ><input
-                                        type="text"
-                                        value="["
-                                        readonly
-                                        inputmode="none"
-                                        autocomplete="off"
-                                        spellcheck="false"
-                                        data-option="playbackSpeedHalfKeyCode"
-                                        data-shortcut-code
-                                        aria-label="배속 감소 단축키"
-                                        aria-describedby="playbackSpeedShortcutHelp"
-                                    /><em>키</em>
-                                </label>
-                                <label>
-                                    <span>배속 증가 키</span
-                                    ><input
-                                        type="text"
-                                        value="]"
-                                        readonly
-                                        inputmode="none"
-                                        autocomplete="off"
-                                        spellcheck="false"
-                                        data-option="playbackSpeedDoubleKeyCode"
-                                        data-shortcut-code
-                                        aria-label="배속 증가 단축키"
-                                        aria-describedby="playbackSpeedShortcutHelp"
-                                    /><em>키</em>
-                                </label>
-                                <label>
-                                    <span>1배속 복원 키</span
-                                    ><input
-                                        type="text"
-                                        value="\"
-                                        readonly
-                                        inputmode="none"
-                                        autocomplete="off"
-                                        spellcheck="false"
-                                        data-option="playbackSpeedResetKeyCode"
-                                        data-shortcut-code
-                                        aria-label="1배속 복원 단축키"
-                                        aria-describedby="playbackSpeedShortcutHelp"
-                                    /><em>키</em>
-                                </label>
-                                <button
-                                    id="resetPlaybackSpeedShortcuts"
-                                    class="secondary-button shortcut-reset-button"
-                                    type="button"
-                                    disabled
-                                >
-                                    단축키 기본값 복원
-                                </button>
-                            </div>
-                            <p class="setting-note" id="playbackSpeedShortcutHelp">
-                                입력칸을 선택한 뒤 원하는 키를 눌러주세요. 배속은 0.25~4배 사이에서 0.25배씩 조절돼요.
-                            </p>
-                        </div>
-                    </details>
                 </section>
 
-                <section class="settings-card" id="tab-panel-1" role="tabpanel" aria-labelledby="tab-1">
+                <section class="settings-card" id="tab-panel-history" role="tabpanel" aria-labelledby="tab-history">
                     <div class="section-heading">
                         <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <use href="#icon-history" />
                         </svg>
                         <h2>시청 기록</h2>
                     </div>
+                    <details class="option-group" data-option-group="history-recording" open>
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-database" /></svg>
+                                <span>기록 저장 설정</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>라이브 시청 기록 저장</strong></span>
+                                <input type="checkbox" data-option="liveWatchHistoryEnabled" />
+                            </label>
+                            <div class="number-grid" data-depends-on="liveWatchHistoryEnabled">
+                                <label
+                                    ><span>최소 저장 시간</span
+                                    ><input
+                                        type="number"
+                                        min="1"
+                                        max="1440"
+                                        step="1"
+                                        data-option="liveWatchHistoryMinMinutes"
+                                    /><em>분</em></label
+                                >
+                            </div>
+                            <p class="setting-note">
+                                최소 저장 시간은 시청 시간 집계에만 적용해요. 기록은 이 브라우저에만 저장해요.
+                            </p>
 
-                    <label class="toggle-row">
-                        <span><strong>라이브 시청 기록 저장</strong></span>
-                        <input type="checkbox" data-option="liveWatchHistoryEnabled" />
-                    </label>
-                    <div class="number-grid" data-depends-on="liveWatchHistoryEnabled">
-                        <label
-                            ><span>최소 저장 시간</span
-                            ><input
-                                type="number"
-                                min="1"
-                                max="1440"
-                                step="1"
-                                data-option="liveWatchHistoryMinMinutes"
-                            /><em>분</em></label
-                        >
-                    </div>
-                    <p class="setting-note">
-                        최소 저장 시간은 시청 시간 집계에만 적용해요. 기록은 이 브라우저에만 저장해요.
-                    </p>
-
-                    <div data-depends-on="liveWatchHistoryEnabled">
-                        <label class="toggle-row">
-                            <span
-                                ><strong>내 채팅 기록 저장</strong
-                                ><small>채팅 내용과 작성 시각을 저장하고 채팅 수를 집계해요.</small></span
-                            >
-                            <input type="checkbox" data-option="liveWatchHistoryChatEnabled" />
-                        </label>
-                        <label class="toggle-row">
-                            <span
-                                ><strong>내 일반 후원 기록 저장</strong
-                                ><small>채팅에 표시된 본인 일반 후원의 횟수와 치즈를 집계해요.</small></span
-                            >
-                            <input type="checkbox" data-option="liveWatchHistoryDonationEnabled" />
-                        </label>
-                    </div>
-                    <p class="setting-note">
-                        켜 둔 동안 로그인한 계정의 라이브 채팅에서 전송이 확인되면 바로 저장해요. 최소 시청 시간이나
-                        영상 재생 여부와 관계없이 기록하며, 과거 내역·익명 후원·미션·외부 후원은 포함하지 않아요.
-                    </p>
-
-                    <p class="history-storage-warning" role="note">
-                        <strong>시청 기록 삭제 주의</strong>
-                        시청 기록은 이 브라우저에만 저장되며 자동 백업되지 않아요. 확장 프로그램을 삭제하거나 브라우저
-                        프로필·확장 데이터를 지우면 기록도 함께 삭제돼요. 별도 백업이 없으면 재설치해도 복구할 수
-                        없어요.
-                    </p>
-
-                    <details class="history-storage-guide">
-                        <summary>시청 기록 저장 위치</summary>
-                        <p>기록은 현재 Chrome 프로필의 확장 저장소에 보관돼요.</p>
-                        <ol>
-                            <li>
-                                주소창에 <code>chrome://version</code>을 입력하고 <strong>프로필 경로</strong>를 확인해
-                                주세요.
-                            </li>
-                            <li>
-                                <code>chrome://extensions</code>에서 <strong>개발자 모드</strong>를 켜고 치즈 스패너의
-                                <strong>ID</strong>를 확인해 주세요.
-                            </li>
-                            <li>
-                                프로필 폴더 안의 <code>Local Extension Settings</code> 폴더에서 해당 ID와 같은 이름의
-                                폴더를 열면 돼요.
-                            </li>
-                        </ol>
-                        <p>Windows에서 찾을 경로</p>
-                        <code class="history-storage-path"
-                            >&lt;프로필 경로&gt;\Local Extension Settings\&lt;치즈 스패너 ID&gt;</code
-                        >
-                        <p>
-                            개인별 프로필과 설치 방식에 따라 경로가 달라요. 시청 기록은 별도 문서 파일이 아닌 브라우저
-                            데이터로 저장돼요.
-                        </p>
+                            <div data-depends-on="liveWatchHistoryEnabled">
+                                <label class="toggle-row">
+                                    <span
+                                        ><strong>내 채팅 기록 저장</strong
+                                        ><small>채팅 내용과 작성 시각을 저장하고 채팅 수를 집계해요.</small></span
+                                    >
+                                    <input type="checkbox" data-option="liveWatchHistoryChatEnabled" />
+                                </label>
+                                <label class="toggle-row">
+                                    <span
+                                        ><strong>내 일반 후원 기록 저장</strong
+                                        ><small>채팅에 표시된 본인 일반 후원의 횟수와 치즈를 집계해요.</small></span
+                                    >
+                                    <input type="checkbox" data-option="liveWatchHistoryDonationEnabled" />
+                                </label>
+                            </div>
+                            <p class="setting-note">
+                                켜 둔 동안 로그인한 계정의 라이브 채팅에서 전송이 확인되면 바로 저장해요. 최소 시청
+                                시간이나 영상 재생 여부와 관계없이 기록하며, 과거 내역·익명 후원·미션·외부 후원은
+                                포함하지 않아요.
+                            </p>
+                        </div>
                     </details>
 
-                    <div class="inline-action-row">
-                        <a class="secondary-button" href="history.html" target="_blank" rel="noopener"
-                            >시청 기록 보기</a
-                        >
-                    </div>
+                    <details class="option-group" data-option-group="history-management" data-search-together open>
+                        <summary>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-history" /></svg>
+                                <span>기록 관리·백업 안내</span>
+                            </span>
+                        </summary>
+                        <div class="option-group-body">
+                            <p id="historyBackupGuide" class="setting-note">
+                                시청 기록과 내 채팅의 백업·불러오기는 시청 기록 페이지에서 할 수 있어요. 후원 기록은
+                                백업에 포함되지 않아요. 아래 시청 기록 보기를 눌러 이용해 주세요.
+                            </p>
+                            <div class="inline-action-row">
+                                <a
+                                    class="secondary-button"
+                                    href="history.html"
+                                    target="_blank"
+                                    rel="noopener"
+                                    aria-describedby="historyBackupGuide"
+                                    >시청 기록 보기</a
+                                >
+                            </div>
+
+                            <p class="history-storage-warning" role="note">
+                                <strong>시청 기록 삭제 주의</strong>
+                                시청 기록은 이 브라우저에만 저장되며 자동 백업되지 않아요. 확장 프로그램을 삭제하거나
+                                브라우저 프로필·확장 데이터를 지우면 기록도 함께 삭제돼요. 별도 백업이 없으면 재설치해도
+                                복구할 수 없어요.
+                            </p>
+
+                            <details class="history-storage-guide">
+                                <summary>시청 기록 저장 위치</summary>
+                                <p>기록은 현재 Chrome 프로필의 확장 저장소에 보관돼요.</p>
+                                <ol>
+                                    <li>
+                                        주소창에 <code>chrome://version</code>을 입력하고 <strong>프로필 경로</strong>를
+                                        확인해 주세요.
+                                    </li>
+                                    <li>
+                                        <code>chrome://extensions</code>에서 <strong>개발자 모드</strong>를 켜고 치즈
+                                        스패너의 <strong>ID</strong>를 확인해 주세요.
+                                    </li>
+                                    <li>
+                                        프로필 폴더 안의 <code>Local Extension Settings</code> 폴더에서 해당 ID와 같은
+                                        이름의 폴더를 열면 돼요.
+                                    </li>
+                                </ol>
+                                <p>Windows에서 찾을 경로</p>
+                                <code class="history-storage-path"
+                                    >&lt;프로필 경로&gt;\Local Extension Settings\&lt;치즈 스패너 ID&gt;</code
+                                >
+                                <p>
+                                    개인별 프로필과 설치 방식에 따라 경로가 달라요. 시청 기록은 별도 문서 파일이 아닌
+                                    브라우저 데이터로 저장돼요.
+                                </p>
+                            </details>
+                        </div>
+                    </details>
                 </section>
 
-                <section class="settings-card" id="tab-panel-2" role="tabpanel" aria-labelledby="tab-2">
+                <section class="settings-card" id="tab-panel-chat" role="tabpanel" aria-labelledby="tab-chat">
                     <div class="section-heading">
                         <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <use href="#icon-chat" />
                         </svg>
-                        <h2>채팅 도구</h2>
+                        <h2>채팅</h2>
                     </div>
-
                     <details class="option-group" data-option-group="chat-display" open>
                         <summary>
                             <span class="option-group-title">
@@ -910,6 +969,18 @@
                             </span>
                         </summary>
                         <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>채팅창 너비 조절</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="chatResizeEnabled"
+                                    aria-describedby="chat-resize-help"
+                                />
+                            </label>
+                            <p class="setting-note" id="chat-resize-help">
+                                채팅·댓글 왼쪽 가장자리를 마우스로 잡아 끌어 조절해요. 더블클릭하면 기본 너비로
+                                돌아가요.
+                            </p>
                             <label class="toggle-row">
                                 <span><strong>라이브 채팅 타임스탬프 표시</strong></span>
                                 <input type="checkbox" data-option="chatTimestampEnabled" />
@@ -976,22 +1047,32 @@
                     </details>
                 </section>
 
-                <section class="settings-card" id="tab-panel-3" role="tabpanel" aria-labelledby="tab-3">
+                <section
+                    class="settings-card"
+                    id="tab-panel-appearance"
+                    role="tabpanel"
+                    aria-labelledby="tab-appearance"
+                >
                     <div class="section-heading">
                         <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <use href="#icon-window" />
                         </svg>
-                        <h2>팝업·알림</h2>
+                        <h2>화면 정리</h2>
                     </div>
-
-                    <details class="option-group" data-option-group="header-buttons" open>
+                    <details
+                        class="option-group"
+                        data-option-group="appearance-page"
+                        data-search-terms="상단 버튼"
+                        open
+                    >
                         <summary>
-                            <span class="option-group-title">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-window" /></svg>
-                                <span>상단 버튼</span>
-                            </span>
+                            <span class="option-group-title"
+                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-window" /></svg
+                                ><span>상단·사이드바</span></span
+                            >
                         </summary>
                         <div class="option-group-body">
+                            <h3 class="option-subheading">상단</h3>
                             <label class="toggle-row">
                                 <span><strong>스튜디오 버튼 숨기기</strong></span>
                                 <input type="checkbox" data-option="headerStudioHidden" />
@@ -1005,34 +1086,119 @@
                                 <input type="checkbox" data-option="headerNotificationHidden" />
                             </label>
                             <p class="setting-note">치지직 상단의 버튼을 각각 숨깁니다. 끄면 다시 표시됩니다.</p>
+                            <h3 class="option-subheading">사이드바</h3>
+                            <label class="toggle-row">
+                                <span><strong>사이드바 너비 조절</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="sidebarResizeEnabled"
+                                    aria-describedby="sidebar-resize-help"
+                                />
+                            </label>
+                            <p class="setting-note" id="sidebar-resize-help">
+                                펼친 사이드바 오른쪽 가장자리를 마우스로 잡아 끌어 조절해요. 더블클릭하면 기본 너비로
+                                돌아가요.
+                            </p>
+                            <label class="toggle-row">
+                                <span><strong>사이드바 치즈팜 숨김</strong></span>
+                                <input type="checkbox" data-option="sidebarCheeseFarmHidden" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>인기 카테고리 숨기기</strong></span>
+                                <input type="checkbox" data-option="sidebarPopularCategoriesHidden" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>다가오는 방송 일정 숨기기</strong></span>
+                                <input type="checkbox" data-option="sidebarUpcomingScheduleHidden" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>파트너 스트리머 숨기기</strong></span>
+                                <input type="checkbox" data-option="sidebarPartnerStreamersHidden" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>서비스 바로가기 숨기기</strong></span>
+                                <input type="checkbox" data-option="sidebarServiceLinksHidden" />
+                            </label>
                         </div>
                     </details>
 
-                    <details class="option-group" data-option-group="popup-adblock" open>
+                    <details class="option-group" data-option-group="appearance-player" data-search-terms="라이브 표시">
                         <summary>
                             <span class="option-group-title"
-                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-window" /></svg
-                                ><span>시청 팝업</span></span
+                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-play" /></svg
+                                ><span>플레이어 표시</span></span
                             >
                         </summary>
                         <div class="option-group-body">
                             <label class="toggle-row">
-                                <span><strong>시청 방해 팝업 제거</strong></span>
-                                <input type="checkbox" data-option="adblockPopupEnabled" />
+                                <span><strong>우상단 LIVE 숨기기</strong></span>
+                                <input type="checkbox" data-option="hideLiveBadgeEnabled" />
                             </label>
-                            <p class="setting-note">시청에 방해되는 팝업을 제거합니다.</p>
+                            <label class="toggle-row">
+                                <span><strong>클립 버튼 숨기기</strong></span>
+                                <input type="checkbox" data-option="playerClipHidden" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>PIP 버튼 숨기기</strong></span>
+                                <input type="checkbox" data-option="playerPipHidden" />
+                            </label>
+                            <p class="setting-note">
+                                라이브·다시보기 플레이어의 클립 만들기·PIP(작은 화면) 버튼을 각각 숨깁니다. 끄면 다시
+                                표시됩니다.
+                            </p>
+                        </div>
+                    </details>
+
+                    <details
+                        class="option-group"
+                        data-option-group="appearance-updates"
+                        data-search-together
+                        data-search-terms="업데이트 새 기능 튜토리얼 다시보기 안내"
+                        open
+                    >
+                        <summary>
+                            <span class="option-group-title"
+                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-window" /></svg
+                                ><span>새 기능 안내</span></span
+                            >
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>업데이트 안내</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="updateGuideEnabled"
+                                    aria-describedby="updateGuideHelp"
+                                />
+                            </label>
+                            <p id="updateGuideHelp" class="setting-note">
+                                업데이트 후 치지직 화면에 한 번 알려드려요. 안내는 20초 뒤 닫히며, 마우스를 올리거나
+                                키보드로 살펴보는 동안에는 유지돼요.
+                            </p>
+                            <div class="inline-action-row">
+                                <button id="updateGuideReplay" type="button" class="secondary-button">
+                                    새 기능 다시보기
+                                </button>
+                            </div>
+                            <p id="updateGuideStatus" class="setting-note" role="status" aria-live="polite">
+                                치지직 화면에 안내를 열어요. 자동 안내를 꺼도 다시 볼 수 있어요.
+                            </p>
                         </div>
                     </details>
                 </section>
 
-                <section class="settings-card" id="tab-panel-4" role="tabpanel" aria-labelledby="tab-4">
+                <section
+                    class="settings-card"
+                    id="tab-panel-broadcast-time"
+                    role="tabpanel"
+                    aria-labelledby="tab-broadcast-time"
+                >
                     <div class="section-heading">
                         <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <use href="#icon-calendar" />
                         </svg>
-                        <h2>채널 방송 시간</h2>
+                        <h2>방송 시간</h2>
                     </div>
-
                     <details class="option-group" data-option-group="broadcast-average" open>
                         <summary>
                             <span class="option-group-title">
@@ -1109,14 +1275,13 @@
                     </details>
                 </section>
 
-                <section class="settings-card" id="tab-panel-5" role="tabpanel" aria-labelledby="tab-5">
+                <section class="settings-card" id="tab-panel-vod" role="tabpanel" aria-labelledby="tab-vod">
                     <div class="section-heading">
                         <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <use href="#icon-video" />
                         </svg>
                         <h2>다시보기</h2>
                     </div>
-
                     <details class="option-group" data-option-group="vod-display" open>
                         <summary>
                             <span class="option-group-title">
@@ -1136,14 +1301,15 @@
                         </div>
                     </details>
 
-                    <details class="option-group" data-option-group="search-basic" open>
+                    <details class="option-group" data-option-group="search-video" open>
                         <summary>
-                            <span class="option-group-title">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-search" /></svg>
-                                <span>영상 검색</span>
-                            </span>
+                            <span class="option-group-title"
+                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-search" /></svg
+                                ><span>영상·댓글 검색</span></span
+                            >
                         </summary>
                         <div class="option-group-body">
+                            <h3 class="option-subheading">영상 검색</h3>
                             <label class="toggle-row">
                                 <span><strong>다시보기 검색</strong></span>
                                 <input type="checkbox" data-option="videoSearchEnabled" />
@@ -1171,17 +1337,7 @@
                                 >
                             </div>
                             <p class="setting-note">조회 페이지와 표시 개수를 낮추면 목록 반응이 빨라집니다.</p>
-                        </div>
-                    </details>
-
-                    <details class="option-group" data-option-group="search-comments">
-                        <summary>
-                            <span class="option-group-title">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-chat" /></svg>
-                                <span>댓글 검색</span>
-                            </span>
-                        </summary>
-                        <div class="option-group-body">
+                            <h3 class="option-subheading">댓글 검색</h3>
                             <label class="toggle-row" data-depends-on="videoSearchEnabled">
                                 <span><strong>제목에 없으면 댓글까지 검색</strong></span>
                                 <input type="checkbox" data-option="videoSearchCommentEnabled" />
@@ -1223,20 +1379,24 @@
                     </details>
                 </section>
 
-                <section class="settings-card" id="tab-panel-6" role="tabpanel" aria-labelledby="tab-6">
+                <section class="settings-card" id="tab-panel-explore" role="tabpanel" aria-labelledby="tab-explore">
                     <div class="section-heading">
                         <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <use href="#icon-compass" />
                         </svg>
-                        <h2>방송 목록 필터</h2>
+                        <h2>탐색</h2>
                     </div>
-
-                    <details class="option-group" data-option-group="explore-channel" open>
+                    <details
+                        class="option-group"
+                        data-option-group="explore-following"
+                        data-search-terms="목록 새로고침 사이드바"
+                        open
+                    >
                         <summary>
-                            <span class="option-group-title">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-users" /></svg>
-                                <span>채널</span>
-                            </span>
+                            <span class="option-group-title"
+                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-users" /></svg
+                                ><span>채널·팔로잉</span></span
+                            >
                         </summary>
                         <div class="option-group-body">
                             <label class="toggle-row">
@@ -1246,37 +1406,6 @@
                             <p class="setting-note">
                                 정보 탭 옆에 방송이 꺼져 있어도 채팅을 볼 수 있는 라이브 화면 바로가기를 표시합니다.
                             </p>
-                        </div>
-                    </details>
-
-                    <details class="option-group" data-option-group="explore-sidebar" open>
-                        <summary>
-                            <span class="option-group-title">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-users" /></svg>
-                                <span>사이드바</span>
-                            </span>
-                        </summary>
-                        <div class="option-group-body">
-                            <label class="toggle-row">
-                                <span><strong>사이드바 치즈팜 숨김</strong></span>
-                                <input type="checkbox" data-option="sidebarCheeseFarmHidden" />
-                            </label>
-                            <label class="toggle-row">
-                                <span><strong>인기 카테고리 숨기기</strong></span>
-                                <input type="checkbox" data-option="sidebarPopularCategoriesHidden" />
-                            </label>
-                            <label class="toggle-row">
-                                <span><strong>다가오는 방송 일정 숨기기</strong></span>
-                                <input type="checkbox" data-option="sidebarUpcomingScheduleHidden" />
-                            </label>
-                            <label class="toggle-row">
-                                <span><strong>파트너 스트리머 숨기기</strong></span>
-                                <input type="checkbox" data-option="sidebarPartnerStreamersHidden" />
-                            </label>
-                            <label class="toggle-row">
-                                <span><strong>서비스 바로가기 숨기기</strong></span>
-                                <input type="checkbox" data-option="sidebarServiceLinksHidden" />
-                            </label>
                             <label class="toggle-row">
                                 <span><strong>팔로잉 목록 상태 기억</strong></span>
                                 <input type="checkbox" data-option="followingListStateEnabled" />
@@ -1296,17 +1425,6 @@
                                 <input type="checkbox" data-option="followingOfflineHidden" />
                             </label>
                             <p class="setting-note">사이드바에서 고정 여부와 관계없이 오프라인 채널을 숨깁니다.</p>
-                        </div>
-                    </details>
-
-                    <details class="option-group" data-option-group="explore-refresh">
-                        <summary>
-                            <span class="option-group-title">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-refresh" /></svg>
-                                <span>목록 새로고침</span>
-                            </span>
-                        </summary>
-                        <div class="option-group-body">
                             <label class="toggle-row">
                                 <span><strong>팔로잉 라이브 제목 이력</strong></span>
                                 <input type="checkbox" data-option="followingTitleHistoryEnabled" />
@@ -1328,37 +1446,6 @@
                                     /><em>초</em></label
                                 >
                             </div>
-                        </div>
-                    </details>
-
-                    <details class="option-group" data-option-group="explore-tools" open>
-                        <summary>
-                            <span class="option-group-title">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-sliders" /></svg>
-                                <span>검색·목록 표시</span>
-                            </span>
-                        </summary>
-                        <div class="option-group-body">
-                            <label class="toggle-row">
-                                <span><strong>방송 목록 검색·필터</strong></span>
-                                <input type="checkbox" data-option="categoryToolsEnabled" />
-                            </label>
-                            <label class="toggle-row" data-depends-on="categoryToolsEnabled">
-                                <span><strong>전체 방송 태그 검색 숨김</strong></span>
-                                <input type="checkbox" data-option="categoryToolsHideGlobalTagSearch" />
-                            </label>
-                            <label class="toggle-row" data-depends-on="categoryToolsEnabled">
-                                <span><strong>팔로워 수 표시</strong></span>
-                                <input type="checkbox" data-option="categoryToolsFollowerBadgesEnabled" />
-                            </label>
-                            <label class="toggle-row" data-depends-on="categoryToolsEnabled">
-                                <span><strong>호버로 진행 시간 표시</strong></span>
-                                <input type="checkbox" data-option="categoryToolsLiveElapsedEnabled" />
-                            </label>
-                            <label class="toggle-row">
-                                <span><strong>긴 제목 툴팁</strong></span>
-                                <input type="checkbox" data-option="titleTooltipEnabled" />
-                            </label>
                         </div>
                     </details>
 
@@ -1400,15 +1487,70 @@
                             <p class="setting-note">처음 켤 때 미리보기 재생 권한(pstatic.net)을 요청합니다.</p>
                         </div>
                     </details>
+                </section>
 
-                    <details class="option-group" data-option-group="explore-presets-followers">
+                <section
+                    class="settings-card"
+                    id="tab-panel-search-filter"
+                    role="tabpanel"
+                    aria-labelledby="tab-search-filter"
+                >
+                    <div class="section-heading">
+                        <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <use href="#icon-search" />
+                        </svg>
+                        <h2>검색·필터</h2>
+                    </div>
+                    <details class="option-group" data-option-group="explore-tools" open>
                         <summary>
                             <span class="option-group-title">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-users" /></svg>
-                                <span>팔로워 필터 기준값</span>
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-sliders" /></svg>
+                                <span>검색·목록 표시</span>
                             </span>
                         </summary>
                         <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>방송 목록 검색·필터</strong></span>
+                                <input type="checkbox" data-option="categoryToolsEnabled" />
+                            </label>
+                            <label class="toggle-row">
+                                <span>
+                                    <strong>전체 방송 집계 표시</strong>
+                                    <small>
+                                        전체 방송에서 시청자 10명 이상인 방송 수와 동시 시청자 합계를 표시합니다. 여러
+                                        방송을 함께 보는 사람의 중복을 제거한 동시접속자 수는 아닙니다.
+                                    </small>
+                                </span>
+                                <input type="checkbox" data-option="globalLiveCountEnabled" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="categoryToolsEnabled">
+                                <span><strong>전체 방송 태그 검색 숨김</strong></span>
+                                <input type="checkbox" data-option="categoryToolsHideGlobalTagSearch" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="categoryToolsEnabled">
+                                <span><strong>팔로워 수 표시</strong></span>
+                                <input type="checkbox" data-option="categoryToolsFollowerBadgesEnabled" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="categoryToolsEnabled">
+                                <span><strong>호버로 진행 시간 표시</strong></span>
+                                <input type="checkbox" data-option="categoryToolsLiveElapsedEnabled" />
+                            </label>
+                            <label class="toggle-row">
+                                <span><strong>긴 제목 툴팁</strong></span>
+                                <input type="checkbox" data-option="titleTooltipEnabled" />
+                            </label>
+                        </div>
+                    </details>
+
+                    <details class="option-group" data-option-group="explore-presets">
+                        <summary>
+                            <span class="option-group-title"
+                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-sliders" /></svg
+                                ><span>필터 기준값</span></span
+                            >
+                        </summary>
+                        <div class="option-group-body">
+                            <h3 class="option-subheading" data-search-terms="팔로워 필터 기준값">팔로워</h3>
                             <p class="setting-note">1번 값은 ‘이하’, 마지막 값 이후는 ‘이상’ 구간입니다.</p>
                             <div class="number-grid" data-depends-on="categoryToolsEnabled">
                                 <label
@@ -1472,17 +1614,9 @@
                                     /><em>명</em></label
                                 >
                             </div>
-                        </div>
-                    </details>
-
-                    <details class="option-group" data-option-group="explore-presets-views">
-                        <summary>
-                            <span class="option-group-title">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-eye" /></svg>
-                                <span>시청자·조회수 필터 기준값</span>
-                            </span>
-                        </summary>
-                        <div class="option-group-body">
+                            <h3 class="option-subheading" data-search-terms="시청자·조회수 필터 기준값">
+                                시청자·조회수
+                            </h3>
                             <p class="setting-note">1번 값은 ‘이하’, 마지막 값 이후는 ‘이상’ 구간입니다.</p>
                             <div class="number-grid" data-depends-on="categoryToolsEnabled">
                                 <label
@@ -1546,17 +1680,7 @@
                                     /><em>명/회</em></label
                                 >
                             </div>
-                        </div>
-                    </details>
-
-                    <details class="option-group" data-option-group="explore-presets-duration">
-                        <summary>
-                            <span class="option-group-title">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-clock" /></svg>
-                                <span>진행 시간 필터 기준값</span>
-                            </span>
-                        </summary>
-                        <div class="option-group-body">
+                            <h3 class="option-subheading" data-search-terms="진행 시간 필터 기준값">진행 시간</h3>
                             <p class="setting-note">1번 값은 ‘이하’, 마지막 값 이후는 ‘이상’ 구간입니다.</p>
                             <div class="number-grid" data-depends-on="categoryToolsEnabled">
                                 <label
@@ -1680,14 +1804,18 @@
                     </details>
                 </section>
 
-                <section class="settings-card" id="tab-panel-7" role="tabpanel" aria-labelledby="tab-7">
+                <section
+                    class="settings-card"
+                    id="tab-panel-live-start"
+                    role="tabpanel"
+                    aria-labelledby="tab-live-start"
+                >
                     <div class="section-heading">
                         <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
                         </svg>
                         <h2>방송 알림</h2>
                     </div>
-
                     <details class="option-group" data-option-group="explore-live-start" data-search-together open>
                         <summary>
                             <span class="option-group-title">
@@ -1794,5 +1922,8 @@
         <script src="shared/data.js"></script>
         <script src="shared/liveStart.js"></script>
         <script src="optionsLiveStart.js"></script>
+        <script src="shared/updateGuide.js"></script>
+        <script src="shared/updateGuideView.js"></script>
+        <script src="optionsUpdateGuide.js"></script>
     </body>
 </html>

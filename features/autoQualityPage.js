@@ -16,7 +16,7 @@
  *   않도록 여러 지연/재시도 창을 관리한다. Object.defineProperty 등을 패치해 플레이어가 나중에
  *   videoTracks를 정의하는 경우도 추적한다.
  * 의존: 없음 (isolated world 전역에 접근 불가). window/document, chrome.runtime.getURL(부트스트랩 전용)만 사용.
- * 옵션 키: 없음 — 활성화 여부(autoQualityEnabled)는 옵션 키가 아니라 STATE_ATTR로 전달받는다.
+ * 옵션 키: 없음 — 자동 화질 활성 상태는 STATE_ATTR로 전달받는다.
  * DOM 마커: document.documentElement에 data-betterchzzk-auto-quality-page-injected(재주입 가드),
  *   data-betterchzzk-auto-quality-status(진단용 결과) 속성을 쓴다.
  * 통신: isolated world의 features/autoQuality.js가 쓰는 data-betterchzzk-auto-quality-request를 읽고
@@ -24,6 +24,8 @@
  *   betterchzzk:auto-quality:apply(요청 트리거)를 수신한다. 활성화 상태는
  *   data-betterchzzk-auto-quality-state 속성 + betterchzzk:auto-quality:state 이벤트로 받는다.
  *   라우트 변경은 features/routeBridgePage.js가 보내는 betterchzzk:routechange 이벤트로 받는다.
+ *   스트림 정보는 현재 메인 video의 data-bcsi-request와 betterchzzk:stream-info:read로 요청하며,
+ *   제어 옵션과 독립적으로 읽은 최소 현재 트랙 정보를 data-bcsi-result에 동기로 반환한다.
  * 주요 진입점: syncAutoQualityState(설정/라우트), getLiveQualityPlayer(라이브 연결),
  *   applyLiveQualitySelection(메뉴 선택), applyQualityToPlayer(기존 트랙), clearPageAutoApply(정리).
  */
@@ -62,6 +64,9 @@
     const ROUTE_CHANGE_EVENT = "betterchzzk:routechange";
     const STATE_ATTR = "data-betterchzzk-auto-quality-state";
     const STATUS_ATTR = "data-betterchzzk-auto-quality-status";
+    const STREAM_INFO_READ_EVENT = "betterchzzk:stream-info:read";
+    const STREAM_INFO_REQUEST_ATTR = "data-bcsi-request";
+    const STREAM_INFO_RESULT_ATTR = "data-bcsi-result";
     const DEFAULT_QUALITY = "1080p";
     const PLAYBACK_ROUTE_RE = /^\/(?:live|video)(?:\/|$)/;
     const PAGE_APPLY_WINDOW_MS = 8000;
@@ -142,6 +147,10 @@
     let lastFullPlayerScanAt = 0;
     let playerSearchMisses = 0;
     let autoQualityEnabled = true;
+    let liveQualityIntentKey = "";
+    const nativeSelectionLocks = new WeakMap();
+    const streamInfoSources = new WeakMap();
+    let streamInfoSourceSequence = 0;
     let commentTimelineSeekSeq = 0;
     let activeCommentTimelineSeek = null;
     let lastCommentTimelineSeekAt = 0;
@@ -526,6 +535,7 @@
     function syncAutoQualityState() {
         syncQualityTargetRouteState();
         readAutoQualityState();
+        liveQualityIntentKey = [location.pathname, autoQualityEnabled, preferredQuality].join("|");
         if (!autoQualityEnabled || !isPlaybackRoute() || isVodRoute()) detachLiveQualityBinding();
         if (autoQualityEnabled && isPlaybackRoute()) installQualityTargetInterceptor();
         else uninstallQualityTargetInterceptor();
@@ -569,6 +579,10 @@
         document.addEventListener("mousedown", rememberUserMediaIntent, true);
         document.addEventListener("touchstart", rememberUserMediaIntent, true);
         window.addEventListener("keydown", rememberUserMediaIntent, true);
+    }
+
+    function isLiveRoute() {
+        return /^\/live\/[^/]+\/?$/.test(location.pathname);
     }
 
     function uninstallPageEventListeners() {
@@ -895,6 +909,7 @@
     window.addEventListener(STATE_EVENT, syncAutoQualityState);
     window.addEventListener(ROUTE_CHANGE_EVENT, syncAutoQualityState);
     window.addEventListener("pageshow", syncAutoQualityState, true);
+    document.addEventListener(STREAM_INFO_READ_EVENT, onStreamInfoRead, true);
 
     function isElement(value) {
         return value instanceof HTMLElement;
@@ -1099,21 +1114,42 @@
         return cachedPlayer;
     }
 
-    function isCurrentLiveQualityBinding(binding) {
-        if (!binding || !autoQualityEnabled || !isPlaybackRoute() || isVodRoute()) return false;
+    function isCurrentLivePlayerOwnership(binding, allowSourceChange = false) {
+        if (!binding) return false;
         try {
             return (
                 binding.route === location.pathname &&
                 binding.host.isConnected &&
                 binding.host.contains(binding.video) &&
                 binding.host.querySelector("video.webplayer-internal-video") === binding.video &&
+                binding.host[binding.fiberKey] === binding.fiber &&
+                (readLooseProp(binding.hook, "memoizedState") === binding.player ||
+                    readLooseProp(readLooseProp(binding.hook, "memoizedState"), "current") === binding.player) &&
+                getMainVideo() === binding.video &&
+                binding.player.shadowRoot === binding.shadowRoot &&
                 binding.player.shadowRoot.contains(binding.video) &&
                 binding.player.querySelector("pzp-setting-quality-pane") === binding.pane &&
-                readLooseProp(binding.player, "srcObject") === binding.provider
+                readLooseProp(binding.player, "srcObject") === binding.provider &&
+                (allowSourceChange || binding.video.currentSrc === binding.source) &&
+                // Native getters above can replace ownership while a diagnostic read is in progress.
+                binding.host[binding.fiberKey] === binding.fiber &&
+                (readLooseProp(binding.hook, "memoizedState") === binding.player ||
+                    readLooseProp(readLooseProp(binding.hook, "memoizedState"), "current") === binding.player) &&
+                binding.route === location.pathname &&
+                getMainVideo() === binding.video
             );
         } catch {
             return false;
         }
+    }
+
+    function isCurrentLiveQualityBinding(binding) {
+        return (
+            autoQualityEnabled &&
+            isPlaybackRoute() &&
+            !isVodRoute() &&
+            isCurrentLivePlayerOwnership(binding, Boolean(binding?.pending || binding?.applying))
+        );
     }
 
     function detachLiveQualityBinding() {
@@ -1129,62 +1165,83 @@
         }
     }
 
-    function getLiveQualityPlayer(video) {
-        if (!autoQualityEnabled || !isPlaybackRoute() || isVodRoute()) return null;
-        if (isCurrentLiveQualityBinding(liveQualityBinding) && liveQualityBinding.video === video)
-            return liveQualityBinding.player;
-        detachLiveQualityBinding();
+    function findLivePlayerOwnership(video, { requireUniquePlayer = false } = {}) {
         const host = video?.closest?.(".chzzk_player.type_live");
-        if (!host || !video.matches("video.webplayer-internal-video")) return null;
+        if (!host || !video.matches("video.webplayer-internal-video")) return { reason: "player-missing" };
 
         const key = Object.getOwnPropertyNames(host).find((name) => name.startsWith("__reactFiber$"));
+        const identity = {
+            host,
+            video,
+            fiberKey: key,
+            fiber: key ? host[key] : null,
+            route: location.pathname,
+            source: video.currentSrc,
+        };
         const seen = new Set();
         const matches = [];
-        const consider = (player) => {
+        const consider = (player, hook) => {
             if (!player || typeof player !== "object" || seen.has(player)) return;
             seen.add(player);
             try {
+                const shadowRoot = player.shadowRoot;
                 if (
                     typeof player.getPreProcessorControl !== "function" ||
                     typeof player.querySelector !== "function" ||
-                    !(player.shadowRoot instanceof Element) ||
-                    !player.shadowRoot.contains(video)
+                    !(shadowRoot instanceof Element) ||
+                    !shadowRoot.contains(video)
                 )
                     return;
+                const provider = readLooseProp(player, "srcObject");
                 const pane = player.querySelector("pzp-setting-quality-pane");
                 if (
                     typeof pane?.$dispatch === "function" &&
                     typeof pane.selectVideoTrack === "function" &&
-                    !matches.some((match) => match.pane === pane)
+                    // Control keeps its existing pane identity policy; diagnostics require a unique player.
+                    (requireUniquePlayer || !matches.some((match) => match.pane === pane))
                 )
-                    matches.push({ player, pane });
+                    matches.push({ ...identity, player, pane, hook, provider, shadowRoot });
             } catch (_) {
                 // 접근할 수 없는 후보는 채택하지 않는다.
             }
         };
-        let owner = key ? host[key] : null;
+        let owner = identity.fiber;
         for (let depth = 0; owner && depth < 8; depth++, owner = readLooseProp(owner, "return")) {
             for (const fiber of [owner, readLooseProp(owner, "alternate")]) {
                 let hook = readLooseProp(fiber, "memoizedState");
                 for (let index = 0; hook && index < 48; index++, hook = readLooseProp(hook, "next")) {
                     const value = readLooseProp(hook, "memoizedState");
-                    consider(value);
-                    consider(readLooseProp(value, "current"));
+                    consider(value, hook);
+                    consider(readLooseProp(value, "current"), hook);
                 }
             }
         }
-        if (matches.length !== 1) return null;
-        const { player, pane } = matches[0];
+        if (
+            identity.route !== location.pathname ||
+            identity.source !== video.currentSrc ||
+            (key ? host[key] : null) !== identity.fiber ||
+            !host.isConnected ||
+            getMainVideo() !== video
+        )
+            return { reason: "player-changed" };
+        if (matches.length !== 1) return { reason: matches.length ? "ambiguous-player" : "player-missing" };
+        const ownership = matches[0];
+        return isCurrentLivePlayerOwnership(ownership) ? { reason: "ok", ownership } : { reason: "player-changed" };
+    }
+
+    function getLiveQualityPlayer(video) {
+        if (!autoQualityEnabled || !isPlaybackRoute() || isVodRoute()) return null;
+        if (isCurrentLiveQualityBinding(liveQualityBinding) && liveQualityBinding.video === video)
+            return liveQualityBinding.player;
+        detachLiveQualityBinding();
+        const { ownership } = findLivePlayerOwnership(video);
+        if (!ownership) return null;
+        const { player, pane } = ownership;
         const descriptor = nativeGetOwnPropertyDescriptor(pane, "$dispatch");
         if (descriptor && !descriptor.configurable) return null;
         const binding = {
-            player,
-            pane,
-            host,
-            video,
+            ...ownership,
             descriptor,
-            route: location.pathname,
-            provider: readLooseProp(player, "srcObject"),
             original: pane.$dispatch,
             wrapper: null,
             pending: null,
@@ -1196,7 +1253,7 @@
         binding.onPlaying = () => {
             if (liveQualityBinding !== binding || !isCurrentLiveQualityBinding(binding)) return;
             binding.started = true;
-            startPageAutoApply(TRACK_RECOVERY_WINDOW_MS);
+            if (autoQualityEnabled) startPageAutoApply(TRACK_RECOVERY_WINDOW_MS);
         };
         binding.wrapper = function (...args) {
             if (liveQualityBinding !== binding || !isCurrentLiveQualityBinding(binding)) {
@@ -1204,7 +1261,9 @@
                 return Reflect.apply(binding.original, this, args);
             }
             const track = args[1]?.track;
-            if (!binding.applying && this === pane && args[0] === "change") binding.failed = null;
+            if (!binding.applying && this === pane && args[0] === "change") {
+                binding.failed = null;
+            }
             const result = Reflect.apply(binding.original, this, args);
             const requestedHeight = getPreferredHeight(preferredQuality);
             const measuredTrack =
@@ -1212,6 +1271,7 @@
                 (track?.width === 1280 && track?.height === 720 && track?.dataset?.encodingTrackId === "720p");
             if (
                 liveQualityBinding === binding &&
+                autoQualityEnabled &&
                 isCurrentLiveQualityBinding(binding) &&
                 this === pane &&
                 args[0] === "change" &&
@@ -1233,13 +1293,142 @@
         }
     }
 
+    function readStreamInfoTrack(player) {
+        const list = getTrackListFromTarget(player);
+        if (!list || !Number.isInteger(list.length) || list.length > 256) return null;
+        const tracks = toTrackArray(list);
+        const selected = tracks.filter((track) => isSelectedTrackValue(readLooseProp(track, "selected")));
+        if (selected.length > 1) return null;
+        const index = readLooseProp(list, "selectedIndex");
+        const indexed = Number.isInteger(index) && index >= 0 ? tracks[index] : null;
+        if (selected.length === 1 && indexed && indexed !== selected[0]) return null;
+        const track = selected[0] || indexed;
+        if (!track) return null;
+        const id = readLooseProp(track, "id");
+        return {
+            track,
+            id: typeof id === "string" && id ? id : null,
+            kind: readLooseProp(track, "kind"),
+            width: readLooseProp(track, "width"),
+            height: readLooseProp(track, "height"),
+        };
+    }
+
+    function getStreamInfoSourceToken(ownership) {
+        const previous = streamInfoSources.get(ownership.video);
+        if (previous?.provider === ownership.provider && previous.source === ownership.source) return previous.token;
+        const token = `bcsi-${++streamInfoSourceSequence}`;
+        streamInfoSources.set(ownership.video, { provider: ownership.provider, source: ownership.source, token });
+        return token;
+    }
+
+    function onStreamInfoRead(event) {
+        const video = event.target;
+        if (!(video instanceof HTMLVideoElement) || video !== getMainVideo()) return;
+        let request;
+        try {
+            const raw = video.getAttribute(STREAM_INFO_REQUEST_ATTR);
+            if (!raw || raw.length > 1024) return;
+            request = JSON.parse(raw);
+        } catch {
+            return;
+        }
+        if (
+            !request ||
+            Array.isArray(request) ||
+            request.version !== 1 ||
+            typeof request.requestId !== "string" ||
+            request.requestId.length < 1 ||
+            request.requestId.length > 128 ||
+            Object.keys(request).some((key) => key !== "version" && key !== "requestId")
+        )
+            return;
+        const result = {
+            version: 1,
+            requestId: request.requestId,
+            route: location.pathname,
+            status: "unavailable",
+            reason: "unsupported-route",
+            mode: "unknown",
+            trackId: null,
+            sourceToken: null,
+            trackWidth: null,
+            trackHeight: null,
+            onLive: null,
+        };
+        if (isLiveRoute()) {
+            let ownership;
+            try {
+                const found = findLivePlayerOwnership(video, { requireUniquePlayer: true });
+                ownership = found.ownership;
+                result.reason = found.reason;
+                if (ownership) {
+                    const selected = readStreamInfoTrack(ownership.player);
+                    const onLive = readLooseProp(
+                        readLooseProp(readLooseProp(ownership.pane, "$store"), "getters"),
+                        "onLive"
+                    );
+                    const current = readStreamInfoTrack(ownership.player);
+                    const sameTrack =
+                        selected &&
+                        current &&
+                        selected.track === current.track &&
+                        selected.id === current.id &&
+                        selected.kind === current.kind &&
+                        Object.is(selected.width, current.width) &&
+                        Object.is(selected.height, current.height);
+                    const verified = findLivePlayerOwnership(video, { requireUniquePlayer: true }).ownership;
+                    if (
+                        !verified ||
+                        verified.player !== ownership.player ||
+                        verified.pane !== ownership.pane ||
+                        verified.hook !== ownership.hook ||
+                        verified.shadowRoot !== ownership.shadowRoot ||
+                        verified.provider !== ownership.provider ||
+                        verified.source !== ownership.source ||
+                        !isCurrentLivePlayerOwnership(ownership)
+                    )
+                        result.reason = "player-changed";
+                    else if (!selected && !current) result.reason = "track-missing";
+                    else if (!sameTrack) result.reason = "player-changed";
+                    else {
+                        result.status = "ready";
+                        result.reason = "ok";
+                        result.mode = ["low-latency", "low-latency-p2p"].includes(selected.kind)
+                            ? "low-latency"
+                            : ["main", "p2p"].includes(selected.kind)
+                              ? "standard"
+                              : "unknown";
+                        result.trackId = selected.id;
+                        result.sourceToken = getStreamInfoSourceToken(ownership);
+                        result.trackWidth =
+                            Number.isFinite(selected.width) && selected.width > 0 ? selected.width : null;
+                        result.trackHeight =
+                            Number.isFinite(selected.height) && selected.height > 0 ? selected.height : null;
+                        result.onLive = typeof onLive === "boolean" ? onLive : null;
+                    }
+                }
+            } catch {
+                result.reason = ownership
+                    ? isCurrentLivePlayerOwnership(ownership)
+                        ? "track-missing"
+                        : "player-changed"
+                    : "player-missing";
+            }
+        }
+        if (result.status === "unavailable") streamInfoSources.delete(video);
+        result.route = location.pathname;
+        video.setAttribute(STREAM_INFO_RESULT_ATTR, JSON.stringify(result));
+    }
+
     function applyLiveQualitySelection(binding, track, quality) {
         if (!isCurrentLiveQualityBinding(binding) || typeof track.id !== "string" || !track.id)
             return { status: "blocked", reason: "native-quality-unavailable" };
         // 현재 공식 코드의 loadedmetadata → CY → Vf는 초기 play를 요청한다. 트랙 변경이
         // 겹쳐 AbortError가 나면 네이티브에서 재시도하지 않으므로 첫 playing 이후에 선택한다.
         if (!binding.started) return { status: "pending", reason: "native-playback-start", waitForEvent: true };
-        if (binding.pending) return { status: "pending", reason: "native-quality-pending", waitForEvent: true };
+        if (binding.pending || nativeSelectionLocks.has(binding.pane))
+            return { status: "pending", reason: "native-quality-pending", waitForEvent: true };
         if (binding.failed?.trackId === track.id && binding.failed.quality === quality)
             return { status: "blocked", reason: binding.failed.reason };
         binding.failed = null;
@@ -1263,15 +1452,18 @@
         }
         const pending = Promise.resolve(selection);
         binding.pending = pending;
+        nativeSelectionLocks.set(binding.pane, pending);
         const settle = (failed) => {
+            if (nativeSelectionLocks.get(binding.pane) === pending) nativeSelectionLocks.delete(binding.pane);
             if (liveQualityBinding !== binding || binding.pending !== pending || !isCurrentLiveQualityBinding(binding))
                 return;
             binding.pending = null;
+            binding.source = binding.video.currentSrc;
             const list = getTrackListFromTarget(binding.player);
             const selected = getSelectedTrack(toTrackArray(list), list);
             if (failed || selected?.id !== track.id)
                 binding.failed = { trackId: track.id, quality, reason: "native-quality-unconfirmed" };
-            startPageAutoApply(TRACK_RECOVERY_WINDOW_MS);
+            if (autoQualityEnabled) startPageAutoApply(TRACK_RECOVERY_WINDOW_MS);
         };
         pending.then(
             () => settle(false),
@@ -1896,8 +2088,26 @@
                 bindTrackList(null);
                 return { status: "pending", reason: "native-playback-start", waitForEvent: true };
             }
-            if (liveQualityBinding.pending)
+            if (liveQualityBinding.pending || nativeSelectionLocks.has(liveQualityBinding.pane)) {
+                const binding = liveQualityBinding;
+                const pending = binding.pending || nativeSelectionLocks.get(binding.pane);
+                const intentKey = liveQualityIntentKey;
+                if (binding.waitingQualityIntent !== intentKey) {
+                    binding.waitingQualityIntent = intentKey;
+                    const resume = () => {
+                        if (binding.waitingQualityIntent === intentKey) binding.waitingQualityIntent = null;
+                        if (
+                            autoQualityEnabled &&
+                            liveQualityIntentKey === intentKey &&
+                            liveQualityBinding === binding &&
+                            isCurrentLiveQualityBinding(binding)
+                        )
+                            startPageAutoApply(TRACK_RECOVERY_WINDOW_MS);
+                    };
+                    pending.then(resume, resume);
+                }
                 return { status: "pending", reason: "native-quality-pending", waitForEvent: true };
+            }
         }
         const trackTarget = findVideoTrackListTarget(player);
         bindTrackList(trackTarget?.trackList || null);
@@ -1986,6 +2196,7 @@
     }
 
     function startPageAutoApply(windowMs = PAGE_APPLY_WINDOW_MS) {
+        if (!autoQualityEnabled) return;
         if (!isPlaybackRoute()) {
             clearPageAutoApply();
             return;
@@ -2034,7 +2245,7 @@
     function runPageApply() {
         pageApplyTimer = 0;
         pageApplyDueAt = 0;
-        if (!isPlaybackRoute()) {
+        if (!autoQualityEnabled || !isPlaybackRoute()) {
             clearPageAutoApply();
             return;
         }

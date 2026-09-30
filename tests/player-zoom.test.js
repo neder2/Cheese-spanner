@@ -26,6 +26,24 @@ function closeTo(actual, expected) {
     assert.ok(Math.abs(actual - expected) < 0.00001, `${actual} should equal ${expected}`);
 }
 
+function assertWheelDelivery(f, deltaY, consumed, init = {}, target = f.video()) {
+    const reached = [];
+    // Register after zoom, including on the same window capture phase, to detect immediate stops.
+    const listeners = [
+        [f.w, true, () => reached.push("window capture")],
+        [target, false, () => reached.push("target")],
+        [target.parentNode, false, () => reached.push("parent bubble")],
+    ];
+    for (const [node, capture, listener] of listeners) node.addEventListener("wheel", listener, capture);
+    try {
+        const event = f.wheel(deltaY, init, target);
+        assert.equal(event.defaultPrevented, consumed);
+        assert.deepEqual(reached, consumed ? [] : ["window capture", "target", "parent bubble"]);
+    } finally {
+        for (const [node, capture, listener] of listeners) node.removeEventListener("wheel", listener, capture);
+    }
+}
+
 function fixture(t, options = { playerZoomEnabled: true, playerZoomMode: "always" }) {
     const dom = new JSDOM(`<!doctype html>${markup}<aside><video data-bcmv-video></video><input></aside>`, {
         url: "https://chzzk.naver.com/live/test",
@@ -34,6 +52,8 @@ function fixture(t, options = { playerZoomEnabled: true, playerZoomMode: "always
     });
     const w = dom.window;
     const doc = w.document;
+    let now = 1000;
+    w.performance.now = () => now;
     let apply;
     let mainLookups = 0;
     const resizers = new Set();
@@ -141,6 +161,7 @@ function fixture(t, options = { playerZoomEnabled: true, playerZoomMode: "always
         pointer,
         route,
         setVideoBox,
+        advanceTime: (ms) => (now += ms),
         toggle: () => doc.getElementById(`${ID}-toggle`),
         reset: () => doc.getElementById(`${ID}-reset`),
         panel: () => doc.getElementById(`${ID}-panel`),
@@ -168,12 +189,16 @@ test("zoom defaults off; manual mode only consumes wheels after its player butto
     const f = fixture(t, {});
     assert.equal(f.toggle(), null);
     assert.equal(f.wheel().defaultPrevented, false);
+    assertWheelDelivery(f, 100, false);
     assert.equal(f.counts().wheels, 0);
     f.apply({ playerZoomEnabled: true, playerZoomMode: "manual" });
     assert.equal(f.toggle().getAttribute("aria-pressed"), "false");
     assert.equal(f.wheel().defaultPrevented, false);
+    assertWheelDelivery(f, 100, false);
     f.toggle().click();
     assert.equal(f.toggle().getAttribute("aria-pressed"), "true");
+    assertWheelDelivery(f, 100, true);
+    assert.equal(transform(f.video()).scale, 1);
     assert.equal(f.wheel().defaultPrevented, true);
     closeTo(transform(f.video()).scale, 1.2);
     f.toggle().click();
@@ -181,6 +206,7 @@ test("zoom defaults off; manual mode only consumes wheels after its player butto
     assert.equal(f.panel().hidden, true);
     assert.equal(f.reset().disabled, true);
     assert.equal(f.wheel().defaultPrevented, false);
+    assertWheelDelivery(f, 100, false);
 });
 
 test("always mode anchors each zoom at the cursor, clamps scale, and restores the original video styles", (t) => {
@@ -208,14 +234,205 @@ test("always mode anchors each zoom at the cursor, clamps scale, and restores th
     assert.ok(f.reset().querySelector('svg[aria-hidden="true"]'));
     for (let i = 0; i < 30; i++) f.wheel();
     assert.equal(transform(video).scale, 5);
+    assertWheelDelivery(f, -100, true);
+    assert.equal(transform(video).scale, 5);
     f.reset().click();
     assert.equal(video.style.cssText, original);
     assert.equal(f.panel().hidden, true);
-    assert.equal(f.wheel(100).defaultPrevented, true);
+    assert.equal(f.wheel(100).defaultPrevented, false);
     assert.equal(transform(video).scale, 1);
     f.wheel(-100);
     f.wheel(100);
     assert.equal(transform(video).scale, 1);
+});
+
+test("always mode at minimum passes downward wheels through without changing styles, media or listeners", async (t) => {
+    const f = fixture(t);
+    const video = f.video();
+    video.style.setProperty("transform", "translateZ(0)", "important");
+    video.style.setProperty("transform-origin", "center");
+    video.style.setProperty("clip-path", "inset(0px)");
+    video.style.setProperty("transition", "opacity 0.2s");
+    video.style.setProperty("will-change", "opacity");
+    video.currentTime = 75;
+    video.volume = 0.4;
+    video.muted = true;
+    video.playbackRate = 1.5;
+    const original = video.style.cssText;
+    const parent = video.parentNode;
+    let mediaCalls = 0,
+        scrollCalls = 0;
+    video.play = video.pause = () => mediaCalls++;
+    for (const node of [f.w, f.doc.documentElement, f.doc.body, f.player(), parent, video]) {
+        node.scrollBy = node.scrollTo = () => scrollCalls++;
+    }
+    await new Promise((resolve) => f.w.queueMicrotask(resolve));
+    const before = f.counts();
+    for (const target of [video, parent, f.player()]) {
+        for (const deltaMode of [0, 1, 2]) {
+            for (const deltaY of [0.001, 1, 100, 100000]) {
+                assertWheelDelivery(f, deltaY, false, { deltaMode }, target);
+                assert.equal(video.style.cssText, original);
+                assert.equal(transform(video).scale, 1);
+            }
+        }
+    }
+    await new Promise((resolve) => f.w.queueMicrotask(resolve));
+    assert.deepEqual(f.counts(), before);
+    assert.equal(video.parentNode, parent);
+    assert.equal(video.hasAttribute("data-bcz-zoomed"), false);
+    assert.equal(f.player().hasAttribute("data-bcz-pannable"), false);
+    assert.equal(f.panel().hidden, true);
+    assert.deepEqual([video.currentTime, video.volume, video.muted, video.playbackRate], [75, 0.4, true, 1.5]);
+    assert.equal(mediaCalls, 0);
+    assert.equal(scrollCalls, 0);
+});
+
+test("the wheel that reaches minimum and its trailing input stay consumed until a pause", (t) => {
+    const f = fixture(t);
+    for (const [deltaY, deltaMode] of [
+        [0.001, 0],
+        [100, 0],
+        [100000, 0],
+        [3, 1],
+        [1, 2],
+    ]) {
+        f.setPercent(120);
+        assertWheelDelivery(f, deltaY, true, { deltaMode });
+        assert.ok(transform(f.video()).scale < 1.2);
+        if (transform(f.video()).scale > 1) assertWheelDelivery(f, 100000, true, { deltaMode });
+        assert.equal(transform(f.video()).scale, 1);
+        const original = f.video().style.cssText;
+        assertWheelDelivery(f, deltaY, true, { deltaMode });
+        f.advanceTime(1000);
+        assertWheelDelivery(f, deltaY, false, { deltaMode });
+        assert.equal(f.video().style.cssText, original);
+    }
+    assertWheelDelivery(f, -1, true);
+    assert.equal(f.value().textContent, "100%");
+    const fineScale = transform(f.video()).scale;
+    assert.ok(fineScale > 1);
+    assertWheelDelivery(f, 0.5, true);
+    assert.ok(transform(f.video()).scale > 1 && transform(f.video()).scale < fineScale);
+    assertWheelDelivery(f, 1, true);
+    assert.equal(transform(f.video()).scale, 1);
+    assertWheelDelivery(f, 1, true);
+    f.advanceTime(1000);
+    assertWheelDelivery(f, 1, false);
+    assertWheelDelivery(f, -0.0001, true);
+    assert.equal(transform(f.video()).scale, 1, "existing near-minimum normalization remains in effect");
+    assertWheelDelivery(f, 0.0001, false);
+});
+
+test("minimum scroll waits for 1000ms without downward input and still permits immediate zooming", (t) => {
+    const f = fixture(t);
+    assertWheelDelivery(f, 100, false);
+    f.wheel(-100);
+    assertWheelDelivery(f, 100, true);
+    const original = f.video().style.cssText;
+    const before = f.counts();
+    for (let i = 0; i < 4; i++) {
+        f.advanceTime(999);
+        assertWheelDelivery(f, 1, true);
+        assert.equal(f.video().style.cssText, original);
+    }
+    assert.deepEqual(f.counts(), before);
+    f.advanceTime(1000);
+    assertWheelDelivery(f, 1, false);
+    assertWheelDelivery(f, 1, false, {}, f.player());
+
+    assertWheelDelivery(f, -100, true);
+    assertWheelDelivery(f, 100, true);
+    f.advanceTime(100);
+    assertWheelDelivery(f, -100, true);
+    closeTo(transform(f.video()).scale, 1.2);
+    assertWheelDelivery(f, 100, true);
+    f.advanceTime(900);
+    assertWheelDelivery(f, 100, true);
+    f.advanceTime(1000);
+    assertWheelDelivery(f, 100, false);
+});
+
+test("controls, modifiers and horizontal input neither use nor prolong the minimum scroll delay", (t) => {
+    const f = fixture(t);
+    f.wheel(-100);
+    f.wheel(100);
+    f.advanceTime(999);
+    for (const selector of ["#native", ".pzp-pc__volume input", "aside video"]) {
+        assertWheelDelivery(f, 100, false, {}, f.doc.querySelector(selector));
+    }
+    for (const extra of [{ ctrlKey: true }, { altKey: true }, { shiftKey: true }, { deltaX: 200 }]) {
+        assertWheelDelivery(f, 100, false, extra);
+    }
+    f.advanceTime(1);
+    assertWheelDelivery(f, 100, false);
+});
+
+test("always mode passes downward wheels after every existing reset path", (t) => {
+    const f = fixture(t);
+    const resets = [
+        () => f.setPercent(100),
+        () => f.reset().click(),
+        () => {
+            f.apply({ playerZoomEnabled: true, playerZoomMode: "manual" });
+            f.apply({ playerZoomEnabled: true, playerZoomMode: "always" });
+        },
+        () => {
+            f.apply({ playerZoomEnabled: false });
+            assertWheelDelivery(f, 100, false);
+            f.apply({ playerZoomEnabled: true, playerZoomMode: "always" });
+        },
+        ...["emptied", "loadstart", "loadedmetadata"].map((name) => () => f.video().dispatchEvent(new f.w.Event(name))),
+        () => f.route("/live/another"),
+        () => f.route("/video/123"),
+        () => {
+            f.w.dispatchEvent(new f.w.Event("pagehide"));
+            f.w.dispatchEvent(new f.w.Event("pageshow"));
+        },
+    ];
+    for (const reset of resets) {
+        assertWheelDelivery(f, -100, true);
+        assert.ok(transform(f.video()).scale > 1);
+        reset();
+        assert.equal(transform(f.video()).scale, 1);
+        assertWheelDelivery(f, 100, false);
+    }
+});
+
+test("source, route, option and video changes clear a pending minimum scroll delay", async (t) => {
+    const f = fixture(t);
+    for (const reset of [
+        () => f.video().dispatchEvent(new f.w.Event("emptied")),
+        () => f.route("/video/123"),
+        () => {
+            f.apply({ playerZoomEnabled: false });
+            f.apply({ playerZoomEnabled: true, playerZoomMode: "always" });
+        },
+        () => {
+            f.apply({ playerZoomEnabled: true, playerZoomMode: "manual" });
+            f.toggle().click();
+            assertWheelDelivery(f, 100, true);
+            f.apply({ playerZoomEnabled: true, playerZoomMode: "always" });
+        },
+        () => {
+            f.w.dispatchEvent(new f.w.Event("pagehide"));
+            f.w.dispatchEvent(new f.w.Event("pageshow"));
+        },
+    ]) {
+        f.wheel(-100);
+        f.wheel(100);
+        assertWheelDelivery(f, 100, true);
+        reset();
+        assertWheelDelivery(f, 100, false);
+    }
+    f.wheel(-100);
+    f.wheel(100);
+    assertWheelDelivery(f, 100, true);
+    const oldRange = f.range();
+    f.video().outerHTML = '<video style="object-fit:contain"></video>';
+    f.setVideoBox(f.video());
+    await waitForCondition(() => f.range() !== oldRange);
+    assertWheelDelivery(f, 100, false);
 });
 
 test("zoom ignores player controls, overlays, previews, modifiers, and horizontal scrolling", (t) => {
@@ -231,6 +448,7 @@ test("zoom ignores player controls, overlays, previews, modifiers, and horizonta
         "aside input",
     ]) {
         assert.equal(f.wheel(-100, {}, f.doc.querySelector(selector)).defaultPrevented, false, selector);
+        assertWheelDelivery(f, 100, false, {}, f.doc.querySelector(selector));
     }
     for (const extra of [
         { ctrlKey: true },
@@ -242,6 +460,7 @@ test("zoom ignores player controls, overlays, previews, modifiers, and horizonta
         { clientY: 511 },
     ]) {
         assert.equal(f.wheel(-100, extra).defaultPrevented, false, JSON.stringify(extra));
+        assertWheelDelivery(f, 100, false, extra);
     }
     assert.equal(f.wheel(0).defaultPrevented, false);
     assert.equal(f.wheel(-100, {}, f.doc.querySelector(".pzp-pc__video")).defaultPrevented, true);
@@ -253,6 +472,28 @@ test("zoom ignores player controls, overlays, previews, modifiers, and horizonta
     wrapper.append(overlay);
     assert.equal(f.wheel(-100, {}, overlay).defaultPrevented, false);
     assert.equal(f.doc.querySelector("aside video").style.transform, "");
+});
+
+test("zoom leaves non-finite and already prevented wheels alone", (t) => {
+    const f = fixture(t);
+    f.wheel();
+    const original = f.video().style.cssText;
+    for (const deltaY of [NaN, Infinity, -Infinity, 100]) {
+        const event = new f.w.WheelEvent("wheel", {
+            bubbles: true,
+            cancelable: true,
+            clientX: 300,
+            clientY: 160,
+        });
+        Object.defineProperty(event, "deltaY", { value: deltaY });
+        if (Number.isFinite(deltaY)) event.preventDefault();
+        let delivered = false;
+        f.video().addEventListener("wheel", () => (delivered = true), { once: true });
+        f.video().dispatchEvent(event);
+        assert.equal(event.defaultPrevented, Number.isFinite(deltaY));
+        assert.equal(delivered, true);
+        assert.equal(f.video().style.cssText, original);
+    }
 });
 
 test("pixel, line, page and fine trackpad wheels zoom without scanning all videos on every event", async (t) => {
@@ -373,6 +614,7 @@ test("native control and video remounts keep one control set; detached controls 
     f.setVideoBox(f.video());
     await waitForCondition(() => oldVideo.style.transform === "");
     assert.equal(transform(f.video()).scale, 1);
+    assertWheelDelivery(f, 100, false);
     f.apply({ playerZoomEnabled: true, playerZoomMode: "manual" });
     oldToggle.click();
     assert.equal(f.toggle().getAttribute("aria-pressed"), "false");

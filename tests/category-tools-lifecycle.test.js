@@ -36,6 +36,10 @@ function createFixture(t) {
     let scheduledApplies = 0;
     const timers = new Map();
     let timerId = 0;
+    let now = Date.now();
+    window.Date.now = () => now;
+    let observerConfig;
+    let disconnected = false;
     const load = (file) => window.eval(fs.readFileSync(path.join(__dirname, "..", file), "utf8"));
     load("shared/settings.js");
     load("shared/data.js");
@@ -47,10 +51,18 @@ function createFixture(t) {
     window.clearTimeout = (id) => timers.delete(id);
     Object.assign(window.BetterChzzk.utils, {
         bindFeatureOptions() {},
-        createMutationObserverSync: () => ({ disconnect() {} }),
+        createMutationObserverSync: (config) => {
+            observerConfig = config;
+            disconnected = false;
+            return {
+                disconnect() {
+                    disconnected = true;
+                },
+            };
+        },
         createThrottledDomSync: () => () => scheduledApplies++,
         fetchJson(url, options) {
-            return new Promise((resolve) => requests.push({ url, ...options, resolve }));
+            return new Promise((resolve, reject) => requests.push({ url, ...options, resolve, reject }));
         },
         normSpace: window.BetterChzzk.utils.compactSpaces,
         injectStyleOnce() {},
@@ -72,6 +84,8 @@ function createFixture(t) {
     window.eval(`${source.slice(0, end)}
         globalThis.categoryLifecycle = {
             mountCount: () => {
+                history.replaceState({}, "", "/lives");
+                applyOptions(BetterChzzkSettings.normalizeOptions({ globalLiveCountEnabled: true }));
                 if (!document.getElementById(BAR_ID)) document.body.appendChild(buildToolbar());
                 syncGlobalLiveCount({ scope: "global-lives", tab: "lives" });
             },
@@ -84,15 +98,240 @@ function createFixture(t) {
             search: (query) => { mountToolbar(getRoute()); currentQuery = query; },
             scroll: handleAutoLoadScroll,
             apply: applyTools,
+            applyScheduled: runApply,
             disable: () => applyOptions(BetterChzzkSettings.normalizeOptions({ categoryToolsEnabled: false })),
-            pageChange: handlePageChange
+            pageChange: handlePageChange,
+            options: (options) => applyOptions(BetterChzzkSettings.normalizeOptions(options))
         };
         ${source.slice(end)}`);
     const card = window.document.getElementById("card");
     window.categoryLifecycle.setFollowerMinimum(1000);
     window.categoryLifecycle.remember(card);
-    return { dom, card, requests, timers, hooks: window.categoryLifecycle, scheduledApplies: () => scheduledApplies };
+    return {
+        dom,
+        card,
+        requests,
+        timers,
+        hooks: window.categoryLifecycle,
+        scheduledApplies: () => scheduledApplies,
+        advance: (ms) => {
+            now += ms;
+        },
+        disconnected: () => disconnected,
+        mutation(record) {
+            observerConfig.onMutations([record]);
+            if (!observerConfig.shouldIgnoreMutations([record]) && observerConfig.shouldSchedule())
+                observerConfig.schedule();
+        },
+    };
 }
+
+const globalRow = (id, concurrentUserCount = 10) => ({
+    liveId: id,
+    concurrentUserCount,
+    channel: { channelId: `channel-${id}` },
+});
+const globalPage = (data, next = null) => ({ content: { data, page: { next } } });
+const countOnly = { categoryToolsEnabled: false, globalLiveCountEnabled: true };
+async function settle() {
+    for (let i = 0; i < 40; i++) await Promise.resolve();
+}
+
+test("global search without count never walks extra pages solely for the aggregate", async (t) => {
+    const { dom, hooks, requests } = createFixture(t);
+    dom.reconfigure({ url: "https://chzzk.naver.com/lives" });
+    hooks.options({ categoryToolsFollowerBadgesEnabled: false, categoryToolsLiveElapsedEnabled: false });
+    const applying = hooks.apply();
+    assert.equal(dom.window.document.querySelector(".bcgt-live-count"), null);
+    requests[0].resolve(
+        globalPage(
+            [
+                { ...globalRow(1), channel: { channelId: "channel-a" } },
+                { ...globalRow(2), channel: { channelId: "channel-b" } },
+            ],
+            { liveId: 2, concurrentUserCount: 10 }
+        )
+    );
+    await applying;
+    await settle();
+    assert.equal(requests.length, 1);
+    assert.ok(dom.window.document.querySelector('input[type="search"]'));
+    hooks.disable();
+});
+
+test("turning search off keeps an in-flight global count and removes all search UI", async (t) => {
+    const { dom, hooks, requests } = createFixture(t);
+    dom.reconfigure({ url: "https://chzzk.naver.com/lives" });
+    hooks.options({ globalLiveCountEnabled: true });
+    const applying = hooks.apply();
+    assert.equal(requests.length, 1);
+    hooks.options(countOnly);
+    await hooks.apply();
+    assert.equal(requests[0].signal.aborted, false);
+    assert.equal(
+        dom.window.document.querySelector("input, .bcgt-filter, .bcgt-status, #betterchzzk-category-filter-menu"),
+        null
+    );
+    requests[0].resolve(globalPage([globalRow(1, 25)]));
+    await applying;
+    await settle();
+    assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /시청자 합계 25명/);
+    assert.equal(requests.length, 1);
+    hooks.disable();
+});
+
+test("scheduled search teardown preserves visible count progress before the shared response arrives", async (t) => {
+    const { dom, hooks, requests } = createFixture(t);
+    dom.reconfigure({ url: "https://chzzk.naver.com/lives" });
+    hooks.options({ globalLiveCountEnabled: true });
+    const applying = hooks.applyScheduled();
+    assert.equal(requests.length, 1);
+    assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /집계 중/);
+    hooks.options(countOnly);
+    await hooks.applyScheduled();
+    assert.equal(requests[0].signal.aborted, false);
+    const label = dom.window.document.querySelector(".bcgt-live-count");
+    assert.ok(label, "count progress stays visible while the previous search is still awaiting the shared response");
+    assert.match(label.textContent, /집계 중/);
+    assert.equal(dom.window.document.querySelector("input, .bcgt-filter, .bcgt-status"), null);
+    assert.equal(requests.length, 1);
+    requests[0].resolve(globalPage([globalRow(1, 25)]));
+    await applying;
+    await settle();
+    assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /시청자 합계 25명/);
+    assert.equal(dom.window.document.querySelectorAll(".bcgt-live-count").length, 1);
+    assert.equal(requests.length, 1);
+    hooks.disable();
+});
+
+test("turning count off preserves an in-flight search without another aggregate page", async (t) => {
+    const { dom, hooks, requests } = createFixture(t);
+    dom.reconfigure({ url: "https://chzzk.naver.com/lives" });
+    const searchOptions = { categoryToolsFollowerBadgesEnabled: false, categoryToolsLiveElapsedEnabled: false };
+    hooks.options({ ...searchOptions, globalLiveCountEnabled: true });
+    const applying = hooks.apply();
+    hooks.options(searchOptions);
+    assert.equal(requests[0].signal.aborted, false);
+    assert.equal(dom.window.document.querySelector(".bcgt-live-count"), null);
+    requests[0].resolve(
+        globalPage(
+            [
+                { ...globalRow(1), channel: { channelId: "channel-a" } },
+                { ...globalRow(2), channel: { channelId: "channel-b" } },
+            ],
+            { liveId: 2, concurrentUserCount: 10 }
+        )
+    );
+    await applying;
+    await settle();
+    assert.equal(requests.length, 1);
+    assert.ok(dom.window.document.querySelector('input[type="search"]'));
+    hooks.disable();
+});
+
+test("rapid count toggles and same-route return ignore stale responses", async (t) => {
+    const { dom, hooks, requests, timers, disconnected } = createFixture(t);
+    dom.reconfigure({ url: "https://chzzk.naver.com/lives" });
+    hooks.options(countOnly);
+    await hooks.apply();
+    hooks.disable();
+    assert.equal(requests[0].signal.aborted, true);
+    assert.equal(disconnected(), true);
+    hooks.options(countOnly);
+    await hooks.apply();
+    requests[0].resolve(globalPage([globalRow(1, 999)]));
+    await settle();
+    assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /집계 중/);
+    dom.reconfigure({ url: "https://chzzk.naver.com/category/game/test/lives" });
+    hooks.pageChange();
+    await hooks.apply();
+    assert.equal(requests[1].signal.aborted, true);
+    assert.equal(dom.window.document.querySelector(".bcgt-live-count"), null);
+    dom.reconfigure({ url: "https://chzzk.naver.com/lives" });
+    hooks.pageChange();
+    await hooks.apply();
+    requests[1].resolve(globalPage([globalRow(2, 888)]));
+    requests[2].resolve(globalPage([]));
+    await settle();
+    assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /시청자 합계 0명/);
+    hooks.disable();
+    assert.equal(timers.size, 0);
+});
+
+test("count failure retries on toggling and completed cache expires only when started again", async (t) => {
+    const { dom, hooks, requests, advance, timers } = createFixture(t);
+    dom.reconfigure({ url: "https://chzzk.naver.com/lives" });
+    hooks.options(countOnly);
+    await hooks.apply();
+    requests[0].reject(new Error("offline"));
+    await settle();
+    assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /집계 실패/);
+    assert.equal(timers.size, 0, "count failures do not schedule search retries");
+    hooks.disable();
+    hooks.options(countOnly);
+    await hooks.apply();
+    requests[1].resolve(globalPage([globalRow(1, 10)]));
+    await settle();
+    hooks.disable();
+    hooks.options(countOnly);
+    await hooks.apply();
+    await settle();
+    assert.equal(requests.length, 2);
+    advance(5 * 60 * 1000);
+    await hooks.apply();
+    assert.equal(requests.length, 2, "visible counts do not refresh periodically");
+    hooks.disable();
+    hooks.options(countOnly);
+    await hooks.apply();
+    assert.equal(requests.length, 3);
+    requests[2].resolve(globalPage([globalRow(2, 20)]));
+    await settle();
+    assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /시청자 합계 20명/);
+    hooks.disable();
+});
+
+test("count-only never starts on category, video, clip or player routes", async (t) => {
+    const { dom, hooks, requests } = createFixture(t);
+    hooks.options(countOnly);
+    for (const pathname of [
+        "/category/game/test/lives",
+        "/category/game/test/videos",
+        "/category/game/test/clips",
+        "/live/channel-a",
+        "/video/1",
+        "/videos",
+    ]) {
+        dom.reconfigure({ url: `https://chzzk.naver.com${pathname}` });
+        hooks.pageChange();
+        await hooks.apply();
+        assert.equal(dom.window.document.querySelector("#betterchzzk-category-tools"), null);
+    }
+    assert.equal(requests.length, 0);
+    hooks.disable();
+});
+
+test("observer restores a removed count bar once without restarting its request", async (t) => {
+    const { dom, hooks, requests, mutation, scheduledApplies } = createFixture(t);
+    dom.reconfigure({ url: "https://chzzk.naver.com/lives" });
+    hooks.pageChange();
+    hooks.options(countOnly);
+    await hooks.apply();
+    const bar = dom.window.document.getElementById("betterchzzk-category-tools");
+    const host = bar.parentElement;
+    bar.remove();
+    const before = scheduledApplies();
+    mutation({ type: "childList", target: host, removedNodes: [bar], addedNodes: [] });
+    assert.equal(scheduledApplies(), before + 1);
+    await hooks.apply();
+    const current = dom.window.document.getElementById("betterchzzk-category-tools");
+    mutation({ type: "childList", target: host, removedNodes: [], addedNodes: [current] });
+    assert.equal(scheduledApplies(), before + 1, "our insertion does not schedule another restoration");
+    assert.equal(requests.length, 1);
+    requests[0].resolve(globalPage([]));
+    await settle();
+    assert.equal(dom.window.document.querySelectorAll(".bcgt-live-count").length, 1);
+    hooks.disable();
+});
 
 test("filter keyboard dismissal preserves values and returns focus to its trigger", (t) => {
     const { dom, hooks } = createFixture(t);
@@ -116,6 +355,28 @@ test("filter keyboard dismissal preserves values and returns focus to its trigge
     trigger.click();
     assert.equal(input.value, "2500", "closing filters must not erase the entered range");
     hooks.disable();
+});
+
+test("global count alone mounts no search controls, card badges or tag-search hiding", async (t) => {
+    const { dom, requests, timers, hooks } = createFixture(t);
+    dom.reconfigure({ url: "https://chzzk.naver.com/lives" });
+    hooks.options({ categoryToolsEnabled: false, globalLiveCountEnabled: true });
+    await hooks.apply();
+    const { document } = dom.window;
+    assert.equal(requests.length, 1);
+    assert.ok(document.querySelector(".bcgt-live-count"));
+    assert.equal(document.querySelector('input[type="search"], .bcgt-filter, .bcgt-status'), null);
+    assert.equal(
+        document.querySelector('[data-bcgt-hide="1"], [data-bcgt-follower-badge="1"], [data-bcgt-live-elapsed="1"]'),
+        null
+    );
+    requests[0].resolve({ content: { data: [], page: { next: null } } });
+    for (let i = 0; i < 40; i++) await Promise.resolve();
+    assert.match(document.querySelector(".bcgt-live-count").textContent, /방송 0개 · 시청자 합계 0명/);
+    assert.equal(requests.length, 1);
+    hooks.disable();
+    assert.equal(document.querySelector(".bcgt-live-count"), null);
+    assert.equal(timers.size, 0);
 });
 
 test("category search displays matching cards while follower badges are still loading", async (t) => {

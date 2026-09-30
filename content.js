@@ -213,15 +213,23 @@
     function createThrottledDomSync(run, throttleMs = 160) {
         let scheduled = false;
         let lastRunAt = 0;
-        return function scheduleDomSync() {
+        let timer = 0;
+        let frame = 0;
+        let generation = 0;
+        function scheduleDomSync() {
             if (scheduled) return;
 
             const elapsed = performance.now() - lastRunAt;
             const delay = Math.max(0, throttleMs - elapsed);
             scheduled = true;
+            const currentGeneration = generation;
 
             const queue = () => {
-                requestAnimationFrame(() => {
+                if (currentGeneration !== generation) return;
+                timer = 0;
+                frame = requestAnimationFrame(() => {
+                    if (currentGeneration !== generation) return;
+                    frame = 0;
                     scheduled = false;
                     lastRunAt = performance.now();
                     run();
@@ -229,12 +237,21 @@
             };
 
             if (delay > 0) {
-                window.setTimeout(queue, delay);
+                timer = window.setTimeout(queue, delay);
                 return;
             }
 
             queue();
+        }
+        scheduleDomSync.cancel = () => {
+            generation++;
+            if (timer) window.clearTimeout(timer);
+            if (frame) window.cancelAnimationFrame(frame);
+            timer = 0;
+            frame = 0;
+            scheduled = false;
         };
+        return scheduleDomSync;
     }
 
     function publishRouteChange(source = "fallback") {

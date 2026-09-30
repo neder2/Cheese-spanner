@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const { JSDOM } = require("jsdom");
+const { waitForCondition: waitForSharedCondition } = require("./helpers/wait-for-condition.js");
 
 const repoRoot = path.join(__dirname, "..");
 const STORAGE_KEY = "betterchzzkPinnedFollowingChannelIds";
@@ -444,13 +445,12 @@ function waitForSync(delayMs = 60) {
     return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
-async function waitForCondition(predicate, { timeoutMs = 2000, intervalMs = 20 } = {}) {
-    const startedAt = Date.now();
-    while (Date.now() - startedAt <= timeoutMs) {
-        if (predicate()) return;
-        await waitForSync(intervalMs);
-    }
-    assert.fail("Timed out waiting for sidebar customization state");
+function waitForCondition(predicate, { timeoutMs = 2000, intervalMs = 20 } = {}) {
+    return waitForSharedCondition(predicate, {
+        timeoutMs,
+        intervalMs,
+        message: "Timed out waiting for sidebar customization state",
+    });
 }
 
 function dispatchClick(dom, element, init = {}) {
@@ -701,6 +701,300 @@ test("collapsed pinned source rows format viewer counts without a name suffix", 
     assert.ok(sourceViewer);
     assert.equal(sourceViewer.textContent, "1,234");
     assert.equal(document.getElementById("liveCViewer").textContent, "321명");
+});
+
+function createNativePartyRow(document, channelId, channelName = channelId) {
+    // 2026-09-30 public sidebar renderer: party participants are a separate
+    // link in the name line, and the party icon belongs to the profile.
+    const row = document.createElement("li");
+    row.innerHTML = [
+        '<div class="_item_partyFixture_1">',
+        '<div class="_profile_partyFixture_70">',
+        '<img src="https://nng-phinf.pstatic.net/native-profile.png" alt="" width="26" height="26">',
+        '<span class="blind">LIVE</span></div>',
+        '<div class="_information_partyFixture_207">',
+        `<strong class="_name_partyFixture_102"><span>${channelName}</span>`,
+        '<i class="_verified_partyFixture_1"></i><span class="_badge_partyFixture_1"></span></strong>',
+        '<span class="_description_partyFixture_250">원본 카테고리</span></div>',
+        '<em class="_count_partyFixture_1">987</em>',
+        `<a class="_item_link_partyFixture_1" href="/live/${channelId}" draggable="false"></a>`,
+        "</div>",
+    ].join("");
+    return row;
+}
+
+function addNativeParty(row, count = 3, partyNo = 41) {
+    row.querySelector("strong").insertAdjacentHTML(
+        "beforeend",
+        `<a class="_participant_partyFixture_233" href="/party-lives/${partyNo}">` +
+            `<span class="blind">파티 참여 인원</span>+${count}<span class="blind">파티 방송으로 이동</span></a>`
+    );
+    row.querySelector("[class*='profile']").insertAdjacentHTML(
+        "beforeend",
+        '<svg class="_icon_party_partyFixture_80" width="12" height="12" aria-hidden="true">' +
+            '<path d="M1 1h10v10H1z"/></svg><span class="blind">파티 진행 중</span>'
+    );
+    return {
+        link: row.querySelector("a[class*='participant']"),
+        icon: row.querySelector("svg[class*='icon_party']"),
+    };
+}
+
+async function createCollapsedPartyDom(t, pinnedIds = ["channel-pinned-a", "channel-pinned-b"]) {
+    const chrome = createFakeChrome({ [STORAGE_KEY]: pinnedIds });
+    const dom = createSidebarDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    const list = document.getElementById("followingList");
+    list.replaceChildren(...["a", "b", "c", "d", "e"].map((id) => createNativePartyRow(document, `channel-${id}`)));
+    const template = list.firstElementChild;
+    const templateParty = addNativeParty(template);
+    const pinnedNative = list.children[1];
+    const pinnedNativeParty = addNativeParty(pinnedNative, 1, 42);
+    const nativeRows = Array.from(list.children);
+    const nativeChildren = nativeRows.map((row) => Array.from(row.querySelectorAll("*")));
+    const entries = ["a", "b", "c", "d", "e", "pinned-a", "pinned-b"].map((id, index) => ({
+        channel: {
+            channelId: `channel-${id}`,
+            channelName: id === "pinned-a" ? "고정 +3" : id === "pinned-b" ? "고정 +1" : id,
+            channelImageUrl: `https://nng-phinf.pstatic.net/${id}.png`,
+            verifiedMark: true,
+            activatedChannelBadgeIds: ["party-test-badge"],
+        },
+        liveInfo: { concurrentUserCount: 1234 + index, cvExposure: true, liveCategoryValue: `게임 ${id}` },
+    }));
+    const requests = [];
+    dom.window.fetch = async (url) => {
+        requests.push(String(url));
+        return {
+            ok: true,
+            status: 200,
+            async json() {
+                if (String(url).includes("/followings/live")) return { content: { followingList: entries } };
+                if (String(url).includes("/followings?")) return { content: { followingList: [] } };
+                return {
+                    content: {
+                        data: [
+                            {
+                                badgeId: "party-test-badge",
+                                imageUrl: "https://nng-phinf.pstatic.net/achievement.png",
+                                title: "채널 업적",
+                            },
+                        ],
+                    },
+                };
+            },
+        };
+    };
+    evalSidebarScripts(dom);
+    await waitForCondition(() => list.querySelector("[data-bcsf-source-row]"));
+    return {
+        dom,
+        chrome,
+        list,
+        template,
+        templateParty,
+        pinnedNative,
+        pinnedNativeParty,
+        nativeRows,
+        nativeChildren,
+        entries,
+        requests,
+    };
+}
+
+function assertSourcePartyIsolation(list, entries, expectedIds, pinnedIds = expectedIds) {
+    const rows = Array.from(list.querySelectorAll("[data-bcsf-source-row]"));
+    assert.deepEqual(
+        rows.map((row) => row.getAttribute("data-bcsf-channel-id")),
+        expectedIds
+    );
+    for (const row of rows) {
+        const channelId = row.getAttribute("data-bcsf-channel-id");
+        const entry = entries.find((candidate) => candidate.channel.channelId === channelId);
+        assert.equal(
+            row.querySelectorAll("a[class*='participant'], a[href*='/party-lives/']").length,
+            0,
+            "source rows cannot link to a template party"
+        );
+        assert.equal(
+            row.querySelectorAll("svg[class*='icon_party']").length,
+            0,
+            "source profiles cannot inherit a party icon"
+        );
+        assert.equal(
+            row.querySelector("strong").textContent,
+            entry.channel.channelName,
+            "+numbers in names stay intact"
+        );
+        assert.equal(row.querySelector("[class*='profile'] img").src, entry.channel.channelImageUrl);
+        assert.equal(row.querySelector("[data-bcsf-channel-badge='verified']").getAttribute("aria-label"), "인증 마크");
+        const achievement = row.querySelector("[data-bcsf-channel-badge='achievement']");
+        assert.equal(achievement.getAttribute("aria-label"), "채널 업적");
+        assert.equal(achievement.querySelector("img").src, "https://nng-phinf.pstatic.net/achievement.png");
+        assert.equal(row.querySelectorAll("[data-bcsf-pin-indicator]").length, pinnedIds.includes(channelId) ? 1 : 0);
+        assert.equal(row.querySelector("[class*='description']").textContent, entry.liveInfo.liveCategoryValue);
+        assert.equal(row.querySelector("em").textContent, entry.liveInfo.concurrentUserCount.toLocaleString("ko-KR"));
+        assert.equal(row.querySelector("a").getAttribute("href"), `/live/${channelId}`);
+    }
+}
+
+function assertNativeParty(row, party, href, count) {
+    assert.equal(row.querySelector("a[class*='participant']"), party.link);
+    assert.equal(row.querySelector("svg[class*='icon_party']"), party.icon);
+    assert.equal(party.link.getAttribute("href"), href);
+    assert.ok(Array.from(party.link.childNodes).some((node) => node.textContent === `+${count}`));
+}
+
+test("one or several supplemental pins discard template parties while preserving native parties and channel details", async (t) => {
+    for (const sourceIds of [["channel-pinned-a"], ["channel-pinned-a", "channel-pinned-b"]]) {
+        await t.test(`${sourceIds.length} supplemental rows`, async (t) => {
+            const {
+                dom,
+                list,
+                template,
+                templateParty,
+                pinnedNative,
+                pinnedNativeParty,
+                nativeRows,
+                nativeChildren,
+                entries,
+                requests,
+            } = await createCollapsedPartyDom(t, [...sourceIds, "channel-b"]);
+
+            assertSourcePartyIsolation(list, entries, sourceIds);
+            assertNativeParty(template, templateParty, "/party-lives/41", 3);
+            assertNativeParty(pinnedNative, pinnedNativeParty, "/party-lives/42", 1);
+            assert.equal(pinnedNative.getAttribute("data-bcsf-pinned"), "1");
+            assert.equal(template.hasAttribute("data-bcsf-pinned"), false);
+            let partyClicks = 0;
+            templateParty.link.addEventListener("click", (event) => {
+                partyClicks += 1;
+                assert.equal(event.defaultPrevented, false, "native party clicks keep their original path");
+                event.preventDefault();
+            });
+            dispatchClick(dom, templateParty.link);
+            assert.equal(partyClicks, 1);
+            assert.deepEqual(
+                Array.from(list.children).filter((row) => !row.hasAttribute("data-bcsf-source-row")),
+                nativeRows
+            );
+            nativeRows.forEach((row, index) =>
+                assert.deepEqual(
+                    Array.from(row.querySelectorAll("*:not([data-bcsf-pin-indicator], [data-bcsf-pin-indicator] *)")),
+                    nativeChildren[index]
+                )
+            );
+            assert.equal(requests.length, 3, "supplemental rows share the existing three source requests");
+        });
+    }
+});
+
+test("template party additions, count changes and removals stay local through source regeneration", async (t) => {
+    const { dom, chrome, list, template, templateParty, entries, requests } = await createCollapsedPartyDom(t);
+    const sourceIds = ["channel-pinned-a", "channel-pinned-b"];
+    assertSourcePartyIsolation(list, entries, sourceIds);
+    const sourceRows = Array.from(list.querySelectorAll("[data-bcsf-source-row]"));
+    const countNode = Array.from(templateParty.link.childNodes).find(
+        (node) => node.nodeType === dom.window.Node.TEXT_NODE
+    );
+    countNode.textContent = "+1";
+    templateParty.link.href = "/party-lives/43";
+    // Let the mutation-driven sync settle before checking that existing sources stay unchanged.
+    await new Promise((resolve) => dom.window.requestAnimationFrame(resolve));
+    assertNativeParty(template, templateParty, "/party-lives/43", 1);
+    assertSourcePartyIsolation(list, entries, sourceIds);
+    assert.deepEqual(Array.from(list.querySelectorAll("[data-bcsf-source-row]")), sourceRows);
+
+    templateParty.link.remove();
+    templateParty.icon.remove();
+    chrome.testState.emitSync({ [STORAGE_KEY]: { newValue: [] } });
+    await waitForCondition(() => !list.querySelector("[data-bcsf-source-row]"));
+    chrome.testState.emitSync({ [STORAGE_KEY]: { newValue: sourceIds } });
+    await waitForCondition(() => list.querySelectorAll("[data-bcsf-source-row]").length === 2);
+    assertSourcePartyIsolation(list, entries, sourceIds);
+    const addedParty = addNativeParty(template, 7, 44);
+    chrome.testState.emitSync({ [STORAGE_KEY]: { newValue: [] } });
+    await waitForCondition(() => !list.querySelector("[data-bcsf-source-row]"));
+    chrome.testState.emitSync({ [STORAGE_KEY]: { newValue: sourceIds } });
+    await waitForCondition(() => list.querySelectorAll("[data-bcsf-source-row]").length === 2);
+    assertSourcePartyIsolation(list, entries, sourceIds);
+    assertNativeParty(template, addedParty, "/party-lives/44", 7);
+    assert.equal(requests.length, 3, "party changes and pin edits do not add source requests");
+});
+
+test("party isolation survives href reuse, row and sidebar replacement, OFF/ON and expanded-list restoration", async (t) => {
+    const { dom, chrome, template, templateParty, entries } = await createCollapsedPartyDom(t);
+    const { document } = dom.window;
+    const sourceIds = ["channel-pinned-a", "channel-pinned-b"];
+    let list = document.getElementById("followingList");
+    assertSourcePartyIsolation(list, entries, sourceIds);
+    const channelLink = template.querySelector("a[class*='item_link']");
+    channelLink.href = "/live/channel-reused";
+    await waitForCondition(
+        () =>
+            template.getAttribute("data-bcsf-channel-id") === "channel-reused" &&
+            list.querySelectorAll("[data-bcsf-source-row]").length === 3
+    );
+    assertNativeParty(template, templateParty, "/party-lives/41", 3);
+    assertSourcePartyIsolation(list, entries, [...sourceIds, "channel-a"], sourceIds);
+    channelLink.href = "/live/channel-a";
+    await waitForCondition(
+        () =>
+            template.getAttribute("data-bcsf-channel-id") === "channel-a" &&
+            list.querySelectorAll("[data-bcsf-source-row]").length === 2
+    );
+
+    const replacement = createNativePartyRow(document, "channel-a", "교체 +5");
+    const replacementParty = addNativeParty(replacement, 5, 45);
+    template.replaceWith(replacement);
+    await waitForCondition(() => replacement.getAttribute("data-bcsf-channel-id") === "channel-a");
+    assertNativeParty(replacement, replacementParty, "/party-lives/45", 5);
+    assertSourcePartyIsolation(list, entries, sourceIds);
+
+    const sidebar = document.getElementById("sidebar");
+    const remountedSidebar = sidebar.cloneNode(true);
+    remountedSidebar.querySelectorAll("[data-bcsf-source-row]").forEach((row) => row.remove());
+    sidebar.replaceWith(remountedSidebar);
+    list = remountedSidebar.querySelector("#followingList");
+    const remountedTemplate = list.firstElementChild;
+    const remountedParty = {
+        link: remountedTemplate.querySelector("a[class*='participant']"),
+        icon: remountedTemplate.querySelector("svg[class*='icon_party']"),
+    };
+    await waitForCondition(() => list.querySelectorAll("[data-bcsf-source-row]").length === 2);
+    assertSourcePartyIsolation(list, entries, sourceIds);
+    assertNativeParty(remountedTemplate, remountedParty, "/party-lives/45", 5);
+
+    chrome.testState.emitSync({ followingPinEnabled: { newValue: false } });
+    await waitForCondition(() => !list.querySelector("[data-bcsf-source-row]"));
+    assert.equal(list.querySelector("[data-bcsf-source-hidden], [data-bcsf-pin-indicator]"), null);
+    assertNativeParty(remountedTemplate, remountedParty, "/party-lives/45", 5);
+    chrome.testState.emitSync({ followingPinEnabled: { newValue: true } });
+    await waitForCondition(() => list.querySelectorAll("[data-bcsf-source-row]").length === 2);
+    assertSourcePartyIsolation(list, entries, sourceIds);
+
+    const expandedRows = sourceIds.map((channelId) => {
+        const row = createNativePartyRow(
+            document,
+            channelId,
+            entries.find((entry) => entry.channel.channelId === channelId).channel.channelName
+        );
+        const party = addNativeParty(row, 2, channelId === sourceIds[0] ? 46 : 47);
+        return { row, party };
+    });
+    list.append(...expandedRows.map(({ row }) => row));
+    await waitForCondition(() => !list.querySelector("[data-bcsf-source-row]"));
+    assert.equal(list.querySelector("[data-bcsf-source-hidden]"), null);
+    assertNativeParty(remountedTemplate, remountedParty, "/party-lives/45", 5);
+    expandedRows.forEach(({ row, party }, index) => {
+        assertNativeParty(row, party, `/party-lives/${46 + index}`, 2);
+        assert.equal(row.getAttribute("data-bcsf-pinned"), "1");
+    });
+    expandedRows.forEach(({ row }) => row.remove());
+    await waitForCondition(() => list.querySelectorAll("[data-bcsf-source-row]").length === 2);
+    assertSourcePartyIsolation(list, entries, sourceIds);
+    assertNativeParty(remountedTemplate, remountedParty, "/party-lives/45", 5);
 });
 
 async function createCollapsedNavigationDom(t) {

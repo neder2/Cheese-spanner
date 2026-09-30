@@ -16,7 +16,13 @@ const nativeControls = `<div class="pzp-pc__bottom-buttons-right"><button class=
 const settingsItem = (f) => f.doc.getElementById("betterchzzk-stream-info-settings-item");
 const tracks = [{ videoWidth: 1920, videoHeight: 1080, videoBitRate: 8192000 }];
 const response = (items = tracks) => ({
-    content: { status: "OPEN", livePlaybackJson: JSON.stringify({ media: [{ encodingTrack: items }] }) },
+    code: 200,
+    content: {
+        status: "OPEN",
+        liveId: 1,
+        channel: { channelId: "test" },
+        livePlaybackJson: JSON.stringify({ media: [{ encodingTrack: items }] }),
+    },
 });
 
 function fixture(t, fetcher = async () => response()) {
@@ -61,11 +67,39 @@ function fixture(t, fetcher = async () => response()) {
         paused: false,
         readyState: 4,
         currentTime: 95,
+        currentSrc: "blob:initial-stream",
         buffered: range([[90, 99]]),
         seekable: range([[80, 100]]),
     }))
         Object.defineProperty(video, key, { configurable: true, value, writable: true });
     video.getVideoPlaybackQuality = () => ({ totalVideoFrames: total, droppedVideoFrames: dropped });
+    const controlCalls = [];
+    const mountNative = (target = video) => {
+        const host = target.closest(".pzp-pc");
+        host.classList.add("chzzk_player", "type_live");
+        target.classList.add("webplayer-internal-video");
+        target.getBoundingClientRect = () => ({ width: 1280, height: 720 });
+        const selected = { id: "main-1080", kind: "main", selected: true, width: 1920, height: 1080 };
+        const pane = {
+            $dispatch: () => controlCalls.push("dispatch"),
+            selectVideoTrack: () => controlCalls.push("select"),
+            $store: { getters: { onLive: true } },
+        };
+        const native = {
+            srcObject: {},
+            shadowRoot: host,
+            videoTracks: [selected],
+            querySelector: () => pane,
+            getPreProcessorControl() {
+                controlCalls.push("processor");
+            },
+        };
+        host.__reactFiber$stream = { memoizedState: { memoizedState: native } };
+        target.play = () => controlCalls.push("play");
+        target.pause = () => controlCalls.push("pause");
+        return { native, pane, selected };
+    };
+    const native = mountNative();
     w.BetterChzzk = {
         utils: {
             bindFeatureOptions(fn) {
@@ -74,7 +108,11 @@ function fixture(t, fetcher = async () => response()) {
             },
             getMainVideoElement: () => {
                 videoReads++;
-                return doc.querySelector("video");
+                return (
+                    Array.from(doc.querySelectorAll("video")).find(
+                        (v) => !v.closest('[data-bcmv-video], [data-bcfp-player-mount], [data-role="imaAdContainerEl"]')
+                    ) || null
+                );
             },
             getPlayerRoot: (v) => v?.closest(".pzp-pc"),
             isPlaybackRoute: () => /^\/(live|video)\//.test(w.location.pathname),
@@ -110,6 +148,29 @@ function fixture(t, fetcher = async () => response()) {
             },
         },
     };
+    doc.documentElement.setAttribute("data-betterchzzk-auto-quality-state", JSON.stringify({ enabled: false }));
+    for (const file of ["features/autoQualityPage.js", "shared/liveTiming.js", "features/streamInfoModel.js"])
+        w.eval(fs.readFileSync(path.join(__dirname, "..", file), "utf8"));
+    const createModel = w.BetterChzzk.streamInfoModel.create;
+    const samples = [];
+    const events = [];
+    w.BetterChzzk.streamInfoModel = {
+        create: (...args) => {
+            const model = createModel(...args);
+            return {
+                ...model,
+                sample(input) {
+                    const view = model.sample(input);
+                    samples.push(view);
+                    return view;
+                },
+                event(type, input) {
+                    events.push(type);
+                    return model.event(type, input);
+                },
+            };
+        },
+    };
     w.eval(source);
     t.after(() => {
         apply({ streamInfoEnabled: false });
@@ -121,6 +182,15 @@ function fixture(t, fetcher = async () => response()) {
         video,
         timers,
         requests,
+        native,
+        mountNative,
+        controlCalls,
+        samples,
+        events,
+        range,
+        advance: (ms) => {
+            now += ms;
+        },
         get videoReads() {
             return videoReads;
         },
@@ -147,10 +217,13 @@ function fixture(t, fetcher = async () => response()) {
             route?.();
         },
         mutate: (addedNodes = [], removedNodes = []) => mutations?.([{ addedNodes, removedNodes }]),
-        tick: (frames = 60, drops = 0) => {
+        tick: (frames = 60, drops = 0, progress = true) => {
             now += 1000;
             total += frames;
             dropped += drops;
+            if (progress) video.currentTime += 1;
+            video.seekable = range([[80, 100 + now / 1000]]);
+            video.buffered = range([[90, video.currentTime + 4]]);
             for (const fn of timers) fn();
         },
         hide: (hidden) => {
@@ -205,7 +278,7 @@ test("panel is on-demand and shows measured dimensions, declared bitrate, buffer
     await new Promise(setImmediate);
     assert.match(f.text(), /1920 × 1080/);
     assert.match(f.text(), /8,192 kbps/);
-    assert.match(f.text(), /4\.00초/);
+    assert.match(f.text(), /4\.0초/);
     f.tick(60, 3);
     assert.match(f.text(), /57\.0 FPS/);
     const labels = Array.from(f.doc.querySelectorAll("#betterchzzk-stream-info dt"), (element) => element.textContent);
@@ -278,7 +351,7 @@ test("closing, disabling, visibility, navigation and stale requests clean up wit
     assert.equal(f.video.paused, false);
 });
 
-test("statistics survive toolbar replacement and close when the player or source is replaced", (t) => {
+test("live panel survives toolbar, source and player replacement while stale handlers are removed", (t) => {
     const f = fixture(t);
     f.open();
     const old = f.doc.querySelector(".pzp-pc__bottom-buttons-right");
@@ -288,10 +361,10 @@ test("statistics survive toolbar replacement and close when the player or source
     f.mutate([next], []);
     assert.match(f.text(), /1920 × 1080/);
     assert.equal(f.timers.size, 1);
+    const panel = f.doc.getElementById("betterchzzk-stream-info");
     f.video.dispatchEvent(new f.w.Event("emptied"));
-    assert.equal(f.text(), undefined);
-    assert.equal(f.timers.size, 0);
-    f.open();
+    assert.equal(f.doc.getElementById("betterchzzk-stream-info"), panel);
+    assert.equal(f.timers.size, 1);
     const oldPlayer = f.doc.querySelector(".pzp-pc");
     const nextPlayer = f.doc.createElement("div");
     nextPlayer.className = "pzp-pc";
@@ -300,10 +373,13 @@ test("statistics survive toolbar replacement and close when the player or source
     nextPlayer.innerHTML = `<video></video>${nativeControls}${nativeSettings}`;
     oldPlayer.replaceWith(nextPlayer);
     f.mutate([nextPlayer], [oldPlayer]);
-    assert.equal(f.text(), undefined);
-    assert.equal(f.timers.size, 0);
+    assert.equal(f.doc.getElementById("betterchzzk-stream-info"), panel);
+    assert.equal(f.timers.size, 1);
     staleItem.click();
-    assert.equal(f.text(), undefined);
+    assert.equal(f.doc.getElementById("betterchzzk-stream-info"), panel);
+    const count = f.requests.length;
+    f.video.dispatchEvent(new f.w.Event("emptied"));
+    assert.equal(f.requests.length, count, "the detached video no longer owns media events");
     assert.equal(settingsItem(f).closest(".pzp-pc"), nextPlayer);
     assert.equal(f.context(f.video).defaultPrevented, false);
     assert.equal(f.context(nextPlayer.querySelector("video")).defaultPrevented, false);
@@ -375,7 +451,7 @@ test("metadata failure preserves core metrics and buffering uses the current ran
     await new Promise(setImmediate);
     assert.match(f.text(), /정보 조회 실패/);
     assert.match(f.text(), /1920 × 1080/);
-    assert.match(f.text(), /현재 위치에 버퍼 없음/);
+    assert.match(f.text(), /남은 재생 버퍼0\.0초/);
     f.w.dispatchEvent(new f.w.Event("pagehide"));
     assert.equal(f.timers.size, 0);
     f.w.dispatchEvent(new f.w.Event("pageshow"));
@@ -548,4 +624,467 @@ test("a settings menu added after player initialization receives one entry", asy
     assert.equal(f.doc.querySelectorAll("#betterchzzk-stream-info-settings-item").length, 1);
     assert.equal(f.requests.length, 0);
     assert.equal(f.timers.size, 0);
+});
+
+test("live diagnostics use the actual MAIN snapshot and model with one sample per second and accessible graph", async (t) => {
+    const f = fixture(t);
+    f.doc.documentElement.setAttribute(
+        "data-betterchzzk-low-latency-result",
+        JSON.stringify({ status: "applied", selectedTrackId: "low-latency-1080" })
+    );
+    f.open();
+    await new Promise(setImmediate);
+    assert.match(f.text(), /현재 재생 방식일반/);
+    assert.match(f.text(), /라이브 지연\(추정\)측정 대기/);
+    assert.equal(f.samples.length, 1, "metadata completion must only redraw");
+    f.tick(60, 3);
+    assert.match(f.text(), /라이브 지연\(추정\)5\.0초/);
+    assert.match(f.text(), /프레임 누락3개 · 5\.0%/);
+    assert.match(f.text(), /1\.0초 관측/);
+    assert.equal(f.samples.length, 2);
+    assert.equal(f.doc.querySelectorAll("#betterchzzk-stream-info svg path[data-series]").length, 2);
+    assert.ok(f.doc.querySelector('#betterchzzk-stream-info svg[role="img"][aria-describedby]'));
+    assert.equal(f.doc.querySelector("#betterchzzk-stream-info [aria-live]"), null);
+    assert.equal(f.video.hasAttribute("data-bcsi-request"), false);
+    assert.equal(f.video.hasAttribute("data-bcsi-result"), false);
+    f.native.selected.kind = "low-latency";
+    f.native.selected.id = "low-latency-1080";
+    f.tick();
+    assert.match(f.text(), /현재 재생 방식저지연/);
+    assert.ok(f.doc.querySelector("#betterchzzk-stream-info [data-mode-change]"));
+    assert.equal(f.requests.length, 1);
+    assert.equal(f.timers.size, 1);
+    assert.deepEqual(f.controlCalls, []);
+});
+
+test("live source emptying keeps the panel and hides sampling gaps while VOD still closes", async (t) => {
+    const f = fixture(t);
+    f.open();
+    await new Promise(setImmediate);
+    f.tick();
+    const panel = f.doc.getElementById("betterchzzk-stream-info");
+    f.video.dispatchEvent(new f.w.Event("emptied"));
+    assert.equal(f.doc.getElementById("betterchzzk-stream-info"), panel);
+    await new Promise(setImmediate);
+    f.tick();
+    assert.ok(f.samples.at(-1).samples.some((point) => point.gap));
+    f.route("/video/123");
+    f.open();
+    f.video.dispatchEvent(new f.w.Event("emptied"));
+    assert.equal(f.text(), undefined);
+    assert.equal(f.timers.size, 0);
+});
+
+test("hidden time stops collection and requests, expires history, and resumes with an explicit graph gap", async (t) => {
+    const f = fixture(t);
+    f.open();
+    await new Promise(setImmediate);
+    f.tick();
+    f.tick();
+    const count = f.samples.length;
+    const observed = f.samples.at(-1).observedSeconds;
+    f.hide(true);
+    f.advance(7000);
+    f.tick();
+    assert.equal(f.samples.length, count);
+    assert.equal(f.requests.length, 1);
+    assert.equal(f.timers.size, 0);
+    f.hide(false);
+    assert.equal(f.samples.at(-1).observedSeconds, observed);
+    assert.equal(f.samples.at(-1).samples.at(-1).gap, true);
+    f.tick();
+    assert.equal(f.samples.at(-1).observedSeconds, observed + 1);
+    assert.equal(f.doc.querySelector('[data-series="buffer"]').getAttribute("d").match(/M/g).length, 2);
+    assert.equal(f.requests.length, 1, "completed metadata need not be fetched again on visibility changes");
+    f.hide(true);
+    f.advance(61000);
+    f.hide(false);
+    assert.equal(f.samples.at(-1).observedSeconds, 0);
+    assert.equal(f.samples.at(-1).samples.length, 1);
+    assert.equal(f.timers.size, 1);
+});
+
+test("media events confirm observed waits and exclude pauses, seeks, advertisements and invalid rates", async (t) => {
+    const f = fixture(t);
+    f.open();
+    await new Promise(setImmediate);
+    f.tick();
+    const emit = (type) => f.video.dispatchEvent(new f.w.Event(type));
+    emit("waiting");
+    emit("waiting");
+    f.tick(0, 0, false);
+    assert.equal(f.samples.at(-1).stalls.count, 1);
+    assert.equal(f.samples.at(-1).stalls.seconds, 1);
+    f.video.paused = true;
+    emit("pause");
+    f.tick(0, 0, false);
+    assert.equal(f.samples.at(-1).stalls.seconds, 1);
+    assert.equal(f.samples.at(-1).current.delay, null);
+    f.video.paused = false;
+    emit("playing");
+    f.tick();
+    Object.defineProperty(f.video, "seeking", { configurable: true, value: true });
+    emit("seeking");
+    f.tick();
+    assert.equal(f.samples.at(-1).current.state, "seeking");
+    Object.defineProperty(f.video, "seeking", { configurable: true, value: false });
+    emit("seeked");
+    f.doc.querySelector(".pzp-pc").classList.add("pzp-pc--adbreak");
+    f.tick();
+    assert.equal(f.samples.at(-1).current.state, "ad");
+    assert.match(f.text(), /현재 재생 방식확인 불가/);
+    f.doc.querySelector(".pzp-pc").classList.remove("pzp-pc--adbreak");
+    f.video.playbackRate = 0;
+    emit("ratechange");
+    f.tick();
+    assert.equal(f.samples.at(-1).current.state, "invalid-rate");
+    f.video.playbackRate = 1.03;
+    emit("ratechange");
+    f.tick();
+    assert.match(f.text(), /재생 속도1\.03배/);
+    f.native.pane.$store.getters.onLive = false;
+    f.tick();
+    assert.match(f.text(), /되감기 시청 중/);
+    assert.equal(f.requests.length, 1);
+    assert.deepEqual(f.controlCalls, []);
+    assert.ok(f.events.includes("waiting"));
+});
+
+test("fresh matching broadcast identity preserves source history, while new, closed or unverified broadcasts reset it", async (t) => {
+    let data = response();
+    const f = fixture(t, async () => data);
+    f.open();
+    await new Promise(setImmediate);
+    f.tick();
+    f.tick();
+    const firstAt = f.samples.at(-1).samples[0].at;
+    f.video.currentSrc = "blob:same-broadcast";
+    f.video.dispatchEvent(new f.w.Event("emptied"));
+    await new Promise(setImmediate);
+    f.tick();
+    assert.equal(f.samples.at(-1).samples[0].at, firstAt);
+    assert.equal(f.samples.at(-1).current.state, "waiting");
+    for (const content of [
+        { ...response().content, liveId: 2 },
+        { ...response().content, liveId: 2, channel: { channelId: "another-channel" } },
+        { ...response().content, channel: undefined },
+        { ...response().content, status: "CLOSE" },
+    ]) {
+        f.tick();
+        data = { ...response(), content };
+        f.video.currentSrc += "-next";
+        f.video.dispatchEvent(new f.w.Event("emptied"));
+        await new Promise(setImmediate);
+        f.tick();
+        assert.equal(f.samples.at(-1).samples.length, 1);
+        assert.equal(f.samples.at(-1).observedSeconds, 0);
+    }
+    assert.doesNotMatch(f.text(), /8,192 kbps/);
+});
+
+test("metadata that goes stale before a source event resumes exactly once for the current source", async (t) => {
+    const resolves = [];
+    const f = fixture(t, () => new Promise((resolve) => resolves.push(resolve)));
+    f.open();
+    resolves.shift()(response());
+    await new Promise(setImmediate);
+    f.tick();
+    f.video.dispatchEvent(new f.w.Event("emptied"));
+    assert.equal(f.requests.length, 2);
+    f.video.currentSrc = "blob:new-source-without-event";
+    resolves.shift()(response());
+    await new Promise(setImmediate);
+    assert.equal(f.requests.length, 2);
+    f.tick();
+    assert.equal(f.requests.length, 3);
+    resolves.shift()(response());
+    await new Promise(setImmediate);
+    f.tick();
+    f.tick();
+    assert.equal(f.requests.length, 3);
+    assert.equal(f.samples.at(-1).current.state, "measuring");
+    assert.equal(f.timers.size, 1);
+});
+
+test("unavailable MAIN reads between provider identities cannot bypass fresh broadcast verification", async (t) => {
+    let data = response();
+    const f = fixture(t, async () => data);
+    f.open();
+    await new Promise(setImmediate);
+    f.tick();
+    f.tick();
+    const host = f.video.parentElement;
+    const fiber = host.__reactFiber$stream;
+    delete host.__reactFiber$stream;
+    f.tick();
+    assert.match(f.text(), /현재 재생 방식확인 불가/);
+    assert.equal(f.requests.length, 1);
+    host.__reactFiber$stream = fiber;
+    f.native.native.srcObject = {};
+    data = { ...response(), content: { ...response().content, liveId: 2 } };
+    f.tick();
+    assert.equal(f.requests.length, 2);
+    await new Promise(setImmediate);
+    f.tick();
+    assert.equal(f.samples.at(-1).samples.length, 1);
+    assert.equal(f.samples.at(-1).observedSeconds, 0);
+});
+
+test("invalid and stale bridge responses stay unknown and are removed without losing video observations", async (t) => {
+    const f = fixture(t);
+    let change = (value) => value;
+    f.doc.addEventListener(
+        "betterchzzk:stream-info:read",
+        (event) => {
+            const raw = event.target.getAttribute("data-bcsi-result");
+            event.target.setAttribute("data-bcsi-result", JSON.stringify(change(JSON.parse(raw))));
+        },
+        true
+    );
+    f.open();
+    await new Promise(setImmediate);
+    for (const patch of [
+        { requestId: "stale" },
+        { version: 0 },
+        { route: "/live/other" },
+        { status: "other" },
+        { mode: "<img src=x>" },
+        { onLive: "true" },
+        { trackWidth: 0 },
+    ]) {
+        change = (value) => ({ ...value, ...patch });
+        f.tick();
+        assert.match(f.text(), /현재 재생 방식확인 불가/);
+        assert.match(f.text(), /남은 재생 버퍼4\.0초/);
+        assert.equal(f.video.hasAttribute("data-bcsi-request"), false);
+        assert.equal(f.video.hasAttribute("data-bcsi-result"), false);
+    }
+    assert.equal(f.requests.length, 1);
+});
+
+test("live panel rebinds a new main only after fresh identity, retaining same-broadcast history and dropping unknown history", async (t) => {
+    let data = response();
+    const f = fixture(t, async () => data);
+    f.open();
+    await new Promise(setImmediate);
+    f.tick();
+    f.tick();
+    const panel = f.doc.getElementById("betterchzzk-stream-info");
+    const replace = () => {
+        const old = f.doc.querySelector(".pzp-pc");
+        const next = f.doc.createElement("div");
+        next.className = "pzp-pc";
+        next.innerHTML = `<video></video>${nativeControls}${nativeSettings}`;
+        const nextVideo = next.querySelector("video");
+        for (const key of [
+            "currentTime",
+            "currentSrc",
+            "videoWidth",
+            "videoHeight",
+            "paused",
+            "readyState",
+            "buffered",
+            "seekable",
+        ])
+            Object.defineProperty(nextVideo, key, Object.getOwnPropertyDescriptor(f.video, key));
+        nextVideo.getVideoPlaybackQuality = f.video.getVideoPlaybackQuality;
+        nextVideo.className = "";
+        old.replaceWith(next);
+        f.mountNative(nextVideo);
+        f.mutate([next], [old]);
+        return nextVideo;
+    };
+    const before = f.samples.at(-1).samples.length;
+    replace();
+    await new Promise(setImmediate);
+    f.tick();
+    assert.equal(f.doc.getElementById("betterchzzk-stream-info"), panel);
+    assert.equal(f.samples.at(-1).samples.length, before + 1);
+    data = { ...response(), content: { ...response().content, liveId: null } };
+    replace();
+    await new Promise(setImmediate);
+    f.tick();
+    assert.equal(f.doc.getElementById("betterchzzk-stream-info"), panel);
+    assert.equal(f.samples.at(-1).samples.length, 1);
+    assert.equal(f.timers.size, 1);
+    assert.equal(f.requests.length, 3);
+});
+
+test("an advertisement taking over the main node is a gap and never becomes the measured video", async (t) => {
+    const f = fixture(t);
+    f.open();
+    await new Promise(setImmediate);
+    f.tick();
+    const host = f.video.parentElement;
+    const wrapper = f.doc.createElement("div");
+    wrapper.setAttribute("data-role", "imaAdContainerEl");
+    host.classList.add("pzp-pc--adbreak");
+    host.append(wrapper);
+    wrapper.append(f.video);
+    f.mutate([wrapper], []);
+    f.tick();
+    assert.ok(f.doc.getElementById("betterchzzk-stream-info"));
+    assert.equal(f.samples.at(-1).current.state, "ad");
+    assert.equal(f.samples.at(-1).current.buffer, null);
+    assert.equal(f.requests.length, 1);
+    host.append(f.video);
+    wrapper.remove();
+    host.classList.remove("pzp-pc--adbreak");
+    f.mutate([f.video], [wrapper]);
+    await new Promise(setImmediate);
+    f.tick();
+    assert.equal(f.requests.length, 2);
+    assert.equal(f.timers.size, 1);
+    assert.deepEqual(f.controlCalls, []);
+});
+
+test("sampling has bounded history and no media writes, and closed panels start a new observation", async (t) => {
+    const f = fixture(t);
+    let time = 95;
+    const writes = [];
+    Object.defineProperties(f.video, {
+        currentTime: {
+            configurable: true,
+            get: () => time,
+            set: () => {
+                writes.push("seek");
+            },
+        },
+        playbackRate: {
+            configurable: true,
+            get: () => 1.03,
+            set: () => {
+                writes.push("rate");
+            },
+        },
+    });
+    let frameReads = 0;
+    const readFrames = f.video.getVideoPlaybackQuality;
+    f.video.getVideoPlaybackQuality = () => {
+        frameReads++;
+        return readFrames();
+    };
+    f.open();
+    await new Promise(setImmediate);
+    assert.equal(frameReads, 1, "metadata rendering does not read another frame sample");
+    for (let index = 0; index < 130; index++) {
+        time++;
+        f.w.Date.now = () => 500000 - index * 10000;
+        f.tick(60, 1, false);
+    }
+    assert.ok(f.samples.at(-1).samples.length <= 120);
+    assert.equal(frameReads, 131);
+    assert.equal(f.samples.at(-1).observedSeconds, 60);
+    assert.equal(f.requests.length, 1);
+    assert.deepEqual(writes, []);
+    assert.deepEqual(f.controlCalls, []);
+    f.open();
+    assert.equal(f.timers.size, 0);
+    f.open();
+    assert.equal(f.samples.at(-1).samples.length, 1);
+    assert.equal(f.samples.at(-1).observedSeconds, 0);
+});
+
+test("layout exposes current values first, readable chart legends and a sticky close action in both themes", (t) => {
+    const f = fixture(t);
+    f.open();
+    const panel = f.doc.getElementById("betterchzzk-stream-info");
+    assert.deepEqual(
+        Array.from(panel.querySelectorAll("dt"))
+            .slice(0, 2)
+            .map((node) => node.textContent),
+        ["현재 재생 방식", "라이브 지연(추정)"]
+    );
+    assert.match(f.text(), /세로 점선: 재생 방식 변경/);
+    const css = f.doc.getElementById("betterchzzk-stream-info-style").textContent;
+    assert.match(css, /position:sticky/);
+    assert.match(css, /max-inline-size:calc\(100% - 16px\)/);
+    assert.match(css, /minmax\(0,1fr\) minmax\(0,1fr\)/);
+    assert.match(css, /html\.theme_dark/);
+    assert.match(css, /stroke-dasharray:5 4/);
+    assert.match(css, /font-variant-numeric:tabular-nums/);
+    assert.equal(panel.querySelector("header button").getAttribute("aria-label"), "스트림 정보 닫기");
+});
+
+test("VOD keeps its existing metrics and closes on replacement without querying live metadata", (t) => {
+    const f = fixture(t);
+    f.route("/video/123");
+    f.open();
+    assert.doesNotMatch(f.text(), /현재 재생 방식|라이브 지연|관측 끊김/);
+    assert.match(f.text(), /남은 재생 버퍼4\.00초/);
+    assert.equal(f.requests.length, 0);
+    const old = f.doc.querySelector(".pzp-pc");
+    const next = old.cloneNode(false);
+    next.innerHTML = `<video></video>${nativeControls}${nativeSettings}`;
+    old.replaceWith(next);
+    f.mutate([next], [old]);
+    assert.equal(f.text(), undefined);
+    assert.equal(f.timers.size, 0);
+});
+
+test("manifest loads pure timing and stream models before their isolated consumers", () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../manifest.json"), "utf8"));
+    const entry = manifest.content_scripts.find((row) => row.js.includes("features/streamInfo.js"));
+    assert.notEqual(entry.world, "MAIN");
+    for (const consumer of ["features/streamInfoModel.js", "features/liveMultiview/model.js"])
+        assert.ok(
+            entry.js.indexOf("shared/liveTiming.js") >= 0 &&
+                entry.js.indexOf("shared/liveTiming.js") < entry.js.indexOf(consumer)
+        );
+    assert.ok(entry.js.indexOf("features/streamInfoModel.js") < entry.js.indexOf("features/streamInfo.js"));
+});
+
+test("malformed broadcast IDs cannot join observations across source replacements", async (t) => {
+    for (const liveId of ["arbitrary", " ", "1", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+        const f = fixture(t, async () => ({ ...response(), content: { ...response().content, liveId } }));
+        f.open();
+        await new Promise(setImmediate);
+        f.tick();
+        f.tick();
+        f.video.currentSrc = "blob:replacement";
+        f.video.dispatchEvent(new f.w.Event("emptied"));
+        await new Promise(setImmediate);
+        f.tick();
+        assert.equal(f.samples.at(-1).samples.length, 1, `invalid ID ${String(liveId)} must not establish identity`);
+    }
+});
+
+test("an unrelated nested player's advertisement does not exclude the current main", async (t) => {
+    const f = fixture(t);
+    const secondary = f.doc.createElement("div");
+    secondary.className = "pzp-pc pzp-pc--adbreak";
+    secondary.setAttribute("data-bcmv-video", "");
+    f.video.parentElement.append(secondary);
+    f.open();
+    await new Promise(setImmediate);
+    f.tick();
+    assert.equal(f.samples.at(-1).current.state, "measuring");
+    assert.match(f.text(), /현재 재생 방식일반/);
+});
+
+test("source events and main removal invalidate the current mode until a fresh MAIN read", async (t) => {
+    const f = fixture(t);
+    f.native.selected.kind = "low-latency";
+    f.open();
+    await new Promise(setImmediate);
+    f.tick();
+    assert.match(f.text(), /현재 재생 방식저지연/);
+    const historyPath = f.doc.querySelector('[data-series="buffer"]').getAttribute("d");
+    f.video.currentSrc = "blob:changed-before-event";
+    f.video.dispatchEvent(new f.w.Event("loadedmetadata"));
+    assert.match(f.text(), /현재 재생 방식확인 불가/);
+    assert.equal(f.doc.querySelector('[data-series="buffer"]').getAttribute("d"), historyPath);
+    await new Promise(setImmediate);
+    assert.match(f.text(), /현재 재생 방식확인 불가/, "metadata completion does not confirm a native mode");
+    f.tick();
+    assert.match(f.text(), /현재 재생 방식저지연/);
+    f.video.dispatchEvent(new f.w.Event("emptied"));
+    assert.match(f.text(), /현재 재생 방식확인 불가/);
+    await new Promise(setImmediate);
+    f.tick();
+    assert.match(f.text(), /현재 재생 방식저지연/);
+    f.video.remove();
+    f.mutate([], [f.video]);
+    assert.match(f.text(), /현재 재생 방식확인 불가/);
+    assert.ok(f.doc.getElementById("betterchzzk-stream-info"));
 });

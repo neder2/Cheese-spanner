@@ -18,6 +18,7 @@
         syncPlayerButtonTooltip,
     } = BetterChzzk.utils;
     const ID = "betterchzzk-player-zoom";
+    const MIN_SCALE_SCROLL_DELAY_MS = 1000;
     const CONTROLS = ".pzp-pc__bottom-buttons-right";
     const EXCLUDED =
         "button, a, input, textarea, select, summary, [contenteditable]:not([contenteditable='false']), " +
@@ -89,6 +90,7 @@
         setVideoViewportTransform(state.video, null);
         state.saved = null;
         state.scale = 1;
+        state.scrollBlockedUntil = 0;
         state.x = 0;
         state.y = 0;
         state.width = 0;
@@ -175,6 +177,12 @@
         if (!Number.isFinite(event.deltaY) || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
         const box = surface(event);
         if (!box) return;
+        if (mode === "always" && state.scale === 1 && event.deltaY > 0) {
+            const now = performance.now();
+            if (now >= state.scrollBlockedUntil) return;
+            // Keep the rest of a zoom-out gesture from spilling into page scrolling.
+            state.scrollBlockedUntil = now + MIN_SCALE_SCROLL_DELAY_MS;
+        }
         const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? box.height : 1;
         const delta = clamp(event.deltaY * unit, -240, 240);
         const next = clamp(state.scale * Math.exp((-delta * Math.log(1.2)) / 100), 1, 5);
@@ -182,6 +190,9 @@
         event.stopImmediatePropagation();
         if (next === 1 && state.scale === 1) return;
         zoomAt(next, event.clientX - box.left, event.clientY - box.top);
+        if (mode === "always" && delta > 0 && state?.scale === 1) {
+            state.scrollBlockedUntil = performance.now() + MIN_SCALE_SCROLL_DELAY_MS;
+        }
     }
 
     function zoomAt(next, x, y) {
@@ -423,7 +434,18 @@
         if (!(video instanceof HTMLVideoElement) || !video.isConnected || !player?.contains(video)) return unmount();
         if (state?.video !== video || state.player !== player) {
             unmount();
-            state = { video, player, manual: false, scale: 1, x: 0, y: 0, width: 0, height: 0, saved: null };
+            state = {
+                video,
+                player,
+                manual: false,
+                scale: 1,
+                scrollBlockedUntil: 0,
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                saved: null,
+            };
             video.addEventListener("emptied", onSourceChange);
             video.addEventListener("loadstart", onSourceChange);
             video.addEventListener("loadedmetadata", onSourceChange);

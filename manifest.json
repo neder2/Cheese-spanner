@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "치즈 스패너",
-    "version": "1.4.0",
+    "version": "1.4.1",
     "description": "치지직 화질 고정, 재생·채팅 도구, 팔로잉 고정·미리보기, 다시보기 검색·댓글, 방송 목록 필터·통계와 시청 기록을 제공합니다.",
     "icons": {
         "16": "icons/cheese-spanner16.png",
@@ -37,13 +37,18 @@
                 "shared/data.js",
                 "shared/selectors.js",
                 "content.js",
+                "shared/updateGuide.js",
+                "shared/updateGuideView.js",
                 "shared/liveStart.js",
                 "shared/vodTimeline.js",
+                "shared/liveTiming.js",
                 "features/adblockPopup.js",
                 "features/adVideo.js",
                 "features/adBanner.js",
                 "features/headerButtons.js",
                 "features/headerBannerLayout.js",
+                "features/panelResizeModel.js",
+                "features/panelResize.js",
                 "features/vodReplayChatFix.js",
                 "features/vodComments/model.js",
                 "features/vodComments/repository.js",
@@ -57,6 +62,7 @@
                 "features/timeMachineLagLabel.js",
                 "features/livePlayerDisplay.js",
                 "features/playerButtons.js",
+                "features/streamInfoModel.js",
                 "features/streamInfo.js",
                 "features/offlineLiveReload.js",
                 "features/monthlyBroadcastTime/model.js",
@@ -98,7 +104,8 @@
                 "features/followingPreviewTooltip.js",
                 "features/holdSpeed.js",
                 "features/screenShortcuts.js",
-                "features/playerZoom.js"
+                "features/playerZoom.js",
+                "features/updateGuide.js"
             ],
             "run_at": "document_start"
         }

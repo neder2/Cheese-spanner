@@ -1,8 +1,9 @@
 /**
- * features/categoryTools.js — 카테고리/전체 라이브 목록 페이지에 검색·필터 툴바와 팔로워/경과시간 배지를 주입한다.
+ * features/categoryTools.js — 목록의 검색·필터와 배지, 독립 설정인 전체 라이브 집계를 표시한다.
  *
  * 동작 위치: /lives (전체 라이브) 및 /category/:categoryType/:categoryId/(lives|videos|clips) 라우트의 탭·정렬 줄.
  * 하는 일:
+ *   - 전체 라이브의 방송 수·시청자 합계를 검색·필터와 독립적으로 표시하고 공유 조회의 소비자 수명을 관리한다.
  *   - 탭/정렬 줄 옆에 검색 입력과 필터(팔로워 수, 조회수/시청자 수, 진행 시간 범위) 버튼이 있는 툴바를 DOM에 삽입한다.
  *   - Chzzk API(v1/v2 lives, videos, clips, channels)에서 메타데이터를 페이지네이션으로 받아 캐싱하고,
  *     검색어/필터 조건에 맞는 카드를 기존 DOM 카드를 템플릿 삼아 추가로 주입한 뒤 조건에 안 맞는 카드는 숨긴다.
@@ -15,7 +16,7 @@
  *   BetterChzzk.categoryToolsRepository/categoryToolsSearchController, 전역 BetterChzzk.utils
  *   (createMutationObserverSync, createThrottledDomSync, fetchJson, normSpace, normalizeChzzkImageUrl,
  *   normalizeCompact, onReady, setLoadingReason, sleep, startPageChangeDetection, touchMapEntry, injectStyleOnce).
- * 옵션 키: categoryToolsEnabled, categoryToolsMaxMetadataPages, categoryToolsHideGlobalTagSearch,
+ * 옵션 키: categoryToolsEnabled, globalLiveCountEnabled, categoryToolsMaxMetadataPages, categoryToolsHideGlobalTagSearch,
  *   categoryToolsFollowerBadgesEnabled, categoryToolsLiveElapsedEnabled,
  *   categoryToolsFollowerFilterPreset1~6, categoryToolsViewFilterPreset1~6, categoryToolsDurationFilterPreset1~6,
  *   categoryToolsFollowerFetchMaxPerPass, categoryToolsFollowerFetchConcurrency, categoryToolsFollowerFetchDelayMs.
@@ -91,7 +92,10 @@
     let orderCounter = 0;
     let lastFollowerRefreshRouteKey = "";
     let lastFollowerRefreshRows = [];
-    let menuPositionScheduled = false;
+    let menuPositionFrame = 0;
+    let toolbarRescueFrame = 0;
+    let toolbarRescueGeneration = 0;
+    let searchApplyTimer = 0;
     let filterOptionDrag = null;
     let suppressNextOptionClick = false;
     let liveElapsedTimer = 0;
@@ -165,11 +169,29 @@
     let liveCountLabel = "시청자 10명 이상 · 집계 중…";
     let liveCountTitle = "전체 방송 목록 기준이며 검색·필터와 무관해요.";
 
+    function resetGlobalLiveCount() {
+        liveCountGeneration++;
+        liveCountStarted = false;
+        liveCountLabel = "시청자 10명 이상 · 집계 중…";
+        liveCountTitle = "전체 방송 목록 기준이며 검색·필터와 무관해요.";
+        dataRepository.cancelGlobalLiveCount();
+    }
+
     function syncGlobalLiveCount(route) {
-        const label = document.querySelector(`#${BAR_ID} .bcgt-live-count`);
+        let label = document.querySelector(`#${BAR_ID} .bcgt-live-count`);
+        if (!isGlobalLiveCountEnabled(route)) {
+            label?.remove();
+            return;
+        }
+        const bar = document.getElementById(BAR_ID);
+        if (!label && bar) {
+            label = document.createElement("span");
+            label.className = "bcgt-live-count";
+            label.setAttribute("aria-live", "polite");
+            bar.prepend(label);
+        }
         if (!label) return;
-        label.hidden = route.scope !== "global-lives";
-        if (label.hidden) return;
+        label.hidden = false;
         if (label.textContent !== liveCountLabel) label.textContent = liveCountLabel;
         if (label.title !== liveCountTitle) label.title = liveCountTitle;
         if (liveCountStarted) return;
@@ -177,13 +199,23 @@
         const generation = liveCountGeneration;
         void dataRepository.countGlobalLives().then(
             ({ count, totalViewers, measuredAt }) => {
-                if (generation !== liveCountGeneration) return;
+                if (
+                    generation !== liveCountGeneration ||
+                    !isGlobalLiveCountEnabled() ||
+                    routeKey(getRoute()) !== routeKey(route)
+                )
+                    return;
                 liveCountLabel = `시청자 10명 이상 · 방송 ${count.toLocaleString("ko-KR")}개 · 시청자 합계 ${totalViewers.toLocaleString("ko-KR")}명`;
                 liveCountTitle = `전체 방송 목록 기준 · ${new Date(measuredAt).toLocaleTimeString("ko-KR")} 집계 · 검색·필터와 무관해요. 방송별 동시 시청자 수의 합계로, 중복 시청자를 제거한 인원 수는 아니에요.`;
                 syncGlobalLiveCount(route);
             },
             () => {
-                if (generation !== liveCountGeneration) return;
+                if (
+                    generation !== liveCountGeneration ||
+                    !isGlobalLiveCountEnabled() ||
+                    routeKey(getRoute()) !== routeKey(route)
+                )
+                    return;
                 liveCountLabel = "방송 수 집계 실패";
                 liveCountTitle = "전체 방송 탭에 다시 진입하면 집계를 다시 시도해요.";
                 syncGlobalLiveCount(route);
@@ -201,6 +233,18 @@
 
     function isFeatureEnabled() {
         return featureOptions.categoryToolsEnabled;
+    }
+
+    function isGlobalLiveCountEnabled(route = getRoute()) {
+        return featureOptions.globalLiveCountEnabled && route?.scope === "global-lives";
+    }
+
+    function isRuntimeEnabled() {
+        return isFeatureEnabled() || featureOptions.globalLiveCountEnabled;
+    }
+
+    function shouldApplyTools() {
+        return Boolean(getRoute()) && (isFeatureEnabled() || isGlobalLiveCountEnabled());
     }
 
     function areFollowerBadgesEnabled() {
@@ -916,11 +960,13 @@
     }
 
     function handleGlobalSortClick(event) {
+        if (!isFeatureEnabled()) return;
         if (!isGlobalSortClickTarget(event.target)) return;
         const route = getRoute();
         const grid = findGrid(route);
         if (grid) clearInjectedCards(grid);
-        resetMetadata(routeKey(route));
+        resetSearchWork();
+        dataRepository.resetSearchMetadata(routeKey(route));
         resetViewFilterSnapshot();
         clearFollowerHydrationTimer();
         clearLoading();
@@ -962,7 +1008,11 @@
 
     function rescueInvisibleGlobalToolbar(route, host, bar) {
         if (host?.id === GLOBAL_FALLBACK_ID) return;
-        requestAnimationFrame(() => {
+        if (toolbarRescueFrame) cancelAnimationFrame(toolbarRescueFrame);
+        const generation = ++toolbarRescueGeneration;
+        toolbarRescueFrame = requestAnimationFrame(() => {
+            if (generation !== toolbarRescueGeneration) return;
+            toolbarRescueFrame = 0;
             if (getRoute()?.scope !== "global-lives") return;
             if (!bar.isConnected || bar.getAttribute("data-mode") !== "global-inline") return;
             if (isElementVisibleOnPage(bar)) return;
@@ -1372,19 +1422,25 @@
         return video ? parseCount(video[1]) : 0;
     }
 
-    function resetMetadata(key = "") {
+    function resetSearchWork() {
+        if (menuPositionFrame) cancelAnimationFrame(menuPositionFrame);
+        menuPositionFrame = 0;
+        if (searchApplyTimer) window.clearTimeout(searchApplyTimer);
+        searchApplyTimer = 0;
         if (autoLoadScrollTimer) window.clearTimeout(autoLoadScrollTimer);
         autoLoadScrollTimer = 0;
         lastAutoLoadScrollCheckAt = 0;
         injectedRenderKey = "";
         injectedRenderLimit = INJECTED_RENDER_BATCH_SIZE;
         pendingInjectedRender = false;
-        liveCountGeneration++;
-        liveCountStarted = false;
-        liveCountLabel = "시청자 10명 이상 · 집계 중…";
-        liveCountTitle = "전체 방송 목록 기준이며 검색·필터와 무관해요.";
         applyGeneration++;
         metadataSearchController.reset();
+        dataRepository.cancelMetadataSearch();
+    }
+
+    function resetMetadata(key = "") {
+        resetGlobalLiveCount();
+        resetSearchWork();
         dataRepository.resetMetadata(key);
     }
 
@@ -2914,10 +2970,11 @@
     }
 
     function scheduleMenuPosition() {
-        if (menuPositionScheduled) return;
-        menuPositionScheduled = true;
-        requestAnimationFrame(() => {
-            menuPositionScheduled = false;
+        if (menuPositionFrame) return;
+        const generation = applyGeneration;
+        menuPositionFrame = requestAnimationFrame(() => {
+            if (generation !== applyGeneration) return;
+            menuPositionFrame = 0;
             positionMenu();
         });
     }
@@ -3009,8 +3066,9 @@
         bar.setAttribute("data-loading", "0");
         bar.setAttribute("data-has-query", "0");
         bar.setAttribute("data-menu-open", "0");
+        bar.setAttribute("data-search-enabled", isFeatureEnabled() ? "1" : "0");
+        if (!isFeatureEnabled()) return bar;
         bar.innerHTML = `
-<span class="bcgt-live-count" hidden aria-live="polite"></span>
 <div class="bcgt-input-wrap">
   <svg class="bcgt-icon" viewBox="0 0 24 24" aria-hidden="true">
     <path fill="currentColor" d="M10 4a6 6 0 1 0 3.74 10.7l4.28 4.29 1.42-1.42-4.29-4.28A6 6 0 0 0 10 4Zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/>
@@ -3037,7 +3095,6 @@
         const clear = bar.querySelector(".bcgt-clear");
         const filter = bar.querySelector(".bcgt-filter");
         let isComposing = false;
-        let searchApplyTimer = 0;
 
         const applyInputValue = () => {
             if (searchApplyTimer) {
@@ -3099,8 +3156,12 @@
     function mountToolbar(route, context = null) {
         injectStyleOnce();
         let bar = document.getElementById(BAR_ID);
+        if (bar && bar.getAttribute("data-search-enabled") !== (isFeatureEnabled() ? "1" : "0")) {
+            bar.remove();
+            bar = null;
+        }
         if (!bar) bar = buildToolbar();
-        ensureMenu();
+        if (isFeatureEnabled()) ensureMenu();
 
         if (route.scope === "global-lives") {
             const hideTagSearch = shouldHideGlobalTagSearch();
@@ -3299,7 +3360,7 @@
     }
 
     async function applyTools() {
-        if (!isFeatureEnabled()) {
+        if (!shouldApplyTools()) {
             removeTools();
             return;
         }
@@ -3311,6 +3372,11 @@
         }
         const scanContext = createApplyScanContext(route);
         if (!mountToolbar(route, scanContext)) return;
+        if (!isFeatureEnabled()) {
+            lastListStateKey = listStateKey(route, scanContext);
+            syncGlobalLiveCount(route);
+            return;
+        }
 
         const canUseMetadata = canUseMetadataForCurrentList(route, scanContext);
         if (hasDurationFilter() && (route.tab !== "lives" || !canUseMetadata)) {
@@ -3331,7 +3397,8 @@
         const currentListStateKey = listStateKey(route, scanContext);
         if (currentListStateKey !== lastListStateKey) {
             clearInjectedCards(grid);
-            resetMetadata(routeKey(route));
+            resetSearchWork();
+            dataRepository.resetSearchMetadata(routeKey(route));
             resetViewFilterSnapshot();
             clearFollowerHydrationTimer();
             clearLoading();
@@ -3491,7 +3558,11 @@
         }
     }
 
-    function removeTools() {
+    function removeTools({ preserveCount = false } = {}) {
+        scheduleThrottledApply.cancel?.();
+        toolbarRescueGeneration++;
+        if (toolbarRescueFrame) cancelAnimationFrame(toolbarRescueFrame);
+        toolbarRescueFrame = 0;
         const bar = document.getElementById(BAR_ID);
         const menu = document.getElementById(MENU_ID);
         const fallback = document.getElementById(GLOBAL_FALLBACK_ID);
@@ -3514,11 +3585,12 @@
         currentQuery = "";
         resetFilterState();
         resetViewFilterSnapshot();
-        lastRouteKey = "";
+        if (!preserveCount) lastRouteKey = "";
         lastListStateKey = "";
         cachedGrid = null;
         cachedGridKey = "";
-        resetMetadata("");
+        if (preserveCount) resetSearchWork();
+        else resetMetadata("");
         orderCounter = 0;
         dataRepository.cancelFollowers();
         lastFollowerRefreshRouteKey = "";
@@ -3526,10 +3598,12 @@
         clearFollowerHydrationTimer();
         clearDurationFilterRefreshTimer();
         clearLoading();
+        const route = getRoute();
+        if (preserveCount && isGlobalLiveCountEnabled(route) && mountToolbar(route)) syncGlobalLiveCount(route);
     }
 
     function runScheduledApply() {
-        if (!isFeatureEnabled() || !getRoute()) {
+        if (!shouldApplyTools()) {
             removeToolsIfMounted();
             return;
         }
@@ -3537,11 +3611,11 @@
     }
 
     function scheduleApply() {
-        if (!isFeatureEnabled()) {
+        if (!isRuntimeEnabled()) {
             removeToolsIfMounted();
             return;
         }
-        if (!getRoute()) {
+        if (!shouldApplyTools()) {
             removeToolsIfMounted();
             return;
         }
@@ -3589,6 +3663,9 @@
     }
 
     function isOurMutation(mutation) {
+        for (const node of mutation.removedNodes || []) {
+            if (node.id === BAR_ID || node.id === MENU_ID || node.classList?.contains("bcgt-live-count")) return false;
+        }
         if (isOurNode(mutation.target)) return true;
         const added = mutation.addedNodes;
         const removed = mutation.removedNodes;
@@ -3651,13 +3728,14 @@
             onMutations: () => {
                 const route = getRoute();
                 if (location.href !== lastUrl) {
+                    scheduleThrottledApply.cancel?.();
                     lastUrl = location.href;
                     if (route) removeTools();
                     else removeToolsIfMounted();
                 }
             },
             shouldIgnoreMutations: (mutations) => mutations.every(isOurMutation),
-            shouldSchedule: () => isFeatureEnabled() && Boolean(getRoute()),
+            shouldSchedule: shouldApplyTools,
             schedule: scheduleApply,
         });
     }
@@ -3692,6 +3770,7 @@
 
     function handlePageChange() {
         if (location.href !== lastUrl) {
+            scheduleThrottledApply.cancel?.();
             lastUrl = location.href;
             removeToolsIfMounted();
         }
@@ -3722,6 +3801,7 @@
 
     function teardownRuntime() {
         runtimeInstalled = false;
+        scheduleThrottledApply.cancel?.();
         applyQueued = false;
         resetMetadata("");
         dataRepository.cancelFollowers();
@@ -3740,19 +3820,28 @@
         updateUiState();
 
         if (prev.categoryToolsMaxMetadataPages !== options.categoryToolsMaxMetadataPages) {
-            resetMetadata(dataRepository.metadataState().key);
+            resetSearchWork();
+            dataRepository.resetSearchMetadata();
+        }
+
+        if (prev.globalLiveCountEnabled !== options.globalLiveCountEnabled) {
+            resetGlobalLiveCount();
+            if (!options.globalLiveCountEnabled) document.querySelector(`#${BAR_ID} .bcgt-live-count`)?.remove();
+        }
+        if (prev.categoryToolsEnabled && !isFeatureEnabled()) {
+            removeTools({ preserveCount: isGlobalLiveCountEnabled() });
         }
 
         clearFollowerHydrationTimer();
 
-        if (!isFeatureEnabled()) {
+        if (!isRuntimeEnabled()) {
             teardownRuntime();
             return;
         }
 
         installRuntime();
 
-        if (!getRoute()) {
+        if (!shouldApplyTools()) {
             removeToolsIfMounted();
             return;
         }
@@ -3765,6 +3854,6 @@
     bindFeatureOptions(applyOptions);
 
     onReady(() => {
-        if (isFeatureEnabled()) installRuntime();
+        if (isRuntimeEnabled()) installRuntime();
     });
 })();

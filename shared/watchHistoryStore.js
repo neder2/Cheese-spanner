@@ -256,22 +256,34 @@
         }
     }
 
+    function getActivityCutoff(entry, kind) {
+        return kind === "chat" && Object.hasOwn(entry, "chatCutoffAt")
+            ? finiteNumber(entry.chatCutoffAt)
+            : finiteNumber(entry.activityCutoffAt);
+    }
+
+    function retireActivity(entry, activity) {
+        const key =
+            activity.kind === "chat" && Object.hasOwn(entry, "chatCutoffAt") ? "chatCutoffAt" : "activityCutoffAt";
+        entry[key] = Math.max(finiteNumber(entry[key]), activity.at);
+    }
+
     function mergeActivities(entry, activities, session) {
         // Provisional records deliberately wait for a verified live ID before accepting activity.
         if (!entry.id.startsWith("live:") || !activities.length) return;
         const previous = normalizeActivities(entry.activities);
         const byId = new Map(previous.map((row) => [row.id, row]));
         const daily = normalizeActivityDaily(entry.activityDaily);
-        const cutoff = finiteNumber(entry.activityCutoffAt);
         for (const activity of activities) {
             if (activity.at < session.enteredAt || activity.at > session.leftAt + MAX_FUTURE_SKEW_MS) continue;
-            if (activity.at <= cutoff || byId.has(activity.id)) continue;
+            if (activity.at <= getActivityCutoff(entry, activity.kind) || byId.has(activity.id)) continue;
             byId.set(activity.id, { ...activity, sessionStartedAt: session.enteredAt });
             countActivity(daily, activity);
         }
         const rows = Array.from(byId.values()).sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
         const retired = rows.slice(0, Math.max(0, rows.length - MAX_ACTIVITIES_PER_ENTRY));
-        entry.activityCutoffAt = Math.max(cutoff, ...retired.map((row) => row.at));
+        entry.activityCutoffAt = finiteNumber(entry.activityCutoffAt);
+        for (const activity of retired) retireActivity(entry, activity);
         entry.activities = rows.slice(-MAX_ACTIVITIES_PER_ENTRY);
         entry.activityDaily = daily;
     }
@@ -286,10 +298,12 @@
         for (const { entry, activity } of rows.slice(MAX_ACTIVITIES_TOTAL)) {
             if (!retiredByEntry.has(entry)) retiredByEntry.set(entry, new Set());
             retiredByEntry.get(entry).add(activity.id);
-            entry.activityCutoffAt = Math.max(finiteNumber(entry.activityCutoffAt), activity.at);
+            retireActivity(entry, activity);
         }
         for (const [entry, ids] of retiredByEntry)
             entry.activities = entry.activities.filter((row) => !ids.has(row.id));
+        for (const entry of retiredByEntry.keys())
+            globalThis.BetterChzzkWatchHistoryBackupMerge?.compactRestoreScope(entry);
     }
 
     function normalizeMutation(value, now = Date.now()) {
@@ -476,6 +490,8 @@
                 entry.activities = normalizeActivities(rawEntry.activities);
                 entry.activityDaily = normalizeActivityDaily(rawEntry.activityDaily);
                 entry.activityCutoffAt = Math.max(0, finiteNumber(rawEntry.activityCutoffAt));
+                if (Object.hasOwn(rawEntry, "chatCutoffAt"))
+                    entry.chatCutoffAt = Math.max(0, finiteNumber(rawEntry.chatCutoffAt));
             }
             entries[id] = entry;
         }
@@ -623,7 +639,7 @@
         let changed = setTombstone(history, recordId, cutoffAt);
         const entry = history.entries[recordId];
         if (!entry || getEntryStartedAt(entry) > cutoffAt) return changed;
-        const retainedEntry = retainEntrySessionsAfter(entry, cutoffAt);
+        const retainedEntry = retainEntryForMigration(entry, cutoffAt);
         if (retainedEntry) history.entries[recordId] = retainedEntry;
         else delete history.entries[recordId];
         changed = true;
@@ -688,7 +704,7 @@
         }
         const activityDaily = {};
         for (const activity of activities) countActivity(activityDaily, activity);
-        return {
+        const retained = {
             ...entry,
             ...(latestTitle ? { title: latestTitle } : {}),
             watchedSeconds,
@@ -704,9 +720,22 @@
                       activities,
                       activityDaily,
                       activityCutoffAt: Math.max(cutoffAt, finiteNumber(entry.activityCutoffAt)),
+                      ...(Object.hasOwn(entry, "chatCutoffAt")
+                          ? { chatCutoffAt: Math.max(cutoffAt, finiteNumber(entry.chatCutoffAt)) }
+                          : {}),
                   }
                 : {}),
         };
+        delete retained.backupRestore;
+        return retained;
+    }
+
+    function retainEntryForMigration(entry, cutoffAt) {
+        if (!entry || getEntryStartedAt(entry) > cutoffAt) return entry;
+        const retained = retainEntrySessionsAfter(entry, cutoffAt);
+        return entry.backupRestore && globalThis.BetterChzzkWatchHistoryBackupMerge
+            ? globalThis.BetterChzzkWatchHistoryBackupMerge.restoreAfterBarrier(entry, retained, cutoffAt)
+            : retained;
     }
 
     function mergeEntryMetadata(entry, patch) {
@@ -779,6 +808,44 @@
         };
     }
 
+    function mergeMigratedActivities(sourceEntry, targetEntry) {
+        const entries = [sourceEntry, targetEntry].filter(Boolean);
+        if (!entries.some((entry) => entry.activities || entry.activityDaily)) return {};
+        const byId = new Map();
+        const residual = {};
+        for (const entry of entries) {
+            const daily = normalizeActivityDaily(entry.activityDaily);
+            for (const activity of normalizeActivities(entry.activities)) {
+                if (!byId.has(activity.id)) byId.set(activity.id, activity);
+                const date = utils.getKstDateKey(activity.at);
+                const counts = daily[date];
+                if (!counts) continue;
+                if (activity.kind === "chat") counts.chatCount = Math.max(0, counts.chatCount - 1);
+                else {
+                    counts.donationCount = Math.max(0, counts.donationCount - 1);
+                    counts.donationCheese = Math.max(0, counts.donationCheese - activity.amount);
+                }
+            }
+            for (const [date, counts] of Object.entries(daily)) {
+                if (!residual[date]) residual[date] = { chatCount: 0, donationCount: 0, donationCheese: 0 };
+                for (const key of ["chatCount", "donationCount", "donationCheese"]) residual[date][key] += counts[key];
+            }
+        }
+        const activities = Array.from(byId.values()).sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+        for (const activity of activities) countActivity(residual, activity);
+        const out = {
+            activities,
+            activityDaily: residual,
+            activityCutoffAt: Math.max(...entries.map((entry) => finiteNumber(entry.activityCutoffAt))),
+        };
+        if (entries.some((entry) => Object.hasOwn(entry, "chatCutoffAt")))
+            out.chatCutoffAt = Math.max(...entries.map((entry) => getActivityCutoff(entry, "chat")));
+        for (const activity of activities.slice(0, Math.max(0, activities.length - MAX_ACTIVITIES_PER_ENTRY)))
+            retireActivity(out, activity);
+        out.activities = activities.slice(-MAX_ACTIVITIES_PER_ENTRY);
+        return out;
+    }
+
     function mergeEntriesForMigration(sourceEntry, targetEntry, targetRecordId, now) {
         if (!sourceEntry) return targetEntry || null;
         const sourceSessions = getEntryKnownSessions(sourceEntry);
@@ -829,6 +896,7 @@
         const entry = {
             ...older,
             ...newer,
+            ...mergeMigratedActivities(sourceEntry, targetEntry),
             id: targetRecordId,
             watchedSeconds,
             dailySeconds: aggregateDailySeconds,
@@ -854,6 +922,11 @@
         if (!Array.isArray(sourceEntry.sessionDetails) && !Array.isArray(targetEntry?.sessionDetails)) {
             delete entry.sessionDetails;
         }
+        const restoredScopes = globalThis.BetterChzzkWatchHistoryBackupMerge?.mergeRestoreScopes(
+            sourceEntry,
+            targetEntry
+        );
+        if (restoredScopes) entry.backupRestore = restoredScopes;
         return entry;
     }
 
@@ -1106,16 +1179,18 @@
                     const sourceEntry = history.entries[sourceRecordId];
                     const targetEntry = history.entries[targetRecordId];
                     if (sourceEntry) {
-                        let mergedEntry = mergeEntriesForMigration(sourceEntry, targetEntry, targetRecordId, now);
                         const barrier = Math.max(
                             history.clearedAt,
                             finiteNumber(history.compactedSessionBarrierAt),
                             finiteNumber(history.tombstones[sourceRecordId]),
                             finiteNumber(history.tombstones[targetRecordId])
                         );
-                        if (mergedEntry && getEntryStartedAt(mergedEntry) <= barrier) {
-                            mergedEntry = retainEntrySessionsAfter(mergedEntry, barrier);
-                        }
+                        const mergedEntry = mergeEntriesForMigration(
+                            retainEntryForMigration(sourceEntry, barrier),
+                            retainEntryForMigration(targetEntry, barrier),
+                            targetRecordId,
+                            now
+                        );
                         if (mergedEntry) history.entries[targetRecordId] = mergedEntry;
                         else delete history.entries[targetRecordId];
                         delete history.entries[sourceRecordId];
@@ -1196,6 +1271,10 @@
                 operation.activities.length
             )
                 pruneActivityTranscripts(history.entries);
+            if (outcome.result.recordId)
+                globalThis.BetterChzzkWatchHistoryBackupMerge?.compactRestoreScope(
+                    history.entries[outcome.result.recordId]
+                );
             history.updatedAt = Math.max(Math.round(now), history.updatedAt + 1);
         }
         return { history, ...outcome };

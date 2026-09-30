@@ -156,3 +156,51 @@ test("header remount, SPA navigation and page lifecycle clean up old nodes and r
     await waitForCondition(() => replacement.hasAttribute("data-bchbl-offset-transform"));
     assert.equal([...f.resizes].filter((observer) => observer.node).length, 1);
 });
+
+test("watchparty sticky title follows the actual header when a hidden skin leaves native offsets behind", async (t) => {
+    const f = await fixture(t),
+        doc = f.document,
+        header = doc.getElementById("header"),
+        body = doc.getElementById("layout-body"),
+        banner = doc.querySelector("._container_banner_2");
+    const filter = doc.createElement("style");
+    filter.textContent = "#header { transform:none !important; }";
+    doc.head.append(filter);
+    let bottom = 60;
+    header.getBoundingClientRect = () => ({ bottom });
+    body.innerHTML =
+        '<div><section><div class="_header_fixture_20 _is_sticky_fixture_31" style="top:111px">같이보기</div></section></div>';
+    const title = body.querySelector("section > div");
+    banner.style.display = "none";
+    f.resize(0);
+    f.dom.window.history.pushState({}, "", "/watchparty/535");
+    await waitForCondition(() => body.style.getPropertyValue("--bchbl-sticky-top") === "60px");
+    assert.equal(title.style.top, "111px", "native React state remains intact");
+    const rule = doc.getElementById("betterchzzk-header-banner-sticky-style").sheet.cssRules[0];
+    assert.equal(title.matches(rule.selectorText), true);
+    assert.equal(rule.style.getPropertyValue("top"), "var(--bchbl-sticky-top)");
+    // JSDOM does not retain !important on this var() declaration in CSSOM.
+    assert.match(
+        doc.getElementById("betterchzzk-header-banner-sticky-style").textContent,
+        /top: var\(--bchbl-sticky-top\) !important/
+    );
+    bottom = 72;
+    f.resize(0);
+    await waitForCondition(() => body.style.getPropertyValue("--bchbl-sticky-top") === "72px");
+    title.replaceWith(title.cloneNode(true));
+    assert.equal(body.querySelector("section > div").matches(rule.selectorText), true);
+    banner.style.display = "block";
+    f.resize(51);
+    await waitForCondition(() => !body.hasAttribute("data-bchbl-sticky"));
+    assert.equal(body.style.getPropertyValue("--bchbl-sticky-top"), "");
+    banner.style.display = "none";
+    f.resize(0);
+    await waitForCondition(() => body.hasAttribute("data-bchbl-sticky"));
+    f.dom.window.history.pushState({}, "", "/lives");
+    await waitForCondition(() => !body.hasAttribute("data-bchbl-sticky"));
+    f.dom.window.history.pushState({}, "", "/watchparty/all");
+    await waitForCondition(() => body.hasAttribute("data-bchbl-sticky"));
+    banner.remove();
+    await waitForCondition(() => !body.hasAttribute("data-bchbl-sticky"));
+    assert.equal(doc.getElementById("betterchzzk-header-banner-sticky-style"), null);
+});

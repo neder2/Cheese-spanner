@@ -974,7 +974,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.4.0");
+    assert.equal(manifest.version, "1.4.1");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
@@ -1000,12 +1000,27 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     assert.ok(isolatedScript.js.includes("features/volumeWheel.js"));
     assert.ok(isolatedScript.js.indexOf("features/qualityInstallGuide.js") > isolatedScript.js.indexOf("content.js"));
     assert.ok(isolatedScript.js.includes("features/sidebarCustomization.js"));
+    for (const file of ["features/panelResizeModel.js", "features/panelResize.js"]) {
+        assert.equal(isolatedScript.js.filter((entry) => entry === file).length, 1);
+        assert.equal(mainScript.js.includes(file), false);
+        assert.ok(isolatedScript.js.indexOf(file) > isolatedScript.js.indexOf("content.js"));
+    }
+    assert.ok(
+        isolatedScript.js.indexOf("features/panelResizeModel.js") < isolatedScript.js.indexOf("features/panelResize.js")
+    );
     assert.ok(
         isolatedScript.js.indexOf("features/sidebarCustomization.js") <
             isolatedScript.js.indexOf("features/followingRefresh.js")
     );
     assert.equal(isolatedScript.js.includes("features/gridBypass.js"), false);
     assert.equal(isolatedScript.js.includes("features/updateNotice.js"), false);
+    assert.ok(
+        isolatedScript.js.indexOf("shared/updateGuide.js") < isolatedScript.js.indexOf("features/updateGuide.js")
+    );
+    assert.ok(
+        isolatedScript.js.indexOf("shared/updateGuideView.js") < isolatedScript.js.indexOf("features/updateGuide.js")
+    );
+    assert.ok(isolatedScript.js.includes("features/updateGuide.js"));
     assert.ok(isolatedScript.js.includes("vendor/hls.light.min.js"));
     assert.ok(isolatedScript.js.includes("features/followingPreviewTooltip.js"));
     assert.ok(isolatedScript.js.includes("shared/selectors.js"));
@@ -1512,6 +1527,7 @@ test("category injected search results join the current pass without rescanning 
 test("category search bounds injected cards and continues cached results on scroll", async (t) => {
     const chrome = createFakeChrome({
         sync: {
+            globalLiveCountEnabled: true,
             categoryToolsFollowerBadgesEnabled: false,
             categoryToolsLiveElapsedEnabled: false,
         },
@@ -2868,7 +2884,7 @@ test("quality and unified popup preferences save independently", async (t) => {
     const dismissGuide = queryOption(document, "adblockPopupEnabled");
     assert.equal(queryOption(document, "autoQualityDismissInstallGuide"), null);
     assert.equal(
-        document.querySelector('[data-option-group="popup-adblock"] .setting-note').textContent.trim(),
+        dismissGuide.closest(".toggle-row").nextElementSibling.textContent.trim(),
         "시청에 방해되는 팝업을 제거합니다."
     );
     assert.equal(dismissGuide.checked, true);

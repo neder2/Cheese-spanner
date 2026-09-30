@@ -388,22 +388,11 @@
     function nativeTiming(video, clock, now) {
         const available = ranges(video);
         const edge = available[available.length - 1]?.end;
-        if (!Number.isFinite(edge) || !video.currentSrc || !Number.isFinite(now)) return { clock: null, timing: null };
-        const fresh = () => ({ edge, at: now, source: video.currentSrc, intervals: [] });
-        if (!clock || clock.source !== video.currentSrc || now < clock.at || edge < clock.edge) {
-            return { clock: fresh(), timing: null };
-        }
-        const elapsed = (now - clock.at) / 1000;
-        const cadence = Math.max(...clock.intervals, 0);
-        if (cadence && elapsed > cadence * 3) return { clock: fresh(), timing: null };
-        if (edge > clock.edge) {
-            if (elapsed <= 0 || edge - clock.edge > (cadence || elapsed) * 3) return { clock: fresh(), timing: null };
-            clock = { edge, at: now, source: video.currentSrc, intervals: [...clock.intervals, elapsed].slice(-3) };
-        }
-        if (!clock.intervals.length) return { clock, timing: null };
-        const estimate = clock.edge + (now - clock.at) / 1000;
-        const latency = estimate - video.currentTime;
-        return { clock, timing: validDelay(latency) ? { edge: estimate, latency } : null };
+        return root.utils.liveTiming.nativeTiming(
+            { edge, currentTime: video.currentTime, source: video.currentSrc },
+            clock,
+            now
+        );
     }
     // Per-channel keys avoid lost updates when different tabs adjust different channels.
     function delayKey(id) {

@@ -10,6 +10,7 @@ const runtimeFiles = [
     "background.js",
     "content.js",
     "history.js",
+    "historyBackup.js",
     "options.js",
     "optionsLiveStart.js",
 ];
@@ -272,6 +273,10 @@ test("watch history writes stay behind the background single-writer boundary", (
     const liveWatchHistorySource = readRepoFile("features", "liveWatchHistory.js");
 
     assert.doesNotMatch(historySource, /\bstorage(?:Set|Remove)\b|chrome\.storage\.local\.(?:set|remove)\s*\(/);
+    assert.doesNotMatch(
+        readRepoFile("historyBackup.js"),
+        /\bstorage(?:Set|Remove)\b|chrome\.storage\.local\.(?:set|remove)\s*\(/
+    );
     assert.doesNotMatch(
         liveWatchHistorySource,
         /\bstorage(?:Get|Set|Remove)\b|chrome\.storage\.local\.(?:get|set|remove)\s*\(/

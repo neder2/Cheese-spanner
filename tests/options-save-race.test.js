@@ -84,6 +84,61 @@ async function createOptionsFixture(t, initial = { autoQualityEnabled: true }, {
     };
 }
 
+test("retired latency settings have no control and are not included in later option saves", async (t) => {
+    const { dom, setCalls, stored, permissionRequests } = await createOptionsFixture(t, {
+        autoQualityEnabled: false,
+        liveLowLatencyEnabled: true,
+    });
+    const doc = dom.window.document;
+    assert.equal(doc.querySelector('[data-option="liveLowLatencyEnabled"]'), null);
+    const quality = doc.querySelector('[data-option="autoQualityEnabled"]');
+    quality.checked = true;
+    quality.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    doc.getElementById("save").click();
+    assert.equal(setCalls.length, 1);
+    assert.equal(Object.hasOwn(setCalls[0].values, "liveLowLatencyEnabled"), false);
+    assert.equal(setCalls[0].values.autoQualityEnabled, true);
+    setCalls[0].complete();
+    assert.equal(stored.autoQualityEnabled, true);
+    assert.equal(permissionRequests.length, 0);
+});
+
+test("global live count saves independently and retains drafts after failed or late writes", async (t) => {
+    const { dom, setCalls, stored, permissionRequests } = await createOptionsFixture(t, {
+        categoryToolsEnabled: false,
+        globalLiveCountEnabled: false,
+    });
+    const { document } = dom.window;
+    const aggregate = document.querySelector('[data-option="globalLiveCountEnabled"]');
+    assert.ok(aggregate);
+    const category = document.querySelector('[data-option="categoryToolsEnabled"]');
+    const save = document.getElementById("save");
+    assert.equal(aggregate.disabled, false);
+    aggregate.checked = true;
+    aggregate.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    assert.equal(setCalls.length, 0);
+    save.click();
+    assert.equal(setCalls[0].values.globalLiveCountEnabled, true);
+    assert.equal(setCalls[0].values.categoryToolsEnabled, false);
+    setCalls[0].complete("write failed");
+    assert.equal(stored.globalLiveCountEnabled, false);
+    assert.equal(aggregate.checked, true);
+    assert.equal(document.getElementById("notice").dataset.state, "error");
+    save.click();
+    category.checked = true;
+    category.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    setCalls[1].complete();
+    assert.equal(stored.globalLiveCountEnabled, true);
+    assert.equal(stored.categoryToolsEnabled, false);
+    assert.equal(category.checked, true);
+    assert.equal(document.getElementById("notice").dataset.state, "dirty");
+    save.click();
+    setCalls[2].complete();
+    assert.equal(stored.globalLiveCountEnabled, true);
+    assert.equal(stored.categoryToolsEnabled, true);
+    assert.equal(permissionRequests.length, 0);
+});
+
 test("playback shortcut reset is blocked while settings load, on load failure, and during a save", async (t) => {
     const customKeys = {
         playbackSpeedHalfKeyCode: "KeyQ",

@@ -4,6 +4,7 @@ const globals = require("globals");
 module.exports = [
     {
         ignores: [
+            ".dryforge/**",
             "node_modules/**",
             "backups/**",
             "coverage/**",

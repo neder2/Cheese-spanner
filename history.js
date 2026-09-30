@@ -2280,4 +2280,5 @@ clearDonationImportButton.addEventListener("click", async () => {
 });
 
 setHistoryView(activeHistoryView);
+globalThis.BetterChzzkHistoryBackup?.init({ reload: () => loadHistory({ silent: true }) });
 loadHistory({ resetToLatest: true });

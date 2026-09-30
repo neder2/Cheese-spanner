@@ -89,6 +89,172 @@ function fixture(fetchJson, callbacks = {}) {
 
 const hydration = { maxPerPass: 3, concurrency: 2, delayMs: 700, clearWhenDone: true, shouldContinue: () => true };
 
+test("global count cancellation preserves a search consumer and stops count-only pagination", async () => {
+    const requests = [];
+    const { repository, timers } = fixture((url, options) => {
+        const pending = deferred();
+        requests.push({ url, ...options, ...pending });
+        return pending.promise;
+    });
+    const route = { scope: "global-lives", tab: "lives" };
+    const search = repository.ensureMetadata(route);
+    const count = repository.countGlobalLives();
+    const rejected = assert.rejects(count, /cancelled/);
+    repository.cancelGlobalLiveCount();
+    assert.equal(requests[0].signal.aborted, false);
+    requests[0].resolve(page([{ ...live("a"), liveId: 1 }], nextCursor));
+    assert.equal((await search).size, 1);
+    await rejected;
+    assert.equal(requests.length, 1);
+    const next = repository.countGlobalLives();
+    const nextRejected = assert.rejects(next, /cancelled/);
+    await flush();
+    assert.equal(requests.length, 2);
+    repository.cancelGlobalLiveCount();
+    assert.equal(requests[1].signal.aborted, true);
+    requests[1].reject(new Error("late abort"));
+    await nextRejected;
+    assert.equal(timers.size, 0);
+});
+
+test("search cancellation preserves count work and cancelled pages cannot contaminate a new count", async () => {
+    const requests = [];
+    const { repository } = fixture((url, options) => {
+        const pending = deferred();
+        requests.push({ url, ...options, ...pending });
+        return pending.promise;
+    });
+    const search = repository.ensureMetadata({ scope: "global-lives", tab: "lives" });
+    const count = repository.countGlobalLives();
+    repository.cancelMetadataSearch();
+    assert.equal(requests[0].signal.aborted, false);
+    requests[0].resolve(page([{ ...live("a"), liveId: 1 }]));
+    await search;
+    assert.equal((await count).count, 1);
+    repository.resetMetadata();
+    const first = repository.countGlobalLives();
+    assert.equal((await first).count, 1, "completed count remains cached across routes");
+});
+
+test("expired global count re-fetches completed metadata instead of re-dating stale rows", async () => {
+    let calls = 0;
+    const { repository, advance } = fixture(async () =>
+        page([{ ...live("a"), liveId: 1, concurrentUserCount: ++calls * 10 }])
+    );
+    assert.equal((await repository.countGlobalLives()).totalViewers, 10);
+    advance(5 * 60 * 1000);
+    assert.equal((await repository.countGlobalLives()).totalViewers, 20);
+    assert.equal(calls, 2);
+});
+
+test("expired count joins a fresh search page without cancelling the search", async () => {
+    const requests = [];
+    const { repository, advance } = fixture((url, options) => {
+        const pending = deferred();
+        requests.push({ ...options, ...pending });
+        return pending.promise;
+    });
+    const first = repository.countGlobalLives();
+    requests[0].resolve(page([{ ...live("a"), liveId: 1 }]));
+    await first;
+    advance(5 * 60 * 1000);
+    repository.resetSearchMetadata();
+    const search = repository.ensureMetadata({ scope: "global-lives", tab: "lives" });
+    const count = repository.countGlobalLives();
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1].signal.aborted, false);
+    requests[1].resolve(page([{ ...live("b"), liveId: 2, concurrentUserCount: 50 }]));
+    assert.equal((await count).totalViewers, 50);
+    assert.equal((await search).get("b").views, 50);
+});
+
+test("count keeps every cached page in search metadata when it starts before the search waiter", async () => {
+    const route = { scope: "global-lives", tab: "lives" };
+    const firstCursor = { liveId: 1, concurrentUserCount: 10 };
+    const secondCursor = { liveId: 2, concurrentUserCount: 10 };
+    let calls = 0;
+    const { repository } = fixture(async () => {
+        const id = ++calls;
+        return page([{ ...live(String(id)), liveId: id }], id === 1 ? firstCursor : id === 2 ? secondCursor : null);
+    });
+    await repository.ensureMetadata(route);
+    await repository.loadNextMetadata(route);
+    assert.equal(calls, 2);
+    repository.resetSearchMetadata();
+    const count = repository.countGlobalLives();
+    const search = repository.ensureMetadata(route);
+    assert.equal((await count).count, 3);
+    const metadata = await search;
+    assert.deepEqual([...metadata.keys()], ["1", "2", "3"]);
+    assert.equal(repository.metadataState().size, 3);
+    assert.equal(repository.metadataState().pagesLoaded, 3, "each shared page is merged exactly once");
+    assert.equal(repository.metadataState().complete, true);
+    assert.equal(repository.metadataState().next, null);
+    assert.equal(calls, 3, "only the third page needs another network request");
+});
+
+test("cancelling count after cached pages preserves the search prefix and excludes a late next page", async () => {
+    const route = { scope: "global-lives", tab: "lives" };
+    const requests = [];
+    const { repository } = fixture((url, options) => {
+        const pending = deferred();
+        requests.push({ ...options, ...pending });
+        return pending.promise;
+    });
+    const first = repository.ensureMetadata(route);
+    requests[0].resolve(page([{ ...live("1"), liveId: 1 }], { liveId: 1, concurrentUserCount: 10 }));
+    await first;
+    const second = repository.loadNextMetadata(route);
+    requests[1].resolve(page([{ ...live("2"), liveId: 2 }], { liveId: 2, concurrentUserCount: 10 }));
+    await second;
+    repository.resetSearchMetadata();
+    const count = repository.countGlobalLives();
+    const rejected = assert.rejects(count, /cancelled/);
+    const search = repository.ensureMetadata(route);
+    await flush();
+    const metadata = await search;
+    assert.deepEqual([...metadata.keys()], ["1", "2"]);
+    assert.equal(repository.metadataState().pagesLoaded, 2);
+    assert.equal(requests.length, 3);
+    repository.cancelGlobalLiveCount();
+    assert.equal(requests[2].signal.aborted, true);
+    requests[2].resolve(page([{ ...live("old"), liveId: 3 }]));
+    await rejected;
+    assert.deepEqual([...metadata.keys()], ["1", "2"]);
+    const nextSearch = repository.loadNextMetadata(route);
+    assert.equal(requests.length, 4);
+    requests[3].resolve(page([{ ...live("current"), liveId: 4 }]));
+    await nextSearch;
+    assert.deepEqual([...metadata.keys()], ["1", "2", "current"]);
+    assert.equal(repository.metadataState().pagesLoaded, 3);
+});
+
+test("global count rejects repeated cursors and retries without caching a failed walk", async () => {
+    let calls = 0;
+    const { repository, timers } = fixture(async () => {
+        calls++;
+        return calls <= 2 ? page([{ ...live("a"), liveId: 1 }], nextCursor) : page([]);
+    });
+    await assert.rejects(repository.countGlobalLives(), /cursor/);
+    assert.equal(calls, 2);
+    assert.equal((await repository.countGlobalLives()).count, 0);
+    assert.equal(calls, 3);
+    assert.equal(timers.size, 0);
+});
+
+test("global count rejects invalid rows and a page walk beyond the bounded limit", async () => {
+    for (const data of [null, {}, [null], [{ liveId: 1 }]]) {
+        const { repository } = fixture(async () => page(data));
+        await assert.rejects(repository.countGlobalLives(), /unavailable/);
+    }
+    let calls = 0;
+    const { repository } = fixture(async () =>
+        page([{ ...live(String(++calls)), liveId: calls }], { liveId: calls, concurrentUserCount: 10 })
+    );
+    await assert.rejects(repository.countGlobalLives(), /page limit/);
+    assert.equal(calls, 200);
+});
+
 test("global live count shares metadata, deduplicates broadcasts and stops below ten viewers", async () => {
     const requests = [];
     const row = (id, viewers) => ({ ...live(String(id)), liveId: id, concurrentUserCount: viewers });

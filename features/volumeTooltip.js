@@ -9,7 +9,8 @@
  *   (2) 오디오 컴프레서(cheese-knife 기반, 출처 주석은 코드 내 유지) — 볼륨 컨트롤 옆에 토글 버튼을 삽입하고,
  *       Web Audio API로 MediaElementSource → DynamicsCompressor → Gain 그래프를 구성/해제한다. MutationObserver와
  *       startPageChangeDetection으로 플레이어 재마운트에 맞춰 버튼과 그래프 상태를 재동기화하며,
- *       버튼 오른쪽 볼륨바로 압축 후 출력 크기를 조절하며, background를 통해 현재 탭의 켜짐 상태와 볼륨을 저장한다.
+ *       버튼 오른쪽 볼륨바로 압축 후 출력 크기를 조절하며, 첫 재생 화면 진입 때 background에서 선택을 복원한다.
+ *       홈·목록에서는 탭 선택을 미리 확정하지 않고 현재 탭의 명시 조작과 출력 볼륨을 저장한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions, injectStyleOnce,
  *   getMainVideoElement, getVideoViewportRect, createMutationObserverSync, createThrottledDomSync, isPlaybackRoute, isVisible,
  *   mutationMatchesSelector, onReady, startPageChangeDetection, runtimeSendMessage), 브라우저 Web Audio API(AudioContext).
@@ -344,6 +345,7 @@
     let featureOptions = normalizeOptions();
     let optionsReady = false;
     let stateReady = false;
+    let stateRestorePending = false;
     let compressorActive = false;
     let compressorVolume = 1;
     let activeVideo = null;
@@ -380,6 +382,8 @@
     }
 
     async function restoreCompressorState() {
+        if (stateReady || stateRestorePending || audioRecoveryStopped) return;
+        stateRestorePending = true;
         try {
             const response = await runtimeSendMessage({ type: STATE_MESSAGE, kind: "get" });
             const state = response?.ok ? response.state : null;
@@ -390,6 +394,7 @@
         } catch (_) {
             compressorActive = false;
         } finally {
+            stateRestorePending = false;
             stateReady = true;
             syncState();
         }
@@ -742,6 +747,7 @@
         button.setAttribute("aria-pressed", active ? "true" : "false");
         button.dataset.betterChzzkAudioCompressor = active ? "1" : "0";
         button.dataset.betterChzzkReady = failed ? "0" : "1";
+        button.dataset.betterChzzkRestoreTrigger = "playback-entry";
         syncButtonLabels(button, failed);
         syncVolumeControl();
     }
@@ -900,7 +906,12 @@
     }
 
     function syncState() {
-        if (!optionsReady || !stateReady) return;
+        if (!optionsReady || audioRecoveryStopped) return;
+        if (!stateReady) {
+            // Reading also registers a tab snapshot; browse-only pages must wait for playback entry.
+            if (featureEnabled() && isPlaybackRoute()) void restoreCompressorState();
+            return;
+        }
         if (!featureEnabled()) {
             syncDisabledState();
             return;
@@ -988,8 +999,6 @@
             onBodyReady: syncState,
         });
     }
-
-    void restoreCompressorState();
 
     bindFeatureOptions((options) => {
         featureOptions = options;

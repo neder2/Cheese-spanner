@@ -433,6 +433,8 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         row.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
         row.querySelectorAll("button, [class*='tooltip']").forEach((node) => node.remove());
         row.querySelectorAll(".blind").forEach((node) => node.remove());
+        // Party participants and the profile icon describe the template channel, not this source entry.
+        row.querySelectorAll("a[class*='participant'], svg[class*='icon_party']").forEach((node) => node.remove());
 
         const href = entry.isLive
             ? `/live/${encodeURIComponent(entry.channelId)}`

@@ -3,7 +3,7 @@ const test = require("node:test");
 const { JSDOM } = require("jsdom");
 const { evalRepoScript, evalFeatureModules } = require("./helpers/extension-page-fixture.js");
 
-function fixture(t, feature, pathname) {
+function fixture(t, feature, pathname, overrides = {}) {
     const dom = new JSDOM("<body></body>", {
         url: `https://chzzk.naver.com${pathname}`,
         runScripts: "outside-only",
@@ -50,7 +50,10 @@ function fixture(t, feature, pathname) {
     });
     evalFeatureModules(dom, feature);
     evalRepoScript(dom, `features/${feature}.js`);
-    const options = window.BetterChzzkSettings.normalizeOptions({ monthlyBroadcastTimeWatchEnabled: false });
+    const options = window.BetterChzzkSettings.normalizeOptions({
+        monthlyBroadcastTimeWatchEnabled: false,
+        ...overrides,
+    });
     applyOptions(options);
     assert.ok(observer, "the enabled feature installs its observer");
     let scans = 0;
@@ -68,7 +71,7 @@ function fixture(t, feature, pathname) {
         scans: () => scans,
         schedule: () => observer.schedule(),
         disable() {
-            applyOptions({ ...options, [`${feature}Enabled`]: false });
+            applyOptions({ ...options, [`${feature}Enabled`]: false, globalLiveCountEnabled: false });
             assert.equal(disconnected, true);
         },
         async frame() {
@@ -86,13 +89,75 @@ function fixture(t, feature, pathname) {
     };
 }
 
-for (const [feature, pathname] of [
+test("throttled DOM scheduling cancels timers and frames, ignores stale callbacks and permits restarting", (t) => {
+    const dom = new JSDOM("<body></body>", { url: "https://chzzk.naver.com/lives", runScripts: "outside-only" });
+    t.after(() => dom.window.close());
+    const { window } = dom;
+    let now = 0;
+    let id = 0;
+    let calls = 0;
+    const timers = new Map();
+    const frames = new Map();
+    window.performance.now = () => now;
+    window.setTimeout = (callback) => {
+        const key = ++id;
+        timers.set(key, callback);
+        return key;
+    };
+    window.clearTimeout = (key) => timers.delete(key);
+    window.requestAnimationFrame = (callback) => {
+        const key = ++id;
+        frames.set(key, callback);
+        return key;
+    };
+    window.cancelAnimationFrame = (key) => frames.delete(key);
+    for (const file of ["shared/settings.js", "shared/data.js", "content.js"]) evalRepoScript(dom, file);
+    const schedule = window.BetterChzzk.utils.createThrottledDomSync(() => calls++, 160);
+    schedule();
+    const staleTimer = [...timers.values()][0];
+    assert.equal(timers.size, 1);
+    schedule.cancel();
+    assert.equal(timers.size, 0);
+    now = 1000;
+    schedule();
+    const staleFrame = [...frames.values()][0];
+    staleTimer();
+    assert.equal(frames.size, 1, "an old timer cannot append to the new scheduled work");
+    schedule.cancel();
+    assert.equal(frames.size, 0);
+    schedule();
+    staleFrame();
+    assert.equal(calls, 0);
+    assert.equal(frames.size, 1, "a stale frame cannot clear a new reservation");
+    const current = [...frames.values()][0];
+    frames.clear();
+    current();
+    assert.equal(calls, 1);
+    schedule();
+    assert.equal(timers.size, 1);
+    schedule.cancel();
+    assert.equal(timers.size, 0);
+});
+
+test("count-only teardown immediately clears its pending timer and frame", async (t) => {
+    const f = fixture(t, "categoryTools", "/lives", { categoryToolsEnabled: false, globalLiveCountEnabled: true });
+    assert.equal(f.frames.size, 1);
+    await f.frame();
+    f.schedule();
+    assert.equal(f.timers.size, 1);
+    f.disable();
+    assert.equal(f.timers.size, 0);
+    assert.equal(f.frames.size, 0);
+});
+
+for (const [feature, pathname, overrides = {}] of [
     ["categoryTools", "/category/game/test/lives"],
+    ["categoryTools", "/lives", { categoryToolsEnabled: false, globalLiveCountEnabled: true }],
     ["monthlyBroadcastTime", `/${"a".repeat(32)}`],
     ["videoSearch", `/${"a".repeat(32)}/videos`],
 ]) {
-    test(`${feature} coalesces observer bursts and pending work cannot restart it after disabling`, async (t) => {
-        const f = fixture(t, feature, pathname);
+    test(`${feature} on ${pathname} coalesces observer bursts and pending work cannot restart it after disabling`, async (t) => {
+        const f = fixture(t, feature, pathname, overrides);
         for (let index = 0; index < 100; index++) f.schedule();
         assert.equal(f.scans(), 0, "observer callbacks do not repeatedly scan synchronously");
         assert.equal(f.frames.size, 1, "one frame services the entire initial burst");

@@ -253,6 +253,43 @@ function createInjectedListPreviewDom(chrome = createFakeChrome()) {
     return { card, document, dom, host, thumb };
 }
 
+test("open following preview follows its resized anchor without a synthetic window resize", async () => {
+    const { document, dom, item, link } = createFollowingPreviewDom();
+    const observers = [];
+    dom.window.ResizeObserver = class {
+        constructor(callback) {
+            this.callback = callback;
+            this.nodes = new Set();
+            observers.push(this);
+        }
+        observe(node) {
+            this.nodes.add(node);
+        }
+        disconnect() {
+            this.nodes.clear();
+        }
+    };
+    let right = 196;
+    item.getBoundingClientRect = () => ({ left: 12, right, top: 80, bottom: 132, width: right - 12, height: 52 });
+    dom.window.fetch = () => new Promise(() => {});
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    const tip = document.getElementById("betterchzzk-following-preview");
+    assert.equal(tip.style.left, "206px");
+    right = 280;
+    for (const observer of observers) if (observer.nodes.has(item)) observer.callback([{ target: item }]);
+    assert.equal(tip.style.left, "290px");
+    link.dispatchEvent(new dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body }));
+    assert.equal(
+        observers.some((observer) => observer.nodes.has(item)),
+        false
+    );
+    for (const observer of observers) observer.callback([{ target: item }]);
+    assert.equal(tip.hasAttribute("data-show"), false);
+});
+
 test("preview fonts use a bundled CHZZK-only resource and follow the feature lifetime", async () => {
     const chrome = createFakeChrome({ sync: { followingPreviewTooltipEnabled: false } });
     const readOptions = chrome.storage.sync.get.bind(chrome.storage.sync);

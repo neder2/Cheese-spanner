@@ -1,7 +1,7 @@
-const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
+const { waitForCondition } = require("./wait-for-condition.js");
 
 require("../../shared/data.js");
 require("../../shared/watchHistoryStore.js");
@@ -146,14 +146,6 @@ function queryOption(document, key) {
 
 function waitForAsyncCallbacks() {
     return new Promise((resolve) => setTimeout(resolve, 20));
-}
-
-async function waitForCondition(predicate, { timeoutMs = 1000, intervalMs = 20 } = {}) {
-    const startedAt = Date.now();
-    while (!predicate()) {
-        if (Date.now() - startedAt > timeoutMs) assert.fail("Timed out waiting for condition");
-        await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    }
 }
 
 module.exports = {

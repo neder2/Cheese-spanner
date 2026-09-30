@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const { JSDOM } = require("jsdom");
+const { waitForCondition: waitForSharedCondition } = require("./helpers/wait-for-condition.js");
 
 const repoRoot = path.join(__dirname, "..");
 const candidateSelector = 'button, [role="button"], a[href]';
@@ -201,13 +202,12 @@ test("reward auto collect accepts the current native power icon class and still 
     assert.equal(ranking.button.hasAttribute("data-bcra-clicked"), false);
 });
 
-async function waitForCondition(predicate, { timeoutMs = 1200, intervalMs = 20 } = {}) {
-    const startedAt = Date.now();
-    while (Date.now() - startedAt <= timeoutMs) {
-        if (predicate()) return;
-        await wait(intervalMs);
-    }
-    assert.fail("Timed out waiting for reward auto collect condition");
+function waitForCondition(predicate, { timeoutMs = 1200, intervalMs = 20 } = {}) {
+    return waitForSharedCondition(predicate, {
+        timeoutMs,
+        intervalMs,
+        message: "Timed out waiting for reward auto collect condition",
+    });
 }
 
 test("reward auto collect clicks a visible verified watch reward button once", async () => {

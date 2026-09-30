@@ -523,6 +523,7 @@ html.theme_dark [${ACTIVE_ATTR}="1"]{
     let tooltip = null;
     let hoverBridge = null;
     let activeInfo = null;
+    let anchorResizeObserver = null;
     let pendingInfo = null;
     let openTimer = 0;
     let requestToken = 0;
@@ -1874,6 +1875,13 @@ html.theme_dark [${ACTIVE_ATTR}="1"]{
         setActiveItem(info.item);
         activeInfo = info;
         renderPreview(info.domMeta, "loading");
+        anchorResizeObserver?.disconnect();
+        if (typeof ResizeObserver === "function") {
+            anchorResizeObserver = new ResizeObserver(() => {
+                if (activeInfo === info && info.item.isConnected) positionTooltip(info.item);
+            });
+            anchorResizeObserver.observe(info.item);
+        }
 
         const cachedMeta = getCachedPreviewMeta(info.channelId);
         if (cachedMeta) {
@@ -1888,6 +1896,8 @@ html.theme_dark [${ACTIVE_ATTR}="1"]{
     }
 
     function hidePreview() {
+        anchorResizeObserver?.disconnect();
+        anchorResizeObserver = null;
         clearOpenTimer();
         clearHoverBridge();
         clearPreviewFetchTimer();

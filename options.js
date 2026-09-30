@@ -37,6 +37,7 @@ const {
     isPlaybackSpeedShortcutCode,
     normalizeOptions,
     migrateLegacyChatToolsOption,
+    withOptionsStorageLock,
 } = BetterChzzkSettings;
 
 const storage = globalThis.chrome?.storage?.sync;
@@ -256,40 +257,46 @@ function startSave(normalized, message) {
         finishSave(normalized, message);
         return;
     }
-    storage.set(normalized, () => {
-        const error = globalThis.chrome?.runtime?.lastError;
-        if (error || savedOptions?.adVideoEnabled === normalized.adVideoEnabled) {
-            finishSave(normalized, message, error);
-            return;
-        }
-        const status = document.getElementById("adVideoStatus");
-        function finishAdVideoSave(result) {
-            if (status) {
-                status.hidden = false;
-                status.textContent =
-                    result?.ok && result.enabled !== normalized.adVideoEnabled
-                        ? "다른 곳에서 광고 설정이 변경됐습니다. 설정을 다시 열어 현재 값을 확인해 주세요."
-                        : result?.ok
-                          ? normalized.adVideoEnabled
-                              ? "적용 준비가 끝났습니다. 치지직 탭을 새로고침해 주세요."
-                              : "동영상 광고 차단을 껐습니다. 이미 반영된 상태는 새로고침하면 복원됩니다."
-                          : "설정은 저장됐지만 적용 준비에 실패했습니다. 확장을 다시 로드한 뒤 설정을 확인해 주세요.";
-            }
-            finishSave(normalized, message);
-        }
-        if (!globalThis.chrome?.runtime?.sendMessage) {
-            finishAdVideoSave({ ok: false });
-            return;
-        }
-        try {
-            chrome.runtime.sendMessage({ type: "betterchzzk:ad-video:sync" }, (result) => {
-                const messageError = chrome.runtime.lastError;
-                finishAdVideoSave(messageError ? null : result);
-            });
-        } catch (_) {
-            finishAdVideoSave(null);
-        }
-    });
+    void withOptionsStorageLock(
+        () =>
+            new Promise((resolve) =>
+                storage.set(normalized, () => {
+                    const error = globalThis.chrome?.runtime?.lastError;
+                    resolve();
+                    if (error || savedOptions?.adVideoEnabled === normalized.adVideoEnabled) {
+                        finishSave(normalized, message, error);
+                        return;
+                    }
+                    const status = document.getElementById("adVideoStatus");
+                    function finishAdVideoSave(result) {
+                        if (status) {
+                            status.hidden = false;
+                            status.textContent =
+                                result?.ok && result.enabled !== normalized.adVideoEnabled
+                                    ? "다른 곳에서 광고 설정이 변경됐습니다. 설정을 다시 열어 현재 값을 확인해 주세요."
+                                    : result?.ok
+                                      ? normalized.adVideoEnabled
+                                          ? "적용 준비가 끝났습니다. 치지직 탭을 새로고침해 주세요."
+                                          : "동영상 광고 차단을 껐습니다. 이미 반영된 상태는 새로고침하면 복원됩니다."
+                                      : "설정은 저장됐지만 적용 준비에 실패했습니다. 확장을 다시 로드한 뒤 설정을 확인해 주세요.";
+                        }
+                        finishSave(normalized, message);
+                    }
+                    if (!globalThis.chrome?.runtime?.sendMessage) {
+                        finishAdVideoSave({ ok: false });
+                        return;
+                    }
+                    try {
+                        chrome.runtime.sendMessage({ type: "betterchzzk:ad-video:sync" }, (result) => {
+                            const messageError = chrome.runtime.lastError;
+                            finishAdVideoSave(messageError ? null : result);
+                        });
+                    } catch (_) {
+                        finishAdVideoSave(null);
+                    }
+                })
+            )
+    ).catch((error) => finishSave(normalized, message, error));
 }
 
 function commitSave(message) {
@@ -491,8 +498,7 @@ resetButton.addEventListener("click", () => {
 if (storage) {
     renderNotice("loading");
     applyControlStates(readOptionsFromForm());
-    storage.get(STORAGE_OPTION_KEYS, (data) => {
-        const error = globalThis.chrome?.runtime?.lastError;
+    function finishOptionsLoad(data, error) {
         if (error) {
             optionsLoadState = "failed";
             renderOptions(DEFAULT_OPTIONS, { state: "error" });
@@ -502,7 +508,17 @@ if (storage) {
         optionsLoadState = "ready";
         savedOptions = renderOptions(data);
         migrateLegacyChatToolsOption(data, savedOptions);
-    });
+    }
+    void withOptionsStorageLock(
+        () =>
+            new Promise((resolve) =>
+                storage.get(STORAGE_OPTION_KEYS, (data) => {
+                    const error = globalThis.chrome?.runtime?.lastError;
+                    resolve();
+                    finishOptionsLoad(data, error);
+                })
+            )
+    ).catch((error) => finishOptionsLoad(null, error));
 } else {
     savedOptions = renderOptions(DEFAULT_OPTIONS);
 }
@@ -517,7 +533,9 @@ if (versionBadge && manifestVersion) {
 const tabButtons = Array.from(document.querySelectorAll(".tab"));
 const tabSections = Array.from(form.querySelectorAll(".settings-card"));
 const tabBar = document.querySelector(".tab-bar");
-const LAST_TAB_STORAGE_KEY = "betterChzzkOptionsLastTab";
+const LAST_TAB_STORAGE_KEY = "betterChzzkOptionsLastTabId";
+const LEGACY_LAST_TAB_STORAGE_KEY = "betterChzzkOptionsLastTab";
+const LEGACY_TAB_IDS = ["player", "history", "chat", "appearance", "broadcast-time", "vod", "explore", "live-start"];
 const reducedTabMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
 let tabScrollTarget = null;
 
@@ -560,8 +578,13 @@ reducedTabMotion?.addEventListener("change", () => {
 
 function readStoredTabIndex() {
     try {
-        const stored = Number.parseInt(window.localStorage.getItem(LAST_TAB_STORAGE_KEY) ?? "", 10);
-        return Number.isInteger(stored) && stored >= 0 && stored < tabButtons.length ? stored : 0;
+        const storedId = window.localStorage.getItem(LAST_TAB_STORAGE_KEY);
+        const currentIndex = tabButtons.findIndex((button) => button.dataset.tab === storedId);
+        if (currentIndex >= 0) return currentIndex;
+        const legacyIndex = window.localStorage.getItem(LEGACY_LAST_TAB_STORAGE_KEY);
+        const legacyId = /^[0-7]$/.test(legacyIndex ?? "") ? LEGACY_TAB_IDS[Number(legacyIndex)] : "player";
+        const migratedIndex = tabButtons.findIndex((button) => button.dataset.tab === legacyId);
+        return migratedIndex >= 0 ? migratedIndex : 0;
     } catch {
         return 0;
     }
@@ -569,7 +592,7 @@ function readStoredTabIndex() {
 
 function storeTabIndex(index) {
     try {
-        window.localStorage.setItem(LAST_TAB_STORAGE_KEY, String(index));
+        window.localStorage.setItem(LAST_TAB_STORAGE_KEY, tabButtons[index].dataset.tab);
     } catch {
         // 저장소를 쓸 수 없으면 마지막 탭 기억만 건너뛴다.
     }
@@ -673,12 +696,46 @@ const searchStatusEl = document.getElementById("searchStatus");
 const optionGroups = Array.from(form.querySelectorAll(".option-group"));
 let searchOpenSnapshot = null;
 const groupStateStorage = globalThis.chrome?.storage?.local;
+const groupStorageKey = (id) => `betterChzzkOptionsGroupOpen:${id}`;
+const legacyGroupSources = {
+    "player-view": ["player-live-display", "player-multiview", "player-zoom"],
+    "appearance-page": ["header-buttons", "explore-sidebar"],
+    "appearance-player": ["player-live-display"],
+    "appearance-blocking": ["player-ads", "popup-adblock"],
+    "search-video": ["search-basic", "search-comments"],
+    "explore-following": ["explore-channel", "explore-sidebar", "explore-refresh"],
+    "explore-presets": ["explore-presets-followers", "explore-presets-views", "explore-presets-duration"],
+};
+const legacyOpenGroups = new Set([
+    "header-buttons",
+    "explore-sidebar",
+    "popup-adblock",
+    "search-basic",
+    "explore-channel",
+]);
 const groupStates = new Map(
     optionGroups.map((group) => [
         group,
-        { key: `betterChzzkOptionsGroupOpen:${group.dataset.optionGroup}`, open: group.open, changed: false },
+        {
+            key: groupStorageKey(group.dataset.optionGroup),
+            sources: (legacyGroupSources[group.dataset.optionGroup] || []).map((id) => ({
+                key: groupStorageKey(id),
+                open: legacyOpenGroups.has(id),
+            })),
+            open: group.open,
+            changed: false,
+        },
     ])
 );
+
+function restoredGroupOpen(state, stored) {
+    if (typeof stored?.[state.key] === "boolean") return stored[state.key];
+    if (!state.sources.some((source) => typeof stored?.[source.key] === "boolean")) return undefined;
+    // 일부만 기억된 예전 묶음은 나머지 출처의 당시 기본값과 함께 해석한다.
+    return state.sources.some((source) =>
+        typeof stored?.[source.key] === "boolean" ? stored[source.key] : source.open
+    );
+}
 
 function setGroupOpen(group, open) {
     // details의 toggle은 비동기로 전달되므로 검색·복원으로 바꾼 상태를 먼저 기록한다.
@@ -712,7 +769,14 @@ for (const group of optionGroups) {
 window.addEventListener("pagehide", () => optionGroups.forEach(rememberGroupOpen));
 try {
     groupStateStorage?.get(
-        Array.from(groupStates.values(), (state) => state.key),
+        [
+            ...new Set(
+                Array.from(groupStates.values()).flatMap((state) => [
+                    state.key,
+                    ...state.sources.map((source) => source.key),
+                ])
+            ),
+        ],
         (stored) => {
             const error = globalThis.chrome?.runtime?.lastError;
             if (error) {
@@ -721,7 +785,7 @@ try {
             }
             for (const [group, state] of groupStates) {
                 rememberGroupOpen(group);
-                const open = stored?.[state.key];
+                const open = restoredGroupOpen(state, stored);
                 if (state.changed || typeof open !== "boolean") continue;
                 if (searchOpenSnapshot) {
                     if (open) searchOpenSnapshot.add(group);
@@ -747,11 +811,17 @@ const searchUnits = tabSections.flatMap((section) => {
     return Array.from(section.children)
         .filter((child) => child !== heading)
         .flatMap((element) => {
-            if (!element.matches(".option-group")) return [element];
+            if (!element.matches(".option-group")) return [{ element, subheading: null }];
             const body = Array.from(element.children).find((child) => child.classList.contains("option-group-body"));
-            return body ? Array.from(body.children) : [];
+            let subheading = null;
+            return body
+                ? Array.from(body.children, (element) => {
+                      if (element.matches(".option-subheading")) subheading = element;
+                      return { element, subheading };
+                  })
+                : [];
         })
-        .map((element) => {
+        .map(({ element, subheading }) => {
             const optionKeys = Array.from(element.querySelectorAll("[data-option]"), (input) => input.dataset.option);
             const dependencyNodes = element.matches("[data-depends-on]")
                 ? [element, ...element.querySelectorAll("[data-depends-on]")]
@@ -766,7 +836,9 @@ const searchUnits = tabSections.flatMap((section) => {
                 ),
             ];
             const group = element.closest(".option-group");
-            const groupText = normalizeSearchText(group?.firstElementChild?.textContent || "");
+            const groupText = normalizeSearchText(
+                `${group?.firstElementChild?.textContent || ""} ${group?.dataset.searchTerms || ""}`
+            );
             return {
                 dependencyKeys,
                 element,
@@ -775,12 +847,17 @@ const searchUnits = tabSections.flatMap((section) => {
                 headingText,
                 optionKeys,
                 section,
+                subheading,
+                subheadingText: normalizeSearchText(
+                    `${subheading?.textContent || ""} ${subheading?.dataset.searchTerms || ""}`
+                ),
                 text: normalizeSearchText(`${element.textContent} ${optionKeys.join(" ")}`),
             };
         });
 });
 
 const searchUnitByOptionKey = new Map();
+const searchUnitByElement = new Map(searchUnits.map((unit) => [unit.element, unit]));
 for (const unit of searchUnits) {
     for (const optionKey of unit.optionKeys) searchUnitByOptionKey.set(optionKey, unit);
 }
@@ -788,11 +865,18 @@ for (const unit of searchUnits) {
 function includeSearchContext(directMatches) {
     const visibleUnits = new Set(directMatches);
 
-    // 안내문만 검색된 경우에도 관련 설정을 함께 보여 줘 문맥과 조작 경로를 남긴다.
+    // 정적 소제목과 그 아래 설정·설명을 같은 문맥으로 유지한다.
     for (const unit of directMatches) {
-        if (!unit.element.matches(".setting-note") && !unit.group?.hasAttribute("data-search-together")) continue;
+        const wholeGroup = unit.group?.hasAttribute("data-search-together");
+        if (!unit.subheading && !unit.element.matches(".setting-note") && !wholeGroup) continue;
         for (const candidate of searchUnits) {
-            const sameContext = unit.group ? candidate.group === unit.group : candidate.section === unit.section;
+            const sameContext = wholeGroup
+                ? candidate.group === unit.group
+                : unit.subheading
+                  ? candidate.subheading === unit.subheading
+                  : unit.group
+                    ? candidate.group === unit.group
+                    : candidate.section === unit.section;
             if (sameContext) visibleUnits.add(candidate);
         }
     }
@@ -800,6 +884,8 @@ function includeSearchContext(directMatches) {
     // 비활성화된 세부 설정을 검색해도 상위 토글을 켤 수 있도록 의존 관계를 끝까지 따라간다.
     const pending = [...visibleUnits];
     for (let index = 0; index < pending.length; index += 1) {
+        const headingUnit = searchUnitByElement.get(pending[index].subheading);
+        if (headingUnit) visibleUnits.add(headingUnit);
         for (const optionKey of pending[index].dependencyKeys) {
             const masterUnit = searchUnitByOptionKey.get(optionKey);
             if (!masterUnit || visibleUnits.has(masterUnit)) continue;
@@ -839,6 +925,7 @@ function applySearch(query) {
         (unit) =>
             unit.headingText.includes(normalized) ||
             unit.groupText.includes(normalized) ||
+            unit.subheadingText.includes(normalized) ||
             unit.text.includes(normalized)
     );
     const visibleUnits = includeSearchContext(directMatches);
@@ -881,3 +968,35 @@ searchInput?.addEventListener("keydown", (event) => {
     event.preventDefault();
     clearSearch();
 });
+
+// Only authored guide destinations may reveal a setting; this never edits or saves option values.
+function showGuideTarget(target) {
+    const selectors = {
+        panels: '[data-option="chatResizeEnabled"]',
+        history: 'a[href="history.html"]',
+        stream: '[data-option="streamInfoEnabled"]',
+    };
+    if (!Object.hasOwn(selectors, target)) return false;
+    const node = form.querySelector(selectors[target]);
+    if (!node) return false;
+    const section = node.closest(".settings-card");
+    const index = tabSections.indexOf(section);
+    if (index < 0) return false;
+    clearSearch();
+    activateTab(index, { align: true });
+    const group = node.closest(".option-group");
+    if (group) {
+        setGroupOpen(group, true);
+        groupStates.get(group).changed = true;
+    }
+    node.scrollIntoView?.({ block: "center", behavior: tabScrollBehavior() });
+    node.focus({ preventScroll: true });
+    return true;
+}
+globalThis.BetterChzzkOptionsNavigation = Object.freeze({ showGuideTarget });
+function revealGuideHash() {
+    const match = location.hash.match(/^#update-guide-(panels|history|stream)$/);
+    if (match) showGuideTarget(match[1]);
+}
+window.addEventListener("hashchange", revealGuideHash);
+revealGuideHash();

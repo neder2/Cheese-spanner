@@ -1,4 +1,4 @@
-/** 카테고리 메타데이터 페이지와 팔로워 조회·캐시·배치·재시도 수명주기를 소유한다. DOM에는 의존하지 않는다. */
+/** 목록 메타데이터·전체 방송 집계의 공유 조회와 독립 취소, 팔로워 캐시·배치·재시도를 소유한다. DOM에는 의존하지 않는다. */
 (() => {
     const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
     const API_BASE = "https://api.chzzk.naver.com/service";
@@ -7,6 +7,8 @@
     const FOLLOWER_NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000;
     const METADATA_RETRY_INITIAL_MS = 1000;
     const METADATA_RETRY_MAX_MS = 30000;
+    const LIVE_COUNT_CACHE_TTL_MS = 5 * 60 * 1000;
+    const MAX_SHARED_PAGES = 200;
 
     function routeKey(route) {
         if (!route) return "";
@@ -116,11 +118,11 @@
         let metadataComplete = false;
         let metadataPagesLoaded = 0;
         let metadataLoading = null;
-        let liveViewerCounts = new Map();
-        let liveCountBoundary = false;
-        let liveCountInvalid = false;
         let liveCountRequest = null;
         let liveCountCache = null;
+        let liveCountGeneration = 0;
+        const pageRequests = new Map();
+        const pageCache = new Map();
         let metadataGeneration = 0;
         let metadataRetryAt = 0;
         let metadataRetryDelayMs = METADATA_RETRY_INITIAL_MS;
@@ -169,39 +171,84 @@
         }
 
         function resetMetadata(key = "") {
-            metadataGeneration++;
-            metadataLoading?.controller.abort();
-            clearMetadataRetryState();
+            resetSearchMetadata(key);
+            cancelGlobalLiveCount();
+            pageCache.clear();
+        }
+
+        function resetSearchMetadata(key = metadataKey) {
+            cancelMetadataSearch();
             metadataKey = key;
             metadataMap = new Map();
             metadataNext = null;
             metadataComplete = false;
             metadataPagesLoaded = 0;
             metadataLoading = null;
-            liveViewerCounts = new Map();
-            liveCountBoundary = false;
-            liveCountInvalid = false;
+        }
+
+        function cancelPageConsumer(consumer) {
+            for (const [url, request] of pageRequests) {
+                request.consumers.delete(consumer);
+                if (request.consumers.size) continue;
+                pageRequests.delete(url);
+                request.controller.abort();
+            }
+        }
+
+        function cancelMetadataSearch() {
+            metadataGeneration++;
+            metadataLoading = null;
+            clearMetadataRetryState();
+            cancelPageConsumer("search");
+        }
+
+        function cancelGlobalLiveCount() {
+            liveCountGeneration++;
+            if (liveCountRequest) pageCache.clear();
             liveCountRequest = null;
+            cancelPageConsumer("count");
+        }
+
+        function validPage(route, json) {
+            const rows = json?.content?.data;
+            return (
+                (json?.code === undefined || json.code === 200) &&
+                Array.isArray(rows) &&
+                (route.scope !== "global-lives" ||
+                    rows.every((item) => item && Number.isFinite(item.concurrentUserCount) && item.liveId))
+            );
+        }
+
+        function loadSharedPage(route, cursor, consumer) {
+            const url = apiUrl(route, cursor);
+            const cached = pageCache.get(url);
+            if (cached && Date.now() - cached.measuredAt < LIVE_COUNT_CACHE_TTL_MS) return Promise.resolve(cached.json);
+            pageCache.delete(url);
+            const existing = pageRequests.get(url);
+            if (existing) {
+                existing.consumers.add(consumer);
+                return existing.promise;
+            }
+            const request = { controller: new AbortController(), consumers: new Set([consumer]), promise: null };
+            pageRequests.set(url, request);
+            request.promise = fetchJson(url, {
+                headers: { Accept: "application/json" },
+                signal: request.controller.signal,
+            })
+                .then((json) => {
+                    if (request.controller.signal.aborted) throw new Error("Live count cancelled");
+                    if (route.scope === "global-lives" && validPage(route, json)) {
+                        touchMapEntry(pageCache, url, { json, measuredAt: Date.now() }, MAX_SHARED_PAGES);
+                    }
+                    return json;
+                })
+                .finally(() => {
+                    if (pageRequests.get(url) === request) pageRequests.delete(url);
+                });
+            return request.promise;
         }
 
         function mergeMetadataPage(route, json) {
-            if (route.scope === "global-lives") {
-                const rows = json?.content?.data;
-                if (
-                    (json.code !== undefined && json.code !== 200) ||
-                    !Array.isArray(rows) ||
-                    rows.some((item) => !Number.isFinite(item.concurrentUserCount) || !item.liveId)
-                )
-                    liveCountInvalid = true;
-                for (const item of rows || []) {
-                    if (item.concurrentUserCount >= 10) liveViewerCounts.set(item.liveId, item.concurrentUserCount);
-                    else {
-                        liveViewerCounts.delete(item.liveId);
-                        liveCountBoundary = true;
-                    }
-                }
-                if (!rows?.length) liveCountBoundary = true;
-            }
             clearMetadataRetryState();
             const data = json?.content?.data || [];
             for (const item of data) {
@@ -227,19 +274,17 @@
             const key = routeKey(route);
             if (metadataKey !== key || isMetadataRetryCoolingDown(key)) return metadataMap;
             if (metadataLoading) return metadataLoading.promise;
-            const request = { generation: metadataGeneration, controller: new AbortController(), promise: null };
+            const request = { generation: metadataGeneration, pagesLoaded: metadataPagesLoaded, promise: null };
             metadataLoading = request;
-            request.promise = fetchJson(apiUrl(route, cursor), {
-                headers: { Accept: "application/json" },
-                signal: request.controller.signal,
-            })
+            request.promise = loadSharedPage(route, cursor, "search")
                 .then((json) => {
                     if (request.generation !== metadataGeneration) return metadataMap;
+                    if (request.pagesLoaded !== metadataPagesLoaded) return metadataMap;
                     return mergeMetadataPage(route, json);
                 })
                 .catch(() => {
                     // A request timeout is a retryable failure; only our own lifecycle abort cancels the lookup.
-                    if (request.generation === metadataGeneration && !request.controller.signal.aborted) {
+                    if (request.generation === metadataGeneration) {
                         scheduleMetadataRetry(key);
                     }
                     return metadataMap;
@@ -258,35 +303,64 @@
         }
 
         async function countGlobalLives() {
-            if (liveCountCache && Date.now() - liveCountCache.measuredAt < 5 * 60 * 1000) return liveCountCache;
+            if (liveCountCache && Date.now() - liveCountCache.measuredAt < LIVE_COUNT_CACHE_TTL_MS)
+                return liveCountCache;
             if (liveCountRequest) return liveCountRequest;
             const route = { scope: "global-lives", tab: "lives" };
-            const initial = ensureMetadata(route);
-            const generation = metadataGeneration;
+            if (metadataKey !== routeKey(route)) resetMetadata(routeKey(route));
+            const generation = liveCountGeneration;
             const pending = (async () => {
-                await initial;
                 const cursors = new Set();
+                const viewers = new Map();
+                let cursor = null;
                 for (let pages = 0; pages < 200; pages++) {
-                    if (generation !== metadataGeneration) throw new Error("Live count cancelled");
-                    if (metadataRetryAt || liveCountInvalid) throw new Error("Live count unavailable");
-                    if (liveCountBoundary || metadataComplete) {
+                    let json;
+                    try {
+                        json = await loadSharedPage(route, cursor, "count");
+                    } catch (_) {
+                        if (generation !== liveCountGeneration) throw new Error("Live count cancelled");
+                        throw new Error("Live count unavailable");
+                    }
+                    if (generation !== liveCountGeneration) throw new Error("Live count cancelled");
+                    if (!validPage(route, json)) throw new Error("Live count unavailable");
+                    // Count pages extend the same contiguous metadata prefix used by search.
+                    // The search waiter skips its merge if another consumer already advanced that page.
+                    if (
+                        !metadataComplete &&
+                        metadataKey === routeKey(route) &&
+                        JSON.stringify(metadataNext) === JSON.stringify(cursor)
+                    )
+                        mergeMetadataPage(route, json);
+                    const rows = json.content.data;
+                    let boundary = !rows.length;
+                    for (const item of rows) {
+                        if (item.concurrentUserCount >= 10) viewers.set(item.liveId, item.concurrentUserCount);
+                        else {
+                            viewers.delete(item.liveId);
+                            boundary = true;
+                        }
+                    }
+                    cursor = json.content.page?.next || null;
+                    if (boundary || !cursor) {
                         liveCountCache = {
-                            count: liveViewerCounts.size,
-                            totalViewers: [...liveViewerCounts.values()].reduce((sum, viewers) => sum + viewers, 0),
+                            count: viewers.size,
+                            totalViewers: [...viewers.values()].reduce((sum, count) => sum + count, 0),
                             measuredAt: Date.now(),
                         };
                         return liveCountCache;
                     }
-                    const key = JSON.stringify(metadataNext);
-                    if (!metadataNext || cursors.has(key)) throw new Error("Invalid live list cursor");
+                    const key = JSON.stringify(cursor);
+                    if (cursors.has(key)) throw new Error("Invalid live list cursor");
                     cursors.add(key);
-                    await loadNextMetadata(route);
                 }
                 throw new Error("Live count page limit reached");
             })();
             liveCountRequest = pending;
             try {
                 return await pending;
+            } catch (error) {
+                if (generation === liveCountGeneration) pageCache.clear();
+                throw error;
             } finally {
                 if (liveCountRequest === pending) liveCountRequest = null;
             }
@@ -454,9 +528,12 @@
 
         return Object.freeze({
             countGlobalLives,
+            cancelGlobalLiveCount,
+            cancelMetadataSearch,
             metadataState,
             isMetadataRetryCoolingDown,
             resetMetadata,
+            resetSearchMetadata,
             ensureMetadata,
             ensureRenderedMetadata,
             loadNextMetadata,

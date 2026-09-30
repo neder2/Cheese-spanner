@@ -6,6 +6,9 @@
     const { createMutationObserverSync, injectStyleOnce, onReady, startPageChangeDetection } = root.utils;
     const STYLE_ID = "betterchzzk-header-banner-layout-style";
     const MARKER = "data-bchbl-offset";
+    const STICKY_STYLE_ID = "betterchzzk-header-banner-sticky-style";
+    const STICKY_MARKER = "data-bchbl-sticky";
+    const STICKY_VARIABLE = "--bchbl-sticky-top";
     const properties = [
         ["header", "transform"],
         ["sidebar", "transform"],
@@ -20,8 +23,44 @@
     let banner = null;
     let scheduled = false;
     let active = false;
+    let stickyBody = null;
+
+    function clearSticky() {
+        stickyBody?.style.removeProperty(STICKY_VARIABLE);
+        stickyBody?.removeAttribute(STICKY_MARKER);
+        stickyBody = null;
+        document.getElementById(STICKY_STYLE_ID)?.remove();
+    }
+
+    function updateSticky(header, bannerStyle, offset) {
+        const body = document.getElementById("layout-body");
+        const bottom = header?.getBoundingClientRect().bottom;
+        // Measured watchparty layout: hidden top skin, reset header, but native sticky top still includes the skin.
+        if (
+            !/^\/watchparty\//.test(location.pathname) ||
+            bannerStyle?.display !== "none" ||
+            !(Number(offset?.[1]) > 0) ||
+            !body ||
+            body.parentElement !== header.parentElement ||
+            getComputedStyle(header).transform !== "none" ||
+            !(bottom > 0)
+        ) {
+            clearSticky();
+            return;
+        }
+        if (stickyBody !== body) clearSticky();
+        stickyBody = body;
+        const value = `${bottom}px`;
+        if (body.style.getPropertyValue(STICKY_VARIABLE) !== value) body.style.setProperty(STICKY_VARIABLE, value);
+        if (!body.hasAttribute(STICKY_MARKER)) body.setAttribute(STICKY_MARKER, "1");
+        injectStyleOnce(
+            STICKY_STYLE_ID,
+            `#layout-body[${STICKY_MARKER}] > div > section > div[class*="_header_"][class*="_is_sticky_"] { top: var(${STICKY_VARIABLE}) !important; }`
+        );
+    }
 
     function clearTargets() {
+        clearSticky();
         attributeObserver?.disconnect();
         resizeObserver?.disconnect();
         for (const { node, variable, marker } of targets) {
@@ -40,6 +79,7 @@
         const offset = header?.style.transform.match(/^translateY\((-?\d+(?:\.\d+)?)px\)$/);
         const rect = banner?.getBoundingClientRect();
         const style = banner?.isConnected ? getComputedStyle(banner) : null;
+        updateSticky(header, style, offset);
         const visible =
             header?.isConnected &&
             banner === header.previousElementSibling &&
@@ -104,6 +144,7 @@
             attributeObserver.observe(node, { attributes: true, attributeFilter: ["style", "class", "hidden"] });
         resizeObserver ||= new ResizeObserver(schedule);
         resizeObserver.observe(banner);
+        resizeObserver.observe(header);
         updateOffsets();
     }
 

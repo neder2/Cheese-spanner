@@ -8,7 +8,7 @@ const root = path.join(__dirname, "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-function harness({ failRemoval = false, version = "1.3.8", noticeState } = {}) {
+function harness({ failRemoval = false, version = "1.3.8", noticeState, registration = false } = {}) {
     const local = {
         betterchzzkUpdateNotice: { version: "1.3.5" },
         betterchzzkUpdateReadVersion: "1.3.4",
@@ -86,7 +86,13 @@ function harness({ failRemoval = false, version = "1.3.8", noticeState } = {}) {
     ]) {
         chrome.storage[name] = {
             get(keys, cb) {
-                cb(Object.fromEntries(keys.map((key) => [key, data[key]])));
+                cb(
+                    Object.fromEntries(
+                        (Array.isArray(keys) ? keys : [keys])
+                            .filter((key) => Object.hasOwn(data, key))
+                            .map((key) => [key, data[key]])
+                    )
+                );
             },
             set(values, cb) {
                 Object.assign(data, values);
@@ -100,7 +106,21 @@ function harness({ failRemoval = false, version = "1.3.8", noticeState } = {}) {
             },
         };
     }
-    const context = vm.createContext({ chrome, URL, console, setTimeout, clearTimeout });
+    if (registration)
+        Object.assign(chrome.scripting, {
+            getRegisteredContentScripts: async () => [],
+            registerContentScripts: async () => {},
+            updateContentScripts: async () => {},
+            unregisterContentScripts: async () => {},
+        });
+    const context = vm.createContext({
+        chrome,
+        URL,
+        console,
+        setTimeout,
+        clearTimeout,
+        crypto: require("node:crypto").webcrypto,
+    });
     context.importScripts = (...files) => files.forEach((file) => vm.runInContext(read(file), context));
     vm.runInContext(read("background.js"), context);
     return {
@@ -189,7 +209,14 @@ test("retired update notices, settings and tutorials stay absent from extension 
     assert.equal(loaded.includes("features/updateNotice.js"), false);
     assert.ok(loaded.includes("features/qualityInstallGuide.js"));
     // 설치 안내 닫기는 네이티브 안내 처리이며, 폐기한 확장 튜토리얼이 아니다.
-    assert.ok(loaded.every((file) => file === "features/qualityInstallGuide.js" || !/tutorial|guide/i.test(file)));
+    const approvedGuides = new Set([
+        "features/qualityInstallGuide.js",
+        "shared/updateGuide.js",
+        "shared/updateGuideView.js",
+        "features/updateGuide.js",
+        "optionsUpdateGuide.js",
+    ]);
+    assert.ok(loaded.every((file) => approvedGuides.has(file) || !/tutorial|guide/i.test(file)));
     for (const file of ["shared/updateNotice.js", "optionsUpdateNotice.js"])
         assert.equal(fs.existsSync(path.join(root, file)), false);
 });
@@ -246,6 +273,77 @@ test("a release from an old tab cannot recreate a notice after successful cleanu
     assert.equal((await h.message({ type: key, action: "release", token: "old" })).show, false);
     assert.equal((await h.message({ type: key, action: "claim" })).show, false);
     assert.equal(h.local[key], undefined);
+});
+
+test("background wires the new version guide independently of legacy cleanup", async () => {
+    const h = harness({ version: "1.4.1" });
+    h.install({ reason: "update", previousVersion: "1.4.0" });
+    await flush();
+    const key = "betterchzzk:update-guide-state";
+    assert.equal(h.local[key].status, "pending");
+    const sender = {
+        id: "fixture-extension",
+        frameId: 0,
+        documentId: "current-doc",
+        tab: { id: 1, active: true },
+        url: "https://chzzk.naver.com/live/measured",
+    };
+    const request = {
+        type: "betterchzzk:update-guide",
+        protocol: 1,
+        guideVersion: "1.4.1",
+        clientId: "current-client",
+    };
+    const claim = await h.message({ ...request, action: "claim" }, sender);
+    assert.equal(claim.show, false);
+    assert.ok(claim.token);
+    const result = await h.message({ ...request, action: "commit", token: claim.token }, sender);
+    assert.equal(result.show, true);
+    assert.equal(h.local[key].status, "seen");
+    assert.equal(
+        (
+            await h.message(
+                { ...request, action: "claim" },
+                { ...sender, documentId: "other-doc", tab: { id: 2, active: true } }
+            )
+        ).token,
+        undefined
+    );
+    h.install({ reason: "update", previousVersion: "1.4.1" });
+    await flush();
+    assert.equal(h.local[key].status, "seen");
+    assert.equal(h.local["betterchzzk:quality-update-notice"], undefined);
+    assert.equal(h.local.unrelated, 123);
+});
+
+test("background guide opt-out suppresses pending presentation without restoring legacy preferences", async () => {
+    const h = harness({ version: "1.4.1" });
+    h.install({ reason: "update", previousVersion: "1.4.0" });
+    await flush();
+    h.change({ updateGuideEnabled: { oldValue: true, newValue: false } }, "sync");
+    await flush();
+    assert.equal(h.local["betterchzzk:update-guide-state"].status, "suppressed");
+    assert.equal(h.sync.updateNotificationsEnabled, undefined);
+    assert.equal(h.local.unrelated, 123);
+});
+
+test("guide settings links preserve ad registration authorization without trusting other pages", async () => {
+    const h = harness({ registration: true });
+    await flush();
+    const base = { id: "fixture-extension", frameId: 0 };
+    const message = { type: "betterchzzk:ad-video:sync" };
+    for (const hash of ["", "#update-guide-panels", "#update-guide-history", "#update-guide-stream"]) {
+        assert.equal(
+            (await h.message(message, { ...base, url: "chrome-extension://fixture-extension/options.html" + hash })).ok,
+            true
+        );
+    }
+    for (const sender of [
+        { ...base, url: "chrome-extension://fixture-extension/options.html?anything=1" },
+        { ...base, url: "chrome-extension://fixture-extension/history.html" },
+        { ...base, frameId: 1, url: "chrome-extension://fixture-extension/options.html#update-guide-panels" },
+    ])
+        assert.equal((await h.message(message, sender)).ok, false);
 });
 
 test("saved notice template preserves copy, confirmation and focus restoration", (t) => {

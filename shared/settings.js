@@ -48,6 +48,7 @@
 
     const OPTION_SCHEMA = Object.freeze({
         optionsTheme: { kind: "theme", default: "system" },
+        updateGuideEnabled: { kind: "bool", default: true },
         autoQualityEnabled: { kind: "bool", default: true, feature: true },
         autoQualityPreferred: { kind: "quality", default: DEFAULT_QUALITY },
         rewardAutoCollectEnabled: { kind: "bool", default: true, feature: true },
@@ -108,6 +109,7 @@
             max: LIVE_WATCH_HISTORY_MIN_MINUTES_MAX,
         },
         vodCommentTabsEnabled: { kind: "bool", default: true, feature: true },
+        chatResizeEnabled: { kind: "bool", default: true, feature: true },
         chatTimestampEnabled: { kind: "bool", default: false, feature: true },
         vodChatTimestampEnabled: { kind: "bool", default: false, feature: true },
         chatWeeklyRankingHidden: { kind: "bool", default: false, feature: true },
@@ -128,6 +130,7 @@
         videoSearchCommentMaxVideos: { kind: "int", default: 60, min: 1, max: 200 },
         videoSearchCommentMaxPagesPerVideo: { kind: "int", default: 1, min: 1, max: 3 },
         categoryToolsEnabled: { kind: "bool", default: true, feature: true },
+        globalLiveCountEnabled: { kind: "bool", default: false, feature: true },
         titleTooltipEnabled: { kind: "bool", default: true, feature: true },
         categoryToolsMaxMetadataPages: { kind: "int", default: 12, min: 1, max: 50 },
         categoryToolsHideGlobalTagSearch: { kind: "bool", default: true },
@@ -214,6 +217,7 @@
         categoryToolsFollowerFetchMaxPerPass: { kind: "int", default: 6, min: 1, max: 50 },
         categoryToolsFollowerFetchConcurrency: { kind: "int", default: 2, min: 1, max: 10 },
         categoryToolsFollowerFetchDelayMs: { kind: "int", default: 700, min: 0, max: 5000 },
+        sidebarResizeEnabled: { kind: "bool", default: true, feature: true },
         sidebarCheeseFarmHidden: { kind: "bool", default: false, feature: true },
         sidebarPopularCategoriesHidden: { kind: "bool", default: false, feature: true },
         sidebarUpcomingScheduleHidden: { kind: "bool", default: false, feature: true },
@@ -258,6 +262,7 @@
     let cachedOptions = normalizeOptions();
     let optionsLoaded = false;
     let optionsLoading = false;
+    let optionsLoadingChanges = null;
     let optionsCallbacks = [];
     let optionsChangeListenerInstalled = false;
     const optionListeners = new Set();
@@ -387,6 +392,18 @@
         return globalThis.chrome?.runtime?.lastError || null;
     }
 
+    function withOptionsStorageLock(work) {
+        // 확장 페이지와 워커가 같은 origin의 잠금을 저장 콜백 완료까지 공유한다.
+        const locks = globalThis.navigator?.locks;
+        if (typeof locks?.request === "function") return locks.request("betterchzzk:options-storage", work);
+        // Web Locks가 없는 단일 컨텍스트에서도 기존 콜백 API를 사용할 수 있다.
+        try {
+            return Promise.resolve(work());
+        } catch (error) {
+            return Promise.reject(error);
+        }
+    }
+
     function installOptionsChangeListener() {
         if (optionsChangeListenerInstalled || !globalThis.chrome?.storage?.onChanged) return;
         optionsChangeListenerInstalled = true;
@@ -397,7 +414,10 @@
             if (!changedKeys.length) return;
 
             const nextRaw = { ...cachedOptions };
-            for (const key of changedKeys) nextRaw[key] = changes[key]?.newValue;
+            for (const key of changedKeys) {
+                nextRaw[key] = changes[key]?.newValue;
+                if (optionsLoadingChanges) optionsLoadingChanges[key] = nextRaw[key];
+            }
             cachedOptions = normalizeOptions(nextRaw);
             optionsLoaded = true;
 
@@ -421,14 +441,18 @@
         optionsCallbacks.push(callback);
         if (optionsLoading) return;
         optionsLoading = true;
+        optionsLoadingChanges = {};
 
         chrome.storage.sync.get(STORAGE_OPTION_KEYS, (data) => {
             optionsLoading = false;
+            const pendingChanges = optionsLoadingChanges;
+            optionsLoadingChanges = null;
             if (getStorageLastError()) {
                 flushOptionCallbacks(cachedOptions);
                 return;
             }
-            cachedOptions = normalizeOptions(data);
+            // 최초 읽기가 진행되는 동안 도착한 변경은 이전 스냅샷보다 우선한다.
+            cachedOptions = normalizeOptions({ ...data, ...pendingChanges });
             optionsLoaded = true;
             flushOptionCallbacks(cachedOptions);
             migrateLegacyChatToolsOption(data, cachedOptions);
@@ -440,6 +464,28 @@
         installOptionsChangeListener();
         optionListeners.add(callback);
         return () => optionListeners.delete(callback);
+    }
+
+    function isOptionsPageSender(sender) {
+        const runtime = globalThis.chrome?.runtime;
+        if (!runtime || sender?.id !== runtime.id || (sender.frameId !== undefined && sender.frameId !== 0))
+            return false;
+        try {
+            const expected = new URL(runtime.getURL("options.html"));
+            const actual = new URL(sender.url);
+            return (
+                actual.protocol === expected.protocol &&
+                actual.hostname === expected.hostname &&
+                actual.pathname === expected.pathname &&
+                !actual.username &&
+                !actual.password &&
+                !actual.port &&
+                !actual.search &&
+                ["", "#update-guide-panels", "#update-guide-history", "#update-guide-stream"].includes(actual.hash)
+            );
+        } catch (_) {
+            return false;
+        }
     }
 
     globalThis.BetterChzzkSettings = {
@@ -467,7 +513,9 @@
         normalizeOptions,
         migrateLegacyChatToolsOption,
         getStorageLastError,
+        withOptionsStorageLock,
         getOptions,
         addOptionsChangeListener,
+        isOptionsPageSender,
     };
 })();

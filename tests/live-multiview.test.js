@@ -235,6 +235,7 @@ function setup(t, { local = {}, savedSession, readFailure = false, writeFailure 
     }
     w.Hls = Hls;
     if (savedSession) w.sessionStorage.setItem("betterChzzkMultiviewSession", JSON.stringify(savedSession));
+    evalFile("shared/liveTiming.js");
     evalFile("features/liveMultiview/model.js");
     for (const name of ["view", "playback", "layoutControls", "settingsPanel"])
         evalFile(`features/liveMultiview/${name}.js`);
@@ -307,6 +308,22 @@ function setup(t, { local = {}, savedSession, readFailure = false, writeFailure 
         popovers,
     };
 }
+
+test("multiview no longer publishes the removed low latency preference bridge", async (t) => {
+    const h = setup(t, { local: { [key(A)]: { version: 1, delaySeconds: 4 } } });
+    const video = h.w.document.querySelector("video");
+    await h.start();
+    assert.equal(video.hasAttribute("data-bcmv-main-delay"), false);
+    h.emitStorage(A, { version: 1, delaySeconds: 0 });
+    assert.equal(video.hasAttribute("data-bcmv-main-delay"), false);
+    const replacement = h.w.document.createElement("video");
+    replacement.className = "webplayer-internal-video";
+    video.replaceWith(replacement);
+    await tick();
+    assert.equal(replacement.hasAttribute("data-bcmv-main-delay"), false);
+    h.configure(false);
+    assert.equal(video.hasAttribute("data-bcmv-main-delay"), false);
+});
 
 test("multiview launcher inherits native fade timing as player controls toggle", (t) => {
     const { w } = setup(t);

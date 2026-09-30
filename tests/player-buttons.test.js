@@ -93,7 +93,7 @@ test("player button options default off and have labelled independent controls a
         assert.equal(controls.length, 1);
         assert.equal(controls[0].type, "checkbox");
         assert.ok(controls[0].closest("label").textContent.trim());
-        assert.ok(controls[0].closest("#tab-panel-0"));
+        assert.ok(controls[0].closest("#tab-panel-appearance"));
         assert.equal(controls[0].closest("[data-depends-on]"), null);
     }
     const manifest = JSON.parse(read("manifest.json"));

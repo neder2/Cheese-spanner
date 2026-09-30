@@ -388,6 +388,29 @@ test("channel mutations serialize, reject untrusted senders, and remove stale po
     assert.equal((await m.send("add", rule(SECOND))).ok, false);
 });
 
+test("guide settings links preserve live-start editing while rejecting other fragments and frames", async () => {
+    const m = monitor({ sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false } });
+    await flush();
+    for (const hash of ["#update-guide-panels", "#update-guide-history", "#update-guide-stream"]) {
+        assert.equal(
+            (
+                await m.send(
+                    "update",
+                    { channelId: CHANNEL, notify: false },
+                    { id: "test", frameId: 0, url: "chrome-extension://test/options.html" + hash }
+                )
+            ).ok,
+            true
+        );
+    }
+    for (const sender of [
+        { id: "test", frameId: 0, url: "chrome-extension://test/options.html#other" },
+        { id: "test", frameId: 1, url: "chrome-extension://test/options.html#update-guide-stream" },
+        { id: "other", frameId: 0, url: "chrome-extension://test/options.html#update-guide-stream" },
+    ])
+        assert.equal((await m.send("update", { channelId: CHANNEL, notify: true }, sender)).ok, false);
+});
+
 test("a channel page can register notifications with a verified name without enabling global options", async () => {
     const m = monitor({ local: {}, sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false } });
     await flush();
