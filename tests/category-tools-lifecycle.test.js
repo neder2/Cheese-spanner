@@ -43,6 +43,7 @@ function createFixture(t) {
     const load = (file) => window.eval(fs.readFileSync(path.join(__dirname, "..", file), "utf8"));
     load("shared/settings.js");
     load("shared/data.js");
+    load("shared/categoryExclusions.js");
     window.setTimeout = (callback) => {
         const id = ++timerId;
         timers.set(id, callback);

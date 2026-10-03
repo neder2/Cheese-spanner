@@ -1,10 +1,53 @@
 # 치즈 스패너 현재 상태
 
+## 맥북 작업 인계 — 2026-10-03
+
+사용자 요청으로 현재 `1.4.2` branch의 카테고리 제외·VOD 이어보기 수정과 관련 테스트·문서를 함께 커밋하고 GitHub `neder2/Cheese-spanner`의 같은 branch로 옮기는 작업 스냅샷이에요. 수정 시작 기준은 `01e9358e7b81b695dbd779af2b2745daea901b99`이고, manifest/package 버전은 계속 1.4.1이에요. 아래 2026-10-01 기록의 미커밋 상태와 작업 당시 branch는 당시 상태를 설명해요.
+
+- 카테고리 제외: 구현·자동 검사까지 마쳤고 실제 Chrome 확인이 남아 있어요. [검증 기록과 수동 절차](../category-exclusions-verification.md)를 따라 검색·카드 제외·두 탭 저장·SPA 진입·키보드·테마·브라우저 재시작을 확인해요.
+- VOD 이어보기: 닫힌 채팅의 불필요한 복구와 같은 URL 시간의 재적용을 보완했어요. 일반 URL 새로고침·탭 재열기의 실제 관측과 미검증 조건은 [실측 기록](../measurements/vod-resume-2026-10-01.md)에 있어요. 신고 당시 조건·서버 위치와 첫 이벤트 순서·화질/광고 OFF 비교는 남아 있어요.
+- 다음 작업은 [남은 확인 사항](findings.md)에서 이어가요. 이번 인계는 개발 중인 소스 전달이며 새 기능 안내·포장·릴리스 검증 완료를 뜻하지 않아요.
+- 2026-10-01 전체 1,459개 테스트·lint·format:check 통과는 이전 작업의 기록이에요. 이번 인계에서는 런타임을 수정하지 않고 인계 문서·파일 누락·Git 변경 내용을 확인해요. 실제 Chrome 검증은 새로 수행하지 않아요. `.dryforge/`의 로컬 로그와 `node_modules/`, Chrome 프로필의 설정·기록은 Git 전송에 포함되지 않아요.
+
+맥북에서는 GitHub 저장소 접근이 가능한 상태에서 새 폴더로 받아 기존 작업과 구분할 수 있어요. 기존에 같은 이름의 폴더가 있다면 비어 있는 다른 폴더 이름을 사용해요.
+
+```sh
+git clone --branch 1.4.2 git@github.com:neder2/Cheese-spanner.git Cheese-spanner-1.4.2
+cd Cheese-spanner-1.4.2
+git branch --show-current
+git log -1 --oneline
+npm ci
+```
+
+기존 검증 환경은 Node 24.18.0·npm 11.16.0이에요. macOS에서는 `npm.cmd` 대신 `npm`을 사용하고, Windows의 `node_modules`를 복사하지 않고 위 명령으로 설치해요. 별도 런타임 빌드는 없어요. Chrome에서 확인할 때는 내려받은 폴더를 압축 해제된 확장으로 로드해요. 맥북에서 전체 검증이 필요하면 아래 순서로 실행해요.
+
+```sh
+npm run test:all -- --test-concurrency=2
+npm run lint
+npm run format:check
+```
+
+Codex에서 이어갈 때는 저장소 폴더를 열고 “AGENTS.md와 docs/tracking/status.md의 맥북 작업 인계, docs/tracking/findings.md를 읽고 1.4.2 작업을 이어가 주세요”라고 요청해요. 먼저 남은 검증과 원하는 다음 수정 범위를 확인해요.
+
 ## 기준 시점
+
+2026-10-01 VOD 이어보기 수정은 요청한 `1.4.2` branch, HEAD `01e9358e7b81b695dbd779af2b2745daea901b99`의 작업 트리에 있어요. 기존 카테고리 제외 변경을 보존하고 manifest/package는 1.4.1을 유지해요. 커밋·push·태그·배포는 하지 않았어요. 닫힌/없는 채팅의 복구 오탐을 막고 복구 위치를 URL 대신 짧은 일회용 상태로 전달해요. URL 보정은 안정화·사용자 취소 뒤 같은 VOD·시간의 화질 요청으로 재시작하지 않아요.
+
+최종 회귀 27개는 기준 HEAD에서 22개 실패를 확인했고 수정 뒤 모두 통과했어요. 관련 282개·전체 1,459개와 lint·전체 format:check는 종료 코드 0이에요. 포맷 반영 뒤 이어보기 27개도 다시 통과했어요. 사용자 확장 재로드 뒤 실제 Chrome 일반 URL의 새로고침·탭 재열기 이어보기와 명시적 0/600 URL 보존·탐색 뒤 진행을 확인했지만, 신고자의 당시 조건·인증된 서버 위치·첫 이벤트 순서와 자동 화질/광고 OFF 비교는 미검증이에요. `docs/measurements/vod-resume-2026-10-01.md`에 코드 결함과 실제 확인·제한을 구분해요.
+
+### 기존 카테고리 제외 작업 기록
+
+현재 카테고리 제외 개발 변경은 2026-10-01 최종 자동 검증을 마친 작업 branch `1.4.1`, 기준 HEAD `01e9358e7b81b695dbd779af2b2745daea901b99`의 작업 트리에 있어요. 작업·HTTP 확인은 2026-09-30에 시작했고 manifest·package 버전은 1.4.1을 유지해요. 이 변경의 실제 Chrome 확인과 배포는 수행하지 않았으며, 앞선 릴리스·작업 검증을 이번 변경의 성공으로 사용하지 않아요.
+
+### 앞선 1.4.1 릴리스 기록
 
 2026-09-30 기준 릴리즈 대상은 1.4.1, 작업 브랜치는 1.4.1, 변경 시작 HEAD는 ea22dfcdbeb167a75b038e50e9780afaa3aa221a예요. 사용자의 릴리즈 요청과 실제 Chrome 확인 뒤 최종 전체 검사 1,335개, 포장 설정 수정 후 배포 안전 검사 7개와 ZIP 파일 111개의 소스 대조를 통과했어요. 최종 소스는 v1.4.1 태그를 기준으로 해요. Chrome 웹 스토어 제출은 별도이며 아래 문단은 각 이전 작업 단계의 기록이에요. 최신 결과는 docs/release-1.4.1-verification.md에 있어요.
 
 ## 구현·자동 검증 상태
+
+전체 방송의 기존 필터 메뉴에 카테고리 이름 검색·여러 선택·개별 해제를 구현했어요. 방송이 없는 카테고리도 검색 결과에서 선택하고, 유형·ID가 정확히 같은 카드만 제외해요. 인기·최신·추천, 원본·추가 카드, 목록 검색·숫자 필터와 함께 적용하며 집계는 독립이에요. 프로필 local의 전용 워커 큐가 개별 변경을 저장하고 다른 열린 전체 방송 탭에 반영해요. 숫자 초기화·메뉴 닫기·SPA·OFF/ON은 선택을 지우지 않아요.
+
+저장 25개·검색/모델 50개·직접 UI 53개와 UI를 포함한 인접 묶음 264개가 각각 종료 코드 0으로 통과했어요. 정확한 유형·ID, 방송 정체성·현재 링크, 신뢰한 버튼, 두 탭의 경합, 상한·손상·읽기/쓰기 실패 보존과 늦은 응답·삭제 세대를 보호해요. 최초 옵션 확인 전 대기, OFF 중 삭제·재생성 뒤 복원과 손상 알림 뒤 이전 콜백 차단도 포함해요. 기존 후원 검사의 고정 9월 자료와 실제 collect 시각을 테스트 helper에서 맞추고 런타임·기존 검증 조건은 유지했어요. 전체 `npm.cmd run test:all -- --test-concurrency=2`는 1,432개 통과, 실패·취소·건너뜀·todo 0개, 종료 코드 0이에요. 전체 `npm.cmd run lint`와 `npm.cmd run format:check`도 종료 코드 0으로 통과했어요. 실제 Chrome의 요청·주입·카드 링크·SPA 발신 URL·기본 키보드 조작·두 테마·새로고침과 브라우저 재시작은 미검증이에요. 새 권한·계정·서버·분석 수집과 버전·Git 공개 작업은 추가하지 않았어요.
 
 다시보기 경로에는 타이머·게이지가 연결되지 않았던 것을 확인하고 자동 안내와 같은 20초 타이머를 적용했어요. 열 때 강제 제목 초점을 없애고, 옵션 팝업 종료 후 치지직에 초점이 돌아오면 시작해요. 다시 열면 새 20초로 시작하고 호버·키보드 초점·창/탭 이탈은 일시정지해요. 자동 표시의 늦은 응답이 수동 타이머를 취소하지 않게 하고 게이지 생성 실패에도 닫힘은 유지했어요. 직접 검사 54개·관련 통합 검사 235개가 통과했으며 실제 Chrome은 사용자 요청대로 확인하지 않았어요. 최신 기록은 `.dryforge/update-guide-replay-timer-20260930/`에 있어요.
 
@@ -77,6 +120,7 @@
 | 채팅·VOD 댓글         | 행 재사용·원문·역할·읽음·선택, 타임스탬프, 요청 공유·정렬·원본 위임                         | chat-tools/modules, chat-timestamp, chat-weekly-ranking, vod-comment-model/repository/tabs                                                                                                                    |
 | 채팅·사이드바 너비    | 기본 너비 보존, 독립 local 저장·문서별 표시, 마우스·취소·복원·단일 강조·가용 공간·수명 정리 | panel-resize-model, panel-resize, settings, options-page, extension-pages, following-preview-tooltip                                                                                                          |
 | 탐색·통계·팔로잉      | 부분 조회, 취소·bounded 캐시, 카드 재사용, KST·분할 VOD, 고정·접기·제목                     | category-tools-filter-model/repository/lifecycle, monthly-broadcast-time, refactoring-data-modules, vod-timeline, navigation-data, sidebar-customization, following-list-state/title-history, extension-pages |
+| 카테고리 제외         | 전체 방송 한정, 정확한 유형·ID, 개별 local 변경·다중 탭·실패 보존·신뢰한 버튼·취소          | category-exclusions-store, category-tools-exclusions, category-tools-filter-model/repository/lifecycle, extension-pages, refactoring-data-modules                                                             |
 | 미리보기·멀티뷰       | 실제 소스·허용 URL, 권한·소리·취소, 메인·보조 분리, 배치·딜레이·화질                        | following-preview-tooltip, live-preview-fast-hover-page, live-multiview                                                                                                                                       |
 | 기록·활동·후원        | 누적 저장 중복 방지, 삭제 후 복원 방지, 본인 활동, 월별 조회·계정 검증                      | watch-history-store, watch-activity, donation-history-import, history-ux, security-boundaries                                                                                                                 |
 | 알림·보상             | 첫 관측 무동작·기존 탭 유지·중복 방지·늦은 효과 차단, 검증된 수령만 실행                    | live-start, live-start-registration, reward-auto-collect                                                                                                                                                      |

@@ -6,8 +6,9 @@ const vm = require("node:vm");
 
 function loadFilterModel() {
     const context = vm.createContext({});
-    const source = fs.readFileSync(path.join(__dirname, "../features/categoryTools/filterModel.js"), "utf8");
-    vm.runInContext(source, context);
+    for (const file of ["shared/categoryExclusions.js", "features/categoryTools/filterModel.js"]) {
+        vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
+    }
     return context.BetterChzzk.categoryToolsFilterModel;
 }
 
@@ -23,6 +24,7 @@ test("category models, repository and search controller load before their runtim
     assert.ok(isolated);
     let previous = -1;
     for (const file of [
+        "shared/categoryExclusions.js",
         "features/categoryTools/filterModel.js",
         "features/categoryTools/repository.js",
         "features/categoryTools/searchController.js",
@@ -32,6 +34,76 @@ test("category models, repository and search controller load before their runtim
         assert.ok(index > previous, `${file} must be present after its dependencies`);
         previous = index;
     }
+});
+
+test("category exclusions match only the exact type and ID while names may change", () => {
+    const model = loadFilterModel();
+    const exclusions = Object.freeze([
+        Object.freeze({ categoryType: "GAME", categoryId: "League_of_Legends", categoryValue: "예전 이름" }),
+        Object.freeze({ categoryType: "ETC", categoryId: "talk", categoryValue: "소통" }),
+    ]);
+    for (const [category, expected] of [
+        [{ categoryType: "GAME", categoryId: "League_of_Legends", categoryValue: "새 이름" }, false],
+        [{ categoryType: "ETC", categoryId: "League_of_Legends", categoryValue: "예전 이름" }, true],
+        [{ categoryType: "GAME", categoryId: "league_of_legends", categoryValue: "예전 이름" }, true],
+        [{ categoryType: "GAME", categoryId: "League_of_Legends_extra", categoryValue: "예전 이름" }, true],
+        [{ categoryType: "GAME", categoryId: "other", categoryValue: "예전 이름" }, true],
+        [{ categoryType: "ETC", categoryId: "talk" }, false],
+        [
+            {
+                categoryType: "GAME",
+                categoryId: "other",
+                title: "League_of_Legends",
+                channelName: "예전 이름",
+                tags: ["League_of_Legends"],
+                liveCategory: "League_of_Legends",
+            },
+            true,
+        ],
+    ]) {
+        assert.equal(model.passesCategoryExclusions(category, exclusions), expected);
+    }
+    assert.deepEqual(plain(exclusions), [
+        { categoryType: "GAME", categoryId: "League_of_Legends", categoryValue: "예전 이름" },
+        { categoryType: "ETC", categoryId: "talk", categoryValue: "소통" },
+    ]);
+});
+
+test("category exclusions leave missing or invalid identity visible", () => {
+    const model = loadFilterModel();
+    const exclusions = [{ categoryType: "GAME", categoryId: "one", categoryValue: "같은 이름" }];
+    for (const category of [
+        null,
+        undefined,
+        {},
+        { categoryValue: "같은 이름" },
+        { categoryType: "GAME" },
+        { categoryId: "one" },
+        { categoryType: "game", categoryId: "one" },
+        { categoryType: "GAME", categoryId: 1 },
+        { categoryType: "GAME", categoryId: " " },
+        { categoryType: "GAME", categoryId: "." },
+        { categoryType: "GAME", categoryId: ".." },
+        { categoryType: "GAME", categoryId: "one\n" },
+    ]) {
+        assert.equal(model.passesCategoryExclusions(category, exclusions), true);
+    }
+    assert.equal(
+        model.passesCategoryExclusions(exclusions[0], [null, {}, { categoryType: "game", categoryId: "one" }]),
+        true
+    );
+    assert.equal(model.passesCategoryExclusions(exclusions[0], []), true);
+    assert.equal(model.passesCategoryExclusions(exclusions[0], null), true);
+});
+
+test("category exclusions also accept a set of exact category keys across VM boundaries", () => {
+    const model = loadFilterModel();
+    const keys = new Set([JSON.stringify(["GAME", "Case_ID"]), JSON.stringify(["ETC", "other"])]);
+    assert.equal(model.passesCategoryExclusions({ categoryType: "GAME", categoryId: "Case_ID" }, keys), false);
+    assert.equal(model.passesCategoryExclusions({ categoryType: "ETC", categoryId: "Case_ID" }, keys), true);
+    assert.equal(model.passesCategoryExclusions({ categoryType: "GAME", categoryId: "case_id" }, keys), true);
+    assert.equal(model.passesCategoryExclusions({ categoryId: "Case_ID" }, keys), true);
+    assert.equal(keys.size, 2);
 });
 
 test("category filters parse follower and view counts with Korean units and format editable values", () => {

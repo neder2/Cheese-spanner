@@ -35,6 +35,7 @@
             "js": [
                 "shared/settings.js",
                 "shared/data.js",
+                "shared/categoryExclusions.js",
                 "shared/selectors.js",
                 "content.js",
                 "shared/updateGuide.js",

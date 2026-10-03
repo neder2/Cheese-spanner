@@ -1,4 +1,4 @@
-/** 목록 메타데이터·전체 방송 집계의 공유 조회와 독립 취소, 팔로워 캐시·배치·재시도를 소유한다. DOM에는 의존하지 않는다. */
+/** 목록 메타데이터·전체 방송 집계·카테고리 검색의 공유 조회와 독립 취소, 팔로워 캐시·배치·재시도를 소유한다. DOM에는 의존하지 않는다. */
 (() => {
     const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
     const API_BASE = "https://api.chzzk.naver.com/service";
@@ -9,6 +9,11 @@
     const METADATA_RETRY_MAX_MS = 30000;
     const LIVE_COUNT_CACHE_TTL_MS = 5 * 60 * 1000;
     const MAX_SHARED_PAGES = 200;
+    const CATEGORY_SEARCH_URL = "https://api.chzzk.naver.com/manage/v1/auto-complete/categories";
+    const CATEGORY_SEARCH_RESULT_LIMIT = 50;
+    const MAX_CATEGORY_SEARCH_KEYWORD_LENGTH = 100;
+    const MAX_CATEGORY_SEARCH_CACHE_ENTRIES = 20;
+    const CATEGORY_SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 
     function routeKey(route) {
         if (!route) return "";
@@ -59,6 +64,7 @@
     function mapApiItem(route, item) {
         if (route.tab === "lives") {
             const channel = item.channel || {};
+            const categoryKey = root.categoryExclusions?.categoryKey(item.categoryType, item.liveCategory);
             return {
                 id: String(channel.channelId || ""),
                 channelId: String(channel.channelId || ""),
@@ -69,6 +75,8 @@
                 duration: null,
                 publishDate: item.openDate || "",
                 views: Number(item.concurrentUserCount) || 0,
+                categoryType: categoryKey ? item.categoryType : "",
+                categoryId: categoryKey ? item.liveCategory : "",
                 categoryName: item.liveCategoryValue || "",
                 tags: item.tags || [],
                 liveId: Number(item.liveId) || 0,
@@ -133,6 +141,140 @@
         let followerHydrateTimer = 0;
         let lastFollowerHydrateAt = 0;
         let followerRefresh = null;
+        const categorySearchCache = new Map();
+        const categorySearchRequests = new Map();
+        let categorySearchGeneration = 0;
+
+        function categorySearchAbortError() {
+            const error = new Error("Category search cancelled");
+            error.name = "AbortError";
+            return error;
+        }
+
+        function normalizeCategoryResults(json) {
+            const rows = json?.content?.results;
+            if (json?.code !== 200 || !Array.isArray(rows)) throw new Error("Category search unavailable");
+            const results = [];
+            const seen = new Set();
+            for (const row of rows) {
+                if (
+                    !row ||
+                    typeof row !== "object" ||
+                    Array.isArray(row) ||
+                    !["categoryType", "categoryId", "categoryValue"].every((field) => Object.hasOwn(row, field))
+                )
+                    continue;
+                const category = root.categoryExclusions.normalizeCategory({
+                    categoryType: row.categoryType,
+                    categoryId: row.categoryId,
+                    categoryValue: row.categoryValue,
+                });
+                if (!category) continue;
+                const key = root.categoryExclusions.categoryKey(category);
+                if (seen.has(key)) continue;
+                seen.add(key);
+                results.push(Object.freeze(category));
+                if (results.length >= CATEGORY_SEARCH_RESULT_LIMIT) break;
+            }
+            if (rows.length && !results.length) throw new Error("Category search unavailable");
+            return Object.freeze(results);
+        }
+
+        function copyCategoryResults(results) {
+            return results.map((category) => ({ ...category }));
+        }
+
+        function consumeCategorySearch(keyword, request, signal) {
+            return new Promise((resolve, reject) => {
+                let active = true;
+                const release = () => {
+                    if (!active) return false;
+                    active = false;
+                    signal?.removeEventListener("abort", consumer.cancel);
+                    request.consumers.delete(consumer);
+                    return true;
+                };
+                const consumer = {
+                    cancel() {
+                        if (!release()) return;
+                        reject(categorySearchAbortError());
+                        if (request.consumers.size) return;
+                        if (categorySearchRequests.get(keyword) === request) categorySearchRequests.delete(keyword);
+                        request.controller.abort();
+                    },
+                };
+                request.consumers.add(consumer);
+                signal?.addEventListener("abort", consumer.cancel, { once: true });
+                request.promise.then(
+                    (results) => {
+                        if (release()) resolve(copyCategoryResults(results));
+                    },
+                    (error) => {
+                        if (release()) reject(error);
+                    }
+                );
+                if (signal?.aborted) consumer.cancel();
+            });
+        }
+
+        function searchCategories(keyword, { signal } = {}) {
+            if (signal?.aborted) return Promise.reject(categorySearchAbortError());
+            if (typeof keyword !== "string") return Promise.reject(new Error("Invalid category search keyword"));
+            const query = keyword.trim();
+            if (query.length > MAX_CATEGORY_SEARCH_KEYWORD_LENGTH)
+                return Promise.reject(new Error("Category search keyword limit exceeded"));
+            if (!query) return Promise.resolve([]);
+            const cached = categorySearchCache.get(query);
+            if (cached && Date.now() - cached.measuredAt < CATEGORY_SEARCH_CACHE_TTL_MS) {
+                touchMapEntry(categorySearchCache, query, cached, MAX_CATEGORY_SEARCH_CACHE_ENTRIES);
+                return Promise.resolve(copyCategoryResults(cached.results));
+            }
+            categorySearchCache.delete(query);
+            let request = categorySearchRequests.get(query);
+            if (!request) {
+                request = {
+                    generation: categorySearchGeneration,
+                    controller: new AbortController(),
+                    consumers: new Set(),
+                    promise: null,
+                };
+                categorySearchRequests.set(query, request);
+                const params = new URLSearchParams({ keyword: query, size: String(CATEGORY_SEARCH_RESULT_LIMIT) });
+                request.promise = (async () => {
+                    const json = await fetchJson(`${CATEGORY_SEARCH_URL}?${params.toString()}`, {
+                        headers: { Accept: "application/json" },
+                        signal: request.controller.signal,
+                    });
+                    if (
+                        request.controller.signal.aborted ||
+                        request.generation !== categorySearchGeneration ||
+                        categorySearchRequests.get(query) !== request
+                    )
+                        throw categorySearchAbortError();
+                    const results = normalizeCategoryResults(json);
+                    touchMapEntry(
+                        categorySearchCache,
+                        query,
+                        { results, measuredAt: Date.now() },
+                        MAX_CATEGORY_SEARCH_CACHE_ENTRIES
+                    );
+                    return results;
+                })().finally(() => {
+                    if (categorySearchRequests.get(query) === request) categorySearchRequests.delete(query);
+                });
+            }
+            return consumeCategorySearch(query, request, signal);
+        }
+
+        function cancelCategorySearch() {
+            categorySearchGeneration++;
+            const requests = [...categorySearchRequests.values()];
+            categorySearchRequests.clear();
+            for (const request of requests) {
+                for (const consumer of [...request.consumers]) consumer.cancel();
+                request.controller.abort();
+            }
+        }
 
         function metadataState() {
             return {
@@ -527,6 +669,8 @@
         }
 
         return Object.freeze({
+            searchCategories,
+            cancelCategorySearch,
             countGlobalLives,
             cancelGlobalLiveCount,
             cancelMetadataSearch,

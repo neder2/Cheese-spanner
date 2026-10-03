@@ -4,6 +4,7 @@
  * 동작 위치: /lives (전체 라이브) 및 /category/:categoryType/:categoryId/(lives|videos|clips) 라우트의 탭·정렬 줄.
  * 하는 일:
  *   - 전체 라이브의 방송 수·시청자 합계를 검색·필터와 독립적으로 표시하고 공유 조회의 소비자 수명을 관리한다.
+ *   - /lives에서 직접 선택한 카테고리 제외를 프로필에 보관하고 현재 카드 정체성과 여러 탭의 최신 목록으로 판정한다.
  *   - 탭/정렬 줄 옆에 검색 입력과 필터(팔로워 수, 조회수/시청자 수, 진행 시간 범위) 버튼이 있는 툴바를 DOM에 삽입한다.
  *   - Chzzk API(v1/v2 lives, videos, clips, channels)에서 메타데이터를 페이지네이션으로 받아 캐싱하고,
  *     검색어/필터 조건에 맞는 카드를 기존 DOM 카드를 템플릿 삼아 추가로 주입한 뒤 조건에 안 맞는 카드는 숨긴다.
@@ -101,6 +102,7 @@
     let liveElapsedTimer = 0;
     let durationFilterRefreshTimer = 0;
     let featureOptions = BetterChzzkSettings.normalizeOptions();
+    let featureOptionsReady = false;
     let viewFilterSnapshotKey = "";
     let viewFilterSnapshotIds = new Set();
     let viewFilterSnapshotOrder = new Map();
@@ -116,6 +118,28 @@
     let injectedRenderKey = "";
     let injectedRenderLimit = 24;
     let pendingInjectedRender = false;
+    let categoryState = null;
+    let categoryKeys = new Set();
+    let categoryStateEpoch = 0;
+    let categoryStoreGeneration = 0;
+    let categoryReadGeneration = 0;
+    let categoryStoreLoading = false;
+    let categoryStoreError = "";
+    let categorySubscription = null;
+    let categoryStateRestored = false;
+    let categoryMenuView = null;
+    let categorySearchGeneration = 0;
+    let documentEnded = false;
+    const categoryPending = new Map();
+    const injectedCategoryBindings = new WeakMap();
+    const {
+        MESSAGE_TYPE: CATEGORY_MESSAGE_TYPE,
+        STORAGE_KEY: CATEGORY_STORAGE_KEY,
+        categoryKey,
+        normalizeCategory,
+        normalizeState: normalizeCategoryState,
+        createEmptyState: createEmptyCategoryState,
+    } = BetterChzzk.categoryExclusions;
 
     // 검색/필터 자동 탐색은 화면 아래 여유가 생기면 멈췄다가 바닥 근처에서 이어서 탐색한다.
     const AUTO_LOAD_BOTTOM_MARGIN_PX = 600;
@@ -148,6 +172,7 @@
         formatFilterOptionLabel,
         combineFilterOptionRanges,
         hasFilterOptionRange,
+        passesCategoryExclusions,
     } = BetterChzzk.categoryToolsFilterModel;
     const { routeKey } = BetterChzzk.categoryToolsRepository;
     const dataRepository = BetterChzzk.categoryToolsRepository.createRepository({
@@ -232,19 +257,524 @@
     const scheduleThrottledApply = createThrottledDomSync(runScheduledApply, 160);
 
     function isFeatureEnabled() {
-        return featureOptions.categoryToolsEnabled;
+        return featureOptionsReady && featureOptions.categoryToolsEnabled;
     }
 
     function isGlobalLiveCountEnabled(route = getRoute()) {
-        return featureOptions.globalLiveCountEnabled && route?.scope === "global-lives";
+        return featureOptionsReady && featureOptions.globalLiveCountEnabled && route?.scope === "global-lives";
     }
 
     function isRuntimeEnabled() {
-        return isFeatureEnabled() || featureOptions.globalLiveCountEnabled;
+        return featureOptionsReady && (isFeatureEnabled() || featureOptions.globalLiveCountEnabled);
     }
 
     function shouldApplyTools() {
-        return Boolean(getRoute()) && (isFeatureEnabled() || isGlobalLiveCountEnabled());
+        return !documentEnded && Boolean(getRoute()) && (isFeatureEnabled() || isGlobalLiveCountEnabled());
+    }
+
+    function isCategoryExclusionRoute() {
+        return !documentEnded && isFeatureEnabled() && getRoute()?.scope === "global-lives";
+    }
+
+    function hasCategoryExclusions() {
+        return isCategoryExclusionRoute() && categoryState !== null && categoryKeys.size > 0;
+    }
+
+    function categoryErrorText(error) {
+        if (error === "limit-reached")
+            return "카테고리는 최대 100개까지 제외할 수 있어요. 기존 항목을 해제한 뒤 다시 선택해 주세요.";
+        if (error === "invalid-stored-state" || error === "unsupported-version")
+            return "저장한 제외 목록을 확인하지 못했어요. 기존 목록을 보존하고 다시 불러올 수 있어요.";
+        return "제외 목록을 저장하거나 불러오지 못했어요. 다시 불러오거나 항목을 다시 선택해 주세요.";
+    }
+
+    function sendCategoryOperation(operation) {
+        return new Promise((resolve, reject) => {
+            try {
+                if (typeof globalThis.chrome?.runtime?.sendMessage !== "function")
+                    throw new Error("storage-unavailable");
+                chrome.runtime.sendMessage({ type: CATEGORY_MESSAGE_TYPE, version: 1, operation }, (response) => {
+                    const error = chrome.runtime.lastError;
+                    if (error) {
+                        reject(new Error("storage-unavailable"));
+                        return;
+                    }
+                    const state = response?.ok === true ? normalizeCategoryState(response.state) : null;
+                    if (!state) {
+                        reject(
+                            new Error(
+                                response?.ok === false && typeof response.error === "string"
+                                    ? response.error
+                                    : "invalid-stored-state"
+                            )
+                        );
+                        return;
+                    }
+                    resolve(state);
+                });
+            } catch (_) {
+                reject(new Error("storage-unavailable"));
+            }
+        });
+    }
+
+    function acceptCategoryState(state) {
+        if (documentEnded || (categoryStateRestored && categoryState && state.revision < categoryState.revision))
+            return;
+        // 구독을 쉬는 동안 키가 삭제·재생성될 수 있어 새 구독의 첫 정상 자료부터 revision을 비교한다.
+        categoryStateRestored = true;
+        const changed = JSON.stringify(categoryState) !== JSON.stringify(state);
+        categoryState = state;
+        categoryKeys = new Set(state.categories.map(categoryKey));
+        categoryStoreError = "";
+        if (changed) categoryStateEpoch++;
+        if (!isCategoryExclusionRoute()) return;
+        updateUiState();
+        if (changed) scheduleApply();
+    }
+
+    function readCategoryState() {
+        if (!isCategoryExclusionRoute()) return;
+        const generation = ++categoryReadGeneration;
+        const storeGeneration = categoryStoreGeneration;
+        const subscription = categorySubscription;
+        categoryStoreLoading = true;
+        categoryStoreError = "";
+        syncCategoryMenu();
+        void sendCategoryOperation({ kind: "get" }).then(
+            (state) => {
+                if (
+                    generation !== categoryReadGeneration ||
+                    storeGeneration !== categoryStoreGeneration ||
+                    subscription !== categorySubscription ||
+                    !isCategoryExclusionRoute()
+                )
+                    return;
+                categoryStoreLoading = false;
+                acceptCategoryState(state);
+                syncCategoryMenu();
+            },
+            (error) => {
+                if (
+                    generation !== categoryReadGeneration ||
+                    storeGeneration !== categoryStoreGeneration ||
+                    subscription !== categorySubscription ||
+                    !isCategoryExclusionRoute()
+                )
+                    return;
+                categoryStoreLoading = false;
+                categoryStoreError = categoryErrorText(error.message);
+                syncCategoryMenu();
+            }
+        );
+    }
+
+    function handleCategoryStorageChange(changes, areaName) {
+        if (!categorySubscription || areaName !== "local" || !Object.hasOwn(changes, CATEGORY_STORAGE_KEY)) return;
+        const value = changes[CATEGORY_STORAGE_KEY]?.newValue;
+        if (value === undefined) {
+            categoryStoreGeneration++;
+            categoryReadGeneration++;
+            categoryStoreLoading = false;
+            categoryPending.clear();
+            categoryState = null;
+            acceptCategoryState(createEmptyCategoryState());
+            return;
+        }
+        const state = normalizeCategoryState(value);
+        if (!state) {
+            categoryStoreGeneration++;
+            categoryReadGeneration++;
+            categoryStoreLoading = false;
+            categoryPending.clear();
+            categoryStoreError = categoryErrorText("invalid-stored-state");
+            syncCategoryMenu();
+            return;
+        }
+        acceptCategoryState(state);
+    }
+
+    function syncCategoryExclusionRuntime() {
+        if (!isCategoryExclusionRoute()) {
+            stopCategoryExclusionRuntime();
+            return;
+        }
+        if (categorySubscription) return;
+        const subscription = (changes, areaName) => {
+            if (categorySubscription === subscription) handleCategoryStorageChange(changes, areaName);
+        };
+        categorySubscription = subscription;
+        categoryStateRestored = false;
+        globalThis.chrome?.storage?.onChanged?.addListener?.(subscription);
+        readCategoryState();
+    }
+
+    function stopCategoryExclusionRuntime() {
+        if (categorySubscription) globalThis.chrome?.storage?.onChanged?.removeListener?.(categorySubscription);
+        categorySubscription = null;
+        categoryStateRestored = false;
+        categoryPending.clear();
+        categoryReadGeneration++;
+        categoryStoreLoading = false;
+        cancelCategoryMenuSearch();
+    }
+
+    function mutateCategory(category, kind, view, row, event) {
+        const key = categoryKey(category);
+        if (
+            !event.isTrusted ||
+            event.currentTarget !== row.button ||
+            row.button.disabled ||
+            view !== categoryMenuView ||
+            !isCurrentCategoryMenu(view) ||
+            view.composing ||
+            !view.root.contains(row.button) ||
+            view[`${kind === "add" ? "result" : "selected"}Rows`].get(key) !== row ||
+            !categoryState ||
+            categoryPending.has(key)
+        )
+            return;
+        if (kind === "add" && categoryKeys.has(key)) return;
+        if (kind === "remove" && !categoryKeys.has(key)) return;
+        const operation =
+            kind === "add"
+                ? { kind, category: { ...category } }
+                : { kind, categoryType: category.categoryType, categoryId: category.categoryId };
+        const storeGeneration = categoryStoreGeneration;
+        const subscription = categorySubscription;
+        const token = {};
+        categoryPending.set(key, token);
+        categoryStoreError = "";
+        syncCategoryMenu();
+        void sendCategoryOperation(operation)
+            .then(
+                (state) => {
+                    if (
+                        documentEnded ||
+                        storeGeneration !== categoryStoreGeneration ||
+                        subscription !== categorySubscription
+                    )
+                        return;
+                    acceptCategoryState(state);
+                },
+                (error) => {
+                    if (
+                        documentEnded ||
+                        storeGeneration !== categoryStoreGeneration ||
+                        subscription !== categorySubscription
+                    )
+                        return;
+                    categoryStoreError = categoryErrorText(error.message);
+                }
+            )
+            .finally(() => {
+                if (categoryPending.get(key) === token) categoryPending.delete(key);
+                if (
+                    !documentEnded &&
+                    storeGeneration === categoryStoreGeneration &&
+                    subscription === categorySubscription
+                )
+                    syncCategoryMenu();
+            });
+    }
+
+    function isCurrentCategoryMenu(view) {
+        return Boolean(
+            view &&
+            view === categoryMenuView &&
+            isCategoryExclusionRoute() &&
+            view.menu.isConnected &&
+            document.getElementById(MENU_ID) === view.menu &&
+            view.menu.getAttribute("data-open") === "1" &&
+            view.menu.contains(view.root)
+        );
+    }
+
+    function cancelCategoryMenuSearch() {
+        categorySearchGeneration++;
+        const view = categoryMenuView;
+        if (view?.timer) window.clearTimeout(view.timer);
+        if (view) {
+            view.timer = 0;
+            view.controller?.abort();
+            view.controller = null;
+        }
+        dataRepository.cancelCategorySearch();
+    }
+
+    function scheduleCategoryMenuSearch(view) {
+        cancelCategoryMenuSearch();
+        view.results = [];
+        const keyword = view.input.value.trim();
+        view.searchStatus = keyword ? "typing" : "idle";
+        if (keyword.length > 100) view.searchStatus = "long";
+        syncCategoryMenu();
+        if (!keyword || keyword.length > 100 || view.composing || !isCurrentCategoryMenu(view)) return;
+        const generation = categorySearchGeneration;
+        view.timer = window.setTimeout(() => {
+            view.timer = 0;
+            void searchCategoryMenu(view, keyword, generation);
+        }, 300);
+    }
+
+    async function searchCategoryMenu(view, keyword, generation = categorySearchGeneration) {
+        if (
+            !isCurrentCategoryMenu(view) ||
+            view.composing ||
+            view.input.value.trim() !== keyword ||
+            generation !== categorySearchGeneration
+        )
+            return;
+        const controller = new AbortController();
+        view.controller = controller;
+        view.searchStatus = "loading";
+        syncCategoryMenu();
+        const isCurrent = () =>
+            generation === categorySearchGeneration &&
+            !controller.signal.aborted &&
+            isCurrentCategoryMenu(view) &&
+            !view.composing &&
+            view.input.value.trim() === keyword;
+        try {
+            const results = await dataRepository.searchCategories(keyword, { signal: controller.signal });
+            if (!isCurrent()) return;
+            view.results = results;
+            view.searchStatus = results.length ? "success" : "empty";
+        } catch (_) {
+            if (!isCurrent()) return;
+            view.searchStatus = "error";
+            view.results = [];
+        } finally {
+            if (isCurrent()) {
+                view.controller = null;
+                syncCategoryMenu();
+                scheduleMenuPosition();
+            }
+        }
+    }
+
+    function syncCategoryRows(view, host, categories, mode) {
+        const records = view[mode === "add" ? "resultRows" : "selectedRows"];
+        const keys = new Set();
+        for (const category of categories) {
+            const key = categoryKey(category);
+            keys.add(key);
+            let row = records.get(key);
+            if (!row) {
+                const element = document.createElement("div");
+                element.className = "bcgt-category-row";
+                const name = document.createElement("span");
+                name.className = "bcgt-category-name";
+                const type = document.createElement("span");
+                type.className = "bcgt-category-type";
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "bcgt-category-button";
+                button.setAttribute(mode === "add" ? "data-category-add" : "data-category-remove", "");
+                element.append(name, type, button);
+                row = { element, name, type, button, category };
+                records.set(key, row);
+                button.addEventListener("click", (event) => mutateCategory(row.category, mode, view, row, event));
+            }
+            row.category = category;
+            setText(row.name, category.categoryValue);
+            setText(
+                row.type,
+                category.categoryType === "GAME"
+                    ? "게임"
+                    : category.categoryType === "ETC"
+                      ? "기타"
+                      : category.categoryType
+            );
+            const pending = categoryPending.has(key);
+            const selected = categoryKeys.has(key);
+            row.button.disabled = !categoryState || view.composing || pending || (mode === "add" && selected);
+            row.button.setAttribute("aria-label", `${category.categoryValue} ${mode === "add" ? "제외" : "제외 해제"}`);
+            row.button.setAttribute("aria-busy", pending ? "true" : "false");
+            setText(
+                row.button,
+                pending
+                    ? mode === "add"
+                        ? "저장 중…"
+                        : "해제 중…"
+                    : mode === "add"
+                      ? selected
+                          ? "제외 중"
+                          : "제외"
+                      : "제외 해제"
+            );
+            if (host.children[keys.size - 1] !== row.element)
+                host.insertBefore(row.element, host.children[keys.size - 1] || null);
+        }
+        for (const [key, row] of records) {
+            if (keys.has(key)) continue;
+            row.element.remove();
+            records.delete(key);
+        }
+    }
+
+    function setCategoryStatusText(element, text) {
+        if (element.textContent !== text) element.textContent = text;
+    }
+
+    function syncCategoryMenu() {
+        const view = categoryMenuView;
+        if (
+            !view ||
+            !view.menu.isConnected ||
+            document.getElementById(MENU_ID) !== view.menu ||
+            !isCategoryExclusionRoute()
+        )
+            return;
+        setCategoryStatusText(
+            view.storeStatus,
+            categoryStoreError || (categoryStoreLoading ? "제외 목록을 불러오고 있어요…" : "")
+        );
+        view.storeRetry.hidden = !categoryStoreError;
+        view.storeRetry.disabled = categoryStoreLoading;
+        syncCategoryRows(view, view.selected, categoryState?.categories || [], "remove");
+        setCategoryStatusText(
+            view.selectedStatus,
+            categoryState
+                ? categoryState.categories.length
+                    ? `제외한 카테고리 ${categoryState.categories.length}개`
+                    : "제외한 카테고리가 없어요."
+                : ""
+        );
+        const messages = {
+            idle: "",
+            typing: "검색어 입력 중이에요…",
+            loading: "카테고리를 검색하고 있어요…",
+            empty: "검색 결과가 없어요.",
+            error: "카테고리 검색에 실패했어요. 다시 시도해 주세요.",
+            long: "검색어는 100자 이하로 입력해 주세요.",
+            success: view.results.length >= 50 ? "검색 결과는 최대 50개예요. 검색어를 구체화해 주세요." : "",
+        };
+        setCategoryStatusText(view.searchStatusElement, messages[view.searchStatus]);
+        view.searchRetry.hidden = view.searchStatus !== "error";
+        syncCategoryRows(view, view.resultsElement, view.results, "add");
+    }
+
+    function buildCategoryExclusionSection(menu) {
+        if (!isCategoryExclusionRoute()) return;
+        cancelCategoryMenuSearch();
+        const root = document.createElement("section");
+        root.className = "bcgt-category-exclusions";
+        root.setAttribute("data-category-exclusions", "");
+        root.setAttribute("aria-label", "카테고리 제외");
+        root.innerHTML = `<div class="bcgt-filter-title">카테고리 제외</div>
+<label class="bcgt-category-search-label">카테고리 검색<input type="search" data-category-search aria-label="제외할 카테고리 검색" placeholder="카테고리 이름 검색" autocomplete="off" spellcheck="false" maxlength="100" /></label>
+<div data-category-store-status role="status" aria-live="polite"></div><button type="button" class="bcgt-category-button" data-category-store-retry hidden>제외 목록 다시 불러오기</button>
+<div data-category-selected-status></div><div class="bcgt-category-list" data-category-selected></div>
+<div data-category-search-status role="status" aria-live="polite"></div><button type="button" class="bcgt-category-button" data-category-search-retry hidden>카테고리 검색 다시 시도</button>
+<div class="bcgt-category-list" data-category-results></div>`;
+        menu.insertBefore(root, menu.querySelector(".bcgt-reset-row"));
+        const view = {
+            menu,
+            root,
+            input: root.querySelector("[data-category-search]"),
+            storeStatus: root.querySelector("[data-category-store-status]"),
+            storeRetry: root.querySelector("[data-category-store-retry]"),
+            selectedStatus: root.querySelector("[data-category-selected-status]"),
+            selected: root.querySelector("[data-category-selected]"),
+            resultsElement: root.querySelector("[data-category-results]"),
+            searchStatusElement: root.querySelector("[data-category-search-status]"),
+            searchRetry: root.querySelector("[data-category-search-retry]"),
+            results: [],
+            selectedRows: new Map(),
+            resultRows: new Map(),
+            composing: false,
+            timer: 0,
+            controller: null,
+            searchStatus: "idle",
+        };
+        categoryMenuView = view;
+        view.input.addEventListener("input", () => scheduleCategoryMenuSearch(view));
+        view.input.addEventListener("compositionstart", () => {
+            view.composing = true;
+            scheduleCategoryMenuSearch(view);
+        });
+        view.input.addEventListener("compositionend", () => {
+            view.composing = false;
+            scheduleCategoryMenuSearch(view);
+        });
+        view.searchRetry.addEventListener("click", () => scheduleCategoryMenuSearch(view));
+        view.storeRetry.addEventListener("click", () => {
+            if (isCurrentCategoryMenu(view)) readCategoryState();
+        });
+    }
+
+    function categoryFromMeta(meta) {
+        return normalizeCategory({
+            categoryType: meta?.categoryType,
+            categoryId: meta?.categoryId,
+            categoryValue: meta?.categoryName,
+        });
+    }
+
+    function categoryIdentityFromMeta(meta) {
+        return categoryKey(meta?.categoryType, meta?.categoryId)
+            ? { categoryType: meta.categoryType, categoryId: meta.categoryId }
+            : null;
+    }
+
+    function categoryFromLink(anchor) {
+        try {
+            const url = new URL(anchor.getAttribute("href"), location.origin);
+            if (url.origin !== "https://chzzk.naver.com") return null;
+            const match = url.pathname.match(/^\/category\/([^/]+)\/([^/]+)\/lives\/?$/);
+            if (!match) return null;
+            const categoryType = decodeURIComponent(match[1]);
+            const categoryId = decodeURIComponent(match[2]);
+            return categoryKey(categoryType, categoryId) ? { categoryType, categoryId } : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function currentRowCategory(row) {
+        const card = row?.entry?.card;
+        const route = getRoute();
+        if (!card?.isConnected || !isCurrentFollowerRow(route, row)) return null;
+        const binding = injectedCategoryBindings.get(card);
+        if (binding) {
+            const meta = row.meta;
+            if (
+                binding.id !== row.entry.id ||
+                binding.channelId !== meta?.channelId ||
+                !hasValidCategoryMetadataBinding(binding) ||
+                !hasValidCategoryMetadataBinding(meta) ||
+                binding.liveId !== meta?.liveId
+            )
+                return null;
+            return categoryIdentityFromMeta(meta);
+        }
+        const categories = Array.from(card.querySelectorAll("a[href]")).map(categoryFromLink).filter(Boolean);
+        if (!categories.length || categories.some((category) => categoryKey(category) !== categoryKey(categories[0])))
+            return null;
+        return categories[0];
+    }
+
+    function passesRowCategoryExclusions(row) {
+        return !hasCategoryExclusions() || passesCategoryExclusions(currentRowCategory(row), categoryKeys);
+    }
+
+    function passesMetaCategoryExclusions(meta) {
+        return (
+            !hasCategoryExclusions() ||
+            !hasValidCategoryMetadataBinding(meta) ||
+            passesCategoryExclusions(categoryIdentityFromMeta(meta), categoryKeys)
+        );
+    }
+
+    function hasValidCategoryMetadataBinding(meta) {
+        return (
+            typeof meta?.id === "string" &&
+            meta.id.length > 0 &&
+            meta.id === meta.channelId &&
+            Number.isSafeInteger(meta.liveId) &&
+            meta.liveId > 0
+        );
     }
 
     function areFollowerBadgesEnabled() {
@@ -554,6 +1084,19 @@
   grid-column:1 / -1;
 }
 #${MENU_ID} .bcgt-filter-group[hidden]{display:none;}
+#${MENU_ID} .bcgt-category-exclusions{display:flex;flex-direction:column;gap:8px;margin-top:12px;padding-top:10px;border-top:1px solid var(--bcgt-menu-border);min-width:0;}
+#${MENU_ID} .bcgt-category-search-label{display:flex;flex-direction:column;gap:4px;color:var(--bcgt-menu-text-sub);}
+#${MENU_ID} [data-category-search]{box-sizing:border-box;width:100%;min-width:0;padding:8px;border:1px solid var(--bcgt-menu-border);border-radius:6px;background:var(--bcgt-menu-field-bg);color:var(--bcgt-menu-text);font:inherit;}
+#${MENU_ID} .bcgt-category-list{display:flex;flex-direction:column;gap:4px;max-height:176px;overflow-y:auto;min-width:0;}
+#${MENU_ID} .bcgt-category-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;min-width:0;padding:4px;}
+#${MENU_ID} .bcgt-category-name{overflow-wrap:anywhere;line-height:20px;}
+#${MENU_ID} .bcgt-category-type{max-width:80px;overflow-wrap:anywhere;color:var(--bcgt-menu-text-sub);font-size:12px;}
+#${MENU_ID} .bcgt-category-button{flex:0 0 auto;min-height:28px;padding:4px 8px;border:1px solid var(--bcgt-menu-border);border-radius:6px;background:var(--bcgt-menu-button-bg);color:var(--bcgt-menu-text);font:inherit;cursor:pointer;}
+#${MENU_ID} .bcgt-category-button:hover{background:var(--bcgt-menu-hover);}
+#${MENU_ID} .bcgt-category-button:disabled{color:var(--bcgt-menu-disabled);cursor:default;}
+#${MENU_ID} .bcgt-category-button[hidden]{display:none;}
+#${MENU_ID} :is(.bcgt-category-button,[data-category-search]):focus-visible{outline:2px solid var(--bcgt-menu-checked);outline-offset:2px;}
+#${MENU_ID} :is([data-category-search-status],[data-category-store-status],[data-category-selected-status]){color:var(--bcgt-menu-text-sub);overflow-wrap:anywhere;line-height:20px;}
 #${MENU_ID} .bcgt-option-list{
   display:flex;
   min-width:0;
@@ -1521,7 +2064,7 @@
         if (!route || !rememberedRows.length) return;
         if (!hasFollowerFilter() && !areFollowerBadgesEnabled()) return;
         const rows = (hasFollowerFilter() ? rememberedRows : getRowsNearViewport(rememberedRows)).filter(
-            (row) => !readFollowerCache(row.meta.channelId).hit
+            (row) => passesRowCategoryExclusions(row) && !readFollowerCache(row.meta.channelId).hit
         );
         if (!rows.length) return;
         const generation = applyGeneration;
@@ -1614,11 +2157,20 @@
     }
 
     function hasActiveFilters() {
+        return hasNumericFilters() || hasCategoryExclusions();
+    }
+
+    function hasNumericFilters() {
         return hasFollowerFilter() || hasViewFilter() || hasDurationFilter();
     }
 
     function activeFilterCount() {
-        return (hasFollowerFilter() ? 1 : 0) + (hasViewFilter() ? 1 : 0) + (hasDurationFilter() ? 1 : 0);
+        return (
+            (hasFollowerFilter() ? 1 : 0) +
+            (hasViewFilter() ? 1 : 0) +
+            (hasDurationFilter() ? 1 : 0) +
+            (hasCategoryExclusions() ? 1 : 0)
+        );
     }
 
     function passesViewFilter(meta) {
@@ -1723,6 +2275,7 @@
     }
 
     function passesStickyFilters(row) {
+        if (!passesRowCategoryExclusions(row)) return false;
         if (!passesStickyViewFilter(row)) return false;
         if (!passesDurationFilter(row.meta)) return false;
         return passesFollowerFilter(row.meta);
@@ -1756,6 +2309,7 @@
     }
 
     function passesMetaFilters(meta, query = "") {
+        if (!passesMetaCategoryExclusions(meta)) return false;
         if (query && !buildMetaSearchText(meta).includes(query)) return false;
         if (!passesViewFilter(meta) && !isViewFilterSnapshotId(meta?.id)) return false;
         if (!passesDurationFilter(meta)) return false;
@@ -2571,10 +3125,34 @@
         setText(card.querySelector("a[class*='title'], [class*='title']"), meta.title);
         syncInjectedChannelIdentity(card, channelAnchors, meta);
 
+        const category = categoryFromMeta(meta);
+        const categoryAnchors = new Set();
+        if (route.scope === "global-lives") {
+            injectedCategoryBindings.set(card, { id: meta.id, channelId: meta.channelId, liveId: meta.liveId });
+            for (const anchor of Array.from(card.querySelectorAll("a[href]"))) {
+                if (!categoryFromLink(anchor)) continue;
+                categoryAnchors.add(anchor);
+                if (!category) {
+                    anchor.remove();
+                    continue;
+                }
+                anchor.setAttribute(
+                    "href",
+                    `/category/${encodeURIComponent(category.categoryType)}/${encodeURIComponent(category.categoryId)}/lives`
+                );
+                setText(anchor.querySelector("span") || anchor, category.categoryValue);
+            }
+        }
+
         const tagContainer = card.querySelector("[class*='information'][class*='link']");
         if (tagContainer) {
-            const tagValues = [meta.categoryName, ...(Array.isArray(meta.tags) ? meta.tags : [])].filter(Boolean);
-            const tagAnchors = Array.from(tagContainer.querySelectorAll("a"));
+            const tagValues = [
+                categoryAnchors.size ? "" : meta.categoryName,
+                ...(Array.isArray(meta.tags) ? meta.tags : []),
+            ].filter(Boolean);
+            const tagAnchors = Array.from(tagContainer.querySelectorAll("a")).filter(
+                (anchor) => !categoryAnchors.has(anchor)
+            );
             tagAnchors.forEach((anchor, index) => {
                 const tag = tagValues[index];
                 if (!tag) {
@@ -2843,6 +3421,7 @@
 </div>
 `;
         syncFilterOptionButtons(menu);
+        buildCategoryExclusionSection(menu);
         const resetButton = menu.querySelector("[data-filter-reset]");
         if (resetButton) {
             resetButton.addEventListener("click", (e) => {
@@ -2922,10 +3501,18 @@
             menu = buildMenu();
             document.body.appendChild(menu);
         }
+        if (categoryMenuView?.menu === menu && !isCategoryExclusionRoute()) {
+            cancelCategoryMenuSearch();
+            categoryMenuView.root.remove();
+            categoryMenuView = null;
+        } else if (isCategoryExclusionRoute() && categoryMenuView?.menu !== menu) {
+            buildCategoryExclusionSection(menu);
+        }
         return menu;
     }
 
     function closeMenu() {
+        cancelCategoryMenuSearch();
         const bar = document.getElementById(BAR_ID);
         const menu = document.getElementById(MENU_ID);
         if (bar) {
@@ -2933,6 +3520,13 @@
             bar.querySelector(".bcgt-filter")?.setAttribute("aria-expanded", "false");
         }
         if (menu) menu.setAttribute("data-open", "0");
+        if (categoryMenuView?.menu === menu) {
+            categoryMenuView.results = [];
+            categoryMenuView.input.value = "";
+            categoryMenuView.searchStatus = "idle";
+            categoryMenuView.composing = false;
+            syncCategoryMenu();
+        }
     }
 
     function positionMenu() {
@@ -3029,7 +3623,7 @@
         const viewFilterUnitEl = menu?.querySelector("[data-view-filter-unit]");
         if (viewFilterUnitEl) viewFilterUnitEl.textContent = viewFilterUnit;
         const resetButton = menu?.querySelector("[data-filter-reset]");
-        if (resetButton) resetButton.disabled = !hasActiveFilters();
+        if (resetButton) resetButton.disabled = !hasNumericFilters();
         for (const option of menu?.querySelectorAll(".bcgt-option") || []) {
             const kind = option.getAttribute("data-filter-kind");
             const { min, max: optionMax } = optionFilterRange(option);
@@ -3057,6 +3651,7 @@
             const hasCustomRange = (state.minCustom && state.min > 0) || (state.maxCustom && state.max > 0);
             custom.setAttribute("data-active", hasCustomRange ? "1" : "0");
         }
+        syncCategoryMenu();
     }
 
     function buildToolbar() {
@@ -3281,6 +3876,7 @@
             viewFilterMax,
             durationFilterMin,
             durationFilterMax,
+            hasCategoryExclusions() ? categoryStateEpoch : 0,
         ].join("|");
     }
 
@@ -3360,6 +3956,7 @@
     }
 
     async function applyTools() {
+        syncCategoryExclusionRuntime();
         if (!shouldApplyTools()) {
             removeTools();
             return;
@@ -3459,8 +4056,14 @@
             clearInjectedCards(grid);
             entries = entries.filter((entry) => entry.card.isConnected);
         }
+        const entriesById = new Map(entries.map((entry) => [entry.id, entry]));
+        const passesCurrentMetadataCategory = (meta) => {
+            const entry = entriesById.get(meta.id);
+            return entry ? passesRowCategoryExclusions({ entry, meta }) : passesMetaCategoryExclusions(meta);
+        };
         const metadataCandidates = Array.from(metadata.values()).filter((meta) => {
             if (!meta?.id) return false;
+            if (!passesCurrentMetadataCategory(meta)) return false;
             if (query && !buildMetaSearchText(meta).includes(query)) return false;
             if (!passesDurationFilter(meta)) return false;
             return passesViewFilter(meta) || isViewFilterSnapshotId(meta.id);
@@ -3499,6 +4102,7 @@
             }
         }
 
+        // 행 순회가 UI에 양보한 동안 카테고리 링크가 바뀔 수 있어 확정 직전에 다시 판정한다.
         const visible = candidateRows
             .filter((row) => passesStickyFilters(row))
             .sort((a, b) => getStableVisibleOrder(a) - getStableVisibleOrder(b));
@@ -3509,11 +4113,14 @@
         syncLiveElapsedBadges(route, rows);
         syncFollowerBadges(route, rows);
         for (const row of rows) {
-            setCardHidden(row.entry.card, !visibleSet.has(row.entry.card));
+            setCardHidden(row.entry.card, !visibleSet.has(row.entry.card) || !passesRowCategoryExclusions(row));
         }
 
         const followerCandidates = hasFollowerFilter()
-            ? [...metadataCandidates, ...candidateRows.map((row) => row.meta)]
+            ? [
+                  ...metadataCandidates.filter(passesCurrentMetadataCategory),
+                  ...candidateRows.filter(passesRowCategoryExclusions).map((row) => row.meta),
+              ]
             : [];
         const followerHydrationPending =
             hasFollowerFilter() && hydrateFilteredCandidates(route, followerCandidates, isCurrent);
@@ -3559,6 +4166,8 @@
     }
 
     function removeTools({ preserveCount = false } = {}) {
+        cancelCategoryMenuSearch();
+        categoryMenuView = null;
         scheduleThrottledApply.cancel?.();
         toolbarRescueGeneration++;
         if (toolbarRescueFrame) cancelAnimationFrame(toolbarRescueFrame);
@@ -3599,6 +4208,7 @@
         clearDurationFilterRefreshTimer();
         clearLoading();
         const route = getRoute();
+        if (!isCategoryExclusionRoute()) stopCategoryExclusionRuntime();
         if (preserveCount && isGlobalLiveCountEnabled(route) && mountToolbar(route)) syncGlobalLiveCount(route);
     }
 
@@ -3667,6 +4277,9 @@
             if (node.id === BAR_ID || node.id === MENU_ID || node.classList?.contains("bcgt-live-count")) return false;
         }
         if (isOurNode(mutation.target)) return true;
+        if (mutation.type === "attributes" && mutation.attributeName === "href") {
+            return !mutation.target.closest?.(`[${CARD_ATTR}="1"]`);
+        }
         const added = mutation.addedNodes;
         const removed = mutation.removedNodes;
         if ((!added || added.length === 0) && (!removed || removed.length === 0)) {
@@ -3710,6 +4323,7 @@
                 subtree: true,
                 attributes: true,
                 attributeFilter: [
+                    "href",
                     TABS_ATTR,
                     CARD_ATTR,
                     CARD_ID_ATTR,
@@ -3726,6 +4340,10 @@
                 ],
             },
             onMutations: () => {
+                if (categoryMenuView && !categoryMenuView.menu.isConnected) {
+                    cancelCategoryMenuSearch();
+                    categoryMenuView = null;
+                }
                 const route = getRoute();
                 if (location.href !== lastUrl) {
                     scheduleThrottledApply.cancel?.();
@@ -3775,6 +4393,20 @@
             removeToolsIfMounted();
         }
         scheduleApply();
+        syncCategoryExclusionRuntime();
+    }
+
+    function handleDocumentEnd(event) {
+        if (event.persisted) {
+            closeMenu();
+            return;
+        }
+        documentEnded = true;
+        categoryStoreGeneration++;
+        categoryPending.clear();
+        stopCategoryExclusionRuntime();
+        teardownRuntime();
+        window.removeEventListener("pagehide", handleDocumentEnd, true);
     }
 
     function uninstallGlobalListeners() {
@@ -3792,6 +4424,8 @@
     }
 
     function installRuntime() {
+        if (documentEnded) return;
+        syncCategoryExclusionRuntime();
         if (runtimeInstalled) return;
         runtimeInstalled = true;
         startObserver();
@@ -3800,6 +4434,7 @@
     }
 
     function teardownRuntime() {
+        stopCategoryExclusionRuntime();
         runtimeInstalled = false;
         scheduleThrottledApply.cancel?.();
         applyQueued = false;
@@ -3817,6 +4452,7 @@
     function applyOptions(options) {
         const prev = featureOptions;
         featureOptions = options;
+        syncCategoryExclusionRuntime();
         updateUiState();
 
         if (prev.categoryToolsMaxMetadataPages !== options.categoryToolsMaxMetadataPages) {
@@ -3851,7 +4487,17 @@
         scheduleApply();
     }
 
-    bindFeatureOptions(applyOptions);
+    function applyInitialOptions(options) {
+        featureOptionsReady = true;
+        applyOptions(options);
+    }
+
+    bindFeatureOptions((options) => {
+        if (featureOptionsReady) applyOptions(options);
+    });
+    // 일반 변경 callback은 초기 읽기보다 먼저 올 수 있다. 공용 진행 조회에 초기 확인만 함께 등록한다.
+    BetterChzzkSettings.getOptions(applyInitialOptions);
+    window.addEventListener("pagehide", handleDocumentEnd, true);
 
     onReady(() => {
         if (isRuntimeEnabled()) installRuntime();

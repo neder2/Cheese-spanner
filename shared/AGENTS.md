@@ -8,6 +8,7 @@
 | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `settings.js`                                | 옵션 스키마·기본값·정규화·최초 로드 공유·변경 구독을 소유해요. 기능 UI와 권한 요청을 넣지 않아요                       |
 | `data.js`                                    | 응답·URL·날짜·시청 구간·제목 정규화, fetch·storage·댓글 공용 요청을 제공해요. 기능별 DOM·페이지 상태를 보관하지 않아요 |
+| `categoryExclusions.js`                      | 카테고리 정체성·상태·명령 검증과 워커의 독립 local 저장 큐를 소유해요. 이름 검색·목록 DOM·시청 기록은 맡지 않아요      |
 | `selectors.js`                               | isolated용 선택자 체인·제한된 진단을 제공해요. MAIN에서 이 전역에 접근할 수 있다고 가정하지 않아요                     |
 | `vodTimeline.js`                             | 상세 정규화·분할 방송 연결 계산을 소유해요. fetch 자체는 호출자가 주입하고 UI·저장소를 다루지 않아요                   |
 | `liveTiming.js`                              | 관측한 라이브 끝 보정과 현재 위치의 연속 버퍼만 계산해요. 시계·DOM·재생·저장은 호출자가 소유해요                       |
@@ -36,9 +37,19 @@
 - 취소된 공유 요청이 다음 세대의 캐시를 채우거나 지우지 않게 해요. AbortError만으로 외부 취소를 단정하지 않아요. KST 날짜 계산, 17시간 분할 관측 모델, 실제 미디어 범위를 서로 혼용하지 않아요.
 - 선택자 체인을 쉼표 목록으로 합치지 않아요. 우선순위가 문서 순서로 바뀔 수 있어요. URL 허용 목록을 확장할 때 실제 호스트·용도·소비 지점을 확인해요.
 
+## 카테고리 제외 저장
+
+유형·ID는 원래 대소문자를 보존하는 정확한 쌍이에요. 이름을 바꿔 같은 유형·ID를 다시 추가해도 기존 표시 이름·순서를 갱신하지 않아요. 상태·명령의 허용 필드·버전·길이·최대 100개·중복을 엄격하게 검증하며 잘못된 값을 절삭하거나 빈 목록으로 저장하지 않아요.
+
+같은 확장 ID의 정상 최상위 `/lives` 탭만 get·add·remove를 요청해요. 전체 목록 교체·초기화는 제공하지 않고 전용 큐에서 최신 local 값에 개별 변경을 적용해요. 시청 기록·새 기능 안내·방송 알림의 큐와 분리하고 각 storage 콜백 안에서 lastError를 읽어요. 변경한 revision은 저장 성공 뒤에만 응답하고, 같은 항목 추가·없는 항목 해제는 쓰지 않는 성공이에요. 읽기 실패·손상·상한·쓰기 실패에서도 기존 선택을 보존하며 큐의 다음 요청은 계속 처리해요.
+
+이 공용 파일은 DOM 독립으로 워커와 isolated에서 각각 로드해요. MAIN 브리지·DOM 속성·합성 이벤트에서 특권 저장 명령을 받는 경로를 만들지 않아요. 저장소 키 삭제 뒤 늦은 응답을 막는 페이지 세대·revision 반영은 콘텐츠 소유이며 워커 큐의 개별 저장과 구분해요.
+
 ## 회귀 검증
 
 설정은 `tests/settings.test.js`, `tests/options-page.test.js`, `tests/options-save-race.test.js`에서 키 일치·기본값·구형 저장값·저장 오류를 확인해요. 공용 storage·라우트·선택자는 `tests/extension-pages.test.js`, URL·구간 방어는 `tests/security-boundaries.test.js`, `tests/navigation-data.test.js`를 확인해요.
+
+카테고리 제외는 `tests/category-exclusions-store.test.js`에서 순수 검증·실제 worker 로드·다중 탭 순서·콜백 실패·손상 보존·독립 큐를 확인해요. 소비자인 `tests/category-tools-exclusions.test.js`와 category-tools 모델·repository·lifecycle, extension-pages·refactoring-data-modules의 로드 순서도 함께 확인해요. 브라우저 재시작·실제 Chrome SPA 발신 정보는 합성 테스트 통과로 대신하지 않아요.
 
 기록 변경은 `tests/watch-history-store.test.js`, `tests/watch-activity.test.js`, `tests/donation-history-import.test.js`에서 재전송·삭제 경합·다중 탭·소유 계정·활동만 저장하는 경로를 확인해요. 분할 방송은 `tests/vod-timeline.test.js`와 실제 통계·시계 소비자 회귀도 함께 실행해요.
 

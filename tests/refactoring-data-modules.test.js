@@ -18,6 +18,7 @@ function loadDataModules(folder, globals = {}) {
         ...globals,
     });
     vm.runInContext(read("shared/data.js"), context);
+    vm.runInContext(read("shared/categoryExclusions.js"), context);
     context.BetterChzzk.utils.normSpace = context.BetterChzzk.utils.compactSpaces;
     // The existing timeline module uses window only for namespace registration.
     context.window = context;

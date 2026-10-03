@@ -166,7 +166,7 @@
     let urlStartSeekSeq = 0;
     let activeUrlStartSeek = null;
     let lastUrlStartSeekAt = 0;
-    let lastUrlStartSeekHref = "";
+    let lastUrlStartSeekKey = "";
     let pageEventListenersInstalled = false;
     const trackedQualityTargets = [];
     let cachedRoutePathname = "";
@@ -319,7 +319,7 @@
             if (!raw) return NaN;
 
             const seconds = Number(raw);
-            return Number.isFinite(seconds) && seconds > 0 ? seconds : NaN;
+            return Number.isFinite(seconds) && seconds >= 0 ? seconds : NaN;
         } catch (_) {
             return NaN;
         }
@@ -344,6 +344,7 @@
     function finishUrlStartSeek(seq) {
         if (seq !== urlStartSeekSeq) return;
         activeUrlStartSeek = null;
+        lastUrlStartSeekAt = 0;
         urlStartSeekSeq += 1;
     }
 
@@ -366,6 +367,9 @@
         const now = performance.now();
         if (isUrlStartSeekSatisfied(video, currentTime, targetSeconds, startedAt)) {
             state.satisfiedAt = state.satisfiedAt || now;
+            if (!video.seeking && now - state.satisfiedAt >= URL_START_SEEK_STABLE_MS) {
+                finishUrlStartSeek(seq);
+            }
             return;
         }
 
@@ -379,7 +383,7 @@
     }
 
     function scheduleUrlStartSeekFix(targetSeconds, href = location.href) {
-        if (!Number.isFinite(targetSeconds) || targetSeconds <= 0) return;
+        if (!Number.isFinite(targetSeconds) || targetSeconds < 0) return;
 
         const seq = ++urlStartSeekSeq;
         const startedAt = performance.now();
@@ -395,17 +399,17 @@
         const href = location.href;
         const targetSeconds = getUrlStartSeekSeconds();
         if (!Number.isFinite(targetSeconds)) {
-            lastUrlStartSeekHref = href;
+            lastUrlStartSeekKey = "";
             lastUrlStartSeekAt = 0;
             if (activeUrlStartSeek) finishUrlStartSeek(activeUrlStartSeek.seq);
             return;
         }
 
-        if (lastUrlStartSeekHref === href && activeUrlStartSeek?.targetSeconds === targetSeconds) {
-            return;
-        }
+        // A completed or cancelled URL intent belongs to this entry, not every quality request.
+        const key = `${location.pathname}|${targetSeconds}`;
+        if (lastUrlStartSeekKey === key) return;
 
-        lastUrlStartSeekHref = href;
+        lastUrlStartSeekKey = key;
         scheduleUrlStartSeekFix(targetSeconds, href);
     }
 
@@ -448,7 +452,12 @@
 
     function handleCommentTimelineClick(event) {
         const targetSeconds = getCommentTimelineSeekSeconds(event.target);
-        if (Number.isFinite(targetSeconds)) scheduleCommentTimelineSeekFix(targetSeconds);
+        if (!Number.isFinite(targetSeconds)) return;
+        if (activeUrlStartSeek) {
+            lastUrlStartSeekAt = 0;
+            finishUrlStartSeek(activeUrlStartSeek.seq);
+        }
+        scheduleCommentTimelineSeekFix(targetSeconds);
     }
 
     function isEditableTarget(target) {

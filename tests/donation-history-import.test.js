@@ -396,6 +396,8 @@ function events() {
 }
 
 function importController(t, { requestPage, owner = "viewer", history = { donationImport: coveredLedger() } } = {}) {
+    const collectAtFixtureTime = data.collect;
+    t.mock.method(data, "collect", (options) => collectAtFixtureTime({ ...options, now: () => NOW }));
     const onConnect = events();
     let stored = history,
         writes = 0,

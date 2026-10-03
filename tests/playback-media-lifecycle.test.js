@@ -377,14 +377,19 @@ test("live timeshift guard accepts native Arrow and L seeks when custom keyboard
     dom.window.close();
 });
 
-test("VOD replay chat observer retries after the DOM has stayed quiet for the settle window", async () => {
+test("VOD replay chat observer retries after the DOM has stayed quiet for the settle window", async (t) => {
     const chrome = createFakeChrome();
     const dom = createPageDom(
-        '<!doctype html><body><main><video id="video"></video></main></body>',
+        '<!doctype html><body><main><video id="video"></video></main><aside id="vod-aside"></aside></body>',
         "https://chzzk.naver.com/category/game/lives",
         chrome
     );
     const { document } = dom.window;
+    t.after(() => dom.window.close());
+    Object.defineProperties(document.getElementById("video"), {
+        readyState: { get: () => 4 },
+        duration: { get: () => 7200 },
+    });
     const timers = new Map();
     let nextTimerId = 1;
     let now = 0;
@@ -422,14 +427,19 @@ test("VOD replay chat observer retries after the DOM has stayed quiet for the se
     dom.window.close();
 });
 
-test("VOD replay chat observer stops deferring after continuous layout mutations", async () => {
+test("VOD replay chat observer stops deferring after continuous layout mutations", async (t) => {
     const chrome = createFakeChrome();
     const dom = createPageDom(
-        '<!doctype html><body><main><video id="video"></video></main></body>',
+        '<!doctype html><body><main><video id="video"></video></main><aside id="vod-aside"></aside></body>',
         "https://chzzk.naver.com/category/game/lives",
         chrome
     );
     const { document } = dom.window;
+    t.after(() => dom.window.close());
+    Object.defineProperties(document.getElementById("video"), {
+        readyState: { get: () => 4 },
+        duration: { get: () => 7200 },
+    });
     const timers = new Map();
     let nextTimerId = 1;
     let now = 0;

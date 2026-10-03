@@ -19,6 +19,9 @@ function evaluateFeature(fileName, { url, options = {}, utils = {}, namespaces =
     assert.notEqual(closeIndex, -1, `${fileName} should end with an IIFE`);
 
     window.BetterChzzkSettings = {
+        getOptions(callback) {
+            callback(this.normalizeOptions());
+        },
         normalizeOptions: () => ({
             adblockPopupEnabled: true,
             categoryToolsEnabled: true,
@@ -160,6 +163,8 @@ test("category metadata backs off persistent failures and recovers", async () =>
             getMetadataState: () => dataRepository.metadataState()
         }`,
     });
+    // 초기 옵션 적용 예약과 구분해, 메타데이터 조회 이후의 재시도 예약만 센다.
+    retryScheduleCount = 0;
     const route = { scope: "category", categoryType: "game", categoryId: "test", tab: "lives" };
     let now = 10000;
     const timers = [];

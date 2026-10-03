@@ -2,7 +2,7 @@
 
 ## 접근 범위
 
-외부 서버에 제공하는 공개 API나 다른 확장이 호출하는 API는 없어요. 치지직 페이지, 네이버 API, Chrome 확장 메시지 사이에서 사용하는 입출력을 구분해요. 아래 API·DOM 형식은 저장소가 현재 처리하는 계약이며 네이버의 장기 호환 보장이 아니에요. 2026-09-28 코드 확인과 기존 fixture 기준이고, 이날 실제 서비스 응답을 다시 측정한 결과는 아니에요.
+외부 서버에 제공하는 공개 API나 다른 확장이 호출하는 API는 없어요. 치지직 페이지, 네이버 API, Chrome 확장 메시지 사이에서 사용하는 입출력을 구분해요. 아래 API·DOM 형식은 저장소가 현재 처리하는 계약이며 네이버의 장기 호환 보장이 아니에요. 기존 계약은 2026-09-28 코드 확인과 fixture 기준이고, 이날 실제 서비스 응답을 다시 측정한 결과는 아니에요. 카테고리 제외는 2026-10-01 최종 코드 확인과 2026-09-30 인증정보 없는 HTTP 확인 기준이며 실제 Chrome 동작은 미검증이에요.
 
 일반 JSON 조회는 기존 로그인 세션을 포함한 요청을 사용해요. 공용 `fetchJson`의 기본 타임아웃은 12초지만 소비자가 다른 값을 줄 수 있어요. HTTP 실패는 `HTTP <상태>` 오류, JSON 해석 실패는 파싱 오류로 전달돼요. 내부 타임아웃과 외부 취소가 모두 AbortError일 수 있으므로 취소 이유는 호출자의 signal과 함께 판단해요. 응답의 `code/content` 검증은 API 소비자별로 달라요. HTTP 성공만으로 모든 API의 내용까지 정상이라고 단정하지 않아요.
 
@@ -25,6 +25,16 @@
 
 첫 두 행 이후 origin이 생략된 `/service/…` 경로는 `https://api.chzzk.naver.com`이에요. 댓글 요청은 objectId, objectType, limit, offset, orderType, 선택적 originalLoungeId를 사용하고 PC/web 헤더와 확장 local에 보관한 무작위 deviceId를 전달해요. 로그인 자격 증명과 deviceId는 같은 것이 아니에요.
 
+### 카테고리 이름 검색과 라이브 식별
+
+이름 검색은 GET `https://api.chzzk.naver.com/manage/v1/auto-complete/categories?keyword=<검색어>&size=50`을 사용해요. 앞뒤 공백을 뺀 검색어를 URL 인코딩하며 입력은 최대 100 UTF-16 code unit이에요. 빈 입력은 요청하지 않아요. 정상 응답은 `code:200`, 배열 `content.results`이고 각 항목의 `categoryType`, `categoryId`, `categoryValue`를 사용해요. 최대 50개의 유효한 결과를 원래 순서대로 전달하고 같은 유형·ID 쌍은 중복 제거해요. 같은 이름의 서로 다른 유형·ID는 별개 결과예요.
+
+HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 오류예요. 비어 있는 results는 정상 빈 결과이고, 비어 있지 않은 results에 유효한 항목이 하나도 없으면 오류로 처리해요. 입력 변경·메뉴 닫기·페이지 이동·OFF 뒤 응답은 현재 검색에 반영하지 않아요. 내부 타임아웃은 검색 실패로 표시하고 결과 없음으로 바꾸지 않아요. 요청에는 검색어·size만 넣고 선택한 제외 목록 전체는 보내지 않아요.
+
+전체 라이브 목록의 카테고리 정체성은 `/service/v1/lives` 항목의 `categoryType`·`liveCategory`이며 표시 이름은 `liveCategoryValue`예요. 원본 카드의 카테고리 링크는 같은 출처의 `/category/{type}/{id}/lives` 또는 끝 슬래시가 있는 형태를 해석하고 경로 조각을 디코딩해요. 현재 원본 링크가 없거나 여러 링크의 정체성이 충돌하면 이름·태그·제목이나 오래된 API 값으로 대신 판정하지 않아요. 메타데이터 후보와 확장이 추가한 카드는 비어 있지 않은 id·channelId 일치와 양의 안전 정수 liveId를 요구하고 현재 결합을 다시 확인해요. liveId 결측·0·음수·소수·안전 범위 초과는 카테고리 제외에서 통과시키며 원본의 현재 링크 판정과 독립이에요. 추가 카드 템플릿의 옛 카테고리 링크는 현재 유형·ID로 바꿔요.
+
+2026-09-30 인증정보 없는 HTTP 요청에서 검색어 `마리모`는 `GAME`·`Marimo_League`·`마리모 리그`를 반환했고, GET `/service/v1/categories/GAME/Marimo_League/info`의 `openLiveCount`는 0이었어요. 공식 공개 코드도 링크에 categoryType·liveCategory를 그대로 사용했어요. 이 근거는 방송이 없는 검색 결과와 대문자 유형의 입력 계약을 뒷받침하며 실제 Chrome의 요청·원본 카드 DOM 성공을 증명하지 않아요.
+
 이미지·미디어의 URL은 HTTPS와 용도별 허용 호스트로 검증해요. 현재 공용 허용 목록에는 pstatic 하위 호스트, 이미지용 `livecloud-thumb.akamaized.net`, 미디어용 `ex-nlive-streaming.navercdn.com`이 있어요. URL 검증 통과가 선택 권한·CORS·브라우저 재생 성공까지 보장하지는 않아요.
 
 멀티뷰는 OPEN 상세의 `livePlaybackJson.media`에서 확인된 LLHLS, 다음으로 HLS 소스를 선택해요. 재생 JSON 오류·지원 소스 없음·종료 방송은 실패 상태예요. 미리보기는 live-detail·auto-play-info의 실제 소스를 검증하며 네이티브 목록 미리보기와 확장 소유 미리보기의 제어 경로를 구분해요. 원격 JS·WASM을 재생 응답으로 받아 실행하지 않아요.
@@ -42,6 +52,12 @@
 | 테마            | 실제 루트 테마와 Surface·Content·Border 토큰 또는 확인한 computed style                                                                                     | 테마·노드 교체 시 갱신하고 토큰이 없는 환경에는 정적 기본값을 사용해요                                                                 |
 
 셀렉터 배열은 먼저 일치한 체인을 사용하는 계약이에요. CSS의 쉼표 목록으로 합치면 문서 순서 선택으로 바뀔 수 있어요. 모든 셀렉터가 공용 레지스트리에 있는 것은 아니므로 각 기능의 로컬 입력도 함께 확인해요.
+
+## 네이티브 VOD 이어보기와 복구 위치
+
+2026-10-01 공식 공개 `index-VdvK-ysl.js`를 실행하지 않고 읽어 확인했어요. 네이티브 첫 play는 명시적 `currentTime`을 우선하며, 없으면 상세의 `watchTimeline`을 사용해요. 남은 길이가 10초 이하이거나 영상 길이 밖인 watchTimeline은 0으로 돌아가요. POST `/polling/v1/watch-event/video`의 `payload.positionAt`은 위치 입력이고 GET `/service/v3/videos/{videoNo}`의 `watchTimeline`은 복원 입력이에요. 실제 로그인된 요청 payload·다음 응답·첫 이벤트 순서는 이번 브라우저 도구로 수집하지 않았어요.
+
+isolated의 `vodReplayChatFix.js`만 `betterchzzk:vod-chat-resume` 한 건을 사이트 sessionStorage에 써요. `{href, seconds, at}`이며 정확한 현재 주소·유한 위치·숫자 생성 시각·60초 이내를 검증해요. 명시적 currentTime이 있는 주소에는 복구 위치를 쓰지 않아요. 첫 playing 또는 실제 시간 진행 뒤 한 번 적용하고 안정화 성공·탐색·이탈·만료 시 소비해요. 일반 이어보기의 서버 저장·특권 요청·영구 VOD 기록을 소유하지 않아요.
 
 ## 광고 판단·소스·일정 계약
 
@@ -101,6 +117,35 @@ isolated는 version·requestId·route·값 형식을 확인한 뒤 두 임시 �
 ## 확장 내부 명령
 
 Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 자칭 출처를 신뢰하지 않아요. 성공 응답을 받기 전 UI를 저장 완료로 확정하지 않아요. storage API 오류는 콜백 안에서 소비하고 요청자에게 실패로 전달해요.
+
+### 카테고리 제외
+
+요청은 `{type:"betterchzzk:category-exclusions",version:1,operation}`이며 최상위 필드는 이 세 개만 허용해요. operation은 아래 형식만 받고, 전체 배열 교체·전체 초기화 명령은 없어요.
+
+| 동작      | operation 입력                                                  |
+| --------- | --------------------------------------------------------------- |
+| 읽기      | `{kind:"get"}`                                                  |
+| 추가      | `{kind:"add",category:{categoryType,categoryId,categoryValue}}` |
+| 개별 해제 | `{kind:"remove",categoryType,categoryId}`                       |
+
+유형은 1~32 UTF-16 code unit의 `[A-Z][A-Z0-9_]*` 문자열이고 ID·표시 이름은 각각 1~200 UTF-16 code unit이에요. 제어 문자·공백만 있는 값은 거부하며 ID `.`·`..`도 거부해요. ID와 이름을 임의로 자르거나 ID의 대소문자를 바꾸지 않아요. 저장 상태의 카테고리 항목과 추가 category에는 세 카테고리 필드만 허용해요.
+
+같은 확장 ID, 음이 아닌 안전한 정수 tab.id, frameId 0과 정확한 `https://chzzk.naver.com/lives` 발신 URL을 요구해요. 끝 슬래시·query·hash는 허용하고 다른 경로·하위 프레임·다른 출처·자격 증명·명시한 포트는 거부해요. 본문이 주장하는 출처·탭 ID는 허용 근거가 아니에요.
+
+성공은 `{ok:true,state:{version:1,revision,categories}}`, 실패는 `{ok:false,error:"<코드>"}`예요. local 키 `betterchzzkCategoryExclusionsV1`에 같은 state를 보관하며 state에는 version·revision·categories만 허용해요. revision은 음이 아닌 안전한 정수이고 categories는 중복 없는 최대 100개의 카테고리 배열이에요. 키가 실제로 없을 때만 revision 0·빈 배열을 읽기 기본값으로 사용하며 읽기 자체는 저장하지 않아요.
+
+| 오류 코드              | 거부·실패 조건                                                           |
+| ---------------------- | ------------------------------------------------------------------------ |
+| `untrusted-sender`     | 발신 확장·탭·프레임·URL을 승인하지 못했어요.                             |
+| `unsupported-version`  | 요청 version이 1이 아니에요.                                             |
+| `invalid-request`      | 요청·operation·category의 허용 필드나 값 형식이 아니에요.                |
+| `storage-unavailable`  | local 읽기·쓰기 API를 사용할 수 없어요.                                  |
+| `storage-read-failed`  | 읽기 콜백 오류·예외·잘못된 콜백 결과로 상태를 읽지 못했어요.             |
+| `invalid-stored-state` | 존재하는 저장값이 버전·필드·형식·상한·중복 검사를 통과하지 못했어요.     |
+| `limit-reached`        | 이미 100개여서 새 유형·ID를 추가할 수 없어요.                            |
+| `storage-write-failed` | 저장 콜백 오류·예외가 생겼거나 실제 변경의 revision을 더 올릴 수 없어요. |
+
+워커의 독립 큐가 수신 순서대로 최신 local 값을 읽어 개별 추가·해제를 적용해요. 같은 항목 추가·없는 항목 해제는 저장·revision 증가 없는 성공이고 기존 이름·순서를 바꾸지 않아요. 실제 변경은 저장 콜백 성공 뒤 증가한 revision을 응답해요. 손상·읽기·쓰기·상한 오류에서는 기존 값을 보존해요. 콘텐츠는 확인된 최초 옵션 완료 뒤 활성 전체 방송에서 구독해요. 새 구독의 첫 정상 읽기·변경을 현재 기준으로 받은 뒤 같은 구독의 오래된 revision은 무시해요. 실제 키 삭제는 이전 요청 세대를 무효화하고 빈 상태로 반영해요. 손상 변경 알림은 마지막 정상 상태를 보존하면서 이전 읽기·변경·대기를 무효화해 늦은 콜백이 오류 안내를 지우지 못하게 해요. 이전 구독의 성공·실패·finally도 현재 UI를 바꾸지 못해요.
 
 시청 기록 메시지는 `{type: "betterchzzk:watch-history-mutation", version: 1, operation}`이에요. 세션·활동에는 recordId, 채널 메타데이터 entry, 식별자·입장/종료 시각·누적 시청량·시간대를 가진 session, 선택적 activities를 보내요. 세션 시각은 밀리초이고 watchedSeconds는 초예요. 성공은 `{ok:true,result}`, 버전·출처·스키마·저장 오류는 `{ok:false,error}`예요.
 

@@ -128,6 +128,7 @@ function evalRepoScript(dom, ...parts) {
 
 function evalFeatureModules(dom, folder) {
     const manifest = JSON.parse(readRepoFile("manifest.json"));
+    if (folder === "categoryTools") evalRepoScript(dom, "shared", "categoryExclusions.js");
     for (const entry of manifest.content_scripts) {
         if (entry.world === "MAIN") continue;
         for (const file of entry.js) {

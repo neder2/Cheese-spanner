@@ -6,6 +6,7 @@
  *   폐기한 설정·알림과 1.3.7 방식 변경 안내의 저장값을 정리한다.
  *   컴프레서 기본 선택은 계속 보관하고, 탭별 스냅샷은 탭 종료·브라우저 시작 시 정리한다.
  *   방송 시작 알림·자동 열기는 shared/liveStartMonitor.js의 독립 큐와 alarm으로 처리한다.
+ *   전체 방송의 카테고리 제외 선택은 독립 처리 경로에서 개별 변경을 순차 저장한다.
  *   과거 후원 가져오기는 history 페이지의 요청으로 조회하고, 같은 시청 기록 writer 큐에 월별 스냅샷을 저장한다.
  * 의존: shared/settings.js, shared/data.js, shared/watchHistoryStore.js,
  *   shared/adVideoRegistration.js, shared/liveStart.js, shared/liveStartMonitor.js,
@@ -16,6 +17,7 @@ importScripts(
     "shared/updateGuide.js",
     "shared/updateGuideController.js",
     "shared/data.js",
+    "shared/categoryExclusions.js",
     "shared/donationHistory.js",
     "shared/watchHistoryStore.js",
     "shared/watchHistoryBackup.js",
@@ -51,6 +53,7 @@ const updateGuide = globalThis.BetterChzzkUpdateGuideController.createController
     chrome,
     catalog: globalThis.BetterChzzkUpdateGuide,
 });
+const categoryExclusions = globalThis.BetterChzzk.categoryExclusions.createController({ chrome });
 const adVideoRegistration = chrome.scripting?.getRegisteredContentScripts
     ? globalThis.BetterChzzkAdVideoRegistration.createController({
           scripting: chrome.scripting,
@@ -353,6 +356,10 @@ globalThis.BetterChzzkDonationHistoryImport.install({
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type === globalThis.BetterChzzk.categoryExclusions.MESSAGE_TYPE) {
+        categoryExclusions.handleMessage(message, sender).then(sendResponse);
+        return true;
+    }
     if (message?.type === globalThis.BetterChzzkUpdateGuide.MESSAGE_TYPE) {
         updateGuide.handleMessage(message, sender).then(sendResponse);
         return true;
