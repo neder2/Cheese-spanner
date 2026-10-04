@@ -298,3 +298,11 @@ test("audio compressor third-party notices stay present", () => {
     assert.match(volumeTooltipSource, /cheese-knife/);
     assert.match(volumeTooltipSource, /jebibot/);
 });
+
+test("retired VOD chat recovery is absent from runtime and manifest", () => {
+    assert.equal(fs.existsSync(path.join(repoRoot, "features/vodReplayChatFix.js")), false);
+    for (const file of [...runtimeFiles, ...runtimeDirs.flatMap(collectJsFiles)]) {
+        const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
+        assert.doesNotMatch(source, /vodReplayChatFix|betterchzzk:vod-chat-(?:resume|reload)/, file);
+    }
+});

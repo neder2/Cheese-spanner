@@ -18,3 +18,7 @@ repository에 DOM이나 네이티브 스타일을 넣지 않아요. model은 현
 ## 검증
 
 `tests/refactoring-data-modules.test.js`에서 여러 줄 검색·실제 진행률·독립 캐시·취소·댓글 초기화를 확인해요. `tests/navigation-data.test.js`는 인덱스 유효기간과 네이티브 색 동기화, `tests/extension-pages.test.js`는 댓글 deviceId·가짜 폴백 방지·조회 실패 후 복구를 보호해요. UI 수명·중복 예약은 `tests/dom-scheduling.test.js`도 확인해요.
+
+## 원본 페이지 버튼
+
+검색 결과를 표시할 때 현재 영상 grid의 원본 페이지 버튼만 숨겨요. 검색 결과의 더 보기·다른 목록의 숫자 버튼은 유지해요. 숫자만 있는 원본 ordered list도 지원하되 해시 클래스 고정이나 페이지 전체 숫자 버튼 탐색으로 확대하지 않아요. 숨긴 노드는 검색 해제·DOM/grid 교체·SPA 종료 때 분리된 노드까지 복원해요. 인덱스·카드 템플릿 준비 전에는 원본 목록을 유지해요.

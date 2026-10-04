@@ -217,7 +217,8 @@
 
     function resolveNativeAnchors() {
         if (!isFeatureEnabled() || !isVodRoute()) return null;
-        const aside = document.querySelector("aside#vod-aside");
+        const scope = document.fullscreenElement || document;
+        const aside = scope.querySelector("aside#vod-aside");
         if (!(aside instanceof HTMLElement)) {
             if (document.fullscreenElement || nativeChatShellSeen) {
                 removeCommentOnlyShell();
@@ -422,13 +423,10 @@
             teardownMount();
             return;
         }
-        if (document.fullscreenElement) {
-            teardownMount();
-            return;
-        }
         const anchors = resolveNativeAnchors();
         if (!anchors) {
-            if (commentView.hasMount()) scheduleMountGapTeardown();
+            if (document.fullscreenElement) teardownMount();
+            else if (commentView.hasMount()) scheduleMountGapTeardown();
             return;
         }
         clearMountGapTimer();
@@ -547,10 +545,6 @@
 
     function handleFullscreenChange() {
         if (!runtimeInstalled || !isFeatureEnabled() || !isVodRoute()) return;
-        if (document.fullscreenElement) {
-            teardownMount();
-            return;
-        }
         installBodyObserver();
         scheduleEnsureMounted({ immediate: true });
     }

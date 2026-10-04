@@ -34,9 +34,9 @@ React owner/alternate에서 잘못된 서비스·채널 후보만 건너뛰면 �
 
 ## 위치·미디어 객체의 수명
 
-채팅을 닫으면 `aside#vod-aside`와 한국어 제목이 정상적으로 없어지고 `넓은 화면` 버튼은 그대로 남을 수 있어요. 제목 부재·DOM 연결만으로 복구 새로고침을 승인하지 않아요. 실제 열린 패널·readyState·유한 duration을 함께 확인해요. 2026-10-01 Chrome 관측과 통제 회귀는 `docs/measurements/vod-resume-2026-10-01.md`에 구분했어요.
+채팅을 닫으면 `aside#vod-aside`와 한국어 제목이 정상적으로 없어질 수 있어요. 제목 누락에 따른 자동 새로고침과 복구 전용 sessionStorage 위치 전달은 2026-10-03 사용자 요청으로 제거했어요. OFF/ON 실측은 `docs/measurements/vod-chat-ab-2026-10-03.md`, 과거 위치 부작용은 `docs/measurements/vod-resume-2026-10-01.md`에 구분했어요.
 
-복구 위치를 `currentTime` URL에 붙이면 다음 새로고침에도 네이티브 `watchTimeline`보다 먼저 적용돼요. 복구 전용 위치는 짧은 sessionStorage 한 건으로 전달하고 첫 playing 또는 실제 시간 진행 뒤에만 적용해요. 성공 확인 뒤 지우며, 사용자 탐색·다른 VOD·pagehide·만료로도 취소해요. 기존 무표식 `currentTime`은 사용자 링크와 구분할 근거가 없어 일괄 삭제하지 않아요. 명시적 링크의 확장 보정은 안정화 뒤 끝내고 동일 VOD·시간에 대한 화질 요청·BFCache·hash 변경으로 다시 시작하지 않아요.
+복구 위치를 `currentTime` URL에 붙이면 다음 새로고침에도 네이티브 `watchTimeline`보다 먼저 적용돼요. 기존 무표식 `currentTime`은 사용자 링크와 구분할 근거가 없어 일괄 삭제하지 않아요. 명시적 링크의 확장 보정은 안정화 뒤 끝내고 동일 VOD·시간에 대한 화질 요청·BFCache·hash 변경으로 다시 시작하지 않아요.
 
 같은 해상도라는 사실만으로 현재 재생 방식을 판단하지 않아요. 실제 선택 트랙의 kind와 ID를 읽어야 해요. 네이티브의 onLive getter를 읽을 수 없는 경우 임의의 지연 초 기준으로 실시간을 추정하지 않아요.
 

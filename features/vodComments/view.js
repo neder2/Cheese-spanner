@@ -470,12 +470,8 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
         function applyNativeMeasurements(measurements = {}) {
             nativeMeasurements = measurements;
             if (!(commentPanel instanceof HTMLElement)) return;
-            const appearanceHeading =
-                mountedAppearanceHeading instanceof HTMLElement && mountedAppearanceHeading.isConnected
-                    ? mountedAppearanceHeading
-                    : mountedHeading;
-            const headingStyle = appearanceHeading instanceof HTMLElement ? getComputedStyle(appearanceHeading) : null;
-            const fallbackFontFamily = headingStyle?.fontFamily || "";
+            // Native comment rows inherit body typography, not the branded chat heading.
+            const fallbackFontFamily = document.body ? getComputedStyle(document.body).fontFamily : "inherit";
             const fontFamily = measurements.fontFamily || fallbackFontFamily;
             const toolbarFontFamily = measurements.toolbarFontFamily || fontFamily;
             if (fontFamily) commentPanel.style.setProperty("--bcvc-font-family", fontFamily);

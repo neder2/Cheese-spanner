@@ -128,6 +128,7 @@
     let categorySubscription = null;
     let categoryStateRestored = false;
     let categoryMenuView = null;
+    let categorySummaryView = null;
     let categorySearchGeneration = 0;
     let documentEnded = false;
     const categoryPending = new Map();
@@ -425,8 +426,11 @@
             !event.isTrusted ||
             event.currentTarget !== row.button ||
             row.button.disabled ||
-            view !== categoryMenuView ||
-            !isCurrentCategoryMenu(view) ||
+            !(kind === "remove" && view === categorySummaryView
+                ? isCategoryExclusionRoute() &&
+                  view.root.isConnected &&
+                  document.getElementById(BAR_ID)?.nextElementSibling === view.root
+                : view === categoryMenuView && isCurrentCategoryMenu(view)) ||
             view.composing ||
             !view.root.contains(row.button) ||
             view[`${kind === "add" ? "result" : "selected"}Rows`].get(key) !== row ||
@@ -438,7 +442,7 @@
         if (kind === "remove" && !categoryKeys.has(key)) return;
         const operation =
             kind === "add"
-                ? { kind, category: { ...category } }
+                ? { kind, category: normalizeCategory(category) }
                 : { kind, categoryType: category.categoryType, categoryId: category.categoryId };
         const storeGeneration = categoryStoreGeneration;
         const subscription = categorySubscription;
@@ -586,6 +590,12 @@
                       ? "기타"
                       : category.categoryType
             );
+            if (mode === "add") {
+                row.type.textContent += Number.isSafeInteger(category.concurrentUserCount)
+                    ? ` · 시청자 ${category.concurrentUserCount.toLocaleString("ko-KR")}명`
+                    : " · 시청자 수 미확인";
+            }
+            row.type.title = row.type.textContent;
             const pending = categoryPending.has(key);
             const selected = categoryKeys.has(key);
             row.button.disabled = !categoryState || view.composing || pending || (mode === "add" && selected);
@@ -617,7 +627,39 @@
         if (element.textContent !== text) element.textContent = text;
     }
 
+    function syncCategorySummary() {
+        const bar = document.getElementById(BAR_ID);
+        if (!bar || !isCategoryExclusionRoute()) {
+            categorySummaryView?.root.remove();
+            categorySummaryView = null;
+            return;
+        }
+        if (!categorySummaryView) {
+            categorySummaryView?.root.remove();
+            const root = document.createElement("section");
+            root.className = "bcgt-category-summary";
+            root.setAttribute("aria-label", "제외한 카테고리");
+            root.innerHTML =
+                '<span class="bcgt-category-summary-label">카테고리 제외</span><div class="bcgt-category-chips"></div><span class="bcgt-category-summary-status" role="status"></span>';
+            bar.after(root);
+            categorySummaryView = { root, selectedRows: new Map(), composing: false };
+        }
+        const view = categorySummaryView;
+        if (bar.nextElementSibling !== view.root) bar.after(view.root);
+        const selected = categoryState?.categories || [];
+        view.root.hidden = !selected.length && !categoryStoreError;
+        syncCategoryRows(view, view.root.querySelector(".bcgt-category-chips"), selected, "remove");
+        for (const row of view.selectedRows.values()) {
+            row.button.removeAttribute("data-category-remove");
+            if (!row.button.hasAttribute("data-category-summary-remove"))
+                row.button.setAttribute("data-category-summary-remove", "");
+            setText(row.button, categoryPending.has(categoryKey(row.category)) ? "…" : "×");
+        }
+        setCategoryStatusText(view.root.querySelector(".bcgt-category-summary-status"), categoryStoreError);
+    }
+
     function syncCategoryMenu() {
+        syncCategorySummary();
         const view = categoryMenuView;
         if (
             !view ||
@@ -668,7 +710,7 @@
 <div data-category-selected-status></div><div class="bcgt-category-list" data-category-selected></div>
 <div data-category-search-status role="status" aria-live="polite"></div><button type="button" class="bcgt-category-button" data-category-search-retry hidden>카테고리 검색 다시 시도</button>
 <div class="bcgt-category-list" data-category-results></div>`;
-        menu.insertBefore(root, menu.querySelector(".bcgt-reset-row"));
+        menu.prepend(root);
         const view = {
             menu,
             root,
@@ -870,7 +912,7 @@
   box-sizing:border-box;
 }
 #${GLOBAL_FALLBACK_ID} #${BAR_ID}{margin-left:0;}
-#${BAR_ID}{
+#${BAR_ID}, .bcgt-category-summary{
   /* 치지직 디자인 토큰 참조(테마 자동 연동) + 토큰이 없을 때의 다크 기준 fallback */
   --bcgt-accent:var(--sem-color-content-brand-strong,var(--Content-Brand-Strong, #00FFA3));
   --bcgt-bg:var(--sem-color-surface-neutral-weakest,var(--Surface-Neutral-Weakest, #111114));
@@ -890,6 +932,8 @@
   --bcgt-height:28px;
   --bcgt-radius:14px;
 
+}
+#${BAR_ID}{
   position:relative;
   display:inline-flex;
   align-items:center;
@@ -917,6 +961,17 @@
   margin-left:auto;
 }
 #${BAR_ID}:has(.bcgt-live-count:not([hidden])){flex-wrap:wrap;}
+.bcgt-category-summary{flex:0 0 100%;width:100%;min-width:0;display:flex;justify-content:flex-end;align-items:center;gap:8px;padding:8px 0;box-sizing:border-box;font-family:inherit;font-size:13px;line-height:20px;font-weight:400;}
+.bcgt-category-summary[hidden]{display:none;}
+.bcgt-category-summary-label{flex:0 0 auto;color:var(--bcgt-text-dim);font-size:12px;}
+.bcgt-category-summary .bcgt-category-chips{display:flex;flex-wrap:wrap;gap:6px;min-width:0;}
+.bcgt-category-summary .bcgt-category-row{display:flex;align-items:center;gap:6px;max-width:100%;padding:4px 8px;border:1px solid var(--bcgt-border-strong);border-radius:8px;background:var(--bcgt-bg);color:var(--bcgt-text-strong);box-sizing:border-box;}
+.bcgt-category-summary .bcgt-category-name{overflow-wrap:anywhere;min-width:0;}
+.bcgt-category-summary .bcgt-category-type{font-size:11px;color:var(--bcgt-text-dim);white-space:nowrap;}
+.bcgt-category-summary .bcgt-category-button{flex:0 0 auto;border:0;background:transparent;color:inherit;cursor:pointer;font:inherit;padding:0 3px;min-width:24px;min-height:24px;}
+.bcgt-category-summary .bcgt-category-button:focus-visible{outline:2px solid var(--bcgt-accent);outline-offset:2px;}
+.bcgt-category-summary-status{font-size:12px;color:var(--bcgt-text-dim);}
+
 #${BAR_ID} .bcgt-live-count{max-width:100%;white-space:normal;color:var(--bcgt-text);font-size:12px;line-height:20px;}
 #${BAR_ID} .bcgt-live-count[hidden]{display:none;}
 #${BAR_ID}[data-mode="category-inline"]{
@@ -994,7 +1049,10 @@
 }
 #${BAR_ID} .bcgt-clear:hover{color:var(--bcgt-text-strong);background:var(--sem-color-surface-interaction-lighten-hovered,var(--Surface-Interaction-Lighten-Hovered, rgba(255,255,255,0.06)));}
 #${BAR_ID}[data-has-query="1"] .bcgt-clear{display:inline-flex;}
-#${BAR_ID} :is(.bcgt-clear,.bcgt-filter):focus-visible{outline:2px solid var(--bcgt-accent);outline-offset:2px;}
+#${BAR_ID} .bcgt-search-apply{flex:0 0 auto;border:1px solid var(--bcgt-border);border-radius:var(--bcgt-radius);background:var(--bcgt-bg);color:var(--bcgt-text-strong);font:inherit;cursor:pointer;min-height:var(--bcgt-height);padding:0 10px;}
+#${BAR_ID} .bcgt-search-apply[hidden]{display:none;}
+#${BAR_ID}[data-search-draft="1"] .bcgt-search-apply{border-color:var(--bcgt-accent);}
+#${BAR_ID} :is(.bcgt-clear,.bcgt-filter,.bcgt-search-apply):focus-visible{outline:2px solid var(--bcgt-accent);outline-offset:2px;}
 #${BAR_ID} .bcgt-status{font-variant-numeric:tabular-nums;}
 #${BAR_ID} .bcgt-meter{
   display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;
@@ -1084,13 +1142,13 @@
   grid-column:1 / -1;
 }
 #${MENU_ID} .bcgt-filter-group[hidden]{display:none;}
-#${MENU_ID} .bcgt-category-exclusions{display:flex;flex-direction:column;gap:8px;margin-top:12px;padding-top:10px;border-top:1px solid var(--bcgt-menu-border);min-width:0;}
+#${MENU_ID} .bcgt-category-exclusions{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--bcgt-menu-border);min-width:0;}
 #${MENU_ID} .bcgt-category-search-label{display:flex;flex-direction:column;gap:4px;color:var(--bcgt-menu-text-sub);}
 #${MENU_ID} [data-category-search]{box-sizing:border-box;width:100%;min-width:0;padding:8px;border:1px solid var(--bcgt-menu-border);border-radius:6px;background:var(--bcgt-menu-field-bg);color:var(--bcgt-menu-text);font:inherit;}
 #${MENU_ID} .bcgt-category-list{display:flex;flex-direction:column;gap:4px;max-height:176px;overflow-y:auto;min-width:0;}
-#${MENU_ID} .bcgt-category-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;min-width:0;padding:4px;}
+#${MENU_ID} .bcgt-category-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,max-content) auto;gap:8px;align-items:center;min-width:0;padding:4px;}
 #${MENU_ID} .bcgt-category-name{overflow-wrap:anywhere;line-height:20px;}
-#${MENU_ID} .bcgt-category-type{max-width:80px;overflow-wrap:anywhere;color:var(--bcgt-menu-text-sub);font-size:12px;}
+#${MENU_ID} .bcgt-category-type{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--bcgt-menu-text-sub);font-size:12px;}
 #${MENU_ID} .bcgt-category-button{flex:0 0 auto;min-height:28px;padding:4px 8px;border:1px solid var(--bcgt-menu-border);border-radius:6px;background:var(--bcgt-menu-button-bg);color:var(--bcgt-menu-text);font:inherit;cursor:pointer;}
 #${MENU_ID} .bcgt-category-button:hover{background:var(--bcgt-menu-hover);}
 #${MENU_ID} .bcgt-category-button:disabled{color:var(--bcgt-menu-disabled);cursor:default;}
@@ -3590,7 +3648,11 @@
     function updateUiState() {
         const bar = document.getElementById(BAR_ID);
         if (!bar) return;
-        bar.setAttribute("data-has-query", currentQuery ? "1" : "0");
+        const draft = bar.querySelector("input")?.value || "";
+        bar.setAttribute("data-has-query", draft || currentQuery ? "1" : "0");
+        bar.setAttribute("data-search-draft", draft !== currentQuery ? "1" : "0");
+        const searchApply = bar.querySelector(".bcgt-search-apply");
+        if (searchApply) searchApply.hidden = getRoute()?.scope !== "global-lives";
         bar.setAttribute("data-has-filter", hasActiveFilters() ? "1" : "0");
         const label = bar.querySelector(".bcgt-filter-label");
         if (label) {
@@ -3675,6 +3737,7 @@
     </svg>
   </button>
 </div>
+<button type="button" class="bcgt-search-apply" aria-label="현재 목록 검색 적용">적용</button>
 <span class="bcgt-meter">
   <span class="bcgt-spinner" aria-hidden="true"></span>
   <span class="bcgt-status" aria-live="polite"></span>
@@ -3688,15 +3751,23 @@
 `;
         const input = bar.querySelector("input");
         const clear = bar.querySelector(".bcgt-clear");
+        const apply = bar.querySelector(".bcgt-search-apply");
         const filter = bar.querySelector(".bcgt-filter");
         let isComposing = false;
+        let compositionEnter = false;
+        const isExplicitSearch = () => getRoute()?.scope === "global-lives";
+        const syncDraft = () => {
+            bar.setAttribute("data-has-query", input.value || currentQuery ? "1" : "0");
+            bar.setAttribute("data-search-draft", input.value !== currentQuery ? "1" : "0");
+        };
 
         const applyInputValue = () => {
             if (searchApplyTimer) {
                 window.clearTimeout(searchApplyTimer);
                 searchApplyTimer = 0;
             }
-            if (!bar.isConnected) return;
+            if (!bar.isConnected || document.getElementById(BAR_ID) !== bar || isComposing) return;
+            if (input.value === currentQuery) return;
             currentQuery = input.value;
             updateUiState();
             scheduleApply();
@@ -3708,7 +3779,8 @@
         };
 
         input.addEventListener("input", () => {
-            if (isComposing) return;
+            syncDraft();
+            if (isComposing || isExplicitSearch()) return;
             scheduleInputApply();
         });
         input.addEventListener("compositionstart", () => {
@@ -3716,17 +3788,38 @@
         });
         input.addEventListener("compositionend", () => {
             isComposing = false;
-            applyInputValue();
+            syncDraft();
+            if (!isExplicitSearch()) applyInputValue();
         });
         input.addEventListener("keydown", (e) => {
-            if (e.key === "Escape" && currentQuery) {
-                input.value = "";
-                applyInputValue();
+            if (isExplicitSearch() && e.key === "Enter") {
+                if (isComposing || e.isComposing || e.keyCode === 229) {
+                    compositionEnter = true;
+                    return;
+                }
+                e.preventDefault();
+                e.stopPropagation();
+                if (!e.repeat && !compositionEnter) applyInputValue();
             }
+            if (e.key === "Escape" && !isComposing) {
+                input.value = isExplicitSearch() ? currentQuery : "";
+                if (isExplicitSearch()) syncDraft();
+                else applyInputValue();
+            }
+        });
+        input.addEventListener("keyup", (e) => {
+            if (e.key === "Enter") compositionEnter = false;
+        });
+        input.addEventListener("blur", () => {
+            compositionEnter = false;
+        });
+        apply.addEventListener("click", () => {
+            if (isExplicitSearch()) applyInputValue();
         });
         clear.addEventListener("click", () => {
             input.value = "";
-            applyInputValue();
+            if (isExplicitSearch()) syncDraft();
+            else applyInputValue();
             input.focus();
         });
         filter.addEventListener("click", (e) => {
@@ -3837,6 +3930,7 @@
             cachedGridKey = "";
             updateUiState();
         }
+        syncCategorySummary();
         return true;
     }
 
@@ -4168,6 +4262,8 @@
     function removeTools({ preserveCount = false } = {}) {
         cancelCategoryMenuSearch();
         categoryMenuView = null;
+        categorySummaryView?.root.remove();
+        categorySummaryView = null;
         scheduleThrottledApply.cancel?.();
         toolbarRescueGeneration++;
         if (toolbarRescueFrame) cancelAnimationFrame(toolbarRescueFrame);
@@ -4261,6 +4357,7 @@
         if (node.getAttribute && node.getAttribute(LIVE_ELAPSED_BADGE_ATTR) === "1") return true;
         if (typeof node.closest === "function") {
             if (node.closest(`#${BAR_ID}`)) return true;
+            if (categorySummaryView?.root.contains(node)) return true;
             if (node.closest(`#${MENU_ID}`)) return true;
             if (node.closest(`#${GLOBAL_FALLBACK_ID}`)) return true;
             if (node.closest(`[${INJECTED_ATTR}="1"]`)) return true;

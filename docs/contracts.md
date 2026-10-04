@@ -27,7 +27,9 @@
 
 ### 카테고리 이름 검색과 라이브 식별
 
-이름 검색은 GET `https://api.chzzk.naver.com/manage/v1/auto-complete/categories?keyword=<검색어>&size=50`을 사용해요. 앞뒤 공백을 뺀 검색어를 URL 인코딩하며 입력은 최대 100 UTF-16 code unit이에요. 빈 입력은 요청하지 않아요. 정상 응답은 `code:200`, 배열 `content.results`이고 각 항목의 `categoryType`, `categoryId`, `categoryValue`를 사용해요. 최대 50개의 유효한 결과를 원래 순서대로 전달하고 같은 유형·ID 쌍은 중복 제거해요. 같은 이름의 서로 다른 유형·ID는 별개 결과예요.
+이름 검색은 GET `https://api.chzzk.naver.com/manage/v1/auto-complete/categories?keyword=<검색어>&size=50`을 사용해요. 앞뒤 공백을 뺀 검색어를 URL 인코딩하며 입력은 최대 100 UTF-16 code unit이에요. 빈 입력은 요청하지 않아요. 정상 응답은 `code:200`, 배열 `content.results`이고 각 항목의 `categoryType`, `categoryId`, `categoryValue`를 사용해요. 최대 50개의 유효한 후보를 받고 같은 유형·ID 쌍은 중복 제거해요. 같은 이름의 서로 다른 유형·ID는 별개 결과예요.
+
+검색 후보의 GET `/service/v1/categories/{type}/{id}/info`에서 정확히 일치하는 유형·ID와 음수가 아닌 안전 정수 `concurrentUserCount`를 확인해 카테고리 전체 동시 시청자 수 내림차순으로 정렬해요. 확인된 0명 후보만 제외하며 저장된 제외 목록은 변경하지 않아요. 미조회·실패·정체성 불일치는 수치 미확인으로 끝에 표시하고 동률은 검색 API 순서를 유지해요. 상세 조회는 최대 4개 동시 실행·각 3초·전체 5초 범위이고, 정상 수치는 최대 200개·5분 메모리 캐시에 보관해요. 미확인 수치가 있는 검색은 완료 캐시로 남기지 않아요. 이름 검색과 상세 조회에 같은 취소 신호를 연결해요. 2026-10-03 실제 Chrome 상세 응답에서 `GAME/MapleStory`의 `openLiveCount:49`, `concurrentUserCount:1218`을 확인했어요. 순간 집계이며 고정 수치가 아니에요.
 
 HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 오류예요. 비어 있는 results는 정상 빈 결과이고, 비어 있지 않은 results에 유효한 항목이 하나도 없으면 오류로 처리해요. 입력 변경·메뉴 닫기·페이지 이동·OFF 뒤 응답은 현재 검색에 반영하지 않아요. 내부 타임아웃은 검색 실패로 표시하고 결과 없음으로 바꾸지 않아요. 요청에는 검색어·size만 넣고 선택한 제외 목록 전체는 보내지 않아요.
 
@@ -53,11 +55,11 @@ HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 �
 
 셀렉터 배열은 먼저 일치한 체인을 사용하는 계약이에요. CSS의 쉼표 목록으로 합치면 문서 순서 선택으로 바뀔 수 있어요. 모든 셀렉터가 공용 레지스트리에 있는 것은 아니므로 각 기능의 로컬 입력도 함께 확인해요.
 
-## 네이티브 VOD 이어보기와 복구 위치
+## 네이티브 VOD 이어보기
 
 2026-10-01 공식 공개 `index-VdvK-ysl.js`를 실행하지 않고 읽어 확인했어요. 네이티브 첫 play는 명시적 `currentTime`을 우선하며, 없으면 상세의 `watchTimeline`을 사용해요. 남은 길이가 10초 이하이거나 영상 길이 밖인 watchTimeline은 0으로 돌아가요. POST `/polling/v1/watch-event/video`의 `payload.positionAt`은 위치 입력이고 GET `/service/v3/videos/{videoNo}`의 `watchTimeline`은 복원 입력이에요. 실제 로그인된 요청 payload·다음 응답·첫 이벤트 순서는 이번 브라우저 도구로 수집하지 않았어요.
 
-isolated의 `vodReplayChatFix.js`만 `betterchzzk:vod-chat-resume` 한 건을 사이트 sessionStorage에 써요. `{href, seconds, at}`이며 정확한 현재 주소·유한 위치·숫자 생성 시각·60초 이내를 검증해요. 명시적 currentTime이 있는 주소에는 복구 위치를 쓰지 않아요. 첫 playing 또는 실제 시간 진행 뒤 한 번 적용하고 안정화 성공·탐색·이탈·만료 시 소비해요. 일반 이어보기의 서버 저장·특권 요청·영구 VOD 기록을 소유하지 않아요.
+채팅 자동 복구의 새로고침·위치 전달 경로는 제거됐어요. 이전 문서가 남긴 `betterchzzk:vod-chat-resume`·`betterchzzk:vod-chat-reload:` 값은 현재 런타임에서 읽거나 적용하지 않아요. 이를 지우기 위한 별도 사이트 저장소 정리 스크립트는 추가하지 않아요.
 
 ## 광고 판단·소스·일정 계약
 
@@ -197,3 +199,7 @@ Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 �
 예약은 탭·documentId에 결합하고 documentId가 없으면 검증한 탭·frame·URL·clientId에 결합해요. 30초 만료, 옵션 변경, 문서 변경, 워커 재시작으로 낡은 예약을 승인하지 않아요. local 키 betterchzzk:update-guide-state에는 schemaVersion:1, version, status 한 건을 저장하며 status는 pending, seen, suppressed예요. 읽기 오류·손상 상태는 자동 표시를 중단해요.
 
 open-settings의 target은 panels, history, stream뿐이고 확장 options.html의 #update-guide- 목적지로 연결해요. 옵션 페이지에서 보내는 replay는 현재 활성 치지직 최상위 프레임만 대상으로 하며 응답은 ok:boolean이에요. 콘텐츠는 같은 확장의 options.html 문서에서 온 요청만 받아요. 기존 옵션 발신자 검증도 허용한 세 목적지 hash와 정확한 확장 protocol·hostname·pathname을 확인하며 임의 query·다른 hash·하위 프레임은 허용하지 않아요.
+
+### 채널 영상 검색의 원본 페이지 묶음
+
+2026-10-03 실제 `#videos-PANEL`에서 영상 grid와 형제인 컨테이너 안의 `ol > li > button` 숫자 페이지 묶음을 확인했어요. 클래스는 `_container_1ihlx_1`, `_list_1ihlx_35`, `_button_1ihlx_8` 형태였고 pagination 이름·다음/이전 버튼이 없었어요. 구현은 해시 대신 현재 grid 형제·숫자 목록 구조를 확인해 검색 결과 표시 중에만 원본 묶음을 숨겨요. [실측·복원 검증](measurements/vod-search-pagination-2026-10-03.md)을 참고해요.

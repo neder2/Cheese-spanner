@@ -50,7 +50,6 @@
                 "features/headerBannerLayout.js",
                 "features/panelResizeModel.js",
                 "features/panelResize.js",
-                "features/vodReplayChatFix.js",
                 "features/vodComments/model.js",
                 "features/vodComments/repository.js",
                 "features/vodComments/nativeAdapter.js",

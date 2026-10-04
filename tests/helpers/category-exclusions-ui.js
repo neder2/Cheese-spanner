@@ -23,6 +23,7 @@ async function createCategoryUI(
         pathname = "/lives",
         options = {},
         metadata,
+        categoryCounts = {},
         bootstrapOptions = false,
     } = {}
 ) {
@@ -182,6 +183,16 @@ async function createCategoryUI(
         },
         fetchJson(url, config = {}) {
             fetches.push({ url, ...config });
+            const info = url.match(/\/categories\/([^/]+)\/([^/]+)\/info$/);
+            if (info)
+                return Promise.resolve({
+                    code: 200,
+                    content: {
+                        categoryType: decodeURIComponent(info[1]),
+                        categoryId: decodeURIComponent(info[2]),
+                        concurrentUserCount: categoryCounts[decodeURIComponent(info[2])] ?? 1,
+                    },
+                });
             if (url.includes("auto-complete/categories"))
                 return new Promise((resolve, reject) => searches.push({ url, ...config, resolve, reject }));
             return Promise.resolve({ content: { data: currentMetadata || defaultMetadata, page: { next: null } } });
@@ -197,6 +208,7 @@ async function createCategoryUI(
             pageChange: handlePageChange,
             numeric: (kind, min, max = 0) => { setFilterValue(kind, min, "", max, ""); updateUiState(); },
             refresh: refreshFollowerHydrationRows,
+            appliedQuery: () => currentQuery,
             listSearch: (query) => { currentQuery = query; updateUiState(); },
             resetMetadata: () => dataRepository.resetSearchMetadata(routeKey(getRoute())),
             metadataState: () => dataRepository.metadataState(),

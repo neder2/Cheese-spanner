@@ -22,7 +22,7 @@ MAIN world와 isolated world는 JavaScript 전역을 공유하지 않아요. 공
 
 ## 의존 방향
 
-VOD의 영구 이어보기는 네이티브 상세·시청 이벤트의 소유예요. `vodReplayChatFix.js`는 실제 열린 채팅 패널의 제목 누락만 제한적으로 재로드하고, 같은 주소의 복구 위치 한 건을 사이트 sessionStorage로 다음 문서에 넘겨 첫 재생 뒤 소비해요. MAIN 자동 화질은 명시적 URL 시간의 초기 안정화 보정만 수행하며 완료·사용자 취소 뒤 같은 시간을 재적용하지 않아요. 이 경로에 background 기록 writer나 새 네트워크 요청을 연결하지 않아요.
+VOD의 영구 이어보기는 네이티브 상세·시청 이벤트의 소유예요. 채팅 복구용 자동 새로고침과 sessionStorage 위치 전달 경로는 제거됐어요. MAIN 자동 화질은 명시적 URL 시간의 초기 안정화 보정만 수행하며 완료·사용자 취소 뒤 같은 시간을 재적용하지 않아요. 이 경로에 background 기록 writer나 새 네트워크 요청을 연결하지 않아요.
 
 isolated 영역은 `shared/settings.js` → `shared/data.js` → `shared/categoryExclusions.js` → `shared/selectors.js` → `content.js` 순서로 공용 기반을 준비해요. `content.js`는 이미 등록된 `BetterChzzk.utils`를 보존하며 DOM·라우트 기능을 추가해요. 기능의 model·repository·view는 해당 기능의 조립 파일보다 먼저 로드돼요.
 

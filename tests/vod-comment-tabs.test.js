@@ -117,6 +117,7 @@ function createFixture({
     });
     const { window } = dom;
     const { document } = window;
+    document.body.style.fontFamily = "system-ui, sans-serif";
     const options = { vodCommentTabsEnabled: true, ...initialOptions };
     const optionListeners = [];
     const routeListeners = [];
@@ -357,8 +358,8 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     assert.equal(tablist.style.getPropertyValue("--bcvc-heading-font-family"), "Arial, sans-serif");
     assert.equal(tablist.style.getPropertyValue("--bcvc-heading-font-size"), "17px");
     assert.equal(tablist.style.getPropertyValue("--bcvc-heading-font-weight"), "700");
-    assert.equal(commentPanel.style.getPropertyValue("--bcvc-font-family"), "Arial, sans-serif");
-    assert.equal(commentPanel.style.getPropertyValue("--bcvc-toolbar-font-family"), "Arial, sans-serif");
+    assert.equal(commentPanel.style.getPropertyValue("--bcvc-font-family"), "system-ui, sans-serif");
+    assert.equal(commentPanel.style.getPropertyValue("--bcvc-toolbar-font-family"), "system-ui, sans-serif");
     assert.equal(container.style.getPropertyValue("--bcvc-panel-height"), "496px");
     const css = document.getElementById("betterchzzk-vod-comment-tabs-style").textContent;
     assert.match(css, /--Content-Neutral-Cool-Strong/);
@@ -1363,4 +1364,74 @@ test("VOD comment tab keyboard navigation keeps roving tabindex", (t) => {
     assert.equal(document.activeElement, chat, "ArrowRight from the last tab must wrap to the first tab");
     chat.dispatchEvent(new window.KeyboardEvent("keydown", { bubbles: true, key: "End" }));
     assert.equal(document.activeElement, comments);
+});
+
+test("VOD tabs survive fullscreen panel reopen and restore native panels outside fullscreen", async (t) => {
+    const fixture = createFixture({ fetchComments: () => apiContent({ rows: [apiComment("fs", "전체화면 댓글")] }) });
+    const { document, window } = fixture;
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    clickCommentTab(document);
+    await waitForCondition(() =>
+        document.getElementById("betterchzzk-vod-comment-panel")?.textContent.includes("전체화면 댓글")
+    );
+    const root = document.getElementById("player-layout");
+    let fullscreen = root;
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => fullscreen });
+    document.dispatchEvent(new window.Event("fullscreenchange"));
+    assert.ok(document.getElementById("betterchzzk-vod-comment-comment-tab"));
+    assert.equal(document.getElementById("betterchzzk-vod-comment-comment-tab").getAttribute("aria-selected"), "true");
+    const oldAside = document.getElementById("vod-aside");
+    oldAside.remove();
+    await waitForCondition(() => !document.getElementById("betterchzzk-vod-comment-panel"));
+    root.insertAdjacentHTML("beforeend", chatAsideHtml());
+    await waitForCondition(() => document.getElementById("betterchzzk-vod-comment-comment-tab"));
+    assert.equal(document.querySelectorAll("[role='tablist']").length, 1);
+    document.getElementById("betterchzzk-vod-comment-chat-tab").click();
+    assert.equal(document.querySelector("#vod-aside [role='log']").hasAttribute("data-bcvc-tab-hidden"), false);
+    clickCommentTab(document);
+    assert.equal(fixture.requests.length, 1);
+    fullscreen = fixture.video;
+    document.dispatchEvent(new window.Event("fullscreenchange"));
+    assert.equal(document.getElementById("betterchzzk-vod-comment-panel"), null);
+    assert.equal(document.querySelector("#vod-aside [role='log']").hasAttribute("data-bcvc-tab-hidden"), false);
+    fullscreen = null;
+    document.dispatchEvent(new window.Event("fullscreenchange"));
+    assert.ok(document.getElementById("betterchzzk-vod-comment-panel"));
+    fixture.emitRoute("/video/67890");
+    await waitForCondition(
+        () => document.getElementById("betterchzzk-vod-comment-chat-tab")?.getAttribute("aria-selected") === "true"
+    );
+    fixture.emitOptions({ vodCommentTabsEnabled: false });
+    assert.equal(document.querySelector("[data-bcvc-mounted]"), null);
+});
+
+test("VOD comment body keeps body typography before native comments arrive and after fullscreen remount", async (t) => {
+    const fixture = createFixture();
+    const { document, window } = fixture;
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const panel = () => document.getElementById("betterchzzk-vod-comment-panel");
+    assert.equal(panel().style.getPropertyValue("--bcvc-font-family"), "system-ui, sans-serif");
+    document.getElementById("below-player").innerHTML =
+        '<div id="commentArea" style="font-family:Verdana,sans-serif"><div id="commentBox-1">원본 댓글</div></div>';
+    await waitForCondition(() => panel().style.getPropertyValue("--bcvc-font-family") === "Verdana, sans-serif");
+    document.getElementById("commentArea").remove();
+    Object.defineProperty(document, "fullscreenElement", {
+        configurable: true,
+        value: document.getElementById("player-layout"),
+    });
+    document.getElementById("vod-aside").remove();
+    document.dispatchEvent(new window.Event("fullscreenchange"));
+    document.getElementById("player-layout").insertAdjacentHTML("beforeend", chatAsideHtml());
+    await waitForCondition(() => panel());
+    assert.equal(panel().style.getPropertyValue("--bcvc-font-family"), "system-ui, sans-serif");
+    assert.equal(
+        document.getElementById("betterchzzk-vod-comment-tabs").style.getPropertyValue("--bcvc-heading-font-family"),
+        "Arial, sans-serif"
+    );
 });
