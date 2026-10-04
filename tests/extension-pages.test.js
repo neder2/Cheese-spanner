@@ -1048,10 +1048,6 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
         isolatedScript.js.indexOf("features/chatTools.js") < isolatedScript.js.indexOf("features/videoSearch.js")
     );
     assert.ok(isolatedScript.js.includes("features/vodCommentTabs.js"));
-    assert.ok(
-        isolatedScript.js.indexOf("features/vodCommentTabs.js") >
-            isolatedScript.js.indexOf("features/vodReplayChatFix.js")
-    );
     for (const modulePath of vodCommentModules) {
         assert.ok(isolatedScript.js.includes(modulePath));
         assert.ok(isolatedScript.js.indexOf(modulePath) < isolatedScript.js.indexOf("features/vodCommentTabs.js"));
@@ -1514,6 +1510,7 @@ test("category injected search results join the current pass without rescanning 
     const input = document.querySelector('#betterchzzk-category-tools input[type="search"]');
     input.value = "Match";
     dispatch(dom, input, "input");
+    document.querySelector(".bcgt-search-apply").click();
     await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "3 / 3");
     assert.equal(inserted, true);
     assert.equal(elapsedReads, 1, "the elapsed badge is synchronized once per filtered apply");
@@ -1561,6 +1558,7 @@ test("category search bounds injected cards and continues cached results on scro
     const input = document.querySelector('#betterchzzk-category-tools input[type="search"]');
     input.value = "Match";
     dispatch(dom, input, "input");
+    document.querySelector(".bcgt-search-apply").click();
     await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent.endsWith(" / 150"));
     const injected = () => [...grid.querySelectorAll('[data-bcgt-injected="1"]')];
     const firstCount = injected().length;
@@ -1595,6 +1593,7 @@ test("category search bounds injected cards and continues cached results on scro
     assert.equal(requests, requestsBeforeScroll, "cached pages should not be fetched again");
     input.value = "No matching broadcast";
     dispatch(dom, input, "input");
+    document.querySelector(".bcgt-search-apply").click();
     await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent.startsWith("0 /"));
     assert.equal(injected().length, 0, "a new query discards obsolete extension-owned cards");
 });
@@ -1768,6 +1767,7 @@ test("category tools respect the currently observed viewer-order tab labels", as
     const input = document.querySelector("#betterchzzk-category-tools input");
     input.value = "Native";
     dispatch(dom, input, "input");
+    document.querySelector(".bcgt-search-apply").click();
     await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "3 / 3");
     tabs[0].setAttribute("aria-selected", "false");
     tabs[1].setAttribute("aria-selected", "true");
@@ -3930,41 +3930,6 @@ test("live watch history splits same-channel broadcasts when live detail changes
         entryB.titleHistory.some((row) => row.title === "A 방송"),
         false
     );
-});
-
-test("VOD replay chat fix ignores currentTime-only URL changes on the same VOD", async () => {
-    const chrome = createFakeChrome();
-    const dom = createPageDom(
-        ["<!doctype html>", "<body>", "<main>", '<video id="video"></video>', "</main>", "</body>"].join(""),
-        "https://chzzk.naver.com/video/12345",
-        chrome
-    );
-    const { document } = dom.window;
-    const video = document.getElementById("video");
-    const scheduledTimers = [];
-
-    dom.window.setTimeout = (callback, delay) => {
-        scheduledTimers.push({ callback, delay });
-        return scheduledTimers.length;
-    };
-    dom.window.clearTimeout = () => {};
-    video.currentTime = 20;
-    makeVisibleVideo(video);
-
-    evalRepoScript(dom, "shared", "settings.js");
-    evalContentScripts(dom);
-    evalRepoScript(dom, "features", "vodReplayChatFix.js");
-    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
-    await waitForAsyncCallbacks();
-    await waitForAsyncCallbacks();
-
-    scheduledTimers.length = 0;
-    dom.window.history.pushState({}, "", "/video/12345?currentTime=30");
-    document.body.appendChild(document.createElement("div"));
-    await waitForAsyncCallbacks();
-
-    assert.equal(scheduledTimers.length, 0);
-    assert.equal(dom.window.sessionStorage.getItem("betterchzzk:vod-chat-reload:/video/12345"), null);
 });
 
 async function createVodBroadcastClockFixture(
@@ -6339,4 +6304,91 @@ test("multiview separator arrow keys do not seek the main video", async (t) => {
     );
     assert.equal(resized, true);
     assert.equal(video.currentTime, before);
+});
+
+test("video search owns only native sibling numeric pagination and restores replaced controls", async (t) => {
+    const chrome = createFakeChrome({ sync: { videoSearchCommentEnabled: false, videoSearchRenderBatchSize: 10 } });
+    const dom = createVideoSearchDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    const pager = document.createElement("div");
+    pager.innerHTML = "<div><ol><li><button>1</button></li><li><button>2</button></li></ol></div>";
+    document.getElementById("grid").after(pager);
+    const unrelated = document.createElement("nav");
+    unrelated.innerHTML = "<ol><li><button>1</button></li><li><button>2</button></li></ol>";
+    document.body.append(unrelated);
+    dom.window.fetch = async () => ({
+        ok: true,
+        json: async () => ({
+            content: {
+                last: true,
+                data: Array.from({ length: 20 }, (_, i) => ({ videoNo: String(100 + i), videoTitle: `needle ${i}` })),
+            },
+        }),
+    });
+    await loadVideoSearchPage(dom);
+    await waitForCondition(() => getVideoSearchInput(dom));
+    assert.equal(pager.hasAttribute("data-bcvs-hide"), false);
+    searchVideoSearchInput(dom, "needle");
+    await waitForCondition(() => document.querySelectorAll('[data-bcvs-injected="1"]').length === 10);
+    assert.equal(pager.getAttribute("data-bcvs-hide"), "1");
+    assert.equal(unrelated.hasAttribute("data-bcvs-hide"), false);
+    document.querySelector('[data-bcvs-load-more="1"] button').click();
+    await waitForCondition(() => document.querySelectorAll('[data-bcvs-injected="1"]').length === 20);
+    assert.equal(pager.getAttribute("data-bcvs-hide"), "1");
+    const replacement = pager.cloneNode(true);
+    replacement.removeAttribute("data-bcvs-hide");
+    pager.replaceWith(replacement);
+    await waitForCondition(() => replacement.getAttribute("data-bcvs-hide") === "1");
+    assert.equal(pager.hasAttribute("data-bcvs-hide"), false, "detached old nodes are restored too");
+    searchVideoSearchInput(dom, "no match");
+    await waitForCondition(() => document.querySelectorAll('[data-bcvs-injected="1"]').length === 0);
+    assert.equal(replacement.getAttribute("data-bcvs-hide"), "1");
+    document.querySelector(".bcvs-clear").click();
+    assert.equal(replacement.hasAttribute("data-bcvs-hide"), false);
+    searchVideoSearchInput(dom, "needle");
+    getVideoSearchInput(dom).dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(replacement.hasAttribute("data-bcvs-hide"), false);
+    searchVideoSearchInput(dom, "needle");
+    dom.window.history.pushState({}, "", "/0123456789abcdef0123456789abcdef/clips");
+    document.body.append(document.createElement("div"));
+    await waitForCondition(() => !getVideoSearchInput(dom));
+    assert.equal(replacement.hasAttribute("data-bcvs-hide"), false);
+    dom.window.history.replaceState({}, "", "/0123456789abcdef0123456789abcdef/videos");
+    dom.window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
+    await waitForCondition(() => getVideoSearchInput(dom));
+    assert.equal(getVideoSearchInput(dom).value, "");
+    assert.equal(replacement.hasAttribute("data-bcvs-hide"), false);
+});
+
+test("late video index responses cannot rehide pagination after search cancellation", async (t) => {
+    const chrome = createFakeChrome({ sync: { videoSearchCommentEnabled: false } });
+    const dom = createVideoSearchDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    const pager = document.createElement("div");
+    pager.innerHTML = "<ol><li><button>1</button></li><li><button>2</button></li></ol>";
+    document.getElementById("grid").after(pager);
+    let resolve;
+    dom.window.fetch = () =>
+        new Promise((done) => {
+            resolve = done;
+        });
+    await loadVideoSearchPage(dom);
+    await waitForCondition(() => getVideoSearchInput(dom));
+    searchVideoSearchInput(dom, "needle");
+    await waitForCondition(() => resolve);
+    assert.equal(
+        pager.hasAttribute("data-bcvs-hide"),
+        false,
+        "native list remains usable before a result template exists"
+    );
+    document.querySelector(".bcvs-clear").click();
+    resolve({
+        ok: true,
+        json: async () => ({ content: { last: true, data: [{ videoNo: "999", videoTitle: "needle late" }] } }),
+    });
+    await waitForAsyncCallbacks();
+    assert.equal(pager.hasAttribute("data-bcvs-hide"), false);
+    assert.equal(document.querySelector('[data-bcvs-injected="1"]'), null);
 });

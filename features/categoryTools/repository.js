@@ -143,6 +143,7 @@
         let followerRefresh = null;
         const categorySearchCache = new Map();
         const categorySearchRequests = new Map();
+        const categoryViewerCache = new Map();
         let categorySearchGeneration = 0;
 
         function categorySearchAbortError() {
@@ -182,6 +183,66 @@
 
         function copyCategoryResults(results) {
             return results.map((category) => ({ ...category }));
+        }
+
+        async function rankCategoryResults(results, request) {
+            const ranked = copyCategoryResults(results);
+            const deadline = Date.now() + 5000;
+            request.measuredAt = Date.now();
+            let next = 0;
+            await Promise.all(
+                Array.from({ length: Math.min(4, ranked.length) }, async () => {
+                    while (next < ranked.length) {
+                        if (request.controller.signal.aborted || request.generation !== categorySearchGeneration)
+                            throw categorySearchAbortError();
+                        const category = ranked[next++];
+                        const key = root.categoryExclusions.categoryKey(category);
+                        const cached = categoryViewerCache.get(key);
+                        if (cached && Date.now() - cached.measuredAt < CATEGORY_SEARCH_CACHE_TTL_MS) {
+                            category.concurrentUserCount = cached.count;
+                            request.measuredAt = Math.min(request.measuredAt, cached.measuredAt);
+                            continue;
+                        }
+                        const remainingMs = deadline - Date.now();
+                        if (remainingMs <= 0) continue;
+                        try {
+                            const json = await fetchJson(
+                                `${API_BASE}/v1/categories/${encodeURIComponent(category.categoryType)}/${encodeURIComponent(category.categoryId)}/info`,
+                                {
+                                    headers: { Accept: "application/json" },
+                                    signal: request.controller.signal,
+                                    timeoutMs: Math.min(3000, remainingMs),
+                                }
+                            );
+                            if (request.controller.signal.aborted || request.generation !== categorySearchGeneration)
+                                throw categorySearchAbortError();
+                            const info = json?.content;
+                            if (
+                                json?.code === 200 &&
+                                info?.categoryType === category.categoryType &&
+                                info?.categoryId === category.categoryId &&
+                                Number.isSafeInteger(info?.concurrentUserCount) &&
+                                info.concurrentUserCount >= 0
+                            ) {
+                                category.concurrentUserCount = info.concurrentUserCount;
+                                touchMapEntry(
+                                    categoryViewerCache,
+                                    key,
+                                    { count: info.concurrentUserCount, measuredAt: Date.now() },
+                                    200
+                                );
+                            }
+                        } catch {
+                            if (request.controller.signal.aborted || request.generation !== categorySearchGeneration)
+                                throw categorySearchAbortError();
+                        }
+                    }
+                })
+            );
+            // Unknown counts remain searchable; measured zero only removes search candidates.
+            return ranked
+                .filter((category) => category.concurrentUserCount !== 0)
+                .sort((a, b) => (b.concurrentUserCount ?? -1) - (a.concurrentUserCount ?? -1));
         }
 
         function consumeCategorySearch(keyword, request, signal) {
@@ -251,13 +312,16 @@
                         categorySearchRequests.get(query) !== request
                     )
                         throw categorySearchAbortError();
-                    const results = normalizeCategoryResults(json);
-                    touchMapEntry(
-                        categorySearchCache,
-                        query,
-                        { results, measuredAt: Date.now() },
-                        MAX_CATEGORY_SEARCH_CACHE_ENTRIES
-                    );
+                    const results = await rankCategoryResults(normalizeCategoryResults(json), request);
+                    if (request.controller.signal.aborted || request.generation !== categorySearchGeneration)
+                        throw categorySearchAbortError();
+                    if (results.every((category) => Number.isSafeInteger(category.concurrentUserCount)))
+                        touchMapEntry(
+                            categorySearchCache,
+                            query,
+                            { results, measuredAt: request.measuredAt },
+                            MAX_CATEGORY_SEARCH_CACHE_ENTRIES
+                        );
                     return results;
                 })().finally(() => {
                     if (categorySearchRequests.get(query) === request) categorySearchRequests.delete(query);

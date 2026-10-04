@@ -45,6 +45,7 @@
     let lastUrl = location.href;
 
     let currentGrid = null;
+    const hiddenPaginations = new Set();
     let cardTemplate = null;
     let lastFilterKey = null;
     let visibleMatchLimit = featureOptions.videoSearchRenderBatchSize;
@@ -1335,12 +1336,36 @@ body[theme="dark"] #${BAR_ID},
 
     function findPagination() {
         if (!currentGrid) return null;
-        const root = currentGrid.parentElement?.parentElement || currentGrid.parentElement || document.body;
+        const parent = currentGrid.parentElement;
+        // Current channel videos use a sibling container with an ordered numeric list,
+        // without pagination class names or next/previous buttons on short lists.
+        for (const candidate of parent?.children || []) {
+            if (candidate === currentGrid || candidate.contains(document.getElementById(BAR_ID))) continue;
+            if (candidate.querySelector('input, article, a[href*="/video/"]')) continue;
+            const list = candidate.matches("ol") ? candidate : candidate.querySelector("ol");
+            if (!list || !list.children.length) continue;
+            const numbers = Array.from(list.children).map((item) => {
+                const controls = item.querySelectorAll("button, a");
+                if (item.tagName !== "LI" || controls.length !== 1) return null;
+                const text = controls[0].textContent.trim();
+                return /^[1-9]\d*$/.test(text) ? Number(text) : null;
+            });
+            if (numbers.every((number) => Number.isSafeInteger(number)) && new Set(numbers).size === numbers.length)
+                return candidate;
+        }
+        const root = parent?.parentElement || parent;
+        if (!root) return null;
 
         const byClass = root.querySelector(
             '[class*="pagination" i], [class*="Pagination"], [class*="paging" i], [class*="Paging"], [class*="paginator" i], nav[aria-label*="페이지"]'
         );
-        if (byClass && !byClass.contains(document.getElementById(BAR_ID))) return byClass;
+        if (
+            byClass &&
+            !byClass.contains(currentGrid) &&
+            !currentGrid.contains(byClass) &&
+            !byClass.contains(document.getElementById(BAR_ID))
+        )
+            return byClass;
 
         const buttons = Array.from(root.querySelectorAll("button, a"));
         for (const b of buttons) {
@@ -1361,14 +1386,22 @@ body[theme="dark"] #${BAR_ID},
     }
 
     function setPaginationHidden(hidden) {
-        const pag = findPagination();
+        const pag = hidden ? findPagination() : null;
+        for (const previous of hiddenPaginations) {
+            if (previous === pag) continue;
+            previous.removeAttribute(HIDE_ATTR);
+            hiddenPaginations.delete(previous);
+        }
         if (!pag) return;
-        if (hidden) pag.setAttribute(HIDE_ATTR, "1");
-        else pag.removeAttribute(HIDE_ATTR);
+        hiddenPaginations.add(pag);
+        if (pag.getAttribute(HIDE_ATTR) !== "1") pag.setAttribute(HIDE_ATTR, "1");
     }
 
     function applyFilter() {
-        if (!currentGrid || !currentGrid.isConnected) return;
+        if (!currentGrid || !currentGrid.isConnected) {
+            setPaginationHidden(false);
+            return;
+        }
 
         const entry = getEntry();
 
@@ -1623,6 +1656,7 @@ body[theme="dark"] #${BAR_ID},
         if (!grid) return;
         grid.setAttribute(GRID_MARK_ATTR, "1");
         const gridChanged = currentGrid !== grid;
+        if (gridChanged) setPaginationHidden(false);
         currentGrid = grid;
         if (gridChanged) {
             cardTemplate = null;
@@ -1666,6 +1700,7 @@ body[theme="dark"] #${BAR_ID},
     }
 
     function removeBar() {
+        setPaginationHidden(false);
         removeCommentTooltip();
         const bar = document.getElementById(BAR_ID);
         if (bar) bar.remove();

@@ -21,6 +21,28 @@ function withState(revision, categories) {
     );
 }
 
+test("viewer-ranked search hides zero candidates while preserving saved exclusions and stores identity only", async (t) => {
+    const worker = withState(1, [category()]);
+    const ui = await createCategoryUI(t, { worker, categoryCounts: { A: 0, low: 5, high: 200 } });
+    const menu = ui.open();
+    await search(ui, "게임", [category(), category("GAME", "low", "낮음"), category("GAME", "high", "높음")]);
+    assert.deepEqual(
+        [...menu.querySelectorAll("[data-category-add]")].map((button) => button.getAttribute("aria-label")),
+        ["높음 제외", "낮음 제외"]
+    );
+    assert.ok(menu.querySelector('button[aria-label="게임 하나 제외 해제"]'));
+    assert.equal(
+        worker.storage.local[CATEGORY_KEY].categories.length,
+        1,
+        "zero viewers never delete a saved exclusion"
+    );
+    ui.trustedClick(menu.querySelector("[data-category-add]"));
+    await settle();
+    const saved = worker.storage.local[CATEGORY_KEY].categories.find((item) => item.categoryId === "high");
+    assert.deepEqual(Object.keys(saved).sort(), ["categoryId", "categoryType", "categoryValue"]);
+    assert.equal(menu.querySelector("[data-category-add]").disabled, true);
+});
+
 async function deleteCategoryKey(worker) {
     await new Promise((resolve) => worker.storage.chrome.storage.local.remove(CATEGORY_KEY, resolve));
     assert.equal(Object.hasOwn(worker.storage.local, CATEGORY_KEY), false);
@@ -42,6 +64,7 @@ test("category exclusions mount only in global lives, restore exact identities, 
     const ui = await createCategoryUI(t, { worker: createCategoryExclusionsWorker(storage) });
     const menu = ui.open();
     assert.ok(menu.querySelector("[data-category-exclusions]"));
+    assert.equal(menu.firstElementChild, menu.querySelector("[data-category-exclusions]"));
     assert.equal(menu.querySelector("[data-filter-reset]").disabled, true);
     assert.equal(ui.window.document.querySelector(".bcgt-filter-label").textContent, "필터 1");
     await ui.hooks.apply();
@@ -76,9 +99,9 @@ test("category search requires trusted explicit selection and commits only after
     await settle();
     let button = menu.querySelector("[data-category-add]");
     assert.ok(button);
-    assert.equal(menu.querySelectorAll(".bcgt-category-type")[0].textContent, "게임");
-    assert.equal(menu.querySelectorAll(".bcgt-category-type")[1].textContent, "SPORTS");
-    assert.equal(menu.querySelectorAll(".bcgt-category-type")[2].textContent, "기타");
+    assert.equal(menu.querySelectorAll(".bcgt-category-type")[0].textContent, "게임 · 시청자 1명");
+    assert.equal(menu.querySelectorAll(".bcgt-category-type")[1].textContent, "SPORTS · 시청자 1명");
+    assert.equal(menu.querySelectorAll(".bcgt-category-type")[2].textContent, "기타 · 시청자 1명");
     button.click();
     button.dispatchEvent(new ui.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     await settle();
@@ -1199,4 +1222,122 @@ test("real option binding starts an initially enabled category feature exactly o
     assert.equal(ui.optionsReads.length, 1);
     assert.ok(ui.window.document.querySelector("[data-category-exclusions]"));
     assert.equal(ui.window.document.querySelector(".bcgt-live-count"), null);
+});
+
+test("global list search keeps a draft until apply or Enter and rejects IME and repeated submissions", async (t) => {
+    const ui = await createCategoryUI(t);
+    const bar = ui.window.document.getElementById("betterchzzk-category-tools");
+    const input = bar.querySelector("input");
+    const apply = bar.querySelector(".bcgt-search-apply");
+    const event = (type, options = {}) =>
+        input.dispatchEvent(
+            type.startsWith("key")
+                ? new ui.window.KeyboardEvent(type, { key: "Enter", bubbles: true, cancelable: true, ...options })
+                : new ui.window.Event(type, { bubbles: true })
+        );
+    const scheduled = ui.schedules();
+    input.value = "Alpha";
+    event("input");
+    assert.equal(ui.hooks.appliedQuery(), "");
+    assert.equal(ui.schedules(), scheduled);
+    assert.equal(
+        [...ui.timers.values()].some((timer) => timer.delay === 120),
+        false
+    );
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "b"), false, "unrelated refresh cannot apply draft");
+    event("compositionstart");
+    event("keydown", { isComposing: true });
+    event("compositionend");
+    event("keydown");
+    assert.equal(ui.hooks.appliedQuery(), "");
+    event("keyup");
+    event("keydown", { keyCode: 229 });
+    event("keyup");
+    event("keydown", { repeat: true });
+    assert.equal(ui.hooks.appliedQuery(), "");
+    event("keydown");
+    assert.equal(ui.hooks.appliedQuery(), "Alpha");
+    const afterSubmit = ui.schedules();
+    event("keydown");
+    apply.click();
+    assert.equal(ui.schedules(), afterSubmit, "same query does not restart work");
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "b"), true);
+    input.value = "Beta";
+    event("input");
+    await ui.hooks.apply();
+    assert.equal(ui.hooks.appliedQuery(), "Alpha");
+    assert.equal(hidden(ui, "b"), true);
+    apply.click();
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "a"), true);
+    assert.equal(hidden(ui, "b"), false);
+    bar.querySelector(".bcgt-clear").click();
+    assert.equal(ui.hooks.appliedQuery(), "Beta", "clear edits draft only");
+    apply.click();
+    await ui.hooks.apply();
+    assert.equal(ui.hooks.appliedQuery(), "");
+    assert.equal(hidden(ui, "a"), false);
+});
+
+test("global list draft survives menu close but route changes and new documents reset it", async (t) => {
+    const ui = await createCategoryUI(t);
+    const bar = ui.window.document.getElementById("betterchzzk-category-tools");
+    const input = bar.querySelector("input");
+    input.value = "Alpha";
+    input.dispatchEvent(new ui.window.Event("input", { bubbles: true }));
+    ui.open();
+    ui.window.document.querySelector(".bcgt-filter").click();
+    assert.equal(input.value, "Alpha");
+    assert.equal(ui.hooks.appliedQuery(), "");
+    input.dispatchEvent(new ui.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(input.value, "");
+    input.value = "Beta";
+    ui.dom.reconfigure({ url: "https://chzzk.naver.com/category/GAME/A/lives" });
+    ui.hooks.pageChange();
+    bar.querySelector(".bcgt-search-apply").click();
+    assert.equal(ui.hooks.appliedQuery(), "", "detached old toolbar cannot submit");
+    const next = await createCategoryUI(t, { worker: ui.worker });
+    assert.equal(next.hooks.appliedQuery(), "");
+    assert.equal(next.window.document.querySelector('[aria-label="현재 목록 검색"]').value, "");
+});
+
+test("toolbar category boxes show stored exclusions without opening filters and remove only through trusted worker requests", async (t) => {
+    const ui = await createCategoryUI(t, { worker: withState(1, [category(), category("SPORTS", "A", "게임 하나")]) });
+    const bar = ui.window.document.getElementById("betterchzzk-category-tools");
+    const summary = bar.nextElementSibling;
+    assert.equal(summary.hidden, false);
+    assert.equal(summary.className, "bcgt-category-summary");
+    assert.equal(bar.contains(summary), false, "summary cannot wrap the existing search toolbar");
+    assert.equal(summary.querySelectorAll(".bcgt-category-row").length, 2);
+    assert.notEqual(
+        ui.window.document.querySelector("[data-category-exclusions]").parentElement.getAttribute("data-open"),
+        "1"
+    );
+    const button = summary.querySelector("[data-category-summary-remove]");
+    button.click();
+    await settle();
+    assert.equal(ui.worker.storage.local[CATEGORY_KEY].categories.length, 2);
+    const gate = ui.worker.storage.pauseNext("set");
+    ui.trustedClick(button);
+    await gate.started;
+    assert.equal(button.disabled, true);
+    assert.equal(summary.querySelectorAll(".bcgt-category-row").length, 2);
+    gate.release();
+    await settle();
+    assert.equal(summary.querySelectorAll(".bcgt-category-row").length, 1);
+    assert.equal(ui.worker.storage.local[CATEGORY_KEY].categories[0].categoryType, "SPORTS");
+    ui.open();
+    ui.window.document.querySelector(".bcgt-filter").click();
+    assert.equal(summary.hidden, false);
+    ui.trustedClick(summary.querySelector("[data-category-summary-remove]"));
+    await settle();
+    assert.equal(summary.hidden, true);
+    assert.equal(ui.worker.storage.local[CATEGORY_KEY].categories.length, 0);
+    ui.emit(state(8, [category()]));
+    assert.equal(summary.hidden, false);
+    ui.dom.reconfigure({ url: "https://chzzk.naver.com/category/GAME/A/lives" });
+    ui.hooks.pageChange();
+    assert.equal(ui.window.document.querySelector(".bcgt-category-summary"), null);
 });

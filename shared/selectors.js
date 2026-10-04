@@ -30,7 +30,7 @@
         volumeControl: ["[class*='volume-control']", "[class*='volume-button']", "[class*='volume']"],
         volumeSlider: ["[class*='slider']"],
 
-        // ── 채팅 (사용처: chatTools, vodReplayChatFix)
+        // ── 채팅 (사용처: chatTools)
         chatRoot: [
             "[class*='chatroom']",
             "[class*='chat-room']",

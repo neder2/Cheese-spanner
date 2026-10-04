@@ -16,7 +16,7 @@ function live(id, title = id) {
 }
 
 function category(categoryId, categoryType = "GAME", categoryValue = categoryId) {
-    return { categoryType, categoryId, categoryValue };
+    return { categoryType, categoryId, categoryValue, concurrentUserCount: 1 };
 }
 
 function categories(rows) {
@@ -72,7 +72,21 @@ function fixture(fetchJson, callbacks = {}) {
         vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
     }
     const repository = context.BetterChzzk.categoryToolsRepository.createRepository({
-        fetchJson,
+        fetchJson: (url, options) => {
+            const match = url.match(/\/categories\/([^/]+)\/([^/]+)\/info$/);
+            if (match) {
+                if (callbacks.categoryInfo) return callbacks.categoryInfo(url, options);
+                return Promise.resolve({
+                    code: 200,
+                    content: {
+                        categoryType: decodeURIComponent(match[1]),
+                        categoryId: decodeURIComponent(match[2]),
+                        concurrentUserCount: 1,
+                    },
+                });
+            }
+            return fetchJson(url, options);
+        },
         touchMapEntry: context.BetterChzzk.utils.touchMapEntry,
         ...callbacks,
     });
@@ -128,7 +142,7 @@ test("category search uses the measured autocomplete endpoint and includes categ
     assert.equal(repository.metadataState().size, 0, "autocomplete must not download or populate live metadata");
 });
 
-test("category search preserves valid server order and deduplicates exact identity without folding ID case", async () => {
+test("category search preserves server order for equal viewers and deduplicates exact identity without folding ID case", async () => {
     const invalid = [
         null,
         "text",
@@ -160,6 +174,87 @@ test("category search preserves valid server order and deduplicates exact identi
         ])
     );
     assert.deepEqual(plain(await repository.searchCategories("검색")), [first, sameIdOtherType, caseVariant, literal]);
+});
+
+test("category search ranks measured viewers, hides zero only, preserves distinct same-name IDs and retries unknown counts", async () => {
+    const rows = [
+        category("low", "GAME", "같은 이름"),
+        category("zero"),
+        category("high", "GAME", "같은 이름"),
+        category("low"),
+        category("unknown"),
+        category("mismatch"),
+        category("invalid"),
+    ];
+    const requested = [];
+    let retry = false;
+    const { repository } = fixture(async () => categories(rows), {
+        categoryInfo: async (url) => {
+            const id = url.match(/\/([^/]+)\/info$/)[1];
+            requested.push(id);
+            if (id === "unknown" && !retry) throw new Error("timeout");
+            return {
+                code: 200,
+                content: {
+                    categoryType: "GAME",
+                    categoryId: id === "mismatch" ? "other" : id,
+                    concurrentUserCount: { low: 5, zero: 0, high: 200, unknown: 10, mismatch: 999, invalid: -1 }[id],
+                },
+            };
+        },
+    });
+    const first = plain(await repository.searchCategories("같은"));
+    assert.deepEqual(
+        first.map((row) => row.categoryId),
+        ["high", "low", "unknown", "mismatch", "invalid"]
+    );
+    assert.equal(first[0].concurrentUserCount, 200);
+    assert.equal(first[1].categoryValue, "같은 이름");
+    assert.equal(Object.hasOwn(first[2], "concurrentUserCount"), false);
+    assert.equal(requested.filter((id) => id === "low").length, 1);
+    retry = true;
+    const second = plain(await repository.searchCategories("같은"));
+    assert.deepEqual(
+        second.map((row) => row.categoryId),
+        ["high", "unknown", "low", "mismatch", "invalid"]
+    );
+    assert.equal(
+        requested.filter((id) => id === "high").length,
+        1,
+        "known viewer counts share bounded cache across retries"
+    );
+    assert.equal(requested.filter((id) => id === "unknown").length, 2, "failed counts are not cached as zero");
+});
+
+test("category viewer lookup limits concurrency to four and abort prevents further requests or stale cache", async () => {
+    const gates = [];
+    const { repository } = fixture(async () => categories(Array.from({ length: 12 }, (_, i) => category(String(i)))), {
+        categoryInfo: (url, { signal }) => {
+            const gate = deferred();
+            gates.push({ ...gate, url, signal });
+            return gate.promise;
+        },
+    });
+    const controller = new AbortController();
+    const pending = repository.searchCategories("취소", { signal: controller.signal });
+    await flush();
+    assert.equal(gates.length, 4);
+    controller.abort();
+    await assert.rejects(pending, { name: "AbortError" });
+    for (const [i, gate] of gates.entries()) {
+        assert.equal(gate.signal.aborted, true);
+        gate.resolve({ code: 200, content: { categoryType: "GAME", categoryId: String(i), concurrentUserCount: 999 } });
+    }
+    await flush();
+    assert.equal(gates.length, 4, "cancelled lookup does not schedule later batches");
+    const nextController = new AbortController();
+    const next = repository.searchCategories("취소", { signal: nextController.signal });
+    await flush();
+    assert.equal(gates.length, 8, "late cancelled counts never populate cache");
+    nextController.abort();
+    await assert.rejects(next, { name: "AbortError" });
+    for (const gate of gates.slice(4)) gate.resolve({ code: 500 });
+    await flush();
 });
 
 test("category search rejects malformed responses and all-invalid rows but accepts a real empty array", async () => {

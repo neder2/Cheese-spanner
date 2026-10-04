@@ -19,3 +19,5 @@
 ## 검증
 
 `tests/vod-comment-model.test.js`에서 무변이 정규화·중복·날짜·잘못된 페이지·첨부를, `tests/vod-comment-repository.test.js`에서 공유 요청·정렬·페이지·상한·취소를 확인해요. `tests/vod-comment-tabs.test.js`에서 채팅 유무·지연 mount·재마운트·원본 버튼·타임코드 위임·키보드·비활성화를 검증해요.
+
+전체화면에서는 해당 fullscreen 요소 내부의 네이티브 VOD 패널만 대상으로 삼아요. 닫힌 패널을 임의로 열거나 전체화면 밖 패널에 확장 UI를 남기지 않아요. 원본 댓글이 아직 없거나 전체화면에서 사라질 때 본문 글꼴은 body 기준을 사용하고 제목용 글꼴로 대체하지 않아요.
