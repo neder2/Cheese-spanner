@@ -34,6 +34,16 @@ function fixture(t, { channels = [], enabled = true, visible = true, withHeader 
         }
     );
     const w = dom.window;
+    const clickListeners = new WeakMap();
+    const addListener = w.EventTarget.prototype.addEventListener;
+    w.EventTarget.prototype.addEventListener = function (type, callback, ...rest) {
+        if (type === "click") {
+            const listeners = clickListeners.get(this) || [];
+            listeners.push(callback);
+            clickListeners.set(this, listeners);
+        }
+        return addListener.call(this, type, callback, ...rest);
+    };
     chrome.runtime.getURL = (file) => "chrome-extension://better-chzzk/" + file;
     w.chrome = chrome;
     const requests = [],
@@ -99,6 +109,13 @@ function fixture(t, { channels = [], enabled = true, visible = true, withHeader 
     const input = () => panel().querySelector("input");
     return {
         w,
+        // JSDOM cannot create trusted events; model user input at the registered listener.
+        trustedClick(button) {
+            assert.ok(button && button.isConnected);
+            if (button.disabled) return;
+            for (const callback of clickListeners.get(button) || [])
+                callback.call(button, { isTrusted: true, target: button, currentTarget: button });
+        },
         chrome,
         requests,
         sent,
@@ -160,14 +177,14 @@ test("one header button opens search on any page and never adds a channel-area b
     assert.equal(url.searchParams.get("withFirstChannelContent"), "false");
     assert.match(f.panel().textContent, /팔로워 100명/);
     assert.equal(f.action(SECOND).closest("li").querySelector("img").src, channel(SECOND).channelImageUrl);
-    f.action(SECOND).click();
+    f.trustedClick(f.action(SECOND));
     assert.deepEqual(f.sent[0], {
         type: "betterchzzk:live-start:channels",
         kind: "set-notify",
         channel: { channelId: SECOND, notify: true },
     });
     assert.equal(f.action(SECOND).getAttribute("aria-pressed"), "true");
-    f.action(SECOND).click();
+    f.trustedClick(f.action(SECOND));
     assert.equal(f.action(SECOND).getAttribute("aria-pressed"), "false");
     assert.equal(f.requests.length, 1);
     f.navigate("/live/" + CHANNEL);
@@ -181,7 +198,7 @@ test("registration removal deletes both channel actions and stays synchronized w
     const other = { ...channel(SECOND), notify: true, autoOpen: false };
     const f = fixture(t, { channels: [saved, other] });
     await f.open();
-    f.action(CHANNEL, "remove").click();
+    f.trustedClick(f.action(CHANNEL, "remove"));
     assert.deepEqual(f.sent[0], {
         type: "betterchzzk:live-start:channels",
         kind: "remove",
@@ -193,10 +210,10 @@ test("registration removal deletes both channel actions and stays synchronized w
     await f.search();
     assert.equal(f.action(CHANNEL, "remove").hidden, true);
     assert.equal(f.action().getAttribute("aria-pressed"), "false");
-    f.action().click();
+    f.trustedClick(f.action());
     assert.equal(f.action(CHANNEL, "remove").hidden, false);
     f.action(CHANNEL, "remove").focus();
-    f.action(CHANNEL, "remove").click();
+    f.trustedClick(f.action(CHANNEL, "remove"));
     assert.equal(f.action(CHANNEL, "remove").hidden, true);
     assert.equal(f.w.document.activeElement, f.action());
     assert.equal(f.action(CHANNEL, "autoOpen").getAttribute("aria-pressed"), "false");
@@ -211,9 +228,9 @@ test("failed removals preserve the registration and pending removal blocks dupli
     f.setSend((_message, callback) => {
         reply = callback;
     });
-    f.action(CHANNEL, "remove").click();
+    f.trustedClick(f.action(CHANNEL, "remove"));
     for (const key of ["notify", "autoOpen", "remove"]) assert.equal(f.action(CHANNEL, key).disabled, true);
-    f.action(CHANNEL, "remove").click();
+    f.trustedClick(f.action(CHANNEL, "remove"));
     assert.equal(f.sent.length, 1);
     reply({ ok: false, error: "저장 실패" });
     assert.deepEqual(f.chrome.testState.local[KEY], [saved]);
@@ -296,7 +313,7 @@ test("registered channels synchronize with settings and keep global options and 
     const f = fixture(t, { enabled: false, channels: [saved] });
     await f.open();
     assert.match(f.panel().textContent, /전체 데스크톱 알림·자동 입장 기능이 꺼져/);
-    f.action().click();
+    f.trustedClick(f.action());
     assert.equal(f.action().getAttribute("aria-pressed"), "false");
     assert.equal(f.action(CHANNEL, "autoOpen").getAttribute("aria-pressed"), "true");
     assert.equal(f.chrome.testState.local[KEY][0].autoOpen, true);
@@ -316,7 +333,7 @@ test("desktop notifications and automatic entry can each register a channel and 
     await f.search();
     for (const key of ["notify", "autoOpen"])
         assert.equal(f.action(CHANNEL, key).getAttribute("aria-pressed"), "false");
-    f.action(CHANNEL, "autoOpen").click();
+    f.trustedClick(f.action(CHANNEL, "autoOpen"));
     assert.deepEqual(f.sent[0], {
         type: "betterchzzk:live-start:channels",
         kind: "set-auto-open",
@@ -326,11 +343,11 @@ test("desktop notifications and automatic entry can each register a channel and 
     assert.equal(f.action(CHANNEL, "autoOpen").getAttribute("aria-pressed"), "true");
     f.type("");
     assert.ok(f.action(), "auto-entry-only channels stay in the registered list");
-    f.action().click();
+    f.trustedClick(f.action());
     assert.equal(f.action(CHANNEL, "autoOpen").getAttribute("aria-pressed"), "true");
-    f.action(CHANNEL, "autoOpen").click();
+    f.trustedClick(f.action(CHANNEL, "autoOpen"));
     assert.equal(f.action().getAttribute("aria-pressed"), "true");
-    f.action().click();
+    f.trustedClick(f.action());
     assert.ok(f.action(), "turning off both retains the channel for later re-enabling");
     assert.equal(f.chrome.testState.sync.liveStartNotificationsEnabled, false);
     assert.equal(f.chrome.testState.sync.liveStartAutoOpenEnabled, undefined);
@@ -424,7 +441,7 @@ test("display option removes UI and listeners without deleting registration and 
     assert.equal(f.trigger(), null);
     f.w.dispatchEvent(new f.w.Event("pageshow"));
     await f.open();
-    f.action().click();
+    f.trustedClick(f.action());
     assert.equal(f.sent.length, 1);
 });
 test("disabled initial option and late header mounting do not create stray UI", async (t) => {
@@ -449,10 +466,10 @@ test("late save acknowledgements preserve newer storage and do not reopen panels
     f.setSend((_message, callback) => {
         reply = callback;
     });
-    f.action().click();
+    f.trustedClick(f.action());
     assert.equal(f.action().disabled, true);
     assert.equal(f.action(CHANNEL, "autoOpen").disabled, true);
-    f.action().click();
+    f.trustedClick(f.action());
     assert.equal(f.sent.length, 1);
     const saved = { ...channel(), notify: true, autoOpen: false };
     f.change({ [KEY]: [saved] });
@@ -460,7 +477,7 @@ test("late save acknowledgements preserve newer storage and do not reopen panels
     reply({ ok: true, channels: [saved] });
     assert.equal(f.action().getAttribute("aria-pressed"), "false");
     assert.match(f.message().textContent, /현재 저장된/);
-    f.action().click();
+    f.trustedClick(f.action());
     f.navigate("/lives");
     reply({ ok: true, channels: [saved] });
     assert.equal(f.panel(), null);
@@ -470,7 +487,7 @@ test("failed saves and runtime errors remain unregistered and unrelated DOM chan
     await f.open();
     await f.search();
     f.setSend((_message, callback) => callback({ ok: false, error: "채널은 최대 32개까지 등록할 수 있어요." }));
-    f.action().click();
+    f.trustedClick(f.action());
     assert.equal(f.action().getAttribute("aria-pressed"), "false");
     assert.match(f.message().textContent, /32개/);
     f.setSend((_message, callback) => {
@@ -478,7 +495,7 @@ test("failed saves and runtime errors remain unregistered and unrelated DOM chan
         callback();
         f.chrome.runtime.lastError = undefined;
     });
-    f.action().click();
+    f.trustedClick(f.action());
     assert.equal(f.action().disabled, false);
     assert.match(f.message().textContent, /저장하지 못했어요/);
     const doc = f.w.document,
@@ -493,4 +510,31 @@ test("failed saves and runtime errors remain unregistered and unrelated DOM chan
     for (let i = 0; i < 30; i++) unrelated.append(doc.createElement("span"));
     await new Promise((resolve) => f.w.requestAnimationFrame(resolve));
     assert.equal(scans, 0);
+});
+
+test("synthetic registration clicks cannot change notification, auto-entry or removal", async (t) => {
+    const saved = { ...channel(), notify: true, autoOpen: true };
+    const f = fixture(t, { channels: [saved] });
+    await f.open();
+    for (const key of ["notify", "autoOpen", "remove"]) {
+        const button = f.action(CHANNEL, key);
+        button.click();
+        button.dispatchEvent(new f.w.MouseEvent("click", { bubbles: true }));
+    }
+    assert.deepEqual(f.sent, []);
+    assert.deepEqual(f.chrome.testState.local[KEY], [saved]);
+    await f.search();
+    f.action(SECOND).click();
+    f.action(SECOND, "autoOpen").click();
+    assert.deepEqual(f.sent, []);
+    assert.deepEqual(f.chrome.testState.local[KEY], [saved]);
+    const button = f.action(SECOND);
+    button.dataset.channelId = CHANNEL;
+    button.dataset.action = "remove";
+    f.trustedClick(button);
+    assert.deepEqual(f.sent[0], {
+        type: "betterchzzk:live-start:channels",
+        kind: "set-notify",
+        channel: { channelId: SECOND, notify: true },
+    });
 });

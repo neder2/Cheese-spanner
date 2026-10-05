@@ -1510,7 +1510,7 @@ test("category injected search results join the current pass without rescanning 
     const input = document.querySelector('#betterchzzk-category-tools input[type="search"]');
     input.value = "Match";
     dispatch(dom, input, "input");
-    document.querySelector(".bcgt-search-apply").click();
+    input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "3 / 3");
     assert.equal(inserted, true);
     assert.equal(elapsedReads, 1, "the elapsed badge is synchronized once per filtered apply");
@@ -1558,7 +1558,7 @@ test("category search bounds injected cards and continues cached results on scro
     const input = document.querySelector('#betterchzzk-category-tools input[type="search"]');
     input.value = "Match";
     dispatch(dom, input, "input");
-    document.querySelector(".bcgt-search-apply").click();
+    input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent.endsWith(" / 150"));
     const injected = () => [...grid.querySelectorAll('[data-bcgt-injected="1"]')];
     const firstCount = injected().length;
@@ -1593,7 +1593,7 @@ test("category search bounds injected cards and continues cached results on scro
     assert.equal(requests, requestsBeforeScroll, "cached pages should not be fetched again");
     input.value = "No matching broadcast";
     dispatch(dom, input, "input");
-    document.querySelector(".bcgt-search-apply").click();
+    input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent.startsWith("0 /"));
     assert.equal(injected().length, 0, "a new query discards obsolete extension-owned cards");
 });
@@ -1737,6 +1737,42 @@ test("category follower filtering continues candidates that do not yet have a DO
     assert.equal(counts.size, 3);
 });
 
+test("global lives category exclusions sit at the right end of the native sort row", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            categoryToolsFollowerBadgesEnabled: false,
+            categoryToolsLiveElapsedEnabled: false,
+        },
+    });
+    const dom = createGlobalLivesDom(chrome);
+    t.after(() => closeCategoryToolsFixture(dom, chrome));
+    const { document } = dom.window;
+    const response = createGlobalLivesApiMock(
+        ["native-a", "native-b"].map((channelId, i) => ({
+            channelId,
+            liveId: 500 - i,
+            title: `Native ${i}`,
+            views: 10,
+        }))
+    );
+    dom.window.fetch = async (url) => ({ ok: true, json: async () => response(String(url)) });
+    await loadCategoryToolsPage(dom);
+    await waitForCondition(() => document.getElementById("betterchzzk-category-exclusions"));
+    const sortRow = document.getElementById("sort-row");
+    const summary = document.getElementById("betterchzzk-category-exclusions");
+    assert.equal(summary.parentElement, sortRow, "the exclusion row shares the sort buttons' line");
+    assert.equal(sortRow.lastElementChild, summary, "chips and the add button stay at the right end");
+    assert.equal(summary.getAttribute("data-placement"), "sort-line");
+    assert.equal(sortRow.getAttribute("data-bcgt-exclusion-host"), "1");
+    assert.ok(summary.querySelector("[data-category-add-open]"));
+    assert.equal(document.getElementById("betterchzzk-category-tools").contains(summary), false);
+    assert.deepEqual(
+        [...sortRow.querySelectorAll(":scope > button")].map((button) => button.textContent),
+        ["인기", "최신", "추천"],
+        "native sort buttons are preserved before the exclusion row"
+    );
+});
+
 test("category tools respect the currently observed viewer-order tab labels", async (t) => {
     const chrome = createFakeChrome({
         sync: {
@@ -1767,7 +1803,7 @@ test("category tools respect the currently observed viewer-order tab labels", as
     const input = document.querySelector("#betterchzzk-category-tools input");
     input.value = "Native";
     dispatch(dom, input, "input");
-    document.querySelector(".bcgt-search-apply").click();
+    input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "3 / 3");
     tabs[0].setAttribute("aria-selected", "false");
     tabs[1].setAttribute("aria-selected", "true");
@@ -4161,18 +4197,24 @@ test("VOD broadcast clock stays hidden when the broadcast start time is unavaila
         right: 136,
         bottom: 348,
     });
-    dom.window.fetch = async () => ({
-        ok: true,
-        json: async () => ({ content: { videoNo: "12345", videoTitle: "VOD without start time" } }),
-    });
+    let detailRequests = 0;
+    dom.window.fetch = async () => {
+        detailRequests++;
+        return {
+            ok: true,
+            json: async () => ({ content: { videoNo: "12345", videoTitle: "VOD without start time" } }),
+        };
+    };
 
     evalRepoScript(dom, "shared", "settings.js");
     evalContentScripts(dom);
     evalRepoScript(dom, "features", "vodBroadcastClock.js");
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
-    await waitForAsyncCallbacks();
-    await waitForAsyncCallbacks();
+    await waitForCondition(() => detailRequests > 0);
+    // With a start time the clock renders about 140ms after this response (120ms DOM sync throttle).
+    await new Promise((resolve) => setTimeout(resolve, 400));
 
+    assert.equal(detailRequests, 1);
     assert.equal(document.getElementById("betterchzzk-vod-broadcast-clock"), null);
 });
 

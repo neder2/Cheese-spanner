@@ -105,10 +105,24 @@ test("native hover acceleration stays disabled with the preview option off", () 
 
     anchor.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
     assert.deepEqual(scheduledDelays, [600]);
+    anchor.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true, relatedTarget: null }));
+
+    dom.window.document.documentElement.setAttribute(
+        "data-betterchzzk-live-preview-fast-hover-options",
+        JSON.stringify({ enabled: true })
+    );
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:live-preview-fast-hover-options"));
+    anchor.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
+    assert.deepEqual(scheduledDelays, [600, 0], "the same native handler is accelerated once the option is on");
     dom.window.close();
 });
 
 test("native hover acceleration ignores non-list routes and small sidebar links", () => {
+    const control = createNativePreviewDom();
+    control.anchor.dispatchEvent(new control.dom.window.MouseEvent("mouseover", { bubbles: true }));
+    assert.deepEqual(control.scheduledDelays, [0], "the same list fixture is accelerated");
+    control.dom.window.close();
+
     const outside = createNativePreviewDom({ url: "https://chzzk.naver.com/" });
     outside.anchor.dispatchEvent(new outside.dom.window.MouseEvent("mouseover", { bubbles: true }));
     assert.deepEqual(outside.scheduledDelays, [600]);
@@ -125,6 +139,10 @@ test("native hover acceleration fails closed when the React handler shape change
     const { anchor, dom, scheduledDelays } = createNativePreviewDom();
     const propsKey = Object.getOwnPropertyNames(anchor).find((name) => name.startsWith("__reactProps"));
     const props = anchor[propsKey];
+    anchor.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
+    anchor.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true }));
+    assert.deepEqual(scheduledDelays, [0], "the measured handler shape is accelerated");
+
     anchor.removeEventListener("mouseover", props.onMouseEnter);
     props.onMouseEnter = () => {
         dom.window.setTimeout(async () => {}, 450);
@@ -132,6 +150,6 @@ test("native hover acceleration fails closed when the React handler shape change
     anchor.addEventListener("mouseover", props.onMouseEnter);
 
     anchor.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }));
-    assert.deepEqual(scheduledDelays, [450]);
+    assert.deepEqual(scheduledDelays, [0, 450]);
     dom.window.close();
 });

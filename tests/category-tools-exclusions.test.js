@@ -30,7 +30,7 @@ test("viewer-ranked search hides zero candidates while preserving saved exclusio
         [...menu.querySelectorAll("[data-category-add]")].map((button) => button.getAttribute("aria-label")),
         ["높음 제외", "낮음 제외"]
     );
-    assert.ok(menu.querySelector('button[aria-label="게임 하나 제외 해제"]'));
+    assert.ok(ui.window.document.querySelector('button[aria-label="게임 하나 제외 해제"]'));
     assert.equal(
         worker.storage.local[CATEGORY_KEY].categories.length,
         1,
@@ -65,19 +65,19 @@ test("category exclusions mount only in global lives, restore exact identities, 
     const menu = ui.open();
     assert.ok(menu.querySelector("[data-category-exclusions]"));
     assert.equal(menu.firstElementChild, menu.querySelector("[data-category-exclusions]"));
-    assert.equal(menu.querySelector("[data-filter-reset]").disabled, true);
-    assert.equal(ui.window.document.querySelector(".bcgt-filter-label").textContent, "필터 1");
+    assert.equal(ui.window.document.querySelector("[data-filter-reset]").disabled, true);
+    assert.equal(ui.window.document.querySelector(".bcgt-filter-label").textContent, "필터");
     await ui.hooks.apply();
     assert.equal(hidden(ui, "a"), true);
     assert.equal(hidden(ui, "b"), false, "the same ID in a different type is not excluded");
     assert.equal(hidden(ui, "c"), false, "a matching title is not a category identity");
     ui.hooks.numeric("views", 100);
     await ui.hooks.apply();
-    assert.equal(menu.querySelector("[data-filter-reset]").disabled, false);
-    menu.querySelector("[data-filter-reset]").click();
+    assert.equal(ui.window.document.querySelector("[data-filter-reset]").disabled, false);
+    ui.window.document.querySelector("[data-filter-reset]").click();
     await ui.hooks.apply();
-    assert.equal(menu.querySelector("[data-filter-reset]").disabled, true);
-    assert.equal(ui.window.document.querySelector(".bcgt-filter-label").textContent, "필터 1");
+    assert.equal(ui.window.document.querySelector("[data-filter-reset]").disabled, true);
+    assert.equal(ui.window.document.querySelector(".bcgt-filter-label").textContent, "필터");
     assert.equal(hidden(ui, "a"), true);
     assert.equal(storage.local[CATEGORY_KEY].revision, 3);
     ui.dom.reconfigure({ url: "https://chzzk.naver.com/category/GAME/A/lives" });
@@ -121,7 +121,7 @@ test("category search requires trusted explicit selection and commits only after
     await settle();
     await ui.hooks.apply();
     assert.equal(hidden(ui, "a"), true);
-    assert.ok(menu.querySelector('button[aria-label="게임 하나 제외 해제"]'));
+    assert.ok(ui.window.document.querySelector('button[aria-label="게임 하나 제외 해제"]'));
     assert.equal(ui.worker.storage.local[CATEGORY_KEY].categories.length, 1);
     button = menu.querySelector("[data-category-add]");
     assert.equal(button.disabled, true);
@@ -149,16 +149,16 @@ test("two open menus share sequential additions and individual removal through t
     await settle();
     assert.equal(worker.storage.local[CATEGORY_KEY].categories.length, 2);
     for (const ui of [first, second]) {
-        assert.equal(ui.window.document.querySelectorAll("[data-category-remove]").length, 2);
+        assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 2);
         await ui.hooks.apply();
         assert.equal(hidden(ui, "a"), true);
         assert.equal(hidden(ui, "b"), true);
     }
-    second.trustedClick(second.window.document.querySelector("[data-category-remove]"));
+    second.trustedClick(second.window.document.querySelector("[data-category-summary-remove]"));
     await settle();
     assert.equal(worker.storage.local[CATEGORY_KEY].categories.length, 1);
     for (const ui of [first, second]) {
-        assert.equal(ui.window.document.querySelectorAll("[data-category-remove]").length, 1);
+        assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 1);
         await ui.hooks.apply();
         assert.equal(hidden(ui, "a"), false);
         assert.equal(hidden(ui, "b"), true);
@@ -172,7 +172,7 @@ test("search composition, empty input and close cancel only search work without 
     ui.input("게임");
     assert.equal(ui.timers.size, 0);
     assert.equal(ui.searches.length, 0);
-    assert.equal(menu.querySelector("[data-category-remove]").disabled, true);
+    assert.equal(ui.window.document.querySelector("[data-category-summary-remove]").disabled, false);
     ui.input("게임", "compositionend");
     ui.runDelay();
     const pending = ui.searches[0];
@@ -183,7 +183,7 @@ test("search composition, empty input and close cancel only search work without 
     pending.resolve(result([category("GAME", "Late", "이전 검색 결과")]));
     await settle();
     assert.equal(menu.querySelectorAll("[data-category-add]").length, 0);
-    assert.equal(menu.querySelectorAll("[data-category-remove]").length, 1);
+    assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 1);
     ui.input("게임");
     ui.window.document.querySelector(".bcgt-filter").click();
     assert.equal(ui.timers.size, 0);
@@ -213,7 +213,7 @@ test("category search distinguishes empty results, malformed response and timeou
     ui.searches.at(-1).reject(timeout);
     await settle();
     assert.match(menu.querySelector("[data-category-search-status]").textContent, /실패/);
-    assert.equal(menu.querySelectorAll("[data-category-remove]").length, 1);
+    assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 1);
     menu.querySelector("[data-category-search-retry]").click();
     ui.runDelay();
     ui.searches.at(-1).resolve(result([category("GAME", "NoLive", "방송하지 않는 게임")]));
@@ -257,8 +257,8 @@ test("the initial read completes before exclusion, and newer revisions beat late
     t.after(() => {
         if (!released) gate.release();
     });
-    const menu = ui.open();
-    assert.match(menu.querySelector("[data-category-store-status]").textContent, /불러오고/);
+    ui.open();
+    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /불러오고/);
     assert.equal(hidden(ui, "a"), false);
     ui.emit(state(5, [category("SPORTS", "A", "같은 이름")]));
     gate.release();
@@ -267,7 +267,7 @@ test("the initial read completes before exclusion, and newer revisions beat late
     await ui.hooks.apply();
     assert.equal(hidden(ui, "a"), false);
     assert.equal(hidden(ui, "b"), true);
-    assert.equal(menu.querySelector("[data-category-selected]").textContent.includes("같은 이름"), true);
+    assert.equal(ui.window.document.querySelector("[data-category-selected]").textContent.includes("같은 이름"), true);
     ui.emit(state(4, [category()]));
     ui.emit(state(99, [category()]), "sync");
     await ui.hooks.apply();
@@ -276,10 +276,10 @@ test("the initial read completes before exclusion, and newer revisions beat late
 
 test("actual key deletion invalidates a paused get and OFF/ON restores a deleted default", async (t) => {
     const ui = await createCategoryUI(t, { worker: withState(3, [category()]) });
-    const menu = ui.open();
+    ui.open();
     ui.emit({ version: 1, revision: 3, categories: "corrupt" });
     const delayed = ui.pauseResponse();
-    menu.querySelector("[data-category-store-retry]").click();
+    ui.window.document.querySelector("[data-category-store-retry]").click();
     await settle();
     assert.equal(typeof delayed.release, "function");
     delete ui.worker.storage.local[CATEGORY_KEY];
@@ -288,7 +288,7 @@ test("actual key deletion invalidates a paused get and OFF/ON restores a deleted
     await settle();
     await ui.hooks.apply();
     assert.equal(hidden(ui, "a"), false);
-    assert.equal(menu.querySelectorAll("[data-category-remove]").length, 0);
+    assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 0);
     ui.emit(state(5, [category()]));
     ui.options({ categoryToolsEnabled: false });
     assert.equal(ui.listeners.size, 0);
@@ -304,25 +304,25 @@ test("read, write and corrupt-state failures preserve known selections and revea
     worker.storage.failNext("get");
     const ui = await createCategoryUI(t, { worker });
     const menu = ui.open();
-    assert.match(menu.querySelector("[data-category-store-status]").textContent, /불러오지 못/);
+    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /불러오지 못/);
     assert.equal(worker.storage.categoryWrites.length, 0);
-    menu.querySelector("[data-category-store-retry]").click();
+    ui.window.document.querySelector("[data-category-store-retry]").click();
     await settle();
     await ui.hooks.apply();
     assert.equal(hidden(ui, "a"), true);
-    const remove = menu.querySelector("[data-category-remove]");
+    const remove = ui.window.document.querySelector("[data-category-summary-remove]");
     worker.storage.failNext("set");
     ui.trustedClick(remove);
     await settle();
     assert.equal(worker.storage.local[CATEGORY_KEY].categories.length, 1);
     assert.equal(remove.disabled, false);
-    assert.match(menu.querySelector("[data-category-store-status]").textContent, /못했/);
+    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /못했/);
     assert.equal(menu.textContent.includes("private response body"), false);
     worker.storage.local[CATEGORY_KEY] = { version: 99, revision: 5, categories: [] };
     ui.emit(worker.storage.local[CATEGORY_KEY]);
     await ui.hooks.apply();
     assert.equal(hidden(ui, "a"), true);
-    assert.equal(menu.querySelectorAll("[data-category-remove]").length, 1);
+    assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 1);
     assert.equal(worker.storage.categoryWrites.length, 0);
 });
 
@@ -415,7 +415,7 @@ test("category exclusion is an AND condition even for sticky viewer rows and the
         assert.equal(ui.hooks.metadataState().size, 0);
         assert.equal(hidden(ui, "a"), true);
         assert.equal(hidden(ui, "b"), false);
-        ui.open();
+        ui.window.document.querySelector(".bcgt-filter").click();
         assert.equal(ui.window.document.querySelector('[data-filter-group="duration"]').hidden, true);
         ui.window.document.querySelector(".bcgt-filter").click();
     }
@@ -499,12 +499,15 @@ test("result order, duplicate selection, fifty-result notice, long names and tex
     ui.trustedClick(menu.querySelector("[data-category-add]"));
     await settle();
     assert.equal(menu.querySelector("[data-category-add]").disabled, true);
-    assert.equal(menu.querySelector("[data-category-remove]").getAttribute("aria-label"), `${longName} 제외 해제`);
+    assert.equal(
+        ui.window.document.querySelector("[data-category-summary-remove]").getAttribute("aria-label"),
+        `${longName} 제외 해제`
+    );
     const input = menu.querySelector("[data-category-search]");
     input.focus();
     input.dispatchEvent(new ui.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     assert.equal(menu.getAttribute("data-open"), "0");
-    assert.equal(ui.window.document.activeElement, ui.window.document.querySelector(".bcgt-filter"));
+    assert.equal(ui.window.document.activeElement, ui.window.document.querySelector("[data-category-add-open]"));
     assert.match(
         ui.window.document.getElementById("betterchzzk-category-tools-style").textContent,
         /overflow-wrap:anywhere/
@@ -564,10 +567,10 @@ test("a late mutation response cannot overwrite a newer storage notification or 
     const ui = await createCategoryUI(t, { worker: withState(1, [category()]) });
     const menu = ui.open();
     const oldResponse = ui.pauseResponse();
-    ui.trustedClick(menu.querySelector("[data-category-remove]"));
+    ui.trustedClick(ui.window.document.querySelector("[data-category-summary-remove]"));
     await settle();
     assert.equal(typeof oldResponse.release, "function");
-    assert.equal(menu.querySelectorAll("[data-category-remove]").length, 0);
+    assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 0);
     await search(ui, "다른 유형", [category("SPORTS", "A", "스포츠")]);
     ui.trustedClick(menu.querySelector("[data-category-add]"));
     await settle();
@@ -577,8 +580,8 @@ test("a late mutation response cannot overwrite a newer storage notification or 
     await ui.hooks.apply();
     assert.equal(hidden(ui, "a"), false);
     assert.equal(hidden(ui, "b"), true);
-    assert.equal(menu.querySelector("[data-category-selected]").textContent.includes("스포츠"), true);
-    assert.equal(menu.querySelectorAll("[data-category-remove]").length, 1);
+    assert.equal(ui.window.document.querySelector("[data-category-selected]").textContent.includes("스포츠"), true);
+    assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 1);
 });
 
 test("active category requests and input timers are cancelled on SPA, OFF and document termination", async (t) => {
@@ -625,7 +628,7 @@ test("owned button closures reject cloned buttons and ignore DOM category attrib
     ui.trustedClick(button);
     await settle();
     assert.deepEqual(ui.worker.storage.local[CATEGORY_KEY].categories, [category()]);
-    const remove = menu.querySelector("[data-category-remove]");
+    const remove = ui.window.document.querySelector("[data-category-summary-remove]");
     remove.click();
     await settle();
     assert.equal(ui.messages.filter((message) => message.operation.kind === "remove").length, 0);
@@ -642,15 +645,15 @@ test("the category limit preserves all selections and a new document restores th
     await search(ui, "한도 넘는 게임", [category()]);
     ui.trustedClick(menu.querySelector("[data-category-add]"));
     await settle();
-    assert.match(menu.querySelector("[data-category-store-status]").textContent, /최대 100개/);
+    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /최대 100개/);
     assert.equal(worker.storage.local[CATEGORY_KEY].categories.length, 100);
     assert.equal(worker.storage.categoryWrites.length, 0);
-    assert.equal(menu.querySelectorAll("[data-category-remove]").length, 100);
+    assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 100);
     ui.cleanup();
     const reloadedWorker = createCategoryExclusionsWorker(worker.storage);
     const reloaded = await createCategoryUI(t, { worker: reloadedWorker });
     reloaded.open();
-    assert.equal(reloaded.window.document.querySelectorAll("[data-category-remove]").length, 100);
+    assert.equal(reloaded.window.document.querySelectorAll("[data-category-summary-remove]").length, 100);
     assert.equal(reloaded.worker.storage.local[CATEGORY_KEY].revision, 100);
     assert.equal(reloaded.searches.length, 0, "restoration does not persist or replay a search keyword");
 });
@@ -723,15 +726,15 @@ test("fresh subscription restores a recreated lower revision after deletion whil
             }
             await settle();
             await ui.hooks.apply();
-            const menu = ui.open();
+            ui.open();
             assert.equal(
                 hidden(ui, "a"),
                 false,
                 "the old revision-five category must not survive authoritative restoration"
             );
             assert.equal(hidden(ui, "b"), true);
-            assert.equal(menu.querySelectorAll("[data-category-remove]").length, 1);
-            assert.match(menu.querySelector("[data-category-selected]").textContent, /다른 탭의 새 선택/);
+            assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 1);
+            assert.match(ui.window.document.querySelector("[data-category-selected]").textContent, /다른 탭의 새 선택/);
             assert.equal(worker.storage.categoryWrites.length, 1, "restoration performs no repair writes");
         });
     }
@@ -757,15 +760,15 @@ test("a mutation response from a stopped subscription cannot restore categories 
     ui.options({ categoryToolsEnabled: true });
     await settle();
     await ui.hooks.apply();
-    const menu = ui.open();
-    assert.equal(menu.querySelectorAll("[data-category-remove]").length, 0);
+    ui.open();
+    assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 0);
     delayed.release();
     released = true;
     await settle();
     await ui.hooks.apply();
     assert.equal(hidden(ui, "a"), false);
     assert.equal(hidden(ui, "b"), false);
-    assert.equal(menu.querySelectorAll("[data-category-remove]").length, 0);
+    assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 0);
     assert.equal(Object.hasOwn(worker.storage.local, CATEGORY_KEY), false);
     assert.equal(worker.storage.categoryWrites.length, 1);
 });
@@ -794,11 +797,11 @@ test("fresh low-revision notifications beat a delayed restore get while current-
     await settle();
     assert.equal(worker.storage.local[CATEGORY_KEY].revision, 2);
     await ui.hooks.apply();
-    const menu = ui.open();
+    ui.open();
     assert.equal(hidden(ui, "a"), false);
     assert.equal(hidden(ui, "b"), true);
     assert.equal(
-        menu.querySelectorAll("[data-category-remove]").length,
+        ui.window.document.querySelectorAll("[data-category-summary-remove]").length,
         2,
         "the new subscription must accept its revision-two event before the old get arrives"
     );
@@ -807,8 +810,8 @@ test("fresh low-revision notifications beat a delayed restore get while current-
     released = true;
     await settle();
     await ui.hooks.apply();
-    assert.equal(menu.querySelectorAll("[data-category-remove]").length, 2);
-    assert.equal(menu.querySelector("[data-category-selected]").textContent.includes("새 게임"), true);
+    assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 2);
+    assert.equal(ui.window.document.querySelector("[data-category-selected]").textContent.includes("새 게임"), true);
     assert.equal(worker.storage.local[CATEGORY_KEY].revision, 2);
 });
 
@@ -822,10 +825,13 @@ test("a removed listener cannot become current again after resubscription", asyn
     await settle();
     oldListener({ [CATEGORY_KEY]: { newValue: state(6, [category("SPORTS", "A", "옛 구독 통지")]) } }, "local");
     await ui.hooks.apply();
-    const menu = ui.open();
+    ui.open();
     assert.equal(hidden(ui, "a"), true);
     assert.equal(hidden(ui, "b"), false);
-    assert.equal(menu.querySelector("[data-category-selected]").textContent.includes("옛 구독 통지"), false);
+    assert.equal(
+        ui.window.document.querySelector("[data-category-selected]").textContent.includes("옛 구독 통지"),
+        false
+    );
     assert.deepEqual(worker.storage.local[CATEGORY_KEY], state(5, [category()]));
 });
 
@@ -847,7 +853,7 @@ test("a fresh empty restore reply cannot erase the recreated revision-one notifi
     await addSelectedCategory(other, category("SPORTS", "A", "새 스포츠"));
     assert.equal(worker.storage.local[CATEGORY_KEY].revision, 1);
     await ui.hooks.apply();
-    const menu = ui.open();
+    ui.open();
     assert.equal(hidden(ui, "a"), false);
     assert.equal(hidden(ui, "b"), true, "the current subscription accepts revision one before its empty get returns");
     delayed.release();
@@ -855,8 +861,8 @@ test("a fresh empty restore reply cannot erase the recreated revision-one notifi
     await settle();
     await ui.hooks.apply();
     assert.equal(hidden(ui, "b"), true);
-    assert.equal(menu.querySelectorAll("[data-category-remove]").length, 1);
-    assert.match(menu.querySelector("[data-category-selected]").textContent, /새 스포츠/);
+    assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 1);
+    assert.match(ui.window.document.querySelector("[data-category-selected]").textContent, /새 스포츠/);
     assert.equal(worker.storage.categoryWrites.length, 1);
 });
 
@@ -878,14 +884,14 @@ test("an old mutation failure cannot display an error in a newly restored subscr
     ui.options({ categoryToolsEnabled: true });
     await settle();
     await ui.hooks.apply();
-    const menu = ui.open();
-    assert.equal(menu.querySelector("[data-category-store-status]").textContent, "");
+    ui.open();
+    assert.equal(ui.window.document.querySelector("[data-category-store-status]").textContent, "");
     delayed.release();
     released = true;
     await settle();
-    assert.equal(menu.querySelector("[data-category-store-status]").textContent, "");
+    assert.equal(ui.window.document.querySelector("[data-category-store-status]").textContent, "");
     assert.equal(hidden(ui, "a"), true);
-    assert.equal(menu.querySelectorAll("[data-category-remove]").length, 1);
+    assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 1);
     assert.equal(worker.storage.categoryWrites.length, 0);
 });
 
@@ -900,17 +906,17 @@ test("a fresh restore read failure preserves the last good state and a retry can
     ui.options({ categoryToolsEnabled: true });
     await settle();
     await ui.hooks.apply();
-    const menu = ui.open();
+    ui.open();
     assert.equal(hidden(ui, "a"), true, "a real read failure preserves the last known good category");
     assert.equal(hidden(ui, "b"), false);
-    assert.match(menu.querySelector("[data-category-store-status]").textContent, /못했/);
+    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /못했/);
     assert.equal(worker.storage.categoryWrites.length, 1);
-    menu.querySelector("[data-category-store-retry]").click();
+    ui.window.document.querySelector("[data-category-store-retry]").click();
     await settle();
     await ui.hooks.apply();
     assert.equal(hidden(ui, "a"), false);
     assert.equal(hidden(ui, "b"), true);
-    assert.match(menu.querySelector("[data-category-selected]").textContent, /새 스포츠/);
+    assert.match(ui.window.document.querySelector("[data-category-selected]").textContent, /새 스포츠/);
     assert.equal(worker.storage.categoryWrites.length, 1);
 });
 
@@ -932,10 +938,10 @@ test("a background write begun before OFF still persists and reaches the new sub
     released = true;
     await settle();
     await ui.hooks.apply();
-    const menu = ui.open();
+    ui.open();
     assert.equal(worker.storage.local[CATEGORY_KEY].revision, 6);
     assert.equal(worker.storage.local[CATEGORY_KEY].categories.length, 2);
-    assert.equal(menu.querySelectorAll("[data-category-remove]").length, 2);
+    assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 2);
     assert.equal(hidden(ui, "a"), true);
     assert.equal(hidden(ui, "b"), true);
     assert.equal(ui.listeners.size, 1);
@@ -1013,31 +1019,31 @@ test("the newest corrupt storage notice survives older get success or failure an
             assert.equal(delayed.response.ok, outcome === "success");
             if (outcome === "success") assert.deepEqual(delayed.response.state, state(5, [category()]));
             await ui.hooks.apply();
-            const menu = ui.open();
+            ui.open();
             const unsupported = { version: 99, revision: 6, categories: [] };
             await writeCategoryState(worker, unsupported);
-            const latestError = menu.querySelector("[data-category-store-status]").textContent;
-            const retryEnabledDuringOldRead = !menu.querySelector("[data-category-store-retry]").disabled;
+            const latestError = ui.window.document.querySelector("[data-category-store-status]").textContent;
+            const retryEnabledDuringOldRead = !ui.window.document.querySelector("[data-category-store-retry]").disabled;
             assert.match(latestError, /저장한 제외 목록을 확인하지 못/);
-            assert.equal(menu.querySelector("[data-category-store-retry]").hidden, false);
+            assert.equal(ui.window.document.querySelector("[data-category-store-retry]").hidden, false);
             const writesAfterNotice = worker.storage.categoryWrites.length;
             delayed.release();
             released = true;
             await settle();
             assert.equal(
-                menu.querySelector("[data-category-store-status]").textContent,
+                ui.window.document.querySelector("[data-category-store-status]").textContent,
                 latestError,
                 "an earlier read cannot clear or replace the newest corrupt-state error"
             );
             assert.equal(retryEnabledDuringOldRead, true, "a superseded read must not keep the error's retry disabled");
-            assert.equal(menu.querySelector("[data-category-store-retry]").hidden, false);
+            assert.equal(ui.window.document.querySelector("[data-category-store-retry]").hidden, false);
             await ui.hooks.apply();
             assert.equal(hidden(ui, "a"), true);
-            assert.equal(menu.querySelectorAll("[data-category-remove]").length, 1);
+            assert.equal(ui.window.document.querySelectorAll("[data-category-summary-remove]").length, 1);
             assert.deepEqual(worker.storage.local[CATEGORY_KEY], unsupported);
-            menu.querySelector("[data-category-store-retry]").click();
+            ui.window.document.querySelector("[data-category-store-retry]").click();
             await settle();
-            assert.equal(menu.querySelector("[data-category-store-status]").textContent, latestError);
+            assert.equal(ui.window.document.querySelector("[data-category-store-status]").textContent, latestError);
             assert.equal(
                 worker.storage.categoryWrites.length,
                 writesAfterNotice,
@@ -1050,13 +1056,13 @@ test("the newest corrupt storage notice survives older get success or failure an
                 ui.window.chrome.storage.onChanged.removeListener(listener);
                 await writeCategoryState(worker, repaired);
                 ui.window.chrome.storage.onChanged.addListener(listener);
-                assert.equal(menu.querySelector("[data-category-store-status]").textContent, latestError);
-                menu.querySelector("[data-category-store-retry]").click();
+                assert.equal(ui.window.document.querySelector("[data-category-store-status]").textContent, latestError);
+                ui.window.document.querySelector("[data-category-store-retry]").click();
                 await settle();
             } else await writeCategoryState(worker, repaired);
-            assert.equal(menu.querySelector("[data-category-store-status]").textContent, "");
-            assert.equal(menu.querySelector("[data-category-store-retry]").hidden, true);
-            assert.match(menu.querySelector("[data-category-selected]").textContent, /복구한 선택/);
+            assert.equal(ui.window.document.querySelector("[data-category-store-status]").textContent, "");
+            assert.equal(ui.window.document.querySelector("[data-category-store-retry]").hidden, true);
+            assert.match(ui.window.document.querySelector("[data-category-selected]").textContent, /복구한 선택/);
             assert.equal(worker.storage.categoryWrites.length, writesAfterNotice + 1);
         });
     }
@@ -1085,12 +1091,12 @@ test("the newest corrupt storage notice survives older mutation success or failu
             assert.equal(lastGood.categories.length, outcome === "success" ? 2 : 1);
             const sameItemButton =
                 outcome === "success"
-                    ? menu.querySelector('button[aria-label="새 스포츠 제외 해제"]')
+                    ? ui.window.document.querySelector('button[aria-label="새 스포츠 제외 해제"]')
                     : menu.querySelector("[data-category-add]");
             assert.equal(sameItemButton.disabled, true);
             const malformed = { version: 1, revision: 7, categories: "private storage must not be exposed" };
             await writeCategoryState(worker, malformed);
-            const latestError = menu.querySelector("[data-category-store-status]").textContent;
+            const latestError = ui.window.document.querySelector("[data-category-store-status]").textContent;
             const pendingReleasedAtNotice = !sameItemButton.disabled;
             assert.match(latestError, /저장한 제외 목록을 확인하지 못/);
             const writesAfterNotice = worker.storage.categoryWrites.length;
@@ -1098,7 +1104,7 @@ test("the newest corrupt storage notice survives older mutation success or failu
             released = true;
             await settle();
             assert.equal(
-                menu.querySelector("[data-category-store-status]").textContent,
+                ui.window.document.querySelector("[data-category-store-status]").textContent,
                 latestError,
                 "an earlier mutation's success, failure and finally cannot replace the latest corrupt-state error"
             );
@@ -1108,26 +1114,32 @@ test("the newest corrupt storage notice survives older mutation success or failu
                 "the corrupt-state notice releases pending ownership even if the old mutation response never returns"
             );
             assert.equal(sameItemButton.disabled, false);
-            assert.equal(menu.querySelector("[data-category-store-retry]").hidden, false);
-            assert.equal(menu.querySelectorAll("[data-category-remove]").length, lastGood.categories.length);
+            assert.equal(ui.window.document.querySelector("[data-category-store-retry]").hidden, false);
+            assert.equal(
+                ui.window.document.querySelectorAll("[data-category-summary-remove]").length,
+                lastGood.categories.length
+            );
             assert.equal(menu.textContent.includes("private storage"), false);
             assert.deepEqual(worker.storage.local[CATEGORY_KEY], malformed);
             assert.equal(worker.storage.categoryWrites.length, writesAfterNotice);
-            menu.querySelector("[data-category-store-retry]").click();
+            ui.window.document.querySelector("[data-category-store-retry]").click();
             await settle();
-            assert.equal(menu.querySelector("[data-category-store-status]").textContent, latestError);
+            assert.equal(ui.window.document.querySelector("[data-category-store-status]").textContent, latestError);
             assert.deepEqual(worker.storage.local[CATEGORY_KEY], malformed);
             await writeCategoryState(worker, lastGood);
-            assert.equal(menu.querySelector("[data-category-store-status]").textContent, "");
-            assert.equal(menu.querySelector("[data-category-store-retry]").hidden, true);
+            assert.equal(ui.window.document.querySelector("[data-category-store-status]").textContent, "");
+            assert.equal(ui.window.document.querySelector("[data-category-store-retry]").hidden, true);
             const retryButton =
                 outcome === "success"
-                    ? menu.querySelector('button[aria-label="새 스포츠 제외 해제"]')
+                    ? ui.window.document.querySelector('button[aria-label="새 스포츠 제외 해제"]')
                     : menu.querySelector("[data-category-add]");
             ui.trustedClick(retryButton);
             await settle();
             assert.equal(worker.storage.local[CATEGORY_KEY].categories.length, outcome === "success" ? 1 : 2);
-            assert.equal(menu.querySelectorAll("[data-category-remove]").length, outcome === "success" ? 1 : 2);
+            assert.equal(
+                ui.window.document.querySelectorAll("[data-category-summary-remove]").length,
+                outcome === "success" ? 1 : 2
+            );
         });
     }
 });
@@ -1185,7 +1197,7 @@ test("real option binding waits for saved count-only settings after DOM ready be
     assert.equal(ui.categorySubscriptions(), 1);
     assert.equal(ui.messages.length, 1);
     assert.equal(ui.messages[0].operation.kind, "get");
-    assert.ok(ui.window.document.querySelector("[data-category-exclusions]"));
+    assert.ok(ui.window.document.querySelector("[data-category-add-open]"));
     assert.ok(ui.window.document.querySelector(".bcgt-filter"));
     assert.equal(ui.searches.length, 0);
     await new Promise((resolve) => ui.window.chrome.storage.sync.set({ categoryToolsEnabled: false }, resolve));
@@ -1220,15 +1232,15 @@ test("real option binding starts an initially enabled category feature exactly o
     assert.equal(ui.messages[0].operation.kind, "get");
     assert.equal(ui.categorySubscriptions(), 1);
     assert.equal(ui.optionsReads.length, 1);
-    assert.ok(ui.window.document.querySelector("[data-category-exclusions]"));
+    assert.ok(ui.window.document.querySelector("[data-category-add-open]"));
     assert.equal(ui.window.document.querySelector(".bcgt-live-count"), null);
 });
 
-test("global list search keeps a draft until apply or Enter and rejects IME and repeated submissions", async (t) => {
+test("global list search keeps a draft until Enter, rejects IME and repeated submissions, and clear submits once", async (t) => {
     const ui = await createCategoryUI(t);
     const bar = ui.window.document.getElementById("betterchzzk-category-tools");
     const input = bar.querySelector("input");
-    const apply = bar.querySelector(".bcgt-search-apply");
+    assert.equal(bar.querySelector(".bcgt-search-apply"), null, "the toolbar has no separate apply button");
     const event = (type, options = {}) =>
         input.dispatchEvent(
             type.startsWith("key")
@@ -1259,8 +1271,8 @@ test("global list search keeps a draft until apply or Enter and rejects IME and 
     event("keydown");
     assert.equal(ui.hooks.appliedQuery(), "Alpha");
     const afterSubmit = ui.schedules();
+    event("keyup");
     event("keydown");
-    apply.click();
     assert.equal(ui.schedules(), afterSubmit, "same query does not restart work");
     await ui.hooks.apply();
     assert.equal(hidden(ui, "b"), true);
@@ -1269,15 +1281,15 @@ test("global list search keeps a draft until apply or Enter and rejects IME and 
     await ui.hooks.apply();
     assert.equal(ui.hooks.appliedQuery(), "Alpha");
     assert.equal(hidden(ui, "b"), true);
-    apply.click();
+    event("keyup");
+    event("keydown");
     await ui.hooks.apply();
     assert.equal(hidden(ui, "a"), true);
     assert.equal(hidden(ui, "b"), false);
     bar.querySelector(".bcgt-clear").click();
-    assert.equal(ui.hooks.appliedQuery(), "Beta", "clear edits draft only");
-    apply.click();
+    assert.equal(ui.hooks.appliedQuery(), "", "clear is one explicit submission of the empty query");
+    assert.equal(input.value, "");
     await ui.hooks.apply();
-    assert.equal(ui.hooks.appliedQuery(), "");
     assert.equal(hidden(ui, "a"), false);
 });
 
@@ -1296,7 +1308,7 @@ test("global list draft survives menu close but route changes and new documents 
     input.value = "Beta";
     ui.dom.reconfigure({ url: "https://chzzk.naver.com/category/GAME/A/lives" });
     ui.hooks.pageChange();
-    bar.querySelector(".bcgt-search-apply").click();
+    input.dispatchEvent(new ui.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     assert.equal(ui.hooks.appliedQuery(), "", "detached old toolbar cannot submit");
     const next = await createCategoryUI(t, { worker: ui.worker });
     assert.equal(next.hooks.appliedQuery(), "");
@@ -1311,8 +1323,19 @@ test("toolbar category boxes show stored exclusions without opening filters and 
     assert.equal(summary.className, "bcgt-category-summary");
     assert.equal(bar.contains(summary), false, "summary cannot wrap the existing search toolbar");
     assert.equal(summary.querySelectorAll(".bcgt-category-row").length, 2);
+    assert.equal(summary.id, "betterchzzk-category-exclusions");
+    assert.equal(summary.querySelector(".bcgt-category-type"), null, "compact boxes do not print the type");
+    assert.deepEqual(
+        [...summary.querySelectorAll(".bcgt-category-row")].map((row) => [row.textContent, row.title]),
+        [
+            ["게임 하나×", "게임 하나 · 게임"],
+            ["게임 하나×", "게임 하나 · SPORTS"],
+        ]
+    );
+    await ui.hooks.apply();
+    assert.equal(bar.querySelector(".bcgt-status").textContent, "", "exclusions alone do not show a filter count");
     assert.notEqual(
-        ui.window.document.querySelector("[data-category-exclusions]").parentElement.getAttribute("data-open"),
+        ui.window.document.querySelector("[data-category-exclusions]")?.parentElement.getAttribute("data-open"),
         "1"
     );
     const button = summary.querySelector("[data-category-summary-remove]");
@@ -1333,11 +1356,182 @@ test("toolbar category boxes show stored exclusions without opening filters and 
     assert.equal(summary.hidden, false);
     ui.trustedClick(summary.querySelector("[data-category-summary-remove]"));
     await settle();
-    assert.equal(summary.hidden, true);
+    assert.equal(summary.hidden, false);
     assert.equal(ui.worker.storage.local[CATEGORY_KEY].categories.length, 0);
     ui.emit(state(8, [category()]));
     assert.equal(summary.hidden, false);
     ui.dom.reconfigure({ url: "https://chzzk.naver.com/category/GAME/A/lives" });
     ui.hooks.pageChange();
     assert.equal(ui.window.document.querySelector(".bcgt-category-summary"), null);
+});
+
+test("empty exclusions expose an independent add panel with mutual dismissal and trusted outside clicks", async (t) => {
+    const ui = await createCategoryUI(t);
+    const document = ui.window.document;
+    const button = document.querySelector("[data-category-add-open]");
+    assert.ok(button);
+    assert.equal(button.closest("section").hidden, false);
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+    const panel = ui.open();
+    assert.equal(button.getAttribute("aria-controls"), panel.id);
+    assert.equal(button.getAttribute("aria-expanded"), "true");
+    assert.equal(document.activeElement, panel.querySelector("input"));
+    assert.equal(panel.querySelector("[data-category-selected]"), null);
+    const filters = document.getElementById("betterchzzk-category-filter-menu");
+    assert.equal(filters.querySelector("[data-category-exclusions]"), null);
+    ui.input("게임");
+    ui.runDelay();
+    const pending = ui.searches.at(-1);
+    ui.outsideClick(document.body, false);
+    assert.equal(panel.getAttribute("data-open"), "1");
+    ui.outsideClick();
+    assert.equal(panel.getAttribute("data-open"), "0");
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+    assert.equal(pending.signal.aborted, true);
+    pending.resolve(result([category()]));
+    await settle();
+    ui.open();
+    assert.equal(panel.querySelectorAll("[data-category-add]").length, 0);
+    document.querySelector(".bcgt-filter").click();
+    assert.equal(panel.getAttribute("data-open"), "0");
+    assert.equal(filters.getAttribute("data-open"), "1");
+    ui.open();
+    assert.equal(filters.getAttribute("data-open"), "0");
+    ui.open();
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+    assert.equal(panel.getAttribute("data-open"), "0");
+});
+
+test("add panel mutations do not rescan cards and a removed summary cancels its search", async (t) => {
+    const ui = await createCategoryUI(t);
+    const panel = ui.open();
+    const before = ui.schedules();
+    ui.mutation({ type: "childList", target: ui.window.document.body, addedNodes: [panel], removedNodes: [] });
+    ui.mutation({ type: "childList", target: panel, addedNodes: [panel.firstElementChild], removedNodes: [] });
+    assert.equal(ui.schedules(), before);
+    ui.input("게임");
+    ui.runDelay();
+    const pending = ui.searches.at(-1);
+    const summary = ui.window.document.querySelector(".bcgt-category-summary");
+    summary.remove();
+    const beforeRemoval = ui.schedules();
+    ui.mutation({ type: "childList", target: ui.window.document.body, removedNodes: [summary], addedNodes: [] });
+    assert.ok(ui.schedules() > beforeRemoval, "a natively removed exclusion row is restored by the next apply");
+    assert.equal(pending.signal.aborted, true);
+    assert.equal(panel.isConnected, false);
+    pending.resolve(result([category()]));
+    await settle();
+    await ui.hooks.apply();
+    assert.equal(ui.window.document.querySelectorAll("[data-category-add]").length, 0);
+    assert.equal(ui.window.document.querySelector("[data-category-add-open]").getAttribute("aria-expanded"), "false");
+    assert.equal(
+        ui.window.document.getElementById("betterchzzk-category-tools").nextElementSibling.id,
+        "betterchzzk-category-exclusions"
+    );
+});
+
+test("Enter adds a typed streamer tag without category results and hides only exact tag matches", async (t) => {
+    const ui = await createCategoryUI(t);
+    const document = ui.window.document;
+    const tagLink = document.createElement("a");
+    tagLink.className = "tag";
+    tagLink.setAttribute("href", `/videos?tags=${encodeURIComponent("롤토체스")}`);
+    tagLink.textContent = "롤토체스";
+    document.getElementById("b").append(tagLink);
+    await ui.hooks.apply();
+    const panel = ui.open();
+    const status = panel.querySelector("[data-category-search-status]");
+    const input = ui.input("#롤토체스");
+    const adds = () => ui.messages.filter((message) => message.operation.kind === "add").length;
+    input.dispatchEvent(new ui.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    ui.trustedKey(input, "Enter", { isComposing: true, keyCode: 229 });
+    ui.trustedKey(input, "Enter");
+    await settle();
+    assert.equal(adds(), 0, "synthetic and IME-confirming Enter never save");
+    input.dispatchEvent(new ui.window.KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+    ui.trustedKey(input, "Enter", { repeat: true });
+    await settle();
+    assert.equal(adds(), 0, "a held Enter does not save");
+    const gate = ui.worker.storage.pauseNext("set");
+    const event = ui.trustedKey(input, "Enter");
+    assert.equal(event.defaultPrevented, true);
+    await gate.started;
+    assert.equal(status.textContent, "태그 제외를 저장하고 있어요…");
+    gate.release();
+    await settle();
+    assert.equal(adds(), 1);
+    assert.deepEqual(ui.worker.storage.local[CATEGORY_KEY].categories, [
+        { categoryType: "CHEESE_SPANNER_TAG", categoryId: "롤토체스", categoryValue: "롤토체스" },
+    ]);
+    assert.equal(input.value, "");
+    assert.equal(status.textContent, "‘롤토체스’ 태그를 제외했어요.");
+    const chip = document.querySelector("#betterchzzk-category-exclusions .bcgt-category-row");
+    assert.equal(chip.textContent, "#롤토체스×");
+    assert.equal(chip.title, "롤토체스 · 태그");
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "b"), true);
+    assert.equal(hidden(ui, "a"), false);
+    ui.input("롤토체스");
+    ui.trustedKey(input, "Enter");
+    await settle();
+    assert.equal(adds(), 1);
+    assert.equal(status.textContent, "이미 제외한 태그예요.");
+    tagLink.setAttribute("href", `/videos?tags=${encodeURIComponent("롤토체스대회")}`);
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "b"), false, "a longer tag containing the word is not excluded");
+    tagLink.setAttribute("href", `/videos?tags=${encodeURIComponent("롤토체스")}`);
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "b"), true);
+    ui.trustedClick(document.querySelector("[data-category-summary-remove]"));
+    await settle();
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "b"), false);
+});
+
+test("metadata tags exclude candidates and reserved tag types never appear as category results", async (t) => {
+    const tag = { categoryType: "CHEESE_SPANNER_TAG", categoryId: "롤토체스", categoryValue: "롤토체스" };
+    const metadata = [
+        {
+            liveId: 4,
+            liveTitle: "태그 방송",
+            concurrentUserCount: 100,
+            liveImageUrl: "https://example.com/tag.jpg",
+            categoryType: "GAME",
+            liveCategory: "New",
+            liveCategoryValue: "새 게임",
+            tags: ["롤토체스"],
+            channel: { channelId: "channel-tag" },
+        },
+        {
+            liveId: 5,
+            liveTitle: "다른 방송",
+            concurrentUserCount: 100,
+            liveImageUrl: "https://example.com/other.jpg",
+            categoryType: "GAME",
+            liveCategory: "New",
+            liveCategoryValue: "새 게임",
+            tags: ["롤토체스대회"],
+            channel: { channelId: "channel-other" },
+        },
+    ];
+    const ui = await createCategoryUI(t, { worker: withState(1, [tag]), metadata });
+    await ui.hooks.apply();
+    const injected = [...ui.window.document.querySelectorAll('[data-bcgt-injected="1"]')].map((card) =>
+        card.getAttribute("data-bcgt-card-id")
+    );
+    assert.equal(injected.includes("channel-tag"), false);
+    assert.equal(injected.includes("channel-other"), true);
+    ui.open();
+    ui.input("롤");
+    ui.runDelay();
+    ui.searches
+        .at(-1)
+        .resolve(result([category("CHEESE_SPANNER_TAG", "롤토체스", "예약"), category("GAME", "L", "롤")]));
+    await settle();
+    assert.deepEqual(
+        [...ui.window.document.querySelectorAll("[data-category-results] .bcgt-category-name")].map(
+            (name) => name.textContent
+        ),
+        ["롤"]
+    );
 });

@@ -214,6 +214,13 @@ test("unmeasured or inconsistent object video slots keep their native ad request
         ({ controller }) => (controller.contentVideoElement = {}),
         ({ root }) => root.parentElement.remove(),
     ];
+    const control = createWrappedLiveController(window);
+    const controlParts = wrapControllerVideoSlot(window, control);
+    const controlState = createWrappedLiveSource("LIVE_CHZZK_NDP_SCH_EVENT");
+    control.srcObject = controlState.wrapped;
+    assert.equal((await controlState.wrapped.initAd()).client, undefined, "an intact measured slot is blocked");
+    assert.equal(controlState.calls.length, 0);
+    controlParts.root.parentElement?.remove();
     for (const mutate of variants) {
         const controller = createWrappedLiveController(window);
         const parts = wrapControllerVideoSlot(window, controller);
@@ -688,7 +695,9 @@ test("live schedule filtering preserves unknown entries, mismatched managers and
 
 test("WeakMap guard preserves unrelated registrations, native errors and later wrappers", (t) => {
     const window = createPage(t);
+    const nativeSet = window.WeakMap.prototype.set;
     window.eval(source);
+    assert.notEqual(window.WeakMap.prototype.set, nativeSet, "the registration guard is installed");
     const key = {},
         manager = { loadWithAdSchedule() {} },
         method = manager.loadWithAdSchedule;
@@ -752,7 +761,9 @@ test("schedule application preserves each native Promise, call and processing co
 
 test("source descriptors retain inherited metadata and native invalid-descriptor errors", (t) => {
     const window = createPage(t);
+    const nativeDefineProperty = window.Object.defineProperty;
     window.eval(source);
+    assert.notEqual(window.Object.defineProperty, nativeDefineProperty, "the source descriptor hook is installed");
     const target = {};
     const descriptor = Object.create({
         enumerable: true,
@@ -842,8 +853,10 @@ test("source guard follows settings, SPA routes and newly created controllers wi
 
 test("source interceptor keeps later property wrappers and native setter exceptions", (t) => {
     const window = createPage(t, "/video/15131992");
+    const nativeDefineProperty = window.Object.defineProperty;
     window.eval(source);
     const installed = window.Object.defineProperty;
+    assert.notEqual(installed, nativeDefineProperty, "the source interceptor is installed");
     const later = (...args) => installed(...args);
     window.Object.defineProperty = later;
     const target = {};
@@ -1278,9 +1291,11 @@ test("deferred guards preserve OFF, source replacement, native errors and later 
         nativeCalls++;
         throw error;
     };
+    const nativeInitAd = controller.initAd;
     const ad = createVodAdSource();
     controller.srcObject = ad;
     const installed = controller.initAd;
+    assert.notEqual(installed, nativeInitAd, "the deferred initialization guard is installed");
     let laterCalls = 0;
     const later = function (...args) {
         laterCalls++;
@@ -1332,6 +1347,10 @@ test("schedule ownership rejects unrelated, cross-channel, stale and accessor-ba
         (h) => Object.defineProperty(h.videoRef, "current", { get: () => h.video }),
         (h) => window.document.body.append(h.video),
     ];
+    const control = createScheduleHarness(window);
+    new window.WeakMap().set(control.container, control.manager);
+    control.manager.loadWithAdSchedule(liveSchedule());
+    assert.equal(control.calls[0].schedule.adBreaks[0].adSources.length, 0, "an intact owner is blocked");
     for (const mutate of variants) {
         const h = createScheduleHarness(window);
         mutate(h);
@@ -1671,7 +1690,13 @@ test("shared schedules recheck the current adapter video while entry ownership r
 
 test("unconfirmed settings and late OFF calls preserve all later wrappers and native source initialization", (t) => {
     const window = createPage(t, "/live/measured-channel", null);
+    const natives = [window.JSON.parse, window.Object.defineProperty, window.WeakMap.prototype.set];
     window.eval(source);
+    assert.notDeepEqual(
+        [window.JSON.parse, window.Object.defineProperty, window.WeakMap.prototype.set],
+        natives,
+        "page hooks are installed before settings are confirmed"
+    );
     const controller = createAdController(window);
     let preparations = 0;
     const ad = createVodAdSource(() => preparations++);
@@ -1919,6 +1944,13 @@ test("live PiP schedules created after leaving the live route keep native comple
 });
 
 test("PiP schedule ownership does not authorize previews, other players or mismatched live routes", (t) => {
+    const controlWindow = createPage(t);
+    controlWindow.eval(source);
+    const control = createPipScheduleHarness(controlWindow);
+    controlWindow.history.replaceState(null, "", "/lives");
+    new controlWindow.WeakMap().set(control.container, control.manager);
+    control.manager.loadWithAdSchedule(liveSchedule("NEW_PIP_MID_UNIT"));
+    assert.equal(control.calls.at(-1).schedule.adBreaks[0].adSources.length, 0, "an intact PiP owner is blocked");
     for (const mutate of [
         (h) => h.playerRoot.classList.remove("pip_mode"),
         (h) => h.playerRoot.classList.replace("type_live", "type_vod"),

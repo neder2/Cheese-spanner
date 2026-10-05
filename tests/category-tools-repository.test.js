@@ -170,6 +170,7 @@ test("category search preserves server order for equal viewers and deduplicates 
             { ...category("Case_ID", "GAME", "중복 이름"), categoryKey: "server-added-field" },
             sameIdOtherType,
             caseVariant,
+            category("reserved", "CHEESE_SPANNER_TAG", "예약 유형"),
             literal,
         ])
     );

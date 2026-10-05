@@ -223,7 +223,10 @@
             const state = el("span", "bcls-state");
             state.setAttribute("aria-hidden", "true");
             toggle.append(el("span", "", action.label), state);
-            toggle.addEventListener("click", () => register(target, channel, action));
+            toggle.addEventListener("click", (event) => {
+                if (!event.isTrusted) return;
+                register(target, channel, action);
+            });
             controls.append(toggle);
             return { ...action, toggle, state };
         });
@@ -232,7 +235,10 @@
         remove.dataset.channelId = channel.channelId;
         remove.dataset.action = "remove";
         remove.title = "등록 해제";
-        remove.addEventListener("click", () => register(target, channel, { kind: "remove" }));
+        remove.addEventListener("click", (event) => {
+            if (!event.isTrusted) return;
+            register(target, channel, { kind: "remove" });
+        });
         controls.append(remove);
         node.append(avatar, info, controls);
         return { node, name, actions, remove, avatar, imageUrl: "" };
