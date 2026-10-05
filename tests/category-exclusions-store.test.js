@@ -179,6 +179,23 @@ test("each add/remove reads the newest durable state and preserves same-name dif
     assert.ok(h.storage.allWrites.every((write) => write.area === "local" && Object.keys(write.values).length === 1));
 });
 
+test("tag exclusions use the existing individual add/remove contract and count toward the same limit", async () => {
+    const h = controllerHarness();
+    const tag = h.module.createTagExclusion("#롤토체스");
+    assert.deepEqual(copy(tag), category("롤토체스", "CHEESE_SPANNER_TAG", "롤토체스"));
+    assert.deepEqual(await h.send({ kind: "add", category: tag }), { ok: true, state: state([tag], 1) });
+    assert.deepEqual(await h.send({ kind: "add", category: tag }), { ok: true, state: state([tag], 1) });
+    assert.deepEqual(await h.send({ kind: "remove", categoryType: "CHEESE_SPANNER_TAG", categoryId: "롤토체스" }), {
+        ok: true,
+        state: state([], 2),
+    });
+    h.local[KEY] = state(
+        Array.from({ length: 100 }, (_, index) => category(`id-${index}`)),
+        3
+    );
+    assert.deepEqual(await h.send({ kind: "add", category: tag }), failure("limit-reached"));
+});
+
 test("duplicate add and nonexistent remove are successful no-ops without renaming or reordering", async () => {
     const a = category("a");
     const b = category("b");

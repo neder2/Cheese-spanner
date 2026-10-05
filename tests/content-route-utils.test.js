@@ -42,3 +42,28 @@ test("main video selection excludes native ad media and extension previews durin
     w.document.body.append(replacement);
     assert.equal(w.BetterChzzk.utils.getMainVideoElement(), replacement);
 });
+
+test("visible area ignores detached, hidden, and zero-sized controls", (t) => {
+    const dom = new JSDOM("<!doctype html><body></body>", {
+        url: "https://chzzk.naver.com/",
+        runScripts: "outside-only",
+    });
+    t.after(() => dom.window.close());
+    const w = dom.window;
+    w.eval(readRepoFile("content.js"));
+    const { getVisibleArea } = w.BetterChzzk.utils;
+    const control = w.document.createElement("button");
+    control.getBoundingClientRect = () => ({ width: 40, height: 20 });
+    assert.equal(getVisibleArea(control), 0);
+    w.document.body.append(control);
+    assert.equal(getVisibleArea(control), 800);
+    for (const style of ["display: none", "visibility: hidden"]) {
+        control.style.cssText = style;
+        assert.equal(getVisibleArea(control), 0);
+    }
+    control.style.cssText = "";
+    control.getBoundingClientRect = () => ({ width: 0, height: 20 });
+    assert.equal(getVisibleArea(control), 0);
+    assert.equal(getVisibleArea(null), 0);
+    assert.equal(getVisibleArea(w.document.createTextNode("control")), 0);
+});

@@ -86,9 +86,10 @@
         cleanTitle,
         createMutationObserverSync,
         createThrottledDomSync,
+        getVisibleArea,
         fetchJson,
         getKstParts,
-        getMainVideoElement,
+        getMainVideoElement: getMainVideo,
         getVodVideoNoFromPath,
         injectStyleOnce,
         isSameKstDate: sameKstDate,
@@ -163,20 +164,6 @@
 
     function isVodRoute() {
         return Boolean(getVideoNoFromUrl());
-    }
-
-    function getMainVideo() {
-        if (typeof getMainVideoElement === "function") return getMainVideoElement();
-        return pickLargestVisible(document.querySelectorAll("video")) || document.querySelector("video");
-    }
-
-    function getVisibleArea(el) {
-        if (!(el instanceof HTMLElement) || !el.isConnected) return 0;
-        const rect = el.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0) return 0;
-        const style = getComputedStyle(el);
-        if (style.display === "none" || style.visibility === "hidden") return 0;
-        return rect.width * rect.height;
     }
 
     function isVideoUsable(video) {
@@ -999,18 +986,6 @@
         const h = Math.floor(totalSeconds / 3600);
         if (h > 0) return `${h}:${pad2(m)}:${pad2(s)}`;
         return `${m}:${pad2(s)}`;
-    }
-
-    // eslint-disable-next-line no-unused-vars
-    function formatTitleSeenRange(row) {
-        const first = Number(row.firstSeenAt) || 0;
-        const last = Number(row.lastSeenAt) || 0;
-        if (first > 0 && last > 0 && Math.abs(last - first) >= 60000) {
-            return `${formatFullKst(first)} - ${formatFullKst(last)}`;
-        }
-        if (first > 0) return formatFullKst(first);
-        if (last > 0) return formatFullKst(last);
-        return "기록 시각 없음";
     }
 
     function formatShortKst(ms) {

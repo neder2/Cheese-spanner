@@ -251,3 +251,35 @@ test("category count filters include both boundaries and treat unavailable count
         assert.equal(model.passesCountRange(value, min, max), expected, `${value}: ${min}–${max}`);
     }
 });
+
+test("tag exclusions compare normalized whole tags only and never partial words", () => {
+    const context = vm.createContext({});
+    for (const file of ["shared/categoryExclusions.js", "features/categoryTools/filterModel.js"]) {
+        vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
+    }
+    const exclusions = context.BetterChzzk.categoryExclusions;
+    const model = context.BetterChzzk.categoryToolsFilterModel;
+    assert.deepEqual(plain(exclusions.createTagExclusion("  ##롤토체스  ")), {
+        categoryType: "CHEESE_SPANNER_TAG",
+        categoryId: "롤토체스",
+        categoryValue: "롤토체스",
+    });
+    assert.deepEqual(plain(exclusions.createTagExclusion(" Just   Chatting ")), {
+        categoryType: "CHEESE_SPANNER_TAG",
+        categoryId: "just chatting",
+        categoryValue: "Just Chatting",
+    });
+    for (const invalid of ["", "   ", "#", "a".repeat(101), "bell\u0007name", null, 3]) {
+        assert.equal(exclusions.createTagExclusion(invalid), null, String(invalid));
+    }
+    assert.equal(exclusions.createTagExclusion("tab\tname").categoryValue, "tab name", "whitespace collapses");
+    assert.equal(exclusions.isTagExclusion(exclusions.createTagExclusion("tag")), true);
+    assert.equal(exclusions.isTagExclusion({ categoryType: "GAME", categoryId: "tag", categoryValue: "tag" }), false);
+    const keys = new Set([exclusions.tagMatchKey("롤토체스"), exclusions.tagMatchKey("just chatting")]);
+    assert.equal(model.passesTagExclusions(["#롤토체스"], keys), false);
+    assert.equal(model.passesTagExclusions(["JUST  CHATTING"], keys), false);
+    assert.equal(model.passesTagExclusions(["롤토체스대회", "롤"], keys), true, "partial words never match");
+    assert.equal(model.passesTagExclusions([], keys), true);
+    assert.equal(model.passesTagExclusions(undefined, keys), true);
+    assert.equal(model.passesTagExclusions(["롤토체스"], new Set()), true);
+});

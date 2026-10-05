@@ -7,6 +7,9 @@
     const VERSION = 1;
     const MAX_CATEGORIES = 100;
     const CATEGORY_FIELDS = ["categoryType", "categoryId", "categoryValue"];
+    // 스트리머가 직접 붙인 태그 단어는 기존 저장 형식에 예약 유형으로 보관한다. 치지직 카테고리 유형과 겹치지 않는 이름이다.
+    const TAG_TYPE = "CHEESE_SPANNER_TAG";
+    const MAX_TAG_LENGTH = 100;
 
     function isRecord(value) {
         return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -57,6 +60,29 @@
         )
             return null;
         return { categoryType: value.categoryType, categoryId: value.categoryId, categoryValue: value.categoryValue };
+    }
+
+    function tagText(value) {
+        if (typeof value !== "string") return "";
+        const text = value.normalize("NFC").trim().replace(/^#+/, "").replace(/\s+/g, " ").trim();
+        return validText(text, MAX_TAG_LENGTH) ? text : "";
+    }
+
+    // 태그 비교는 대소문자와 연속 공백, 앞의 # 표시만 무시하는 정확한 일치다.
+    function tagMatchKey(value) {
+        return tagText(value).toLowerCase();
+    }
+
+    function createTagExclusion(value) {
+        const text = tagText(value);
+        const categoryId = text.toLowerCase();
+        return text && validIdentity(TAG_TYPE, categoryId)
+            ? { categoryType: TAG_TYPE, categoryId, categoryValue: text }
+            : null;
+    }
+
+    function isTagExclusion(value) {
+        return isRecord(value) && value.categoryType === TAG_TYPE;
     }
 
     function categoryKey(value, categoryId) {
@@ -213,7 +239,11 @@
     root.categoryExclusions = Object.freeze({
         MESSAGE_TYPE,
         STORAGE_KEY,
+        TAG_TYPE,
         normalizeCategory,
+        tagMatchKey,
+        createTagExclusion,
+        isTagExclusion,
         categoryKey,
         normalizeState,
         createEmptyState,

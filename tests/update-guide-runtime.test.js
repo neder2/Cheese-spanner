@@ -447,6 +447,7 @@ test("temporary tab hiding preserves the notice without counting hidden time", a
     const f = fixture(t);
     await f.advance(2000);
     const toast = f.toast();
+    assert.ok(toast, "the notice must be visible before the tab is hidden");
     await f.advance(7000);
     f.hide(true);
     await f.advance(60000);

@@ -170,7 +170,8 @@
                     categoryId: row.categoryId,
                     categoryValue: row.categoryValue,
                 });
-                if (!category) continue;
+                // 확장이 태그 제외에 예약한 유형은 검색 결과 카테고리로 받지 않는다.
+                if (!category || root.categoryExclusions.isTagExclusion(category)) continue;
                 const key = root.categoryExclusions.categoryKey(category);
                 if (seen.has(key)) continue;
                 seen.add(key);

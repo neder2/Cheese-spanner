@@ -34,12 +34,18 @@ async function createCategoryUI(
     );
     const { window } = dom;
     const buttons = new WeakMap();
+    const keyListeners = new WeakMap();
     const addListener = window.EventTarget.prototype.addEventListener;
     window.EventTarget.prototype.addEventListener = function (type, callback, ...rest) {
         if (type === "click") {
             const callbacks = buttons.get(this) || [];
             callbacks.push(callback);
             buttons.set(this, callbacks);
+        }
+        if (type === "keydown") {
+            const callbacks = keyListeners.get(this) || [];
+            callbacks.push(callback);
+            keyListeners.set(this, callbacks);
         }
         return addListener.call(this, type, callback, ...rest);
     };
@@ -267,8 +273,8 @@ async function createCategoryUI(
             hooks.resetMetadata();
         },
         open() {
-            window.document.querySelector(".bcgt-filter").click();
-            return window.document.getElementById("betterchzzk-category-filter-menu");
+            window.document.querySelector("[data-category-add-open]").click();
+            return window.document.getElementById("betterchzzk-category-add-panel");
         },
         input(value, type = "input") {
             const input = window.document.querySelector("[data-category-search]");
@@ -282,6 +288,10 @@ async function createCategoryUI(
             assert.ok(found, "category input owns a 300 ms debounce");
             timers.delete(found[0]);
             found[1].callback();
+        },
+        outsideClick(target = window.document.body, isTrusted = true) {
+            for (const callback of buttons.get(window.document) || [])
+                callback.call(window.document, { target, isTrusted });
         },
         trustedClick(button) {
             assert.ok(
@@ -298,6 +308,27 @@ async function createCategoryUI(
                 stopPropagation() {},
             };
             for (const callback of buttons.get(button) || []) callback.call(button, event);
+        },
+        trustedKey(element, key = "Enter", fields = {}) {
+            assert.ok(element && element.isConnected, "a user can type only into the current input");
+            // JSDOM cannot create trusted keyboard events. Invoke the input's own listeners with a user-input fixture.
+            const event = {
+                isTrusted: true,
+                key,
+                keyCode: 13,
+                repeat: false,
+                isComposing: false,
+                target: element,
+                currentTarget: element,
+                defaultPrevented: false,
+                preventDefault() {
+                    this.defaultPrevented = true;
+                },
+                stopPropagation() {},
+                ...fields,
+            };
+            for (const callback of keyListeners.get(element) || []) callback.call(element, event);
+            return event;
         },
         emit(value, area = "local") {
             for (const listener of [...listeners]) listener({ [CATEGORY_KEY]: { newValue: value } }, area);

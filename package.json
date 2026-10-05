@@ -19,7 +19,7 @@
         "globals": "^15.15.0",
         "jsdom": "^29.1.1",
         "prettier": "^3.5.3",
-        "web-ext": "^8.7.0"
+        "web-ext": "^10.7.0"
     },
     "dependencies": {
         "hls.js": "^1.6.16"

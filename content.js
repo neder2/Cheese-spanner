@@ -22,8 +22,6 @@
     const FEATURE_ROUTE_CHANGE_EVENT = "betterchzzk:routechange:detected";
     const EXTENSION_PREVIEW_VIDEO_SELECTOR =
         "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip], [data-bcmv-video]";
-    const INTERACTIVE_SELECTOR =
-        "button, [role='button'], a[href], input, textarea, select, summary, [contenteditable='true']";
     const ROUTE_CHECK_DELAYS_MS = [0, 80, 250, 800];
     const RECONNECT_CHECK_THROTTLE_MS = 160;
     const videoViewportTransforms = new WeakMap();
@@ -106,6 +104,15 @@
         return style.display !== "none" && style.visibility !== "hidden";
     }
 
+    function getVisibleArea(el) {
+        if (!(el instanceof HTMLElement) || !el.isConnected) return 0;
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return 0;
+        const style = getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") return 0;
+        return rect.width * rect.height;
+    }
+
     function pickLargestVisible(nodes) {
         let best = null;
         let bestArea = -1;
@@ -181,14 +188,6 @@
         if (node instanceof HTMLElement) return node;
         const fallback = document.querySelector(".pzp-pc, [class*='pzp-pc']");
         return fallback instanceof HTMLElement ? fallback : null;
-    }
-
-    function isOutsidePlayerInteractiveTarget(target, video) {
-        if (!(target instanceof Element)) return false;
-        const interactive = target.closest(INTERACTIVE_SELECTOR);
-        if (!interactive) return false;
-        const root = getPlayerRoot(video);
-        return !(root && root.contains(interactive));
     }
 
     function elementMatchesOrContains(node, selector) {
@@ -535,6 +534,7 @@
         normalizeCompact,
         sleep,
         isVisible,
+        getVisibleArea,
         pickLargestVisible,
         getMainVideoElement,
         getVideoViewportRect,
@@ -542,7 +542,6 @@
         isExtensionPreviewVideo,
         isEditableTarget,
         getPlayerRoot,
-        isOutsidePlayerInteractiveTarget,
         elementMatchesOrContains,
         mutationMatchesSelector,
         createThrottledDomSync,

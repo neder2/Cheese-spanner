@@ -12,7 +12,8 @@
  *   - MutationObserver와 페이지 전환 감지로 라우트가 바뀔 때마다 pill/버튼/가드를 재부착한다.
  * 의존: 전역 BetterChzzkSettings(DEFAULT_SKIP_SECONDS, getStorageLastError, normalizeSkipSeconds,
  *   normalizeOptions), 전역 BetterChzzk.utils(bindFeatureOptions, createMutationObserverSync,
- *   createThrottledDomSync, getVideoViewportRect, isLiveRoute, isPlaybackRoute, isVisible, isExtensionPreviewVideo,
+ *   createThrottledDomSync, getVisibleArea, getVideoViewportRect, isEditableTarget, isLiveRoute, isPlaybackRoute,
+ *   isVisible, isExtensionPreviewVideo,
  *   mutationMatchesSelector, normalizeCompact, onReady, pickLargestVisible, startPageChangeDetection,
  *   injectStyleOnce), chrome.storage.sync.
  * 옵션 키: skipControlEnabled, skipKeyboardEnabled, skipPillEnabled, skipLivePillEnabled,
@@ -89,13 +90,15 @@
         bindFeatureOptions,
         createMutationObserverSync,
         createThrottledDomSync,
+        getVisibleArea,
         getVideoViewportRect,
+        isEditableTarget,
         isLiveRoute,
         isPlaybackRoute,
         isVisible,
         isExtensionPreviewVideo,
         mutationMatchesSelector,
-        normalizeCompact,
+        normalizeCompact: compact,
         onReady,
         pickLargestVisible,
         startPageChangeDetection,
@@ -161,13 +164,6 @@
 
     function isLiveFastForwardButtonEnabled() {
         return isSkipEnabled() && isLiveRoute();
-    }
-
-    function compact(value) {
-        if (typeof normalizeCompact === "function") return normalizeCompact(value);
-        return String(value || "")
-            .toLowerCase()
-            .replace(/\s+/g, "");
     }
 
     function containsAnyTerm(value, terms) {
@@ -245,29 +241,11 @@
         }, 250);
     }
 
-    function isEditableTarget(target) {
-        if (!target) return false;
-        if (target.isContentEditable) return true;
-        if (typeof target.closest === "function") {
-            return !!target.closest("input, textarea, select, [contenteditable='true'], [role='separator']");
-        }
-        return false;
-    }
-
     function getMainVideoElement() {
         const videos = Array.from(document.querySelectorAll("video")).filter(
             (video) => !isExtensionPreviewVideo?.(video)
         );
         return pickLargestVisible(videos) || videos[0] || null;
-    }
-
-    function getVisibleArea(el) {
-        if (!(el instanceof HTMLElement) || !el.isConnected) return 0;
-        const rect = el.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0) return 0;
-        const style = getComputedStyle(el);
-        if (style.display === "none" || style.visibility === "hidden") return 0;
-        return rect.width * rect.height;
     }
 
     function getEffectiveControlState(el) {

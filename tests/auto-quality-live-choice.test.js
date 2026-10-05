@@ -373,7 +373,7 @@ test("a user-paused video that already played keeps its pause state during quali
 test("disabling or replacing the startup player removes the waiting playback listener", (t) => {
     const f = fixture(t, { started: false, paused: true, readyState: 0 }),
         p = f.initial;
-    f.request();
+    assert.equal(f.request().waitForEvent, true, "the startup request must be waiting for native playback");
     f.state(false);
     const timersAfterDisable = f.timers.size;
     p.startPlayback();
@@ -448,6 +448,7 @@ test("provider replacement and disabling release wrappers without overwriting la
         p = f.initial;
     f.request();
     await flush();
+    assert.notEqual(p.pane.$dispatch, p.original, "the native dispatch must be wrapped before release");
     p.player.srcObject = {};
     assert.equal(p.pane.$dispatch("change", { track: p.tracks[2] }), false);
     assert.equal(p.pane.$dispatch, p.original);

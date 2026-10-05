@@ -43,6 +43,15 @@
         return !excludedCategories.some((excluded) => categoryKey(excluded) === key);
     }
 
+    function passesTagExclusions(tags, excludedTagKeys) {
+        const tagMatchKey = root.categoryExclusions?.tagMatchKey;
+        if (!tagMatchKey || !excludedTagKeys?.size || !Array.isArray(tags)) return true;
+        return !tags.some((tag) => {
+            const key = tagMatchKey(tag);
+            return Boolean(key) && excludedTagKeys.has(key);
+        });
+    }
+
     function parseFilterInput(value) {
         const raw = String(value || "")
             .replace(/,/g, "")
@@ -145,6 +154,7 @@
     root.categoryToolsFilterModel = Object.freeze({
         passesCountRange,
         passesCategoryExclusions,
+        passesTagExclusions,
         parseFilterInputForKind,
         formatFilterInputForKind,
         getFilterPresetValues,

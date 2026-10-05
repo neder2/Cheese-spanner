@@ -14,8 +14,8 @@
  *   - MutationObserver, timeupdate/progress 이벤트, 1초 간격 fallback 인터벌, 페이지 전환 감지를 함께
  *     사용해 라벨을 최신 상태로 유지한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, 전역 BetterChzzk.utils(bindFeatureOptions,
- *   createMutationObserverSync, createThrottledDomSync, getMainVideoElement, isLiveRoute,
- *   mutationMatchesSelector, normalizeCompact, onReady, pickLargestVisible, startPageChangeDetection).
+ *   createMutationObserverSync, createThrottledDomSync, getMainVideoElement, getVisibleArea, isLiveRoute,
+ *   mutationMatchesSelector, normalizeCompact, onReady, startPageChangeDetection).
  * 옵션 키: timeMachineLagLabelEnabled.
  * DOM 마커: data-bctm-text-patched(패치된 버튼 표시), id="betterchzzk-live-lag-label"(fallback 라벨),
  *   id="betterchzzk-live-lag-patch-style"/id="betterchzzk-live-lag-label-style"(주입 스타일).
@@ -86,12 +86,12 @@
         bindFeatureOptions,
         createMutationObserverSync,
         createThrottledDomSync,
-        getMainVideoElement,
+        getVisibleArea,
+        getMainVideoElement: getMainVideo,
         isLiveRoute,
         mutationMatchesSelector,
-        normalizeCompact,
+        normalizeCompact: compact,
         onReady,
-        pickLargestVisible,
         startPageChangeDetection,
     } = BetterChzzk.utils;
 
@@ -123,13 +123,6 @@
         return featureOptions.timeMachineLagLabelEnabled !== false;
     }
 
-    function compact(value) {
-        if (typeof normalizeCompact === "function") return normalizeCompact(value);
-        return String(value || "")
-            .toLowerCase()
-            .replace(/\s+/g, "");
-    }
-
     function containsAnyTerm(value, terms) {
         const text = compact(value);
         return terms.some((term) => text.includes(compact(term)));
@@ -139,15 +132,6 @@
         return [button.getAttribute("aria-label"), button.getAttribute("title"), button.textContent].join(" ");
     }
 
-    function getVisibleArea(el) {
-        if (!(el instanceof HTMLElement) || !el.isConnected) return 0;
-        const rect = el.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0) return 0;
-        const style = getComputedStyle(el);
-        if (style.display === "none" || style.visibility === "hidden") return 0;
-        return rect.width * rect.height;
-    }
-
     function isButtonLike(el) {
         return el instanceof HTMLElement && Boolean(el.matches?.(BUTTON_SELECTOR));
     }
@@ -155,12 +139,6 @@
     function isVisibleControlTarget(el) {
         if (getVisibleArea(el) <= 0) return false;
         return !isButtonLike(el) || getComputedStyle(el).pointerEvents !== "none";
-    }
-
-    function getMainVideo() {
-        if (typeof getMainVideoElement === "function") return getMainVideoElement();
-        const videos = document.querySelectorAll("video");
-        return pickLargestVisible(videos) || videos[0] || null;
     }
 
     function isVideoUsable(video) {

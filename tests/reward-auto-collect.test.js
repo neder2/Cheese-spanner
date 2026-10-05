@@ -232,9 +232,11 @@ test("reward auto collect rejects executable URL schemes hidden by ASCII whitesp
     anchor.textContent = "통나무 받기";
     anchor.addEventListener("click", (event) => event.preventDefault());
     const tracked = trackButton(anchor);
+    const control = createScreenshotRewardButton(dom);
 
-    scope.appendChild(tracked.button);
-    await wait(650);
+    scope.append(tracked.button, control.button);
+    await waitForCondition(() => control.clicks === 1);
+    await wait(350);
 
     assert.equal(tracked.clicks, 0);
     assert.equal(dom.window.__betterChzzkRemoteCodeRan, undefined);
@@ -465,10 +467,14 @@ test("reward auto collect releases a completed reward after it stays hidden past
 
 test("reward auto collect ignores 통나무 claim buttons outside the live chat scope", async () => {
     const dom = createRewardDom();
+    const scope = createRewardScope(dom);
     const tracked = createScreenshotRewardButton(dom);
+    const control = createScreenshotRewardButton(dom);
 
     dom.window.document.body.appendChild(tracked.button);
-    await wait(450);
+    scope.appendChild(control.button);
+    await waitForCondition(() => control.clicks === 1);
+    await wait(350);
 
     assert.equal(tracked.clicks, 0);
     assert.equal(tracked.button.hasAttribute("data-bcra-clicked"), false);
@@ -478,9 +484,11 @@ test("reward auto collect ignores generic claim buttons without a 통나무 sign
     const dom = createRewardDom();
     const scope = createRewardScope(dom);
     const tracked = createTrackedButton(dom, "받기");
+    const control = createScreenshotRewardButton(dom);
 
-    scope.appendChild(tracked.button);
-    await wait(450);
+    scope.append(tracked.button, control.button);
+    await waitForCondition(() => control.clicks === 1);
+    await wait(350);
 
     assert.equal(tracked.clicks, 0);
     assert.equal(tracked.button.hasAttribute("data-bcra-clicked"), false);
@@ -639,4 +647,9 @@ test("reward auto collect revalidates reward structure before a delayed click", 
     await wait(650);
     assert.equal(reward.clicks, 0);
     assert.equal(reward.button.hasAttribute("data-bcra-clicked"), false);
+
+    const control = createScreenshotRewardButton(dom, { amount: 200 });
+    scope.append(control.button);
+    await waitForCondition(() => control.clicks === 1);
+    assert.equal(reward.clicks, 0);
 });

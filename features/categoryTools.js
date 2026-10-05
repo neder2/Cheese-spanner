@@ -45,6 +45,7 @@
     const STYLE_ID = "betterchzzk-category-tools-style";
     const TABS_ATTR = "data-bcgt-tabs";
     const GLOBAL_SORT_ATTR = "data-bcgt-global-sort";
+    const CATEGORY_SUMMARY_HOST_ATTR = "data-bcgt-exclusion-host";
     const CARD_ATTR = "data-bcgt-card";
     const CARD_ID_ATTR = "data-bcgt-card-id";
     const INJECTED_ATTR = "data-bcgt-injected";
@@ -120,6 +121,7 @@
     let pendingInjectedRender = false;
     let categoryState = null;
     let categoryKeys = new Set();
+    let categoryTagKeys = new Set();
     let categoryStateEpoch = 0;
     let categoryStoreGeneration = 0;
     let categoryReadGeneration = 0;
@@ -127,7 +129,10 @@
     let categoryStoreError = "";
     let categorySubscription = null;
     let categoryStateRestored = false;
-    let categoryMenuView = null;
+    const CATEGORY_ADD_ID = "betterchzzk-category-add-panel";
+    const CATEGORY_SUMMARY_ID = "betterchzzk-category-exclusions";
+    let categorySummaryHost = null;
+    let categoryAddView = null;
     let categorySummaryView = null;
     let categorySearchGeneration = 0;
     let documentEnded = false;
@@ -136,8 +141,12 @@
     const {
         MESSAGE_TYPE: CATEGORY_MESSAGE_TYPE,
         STORAGE_KEY: CATEGORY_STORAGE_KEY,
+        TAG_TYPE: CATEGORY_TAG_TYPE,
         categoryKey,
         normalizeCategory,
+        tagMatchKey,
+        createTagExclusion,
+        isTagExclusion,
         normalizeState: normalizeCategoryState,
         createEmptyState: createEmptyCategoryState,
     } = BetterChzzk.categoryExclusions;
@@ -174,6 +183,7 @@
         combineFilterOptionRanges,
         hasFilterOptionRange,
         passesCategoryExclusions,
+        passesTagExclusions,
     } = BetterChzzk.categoryToolsFilterModel;
     const { routeKey } = BetterChzzk.categoryToolsRepository;
     const dataRepository = BetterChzzk.categoryToolsRepository.createRepository({
@@ -327,6 +337,10 @@
         const changed = JSON.stringify(categoryState) !== JSON.stringify(state);
         categoryState = state;
         categoryKeys = new Set(state.categories.map(categoryKey));
+        categoryTagKeys = new Set(
+            state.categories.filter(isTagExclusion).map((category) => tagMatchKey(category.categoryId))
+        );
+        categoryTagKeys.delete("");
         categoryStoreError = "";
         if (changed) categoryStateEpoch++;
         if (!isCategoryExclusionRoute()) return;
@@ -341,7 +355,7 @@
         const subscription = categorySubscription;
         categoryStoreLoading = true;
         categoryStoreError = "";
-        syncCategoryMenu();
+        syncCategoryAdd();
         void sendCategoryOperation({ kind: "get" }).then(
             (state) => {
                 if (
@@ -353,7 +367,7 @@
                     return;
                 categoryStoreLoading = false;
                 acceptCategoryState(state);
-                syncCategoryMenu();
+                syncCategoryAdd();
             },
             (error) => {
                 if (
@@ -365,7 +379,7 @@
                     return;
                 categoryStoreLoading = false;
                 categoryStoreError = categoryErrorText(error.message);
-                syncCategoryMenu();
+                syncCategoryAdd();
             }
         );
     }
@@ -389,7 +403,7 @@
             categoryStoreLoading = false;
             categoryPending.clear();
             categoryStoreError = categoryErrorText("invalid-stored-state");
-            syncCategoryMenu();
+            syncCategoryAdd();
             return;
         }
         acceptCategoryState(state);
@@ -417,7 +431,7 @@
         categoryPending.clear();
         categoryReadGeneration++;
         categoryStoreLoading = false;
-        cancelCategoryMenuSearch();
+        closeCategoryAdd();
     }
 
     function mutateCategory(category, kind, view, row, event) {
@@ -429,8 +443,8 @@
             !(kind === "remove" && view === categorySummaryView
                 ? isCategoryExclusionRoute() &&
                   view.root.isConnected &&
-                  document.getElementById(BAR_ID)?.nextElementSibling === view.root
-                : view === categoryMenuView && isCurrentCategoryMenu(view)) ||
+                  document.getElementById(CATEGORY_SUMMARY_ID) === view.root
+                : view === categoryAddView && isCurrentCategoryAdd(view)) ||
             view.composing ||
             !view.root.contains(row.button) ||
             view[`${kind === "add" ? "result" : "selected"}Rows`].get(key) !== row ||
@@ -444,12 +458,16 @@
             kind === "add"
                 ? { kind, category: normalizeCategory(category) }
                 : { kind, categoryType: category.categoryType, categoryId: category.categoryId };
+        commitCategoryOperation(key, operation);
+    }
+
+    function commitCategoryOperation(key, operation, { onSuccess, onSettled } = {}) {
         const storeGeneration = categoryStoreGeneration;
         const subscription = categorySubscription;
         const token = {};
         categoryPending.set(key, token);
         categoryStoreError = "";
-        syncCategoryMenu();
+        syncCategoryAdd();
         void sendCategoryOperation(operation)
             .then(
                 (state) => {
@@ -460,6 +478,7 @@
                     )
                         return;
                     acceptCategoryState(state);
+                    onSuccess?.();
                 },
                 (error) => {
                     if (
@@ -477,26 +496,81 @@
                     !documentEnded &&
                     storeGeneration === categoryStoreGeneration &&
                     subscription === categorySubscription
-                )
-                    syncCategoryMenu();
+                ) {
+                    onSettled?.();
+                    syncCategoryAdd();
+                }
             });
     }
 
-    function isCurrentCategoryMenu(view) {
+    function handleCategoryAddKeydown(view, event) {
+        if (event.key !== "Enter") return;
+        if (event.isComposing || event.keyCode === 229 || view.composing) {
+            // 한글 조합을 확정하는 Enter는 태그 추가로 쓰지 않는다. 확정 뒤 한 번 더 누르면 추가된다.
+            view.compositionEnter = true;
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        if (
+            !event.isTrusted ||
+            event.currentTarget !== view.input ||
+            event.repeat ||
+            view.compositionEnter ||
+            !isCurrentCategoryAdd(view) ||
+            !categoryState
+        )
+            return;
+        const typed = view.input.value;
+        const category = createTagExclusion(typed);
+        if (!category) {
+            view.searchStatus = typed.trim() ? "tag-invalid" : "idle";
+            syncCategoryAdd();
+            return;
+        }
+        const key = categoryKey(category);
+        if (categoryPending.has(key)) return;
+        if (categoryKeys.has(key)) {
+            view.searchStatus = "tag-duplicate";
+            syncCategoryAdd();
+            return;
+        }
+        cancelCategoryAddSearch();
+        view.results = [];
+        view.searchStatus = "tag-saving";
+        commitCategoryOperation(
+            key,
+            { kind: "add", category },
+            {
+                onSuccess() {
+                    if (!isCurrentCategoryAdd(view) || view.input.value !== typed) return;
+                    view.input.value = "";
+                    view.addedTag = category.categoryValue;
+                    view.searchStatus = "tag-added";
+                },
+                onSettled() {
+                    if (view.searchStatus === "tag-saving") view.searchStatus = "idle";
+                },
+            }
+        );
+    }
+
+    function isCurrentCategoryAdd(view) {
         return Boolean(
             view &&
-            view === categoryMenuView &&
+            view === categoryAddView &&
             isCategoryExclusionRoute() &&
             view.menu.isConnected &&
-            document.getElementById(MENU_ID) === view.menu &&
+            document.getElementById(CATEGORY_ADD_ID) === view.menu &&
+            document.getElementById(CATEGORY_SUMMARY_ID) === categorySummaryView?.root &&
             view.menu.getAttribute("data-open") === "1" &&
             view.menu.contains(view.root)
         );
     }
 
-    function cancelCategoryMenuSearch() {
+    function cancelCategoryAddSearch() {
         categorySearchGeneration++;
-        const view = categoryMenuView;
+        const view = categoryAddView;
         if (view?.timer) window.clearTimeout(view.timer);
         if (view) {
             view.timer = 0;
@@ -506,24 +580,24 @@
         dataRepository.cancelCategorySearch();
     }
 
-    function scheduleCategoryMenuSearch(view) {
-        cancelCategoryMenuSearch();
+    function scheduleCategoryAddSearch(view) {
+        cancelCategoryAddSearch();
         view.results = [];
         const keyword = view.input.value.trim();
         view.searchStatus = keyword ? "typing" : "idle";
         if (keyword.length > 100) view.searchStatus = "long";
-        syncCategoryMenu();
-        if (!keyword || keyword.length > 100 || view.composing || !isCurrentCategoryMenu(view)) return;
+        syncCategoryAdd();
+        if (!keyword || keyword.length > 100 || view.composing || !isCurrentCategoryAdd(view)) return;
         const generation = categorySearchGeneration;
         view.timer = window.setTimeout(() => {
             view.timer = 0;
-            void searchCategoryMenu(view, keyword, generation);
+            void searchCategoryAdd(view, keyword, generation);
         }, 300);
     }
 
-    async function searchCategoryMenu(view, keyword, generation = categorySearchGeneration) {
+    async function searchCategoryAdd(view, keyword, generation = categorySearchGeneration) {
         if (
-            !isCurrentCategoryMenu(view) ||
+            !isCurrentCategoryAdd(view) ||
             view.composing ||
             view.input.value.trim() !== keyword ||
             generation !== categorySearchGeneration
@@ -532,11 +606,11 @@
         const controller = new AbortController();
         view.controller = controller;
         view.searchStatus = "loading";
-        syncCategoryMenu();
+        syncCategoryAdd();
         const isCurrent = () =>
             generation === categorySearchGeneration &&
             !controller.signal.aborted &&
-            isCurrentCategoryMenu(view) &&
+            isCurrentCategoryAdd(view) &&
             !view.composing &&
             view.input.value.trim() === keyword;
         try {
@@ -551,7 +625,7 @@
         } finally {
             if (isCurrent()) {
                 view.controller = null;
-                syncCategoryMenu();
+                syncCategoryAdd();
                 scheduleMenuPosition();
             }
         }
@@ -569,33 +643,41 @@
                 element.className = "bcgt-category-row";
                 const name = document.createElement("span");
                 name.className = "bcgt-category-name";
-                const type = document.createElement("span");
-                type.className = "bcgt-category-type";
+                // 제외 박스는 작게 유지하려고 유형을 화면 글자 대신 title로만 보여 준다.
+                const type = mode === "add" ? document.createElement("span") : null;
+                if (type) type.className = "bcgt-category-type";
                 const button = document.createElement("button");
                 button.type = "button";
                 button.className = "bcgt-category-button";
                 button.setAttribute(mode === "add" ? "data-category-add" : "data-category-remove", "");
-                element.append(name, type, button);
+                element.append(...[name, type, button].filter(Boolean));
                 row = { element, name, type, button, category };
                 records.set(key, row);
                 button.addEventListener("click", (event) => mutateCategory(row.category, mode, view, row, event));
             }
             row.category = category;
-            setText(row.name, category.categoryValue);
-            setText(
-                row.type,
+            setText(row.name, isTagExclusion(category) ? `#${category.categoryValue}` : category.categoryValue);
+            const typeLabel =
                 category.categoryType === "GAME"
                     ? "게임"
                     : category.categoryType === "ETC"
                       ? "기타"
-                      : category.categoryType
-            );
-            if (mode === "add") {
-                row.type.textContent += Number.isSafeInteger(category.concurrentUserCount)
-                    ? ` · 시청자 ${category.concurrentUserCount.toLocaleString("ko-KR")}명`
-                    : " · 시청자 수 미확인";
+                      : category.categoryType === CATEGORY_TAG_TYPE
+                        ? "태그"
+                        : category.categoryType;
+            if (row.type) {
+                setText(
+                    row.type,
+                    typeLabel +
+                        (Number.isSafeInteger(category.concurrentUserCount)
+                            ? ` · 시청자 ${category.concurrentUserCount.toLocaleString("ko-KR")}명`
+                            : " · 시청자 수 미확인")
+                );
+                row.type.title = row.type.textContent;
+            } else {
+                const title = `${category.categoryValue} · ${typeLabel}`;
+                if (row.element.title !== title) row.element.title = title;
             }
-            row.type.title = row.type.textContent;
             const pending = categoryPending.has(key);
             const selected = categoryKeys.has(key);
             row.button.disabled = !categoryState || view.composing || pending || (mode === "add" && selected);
@@ -627,27 +709,74 @@
         if (element.textContent !== text) element.textContent = text;
     }
 
-    function syncCategorySummary() {
+    function releaseCategorySummaryHost() {
+        categorySummaryHost?.removeAttribute(CATEGORY_SUMMARY_HOST_ATTR);
+        categorySummaryHost = null;
+    }
+
+    function placeCategorySummary(root, bar, findHost) {
+        let host = categorySummaryHost?.isConnected ? categorySummaryHost : null;
+        // 정렬(인기·최신·추천) 줄을 찾으면 같은 줄 오른쪽에 두고, 찾지 못하면 검색 바 아래 줄로 둔다.
+        // 문서 탐색은 툴바 장착 때와 줄이 떨어졌을 때만 해서 입력·상태 갱신마다 반복하지 않는다.
+        if (!host && (findHost || !root.isConnected)) host = findGlobalSortLine();
+        if (host !== categorySummaryHost) {
+            releaseCategorySummaryHost();
+            categorySummaryHost = host;
+        }
+        if (host) {
+            if (host.getAttribute(CATEGORY_SUMMARY_HOST_ATTR) !== "1")
+                host.setAttribute(CATEGORY_SUMMARY_HOST_ATTR, "1");
+            if (root.getAttribute("data-placement") !== "sort-line") root.setAttribute("data-placement", "sort-line");
+            if (host.lastElementChild !== root) host.appendChild(root);
+            return;
+        }
+        if (root.hasAttribute("data-placement")) root.removeAttribute("data-placement");
+        if (bar.nextElementSibling !== root) bar.after(root);
+    }
+
+    function syncCategorySummary({ findHost = false } = {}) {
         const bar = document.getElementById(BAR_ID);
         if (!bar || !isCategoryExclusionRoute()) {
+            closeCategoryAdd();
+            categoryAddView?.menu.remove();
+            categoryAddView = null;
             categorySummaryView?.root.remove();
             categorySummaryView = null;
+            releaseCategorySummaryHost();
             return;
         }
         if (!categorySummaryView) {
             categorySummaryView?.root.remove();
             const root = document.createElement("section");
+            root.id = CATEGORY_SUMMARY_ID;
             root.className = "bcgt-category-summary";
             root.setAttribute("aria-label", "제외한 카테고리");
             root.innerHTML =
-                '<span class="bcgt-category-summary-label">카테고리 제외</span><div class="bcgt-category-chips"></div><span class="bcgt-category-summary-status" role="status"></span>';
-            bar.after(root);
+                '<span class="bcgt-category-summary-label">카테고리 제외</span><div class="bcgt-category-chips" data-category-selected></div><span class="bcgt-category-summary-status" data-category-store-status role="status"></span><button type="button" class="bcgt-category-button" data-category-store-retry hidden>제외 목록 다시 불러오기</button><button type="button" class="bcgt-category-button" data-category-add-open aria-expanded="false">+ 제외 추가</button>';
             categorySummaryView = { root, selectedRows: new Map(), composing: false };
+            const button = root.querySelector("[data-category-add-open]");
+            button.setAttribute("aria-controls", CATEGORY_ADD_ID);
+            button.addEventListener("click", () => {
+                if (categoryAddView?.menu.getAttribute("data-open") === "1") closeCategoryAdd();
+                else {
+                    closeMenu();
+                    if (!categoryAddView) buildCategoryAddPanel();
+                    categoryAddView.menu.setAttribute("data-open", "1");
+                    button.setAttribute("aria-expanded", "true");
+                    syncCategoryAdd();
+                    scheduleMenuPosition();
+                    categoryAddView.input.focus();
+                }
+            });
+            root.querySelector("[data-category-store-retry]").addEventListener("click", () => {
+                if (isCategoryExclusionRoute() && categorySummaryView?.root === root && root.isConnected)
+                    readCategoryState();
+            });
         }
         const view = categorySummaryView;
-        if (bar.nextElementSibling !== view.root) bar.after(view.root);
+        placeCategorySummary(view.root, bar, findHost);
         const selected = categoryState?.categories || [];
-        view.root.hidden = !selected.length && !categoryStoreError;
+        view.root.hidden = false;
         syncCategoryRows(view, view.root.querySelector(".bcgt-category-chips"), selected, "remove");
         for (const row of view.selectedRows.values()) {
             row.button.removeAttribute("data-category-remove");
@@ -655,95 +784,110 @@
                 row.button.setAttribute("data-category-summary-remove", "");
             setText(row.button, categoryPending.has(categoryKey(row.category)) ? "…" : "×");
         }
-        setCategoryStatusText(view.root.querySelector(".bcgt-category-summary-status"), categoryStoreError);
-    }
-
-    function syncCategoryMenu() {
-        syncCategorySummary();
-        const view = categoryMenuView;
-        if (
-            !view ||
-            !view.menu.isConnected ||
-            document.getElementById(MENU_ID) !== view.menu ||
-            !isCategoryExclusionRoute()
-        )
-            return;
         setCategoryStatusText(
-            view.storeStatus,
+            view.root.querySelector(".bcgt-category-summary-status"),
             categoryStoreError || (categoryStoreLoading ? "제외 목록을 불러오고 있어요…" : "")
         );
-        view.storeRetry.hidden = !categoryStoreError;
-        view.storeRetry.disabled = categoryStoreLoading;
-        syncCategoryRows(view, view.selected, categoryState?.categories || [], "remove");
-        setCategoryStatusText(
-            view.selectedStatus,
-            categoryState
-                ? categoryState.categories.length
-                    ? `제외한 카테고리 ${categoryState.categories.length}개`
-                    : "제외한 카테고리가 없어요."
-                : ""
-        );
+        const retry = view.root.querySelector("[data-category-store-retry]");
+        retry.hidden = !categoryStoreError;
+        retry.disabled = categoryStoreLoading;
+    }
+
+    function syncCategoryAdd() {
+        syncCategorySummary();
+        const view = categoryAddView;
+        if (!isCurrentCategoryAdd(view)) return;
         const messages = {
             idle: "",
             typing: "검색어 입력 중이에요…",
             loading: "카테고리를 검색하고 있어요…",
-            empty: "검색 결과가 없어요.",
+            empty: "검색 결과가 없어요. Enter를 누르면 입력한 단어를 태그로 제외해요.",
             error: "카테고리 검색에 실패했어요. 다시 시도해 주세요.",
             long: "검색어는 100자 이하로 입력해 주세요.",
             success: view.results.length >= 50 ? "검색 결과는 최대 50개예요. 검색어를 구체화해 주세요." : "",
+            "tag-saving": "태그 제외를 저장하고 있어요…",
+            "tag-added": `‘${view.addedTag}’ 태그를 제외했어요.`,
+            "tag-duplicate": "이미 제외한 태그예요.",
+            "tag-invalid": "태그는 100자 이하로 입력해 주세요.",
         };
         setCategoryStatusText(view.searchStatusElement, messages[view.searchStatus]);
         view.searchRetry.hidden = view.searchStatus !== "error";
         syncCategoryRows(view, view.resultsElement, view.results, "add");
     }
 
-    function buildCategoryExclusionSection(menu) {
+    function buildCategoryAddPanel() {
         if (!isCategoryExclusionRoute()) return;
-        cancelCategoryMenuSearch();
+        cancelCategoryAddSearch();
+        const menu = document.createElement("div");
+        menu.id = CATEGORY_ADD_ID;
+        menu.setAttribute("data-open", "0");
         const root = document.createElement("section");
         root.className = "bcgt-category-exclusions";
         root.setAttribute("data-category-exclusions", "");
         root.setAttribute("aria-label", "카테고리 제외");
         root.innerHTML = `<div class="bcgt-filter-title">카테고리 제외</div>
-<label class="bcgt-category-search-label">카테고리 검색<input type="search" data-category-search aria-label="제외할 카테고리 검색" placeholder="카테고리 이름 검색" autocomplete="off" spellcheck="false" maxlength="100" /></label>
-<div data-category-store-status role="status" aria-live="polite"></div><button type="button" class="bcgt-category-button" data-category-store-retry hidden>제외 목록 다시 불러오기</button>
-<div data-category-selected-status></div><div class="bcgt-category-list" data-category-selected></div>
+<label class="bcgt-category-search-label">카테고리 검색 · 태그 추가<input type="search" data-category-search aria-label="제외할 카테고리 검색 또는 태그 입력" placeholder="카테고리 이름 또는 태그 입력 후 Enter" autocomplete="off" spellcheck="false" maxlength="100" /></label>
+<div class="bcgt-category-hint">카테고리는 결과의 제외로, 스트리머가 붙인 태그는 단어 입력 후 Enter로 제외해요.</div>
 <div data-category-search-status role="status" aria-live="polite"></div><button type="button" class="bcgt-category-button" data-category-search-retry hidden>카테고리 검색 다시 시도</button>
 <div class="bcgt-category-list" data-category-results></div>`;
-        menu.prepend(root);
+        menu.append(root);
+        document.body.append(menu);
         const view = {
             menu,
             root,
             input: root.querySelector("[data-category-search]"),
-            storeStatus: root.querySelector("[data-category-store-status]"),
-            storeRetry: root.querySelector("[data-category-store-retry]"),
-            selectedStatus: root.querySelector("[data-category-selected-status]"),
-            selected: root.querySelector("[data-category-selected]"),
             resultsElement: root.querySelector("[data-category-results]"),
             searchStatusElement: root.querySelector("[data-category-search-status]"),
             searchRetry: root.querySelector("[data-category-search-retry]"),
             results: [],
-            selectedRows: new Map(),
             resultRows: new Map(),
             composing: false,
+            compositionEnter: false,
+            addedTag: "",
             timer: 0,
             controller: null,
             searchStatus: "idle",
         };
-        categoryMenuView = view;
-        view.input.addEventListener("input", () => scheduleCategoryMenuSearch(view));
+        categoryAddView = view;
+        view.input.addEventListener("input", () => scheduleCategoryAddSearch(view));
         view.input.addEventListener("compositionstart", () => {
             view.composing = true;
-            scheduleCategoryMenuSearch(view);
+            scheduleCategoryAddSearch(view);
         });
         view.input.addEventListener("compositionend", () => {
             view.composing = false;
-            scheduleCategoryMenuSearch(view);
+            scheduleCategoryAddSearch(view);
         });
-        view.searchRetry.addEventListener("click", () => scheduleCategoryMenuSearch(view));
-        view.storeRetry.addEventListener("click", () => {
-            if (isCurrentCategoryMenu(view)) readCategoryState();
+        view.input.addEventListener("keydown", (event) => handleCategoryAddKeydown(view, event));
+        view.input.addEventListener("keyup", (event) => {
+            if (event.key === "Enter") view.compositionEnter = false;
         });
+        view.input.addEventListener("blur", () => {
+            view.compositionEnter = false;
+        });
+        view.searchRetry.addEventListener("click", () => scheduleCategoryAddSearch(view));
+        menu.addEventListener("keydown", (event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            closeCategoryAdd();
+            categorySummaryView?.root.querySelector("[data-category-add-open]")?.focus();
+        });
+    }
+
+    function closeCategoryAdd() {
+        cancelCategoryAddSearch();
+        const view = categoryAddView;
+        categorySummaryView?.root.querySelector("[data-category-add-open]")?.setAttribute("aria-expanded", "false");
+        if (!view) return;
+        view.menu.setAttribute("data-open", "0");
+        view.results = [];
+        view.input.value = "";
+        view.searchStatus = "idle";
+        view.composing = false;
+        view.resultsElement.replaceChildren();
+        view.resultRows.clear();
+        setCategoryStatusText(view.searchStatusElement, "");
     }
 
     function categoryFromMeta(meta) {
@@ -797,15 +941,52 @@
         return categories[0];
     }
 
+    function tagFromLink(anchor) {
+        try {
+            const url = new URL(anchor.getAttribute("href"), location.origin);
+            return url.origin === "https://chzzk.naver.com" ? url.searchParams.get("tags") || "" : "";
+        } catch (_) {
+            return "";
+        }
+    }
+
+    function currentRowTags(row) {
+        const card = row?.entry?.card;
+        const route = getRoute();
+        if (!card?.isConnected || !isCurrentFollowerRow(route, row)) return [];
+        const meta = row.meta;
+        const metaTags =
+            hasValidCategoryMetadataBinding(meta) && meta.id === row.entry.id && Array.isArray(meta.tags)
+                ? meta.tags
+                : [];
+        const binding = injectedCategoryBindings.get(card);
+        if (binding) {
+            // 추가 카드의 템플릿 태그 링크는 옛 값일 수 있어 결합이 확인된 메타데이터 태그만 쓴다.
+            return binding.id === row.entry.id &&
+                binding.channelId === meta?.channelId &&
+                hasValidCategoryMetadataBinding(binding) &&
+                binding.liveId === meta?.liveId
+                ? metaTags
+                : [];
+        }
+        // 원본 카드는 현재 태그 링크를 읽고, 카드에 일부 태그만 보일 수 있어 같은 채널의 메타데이터 태그도 함께 본다.
+        return [...Array.from(card.querySelectorAll("a[href]"), tagFromLink).filter(Boolean), ...metaTags];
+    }
+
     function passesRowCategoryExclusions(row) {
-        return !hasCategoryExclusions() || passesCategoryExclusions(currentRowCategory(row), categoryKeys);
+        return (
+            !hasCategoryExclusions() ||
+            (passesCategoryExclusions(currentRowCategory(row), categoryKeys) &&
+                passesTagExclusions(currentRowTags(row), categoryTagKeys))
+        );
     }
 
     function passesMetaCategoryExclusions(meta) {
         return (
             !hasCategoryExclusions() ||
             !hasValidCategoryMetadataBinding(meta) ||
-            passesCategoryExclusions(categoryIdentityFromMeta(meta), categoryKeys)
+            (passesCategoryExclusions(categoryIdentityFromMeta(meta), categoryKeys) &&
+                passesTagExclusions(meta.tags, categoryTagKeys))
         );
     }
 
@@ -899,7 +1080,7 @@
   width:100% !important;
   overflow:visible !important;
 }
-[${GLOBAL_SORT_ATTR}="1"]{
+[${GLOBAL_SORT_ATTR}="1"], [${CATEGORY_SUMMARY_HOST_ATTR}="1"]{
   display:flex !important;
   align-items:center !important;
   flex-wrap:wrap !important;
@@ -961,15 +1142,25 @@
   margin-left:auto;
 }
 #${BAR_ID}:has(.bcgt-live-count:not([hidden])){flex-wrap:wrap;}
-.bcgt-category-summary{flex:0 0 100%;width:100%;min-width:0;display:flex;justify-content:flex-end;align-items:center;gap:8px;padding:8px 0;box-sizing:border-box;font-family:inherit;font-size:13px;line-height:20px;font-weight:400;}
+.bcgt-category-summary{flex:0 0 100%;width:100%;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:6px 0;box-sizing:border-box;font-family:inherit;font-size:12px;line-height:18px;font-weight:400;--bcgt-chip-bg:#00FFA3;--bcgt-chip-text:#0B0D0F;}
 .bcgt-category-summary[hidden]{display:none;}
+.bcgt-category-summary[data-placement="sort-line"]{flex:0 1 auto;width:auto;max-width:100%;margin-left:auto;justify-content:flex-end;padding:0;}
+.bcgt-category-summary[data-placement="sort-line"] .bcgt-category-chips{justify-content:flex-end;}
 .bcgt-category-summary-label{flex:0 0 auto;color:var(--bcgt-text-dim);font-size:12px;}
-.bcgt-category-summary .bcgt-category-chips{display:flex;flex-wrap:wrap;gap:6px;min-width:0;}
-.bcgt-category-summary .bcgt-category-row{display:flex;align-items:center;gap:6px;max-width:100%;padding:4px 8px;border:1px solid var(--bcgt-border-strong);border-radius:8px;background:var(--bcgt-bg);color:var(--bcgt-text-strong);box-sizing:border-box;}
-.bcgt-category-summary .bcgt-category-name{overflow-wrap:anywhere;min-width:0;}
-.bcgt-category-summary .bcgt-category-type{font-size:11px;color:var(--bcgt-text-dim);white-space:nowrap;}
-.bcgt-category-summary .bcgt-category-button{flex:0 0 auto;border:0;background:transparent;color:inherit;cursor:pointer;font:inherit;padding:0 3px;min-width:24px;min-height:24px;}
-.bcgt-category-summary .bcgt-category-button:focus-visible{outline:2px solid var(--bcgt-accent);outline-offset:2px;}
+.bcgt-category-summary .bcgt-category-chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;}
+.bcgt-category-summary .bcgt-category-row{display:inline-flex;align-items:center;gap:2px;max-width:100%;height:22px;padding:0 3px 0 10px;border:0;border-radius:999px;background:var(--bcgt-chip-bg);color:var(--bcgt-chip-text);font-weight:600;box-sizing:border-box;}
+.bcgt-category-summary .bcgt-category-name{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+.bcgt-category-summary .bcgt-category-button{position:relative;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;padding:0;border:0;border-radius:50%;background:rgba(11,13,15,0.14);color:inherit;cursor:pointer;font:inherit;font-size:12px;line-height:16px;}
+.bcgt-category-summary .bcgt-category-button::after{content:"";position:absolute;inset:-4px;border-radius:50%;}
+.bcgt-category-summary .bcgt-category-button:hover{background:rgba(11,13,15,0.28);}
+.bcgt-category-summary .bcgt-category-button:disabled{opacity:0.6;cursor:default;}
+.bcgt-category-summary .bcgt-category-button:focus-visible{outline:2px solid var(--bcgt-chip-text);outline-offset:1px;}
+.bcgt-category-summary :is([data-category-add-open],[data-category-store-retry]){position:static;width:auto;height:22px;padding:0 10px;border:1px solid var(--bcgt-border-strong);border-radius:999px;background:transparent;color:var(--bcgt-text-strong);font-weight:400;line-height:20px;white-space:nowrap;}
+.bcgt-category-summary [data-category-add-open]{margin-left:auto;border-color:var(--bcgt-accent);}
+.bcgt-category-summary :is([data-category-add-open],[data-category-store-retry])::after{content:none;}
+.bcgt-category-summary :is([data-category-add-open],[data-category-store-retry]):hover{background:rgba(0,255,163,0.12);}
+.bcgt-category-summary :is([data-category-add-open],[data-category-store-retry]):focus-visible{outline:2px solid var(--bcgt-accent);outline-offset:2px;}
+.bcgt-category-summary [hidden]{display:none;}
 .bcgt-category-summary-status{font-size:12px;color:var(--bcgt-text-dim);}
 
 #${BAR_ID} .bcgt-live-count{max-width:100%;white-space:normal;color:var(--bcgt-text);font-size:12px;line-height:20px;}
@@ -1049,10 +1240,7 @@
 }
 #${BAR_ID} .bcgt-clear:hover{color:var(--bcgt-text-strong);background:var(--sem-color-surface-interaction-lighten-hovered,var(--Surface-Interaction-Lighten-Hovered, rgba(255,255,255,0.06)));}
 #${BAR_ID}[data-has-query="1"] .bcgt-clear{display:inline-flex;}
-#${BAR_ID} .bcgt-search-apply{flex:0 0 auto;border:1px solid var(--bcgt-border);border-radius:var(--bcgt-radius);background:var(--bcgt-bg);color:var(--bcgt-text-strong);font:inherit;cursor:pointer;min-height:var(--bcgt-height);padding:0 10px;}
-#${BAR_ID} .bcgt-search-apply[hidden]{display:none;}
-#${BAR_ID}[data-search-draft="1"] .bcgt-search-apply{border-color:var(--bcgt-accent);}
-#${BAR_ID} :is(.bcgt-clear,.bcgt-filter,.bcgt-search-apply):focus-visible{outline:2px solid var(--bcgt-accent);outline-offset:2px;}
+#${BAR_ID} :is(.bcgt-clear,.bcgt-filter):focus-visible{outline:2px solid var(--bcgt-accent);outline-offset:2px;}
 #${BAR_ID} .bcgt-status{font-variant-numeric:tabular-nums;}
 #${BAR_ID} .bcgt-meter{
   display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;
@@ -1090,7 +1278,7 @@
   border-color:var(--bcgt-border-strong);
   color:var(--bcgt-text-hover);
 }
-#${MENU_ID}{
+#${MENU_ID}, #${CATEGORY_ADD_ID}{
   /* 메뉴는 BAR 밖 fixed 요소라 토큰 변수를 자체적으로 다시 참조한다(fallback은 다크 기준). */
   --bcgt-menu-bg:var(--sem-color-surface-neutral-weaker,var(--Surface-Neutral-Weaker, #1B1D20));
   --bcgt-menu-border:var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.24)));
@@ -1126,7 +1314,8 @@
   transform-origin:bottom right;
   z-index:90;
 }
-#${MENU_ID}[data-open="1"]{display:block;}
+#${MENU_ID}[data-open="1"], #${CATEGORY_ADD_ID}[data-open="1"]{display:block;}
+#${CATEGORY_ADD_ID}{width:400px;box-sizing:border-box;}
 #${MENU_ID} .bcgt-filter-groups{
   display:grid;
   grid-template-columns:minmax(0, 1fr) minmax(0, 1fr);
@@ -1142,19 +1331,20 @@
   grid-column:1 / -1;
 }
 #${MENU_ID} .bcgt-filter-group[hidden]{display:none;}
-#${MENU_ID} .bcgt-category-exclusions{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--bcgt-menu-border);min-width:0;}
-#${MENU_ID} .bcgt-category-search-label{display:flex;flex-direction:column;gap:4px;color:var(--bcgt-menu-text-sub);}
-#${MENU_ID} [data-category-search]{box-sizing:border-box;width:100%;min-width:0;padding:8px;border:1px solid var(--bcgt-menu-border);border-radius:6px;background:var(--bcgt-menu-field-bg);color:var(--bcgt-menu-text);font:inherit;}
-#${MENU_ID} .bcgt-category-list{display:flex;flex-direction:column;gap:4px;max-height:176px;overflow-y:auto;min-width:0;}
-#${MENU_ID} .bcgt-category-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,max-content) auto;gap:8px;align-items:center;min-width:0;padding:4px;}
-#${MENU_ID} .bcgt-category-name{overflow-wrap:anywhere;line-height:20px;}
-#${MENU_ID} .bcgt-category-type{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--bcgt-menu-text-sub);font-size:12px;}
-#${MENU_ID} .bcgt-category-button{flex:0 0 auto;min-height:28px;padding:4px 8px;border:1px solid var(--bcgt-menu-border);border-radius:6px;background:var(--bcgt-menu-button-bg);color:var(--bcgt-menu-text);font:inherit;cursor:pointer;}
-#${MENU_ID} .bcgt-category-button:hover{background:var(--bcgt-menu-hover);}
-#${MENU_ID} .bcgt-category-button:disabled{color:var(--bcgt-menu-disabled);cursor:default;}
-#${MENU_ID} .bcgt-category-button[hidden]{display:none;}
-#${MENU_ID} :is(.bcgt-category-button,[data-category-search]):focus-visible{outline:2px solid var(--bcgt-menu-checked);outline-offset:2px;}
-#${MENU_ID} :is([data-category-search-status],[data-category-store-status],[data-category-selected-status]){color:var(--bcgt-menu-text-sub);overflow-wrap:anywhere;line-height:20px;}
+#${CATEGORY_ADD_ID} .bcgt-category-exclusions{display:flex;flex-direction:column;gap:8px;min-width:0;}
+#${CATEGORY_ADD_ID} .bcgt-category-search-label{display:flex;flex-direction:column;gap:4px;color:var(--bcgt-menu-text-sub);}
+#${CATEGORY_ADD_ID} .bcgt-category-hint{color:var(--bcgt-menu-text-sub);font-size:12px;line-height:18px;overflow-wrap:anywhere;}
+#${CATEGORY_ADD_ID} [data-category-search]{box-sizing:border-box;width:100%;min-width:0;padding:8px;border:1px solid var(--bcgt-menu-border);border-radius:6px;background:var(--bcgt-menu-field-bg);color:var(--bcgt-menu-text);font:inherit;}
+#${CATEGORY_ADD_ID} .bcgt-category-list{display:flex;flex-direction:column;gap:4px;max-height:176px;overflow-y:auto;min-width:0;}
+#${CATEGORY_ADD_ID} .bcgt-category-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,max-content) auto;gap:8px;align-items:center;min-width:0;padding:4px;}
+#${CATEGORY_ADD_ID} .bcgt-category-name{overflow-wrap:anywhere;line-height:20px;}
+#${CATEGORY_ADD_ID} .bcgt-category-type{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--bcgt-menu-text-sub);font-size:12px;}
+#${CATEGORY_ADD_ID} .bcgt-category-button{flex:0 0 auto;min-height:28px;padding:4px 8px;border:1px solid var(--bcgt-menu-border);border-radius:6px;background:var(--bcgt-menu-button-bg);color:var(--bcgt-menu-text);font:inherit;cursor:pointer;}
+#${CATEGORY_ADD_ID} .bcgt-category-button:hover{background:var(--bcgt-menu-hover);}
+#${CATEGORY_ADD_ID} .bcgt-category-button:disabled{color:var(--bcgt-menu-disabled);cursor:default;}
+#${CATEGORY_ADD_ID} .bcgt-category-button[hidden]{display:none;}
+#${CATEGORY_ADD_ID} :is(.bcgt-category-button,[data-category-search]):focus-visible{outline:2px solid var(--bcgt-menu-checked);outline-offset:2px;}
+#${CATEGORY_ADD_ID} :is([data-category-search-status],[data-category-store-status],[data-category-selected-status]){color:var(--bcgt-menu-text-sub);overflow-wrap:anywhere;line-height:20px;}
 #${MENU_ID} .bcgt-option-list{
   display:flex;
   min-width:0;
@@ -1474,7 +1664,7 @@
         const byLabel = new Map();
         for (const el of document.querySelectorAll("button, a, [role='button'], [role='tab']")) {
             if (!(el instanceof HTMLElement)) continue;
-            if (el.closest(`#${BAR_ID}`) || el.closest(`#${MENU_ID}`)) continue;
+            if (el.closest(`#${BAR_ID}, #${MENU_ID}, #${CATEGORY_ADD_ID}, #${CATEGORY_SUMMARY_ID}`)) continue;
             const text = normSpace(el.textContent);
             if (!labels.includes(text)) continue;
             const rect = el.getBoundingClientRect();
@@ -1552,7 +1742,7 @@
         let node = target instanceof HTMLElement ? target : target?.parentElement;
         let depth = 0;
         while (node instanceof HTMLElement && depth < 5) {
-            if (node.closest(`#${BAR_ID}`) || node.closest(`#${MENU_ID}`)) return false;
+            if (node.closest(`#${BAR_ID}, #${MENU_ID}, #${CATEGORY_ADD_ID}, #${CATEGORY_SUMMARY_ID}`)) return false;
             if (Object.hasOwn(GLOBAL_SORT_LABELS, normSpace(node.textContent))) return true;
             node = node.parentElement;
             depth++;
@@ -1656,7 +1846,7 @@
     function findGlobalTagSearch() {
         const inputs = Array.from(document.querySelectorAll("input")).filter((input) => {
             if (!(input instanceof HTMLElement)) return false;
-            if (input.closest(`#${BAR_ID}`) || input.closest(`#${MENU_ID}`)) return false;
+            if (input.closest(`#${BAR_ID}`) || input.closest(`#${MENU_ID}, #${CATEGORY_ADD_ID}`)) return false;
             const label = [
                 input.getAttribute("placeholder"),
                 input.getAttribute("aria-label"),
@@ -1673,7 +1863,7 @@
         const inputs = Array.from(document.querySelectorAll("input"));
         for (const input of inputs) {
             if (!(input instanceof HTMLElement)) continue;
-            if (input.closest(`#${BAR_ID}`) || input.closest(`#${MENU_ID}`)) continue;
+            if (input.closest(`#${BAR_ID}`) || input.closest(`#${MENU_ID}, #${CATEGORY_ADD_ID}`)) continue;
             const label = [
                 input.getAttribute("placeholder"),
                 input.getAttribute("aria-label"),
@@ -1697,6 +1887,7 @@
             if (
                 node.id === BAR_ID ||
                 node.id === MENU_ID ||
+                node.id === CATEGORY_ADD_ID ||
                 node.id === GLOBAL_FALLBACK_ID ||
                 node.getAttribute(GLOBAL_SORT_ATTR) === "1"
             ) {
@@ -1755,7 +1946,7 @@
         if (!root) return [];
         return Array.from(root.querySelectorAll("button, a")).filter((el) => {
             if (!(el instanceof HTMLElement)) return false;
-            if (el.closest(`#${BAR_ID}`) || el.closest(`#${MENU_ID}`)) return false;
+            if (el.closest(`#${BAR_ID}`) || el.closest(`#${MENU_ID}, #${CATEGORY_ADD_ID}`)) return false;
             const rect = el.getBoundingClientRect();
             return rect.width > 0 && rect.height > 0;
         });
@@ -2223,12 +2414,7 @@
     }
 
     function activeFilterCount() {
-        return (
-            (hasFollowerFilter() ? 1 : 0) +
-            (hasViewFilter() ? 1 : 0) +
-            (hasDurationFilter() ? 1 : 0) +
-            (hasCategoryExclusions() ? 1 : 0)
-        );
+        return (hasFollowerFilter() ? 1 : 0) + (hasViewFilter() ? 1 : 0) + (hasDurationFilter() ? 1 : 0);
     }
 
     function passesViewFilter(meta) {
@@ -2577,6 +2763,10 @@
         );
         if (meta && meta.id) meta._bcgtSearchText = text;
         return text;
+    }
+
+    function channelHrefForId(channelId) {
+        return typeof channelId === "string" && /^[a-f0-9]{32}$/i.test(channelId) ? `/${channelId}` : "";
     }
 
     function contentHref(route, meta) {
@@ -3128,7 +3318,7 @@
         applyCardAttrs(card, meta);
 
         const itemHref = contentHref(route, meta);
-        const channelHref = meta.channelId ? `/${meta.channelId}` : "";
+        const channelHref = channelHrefForId(meta.channelId);
         const channelAnchors = [];
 
         for (const anchor of card.querySelectorAll("a[href]")) {
@@ -3141,8 +3331,9 @@
             if (getItemId(route, href)) {
                 anchor.setAttribute("href", itemHref);
                 if (isChannelAnchor) channelAnchors.push(anchor);
-            } else if (channelHref && (href.match(/^\/[a-f0-9]{32}/i) || isChannelAnchor)) {
-                anchor.setAttribute("href", channelHref);
+            } else if (href.match(/^\/[a-f0-9]{32}/i) || isChannelAnchor) {
+                if (channelHref) anchor.setAttribute("href", channelHref);
+                else anchor.removeAttribute("href");
                 channelAnchors.push(anchor);
             }
         }
@@ -3239,13 +3430,14 @@
         applyCardAttrs(card, meta);
 
         const itemHref = contentHref(route, meta);
-        const channelHref = meta.channelId ? `/${meta.channelId}` : "";
+        const channelHref = channelHrefForId(meta.channelId);
         for (const anchor of card.querySelectorAll("a[href]")) {
             const href = anchor.getAttribute("href") || "";
             if (getItemId(route, href)) {
                 anchor.setAttribute("href", itemHref);
-            } else if (channelHref && (href.match(/^\/[a-f0-9]{32}/i) || /channel|profile/i.test(anchor.className))) {
-                anchor.setAttribute("href", channelHref);
+            } else if (href.match(/^\/[a-f0-9]{32}/i) || /channel|profile/i.test(anchor.className)) {
+                if (channelHref) anchor.setAttribute("href", channelHref);
+                else anchor.removeAttribute("href");
             }
         }
 
@@ -3479,7 +3671,6 @@
 </div>
 `;
         syncFilterOptionButtons(menu);
-        buildCategoryExclusionSection(menu);
         const resetButton = menu.querySelector("[data-filter-reset]");
         if (resetButton) {
             resetButton.addEventListener("click", (e) => {
@@ -3559,18 +3750,10 @@
             menu = buildMenu();
             document.body.appendChild(menu);
         }
-        if (categoryMenuView?.menu === menu && !isCategoryExclusionRoute()) {
-            cancelCategoryMenuSearch();
-            categoryMenuView.root.remove();
-            categoryMenuView = null;
-        } else if (isCategoryExclusionRoute() && categoryMenuView?.menu !== menu) {
-            buildCategoryExclusionSection(menu);
-        }
         return menu;
     }
 
     function closeMenu() {
-        cancelCategoryMenuSearch();
         const bar = document.getElementById(BAR_ID);
         const menu = document.getElementById(MENU_ID);
         if (bar) {
@@ -3578,27 +3761,15 @@
             bar.querySelector(".bcgt-filter")?.setAttribute("aria-expanded", "false");
         }
         if (menu) menu.setAttribute("data-open", "0");
-        if (categoryMenuView?.menu === menu) {
-            categoryMenuView.results = [];
-            categoryMenuView.input.value = "";
-            categoryMenuView.searchStatus = "idle";
-            categoryMenuView.composing = false;
-            syncCategoryMenu();
-        }
     }
 
     function positionMenu() {
-        const bar = document.getElementById(BAR_ID);
-        const button = bar?.querySelector(".bcgt-filter");
-        const menu = document.getElementById(MENU_ID);
-        if (
-            !bar ||
-            !button ||
-            !menu ||
-            bar.getAttribute("data-menu-open") !== "1" ||
-            menu.getAttribute("data-open") !== "1"
-        )
-            return;
+        positionPopup(document.getElementById(MENU_ID), document.getElementById(BAR_ID)?.querySelector(".bcgt-filter"));
+        positionPopup(categoryAddView?.menu, categorySummaryView?.root.querySelector("[data-category-add-open]"));
+    }
+
+    function positionPopup(menu, button) {
+        if (!button || !menu || menu.getAttribute("data-open") !== "1") return;
 
         const buttonRect = button.getBoundingClientRect();
         const scrollTop = menu.scrollTop;
@@ -3637,7 +3808,8 @@
         if (menu && event?.target instanceof Node && menu.contains(event.target)) return;
         const now = performance.now();
         if (now > ignoreScrollTrackingUntil) lastUserScrollAt = now;
-        if (menu.getAttribute("data-open") === "1") scheduleMenuPosition();
+        if (menu.getAttribute("data-open") === "1" || categoryAddView?.menu.getAttribute("data-open") === "1")
+            scheduleMenuPosition();
     }
 
     function handleViewportChange() {
@@ -3651,9 +3823,7 @@
         const draft = bar.querySelector("input")?.value || "";
         bar.setAttribute("data-has-query", draft || currentQuery ? "1" : "0");
         bar.setAttribute("data-search-draft", draft !== currentQuery ? "1" : "0");
-        const searchApply = bar.querySelector(".bcgt-search-apply");
-        if (searchApply) searchApply.hidden = getRoute()?.scope !== "global-lives";
-        bar.setAttribute("data-has-filter", hasActiveFilters() ? "1" : "0");
+        bar.setAttribute("data-has-filter", hasNumericFilters() ? "1" : "0");
         const label = bar.querySelector(".bcgt-filter-label");
         if (label) {
             const count = activeFilterCount();
@@ -3713,7 +3883,7 @@
             const hasCustomRange = (state.minCustom && state.min > 0) || (state.maxCustom && state.max > 0);
             custom.setAttribute("data-active", hasCustomRange ? "1" : "0");
         }
-        syncCategoryMenu();
+        syncCategoryAdd();
     }
 
     function buildToolbar() {
@@ -3737,7 +3907,6 @@
     </svg>
   </button>
 </div>
-<button type="button" class="bcgt-search-apply" aria-label="현재 목록 검색 적용">적용</button>
 <span class="bcgt-meter">
   <span class="bcgt-spinner" aria-hidden="true"></span>
   <span class="bcgt-status" aria-live="polite"></span>
@@ -3751,7 +3920,6 @@
 `;
         const input = bar.querySelector("input");
         const clear = bar.querySelector(".bcgt-clear");
-        const apply = bar.querySelector(".bcgt-search-apply");
         const filter = bar.querySelector(".bcgt-filter");
         let isComposing = false;
         let compositionEnter = false;
@@ -3813,13 +3981,11 @@
         input.addEventListener("blur", () => {
             compositionEnter = false;
         });
-        apply.addEventListener("click", () => {
-            if (isExplicitSearch()) applyInputValue();
-        });
         clear.addEventListener("click", () => {
             input.value = "";
-            if (isExplicitSearch()) syncDraft();
-            else applyInputValue();
+            // 적용 버튼이 없으므로 지우기 클릭은 한 번의 명시적 제출로 검색을 해제한다.
+            applyInputValue();
+            syncDraft();
             input.focus();
         });
         filter.addEventListener("click", (e) => {
@@ -3828,6 +3994,7 @@
             if (open) {
                 closeMenu();
             } else {
+                closeCategoryAdd();
                 const menu = ensureMenu();
                 bar.setAttribute("data-menu-open", "1");
                 filter.setAttribute("aria-expanded", "true");
@@ -3930,7 +4097,7 @@
             cachedGridKey = "";
             updateUiState();
         }
-        syncCategorySummary();
+        syncCategorySummary({ findHost: true });
         return true;
     }
 
@@ -3953,7 +4120,8 @@
     function updateStatus(visible, total) {
         const status = document.querySelector(`#${BAR_ID} .bcgt-status`);
         if (!status) return;
-        status.textContent = currentQuery || hasActiveFilters() ? `${visible} / ${total}` : "";
+        // 카테고리 제외는 검색·필터와 독립된 줄에서 관리하므로 결과 수는 검색어·숫자 필터에만 표시한다.
+        status.textContent = currentQuery || hasNumericFilters() ? `${visible} / ${total}` : "";
     }
 
     function isAutoLoadActive() {
@@ -4260,10 +4428,12 @@
     }
 
     function removeTools({ preserveCount = false } = {}) {
-        cancelCategoryMenuSearch();
-        categoryMenuView = null;
+        closeCategoryAdd();
+        categoryAddView?.menu.remove();
+        categoryAddView = null;
         categorySummaryView?.root.remove();
         categorySummaryView = null;
+        releaseCategorySummaryHost();
         scheduleThrottledApply.cancel?.();
         toolbarRescueGeneration++;
         if (toolbarRescueFrame) cancelAnimationFrame(toolbarRescueFrame);
@@ -4349,7 +4519,8 @@
 
     function isOurNode(node) {
         if (!node || node.nodeType !== 1) return false;
-        if (node.id === BAR_ID || node.id === MENU_ID || node.id === GLOBAL_FALLBACK_ID) return true;
+        if (node.id === BAR_ID || node.id === MENU_ID || node.id === CATEGORY_ADD_ID || node.id === GLOBAL_FALLBACK_ID)
+            return true;
         if (node.getAttribute && node.getAttribute(EMPTY_ATTR) === "1") return true;
         if (node.getAttribute && node.getAttribute(INJECTED_ATTR) === "1") return true;
         if (node.getAttribute && node.getAttribute(FOLLOWER_BADGE_ATTR) === "1") return true;
@@ -4358,7 +4529,7 @@
         if (typeof node.closest === "function") {
             if (node.closest(`#${BAR_ID}`)) return true;
             if (categorySummaryView?.root.contains(node)) return true;
-            if (node.closest(`#${MENU_ID}`)) return true;
+            if (node.closest(`#${MENU_ID}, #${CATEGORY_ADD_ID}`)) return true;
             if (node.closest(`#${GLOBAL_FALLBACK_ID}`)) return true;
             if (node.closest(`[${INJECTED_ATTR}="1"]`)) return true;
             if (node.closest(`[${EMPTY_ATTR}="1"]`)) return true;
@@ -4371,7 +4542,14 @@
 
     function isOurMutation(mutation) {
         for (const node of mutation.removedNodes || []) {
-            if (node.id === BAR_ID || node.id === MENU_ID || node.classList?.contains("bcgt-live-count")) return false;
+            if (
+                node.id === BAR_ID ||
+                node.id === MENU_ID ||
+                node.id === CATEGORY_ADD_ID ||
+                node.id === CATEGORY_SUMMARY_ID ||
+                node.classList?.contains("bcgt-live-count")
+            )
+                return false;
         }
         if (isOurNode(mutation.target)) return true;
         if (mutation.type === "attributes" && mutation.attributeName === "href") {
@@ -4395,7 +4573,8 @@
                     mutation.attributeName === FOLLOWER_BADGE_ATTR ||
                     mutation.attributeName === FOLLOWER_BADGE_WRAP_ATTR ||
                     mutation.attributeName === LIVE_ELAPSED_BADGE_ATTR ||
-                    mutation.attributeName === LIVE_THUMB_HOST_ATTR)
+                    mutation.attributeName === LIVE_THUMB_HOST_ATTR ||
+                    mutation.attributeName === CATEGORY_SUMMARY_HOST_ATTR)
             );
         }
         for (const node of added || []) {
@@ -4437,9 +4616,10 @@
                 ],
             },
             onMutations: () => {
-                if (categoryMenuView && !categoryMenuView.menu.isConnected) {
-                    cancelCategoryMenuSearch();
-                    categoryMenuView = null;
+                if (categoryAddView && (!categoryAddView.menu.isConnected || !categorySummaryView?.root.isConnected)) {
+                    closeCategoryAdd();
+                    categoryAddView.menu.remove();
+                    categoryAddView = null;
                 }
                 const route = getRoute();
                 if (location.href !== lastUrl) {
@@ -4467,6 +4647,12 @@
         const menu = document.getElementById(MENU_ID);
         if (!bar && !menu && getRoute()?.scope !== "global-lives") return;
         handleGlobalSortClick(event);
+        if (
+            event.isTrusted &&
+            !categorySummaryView?.root.contains(event.target) &&
+            !categoryAddView?.menu.contains(event.target)
+        )
+            closeCategoryAdd();
         // Automatic sidebar refresh also emits clicks; only user input dismisses the filter menu.
         const filterButton = bar?.querySelector(".bcgt-filter");
         if (event.isTrusted && !filterButton?.contains(event.target) && !menu?.contains(event.target)) closeMenu();

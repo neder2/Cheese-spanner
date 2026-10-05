@@ -84,6 +84,7 @@ function createFixture(t) {
     assert.ok(end >= 0);
     window.eval(`${source.slice(0, end)}
         globalThis.categoryLifecycle = {
+            buildCard: buildInjectedCard,
             mountCount: () => {
                 history.replaceState({}, "", "/lives");
                 applyOptions(BetterChzzkSettings.normalizeOptions({ globalLiveCountEnabled: true }));
@@ -584,3 +585,49 @@ test("category disable during initial metadata loading does not resume card or b
     assert.equal(dom.window.document.querySelector('[data-bcgt-card="1"], [data-bcgt-follower-badge="1"]'), null);
     assert.equal(timers.size, 0);
 });
+
+for (const tab of ["lives", "videos", "clips"]) {
+    test(`${tab} injected channel links reject malformed IDs and preserve content links`, (t) => {
+        const f = createFixture(t);
+        const document = f.dom.window.document;
+        const template = document.createElement("article");
+        const originalId = "a".repeat(32);
+        const prefix = tab === "lives" ? "live" : tab === "videos" ? "video" : "clips";
+        const originalItem = tab === "lives" ? originalId : tab === "videos" ? "123" : "originalClip";
+        const itemId = tab === "lives" ? "b".repeat(32) : tab === "videos" ? "456" : "nextClip";
+        template.innerHTML = `<a class="title" href="/${prefix}/${originalItem}">Original title</a><a class="profile" href="/${originalId}">Original channel</a><a href="/${originalId}">Original profile</a>`;
+        const originalMarkup = template.innerHTML;
+        const route = { scope: "category", tab };
+        for (const channelId of [
+            "/evil.example",
+            "\\evil.example",
+            "../other",
+            "a".repeat(31),
+            "",
+            null,
+            "a".repeat(32) + "/extra",
+        ]) {
+            const card = f.hooks.buildCard(route, template, {
+                id: itemId,
+                channelId,
+                channelName: "Candidate",
+            });
+            for (const anchor of card.querySelectorAll("a:not(.title)"))
+                assert.equal(anchor.hasAttribute("href"), false, String(channelId));
+            const title = card.querySelector("a.title");
+            assert.equal(new URL(title.href).origin, "https://chzzk.naver.com");
+            if (tab !== "lives") assert.equal(title.getAttribute("href"), `/${prefix}/${itemId}`);
+            assert.equal(template.innerHTML, originalMarkup);
+        }
+        for (const channelId of ["b".repeat(32), "B".repeat(32)]) {
+            const card = f.hooks.buildCard(route, template, { id: itemId, channelId, channelName: "Candidate" });
+            for (const anchor of card.querySelectorAll("a:not(.title)"))
+                assert.equal(anchor.getAttribute("href"), "/" + channelId);
+            assert.equal(
+                card.querySelector("a.title").getAttribute("href"),
+                `/${prefix}/${tab === "lives" ? channelId : itemId}`
+            );
+            assert.equal(template.innerHTML, originalMarkup);
+        }
+    });
+}
