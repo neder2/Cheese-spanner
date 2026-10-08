@@ -564,6 +564,46 @@
                         </div>
                     </details>
 
+                    <details
+                        class="option-group"
+                        data-option-group="player-ambient"
+                        data-search-terms="앰비언트 배경 빛 번짐 글로우"
+                    >
+                        <summary>
+                            <span class="option-group-title"
+                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-eye" /></svg
+                                ><span>앰비언트 효과</span></span
+                            >
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>앰비언트 효과</strong></span>
+                                <input type="checkbox" data-option="ambientEnabled" aria-describedby="ambientHelp" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="ambientEnabled">
+                                <span><strong>효과 강도</strong></span>
+                                <span class="range-control"
+                                    ><input
+                                        id="ambientIntensity"
+                                        type="range"
+                                        min="10"
+                                        max="100"
+                                        step="5"
+                                        data-option="ambientIntensity"
+                                        aria-describedby="ambientHelp" /><output
+                                        for="ambientIntensity"
+                                        aria-hidden="true"
+                                    ></output
+                                ></span>
+                            </label>
+                            <p class="setting-note" id="ambientHelp">
+                                라이브·다시보기 영상의 색이 플레이어 바깥으로 은은하게 번져 상단·채팅창·사이드바
+                                가장자리까지 이어집니다. 켜 두면 플레이어 톱니바퀴 메뉴에서도 바로 끄고 켜거나 세기를
+                                조절할 수 있습니다. 전체 화면과 멀티뷰에서는 표시하지 않습니다.
+                            </p>
+                        </div>
+                    </details>
+
                     <details class="option-group" data-option-group="player-seek">
                         <summary>
                             <span class="option-group-title">

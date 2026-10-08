@@ -105,6 +105,7 @@
                 "features/holdSpeed.js",
                 "features/screenShortcuts.js",
                 "features/playerZoom.js",
+                "features/ambientGlow.js",
                 "features/updateGuide.js"
             ],
             "run_at": "document_start"

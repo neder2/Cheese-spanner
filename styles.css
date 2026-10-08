@@ -645,6 +645,38 @@ h1 {
     transform: translateX(14px);
 }
 
+.range-control {
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.range-control input[type="range"] {
+    width: 128px;
+    min-width: 0;
+    margin: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.range-control input[type="range"]:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+}
+
+.toggle-row.is-disabled .range-control input[type="range"] {
+    cursor: not-allowed;
+}
+
+.range-control output {
+    min-width: 4ch;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
 .quality-options {
     min-width: 0;
     display: grid;
@@ -1997,6 +2029,10 @@ h1 {
 
     .toggle-row {
         gap: 8px;
+    }
+
+    .range-control input[type="range"] {
+        width: 96px;
     }
 
     .number-grid label {
