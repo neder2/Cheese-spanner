@@ -24,6 +24,23 @@
                 }),
             ]),
         }),
+        "1.4.2": Object.freeze({
+            version: "1.4.2",
+            title: "새 기능",
+            summary: "카테고리 제외 추가.",
+            cards: Object.freeze([
+                Object.freeze({
+                    id: "category-exclusions",
+                    title: "카테고리 제외",
+                    summary: "전체 방송 탐색에서 사용. 우측 + 제외 추가. 방송 목록 검색·필터를 켜야 작동.",
+                    instructions: Object.freeze([
+                        "전체 방송 탐색에서 사용. 우측 + 제외 추가. 방송 목록 검색·필터를 켜야 작동.",
+                    ]),
+                    target: "categories",
+                    settingsTarget: "categories",
+                }),
+            ]),
+        }),
     });
     globalThis.BetterChzzkUpdateGuide = Object.freeze({
         MESSAGE_TYPE: "betterchzzk:update-guide",

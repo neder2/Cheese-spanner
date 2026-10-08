@@ -18,7 +18,7 @@
  *   (createMutationObserverSync, createThrottledDomSync, fetchJson, normSpace, normalizeChzzkImageUrl,
  *   normalizeCompact, onReady, setLoadingReason, sleep, startPageChangeDetection, touchMapEntry, injectStyleOnce).
  * 옵션 키: categoryToolsEnabled, globalLiveCountEnabled, categoryToolsMaxMetadataPages, categoryToolsHideGlobalTagSearch,
- *   categoryToolsFollowerBadgesEnabled, categoryToolsLiveElapsedEnabled,
+ *   categoryToolsFollowerBadgesEnabled, categoryToolsLiveElapsedEnabled, categoryToolsExclusionsEnabled,
  *   categoryToolsFollowerFilterPreset1~6, categoryToolsViewFilterPreset1~6, categoryToolsDurationFilterPreset1~6,
  *   categoryToolsFollowerFetchMaxPerPass, categoryToolsFollowerFetchConcurrency, categoryToolsFollowerFetchDelayMs.
  * DOM 마커: id betterchzzk-category-tools(바), betterchzzk-category-filter-menu(필터 메뉴),
@@ -284,7 +284,12 @@
     }
 
     function isCategoryExclusionRoute() {
-        return !documentEnded && isFeatureEnabled() && getRoute()?.scope === "global-lives";
+        return (
+            !documentEnded &&
+            isFeatureEnabled() &&
+            featureOptions.categoryToolsExclusionsEnabled &&
+            getRoute()?.scope === "global-lives"
+        );
     }
 
     function hasCategoryExclusions() {
@@ -1243,7 +1248,7 @@
 #${BAR_ID} :is(.bcgt-clear,.bcgt-filter):focus-visible{outline:2px solid var(--bcgt-accent);outline-offset:2px;}
 #${BAR_ID} .bcgt-status{font-variant-numeric:tabular-nums;}
 #${BAR_ID} .bcgt-meter{
-  display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;
+  display:inline-flex;align-items:center;flex:0 0 auto;
   color:var(--bcgt-text-dim);white-space:nowrap;
   min-height:var(--bcgt-height);
 }
@@ -1252,9 +1257,11 @@
   border:2px solid var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.24)));
   border-top-color:var(--bcgt-accent);
   animation:bcgt-spin 0.8s linear infinite;flex:0 0 auto;
-  visibility:hidden;
+  display:none;margin-left:6px;
 }
-#${BAR_ID}[data-loading="1"] .bcgt-spinner{visibility:visible;}
+#${BAR_ID}[data-loading="1"] .bcgt-spinner{display:block;}
+/* 스피너는 검색창 안에 두고, 결과 수가 없을 때는 빈 결과 영역의 간격을 접는다. 결과 수 영역(aria-live)은 계속 둔다. */
+#${BAR_ID} .bcgt-meter:has(.bcgt-status:empty){margin-left:-6px;}
 @keyframes bcgt-spin{to{transform:rotate(360deg);}}
 @media (prefers-reduced-motion:reduce){#${BAR_ID} .bcgt-spinner{animation:none;}}
 #${BAR_ID} .bcgt-filter-wrap{position:relative;display:inline-flex;margin-left:auto;}
@@ -1312,7 +1319,8 @@
   line-height:16px;
   overflow-y:auto;
   transform-origin:bottom right;
-  z-index:90;
+  box-sizing:border-box;
+  z-index:2147483644;
 }
 #${MENU_ID}[data-open="1"], #${CATEGORY_ADD_ID}[data-open="1"]{display:block;}
 #${CATEGORY_ADD_ID}{width:400px;box-sizing:border-box;}
@@ -3311,8 +3319,75 @@
         }
     }
 
+    // 복제 직전 템플릿 카드가 보여 주던 방송 제목·채널명을 읽는다. 채널명은 표시 요소가 없으면 "채널로 이동" 안내에서 찾는다.
+    function readTemplateIdentity(card, titleSelector) {
+        const title = normSpace(card.querySelector(titleSelector)?.textContent);
+        let channelName = normSpace(card.querySelector("[class*='name_text']")?.textContent);
+        if (!channelName) {
+            const labels = [
+                ...Array.from(card.querySelectorAll("[aria-label]"), (el) => el.getAttribute("aria-label")),
+                ...Array.from(card.querySelectorAll(".blind, [class*='blind']"), (el) => el.textContent),
+            ];
+            for (const label of labels) {
+                const match = normSpace(label).match(/^(.+?)\s*채널로 이동$/);
+                if (match) {
+                    channelName = match[1];
+                    break;
+                }
+            }
+        }
+        return { title, channelName };
+    }
+
+    // 접근성 이름에 쓰이는 숨은 안내와 aria-label·title·alt에 남은 템플릿 방송 값을 현재 방송 값으로 한 번에 바꾼다.
+    function replaceTemplateIdentity(card, previous, meta) {
+        const replacements = new Map();
+        for (const [from, to] of [
+            [previous.title, normSpace(meta?.title)],
+            [previous.channelName, normSpace(meta?.channelName)],
+        ]) {
+            if (from && to && from !== to && !replacements.has(from)) replacements.set(from, to);
+        }
+        if (!replacements.size) return;
+        // Replace complete identity labels and observed navigation suffixes, not words
+        // embedded in unrelated badges (for example a broadcast titled "LIVE").
+        const suffixes = new Set([
+            "",
+            "로 이동",
+            " 채널로 이동",
+            "라이브 엔드로 이동",
+            " 라이브 엔드로 이동",
+            "동영상 엔드로 이동",
+            " 동영상 엔드로 이동",
+        ]);
+        const pairs = Array.from(replacements).sort((a, b) => b[0].length - a[0].length);
+        const replace = (value) => {
+            const text = normSpace(value);
+            for (const [from, to] of pairs) {
+                if (!text.startsWith(from)) continue;
+                const suffix = text.slice(from.length);
+                if (suffixes.has(suffix)) return to + suffix;
+            }
+            return text;
+        };
+        for (const element of [card, ...card.querySelectorAll("[aria-label], [title], [alt]")]) {
+            for (const attr of ["aria-label", "title", "alt"]) {
+                const value = element.getAttribute(attr);
+                if (!value) continue;
+                const next = replace(value);
+                if (next !== normSpace(value)) element.setAttribute(attr, next);
+            }
+        }
+        for (const label of card.querySelectorAll(".blind, [class*='blind']")) {
+            if (label.children.length) continue;
+            const next = replace(label.textContent);
+            if (next !== normSpace(label.textContent)) label.textContent = next;
+        }
+    }
+
     function buildInjectedLiveCard(route, template, meta) {
         const card = template instanceof HTMLElement ? template.cloneNode(true) : document.createElement("article");
+        replaceTemplateIdentity(card, readTemplateIdentity(card, "a[class*='title'], [class*='title']"), meta);
         removeFollowerBadge(card);
         removeLiveElapsedBadge(card);
         applyCardAttrs(card, meta);
@@ -3427,6 +3502,7 @@
         if (route.tab === "lives") return buildInjectedLiveCard(route, template, meta);
 
         const card = template.cloneNode(true);
+        replaceTemplateIdentity(card, readTemplateIdentity(card, "a[class*='title']"), meta);
         applyCardAttrs(card, meta);
 
         const itemHref = contentHref(route, meta);
@@ -3901,6 +3977,7 @@
     <path fill="currentColor" d="M10 4a6 6 0 1 0 3.74 10.7l4.28 4.29 1.42-1.42-4.29-4.28A6 6 0 0 0 10 4Zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/>
   </svg>
   <input type="search" aria-label="현재 목록 검색" placeholder="현재 목록 검색" autocomplete="off" spellcheck="false" />
+  <span class="bcgt-spinner" aria-hidden="true"></span>
   <button type="button" class="bcgt-clear" aria-label="검색어 지우기">
     <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
       <path fill="currentColor" d="M18.3 5.71 12 12.01l-6.3-6.3-1.41 1.41 6.3 6.3-6.3 6.3 1.41 1.41 6.3-6.3 6.3 6.3 1.41-1.41-6.3-6.3 6.3-6.3z"/>
@@ -3908,7 +3985,6 @@
   </button>
 </div>
 <span class="bcgt-meter">
-  <span class="bcgt-spinner" aria-hidden="true"></span>
   <span class="bcgt-status" aria-live="polite"></span>
 </span>
 <span class="bcgt-filter-wrap">

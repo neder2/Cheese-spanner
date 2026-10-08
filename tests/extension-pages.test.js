@@ -974,7 +974,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.4.1");
+    assert.equal(manifest.version, "1.4.2");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
@@ -1814,6 +1814,67 @@ test("category tools respect the currently observed viewer-order tab labels", as
         null,
         "a popularity API card must not be inserted into the reversed native list"
     );
+});
+
+test("injected live cards replace the template broadcast in hidden labels and attributes", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            categoryToolsFollowerBadgesEnabled: false,
+            categoryToolsLiveElapsedEnabled: false,
+        },
+    });
+    const dom = createGlobalLivesDom(chrome);
+    t.after(() => closeCategoryToolsFixture(dom, chrome));
+    const { document } = dom.window;
+    // 실제 /lives 접근성 트리에서 복제 카드의 썸네일 링크 이름에 템플릿 방송 제목이 남은 관측을 재현한다.
+    for (const [cardId, title, channelName] of [
+        ["live-card-a", "Native A", "Template Channel"],
+        ["live-card-b", "Native B", "Second Template Channel"],
+    ]) {
+        const card = document.getElementById(cardId);
+        const thumbnail = card.querySelector("a._thumbnail");
+        thumbnail.setAttribute("title", title);
+        thumbnail.querySelector("img").setAttribute("alt", title);
+        thumbnail.insertAdjacentHTML("beforeend", `<span class="_blind">${title}로 이동</span>`);
+        card.querySelector("img._profile").setAttribute("alt", channelName);
+    }
+    const response = createGlobalLivesApiMock([
+        { channelId: "native-a", channelName: "API Channel A", liveId: 503, title: "API A", views: 30 },
+        { channelId: "native-b", channelName: "API Channel B", liveId: 502, title: "API B", views: 20 },
+        { channelId: "fresh-c", channelName: "Fresh Channel", liveId: 501, title: "Fresh title", views: 10 },
+    ]);
+    dom.window.fetch = async (url) => ({ ok: true, json: async () => response(String(url)) });
+    await loadCategoryToolsPage(dom);
+    await waitForCondition(() => document.querySelector("#betterchzzk-category-tools input"));
+    const input = document.querySelector("#betterchzzk-category-tools input");
+    input.value = "Fresh";
+    dispatch(dom, input, "input");
+    input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await waitForCondition(() => document.querySelector('[data-bcgt-injected="1"][data-bcgt-card-id="fresh-c"]'), {
+        timeoutMs: 3000,
+    });
+
+    const injected = document.querySelector('[data-bcgt-injected="1"][data-bcgt-card-id="fresh-c"]');
+    const labels = [];
+    for (const element of injected.querySelectorAll("*")) {
+        for (const attr of ["aria-label", "title", "alt"]) {
+            if (element.hasAttribute(attr)) labels.push(element.getAttribute(attr));
+        }
+    }
+    for (const label of injected.querySelectorAll("._blind")) labels.push(label.textContent);
+    for (const stale of ["Native A", "Native B", "Template Channel"]) {
+        assert.equal(
+            labels.some((label) => label.includes(stale)),
+            false,
+            `${stale} must not remain in ${JSON.stringify(labels)}`
+        );
+    }
+    const thumbnail = injected.querySelector("a._thumbnail");
+    assert.equal(thumbnail.getAttribute("title"), "Fresh title");
+    assert.equal(thumbnail.querySelector("img").getAttribute("alt"), "Fresh title");
+    assert.equal(thumbnail.querySelector("._blind").textContent, "Fresh title로 이동");
+    assert.equal(injected.querySelector("img._profile").getAttribute("alt"), "Fresh Channel");
+    assert.equal(injected.querySelector("a._channel").getAttribute("aria-label"), "Fresh Channel 채널로 이동");
 });
 
 test("global lives duration filter uses openDate and keeps the native list path", async () => {

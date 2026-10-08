@@ -20,7 +20,7 @@ const request = (operation = { kind: "get" }) => ({ type: TYPE, version: 1, oper
 const sender = (overrides = {}) => ({
     id: "category-test-extension",
     frameId: 0,
-    tab: { id: 3, active: true },
+    tab: { id: 3, active: true, url: "https://chzzk.naver.com/lives" },
     url: "https://chzzk.naver.com/lives",
     ...overrides,
 });
@@ -218,10 +218,19 @@ test("simultaneous tab changes and opposite changes follow receive order without
     const a = category("a");
     const b = category("b");
     const gate = h.pauseNext("get");
-    const addedA = h.send({ kind: "add", category: a }, sender({ tab: { id: 1 } }));
+    const addedA = h.send(
+        { kind: "add", category: a },
+        sender({ tab: { id: 1, url: "https://chzzk.naver.com/lives" } })
+    );
     await gate.started;
-    const addedB = h.send({ kind: "add", category: b }, sender({ tab: { id: 2 } }));
-    const removedA = h.send({ kind: "remove", categoryType: "GAME", categoryId: "a" }, sender({ tab: { id: 1 } }));
+    const addedB = h.send(
+        { kind: "add", category: b },
+        sender({ tab: { id: 2, url: "https://chzzk.naver.com/lives" } })
+    );
+    const removedA = h.send(
+        { kind: "remove", categoryType: "GAME", categoryId: "a" },
+        sender({ tab: { id: 1, url: "https://chzzk.naver.com/lives" } })
+    );
     assert.equal(h.storage.categoryReads.length, 1, "later operations must wait for the current storage callback");
     gate.release();
     assert.deepEqual(await addedA, { ok: true, state: state([a], 1) });
@@ -464,7 +473,7 @@ test("only the same extension's integer tab, top frame and exact lives URL may a
             "https://chzzk.naver.com/%6cives",
             "https://chzzk.naver.com/lives\n",
             "not a URL",
-        ].map((url) => sender({ url })),
+        ].map((url) => sender({ url, tab: { id: 3, url } })),
     ]) {
         const response = await h.raw(request(), from === undefined ? null : from);
         assert.deepEqual(response, failure("untrusted-sender"), JSON.stringify(from));
@@ -477,7 +486,10 @@ test("only the same extension's integer tab, top frame and exact lives URL may a
         "https://chzzk.naver.com/lives?sortType=POPULAR#filters",
         "https://chzzk.naver.com/lives/?x=1#filters",
     ])
-        assert.deepEqual(await h.send({ kind: "get" }, sender({ url, tab: { id: 0 } })), { ok: true, state: state() });
+        assert.deepEqual(await h.send({ kind: "get" }, sender({ url, tab: { id: 0, url } })), {
+            ok: true,
+            state: state(),
+        });
 });
 
 test("request validation permits only version one and the three exact operation schemas", async () => {
@@ -535,10 +547,13 @@ test("the packaged background imports the DOM-independent module and routes dura
     });
     const restarted = createCategoryExclusionsWorker(createCategoryExclusionsStorage(storage.local));
     await restarted.ready();
-    assert.deepEqual(await restarted.send(request(), sender({ tab: { id: 99 } })), {
-        ok: true,
-        state: state([category("persisted")], 1),
-    });
+    assert.deepEqual(
+        await restarted.send(request(), sender({ tab: { id: 99, url: "https://chzzk.naver.com/lives" } })),
+        {
+            ok: true,
+            state: state([category("persisted")], 1),
+        }
+    );
     assert.deepEqual(storage.local.unrelated, { retained: true });
     assert.deepEqual(
         storage.categoryWrites.map((write) => Object.keys(write)),
@@ -556,14 +571,23 @@ test("the packaged worker serializes two tabs and same-category add/remove by re
     const a = category("a");
     const b = category("b");
     const gate = storage.pauseNext("get");
-    const first = worker.send(request({ kind: "add", category: a }), sender({ tab: { id: 1 } }));
+    const first = worker.send(
+        request({ kind: "add", category: a }),
+        sender({ tab: { id: 1, url: "https://chzzk.naver.com/lives" } })
+    );
     await gate.started;
-    const second = worker.send(request({ kind: "add", category: b }), sender({ tab: { id: 2 } }));
+    const second = worker.send(
+        request({ kind: "add", category: b }),
+        sender({ tab: { id: 2, url: "https://chzzk.naver.com/lives" } })
+    );
     const remove = worker.send(
         request({ kind: "remove", categoryType: "GAME", categoryId: "a" }),
-        sender({ tab: { id: 2 } })
+        sender({ tab: { id: 2, url: "https://chzzk.naver.com/lives" } })
     );
-    const readd = worker.send(request({ kind: "add", category: a }), sender({ tab: { id: 1 } }));
+    const readd = worker.send(
+        request({ kind: "add", category: a }),
+        sender({ tab: { id: 1, url: "https://chzzk.naver.com/lives" } })
+    );
     assert.equal(storage.categoryReads.length, 1);
     gate.release();
     assert.deepEqual(await first, { ok: true, state: state([a], 1) });
@@ -679,4 +703,38 @@ test("category persistence stays independent of a blocked history writer, guide 
             await blocked;
         }
     }
+});
+
+test("SPA entry uses Chrome's current tab URL while retaining the sender origin boundary", async () => {
+    const h = controllerHarness();
+    const from = sender({ url: "https://chzzk.naver.com/", tab: { id: 3, url: "https://chzzk.naver.com/lives" } });
+    assert.deepEqual(await h.send({ kind: "add", category: category() }, from), {
+        ok: true,
+        state: state([category()], 1),
+    });
+    assert.deepEqual(await h.send({ kind: "get" }, from), { ok: true, state: state([category()], 1) });
+    const readCount = h.storage.categoryReads.length;
+    for (const invalid of [
+        { ...from, url: "https://evil.test/" },
+        { ...from, url: "http://chzzk.naver.com/" },
+        { ...from, url: "https://chzzk.naver.com/\n" },
+        { ...from, url: "https://chzzk.naver.com.evil.test/" },
+        { ...from, url: "https://user@chzzk.naver.com/" },
+        { ...from, frameId: 1 },
+        { ...from, origin: "https://evil.test" },
+        { ...from, tab: { id: 3, url: "https://chzzk.naver.com/" } },
+        { ...from, tab: { id: 3, url: "https://chzzk.naver.com/lives/extra" } },
+        { ...from, tab: { id: 3, url: "https://chzzk.naver.com:443/lives" } },
+        { ...from, tab: { id: 3, url: "https://evil.test/lives" } },
+        { ...from, tab: { id: 3, url: "" } },
+        { ...from, tab: { id: 3 } },
+        { ...from, tab: { id: 3, url: null } },
+        sender({ tab: { id: 3, url: "https://chzzk.naver.com/" } }),
+    ])
+        assert.deepEqual(
+            await h.send({ kind: "remove", categoryType: "GAME", categoryId: "League_of_Legends" }, invalid),
+            failure("untrusted-sender")
+        );
+    assert.equal(h.storage.categoryReads.length, readCount);
+    assert.equal(h.storage.categoryWrites.length, 1);
 });

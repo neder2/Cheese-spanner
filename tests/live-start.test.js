@@ -391,7 +391,12 @@ test("channel mutations serialize, reject untrusted senders, and remove stale po
 test("guide settings links preserve live-start editing while rejecting other fragments and frames", async () => {
     const m = monitor({ sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false } });
     await flush();
-    for (const hash of ["#update-guide-panels", "#update-guide-history", "#update-guide-stream"]) {
+    for (const hash of [
+        "#update-guide-panels",
+        "#update-guide-history",
+        "#update-guide-stream",
+        "#update-guide-categories",
+    ]) {
         assert.equal(
             (
                 await m.send(

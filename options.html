@@ -358,9 +358,9 @@
                             role="tab"
                             data-tab="explore"
                             aria-controls="tab-panel-explore"
-                            aria-label="탐색"
+                            aria-label="팔로잉·미리보기"
                             aria-selected="false"
-                            title="탐색"
+                            title="팔로잉·미리보기"
                             tabindex="-1"
                         >
                             <svg
@@ -375,7 +375,7 @@
                                 <circle cx="12" cy="12" r="9" />
                                 <path d="m14.8 9.2-1.6 4-4 1.6 1.6-4z" />
                             </svg>
-                            <span>탐색</span>
+                            <span>팔로잉·미리보기</span>
                         </button>
                         <button
                             type="button"
@@ -384,9 +384,9 @@
                             role="tab"
                             data-tab="search-filter"
                             aria-controls="tab-panel-search-filter"
-                            aria-label="검색·필터"
+                            aria-label="방송 목록"
                             aria-selected="false"
-                            title="검색·필터"
+                            title="방송 목록"
                             tabindex="-1"
                         >
                             <svg
@@ -399,7 +399,7 @@
                                 aria-hidden="true"
                             >
                                 <use href="#icon-search" /></svg
-                            ><span>검색·필터</span>
+                            ><span>방송 목록</span>
                         </button>
                         <button
                             type="button"
@@ -443,6 +443,7 @@
                             <span class="option-group-title"><span>재생·자동 처리</span></span>
                         </summary>
                         <div class="option-group-body">
+                            <h3 class="option-subheading">화질</h3>
                             <label class="toggle-row">
                                 <span><strong>자동 화질 복구</strong></span>
                                 <input type="checkbox" data-option="autoQualityEnabled" />
@@ -459,6 +460,7 @@
                                 선택한 화질이 없으면 가능한 가장 높은 하위 화질을 적용합니다. 지원되는 라이브에서는
                                 프로그램 미설치로 취소되던 1080p·720p 선택을 유지합니다.
                             </p>
+                            <h3 class="option-subheading">자동 처리</h3>
                             <label class="toggle-row">
                                 <span><strong>통나무 보상 자동 받기</strong></span>
                                 <input type="checkbox" data-option="rewardAutoCollectEnabled" />
@@ -1384,7 +1386,7 @@
                         <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <use href="#icon-compass" />
                         </svg>
-                        <h2>탐색</h2>
+                        <h2>팔로잉·미리보기</h2>
                     </div>
                     <details
                         class="option-group"
@@ -1399,6 +1401,7 @@
                             >
                         </summary>
                         <div class="option-group-body">
+                            <h3 class="option-subheading">채널</h3>
                             <label class="toggle-row">
                                 <span><strong>채널 채팅 바로가기</strong></span>
                                 <input type="checkbox" data-option="channelChatLinkEnabled" />
@@ -1406,6 +1409,7 @@
                             <p class="setting-note">
                                 정보 탭 옆에 방송이 꺼져 있어도 채팅을 볼 수 있는 라이브 화면 바로가기를 표시합니다.
                             </p>
+                            <h3 class="option-subheading">팔로잉 목록</h3>
                             <label class="toggle-row">
                                 <span><strong>팔로잉 목록 상태 기억</strong></span>
                                 <input type="checkbox" data-option="followingListStateEnabled" />
@@ -1499,7 +1503,7 @@
                         <svg class="section-heading-icon" viewBox="0 0 24 24" aria-hidden="true">
                             <use href="#icon-search" />
                         </svg>
-                        <h2>검색·필터</h2>
+                        <h2>방송 목록</h2>
                     </div>
                     <details class="option-group" data-option-group="explore-tools" open>
                         <summary>
@@ -1509,19 +1513,10 @@
                             </span>
                         </summary>
                         <div class="option-group-body">
+                            <h3 class="option-subheading">검색·필터</h3>
                             <label class="toggle-row">
                                 <span><strong>방송 목록 검색·필터</strong></span>
                                 <input type="checkbox" data-option="categoryToolsEnabled" />
-                            </label>
-                            <label class="toggle-row">
-                                <span>
-                                    <strong>전체 방송 집계 표시</strong>
-                                    <small>
-                                        전체 방송에서 시청자 10명 이상인 방송 수와 동시 시청자 합계를 표시합니다. 여러
-                                        방송을 함께 보는 사람의 중복을 제거한 동시접속자 수는 아닙니다.
-                                    </small>
-                                </span>
-                                <input type="checkbox" data-option="globalLiveCountEnabled" />
                             </label>
                             <label class="toggle-row" data-depends-on="categoryToolsEnabled">
                                 <span><strong>전체 방송 태그 검색 숨김</strong></span>
@@ -1534,6 +1529,27 @@
                             <label class="toggle-row" data-depends-on="categoryToolsEnabled">
                                 <span><strong>호버로 진행 시간 표시</strong></span>
                                 <input type="checkbox" data-option="categoryToolsLiveElapsedEnabled" />
+                            </label>
+                            <label class="toggle-row" data-depends-on="categoryToolsEnabled">
+                                <span>
+                                    <strong>카테고리·태그 제외</strong>
+                                    <small>
+                                        전체 방송 정렬 줄 오른쪽에 제외 박스와 추가 버튼을 표시합니다. 꺼도 저장한 제외
+                                        목록은 지우지 않습니다.
+                                    </small>
+                                </span>
+                                <input type="checkbox" data-option="categoryToolsExclusionsEnabled" />
+                            </label>
+                            <h3 class="option-subheading">목록 표시</h3>
+                            <label class="toggle-row">
+                                <span>
+                                    <strong>전체 방송 집계 표시</strong>
+                                    <small>
+                                        전체 방송에서 시청자 10명 이상인 방송 수와 동시 시청자 합계를 표시합니다. 여러
+                                        방송을 함께 보는 사람의 중복을 제거한 동시접속자 수는 아닙니다.
+                                    </small>
+                                </span>
+                                <input type="checkbox" data-option="globalLiveCountEnabled" />
                             </label>
                             <label class="toggle-row">
                                 <span><strong>긴 제목 툴팁</strong></span>

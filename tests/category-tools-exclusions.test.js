@@ -1535,3 +1535,29 @@ test("metadata tags exclude candidates and reserved tag types never appear as ca
         ["롤"]
     );
 });
+
+test("the exclusion option hides the row and stops filtering without erasing the saved list", async (t) => {
+    const ui = await createCategoryUI(t, { worker: withState(1, [category()]) });
+    const document = ui.window.document;
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "a"), true);
+    assert.ok(document.getElementById("betterchzzk-category-exclusions"));
+    ui.open();
+    ui.options({ categoryToolsExclusionsEnabled: false });
+    await ui.hooks.apply();
+    assert.equal(document.getElementById("betterchzzk-category-exclusions"), null);
+    assert.equal(document.getElementById("betterchzzk-category-add-panel"), null);
+    assert.equal(hidden(ui, "a"), false);
+    assert.ok(document.getElementById("betterchzzk-category-tools"), "search and filters stay available");
+    assert.equal(ui.categorySubscriptions(), 0);
+    const requests = ui.messages.length;
+    ui.emit(state(2, [category(), category("SPORTS", "A", "게임 하나")]));
+    await ui.hooks.apply();
+    assert.equal(ui.messages.length, requests, "a disabled option neither reads nor writes exclusions");
+    assert.equal(ui.worker.storage.local[CATEGORY_KEY].categories.length, 1);
+    ui.options({ categoryToolsExclusionsEnabled: true });
+    await settle();
+    await ui.hooks.apply();
+    assert.equal(document.querySelectorAll("[data-category-summary-remove]").length, 1);
+    assert.equal(hidden(ui, "a"), true);
+});

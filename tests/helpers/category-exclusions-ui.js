@@ -63,7 +63,12 @@ async function createCategoryUI(
     const optionsReadReleases = [];
     const searches = [];
     const listeners = new Set();
-    const sender = { id: worker.storage.chrome.runtime.id, tab: { id: 101 }, frameId: 0, url: window.location.href };
+    const sender = {
+        id: worker.storage.chrome.runtime.id,
+        tab: { id: 101, url: window.location.href },
+        frameId: 0,
+        url: window.location.href,
+    };
     window.chrome = {
         runtime: {
             id: sender.id,

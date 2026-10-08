@@ -132,7 +132,7 @@ Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 �
 
 유형은 1~32 UTF-16 code unit의 `[A-Z][A-Z0-9_]*` 문자열이고 ID·표시 이름은 각각 1~200 UTF-16 code unit이에요. 제어 문자·공백만 있는 값은 거부하며 ID `.`·`..`도 거부해요. ID와 이름을 임의로 자르거나 ID의 대소문자를 바꾸지 않아요. 저장 상태의 카테고리 항목과 추가 category에는 세 카테고리 필드만 허용해요. 태그 제외는 같은 형식의 `{categoryType:"CHEESE_SPANNER_TAG",categoryId:<정규화 태그>,categoryValue:<표시 태그>}`예요. ID는 앞의 `#` 제거·연속 공백 축약·NFC·소문자 변환을 거친 1~100자 값이고, 카드의 태그도 같은 정규화로 전체 일치만 비교해요. 원본 카드 태그는 같은 출처 링크의 `tags` query 값이에요. 이 예약 유형은 치지직 검색 결과에서 받지 않아요.
 
-같은 확장 ID, 음이 아닌 안전한 정수 tab.id, frameId 0과 정확한 `https://chzzk.naver.com/lives` 발신 URL을 요구해요. 끝 슬래시·query·hash는 허용하고 다른 경로·하위 프레임·다른 출처·자격 증명·명시한 포트는 거부해요. 본문이 주장하는 출처·탭 ID는 허용 근거가 아니에요.
+같은 확장 ID, 음이 아닌 안전한 정수 tab.id, frameId 0과 치지직 발신 출처를 요구해요. SPA 이동 전 문서 URL인 sender.url과 Chrome이 제공하는 현재 sender.tab.url을 구분하고, 현재 탭 URL이 정확한 `https://chzzk.naver.com/lives`인지 검사해요. 현재 탭 URL이 없거나 잘못되면 거절해요. 끝 슬래시·query·hash는 허용하고 다른 경로·하위 프레임·다른 출처·자격 증명·명시한 포트는 거부해요. 본문이 주장하는 출처·탭 ID는 허용 근거가 아니에요.
 
 성공은 `{ok:true,state:{version:1,revision,categories}}`, 실패는 `{ok:false,error:"<코드>"}`예요. local 키 `betterchzzkCategoryExclusionsV1`에 같은 state를 보관하며 state에는 version·revision·categories만 허용해요. revision은 음이 아닌 안전한 정수이고 categories는 중복 없는 최대 100개의 카테고리 배열이에요. 키가 실제로 없을 때만 revision 0·빈 배열을 읽기 기본값으로 사용하며 읽기 자체는 저장하지 않아요.
 
@@ -198,7 +198,7 @@ Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 �
 
 예약은 탭·documentId에 결합하고 documentId가 없으면 검증한 탭·frame·URL·clientId에 결합해요. 30초 만료, 옵션 변경, 문서 변경, 워커 재시작으로 낡은 예약을 승인하지 않아요. local 키 betterchzzk:update-guide-state에는 schemaVersion:1, version, status 한 건을 저장하며 status는 pending, seen, suppressed예요. 읽기 오류·손상 상태는 자동 표시를 중단해요.
 
-open-settings의 target은 panels, history, stream뿐이고 확장 options.html의 #update-guide- 목적지로 연결해요. 옵션 페이지에서 보내는 replay는 현재 활성 치지직 최상위 프레임만 대상으로 하며 응답은 ok:boolean이에요. 콘텐츠는 같은 확장의 options.html 문서에서 온 요청만 받아요. 기존 옵션 발신자 검증도 허용한 세 목적지 hash와 정확한 확장 protocol·hostname·pathname을 확인하며 임의 query·다른 hash·하위 프레임은 허용하지 않아요.
+open-settings의 target은 panels, history, stream, categories뿐이고 확장 options.html의 #update-guide- 목적지로 연결해요. 옵션 페이지에서 보내는 replay는 현재 활성 치지직 최상위 프레임만 대상으로 하며 응답은 ok:boolean이에요. 콘텐츠는 같은 확장의 options.html 문서에서 온 요청만 받아요. 기존 옵션 발신자 검증도 허용한 네 목적지 hash와 정확한 확장 protocol·hostname·pathname을 확인하며 임의 query·다른 hash·하위 프레임은 허용하지 않아요.
 
 ### 채널 영상 검색의 원본 페이지 묶음
 

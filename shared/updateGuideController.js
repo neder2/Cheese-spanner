@@ -2,7 +2,7 @@
     "use strict";
 
     const TOKEN_TTL_MS = 30_000;
-    const SETTINGS_TARGETS = new Set(["panels", "history", "stream"]);
+    const SETTINGS_TARGETS = new Set(["panels", "history", "stream", "categories"]);
     const idle = () => ({ ok: true, show: false });
     const failed = () => ({ ok: false, show: false });
 

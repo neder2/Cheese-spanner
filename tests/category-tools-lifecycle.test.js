@@ -631,3 +631,67 @@ for (const tab of ["lives", "videos", "clips"]) {
         }
     });
 }
+
+for (const tab of ["lives", "videos", "clips"]) {
+    test(`${tab} injected cards replace the template broadcast in hidden labels and attributes`, (t) => {
+        const f = createFixture(t);
+        const document = f.dom.window.document;
+        const template = document.createElement("article");
+        const prefix = tab === "lives" ? "live" : tab === "videos" ? "video" : "clips";
+        const channelId = "a".repeat(32);
+        const itemId = tab === "lives" ? channelId : tab === "videos" ? "456" : "nextClip";
+        template.innerHTML =
+            `<a class="thumbnail" href="/${prefix}/${tab === "videos" ? "123" : "originalItem"}" title="Original title">` +
+            '<img alt="Original title" src="https://nng-phinf.pstatic.net/original.jpg">' +
+            '<span class="blind">Original title로 이동</span></a>' +
+            `<a class="title" href="/${prefix}/${tab === "videos" ? "123" : "originalItem"}">Original title</a>` +
+            `<a class="profile" href="/${"c".repeat(32)}" aria-label="Original channel 채널로 이동">` +
+            '<img alt="Original channel" src="https://nng-phinf.pstatic.net/profile.jpg">' +
+            '<span class="blind">Original channel 채널로 이동</span></a>';
+        const originalMarkup = template.innerHTML;
+        const card = f.hooks.buildCard({ scope: "category", tab }, template, {
+            id: itemId,
+            channelId,
+            channelName: "Next channel",
+            title: "Next title",
+            thumb: "https://nng-phinf.pstatic.net/next.jpg",
+        });
+        const labels = [];
+        for (const element of card.querySelectorAll("*")) {
+            for (const attr of ["aria-label", "title", "alt"]) {
+                if (element.hasAttribute(attr)) labels.push(element.getAttribute(attr));
+            }
+        }
+        for (const label of card.querySelectorAll(".blind")) labels.push(label.textContent);
+        assert.equal(
+            labels.some((label) => label.includes("Original")),
+            false,
+            JSON.stringify(labels)
+        );
+        assert.equal(card.querySelector("a.thumbnail .blind").textContent, "Next title로 이동");
+        assert.equal(card.querySelector("a.profile").getAttribute("aria-label"), "Next channel 채널로 이동");
+        assert.equal(template.innerHTML, originalMarkup);
+    });
+}
+
+for (const tab of ["lives", "videos", "clips"]) {
+    test(`${tab} identity repair preserves unrelated label substrings and supports short names`, (t) => {
+        const f = createFixture(t);
+        const template = f.dom.window.document.createElement("article");
+        const prefix = tab === "lives" ? "live" : tab === "videos" ? "video" : "clips";
+        template.innerHTML = `<a class="thumbnail" href="/${prefix}/123" title="LIVE"><span class="blind">김라이브 엔드로 이동</span></a>
+            <a class="title" href="/${prefix}/123">LIVE</a><span class="name_text">김</span>
+            <span class="badge" aria-label="LIVE 방송" title="LIVE 방송 안내"><span class="blind">LIVE 방송 안내</span></span>`;
+        const card = f.hooks.buildCard({ scope: "category", tab }, template, {
+            id: tab === "lives" ? "a".repeat(32) : "456",
+            channelId: "a".repeat(32),
+            channelName: "새 채널",
+            title: "새 제목",
+        });
+        assert.equal(card.querySelector("a.thumbnail").title, "새 제목");
+        assert.equal(card.querySelector("a.thumbnail .blind").textContent, "새 채널라이브 엔드로 이동");
+        assert.equal(card.querySelector(".badge").getAttribute("aria-label"), "LIVE 방송");
+        assert.equal(card.querySelector(".badge").title, "LIVE 방송 안내");
+        assert.equal(card.querySelector(".badge .blind").textContent, "LIVE 방송 안내");
+    });
+}

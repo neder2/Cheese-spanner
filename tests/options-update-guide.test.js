@@ -220,6 +220,7 @@ for (const [target, option, tab] of [
     ["panels", "chatResizeEnabled", "chat"],
     ["history", null, "history"],
     ["stream", "streamInfoEnabled", "player"],
+    ["categories", "categoryToolsExclusionsEnabled", "search-filter"],
 ]) {
     test(`guide link ${target} survives late group restoration without changing options`, async (t) => {
         const h = await fixture(t, { hash: `#update-guide-${target}` });
@@ -234,7 +235,13 @@ for (const [target, option, tab] of [
 test("options sender validation permits only the known page and guide fragments", async (t) => {
     const h = await fixture(t);
     const check = h.dom.window.BetterChzzkSettings.isOptionsPageSender;
-    for (const hash of ["", "#update-guide-panels", "#update-guide-history", "#update-guide-stream"]) {
+    for (const hash of [
+        "",
+        "#update-guide-panels",
+        "#update-guide-history",
+        "#update-guide-stream",
+        "#update-guide-categories",
+    ]) {
         assert.equal(
             check({ id: h.chrome.runtime.id, frameId: 0, url: h.chrome.runtime.getURL("options.html") + hash }),
             true
