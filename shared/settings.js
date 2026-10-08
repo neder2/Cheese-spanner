@@ -136,6 +136,7 @@
         categoryToolsHideGlobalTagSearch: { kind: "bool", default: true },
         categoryToolsFollowerBadgesEnabled: { kind: "bool", default: true },
         categoryToolsLiveElapsedEnabled: { kind: "bool", default: true },
+        categoryToolsExclusionsEnabled: { kind: "bool", default: true },
         categoryToolsFollowerFilterPreset1: {
             kind: "int",
             default: 1000,
@@ -481,7 +482,13 @@
                 !actual.password &&
                 !actual.port &&
                 !actual.search &&
-                ["", "#update-guide-panels", "#update-guide-history", "#update-guide-stream"].includes(actual.hash)
+                [
+                    "",
+                    "#update-guide-panels",
+                    "#update-guide-history",
+                    "#update-guide-stream",
+                    "#update-guide-categories",
+                ].includes(actual.hash)
             );
         } catch (_) {
             return false;

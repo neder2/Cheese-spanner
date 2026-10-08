@@ -975,6 +975,7 @@ function showGuideTarget(target) {
         panels: '[data-option="chatResizeEnabled"]',
         history: 'a[href="history.html"]',
         stream: '[data-option="streamInfoEnabled"]',
+        categories: '[data-option="categoryToolsExclusionsEnabled"]',
     };
     if (!Object.hasOwn(selectors, target)) return false;
     const node = form.querySelector(selectors[target]);
@@ -995,7 +996,7 @@ function showGuideTarget(target) {
 }
 globalThis.BetterChzzkOptionsNavigation = Object.freeze({ showGuideTarget });
 function revealGuideHash() {
-    const match = location.hash.match(/^#update-guide-(panels|history|stream)$/);
+    const match = location.hash.match(/^#update-guide-(panels|history|stream|categories)$/);
     if (match) showGuideTarget(match[1]);
 }
 window.addEventListener("hashchange", revealGuideHash);

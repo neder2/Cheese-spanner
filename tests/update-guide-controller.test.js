@@ -501,18 +501,18 @@ test("stale installed version invalidates an outstanding reservation", async () 
 test("settings navigation opens only allowlisted extension hashes after explicit request", async () => {
     const h = harness();
     await h.option(false);
-    for (const target of ["panels", "history", "stream"])
+    for (const target of ["panels", "history", "stream", "categories"])
         assert.equal((await h.message("open-settings", { target })).ok, true);
     assert.deepEqual(
         h.opened,
-        ["panels", "history", "stream"].map((target) => ({
+        ["panels", "history", "stream", "categories"].map((target) => ({
             url: `chrome-extension://extension-id/options.html#update-guide-${target}`,
         }))
     );
     for (const target of ["", "https://example.com", "../history.html", "__proto__"])
         assert.equal((await h.message("open-settings", { target })).ok, false);
     assert.equal((await h.message("open-settings", { target: "panels", url: "https://example.com" })).ok, false);
-    assert.equal(h.opened.length, 3);
+    assert.equal(h.opened.length, 4);
     h.fail("tabs");
     assert.equal((await h.message("open-settings", { target: "history" })).ok, false);
 });

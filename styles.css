@@ -2911,17 +2911,34 @@ h1 {
     padding: 0 16px 12px;
 }
 
+/* 한 묶음 안의 하위 묶음은 구분선과 강조 막대로 나눈다. */
 .options-body .option-subheading {
-    margin: 16px 0 6px;
-    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 12px 0 2px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    color: var(--text);
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 650;
     line-height: 1.5;
     overflow-wrap: anywhere;
 }
 
+.options-body .option-subheading::before {
+    content: "";
+    flex: none;
+    width: 3px;
+    height: 12px;
+    border-radius: 2px;
+    background: var(--accent);
+}
+
 .options-body .option-subheading:first-child {
     margin-top: 0;
+    padding-top: 2px;
+    border-top: 0;
 }
 
 .options-body .toggle-row {

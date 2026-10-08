@@ -18,8 +18,8 @@ test("catalog matches exact versions and contains local text and known destinati
             assert.ok(card.title && typeof card.summary === "string" && Array.isArray(card.instructions));
             assert.ok(Object.isFrozen(card.instructions));
             assert.ok(card.instructions.every((line) => typeof line === "string" && line.length > 0));
-            assert.ok(["panels", "history", "stream"].includes(card.target));
-            assert.ok(["panels", "history", "stream"].includes(card.settingsTarget));
+            assert.ok(["panels", "history", "stream", "categories"].includes(card.target));
+            assert.ok(["panels", "history", "stream", "categories"].includes(card.settingsTarget));
         }
     }
 });
@@ -53,4 +53,21 @@ test("1.4.1 introduces only panel sizing and history backup", () => {
         ["panel-width", "history-backup"]
     );
     assert.doesNotMatch([guide.summary, ...guide.cards.map((card) => card.title)].join(" "), /스트림/);
+});
+
+test("1.4.2 briefly announces the added category exclusion", () => {
+    const guide = catalog.getGuide("1.4.2");
+    assert.equal(guide.summary, "카테고리 제외 추가.");
+    assert.deepEqual(
+        Array.from(guide.cards, (card) => card.id),
+        ["category-exclusions"]
+    );
+    const card = guide.cards[0];
+    assert.equal(card.title, "카테고리 제외");
+    assert.equal(card.summary, "전체 방송 탐색에서 사용. 우측 + 제외 추가. 방송 목록 검색·필터를 켜야 작동.");
+    assert.deepEqual(Array.from(card.instructions), [
+        "전체 방송 탐색에서 사용. 우측 + 제외 추가. 방송 목록 검색·필터를 켜야 작동.",
+    ]);
+    assert.equal(card.target, "categories");
+    assert.equal(card.settingsTarget, "categories");
 });

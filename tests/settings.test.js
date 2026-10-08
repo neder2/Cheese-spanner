@@ -82,6 +82,7 @@ const expectedDefaults = {
     categoryToolsHideGlobalTagSearch: true,
     categoryToolsFollowerBadgesEnabled: true,
     categoryToolsLiveElapsedEnabled: true,
+    categoryToolsExclusionsEnabled: true,
     categoryToolsFollowerFilterPreset1: 1000,
     categoryToolsFollowerFilterPreset2: 5000,
     categoryToolsFollowerFilterPreset3: 10000,

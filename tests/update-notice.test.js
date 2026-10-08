@@ -332,7 +332,13 @@ test("guide settings links preserve ad registration authorization without trusti
     await flush();
     const base = { id: "fixture-extension", frameId: 0 };
     const message = { type: "betterchzzk:ad-video:sync" };
-    for (const hash of ["", "#update-guide-panels", "#update-guide-history", "#update-guide-stream"]) {
+    for (const hash of [
+        "",
+        "#update-guide-panels",
+        "#update-guide-history",
+        "#update-guide-stream",
+        "#update-guide-categories",
+    ]) {
         assert.equal(
             (await h.message(message, { ...base, url: "chrome-extension://fixture-extension/options.html" + hash })).ok,
             true

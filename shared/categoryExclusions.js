@@ -129,18 +129,23 @@
             sender.frameId !== 0 ||
             typeof sender.url !== "string" ||
             hasControlCharacter(sender.url) ||
-            !/^https:\/\/chzzk\.naver\.com\/lives\/?(?:[?#][\s\S]*)?$/.test(sender.url)
+            !/^https:\/\/chzzk\.naver\.com\//.test(sender.url) ||
+            (sender.origin !== undefined && sender.origin !== "https://chzzk.naver.com")
+        )
+            return false;
+        // SPA navigation keeps the original document URL in sender.url. Chrome supplies
+        // the current top-level URL in sender.tab; never accept a route from message data.
+        const currentUrl = sender.tab.url;
+        if (
+            typeof currentUrl !== "string" ||
+            hasControlCharacter(currentUrl) ||
+            !/^https:\/\/chzzk\.naver\.com\/lives\/?(?:[?#][\s\S]*)?$/.test(currentUrl)
         )
             return false;
         try {
-            const url = new URL(sender.url);
             return (
-                url.protocol === "https:" &&
-                url.hostname === "chzzk.naver.com" &&
-                !url.username &&
-                !url.password &&
-                !url.port &&
-                (url.pathname === "/lives" || url.pathname === "/lives/")
+                new URL(sender.url).origin === "https://chzzk.naver.com" &&
+                ["/lives", "/lives/"].includes(new URL(currentUrl).pathname)
             );
         } catch {
             return false;
