@@ -71,3 +71,11 @@ test("1.4.2 briefly announces the added category exclusion", () => {
     assert.equal(card.target, "categories");
     assert.equal(card.settingsTarget, "categories");
 });
+
+test("1.4.3 briefly announces the ambient effect without adding a settings destination", () => {
+    const guide = catalog.getGuide("1.4.3");
+    assert.equal(guide.summary, "앰비언트 효과 추가. 설정 → 플레이어에서 켜고, 플레이어 톱니바퀴에서 세기 조절.");
+    assert.equal(guide.cards.length, 0);
+    assert.ok(Object.isFrozen(guide.cards));
+    assert.doesNotMatch(guide.summary, /광고 차단|팝업|AdGuard/);
+});

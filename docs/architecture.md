@@ -18,7 +18,7 @@
 
 MAIN world와 isolated world는 JavaScript 전역을 공유하지 않아요. 공유 DOM의 속성과 이벤트만 경계를 건너며, 옵션 객체나 React 객체를 직접 넘기지 않아요. 페이지 측에서 읽을 수 있는 DOM 속성을 확장 전용 비밀 저장소로 취급하지 않아요.
 
-현재 정적 MAIN 파일은 `routeBridgePage`, `livePreviewFastHoverPage`, `chatTimestampPage`, `watchActivityPage`, `autoQualityPage`, `volumeControlsPage`, `volumeWheelPage`예요. `adVideoPage.js`는 여기에 포함되지 않고 저장된 광고 옵션에 맞춰 별도로 동적 등록돼요. 실제 파일 목록과 순서는 manifest·등록 코드를 다시 확인해요.
+현재 정적 MAIN 파일은 `routeBridgePage`, `livePreviewFastHoverPage`, `chatTimestampPage`, `watchActivityPage`, `autoQualityPage`, `volumeControlsPage`, `volumeWheelPage`, `adblockPopupPage`예요. `adblockPopupPage`는 isolated `adblockPopup`의 동기 요청을 받았을 때만 확인형 안내의 확인 동작을 확인·실행하고 옵션·관찰은 소유하지 않아요. `adVideoPage.js`는 여기에 포함되지 않고 저장된 광고 옵션에 맞춰 별도로 동적 등록돼요. 실제 파일 목록과 순서는 manifest·등록 코드를 다시 확인해요.
 
 ## 의존 방향
 

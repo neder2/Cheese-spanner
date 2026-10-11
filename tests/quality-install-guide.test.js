@@ -6,6 +6,23 @@ const { JSDOM } = require("jsdom");
 const read = (file) => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
+// 실측한 고화질 설치 안내 두 변형. 구조는 같고 문단·설치 버튼 문구가 다르다.
+const GUIDE_HTML = {
+    // 2026-09-14 Chrome 커넥터 안내
+    connector: `<div class="_dimmed_10lql_28"><div class="_layer_10lql_38">
+            <p>고화질 시청을 위해서는<br>네이버 라이브 스트리밍 커넥터가 필요합니다.</p>
+            <div class="_button_10lql_70"><button type="button">설치하고 고화질 시청</button></div>
+            <div class="_button_10lql_70"><button type="button">설치없이 일반 화질 시청</button></div>
+        </div></div>`,
+    // 2026-10-11 Edge 브라우저 확장 프로그램 안내
+    extension: `<div class="_dimmed_10lql_28"><div class="_layer_10lql_38">
+            <p class="_text_10lql_50">크롬, 엣지 브라우저에서 고화질 시청을 위해<br><strong>브라우저 확장 프로그램</strong>을 먼저 설치합니다.</p>
+            <p class="_text_10lql_50">이미 확장 프로그램을 설치했다면<br><a href="https://help.naver.com/alias/navergame/chzzk6.naver" target="_blank" rel="noreferrer" class="_link_10lql_63">여기</a>를 참고해주세요.</p>
+            <div class="_button_10lql_70"><button type="button">확장 프로그램 설치</button></div>
+            <div class="_button_10lql_70"><button type="button">설치없이 일반 화질 시청</button></div>
+        </div></div>`,
+};
+
 function fixture(t, pathname = "/live/measured") {
     const dom = new JSDOM("<!doctype html><body></body>", {
         url: `https://chzzk.naver.com${pathname}`,
@@ -50,14 +67,10 @@ function fixture(t, pathname = "/live/measured") {
     };
     w.eval(read("content.js"));
     w.eval(read("features/qualityInstallGuide.js"));
-    const guide = ({ remove = true, onDecline = () => {} } = {}) => {
+    const guide = ({ remove = true, onDecline = () => {}, variant = "connector" } = {}) => {
         const parent = w.document.createElement("div");
         parent.className = "_player_jwedy_23";
-        parent.innerHTML = `<div class="_dimmed_10lql_28"><div class="_layer_10lql_38">
-            <p>고화질 시청을 위해서는<br>네이버 라이브 스트리밍 커넥터가 필요합니다.</p>
-            <div class="_button_10lql_70"><button type="button">설치하고 고화질 시청</button></div>
-            <div class="_button_10lql_70"><button type="button">설치없이 일반 화질 시청</button></div>
-        </div></div>`;
+        parent.innerHTML = GUIDE_HTML[variant];
         const root = parent.firstElementChild;
         const layer = root.firstElementChild;
         const [install, decline] = parent.querySelectorAll("button");
@@ -490,4 +503,86 @@ test("a zero-size decline control is not clicked until native layout makes it vi
     g.decline.style.width = "180px";
     await flush();
     assert.equal(g.calls.decline, 1);
+});
+
+test("the browser extension guide measured on Edge is declined like the connector guide", async (t) => {
+    const f = fixture(t);
+    const first = f.guide({
+        variant: "extension",
+        onDecline: () => f.w.document.body.append(f.w.document.createElement("video")),
+    });
+    first.mount();
+    await flush();
+    assert.equal(first.calls.decline, 0, "saved options must load before clicking");
+    f.options();
+    await flush();
+    assert.deepEqual(first.calls, { decline: 1, install: 0 });
+    assert.ok(f.w.document.querySelector("video"), "the native handler creates the player");
+    assert.equal(first.root.isConnected, false);
+    const second = f.guide({ variant: "extension" });
+    second.mount();
+    await flush();
+    assert.deepEqual(second.calls, { decline: 1, install: 0 });
+    assert.deepEqual(f.state(), { enabled: true, attempts: 2 });
+    assert.equal(f.active.size, 1, "closed guides release their scoped observers");
+});
+
+test("guide variants are matched only as the measured pairs of message and install button", async (t) => {
+    const f = fixture(t);
+    f.options();
+    for (const [variant, change] of [
+        [
+            "extension",
+            (g) => {
+                g.install.textContent = "설치하고 고화질 시청";
+            },
+        ],
+        [
+            "connector",
+            (g) => {
+                g.install.textContent = "확장 프로그램 설치";
+            },
+        ],
+        [
+            "extension",
+            (g) => {
+                g.layer.querySelector("p").textContent =
+                    "고화질 시청을 위해서는 네이버 라이브 스트리밍 커넥터가 필요합니다.";
+            },
+        ],
+        [
+            "extension",
+            (g) => {
+                g.layer.querySelector("p").remove();
+            },
+        ],
+        [
+            "extension",
+            (g) => {
+                g.install.textContent = "확장 프로그램 설치하기";
+            },
+        ],
+        [
+            "extension",
+            (g) => {
+                g.decline.textContent = "확장 프로그램 설치";
+            },
+        ],
+        [
+            "extension",
+            (g) => {
+                g.layer.append(g.install.cloneNode(true));
+            },
+        ],
+    ]) {
+        const g = f.guide({ variant });
+        change(g);
+        g.mount();
+        await flush();
+        assert.deepEqual(g.calls, { decline: 0, install: 0 }, variant);
+        assert.ok(g.root.isConnected);
+        g.parent.remove();
+        await flush();
+    }
+    assert.equal(f.state().attempts, 0);
 });
