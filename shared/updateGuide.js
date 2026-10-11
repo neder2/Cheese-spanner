@@ -41,6 +41,13 @@
                 }),
             ]),
         }),
+        // 앰비언트 설정에는 기존 이동 목적지가 없어 카드 없이 요약 한 줄만 보여준다.
+        "1.4.3": Object.freeze({
+            version: "1.4.3",
+            title: "새 기능",
+            summary: "앰비언트 효과 추가. 설정 → 플레이어에서 켜고, 플레이어 톱니바퀴에서 세기 조절.",
+            cards: Object.freeze([]),
+        }),
     });
     globalThis.BetterChzzkUpdateGuide = Object.freeze({
         MESSAGE_TYPE: "betterchzzk:update-guide",

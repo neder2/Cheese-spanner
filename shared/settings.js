@@ -66,6 +66,8 @@
         volumeTooltipEnabled: { kind: "bool", default: false, feature: true },
         playerZoomEnabled: { kind: "bool", default: false, feature: true },
         playerZoomMode: { kind: "zoomMode", default: "manual" },
+        ambientEnabled: { kind: "bool", default: false, feature: true },
+        ambientIntensity: { kind: "int", default: 60, min: 10, max: 100 },
         hideLiveBadgeEnabled: { kind: "bool", default: false, feature: true },
         playerClipHidden: { kind: "bool", default: false, feature: true },
         playerPipHidden: { kind: "bool", default: false, feature: true },

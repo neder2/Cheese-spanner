@@ -974,7 +974,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.4.2");
+    assert.equal(manifest.version, "1.4.3");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);

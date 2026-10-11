@@ -69,6 +69,15 @@ function isShortcutCodeInput(input) {
     return input?.hasAttribute?.("data-shortcut-code") === true;
 }
 
+// 슬라이더는 현재 값을 옆 output과 보조기기용 aria-valuetext에 퍼센트로 함께 보여준다.
+function syncRangeLabel(input) {
+    if (input.type !== "range") return;
+    const text = `${input.value}%`;
+    input.setAttribute("aria-valuetext", text);
+    const output = input.id ? form.querySelector(`output[for="${input.id}"]`) : null;
+    if (output) output.textContent = text;
+}
+
 function setInputValue(input, value) {
     if (input.type === "checkbox") {
         input.checked = Boolean(value);
@@ -80,6 +89,7 @@ function setInputValue(input, value) {
         return;
     }
     input.value = String(value);
+    syncRangeLabel(input);
 }
 
 function getInputValue(input) {
@@ -431,6 +441,7 @@ form.addEventListener("input", (event) => {
     const input = getOptionInput(event.target);
     // 체크박스는 change에서 한 번만 처리한다.
     if (!input || input.type === "checkbox") return;
+    syncRangeLabel(input);
     renderFormChanges();
 });
 

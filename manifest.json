@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "치즈 스패너",
-    "version": "1.4.2",
+    "version": "1.4.3",
     "description": "치지직 화질 고정, 재생·채팅 도구, 팔로잉 고정·미리보기, 다시보기 검색·댓글, 방송 목록 필터·통계와 시청 기록을 제공합니다.",
     "icons": {
         "16": "icons/cheese-spanner16.png",
@@ -25,7 +25,8 @@
                 "features/watchActivityPage.js",
                 "features/autoQualityPage.js",
                 "shared/volumeControlsPage.js",
-                "features/volumeWheelPage.js"
+                "features/volumeWheelPage.js",
+                "features/adblockPopupPage.js"
             ],
             "run_at": "document_start",
             "world": "MAIN"
@@ -105,6 +106,7 @@
                 "features/holdSpeed.js",
                 "features/screenShortcuts.js",
                 "features/playerZoom.js",
+                "features/ambientGlow.js",
                 "features/updateGuide.js"
             ],
             "run_at": "document_start"

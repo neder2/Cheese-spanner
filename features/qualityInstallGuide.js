@@ -1,5 +1,6 @@
 /**
- * 통합 팝업 제거 옵션의 커넥터 설치 안내 닫기. 측정한 안내의 '설치없이 일반 화질 시청'만 선택한다.
+ * 통합 팝업 제거 옵션의 고화질 설치 안내 닫기. 측정한 안내의 '설치없이 일반 화질 시청'만 선택한다.
+ * 실측 변형은 2026-09-14 Chrome의 커넥터 안내와 2026-10-11 Edge의 브라우저 확장 프로그램 안내 두 가지다.
  * isolated world. 설정이 로드된 뒤 라이브에서 동작하며 설치·재생 버튼이나 메타데이터는 다루지 않는다.
  * 전역 감시는 추가/제거된 하위 트리만 확인하고, 최대 4개의 안내와 조상 표시 속성만 관찰한다.
  */
@@ -8,9 +9,15 @@
     const LAYER = '[class^="_layer_"], [class*=" _layer_"]';
     const PLAYER = '[class^="_player_"], [class*=" _player_"]';
     const STATE_ATTR = "data-betterchzzk-auto-quality-guide";
-    const MESSAGE = "고화질시청을위해서는네이버라이브스트리밍커넥터가필요합니다.";
     const DECLINE = "설치없이일반화질시청";
-    const INSTALL = "설치하고고화질시청";
+    // 안내 문단과 설치 버튼은 같은 실측 변형끼리만 짝지어 확인한다.
+    const GUIDES = [
+        { message: "고화질시청을위해서는네이버라이브스트리밍커넥터가필요합니다.", install: "설치하고고화질시청" },
+        {
+            message: "크롬,엣지브라우저에서고화질시청을위해브라우저확장프로그램을먼저설치합니다.",
+            install: "확장프로그램설치",
+        },
+    ];
     const {
         bindFeatureOptions,
         createMutationObserverSync,
@@ -66,15 +73,12 @@
         const layers = Array.from(root.children).filter((child) => child.matches(LAYER));
         const layer = layers.length === 1 ? layers[0] : null;
         const buttons = Array.from(layer?.querySelectorAll("button") || []);
-        const button = buttons.find((item) => normalizeCompact(item.textContent) === DECLINE);
-        return button &&
-            buttons.length === 2 &&
-            buttons.every((item) => item.closest(BACKDROP) === root) &&
-            buttons.filter((item) => normalizeCompact(item.textContent) === DECLINE).length === 1 &&
-            buttons.filter((item) => normalizeCompact(item.textContent) === INSTALL).length === 1 &&
-            Array.from(layer.querySelectorAll("p")).some((item) => normalizeCompact(item.textContent) === MESSAGE)
-            ? button
-            : null;
+        if (buttons.length !== 2 || !buttons.every((item) => item.closest(BACKDROP) === root)) return null;
+        const labels = buttons.map((item) => normalizeCompact(item.textContent));
+        const messages = Array.from(layer.querySelectorAll("p"), (item) => normalizeCompact(item.textContent));
+        const guide = GUIDES.find(({ message, install }) => messages.includes(message) && labels.includes(install));
+        const declines = buttons.filter((_, index) => labels[index] === DECLINE);
+        return guide && declines.length === 1 ? declines[0] : null;
     }
 
     function inspect(entry) {
