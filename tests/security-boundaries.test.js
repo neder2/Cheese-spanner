@@ -39,6 +39,55 @@ test("session snapshots clip inconsistent ranges at both session boundaries", ()
     assert.equal(Object.keys(totals.dailySeconds).length, 1);
 });
 
+test("session snapshots cannot store watch time outside the KST days they cover", () => {
+    const { store } = load();
+    const plain = (value) => JSON.parse(JSON.stringify(value));
+    const inflated = {
+        kind: "upsertSessionSnapshot",
+        recordId: "live:100",
+        entry: {},
+        session: {
+            ...session(NOW),
+            watchedSeconds: 1e9,
+            dailySeconds: { "2099-12-31": 86400, "2001-01-01": 5, "2026-07-10": 1e9, "2026-07-11": 30 },
+        },
+    };
+    const normalized = store.normalizeMutation(inflated, NOW).session;
+    assert.equal(normalized.watchedSeconds, 86400);
+    assert.deepEqual(plain(normalized.dailySeconds), { "2026-07-10": 86400 });
+
+    // The writer keeps the larger value of each session, so an inflated first write could never be lowered.
+    let history = store.applyMutation({}, inflated, NOW).history;
+    const corrected = { ...inflated, session: { ...session(NOW), dailySeconds: { "2026-07-10": 60 } } };
+    history = store.applyMutation(history, corrected, NOW).history;
+    const entry = history.entries["live:100"];
+    assert.ok(entry.watchedSeconds <= 86400);
+    assert.deepEqual(Object.keys(entry.dailySeconds), ["2026-07-10"]);
+    assert.ok(entry.dailySeconds["2026-07-10"] <= 86400);
+    assert.deepEqual(Object.keys(entry.sessionDetails[0].dailySeconds), ["2026-07-10"]);
+
+    // Midnight sessions keep both real days; impossible calendar dates inside the range are dropped.
+    const enteredAt = Date.parse("2026-06-30T23:59:30+09:00");
+    const midnight = store.normalizeMutation(
+        {
+            kind: "upsertSessionSnapshot",
+            recordId: "live:200",
+            entry: {},
+            session: {
+                id: "midnight",
+                enteredAt,
+                leftAt: enteredAt + 60000,
+                watchedSeconds: 60,
+                dailySeconds: { "2026-06-30": 30, "2026-06-31": 30, "2026-07-01": 30 },
+                watchedRanges: [{ startAt: enteredAt, endAt: enteredAt + 60000 }],
+            },
+        },
+        NOW
+    ).session;
+    assert.equal(midnight.watchedSeconds, 60);
+    assert.deepEqual(plain(midnight.dailySeconds), { "2026-06-30": 30, "2026-07-01": 30 });
+});
+
 test("stored snapshots are sanitized before reused or displayed", () => {
     const { store, utils } = load();
     const stored = store.normalizeStoredHistory({ entries: [{ id: "live:100", sessionDetails: [session()] }] });

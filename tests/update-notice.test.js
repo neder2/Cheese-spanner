@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const test = require("node:test");
+const { pathToFileURL } = require("node:url");
 const { JSDOM } = require("jsdom");
 const root = path.join(__dirname, "..");
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
@@ -219,6 +220,12 @@ test("retired update notices, settings and tutorials stay absent from extension 
     assert.ok(loaded.every((file) => approvedGuides.has(file) || !/tutorial|guide/i.test(file)));
     for (const file of ["shared/updateNotice.js", "optionsUpdateNotice.js"])
         assert.equal(fs.existsSync(path.join(root, file)), false);
+});
+
+test("the saved notice template stays in the repository but out of the packaged build", async () => {
+    const { default: config } = await import(pathToFileURL(path.join(root, "web-ext-config.mjs")).href);
+    assert.ok(fs.existsSync(path.join(root, "features/updateNotice.js")));
+    assert.ok(config.ignoreFiles.includes("features/updateNotice.js"));
 });
 
 test("the development manifest version cannot recreate or inject the retired notice", async () => {

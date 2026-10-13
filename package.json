@@ -1,6 +1,6 @@
 {
     "name": "cheese-spanner",
-    "version": "1.4.3",
+    "version": "1.4.4",
     "private": true,
     "description": "Development tooling for the Cheese Spanner browser extension.",
     "type": "commonjs",
@@ -23,5 +23,10 @@
     },
     "dependencies": {
         "hls.js": "^1.6.16"
+    },
+    "overrides": {
+        "fx-runner": {
+            "shell-quote": "1.11.0"
+        }
     }
 }

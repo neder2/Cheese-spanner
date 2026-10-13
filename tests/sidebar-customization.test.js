@@ -4,6 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 const { JSDOM } = require("jsdom");
 const { waitForCondition: waitForSharedCondition } = require("./helpers/wait-for-condition.js");
+const { forwardSettingsStore } = require("./helpers/settings-store-emulation.js");
 
 const repoRoot = path.join(__dirname, "..");
 const STORAGE_KEY = "betterchzzkPinnedFollowingChannelIds";
@@ -361,10 +362,14 @@ function createStorageArea(initialData, runtime) {
 }
 
 function createFakeChrome(sync = {}) {
-    const runtime = {};
+    const runtime = {
+        sendMessage(message, callback) {
+            forwardSettingsStore(fake, message, callback);
+        },
+    };
     const syncArea = createStorageArea(sync, runtime);
     const storageChangeListeners = [];
-    return {
+    const fake = {
         runtime,
         storage: {
             sync: syncArea,
@@ -390,6 +395,7 @@ function createFakeChrome(sync = {}) {
             },
         },
     };
+    return fake;
 }
 
 function createSidebarDom(chrome) {
@@ -515,9 +521,17 @@ test("following links export native drag URLs with pinning off and restore their
     assert.equal(data.get("text/uri-list"), "https://chzzk.naver.com/live/channel-a");
     assert.equal(data.get("text/plain"), data.get("text/uri-list"));
     assert.equal(transfer.effectAllowed, "copyLink");
+    // The native row tooltip (broadcast title) stays open during a drag because no pointerleave arrives.
+    const sidebar = d.getElementById("sidebar");
+    assert.equal(sidebar.getAttribute("data-bcsf-link-dragging"), "1");
+    assert.match(
+        d.getElementById("betterchzzk-sidebar-drag-style").textContent,
+        /#sidebar\[data-bcsf-link-dragging\] \[class\*="_item_"\] \[class\^="_tooltip_"\]\{display:none!important\}/
+    );
     pointer("pointercancel");
     assert.equal(link.draggable, true, "native drag pointercancel must not discard the active drag");
     link.dispatchEvent(new dom.window.Event("dragend", { bubbles: true }));
+    assert.equal(sidebar.hasAttribute("data-bcsf-link-dragging"), false, "tooltips come back after the drag");
     assert.equal(link.draggable, false);
     assert.equal(link.style.getPropertyValue("-webkit-user-drag"), "none");
     assert.equal(link.style.getPropertyPriority("-webkit-user-drag"), "important");
@@ -1575,6 +1589,84 @@ test("a failed sync write rolls the optimistic pin state back", async (t) => {
         warnings.some((message) => message.includes("고정 저장 실패")),
         true
     );
+});
+
+async function openPinMode(chrome) {
+    const dom = createSidebarDom(chrome);
+    const settingsWrites = [];
+    const forward = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = (message, callback) => {
+        if (message?.type === "betterchzzk:settings-store") settingsWrites.push(JSON.parse(JSON.stringify(message)));
+        forward(message, callback);
+    };
+    evalSidebarScripts(dom);
+    await waitForCondition(() => dom.window.document.getElementById("betterchzzk-following-pin-mode"));
+    const { document } = dom.window;
+    document.getElementById("betterchzzk-following-pin-mode").click();
+    await waitForCondition(() => document.querySelector("#liveA a").getAttribute("role") === "button");
+    return { dom, document, settingsWrites };
+}
+
+test("a pin re-applies to the latest stored list when another tab changed it first", async (t) => {
+    const chrome = createFakeChrome({ followingPinEnabled: true, [STORAGE_KEY]: ["channel-b"] });
+    const { dom, document, settingsWrites } = await openPinMode(chrome);
+    t.after(() => dom.window.close());
+    // Another tab pinned channel-x; this document has not received storage.onChanged yet.
+    chrome.testState.sync[STORAGE_KEY] = ["channel-b", "channel-x"];
+    dispatchClick(dom, document.querySelector("#liveA a"));
+    await waitForCondition(() => chrome.testState.sync[STORAGE_KEY].includes("channel-a"));
+
+    assert.deepEqual(Array.from(chrome.testState.sync[STORAGE_KEY]), ["channel-b", "channel-x", "channel-a"]);
+    assert.deepEqual(
+        settingsWrites.map((message) => [message.area, message.values, message.expected]),
+        [
+            ["sync", { [STORAGE_KEY]: ["channel-b", "channel-a"] }, { [STORAGE_KEY]: { value: ["channel-b"] } }],
+            [
+                "sync",
+                { [STORAGE_KEY]: ["channel-b", "channel-x", "channel-a"] },
+                { [STORAGE_KEY]: { value: ["channel-b", "channel-x"] } },
+            ],
+        ],
+        "the conflicting write is not applied and only the user's pin is added to the latest list"
+    );
+    await waitForCondition(() => document.getElementById("liveA").getAttribute("data-bcsf-order-group") === "pinned");
+
+    // The next unpin starts from the confirmed list, so it needs no conflict round trip.
+    dispatchClick(dom, document.querySelector("#liveA a"));
+    await waitForCondition(() => !chrome.testState.sync[STORAGE_KEY].includes("channel-a"));
+    assert.deepEqual(Array.from(chrome.testState.sync[STORAGE_KEY]), ["channel-b", "channel-x"]);
+    assert.equal(settingsWrites.length, 3);
+    assert.deepEqual(settingsWrites[2].expected, {
+        [STORAGE_KEY]: { value: ["channel-b", "channel-x", "channel-a"] },
+    });
+});
+
+test("pin conflicts retry a bounded number of times and then roll back without a direct write", async (t) => {
+    const chrome = createFakeChrome({ followingPinEnabled: true, [STORAGE_KEY]: [] });
+    const { dom, document, settingsWrites } = await openPinMode(chrome);
+    t.after(() => dom.window.close());
+    const warnings = [];
+    dom.window.console.warn = (...args) => warnings.push(args.join(" "));
+    let directWrites = 0;
+    const set = chrome.storage.sync.set;
+    chrome.storage.sync.set = (values, callback) => {
+        directWrites += 1;
+        set(values, callback);
+    };
+    // Another writer changes the list again before every attempt reaches storage.
+    const forward = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = (message, callback) => {
+        chrome.testState.sync[STORAGE_KEY] = [`channel-other${settingsWrites.length}`];
+        forward(message, callback);
+    };
+    dispatchClick(dom, document.querySelector("#liveA a"));
+    await waitForCondition(() => warnings.some((message) => message.includes("고정 저장 실패")));
+
+    assert.equal(settingsWrites.length, 3, "the operation is retried at most three times");
+    assert.equal(directWrites, 0, "conflicts never fall back to a direct storage write");
+    assert.deepEqual(Array.from(chrome.testState.sync[STORAGE_KEY]), ["channel-other2"]);
+    await waitForCondition(() => document.querySelector("#liveA a").getAttribute("aria-pressed") === "false");
+    assert.equal(document.getElementById("liveA").getAttribute("data-bcsf-order-group"), "live");
 });
 
 test("pin mode does not intercept the native following refresh control", async (t) => {

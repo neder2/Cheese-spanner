@@ -205,6 +205,127 @@ test("an empty root remount preserves id-less records and read state only throug
     assert.equal(h.snapshot()[1].unread, true);
 });
 
+test("a cleared list keeps id-less records in removal order only through the next hydration", (t) => {
+    const h = createModules(t, moderatorRow({ text: "가" }) + moderatorRow({ text: "나" }));
+    for (const row of h.root.children) h.collect(row);
+    h.store.finishScan(true);
+    const [first, second] = h.snapshot();
+    let clearedChecks = 0;
+    const clearList = () => {
+        const removed = Array.from(h.root.children);
+        h.root.textContent = "";
+        h.store.removeSubtrees(removed, [], {
+            isListCleared: () => {
+                clearedChecks += 1;
+                return h.root.children.length === 0;
+            },
+        });
+    };
+
+    clearList();
+    h.store.finishScan(false);
+    // 다시 받은 백로그에서 빠진 앞쪽 "가"는 뒤에 오는 같은 문구의 새 메시지와 잇지 않는다.
+    h.root.innerHTML = moderatorRow({ text: "나" }) + moderatorRow({ text: "가" });
+    for (const row of h.root.children) h.collect(row);
+    h.store.finishScan(true);
+    assert.ok(clearedChecks > 0);
+    assert.deepEqual(
+        Array.from(h.snapshot(), (message) => [message.text, message.recordId]),
+        [
+            ["가", first.recordId],
+            ["나", second.recordId],
+            ["가", h.snapshot()[2].recordId],
+        ]
+    );
+    assert.notEqual(h.snapshot()[2].recordId, first.recordId);
+
+    h.root.insertAdjacentHTML("beforeend", moderatorRow({ text: "나" }));
+    h.collect(h.root.lastElementChild);
+    h.store.finishScan(true);
+    assert.equal(h.snapshot().length, 4, "a message after the first hydration is new");
+
+    const lengthBefore = h.snapshot().length;
+    const removed = h.root.lastElementChild;
+    removed.remove();
+    h.store.removeSubtrees([removed], [], { isListCleared: () => false });
+    h.root.insertAdjacentHTML("beforeend", moderatorRow({ text: "나" }));
+    h.collect(h.root.lastElementChild);
+    h.store.finishScan(true);
+    assert.equal(h.snapshot().length, lengthBefore + 1, "removing one row from a live list keeps no candidate");
+});
+
+test("retired rows stay uncollected while they hold the same message and are staged when reused", (t) => {
+    const h = createModules(t, moderatorRow({ author: "이전 운영자", text: "이전 안내" }));
+    const row = h.root.firstElementChild;
+    h.store.retireRows([row]);
+    h.collect(row);
+    row.querySelector(".nickname").style.color = "rgb(1, 2, 3)";
+    h.collect(row);
+    h.nextPass();
+    h.store.finishScan(true);
+    assert.equal(h.snapshot().length, 0);
+    assert.equal(row.hasAttribute("data-bcct-moderator-collected"), false);
+
+    row.querySelector(".nickname").textContent = "다음 운영자";
+    row.querySelector(".message").textContent = "다음 안내";
+    h.collect(row);
+    h.store.finishScan(true);
+    assert.equal(h.snapshot().length, 0, "a reused node is not committed in its first mixed pass");
+    h.nextPass();
+    h.nextPass();
+    assert.deepEqual(
+        Array.from(h.snapshot(), (message) => [message.author, message.text]),
+        [["다음 운영자", "다음 안내"]]
+    );
+});
+
+test("retired explicit message IDs are capped and replaced by the next channel generation", (t) => {
+    const h = createModules(t);
+    const template = h.dom.window.document.createElement("template");
+    template.innerHTML = Array.from({ length: 501 }, (_, index) => moderatorRow({ id: `old-${index}` })).join("");
+    h.store.retireRows(Array.from(template.content.children));
+    const collectNewNode = (id) => {
+        h.root.insertAdjacentHTML("beforeend", moderatorRow({ id }));
+        h.collect(h.root.lastElementChild);
+        h.store.finishScan(true);
+        return Array.from(h.snapshot(), (message) => message.id);
+    };
+
+    assert.equal(collectNewNode("old-500").length, 0, "the newest retired ID is blocked on a new node");
+    assert.deepEqual(collectNewNode("old-0"), ["data-chat-id:old-0"], "the cap drops the oldest retired ID");
+    assert.deepEqual(collectNewNode("fresh"), ["data-chat-id:old-0", "data-chat-id:fresh"]);
+
+    // 다음 채널 이동은 이전 세대의 ID를 버리고 그때의 목록만 은퇴시킨다.
+    h.store.retireRows([h.root.lastElementChild]);
+    assert.deepEqual(collectNewNode("old-500"), ["data-chat-id:old-0", "data-chat-id:fresh", "data-chat-id:old-500"]);
+    h.store.clear();
+    assert.equal(collectNewNode("fresh").length, 0, "the current generation still blocks its retired ID");
+});
+
+test("collected explicit IDs are retired without connected rows and released by the next generation", (t) => {
+    const h = createModules(t, moderatorRow({ id: "a1", text: "A 공지" }));
+    h.collect(h.root.firstElementChild);
+    h.store.finishScan(true);
+    h.root.firstElementChild.remove();
+    const collectNewNode = (id, text) => {
+        h.root.insertAdjacentHTML("beforeend", moderatorRow({ id, text }));
+        h.collect(h.root.lastElementChild);
+        h.store.finishScan(true);
+        return Array.from(h.snapshot(), (message) => message.id);
+    };
+
+    h.store.retireRows([]);
+    h.store.clear();
+    assert.equal(collectNewNode("a1", "A 공지").length, 0, "an already collected ID needs no connected row");
+    assert.deepEqual(collectNewNode("b1", "A 공지"), ["data-chat-id:b1"], "a different ID with the same text is new");
+
+    h.root.textContent = "";
+    h.store.retireRows([]);
+    h.store.clear();
+    assert.deepEqual(collectNewNode("a1", "A 공지"), ["data-chat-id:a1"], "returning releases the older generation");
+    assert.deepEqual(collectNewNode("b1", "A 공지"), ["data-chat-id:a1"]);
+});
+
 test("subtree replacement transfers collection ownership but drops an original-text cache from the removed DOM", (t) => {
     const h = createModules(t, moderatorRow());
     const oldRow = h.root.firstElementChild;

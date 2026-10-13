@@ -4,6 +4,8 @@
     const MESSAGE_TYPE = "betterchzzk:watch-history-backup";
     const TOKEN_TTL_MS = 5 * 60 * 1000;
     const MAX_TOKENS = 8;
+    // Room left for the other local writers (live-start state, new watch sessions, settings) after a restore.
+    const STORAGE_HEADROOM_BYTES = 1024 * 1024;
     const messages = {
         UNTRUSTED_SENDER: "시청 기록 페이지에서 다시 시도해 주세요.",
         INVALID_REQUEST: "백업 요청을 확인할 수 없어요. 시청 기록 페이지를 다시 열어 주세요.",
@@ -78,10 +80,53 @@
         return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
     }
 
-    function createController({ runtime, enqueue, readHistory, writeHistory, now = Date.now, maxStorageBytes }) {
+    function createController({
+        runtime,
+        enqueue,
+        readHistory,
+        writeHistory,
+        now = Date.now,
+        maxStorageBytes,
+        storageArea,
+        storageKey,
+    }) {
         const tokens = new Map();
         const fileApi = globalThis.BetterChzzkWatchHistoryBackup;
         const merger = globalThis.BetterChzzkWatchHistoryBackupMerge;
+        function storageCall(method, keys) {
+            return new Promise((resolve, reject) => {
+                storageArea[method](keys, (value) => {
+                    const error = runtime.lastError;
+                    if (error) reject(error);
+                    else resolve(value);
+                });
+            });
+        }
+        // The local quota covers every key, so the merged history may only use what the other values leave.
+        async function historyBudget() {
+            if (!storageArea || typeof storageKey !== "string") return maxStorageBytes;
+            const quota = Number.isFinite(maxStorageBytes) ? maxStorageBytes : merger.DEFAULT_MAX_STORAGE_BYTES;
+            let other = 0;
+            try {
+                if (typeof storageArea.getBytesInUse === "function") {
+                    const [total, own] = await Promise.all([
+                        storageCall("getBytesInUse", null),
+                        storageCall("getBytesInUse", storageKey),
+                    ]);
+                    other = Math.max(0, Number(total) - Number(own));
+                    if (!Number.isFinite(other)) throw new Error("Invalid storage usage");
+                } else {
+                    // Same accounting as Chrome: key plus JSON value bytes for each stored item.
+                    const values = await storageCall("get", null);
+                    for (const [name, value] of Object.entries(values || {}))
+                        if (name !== storageKey)
+                            other += fileApi.byteLength(name) + fileApi.byteLength(JSON.stringify(value));
+                }
+            } catch {
+                fail("STORAGE_READ_FAILED");
+            }
+            return quota - other - fileApi.byteLength(storageKey) - STORAGE_HEADROOM_BYTES;
+        }
         function pruneTokens(at) {
             for (const [token, saved] of tokens) if (saved.expiresAt <= at) tokens.delete(token);
         }
@@ -114,7 +159,7 @@
                     }),
                 };
             const file = fileApi.validateBackup(message.backup, { now: at });
-            const outcome = merger.mergeBackup(history, file, { now: at, maxStorageBytes });
+            const outcome = merger.mergeBackup(history, file, { now: at, maxStorageBytes: await historyBudget() });
             const hash = await fingerprint(file);
             if (message.action === "preview") return previewResult("preview", outcome, page, hash, at);
             pruneTokens(at);
@@ -149,5 +194,9 @@
         }
         return Object.freeze({ handle });
     }
-    globalThis.BetterChzzkWatchHistoryBackupController = Object.freeze({ MESSAGE_TYPE, createController });
+    globalThis.BetterChzzkWatchHistoryBackupController = Object.freeze({
+        MESSAGE_TYPE,
+        STORAGE_HEADROOM_BYTES,
+        createController,
+    });
 })();

@@ -13,7 +13,9 @@
  * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
  *   createMutationObserverSync, fetchJson, injectStyleOnce, normSpace, normalizeChzzkChannelId,
  *   normalizeChzzkImageUrl,
- *   startPageChangeDetection, startStorageChangeListener, storageGet, storageSet), BetterChzzk.selectors(CHZZK, queryChain).
+ *   settingsStoreSet, startPageChangeDetection, startStorageChangeListener, storageGet), BetterChzzk.selectors(CHZZK, queryChain).
+ *   고정 목록 저장은 워커의 설정 저장 잠금을 거쳐 설정 파일 적용·다른 문서와 직렬화돼요. 마지막으로 읽은
+ *   저장값을 기대값으로 보내고, 충돌하면 워커가 돌려준 최신 목록에 고정·해제 하나만 다시 적용해요(최대 3회).
  * 옵션 키: sidebarCheeseFarmHidden, followingPinEnabled, followingPinOfflineToTopEnabled, followingOfflineHidden.
  *   sidebarPopularCategoriesHidden, sidebarUpcomingScheduleHidden, sidebarPartnerStreamersHidden,
  *   sidebarServiceLinksHidden.
@@ -31,14 +33,15 @@
         normSpace,
         normalizeChzzkChannelId,
         normalizeChzzkImageUrl,
+        settingsStoreSet,
         startStorageChangeListener,
         storageGet,
-        storageSet,
         startPageChangeDetection,
     } = BetterChzzk.utils;
 
     const STORAGE_KEY = "betterchzzkPinnedFollowingChannelIds";
     const MAX_PINNED_CHANNELS = 64;
+    const MAX_PIN_WRITE_ATTEMPTS = 3;
     const STYLE_ID = "betterchzzk-sidebar-customization-style";
     const MODE_BUTTON_ID = "betterchzzk-following-pin-mode";
     const CHEESE_HIDDEN_ATTR = "data-bcsf-cheese-hidden";
@@ -180,6 +183,11 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     let pinnedChannelIds = new Set();
     let pinnedIdsLoaded = false;
     let persistedChannelIds = [];
+    // The stored value as last read (undefined = absent) is the expected value each pin write is compared against.
+    let persistedRawValue;
+    let pinChangeEpoch = 0;
+    // Pin/unpin operations waiting for the worker; the sidebar shows them on top of the stored list.
+    const pendingPinOperations = [];
     let runtimeInstalled = false;
     let domObserver = null;
     let sectionObserver = null;
@@ -219,10 +227,6 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
             if (normalized.length >= MAX_PINNED_CHANNELS) break;
         }
         return normalized;
-    }
-
-    function sameIds(left, right) {
-        return left.length === right.length && left.every((value, index) => value === right[index]);
     }
 
     function pickSourceText(...values) {
@@ -1021,26 +1025,71 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         syncOfflineVisibility();
     }
 
-    function setPinnedIds(value, { persisted = false } = {}) {
-        const normalized = normalizePinnedIds(value);
-        pinnedChannelIds = new Set(normalized);
-        pinnedIdsLoaded = true;
-        if (persisted) persistedChannelIds = normalized;
-        scheduleSync();
-        return normalized;
+    function applyPinOperation(ids, operation) {
+        if (ids.includes(operation.channelId) === operation.pinned) return { ids, changed: false };
+        if (!operation.pinned) return { ids: ids.filter((id) => id !== operation.channelId), changed: true };
+        if (ids.length >= MAX_PINNED_CHANNELS) return { ids, changed: false, full: true };
+        return { ids: [...ids, operation.channelId], changed: true };
     }
 
-    function persistPinnedIds(snapshot) {
+    // The sidebar shows the stored list with this document's unsaved pin operations applied on top.
+    function renderPinnedIds() {
+        let ids = persistedChannelIds;
+        for (const operation of pendingPinOperations) ids = applyPinOperation(ids, operation).ids;
+        pinnedChannelIds = new Set(ids);
+        scheduleSync();
+    }
+
+    function rememberPersistedPins(rawValue) {
+        persistedRawValue = rawValue;
+        persistedChannelIds = normalizePinnedIds(rawValue);
+    }
+
+    function setPersistedPinnedIds(rawValue) {
+        rememberPersistedPins(rawValue);
+        pinnedIdsLoaded = true;
+        renderPinnedIds();
+    }
+
+    // One pin/unpin is written with the last stored value as the expected value. When another tab or a settings
+    // file changed the list first, the worker answers with the latest value and only this operation is applied
+    // to it again, at most MAX_PIN_WRITE_ATTEMPTS times. The list is never written to chrome.storage directly.
+    async function writePinOperation(operation) {
+        let rawValue = persistedRawValue;
+        for (let attempt = 0; attempt < MAX_PIN_WRITE_ATTEMPTS; attempt += 1) {
+            const result = applyPinOperation(normalizePinnedIds(rawValue), operation);
+            if (result.full) throw new Error(`팔로잉 채널은 최대 ${MAX_PINNED_CHANNELS}개까지 고정할 수 있습니다.`);
+            if (!result.changed) return;
+            const epoch = pinChangeEpoch;
+            const expected = rawValue === undefined ? { absent: true } : { value: rawValue };
+            try {
+                await settingsStoreSet("sync", { [STORAGE_KEY]: result.ids }, { [STORAGE_KEY]: expected });
+            } catch (error) {
+                const current = error?.code === "conflict" ? error.current?.[STORAGE_KEY] : null;
+                if (current?.absent !== true && !Object.hasOwn(current || {}, "value")) throw error;
+                rawValue = current.absent === true ? undefined : current.value;
+                // A storage.onChanged that arrived meanwhile is at least as new as this answer.
+                if (epoch === pinChangeEpoch) rememberPersistedPins(rawValue);
+                continue;
+            }
+            if (epoch === pinChangeEpoch) rememberPersistedPins(result.ids);
+            return;
+        }
+        throw Object.assign(new Error("Settings store: conflict"), { code: "conflict" });
+    }
+
+    function persistPinOperation(operation) {
         writeChain = writeChain
             .catch(() => {})
-            .then(() => storageSet(storage, { [STORAGE_KEY]: snapshot }))
-            .then(() => {
-                persistedChannelIds = snapshot;
-            })
+            .then(() => writePinOperation(operation))
             .catch((error) => {
-                const current = Array.from(pinnedChannelIds);
-                if (sameIds(current, snapshot)) setPinnedIds(persistedChannelIds);
                 console.warn("[Better Chzzk] 팔로잉 채널 고정 저장 실패", error);
+            })
+            .finally(() => {
+                // Success shows the stored list; failure drops only this operation from the optimistic view.
+                const index = pendingPinOperations.indexOf(operation);
+                if (index >= 0) pendingPinOperations.splice(index, 1);
+                renderPinnedIds();
             });
         return writeChain;
     }
@@ -1048,15 +1097,14 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     function togglePinned(channelId) {
         const normalizedId = normalizeChzzkChannelId(channelId);
         if (!normalizedId) return;
-        const next = new Set(pinnedChannelIds);
-        if (next.has(normalizedId)) next.delete(normalizedId);
-        else if (next.size >= MAX_PINNED_CHANNELS) {
+        const operation = { channelId: normalizedId, pinned: !pinnedChannelIds.has(normalizedId) };
+        if (operation.pinned && pinnedChannelIds.size >= MAX_PINNED_CHANNELS) {
             console.warn(`[Better Chzzk] 팔로잉 채널은 최대 ${MAX_PINNED_CHANNELS}개까지 고정할 수 있습니다.`);
             return;
-        } else next.add(normalizedId);
-
-        const snapshot = setPinnedIds(Array.from(next));
-        void persistPinnedIds(snapshot);
+        }
+        pendingPinOperations.push(operation);
+        renderPinnedIds();
+        void persistPinOperation(operation);
     }
 
     function setPinMode(enabled) {
@@ -1089,9 +1137,24 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         return url.username || url.password ? null : link;
     }
 
+    // 2026-10-11 사용자 보고: 끄는 동안 치지직 행 툴팁(방송 제목, 행 안의 단일 클래스 _tooltip_*)이 그대로 남았어요.
+    // 끄는 동안 마우스가 행을 떠났다는 신호가 오지 않으므로, 끌기 중에만 사이드바의 그 툴팁을 감춰요.
+    const DRAG_STYLE_ID = "betterchzzk-sidebar-drag-style";
+    const DRAGGING_ATTR = "data-bcsf-link-dragging";
+    const DRAG_STYLE_TEXT = `#sidebar[${DRAGGING_ATTR}] [class*="_item_"] [class^="_tooltip_"]{display:none!important}`;
+
+    function setLinkDragging(active) {
+        const sidebar = getSidebar();
+        if (active) {
+            injectStyleOnce(DRAG_STYLE_ID, DRAG_STYLE_TEXT);
+            sidebar?.setAttribute(DRAGGING_ATTR, "1");
+        } else document.querySelectorAll(`[${DRAGGING_ATTR}]`).forEach((node) => node.removeAttribute(DRAGGING_ATTR));
+    }
+
     function restoreFollowingDrag() {
         const active = followingDrag;
         followingDrag = null;
+        setLinkDragging(false);
         if (!active) return;
         if (active.link.getAttribute("draggable") === "true")
             restoreOriginalAttribute(active.link, "draggable", active.draggable);
@@ -1132,6 +1195,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
             return;
         }
         if (followingDrag) followingDrag.started = true;
+        setLinkDragging(true);
         event.dataTransfer.setData("text/uri-list", link.href);
         event.dataTransfer.setData("text/plain", link.href);
         event.dataTransfer.effectAllowed = "copyLink";
@@ -1208,7 +1272,8 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
 
     function handlePinnedStorageChange(changes, areaName) {
         if (areaName !== "sync" || !Object.hasOwn(changes || {}, STORAGE_KEY)) return;
-        setPinnedIds(changes[STORAGE_KEY]?.newValue, { persisted: true });
+        pinChangeEpoch += 1;
+        setPersistedPinnedIds(changes[STORAGE_KEY]?.newValue);
     }
 
     function installRuntime() {
@@ -1239,7 +1304,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         storageGet(storage, STORAGE_KEY)
             .then((data) => {
                 if (!runtimeInstalled || generation !== runtimeGeneration) return;
-                setPinnedIds(data?.[STORAGE_KEY], { persisted: true });
+                setPersistedPinnedIds(data?.[STORAGE_KEY]);
                 if (featureOptions.followingPinEnabled) syncPinUi();
             })
             .catch((error) => {

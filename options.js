@@ -5,7 +5,8 @@
  * 확장 아이콘을 클릭하면 작은 팝업 창으로 여는 것이 1차 사용 환경이라, UI는 좁은 뷰포트를 기준으로
  * 짜여 있다(전체 탭으로 여는 것은 부차적 경로). options.html은 shared/settings.js를 같은 페이지에
  * script 태그로 먼저 로드하고 그다음 이 파일을 로드한다. content script가 아니다.
- * 하는 일: chrome.storage.sync에서 옵션을 불러와 폼에 채우고, 저장 버튼을 누르면 현재 값을 저장한다.
+ * 하는 일: chrome.storage.sync에서 옵션을 불러와 폼에 채우고, 저장 버튼을 누르면 이 화면에서 바꾼 옵션만
+ * 설정 저장 잠금 안에서 다시 읽은 최신 값 위에 저장한다. 다른 곳의 변경은 storage.onChanged로 폼에 반영한다.
  * 옵션 간 의존 관계(data-depends-on)에 따라 하위 컨트롤을 비활성화하고, 탭 전환과
  * 설정 검색(검색어로 카드 항목 필터링), 기본값 복원 버튼을 처리한다.
  * 의존: BetterChzzkSettings(shared/settings.js가 노출하는 DEFAULT_OPTIONS, OPTION_KEYS,
@@ -21,8 +22,10 @@ const form = document.getElementById("optionsForm");
 const optionInputs = Array.from(document.querySelectorAll("[data-option]"));
 const dependencyGroups = Array.from(document.querySelectorAll("[data-depends-on]"));
 const resetButton = document.getElementById("reset");
+const resetPanelSizesButton = document.getElementById("resetPanelSizes");
 const shortcutResetButton = document.getElementById("resetPlaybackSpeedShortcuts");
 const playbackSpeedShortcutInputs = optionInputs.filter(isShortcutCodeInput);
+const playbackSpeedShortcutKeys = playbackSpeedShortcutInputs.map((input) => input.dataset.option);
 const saveButton = document.getElementById("save");
 const discardButton = document.getElementById("discardChanges");
 const headerMenu = document.getElementById("headerMenu");
@@ -45,6 +48,8 @@ const OPTIONS_LOAD_ERROR_MESSAGE = "설정을 불러오지 못했습니다. 페�
 const OPTIONS_LOAD_BLOCKED_SAVE_MESSAGE =
     "설정을 불러오지 못해 저장하지 않았습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.";
 const OPTIONS_SAVE_ERROR_MESSAGE = "설정을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.";
+const optionsSaveConflictMessage = (count) =>
+    `저장하기 전에 다른 곳에서도 바뀐 항목 ${count}개는 이 화면에서 고른 값으로 저장했습니다.`;
 const NOTICE_STATE_LABELS = {
     loading: "불러오는 중",
     dirty: "변경됨",
@@ -64,6 +69,14 @@ let hideMessageTimer = 0;
 let savedOptions = null;
 let saveInFlight = false;
 let optionsLoadState = storage ? "loading" : "ready";
+// A settings file restore owns the stored options from file selection until its panel closes.
+let externalBusy = false;
+// A save writes only the options the user set on this form (touched controls or values that differ from
+// savedOptions); every other option keeps the newest stored value, which storage.onChanged also shows here.
+const touchedOptionKeys = new Set();
+// User-set options whose stored value changed elsewhere before this form saved them.
+const staleOwnedKeys = new Set();
+let activeSave = null;
 
 function isShortcutCodeInput(input) {
     return input?.hasAttribute?.("data-shortcut-code") === true;
@@ -96,6 +109,20 @@ function getInputValue(input) {
     if (input.type === "checkbox") return input.checked;
     if (isShortcutCodeInput(input)) return input.dataset.shortcutCode || "";
     return input.value;
+}
+
+function setOptionValue(key, value) {
+    for (const input of optionInputs) {
+        if (input.dataset.option === key) setInputValue(input, value);
+    }
+}
+
+function markOptionsTouched(keys) {
+    for (const key of keys) touchedOptionKeys.add(key);
+}
+
+function isUserOwnedOption(key, draft) {
+    return touchedOptionKeys.has(key) || activeSave?.owned.has(key) || !Object.is(draft[key], savedOptions?.[key]);
 }
 
 function readOptionsFromForm() {
@@ -146,7 +173,7 @@ function isDisabledByDependency(control, options) {
 }
 
 function applyControlStates(options) {
-    const optionsUnavailable = optionsLoadState !== "ready";
+    const optionsUnavailable = optionsLoadState !== "ready" || externalBusy;
     for (const control of optionInputs) {
         control.disabled = optionsUnavailable || isDisabledByDependency(control, options);
     }
@@ -239,77 +266,202 @@ function showMessage(text, type = "success") {
     if (type !== "error") hideMessageTimer = setTimeout(hideMessage, 1800);
 }
 
-function finishSave(normalized, message, error) {
+// The click fixes which options this save owns; edits made while it runs stay pending for the next save.
+function createSaveSnapshot(normalized) {
+    const owned = new Set(touchedOptionKeys);
+    for (const key of OPTION_KEYS) {
+        if (!Object.is(normalized[key], savedOptions?.[key])) owned.add(key);
+    }
+    // Writing one speed key could duplicate another stored key and reset all three, so they are saved together.
+    if (playbackSpeedShortcutKeys.some((key) => owned.has(key))) {
+        for (const key of playbackSpeedShortcutKeys) owned.add(key);
+    }
+    touchedOptionKeys.clear();
+    return { draft: normalized, baseline: savedOptions, owned, conflicts: [], changesAfterRead: null };
+}
+
+function releaseSaveSnapshot(save) {
+    if (activeSave === save) activeSave = null;
+    markOptionsTouched(save.owned);
+}
+
+// Compares the click snapshot with the latest stored values read inside the settings lock.
+function planSave(save, latestRaw) {
+    const latest = normalizeOptions(latestRaw);
+    const values = {};
+    for (const key of OPTION_KEYS) {
+        const stored = Object.hasOwn(latestRaw, key);
+        if (!save.owned.has(key)) {
+            // An option that was never stored is confirmed with its current effective value, as the full-form save did.
+            if (!stored) values[key] = latest[key];
+            continue;
+        }
+        if (stored && Object.is(latestRaw[key], save.draft[key])) continue;
+        // Another writer changed an option the user also set here: the explicit choice wins and the message says so.
+        const changedElsewhere = staleOwnedKeys.has(key) || !Object.is(latest[key], save.baseline?.[key]);
+        if (changedElsewhere && !Object.is(latest[key], save.draft[key])) save.conflicts.push(key);
+        values[key] = save.draft[key];
+    }
+    return { latest, values };
+}
+
+function finishSave(save, stored, message, error) {
     saveInFlight = false;
     if (error) {
+        // Nothing was confirmed: keep the previous savedOptions and the user's ownership for an explicit retry.
+        releaseSaveSnapshot(save);
         renderPageState(readOptionsFromForm(), "error");
         showMessage(OPTIONS_SAVE_ERROR_MESSAGE, "error");
         return;
     }
+    if (activeSave === save) activeSave = null;
 
-    savedOptions = normalized;
-    hideMessage();
+    // Fields not edited since the click follow the stored result, including values saved elsewhere meanwhile.
+    // The speed keys follow it together unless the user picked one of them during the write.
     const current = readOptionsFromForm();
-    if (!areOptionsEqual(current, normalized)) {
-        renderPageState(current, "dirty");
+    const keepShortcuts = playbackSpeedShortcutKeys.some((key) => touchedOptionKeys.has(key));
+    for (const key of OPTION_KEYS) {
+        if (save.owned.has(key)) staleOwnedKeys.delete(key);
+        const keep = playbackSpeedShortcutKeys.includes(key)
+            ? keepShortcuts
+            : touchedOptionKeys.has(key) || !Object.is(current[key], save.draft[key]);
+        if (!keep) setOptionValue(key, stored[key]);
+    }
+    savedOptions = stored;
+    hideMessage();
+    const conflictText = save.conflicts.length ? optionsSaveConflictMessage(save.conflicts.length) : "";
+    const next = readOptionsFromForm();
+    if (!areOptionsEqual(next, stored)) {
+        renderPageState(next, "dirty");
+        if (conflictText) showMessage(conflictText);
         return;
     }
-    syncNumberInputs(normalized);
-    renderPageState(normalized, "saved");
-    if (message) showMessage(message);
+    syncNumberInputs(stored);
+    renderPageState(stored, "saved");
+    const text = [message, conflictText].filter(Boolean).join(" ");
+    if (text) showMessage(text);
 }
 
-function startSave(normalized, message) {
-    if (optionsLoadState !== "ready") return;
+function startSave(normalized, message, save = createSaveSnapshot(normalized)) {
+    if (optionsLoadState !== "ready" || externalBusy) {
+        releaseSaveSnapshot(save);
+        return;
+    }
     saveInFlight = true;
+    activeSave = save;
     renderPageState(normalized, "saving");
     if (!storage) {
-        finishSave(normalized, message);
+        finishSave(save, normalized, message);
         return;
     }
     void withOptionsStorageLock(
         () =>
             new Promise((resolve) =>
-                storage.set(normalized, () => {
-                    const error = globalThis.chrome?.runtime?.lastError;
-                    resolve();
-                    if (error || savedOptions?.adVideoEnabled === normalized.adVideoEnabled) {
-                        finishSave(normalized, message, error);
+                // Re-read inside the lock so options this form did not set keep the newest stored value.
+                storage.get(STORAGE_OPTION_KEYS, (data) => {
+                    const readError = globalThis.chrome?.runtime?.lastError;
+                    if (readError) {
+                        resolve();
+                        finishSave(save, null, message, readError);
                         return;
                     }
-                    const status = document.getElementById("adVideoStatus");
-                    function finishAdVideoSave(result) {
-                        if (status) {
-                            status.hidden = false;
-                            status.textContent =
-                                result?.ok && result.enabled !== normalized.adVideoEnabled
-                                    ? "다른 곳에서 광고 설정이 변경됐습니다. 설정을 다시 열어 현재 값을 확인해 주세요."
-                                    : result?.ok
-                                      ? normalized.adVideoEnabled
-                                          ? "적용 준비가 끝났습니다. 치지직 탭을 새로고침해 주세요."
-                                          : "동영상 광고 차단을 껐습니다. 이미 반영된 상태는 새로고침하면 복원됩니다."
-                                      : "설정은 저장됐지만 적용 준비에 실패했습니다. 확장을 다시 로드한 뒤 설정을 확인해 주세요.";
-                        }
-                        finishSave(normalized, message);
-                    }
-                    if (!globalThis.chrome?.runtime?.sendMessage) {
-                        finishAdVideoSave({ ok: false });
+                    const latestRaw = data && typeof data === "object" ? data : {};
+                    const { latest, values } = planSave(save, latestRaw);
+                    if (!Object.keys(values).length) {
+                        resolve();
+                        finishSave(save, latest, message);
                         return;
                     }
+                    save.changesAfterRead = {};
                     try {
-                        chrome.runtime.sendMessage({ type: "betterchzzk:ad-video:sync" }, (result) => {
-                            const messageError = chrome.runtime.lastError;
-                            finishAdVideoSave(messageError ? null : result);
+                        storage.set(values, () => {
+                            const error = globalThis.chrome?.runtime?.lastError;
+                            resolve();
+                            const stored = normalizeOptions({ ...latestRaw, ...values, ...save.changesAfterRead });
+                            if (
+                                error ||
+                                !Object.hasOwn(values, "adVideoEnabled") ||
+                                Object.is(latest.adVideoEnabled, values.adVideoEnabled)
+                            ) {
+                                finishSave(save, stored, message, error);
+                                return;
+                            }
+                            const status = document.getElementById("adVideoStatus");
+                            function finishAdVideoSave(result) {
+                                if (status) {
+                                    status.hidden = false;
+                                    status.textContent =
+                                        result?.ok && result.enabled !== values.adVideoEnabled
+                                            ? "다른 곳에서 광고 설정이 변경됐습니다. 설정을 다시 열어 현재 값을 확인해 주세요."
+                                            : result?.ok
+                                              ? values.adVideoEnabled
+                                                  ? "적용 준비가 끝났습니다. 치지직 탭을 새로고침해 주세요."
+                                                  : "동영상 광고 차단을 껐습니다. 이미 반영된 상태는 새로고침하면 복원됩니다."
+                                              : "설정은 저장됐지만 적용 준비에 실패했습니다. 확장을 다시 로드한 뒤 설정을 확인해 주세요.";
+                                }
+                                finishSave(save, stored, message);
+                            }
+                            if (!globalThis.chrome?.runtime?.sendMessage) {
+                                finishAdVideoSave({ ok: false });
+                                return;
+                            }
+                            try {
+                                chrome.runtime.sendMessage({ type: "betterchzzk:ad-video:sync" }, (result) => {
+                                    const messageError = chrome.runtime.lastError;
+                                    finishAdVideoSave(messageError ? null : result);
+                                });
+                            } catch (_) {
+                                finishAdVideoSave(null);
+                            }
                         });
-                    } catch (_) {
-                        finishAdVideoSave(null);
+                    } catch (error) {
+                        resolve();
+                        finishSave(save, null, message, error);
                     }
                 })
             )
-    ).catch((error) => finishSave(normalized, message, error));
+    ).catch((error) => finishSave(save, null, message, error));
+}
+
+// Other option pages, Chzzk pages (through the worker) and settings files change stored options while this
+// form stays open. Untouched fields show the new value; a field the user set keeps the user's value.
+function applyStoredOptionChanges(changes, areaName) {
+    if (areaName !== "sync" || optionsLoadState !== "ready" || !savedOptions) return;
+    const changedKeys = OPTION_KEYS.filter((key) => Object.hasOwn(changes || {}, key));
+    if (!changedKeys.length) return;
+    const raw = { ...savedOptions };
+    for (const key of changedKeys) {
+        raw[key] = changes[key]?.newValue;
+        if (activeSave?.changesAfterRead) activeSave.changesAfterRead[key] = changes[key]?.newValue;
+    }
+    const next = normalizeOptions(raw);
+    if (areOptionsEqual(next, savedOptions)) return;
+    const draft = readOptionsFromForm();
+    // The three speed keys must stay distinct, so a change from elsewhere replaces all of them or none:
+    // mixing it into keys the user set here could duplicate a key and reset all three on save.
+    const shortcutsOwned = !externalBusy && playbackSpeedShortcutKeys.some((key) => isUserOwnedOption(key, draft));
+    for (const key of OPTION_KEYS) {
+        if (Object.is(next[key], savedOptions[key])) continue;
+        const owned = playbackSpeedShortcutKeys.includes(key)
+            ? shortcutsOwned
+            : !externalBusy && isUserOwnedOption(key, draft);
+        if (!owned) setOptionValue(key, next[key]);
+        else if (!Object.is(next[key], draft[key])) staleOwnedKeys.add(key);
+    }
+    savedOptions = next;
+    const current = readOptionsFromForm();
+    const state = saveInFlight
+        ? "saving"
+        : noticeEl.dataset.state === "error"
+          ? "error"
+          : areOptionsEqual(current, next)
+            ? "saved"
+            : "dirty";
+    renderPageState(current, state);
 }
 
 function commitSave(message) {
+    if (externalBusy) return;
     if (optionsLoadState !== "ready") {
         if (optionsLoadState === "failed") {
             renderPageState(readOptionsFromForm(), "error");
@@ -322,6 +474,9 @@ function commitSave(message) {
     if (saveInFlight) return;
 
     if (savedOptions && areOptionsEqual(normalized, savedOptions)) {
+        // The form already shows the stored values, so no earlier control choice remains pending.
+        touchedOptionKeys.clear();
+        staleOwnedKeys.clear();
         syncNumberInputs(normalized);
         renderPageState(normalized, "saved");
         if (message) showMessage(message);
@@ -356,7 +511,13 @@ function renderFormChanges() {
 }
 
 function saveCurrentOptions() {
-    if (optionsLoadState !== "ready" || saveInFlight) return;
+    if (optionsLoadState !== "ready" || saveInFlight || externalBusy) return;
+    // normalizeOptions would silently replace duplicate speed keys with the defaults; keep the edit pending instead.
+    const shortcutCodes = playbackSpeedShortcutInputs.map(getInputValue);
+    if (new Set(shortcutCodes).size < shortcutCodes.length) {
+        showMessage(SHORTCUT_KEY_DUPLICATE_MESSAGE, "error");
+        return;
+    }
 
     const normalized = readOptionsFromForm();
     const newlyEnabledMedia = ["followingPreviewTooltipEnabled", "liveMultiviewEnabled"].filter(
@@ -368,11 +529,14 @@ function saveCurrentOptions() {
             ...(newlyEnabledMedia.length ? PREVIEW_HOST_PERMISSION : {}),
             ...(needsNotifications ? { permissions: ["notifications"] } : {}),
         };
+        const save = createSaveSnapshot(normalized);
         saveInFlight = true;
+        activeSave = save;
         renderPageState(normalized, "saving");
         requestOptionalPermissions(permissionSpec, (granted) => {
             if (!granted) {
                 saveInFlight = false;
+                releaseSaveSnapshot(save);
                 for (const key of [
                     ...newlyEnabledMedia,
                     ...(needsNotifications ? ["liveStartNotificationsEnabled"] : []),
@@ -391,7 +555,7 @@ function saveCurrentOptions() {
                 );
                 return;
             }
-            startSave(normalized, "옵션을 저장했습니다.");
+            startSave(normalized, "옵션을 저장했습니다.", save);
         });
         return;
     }
@@ -408,7 +572,7 @@ form.addEventListener("keydown", (event) => {
     const input = getOptionInput(event.target);
     if (!isShortcutCodeInput(input) || event.code === "Tab") return;
 
-    if (optionsLoadState !== "ready" || input.disabled || event.repeat || event.isComposing) return;
+    if (optionsLoadState !== "ready" || externalBusy || input.disabled || event.repeat || event.isComposing) return;
     if (event.code === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -433,22 +597,25 @@ form.addEventListener("keydown", (event) => {
     }
 
     setInputValue(input, event.code);
+    markOptionsTouched([input.dataset.option]);
     renderFormChanges();
 });
 
 form.addEventListener("input", (event) => {
-    if (optionsLoadState !== "ready") return;
+    if (optionsLoadState !== "ready" || externalBusy) return;
     const input = getOptionInput(event.target);
     // 체크박스는 change에서 한 번만 처리한다.
     if (!input || input.type === "checkbox") return;
+    markOptionsTouched([input.dataset.option]);
     syncRangeLabel(input);
     renderFormChanges();
 });
 
 form.addEventListener("change", (event) => {
-    if (optionsLoadState !== "ready") return;
+    if (optionsLoadState !== "ready" || externalBusy) return;
     const input = getOptionInput(event.target);
     if (!input) return;
+    markOptionsTouched([input.dataset.option]);
     if (input.type !== "checkbox") {
         // 범위를 벗어난 값은 입력을 마친 시점에 보정값을 되돌려 보여준다.
         const normalized = readOptionsFromForm();
@@ -460,25 +627,29 @@ form.addEventListener("change", (event) => {
 saveButton.addEventListener("click", saveCurrentOptions);
 // The appearance control lives in the header, outside the form's event subtree.
 document.getElementById("optionsTheme").addEventListener("click", (event) => {
-    if (optionsLoadState !== "ready") return;
+    if (optionsLoadState !== "ready" || externalBusy) return;
     const themes = ["system", "light", "dark"];
     const button = event.currentTarget;
     button.value = themes[(themes.indexOf(button.value) + 1) % themes.length];
+    markOptionsTouched([button.dataset.option]);
     renderFormChanges();
 });
 
 shortcutResetButton.addEventListener("click", () => {
-    if (optionsLoadState !== "ready" || saveInFlight || shortcutResetButton.disabled) return;
+    if (optionsLoadState !== "ready" || saveInFlight || externalBusy || shortcutResetButton.disabled) return;
     for (const input of playbackSpeedShortcutInputs) {
         setInputValue(input, DEFAULT_OPTIONS[input.dataset.option]);
     }
+    markOptionsTouched(playbackSpeedShortcutKeys);
     hideMessage();
     renderFormChanges();
 });
 
 discardButton.addEventListener("click", () => {
-    if (optionsLoadState !== "ready" || saveInFlight || !savedOptions) return;
+    if (optionsLoadState !== "ready" || saveInFlight || externalBusy || !savedOptions) return;
     const hadFocus = document.activeElement === discardButton;
+    touchedOptionKeys.clear();
+    staleOwnedKeys.clear();
     renderOptions(savedOptions);
     hideMessage();
     if (hadFocus) document.querySelector('.tab[aria-selected="true"]')?.focus({ preventScroll: true });
@@ -498,17 +669,20 @@ document.addEventListener("click", (event) => {
 });
 
 resetButton.addEventListener("click", () => {
-    if (optionsLoadState !== "ready" || saveInFlight) return;
+    if (optionsLoadState !== "ready" || saveInFlight || externalBusy) return;
     if (!window.confirm("모든 설정을 기본값으로 되돌릴까요? 직접 바꾼 키와 수치도 함께 초기화됩니다.")) return;
     headerMenu.open = false;
     headerMenu.querySelector("summary").focus();
     renderOptions(DEFAULT_OPTIONS);
+    // Restoring defaults is an explicit choice for every option, including ones changed elsewhere meanwhile.
+    markOptionsTouched(OPTION_KEYS);
     commitSave("기본값으로 복원했습니다.");
 });
 
 if (storage) {
     renderNotice("loading");
     applyControlStates(readOptionsFromForm());
+    globalThis.chrome?.storage?.onChanged?.addListener?.(applyStoredOptionChanges);
     function finishOptionsLoad(data, error) {
         if (error) {
             optionsLoadState = "failed";
@@ -533,6 +707,92 @@ if (storage) {
 } else {
     savedOptions = renderOptions(DEFAULT_OPTIONS);
 }
+
+// Keyboard path for the mouse-only size boundaries: clear the profile-local choices under the settings lock.
+resetPanelSizesButton?.addEventListener("click", () => {
+    const local = globalThis.chrome?.storage?.local;
+    const keys = Object.values(globalThis.BetterChzzkSettingsBackup?.PANEL_KEYS || {});
+    if (typeof local?.set !== "function" || !keys.length) {
+        showMessage("저장한 크기를 초기화하지 못했어요. 잠시 후 다시 시도해 주세요.", "error");
+        return;
+    }
+    resetPanelSizesButton.disabled = true;
+    void withOptionsStorageLock(
+        () =>
+            new Promise((resolve) =>
+                local.set(Object.fromEntries(keys.map((key) => [key, null])), () => {
+                    const error = globalThis.chrome?.runtime?.lastError;
+                    resolve();
+                    resetPanelSizesButton.disabled = false;
+                    if (error) showMessage("저장한 크기를 초기화하지 못했어요. 잠시 후 다시 시도해 주세요.", "error");
+                    else showMessage("저장한 크기를 초기화했어요. 새로 여는 치지직 화면부터 기본 크기로 보여요.");
+                })
+            )
+    ).catch(() => {
+        resetPanelSizesButton.disabled = false;
+        showMessage("저장한 크기를 초기화하지 못했어요. 잠시 후 다시 시도해 주세요.", "error");
+    });
+});
+
+function reloadSavedOptions() {
+    return new Promise((resolve) => {
+        if (!storage || saveInFlight) {
+            resolve(false);
+            return;
+        }
+        const baseline = savedOptions;
+        void withOptionsStorageLock(
+            () =>
+                new Promise((done) =>
+                    storage.get(STORAGE_OPTION_KEYS, (data) => {
+                        const error = globalThis.chrome?.runtime?.lastError;
+                        done();
+                        if (error) {
+                            resolve(false);
+                            return;
+                        }
+                        const next = normalizeOptions(data);
+                        const draft = readOptionsFromForm();
+                        // Keep fields changed while the read was in flight; refresh every untouched field.
+                        const merged = { ...next };
+                        for (const key of OPTION_KEYS) {
+                            if (baseline && !Object.is(draft[key], baseline[key])) {
+                                merged[key] = draft[key];
+                                if (!Object.is(next[key], baseline[key])) staleOwnedKeys.add(key);
+                                continue;
+                            }
+                            touchedOptionKeys.delete(key);
+                            staleOwnedKeys.delete(key);
+                        }
+                        optionsLoadState = "ready";
+                        savedOptions = next;
+                        renderOptions(merged, { state: areOptionsEqual(merged, next) ? "saved" : "dirty" });
+                        resolve(true);
+                    })
+                )
+        ).catch(() => resolve(false));
+    });
+}
+
+function setExternalBusy(value) {
+    externalBusy = Boolean(value);
+    // A settings file takes over only a form without unsaved edits; it decides every option it restores.
+    if (externalBusy) {
+        touchedOptionKeys.clear();
+        staleOwnedKeys.clear();
+    }
+    applyControlStates(readOptionsFromForm());
+}
+
+// The settings file UI (optionsSettingsBackup.js) reads page state, locks editing during a restore and asks for a reload.
+globalThis.BetterChzzkOptionsPage = Object.freeze({
+    isReady: () => optionsLoadState === "ready" && !saveInFlight && !externalBusy,
+    hasUnsavedChanges: () =>
+        optionsLoadState === "ready" && !!savedOptions && !areOptionsEqual(readOptionsFromForm(), savedOptions),
+    setExternalBusy,
+    reloadSavedOptions,
+    showMessage,
+});
 
 const versionBadge = document.getElementById("versionBadge");
 const manifestVersion = globalThis.chrome?.runtime?.getManifest?.()?.version;

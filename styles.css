@@ -3206,3 +3206,100 @@ h1 {
         transform: none;
     }
 }
+
+/* 설정 파일 불러오기 미리보기 — 2026-10-08 */
+.options-body .settings-backup-panel {
+    margin: 0 0 12px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-top: 2px solid var(--accent);
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--text);
+}
+
+.options-body .settings-backup-panel[hidden] {
+    display: none;
+}
+
+.settings-backup-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.settings-backup-title:focus {
+    outline: none;
+}
+
+.settings-backup-title:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+}
+
+.settings-backup-meta {
+    margin: 4px 0 10px;
+    color: var(--text-dim);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.settings-backup-summary {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 6px 12px;
+    margin: 0 0 10px;
+    font-size: 13px;
+}
+
+.settings-backup-summary dt {
+    color: var(--text-muted);
+}
+
+.settings-backup-summary dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.settings-backup-notes {
+    margin: 0 0 10px;
+    padding-left: 18px;
+    color: var(--text-dim);
+    font-size: 12px;
+    line-height: 1.5;
+    word-break: keep-all;
+}
+
+.settings-backup-status {
+    margin: 0 0 10px;
+    font-size: 12px;
+    word-break: keep-all;
+}
+
+.settings-backup-status:empty {
+    display: none;
+}
+
+.settings-backup-status[data-type="error"] {
+    color: var(--danger);
+}
+
+.settings-backup-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.options-body .panel-size-reset {
+    margin: 4px 0 2px;
+}
+
+@media (max-width: 420px) {
+    .settings-backup-summary {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .settings-backup-summary dd {
+        margin-bottom: 4px;
+    }
+}

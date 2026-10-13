@@ -10,7 +10,7 @@
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
  *   cleanEntryTitle, compactSpaces, fetchJson, injectStyleOnce, normalizeChzzkImageUrl,
  *   normalizeChzzkMediaUrl, normSpace, onReady, parseChzzkDate, startPageChangeDetection,
- *   storageSet, touchMapEntry), vendor/hls.light.min.js가 제공하는 전역 window.Hls.
+ *   settingsStoreSet, touchMapEntry), vendor/hls.light.min.js가 제공하는 전역 window.Hls.
  * 옵션 키: followingPreviewTooltipEnabled, followingPreviewSoundEnabled,
  *   followingPreviewVolumePercent, livePreviewRightClickSoundEnabled.
  * DOM 마커: #betterchzzk-following-preview 툴팁, data-bcfp-tooltip/data-bcfp-active/
@@ -513,8 +513,8 @@ html.theme_dark [${ACTIVE_ATTR}="1"]{
         normSpace,
         onReady,
         parseChzzkDate,
+        settingsStoreSet,
         startPageChangeDetection,
-        storageSet,
         touchMapEntry,
     } = BetterChzzk.utils;
 
@@ -2114,8 +2114,8 @@ html.theme_dark [${ACTIVE_ATTR}="1"]{
 
     function persistFollowingPreviewSound(enabled) {
         featureOptions = { ...featureOptions, followingPreviewSoundEnabled: enabled };
-        if (typeof storageSet !== "function") return;
-        void storageSet(globalThis.chrome?.storage?.sync, { followingPreviewSoundEnabled: enabled }).catch(() => {});
+        if (typeof settingsStoreSet !== "function") return;
+        void settingsStoreSet("sync", { followingPreviewSoundEnabled: enabled }).catch(() => {});
     }
 
     function clearSoundFeedback(container = null) {

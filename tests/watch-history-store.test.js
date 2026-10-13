@@ -694,7 +694,7 @@ test("background validates sender and schema before mutating history", async () 
 
     const wrongVersion = await harness.send(
         { ...mutationMessage(harness.store, operation), version: 999 },
-        { id: "extension-id", tab: { id: 1 }, url: "https://chzzk.naver.com/live/channel-a" }
+        { id: "extension-id", tab: { id: 1 }, frameId: 0, url: "https://chzzk.naver.com/live/channel-a" }
     );
     assert.equal(wrongVersion.ok, false);
     assert.deepEqual(harness.local, {});
@@ -702,6 +702,7 @@ test("background validates sender and schema before mutating history", async () 
     const liveSender = {
         id: "extension-id",
         tab: { id: 1 },
+        frameId: 0,
         url: "https://chzzk.naver.com/live/channel-a",
     };
     assert.equal((await harness.send(mutationMessage(harness.store, operation), liveSender)).ok, true);
@@ -746,22 +747,108 @@ test("background accepts immediate activity only from trusted CHZZK tabs", async
         kind: "appendActivities",
         activities: [{ id: `viewer:${now}:1`, at: now, kind: "chat", text: "즉시 저장", amount: 0 }],
     };
-    const liveSender = { id: "extension-id", tab: { id: 1 }, url: "https://chzzk.naver.com/live/channel-a" };
+    const liveSender = {
+        id: "extension-id",
+        tab: { id: 1 },
+        frameId: 0,
+        url: "https://chzzk.naver.com/live/channel-a",
+    };
     const denied = await harness.send(mutationMessage(harness.store, operation), {
         ...liveSender,
         url: "https://example.com/",
     });
     assert.equal(denied.ok, false);
-    const accepted = await harness.send(mutationMessage(harness.store, operation), liveSender);
+    // Content scripts run only in the top frame; same-origin chat frames must not write history.
+    for (const untrusted of [
+        { ...liveSender, frameId: 3 },
+        { ...liveSender, frameId: undefined },
+        { ...liveSender, origin: "https://example.com" },
+        { ...liveSender, url: "https://chzzk.naver.com:8443/live/channel-a" },
+    ]) {
+        assert.equal((await harness.send(mutationMessage(harness.store, operation), untrusted)).ok, false);
+        assert.deepEqual(harness.local, {});
+    }
+    const accepted = await harness.send(mutationMessage(harness.store, operation), {
+        ...liveSender,
+        origin: "https://chzzk.naver.com",
+    });
     assert.equal(accepted.ok, true);
     const entry = harness.local[harness.store.STORAGE_KEY].entries["live:100"];
     assert.equal(entry.activities.length, 1);
     assert.equal(entry.watchedSeconds, 0);
 });
 
+test("background keeps incognito viewing and chats out of the shared profile history", async () => {
+    // Without a manifest incognito key Chrome runs one worker and one storage.local for both window types.
+    const harness = createBackgroundHarness();
+    const now = Date.now();
+    const chat = (at, text) => ({ id: `viewer:${at}:1`, at, kind: "chat", text, amount: 0 });
+    const normalTab = {
+        id: "extension-id",
+        tab: { id: 1, incognito: false },
+        frameId: 0,
+        url: "https://chzzk.naver.com/live/channel-a",
+        origin: "https://chzzk.naver.com",
+    };
+    const privateTab = { ...normalTab, tab: { id: 2, incognito: true } };
+    const privateOperations = [
+        { ...createSnapshot(now, { sessionId: "private" }), activities: [chat(now - 3000, "시크릿 창 채팅")] },
+        {
+            ...createSnapshot(now, { sessionId: "private" }),
+            kind: "appendActivities",
+            activities: [chat(now - 2000, "시크릿 창 즉시 채팅")],
+        },
+        {
+            kind: "migrateRecordId",
+            sourceRecordId: "channel:channel-a:provisional:private",
+            targetRecordId: "live:100",
+        },
+    ];
+    const sendPrivateOperations = async () => {
+        for (const operation of privateOperations) {
+            const response = await harness.send(mutationMessage(harness.store, operation), privateTab);
+            // A non-error result stops the page from retrying a write that is never going to be stored.
+            assert.deepEqual(JSON.parse(JSON.stringify(response)), {
+                ok: true,
+                result: { status: "ignored", reason: "incognito" },
+            });
+        }
+    };
+
+    await sendPrivateOperations();
+    assert.deepEqual(harness.local, {});
+
+    const saved = await harness.send(
+        mutationMessage(harness.store, { ...createSnapshot(now), activities: [chat(now - 4000, "일반 창 채팅")] }),
+        normalTab
+    );
+    assert.equal(saved.ok, true);
+    assert.equal(saved.result.status, "applied");
+    const stored = JSON.stringify(harness.local);
+    await sendPrivateOperations();
+    assert.equal(JSON.stringify(harness.local), stored);
+    const entry = harness.local[harness.store.STORAGE_KEY].entries["live:100"];
+    assert.deepEqual(
+        Array.from(entry.activities, (row) => row.text),
+        ["일반 창 채팅"]
+    );
+    assert.deepEqual(
+        Array.from(entry.sessionDetails, (session) => session.id),
+        ["session-a"]
+    );
+
+    const historyPage = { id: "extension-id", url: "chrome-extension://extension-id/history.html" };
+    const replay = await harness.send(
+        mutationMessage(harness.store, { kind: "setReplayVideoNo", recordId: "live:100", videoNo: "555" }),
+        historyPage
+    );
+    assert.equal(replay.ok, true);
+    assert.equal(harness.local[harness.store.STORAGE_KEY].entries["live:100"].replayVideoNo, "555");
+});
+
 test("background queue reports runtime.lastError and continues with the next mutation", async () => {
     const harness = createBackgroundHarness();
-    const sender = { id: "extension-id", tab: { id: 1 }, url: "https://chzzk.naver.com/live/channel-a" };
+    const sender = { id: "extension-id", tab: { id: 1 }, frameId: 0, url: "https://chzzk.naver.com/live/channel-a" };
     const message = mutationMessage(harness.store, createSnapshot(Date.now()));
     harness.failNextSet();
 

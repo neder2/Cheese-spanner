@@ -1,9 +1,8 @@
 /**
  * features/autoQualityPage.js — 자동 화질 기능의 페이지 측(MAIN world) 실행부: 실제 화질 트랙 전환.
  *
- * 실행 컨텍스트: MAIN world(페이지). 최초 로드 시 chrome.runtime API가 보이면 web_accessible_resources로
- *   등록된 자기 자신을 script 태그로 페이지 문서에 재주입하고 반환하며(부트스트랩), 재주입된 실행에서는
- *   chrome API가 보이지 않는 순수 페이지 컨텍스트로 나머지 로직 전체가 실행된다.
+ * 실행 컨텍스트: manifest의 MAIN world(페이지) 콘텐츠 스크립트로 직접 로드된다. 확장 URL로 자기 자신을
+ *   다시 주입하지 않으며 web_accessible_resources에 등록하지 않는다.
  * 동작 위치: PLAYBACK_ROUTE_RE(/^\/(?:live|video)(?:\/|$)/)에 매칭하는 라이브/VOD 재생 라우트의 video 및
  *   pzp 계열 플레이어 요소.
  * 하는 일: 라이브의 검증된 React 소유 플레이어와 화질 메뉴를 먼저 찾고, 메뉴의 선택 이벤트를 통해
@@ -15,10 +14,9 @@
  *   이어보기 유도 UI, URL의 currentTime 파라미터, 댓글 타임라인 클릭 탐색과 화질 적용 타이밍이 겹치지
  *   않도록 여러 지연/재시도 창을 관리한다. Object.defineProperty 등을 패치해 플레이어가 나중에
  *   videoTracks를 정의하는 경우도 추적한다.
- * 의존: 없음 (isolated world 전역에 접근 불가). window/document, chrome.runtime.getURL(부트스트랩 전용)만 사용.
+ * 의존: 없음 (isolated world 전역에 접근 불가). window/document만 사용한다.
  * 옵션 키: 없음 — 자동 화질 활성 상태는 STATE_ATTR로 전달받는다.
- * DOM 마커: document.documentElement에 data-betterchzzk-auto-quality-page-injected(재주입 가드),
- *   data-betterchzzk-auto-quality-status(진단용 결과) 속성을 쓴다.
+ * DOM 마커: document.documentElement에 data-betterchzzk-auto-quality-status(진단용 결과) 속성을 쓴다.
  * 통신: isolated world의 features/autoQuality.js가 쓰는 data-betterchzzk-auto-quality-request를 읽고
  *   data-betterchzzk-auto-quality-result에 결과를 써서 응답하며, window Event
  *   betterchzzk:auto-quality:apply(요청 트리거)를 수신한다. 활성화 상태는
@@ -31,24 +29,6 @@
  */
 (() => {
     const INSTALL_FLAG = "__betterChzzkAutoQualityPageInstalled";
-    const INJECT_ATTR = "data-betterchzzk-auto-quality-page-injected";
-
-    if (globalThis.chrome?.runtime?.getURL) {
-        try {
-            if (!document.documentElement.hasAttribute(INJECT_ATTR)) {
-                document.documentElement.setAttribute(INJECT_ATTR, "1");
-
-                const script = document.createElement("script");
-                script.src = chrome.runtime.getURL("features/autoQualityPage.js");
-                script.async = false;
-                script.onload = () => script.remove();
-                (document.head || document.documentElement).prepend(script);
-            }
-        } catch (_) {
-            // If script injection is unavailable, keep the isolated-world fallback from running.
-        }
-        return;
-    }
 
     if (window[INSTALL_FLAG]) return;
     try {
@@ -133,6 +113,7 @@
     const PLAYER_MUTATION_SELECTOR = `video, ${PLAYER_DISCOVERY_SELECTORS.join(", ")}`;
     const EXTENSION_PREVIEW_VIDEO_SELECTOR =
         "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip], [data-bcmv-video]";
+    const ROUTE_MEDIA_LOAD_EVENTS = ["emptied", "loadstart", "loadedmetadata"];
 
     let cachedPlayer = null;
     let liveQualityBinding = null;
@@ -142,6 +123,7 @@
     let pageApplyDueAt = 0;
     let pageApplyStartedAt = 0;
     let pageApplyDeadline = 0;
+    let pageApplyWindowSeq = 0;
     let observedTrackList = null;
     let pageObserver = null;
     let lastFullPlayerScanAt = 0;
@@ -163,6 +145,13 @@
     let vodStartupSettled = false;
     let stableVodApplyKey = "";
     let stableVodApplyVideo = null;
+    let stableVodApplyPlayer = null;
+    let stableVodApplyVerifyWindow = 0;
+    let stableLiveApplyKey = "";
+    let stableLiveApplyPlayer = null;
+    let stableLiveApplyVideo = null;
+    let stableLiveApplyReason = "";
+    let stableLiveApplyVerifyWindow = 0;
     let urlStartSeekSeq = 0;
     let activeUrlStartSeek = null;
     let lastUrlStartSeekAt = 0;
@@ -179,6 +168,7 @@
     let awaitingRouteApplyRequest = false;
     let playbackRestoreSeq = 0;
     let playbackRestoreTimer = 0;
+    let routeMediaGate = null;
 
     const nativeDefineProperty = Object.defineProperty;
     const nativeDefineProperties = Object.defineProperties;
@@ -203,8 +193,37 @@
         trackedQualityTargets.length = 0;
         lastFullPlayerScanAt = 0;
         playerSearchMisses = 0;
-        stableVodApplyKey = "";
-        stableVodApplyVideo = null;
+        clearStableVodApply();
+        clearStableLiveApply();
+    }
+
+    function clearRouteMediaGate() {
+        const gate = routeMediaGate;
+        routeMediaGate = null;
+        if (!gate) return;
+        for (const type of ROUTE_MEDIA_LOAD_EVENTS) gate.video.removeEventListener(type, gate.onLoad, true);
+    }
+
+    // URL이 먼저 바뀌면 같은 video에 이전 방송·영상이 남아 있다. 새 매체가 실제로 로드되기 전(소스 변경이나
+    // emptied·loadstart·loadedmetadata 전)의 트랙을 새 경로의 입장 적용 완료로 기록하지 않는다.
+    function armRouteMediaGate() {
+        clearRouteMediaGate();
+        const video = getMainVideo();
+        if (!(video instanceof HTMLVideoElement)) return;
+        const gate = { video, source: readLooseProp(video, "currentSrc"), onLoad: null };
+        gate.onLoad = () => {
+            if (routeMediaGate === gate) clearRouteMediaGate();
+        };
+        for (const type of ROUTE_MEDIA_LOAD_EVENTS) video.addEventListener(type, gate.onLoad, true);
+        routeMediaGate = gate;
+    }
+
+    function isStaleRouteMedia(video) {
+        const gate = routeMediaGate;
+        if (!gate || gate.video !== video) return false;
+        if (readLooseProp(video, "currentSrc") === gate.source) return true;
+        clearRouteMediaGate();
+        return false;
     }
 
     function syncQualityTargetRouteState() {
@@ -217,6 +236,7 @@
         detachVodPlaybackGuard();
         cancelPlaybackRestore();
         clearQualityTargetRouteState();
+        armRouteMediaGate();
         return true;
     }
 
@@ -495,7 +515,8 @@
     }
 
     function rememberUserMediaIntent(event) {
-        if (!isVodRoute()) return;
+        // VOD startup readiness reads this only on VOD; playback restore also uses it on live.
+        if (!isPlaybackRoute()) return;
 
         if (event.type === "keydown") {
             if (isEditableTarget(event.target)) return;
@@ -545,6 +566,12 @@
         syncQualityTargetRouteState();
         readAutoQualityState();
         liveQualityIntentKey = [location.pathname, autoQualityEnabled, preferredQuality].join("|");
+        if (!autoQualityEnabled) {
+            // Re-enabling is a settings change: the next entry applies again on both live and VOD.
+            clearStableVodApply();
+            clearStableLiveApply();
+            clearRouteMediaGate();
+        }
         if (!autoQualityEnabled || !isPlaybackRoute() || isVodRoute()) detachLiveQualityBinding();
         if (autoQualityEnabled && isPlaybackRoute()) installQualityTargetInterceptor();
         else uninstallQualityTargetInterceptor();
@@ -1272,6 +1299,8 @@
             const track = args[1]?.track;
             if (!binding.applying && this === pane && args[0] === "change") {
                 binding.failed = null;
+                // 첫 재생 뒤 메뉴에서 직접 고른 화질은 같은 플레이어에서 다시 덮어쓰지 않는다.
+                if (binding.started) rememberStableLiveApply(binding.player, binding.video, "manual-choice");
             }
             const result = Reflect.apply(binding.original, this, args);
             const requestedHeight = getPreferredHeight(preferredQuality);
@@ -1574,9 +1603,16 @@
         return match ? Number(match[0]) : 1080;
     }
 
+    function hasVideoPlaybackStarted(video) {
+        const played = Number(readLooseProp(readLooseProp(video, "played"), "length"));
+        return Number.isFinite(played) && played > 0;
+    }
+
     function shouldResumeAfterQualityChange(video, wasPaused) {
         if (!(video instanceof HTMLVideoElement)) return false;
         if (!wasPaused) return true;
+        // Startup recovery only covers an autoplay that never started; a pause after playback is not ours.
+        if (hasVideoPlaybackStarted(video)) return false;
         if (video.autoplay) return true;
         if (document.visibilityState === "hidden") return false;
 
@@ -1670,7 +1706,8 @@
 
             let shouldRetry = !timeRestoreCancelled;
 
-            if (shouldResume && nextVideo.paused) {
+            // A pause, seek or media key after the switch belongs to the user; never resume it late.
+            if (shouldResume && nextVideo.paused && lastUserMediaIntentAt < startedAt) {
                 const playResult = nextVideo.play?.();
                 playResult?.catch?.(() => {});
                 shouldRetry = shouldRetry || nextVideo.paused;
@@ -2081,7 +2118,8 @@
         };
     }
 
-    function applyQuality(quality) {
+    // pageWindowSeq is set only by the page's own apply pass; external requests pass 0.
+    function applyQuality(quality, pageWindowSeq = 0) {
         const context = createApplyContext();
         if (shouldDeferVodStartupQuality(context)) {
             return { status: "pending", reason: "vod-resume-wait" };
@@ -2091,6 +2129,12 @@
         if (!player) {
             bindTrackList(null);
             return { status: "pending", reason: "player-missing" };
+        }
+        const video = getMainVideoForContext(context);
+        // The window that produced 'selected' re-checks its own selection; everyone else sees the entry as done.
+        const verifyingEntry = pageWindowSeq > 0 && getEntryVerifyWindow() === pageWindowSeq;
+        if (!verifyingEntry && (isVodRoute() ? hasStableVodApply(video, player) : hasStableLiveApply(player, video))) {
+            return { status: "already", reason: isVodRoute() ? "entry-applied" : stableLiveApplyReason };
         }
         if (liveQualityBinding?.player === player) {
             if (!liveQualityBinding.started) {
@@ -2120,7 +2164,15 @@
         }
         const trackTarget = findVideoTrackListTarget(player);
         bindTrackList(trackTarget?.trackList || null);
-        return applyQualityToPlayer(player, quality, context, trackTarget);
+        const result = applyQualityToPlayer(player, quality, context, trackTarget);
+        // A matching track completes this entry and a selection makes it provisional until its own window
+        // verifies it; the same request re-sent from outside must not overwrite a quality the user picked since.
+        if ((result.status === "already" || result.status === "selected") && video instanceof HTMLVideoElement) {
+            const verifyWindow = result.status === "selected" ? pageWindowSeq : 0;
+            if (isVodRoute()) rememberStableVodPlayerApply(player, video, verifyWindow);
+            else rememberStableLiveApply(player, video, "entry-applied", verifyWindow);
+        }
+        return result;
     }
 
     function removeTrackListListeners() {
@@ -2151,26 +2203,93 @@
 
         pageApplyStartedAt = 0;
         pageApplyDeadline = 0;
+        finalizeEntryVerification();
         removeTrackListListeners();
         observedTrackList = null;
         stopPageObserver();
     }
 
-    function getStableVodApplyKey() {
-        return isVodRoute() ? `${location.href}|${preferredQuality}` : "";
+    function getEntryVerifyWindow() {
+        return isVodRoute() ? stableVodApplyVerifyWindow : stableLiveApplyVerifyWindow;
     }
 
-    function hasStableVodApply(video = getMainVideo()) {
+    // A provisional entry is verified only by the page window that selected it; ending that window finalizes it.
+    function isPageEntryVerifying() {
+        return pageApplyDeadline > 0 && pageApplyWindowSeq > 0 && getEntryVerifyWindow() === pageApplyWindowSeq;
+    }
+
+    function finalizeEntryVerification() {
+        stableVodApplyVerifyWindow = 0;
+        stableLiveApplyVerifyWindow = 0;
+    }
+
+    // Query/hash changes (timecode links, comment anchors) stay on the same VOD entry; link times are handled
+    // by the URL start-seek intent, not by re-applying quality.
+    function getStableVodApplyKey() {
+        return isVodRoute() ? `${location.pathname}|${preferredQuality}` : "";
+    }
+
+    function hasStableVodApply(video = getMainVideo(), player = stableVodApplyPlayer) {
         const key = getStableVodApplyKey();
         if (!key || stableVodApplyKey !== key) return false;
-        return stableVodApplyVideo === video;
+        return stableVodApplyVideo === video && stableVodApplyPlayer === player;
     }
 
     function rememberStableVodApply(result) {
-        if (isVodRoute() && result?.status === "already") {
+        if (isVodRoute() && result?.status === "already" && !isStaleRouteMedia(getMainVideo())) {
             stableVodApplyKey = getStableVodApplyKey();
             stableVodApplyVideo = getMainVideo();
         }
+    }
+
+    function clearStableVodApply() {
+        stableVodApplyKey = "";
+        stableVodApplyVideo = null;
+        stableVodApplyPlayer = null;
+        stableVodApplyVerifyWindow = 0;
+    }
+
+    // VOD 입장 적용도 같은 경로·선호 화질·플레이어·영상에서 한 번 끝난다. 경로·설정·플레이어·영상 교체만 다시 적용한다.
+    function rememberStableVodPlayerApply(player, video, verifyWindow = 0) {
+        if (isStaleRouteMedia(video)) return;
+        stableVodApplyKey = getStableVodApplyKey();
+        stableVodApplyVideo = video;
+        stableVodApplyPlayer = player;
+        stableVodApplyVerifyWindow = verifyWindow;
+    }
+
+    // 라이브 입장 적용은 같은 경로·선호 화질·플레이어·영상에서 한 번 끝난다. 이후 사용자가 고른 화질을
+    // DOM·트랙 변화나 무관한 옵션 갱신으로 되돌리지 않고, 경로·설정·플레이어 교체 때만 다시 적용한다.
+    function getStableLiveApplyKey() {
+        return isPlaybackRoute() && !isVodRoute() ? `${location.pathname}|${preferredQuality}` : "";
+    }
+
+    function clearStableLiveApply() {
+        stableLiveApplyKey = "";
+        stableLiveApplyPlayer = null;
+        stableLiveApplyVideo = null;
+        stableLiveApplyReason = "";
+        stableLiveApplyVerifyWindow = 0;
+    }
+
+    function rememberStableLiveApply(player, video, reason, verifyWindow = 0) {
+        const key = getStableLiveApplyKey();
+        if (!key || !player || !(video instanceof HTMLVideoElement) || isStaleRouteMedia(video)) return;
+        stableLiveApplyKey = key;
+        stableLiveApplyPlayer = player;
+        stableLiveApplyVideo = video;
+        stableLiveApplyReason = reason;
+        stableLiveApplyVerifyWindow = verifyWindow;
+    }
+
+    function hasStableLiveApply(player, video) {
+        const key = getStableLiveApplyKey();
+        return (
+            Boolean(key) &&
+            stableLiveApplyKey === key &&
+            stableLiveApplyPlayer === player &&
+            stableLiveApplyVideo === video
+        );
     }
 
     function settlePageApplyWindow({ stopObserver = false, stopTrackList = false } = {}) {
@@ -2181,6 +2300,7 @@
         pageApplyDueAt = 0;
         pageApplyStartedAt = 0;
         pageApplyDeadline = 0;
+        finalizeEntryVerification();
         if (stopTrackList) {
             removeTrackListListeners();
             observedTrackList = null;
@@ -2211,7 +2331,7 @@
             return;
         }
 
-        if (isVodRoute() && hasStableVodApply()) {
+        if (isVodRoute() && hasStableVodApply() && !isPageEntryVerifying()) {
             settlePageApplyWindow({ stopObserver: true, stopTrackList: true });
             return;
         }
@@ -2223,7 +2343,10 @@
 
     function extendPageApplyWindow(windowMs = PAGE_APPLY_WINDOW_MS) {
         const now = performance.now();
-        if (!pageApplyDeadline || now > pageApplyDeadline) pageApplyStartedAt = now;
+        if (!pageApplyDeadline || now > pageApplyDeadline) {
+            pageApplyStartedAt = now;
+            pageApplyWindowSeq += 1;
+        }
         pageApplyDeadline = Math.max(pageApplyDeadline, now + windowMs);
     }
 
@@ -2259,7 +2382,7 @@
             return;
         }
 
-        const result = applyQuality(preferredQuality);
+        const result = applyQuality(preferredQuality, pageApplyWindowSeq);
         writeStatus(result);
         scheduleNextPageApply(result);
     }
@@ -2357,7 +2480,9 @@
             });
             if (result.status === "already" || result.status === "blocked" || result.waitForEvent) {
                 rememberStableVodApply(result);
-                settlePageApplyWindow({ stopObserver: isVodRoute(), stopTrackList: isVodRoute() });
+                // An external answer must not cancel the page window still verifying its own selection.
+                if (!isPageEntryVerifying())
+                    settlePageApplyWindow({ stopObserver: isVodRoute(), stopTrackList: isVodRoute() });
             }
         } catch (error) {
             writeStatus({

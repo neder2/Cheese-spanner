@@ -105,6 +105,8 @@ test("discard is unavailable during a write and later restores the newly saved s
     dispatch(dom, skip, "input");
     dispatch(dom, discard, "click");
     assert.equal(skip.value, "25");
+    // The save re-reads the latest stored options inside the settings lock before it writes.
+    await waitForAsyncCallbacks();
     assert.equal(writes.length, 1);
     writes[0].complete();
     assert.equal(document.getElementById("notice").textContent, "변경 1개");
@@ -145,10 +147,15 @@ for (const granted of [true, false]) {
         skip.value = "30";
         dispatch(dom, skip, "input");
         requests[0](granted);
+        await waitForAsyncCallbacks();
         if (granted) {
             assert.equal(writes.length, 1);
             assert.equal(writes[0].values.followingPreviewTooltipEnabled, true);
-            assert.equal(writes[0].values.skipSeconds, 15, "permission approval saves only the clicked snapshot");
+            assert.equal(
+                Object.hasOwn(writes[0].values, "skipSeconds"),
+                false,
+                "permission approval saves only the clicked snapshot, not the later edit"
+            );
             assert.equal(discard.disabled, true);
             writes[0].complete();
         } else {
@@ -186,6 +193,7 @@ test("save errors persist until dismissed or successfully retried while successe
     const save = document.getElementById("save");
     const message = document.getElementById("message");
     save.click();
+    await waitForAsyncCallbacks();
     assert.equal(message.dataset.type, "error");
     assert.equal(message.classList.contains("hidden"), false);
     assert.equal(
@@ -200,6 +208,7 @@ test("save errors persist until dismissed or successfully retried while successe
         retry = complete;
     };
     save.click();
+    await waitForAsyncCallbacks();
     dismiss.focus();
     chrome.runtime.lastError = { message: "retry failed" };
     retry();
@@ -213,9 +222,11 @@ test("save errors persist until dismissed or successfully retried while successe
     assert.equal(message.classList.contains("hidden"), true);
     assert.equal(document.activeElement, save);
     save.click();
+    await waitForAsyncCallbacks();
     assert.equal(message.classList.contains("hidden"), false);
     chrome.storage.sync.set = (_values, complete) => complete();
     save.click();
+    await waitForAsyncCallbacks();
     assert.equal(message.dataset.type, "success");
     assert.equal(message.querySelector("button"), null);
     assert.equal(document.getElementById("notice").dataset.state, "saved");

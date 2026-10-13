@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
 const { waitForCondition } = require("./wait-for-condition.js");
+const { forwardSettingsStore } = require("./settings-store-emulation.js");
 
 require("../../shared/data.js");
 require("../../shared/watchHistoryStore.js");
@@ -56,10 +57,12 @@ function createFakeChrome({ sync = {}, local = {}, permissionGranted = true } = 
     const storageChangeListeners = [];
     const permissionRequests = [];
     const runtimeMessages = [];
+    let fakeChrome = null;
     const runtime = {
         id: "better-chzzk",
         sendMessage(message, callback) {
             runtimeMessages.push(message);
+            if (forwardSettingsStore(fakeChrome, message, callback)) return;
             if (message?.type !== watchHistoryStore.MESSAGE_TYPE) {
                 setTimeout(() => callback?.(), 0);
                 return;
@@ -75,7 +78,7 @@ function createFakeChrome({ sync = {}, local = {}, permissionGranted = true } = 
         },
     };
 
-    return {
+    fakeChrome = {
         runtime,
         permissions: {
             request(spec, callback) {
@@ -104,6 +107,7 @@ function createFakeChrome({ sync = {}, local = {}, permissionGranted = true } = 
             runtimeMessages,
         },
     };
+    return fakeChrome;
 }
 
 function createDom(htmlFile, urlPath, chrome) {

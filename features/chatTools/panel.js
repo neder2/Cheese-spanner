@@ -29,6 +29,8 @@
     const MODERATOR_PANEL_HOST_ATTR = "data-bcct-moderator-panel-host";
 
     const MODERATOR_TITLE = "방송자/채팅 운영자 채팅";
+    // Matches chatToolsModeratorBoxHeight's default and the box's original maximum height.
+    const DEFAULT_MODERATOR_BOX_HEIGHT = 420;
 
     const CHAT_TITLE_RE = /chat|\uCC44\uD305/i;
 
@@ -162,7 +164,7 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
   right:8px;
   z-index:2147483646;
   width:min(344px, calc(100vw - 24px));
-  max-height:min(420px, calc(100vh - 120px));
+  max-height:min(var(--bcct-box-height,420px), calc(100vh - 120px));
   border:1px solid rgba(0,0,0,0.1);
   border-radius:10px;
   background:var(--sem-color-background-neutral-base,#fff);
@@ -240,7 +242,7 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
 .bcct-moderator-box__list{
   display:flex;
   flex-direction:column;
-  max-height:276px;
+  max-height:calc(var(--bcct-box-height,420px) - 144px);
   overflow:auto;
   overscroll-behavior:contain;
   min-height:0;
@@ -498,6 +500,7 @@ html.theme_dark .bcct-moderator-box__empty{
         let moderatorMenuButtonConfirmed = false;
         let moderatorAnchorObserver = null;
         let moderatorAnchorRoot = null;
+        let moderatorBoxHeight = DEFAULT_MODERATOR_BOX_HEIGHT;
         let moderatorAnchorDirty = false;
         let moderatorPanelOpen = false;
 
@@ -1277,6 +1280,7 @@ html.theme_dark .bcct-moderator-box__empty{
             host.appendChild(box);
 
             moderatorBox = box;
+            applyModeratorBoxHeight();
             moderatorList = list;
             moderatorCount = count;
             moderatorAuthors = authors;
@@ -1304,8 +1308,21 @@ html.theme_dark .bcct-moderator-box__empty{
             renderModeratorList();
         }
 
-        function configure({ showTimestamp }) {
+        function applyModeratorBoxHeight() {
+            if (!moderatorBox) return;
+            // The default keeps the original stylesheet value; only a chosen height adds an inline variable.
+            if (moderatorBoxHeight === DEFAULT_MODERATOR_BOX_HEIGHT)
+                moderatorBox.style.removeProperty("--bcct-box-height");
+            else moderatorBox.style.setProperty("--bcct-box-height", `${moderatorBoxHeight}px`);
+        }
+
+        function configure({ showTimestamp, boxHeight }) {
             showChatTimestamp = showTimestamp === true;
+            moderatorBoxHeight =
+                Number.isInteger(boxHeight) && boxHeight >= 240 && boxHeight <= 720
+                    ? boxHeight
+                    : DEFAULT_MODERATOR_BOX_HEIGHT;
+            applyModeratorBoxHeight();
             renderModeratorList();
         }
 

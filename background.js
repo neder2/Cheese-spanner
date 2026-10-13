@@ -6,10 +6,14 @@
  *   폐기한 설정·알림과 1.3.7 방식 변경 안내의 저장값을 정리한다.
  *   컴프레서 기본 선택은 계속 보관하고, 탭별 스냅샷은 탭 종료·브라우저 시작 시 정리한다.
  *   방송 시작 알림·자동 열기는 shared/liveStartMonitor.js의 독립 큐와 alarm으로 처리한다.
+ *   팔로우한 라이브 채널의 방송 제목 이력은 shared/followingTitleCollector.js의 독립 큐와 alarm으로 수집·저장한다.
  *   전체 방송의 카테고리 제외 선택은 독립 처리 경로에서 개별 변경을 순차 저장한다.
  *   과거 후원 가져오기는 history 페이지의 요청으로 조회하고, 같은 시청 기록 writer 큐에 월별 스냅샷을 저장한다.
+ *   백업 대상 설정의 콘텐츠 쓰기와 설정 파일 내보내기·미리보기·적용은 shared/settingsStore.js의 설정 저장 큐가
+ *   옵션 페이지와 공유하는 설정 저장 잠금 안에서 처리한다.
  * 의존: shared/settings.js, shared/data.js, shared/watchHistoryStore.js,
  *   shared/adVideoRegistration.js, shared/liveStart.js, shared/liveStartMonitor.js,
+ *   shared/followingTitleHistory.js, shared/followingTitleCollector.js,
  *   shared/donationHistory.js, shared/donationHistoryImport.js(importScripts).
  */
 importScripts(
@@ -26,6 +30,9 @@ importScripts(
     "shared/adVideoRegistration.js"
 );
 importScripts("shared/liveStart.js", "shared/liveStartMonitor.js");
+importScripts("shared/followingTitleHistory.js", "shared/followingTitleCollector.js");
+importScripts("shared/followingFolders.js", "shared/chatMultiview.js");
+importScripts("shared/settingsBackup.js", "shared/settingsStore.js");
 importScripts("shared/donationHistoryImport.js");
 
 const { OPTION_KEYS, getStorageLastError, normalizeOptions, withOptionsStorageLock } = BetterChzzkSettings;
@@ -54,6 +61,10 @@ const updateGuide = globalThis.BetterChzzkUpdateGuideController.createController
     catalog: globalThis.BetterChzzkUpdateGuide,
 });
 const categoryExclusions = globalThis.BetterChzzk.categoryExclusions.createController({ chrome });
+const settingsStore = globalThis.BetterChzzkSettingsStore.createController({ chrome });
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) =>
+    settingsStore.handleMessage(message, sender, sendResponse)
+);
 const adVideoRegistration = chrome.scripting?.getRegisteredContentScripts
     ? globalThis.BetterChzzkAdVideoRegistration.createController({
           scripting: chrome.scripting,
@@ -310,7 +321,12 @@ function isTrustedWatchHistorySender(operation, sender) {
         operation.kind === "appendActivities" ||
         operation.kind === "migrateRecordId"
     ) {
-        return Boolean(sender.tab) && senderUrl.protocol === "https:" && senderUrl.hostname === "chzzk.naver.com";
+        return (
+            Boolean(sender.tab) &&
+            sender.frameId === 0 &&
+            senderUrl.origin === "https://chzzk.naver.com" &&
+            (sender.origin === undefined || sender.origin === "https://chzzk.naver.com")
+        );
     }
 
     const historyUrl = new URL(chrome.runtime.getURL("history.html"));
@@ -321,6 +337,17 @@ function isTrustedWatchHistorySender(operation, sender) {
         !senderUrl.username &&
         !senderUrl.password &&
         !senderUrl.port
+    );
+}
+
+function isIncognitoWatchHistoryWrite(operation, sender) {
+    // The manifest keeps Chrome's default spanning mode: incognito tabs share this worker and storage.local.
+    // Private-window viewing and chats (possibly from another Naver account) never enter the profile history.
+    return (
+        Boolean(sender.tab?.incognito) &&
+        (operation.kind === "upsertSessionSnapshot" ||
+            operation.kind === "appendActivities" ||
+            operation.kind === "migrateRecordId")
     );
 }
 
@@ -347,6 +374,9 @@ const watchHistoryBackup = globalThis.BetterChzzkWatchHistoryBackupController.cr
     readHistory: async () => (await storageLocalGet(WATCH_HISTORY_STORAGE_KEY))[WATCH_HISTORY_STORAGE_KEY],
     writeHistory: (history) => storageLocalSet({ [WATCH_HISTORY_STORAGE_KEY]: history }),
     maxStorageBytes: chrome.storage.local.QUOTA_BYTES,
+    // The quota is shared with every other local value; the controller only measures it.
+    storageArea: chrome.storage.local,
+    storageKey: WATCH_HISTORY_STORAGE_KEY,
 });
 
 globalThis.BetterChzzkDonationHistoryImport.install({
@@ -409,6 +439,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: false, error: error?.message || "Invalid watch history mutation" });
         return false;
     }
+    if (isIncognitoWatchHistoryWrite(operation, sender)) {
+        // Not an error: the page must not keep retrying a write that is intentionally never stored.
+        sendResponse({ ok: true, result: { status: "ignored", reason: "incognito" } });
+        return false;
+    }
 
     enqueueWatchHistoryMutation(operation).then(
         (result) => sendResponse({ ok: true, result }),
@@ -424,7 +459,8 @@ chrome.runtime.onInstalled.addListener((details) => {
     void withOptionsStorageLock(
         () =>
             new Promise((resolve) => {
-                chrome.storage.sync.get(OPTION_KEYS, (data) => {
+                // The legacy chatToolsEnabled key must be read too, or its migration writes both chat tools off.
+                chrome.storage.sync.get(BetterChzzkSettings.STORAGE_OPTION_KEYS, (data) => {
                     if (getStorageLastError()) {
                         resolve();
                         return;

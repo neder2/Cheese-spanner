@@ -222,7 +222,7 @@ test("one donation view uses refreshed coverage and later live rows without dupl
         NOW + 3000
     ).history;
     document.getElementById("refresh").click();
-    await waitForCondition(() => document.getElementById("message").textContent.includes("새로고침했습니다"));
+    await waitForCondition(() => document.getElementById("message").textContent.includes("새로고침했어요"));
     assert.match(document.getElementById("activitySummary").textContent, /10,500치즈 \(7회\)/);
     assert.equal(document.querySelectorAll("#activityList li").length, 4);
     document.getElementById("historySearch").value = "없는 채널";
@@ -542,7 +542,7 @@ test("history refresh starts with one click, ignores display filters, shows one 
     assert.match(document.getElementById("donationImportUpdated").textContent, /마지막 갱신/);
     assert.equal(document.querySelector("#activityList img"), null);
     assert.match(document.getElementById("activityList").textContent, /메시지 없는 후원/);
-    assert.equal(document.getElementById("totalWatchTime").textContent, "0초");
+    assert.equal(document.getElementById("totalWatchTime").textContent, "0분");
     assert.equal(document.getElementById("totalLiveCount").textContent, "0개");
     assert.equal(document.getElementById("clearHistory").disabled, false);
     const activityType = document.getElementById("activityType");
@@ -552,4 +552,101 @@ test("history refresh starts with one click, ignores display filters, shows one 
     document.getElementById("clearDonationImport").click();
     await waitForCondition(() => document.getElementById("clearDonationImport").disabled);
     assert.equal(chrome.testState.local[store.STORAGE_KEY].donationImport, undefined);
+});
+
+// Opens the activity tab with a fake import port, starts a refresh from the donation list, and switches to chats.
+async function startRefreshThenShowChats(t) {
+    const chrome = createFakeChrome();
+    const incoming = events(),
+        disconnect = events(),
+        sent = [];
+    chrome.runtime.connect = () => ({
+        onMessage: incoming,
+        onDisconnect: disconnect,
+        postMessage: (message) => sent.push(message),
+        disconnect: () => disconnect.emit(),
+    });
+    const dom = createDom("history.html", "history.html", chrome);
+    t.after(async () => {
+        await new Promise((resolve) => setImmediate(resolve));
+        dom.window.close();
+    });
+    dom.window.Date.now = () => NOW;
+    for (const file of ["shared/data.js", "shared/donationHistory.js", "history.js"]) evalRepoScript(dom, file);
+    const document = dom.window.document;
+    await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
+    document.getElementById("activityViewTab").click();
+    const ui = {
+        activityType: document.getElementById("activityType"),
+        controls: document.getElementById("donationImportControls"),
+        refresh: document.getElementById("donationImportRefresh"),
+        cancel: document.getElementById("donationImportCancel"),
+        status: document.getElementById("donationImportStatus"),
+        description: document.getElementById("donationImportDescription"),
+    };
+    const showType = (value) => {
+        ui.activityType.value = value;
+        dispatch(dom, ui.activityType, "change");
+    };
+    const startFromChats = () => {
+        showType("donation");
+        ui.refresh.click();
+        incoming.emit({ type: "progress", month: MONTH, monthIndex: 1, monthCount: 2, page: 1, pages: 3, count: 4 });
+        showType("chat");
+    };
+    // A finished refresh, failed or not, shows its result in the donation list next to the retry button.
+    const expectFailureInDonationList = (pattern, when) => {
+        assert.equal(ui.activityType.value, "donation", when);
+        assert.equal(ui.controls.hidden, false, when);
+        assert.match(ui.status.textContent, pattern, when);
+        assert.equal(ui.status.dataset.error, "true", when);
+        assert.equal(ui.cancel.hidden, true, when);
+        assert.equal(ui.refresh.hidden, false, when);
+        assert.equal(ui.refresh.disabled, false, when);
+        assert.equal(ui.description.hidden, false, when);
+        assert.equal(ui.controls.getAttribute("aria-busy"), "false", when);
+    };
+    startFromChats();
+    return { chrome, incoming, disconnect, sent, ui, showType, startFromChats, expectFailureInDonationList };
+}
+
+test("a running donation refresh keeps its progress and cancel button after switching to chats", async (t) => {
+    const { incoming, sent, ui, showType, expectFailureInDonationList } = await startRefreshThenShowChats(t);
+    assert.equal(ui.controls.hidden, false, "the running refresh stays on screen in the chat list");
+    assert.match(ui.status.textContent, /1\/3페이지/);
+    assert.equal(ui.cancel.hidden, false);
+    assert.equal(ui.cancel.disabled, false);
+    assert.equal(ui.refresh.hidden, true, "the chat list still does not offer another refresh");
+    assert.equal(ui.description.hidden, true, "the donation list description stays with the donation list");
+    incoming.emit({ type: "progress", month: MONTH, monthIndex: 2, monthCount: 2, page: 2, pages: 3, count: 7 });
+    assert.match(ui.status.textContent, /2\/2개월 · 2\/3페이지/);
+    ui.cancel.click();
+    assert.deepEqual(
+        sent.map((message) => message.type),
+        ["start", "cancel"]
+    );
+    assert.equal(ui.controls.hidden, false);
+    assert.match(ui.status.textContent, /취소하고 있어요/);
+
+    incoming.emit({ type: "error", message: "후원 내역 갱신을 취소했어요." });
+    expectFailureInDonationList(/갱신을 취소했어요/, "an error message is not written into hidden tools");
+    showType("chat");
+    assert.equal(ui.controls.hidden, true, "once the refresh ended the chat list hides the donation tools again");
+});
+
+test("a donation refresh whose port disconnects while chats are shown reports it in the donation list", async (t) => {
+    const { chrome, disconnect, ui, showType, startFromChats, expectFailureInDonationList } =
+        await startRefreshThenShowChats(t);
+    assert.equal(ui.controls.hidden, false);
+    disconnect.emit();
+    expectFailureInDonationList(/가져오기가 중단됐어요/, "a plain disconnect");
+
+    startFromChats();
+    assert.equal(ui.status.dataset.error, "false", "a new refresh replaces the earlier error");
+    chrome.runtime.lastError = { message: "Could not establish connection." };
+    disconnect.emit();
+    delete chrome.runtime.lastError;
+    expectFailureInDonationList(/가져오기 연결이 끊겼어요/, "a disconnect with runtime.lastError");
+    showType("chat");
+    assert.equal(ui.controls.hidden, true);
 });

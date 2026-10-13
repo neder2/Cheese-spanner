@@ -2,11 +2,16 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 const { JSDOM } = require("jsdom");
 const { waitForCondition } = require("./helpers/wait-for-condition.js");
 
 const repoRoot = path.join(__dirname, "..");
 const STORAGE_KEY = "betterchzzkFollowingLiveTitleHistory";
+const ALARM = "betterchzzk:following-title-history";
+const LIST_URL = "https://api.chzzk.naver.com/service/v1/channels/following-lives?sortType=RECOMMEND";
+const CHANNEL = "channel-123";
+const OTHER_CHANNEL = "channel-456";
 const openDoms = new Set();
 
 test.afterEach(() => {
@@ -26,6 +31,605 @@ test.afterEach(() => {
 function readRepoFile(...parts) {
     return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
 }
+
+function clone(value) {
+    return value === undefined ? undefined : structuredClone(value);
+}
+
+async function flush() {
+    // Mocked extension callbacks settle in microtasks and immediates; drain several event turns.
+    for (let i = 0; i < 30; i++) await new Promise(setImmediate);
+}
+
+function loadModel() {
+    const context = vm.createContext({});
+    vm.runInContext(readRepoFile("shared", "followingTitleHistory.js"), context);
+    return context.BetterChzzkFollowingTitleHistory;
+}
+
+function liveItem(channelId, liveId, liveTitle, channelName = "테스트 채널") {
+    return { channel: { channelId, channelName }, liveInfo: { liveId, liveTitle } };
+}
+
+function listResponse(items) {
+    return { code: 200, message: null, content: { followingList: items } };
+}
+
+function toPlain(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
+test("following-lives rows keep raw titles and skip rows without live identity", () => {
+    const model = loadModel();
+    assert.equal(model.parseFollowingLives({ code: 401, message: "권한이 없습니다." }), null);
+    assert.equal(model.parseFollowingLives({ code: 200, content: {} }), null);
+    assert.deepEqual(
+        toPlain(
+            model.parseFollowingLives(
+                listResponse([
+                    liveItem(CHANNEL, 11, "  롤 내전 |  치지직 대회 예선 "),
+                    liveItem(OTHER_CHANNEL, null, "라이브 ID 없음"),
+                    liveItem("bad id!", 12, "잘못된 채널"),
+                    liveItem("channel-789", 13, ""),
+                ])
+            )
+        ),
+        [{ channelId: CHANNEL, liveId: "11", title: "롤 내전 | 치지직 대회 예선", channelName: "테스트 채널" }]
+    );
+});
+
+test("polls record every small title change per live and restart a new live id", () => {
+    const model = loadModel();
+    const poll = (store, title, at, liveId = "11") =>
+        model.applyPoll(store, model.parseFollowingLives(listResponse([liveItem(CHANNEL, liveId, title)])), at);
+
+    let result = poll(undefined, "테스트 채널 | 롤 내전 | 치지직 대회 예선", 1000);
+    assert.equal(result.titlesChanged, true);
+    result = poll(result.store, "테스트 채널 | 롤 내전 | 치지직 대회 예선", 61_000);
+    assert.equal(result.titlesChanged, false);
+    result = poll(result.store, "테스트 채널  |  롤 내전 | 치지직 대회 예선", 121_000);
+    assert.equal(result.titlesChanged, false, "whitespace-only edits are the same title");
+    result = poll(result.store, "테스트 채널 | 롤 내전 | 치지직 대회 본선", 181_000);
+    result = poll(result.store, "테스트 채널 | 롤 내전 | 치지직 대회 본선 🔴", 241_000);
+    result = poll(result.store, "테스트 채널 | 롤 내전 | 치지직 대회 예선", 301_000);
+
+    const entry = result.store.entries[0];
+    assert.equal(entry.liveId, "11");
+    assert.deepEqual(toPlain(entry.titleHistory), [
+        { title: "테스트 채널 | 롤 내전 | 치지직 대회 예선", firstSeenAt: 1000, lastSeenAt: 121_000 },
+        { title: "테스트 채널 | 롤 내전 | 치지직 대회 본선", firstSeenAt: 181_000, lastSeenAt: 181_000 },
+        { title: "테스트 채널 | 롤 내전 | 치지직 대회 본선 🔴", firstSeenAt: 241_000, lastSeenAt: 241_000 },
+        { title: "테스트 채널 | 롤 내전 | 치지직 대회 예선", firstSeenAt: 301_000, lastSeenAt: 301_000 },
+    ]);
+    assert.deepEqual(
+        toPlain(model.getPreviousRows(entry, "테스트 채널 | 롤 내전 | 치지직 대회 예선").map((row) => row.title)),
+        ["테스트 채널 | 롤 내전 | 치지직 대회 본선", "테스트 채널 | 롤 내전 | 치지직 대회 본선 🔴"]
+    );
+
+    result = poll(result.store, "다음 방송", 400_000, "12");
+    assert.deepEqual(toPlain(result.store.entries[0].titleHistory.map((row) => row.title)), ["다음 방송"]);
+    assert.equal(result.store.entries[0].liveId, "12");
+});
+
+test("one poll stores every followed live and bounds titles and broadcasts", () => {
+    const model = loadModel();
+    const items = Array.from({ length: model.MAX_ENTRIES + 5 }, (_, index) =>
+        liveItem(`channel-${index}`, index + 1, `제목 ${index}`)
+    );
+    let { store } = model.applyPoll(undefined, model.parseFollowingLives(listResponse(items)), 1000);
+    assert.equal(store.entries.length, model.MAX_ENTRIES);
+    assert.deepEqual(
+        toPlain(store.entries.map((entry) => entry.channelId)),
+        Array.from({ length: model.MAX_ENTRIES }, (_, index) => `channel-${index}`),
+        "new broadcasts beyond the cap keep the top of the following list"
+    );
+
+    store = undefined;
+    for (let index = 0; index < model.MAX_TITLES_PER_LIVE + 3; index++) {
+        ({ store } = model.applyPoll(
+            store,
+            model.parseFollowingLives(listResponse([liveItem(CHANNEL, 1, `제목 ${index}`)])),
+            1000 + index
+        ));
+    }
+    const rows = store.entries[0].titleHistory;
+    assert.equal(rows.length, model.MAX_TITLES_PER_LIVE);
+    assert.equal(rows.at(-1).title, `제목 ${model.MAX_TITLES_PER_LIVE + 2}`);
+});
+
+test("with more than 100 lives at once stored broadcasts keep accumulating whatever the list order", () => {
+    const model = loadModel();
+    const count = model.MAX_ENTRIES + 30;
+    const poll = (store, suffix, at, order = (position) => position) =>
+        model.applyPoll(
+            store,
+            model.parseFollowingLives(
+                listResponse(
+                    Array.from({ length: count }, (_, position) => {
+                        const index = order(position);
+                        return liveItem(`channel-${index}`, index + 1, `제목 ${index}${suffix}`);
+                    })
+                )
+            ),
+            at
+        ).store;
+    const ended = {
+        channelId: "ended-channel",
+        liveId: "999",
+        channelName: "끝난 채널",
+        titleHistory: [{ title: "끝난 방송", firstSeenAt: 10, lastSeenAt: 20 }],
+        updatedAt: 20,
+    };
+    const top = Array.from({ length: model.MAX_ENTRIES }, (_, index) => `channel-${index}`);
+
+    let store = poll({ version: 1, entries: [ended] }, "", 1000);
+    assert.deepEqual(
+        toPlain(store.entries.map((entry) => entry.channelId)),
+        top,
+        "the ended broadcast leaves first and the top of the list is kept"
+    );
+
+    store = poll(store, " 변경", 61_000, (position) => count - 1 - position);
+    store = poll(store, " 변경 2", 121_000, (position) => (position + 17) % count);
+    assert.deepEqual(
+        toPlain(store.entries.map((entry) => entry.channelId)).sort(),
+        [...top].sort(),
+        "a reordered list does not swap out broadcasts that are already collecting"
+    );
+    assert.ok(
+        store.entries.every((entry) => entry.titleHistory.length === 3),
+        "kept broadcasts record every title change"
+    );
+});
+
+test("stored values from the earlier page-only cache stay readable", () => {
+    const model = loadModel();
+    const store = model.normalizeStore({
+        version: 1,
+        entries: [
+            {
+                channelId: CHANNEL,
+                liveId: "old-live",
+                channelName: "테스트 채널",
+                titleHistory: [{ title: "이전 제목", firstSeenAt: 10, lastSeenAt: 20 }, { title: "" }],
+                updatedAt: 20,
+            },
+            { channelId: "", liveId: "x", titleHistory: [{ title: "버림", firstSeenAt: 1 }] },
+        ],
+    });
+    assert.deepEqual(toPlain(store.entries), [
+        {
+            channelId: CHANNEL,
+            liveId: "old-live",
+            channelName: "테스트 채널",
+            titleHistory: [{ title: "이전 제목", firstSeenAt: 10, lastSeenAt: 20 }],
+            updatedAt: 20,
+        },
+    ]);
+});
+
+function createEvent() {
+    const listeners = [];
+    return {
+        listeners,
+        addListener: (listener) => listeners.push(listener),
+        removeListener(listener) {
+            const index = listeners.indexOf(listener);
+            if (index >= 0) listeners.splice(index, 1);
+        },
+        emit: (...args) => listeners.forEach((listener) => listener(...args)),
+    };
+}
+
+function createCollector({ sync = {}, local = {}, tabs = [] } = {}) {
+    const changed = createEvent();
+    const stores = { sync: { ...sync }, local: clone(local) };
+    const writes = [];
+    const workerRequests = [];
+    const tabRequests = [];
+    const alarms = new Map();
+    let clock = 10_000_000;
+    let workerResponder = () => ({ status: 200, json: listResponse([]) });
+    let tabResponder = () => ({ status: 200, json: listResponse([]) });
+    let currentTabs = tabs;
+    const runtime = { id: "test", lastError: null, onStartup: createEvent(), onInstalled: createEvent() };
+
+    function area(name) {
+        return {
+            get(keys, callback) {
+                const result = {};
+                for (const key of Array.isArray(keys) ? keys : [keys]) {
+                    if (Object.hasOwn(stores[name], key)) result[key] = clone(stores[name][key]);
+                }
+                queueMicrotask(() => callback(result));
+            },
+            set(values, callback) {
+                queueMicrotask(() => {
+                    const changes = {};
+                    for (const [key, value] of Object.entries(values)) {
+                        changes[key] = { oldValue: stores[name][key], newValue: clone(value) };
+                        stores[name][key] = clone(value);
+                    }
+                    writes.push({ area: name, values: clone(values) });
+                    callback?.();
+                    changed.emit(changes, name);
+                });
+            },
+        };
+    }
+
+    const chrome = {
+        runtime,
+        storage: { local: area("local"), sync: area("sync"), onChanged: changed },
+        alarms: {
+            onAlarm: createEvent(),
+            get: async (name) => clone(alarms.get(name)),
+            create: async (name, info) => alarms.set(name, clone(info)),
+            clear: async (name) => alarms.delete(name),
+        },
+        tabs: { query: async () => clone(currentTabs) },
+        scripting: {
+            executeScript: async (injection) => {
+                tabRequests.push({ target: clone(injection.target), world: injection.world, args: injection.args });
+                return [{ result: await tabResponder(injection) }];
+            },
+        },
+    };
+    class Clock extends Date {
+        static now() {
+            return clock;
+        }
+    }
+    const context = vm.createContext({
+        chrome,
+        console: { warn() {} },
+        URL,
+        AbortController,
+        setTimeout,
+        clearTimeout,
+        Date: Clock,
+        fetch: async (url, init) => {
+            workerRequests.push({ url, credentials: init?.credentials, cache: init?.cache });
+            const response = await workerResponder(url);
+            return { ok: response.status === 200, status: response.status, json: async () => clone(response.json) };
+        },
+    });
+    for (const file of [
+        "shared/settings.js",
+        "shared/data.js",
+        "shared/followingTitleHistory.js",
+        "shared/followingTitleCollector.js",
+    ]) {
+        vm.runInContext(readRepoFile(file), context, { filename: file });
+    }
+    return {
+        chrome,
+        stores,
+        writes,
+        alarms,
+        workerRequests,
+        tabRequests,
+        get entries() {
+            return toPlain(stores.local[STORAGE_KEY]?.entries || []);
+        },
+        setWorker: (next) => {
+            workerResponder = next;
+        },
+        setTab: (next) => {
+            tabResponder = next;
+        },
+        setTabs: (next) => {
+            currentTabs = next;
+        },
+        advance: (ms) => {
+            clock += ms;
+        },
+        async tick(ms = 60_000) {
+            clock += ms;
+            chrome.alarms.onAlarm.emit({ name: ALARM });
+            await flush();
+        },
+        async setOption(value) {
+            const oldValue = stores.sync.followingTitleHistoryEnabled;
+            stores.sync.followingTitleHistoryEnabled = value;
+            changed.emit({ followingTitleHistoryEnabled: { oldValue, newValue: value } }, "sync");
+            await flush();
+        },
+    };
+}
+
+const chzzkTab = (overrides = {}) => ({
+    id: 7,
+    windowId: 1,
+    url: "https://chzzk.naver.com/live/abc",
+    status: "complete",
+    active: true,
+    incognito: false,
+    discarded: false,
+    ...overrides,
+});
+
+test("the worker keeps a one-minute alarm only while the option is on", async () => {
+    const c = createCollector();
+    await flush();
+    assert.equal(c.alarms.get(ALARM).periodInMinutes, 1);
+    assert.equal(c.workerRequests.length, 0, "loading the worker alone does not request the list");
+
+    await c.setOption(false);
+    assert.equal(c.alarms.has(ALARM), false);
+    await c.tick();
+    assert.equal(c.workerRequests.length, 0);
+
+    await c.setOption(true);
+    assert.equal(c.alarms.get(ALARM).periodInMinutes, 1);
+    assert.equal(c.workerRequests.length, 1, "turning the option on checks the list right away");
+});
+
+test("each alarm reads all followed lives with one request and records title changes", async () => {
+    const c = createCollector();
+    await flush();
+    let titles = { [CHANNEL]: "첫 제목", [OTHER_CHANNEL]: "다른 채널 제목" };
+    c.setWorker(() => ({
+        status: 200,
+        json: listResponse(Object.entries(titles).map(([id, title], index) => liveItem(id, index + 1, title))),
+    }));
+
+    await c.tick();
+    assert.deepEqual(c.workerRequests, [{ url: LIST_URL, credentials: "include", cache: "no-store" }]);
+    assert.deepEqual(
+        c.entries.map((entry) => [entry.channelId, entry.titleHistory.map((row) => row.title)]),
+        [
+            [CHANNEL, ["첫 제목"]],
+            [OTHER_CHANNEL, ["다른 채널 제목"]],
+        ]
+    );
+
+    titles = { [CHANNEL]: "첫 제목!", [OTHER_CHANNEL]: "다른 채널 제목" };
+    await c.tick();
+    assert.equal(c.workerRequests.length, 2);
+    assert.deepEqual(
+        c.entries.find((entry) => entry.channelId === CHANNEL).titleHistory.map((row) => row.title),
+        ["첫 제목", "첫 제목!"]
+    );
+});
+
+test("overlapping alarms coalesce into one request and failures keep stored history", async () => {
+    const c = createCollector({
+        local: {
+            [STORAGE_KEY]: {
+                version: 1,
+                entries: [
+                    {
+                        channelId: CHANNEL,
+                        liveId: "1",
+                        channelName: "테스트 채널",
+                        titleHistory: [{ title: "보관된 제목", firstSeenAt: 1, lastSeenAt: 2 }],
+                        updatedAt: 2,
+                    },
+                ],
+            },
+        },
+    });
+    await flush();
+    c.setWorker(() => ({ status: 503 }));
+    c.advance(60_000);
+    for (let i = 0; i < 5; i++) c.chrome.alarms.onAlarm.emit({ name: ALARM });
+    await flush();
+    assert.equal(c.workerRequests.length, 1);
+    assert.equal(c.writes.length, 0);
+
+    c.setWorker(() => ({ status: 200, json: { code: 200, content: { unexpected: [] } } }));
+    await c.tick();
+    assert.equal(c.writes.length, 0);
+    assert.deepEqual(c.entries[0].titleHistory, [{ title: "보관된 제목", firstSeenAt: 1, lastSeenAt: 2 }]);
+});
+
+test("an open regular Chzzk tab reads the list with the page session instead of the worker", async () => {
+    const c = createCollector({
+        tabs: [
+            chzzkTab({ id: 3, incognito: true }),
+            chzzkTab({ id: 4, discarded: true }),
+            chzzkTab({ id: 5, active: false }),
+            chzzkTab({ id: 6, status: "loading" }),
+        ],
+    });
+    await flush();
+    c.setTab(() => ({ status: 200, json: listResponse([liveItem(CHANNEL, 1, "탭에서 읽은 제목")]) }));
+    await c.tick();
+
+    assert.equal(c.workerRequests.length, 0);
+    assert.deepEqual(toPlain(c.tabRequests), [
+        { target: { tabId: 5, frameIds: [0] }, world: "ISOLATED", args: [LIST_URL, 8000] },
+    ]);
+    assert.deepEqual(
+        c.entries[0].titleHistory.map((row) => row.title),
+        ["탭에서 읽은 제목"]
+    );
+});
+
+test("the injected page reader is self-contained and only runs on Chzzk", async () => {
+    const c = createCollector({ tabs: [chzzkTab()] });
+    await flush();
+    let injected = null;
+    c.setTab((injection) => {
+        injected = injection.func;
+        return { status: 0 };
+    });
+    await c.tick();
+    assert.equal(typeof injected, "function");
+
+    const pageRequests = [];
+    const page = (origin) =>
+        vm.createContext({
+            location: { origin },
+            AbortController,
+            setTimeout,
+            clearTimeout,
+            fetch: async (url, init) => {
+                pageRequests.push({ url, credentials: init.credentials, cache: init.cache });
+                return { ok: true, status: 200, json: async () => listResponse([]) };
+            },
+        });
+    const run = (origin) => vm.runInContext(`(${injected.toString()})`, page(origin))(LIST_URL, 8000);
+    assert.deepEqual(toPlain(await run("https://example.com")), { status: 0 });
+    assert.equal(pageRequests.length, 0);
+    assert.deepEqual(toPlain(await run("https://chzzk.naver.com")), { status: 200, json: listResponse([]) });
+    assert.deepEqual(pageRequests, [{ url: LIST_URL, credentials: "include", cache: "no-store" }]);
+});
+
+test("logged-out responses pause only the failing path for ten minutes", async () => {
+    const c = createCollector({ tabs: [chzzkTab()] });
+    await flush();
+    c.setTab(() => ({ status: 401 }));
+    c.setWorker(() => ({ status: 401 }));
+
+    await c.tick();
+    assert.equal(c.tabRequests.length, 1);
+    assert.ok(c.stores.local[STORAGE_KEY].tabRetryAt > 0);
+
+    await c.tick();
+    assert.equal(c.tabRequests.length, 1, "the tab path waits after a login failure");
+    assert.equal(c.workerRequests.length, 1, "the worker path is still tried once");
+    assert.ok(c.stores.local[STORAGE_KEY].retryAt > 0);
+
+    for (let i = 0; i < 7; i++) await c.tick();
+    assert.equal(c.tabRequests.length, 1);
+    assert.equal(c.workerRequests.length, 1);
+
+    c.setTab(() => ({ status: 200, json: listResponse([liveItem(CHANNEL, 1, "로그인 후 제목")]) }));
+    await c.tick(2 * 60_000);
+    assert.equal(c.tabRequests.length, 2);
+    assert.equal(c.stores.local[STORAGE_KEY].tabRetryAt, 0);
+    assert.equal(c.stores.local[STORAGE_KEY].retryAt, 0);
+    assert.equal(c.entries[0].titleHistory[0].title, "로그인 후 제목");
+});
+
+test("a Chzzk tab that cannot read the list hands the same alarm to another tab or the worker", async () => {
+    const workerList = () => ({ status: 200, json: listResponse([liveItem(CHANNEL, 1, "워커에서 읽은 제목")]) });
+    const pageError = () => {
+        throw new Error("Frame with ID 0 is showing error page");
+    };
+
+    const blocked = createCollector({ tabs: [chzzkTab()] });
+    await flush();
+    blocked.setTab(pageError);
+    blocked.setWorker(workerList);
+    for (let i = 0; i < 3; i++) await blocked.tick();
+    assert.equal(blocked.tabRequests.length, 3);
+    assert.equal(blocked.workerRequests.length, 3, "every alarm still reads the list through the worker");
+    assert.deepEqual(
+        blocked.entries.map((entry) => entry.titleHistory.map((row) => row.title)),
+        [["워커에서 읽은 제목"]]
+    );
+
+    for (const status of [0, 503]) {
+        const failing = createCollector({ tabs: [chzzkTab()] });
+        await flush();
+        failing.setTab(() => ({ status }));
+        failing.setWorker(workerList);
+        await failing.tick();
+        assert.equal(failing.workerRequests.length, 1, `a tab result of ${status} falls back to the worker`);
+        assert.equal(failing.entries[0].titleHistory[0].title, "워커에서 읽은 제목");
+    }
+
+    const twoTabs = createCollector({ tabs: [chzzkTab({ id: 7 }), chzzkTab({ id: 8, active: false })] });
+    await flush();
+    twoTabs.setTab((injection) =>
+        injection.target.tabId === 7
+            ? pageError()
+            : { status: 200, json: listResponse([liveItem(CHANNEL, 1, "다른 탭에서 읽은 제목")]) }
+    );
+    await twoTabs.tick();
+    assert.deepEqual(
+        twoTabs.tabRequests.map((request) => request.target.tabId),
+        [7, 8]
+    );
+    assert.equal(twoTabs.workerRequests.length, 0, "another regular tab keeps the page session path");
+    assert.equal(twoTabs.entries[0].titleHistory[0].title, "다른 탭에서 읽은 제목");
+
+    const paused = createCollector({
+        tabs: [chzzkTab()],
+        local: { [STORAGE_KEY]: { version: 1, retryAt: 10_000_000 + 5 * 60_000, entries: [] } },
+    });
+    await flush();
+    paused.setTab(pageError);
+    await paused.tick();
+    assert.equal(paused.tabRequests.length, 1);
+    assert.equal(paused.workerRequests.length, 0, "the worker keeps its login pause");
+});
+
+test("retry times saved while the clock ran ahead pause a path for at most ten minutes", async () => {
+    const start = 10_000_000;
+    const future = start + 30 * 24 * 60 * 60_000;
+    const c = createCollector({
+        tabs: [chzzkTab()],
+        local: { [STORAGE_KEY]: { version: 1, retryAt: future, tabRetryAt: future, entries: [] } },
+    });
+    await flush();
+    c.setTab(() => ({ status: 200, json: listResponse([liveItem(CHANNEL, 1, "시계 보정 뒤 제목")]) }));
+    c.setWorker(() => ({ status: 200, json: listResponse([liveItem(CHANNEL, 1, "시계 보정 뒤 제목")]) }));
+
+    await c.tick();
+    assert.equal(c.tabRequests.length + c.workerRequests.length, 0);
+    const bound = start + 60_000 + 10 * 60_000;
+    assert.ok(c.stores.local[STORAGE_KEY].retryAt <= bound, "the worker pause is cut to ten minutes");
+    assert.ok(c.stores.local[STORAGE_KEY].tabRetryAt <= bound, "the tab pause is cut to ten minutes");
+
+    for (let i = 0; i < 10; i++) await c.tick();
+    assert.equal(c.tabRequests.length, 1);
+    assert.equal(c.workerRequests.length, 0);
+    assert.equal(c.entries[0].titleHistory[0].title, "시계 보정 뒤 제목");
+    assert.equal(c.stores.local[STORAGE_KEY].retryAt, 0);
+    assert.equal(c.stores.local[STORAGE_KEY].tabRetryAt, 0);
+});
+
+test("the first poll after updating keeps a live's 1.4.3 cleaned title as its current title", async () => {
+    const raw = "테스트 채널 | 내전 | 치지직 대회";
+    const legacyEntry = (channelId, titleHistory) => ({
+        channelId,
+        liveId: "777",
+        channelName: "테스트 채널",
+        titleHistory,
+        updatedAt: 9_500_000,
+    });
+    const c = createCollector({
+        local: {
+            [STORAGE_KEY]: {
+                version: 1,
+                entries: [
+                    legacyEntry(CHANNEL, [{ title: "내전", firstSeenAt: 9_000_000, lastSeenAt: 9_500_000 }]),
+                    // 1.4.3은 같은 제목으로 돌아오면(A→B→A) 첫 줄 하나로 합쳐 저장했어요.
+                    legacyEntry(OTHER_CHANNEL, [
+                        { title: "내전", firstSeenAt: 9_000_000, lastSeenAt: 9_500_000 },
+                        { title: "스크림", firstSeenAt: 9_200_000, lastSeenAt: 9_300_000 },
+                    ]),
+                ],
+            },
+        },
+    });
+    await flush();
+    c.setWorker(() => ({
+        status: 200,
+        json: listResponse([liveItem(CHANNEL, 777, raw), liveItem(OTHER_CHANNEL, 777, raw)]),
+    }));
+    await c.tick();
+
+    const model = loadModel();
+    const entryOf = (channelId) => c.entries.find((entry) => entry.channelId === channelId);
+    assert.deepEqual(entryOf(CHANNEL).titleHistory, [{ title: raw, firstSeenAt: 9_000_000, lastSeenAt: 10_060_000 }]);
+    assert.deepEqual(toPlain(model.getPreviousRows(entryOf(CHANNEL), raw)), []);
+    assert.deepEqual(toPlain(model.getPreviousRows(entryOf(OTHER_CHANNEL), raw).map((row) => row.title)), ["스크림"]);
+
+    // 수집기가 한 번 쓴 뒤에는 접두사·접미사만 다른 제목도 실제 변경이라 새 줄로 남겨요.
+    c.setWorker(() => ({ status: 200, json: listResponse([liveItem(CHANNEL, 777, "내전")]) }));
+    await c.tick();
+    c.setWorker(() => ({ status: 200, json: listResponse([liveItem(CHANNEL, 777, raw)]) }));
+    await c.tick();
+    assert.deepEqual(
+        entryOf(CHANNEL).titleHistory.map((row) => row.title),
+        [raw, "내전", raw]
+    );
+});
 
 function createStorageArea(initialData = {}) {
     const data = structuredClone(initialData);
@@ -49,6 +653,12 @@ function createFakeChrome({ local = {}, sync = {} } = {}) {
     const syncArea = createStorageArea({ followingTitleHistoryEnabled: true, ...sync });
     const localArea = createStorageArea(local);
     const storageChangeListeners = [];
+    const localWrites = [];
+    const originalSet = localArea.set.bind(localArea);
+    localArea.set = (values, callback) => {
+        localWrites.push(structuredClone(values));
+        originalSet(values, callback);
+    };
     return {
         runtime: {},
         storage: {
@@ -66,195 +676,323 @@ function createFakeChrome({ local = {}, sync = {} } = {}) {
         },
         testState: {
             local: localArea.data,
+            localWrites,
             storageChangeListeners,
             sync: syncArea.data,
         },
     };
 }
 
-function createFollowingDom({ chrome = createFakeChrome(), meta, url = "https://chzzk.naver.com/following?tab=ALL" }) {
+function storedEntry(titles, { channelId = CHANNEL, liveId = "live-1" } = {}) {
+    return {
+        channelId,
+        liveId,
+        channelName: "테스트 채널",
+        titleHistory: titles.map((title, index) => ({
+            title,
+            firstSeenAt: Date.UTC(2026, 9, 12, 3, index * 10),
+            lastSeenAt: Date.UTC(2026, 9, 12, 3, index * 10 + 5),
+        })),
+        updatedAt: Date.UTC(2026, 9, 12, 4),
+    };
+}
+
+function createFollowingDom({
+    chrome = createFakeChrome(),
+    title = "첫 번째 제목",
+    liveIds = { [CHANNEL]: "live-1" },
+    url = "https://chzzk.naver.com/following?tab=ALL",
+} = {}) {
     const dom = new JSDOM(
         [
             "<!doctype html><body>",
             '<aside><a href="/live/sidebar-channel">사이드바 채널</a></aside>',
             "<main><section><ul>",
             '<li id="liveCard">',
-            '<a class="_thumbnail_card" href="/live/channel-123"><span>LIVE</span></a>',
+            `<a class="_thumbnail_card" href="/live/${CHANNEL}"><span>LIVE</span></a>`,
             '<div class="_wrapper_card"><div class="_area_card">',
-            '<a id="liveTitle" class="_title_card" href="/live/channel-123">첫 번째 제목<span class="blind">라이브 엔드로 이동</span></a>',
-            '<div class="_name_card"><a href="/channel-123">테스트 채널</a></div>',
+            `<a id="liveTitle" class="_title_card" href="/live/${CHANNEL}">${title}<span class="blind">라이브 엔드로 이동</span></a>`,
+            `<div class="_name_card"><a href="/${CHANNEL}">테스트 채널</a></div>`,
             '<div class="_information_card">카테고리</div>',
             "</div></div>",
             "</li>",
             "</ul></section></main>",
             "</body>",
         ].join(""),
-        {
-            url,
-            runScripts: "outside-only",
-            pretendToBeVisual: true,
-        }
+        { url, runScripts: "outside-only", pretendToBeVisual: true }
     );
-    const state = {
-        fetchCount: 0,
-        meta: {
-            channel: { channelName: "테스트 채널" },
-            liveId: "live-1",
-            liveTitle: "첫 번째 제목",
-            ...meta,
-        },
-    };
+    const state = { requests: [], liveIds };
     dom.window.chrome = chrome;
     dom.window.fetch = async (requestUrl) => {
-        state.fetchCount += 1;
-        assert.match(String(requestUrl), /\/service\/v3\/channels\/channel-123\/live-detail$/);
-        return {
-            ok: true,
-            json: async () => ({ code: 200, content: structuredClone(state.meta) }),
-        };
+        const channelId = String(requestUrl).match(/\/service\/v3\/channels\/([^/]+)\/live-detail$/)?.[1];
+        assert.ok(channelId, `unexpected request ${requestUrl}`);
+        state.requests.push(channelId);
+        return { ok: true, json: async () => ({ code: 200, content: { liveId: state.liveIds[channelId] } }) };
     };
     openDoms.add(dom);
     return { chrome, document: dom.window.document, dom, state };
 }
 
 function evalFeatureScripts(dom) {
-    dom.window.eval(readRepoFile("shared", "settings.js"));
-    dom.window.eval(readRepoFile("shared", "data.js"));
-    dom.window.eval(readRepoFile("content.js"));
-    dom.window.eval(readRepoFile("features", "followingTitleHistory.js"));
-}
-
-function waitForFeature() {
-    return new Promise((resolve) => setTimeout(resolve, 100));
+    for (const file of [
+        "shared/settings.js",
+        "shared/data.js",
+        "shared/followingTitleHistory.js",
+        "content.js",
+        "features/followingTitleHistory.js",
+    ]) {
+        dom.window.eval(readRepoFile(file));
+    }
 }
 
 function waitFor(predicate, message, timeoutMs = 3000) {
     return waitForCondition(predicate, { timeoutMs, intervalMs: 20, message });
 }
 
-function getStoredEntry(chrome) {
-    return chrome.testState.local[STORAGE_KEY]?.entries?.find((entry) => entry.channelId === "channel-123");
+function emitLocalChange(chrome, entries) {
+    const newValue = { version: 1, entries };
+    chrome.testState.local[STORAGE_KEY] = newValue;
+    for (const listener of [...chrome.testState.storageChangeListeners]) {
+        listener({ [STORAGE_KEY]: { newValue: structuredClone(newValue) } }, "local");
+    }
 }
 
-test("manifest loads following title history after following refresh and before preview", () => {
+test("manifest loads the shared model before the following page feature and the worker imports the collector", () => {
     const manifest = JSON.parse(readRepoFile("manifest.json"));
     const scripts = manifest.content_scripts.find((entry) =>
         entry.js?.includes("features/followingTitleHistory.js")
     ).js;
+    assert.ok(scripts.indexOf("shared/followingTitleHistory.js") >= 0);
+    assert.ok(
+        scripts.indexOf("shared/followingTitleHistory.js") < scripts.indexOf("features/followingTitleHistory.js")
+    );
     assert.ok(scripts.indexOf("features/followingTitleHistory.js") > scripts.indexOf("features/followingRefresh.js"));
     assert.ok(
         scripts.indexOf("features/followingTitleHistory.js") < scripts.indexOf("features/followingPreviewTooltip.js")
     );
-});
-
-test("following live title changes are cached per live and previous titles expand beside the current title", async () => {
-    const { chrome, document, dom, state } = createFollowingDom({});
-    evalFeatureScripts(dom);
-    await waitFor(() => getStoredEntry(chrome), "initial live title was not stored");
-
-    let entry = getStoredEntry(chrome);
-    assert.equal(entry.liveId, "live-1");
-    assert.deepEqual(
-        entry.titleHistory.map((row) => row.title),
-        ["첫 번째 제목"]
-    );
-    assert.equal(document.querySelector("[data-bcfth-toggle]"), null);
-
-    state.meta.liveTitle = "두 번째 제목";
-    document.getElementById("liveTitle").firstChild.nodeValue = "두 번째 제목";
-    await waitFor(
-        () => getStoredEntry(chrome)?.titleHistory?.length === 2 && document.querySelector("button[data-bcfth-toggle]"),
-        "changed live title was not stored and rendered"
-    );
-
-    entry = getStoredEntry(chrome);
-    assert.deepEqual(
-        entry.titleHistory.map((row) => row.title),
-        ["첫 번째 제목", "두 번째 제목"]
-    );
-    const titleLink = document.getElementById("liveTitle");
-    const button = document.querySelector("button[data-bcfth-toggle]");
-    assert.equal(titleLink.nextElementSibling, button);
-    assert.equal(button.getAttribute("aria-label"), "이전 방송 제목 1개 보기");
-    assert.equal(button.getAttribute("aria-expanded"), "false");
-
-    button.click();
-    const panel = document.getElementById("betterchzzk-following-title-history-panel");
-    assert.equal(button.getAttribute("aria-expanded"), "true");
-    assert.equal(panel.hidden, false);
-    assert.match(panel.textContent, /첫 번째 제목/);
-    assert.doesNotMatch(panel.textContent, /두 번째 제목/);
-});
-
-test("visible symbol-only title changes keep the previous title toggle", async () => {
-    const { chrome, document, dom, state } = createFollowingDom({});
-    evalFeatureScripts(dom);
-    await waitFor(() => getStoredEntry(chrome), "initial live title was not stored");
-
-    state.meta.liveTitle = "첫 번째 제목 🔴";
-    document.getElementById("liveTitle").firstChild.nodeValue = "첫 번째 제목 🔴";
-
-    await waitFor(
-        () => getStoredEntry(chrome)?.titleHistory?.length === 2 && document.querySelector("button[data-bcfth-toggle]"),
-        "symbol-only title change was not stored and rendered"
-    );
-
-    assert.deepEqual(
-        getStoredEntry(chrome).titleHistory.map((row) => row.title),
-        ["첫 번째 제목", "첫 번째 제목 🔴"]
-    );
-    assert.equal(
-        document.querySelector("button[data-bcfth-toggle]").getAttribute("aria-label"),
-        "이전 방송 제목 1개 보기"
+    assert.equal(scripts.includes("shared/followingTitleCollector.js"), false);
+    assert.match(
+        readRepoFile("background.js"),
+        /importScripts\("shared\/followingTitleHistory\.js", "shared\/followingTitleCollector\.js"\)/
     );
 });
 
-test("a new live id replaces the previous broadcast title cache", async () => {
-    const oldTime = Date.now() - 60_000;
+test("previous titles of the same live open beside the current title like the replay title history", async () => {
     const chrome = createFakeChrome({
         local: {
             [STORAGE_KEY]: {
                 version: 1,
-                entries: [
-                    {
-                        channelId: "channel-123",
-                        liveId: "old-live",
-                        channelName: "테스트 채널",
-                        titleHistory: [
-                            { title: "이전 방송 첫 제목", firstSeenAt: oldTime, lastSeenAt: oldTime },
-                            { title: "이전 방송 끝 제목", firstSeenAt: oldTime + 1, lastSeenAt: oldTime + 1 },
-                        ],
-                        updatedAt: oldTime,
-                    },
-                ],
+                entries: [storedEntry(["첫 번째 제목", "테스트 채널 | 두 번째 제목 | 치지직 대회", "첫 번째 제목"])],
             },
         },
     });
-    const { document, dom } = createFollowingDom({ chrome, meta: { liveId: "new-live" } });
+    const { document, dom, state } = createFollowingDom({ chrome });
     evalFeatureScripts(dom);
-    await waitFor(() => getStoredEntry(chrome)?.liveId === "new-live", "new live id did not replace old cache");
 
-    const entry = getStoredEntry(chrome);
-    assert.equal(entry.liveId, "new-live");
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "previous title toggle was not rendered");
+    const titleLink = document.getElementById("liveTitle");
+    const button = document.querySelector("button[data-bcfth-toggle]");
+    assert.equal(titleLink.nextElementSibling, button);
+    assert.equal(button.getAttribute("aria-label"), "이전 방제 1개 보기");
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+    assert.deepEqual(state.requests, [CHANNEL]);
+
+    button.click();
+    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+    assert.equal(button.getAttribute("aria-expanded"), "true");
+    assert.equal(button.getAttribute("aria-label"), "이전 방제 접기");
+    assert.equal(panel.hidden, false);
     assert.deepEqual(
-        entry.titleHistory.map((row) => row.title),
-        ["첫 번째 제목"]
+        Array.from(panel.querySelectorAll(".bcfth-title"), (node) => node.textContent),
+        ["테스트 채널 | 두 번째 제목 | 치지직 대회"]
     );
-    assert.equal(document.querySelector("[data-bcfth-toggle]"), null);
+
+    button.click();
+    assert.equal(panel.hidden, true);
+    assert.equal(button.getAttribute("aria-label"), "이전 방제 1개 보기");
+    assert.deepEqual(chrome.testState.localWrites, [], "the page only reads the worker's history");
 });
 
-test("the feature ignores non-following pages, sidebar links, and disabled state", async () => {
-    const outside = createFollowingDom({ url: "https://chzzk.naver.com/lives" });
-    evalFeatureScripts(outside.dom);
-    await waitForFeature();
-    assert.equal(outside.state.fetchCount, 0);
-    assert.equal(getStoredEntry(outside.chrome), undefined);
+test("titles stored for an earlier live of the same channel are never shown", async () => {
+    const chrome = createFakeChrome({
+        local: {
+            [STORAGE_KEY]: {
+                version: 1,
+                entries: [storedEntry(["어제 방송 제목", "어제 방송 끝 제목"], { liveId: "old-live" })],
+            },
+        },
+    });
+    const { document, dom, state } = createFollowingDom({ chrome });
+    evalFeatureScripts(dom);
+    await waitFor(() => state.requests.length === 1, "the card live was not checked");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(document.querySelector("[data-bcfth-toggle]"), null);
 
-    const chrome = createFakeChrome({ sync: { followingTitleHistoryEnabled: false } });
-    const disabled = createFollowingDom({ chrome });
+    emitLocalChange(chrome, [storedEntry(["첫 번째 제목"]), storedEntry(["다른 채널"], { channelId: OTHER_CHANNEL })]);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(document.querySelector("[data-bcfth-toggle]"), null, "a single title has nothing previous");
+
+    emitLocalChange(chrome, [storedEntry(["첫 번째 제목", "바뀐 제목"])]);
+    await waitFor(
+        () => document.querySelector("button[data-bcfth-toggle]")?.getAttribute("aria-label") === "이전 방제 1개 보기",
+        "worker updates did not refresh the toggle"
+    );
+    assert.equal(state.requests.length, 1, "a changed history of the verified live needs no second check");
+});
+
+test("a new live id from the worker rechecks the card once before showing its titles", async () => {
+    const chrome = createFakeChrome({
+        local: {
+            [STORAGE_KEY]: { version: 1, entries: [storedEntry(["옛 제목", "옛 제목 2"], { liveId: "old-live" })] },
+        },
+    });
+    const { document, dom, state } = createFollowingDom({ chrome, liveIds: { [CHANNEL]: "live-2" } });
+    evalFeatureScripts(dom);
+    await waitFor(() => state.requests.length === 1, "the card live was not checked");
+
+    emitLocalChange(chrome, [storedEntry(["시작 제목", "첫 번째 제목"], { liveId: "live-2" })]);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "the matching live was not shown");
+    assert.equal(state.requests.length, 1, "the verified live already matches the new history");
+
+    emitLocalChange(chrome, [storedEntry(["재시작 제목", "첫 번째 제목"], { liveId: "live-3" })]);
+    await waitFor(() => state.requests.length === 2, "a different stored live was not rechecked");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(document.querySelector("[data-bcfth-toggle]"), null);
+    assert.equal(state.requests.length, 2, "the same stored live is not rechecked again");
+});
+
+test("a restart that changes the card title is checked again before any stored title is shown", async () => {
+    const chrome = createFakeChrome({
+        local: { [STORAGE_KEY]: { version: 1, entries: [storedEntry(["어제 제목 A", "어제 제목 B"])] } },
+    });
+    const { document, dom, state } = createFollowingDom({ chrome, title: "어제 제목 B" });
+    let releaseSecondCheck = () => {};
+    const secondCheck = new Promise((resolve) => {
+        releaseSecondCheck = resolve;
+    });
+    const pageFetch = dom.window.fetch;
+    dom.window.fetch = async (...args) => {
+        const response = await pageFetch(...args);
+        if (state.requests.length > 1) await secondCheck;
+        return response;
+    };
+    evalFeatureScripts(dom);
+    await waitFor(
+        () => document.querySelector("button[data-bcfth-toggle]")?.getAttribute("aria-label") === "이전 방제 1개 보기",
+        "the first live's toggle was not rendered"
+    );
+
+    // 방송을 끄고 새 방송을 켜면 카드 제목이 먼저 바뀌고, 수집기는 아직 새 라이브 ID를 쓰지 않았어요.
+    state.liveIds[CHANNEL] = "live-2";
+    document.getElementById("liveTitle").firstChild.nodeValue = "새 방송 제목 C";
+    await waitFor(() => state.requests.length === 2, "the changed card title was not checked again");
+    assert.equal(document.querySelector("[data-bcfth-toggle]"), null, "stored titles wait for the new check");
+
+    releaseSecondCheck();
+    // 두 번째 확인 응답과 이어지는 화면 동기화(requestAnimationFrame)가 끝날 시간이에요.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(
+        document.querySelector("[data-bcfth-toggle]"),
+        null,
+        "the previous live's titles never reach the new one"
+    );
+});
+
+test("a checked live expires after two minutes so a same-title restart drops stored titles", async () => {
+    const chrome = createFakeChrome({
+        local: { [STORAGE_KEY]: { version: 1, entries: [storedEntry(["이전 제목", "첫 번째 제목"])] } },
+    });
+    const { document, dom, state } = createFollowingDom({ chrome });
+    const realNow = dom.window.Date.now.bind(dom.window.Date);
+    let offset = 0;
+    dom.window.Date.now = () => realNow() + offset;
+    evalFeatureScripts(dom);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "toggle was not rendered");
+
+    // 같은 제목으로 다시 켠 방송이라 카드 제목은 그대로이고, 수집기도 아직 새 라이브 ID를 쓰지 않았어요.
+    state.liveIds[CHANNEL] = "live-2";
+    const info = document.querySelector("._information_card");
+    info.textContent = "카테고리 · 1,234명";
+    // 화면 동기화 한 번이 끝날 시간 동안 새 확인 요청이 없어야 해요.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(state.requests.length, 1, "a recent check is reused");
+
+    offset = 2 * 60_000 + 1000;
+    info.textContent = "카테고리 · 1,240명";
+    await waitFor(() => state.requests.length === 2, "the expired check was not repeated");
+    await waitFor(() => !document.querySelector("[data-bcfth-toggle]"), "stored titles stayed on the restarted live");
+});
+
+test("cards without a stored previous title send no live check", async () => {
+    const chrome = createFakeChrome();
+    const { document, dom, state } = createFollowingDom({ chrome });
+    evalFeatureScripts(dom);
+    // 저장값 읽기와 화면 동기화가 끝날 시간 동안 요청이 없어야 해요.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(state.requests, []);
+
+    emitLocalChange(chrome, [storedEntry(["첫 번째 제목"])]);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(state.requests, [], "only the current title is stored, so there is nothing to show");
+
+    emitLocalChange(chrome, [storedEntry(["이전 제목", "첫 번째 제목"])]);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "a stored previous title was not shown");
+    assert.deepEqual(state.requests, [CHANNEL]);
+});
+
+test("returning to the following page within two minutes reuses the checked live", async () => {
+    const chrome = createFakeChrome({
+        local: { [STORAGE_KEY]: { version: 1, entries: [storedEntry(["이전 제목", "첫 번째 제목"])] } },
+    });
+    const { document, dom, state } = createFollowingDom({ chrome });
+    evalFeatureScripts(dom);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "toggle was not rendered");
+
+    const navigate = (url) => {
+        dom.window.history.pushState({}, "", url);
+        dom.window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
+    };
+    navigate("/lives");
+    await waitFor(() => !document.querySelector("[data-bcfth-toggle]"), "the toggle stayed outside the following page");
+    navigate("/following?tab=ALL");
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "the toggle did not come back");
+    assert.deepEqual(state.requests, [CHANNEL]);
+});
+
+test("a toggle never stays on a title link that now belongs to another channel", async () => {
+    const chrome = createFakeChrome({
+        local: { [STORAGE_KEY]: { version: 1, entries: [storedEntry(["이전 제목", "첫 번째 제목"])] } },
+    });
+    const { document, dom } = createFollowingDom({ chrome, liveIds: { [CHANNEL]: "live-1", [OTHER_CHANNEL]: "x" } });
+    evalFeatureScripts(dom);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "toggle was not rendered");
+
+    const link = document.getElementById("liveTitle");
+    link.setAttribute("href", `/live/${OTHER_CHANNEL}`);
+    link.firstChild.nodeValue = "다른 채널 제목";
+    await waitFor(() => !document.querySelector("[data-bcfth-toggle]"), "the reused link kept the old channel toggle");
+});
+
+test("the page feature ignores other routes, sidebar links, and the disabled option", async () => {
+    const entries = [storedEntry(["이전 제목", "첫 번째 제목"])];
+    const outside = createFollowingDom({
+        chrome: createFakeChrome({ local: { [STORAGE_KEY]: { version: 1, entries } } }),
+        url: "https://chzzk.naver.com/lives",
+    });
+    evalFeatureScripts(outside.dom);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(outside.state.requests, []);
+    assert.equal(outside.document.querySelector("[data-bcfth-toggle]"), null);
+
+    const disabled = createFollowingDom({
+        chrome: createFakeChrome({
+            local: { [STORAGE_KEY]: { version: 1, entries } },
+            sync: { followingTitleHistoryEnabled: false },
+        }),
+    });
     evalFeatureScripts(disabled.dom);
-    await waitForFeature();
-    assert.equal(disabled.state.fetchCount, 0);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(disabled.state.requests, []);
     assert.equal(disabled.document.querySelector("[data-bcfth-toggle]"), null);
     assert.equal(disabled.document.getElementById("betterchzzk-following-title-history-style"), null);
 });

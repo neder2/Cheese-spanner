@@ -5,6 +5,7 @@ const {
     createFakeChrome,
     evalRepoScript,
     dispatch,
+    readRepoFile,
     waitForCondition,
 } = require("./helpers/extension-page-fixture.js");
 
@@ -79,7 +80,7 @@ test("history keeps the calendar available across views and reveals selection an
     assert.equal(document.activeElement, document.getElementById("rankingViewTab"));
     assert.equal(document.getElementById("rankingPanel").hidden, false);
     assert.equal(document.getElementById("historyPanel").hidden, true);
-    assert.equal(document.getElementById("historySortControls").hidden, true);
+    assert.equal(document.getElementById("historySort").hidden, true);
     document.activeElement.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "End", bubbles: true }));
     assert.equal(document.getElementById("activityPanel").hidden, false);
     assert.equal(document.getElementById("activityViewTab").tabIndex, 0);
@@ -380,17 +381,19 @@ test("deleting a hidden selection writes only the selected record IDs", async (t
     assert.ok(chrome.testState.local[STORAGE_KEY].entries["live:august"]);
 });
 
-test("summary and calendar footer name the selected month including months with no records", async (t) => {
+test("the calendar names the selected month and shows its total once, including months with no records", async (t) => {
     const { document } = await openHistory(t);
     for (const [month, duration] of [
         [9, "15분"],
         [8, "15분"],
-        [7, "0초"],
+        [7, "0분"],
     ]) {
         if (month !== 9) document.getElementById("prevMonth").click();
-        assert.equal(document.getElementById("monthWatchLabel").textContent, `2026년 ${month}월`);
+        assert.equal(document.getElementById("calendarTitle").textContent, `2026년 ${month}월`);
+        assert.equal(document.getElementById("monthWatchLabel").textContent, `${month}월 시청`);
         assert.equal(document.getElementById("monthWatchTime").textContent, duration);
-        assert.ok(document.getElementById("calendarFoot").textContent.includes(`2026년 ${month}월 총`));
+        assert.ok(document.getElementById("monthWatchTime").closest(".history-calendar-card"));
+        assert.equal(document.getElementById("calendarFoot").textContent.includes(duration), false);
     }
 });
 
@@ -403,21 +406,25 @@ test("month overview preserves filters and selection and returns focus to the pr
     const search = document.getElementById("historySearch");
     search.value = "같은 방송";
     dispatch(dom, search, "input");
-    const direction = document.getElementById("historySortDirection");
-    direction.value = "asc";
-    dispatch(dom, direction, "change");
+    const sort = document.getElementById("historySort");
+    assert.equal(document.querySelector(".history-item").dataset.entryId, "live:beta");
+    sort.value = "longest";
+    dispatch(dom, sort, "change");
+    assert.equal(document.querySelector(".history-item").dataset.entryId, "live:alpha");
     document.querySelector('[data-date="2026-09-11"]').click();
     assert.equal(document.querySelectorAll(".history-item").length, 1);
     assert.equal(overview.disabled, false);
+    assert.equal(overview.hidden, false);
     assert.equal(document.querySelector('[data-date="2026-09-11"]').getAttribute("aria-pressed"), "true");
     overview.focus();
     overview.click();
     assert.equal(document.querySelectorAll(".history-item").length, 2);
-    assert.equal(document.querySelector(".history-item").dataset.entryId, "live:beta");
+    assert.equal(document.querySelector(".history-item").dataset.entryId, "live:alpha");
     assert.equal(row("live:beta").querySelector("input").checked, true);
     assert.equal(search.value, "같은 방송");
-    assert.equal(direction.value, "asc");
+    assert.equal(sort.value, "longest");
     assert.equal(overview.disabled, true);
+    assert.equal(overview.hidden, true);
     assert.equal(document.activeElement, document.querySelector('[data-date="2026-09-11"]'));
     assert.equal(document.querySelector('[data-date="2026-09-11"]').getAttribute("aria-pressed"), "false");
     assert.equal(chrome.testState.runtimeMessages.length, 0);
@@ -469,4 +476,92 @@ test("history load errors persist until dismissal or successful reload", async (
     }
     await waitForCondition(() => message.classList.contains("hidden"));
     assert.equal(document.getElementById("notice").dataset.state, "saved");
+});
+
+function visit(id, title, startText, minutes) {
+    const enteredAt = Date.parse(startText);
+    const leftAt = enteredAt + minutes * 60000;
+    const date = startText.slice(0, 10);
+    return {
+        id,
+        title,
+        enteredAt,
+        leftAt,
+        watchedSeconds: minutes * 60,
+        dailySeconds: { [date]: minutes * 60 },
+        watchedRanges: [{ startAt: enteredAt, endAt: leftAt }],
+        closed: true,
+    };
+}
+
+test("records stay compact: single visits omit the count, actions sit beside the facts, details skip repeats", async (t) => {
+    const { row } = await openHistory(t, (history) => {
+        const alpha = history.entries["live:alpha"];
+        alpha.sessionDetails = [
+            visit("first", "같은 방송 제목", "2026-09-10T10:00:00+09:00", 5),
+            visit("second", "중간에 바뀐 제목", "2026-09-10T12:00:00+09:00", 5),
+        ];
+    });
+    assert.match(row("live:alpha").querySelector(".history-item-meta").textContent, /2회 입장/);
+    assert.doesNotMatch(row("live:beta").querySelector(".history-item-meta").textContent, /회 입장/);
+    const actions = row("live:alpha").querySelector(".history-item-actions");
+    assert.equal(actions.parentElement, row("live:alpha"));
+    assert.equal(actions.closest(".history-item-meta"), null);
+    const detail = row("live:alpha").querySelector(".history-entry-detail");
+    detail.click();
+    assert.equal(row("live:alpha").querySelector(".history-entry-detail").textContent, "세부");
+    const panel = row("live:alpha").querySelector(".history-entry-details");
+    const cells = (label) =>
+        Array.from(panel.querySelectorAll(".history-session-cell"))
+            .filter((cell) => cell.firstChild.textContent === label)
+            .map((cell) => cell.lastChild.textContent);
+    assert.deepEqual(cells("방송 제목"), ["중간에 바뀐 제목"]);
+    assert.ok(
+        cells("퇴장").every((text) => /^\d{2}:\d{2}$/.test(text)),
+        "same-day exits omit the date"
+    );
+    assert.equal(panel.querySelector(":scope > strong"), null, "the expanded panel does not repeat the row title");
+});
+
+test("calendar disables future days and the activity tab groups rows and shows donation tools only for donations", async (t) => {
+    const { dom, document, row } = await openHistory(t, (history) => {
+        addChats(history.entries["live:alpha"], "2026-09-10", 3);
+        addChats(history.entries["live:beta"], "2026-09-11", 1, "다른 방송 채팅");
+    });
+    assert.equal(document.querySelector('[data-date="2026-09-20"]').disabled, true);
+    assert.equal(document.querySelector('[data-date="2026-09-13"]').disabled, false);
+    row("live:alpha").querySelector(".history-entry-chats").click();
+    const chatPanel = row("live:alpha").querySelector(".history-entry-chat-panel");
+    assert.match(chatPanel.querySelector(".history-activity-meta").textContent, /2026\.09\.10/);
+    assert.match(chatPanel.querySelector("time").textContent, /^\d{2}:\d{2}:\d{2}$/);
+    document.getElementById("activityViewTab").click();
+    assert.equal(document.getElementById("donationImportControls").hidden, true);
+    assert.equal(document.getElementById("donationImportRefresh").hidden, true);
+    assert.equal(document.querySelectorAll("#activityList li").length, 4);
+    assert.deepEqual(
+        Array.from(document.querySelectorAll("#activityList .history-activity-group"), (node) => node.textContent),
+        ["같은 방송 제목같은 방송 제목", "같은 방송 제목같은 방송 제목"]
+    );
+    assert.equal(document.querySelectorAll('#activityList li[data-group-start="1"]').length, 2);
+    const type = document.getElementById("activityType");
+    type.value = "donation";
+    dispatch(dom, type, "change");
+    assert.equal(document.getElementById("donationImportControls").hidden, false);
+    assert.equal(document.getElementById("donationImportRefresh").hidden, false);
+});
+
+test("an empty history explains how records appear and offers one refresh action", async (t) => {
+    const { document } = await openHistory(t, (history) => (history.entries = {}), 0);
+    await waitForCondition(() => document.querySelector(".history-empty"));
+    assert.match(document.querySelector(".history-empty").textContent, /아직 저장된 시청 기록이 없어요/);
+    assert.equal(document.querySelector(".history-empty a").getAttribute("href"), "options.html");
+    assert.equal(document.getElementById("historySelectionToggle").disabled, true);
+    assert.equal(document.getElementById("totalWatchTime").textContent, "0분");
+    assert.equal(document.querySelectorAll("#refresh, #calendarRefresh").length, 1);
+});
+
+test("history page copy uses the polite 해요체 tone", () => {
+    for (const file of ["history.html", "history.js"]) {
+        assert.doesNotMatch(readRepoFile(file), /(습니다|입니다|합니다|됩니다)/, file);
+    }
 });

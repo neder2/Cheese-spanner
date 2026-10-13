@@ -4,6 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 const { JSDOM } = require("jsdom");
 const { waitForCondition } = require("./helpers/extension-page-fixture.js");
+const { forwardSettingsStore } = require("./helpers/settings-store-emulation.js");
 
 const repoRoot = path.join(__dirname, "..");
 const openDoms = new Set();
@@ -41,9 +42,10 @@ function createFakeChrome({ sync = {} } = {}) {
     const syncArea = createStorageArea({ followingPreviewTooltipEnabled: true, ...sync });
     const storageChangeListeners = [];
 
-    return {
+    const fake = {
         runtime: {
             getURL: (resource) => `chrome-extension://better-chzzk/${resource}`,
+            sendMessage: (message, callback) => forwardSettingsStore(fake, message, callback),
         },
         storage: {
             sync: syncArea,
@@ -62,6 +64,7 @@ function createFakeChrome({ sync = {} } = {}) {
             storageChangeListeners,
         },
     };
+    return fake;
 }
 
 function createPageDom(html, url, chrome = createFakeChrome()) {

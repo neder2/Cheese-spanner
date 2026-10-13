@@ -16,7 +16,21 @@
                     <p class="eyebrow">치즈 스패너</p>
                     <h1>시청 기록</h1>
                 </div>
-                <span id="notice" class="status-pill" aria-live="polite">불러오는 중</span>
+                <div class="history-hero-actions">
+                    <span id="notice" class="status-pill" aria-live="polite">불러오는 중</span>
+                    <button
+                        id="refresh"
+                        class="secondary-button history-refresh-button"
+                        type="button"
+                        aria-label="새로고침"
+                    >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+                            <path d="M20 4v5h-5" />
+                        </svg>
+                        <span>새로고침</span>
+                    </button>
+                </div>
             </header>
             <div class="history-layout">
                 <aside class="history-overview" aria-label="달력과 시청 요약">
@@ -28,50 +42,45 @@
                                 type="button"
                                 aria-label="이전 달"
                             >
-                                ‹
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6" /></svg>
                             </button>
                             <h2 id="calendarTitle">-</h2>
-                            <button
-                                id="calendarRefresh"
-                                class="secondary-button history-nav-button"
-                                type="button"
-                                aria-label="달력 새로고침"
-                            >
-                                ↻
-                            </button>
                             <button
                                 id="nextMonth"
                                 class="secondary-button history-nav-button"
                                 type="button"
                                 aria-label="다음 달"
                             >
-                                ›
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
                             </button>
                         </div>
                         <div class="history-calendar" aria-label="월별 시청 기록 달력">
                             <div id="weekdays" class="history-weekdays" aria-hidden="true"></div>
                             <div id="calendarDays" class="history-days"></div>
                         </div>
-                        <p id="calendarFoot" class="history-calendar-foot">
-                            날짜를 선택하면 해당 날짜의 기록을 표시해요.
-                        </p>
-                        <button
-                            id="clearDateFilter"
-                            class="secondary-button history-month-button"
-                            type="button"
-                            disabled
-                        >
-                            이 달 전체 보기
-                        </button>
+                        <div class="history-month-total">
+                            <span id="monthWatchLabel">선택한 달</span><strong id="monthWatchTime">-</strong>
+                        </div>
+                        <div class="history-date-filter">
+                            <p id="calendarFoot" class="history-calendar-foot">
+                                날짜를 누르면 그날 본 기록만 보여 줘요.
+                            </p>
+                            <button
+                                id="clearDateFilter"
+                                class="secondary-button history-month-button"
+                                type="button"
+                                disabled
+                                hidden
+                            >
+                                이 달 전체 보기
+                            </button>
+                        </div>
                     </section>
-                    <section class="settings-card history-summary-card" aria-label="시청 시간 요약">
+                    <section class="settings-card history-summary-card" aria-label="전체 시청 요약">
                         <div class="history-summary">
                             <div class="history-stat"><span>누적 시청</span><strong id="totalWatchTime">-</strong></div>
                             <div class="history-stat">
                                 <span>시청한 라이브</span><strong id="totalLiveCount">-</strong>
-                            </div>
-                            <div class="history-stat">
-                                <span id="monthWatchLabel">선택한 달</span><strong id="monthWatchTime">-</strong>
                             </div>
                         </div>
                     </section>
@@ -112,28 +121,29 @@
                         </button>
                     </div>
                     <div class="history-filter-row">
-                        <input
-                            id="historySearch"
-                            type="search"
-                            placeholder="제목 또는 채널 검색"
-                            aria-label="시청 기록 검색"
-                            autocomplete="off"
-                        />
+                        <span class="history-search">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <circle cx="11" cy="11" r="6.5" />
+                                <path d="m16 16 4 4" />
+                            </svg>
+                            <input
+                                id="historySearch"
+                                type="search"
+                                placeholder="제목 또는 채널 검색"
+                                aria-label="시청 기록 검색"
+                                autocomplete="off"
+                            />
+                        </span>
                         <select id="historyScope" aria-label="기록 기간">
                             <option value="month">선택한 달</option>
                             <option value="all">전체 기간</option>
                         </select>
-                        <div id="historySortControls" class="history-sort-controls">
-                            <select id="historySort" aria-label="정렬 기준">
-                                <option value="watchTime">시청시간 순</option>
-                                <option value="actualTime">실제시간 순</option>
-                            </select>
-                            <select id="historySortDirection" aria-label="정렬 방향">
-                                <option value="desc">내림차순</option>
-                                <option value="asc">오름차순</option>
-                            </select>
-                        </div>
-                        <button id="refresh" class="secondary-button" type="button">새로고침</button>
+                        <select id="historySort" aria-label="정렬">
+                            <option value="recent">최근 본 순</option>
+                            <option value="oldest">예전에 본 순</option>
+                            <option value="longest">시청 시간 긴 순</option>
+                            <option value="shortest">시청 시간 짧은 순</option>
+                        </select>
                         <button id="historySelectionToggle" class="secondary-button" type="button" aria-pressed="false">
                             선택
                         </button>
@@ -145,7 +155,7 @@
                         aria-labelledby="historyViewTab"
                         tabindex="-1"
                     >
-                        <p id="listDescription" class="history-result-description">선택한 기간의 라이브 내역입니다.</p>
+                        <p id="listDescription" class="history-result-description">선택한 기간의 라이브 내역이에요.</p>
                         <div id="historySelectionControls" class="history-selection-row" hidden>
                             <label class="history-select-all"
                                 ><input id="selectVisibleHistory" type="checkbox" /><span
@@ -241,11 +251,12 @@
                                 class="secondary-button"
                                 type="button"
                                 aria-describedby="donationImportHint"
+                                hidden
                             >
                                 후원 내역 갱신
                             </button>
                         </div>
-                        <div id="donationImportControls" class="history-donation-import">
+                        <div id="donationImportControls" class="history-donation-import" hidden>
                             <p id="donationImportHint">
                                 처음에는 전체 기간을, 이후에는 새 내역이 생길 수 있는 달과 아직 확인하지 않은 달만
                                 조회해요. 치지직에 로그인된 탭을 열어 두세요. 일반 후원을 최대 3,000개까지 보관해요.
@@ -299,16 +310,16 @@
                     </section>
                 </section>
             </div>
-            <details class="history-management">
-                <summary>기록 백업·관리·삭제 안내</summary>
+            <section class="history-management" aria-labelledby="historyManagementTitle">
+                <h2 id="historyManagementTitle">기록 백업·관리</h2>
                 <div class="history-management-content">
                     <section id="historyBackup" class="history-backup" aria-labelledby="historyBackupTitle">
-                        <h2 id="historyBackupTitle">시청 기록·내 채팅 백업</h2>
+                        <h3 id="historyBackupTitle">시청 기록·내 채팅 백업</h3>
                         <p id="historyBackupScope">
                             화면의 기간·검색·선택과 관계없이 전체 기간의 시청 기록과 내 채팅을 JSON 파일로 저장해요.
                             실시간·갱신 후원 기록은 모두 제외해요. 기록 수집을 꺼도 사용할 수 있어요.
                         </p>
-                        <p id="historyBackupPrivacy">
+                        <p id="historyBackupPrivacy" class="history-backup-note">
                             파일에는 시청 이력·채팅 본문·작성자 식별 정보가 암호화 없이 담겨요. 안전한 곳에 보관해
                             주세요. 로그인이나 인터넷 조회 없이 이 기기에서 처리해요.
                         </p>
@@ -343,7 +354,7 @@
                             aria-labelledby="historyBackupPreviewTitle"
                             hidden
                         >
-                            <h3 id="historyBackupPreviewTitle" tabindex="-1">불러오기 미리보기</h3>
+                            <h4 id="historyBackupPreviewTitle" tabindex="-1">불러오기 미리보기</h4>
                             <p id="historyBackupFilename" class="history-backup-filename"></p>
                             <dl id="historyBackupSummary" class="history-backup-summary"></dl>
                             <p>현재 기록에 중복 없이 합쳐요. 현재 후원 기록은 그대로 유지해요.</p>
@@ -371,58 +382,68 @@
                             aria-atomic="true"
                         ></p>
                     </section>
-                    <details class="history-storage-warning">
-                        <summary>시청 기록 삭제 주의</summary>
-                        <p role="note">
-                            시청 기록은 이 브라우저에만 저장되며 자동 백업되지 않아요. 확장 프로그램을 삭제하거나
-                            브라우저 프로필·확장 데이터를 지우면 기록도 함께 삭제돼요. 별도 백업이 없으면 재설치해도
-                            복구할 수 없어요. 삭제하기 전에 위의 백업 파일 저장으로 시청 기록과 내 채팅을 보관할 수
-                            있어요. 후원 기록은 백업에 포함되지 않아요.
-                        </p>
-                    </details>
-                    <details class="history-storage-guide">
-                        <summary>개발자용 시청 기록 저장 위치</summary>
-                        <p>
-                            파일 백업은 위의 백업 파일 저장을 이용해 주세요. 아래는 현재 Chrome 프로필의 확장 저장소
-                            위치예요.
-                        </p>
-                        <ol>
-                            <li>
-                                주소창에 <code>chrome://version</code>을 입력하고 <strong>프로필 경로</strong>를 확인해
-                                주세요.
-                            </li>
-                            <li>
-                                <code>chrome://extensions</code>에서 <strong>개발자 모드</strong>를 켜고 치즈 스패너의
-                                <strong>ID</strong>를 확인해 주세요.
-                            </li>
-                            <li>
-                                프로필 폴더 안의 <code>Local Extension Settings</code> 폴더에서 해당 ID와 같은 이름의
-                                폴더를 열면 돼요.
-                            </li>
-                        </ol>
-                        <p>Windows에서 찾을 경로</p>
-                        <code class="history-storage-path"
-                            >&lt;프로필 경로&gt;\Local Extension Settings\&lt;치즈 스패너 ID&gt;</code
-                        >
-                        <p>
-                            개인별 프로필과 설치 방식에 따라 경로가 달라요. 시청 기록은 별도 문서 파일이 아닌 브라우저
-                            데이터로 저장돼요.
-                        </p>
-                    </details>
-                    <div class="history-list-footer">
-                        <span>후원 갱신 내역과 조회 상태를 초기화해요. 실시간 저장 기록은 유지해요.</span>
-                        <button id="clearDonationImport" class="secondary-button danger-button" type="button" disabled>
-                            후원 갱신 초기화
-                        </button>
-                    </div>
-                    <div class="history-list-footer">
-                        <span>전체 삭제는 모든 달의 시청·채팅·후원 기록에 적용돼요.</span
-                        ><button id="clearHistory" class="secondary-button danger-button" type="button">
-                            전체 삭제
-                        </button>
+                    <section class="history-danger-zone" aria-labelledby="historyDangerTitle">
+                        <h3 id="historyDangerTitle">기록 삭제</h3>
+                        <div class="history-list-footer">
+                            <span>후원 갱신 내역과 조회 상태를 초기화해요. 실시간 저장 기록은 유지해요.</span>
+                            <button
+                                id="clearDonationImport"
+                                class="secondary-button danger-button"
+                                type="button"
+                                disabled
+                            >
+                                후원 갱신 초기화
+                            </button>
+                        </div>
+                        <div class="history-list-footer">
+                            <span>모든 달의 시청·채팅·후원 기록을 지워요. 되돌릴 수 없어요.</span
+                            ><button id="clearHistory" class="secondary-button danger-button" type="button">
+                                전체 삭제
+                            </button>
+                        </div>
+                    </section>
+                    <div class="history-management-notes">
+                        <details class="history-storage-warning">
+                            <summary>시청 기록 삭제 주의</summary>
+                            <p role="note">
+                                시청 기록은 이 브라우저에만 저장되며 자동 백업되지 않아요. 확장 프로그램을 삭제하거나
+                                브라우저 프로필·확장 데이터를 지우면 기록도 함께 삭제돼요. 별도 백업이 없으면 재설치해도
+                                복구할 수 없어요. 삭제하기 전에 위의 백업 파일 저장으로 시청 기록과 내 채팅을 보관할 수
+                                있어요. 후원 기록은 백업에 포함되지 않아요.
+                            </p>
+                        </details>
+                        <details class="history-storage-guide">
+                            <summary>개발자용 시청 기록 저장 위치</summary>
+                            <p>
+                                파일 백업은 위의 백업 파일 저장을 이용해 주세요. 아래는 현재 Chrome 프로필의 확장 저장소
+                                위치예요.
+                            </p>
+                            <ol>
+                                <li>
+                                    주소창에 <code>chrome://version</code>을 입력하고 <strong>프로필 경로</strong>를
+                                    확인해 주세요.
+                                </li>
+                                <li>
+                                    <code>chrome://extensions</code>에서 <strong>개발자 모드</strong>를 켜고 치즈
+                                    스패너의 <strong>ID</strong>를 확인해 주세요.
+                                </li>
+                                <li>
+                                    프로필 폴더 안의 <code>Local Extension Settings</code> 폴더에서 해당 ID와 같은
+                                    이름의 폴더를 열면 돼요.
+                                </li>
+                            </ol>
+                            <p>Windows에서 찾을 경로</p>
+                            <code class="history-storage-path"
+                                >&lt;프로필 경로&gt;\Local Extension Settings\&lt;치즈 스패너 ID&gt;</code
+                            >
+                            <p>
+                                개인별 프로필과 설치 방식에 따라 경로가 달라요. 시청 기록은 별도 문서 파일이 아닌
+                                브라우저 데이터로 저장돼요.
+                            </p>
+                        </details>
                     </div>
                 </div>
-            </details>
+            </section>
             <div class="action-bar">
                 <a class="secondary-button" href="options.html">설정으로 돌아가기</a>
                 <a class="secondary-button" href="https://chzzk.naver.com/lives" target="_blank" rel="noopener"

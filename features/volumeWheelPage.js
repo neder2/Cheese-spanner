@@ -74,6 +74,8 @@
 
     function handleWheel(event) {
         if (!options.enabled || !isPlaybackRoute()) return;
+        // Ctrl+wheel and trackpad pinch stay with the browser zoom.
+        if (event.ctrlKey) return;
         if (!Number.isFinite(event.deltaY) || event.deltaY === 0) return;
 
         const controls = getVolumeControlCandidates(event);

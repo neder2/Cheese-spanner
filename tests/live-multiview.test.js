@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
 const { waitForCondition } = require("./helpers/extension-page-fixture.js");
+const { forwardSettingsStore } = require("./helpers/settings-store-emulation.js");
 const repo = path.join(__dirname, "..");
 const A = "a".repeat(32),
     B = "b".repeat(32),
@@ -52,7 +53,7 @@ function setup(t, { local = {}, savedSession, readFailure = false, writeFailure 
         for (const listener of optionListeners) listener(featureOptions);
     };
     w.chrome = {
-        runtime: {},
+        runtime: { sendMessage: (message, callback) => forwardSettingsStore(w.chrome, message, callback) },
         storage: {
             onChanged: {
                 addListener: (fn) => listeners.add(fn),

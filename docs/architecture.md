@@ -12,6 +12,7 @@
 | `shared/liveStartMonitor.js`      | 서비스 워커 안에서 방송 알림·자동 입장의 독립 큐와 alarm                            | 기기별 채널 설정·라이브 상태 → 중복 방지 상태·알림·탭 동작  |
 | `shared/categoryExclusions.js`    | 프로필별 카테고리 제외 검증과 서비스 워커의 독립 저장 큐                            | 전체 방송 문서의 개별 선택 → local 상태 → 열린 목록의 반영  |
 | `shared/donationHistoryImport.js` | 사용자가 시작한 과거 후원 조회 작업                                                 | 기록 페이지의 연결 → 로그인 확인·월별 조회 → 기록 쓰기 큐   |
+| `shared/settingsStore.js`         | 백업 대상 설정의 콘텐츠 쓰기 큐와 설정 파일 내보내기·미리보기·적용                  | 검증한 콘텐츠·옵션 페이지 요청 → 설정 저장 잠금 안의 쓰기   |
 | `options.html`                    | 액션 팝업과 옵션 페이지, 저장 전 편집 상태                                          | 옵션 스키마·저장값 → 사용자 승인에 따른 권한 요청·설정 저장 |
 | `history.html`                    | 기록 조회·필터·달력·활동 표시, 삭제·후원 갱신 요청                                  | local 기록 → 화면; 변경은 서비스 워커에 요청                |
 | `replay-pending.html`             | 기록에서 다시보기 번호를 찾는 동안의 대기 화면                                      | 기록 페이지가 연 탭 → 조회가 끝나면 해당 다시보기로 이동    |
@@ -26,24 +27,26 @@ VOD의 영구 이어보기는 네이티브 상세·시청 이벤트의 소유예
 
 isolated 영역은 `shared/settings.js` → `shared/data.js` → `shared/categoryExclusions.js` → `shared/selectors.js` → `content.js` 순서로 공용 기반을 준비해요. `content.js`는 이미 등록된 `BetterChzzk.utils`를 보존하며 DOM·라우트 기능을 추가해요. 기능의 model·repository·view는 해당 기능의 조립 파일보다 먼저 로드돼요.
 
-서비스 워커는 settings·data·categoryExclusions·donationHistory·watchHistoryStore·adVideoRegistration·liveStart·liveStartMonitor·donationHistoryImport를 로드해요. `shared/` 전체가 워커용이라는 뜻은 아니에요. selectors·vodTimeline처럼 페이지 컨텍스트에 의존하는 파일을 디렉터리 단위로 일괄 로드하지 않아요.
+서비스 워커는 settings·data·categoryExclusions·donationHistory·watchHistoryStore·adVideoRegistration·liveStart·liveStartMonitor·followingFolders·chatMultiview·settingsBackup·settingsStore·donationHistoryImport를 로드해요. `shared/` 전체가 워커용이라는 뜻은 아니에요. selectors·vodTimeline처럼 페이지 컨텍스트에 의존하는 파일을 디렉터리 단위로 일괄 로드하지 않아요.
 
 백업에서는 `shared/watchHistoryBackup.js`가 파일 변환·검증을, `shared/watchHistoryBackupMerge.js`가 병합 결과와 제한된 삭제 복원 계산을, `shared/watchHistoryBackupController.js`가 신뢰 문서·확인 토큰·요청 조정을 담당해요. 서비스 워커는 기록 store 뒤에 이 세 파일을 순서대로 로드하고, 기존 기록 큐에 읽기·미리보기·저장을 직렬로 연결해요. store의 늦은 ID 연결도 같은 복원 범위 계산을 사용해요.
 
 기록 페이지의 `historyBackup.js`는 파일 선택·다운로드·미리보기만 소유해요. HTML은 data·donationHistory·watchHistoryBackup·historyBackup·history 순서로 로드하고 history가 기존 조회 함수를 연결해요. 백업 UI와 기록 UI 모두 실제 저장은 background에 요청해요. 옵션 페이지에는 안내와 진입 링크만 있어요.
 
-| 기능 경계      | 내부 역할 분리                                                                                                            | 바깥과의 연결                                                                        |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| 재생·화질      | `autoQuality.js`가 설정·라우트를 조정하고 `autoQualityPage.js`가 실제 플레이어를 제어해요                                 | DOM 브리지로 요청·결과를 교환해요                                                    |
-| 채팅 모아보기  | parser는 현재 행을 읽고, messageStore는 정체성·원문·수집 상태를 관리하며, panel은 표시·선택·읽음을 관리해요               | `chatTools.js`가 옵션과 루트 교체를 조립해요                                         |
-| 패널 너비      | `panelResizeModel.js`는 선택값 검증·가용 폭 계산, `panelResize.js`는 양쪽 경계·DOM 적용·local 너비 보관을 소유해요        | isolated에서 공용 설정·라우트 감지를 사용하며 채팅·팔로잉 기능과 독립적으로 연결해요 |
-| VOD 댓글       | model은 정규화, repository는 VOD·정렬별 요청, nativeAdapter는 원본 댓글 조작 위임, view는 확장 DOM을 소유해요             | `vodCommentTabs.js`가 라우트·mount를 조정해요                                        |
-| 방송 목록      | filterModel은 범위·제외 판정, repository는 목록·팔로워·이름 조회, searchController는 탐색 예약을 소유해요                 | `categoryTools.js`가 네이티브 카드와 결과 UI를 연결해요                              |
-| 다시보기 검색  | model은 검색·진행률 계산, repository는 채널 인덱스·댓글 조회를 소유해요                                                   | `videoSearch.js`가 원본 카드와 결과 표시를 관리해요                                  |
-| 방송 시간 통계 | model은 KST 달력·방송 계산, repository는 페이지·상세 조회를 소유해요                                                      | `monthlyBroadcastTime.js`가 채널 위젯을 관리해요                                     |
-| 멀티뷰         | model은 구성·딜레이 계산, playback은 미디어, layoutControls는 배치, settingsPanel은 설정 UI, view는 DOM 생성기를 소유해요 | runtime이 네이티브 메인과 확장 보조 영상을 조립해요                                  |
-| 시청·활동 기록 | liveWatchHistory는 세션 추적, watchActivity는 현재 계정의 새 활동 수집, watchHistoryStore는 변경 계산을 맡아요            | 저장은 background만 수행하고 history는 조회·명령만 해요                              |
-| 팔로잉         | 고정·숨김, 접기 기억, 새로고침, 제목 이력, 미리보기는 별도 기능이에요                                                     | 원본 목록을 공유해도 상태와 저장 책임은 합치지 않아요                                |
+| 기능 경계      | 내부 역할 분리                                                                                                              | 바깥과의 연결                                                                                                     |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 재생·화질      | `autoQuality.js`가 설정·라우트를 조정하고 `autoQualityPage.js`가 실제 플레이어를 제어해요                                   | DOM 브리지로 요청·결과를 교환해요                                                                                 |
+| 채팅 모아보기  | parser는 현재 행을 읽고, messageStore는 정체성·원문·수집 상태를 관리하며, panel은 표시·선택·읽음을 관리해요                 | `chatTools.js`가 옵션과 루트 교체를 조립해요                                                                      |
+| 패널 너비      | `panelResizeModel.js`는 선택값 검증·가용 폭 계산, `panelResize.js`는 양쪽 경계·DOM 적용·local 너비 보관을 소유해요          | isolated에서 공용 설정·라우트 감지를 사용하며 채팅·팔로잉 기능과 독립적으로 연결해요                              |
+| VOD 댓글       | model은 정규화, repository는 VOD·정렬별 요청, nativeAdapter는 원본 댓글 조작 위임, view는 확장 DOM을 소유해요               | `vodCommentTabs.js`가 라우트·mount를 조정해요                                                                     |
+| 방송 목록      | filterModel은 범위·제외 판정, repository는 목록·팔로워·이름 조회, searchController는 탐색 예약을 소유해요                   | `categoryTools.js`가 네이티브 카드와 결과 UI를 연결해요                                                           |
+| 다시보기 검색  | model은 검색·진행률 계산, repository는 채널 인덱스·댓글 조회를 소유해요                                                     | `videoSearch.js`가 원본 카드와 결과 표시를 관리해요                                                               |
+| 방송 시간 통계 | model은 KST 달력·방송 계산, repository는 페이지·상세 조회를 소유해요                                                        | `monthlyBroadcastTime.js`가 채널 위젯을 관리해요                                                                  |
+| 멀티뷰         | model은 구성·딜레이 계산, playback은 미디어, layoutControls는 배치, settingsPanel은 설정 UI, view는 DOM 생성기를 소유해요   | runtime이 네이티브 메인과 확장 보조 영상을 조립해요                                                               |
+| 시청·활동 기록 | liveWatchHistory는 세션 추적, watchActivity는 현재 계정의 새 활동 수집, watchHistoryStore는 변경 계산을 맡아요              | 저장은 background만 수행하고 history는 조회·명령만 해요                                                           |
+| 팔로잉         | 고정·숨김, 접기 기억, 새로고침, 제목 이력, 미리보기, 폴더·목록 높이는 별도 기능이에요                                       | 원본 목록을 공유해도 상태와 저장 책임은 합치지 않아요. 제목 이력은 워커가 수집·저장하고 팔로잉 본문은 읽기만 해요 |
+| 채팅 멀티뷰    | `shared/chatMultiview.js`는 구성 검증·프레임 주소, `features/chatMultiview.js`는 헤더 진입점·패널·칸을 소유해요             | 같은 출처 네이티브 채팅 팝업 경로만 표시하고 구성 저장은 설정 저장 큐로 보내요                                    |
+| 설정 저장·파일 | `shared/settingsBackup.js`는 대상 키·검증·파일 형식·적용 계획, `shared/settingsStore.js`는 워커 큐·적용·되돌리기를 소유해요 | 옵션 페이지 `optionsSettingsBackup.js`는 파일 선택·미리보기·권한 요청만 해요                                      |
 
 멀티뷰의 메인은 치지직이 소유하는 플레이어와 라우터를 계속 사용해요. 보조 영상과 확장 소유 미리보기는 패키지의 hls.js를 사용해요. 일반 재생 조작이 보조 영상을 메인으로 오인하지 않도록 공용 메인 영상 판별을 사용해요.
 
@@ -51,13 +54,15 @@ isolated 영역은 `shared/settings.js` → `shared/data.js` → `shared/categor
 
 설정 저장은 편집값 정규화 → 필요한 선택 권한 요청 → `chrome.storage.sync` 저장 → 변경 구독 → 각 기능의 적용·정리로 이어져요. 권한이 거부되거나 저장이 실패한 상태를 저장 완료로 표시하지 않아요. 광고 옵션은 서비스 워커의 등록 조정 결과까지 확인하며, 새 문서의 초기 주입이 필요한 상태를 구분해요.
 
-패널 너비는 새 문서의 확장 local 읽기 → 현재 문서 선택과 DOM 가용 공간 → 순수 모델의 표시 너비 계산 → 기존 패널·본문의 가로 스타일 적용으로 이어져요. 마우스 조작을 확정하거나 더블클릭으로 초기화할 때 해당 패널의 독립 local 키만 갱신해요. 너비 변경을 다른 문서에 구독시키지 않고 같은 문서의 복귀·옵션 재활성화는 메모리 선택을 사용해요. 기능 ON/OFF는 기존 옵션 구독을 사용하고, 너비 처리에는 MAIN 브리지·서비스 워커·시청 기록 저장 경로가 참여하지 않아요.
+패널 너비·높이는 새 문서의 확장 local 읽기 → 현재 문서 선택과 DOM 가용 공간 → 순수 모델의 표시 크기 계산 → 기존 패널·본문의 스타일 적용으로 이어져요. 위치는 sync 옵션에서 읽어 확장 marker로 순서와 좌우 기준만 바꿔요. 마우스 조작을 확정하거나 더블클릭으로 초기화할 때 해당 패널의 독립 local 키만 워커의 설정 저장 큐를 거쳐 갱신해요. 너비 변경을 다른 문서에 구독시키지 않고 같은 문서의 복귀·옵션 재활성화는 메모리 선택을 사용해요. 기능 ON/OFF는 기존 옵션 구독을 사용하고, 크기·위치 처리에는 MAIN 브리지·시청 기록 저장 경로가 참여하지 않아요. 서비스 워커는 저장 순서와 검증만 맡아요.
 
 라이브 기록은 현재 채널과 실제 영상 진행 확인 → 누적 절대값 세션 스냅샷 → 확장 메시지 → 발신자·스키마 검증 → 쓰기 큐에서 최신 local 기록 읽기 → 병합·저장 → 결과 응답 순서예요. 시청 기록 페이지는 저장소 변경을 읽고 다시 표시해요. 늦은 스냅샷이 삭제한 기록을 되살리지 않도록 삭제 시점과 세션 정체성도 같은 저장 경계를 통과해요.
 
 카테고리 제외는 전체 방송 필터 메뉴의 이름 검색 → 실제 결과 선택 → 검증한 확장 메시지 → 독립 워커 큐의 최신 local 읽기·개별 변경·저장 → 성공 상태와 저장소 변경 구독 순서예요. 열린 전체 방송 문서는 같은 프로필 선택을 반영하고 유형·ID와 태그 전체 일치로 카드 표시를 판정해요. 태그는 패널 입력의 Enter에서 같은 개별 추가 명령으로 저장해요. 검색어·결과 캐시는 문서 메모리에만 두며 선택 목록의 지속 보관과 분리해요. MAIN 브리지·시청 기록 writer·전체 방송 집계에는 선택 변경을 연결하지 않아요.
 
 페이지 이동은 MAIN의 route bridge → 공용 라우트 감지 → 기능별 이전 작업 취소·UI 정리 → 새 경로에 필요한 작업 시작으로 이어져요. React가 루트나 행을 교체하는 경우는 URL 이동과 별도로 처리해요.
+
+설정 저장은 백업 대상 키를 쓰는 모든 writer가 같은 설정 저장 잠금을 공유하는 흐름이에요. 옵션 페이지·워커는 Web Lock을 직접 잡고, 치지직 콘텐츠는 `settingsStoreSet` → 워커 발신자·키·값·기대값 검증 → 도착 순서 큐 → 잠금 안의 최신 읽기·쓰기 → 결과 응답 순서로 진행해요. 설정 파일 적용은 옵션 페이지의 미리보기·확인·권한 요청 → 워커가 잠금을 한 번 잡고 최신 값·지문 비교 → 효과 끄기·sync·local·방송 대상·효과 켜기 순서의 쓰기 → 실패 시 되돌리기로 이어져요.
 
 ## 외부 의존
 

@@ -144,11 +144,28 @@ function monitor(options = {}) {
             return { ok: true, json: async () => clone(json) };
         },
     });
-    for (const file of ["shared/settings.js", "shared/data.js", "shared/liveStart.js", "shared/liveStartMonitor.js"]) {
+    for (const file of [
+        "shared/settings.js",
+        "shared/data.js",
+        "shared/liveStart.js",
+        "shared/liveStartMonitor.js",
+        "shared/settingsBackup.js",
+        "shared/settingsStore.js",
+    ]) {
         vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context, { filename: file });
     }
+    const settingsStore = context.BetterChzzkSettingsStore.createController({ chrome });
     return {
         chrome,
+        backup(message, sender = { id: "test", url: "chrome-extension://test/options.html" }) {
+            return new Promise((resolve) =>
+                settingsStore.handleMessage(
+                    { type: "betterchzzk:settings-backup", version: 1, ...message },
+                    sender,
+                    resolve
+                )
+            );
+        },
         local,
         sync,
         alarms,
@@ -369,6 +386,126 @@ test("state persistence failure prevents effects; notification failure does not 
     m.failNotification(false);
     await m.tick();
     assert.equal(m.notifications.length, 0, "failed effects are not repeated for a consumed live ID");
+});
+
+test("a failed state save is shown in the status and later checks still notify once storage recovers", async () => {
+    const m = monitor();
+    await flush();
+    const before = clone(m.local[STATUS]);
+    m.setResponse(snapshot(11, true));
+    m.failStorage(true);
+    await m.tick();
+    assert.equal(m.notifications.length, 0);
+    assert.equal(m.opened.length, 0);
+    assert.notDeepEqual(m.local[STATUS], before);
+    assert.match(m.local[STATUS].error, /저장하지 못해/);
+    m.failStorage(false);
+    await m.tick();
+    assert.equal(m.notifications.length, 1);
+    assert.equal(m.opened.length, 1);
+    assert.equal(m.local[STATUS].error, "");
+});
+
+test("a failed final state save after committed effects is reported without repeating them", async () => {
+    const m = monitor();
+    await flush();
+    m.setResponse(snapshot(11, true));
+    const save = m.chrome.storage.local.set;
+    let failFinal = true;
+    m.chrome.storage.local.set = (values, callback) => {
+        // Only the end-of-check write carries a new checkedAt; per-channel commits keep the previous one.
+        if (failFinal && values[STATE] && values[STATE].checkedAt !== m.local[STATE].checkedAt) {
+            queueMicrotask(() => {
+                m.chrome.runtime.lastError = { message: "storage failed" };
+                callback();
+                m.chrome.runtime.lastError = null;
+            });
+            return;
+        }
+        return save(values, callback);
+    };
+    await m.tick();
+    assert.equal(m.notifications.length, 1);
+    assert.equal(m.opened.length, 1);
+    assert.match(m.local[STATUS].error, /저장하지 못해/);
+    failFinal = false;
+    await m.tick();
+    assert.equal(m.local[STATUS].error, "");
+    assert.equal(m.notifications.length, 1, "the committed live ID is not notified again");
+    assert.equal(m.opened.length, 1);
+});
+
+test("an unrelated registration after a live ID is saved still runs that broadcast's effects once", async () => {
+    const m = monitor();
+    await flush();
+    m.setResponse(snapshot(11, true));
+    const save = m.chrome.storage.local.set;
+    let request = null;
+    m.chrome.storage.local.set = (values, callback) => {
+        if (!request && values[STATE]?.channels?.[CHANNEL]?.notify?.includes("11"))
+            request = m.send("remove", { channelId: SECOND });
+        return save(values, callback);
+    };
+    await m.tick();
+    assert.ok(request, "the registration arrives while the live ID is being saved");
+    assert.equal((await request).ok, true);
+    await m.tick();
+    assert.ok(m.local[STATE].channels[CHANNEL].notify.includes("11"));
+    assert.equal(m.notifications.length, 1);
+    assert.deepEqual(m.opened, [{ url: `https://chzzk.naver.com/live/${CHANNEL}`, active: false }]);
+    await m.tick();
+    assert.equal(m.notifications.length, 1, "the committed live ID is not notified again");
+    assert.equal(m.opened.length, 1);
+});
+
+test("another channel's rule change during a commit keeps committed effects and only rebaselines that channel", async () => {
+    const m = monitor();
+    let liveId = 10;
+    m.setFetch(async (url) => snapshot(liveId, true, url.split("/").at(-2)));
+    await flush();
+    liveId = 11;
+    const save = m.chrome.storage.local.set;
+    let restored = false;
+    m.chrome.storage.local.set = (values, callback) => {
+        if (!restored && values[STATE]?.channels?.[CHANNEL]?.notify?.includes("11")) {
+            restored = true;
+            // A settings restore writes the list directly instead of sending a registration message.
+            save({ [CHANNELS]: [rule(), rule(SECOND)] });
+        }
+        return save(values, callback);
+    };
+    await m.tick();
+    assert.equal(restored, true);
+    await flush();
+    assert.deepEqual(
+        m.notifications.map((row) => row.id),
+        [`betterchzzk:live-start:${CHANNEL}:11`]
+    );
+    assert.deepEqual(m.opened, [{ url: `https://chzzk.naver.com/live/${CHANNEL}`, active: false }]);
+    assert.deepEqual(m.local[STATE].channels[SECOND].notify, ["11"], "the added channel starts from a baseline");
+    await m.tick();
+    assert.equal(m.notifications.length, 1);
+    assert.equal(m.opened.length, 1);
+});
+
+test("removing the channel whose live ID was just saved cancels its pending effects", async () => {
+    const m = monitor();
+    await flush();
+    m.setResponse(snapshot(11, true));
+    const save = m.chrome.storage.local.set;
+    let request = null;
+    m.chrome.storage.local.set = (values, callback) => {
+        if (!request && values[STATE]?.channels?.[CHANNEL]?.notify?.includes("11"))
+            request = m.send("remove", { channelId: CHANNEL });
+        return save(values, callback);
+    };
+    await m.tick();
+    assert.ok(request);
+    assert.equal((await request).ok, true);
+    await flush();
+    assert.deepEqual(m.local[CHANNELS], []);
+    assert.equal(m.notifications.length, 0);
+    assert.equal(m.opened.length, 0);
 });
 
 test("channel mutations serialize, reject untrusted senders, and remove stale polling state", async () => {
@@ -655,6 +792,40 @@ test("live-start controls have their own accessible options tab", async (t) => {
     tab.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
     assert.notEqual(doc.activeElement, tab);
     assert.equal(doc.activeElement.getAttribute("role"), "tab");
+});
+
+test("restored targets for a broadcast already in progress only rebaseline before later broadcasts act", async () => {
+    const m = monitor({
+        local: { [CHANNELS]: [] },
+        sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false },
+    });
+    m.setResponse(snapshot(10, true));
+    await flush();
+    const backup = {
+        kind: "cheese-spanner.settings-backup",
+        formatVersion: 1,
+        extensionVersion: "1.4.3",
+        createdAt: 1,
+        sync: { options: { liveStartNotificationsEnabled: true, liveStartAutoOpenEnabled: true } },
+        local: { liveStartChannels: [rule()] },
+    };
+    const preview = await m.backup({ action: "preview", backup });
+    assert.equal(preview.ok, true);
+    const applied = await m.backup({ action: "apply", backup, fingerprint: preview.fingerprint });
+    assert.equal(applied.result?.status, "applied", JSON.stringify(applied));
+    await flush();
+    await m.tick();
+    assert.equal(m.notifications.length, 0, "the running broadcast is a baseline, not a new start");
+    assert.equal(m.opened.length, 0);
+    m.setResponse(snapshot(11, true));
+    await m.tick();
+    assert.equal(m.notifications.length, 1);
+    assert.equal(m.opened.length, 1);
+    const again = await m.backup({ action: "preview", backup });
+    const reapplied = await m.backup({ action: "apply", backup, fingerprint: again.fingerprint });
+    assert.equal(reapplied.result.status, "unchanged");
+    await m.tick();
+    assert.equal(m.opened.length, 1, "re-applying the same file does not reopen the broadcast");
 });
 
 test("hiding the registration button leaves monitoring and channel rules active", async () => {

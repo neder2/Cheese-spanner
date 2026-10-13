@@ -79,3 +79,14 @@ test("1.4.3 briefly announces the ambient effect without adding a settings desti
     assert.ok(Object.isFrozen(guide.cards));
     assert.doesNotMatch(guide.summary, /광고 차단|팝업|AdGuard/);
 });
+
+test("1.4.4 briefly announces folders, chat multiview and the following title history", () => {
+    const guide = catalog.getGuide("1.4.4");
+    assert.equal(
+        guide.summary,
+        "팔로잉 폴더·채팅 멀티뷰 추가(설정에서 켜기). 팔로잉 방제를 자동으로 모아 팔로잉 화면에서 확인."
+    );
+    assert.equal(guide.cards.length, 0);
+    assert.ok(Object.isFrozen(guide.cards));
+    assert.doesNotMatch(guide.summary, /앰비언트|카테고리 제외/);
+});

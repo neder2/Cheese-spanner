@@ -30,6 +30,8 @@ async function fixture(
         localAvailable = true,
         sharedLocal,
         legacyStored,
+        storedHeight,
+        initialOptions = {},
     } = {}
 ) {
     const dom = new JSDOM(
@@ -87,11 +89,15 @@ async function fixture(
     });
     const sbWidth = () =>
         width(doc.getElementById("sidebar"), Number.parseFloat(doc.getElementById("sidebar")?.style.width) || 0);
-    const bodySpace = () =>
-        width(
-            doc.getElementById("layout-body"),
-            Number.parseFloat(doc.getElementById("layout-body")?.style.paddingLeft) || 0
-        );
+    const sidebarRight = () => doc.getElementById("layout-body")?.getAttribute("data-bcpr-sidebar-side") === "right";
+    const bodySpace = () => {
+        const body = doc.getElementById("layout-body");
+        if (sidebarRight()) return Number.parseFloat(body.style.getPropertyValue("--bcpr-sidebar-space")) || 0;
+        return width(body, Number.parseFloat(body?.style.paddingLeft) || 0);
+    };
+    const bodyLeft = () => (sidebarRight() ? 0 : bodySpace());
+    const chatHeight = (node) => Number.parseFloat(node.style.getPropertyValue("--bcpr-height")) || 700;
+    // Side markers move only the extension-controlled order/anchoring, as CSS would in Chrome.
     function bindRects() {
         doc.getElementById("layout-body").getBoundingClientRect = () => rect(0, viewport - 12);
         for (const node of doc.querySelectorAll(
@@ -99,20 +105,27 @@ async function fixture(
         )) {
             node.getBoundingClientRect = () => {
                 if (node.style.display === "none" || node.hidden) return rect(0, 0, 0, 0);
-                const w = node.id === "sidebar" ? sbWidth() : width(node, Number.parseFloat(node.style.width) || 353);
-                return rect(node.id === "sidebar" ? 0 : viewport - 12 - w, w);
+                if (node.id === "sidebar") {
+                    const w = sbWidth();
+                    return rect(node.getAttribute("data-bcpr-side") === "right" ? viewport - 12 - w : 0, w);
+                }
+                const w = width(node, Number.parseFloat(node.style.width) || 353);
+                const end = viewport - 12 - (sidebarRight() ? bodySpace() : 0);
+                return rect(
+                    node.getAttribute("data-bcpr-side") === "left" ? bodyLeft() : end - w,
+                    w,
+                    60,
+                    chatHeight(node)
+                );
             };
         }
-        doc.getElementById("player-row").getBoundingClientRect = () => rect(bodySpace(), viewport - 12 - bodySpace());
+        doc.getElementById("player-row").getBoundingClientRect = () => rect(bodyLeft(), viewport - 12 - bodySpace());
         doc.querySelector("main").getBoundingClientRect = () => {
             const aside = doc.querySelector("#aside-chatting, #vod-aside, #betterchzzk-vod-comment-aside");
-            return rect(
-                bodySpace(),
-                viewport -
-                    12 -
-                    bodySpace() -
-                    (aside?.style.display === "none" ? 0 : width(aside, Number.parseFloat(aside?.style.width) || 0))
-            );
+            const asideWidth =
+                aside?.style.display === "none" ? 0 : width(aside, Number.parseFloat(aside?.style.width) || 0);
+            const left = aside?.getAttribute("data-bcpr-side") === "left" ? bodyLeft() + asideWidth : bodyLeft();
+            return rect(left, viewport - 12 - bodySpace() - asideWidth);
         };
     }
     bindRects();
@@ -124,7 +137,12 @@ async function fixture(
         storageFailures = { read: storageFails, write: storageFails },
         pendingReads = [],
         pendingWrites = [],
-        store = sharedLocal || localStore(stored ? storedWidths(stored.sidebarWidthPx, stored.chatWidthPx) : {});
+        store =
+            sharedLocal ||
+            localStore({
+                ...(stored ? storedWidths(stored.sidebarWidthPx, stored.chatWidthPx) : {}),
+                ...(storedHeight !== undefined ? { "betterchzzk:panel-resize:chat-height:v1": storedHeight } : {}),
+            });
     if (legacyStored) originalSet.call(win.sessionStorage, "betterchzzk:panel-resize:v1", JSON.stringify(legacyStored));
     for (const [name, original] of [
         ["getItem", originalGet],
@@ -190,7 +208,7 @@ async function fixture(
         evalRepoScript(dom, file);
     win.BetterChzzk.utils.bindFeatureOptions = (apply) => {
         optionsChanged = apply;
-        if (!delayedOptions) apply({ sidebarResizeEnabled: true, chatResizeEnabled: true });
+        if (!delayedOptions) apply({ sidebarResizeEnabled: true, chatResizeEnabled: true, ...initialOptions });
         return () => {};
     };
     t.after(() => {
@@ -290,7 +308,9 @@ test("default boundaries preserve native styles, media and input; mouse drag and
         video = f.doc.querySelector("video");
     const original = [sb.style.cssText, body.style.cssText, chat.style.cssText],
         parent = video.parentElement;
-    assert.equal(f.doc.querySelectorAll('[role="separator"]').length, 2);
+    // Two width boundaries plus the chat height boundary added for the chat height plan.
+    assert.equal(f.doc.querySelectorAll('[role="separator"][aria-orientation="vertical"]').length, 2);
+    assert.equal(f.doc.querySelectorAll('[role="separator"][aria-orientation="horizontal"]').length, 1);
     assert.equal(f.handle("chat").getAttribute("aria-orientation"), "vertical");
     assert.equal(f.handle("chat").getAttribute("aria-valuenow"), "353");
     assert.equal(f.handle("sidebar").tabIndex, -1);
@@ -677,7 +697,8 @@ test("SPA comment-only replacement shares document selection; storage failures r
     await f.flush();
     assert.equal(f.width(aside), 363);
     assert.equal(old.style.getPropertyValue("--bcpr-width"), "");
-    assert.equal(f.doc.querySelectorAll('[role="separator"]').length, 1);
+    assert.equal(f.doc.querySelectorAll('[role="separator"][aria-orientation="vertical"]').length, 1);
+    assert.equal(old.querySelectorAll("[data-bcpr-handle]").length, 0);
     f.win.dispatchEvent(new f.win.Event("pagehide"));
     await f.flush();
     assert.equal(f.handle("chat"), null);
@@ -1182,3 +1203,262 @@ for (const panel of ["sidebar", "chat"]) {
         });
     }
 }
+
+const HEIGHT_KEY = "betterchzzk:panel-resize:chat-height:v1";
+const placementRules = (f) => [...f.doc.getElementById("betterchzzk-panel-placement-style").sheet.cssRules];
+
+test("chat left placement marks only the native aside, mirrors its boundary and keeps the width choice", async (t) => {
+    const f = await fixture(t, { sidebar: false, initialOptions: { chatPosition: "left" } });
+    const chat = f.doc.getElementById("aside-chatting"),
+        video = f.doc.querySelector("video"),
+        row = chat.parentElement,
+        original = chat.style.cssText;
+    await f.flush();
+    assert.equal(chat.getAttribute("data-bcpr-side"), "left");
+    assert.equal(chat.parentElement, row);
+    assert.equal([...row.children].indexOf(chat), 1, "the DOM order stays native; CSS order moves the column");
+    assert.equal(f.handle("chat").getAttribute("data-bcpr-edge"), "right");
+    const rules = placementRules(f);
+    const order = rules.find(
+        (rule) => rule.selectorText.includes('[data-bcpr-side="left"]') && rule.style.getPropertyValue("order")
+    );
+    assert.equal(order.style.getPropertyValue("order"), "-1");
+    const separator = rules.find((rule) => rule.selectorText === '#aside-chatting[data-bcpr-side="left"]::before');
+    assert.equal(separator.style.getPropertyValue("right"), "-1px");
+    f.pointer(f.handle("chat"), "pointerdown", 600);
+    f.pointer(f.win, "pointermove", 615);
+    f.pointer(f.win, "pointerup", 615);
+    await f.flush();
+    assert.equal(f.width(chat), 368, "dragging the right edge away from the media widens a left chat");
+    assert.deepEqual(f.writes.at(-1), { [STORAGE_KEYS.chat]: 368 });
+    f.options({ chatPosition: "right" });
+    await f.flush();
+    assert.equal(chat.hasAttribute("data-bcpr-side"), false);
+    assert.equal(f.handle("chat").getAttribute("data-bcpr-edge"), "left");
+    assert.equal(f.width(chat), 368, "the saved width follows the chat to either side");
+    f.options({ chatResizeEnabled: false, sidebarResizeEnabled: false, chatPosition: "left" });
+    await f.flush();
+    assert.equal(chat.getAttribute("data-bcpr-side"), "left", "placement works without the resize option");
+    assert.equal(f.handle("chat"), null);
+    row.style.flexDirection = "column";
+    await f.flush();
+    assert.equal(chat.hasAttribute("data-bcpr-side"), false, "stacked native layouts keep their own order");
+    row.style.flexDirection = "row";
+    await f.flush();
+    assert.equal(chat.getAttribute("data-bcpr-side"), "left");
+    f.options({ chatResizeEnabled: false, sidebarResizeEnabled: false, chatPosition: "right" });
+    await f.flush();
+    assert.equal(chat.hasAttribute("data-bcpr-side"), false);
+    assert.equal(chat.style.cssText, original);
+    assert.equal(f.doc.getElementById("betterchzzk-panel-placement-style"), null);
+    assert.equal(video.parentElement.parentElement, row);
+});
+
+test("sidebar right placement reuses the native reserved space, flips its boundary and releases on overflow", async (t) => {
+    const f = await fixture(t, { initialOptions: { sidebarPosition: "right" } });
+    const sb = f.doc.getElementById("sidebar"),
+        body = f.doc.getElementById("layout-body");
+    // Native inline styles from the fixture; only extension variables may be added on top of them.
+    const originals = [
+        "position: fixed; width: 240px; transform: translateY(111px); height: calc(100vh - 111px);",
+        "padding-left: 240px; padding-top: 51px;",
+    ];
+    await f.flush();
+    assert.equal(sb.style.cssText, originals[0]);
+    assert.equal(sb.getAttribute("data-bcpr-side"), "right");
+    assert.equal(body.getAttribute("data-bcpr-sidebar-side"), "right");
+    assert.equal(body.style.getPropertyValue("--bcpr-sidebar-space"), "240px");
+    assert.equal(body.hasAttribute("data-bcpr-sidebar-space"), false);
+    assert.equal(f.handle("sidebar").getAttribute("data-bcpr-edge"), "left");
+    const rules = placementRules(f);
+    const anchor = rules.find((rule) => rule.selectorText === '#sidebar[data-bcpr-side="right"]');
+    assert.equal(anchor.style.getPropertyValue("left"), "auto");
+    assert.equal(anchor.style.getPropertyValue("right"), "0px");
+    const backdrop = rules.find((rule) => rule.selectorText === '#sidebar[data-bcpr-side="right"]::before');
+    assert.equal(backdrop.style.getPropertyValue("right"), "0px");
+    const tooltip = rules.find((rule) => rule.selectorText.includes('[class^="_tooltip_"]'));
+    assert.equal(tooltip.style.getPropertyValue("right"), "100%");
+    assert.equal(tooltip.style.getPropertyValue("padding-right"), "17px");
+    const tooltipArea = rules.find((rule) => rule.selectorText.includes('[class*="_show_tooltip_"]'));
+    assert.equal(tooltipArea.style.getPropertyValue("margin-left"), "-200px");
+    f.pointer(f.handle("sidebar"), "pointerdown", 600);
+    f.pointer(f.win, "pointermove", 590);
+    f.pointer(f.win, "pointerup", 590);
+    await f.flush();
+    assert.equal(f.width(sb), 250, "dragging the left edge away from the content widens a right sidebar");
+    assert.equal(body.style.getPropertyValue("--bcpr-sidebar-space"), "250px");
+    assert.deepEqual(f.writes.at(-1), { [STORAGE_KEYS.sidebar]: 250 });
+    f.reset("sidebar");
+    await f.flush();
+    assert.equal(body.style.getPropertyValue("--bcpr-sidebar-space"), "240px");
+    body.parentElement.getBoundingClientRect = () => ({
+        left: 0,
+        right: 2000,
+        width: 2000,
+        top: 0,
+        bottom: 800,
+        height: 800,
+        x: 0,
+        y: 0,
+    });
+    f.resize(1280);
+    await f.flush();
+    assert.equal(sb.hasAttribute("data-bcpr-side"), false, "a horizontally scrolled shell keeps the native side");
+    assert.equal(body.hasAttribute("data-bcpr-sidebar-side"), false);
+    assert.deepEqual([sb.style.cssText, body.style.cssText], originals);
+    delete body.parentElement.getBoundingClientRect;
+    f.resize(1280);
+    await f.flush();
+    assert.equal(sb.getAttribute("data-bcpr-side"), "right");
+    f.options({ sidebarPosition: "left" });
+    await f.flush();
+    assert.equal(sb.hasAttribute("data-bcpr-side"), false);
+    assert.deepEqual([sb.style.cssText, body.style.cssText], originals);
+});
+
+test("chat height drags the native chat only, keeps its input, resets on double click and stays mouse only", async (t) => {
+    const f = await fixture(t, { sidebar: false });
+    const chat = f.doc.getElementById("aside-chatting"),
+        input = chat.querySelector("textarea");
+    const grip = f.doc.querySelector('[data-bcpr-handle="chat-height"]');
+    assert.ok(grip);
+    assert.equal(grip.getAttribute("role"), "separator");
+    assert.equal(grip.getAttribute("aria-orientation"), "horizontal");
+    assert.equal(grip.getAttribute("aria-valuemin"), "240");
+    assert.equal(grip.getAttribute("aria-valuemax"), "700");
+    assert.equal(grip.tabIndex, -1);
+    assert.equal(chat.hasAttribute("data-bcpr-height"), false, "the native height stays until the user drags");
+    // Chrome 2026-10-09: the native input area (position:relative; z-index:1000) covered a z-index:3 grip.
+    const gripRule = [...f.doc.getElementById("betterchzzk-panel-resize-style").sheet.cssRules].find(
+        (rule) => rule.selectorText === '[data-bcpr-handle="chat-height"]'
+    );
+    assert.ok(Number(gripRule.style.getPropertyValue("z-index")) > 1000, "the grip stacks above the chat input area");
+    const inputArea = f.doc.createElement("div");
+    inputArea.style.cssText = "position:relative;z-index:1000";
+    chat.insertBefore(inputArea, grip);
+    assert.ok(
+        Number(f.win.getComputedStyle(grip).zIndex) > Number(f.win.getComputedStyle(inputArea).zIndex),
+        "a later native footer cannot cover the grip"
+    );
+    inputArea.remove();
+    f.pointer(grip, "pointerdown", 600, { clientY: 760 });
+    f.pointer(f.win, "pointermove", 600, { clientY: 560 });
+    f.pointer(f.win, "pointerup", 600, { clientY: 560 });
+    await f.flush();
+    assert.equal(chat.style.getPropertyValue("--bcpr-height"), "500px");
+    assert.equal(chat.getAttribute("data-bcpr-height"), "1");
+    assert.equal(input.parentElement, chat, "the input stays inside the native chat");
+    assert.deepEqual(f.writes.at(-1), { [HEIGHT_KEY]: 500 });
+    assert.equal(chat.style.getPropertyValue("--bcpr-width"), "", "height never changes the width choice");
+    f.pointer(grip, "pointerdown", 600, { clientY: 560 });
+    f.pointer(f.win, "pointermove", 600, { clientY: -2000 });
+    f.pointer(f.win, "pointerup", 600, { clientY: -2000 });
+    await f.flush();
+    assert.equal(chat.style.getPropertyValue("--bcpr-height"), "240px");
+    for (const key of ["ArrowUp", "ArrowDown", "Home", "Enter"]) {
+        const event = new f.win.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+        grip.dispatchEvent(event);
+        assert.equal(event.defaultPrevented, false);
+    }
+    f.pointer(grip, "pointerdown", 600, { clientY: 300 });
+    f.pointer(f.win, "pointerup", 600, { clientY: 300 });
+    grip.dispatchEvent(new f.win.MouseEvent("dblclick", { button: 0, bubbles: true, cancelable: true }));
+    await f.flush();
+    assert.equal(chat.hasAttribute("data-bcpr-height"), false);
+    assert.equal(f.writes.at(-1)[HEIGHT_KEY], null, "double click stores the native default");
+    f.options({ chatResizeEnabled: false });
+    await f.flush();
+    assert.equal(f.doc.querySelector('[data-bcpr-handle="chat-height"]'), null);
+});
+
+test("a saved chat height restores in a new document, capped by the native height, and failures stay in memory", async (t) => {
+    const restored = await fixture(t, { sidebar: false, storedHeight: 450 });
+    const chat = restored.doc.getElementById("aside-chatting");
+    assert.equal(chat.style.getPropertyValue("--bcpr-height"), "450px");
+    const tall = await fixture(t, { sidebar: false, storedHeight: 900 });
+    assert.equal(tall.doc.getElementById("aside-chatting").hasAttribute("data-bcpr-height"), false);
+    const failing = await fixture(t, { sidebar: false, storageFails: true });
+    const grip = failing.doc.querySelector('[data-bcpr-handle="chat-height"]');
+    failing.pointer(grip, "pointerdown", 600, { clientY: 760 });
+    failing.pointer(failing.win, "pointermove", 600, { clientY: 660 });
+    failing.pointer(failing.win, "pointerup", 600, { clientY: 660 });
+    await failing.flush();
+    assert.equal(failing.doc.getElementById("aside-chatting").style.getPropertyValue("--bcpr-height"), "600px");
+    assert.equal(Object.hasOwn(failing.store.data, HEIGHT_KEY), false);
+});
+
+test("a left VOD chat takes the reserved info column and banner along so its overhang never covers the title", async (t) => {
+    // 2026-10-09 Codex Chrome: the VOD aside overhangs the info row by ~84px into ._content_right; moving only the
+    // aside to the left covered the title in ._content_left.
+    const f = await fixture(t, { route: "/video/123", sidebar: false, initialOptions: { chatPosition: "left" } });
+    const body = f.doc.getElementById("layout-body");
+    body.insertAdjacentHTML(
+        "beforeend",
+        '<div class="_banner_t" style="position:absolute;top:43px;right:0"></div>' +
+            '<div class="_area_t"><div class="_content_t" style="display:flex">' +
+            '<div class="_content_left_t"><h3>제목</h3></div>' +
+            '<div class="_content_right_t" style="flex:none;width:353px"></div></div></div>'
+    );
+    const nativeColumnStyle = f.doc.querySelector("._content_right_t").style.cssText;
+    f.resize(1280);
+    await f.flush();
+    const aside = f.doc.getElementById("vod-aside"),
+        right = f.doc.querySelector("._content_right_t"),
+        left = f.doc.querySelector("._content_left_t"),
+        banner = f.doc.querySelector("._banner_t");
+    assert.equal(aside.getAttribute("data-bcpr-side"), "left");
+    assert.equal(right.getAttribute("data-bcpr-side"), "left", "the reserved column moves under the left chat");
+    assert.equal(right.style.getPropertyValue("--bcpr-companion-width"), "353px");
+    assert.equal(banner.getAttribute("data-bcpr-side"), "left");
+    assert.equal(left.hasAttribute("data-bcpr-side"), false, "the title column keeps its native place in the row");
+    const rules = placementRules(f);
+    const column = rules.find((rule) => rule.selectorText === '[class*="content_right"][data-bcpr-side="left"]');
+    assert.equal(column.style.getPropertyValue("order"), "-1");
+    assert.equal(column.style.getPropertyValue("width"), "var(--bcpr-companion-width,353px)");
+    const bannerRule = rules.find((rule) => rule.selectorText === '[class*="_banner_"][data-bcpr-side="left"]');
+    assert.equal(bannerRule.style.getPropertyValue("left"), "0px");
+    f.pointer(f.handle("chat"), "pointerdown", 600);
+    f.pointer(f.win, "pointermove", 620);
+    f.pointer(f.win, "pointerup", 620);
+    await f.flush();
+    assert.equal(f.width(aside), 373);
+    assert.equal(right.style.getPropertyValue("--bcpr-companion-width"), "373px", "the column follows the chat width");
+    f.options({ chatPosition: "right" });
+    await f.flush();
+    for (const node of [aside, right, banner]) assert.equal(node.hasAttribute("data-bcpr-side"), false);
+    assert.equal(right.style.getPropertyValue("--bcpr-companion-width"), "");
+    assert.equal(right.style.cssText, nativeColumnStyle, "native inline styles are restored");
+});
+
+test("fullscreen keeps the native side and height, keeps width support, and restores both choices on exit", async (t) => {
+    // 2026-10-09 Codex Chrome: a VOD chat opened inside fullscreen kept the left side, the saved height and both grips.
+    const f = await fixture(t, {
+        sidebar: false,
+        stored: { chatWidthPx: 400 },
+        storedHeight: 450,
+        initialOptions: { chatPosition: "left" },
+    });
+    const chat = f.doc.getElementById("aside-chatting");
+    assert.equal(chat.getAttribute("data-bcpr-side"), "left");
+    assert.equal(chat.style.getPropertyValue("--bcpr-height"), "450px");
+    assert.ok(f.doc.querySelector('[data-bcpr-handle="chat-height"]'));
+    Object.defineProperty(f.doc, "fullscreenElement", {
+        configurable: true,
+        value: f.doc.getElementById("player-row"),
+    });
+    f.doc.dispatchEvent(new f.win.Event("fullscreenchange"));
+    await f.flush();
+    assert.equal(chat.hasAttribute("data-bcpr-side"), false, "fullscreen shows the native side");
+    assert.equal(chat.hasAttribute("data-bcpr-height"), false, "fullscreen shows the native height");
+    assert.equal(f.doc.querySelector('[data-bcpr-handle="chat-height"]'), null);
+    assert.equal(f.width(chat), 400, "width resizing keeps its fullscreen support");
+    assert.equal(f.handle("chat").getAttribute("data-bcpr-edge"), "left");
+    assert.equal(f.writes.length, 0, "the temporary layout never rewrites the choices");
+    Object.defineProperty(f.doc, "fullscreenElement", { configurable: true, value: null });
+    f.doc.dispatchEvent(new f.win.Event("fullscreenchange"));
+    await f.flush();
+    assert.equal(chat.getAttribute("data-bcpr-side"), "left");
+    assert.equal(chat.style.getPropertyValue("--bcpr-height"), "450px");
+    assert.ok(f.doc.querySelector('[data-bcpr-handle="chat-height"]'));
+    assert.equal(f.handle("chat").getAttribute("data-bcpr-edge"), "right");
+});

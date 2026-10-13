@@ -11,6 +11,11 @@
  * - getResizeRange(panel, availableWidthPx, otherWidthPx): { min, max } 또는 공간 부족 시 null이에요.
  * - clampWidth(panel, requestedWidthPx, availableWidthPx, otherWidthPx): 조절할 정수 너비 또는 null이에요.
  *   otherWidthPx는 다른 영역의 현재 실제 표시 폭이며, 선택값이나 이전 기본 폭이 아니에요.
+ * - 채팅 높이는 너비와 별도의 local 키예요. normalizeHeight(value)는 정수만 읽고,
+ *   getHeightRange(nativeHeightPx)는 { min, max } 또는 공간 부족 시 null,
+ *   clampHeight(requested, nativeHeightPx)는 조절할 정수 높이 또는 null,
+ *   resolveHeight(selected, nativeHeightPx)는 적용할 높이 또는 원래 높이(null)를 반환해요.
+ *   최대값은 확장이 높이를 지정하지 않았을 때의 원래 표시 높이예요.
  */
 (() => {
     "use strict";
@@ -24,6 +29,8 @@
         chat: Object.freeze({ min: 240, max: 640 }),
         centerMinPx: 320,
     });
+    const HEIGHT_STORAGE_KEY = "betterchzzk:panel-resize:chat-height:v1";
+    const HEIGHT_LIMITS = Object.freeze({ min: 240 });
     const panels = ["sidebar", "chat"];
     const validWidth = (value) => Number.isInteger(value) && value >= 1 && value <= 8192;
     const measuredWidth = (value) => Number.isFinite(value) && value >= 0;
@@ -103,9 +110,40 @@
         return range ? clamp(Math.round(requestedWidthPx), range.min, range.max) : null;
     }
 
+    function normalizeHeight(value) {
+        return validWidth(value) ? value : null;
+    }
+
+    function getHeightRange(nativeHeightPx) {
+        if (!Number.isFinite(nativeHeightPx)) return null;
+        const max = Math.floor(nativeHeightPx);
+        return max < HEIGHT_LIMITS.min ? null : { min: HEIGHT_LIMITS.min, max };
+    }
+
+    function clampHeight(requestedHeightPx, nativeHeightPx) {
+        if (!Number.isFinite(requestedHeightPx)) return null;
+        const range = getHeightRange(nativeHeightPx);
+        return range ? clamp(Math.round(requestedHeightPx), range.min, range.max) : null;
+    }
+
+    function resolveHeight(selectedHeightPx, nativeHeightPx) {
+        const selected = normalizeHeight(selectedHeightPx);
+        const range = getHeightRange(nativeHeightPx);
+        if (selected === null || !range) return null;
+        // A choice at or above the current native height is shown as the native layout.
+        const value = clamp(selected, range.min, range.max);
+        return value >= range.max ? null : value;
+    }
+
     root.panelResizeModel = Object.freeze({
         STORAGE_KEYS,
         LIMITS,
+        HEIGHT_STORAGE_KEY,
+        HEIGHT_LIMITS,
+        normalizeHeight,
+        getHeightRange,
+        clampHeight,
+        resolveHeight,
         normalizeState,
         normalizeWidth,
         fromStorage,

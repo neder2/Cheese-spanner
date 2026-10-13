@@ -13,6 +13,7 @@
         bindFeatureOptions,
         createMutationObserverSync,
         createThrottledDomSync,
+        getLiveChannelIdFromPath,
         injectStyleOnce,
         isLiveRoute,
         onReady,
@@ -133,6 +134,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     let chatMutationBatchShouldSchedule = false;
     let lastChatRootFindAt = 0;
     let lastChatRootFindResult = null;
+    let routeChannelId = "";
 
     const scheduleSync = createThrottledDomSync(syncChatTools, CHAT_SYNC_THROTTLE_MS);
     const panel = namespace.createPanel({
@@ -487,6 +489,12 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
 
         const mutationList = Array.from(mutations || []);
         const addedNodes = [];
+        // 수집 기록이 떨어져 나간 제거 배치에서만, 목록이 완전히 비었는지 배치당 한 번 확인한다.
+        let listCleared = null;
+        const isListCleared = () => {
+            if (listCleared === null) listCleared = findChatRows(rootEl).length === 0;
+            return listCleared;
+        };
         for (const mutation of mutationList) {
             if (mutation.type === "attributes") {
                 markDirtyChatMutationTarget(mutation, rootEl, shouldTrackChatAttributeMutation);
@@ -512,7 +520,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
                 removedNodes.push(node);
             }
             if (removedNodes.length) {
-                store.removeSubtrees(removedNodes, getTopLevelMutationElements(mutationAddedNodes));
+                store.removeSubtrees(removedNodes, getTopLevelMutationElements(mutationAddedNodes), { isListCleared });
                 markDirtyContainingChatRow(mutation.target, rootEl);
             }
         }
@@ -703,15 +711,28 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         });
     }
 
-    function restartRuntime({ clearMessages = false } = {}) {
+    function restartRuntime({ clearMessages = false, retiredRows = null } = {}) {
         if (!isFeatureEnabled()) return;
         chatRoot = null;
         store.resetRoot();
         removeModeratorBox();
         resetChatProcessingState({ reparse: true });
+        // 수집 기록을 비우기 전에 은퇴시켜야 이전 채널에서 확인한 ID도 함께 넘어간다.
+        if (retiredRows) store.retireRows(retiredRows);
         if (clearMessages) clearModeratorState();
         startObserver();
         scheduleSync();
+    }
+
+    function handlePageChange() {
+        const channelId = getLiveChannelIdFromPath();
+        // 치지직은 URL을 먼저 바꾸고 이전 채널 목록은 채팅 연결을 정리할 때 비운다.
+        // 채널이 바뀐 시점의 행은 이전 채널 것이므로 재파싱에서 다시 수집하지 않게 넘긴다.
+        // 채널 이동마다 이전 세대를 바꾸므로 나중에 돌아온 채널의 메시지는 다시 수집된다.
+        let retiredRows = null;
+        if (channelId !== routeChannelId) retiredRows = chatRoot?.isConnected ? findChatRows(chatRoot) : [];
+        routeChannelId = channelId;
+        restartRuntime({ clearMessages: true, retiredRows });
     }
 
     function installRuntime() {
@@ -720,7 +741,8 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         purgeLegacyModeratorCache();
         if (!observer) startObserver();
         if (!removePageChangeDetection) {
-            removePageChangeDetection = startPageChangeDetection(() => restartRuntime({ clearMessages: true }));
+            routeChannelId = getLiveChannelIdFromPath();
+            removePageChangeDetection = startPageChangeDetection(handlePageChange);
         }
         scheduleSync();
     }
@@ -744,7 +766,10 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         featureOptions = options;
         syncWelcomeMessageRemoval();
         store.configure({ enabled: isModeratorBoxEnabled(), maximum: Number(options.chatToolsMaxModeratorMessages) });
-        panel.configure({ showTimestamp: options.chatTimestampEnabled });
+        panel.configure({
+            showTimestamp: options.chatTimestampEnabled,
+            boxHeight: options.chatToolsModeratorBoxHeight,
+        });
 
         if (!isFeatureEnabled()) {
             uninstallRuntime();

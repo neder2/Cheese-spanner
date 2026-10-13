@@ -21,6 +21,8 @@
     const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
     const MAX_ACTIVITIES_PER_ENTRY = 500;
     const MAX_ACTIVITIES_TOTAL = 3000;
+    const DAY_SECONDS = 86400;
+    const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
     const utils = globalThis.BetterChzzk?.utils || {};
 
     function compactString(value, maxLength = MAX_STRING_LENGTH) {
@@ -139,6 +141,30 @@
         return out;
     }
 
+    function getKstDayNumber(timestamp) {
+        return Math.floor((timestamp + KST_OFFSET_MS) / (DAY_SECONDS * 1000));
+    }
+
+    // The session max-merge keeps the largest snapshot forever, so incoming totals are bounded to the KST days the
+    // session covers before the first write. The bound is per day, not the exact span: watch time is counted on the
+    // monotonic clock while enteredAt/leftAt come from the wall clock, which can be adjusted during a session.
+    function boundSessionSeconds(enteredAt, leftAt, watchedSeconds, dailySeconds) {
+        const firstDay = getKstDayNumber(enteredAt);
+        const lastDay = getKstDayNumber(leftAt);
+        const bounded = {};
+        for (const [dateKey, seconds] of Object.entries(dailySeconds)) {
+            const dayStartUtc = Date.parse(`${dateKey}T00:00:00Z`);
+            // Date.parse rolls impossible dates such as 06-31 into the next month.
+            if (!Number.isFinite(dayStartUtc) || new Date(dayStartUtc).toISOString().slice(0, 10) !== dateKey) continue;
+            const day = dayStartUtc / (DAY_SECONDS * 1000);
+            if (day >= firstDay && day <= lastDay) bounded[dateKey] = Math.min(seconds, DAY_SECONDS);
+        }
+        return {
+            watchedSeconds: Math.min(watchedSeconds, (lastDay - firstDay + 1) * DAY_SECONDS),
+            dailySeconds: bounded,
+        };
+    }
+
     function normalizeTitleHistory(value, channelName = "") {
         if (typeof utils.normalizeTitleHistory === "function") {
             return utils.normalizeTitleHistory(value, channelName, TITLE_HISTORY_MAX);
@@ -195,13 +221,19 @@
         const source = value && typeof value === "object" ? value : {};
         const enteredAt = normalizeTimestamp(source.enteredAt, { required: true, now });
         const leftAt = Math.max(enteredAt, normalizeTimestamp(source.leftAt, { now }) || enteredAt);
+        const seconds = boundSessionSeconds(
+            enteredAt,
+            leftAt,
+            Math.max(0, Math.round(finiteNumber(source.watchedSeconds))),
+            normalizeDailySeconds(source.dailySeconds)
+        );
         return {
             id: normalizeSessionId(source.id),
             title: compactString(source.title, 500),
             enteredAt,
             leftAt,
-            watchedSeconds: Math.max(0, Math.round(finiteNumber(source.watchedSeconds))),
-            dailySeconds: normalizeDailySeconds(source.dailySeconds),
+            watchedSeconds: seconds.watchedSeconds,
+            dailySeconds: seconds.dailySeconds,
             watchedRanges: normalizeSessionRanges({ ...source, enteredAt, leftAt }, now),
             closed: source.closed === true,
         };

@@ -173,12 +173,12 @@ test("panel resize settings explain their boundaries and remain independently us
         [
             chat,
             "chat-display",
-            "채팅·댓글 왼쪽 가장자리를 마우스로 잡아 끌어 조절해요. 더블클릭하면 기본 너비로 돌아가요.",
+            "채팅·댓글의 영상 쪽 가장자리로 너비를, 아래 가장자리로 높이를 마우스로 끌어 조절해요. 더블클릭하면 기본 크기로 돌아가요.",
         ],
         [
             sidebar,
             "appearance-page",
-            "펼친 사이드바 오른쪽 가장자리를 마우스로 잡아 끌어 조절해요. 더블클릭하면 기본 너비로 돌아가요.",
+            "펼친 사이드바의 본문 쪽 가장자리를 마우스로 잡아 끌어 조절해요. 더블클릭하면 기본 너비로 돌아가요.",
         ],
     ]) {
         assert.ok(input);

@@ -485,6 +485,189 @@ test("activity UI is cleaned up on option disable and channel navigation", async
     assert.equal(unreadCount(document), 0);
 });
 
+function managerChat(nickname, text, chatId = "") {
+    return realChzzkChatRow({
+        chatId,
+        nickname,
+        text,
+        badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+    });
+}
+
+function collectedTexts(document) {
+    return moderatorRows(document).map((row) => row.querySelector(".bcct-moderator-row__text")?.textContent);
+}
+
+test("a channel change never re-collects previous channel rows that the native list clears later", async (t) => {
+    // 치지직은 URL을 먼저 바꾸고 이전 채널 목록을 연결 정리 때 비운다. 그 사이 재파싱이
+    // 이전 채널 행을 새 채널 모아보기로 다시 수집하면 안 된다.
+    const { dom } = createPageDom(
+        managerChat("A채널 매니저", "A 방송 공지", "old-A") + managerChat("A채널 안내", "A 두 번째 공지")
+    );
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    evalRepoScript(dom, "features", "routeBridgePage.js");
+    await waitForCondition(() => moderatorRows(document).length === 2);
+
+    dom.window.history.pushState({}, "", "/live/next-channel");
+    // 경로 변경 뒤 전체 재파싱(약 120ms 스로틀)이 끝날 시간을 준다.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.deepEqual(collectedTexts(document), []);
+    assert.equal(unreadCount(document), 0);
+
+    // 이전 행에 늦게 붙는 색·배지 갱신은 같은 이전 메시지라 수집 근거가 아니다.
+    const staleIdless = document.querySelectorAll(".chat-list > ._item_sg7hy_7")[1];
+    staleIdless.querySelector("[class*='_nickname_o']").style.color = "rgb(10, 20, 30)";
+    staleIdless.querySelector("img").setAttribute("alt", "채팅 운영자 ");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.deepEqual(collectedTexts(document), []);
+
+    // 같은 노드를 새 채널 메시지로 재사용하면 안정화 뒤 새 메시지로 수집한다.
+    staleIdless.querySelector("._nickname_o04z9_57").textContent = "B채널 안내";
+    staleIdless.querySelector("._text_1vemp_1").textContent = "B 재사용 공지";
+    await waitForCondition(() => collectedTexts(document).join() === "B 재사용 공지");
+
+    document.querySelector(".chat-list").innerHTML = managerChat("B채널 매니저", "B 방송 공지", "new-B");
+    await waitForCondition(() => collectedTexts(document).join() === "B 재사용 공지,B 방송 공지");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.deepEqual(collectedTexts(document), ["B 재사용 공지", "B 방송 공지"]);
+    assert.equal(unreadCount(document), 2);
+});
+
+function collectedEntries(document) {
+    return moderatorRows(document).map(
+        (row) =>
+            `${row.querySelector(".bcct-moderator-row__author")?.textContent} ${row.querySelector(".bcct-moderator-row__text")?.textContent}`
+    );
+}
+
+test("a previous channel message re-rendered as a new node after a channel change is not collected", async (t) => {
+    const { dom } = createPageDom(managerChat("A 관리자", "A 공지", "A1"));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    evalRepoScript(dom, "features", "routeBridgePage.js");
+    await waitForCondition(() => moderatorRows(document).length === 1);
+
+    dom.window.history.pushState({}, "", "/live/next-channel");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    // 이전 채널 목록 상태가 새 DOM 노드로 한 번 더 그려진 뒤 새 채널 목록으로 바뀐다.
+    document.querySelector(".chat-list").innerHTML = managerChat("A 관리자", "A 공지", "A1");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    document.querySelector(".chat-list").innerHTML = managerChat("B 관리자", "B 공지", "B1");
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    assert.deepEqual(collectedEntries(document), ["B 관리자 B 공지"]);
+    assert.equal(unreadCount(document), 1);
+});
+
+async function assertPreviousChannelIdBlockedAfterListLoss(t, mode) {
+    const { dom } = createPageDom(managerChat("A 관리자", "A 공지", "A1"));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    evalRepoScript(dom, "features", "routeBridgePage.js");
+    await waitForCondition(() => moderatorRows(document).length === 1);
+
+    // 채널 이동 전에 목록이나 root가 먼저 사라져 읽을 행이 없어도 이미 수집한 A1은 이전 채널 ID다.
+    const original = document.querySelector(".chat-list");
+    if (mode === "detached-root") original.remove();
+    else original.textContent = "";
+    dom.window.history.pushState({}, "", "/live/next-channel");
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    let list = original;
+    if (mode === "detached-root") {
+        list = original.cloneNode(false);
+        document.querySelector("aside").appendChild(list);
+    }
+    list.innerHTML = managerChat("A 관리자", "A 공지", "A1");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    list.innerHTML = managerChat("B 관리자", "B 공지", "B1");
+    await waitForCondition(() => collectedEntries(document).includes("B 관리자 B 공지"));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.deepEqual(collectedEntries(document), ["B 관리자 B 공지"]);
+    assert.equal(unreadCount(document), 1);
+}
+
+test("a collected previous channel ID stays retired when the chat root is detached before the channel change", (t) =>
+    assertPreviousChannelIdBlockedAfterListLoss(t, "detached-root"));
+
+test("a collected previous channel ID stays retired when the list is cleared before the channel change", (t) =>
+    assertPreviousChannelIdBlockedAfterListLoss(t, "cleared-list"));
+
+test("retired message IDs never block same-channel re-renders or a later return to that channel", async (t) => {
+    const { dom } = createPageDom(managerChat("A 관리자", "A 공지", "A1"));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    const list = () => document.querySelector(".chat-list");
+    loadChatTools(dom);
+    evalRepoScript(dom, "features", "routeBridgePage.js");
+    await waitForCondition(() => moderatorRows(document).length === 1);
+
+    dom.window.history.pushState({}, "", "/live/next-channel");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    list().innerHTML = managerChat("B 관리자", "B 공지", "B1");
+    await waitForCondition(() => collectedEntries(document).join() === "B 관리자 B 공지");
+    // 같은 채널에서 같은 명시적 ID 행을 새 노드로 다시 그리면 기존 기록 하나로 유지한다.
+    list().innerHTML = managerChat("B 관리자", "B 공지", "B1");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.deepEqual(collectedEntries(document), ["B 관리자 B 공지"]);
+    assert.equal(unreadCount(document), 1);
+
+    // A로 돌아오면 B의 행이 이전 채널 정체성이 되고, A의 실제 메시지는 다시 수집한다.
+    dom.window.history.pushState({}, "", "/live/test-channel");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    list().innerHTML = managerChat("B 관리자", "B 공지", "B1");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.deepEqual(collectedEntries(document), []);
+    list().innerHTML = managerChat("A 관리자", "A 공지", "A1") + managerChat("A 관리자", "A 공지", "A2");
+    await waitForCondition(() => collectedEntries(document).join() === "A 관리자 A 공지,A 관리자 A 공지");
+    assert.equal(unreadCount(document), 2);
+});
+
+test("a same-channel route change keeps re-collecting the current list", async (t) => {
+    const { dom } = createPageDom(managerChat("같은 채널 매니저", "현재 방송 공지"));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    evalRepoScript(dom, "features", "routeBridgePage.js");
+    await waitForCondition(() => moderatorRows(document).length === 1);
+    dom.window.history.pushState({}, "", "/live/test-channel?from=search");
+    await waitForCondition(() => collectedTexts(document).join() === "현재 방송 공지" && unreadCount(document) === 1);
+});
+
+test("an emptied id-less chat list refilled with the same backlog keeps one record per message", async (t) => {
+    // 치지직은 같은 방송에서 소켓을 다시 연결할 때 목록을 비운 뒤 최근 채팅을 다시 붙인다.
+    const backlog = managerChat("같은 관리자", "같은 공지");
+    const { dom } = createPageDom(backlog);
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 1);
+    const list = document.querySelector(".chat-list");
+
+    list.textContent = "";
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    list.innerHTML = backlog;
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    assert.equal(moderatorRows(document).length, 1);
+    assert.equal(unreadCount(document), 1);
+
+    // 다시 받은 백로그 뒤에 도착한 같은 문구는 실제 새 메시지다.
+    list.insertAdjacentHTML("beforeend", backlog);
+    await waitForCondition(() => moderatorRows(document).length === 2);
+    assert.equal(unreadCount(document), 2);
+
+    // 한 번에 다시 붙은 백로그 안에서도 이전 행 수만큼만 기존 기록으로 잇고 남은 같은 문구는 새로 수집한다.
+    list.textContent = "";
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    list.innerHTML = backlog + backlog + backlog;
+    await waitForCondition(() => moderatorRows(document).length === 3);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.deepEqual(collectedTexts(document), ["같은 공지", "같은 공지", "같은 공지"]);
+    assert.equal(unreadCount(document), 3);
+});
+
 test("native moderator highlights follow nickname colors without changing text or collecting viewers", async (t) => {
     const { dom } = createPageDom(
         realChzzkChatRow({
@@ -1668,6 +1851,39 @@ test("moderator box trims old messages at the configured maximum", async (t) => 
         .join("\n");
     assert.doesNotMatch(collectedText, /관리자 메시지 0/);
     assert.match(collectedText, /관리자 메시지 24/);
+});
+
+test("moderator box height follows its option without changing the chat or the default stylesheet", async (t) => {
+    const rows = Array.from({ length: 2 }, (_, index) =>
+        [
+            `<div class="chat-row" data-chat-id="manager-${index}">`,
+            '<span class="badge" aria-label="매니저"></span>',
+            `<span class="nickname">manager-${index}</span>`,
+            `<span class="message">관리자 메시지 ${index}</span>`,
+            "</div>",
+        ].join("")
+    ).join("");
+    const { chrome, dom } = createPageDom(rows, { chatToolsModeratorBoxHeight: 600 });
+    t.after(() => closeChatToolsDom(dom));
+    loadChatTools(dom);
+    const document = dom.window.document;
+    await waitForCondition(() => moderatorRows(document).length === 2);
+    const height = () => document.querySelector(".bcct-moderator-box")?.style.getPropertyValue("--bcct-box-height");
+    await waitForCondition(() => height() === "600px");
+    const chat = document.querySelector(".live_chatting_area");
+    assert.equal(chat.getAttribute("style"), null, "the native chat keeps its own size");
+    const css = document.getElementById("betterchzzk-chat-tools-style").textContent;
+    assert.match(css, /max-height:min\(var\(--bcct-box-height,420px\), calc\(100vh - 120px\)\)/);
+    assert.match(css, /max-height:calc\(var\(--bcct-box-height,420px\) - 144px\)/);
+    for (const [value, expected] of [
+        [420, ""],
+        [240, "240px"],
+        [9999, "720px"],
+    ]) {
+        for (const listener of [...chrome.testState.storageChangeListeners])
+            listener({ chatToolsModeratorBoxHeight: { newValue: value } }, "sync");
+        await waitForCondition(() => height() === expected);
+    }
 });
 
 test("feature init removes the legacy moderator cache key from storage.local", async (t) => {

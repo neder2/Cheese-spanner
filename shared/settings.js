@@ -27,6 +27,10 @@
     const LIVE_WATCH_HISTORY_MIN_MINUTES_MAX = 1440;
     const CHAT_TOOLS_MIN_MODERATOR_MESSAGES = 20;
     const CHAT_TOOLS_MAX_MODERATOR_MESSAGES = 200;
+    const CHAT_TOOLS_DEFAULT_MODERATOR_BOX_HEIGHT = 420;
+    const CHAT_TOOLS_MIN_MODERATOR_BOX_HEIGHT = 240;
+    const CHAT_TOOLS_MAX_MODERATOR_BOX_HEIGHT = 720;
+    const FOLLOWING_LIST_MAX_ROWS = 30;
     const LEGACY_CHAT_TOOLS_ENABLED_KEY = "chatToolsEnabled";
     const DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE = "BracketLeft";
     const DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE = "BracketRight";
@@ -112,6 +116,8 @@
         },
         vodCommentTabsEnabled: { kind: "bool", default: true, feature: true },
         chatResizeEnabled: { kind: "bool", default: true, feature: true },
+        // 일반 라이브·다시보기의 채팅 열 위치. 기본은 치지직 원래 배치(오른쪽)예요.
+        chatPosition: { kind: "choice", values: ["right", "left"], default: "right" },
         chatTimestampEnabled: { kind: "bool", default: false, feature: true },
         vodChatTimestampEnabled: { kind: "bool", default: false, feature: true },
         chatWeeklyRankingHidden: { kind: "bool", default: false, feature: true },
@@ -123,6 +129,13 @@
             default: 100,
             min: CHAT_TOOLS_MIN_MODERATOR_MESSAGES,
             max: CHAT_TOOLS_MAX_MODERATOR_MESSAGES,
+        },
+        // 기본값 420px은 모아보기 상자의 기존 최대 높이와 같아요.
+        chatToolsModeratorBoxHeight: {
+            kind: "int",
+            default: CHAT_TOOLS_DEFAULT_MODERATOR_BOX_HEIGHT,
+            min: CHAT_TOOLS_MIN_MODERATOR_BOX_HEIGHT,
+            max: CHAT_TOOLS_MAX_MODERATOR_BOX_HEIGHT,
         },
         videoSearchEnabled: { kind: "bool", default: true, feature: true },
         videoSearchCommentEnabled: { kind: "bool", default: true },
@@ -221,6 +234,7 @@
         categoryToolsFollowerFetchConcurrency: { kind: "int", default: 2, min: 1, max: 10 },
         categoryToolsFollowerFetchDelayMs: { kind: "int", default: 700, min: 0, max: 5000 },
         sidebarResizeEnabled: { kind: "bool", default: true, feature: true },
+        sidebarPosition: { kind: "choice", values: ["left", "right"], default: "left" },
         sidebarCheeseFarmHidden: { kind: "bool", default: false, feature: true },
         sidebarPopularCategoriesHidden: { kind: "bool", default: false, feature: true },
         sidebarUpcomingScheduleHidden: { kind: "bool", default: false, feature: true },
@@ -233,12 +247,16 @@
         followingListStateEnabled: { kind: "bool", default: false, feature: true },
         followingRefreshEnabled: { kind: "bool", default: true, feature: true },
         followingRefreshSeconds: { kind: "int", default: 30, min: 10, max: 600 },
+        followingFoldersEnabled: { kind: "bool", default: false, feature: true },
+        // 0은 팔로잉 목록 높이를 제한하지 않는다는 뜻이에요.
+        followingListMaxRows: { kind: "int", default: 0, min: 0, max: FOLLOWING_LIST_MAX_ROWS },
         liveStartNotificationsEnabled: { kind: "bool", default: false, feature: true },
         liveStartAutoOpenEnabled: { kind: "bool", default: false, feature: true },
         liveStartButtonEnabled: { kind: "bool", default: true, feature: true },
         // 미리보기 HLS가 선택 권한(pstatic.net) 승인을 전제로 하므로, 사용자가
         // 옵션에서 직접 켜면서 권한을 허용하는 흐름이 되도록 기본값은 꺼짐이다.
         liveMultiviewEnabled: { kind: "bool", default: false, feature: true },
+        chatMultiviewEnabled: { kind: "bool", default: false, feature: true },
         followingPreviewTooltipEnabled: { kind: "bool", default: false, feature: true },
         followingPreviewSoundEnabled: { kind: "bool", default: true },
         followingPreviewVolumePercent: { kind: "int", default: 15, min: 1, max: 100 },
@@ -328,6 +346,7 @@
         if (spec.kind === "theme") return ["system", "light", "dark"].includes(value) ? value : fallback;
         if (spec.kind === "quality") return ["1080p", "720p", "480p"].includes(value) ? value : fallback;
         if (spec.kind === "zoomMode") return ["manual", "always"].includes(value) ? value : fallback;
+        if (spec.kind === "choice") return spec.values.includes(value) ? value : fallback;
         if (spec.kind === "int") return normalizeInteger(value, fallback, spec.min, spec.max);
         if (spec.kind === "number") return normalizeNumber(value, fallback, spec.min, spec.max, spec.step);
         if (spec.kind === "skipSeconds") return normalizeSkipSeconds(value);
@@ -366,23 +385,43 @@
         return out;
     }
 
-    function migrateLegacyChatToolsOption(raw, normalized = normalizeOptions(raw)) {
+    function migrateLegacyChatToolsOption(raw) {
         if (!Object.prototype.hasOwnProperty.call(raw || {}, LEGACY_CHAT_TOOLS_ENABLED_KEY)) return;
+        // Only extension pages and the worker hold the settings lock; chzzk pages leave the write to them.
+        if (globalThis.location?.protocol !== "chrome-extension:") return;
         const storage = globalThis.chrome?.storage?.sync;
-        if (typeof storage?.set !== "function" || typeof storage?.remove !== "function") return;
+        if (typeof storage?.get !== "function" || typeof storage?.set !== "function") return;
+        if (typeof storage.remove !== "function") return;
 
-        storage.set(
-            {
-                chatToolsShowBlindEnabled: normalized.chatToolsShowBlindEnabled,
-                chatToolsModeratorBoxEnabled: normalized.chatToolsModeratorBoxEnabled,
-            },
-            () => {
-                if (getStorageLastError()) return;
-                storage.remove(LEGACY_CHAT_TOOLS_ENABLED_KEY, () => {
-                    void getStorageLastError();
-                });
-            }
-        );
+        void withOptionsStorageLock(
+            () =>
+                new Promise((resolve) => {
+                    // Re-read inside the lock so a newer explicit choice is never replaced by an old snapshot.
+                    storage.get(STORAGE_OPTION_KEYS, (latest) => {
+                        if (getStorageLastError() || !Object.hasOwn(latest || {}, LEGACY_CHAT_TOOLS_ENABLED_KEY)) {
+                            resolve();
+                            return;
+                        }
+                        const normalized = normalizeOptions(latest);
+                        storage.set(
+                            {
+                                chatToolsShowBlindEnabled: normalized.chatToolsShowBlindEnabled,
+                                chatToolsModeratorBoxEnabled: normalized.chatToolsModeratorBoxEnabled,
+                            },
+                            () => {
+                                if (getStorageLastError()) {
+                                    resolve();
+                                    return;
+                                }
+                                storage.remove(LEGACY_CHAT_TOOLS_ENABLED_KEY, () => {
+                                    void getStorageLastError();
+                                    resolve();
+                                });
+                            }
+                        );
+                    });
+                })
+        ).catch(() => {});
     }
 
     function flushOptionCallbacks(options) {
@@ -458,7 +497,7 @@
             cachedOptions = normalizeOptions({ ...data, ...pendingChanges });
             optionsLoaded = true;
             flushOptionCallbacks(cachedOptions);
-            migrateLegacyChatToolsOption(data, cachedOptions);
+            migrateLegacyChatToolsOption(data);
         });
     }
 
@@ -508,6 +547,10 @@
         LIVE_WATCH_HISTORY_MIN_MINUTES_MAX,
         CHAT_TOOLS_MIN_MODERATOR_MESSAGES,
         CHAT_TOOLS_MAX_MODERATOR_MESSAGES,
+        CHAT_TOOLS_DEFAULT_MODERATOR_BOX_HEIGHT,
+        CHAT_TOOLS_MIN_MODERATOR_BOX_HEIGHT,
+        CHAT_TOOLS_MAX_MODERATOR_BOX_HEIGHT,
+        FOLLOWING_LIST_MAX_ROWS,
         DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE,
         DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE,
         DEFAULT_PLAYBACK_SPEED_RESET_KEY_CODE,

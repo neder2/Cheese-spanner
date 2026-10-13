@@ -858,6 +858,43 @@
         });
     }
 
+    const SETTINGS_STORE_MESSAGE_TYPE = "betterchzzk:settings-store";
+
+    function settingsStoreError(code, current) {
+        const error = new Error(`Settings store: ${code}`);
+        error.code = code;
+        if (current) error.current = current;
+        return error;
+    }
+
+    /**
+     * Chzzk pages write backup-target settings through the worker's settings lock instead of chrome.storage.
+     * expected: optional {key: {value} | {absent: true}}; a different stored value rejects with code "conflict".
+     */
+    function settingsStoreSet(area, values, expected) {
+        return new Promise((resolve, reject) => {
+            const runtime = globalThis.chrome?.runtime;
+            if (typeof runtime?.sendMessage !== "function") {
+                reject(settingsStoreError("unavailable"));
+                return;
+            }
+            const message = { type: SETTINGS_STORE_MESSAGE_TYPE, version: 1, area, values };
+            if (expected !== undefined) message.expected = expected;
+            try {
+                runtime.sendMessage(message, (response) => {
+                    // Read lastError in this callback even when a response explains the failure.
+                    const messagingError = runtime.lastError;
+                    if (response?.ok === true && !messagingError) resolve();
+                    else if (typeof response?.error === "string")
+                        reject(settingsStoreError(response.error, response.current));
+                    else reject(settingsStoreError(messagingError ? "unavailable" : "storage-write-failed"));
+                });
+            } catch (_) {
+                reject(settingsStoreError("unavailable"));
+            }
+        });
+    }
+
     function startStorageChangeListener(listener) {
         const onChanged = globalThis.chrome?.storage?.onChanged;
         if (!onChanged || typeof listener !== "function") return null;
@@ -914,6 +951,7 @@
         storageRemove,
         storageSet,
         runtimeSendMessage,
+        settingsStoreSet,
         startStorageChangeListener,
         sumWatchRanges,
         sumWatchRangesByDate,

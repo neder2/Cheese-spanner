@@ -7,10 +7,11 @@
  *   - #betterchzzk-skip-pill(초 단위 스킵 값 표시/조절 pill)과 #betterchzzk-live-fast-forward(라이브 빨리감기
  *     버튼)를 좌측 버튼 컨테이너 또는 시간 표시 요소 옆에 주입·재배치한다.
  *   - ArrowLeft/ArrowRight로 skipSeconds만큼, comma/period로 1/60초(60fps 기준) 프레임 단위 seek를 처리한다.
+ *     방향키를 직접 쓰는 위젯(볼륨 슬라이더·설정 메뉴 항목 등, 탐색 바 제외)에 초점이 있으면 방향키를 양보한다.
  *   - 라이브 일시정지 중 버퍼가 밀려도 사용자가 멈춘 지점을 기억했다가 재생 재개 시 그 지점으로 복원하고,
- *     라이브 엣지에서 벗어난(타임시프트) 상태를 감지해 사용자 seek 제스처가 아니면 원위치로 되돌린다.
+ *     라이브 엣지에서 벗어난(타임시프트) 상태를 감지해 사용자 seek 제스처가 아니면 제한된 횟수만 원위치로 되돌린다.
  *   - MutationObserver와 페이지 전환 감지로 라우트가 바뀔 때마다 pill/버튼/가드를 재부착한다.
- * 의존: 전역 BetterChzzkSettings(DEFAULT_SKIP_SECONDS, getStorageLastError, normalizeSkipSeconds,
+ * 의존: 전역 BetterChzzkSettings(DEFAULT_SKIP_SECONDS, normalizeSkipSeconds,
  *   normalizeOptions), 전역 BetterChzzk.utils(bindFeatureOptions, createMutationObserverSync,
  *   createThrottledDomSync, getVisibleArea, getVideoViewportRect, isEditableTarget, isLiveRoute, isPlaybackRoute,
  *   isVisible, isExtensionPreviewVideo,
@@ -77,15 +78,21 @@
     const LIVE_TIMESHIFT_SNAP_AHEAD_SECONDS = 2;
     const LIVE_TIMESHIFT_NEAR_EDGE_SECONDS = 2;
     const LIVE_TIMESHIFT_RESTORE_COOLDOWN_MS = 120;
+    // Restores allowed per user arming; a forward jump that keeps returning is then left to the native player.
+    const LIVE_TIMESHIFT_MAX_RESTORES = 3;
     const LIVE_TIMESHIFT_SYNC_INTERVAL_MS = 500;
     const LIVE_TIMESHIFT_USER_SEEK_GRACE_MS = LIVE_EDGE_INTENT_GRACE_MS;
     const LIVE_TIMESHIFT_USER_SEEK_DRAG_MAX_MS = LIVE_RESUME_RESTORE_WINDOW_MS;
     const SEEK_GESTURE_SIGNATURE_TERMS = ["progress", "seek", "scrub", "timeline", "timebar", "playbackbar"];
     const NON_SEEK_GESTURE_SIGNATURE_TERMS = ["volume", "mute", "sound", "audio", "\uC74C\uB7C9", "\uC74C\uC18C\uAC70"];
+    // Focused widgets that use the arrow keys themselves (native volume slider, settings menu rows).
+    const ARROW_KEY_WIDGET_SELECTOR =
+        "[contenteditable]:not([contenteditable='false']), [role='textbox'], [role='searchbox'], [role='combobox'], " +
+        "[role='slider'], [role='menuitem'], [role='menuitemradio'], [role='menuitemcheckbox']";
     // 치지직 플레이어는 프레임레이트를 노출하지 않으므로 주류인 1080p60 기준(60fps)으로 이동한다.
     const FRAME_STEP_SECONDS = 1 / 60;
     const OWNED_LIVE_CONTROL_IDS = new Set([SKIP_PILL_ID, LIVE_FAST_FORWARD_BUTTON_ID]);
-    const { DEFAULT_SKIP_SECONDS, getStorageLastError, normalizeSkipSeconds, normalizeOptions } = BetterChzzkSettings;
+    const { DEFAULT_SKIP_SECONDS, normalizeSkipSeconds, normalizeOptions } = BetterChzzkSettings;
     const {
         bindFeatureOptions,
         createMutationObserverSync,
@@ -101,11 +108,13 @@
         normalizeCompact: compact,
         onReady,
         pickLargestVisible,
+        settingsStoreSet,
         startPageChangeDetection,
     } = BetterChzzk.utils;
 
     let featureOptions = normalizeOptions();
     let skipSeconds = featureOptions.skipSeconds;
+    let storedSkipSeconds = skipSeconds;
     let persistTimer = null;
     let skipSyncRafId = null;
     let delayedSkipSyncTimer = null;
@@ -235,9 +244,8 @@
         if (persistTimer) clearTimeout(persistTimer);
         persistTimer = setTimeout(() => {
             persistTimer = null;
-            chrome.storage.sync.set({ skipSeconds }, () => {
-                getStorageLastError?.();
-            });
+            // Saved through the worker's settings lock; a failure keeps the value in this document only.
+            settingsStoreSet("sync", { skipSeconds }).catch(() => {});
         }, 250);
     }
 
@@ -548,7 +556,7 @@
         return state.video?.paused ? state.time : state.time + elapsedSeconds * playbackRate;
     }
 
-    function rememberLiveTimeShiftPosition(video, edge, lag) {
+    function rememberLiveTimeShiftPosition(video, edge, lag, { userArmed = false } = {}) {
         const currentTime = Number(video?.currentTime);
         if (!Number.isFinite(currentTime) || !Number.isFinite(edge) || lag < LIVE_TIMESHIFT_ARM_LAG_SECONDS) {
             if (Number.isFinite(lag) && lag <= LIVE_TIMESHIFT_NEAR_EDGE_SECONDS) clearLiveTimeShiftState(video);
@@ -570,7 +578,8 @@
             lag,
             storedAt: previous?.storedAt || performance.now(),
             updatedAt: performance.now(),
-            restores: previous?.restores || 0,
+            // An explicit user seek starts a new restore budget.
+            restores: userArmed ? 0 : previous?.restores || 0,
             lastRestoreAt: previous?.lastRestoreAt ?? Number.NEGATIVE_INFINITY,
         };
     }
@@ -649,7 +658,14 @@
             const collapsedLag =
                 lag <= LIVE_TIMESHIFT_NEAR_EDGE_SECONDS || lag < state.lag - LIVE_TIMESHIFT_SNAP_AHEAD_SECONDS;
             if (jumpedAhead && collapsedLag) {
-                if (!liveTimeShiftRestoring) restoreLiveTimeShiftPosition(video, state, expectedTime, edge);
+                if (liveTimeShiftRestoring) return;
+                // Repeated native jumps (e.g. stall recovery over a buffer gap) would turn the restore into a
+                // stall loop, so after the budget the guard yields until the next explicit user seek.
+                if ((state.restores || 0) >= LIVE_TIMESHIFT_MAX_RESTORES) {
+                    clearLiveTimeShiftState(video);
+                    return;
+                }
+                restoreLiveTimeShiftPosition(video, state, expectedTime, edge);
                 return;
             }
         }
@@ -661,7 +677,7 @@
 
         if (!canCreateLiveTimeShiftState(video, { allowCurrent, recentUserSeekGesture })) return;
 
-        rememberLiveTimeShiftPosition(video, edge, lag);
+        rememberLiveTimeShiftPosition(video, edge, lag, { userArmed: allowCurrent || recentUserSeekGesture });
     }
 
     function rememberPausedPosition(video, { preserveCachedTime = false, allowUserIntent = false } = {}) {
@@ -928,12 +944,21 @@
         return event.key === "," || event.key === "." || event.code === "Comma" || event.code === "Period";
     }
 
+    function isArrowKeyWidgetTarget(event) {
+        const target = event.composedPath?.()[0] || event.target;
+        const widget = target instanceof Element ? target.closest(ARROW_KEY_WIDGET_SELECTOR) : null;
+        if (!(widget instanceof HTMLElement)) return false;
+        // The seek bar is also a slider; its arrows keep the configured skip step.
+        return !(widget.getAttribute("role") === "slider" && looksLikeSeekGestureElement(widget));
+    }
+
     function onKeyDownSeek(event) {
         if (!isKeyboardEnabled()) return;
         if (event.ctrlKey || event.altKey || event.metaKey) return;
         if (isEditableTarget(event.target)) return;
 
         if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+            if (isArrowKeyWidgetTarget(event)) return;
             const video = getMainVideoElement();
             if (!video) return;
 
@@ -1415,15 +1440,28 @@
         setSkipSeconds(DEFAULT_SKIP_SECONDS);
     }
 
+    function getWheelDirection(event) {
+        // Chromium maps Shift+wheel (and horizontal trackpad swipes) to deltaX with deltaY 0.
+        const deltaY = Number(event.deltaY) || 0;
+        const deltaX = Number(event.deltaX) || 0;
+        const delta = Math.abs(deltaX) > Math.abs(deltaY) ? deltaX : deltaY;
+        if (delta < 0) return 1;
+        return delta > 0 ? -1 : 0;
+    }
+
     function handleSkipPillWheel(event) {
         const pill = getSkipPillElement();
         if (!pill || !pill.contains(event.target)) return;
+        // Ctrl+wheel and trackpad pinch stay with the browser zoom.
+        if (event.ctrlKey) return;
+
+        const direction = getWheelDirection(event);
+        if (!direction) return;
 
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
 
-        const direction = event.deltaY < 0 ? 1 : -1;
         const step = getWheelStep(event);
         setSkipSeconds(Math.max(1, skipSeconds + direction * step));
     }
@@ -1933,9 +1971,18 @@
         detachLiveResumeGuard();
     }
 
+    function syncSkipSecondsFromOptions(options) {
+        const next = normalizeSkipSeconds(options.skipSeconds);
+        const storedChanged = next !== storedSkipSeconds;
+        storedSkipSeconds = next;
+        // Unrelated option changes and the echo of an older save must not revert a pending or failed wheel
+        // value; only a stored value changed elsewhere replaces this document's choice.
+        if (storedChanged && !persistTimer) skipSeconds = next;
+    }
+
     function applyOptions(options) {
         featureOptions = options;
-        skipSeconds = normalizeSkipSeconds(options.skipSeconds);
+        syncSkipSecondsFromOptions(options);
         if (!isSkipEnabled()) {
             teardownRuntime();
             return;

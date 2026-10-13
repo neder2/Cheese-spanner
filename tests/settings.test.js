@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 
 require("../shared/settings.js");
 
@@ -63,6 +64,7 @@ const expectedDefaults = {
     liveWatchHistoryMinMinutes: 1,
     vodCommentTabsEnabled: true,
     chatResizeEnabled: true,
+    chatPosition: "right",
     chatTimestampEnabled: false,
     vodChatTimestampEnabled: false,
     chatWeeklyRankingHidden: false,
@@ -70,6 +72,7 @@ const expectedDefaults = {
     chatToolsShowBlindEnabled: false,
     chatToolsModeratorBoxEnabled: false,
     chatToolsMaxModeratorMessages: 100,
+    chatToolsModeratorBoxHeight: 420,
     videoSearchEnabled: true,
     videoSearchCommentEnabled: true,
     videoSearchMaxPages: 80,
@@ -107,6 +110,7 @@ const expectedDefaults = {
     categoryToolsFollowerFetchConcurrency: 2,
     categoryToolsFollowerFetchDelayMs: 700,
     sidebarResizeEnabled: true,
+    sidebarPosition: "left",
     sidebarCheeseFarmHidden: false,
     sidebarPopularCategoriesHidden: false,
     sidebarUpcomingScheduleHidden: false,
@@ -119,10 +123,13 @@ const expectedDefaults = {
     followingListStateEnabled: false,
     followingRefreshEnabled: true,
     followingRefreshSeconds: 30,
+    followingFoldersEnabled: false,
+    followingListMaxRows: 0,
     liveStartNotificationsEnabled: false,
     liveStartAutoOpenEnabled: false,
     liveStartButtonEnabled: true,
     liveMultiviewEnabled: false,
+    chatMultiviewEnabled: false,
     followingPreviewTooltipEnabled: false,
     followingPreviewSoundEnabled: true,
     followingPreviewVolumePercent: 15,
@@ -217,10 +224,12 @@ test("feature count keys are derived from feature toggles only", () => {
         "followingTitleHistoryEnabled",
         "followingListStateEnabled",
         "followingRefreshEnabled",
+        "followingFoldersEnabled",
         "liveStartNotificationsEnabled",
         "liveStartAutoOpenEnabled",
         "liveStartButtonEnabled",
         "liveMultiviewEnabled",
+        "chatMultiviewEnabled",
         "followingPreviewTooltipEnabled",
         "screenShortcutsEnabled",
         "holdSpeedEnabled",
@@ -241,6 +250,32 @@ test("panel resize defaults on for empty and legacy settings and keeps independe
             assert.equal(normalized.sidebarResizeEnabled, sidebar);
         }
     }
+});
+
+test("panel placement and list heights accept only declared choices and bounded values", () => {
+    for (const chatPosition of ["right", "left"]) {
+        assert.equal(settings.normalizeOptions({ chatPosition }).chatPosition, chatPosition);
+    }
+    for (const sidebarPosition of ["left", "right"]) {
+        assert.equal(settings.normalizeOptions({ sidebarPosition }).sidebarPosition, sidebarPosition);
+    }
+    for (const invalid of [undefined, null, "", "top", "LEFT", 1, true]) {
+        const normalized = settings.normalizeOptions({ chatPosition: invalid, sidebarPosition: invalid });
+        assert.equal(normalized.chatPosition, "right");
+        assert.equal(normalized.sidebarPosition, "left");
+    }
+    assert.equal(settings.normalizeOptions({ chatToolsModeratorBoxHeight: 100 }).chatToolsModeratorBoxHeight, 240);
+    assert.equal(settings.normalizeOptions({ chatToolsModeratorBoxHeight: 9999 }).chatToolsModeratorBoxHeight, 720);
+    assert.equal(settings.normalizeOptions({ chatToolsModeratorBoxHeight: "x" }).chatToolsModeratorBoxHeight, 420);
+    assert.equal(settings.normalizeOptions({ followingListMaxRows: -3 }).followingListMaxRows, 0);
+    assert.equal(settings.normalizeOptions({ followingListMaxRows: "12" }).followingListMaxRows, 12);
+    assert.equal(settings.normalizeOptions({ followingListMaxRows: 500 }).followingListMaxRows, 30);
+    // Existing users keep the native layout until they opt in.
+    const legacy = settings.normalizeOptions({ chatResizeEnabled: false, followingPinEnabled: true });
+    assert.equal(legacy.chatPosition, "right");
+    assert.equal(legacy.sidebarPosition, "left");
+    assert.equal(legacy.followingFoldersEnabled, false);
+    assert.equal(legacy.chatMultiviewEnabled, false);
 });
 
 test("preferred quality accepts only supported choices and retains the existing default", () => {
@@ -353,6 +388,101 @@ test("removed chat tools master toggle migrates its previous disabled and enable
     assert.equal(previouslyDisabled.chatToolsModeratorBoxEnabled, false);
     assert.equal(previouslyEnabled.chatToolsShowBlindEnabled, true);
     assert.equal(previouslyEnabled.chatToolsModeratorBoxEnabled, true);
+});
+
+function createSettingsWorker(sync) {
+    const read = (file) => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
+    const queues = new Map();
+    const locks = {
+        request(name, callback) {
+            const pending = (queues.get(name) || Promise.resolve()).then(callback);
+            queues.set(
+                name,
+                pending.catch(() => {})
+            );
+            return pending;
+        },
+    };
+    const area = (data) => ({
+        get(keys, callback) {
+            const names =
+                keys === null || keys === undefined
+                    ? Object.keys(data)
+                    : typeof keys === "object" && !Array.isArray(keys)
+                      ? Object.keys(keys)
+                      : [].concat(keys);
+            const values = typeof keys === "object" && keys && !Array.isArray(keys) ? { ...keys } : {};
+            for (const key of names) if (Object.hasOwn(data, key)) values[key] = structuredClone(data[key]);
+            setImmediate(() => callback(values));
+        },
+        set(values, callback) {
+            setImmediate(() => {
+                Object.assign(data, structuredClone(values));
+                callback?.();
+            });
+        },
+        remove(keys, callback) {
+            setImmediate(() => {
+                for (const key of [].concat(keys)) delete data[key];
+                callback?.();
+            });
+        },
+    });
+    let installed;
+    const stored = { ...sync };
+    const chrome = {
+        runtime: {
+            id: "fixture-extension",
+            getURL: (file) => `chrome-extension://fixture-extension/${file}`,
+            getManifest: () => ({ version: "1.4.4" }),
+            lastError: undefined,
+            onInstalled: { addListener: (listener) => (installed = listener) },
+            onMessage: { addListener() {} },
+        },
+        storage: { onChanged: { addListener() {} }, sync: area(stored), local: area({}) },
+    };
+    const context = vm.createContext({ chrome, navigator: { locks }, URL, console, setTimeout, clearTimeout });
+    context.importScripts = (...files) =>
+        files.forEach((file) => vm.runInContext(read(file), context, { filename: file }));
+    vm.runInContext(read("background.js"), context, { filename: "background.js" });
+    return {
+        stored,
+        install: (details) => installed(details),
+        openExtensionPage() {
+            const page = vm.createContext({
+                chrome,
+                navigator: { locks },
+                location: { protocol: "chrome-extension:" },
+            });
+            vm.runInContext(read("shared/settings.js"), page, { filename: "shared/settings.js" });
+            page.BetterChzzkSettings.getOptions(() => {});
+        },
+    };
+}
+
+async function settleStorage() {
+    for (let index = 0; index < 40; index += 1) await new Promise((resolve) => setImmediate(resolve));
+}
+
+test("worker update keeps the chat tool choices of the removed master toggle", async () => {
+    for (const [legacyEnabled, moderatorBox] of [
+        [true, true],
+        [false, false],
+    ]) {
+        const worker = createSettingsWorker({ chatToolsEnabled: legacyEnabled });
+        worker.install({ reason: "update", previousVersion: "1.2.3" });
+        await settleStorage();
+        assert.equal(worker.stored.chatToolsModeratorBoxEnabled, moderatorBox);
+        assert.equal(worker.stored.chatToolsShowBlindEnabled, false);
+        assert.equal(settings.normalizeOptions(worker.stored).chatToolsModeratorBoxEnabled, moderatorBox);
+
+        // The extension page later retires the legacy key without changing what the worker stored.
+        worker.openExtensionPage();
+        await settleStorage();
+        assert.equal(Object.hasOwn(worker.stored, "chatToolsEnabled"), false);
+        assert.equal(worker.stored.chatToolsModeratorBoxEnabled, moderatorBox);
+        assert.equal(worker.stored.chatToolsShowBlindEnabled, false);
+    }
 });
 
 test("options.html data-option keys match the settings keys", () => {

@@ -13,6 +13,7 @@ const runtimeFiles = [
     "historyBackup.js",
     "options.js",
     "optionsLiveStart.js",
+    "optionsSettingsBackup.js",
 ];
 const runtimeDirs = ["shared", "features", "vendor"];
 const followingPreviewFiles = ["features/followingPreviewTooltip.js"];
@@ -305,4 +306,40 @@ test("retired VOD chat recovery is absent from runtime and manifest", () => {
         const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
         assert.doesNotMatch(source, /vodReplayChatFix|betterchzzk:vod-chat-(?:resume|reload)/, file);
     }
+});
+
+test("extension scripts stay in the top frame so native chat frames run without extension features", () => {
+    const manifest = JSON.parse(readRepoFile("manifest.json"));
+    for (const entry of manifest.content_scripts) {
+        assert.equal(entry.all_frames, undefined, "content scripts must not run inside chat multiview frames");
+        assert.equal(entry.match_about_blank, undefined);
+        assert.equal(entry.match_origin_as_fallback, undefined);
+    }
+    require("../shared/adVideoRegistration.js");
+    assert.equal(globalThis.BetterChzzkAdVideoRegistration.CONTENT_SCRIPT.allFrames, false);
+    assert.match(readRepoFile("features", "chatMultiview.js"), /if \(window\.top !== window\) return;/);
+});
+
+test("chat multiview embeds only the native chat popup route and never falls back to other surfaces", () => {
+    const source = readRepoFile("features", "chatMultiview.js");
+    const violations = [];
+    for (const { label, pattern } of followingPreviewForbiddenPatterns.filter(
+        ({ label }) => label !== "iframe fallback"
+    )) {
+        if (pattern.test(source)) violations.push(label);
+    }
+    for (const [label, pattern] of [
+        ["srcdoc", /srcdoc/i],
+        ["WebSocket", /\bWebSocket\b/],
+        ["direct storage write", /chrome\.storage\.(?:sync|local)\.(?:set|remove)\s*\(/],
+    ]) {
+        if (pattern.test(source)) violations.push(label);
+    }
+    assert.deepEqual(violations, []);
+    require("../shared/chatMultiview.js");
+    const model = globalThis.BetterChzzkChatMultiview;
+    const id = "a".repeat(32);
+    assert.equal(model.frameUrl(id), `https://chzzk.naver.com/live/${id}/chat`);
+    for (const invalid of ["A".repeat(32), "a".repeat(31), `${id}/../x`, "", null, `https://evil.example/${id}`])
+        assert.equal(model.frameUrl(invalid), "", String(invalid));
 });

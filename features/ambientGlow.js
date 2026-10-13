@@ -26,6 +26,7 @@
         injectStyleOnce,
         isPlaybackRoute,
         onReady,
+        settingsStoreSet,
         startPageChangeDetection,
         storageGet,
         storageSet,
@@ -368,9 +369,8 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
         if (intensityOverride === null) return;
         const value = intensityOverride;
         const revision = ++persistRevision;
-        const area = globalThis.chrome?.storage?.sync;
-        if (typeof area?.set !== "function") return;
-        storageSet(area, { ambientIntensity: value }).then(
+        // The worker's settings store serializes this option with options pages and settings restores.
+        settingsStoreSet("sync", { ambientIntensity: value }).then(
             () => {
                 // A later drag keeps its own pending value; only the latest write releases it. The
                 // saved value stands in until the option echo arrives, so the slider never snaps back.

@@ -3,12 +3,13 @@
     if (!globalThis.chrome?.alarms?.onAlarm) return;
     const { CHANNELS_KEY, STATE_KEY, STATUS_KEY, normalizeChannels, parseSnapshot } = globalThis.BetterChzzkLiveStart;
     const { storageGet, storageSet, fetchJson } = BetterChzzk.utils;
-    const { normalizeOptions } = BetterChzzkSettings;
+    const { normalizeOptions, withOptionsStorageLock } = BetterChzzkSettings;
     const OPTION_KEYS = ["liveStartNotificationsEnabled", "liveStartAutoOpenEnabled"];
     const ALARM = "betterchzzk:live-start";
     const NOTIFICATION_PREFIX = "betterchzzk:live-start:";
     const PERIOD_MINUTES = 1;
     const MAX_SEEN = 16;
+    const STATE_SAVE_ERROR = "방송 확인 상태를 저장하지 못해 알림·탭 열기를 멈췄어요. 저장 공간을 확인해 주세요.";
     let queue = Promise.resolve();
     let tabQueue = Promise.resolve();
     let generation = 0;
@@ -18,6 +19,15 @@
     let resetAll = false;
     const resetActions = new Set();
     const resetRules = new Set();
+    // Channel IDs of registration requests that are queued but not yet applied.
+    const editing = new Map();
+
+    // Once a live ID is saved, only a change to that channel's own rule cancels its effects.
+    function ruleChanged(channelId, action) {
+        return (
+            resetAll || resetActions.has(action) || resetRules.has(`${channelId}:${action}`) || editing.has(channelId)
+        );
+    }
 
     function enqueue(task) {
         const pending = queue.then(task);
@@ -62,6 +72,24 @@
 
     function saveStates(config, checkedAt = config.checkedAt) {
         return storageSet(chrome.storage.local, { [STATE_KEY]: { checkedAt, channels: config.states } });
+    }
+
+    async function saveStatesOrReport(token, config, checkedAt) {
+        try {
+            await saveStates(config, checkedAt);
+        } catch (error) {
+            // The small status value may still fit when the larger state write fails; report it best-effort.
+            if (token === generation) {
+                await storageSet(chrome.storage.local, {
+                    [STATUS_KEY]: {
+                        checkedAt: config.checkedAt,
+                        error: STATE_SAVE_ERROR,
+                        activeChannels: config.channels.length,
+                    },
+                }).catch(() => {});
+            }
+            throw error;
+        }
     }
 
     function liveChannel(url) {
@@ -128,10 +156,12 @@
                     }
                     // Persist before side effects: a terminated worker must not repeat an action.
                     // A separate write queue avoids an older concurrent snapshot winning the race.
-                    await persist();
-                    if (!isCurrent()) return;
+                    if (!(await persist())) return;
                     for (const action of actions) {
-                        if (!isCurrent()) return;
+                        // A saved live ID is consumed, so an unrelated edit that only stops the remaining
+                        // reads must not drop its effects; a change to this channel's own rule still does.
+                        const canAct = () => isCurrent() || !ruleChanged(channel.channelId, action);
+                        if (!canAct()) continue;
                         try {
                             if (action === "notify") {
                                 await chrome.notifications.create(
@@ -144,7 +174,7 @@
                                     }
                                 );
                             } else {
-                                await openChannel(channel.channelId, false, isCurrent);
+                                await openChannel(channel.channelId, false, canAct);
                             }
                         } catch (_) {
                             failed = true;
@@ -156,18 +186,26 @@
             }
         }
         let writes = Promise.resolve();
+        let changed = 0;
+        let saved = 0;
+        // Resolves true once a finished write included the caller's state change, even if another
+        // worker's write carried it; false when the check was cancelled before that change was saved.
         function persist() {
-            const pending = writes.then(() => {
-                if (isCurrent()) return saveStates(config);
+            const version = ++changed;
+            const pending = writes.then(async () => {
+                if (!isCurrent()) return;
+                const saving = changed;
+                await saveStates(config);
+                saved = saving;
             });
             writes = pending.catch(() => {});
-            return pending;
+            return pending.then(() => saved >= version);
         }
         try {
             await Promise.all([worker(), worker()]);
             if (!isCurrent()) return;
             const checkedAt = Date.now();
-            await saveStates(config, checkedAt);
+            await saveStatesOrReport(token, config, checkedAt);
             if (!isCurrent()) return;
             await storageSet(chrome.storage.local, {
                 [STATUS_KEY]: {
@@ -195,7 +233,7 @@
                 }
             }
         }
-        await saveStates(config);
+        await saveStatesOrReport(token, config);
         if (token !== generation) return;
         resetAll = false;
         resetActions.clear();
@@ -258,6 +296,11 @@
                     if (previous.get(channel.channelId)?.[action] !== channel[action])
                         resetRules.add(`${channel.channelId}:${action}`);
                 }
+                previous.delete(channel.channelId);
+            }
+            // Removed channels also cancel effects that an in-flight check has not run yet.
+            for (const channelId of previous.keys()) {
+                for (const action of ["notify", "autoOpen"]) resetRules.add(`${channelId}:${action}`);
             }
         }
         if (
@@ -301,7 +344,10 @@
             sendResponse({ ok: false, error: "알림 설정 요청의 출처를 확인하지 못했어요." });
             return false;
         }
-        // Stop outstanding reads as soon as the user edits a channel rule.
+        // Stop outstanding reads as soon as the user edits a channel rule. Effects of live IDs that are
+        // already saved still run unless they belong to the edited channel (see ruleChanged).
+        const target = message.channel?.channelId;
+        editing.set(target, (editing.get(target) || 0) + 1);
         generation++;
         controller?.abort();
         void enqueue(async () => {
@@ -314,14 +360,14 @@
                 (key && typeof message.channel[key] !== "boolean")
             )
                 throw new Error("올바른 채널 설정이 아니에요.");
-            const data = await storageGet(chrome.storage.local, CHANNELS_KEY);
-            let channels = normalizeChannels(data[CHANNELS_KEY]);
-            const existing = channels.find((channel) => channel.channelId === id);
-            if (key) {
-                if (existing) existing[key] = message.channel[key];
-                else if (message.channel[key]) {
-                    if (channels.length >= globalThis.BetterChzzkLiveStart.MAX_CHANNELS)
-                        throw new Error("채널은 최대 32개까지 등록할 수 있어요.");
+            const max = globalThis.BetterChzzkLiveStart.MAX_CHANNELS;
+            let profile = null;
+            if (key && message.channel[key]) {
+                // Look the channel up before taking the shared settings lock; the lock only covers storage.
+                const data = await storageGet(chrome.storage.local, CHANNELS_KEY);
+                const known = normalizeChannels(data[CHANNELS_KEY]);
+                if (!known.some((channel) => channel.channelId === id)) {
+                    if (known.length >= max) throw new Error("채널은 최대 32개까지 등록할 수 있어요.");
                     const json = await fetchJson(`https://api.chzzk.naver.com/service/v1/channels/${id}`, {
                         timeoutMs: 8000,
                     });
@@ -332,40 +378,59 @@
                         !json.content.channelName.trim()
                     )
                         throw new Error("채널 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.");
-                    channels.push(
-                        normalizeChannels([
-                            {
-                                channelId: id,
-                                channelName: json.content.channelName,
-                                channelImageUrl: json.content.channelImageUrl,
-                                notify: false,
-                                autoOpen: false,
-                                [key]: true,
-                            },
-                        ])[0]
-                    );
-                }
-            } else if (message.kind === "remove") {
-                channels = channels.filter((channel) => channel.channelId !== id);
-            } else if (message.kind === "add") {
-                if (existing) throw new Error("이미 등록한 채널이에요.");
-                if (channels.length >= globalThis.BetterChzzkLiveStart.MAX_CHANNELS)
-                    throw new Error("채널은 최대 32개까지 등록할 수 있어요.");
-                const channel = normalizeChannels([message.channel])[0];
-                if (!channel.channelName) throw new Error("채널 이름을 확인하지 못했어요.");
-                channels.push(channel);
-            } else {
-                if (!existing) throw new Error("삭제된 채널이에요. 목록을 다시 확인해 주세요.");
-                for (const key of ["notify", "autoOpen"]) {
-                    if (typeof message.channel[key] === "boolean") existing[key] = message.channel[key];
+                    profile = json.content;
                 }
             }
-            await storageSet(chrome.storage.local, { [CHANNELS_KEY]: channels });
-            return channels;
-        }).then(
-            (channels) => sendResponse({ ok: true, channels }),
-            (error) => sendResponse({ ok: false, error: error.message || "채널 설정을 저장하지 못했어요." })
-        );
+            // Read-modify-write under the settings lock shared with options pages and settings restores.
+            return withOptionsStorageLock(async () => {
+                const data = await storageGet(chrome.storage.local, CHANNELS_KEY);
+                let channels = normalizeChannels(data[CHANNELS_KEY]);
+                const existing = channels.find((channel) => channel.channelId === id);
+                if (key) {
+                    if (existing) existing[key] = message.channel[key];
+                    else if (message.channel[key]) {
+                        if (channels.length >= max) throw new Error("채널은 최대 32개까지 등록할 수 있어요.");
+                        if (!profile) throw new Error("채널 목록이 바뀌었어요. 다시 시도해 주세요.");
+                        channels.push(
+                            normalizeChannels([
+                                {
+                                    channelId: id,
+                                    channelName: profile.channelName,
+                                    channelImageUrl: profile.channelImageUrl,
+                                    notify: false,
+                                    autoOpen: false,
+                                    [key]: true,
+                                },
+                            ])[0]
+                        );
+                    }
+                } else if (message.kind === "remove") {
+                    channels = channels.filter((channel) => channel.channelId !== id);
+                } else if (message.kind === "add") {
+                    if (existing) throw new Error("이미 등록한 채널이에요.");
+                    if (channels.length >= max) throw new Error("채널은 최대 32개까지 등록할 수 있어요.");
+                    const channel = normalizeChannels([message.channel])[0];
+                    if (!channel.channelName) throw new Error("채널 이름을 확인하지 못했어요.");
+                    channels.push(channel);
+                } else {
+                    if (!existing) throw new Error("삭제된 채널이에요. 목록을 다시 확인해 주세요.");
+                    for (const key of ["notify", "autoOpen"]) {
+                        if (typeof message.channel[key] === "boolean") existing[key] = message.channel[key];
+                    }
+                }
+                await storageSet(chrome.storage.local, { [CHANNELS_KEY]: channels });
+                return channels;
+            });
+        })
+            .finally(() => {
+                const pending = editing.get(target) - 1;
+                if (pending > 0) editing.set(target, pending);
+                else editing.delete(target);
+            })
+            .then(
+                (channels) => sendResponse({ ok: true, channels }),
+                (error) => sendResponse({ ok: false, error: error.message || "채널 설정을 저장하지 못했어요." })
+            );
         return true;
     });
     function bindNotificationClicks() {

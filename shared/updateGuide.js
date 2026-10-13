@@ -48,6 +48,14 @@
             summary: "앰비언트 효과 추가. 설정 → 플레이어에서 켜고, 플레이어 톱니바퀴에서 세기 조절.",
             cards: Object.freeze([]),
         }),
+        // 2026-10-13 사용자 확정 문구. 폴더·채팅 멀티뷰는 기본 꺼짐이라 켜는 곳을, 방제 기록은 보는 곳을 알린다.
+        // 세 기능에는 기존 이동 목적지가 없어 카드 없이 요약 한 줄만 보여준다.
+        "1.4.4": Object.freeze({
+            version: "1.4.4",
+            title: "새 기능",
+            summary: "팔로잉 폴더·채팅 멀티뷰 추가(설정에서 켜기). 팔로잉 방제를 자동으로 모아 팔로잉 화면에서 확인.",
+            cards: Object.freeze([]),
+        }),
     });
     globalThis.BetterChzzkUpdateGuide = Object.freeze({
         MESSAGE_TYPE: "betterchzzk:update-guide",

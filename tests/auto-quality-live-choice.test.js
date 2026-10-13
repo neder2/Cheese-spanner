@@ -43,11 +43,12 @@ function fixture(t, initialPlayback = {}) {
         host.className = "chzzk_player type_live";
         const video = w.document.createElement("video");
         video.className = "webplayer-internal-video";
-        const playback = { started, paused, readyState, playCalls: 0 };
+        const playback = { started, paused, readyState, playCalls: 0, src: "" };
         Object.defineProperties(video, {
             played: { get: () => ({ length: playback.started ? 1 : 0 }) },
             paused: { get: () => playback.paused },
             readyState: { get: () => playback.readyState },
+            currentSrc: { get: () => playback.src },
         });
         video.play = () => {
             playback.playCalls++;
@@ -502,4 +503,165 @@ test("removing a discovered native video cannot restart selection through a stal
     assert.equal(f.request().status, "pending");
     assert.equal(p.tracks.find((track) => track.selected).height, 480);
     assert.equal(p.selections.length, 1);
+});
+
+async function drain(f) {
+    await flush();
+    for (let count = 0; f.timers.size && count < 20; count++) await f.runNextTimer();
+    assert.equal(f.timers.size, 0, "settled quality work must not keep polling");
+}
+
+const selectedHeight = (p) => p.tracks.find((track) => track.selected).height;
+const lastResult = (f) => JSON.parse(f.w.document.documentElement.getAttribute("data-betterchzzk-auto-quality-result"));
+const lastStatus = (f) => JSON.parse(f.w.document.documentElement.getAttribute("data-betterchzzk-auto-quality-status"));
+
+function chooseInNativeMenu(p, height) {
+    for (const track of p.tracks) track.selected = track.height === height;
+}
+
+async function addPlayerMenuNode(f, p) {
+    const item = f.w.document.createElement("div");
+    item.className = "pzp-pc-setting-quality-item";
+    p.host.append(item);
+    await flush();
+}
+
+// The isolated DOM observer throttles through a timer and one animation frame before it asks the page world.
+async function drainBothWorlds(f) {
+    await drain(f);
+    await new Promise((resolve) => f.w.requestAnimationFrame(() => resolve()));
+    await drain(f);
+}
+
+test("a manual live choice after the entry apply survives later track and player DOM changes in both worlds", async (t) => {
+    const f = fixture(t),
+        p = f.initial;
+    const trackEvents = new f.w.EventTarget();
+    p.tracks.addEventListener = trackEvents.addEventListener.bind(trackEvents);
+    p.tracks.removeEventListener = trackEvents.removeEventListener.bind(trackEvents);
+    await f.loadIsolated();
+    await drain(f);
+    assert.deepEqual(p.selections, ["muxed-1080"], "the entry apply still selects the preferred quality once");
+    chooseInNativeMenu(p, 720);
+    trackEvents.dispatchEvent(new f.w.Event("change"));
+    await drain(f);
+    assert.equal(selectedHeight(p), 720, "the native track change notification does not restore 1080p");
+    const before = lastResult(f);
+    await addPlayerMenuNode(f, p);
+    await drainBothWorlds(f);
+    const after = lastResult(f);
+    assert.notEqual(after.requestId, before.requestId, "the isolated DOM observer still asks the page world");
+    assert.equal(after.status, "already");
+    assert.equal(selectedHeight(p), 720);
+    assert.deepEqual(p.selections, ["muxed-1080"], "neither world re-selects the preferred quality");
+    assert.equal(f.request().status, "already");
+    assert.deepEqual(p.selections, ["muxed-1080"]);
+});
+
+test("player mutations during the first-playback wait still lead to one entry apply", async (t) => {
+    const f = fixture(t, { started: false, paused: true, readyState: 0 }),
+        p = f.initial;
+    await drain(f);
+    await addPlayerMenuNode(f, p);
+    await drain(f);
+    assert.deepEqual(p.selections, [], "nothing is selected before native playback starts");
+    p.startPlayback();
+    await drain(f);
+    assert.deepEqual(p.selections, ["muxed-1080"]);
+    chooseInNativeMenu(p, 480);
+    await addPlayerMenuNode(f, p);
+    await drain(f);
+    assert.equal(selectedHeight(p), 480);
+    assert.deepEqual(p.selections, ["muxed-1080"]);
+});
+
+test("a menu choice after a cancelled entry attempt is not retried by later player changes", async (t) => {
+    const f = fixture(t),
+        p = f.initial;
+    p.tracks[2].kind = "unobserved";
+    await drain(f);
+    assert.equal(lastStatus(f).reason, "native-quality-cancelled");
+    assert.deepEqual(p.selections, []);
+    p.setDispatch(() => true);
+    p.pane.$dispatch("change", { track: p.tracks[1] });
+    chooseInNativeMenu(p, 720);
+    await addPlayerMenuNode(f, p);
+    await drain(f);
+    assert.equal(f.request().status, "already");
+    assert.equal(selectedHeight(p), 720);
+    assert.deepEqual(p.selections, [], "the user's own menu choice is not overwritten after the failure is cleared");
+});
+
+test("a saved quality, a replaced player, re-enabling and a route change still apply after a manual choice", async (t) => {
+    const f = fixture(t),
+        p = f.initial;
+    await drain(f);
+    chooseInNativeMenu(p, 480);
+    await addPlayerMenuNode(f, p);
+    await drain(f);
+    assert.deepEqual(p.selections, ["muxed-1080"]);
+
+    f.state(true, "720p");
+    await drain(f);
+    assert.deepEqual(p.selections, ["muxed-1080", "muxed-720"], "saving a new preferred quality applies it");
+    chooseInNativeMenu(p, 480);
+    await addPlayerMenuNode(f, p);
+    await drain(f);
+    assert.equal(selectedHeight(p), 480);
+    assert.equal(p.selections.length, 2);
+
+    p.host.remove();
+    const next = f.mount();
+    await drain(f);
+    assert.deepEqual(next.selections, ["muxed-720"], "a new player on the same route is a new entry");
+    chooseInNativeMenu(next, 480);
+    await addPlayerMenuNode(f, next);
+    await drain(f);
+    assert.deepEqual(next.selections, ["muxed-720"]);
+
+    f.state(false, "720p");
+    f.state(true, "720p");
+    await drain(f);
+    assert.deepEqual(next.selections, ["muxed-720", "muxed-720"], "re-enabling automatic quality applies again");
+    chooseInNativeMenu(next, 480);
+
+    f.w.history.pushState({}, "", "/live/measured-b");
+    f.w.dispatchEvent(new f.w.Event("betterchzzk:routechange"));
+    assert.equal(f.request("720p").status, "pending");
+    await drain(f);
+    assert.deepEqual(next.selections, ["muxed-720", "muxed-720", "muxed-720"], "a new route is a new entry");
+    assert.equal(selectedHeight(next), 720);
+});
+
+test("the previous stream left in the same player is not recorded as the next route's entry", async (t) => {
+    const f = fixture(t),
+        p = f.initial;
+    p.playback.src = "blob:measured-a";
+    await drain(f);
+    assert.deepEqual(p.selections, ["muxed-1080"]);
+
+    // The URL changes first; the isolated world asks at once while the old stream still shows 1080p.
+    f.w.history.pushState({}, "", "/live/measured-b");
+    f.w.dispatchEvent(new f.w.Event("betterchzzk:routechange"));
+    assert.equal(f.request().status, "already");
+    await drain(f);
+
+    // Channel B then loads into the same player and video at the platform's low default.
+    p.playback.src = "blob:measured-b";
+    p.playback.started = false;
+    chooseInNativeMenu(p, 480);
+    await addPlayerMenuNode(f, p);
+    await drain(f);
+    p.startPlayback();
+    await drain(f);
+    assert.deepEqual(p.selections, ["muxed-1080", "muxed-1080"], "channel B still receives its entry apply");
+    assert.equal(selectedHeight(p), 1080);
+
+    // Once B's own entry is complete, B's manual choice is preserved as usual.
+    chooseInNativeMenu(p, 720);
+    await addPlayerMenuNode(f, p);
+    await drain(f);
+    assert.equal(f.request().status, "already");
+    assert.equal(selectedHeight(p), 720);
+    assert.equal(p.selections.length, 2);
 });

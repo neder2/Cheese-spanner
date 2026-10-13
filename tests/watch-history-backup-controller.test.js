@@ -15,8 +15,10 @@ const {
     plain,
 } = require("./helpers/watch-history-backup-fixture.js");
 
-function harness() {
+function harness({ quota, bytesInUse = false } = {}) {
     const local = {};
+    // Chrome counts each item as its key plus the JSON value.
+    const itemBytes = (name) => Buffer.byteLength(name) + Buffer.byteLength(JSON.stringify(local[name]));
     const listeners = [];
     let writes = 0;
     let reads = 0;
@@ -44,6 +46,20 @@ function harness() {
         runtime,
         storage: {
             local: {
+                ...(quota ? { QUOTA_BYTES: quota } : {}),
+                ...(bytesInUse
+                    ? {
+                          getBytesInUse(keys, callback) {
+                              queueMicrotask(() =>
+                                  callback(
+                                      (keys === null ? Object.keys(local) : [].concat(keys))
+                                          .filter((name) => Object.hasOwn(local, name))
+                                          .reduce((sum, name) => sum + itemBytes(name), 0)
+                                  )
+                              );
+                          },
+                      }
+                    : {}),
                 get(key, callback) {
                     reads++;
                     queueMicrotask(() => {
@@ -52,7 +68,8 @@ function harness() {
                             runtime.lastError = { message: "read failed" };
                             callback({});
                             runtime.lastError = null;
-                        } else callback(Object.hasOwn(local, key) ? { [key]: plain(local[key]) } : {});
+                        } else if (key === null) callback(plain(local));
+                        else callback(Object.hasOwn(local, key) ? { [key]: plain(local[key]) } : {});
                     });
                 },
                 set(values, callback) {
@@ -114,6 +131,7 @@ function harness() {
         context,
         sender,
         send,
+        itemBytes,
         counts: () => ({ writes, reads }),
         setNow(value) {
             now = value;
@@ -232,6 +250,7 @@ test("a deletion after preview requires a new confirmation while ordinary growth
         id: "extension-id",
         url: "https://chzzk.naver.com/live/channel-a",
         tab: { id: 1 },
+        frameId: 0,
     });
     const applied = await h2.send(request("import", { backup, confirmationToken: preview2.result.confirmationToken }));
     assert.equal(applied.result.status, "applied");
@@ -287,4 +306,33 @@ test("backup apply shares the donation writer queue and an export after both see
     assert.equal(h.local[key].donationImport.months["2026-09"][0].text, "보존할 후원");
     assert.equal(h.counts().writes, 2);
     assert.doesNotMatch(JSON.stringify(exported.result.backup), /보존할 후원|donationImport/);
+});
+
+test("the merged history must fit beside the other local values with headroom; otherwise nothing is written", async () => {
+    for (const bytesInUse of [true, false]) {
+        const probe = harness();
+        const backup = file();
+        const headroom = probe.context.BetterChzzkWatchHistoryBackupController.STORAGE_HEADROOM_BYTES;
+        const probed = await probe.send(request("preview", { backup }));
+        await probe.send(request("import", { backup, confirmationToken: probed.result.confirmationToken }));
+        const historyBytes = probe.itemBytes(key);
+        const h = harness({ quota: headroom + historyBytes + 500, bytesInUse });
+        const preview = await h.send(request("preview", { backup }));
+        assert.equal(preview.ok, true, `history alone fits (getBytesInUse: ${bytesInUse})`);
+        h.local.otherFeature = "x".repeat(2000);
+        const rejected = await h.send(
+            request("import", { backup, confirmationToken: preview.result.confirmationToken })
+        );
+        assert.equal(rejected.ok, false);
+        assert.equal(rejected.error.code, "LIMIT_EXCEEDED");
+        assert.equal((await h.send(request("preview", { backup }))).error.code, "LIMIT_EXCEEDED");
+        assert.equal(h.counts().writes, 0);
+        assert.equal(h.local[key], undefined);
+        h.local.otherFeature = "x".repeat(100);
+        const next = await h.send(request("preview", { backup }));
+        const applied = await h.send(request("import", { backup, confirmationToken: next.result.confirmationToken }));
+        assert.equal(applied.result.status, "applied");
+        assert.equal(h.counts().writes, 1);
+        assert.ok(h.itemBytes(key) + h.itemBytes("otherFeature") + headroom <= headroom + historyBytes + 500);
+    }
 });

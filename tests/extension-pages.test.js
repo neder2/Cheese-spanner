@@ -974,7 +974,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.4.3");
+    assert.equal(manifest.version, "1.4.4");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
@@ -987,6 +987,10 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
         "https://chzzk.naver.com/*",
     ]);
     assert.deepEqual(manifest.optional_host_permissions, ["https://*.pstatic.net/*"]);
+    // MAIN scripts load from the manifest; exposing one to pages only lets sites probe the install.
+    assert.deepEqual(manifest.web_accessible_resources, [
+        { resources: ["vendor/fonts/PretendardVariable.woff2"], matches: ["https://chzzk.naver.com/*"] },
+    ]);
     assert.equal(mainScript.js.includes("features/gridBypassPage.js"), false);
     assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
     assert.equal(mainScript.js.includes("features/followingPreviewPage.js"), false);

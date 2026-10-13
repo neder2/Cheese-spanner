@@ -197,3 +197,24 @@ test("one-panel resize clamps to the remaining actual space without changing the
     const updated = model.withWidth(chosen, "sidebar", model.clampWidth("sidebar", 800, 1000, 440));
     assert.deepEqual(plain(updated), state(240, 640));
 });
+
+test("chat height helpers use the native height as the upper bound and never coerce strings", () => {
+    const model = setup();
+    assert.equal(model.HEIGHT_STORAGE_KEY, "betterchzzk:panel-resize:chat-height:v1");
+    assert.equal(model.HEIGHT_LIMITS.min, 240);
+    for (const invalid of ["400", 0, -1, 8193, 1.5, null, undefined, {}])
+        assert.equal(model.normalizeHeight(invalid), null);
+    assert.equal(model.normalizeHeight(400), 400);
+    assert.deepEqual(plain(model.getHeightRange(700.6)), { min: 240, max: 700 });
+    for (const native of [239, Number.NaN, undefined]) assert.equal(model.getHeightRange(native), null);
+    assert.equal(model.clampHeight(100, 700), 240);
+    assert.equal(model.clampHeight(900, 700), 700);
+    assert.equal(model.clampHeight(Number.NaN, 700), null);
+    assert.equal(model.clampHeight(400, 200), null);
+    assert.equal(model.resolveHeight(null, 700), null);
+    assert.equal(model.resolveHeight(450, 700), 450);
+    assert.equal(model.resolveHeight(100, 700), 240);
+    assert.equal(model.resolveHeight(700, 700), null, "a choice at the native height shows the native layout");
+    assert.equal(model.resolveHeight(900, 700), null);
+    assert.equal(model.resolveHeight(450, 200), null, "too little native space suspends the custom height");
+});

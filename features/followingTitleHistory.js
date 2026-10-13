@@ -1,10 +1,11 @@
 /**
- * features/followingTitleHistory.js — 팔로잉 본문의 현재 라이브 방송 제목 변경 이력을 저장하고 펼쳐 본다.
+ * features/followingTitleHistory.js — 팔로잉 본문의 라이브 카드에 이전 방제를 다시보기와 같은 버튼·패널로 보여 준다.
  *
  * 동작 위치: isolated world, https://chzzk.naver.com/following 본문의 라이브 카드.
- * 하는 일: 본문 목록에 현재 노출된 /live/{channelId} 제목을 live-detail API와 대조해
- *   실제 라이브 ID와 제목을 확정한 뒤 chrome.storage.local에 방송별로 최대 20개를 저장한다.
- *   이전 제목이 있으면 현재 제목 오른쪽에 버튼을 붙여 시각과 함께 펼쳐 보여 준다.
+ * 하는 일: 서비스 워커(shared/followingTitleCollector.js)가 1분마다 모은 방송별 제목 이력을 읽기만 한다.
+ *   저장된 이전 방제가 있는 카드만 live-detail로 현재 라이브 ID를 확인하고(카드 제목이 바뀌거나 2분이 지나면 다시 확인),
+ *   저장된 이력의 라이브 ID와 같을 때만 현재 제목을 뺀 이전 방제를 제목 오른쪽 버튼으로 시각과 함께 펼쳐 보여 준다.
+ *   다른 방송의 제목은 보이지 않는다.
  * 수명주기: 옵션을 끄거나 라우트가 바뀌면 observer·listener·요청·UI를 정리하고, SPA 이동 후 재설치한다.
  * 옵션 키: followingTitleHistoryEnabled.
  * DOM 마커: #betterchzzk-following-title-history-style/panel,
@@ -12,9 +13,7 @@
  */
 (() => {
     const {
-        addTitleHistory,
         bindFeatureOptions,
-        cleanEntryTitle,
         createMutationObserverSync,
         fetchJson,
         formatKstDateTime,
@@ -22,24 +21,21 @@
         injectStyleOnce,
         isSameKstDate,
         normalizeChzzkChannelId,
-        normalizeTitleHistory,
-        pickString,
         startPageChangeDetection,
         startStorageChangeListener,
         storageGet,
-        storageSet,
     } = BetterChzzk.utils;
+    const { STORAGE_KEY, getPreviousRows, normalizeId, normalizeStore, normalizeTitle } =
+        globalThis.BetterChzzkFollowingTitleHistory;
 
-    const STORAGE_KEY = "betterchzzkFollowingLiveTitleHistory";
     const STYLE_ID = "betterchzzk-following-title-history-style";
     const PANEL_ID = "betterchzzk-following-title-history-panel";
     const HOST_ATTR = "data-bcfth-host";
     const TITLE_ATTR = "data-bcfth-title";
     const BUTTON_ATTR = "data-bcfth-toggle";
     const CHANNEL_ATTR = "data-bcfth-channel-id";
+    const COUNT_ATTR = "data-bcfth-count";
     const LIVE_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v3/channels";
-    const MAX_ENTRIES = 100;
-    const MAX_TITLES_PER_LIVE = 20;
     const MAX_FETCH_CONCURRENCY = 3;
     const VERIFY_TTL_MS = 2 * 60 * 1000;
     const RETRY_COOLDOWN_MS = 15 * 1000;
@@ -55,8 +51,8 @@
     let runtimeGeneration = 0;
     let storeLoaded = false;
     let storeLoadPromise = null;
+    let storeRevision = 0;
     let storeEntries = new Map();
-    let writeChain = Promise.resolve();
     let activeFetchCount = 0;
     let activeChannelId = "";
     const fetchQueue = new Map();
@@ -72,15 +68,6 @@
         return location.pathname.replace(/\/+$/, "") === "/following";
     }
 
-    function normalizeId(value) {
-        const id = pickString(value);
-        return /^[A-Za-z0-9_-]{1,100}$/.test(id) ? id : "";
-    }
-
-    function normalizeTitleKey(value) {
-        return pickString(value).normalize("NFC");
-    }
-
     function extractChannelId(href) {
         try {
             const url = new URL(href, location.origin);
@@ -91,99 +78,26 @@
         }
     }
 
-    function normalizeStore(raw) {
-        const rows = Array.isArray(raw?.entries)
-            ? raw.entries
-            : raw?.entries && typeof raw.entries === "object"
-              ? Object.values(raw.entries)
-              : [];
-        const next = new Map();
-
-        for (const row of rows) {
-            if (!row || typeof row !== "object") continue;
-            const channelId = normalizeChzzkChannelId(row.channelId);
-            const liveId = normalizeId(row.liveId);
-            const channelName = pickString(row.channelName);
-            const titleHistory = normalizeTitleHistory(row.titleHistory, channelName, MAX_TITLES_PER_LIVE);
-            if (!channelId || !liveId || !titleHistory.length) continue;
-            next.set(channelId, {
-                channelId,
-                liveId,
-                channelName,
-                titleHistory,
-                updatedAt: Number(row.updatedAt) || 0,
-            });
-        }
-
-        return new Map(
-            Array.from(next.entries())
-                .sort((a, b) => a[1].updatedAt - b[1].updatedAt)
-                .slice(-MAX_ENTRIES)
-        );
+    function setStore(raw) {
+        storeEntries = new Map(normalizeStore(raw).entries.map((entry) => [entry.channelId, entry]));
+        storeLoaded = true;
+        return storeEntries;
     }
 
-    function serializeStore() {
-        return {
-            version: 1,
-            entries: Array.from(storeEntries.values())
-                .sort((a, b) => a.updatedAt - b.updatedAt)
-                .slice(-MAX_ENTRIES),
-        };
-    }
-
-    function loadStore({ force = false } = {}) {
+    function loadStore() {
         if (!storage) return Promise.resolve(new Map());
-        if (!force && storeLoaded) return Promise.resolve(storeEntries);
-        if (!force && storeLoadPromise) return storeLoadPromise;
+        if (storeLoaded) return Promise.resolve(storeEntries);
+        if (storeLoadPromise) return storeLoadPromise;
 
+        const revision = storeRevision;
+        // 읽는 사이 변경 알림으로 더 새 값이 들어왔으면 늦게 도착한 읽기 결과로 되돌리지 않아요.
         const request = storageGet(storage, STORAGE_KEY)
-            .then((data) => {
-                storeEntries = normalizeStore(data?.[STORAGE_KEY]);
-                storeLoaded = true;
-                return storeEntries;
-            })
+            .then((data) => (revision === storeRevision ? setStore(data?.[STORAGE_KEY]) : storeEntries))
             .finally(() => {
                 if (storeLoadPromise === request) storeLoadPromise = null;
             });
         storeLoadPromise = request;
         return request;
-    }
-
-    function persistStore() {
-        const snapshot = serializeStore();
-        writeChain = writeChain.catch(() => {}).then(() => storageSet(storage, { [STORAGE_KEY]: snapshot }));
-        return writeChain;
-    }
-
-    function recordVerifiedTitle(meta, now = Date.now()) {
-        const existing = storeEntries.get(meta.channelId);
-        const entry =
-            existing?.liveId === meta.liveId
-                ? {
-                      ...existing,
-                      channelName: meta.channelName || existing.channelName,
-                      titleHistory: normalizeTitleHistory(
-                          existing.titleHistory,
-                          meta.channelName || existing.channelName,
-                          MAX_TITLES_PER_LIVE
-                      ),
-                  }
-                : {
-                      channelId: meta.channelId,
-                      liveId: meta.liveId,
-                      channelName: meta.channelName,
-                      titleHistory: [],
-                      updatedAt: now,
-                  };
-
-        addTitleHistory(entry, meta.title, now, now, MAX_TITLES_PER_LIVE);
-        entry.updatedAt = now;
-        storeEntries.delete(meta.channelId);
-        storeEntries.set(meta.channelId, entry);
-        while (storeEntries.size > MAX_ENTRIES) {
-            storeEntries.delete(storeEntries.keys().next().value);
-        }
-        return persistStore().then(() => entry);
     }
 
     function getMainRoot() {
@@ -194,7 +108,7 @@
         if (!(link instanceof HTMLAnchorElement)) return "";
         const clone = link.cloneNode(true);
         clone.querySelectorAll(`.blind, [aria-hidden="true"], [${BUTTON_ATTR}]`).forEach((node) => node.remove());
-        return cleanEntryTitle(clone.textContent || "");
+        return normalizeTitle(clone.textContent || "");
     }
 
     function isTitleLink(link, card) {
@@ -220,16 +134,9 @@
             if (!channelId || !(card instanceof HTMLElement) || !isTitleLink(link, card)) continue;
             const title = getTitleText(link);
             if (!title) continue;
-            byChannel.set(channelId, { card, channelId, link, title, titleNorm: normalizeTitleKey(title) });
+            byChannel.set(channelId, { card, channelId, link, title });
         }
         return Array.from(byChannel.values());
-    }
-
-    function getPreviousRows(entry, currentTitle) {
-        const currentNorm = normalizeTitleKey(currentTitle);
-        return normalizeTitleHistory(entry?.titleHistory, entry?.channelName, MAX_TITLES_PER_LIVE).filter(
-            (row) => normalizeTitleKey(row.title) !== currentNorm
-        );
     }
 
     function formatSeenRange(row) {
@@ -248,11 +155,19 @@
         return panel instanceof HTMLElement ? panel : null;
     }
 
+    function setButtonExpanded(button, expanded) {
+        const count = Number(button.getAttribute(COUNT_ATTR)) || 0;
+        const label = expanded ? "이전 방제 접기" : `이전 방제 ${count}개 보기`;
+        if (button.getAttribute("aria-expanded") !== String(expanded)) {
+            button.setAttribute("aria-expanded", String(expanded));
+        }
+        if (button.getAttribute("aria-label") !== label) button.setAttribute("aria-label", label);
+        if (button.title !== label) button.title = label;
+    }
+
     function closePanel() {
         activeChannelId = "";
-        for (const button of document.querySelectorAll(`[${BUTTON_ATTR}]`)) {
-            if (button.getAttribute("aria-expanded") !== "false") button.setAttribute("aria-expanded", "false");
-        }
+        for (const button of document.querySelectorAll(`[${BUTTON_ATTR}]`)) setButtonExpanded(button, false);
         const panel = getPanel();
         if (panel) panel.hidden = true;
     }
@@ -291,7 +206,7 @@
             panel.id = PANEL_ID;
             panel.hidden = true;
             panel.setAttribute("role", "region");
-            panel.setAttribute("aria-label", "이전 방송 제목");
+            panel.setAttribute("aria-label", "이전 방제");
             document.body.appendChild(panel);
         }
 
@@ -363,44 +278,48 @@
                     activeChannelId !== candidate.channelId || button.getAttribute("aria-expanded") !== "true";
                 closePanel();
                 if (!shouldOpen) return;
+                const title = getTitleText(candidate.link);
+                const verifiedEntry = getVerifiedEntry(candidate.channelId, title);
+                if (!verifiedEntry) {
+                    scheduleSync();
+                    return;
+                }
                 activeChannelId = candidate.channelId;
-                button.setAttribute("aria-expanded", "true");
-                renderPanel(button, storeEntries.get(candidate.channelId), getTitleText(candidate.link));
+                setButtonExpanded(button, true);
+                renderPanel(button, verifiedEntry, title);
             });
             candidate.link.insertAdjacentElement("afterend", button);
         }
 
-        const label = `이전 방송 제목 ${rows.length}개 보기`;
         button.setAttribute("aria-controls", PANEL_ID);
-        button.setAttribute("aria-expanded", activeChannelId === candidate.channelId ? "true" : "false");
-        button.setAttribute("aria-label", label);
-        button.title = label;
+        button.setAttribute(COUNT_ATTR, String(rows.length));
+        setButtonExpanded(button, activeChannelId === candidate.channelId);
         if (activeChannelId === candidate.channelId) renderPanel(button, entry, candidate.title);
     }
 
-    function normalizeLiveMeta(json, channelId) {
-        const content = json?.content ?? json ?? {};
-        const channel = content.channel || content.channelInfo || content.channelModel || {};
-        const channelName = pickString(channel.channelName, channel.name, content.channelName);
-        return {
-            channelId,
-            channelName,
-            liveId: normalizeId(content.liveId),
-            title: cleanEntryTitle(pickString(content.liveTitle, content.title, content.broadcastTitle), channelName),
-        };
+    // 지금 카드 제목으로 확인한 live-detail 라이브 ID가 저장된 이력의 라이브 ID와 같을 때만 그 이력을 써요.
+    function getVerifiedEntry(channelId, title) {
+        const verified = verifiedLives.get(channelId);
+        const entry = storeEntries.get(channelId);
+        return verified && entry && verified.title === title && verified.liveId === entry.liveId ? entry : null;
     }
 
+    // 카드의 채널이 지금 어떤 방송인지만 확인해요. 제목은 서비스 워커가 모은 이력을 쓰고 여기서 저장하지 않아요.
+    // 같은 채널이 방송을 다시 켜면 카드 제목이 먼저 바뀔 수 있고, 같은 제목으로 다시 켜도 2분 안에 다시 확인해요.
     function shouldVerify(candidate) {
         const verified = verifiedLives.get(candidate.channelId);
-        if (!verified) return true;
-        if (verified.titleNorm !== candidate.titleNorm) return true;
-        return Date.now() - verified.verifiedAt > VERIFY_TTL_MS;
+        if (!verified || verified.title !== candidate.title) return true;
+        if (Date.now() - verified.verifiedAt > VERIFY_TTL_MS) return true;
+        const entryLiveId = storeEntries.get(candidate.channelId)?.liveId || "";
+        return Boolean(entryLiveId) && entryLiveId !== verified.liveId && entryLiveId !== verified.entryLiveId;
     }
 
     function queueVerification(candidate) {
-        if (!shouldVerify(candidate)) return;
+        if (!shouldVerify(candidate) || fetchControllers.has(candidate.channelId)) return;
+        // 실패한 확인만 잠시 쉬어요. 성공한 뒤 저장된 라이브 ID가 바뀐 경우는 바로 한 번 다시 확인해요.
         const last = lastFetches.get(candidate.channelId);
-        if (last?.titleNorm === candidate.titleNorm && Date.now() - last.requestedAt < RETRY_COOLDOWN_MS) return;
+        const verifiedAt = verifiedLives.get(candidate.channelId)?.verifiedAt || 0;
+        if (last && last.requestedAt > verifiedAt && Date.now() - last.requestedAt < RETRY_COOLDOWN_MS) return;
         fetchQueue.set(candidate.channelId, candidate);
         pumpFetchQueue();
     }
@@ -417,29 +336,26 @@
     function verifyCandidate(candidate) {
         const generation = runtimeGeneration;
         const controller = new AbortController();
+        const entryLiveId = storeEntries.get(candidate.channelId)?.liveId || "";
         activeFetchCount += 1;
         fetchControllers.set(candidate.channelId, controller);
-        lastFetches.set(candidate.channelId, { requestedAt: Date.now(), titleNorm: candidate.titleNorm });
+        lastFetches.set(candidate.channelId, { requestedAt: Date.now() });
 
         fetchJson(`${LIVE_DETAIL_API_BASE}/${encodeURIComponent(candidate.channelId)}/live-detail`, {
             signal: controller.signal,
             timeoutMs: FETCH_TIMEOUT_MS,
         })
-            .then((json) => normalizeLiveMeta(json, candidate.channelId))
-            .then(async (meta) => {
+            .then((json) => {
                 if (generation !== runtimeGeneration || controller.signal.aborted) return;
-                if (!meta.liveId || !meta.title || normalizeTitleKey(meta.title) !== candidate.titleNorm) return;
-                await loadStore();
-                if (generation !== runtimeGeneration || controller.signal.aborted) return;
-                const entry = await recordVerifiedTitle(meta);
+                const liveId = normalizeId(json?.content?.liveId);
+                if (!liveId) return;
                 verifiedLives.set(candidate.channelId, {
-                    liveId: meta.liveId,
-                    titleNorm: candidate.titleNorm,
+                    liveId,
+                    entryLiveId,
+                    title: candidate.title,
                     verifiedAt: Date.now(),
                 });
-                if (candidate.link.isConnected && getTitleText(candidate.link) === candidate.title) {
-                    renderCandidate(candidate, entry);
-                }
+                scheduleSync();
             })
             .catch(() => {})
             .finally(() => {
@@ -460,29 +376,33 @@
         try {
             await loadStore();
         } catch (error) {
-            console.warn("[Better Chzzk] 팔로잉 제목 이력 로드 실패", error);
+            console.warn("[Cheese Spanner] 팔로잉 방제 이력 로드 실패", error);
             return;
         }
+        if (!runtimeInstalled || !isEnabled() || !isFollowingRoute()) return;
 
         const candidates = collectCandidates();
-        const liveLinks = new Set(candidates.map((candidate) => candidate.link));
+        const candidateByLink = new Map(candidates.map((candidate) => [candidate.link, candidate]));
+        // 치지직이 같은 제목 링크를 다른 채널 카드로 재사용하면 이전 채널의 버튼을 남기지 않아요.
         for (const button of document.querySelectorAll(`[${BUTTON_ATTR}]`)) {
             const host = button.parentElement;
-            const titleLink = host?.querySelector(`[${TITLE_ATTR}]`);
-            if (!liveLinks.has(titleLink)) {
+            const candidate = candidateByLink.get(host?.querySelector(`[${TITLE_ATTR}]`));
+            if (!candidate || candidate.channelId !== button.getAttribute(CHANNEL_ATTR)) {
+                if (button.getAttribute("aria-expanded") === "true") closePanel();
                 button.remove();
                 clearHostIfUnused(host);
             }
         }
 
         for (const candidate of candidates) {
-            const verified = verifiedLives.get(candidate.channelId);
-            const entry = storeEntries.get(candidate.channelId);
-            if (verified?.liveId && verified.liveId === entry?.liveId && verified.titleNorm === candidate.titleNorm) {
-                renderCandidate(candidate, entry);
-            } else {
+            // 저장된 이전 방제가 없으면 버튼을 만들 수 없으니 방송 확인 요청도 보내지 않아요.
+            if (!getPreviousRows(storeEntries.get(candidate.channelId), candidate.title).length) {
                 removeCandidateButton(candidate);
+                continue;
             }
+            const entry = getVerifiedEntry(candidate.channelId, candidate.title);
+            if (entry) renderCandidate(candidate, entry);
+            else removeCandidateButton(candidate);
             queueVerification(candidate);
         }
 
@@ -514,7 +434,11 @@
 
     function handlePageChange() {
         runtimeGeneration += 1;
-        verifiedLives.clear();
+        // 확인한 방송은 2분 동안 유효해 팔로잉을 잠시 떠났다 돌아와도 다시 묻지 않아요. 지난 확인만 버려요.
+        const now = Date.now();
+        for (const [channelId, verified] of verifiedLives) {
+            if (now - verified.verifiedAt > VERIFY_TTL_MS) verifiedLives.delete(channelId);
+        }
         lastFetches.clear();
         abortFetches();
         cleanupUi();
@@ -530,11 +454,10 @@
 
     function handleStorageChange(changes, areaName) {
         if (areaName !== "local" || !changes[STORAGE_KEY]) return;
-        storeLoaded = false;
+        storeRevision += 1;
         storeLoadPromise = null;
-        loadStore({ force: true })
-            .then(scheduleSync)
-            .catch((error) => console.warn("[Better Chzzk] 팔로잉 제목 이력 동기화 실패", error));
+        setStore(changes[STORAGE_KEY].newValue);
+        scheduleSync();
     }
 
     function injectStyles() {
@@ -542,10 +465,10 @@
             STYLE_ID,
             `
 [${HOST_ATTR}="1"]{position:relative!important}
-[${TITLE_ATTR}="1"]{box-sizing:border-box!important;padding-right:28px!important}
+[${TITLE_ATTR}="1"]{box-sizing:border-box!important;padding-right:30px!important}
 [${BUTTON_ATTR}="1"]{
   position:absolute;top:0;right:0;z-index:2;display:inline-flex;align-items:center;justify-content:center;
-  width:22px;height:22px;min-width:22px;margin:0;padding:0;border:1px solid var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak,rgba(0,0,0,.12)));
+  width:24px;height:24px;min-width:24px;margin:0;padding:0;border:1px solid var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak,rgba(0,0,0,.12)));
   border-radius:999px;color:var(--sem-color-content-neutral-primary,var(--Content-Neutral-Primary,#141517));background:var(--sem-color-surface-neutral-weaker,var(--Surface-Neutral-Weaker,#eef1f5));
   font:inherit;font-size:0;line-height:1;cursor:pointer
 }
@@ -554,17 +477,17 @@
 [${BUTTON_ATTR}="1"][aria-expanded="true"]{color:var(--sem-color-content-brand-strong,var(--Content-Brand-Strong,#00875a));background:var(--sem-color-surface-brand-alpha-weak,var(--Surface-Brand-Alpha-Weak,rgba(0,168,107,.12)));border-color:var(--sem-color-border-brand-alpha-base,var(--Border-Brand-Alpha-Base,rgba(0,168,107,.28)))}
 [${BUTTON_ATTR}="1"] .bcfth-chevron{display:block;width:7px;height:7px;margin-top:-3px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(45deg);transition:transform 120ms ease,margin-top 120ms ease}
 [${BUTTON_ATTR}="1"][aria-expanded="true"] .bcfth-chevron{margin-top:3px;transform:rotate(225deg)}
-#${PANEL_ID}{position:fixed;left:var(--bcfth-left,12px);top:var(--bcfth-top,12px);z-index:2147483646;display:grid;width:max-content;max-width:min(560px,calc(100vw - 24px));max-height:min(360px,calc(100vh - 24px));overflow:auto;margin:0;padding:6px 8px;border:1px solid var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak,rgba(0,0,0,.1)));border-radius:8px;color:var(--sem-color-content-neutral-primary,var(--Content-Neutral-Primary,#141517));background:var(--sem-color-surface-neutral-base,var(--Surface-Neutral-Base,rgba(255,255,255,.98)));box-shadow:0 8px 24px rgba(0,0,0,.12);font-family:inherit;box-sizing:border-box}
+#${PANEL_ID}{position:fixed;left:var(--bcfth-left,12px);top:var(--bcfth-top,12px);z-index:2147483646;display:grid;width:max-content;max-width:min(760px,calc(100vw - 24px));max-height:min(360px,calc(100vh - 24px));overflow:auto;margin:0;padding:6px 8px;border:1px solid var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak,rgba(0,0,0,.1)));border-radius:8px;color:var(--sem-color-content-neutral-primary,var(--Content-Neutral-Primary,#141517));background:var(--sem-color-surface-neutral-base,var(--Surface-Neutral-Base,rgba(255,255,255,.98)));box-shadow:0 8px 24px rgba(0,0,0,.12);font-family:inherit;box-sizing:border-box}
 #${PANEL_ID}[hidden]{display:none!important}
-#${PANEL_ID} .bcfth-row{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:12px;align-items:center;min-width:0;padding:5px 0;border-top:1px solid var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak,rgba(0,0,0,.08)))}
-#${PANEL_ID} .bcfth-row:first-child{border-top:0}
+#${PANEL_ID} .bcfth-row{display:grid;grid-template-columns:max-content max-content;gap:12px;align-items:center;min-width:0;padding:5px 0;border-top:1px solid var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak,rgba(0,0,0,.08)))}
+#${PANEL_ID} .bcfth-row:first-child{border-top:0;padding-top:0}
 #${PANEL_ID} .bcfth-time,#${PANEL_ID} .bcfth-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#${PANEL_ID} .bcfth-time{color:var(--sem-color-content-neutral-cool-weak,var(--Content-Neutral-Cool-Weak,#7b8493));font-size:12px;font-weight:700}
-#${PANEL_ID} .bcfth-title{display:block;max-width:min(380px,calc(100vw - 190px));color:var(--sem-color-content-neutral-primary,var(--Content-Neutral-Primary,#141517));font-size:13px;font-weight:700}
+#${PANEL_ID} .bcfth-time{color:var(--sem-color-content-neutral-cool-weak,var(--Content-Neutral-Cool-Weak,#7b8493));font-size:12px;font-weight:800}
+#${PANEL_ID} .bcfth-title{display:block;max-width:min(560px,calc(100vw - 190px));color:var(--sem-color-content-neutral-primary,var(--Content-Neutral-Primary,#141517));font-size:13px;font-weight:900}
 html.theme_dark [${BUTTON_ATTR}="1"]{border-color:var(--sem-color-border-neutral-alpha-weak,rgba(255,255,255,.16));color:var(--sem-color-content-neutral-primary,#f2f4f7);background:var(--sem-color-surface-neutral-weaker,rgba(255,255,255,.12))}
 html.theme_dark #${PANEL_ID}{border-color:var(--sem-color-border-neutral-alpha-weak,rgba(255,255,255,.14));color:var(--sem-color-content-neutral-primary,#f2f4f7);background:var(--sem-color-surface-neutral-base,rgba(24,26,29,.98));box-shadow:0 8px 24px rgba(0,0,0,.28)}
 html.theme_dark #${PANEL_ID} .bcfth-time{color:var(--sem-color-content-neutral-cool-weak,#a6adba)} html.theme_dark #${PANEL_ID} .bcfth-title{color:var(--sem-color-content-neutral-primary,#f2f4f7)}
-@media(max-width:720px){#${PANEL_ID} .bcfth-row{gap:8px}#${PANEL_ID} .bcfth-title{max-width:calc(100vw - 150px)}}
+@media(max-width:720px){#${PANEL_ID} .bcfth-row{grid-template-columns:max-content minmax(0,1fr);gap:8px}#${PANEL_ID} .bcfth-title{max-width:calc(100vw - 150px)}}
 `
         );
     }
@@ -609,6 +532,10 @@ html.theme_dark #${PANEL_ID} .bcfth-time{color:var(--sem-color-content-neutral-c
         window.removeEventListener("scroll", handleViewportChange, true);
         verifiedLives.clear();
         lastFetches.clear();
+        // 꺼져 있는 동안은 변경 알림을 받지 않으니 다시 켤 때 저장값을 새로 읽어요.
+        storeRevision += 1;
+        storeLoaded = false;
+        storeLoadPromise = null;
         cleanupUi();
         document.getElementById(STYLE_ID)?.remove();
     }

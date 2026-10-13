@@ -4,6 +4,8 @@
  * 실행 컨텍스트: https://chzzk.naver.com/live/{channelId}의 isolated content script.
  * 하는 일: 실제 media time이 전진한 구간만 누적하고 15초 간격·가시성 변경·pagehide에 flush한다.
  *   본인 채팅·일반 후원은 확인 즉시 저장하며, 최소 시청 시간에 미달하면 활동만 저장한다.
+ *   live-detail이 현재 방송(OPEN)을 확인하기 전에는 세션·활동을 방송 기록에 연결하지 않는다.
+ *   같은 방송의 종료(CLOSE)가 확인되면 시청 세션은 유지하고 다시 OPEN이 될 때까지 새 활동만 버린다.
  * 의존: BetterChzzkSettings와 BetterChzzk.utils의 DOM, 날짜, 범위 병합, runtime 메시지 유틸.
  * 통신: 누적 절대값 세션 스냅샷과 provisional→live ID migration을 background 단일 writer에 보낸다.
  * 삭제 barrier 응답을 받으면 기존 세션을 버리고 현재 시각부터 새 세션으로 다시 추적한다.
@@ -69,6 +71,8 @@
         current.seenActivityIds.add(activity.id);
         if (current.seenActivityIds.size > 1000)
             current.seenActivityIds.delete(current.seenActivityIds.values().next().value);
+        // 종료·미확인 응답 뒤의 활동은 버린다. 본 ID는 남겨 방송 재확인 뒤 다시 수집하지 않는다.
+        if (current.liveUnconfirmed) return;
         current.activities.push(activity);
         if (current.activities.length > 500) current.activities.shift();
         current.lastSeenAt = Math.max(current.lastSeenAt, Date.now());
@@ -200,6 +204,7 @@
         return {
             channelId: pickString(content.channelId, live.channelId, channel.channelId, channelId),
             liveId: pickString(content.liveId, content.liveNo, live.liveId, live.liveNo, content.id),
+            status: pickString(content.status, live.status),
             title: cleanEntryTitle(
                 pickString(content.liveTitle, content.title, live.liveTitle, live.title),
                 channelName
@@ -283,12 +288,28 @@
             if (!isCurrentMetadataRequest(current, requestId, channelId)) return;
             const nextMetadata = extractMetadataFromLiveDetail(json, channelId);
             if (nextMetadata.channelId !== channelId) return;
+            // CLOSE 응답의 liveId는 지난 방송이다. status가 없으면 실제 재생 중인 본영상만 현재 방송의 근거로 쓴다.
+            const liveConfirmed =
+                nextMetadata.status === "OPEN" || (!nextMetadata.status && isVideoActive(attachedVideo));
             const pinnedLiveId = getPinnedLiveId(current);
             if (pinnedLiveId && nextMetadata.liveId && nextMetadata.liveId !== pinnedLiveId) {
+                endSession();
+                startSession(liveConfirmed ? nextMetadata : null);
+                return;
+            }
+            if (!pinnedLiveId && !liveConfirmed) {
+                current.liveUnconfirmed = true;
+                mergeMetadata(current, pageMetadata);
+                return;
+            }
+            if (!pinnedLiveId && current.liveUnconfirmed) {
+                // 방송 확인 전 세션의 시작 시각·활동은 나중에 확인된 방송에도 붙이지 않고 새 세션으로 시작한다.
                 endSession();
                 startSession(nextMetadata);
                 return;
             }
+            // 같은 방송의 종료·미확인 응답은 시청 세션과 기존 활동을 유지하고 새 활동 연결만 멈춘다.
+            current.liveUnconfirmed = !liveConfirmed;
             mergeMetadata(current, pageMetadata);
             mergeMetadata(current, nextMetadata, { persistThumbnail: true, persistTitle: true });
             await promoteSessionRecordId(current);

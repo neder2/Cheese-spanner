@@ -43,6 +43,23 @@ for (const theme of ["theme_light", "theme_dark"]) {
         document.getElementById("ranking").innerHTML = expanded;
         assert.equal(hidden("ranking"), true);
         for (const id of ["header", "messages", "reward", "outside"]) assert.equal(hidden(id), false);
+        // 2026-10-12 public bundle: an empty week renders no list, and the log power view has no refresh button.
+        const states = {
+            emptyCollapsed:
+                '<div><div class="_no_ranking_header_wl8bq_155"><strong class="_title_wl8bq_22">주간 후원 랭킹</strong></div><div class="_swipe_button_wl8bq_118"></div><button class="_no_ranking_button_wl8bq_133" aria-expanded="false"><span class="blind">펼치기</span></button></div>',
+            emptyExpanded:
+                '<div class="_header_wl8bq_13"><strong class="_title_wl8bq_22">주간 후원 랭킹<button class="_refresh_button_wl8bq_54">랭킹 새로고침</button></strong></div><div class="_contents_wl8bq_84"><div class="_swipe_button_wl8bq_118"></div><button class="_no_ranking_button_wl8bq_133" aria-expanded="true"><span class="blind">접기</span></button></div>',
+            powerExpanded:
+                '<div class="_header_wl8bq_13 _show_power_wl8bq_25"><strong class="_title_wl8bq_22">주간 통나무 파워 랭킹</strong><button class="_header_button_wl8bq_32" aria-expanded="true"></button></div><div class="_contents_wl8bq_84"><ul><li>1</li></ul><button class="_swipe_button_wl8bq_118" aria-expanded="true"></button></div>',
+        };
+        for (const [state, html] of Object.entries(states)) {
+            document.getElementById("ranking").innerHTML = html;
+            assert.equal(hidden("ranking"), true, state);
+            for (const id of ["header", "messages", "reward", "outside"]) assert.equal(hidden(id), false, state);
+        }
+        document.getElementById("messages").innerHTML =
+            '<div><button class="_no_ranking_button_fake">랭킹</button><div class="_show_power_fake"></div></div>';
+        assert.equal(hidden("messages"), false);
         dom.window.history.pushState({}, "", "/live/other");
         const aside = document.getElementById("aside-chatting");
         aside.replaceWith(aside.cloneNode(true));

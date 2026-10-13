@@ -2,7 +2,8 @@
 (() => {
     const root = (window.BetterChzzk = window.BetterChzzk || {});
     const model = root.multiviewModel;
-    const { fetchJson, storageGet, storageSet, normalizeChzzkMediaUrl } = root.utils;
+    // Delay/quality choices are written through the worker's settings lock (settings restore boundary).
+    const { fetchJson, storageGet, settingsStoreSet, normalizeChzzkMediaUrl } = root.utils;
     const MEDIA_EVENTS = [
         "loadedmetadata",
         "durationchange",
@@ -140,7 +141,7 @@
             saveQueue = saveQueue
                 .catch(() => {})
                 .then(() =>
-                    storageSet(chrome.storage.local, {
+                    settingsStoreSet("local", {
                         [qualityKey(player.id)]: height,
                     })
                 )
@@ -266,7 +267,7 @@
                 .catch(() => {})
                 .then(async () => {
                     if (!chrome.storage?.local) throw new Error("저장소를 사용할 수 없어요.");
-                    await storageSet(chrome.storage.local, {
+                    await settingsStoreSet("local", {
                         [model.delayKey(player.id)]:
                             basis === "legacy"
                                 ? { version: 1, delaySeconds: delay }

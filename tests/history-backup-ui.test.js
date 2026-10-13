@@ -524,7 +524,8 @@ test("export failure and page exit before export completion cannot start a downl
 test("backup controls keep keyboard/status semantics, local script order and responsive theme tokens", async (t) => {
     const h = await openBackup(t);
     const { document } = h.window;
-    assert.match(document.querySelector(".history-management > summary").textContent, /백업/);
+    assert.match(document.querySelector(".history-management > h2").textContent, /백업/);
+    assert.equal(h.element("historyBackup").closest("details"), null, "backup controls stay visible");
     assert.equal(h.element("historyBackupStatus").getAttribute("role"), "status");
     assert.equal(h.element("historyBackupStatus").getAttribute("aria-live"), "polite");
     assert.equal(h.element("historyBackupFile").multiple, false);

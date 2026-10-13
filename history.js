@@ -106,7 +106,6 @@ const listDescriptionEl = document.getElementById("listDescription");
 const historyListEl = document.getElementById("historyList");
 const historySearchEl = document.getElementById("historySearch");
 const historySortEl = document.getElementById("historySort");
-const historySortDirectionEl = document.getElementById("historySortDirection");
 const historyScopeEl = document.getElementById("historyScope");
 const channelRankingEl = document.getElementById("channelRanking");
 const activityTypeEl = document.getElementById("activityType");
@@ -122,11 +121,9 @@ const viewTabs = Array.from(document.querySelectorAll("[data-history-view]"));
 const viewNames = ["history", "ranking", "activity"];
 const selectionToggle = document.getElementById("historySelectionToggle");
 const selectionControls = document.getElementById("historySelectionControls");
-const historySortControls = document.getElementById("historySortControls");
 const VIEW_PAGE_SIZE = 10;
 const viewPages = { history: 0, ranking: 0, activity: 0 };
 const prevMonthButton = document.getElementById("prevMonth");
-const calendarRefreshButton = document.getElementById("calendarRefresh");
 const nextMonthButton = document.getElementById("nextMonth");
 const refreshButton = document.getElementById("refresh");
 const clearHistoryButton = document.getElementById("clearHistory");
@@ -184,7 +181,7 @@ function setHistoryView(view, { focus = false } = {}) {
         document.getElementById(tab.getAttribute("aria-controls")).hidden = !selected;
         if (selected && focus) tab.focus({ preventScroll: true });
     }
-    historySortControls.hidden = view !== "history";
+    historySortEl.hidden = view !== "history";
     selectionToggle.hidden = view !== "history";
 }
 
@@ -254,11 +251,7 @@ function formatWatchRange(range) {
     const endAt = Number(range?.endAt) || 0;
     if (startAt <= 0 || endAt <= startAt) return "";
     const showSeconds = endAt - startAt < 60 * 1000 || formatKstDateTime(startAt) === formatKstDateTime(endAt);
-    const formatOptions = { seconds: showSeconds };
-    const endText = isSameKstDate(startAt, endAt)
-        ? formatKstTime(endAt, formatOptions)
-        : formatKstDateTime(endAt, formatOptions);
-    return `${formatKstDateTime(startAt, formatOptions)} - ${endText}`;
+    return formatKstRange(startAt, endAt, { seconds: showSeconds });
 }
 
 function formatDuration(seconds) {
@@ -267,19 +260,23 @@ function formatDuration(seconds) {
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
 
+    if (totalSeconds <= 0) return "0분";
     if (hours <= 0 && totalMinutes <= 0) return `${totalSeconds}초`;
     if (hours <= 0) return `${totalMinutes}분`;
     if (minutes <= 0) return `${hours}시간`;
     return `${hours}시간 ${minutes}분`;
 }
 
+// Calendar cells only fit one unit; the full duration stays in the label and tooltip.
 function formatCalendarDuration(seconds) {
     const totalMinutes = Math.max(0, Math.round((Number(seconds) || 0) / 60));
-    if (totalMinutes < 60) return `${totalMinutes}m`;
+    if (totalMinutes < 60) return `${totalMinutes}분`;
+    return `${Math.floor(totalMinutes / 60)}시간`;
+}
 
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    return minutes > 0 ? `${hours}h+` : `${hours}h`;
+function formatKstRange(startAt, endAt, options) {
+    const endText = isSameKstDate(startAt, endAt) ? formatKstTime(endAt, options) : formatKstDateTime(endAt, options);
+    return `${formatKstDateTime(startAt, options)} - ${endText}`;
 }
 
 function mergeContinuousSessionDetails(sessionDetails) {
@@ -945,12 +942,13 @@ function getRowActualWatchedAt(row) {
     return latest || Number(row?.entry?.lastWatchedAt) || 0;
 }
 
+// One sort control: recent/oldest order by when it was watched, longest/shortest by watch time.
 function getHistorySortMode() {
-    return historySortEl?.value === "actualTime" ? "actualTime" : "watchTime";
+    return ["longest", "shortest"].includes(historySortEl?.value) ? "watchTime" : "actualTime";
 }
 
 function getHistorySortDirection() {
-    return historySortDirectionEl?.value === "asc" ? "asc" : "desc";
+    return ["oldest", "shortest"].includes(historySortEl?.value) ? "asc" : "desc";
 }
 
 function compareNumberByDirection(a, b) {
@@ -1079,6 +1077,7 @@ function renderCalendar() {
         ? formatDateLabel(selectedDateKey)
         : `${selectedYear}.${String(selectedMonth).padStart(2, "0")}`;
     clearDateFilterButton.disabled = !selectedDateKey;
+    clearDateFilterButton.hidden = !selectedDateKey;
     renderWeekdays();
     const focusedDate = calendarDaysEl.contains(document.activeElement) ? document.activeElement.dataset.date : null;
     let focusTarget = null;
@@ -1091,8 +1090,9 @@ function renderCalendar() {
     const today = getKstParts();
     const fragment = document.createDocumentFragment();
 
-    calendarTitleEl.textContent = `${selectedYear}.${String(selectedMonth).padStart(2, "0")}`;
+    calendarTitleEl.textContent = `${selectedYear}년 ${selectedMonth}월`;
     nextMonthButton.disabled = isFutureMonth(selectedYear, selectedMonth + 1);
+    const todayIndex = today.year * 10000 + today.month * 100 + today.day;
 
     for (let i = 0; i < firstWeekday; i++) {
         const empty = document.createElement("span");
@@ -1121,6 +1121,10 @@ function renderCalendar() {
             item.setAttribute("aria-current", "date");
         }
         if (selectedDateKey === dateKey) item.dataset.selected = "1";
+        if (seconds <= 0 && selectedYear * 10000 + selectedMonth * 100 + day > todayIndex) {
+            item.dataset.future = "1";
+            item.disabled = true;
+        }
 
         appendText(item, "history-day-number", String(day));
         if (seconds > 0) {
@@ -1144,13 +1148,12 @@ function renderCalendar() {
     }
 
     calendarDaysEl.replaceChildren(fragment);
-    if (focusedDate) (focusTarget || calendarRefreshButton).focus({ preventScroll: true });
+    if (focusedDate) (focusTarget || prevMonthButton).focus({ preventScroll: true });
 
-    const monthSeconds = getUniqueWatchSecondsForMonth(selectedYear, selectedMonth);
-    const selectedText = selectedDateKey
-        ? `${formatDateLabel(selectedDateKey)} 선택됨 · 다시 누르면 해제됩니다.`
-        : "날짜를 선택하면 해당 날짜에 본 라이브만 표시합니다.";
-    calendarFootEl.textContent = `${selectedText} ${selectedYear}년 ${selectedMonth}월 총 ${formatDuration(monthSeconds)}.`;
+    const [, selectedDateMonth, selectedDateDay] = selectedDateKey.split("-").map(Number);
+    calendarFootEl.textContent = selectedDateKey
+        ? `${selectedDateMonth}월 ${selectedDateDay}일 기록만 보고 있어요.`
+        : "날짜를 누르면 그날 본 기록만 보여 줘요.";
 }
 
 function getVisibleRows() {
@@ -1198,6 +1201,7 @@ function renderSelectionControls(rows = getPageRows("history", getVisibleRows())
     selectionControls.hidden = !selectionMode;
     selectionToggle.setAttribute("aria-pressed", String(selectionMode));
     selectionToggle.textContent = selectionMode ? "선택 취소" : "선택";
+    selectionToggle.disabled = !selectionMode && entries.length === 0;
     selectVisibleHistoryEl.checked = visibleIds.length > 0 && visibleSelectedCount === visibleIds.length;
     selectVisibleHistoryEl.indeterminate = visibleSelectedCount > 0 && visibleSelectedCount < visibleIds.length;
 
@@ -1261,11 +1265,15 @@ function buildEntryChatPanel(entry, counts, panelId) {
         (a, b) => b.at - a.at || String(a.id).localeCompare(String(b.id))
     );
     const limit = expandedChatLimits.get(entry.id);
-    appendText(
-        panel,
-        "history-activity-meta",
-        `내 채팅 ${counts.chatCount.toLocaleString()}개 · 내용 보관 ${chats.length.toLocaleString()}개 · 최근 작성순`
-    );
+    // A broadcast's chats usually share one date; show it once instead of on every row.
+    const sameDay = chats.length > 0 && chats.every((chat) => isSameKstDate(chat.at, chats[0].at));
+    const metaParts = [
+        `내 채팅 ${counts.chatCount.toLocaleString()}개`,
+        `내용 보관 ${chats.length.toLocaleString()}개`,
+    ];
+    if (sameDay) metaParts.push(formatKstDateTime(chats[0].at).slice(0, 10));
+    metaParts.push("최근 작성순");
+    appendText(panel, "history-activity-meta", metaParts.join(" · "));
     if (!chats.length) {
         const empty = document.createElement("p");
         empty.className = "history-entry-chat-empty";
@@ -1286,9 +1294,11 @@ function buildEntryChatPanel(entry, counts, panelId) {
         item.dataset.chatId = String(chat.id);
         item.tabIndex = -1;
         const time = document.createElement("time");
-        time.className = "history-activity-meta";
+        time.className = "history-activity-time";
         time.dateTime = new Date(chat.at).toISOString();
-        time.textContent = formatKstDateTime(chat.at, { seconds: true });
+        time.textContent = sameDay
+            ? formatKstTime(chat.at, { seconds: true })
+            : formatKstDateTime(chat.at, { seconds: true }).slice(5);
         item.appendChild(time);
         appendText(item, "history-activity-text", String(chat.text || "") || "내용 없는 채팅");
         list.appendChild(item);
@@ -1362,7 +1372,7 @@ async function handleTitleClick(event, entry) {
             if (pendingWindow) {
                 pendingWindow.opener = null;
                 pendingWindow.document.title = "다시보기 찾는 중";
-                pendingWindow.document.body.textContent = "다시보기를 찾는 중입니다...";
+                pendingWindow.document.body.textContent = "다시보기를 찾고 있어요...";
             }
         } catch (_) {
             pendingWindow = null;
@@ -1371,22 +1381,22 @@ async function handleTitleClick(event, entry) {
 
     resolvingReplayEntryIds.add(entry.id);
     renderList();
-    showMessage("해당 방송의 다시보기를 찾는 중입니다.");
+    showMessage("해당 방송의 다시보기를 찾고 있어요.");
 
     try {
         const videoNo = await resolveReplayVideoNo(entry);
         if (!videoNo) {
             if (pendingWindow && !pendingWindow.closed) pendingWindow.close();
-            showMessage("해당 방송의 다시보기를 찾지 못했습니다.", "error");
+            showMessage("해당 방송의 다시보기를 찾지 못했어요.", "error");
             return;
         }
 
         await persistReplayVideoNo(entry, videoNo);
         openUrlInNewTab(`https://chzzk.naver.com/video/${encodeURIComponent(videoNo)}`, pendingWindow);
-        showMessage("다시보기 링크를 찾았습니다.");
+        showMessage("다시보기 링크를 찾았어요.");
     } catch (_) {
         if (pendingWindow && !pendingWindow.closed) pendingWindow.close();
-        showMessage("다시보기를 찾지 못했습니다.", "error");
+        showMessage("다시보기를 찾지 못했어요.", "error");
     } finally {
         resolvingReplayEntryIds.delete(entry.id);
         renderList();
@@ -1404,7 +1414,10 @@ function getEntryDateLabel(entry) {
 
 function formatSessionLeftText(session) {
     if (!session.leftAt) return "알 수 없음";
-    return session.closed ? formatKstDateTime(session.leftAt) : `${formatKstDateTime(session.leftAt)} 기준`;
+    const leftText = isSameKstDate(session.enteredAt, session.leftAt)
+        ? formatKstTime(session.leftAt)
+        : formatKstDateTime(session.leftAt);
+    return session.closed ? leftText : `${leftText} 기준`;
 }
 
 function appendSessionCell(parent, label, value) {
@@ -1425,7 +1438,7 @@ function formatTitleSeenRange(row) {
     const first = Number(row.firstSeenAt) || 0;
     const last = Number(row.lastSeenAt) || 0;
     if (first > 0 && last > 0 && Math.abs(last - first) >= 60000) {
-        return `${formatKstDateTime(first)} - ${formatKstDateTime(last)}`;
+        return formatKstRange(Math.min(first, last), Math.max(first, last));
     }
     if (first > 0) return formatKstDateTime(first);
     if (last > 0) return formatKstDateTime(last);
@@ -1513,8 +1526,9 @@ function buildSessionList(row) {
         item.className = "history-session-item";
         if (session.legacy) item.dataset.legacy = "1";
 
-        const titleText = pickString(session.title, row.entry?.title);
-        if (titleText) appendSessionCell(item, "방제", titleText);
+        // The row heading already shows the broadcast title; repeat it only when this visit differed.
+        const titleText = pickString(session.title);
+        if (titleText && titleText !== row.entry?.title) appendSessionCell(item, "방송 제목", titleText);
         appendSessionCell(item, session.legacy ? "이전 기록" : "입장", formatKstDateTime(session.enteredAt));
         appendSessionCell(item, "퇴장", session.legacy ? "세부 시간 없음" : formatSessionLeftText(session));
         appendSessionCell(item, "시청", formatDuration(session.scopeSeconds));
@@ -1526,6 +1540,25 @@ function buildSessionList(row) {
     }
 
     return list;
+}
+
+function buildHistoryEmptyState() {
+    const empty = document.createElement("div");
+    empty.className = "history-empty";
+    const headline = document.createElement("p");
+    headline.textContent = entries.length ? "조건에 맞는 시청 기록이 없어요." : "아직 저장된 시청 기록이 없어요.";
+    const hint = document.createElement("p");
+    hint.className = "history-empty-hint";
+    if (entries.length) {
+        hint.textContent = "검색어나 기간을 바꾸거나 다른 날짜를 골라 보세요.";
+    } else {
+        const link = document.createElement("a");
+        link.href = "options.html";
+        link.textContent = "설정";
+        hint.append("라이브를 일정 시간 이상 보면 여기에 기록돼요. 기록 저장 여부는 ", link, "에서 바꿀 수 있어요.");
+    }
+    empty.append(headline, hint);
+    return empty;
 }
 
 function renderList() {
@@ -1549,10 +1582,7 @@ function renderList() {
     renderSelectionControls(rows);
 
     if (!rows.length) {
-        const empty = document.createElement("div");
-        empty.className = "history-empty";
-        empty.textContent = entries.length ? "조건에 맞는 시청 기록이 없습니다." : "아직 저장된 시청 기록이 없습니다.";
-        fragment.appendChild(empty);
+        fragment.appendChild(buildHistoryEmptyState());
         historyListEl.replaceChildren(fragment);
         if (hadListFocus) historySearchEl.focus({ preventScroll: true });
         return;
@@ -1594,33 +1624,14 @@ function renderList() {
         }
         title.textContent = entry.title;
         if (title.tagName === "A") title.title = `${entry.title} · ${title.title}`;
-        const meta = document.createElement("small");
-        const visitText = row.sessionsForScope.length ? `${row.sessionsForScope.length}회 입장` : "채팅·후원 기록";
-        meta.textContent = `${entry.channelName} · ${getEntryDateLabel(entry)} · ${visitText}`;
-        body.append(title, meta);
         const activityCounts = getActivityCounts(entry, getHistoryScopeBounds());
-        const chatPanelId = `history-chats-${encodeURIComponent(entry.id)}`;
-        const chatButton = document.createElement("button");
-        chatButton.type = "button";
-        chatButton.className = "history-entry-chats";
-        const chatsExpanded = expandedChatLimits.has(entry.id);
-        chatButton.hidden = !activityCounts.chatCount && !chatsExpanded && !expanded;
-        chatButton.textContent = `내 채팅 ${activityCounts.chatCount.toLocaleString()}개 ${chatsExpanded ? "접기" : "보기"}`;
-        chatButton.setAttribute("aria-expanded", String(chatsExpanded));
-        chatButton.setAttribute("aria-controls", chatPanelId);
-        chatButton.setAttribute("aria-label", `${entry.title} 내 채팅 ${chatsExpanded ? "접기" : "보기"}`);
-        chatButton.addEventListener("click", () => toggleEntryChats(entry.id));
-        const activityMeta = document.createElement("span");
-        activityMeta.className = "history-entry-activity";
-        activityMeta.appendChild(chatButton);
-        if (activityCounts.donationCount) {
-            appendText(
-                activityMeta,
-                "history-activity-meta",
-                `내 후원 ${activityCounts.donationCheese.toLocaleString()}치즈 (${activityCounts.donationCount.toLocaleString()}회)`
-            );
+        const meta = document.createElement("small");
+        meta.className = "history-item-meta";
+        appendText(meta, "history-item-channel", entry.channelName);
+        appendText(meta, "history-item-date", getEntryDateLabel(entry));
+        if (row.sessionsForScope.length > 1) {
+            appendText(meta, "history-item-visits", `${row.sessionsForScope.length}회 입장`);
         }
-        activityMeta.hidden = chatButton.hidden && !activityCounts.donationCount;
         const time = document.createElement("span");
         time.className = "history-item-time";
         time.textContent = row.seconds > 0 ? formatDuration(row.seconds) : "활동만 기록";
@@ -1629,30 +1640,49 @@ function renderList() {
         if (row.seconds > 0) watchMeta.append("시청 ");
         watchMeta.appendChild(time);
         meta.appendChild(watchMeta);
+        if (activityCounts.donationCount) {
+            appendText(
+                meta,
+                "history-item-donation",
+                `내 후원 ${activityCounts.donationCheese.toLocaleString()}치즈 (${activityCounts.donationCount.toLocaleString()}회)`
+            );
+        }
+        body.append(title, meta);
 
-        const actions = document.createElement("span");
-        actions.className = "history-item-actions";
+        const chatPanelId = `history-chats-${encodeURIComponent(entry.id)}`;
+        const chatButton = document.createElement("button");
+        chatButton.type = "button";
+        chatButton.className = "history-entry-chats";
+        const chatsExpanded = expandedChatLimits.has(entry.id);
+        chatButton.hidden = !activityCounts.chatCount && !chatsExpanded && !expanded;
+        chatButton.textContent = `내 채팅 ${activityCounts.chatCount.toLocaleString()}개`;
+        chatButton.setAttribute("aria-expanded", String(chatsExpanded));
+        chatButton.setAttribute("aria-controls", chatPanelId);
+        chatButton.setAttribute("aria-label", `${entry.title} 내 채팅 ${chatsExpanded ? "접기" : "보기"}`);
+        chatButton.addEventListener("click", () => toggleEntryChats(entry.id));
 
         const expandButton = document.createElement("button");
         expandButton.className = "history-entry-detail";
         expandButton.type = "button";
-        expandButton.textContent = expanded ? "접기" : "세부";
-        expandButton.title = getTitleHistorySummary(entry) || "방제 이력·입장 기록·삭제";
+        expandButton.textContent = "세부";
+        expandButton.title = getTitleHistorySummary(entry) || "방송 제목 이력·입장 기록·삭제";
         const detailPanelId = `history-details-${encodeURIComponent(entry.id)}`;
         expandButton.setAttribute("aria-controls", detailPanelId);
         expandButton.setAttribute("aria-expanded", expanded ? "true" : "false");
-        expandButton.setAttribute("aria-label", `${entry.title} 입장 기록 ${expanded ? "접기" : "보기"}`);
+        expandButton.setAttribute("aria-label", `${entry.title} 세부 기록 ${expanded ? "접기" : "보기"}`);
         expandButton.addEventListener("click", () => toggleEntryExpanded(entry.id));
 
         const deleteButton = document.createElement("button");
         deleteButton.className = "history-entry-delete";
         deleteButton.type = "button";
-        deleteButton.textContent = "삭제";
+        deleteButton.textContent = "이 기록 삭제";
         deleteButton.disabled = !expanded;
         deleteButton.setAttribute("aria-label", `${entry.title} 기록 삭제`);
         deleteButton.addEventListener("click", () => deleteSingleEntry(entry));
-        actions.append(activityMeta, expandButton);
-        meta.appendChild(actions);
+
+        const actions = document.createElement("span");
+        actions.className = "history-item-actions";
+        actions.append(chatButton, expandButton);
 
         if (entry.id === focusedEntryId) {
             if (active.matches(".history-item-select input")) focusTarget = selectInput;
@@ -1663,7 +1693,7 @@ function renderList() {
             else if (active.matches(".history-item-title-link") && title.tagName === "A") focusTarget = title;
         }
 
-        item.append(selectLabel, body);
+        item.append(selectLabel, body, actions);
         const chatPanel = buildEntryChatPanel(entry, activityCounts, chatPanelId);
         item.appendChild(chatPanel);
         if (entry.id === focusedEntryId) {
@@ -1683,9 +1713,6 @@ function renderList() {
         detailPanel.hidden = !expanded;
         detailPanel.setAttribute("aria-label", `${entry.title} 세부 기록`);
         if (expanded) {
-            const fullTitle = document.createElement("strong");
-            fullTitle.textContent = entry.title;
-            detailPanel.appendChild(fullTitle);
             const titleHistoryList = buildTitleHistoryList(entry);
             if (titleHistoryList) detailPanel.appendChild(titleHistoryList);
             if (row.sessionsForScope.length) detailPanel.appendChild(buildSessionList(row));
@@ -1710,7 +1737,7 @@ function renderSummary() {
     totalWatchTimeEl.textContent = formatDuration(totalSeconds);
     totalLiveCountEl.textContent = `${entries.filter((entry) => entry.watchedSeconds > 0).length}개`;
     monthWatchTimeEl.textContent = formatDuration(monthSeconds);
-    monthWatchLabelEl.textContent = `${selectedYear}년 ${selectedMonth}월`;
+    monthWatchLabelEl.textContent = `${selectedMonth}월 시청`;
     document.getElementById("donationImportUpdated").textContent = importedDonations?.updatedAt
         ? `마지막 갱신: ${formatKstDateTime(importedDonations.updatedAt)}`
         : "아직 갱신한 내역이 없어요.";
@@ -1854,6 +1881,7 @@ function renderRanking(donations = getDonationView()) {
     document.getElementById("rankingDescription").textContent =
         `${getScopeLabel()} · ${ranked.length}개 채널 · 시청 시간순 (같은 채널의 겹친 시간 제외)`;
     const pageRows = getPageRows("ranking", ranked);
+    const maxSeconds = ranked[0]?.seconds || 0;
     channelRankingEl.start = viewPages.ranking * VIEW_PAGE_SIZE + 1;
     pageRows.forEach((group, index) => {
         const item = document.createElement("li");
@@ -1869,6 +1897,12 @@ function renderRanking(donations = getDonationView()) {
         appendText(copy, "history-activity-meta", meta.join(" · "));
         item.appendChild(copy);
         appendText(item, "history-ranking-time", formatDuration(group.seconds));
+        // The bar spans the name and time columns so a long duration does not shorten it.
+        const bar = document.createElement("span");
+        bar.className = "history-ranking-bar";
+        bar.setAttribute("aria-hidden", "true");
+        bar.style.setProperty("--ratio", String(maxSeconds > 0 ? Math.min(1, group.seconds / maxSeconds) : 0));
+        item.appendChild(bar);
         fragment.appendChild(item);
     });
     if (!ranked.length) {
@@ -1880,27 +1914,65 @@ function renderRanking(donations = getDonationView()) {
     channelRankingEl.replaceChildren(fragment);
 }
 
+// Consecutive rows from one broadcast or channel share a heading instead of repeating it on every row.
+function appendActivityRows(fragment, rows) {
+    let previousGroup = null;
+    for (const row of rows) {
+        const item = document.createElement("li");
+        if (row.group !== previousGroup) {
+            previousGroup = row.group;
+            item.dataset.groupStart = "1";
+            const heading = document.createElement("div");
+            heading.className = "history-activity-group";
+            appendText(heading, "history-activity-channel", row.channelName);
+            if (row.title) appendText(heading, "history-activity-broadcast", row.title).title = row.title;
+            item.appendChild(heading);
+        }
+        const line = document.createElement("div");
+        line.className = "history-activity-line";
+        const time = document.createElement("time");
+        time.className = "history-activity-time";
+        if (Number.isFinite(row.at)) time.dateTime = new Date(row.at).toISOString();
+        time.textContent = formatKstDateTime(row.at, { seconds: true });
+        line.appendChild(time);
+        appendText(line, "history-activity-text", row.text);
+        if (row.amount !== undefined) {
+            appendText(line, "history-ranking-time", `${Number(row.amount).toLocaleString()}치즈`);
+        }
+        item.appendChild(line);
+        fragment.appendChild(item);
+    }
+}
+
+// Donation refresh tools only matter for the donation list, but a running refresh keeps its progress and cancel
+// button reachable after switching to chats; the usual rule returns once it ends.
+function syncDonationImportVisibility() {
+    const isDonation = activityTypeEl.value === "donation";
+    donationImportControls.hidden = !isDonation && !donationImportPort;
+    donationImportRefresh.hidden = !isDonation;
+    document.getElementById("donationImportDescription").hidden = !isDonation;
+}
+
 function renderActivity(donations = getDonationView()) {
     const bounds = getHistoryScopeBounds();
     const isDonation = activityTypeEl.value === "donation";
-    document.getElementById("donationImportDescription").hidden = !isDonation;
+    syncDonationImportVisibility();
     if (isDonation) {
         document.getElementById("donationImportDescription").textContent = donations.incomplete
             ? "갱신 이후 후원 일부의 상세 기록이 정리되어 합계에 빠질 수 있어요. 후원 내역을 갱신해 주세요."
             : "갱신한 내역과 이후 새 후원을 함께 보여 줘요. 같은 기간을 중복해서 더하지 않으며, 후원은 채널명으로 검색해요.";
         activitySummaryEl.textContent = `내 후원 ${donations.amount.toLocaleString()}치즈 (${donations.count.toLocaleString()}회)`;
         const fragment = document.createDocumentFragment();
-        for (const row of getPageRows("activity", donations.rows)) {
-            const item = document.createElement("li");
-            appendText(
-                item,
-                "history-activity-meta",
-                `${row.channelName} · ${formatKstDateTime(row.at, { seconds: true })}`
-            );
-            appendText(item, "history-ranking-time", `${row.amount.toLocaleString()}치즈`);
-            appendText(item, "history-activity-text", row.text || "메시지 없는 후원");
-            fragment.appendChild(item);
-        }
+        appendActivityRows(
+            fragment,
+            getPageRows("activity", donations.rows).map((row) => ({
+                group: row.channelId || row.channelName,
+                channelName: row.channelName,
+                at: row.at,
+                amount: row.amount,
+                text: row.text || "메시지 없는 후원",
+            }))
+        );
         if (!donations.rows.length) {
             const empty = document.createElement("li");
             empty.className = "history-empty";
@@ -1926,22 +1998,17 @@ function renderActivity(donations = getDonationView()) {
         )
         .sort((a, b) => b.activity.at - a.activity.at || String(a.activity.id).localeCompare(String(b.activity.id)));
     const fragment = document.createDocumentFragment();
-    for (const { entry, activity } of getPageRows("activity", rows)) {
-        const item = document.createElement("li");
-        appendText(
-            item,
-            "history-activity-meta",
-            `${entry.channelName} · ${formatKstDateTime(activity.at, { seconds: true })} · ${entry.title}`
-        );
-        if (activity.kind === "donation")
-            appendText(item, "history-ranking-time", `${Number(activity.amount).toLocaleString()}치즈`);
-        appendText(
-            item,
-            "history-activity-text",
-            String(activity.text || "") || (activity.kind === "donation" ? "메시지 없는 후원" : "내용 없는 채팅")
-        );
-        fragment.appendChild(item);
-    }
+    appendActivityRows(
+        fragment,
+        getPageRows("activity", rows).map(({ entry, activity }) => ({
+            group: entry.id,
+            channelName: entry.channelName,
+            title: entry.title,
+            at: activity.at,
+            amount: activity.kind === "donation" ? activity.amount : undefined,
+            text: String(activity.text || "") || (activity.kind === "donation" ? "메시지 없는 후원" : "내용 없는 채팅"),
+        }))
+    );
     if (!rows.length) {
         const empty = document.createElement("li");
         empty.className = "history-empty";
@@ -2024,7 +2091,7 @@ async function loadHistory({ resetToLatest = false, silent = false } = {}) {
         if (generation !== historyLoadGeneration) return false;
         noticeEl.dataset.state = "dirty";
         noticeEl.textContent = "불러오기 실패";
-        showMessage("시청 기록을 불러오지 못했습니다. 새로고침 버튼을 눌러 다시 시도해 주세요.", "error", "load");
+        showMessage("시청 기록을 불러오지 못했어요. 새로고침 버튼을 눌러 다시 시도해 주세요.", "error", "load");
         return false;
     }
 }
@@ -2040,7 +2107,7 @@ function scheduleStorageChangeReload() {
 
 async function refreshHistory() {
     if (await loadHistory({ silent: false })) {
-        showMessage("시청 기록을 새로고침했습니다.");
+        showMessage("시청 기록을 새로고침했어요.");
     }
 }
 
@@ -2058,9 +2125,9 @@ async function clearHistory() {
         expandedChatLimits.clear();
         ensureSelectedMonth({ resetToLatest: true });
         renderAll();
-        showMessage("시청 기록을 삭제했습니다.");
+        showMessage("시청 기록을 삭제했어요.");
     } catch (_) {
-        showMessage("시청 기록을 삭제하지 못했습니다.", "error");
+        showMessage("시청 기록을 삭제하지 못했어요.", "error");
     }
 }
 
@@ -2082,10 +2149,10 @@ async function deleteEntriesByIds(ids, successMessage) {
         }
         pruneSelectedEntryIds();
         renderAll();
-        showMessage(successMessage || "선택한 시청 기록을 삭제했습니다.");
+        showMessage(successMessage || "선택한 시청 기록을 삭제했어요.");
         return true;
     } catch (_) {
-        showMessage("시청 기록을 삭제하지 못했습니다.", "error");
+        showMessage("시청 기록을 삭제하지 못했어요.", "error");
         return false;
     }
 }
@@ -2095,17 +2162,17 @@ async function deleteSelectedEntries() {
     if (count <= 0) return;
     const visibleIds = new Set(getVisibleEntryIds());
     const hiddenCount = Array.from(selectedEntryIds).filter((id) => !visibleIds.has(id)).length;
-    const hiddenNotice = hiddenCount > 0 ? ` 현재 목록 밖의 기록 ${hiddenCount}개도 함께 삭제됩니다.` : "";
+    const hiddenNotice = hiddenCount > 0 ? ` 현재 목록 밖의 기록 ${hiddenCount}개도 함께 삭제돼요.` : "";
     if (!confirm(`선택한 시청 기록 ${count}개를 삭제할까요?${hiddenNotice}`)) return;
 
-    await deleteEntriesByIds(selectedEntryIds, `선택한 시청 기록 ${count}개를 삭제했습니다.`);
+    await deleteEntriesByIds(selectedEntryIds, `선택한 시청 기록 ${count}개를 삭제했어요.`);
 }
 
 async function deleteSingleEntry(entry) {
     if (!entry?.id) return;
     if (!confirm(`"${entry.title}" 시청 기록을 삭제할까요?`)) return;
 
-    await deleteEntriesByIds([entry.id], "시청 기록 1개를 삭제했습니다.");
+    await deleteEntriesByIds([entry.id], "시청 기록 1개를 삭제했어요.");
 }
 
 prevMonthButton.addEventListener("click", () => shiftSelectedMonth(-1));
@@ -2115,11 +2182,10 @@ clearDateFilterButton.addEventListener("click", () => {
     historyScopeEl.value = "month";
     selectedDateKey = "";
     renderAll();
-    (calendarDaysEl.querySelector(`[data-date="${previousDate}"]`) || calendarRefreshButton).focus({
+    (calendarDaysEl.querySelector(`[data-date="${previousDate}"]`) || prevMonthButton).focus({
         preventScroll: true,
     });
 });
-calendarRefreshButton.addEventListener("click", refreshHistory);
 nextMonthButton.addEventListener("click", () => {
     if (!nextMonthButton.disabled) shiftSelectedMonth(1);
 });
@@ -2129,11 +2195,10 @@ historySearchEl.addEventListener("input", () => {
     resetViewPages();
     renderResults();
 });
-for (const control of [historySortEl, historySortDirectionEl])
-    control.addEventListener("change", () => {
-        viewPages.history = 0;
-        renderList();
-    });
+historySortEl.addEventListener("change", () => {
+    viewPages.history = 0;
+    renderList();
+});
 historyScopeEl.addEventListener("change", () => {
     selectedDateKey = "";
     resetViewPages();
@@ -2198,11 +2263,23 @@ function setDonationImportBusy(busy) {
     donationImportRefresh.disabled = busy;
     donationImportCancel.hidden = !busy;
     donationImportCancel.disabled = !busy;
+    syncDonationImportVisibility();
 }
 
 function showDonationImportStatus(text, error = false) {
     donationImportStatus.textContent = text;
     donationImportStatus.dataset.error = String(error);
+}
+
+// Like `done`, a refresh that ends in an error lands on the donation list, where its status and the retry button
+// are shown, instead of writing the error into tools hidden behind the chat list.
+function showDonationImportFailure(text) {
+    if (activityTypeEl.value !== "donation") {
+        activityTypeEl.value = "donation";
+        viewPages.activity = 0;
+        renderActivity();
+    }
+    showDonationImportStatus(text, true);
 }
 
 donationImportRefresh.addEventListener("click", () => {
@@ -2224,9 +2301,8 @@ donationImportRefresh.addEventListener("click", () => {
             if (donationImportPort !== port) return;
             donationImportPort = null;
             setDonationImportBusy(false);
-            showDonationImportStatus(
-                error ? "가져오기 연결이 끊겼어요. 다시 시도해 주세요." : "가져오기가 중단됐어요. 다시 시도해 주세요.",
-                true
+            showDonationImportFailure(
+                error ? "가져오기 연결이 끊겼어요. 다시 시도해 주세요." : "가져오기가 중단됐어요. 다시 시도해 주세요."
             );
         });
         port.onMessage.addListener(async (message) => {
@@ -2240,7 +2316,7 @@ donationImportRefresh.addEventListener("click", () => {
                 showDonationImportStatus("확인한 후원 내역을 저장하고 있어요.");
             } else if (message.type === "error") {
                 finish();
-                showDonationImportStatus(message.message, true);
+                showDonationImportFailure(message.message);
             } else if (message.type === "done") {
                 finish();
                 activityTypeEl.value = "donation";
@@ -2258,7 +2334,7 @@ donationImportRefresh.addEventListener("click", () => {
         donationImportPort?.disconnect();
         donationImportPort = null;
         setDonationImportBusy(false);
-        showDonationImportStatus(error.message || "가져오기를 시작하지 못했어요.", true);
+        showDonationImportFailure(error.message || "가져오기를 시작하지 못했어요.");
     }
 });
 

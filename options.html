@@ -136,6 +136,14 @@
                                 aria-label="릴리즈 노트 (새 탭에서 열기)"
                                 >릴리즈 노트</a
                             >
+                            <button id="exportSettingsFile" class="secondary-button reset-button" type="button">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-database" /></svg>
+                                <span>설정 파일 저장</span>
+                            </button>
+                            <button id="importSettingsFile" class="secondary-button reset-button" type="button">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-history" /></svg>
+                                <span>설정 파일 불러오기</span>
+                            </button>
                             <button id="reset" class="secondary-button reset-button" type="button">
                                 <svg viewBox="0 0 20 20" aria-hidden="true"><use href="#icon-restore" /></svg>
                                 <span>기본값 복원</span>
@@ -144,6 +152,20 @@
                     </details>
                 </div>
             </header>
+
+            <input
+                id="settingsFileInput"
+                type="file"
+                accept="application/json,.json"
+                hidden
+                aria-label="불러올 설정 파일"
+            />
+            <section
+                id="settingsBackupPanel"
+                class="settings-backup-panel"
+                aria-labelledby="settingsBackupTitle"
+                hidden
+            ></section>
 
             <form id="optionsForm" class="settings-form" novalidate>
                 <div class="settings-toolbar">
@@ -1012,7 +1034,7 @@
                         </summary>
                         <div class="option-group-body">
                             <label class="toggle-row">
-                                <span><strong>채팅창 너비 조절</strong></span>
+                                <span><strong>채팅창 너비·높이 조절</strong></span>
                                 <input
                                     type="checkbox"
                                     data-option="chatResizeEnabled"
@@ -1020,8 +1042,47 @@
                                 />
                             </label>
                             <p class="setting-note" id="chat-resize-help">
-                                채팅·댓글 왼쪽 가장자리를 마우스로 잡아 끌어 조절해요. 더블클릭하면 기본 너비로
-                                돌아가요.
+                                채팅·댓글의 영상 쪽 가장자리로 너비를, 아래 가장자리로 높이를 마우스로 끌어 조절해요.
+                                더블클릭하면 기본 크기로 돌아가요.
+                            </p>
+                            <label class="toggle-row">
+                                <span><strong>채팅창 위치</strong></span>
+                                <select
+                                    class="quality-select"
+                                    data-option="chatPosition"
+                                    aria-describedby="chat-position-help"
+                                >
+                                    <option value="right">오른쪽(기본)</option>
+                                    <option value="left">왼쪽</option>
+                                </select>
+                            </label>
+                            <p class="setting-note" id="chat-position-help">
+                                일반 라이브·다시보기에서 채팅·댓글을 영상의 어느 쪽에 둘지 정해요. 화면이 좁아 세로로
+                                쌓이는 배치는 그대로 둬요.
+                            </p>
+                            <button
+                                id="resetPanelSizes"
+                                class="secondary-button panel-size-reset"
+                                type="button"
+                                aria-describedby="panel-size-reset-help"
+                            >
+                                저장한 채팅·사이드바 크기 초기화
+                            </button>
+                            <p class="setting-note" id="panel-size-reset-help">
+                                마우스로 정한 채팅 너비·높이와 사이드바 너비를 기본 크기로 되돌려요. 새로 여는 치지직
+                                화면부터 적용돼요.
+                            </p>
+                            <label class="toggle-row">
+                                <span><strong>채팅 멀티뷰</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="chatMultiviewEnabled"
+                                    aria-describedby="chat-multiview-help"
+                                />
+                            </label>
+                            <p class="setting-note" id="chat-multiview-help">
+                                치지직 상단의 채팅 멀티뷰 버튼으로 다른 채널의 채팅을 최대 4개까지 함께 봐요. 칸에는
+                                채널 이름과 채팅만 보이고, 채팅 입력창은 멀티뷰 설정에서 켤 수 있어요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>라이브 채팅 타임스탬프 표시</strong></span>
@@ -1081,6 +1142,16 @@
                                         data-option="chatToolsMaxModeratorMessages"
                                     /><em>개</em></label
                                 >
+                                <label
+                                    ><span>모아보기 최대 높이</span
+                                    ><input
+                                        type="number"
+                                        min="240"
+                                        max="720"
+                                        step="20"
+                                        data-option="chatToolsModeratorBoxHeight"
+                                    /><em>px</em></label
+                                >
                             </div>
                             <p class="setting-note">
                                 기억한 원문만 취소선으로 표시하며, 모아보기는 채팅창 우측 상단에서 엽니다.
@@ -1138,8 +1209,23 @@
                                 />
                             </label>
                             <p class="setting-note" id="sidebar-resize-help">
-                                펼친 사이드바 오른쪽 가장자리를 마우스로 잡아 끌어 조절해요. 더블클릭하면 기본 너비로
+                                펼친 사이드바의 본문 쪽 가장자리를 마우스로 잡아 끌어 조절해요. 더블클릭하면 기본 너비로
                                 돌아가요.
+                            </p>
+                            <label class="toggle-row">
+                                <span><strong>사이드바 위치</strong></span>
+                                <select
+                                    class="quality-select"
+                                    data-option="sidebarPosition"
+                                    aria-describedby="sidebar-position-help"
+                                >
+                                    <option value="left">왼쪽(기본)</option>
+                                    <option value="right">오른쪽</option>
+                                </select>
+                            </label>
+                            <p class="setting-note" id="sidebar-position-help">
+                                사이드바를 화면 오른쪽 끝에 둘 수 있어요. 채팅도 같은 쪽이면 사이드바가 바깥쪽이에요.
+                                창이 너무 좁아 가로로 넘치면 잠시 원래 위치로 돌아가요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>사이드바 치즈팜 숨김</strong></span>
@@ -1470,10 +1556,43 @@
                             </label>
                             <p class="setting-note">사이드바에서 고정 여부와 관계없이 오프라인 채널을 숨깁니다.</p>
                             <label class="toggle-row">
+                                <span><strong>팔로잉 폴더</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="followingFoldersEnabled"
+                                    aria-describedby="following-folders-help"
+                                />
+                            </label>
+                            <p class="setting-note" id="following-folders-help">
+                                팔로잉 채널을 끌어 사이드바 아래 ‘+ 새 폴더로’에 놓으면 폴더가 생기고, 폴더 이름을
+                                더블클릭해 바꿔요. 폴더의 ⋯ 메뉴로도 만들고 정리해요. 폴더를 지워도 팔로우는 바뀌지
+                                않아요.
+                            </p>
+                            <div class="number-grid">
+                                <label
+                                    ><span>팔로잉 목록 최대 줄 수</span
+                                    ><input
+                                        type="number"
+                                        min="0"
+                                        max="30"
+                                        step="1"
+                                        data-option="followingListMaxRows"
+                                        aria-describedby="following-max-rows-help"
+                                    /><em>줄</em></label
+                                >
+                            </div>
+                            <p class="setting-note" id="following-max-rows-help">
+                                0이면 제한하지 않아요. 정한 줄 수보다 긴 목록은 목록 안에서 스크롤하며 아래 구역과
+                                더보기 버튼은 그대로 쓸 수 있어요.
+                            </p>
+                            <label class="toggle-row">
                                 <span><strong>팔로잉 라이브 제목 이력</strong></span>
                                 <input type="checkbox" data-option="followingTitleHistoryEnabled" />
                             </label>
-                            <p class="setting-note">현재 라이브의 제목 변경 이력은 이 브라우저에만 저장합니다.</p>
+                            <p class="setting-note">
+                                치지직에 로그인돼 있으면 팔로우한 라이브 채널의 방제를 약 1분마다 한 번에 확인해 이
+                                브라우저에만 저장해요. 팔로잉 화면에서 제목 오른쪽 버튼으로 이전 방제를 펼쳐 봐요.
+                            </p>
                             <label class="toggle-row">
                                 <span><strong>팔로잉 목록 자동 새로고침</strong></span>
                                 <input type="checkbox" data-option="followingRefreshEnabled" />
@@ -1978,6 +2097,8 @@
         <script src="shared/data.js"></script>
         <script src="shared/liveStart.js"></script>
         <script src="optionsLiveStart.js"></script>
+        <script src="shared/settingsBackup.js"></script>
+        <script src="optionsSettingsBackup.js"></script>
         <script src="shared/updateGuide.js"></script>
         <script src="shared/updateGuideView.js"></script>
         <script src="optionsUpdateGuide.js"></script>

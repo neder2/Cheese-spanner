@@ -358,6 +358,7 @@ test("live history immediately persists activity before minimum watch time, incl
                     ? { code: 200, content: { loggedIn: true, userIdHash: "viewer" } }
                     : {
                           content: {
+                              status: "OPEN",
                               liveId: "100",
                               liveTitle: "방송 A",
                               channel: { channelId: "channel-a", channelName: "채널 A" },
@@ -463,6 +464,251 @@ test("live history immediately persists activity before minimum watch time, incl
     assert.equal(chrome.testState.local[store.STORAGE_KEY].entries["live:100"].activities.length, 2);
 });
 
+const LIVE_CHANNEL = "a".repeat(32);
+const OTHER_CHANNEL = "b".repeat(32);
+const METADATA_REFRESH_MS = 60000;
+const METADATA_REFRESH_TIMER_ID = -METADATA_REFRESH_MS;
+
+function liveDetail(content = {}) {
+    return {
+        code: 200,
+        content: {
+            status: "OPEN",
+            liveId: "100",
+            liveTitle: "방송 A",
+            openDate: "2026-09-18 11:00:00",
+            channel: { channelId: LIVE_CHANNEL, channelName: "A채널" },
+            ...content,
+        },
+    };
+}
+
+async function liveHistoryFixture(t, { detail, pausedVideo = false }) {
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: true,
+            liveWatchHistoryChatEnabled: true,
+            liveWatchHistoryDonationEnabled: true,
+        },
+    });
+    const dom = new JSDOM(
+        `${pausedVideo ? "<video></video>" : ""}` +
+            '<aside id="aside-chatting"><div role="log"><div class="_wrapper_8lqsk_25"></div></div></aside>',
+        { url: `https://chzzk.naver.com/live/${LIVE_CHANNEL}`, runScripts: "outside-only", pretendToBeVisual: true }
+    );
+    dom.window.chrome = chrome;
+    const f = { chrome, dom, detail, elapsed: 0, identityRequests: 0, paused: true };
+    dom.window.Date.now = () => NOW + f.elapsed;
+    Object.defineProperty(dom.window.performance, "now", { value: () => f.elapsed });
+    const intervals = new Map();
+    dom.window.setInterval = (fn, ms) => {
+        intervals.set(ms, fn);
+        return ms;
+    };
+    dom.window.clearInterval = (id) => intervals.delete(id);
+    // The periodic metadata refresh runs only when a test calls f.refresh().
+    const realSetTimeout = dom.window.setTimeout.bind(dom.window);
+    const realClearTimeout = dom.window.clearTimeout.bind(dom.window);
+    let refreshCallback = null;
+    dom.window.setTimeout = (fn, ms, ...args) => {
+        if (ms !== METADATA_REFRESH_MS) return realSetTimeout(fn, ms, ...args);
+        refreshCallback = fn;
+        return METADATA_REFRESH_TIMER_ID;
+    };
+    dom.window.clearTimeout = (id) => {
+        if (id === METADATA_REFRESH_TIMER_ID) refreshCallback = null;
+        else realClearTimeout(id);
+    };
+    dom.window.fetch = async (url) => {
+        const identity = String(url).includes("getUserStatus");
+        if (identity) f.identityRequests++;
+        const body = identity ? { code: 200, content: { loggedIn: true, userIdHash: "viewer" } } : f.detail;
+        return { ok: true, json: async () => body };
+    };
+    if (pausedVideo) {
+        const video = dom.window.document.querySelector("video");
+        video.getBoundingClientRect = () => ({ width: 640, height: 360, top: 0, left: 0, bottom: 360, right: 640 });
+        for (const [key, get] of Object.entries({
+            paused: () => f.paused,
+            ended: () => false,
+            playbackRate: () => 1,
+            currentTime: () => f.elapsed / 1000,
+            readyState: () => 4,
+        }))
+            Object.defineProperty(video, key, { configurable: true, get });
+    }
+    t.after(async () => {
+        for (const listener of chrome.testState.storageChangeListeners)
+            listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+        await new Promise((resolve) => setImmediate(resolve));
+        dom.window.close();
+    });
+    for (const file of [
+        "shared/settings.js",
+        "shared/data.js",
+        "content.js",
+        "features/watchActivityPage.js",
+        "features/watchActivity.js",
+        "features/liveWatchHistory.js",
+    ])
+        evalRepoScript(dom, file);
+    // The next refresh is scheduled only after the first live-detail response has been applied.
+    await waitForCondition(() => f.identityRequests === 1 && refreshCallback !== null);
+    f.appendChat = (text) => {
+        const row = dom.window.document.createElement("div");
+        row.className = "_item_8lqsk_7";
+        row.__reactProps$fixture = {
+            children: { props: { chatMessage: message({ time: NOW + f.elapsed + 1, originalContent: text }) } },
+        };
+        row.textContent = text;
+        dom.window.document.querySelector("[class*='_wrapper_']").appendChild(row);
+    };
+    f.refresh = async () => {
+        const callback = refreshCallback;
+        refreshCallback = null;
+        callback();
+        await waitForCondition(() => refreshCallback !== null);
+    };
+    f.settle = async () => {
+        // A later task drains the collector's observer and microtask; the flush timer then gets a chance to send.
+        await new Promise((resolve) => setImmediate(resolve));
+        intervals.get(15000)();
+        await new Promise((resolve) => setImmediate(resolve));
+    };
+    f.watch = (seconds) => {
+        for (let watched = 0; watched < seconds; watched += 10) {
+            f.elapsed += 10000;
+            intervals.get(5000)();
+        }
+        intervals.get(15000)();
+    };
+    f.entries = () => chrome.testState.local[store.STORAGE_KEY]?.entries || {};
+    f.activityTexts = (recordId) => (f.entries()[recordId]?.activities || []).map((row) => row.text);
+    f.mutations = () => chrome.testState.runtimeMessages.filter((row) => row?.type === store.MESSAGE_TYPE);
+    return f;
+}
+
+test("live history does not attach offline-channel chat to the closed broadcast or to the next one", async (t) => {
+    const f = await liveHistoryFixture(t, {
+        detail: liveDetail({ status: "CLOSE", liveTitle: "3일 전 방송", openDate: "2026-09-15 12:00:00" }),
+    });
+    f.appendChat("방송 종료 후 채팅");
+    await f.settle();
+    assert.deepEqual(f.entries(), {});
+    assert.equal(f.mutations().length, 0);
+
+    f.elapsed += METADATA_REFRESH_MS;
+    f.detail = liveDetail({ liveId: "101", liveTitle: "새 방송", openDate: "2026-09-18 12:00:30" });
+    await f.refresh();
+    f.appendChat("새 방송 채팅");
+    await waitForCondition(() => f.activityTexts("live:101").length === 1);
+    assert.deepEqual(Object.keys(f.entries()), ["live:101"]);
+    assert.deepEqual(f.activityTexts("live:101"), ["새 방송 채팅"]);
+    assert.equal(f.entries()["live:101"].watchedSeconds, 0);
+});
+
+test("live history keeps chat unattached when live-detail omits the status and the video is paused", async (t) => {
+    const f = await liveHistoryFixture(t, { detail: liveDetail({ status: undefined }), pausedVideo: true });
+    f.appendChat("상태 미확인 채팅");
+    await f.settle();
+    assert.deepEqual(f.entries(), {});
+    assert.equal(f.mutations().length, 0);
+
+    f.elapsed += METADATA_REFRESH_MS;
+    f.detail = liveDetail();
+    await f.refresh();
+    f.appendChat("방송 확인 후 채팅");
+    await waitForCondition(() => f.activityTexts("live:100").length === 1);
+    assert.deepEqual(f.activityTexts("live:100"), ["방송 확인 후 채팅"]);
+});
+
+test("live history neither attaches nor discards chat on another channel's live-detail", async (t) => {
+    const f = await liveHistoryFixture(t, {
+        detail: liveDetail({ liveId: "200", channel: { channelId: OTHER_CHANNEL, channelName: "B채널" } }),
+    });
+    f.appendChat("다른 채널 응답 중 채팅");
+    await f.settle();
+    assert.deepEqual(f.entries(), {});
+    assert.equal(f.mutations().length, 0);
+
+    f.detail = liveDetail();
+    await f.refresh();
+    await waitForCondition(() => f.activityTexts("live:100").length === 1);
+    assert.deepEqual(Object.keys(f.entries()), ["live:100"]);
+    assert.deepEqual(f.activityTexts("live:100"), ["다른 채널 응답 중 채팅"]);
+});
+
+test("live history records paused chat for the open broadcast but not after a split to a closed one", async (t) => {
+    const f = await liveHistoryFixture(t, { detail: liveDetail(), pausedVideo: true });
+    f.appendChat("일시정지 중 채팅");
+    await waitForCondition(() => f.activityTexts("live:100").length === 1);
+    assert.equal(f.entries()["live:100"].watchedSeconds, 0);
+    assert.equal(f.mutations()[0].operation.kind, "appendActivities");
+
+    f.elapsed += METADATA_REFRESH_MS;
+    f.detail = liveDetail({ status: "CLOSE", liveId: "101", liveTitle: "짧은 방송" });
+    await f.refresh();
+    f.appendChat("종료 확인 후 채팅");
+    await f.settle();
+    assert.deepEqual(Object.keys(f.entries()), ["live:100"]);
+    assert.deepEqual(f.activityTexts("live:100"), ["일시정지 중 채팅"]);
+});
+
+test("live history stops attaching new chat once the same broadcast is confirmed closed", async (t) => {
+    const f = await liveHistoryFixture(t, { detail: liveDetail(), pausedVideo: true });
+    f.appendChat("방송 중 본인 채팅");
+    await waitForCondition(() => f.activityTexts("live:100").length === 1);
+
+    f.elapsed += METADATA_REFRESH_MS;
+    f.detail = liveDetail({ status: "CLOSE" });
+    await f.refresh();
+    f.appendChat("종료 확인 후 본인 채팅");
+    await f.settle();
+    assert.deepEqual(Object.keys(f.entries()), ["live:100"]);
+    assert.deepEqual(f.activityTexts("live:100"), ["방송 중 본인 채팅"]);
+});
+
+test("live history resumes new chat when the same broadcast reopens, dropping the closed-gap chat for good", async (t) => {
+    const f = await liveHistoryFixture(t, { detail: liveDetail(), pausedVideo: true });
+    f.appendChat("방송 중 본인 채팅");
+    await waitForCondition(() => f.activityTexts("live:100").length === 1);
+    f.elapsed += METADATA_REFRESH_MS;
+    f.detail = liveDetail({ status: "CLOSE" });
+    await f.refresh();
+    f.appendChat("종료 확인 중 본인 채팅");
+    await f.settle();
+
+    f.elapsed += METADATA_REFRESH_MS;
+    f.detail = liveDetail();
+    await f.refresh();
+    f.appendChat("재개 후 본인 채팅");
+    await waitForCondition(() => f.activityTexts("live:100").length === 2);
+    // A visible-tab identity check rescans every chat row, including the one typed while closed.
+    f.dom.window.document.dispatchEvent(new f.dom.window.Event("visibilitychange"));
+    await waitForCondition(() => f.identityRequests === 2);
+    await f.settle();
+    assert.deepEqual(f.activityTexts("live:100"), ["방송 중 본인 채팅", "재개 후 본인 채팅"]);
+    assert.equal(f.entries()["live:100"].activityDaily[DAY].chatCount, 2);
+});
+
+test("live history keeps one watch session across a transient same-broadcast CLOSE", async (t) => {
+    const f = await liveHistoryFixture(t, { detail: liveDetail(), pausedVideo: true });
+    f.paused = false;
+    f.watch(60);
+    await waitForCondition(() => f.entries()["live:100"]?.watchedSeconds === 60);
+    f.detail = liveDetail({ status: "CLOSE" });
+    await f.refresh();
+    f.watch(60);
+    await waitForCondition(() => f.entries()["live:100"]?.watchedSeconds === 120);
+    f.detail = liveDetail();
+    await f.refresh();
+    f.watch(60);
+    await waitForCondition(() => f.entries()["live:100"]?.watchedSeconds === 180);
+    assert.deepEqual(Object.keys(f.entries()), ["live:100"]);
+    assert.equal(f.entries()["live:100"].sessionDetails.length, 1);
+    assert.equal(new Set(f.mutations().map((row) => row.operation.session.id)).size, 1);
+});
+
 test("history ranks channels by unique time and shows safe transcripts, counts, period filters, and deletion", async (t) => {
     let history = store.applyMutation(
         {},
@@ -535,7 +781,7 @@ test("an open history page reflects activity immediately and ignores an older pe
     await new Promise((resolve) => setImmediate(resolve));
     assert.match(document.getElementById("activitySummary").textContent, /내 채팅 1개/);
     assert.equal(document.getElementById("totalLiveCount").textContent, "0개");
-    assert.equal(document.getElementById("totalWatchTime").textContent, "0초");
+    assert.equal(document.getElementById("totalWatchTime").textContent, "0분");
     assert.match(document.querySelector(".history-item-time").textContent, /활동만 기록/);
     document.querySelector(".history-entry-detail").click();
     document.querySelector(".history-entry-delete").click();
