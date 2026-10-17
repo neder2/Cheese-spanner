@@ -94,12 +94,12 @@
     }
 
     function validateCommentResponse(content) {
-        if (!content || typeof content !== "object") throw new Error("댓글 응답 형식을 확인할 수 없습니다.");
+        if (!content || typeof content !== "object") throw new Error("댓글 응답 형식을 확인할 수 없어요.");
         if (!content.comments || typeof content.comments !== "object" || !Array.isArray(content.comments.data)) {
-            throw new Error("댓글 목록 응답 형식을 확인할 수 없습니다.");
+            throw new Error("댓글 목록 응답 형식을 확인할 수 없어요.");
         }
         if (content.bestComments != null && !Array.isArray(content.bestComments)) {
-            throw new Error("인기 댓글 응답 형식을 확인할 수 없습니다.");
+            throw new Error("인기 댓글 응답 형식을 확인할 수 없어요.");
         }
         return content;
     }

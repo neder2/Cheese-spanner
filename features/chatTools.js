@@ -207,7 +207,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         if (!reveal) {
             reveal = document.createElement("span");
             reveal.className = "bcct-blind-reveal";
-            reveal.title = "블라인드된 메시지의 원문입니다.";
+            reveal.title = "블라인드된 메시지의 원문이에요.";
         }
         if (reveal.textContent !== original) reveal.textContent = original;
 

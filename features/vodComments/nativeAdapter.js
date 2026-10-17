@@ -369,7 +369,7 @@
                         mirroredAvatar,
                         profileControls.avatar,
                         label,
-                        "하단 원본 댓글이 표시되면 프로필을 볼 수 있습니다."
+                        "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요."
                     );
                     syncMirroredAvatarVisual(mirroredAvatar, nativeRow, profileControls.avatar);
                 }
@@ -382,7 +382,7 @@
                         mirroredAuthor,
                         profileControls.author,
                         label,
-                        "하단 원본 댓글이 표시되면 프로필을 볼 수 있습니다."
+                        "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요."
                     );
                 }
 
@@ -396,7 +396,7 @@
                         mirroredBuff,
                         nativeBuffButton,
                         label,
-                        "하단 원본 댓글이 표시되면 버프할 수 있습니다."
+                        "하단 원본 댓글이 표시되면 버프할 수 있어요."
                     );
                     mirroredBuff.setAttribute(
                         "aria-pressed",

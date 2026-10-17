@@ -529,6 +529,9 @@
     }
 
     function injectClockStyleOnce() {
+        // The clock pill sits on the video controls: fixed overlay colors and the copied native control font.
+        // The previous-title toggle and panel use shared/uiTheme.js (--bct-*), which follows CHZZK's root theme.
+        BetterChzzk.utils.ensureUiTheme?.();
         injectStyleOnce(
             STYLE_ID,
             `
@@ -602,10 +605,10 @@
   min-width:24px;
   margin:0;
   padding:0;
-  border:1px solid rgba(0,0,0,0.12);
-  border-radius:999px;
-  color:#141517;
-  background:#eef1f5;
+  border:1px solid var(--bct-border-alpha);
+  border-radius:var(--bct-radius-full);
+  color:var(--bct-text);
+  background:var(--bct-surface-weak);
   font-family:inherit;
   font-size:0;
   font-weight:800;
@@ -626,16 +629,16 @@
   transition:transform 120ms ease, margin-top 120ms ease;
 }
 #${TITLE_HISTORY_BUTTON_ID}:focus-visible{
-  outline:2px solid rgba(0,168,107,0.45);
+  outline:2px solid var(--bct-focus-ring);
   outline-offset:2px;
 }
 #${TITLE_HISTORY_BUTTON_ID}:hover{
-  background:#e3e7ed;
+  background-image:linear-gradient(var(--bct-hover),var(--bct-hover));
 }
 #${TITLE_HISTORY_BUTTON_ID}[aria-expanded="true"]{
-  color:#00875a;
-  background:rgba(0,168,107,0.12);
-  border-color:rgba(0,168,107,0.28);
+  color:var(--bct-brand-text);
+  background-color:var(--bct-brand-weak);
+  border-color:color-mix(in srgb,var(--bct-brand-text) 40%,transparent);
 }
 #${TITLE_HISTORY_BUTTON_ID}[aria-expanded="true"] .bcbc-title-history-chevron{
   margin-top:3px;
@@ -654,12 +657,12 @@
   overflow:auto;
   margin:0;
   padding:6px 8px;
-  border:1px solid rgba(0,0,0,0.1);
-  border-radius:8px;
-  color:#141517;
-  background:rgba(255,255,255,0.96);
-  box-shadow:0 8px 24px rgba(0,0,0,0.08);
-  font-family:inherit;
+  border:1px solid var(--bct-border);
+  border-radius:var(--bct-radius-lg);
+  color:var(--bct-text);
+  background:var(--bct-surface);
+  box-shadow:var(--bct-shadow);
+  font-family:var(--bct-font);
   box-sizing:border-box;
 }
 #${TITLE_HISTORY_PANEL_ID}[hidden]{
@@ -672,7 +675,7 @@
   align-items:center;
   min-width:0;
   padding:5px 0;
-  border-top:1px solid rgba(0,0,0,0.08);
+  border-top:1px solid var(--bct-border-weaker);
 }
 #${TITLE_HISTORY_PANEL_ID} .bcbc-title-history-row:first-of-type{
   border-top:0;
@@ -685,46 +688,16 @@
   white-space:nowrap;
 }
 #${TITLE_HISTORY_PANEL_ID} .bcbc-title-history-time{
-  color:#7b8493;
+  color:var(--bct-text-muted);
   font-size:12px;
-  font-weight:800;
+  font-weight:600;
 }
 #${TITLE_HISTORY_PANEL_ID} .bcbc-title-history-title{
   display:block;
   max-width:min(560px, calc(100vw - 190px));
-  color:#141517;
+  color:var(--bct-text);
   font-size:13px;
-  font-weight:900;
-}
-@media (prefers-color-scheme: dark){
-  #${TITLE_HISTORY_BUTTON_ID}{
-    border-color:rgba(255,255,255,0.16);
-    color:#f2f4f7;
-    background:rgba(255,255,255,0.12);
-  }
-  #${TITLE_HISTORY_BUTTON_ID}:hover{
-    background:rgba(255,255,255,0.18);
-  }
-  #${TITLE_HISTORY_BUTTON_ID}[aria-expanded="true"]{
-    color:#00ffa3;
-    background:rgba(0,255,163,0.12);
-    border-color:rgba(0,255,163,0.28);
-  }
-  #${TITLE_HISTORY_PANEL_ID}{
-    border-color:rgba(255,255,255,0.14);
-    color:#f2f4f7;
-    background:rgba(24,26,29,0.96);
-    box-shadow:0 8px 24px rgba(0,0,0,0.24);
-  }
-  #${TITLE_HISTORY_PANEL_ID} .bcbc-title-history-row{
-    border-top-color:rgba(255,255,255,0.1);
-  }
-  #${TITLE_HISTORY_PANEL_ID} .bcbc-title-history-time{
-    color:#8a93a2;
-  }
-  #${TITLE_HISTORY_PANEL_ID} .bcbc-title-history-title{
-    color:#f2f4f7;
-  }
+  font-weight:700;
 }
 @media (max-width: 720px){
   #${CLOCK_ID} .bcbc-label{display:none;}
@@ -1257,9 +1230,7 @@
             if (clockTextEl && clockTextEl.textContent !== text) clockTextEl.textContent = text;
 
             const stateText =
-                metadataState === "loading"
-                    ? "방송 시작 시간을 가져오는 중입니다."
-                    : "방송 시작 시간을 찾지 못했습니다.";
+                metadataState === "loading" ? "방송 시작 시간을 가져오는 중이에요." : "방송 시작 시간을 찾지 못했어요.";
             applyClockTitle(clock, [stateText]);
             setAttributeIfChanged(clock, "aria-label", `현재 방송 시각 ${text}`);
             return true;

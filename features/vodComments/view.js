@@ -2,7 +2,8 @@
  * features/vodComments/view.js — VOD 댓글 탭과 댓글 목록 DOM을 관리한다.
  *
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트.
- * 의존: BetterChzzk.vodComments.model, BetterChzzk.utils.injectStyleOnce(주입).
+ * 의존: BetterChzzk.vodComments.model, BetterChzzk.utils.injectStyleOnce(주입), BetterChzzk.utils.ensureUiTheme(선택).
+ * 색·모서리는 shared/uiTheme.js의 공통 --bct-* 변수를 따르고, 글꼴은 원본 댓글(body)·원본 heading 측정값을 그대로 쓴다.
  */
 (() => {
     "use strict";
@@ -56,6 +57,7 @@
         const messageToggleStates = new WeakMap();
 
         function injectStyles() {
+            root.utils?.ensureUiTheme?.();
             injectStyleOnce(
                 STYLE_ID,
                 `
@@ -72,9 +74,9 @@
   margin-top:0!important;
 }
 #betterchzzk-vod-comment-aside{
-  --bcvc-surface:var(--Background-Neutral-Base,var(--sem-color-surface-neutral-weakest,var(--Surface-Neutral-Weakest,#fff)));
-  --bcvc-text:var(--sem-color-content-neutral-cool-strong,var(--Content-Neutral-Cool-Strong,#292c33));
-  --bcvc-border:var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak,rgba(0,0,0,.08)));
+  --bcvc-surface:var(--bct-bg);
+  --bcvc-text:var(--bct-text-body);
+  --bcvc-border:var(--bct-border-alpha);
   position:relative;
   flex:0 0 353px;
   align-self:stretch;
@@ -86,7 +88,6 @@
   border-left:1px solid var(--bcvc-border);
   background:var(--bcvc-surface);
   color:var(--bcvc-text);
-  color-scheme:light;
 }
 [data-bcvc-comment-only-container="1"]{
   position:absolute;
@@ -125,10 +126,10 @@
   --bcvc-heading-font-weight:700;
   --bcvc-heading-line-height:20px;
   --bcvc-heading-letter-spacing:normal;
-  --bcvc-text:var(--sem-color-content-neutral-cool-strong,var(--Content-Neutral-Cool-Strong,#292c33));
-  --bcvc-text-base:var(--sem-color-content-neutral-cool-base,var(--Content-Neutral-Cool-Base,#444a55));
-  --bcvc-text-weak:var(--sem-color-content-neutral-cool-weak,var(--Content-Neutral-Cool-Weak,#707784));
-  --bcvc-hover:var(--sem-color-surface-interaction-lighten-hovered,var(--Surface-Interaction-Lighten-Hovered,rgba(0,0,0,.04)));
+  --bcvc-text:var(--bct-text-body);
+  --bcvc-text-base:var(--bct-text-muted);
+  --bcvc-text-weak:var(--bct-text-muted);
+  --bcvc-hover:var(--bct-hover);
   display:flex;
   flex:1 1 auto;
   align-self:stretch;
@@ -171,7 +172,7 @@
 }
 #${TABLIST_ID} button:hover{
   background:var(--bcvc-hover);
-  color:var(--bcvc-text-base);
+  color:var(--bcvc-text);
 }
 #${TABLIST_ID} button[aria-selected="true"]{
   color:var(--bcvc-text);
@@ -184,7 +185,7 @@
   left:12px;
   height:2px;
   border-radius:2px 2px 0 0;
-  background:var(--sem-color-content-brand-strong,var(--Content-Brand-Strong,var(--sem-color-content-brand-base,var(--Content-Brand-Base,#00e693))));
+  background:var(--bct-brand-text);
 }
 #betterchzzk-vod-comment-aside #${TABLIST_ID}{
   background:var(--bcvc-surface);
@@ -203,7 +204,7 @@
 }
 #${TABLIST_ID} button:focus-visible,
 #${COMMENT_PANEL_ID} button:focus-visible{
-  outline:2px solid var(--sem-color-content-brand-strong,var(--Content-Brand-Strong,var(--sem-color-content-brand-base,var(--Content-Brand-Base,#00e693))));
+  outline:2px solid var(--bct-focus-ring);
   outline-offset:-2px;
 }
 [data-bcvc-native-log="1"][data-bcvc-tab-hidden="1"]{
@@ -229,15 +230,15 @@
   --bcvc-message-font-weight:400;
   --bcvc-message-line-height:1.5;
   --bcvc-message-letter-spacing:normal;
-  --bcvc-surface:var(--Background-Neutral-Base,var(--sem-color-surface-neutral-weakest,var(--Surface-Neutral-Weakest,#fff)));
-  --bcvc-surface-raised:var(--sem-color-surface-neutral-weakest,var(--Surface-Neutral-Weakest,#f7f8fa));
-  --bcvc-surface-soft:var(--sem-color-surface-neutral-weaker,var(--Surface-Neutral-Weaker,#eef0f3));
-  --bcvc-text:var(--sem-color-content-neutral-cool-strong,var(--Content-Neutral-Cool-Strong,#292c33));
-  --bcvc-text-base:var(--sem-color-content-neutral-cool-base,var(--Content-Neutral-Cool-Base,#444a55));
-  --bcvc-text-weak:var(--sem-color-content-neutral-cool-weak,var(--Content-Neutral-Cool-Weak,#707784));
-  --bcvc-border:var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak,rgba(0,0,0,.08)));
-  --bcvc-brand:var(--sem-color-content-brand-strong,var(--Content-Brand-Strong,var(--sem-color-content-brand-base,var(--Content-Brand-Base,#00e693))));
-  --bcvc-hover:var(--sem-color-surface-interaction-lighten-hovered,var(--Surface-Interaction-Lighten-Hovered,rgba(0,0,0,.04)));
+  --bcvc-surface:var(--bct-bg);
+  --bcvc-surface-raised:var(--bct-surface);
+  --bcvc-surface-soft:var(--bct-surface-weak);
+  --bcvc-text:var(--bct-text-body);
+  --bcvc-text-base:var(--bct-text-muted);
+  --bcvc-text-weak:var(--bct-text-muted);
+  --bcvc-border:var(--bct-border-alpha);
+  --bcvc-brand:var(--bct-brand-text);
+  --bcvc-hover:var(--bct-hover);
   position:absolute;
   z-index:1;
   top:var(--bcvc-panel-top,44px);
@@ -255,7 +256,6 @@
   container-type:inline-size;
   background:var(--bcvc-surface);
   color:var(--bcvc-text-base);
-  color-scheme:light;
   font-family:var(--bcvc-font-family,inherit);
 }
 #${COMMENT_PANEL_ID}[hidden]{display:none!important}
@@ -295,16 +295,16 @@
   align-items:center;
   gap:2px;
   padding:2px;
-  border-radius:8px;
+  border-radius:var(--bct-radius-md);
   max-width:100%;
-  background:color-mix(in srgb,var(--bcvc-surface-soft) 55%,transparent);
+  background:var(--bcvc-surface-soft);
 }
 .bcvc-sort-button,
 .bcvc-icon-button{
   min-width:0;
   min-height:28px;
   border:0;
-  border-radius:6px;
+  border-radius:var(--bct-radius-sm);
   padding:4px 6px;
   background:transparent;
   color:var(--bcvc-text-weak);
@@ -343,12 +343,12 @@
   border-radius:50%;
   padding:0;
   appearance:none;
-  background:var(--sem-color-surface-neutral-base,var(--Surface-Neutral-Base,var(--bcvc-surface-soft)));
+  background:var(--bct-surface-base);
 }
 .bcvc-avatar:not(:disabled){cursor:pointer}
 .bcvc-avatar:not(:disabled):hover::after{border-color:var(--bcvc-brand)}
 .bcvc-avatar:disabled{cursor:default}
-.bcvc-avatar::after{content:"";position:absolute;inset:0;border:1px solid var(--sem-color-border-neutral-alpha-weakest,var(--Border-Neutral-Alpha-Weakest,rgba(0,0,0,.05)));border-radius:inherit;pointer-events:none}
+.bcvc-avatar::after{content:"";position:absolute;inset:0;border:1px solid var(--bct-border-alpha-weaker);border-radius:inherit;pointer-events:none}
 .bcvc-avatar-image,.bcvc-avatar-native-visual{display:block;width:100%;height:100%;border-radius:inherit}
 .bcvc-avatar-image{object-fit:cover}
 .bcvc-avatar-native-visual{background-position:center;background-repeat:no-repeat;background-size:cover}
@@ -362,16 +362,16 @@ body[theme="dark"] .bcvc-avatar-fallback,
 .bcvc-author:not(:disabled):hover{text-decoration:underline}
 .bcvc-author:disabled{cursor:default}
 .bcvc-date{flex:0 0 auto;color:var(--bcvc-text-weak);font-family:inherit;font-size:var(--bcvc-date-font-size,12px);font-weight:var(--bcvc-date-font-weight,400);line-height:var(--bcvc-date-line-height,18px);letter-spacing:var(--bcvc-date-letter-spacing,normal);white-space:nowrap}
-.bcvc-badge{flex:0 0 auto;border-radius:4px;padding:0 4px;font-family:inherit;font-size:9px;font-weight:700;line-height:15px}
-.bcvc-writer{background:var(--sem-color-surface-brand-alpha-weaker,var(--Surface-Brand-Alpha-Weaker,rgba(0,230,147,.12)));color:var(--bcvc-brand)}
+.bcvc-badge{flex:0 0 auto;border-radius:var(--bct-radius-sm);padding:0 4px;font-family:inherit;font-size:9px;font-weight:700;line-height:15px}
+.bcvc-writer{background:var(--bct-brand-weak);color:var(--bct-text)}
 .bcvc-message{min-width:0;margin-top:2px;color:var(--bcvc-text);font-family:inherit;font-size:var(--bcvc-message-font-size,15px);font-weight:var(--bcvc-message-font-weight,400);line-height:var(--bcvc-message-line-height,1.5);letter-spacing:var(--bcvc-message-letter-spacing,normal);overflow-wrap:anywhere;white-space:pre-wrap}
 .bcvc-message-content{display:inline}
 .bcvc-message-toggle{display:block;min-height:24px;border:0;padding:2px 0;background:transparent;color:var(--bcvc-brand);font-family:inherit;font-size:12px;font-weight:600;line-height:20px;text-align:left;cursor:pointer}
 .bcvc-message-toggle:hover{text-decoration:underline}
-.bcvc-best{display:inline-flex;align-items:center;justify-content:center;min-width:39px;height:18px;margin:1px 6px 0 0;border-radius:5px;padding:0 4px;background:#41bd53;color:#fff;font-family:inherit;font-size:9px;font-weight:700;line-height:18px;vertical-align:top}
-.bcvc-timecode{display:inline-block;min-height:0;margin:2px 8px 0 0;border:0;border-radius:4px;padding:0 3px;background:var(--sem-color-surface-brand-alpha-weaker,var(--Surface-Brand-Alpha-Weaker,rgba(0,255,163,.1)));color:var(--sem-color-content-brand-base,var(--Content-Brand-Base,#00e693));font-family:inherit;font-size:15px;font-weight:600;line-height:16px;vertical-align:top;cursor:pointer}
+.bcvc-best{display:inline-flex;align-items:center;justify-content:center;min-width:39px;height:18px;margin:1px 6px 0 0;border-radius:var(--bct-radius-sm);padding:0 4px;background:#41bd53;color:#fff;font-family:inherit;font-size:9px;font-weight:700;line-height:18px;vertical-align:top}
+.bcvc-timecode{display:inline-block;min-height:0;margin:2px 8px 0 0;border:0;border-radius:var(--bct-radius-sm);padding:0 3px;background:color-mix(in srgb,var(--bct-brand-weak) 40%,transparent);color:var(--bcvc-brand);font-family:inherit;font-size:15px;font-weight:600;line-height:16px;vertical-align:top;cursor:pointer}
 .bcvc-comment-footer{display:flex;align-items:flex-start;justify-content:space-between;min-height:25px;margin-top:2px}
-.bcvc-reply-toggle{display:block;margin:0 0 0 4px;border:0;padding:3px 4px 2px 6px;background:transparent;color:var(--sem-color-content-brand-base,var(--Content-Brand-Base,var(--bcvc-brand)));font-family:inherit;font-size:13px;font-weight:700;line-height:16px;text-align:left;cursor:pointer}
+.bcvc-reply-toggle{display:block;margin:0 0 0 4px;border:0;padding:3px 4px 2px 6px;background:transparent;color:var(--bcvc-brand);font-family:inherit;font-size:13px;font-weight:700;line-height:16px;text-align:left;cursor:pointer}
 .bcvc-reply-toggle svg{display:inline-block;width:14px;height:14px;margin:1px 0 0;vertical-align:top}
 .bcvc-reply-toggle[aria-expanded="false"] svg{transform:rotate(180deg)}
 .bcvc-buff{display:inline-flex;align-items:flex-start;min-height:23px;border:0;padding:0;background:transparent;color:var(--bcvc-text-weak);font-family:inherit;appearance:none}
@@ -381,34 +381,34 @@ body[theme="dark"] .bcvc-avatar-fallback,
 .bcvc-buff:disabled{cursor:default}
 .bcvc-buff-icon{display:block;flex:0 0 47px;width:47px;height:23px}
 .bcvc-buff-native-icon{font-style:normal}
-.bcvc-buff-label{display:inline-flex;align-items:center;justify-content:center;width:47px;height:23px;border:2px solid var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak,rgba(128,137,156,.2)));border-radius:12px;font-size:11px;font-weight:700;line-height:19px}
+.bcvc-buff-label{display:inline-flex;align-items:center;justify-content:center;width:47px;height:23px;border:2px solid var(--bcvc-border);border-radius:var(--bct-radius-full);font-size:11px;font-weight:700;line-height:19px}
 .bcvc-buff-label::after{content:"↑";margin-left:2px;font-size:12px;line-height:1}
 .bcvc-buff-count{display:inline-block;margin:5px 3px 0;color:var(--color-content-04,var(--bcvc-text-weak));font-family:inherit;font-size:13px;font-weight:500;line-height:16px}
-.bcvc-buff[aria-pressed="true"] .bcvc-buff-count{color:rgb(44,213,136);font-weight:600}
+.bcvc-buff[aria-pressed="true"] .bcvc-buff-count{color:var(--bcvc-brand);font-weight:600}
 .bcvc-replies{min-width:0;margin:4px 0 0 12px}
 .bcvc-replies[hidden]{display:none!important}
 .bcvc-replies .bcvc-comment{padding:9px 0 5px 30px}
 .bcvc-replies .bcvc-avatar{top:9px;width:22px;height:22px}
 .bcvc-replies .bcvc-message{font-size:14px;line-height:1.5}
-.bcvc-mention{display:inline-block;margin-right:5px;color:var(--sem-color-content-brand-base,var(--Content-Brand-Base,var(--bcvc-brand)));font-size:15px;font-weight:700;line-height:20px}
+.bcvc-mention{display:inline-block;margin-right:5px;color:var(--bcvc-brand);font-size:15px;font-weight:700;line-height:20px}
 .bcvc-reply-limit{margin:3px 0 4px 20px;color:var(--bcvc-text-weak);font-size:12px;line-height:18px}
 .bcvc-reply-limit[hidden]{display:none!important}
 .bcvc-comment[data-bcvc-deleted="1"]{padding-left:0}
-.bcvc-attachments{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;overflow:hidden;border-radius:8px}
+.bcvc-attachments{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:8px;overflow:hidden;border-radius:var(--bct-radius-md)}
 .bcvc-attachments[data-count="1"]{display:block}
-.bcvc-attachment{display:block;width:100%;height:96px;border-radius:6px;background:var(--bcvc-surface-soft);object-fit:cover}
+.bcvc-attachment{display:block;width:100%;height:96px;border-radius:var(--bct-radius-sm);background:var(--bcvc-surface-soft);object-fit:cover}
 .bcvc-attachments[data-count="1"] .bcvc-attachment{height:auto;max-height:190px;object-fit:contain}
 .bcvc-attachment[data-type="STICKER"],.bcvc-attachment[data-type="EMOTICON"]{object-fit:contain}
 .bcvc-state{display:grid;place-items:center;gap:10px;min-height:168px;margin:0;padding:28px 18px;color:var(--bcvc-text-weak);text-align:center}
 .bcvc-state p{margin:0;font-family:inherit;font-size:13px;font-weight:500;line-height:20px}
-.bcvc-state-button,.bcvc-more-button{min-height:36px;border:0;border-radius:8px;padding:8px 14px;background:color-mix(in srgb,var(--bcvc-surface-soft) 65%,transparent);color:var(--bcvc-text);font-family:inherit;font-size:13px;font-weight:700;line-height:18px;cursor:pointer}
+.bcvc-state-button,.bcvc-more-button{min-height:36px;border:0;border-radius:var(--bct-radius-md);padding:8px 14px;background:color-mix(in srgb,var(--bcvc-surface-soft) 65%,transparent);color:var(--bcvc-text);font-family:inherit;font-size:13px;font-weight:700;line-height:18px;cursor:pointer}
 .bcvc-state-button:hover,.bcvc-more-button:hover{background:var(--bcvc-hover)}
 .bcvc-skeleton-list{padding:0 6px 0 8px}
 .bcvc-skeleton{position:relative;min-height:72px;padding:12px 0 12px 46px;overflow:hidden}
 .bcvc-skeleton::before{content:"";position:absolute;top:12px;left:0;width:36px;height:36px;border-radius:50%;background:var(--bcvc-surface-soft)}
-.bcvc-skeleton-line{height:10px;margin:2px 0 10px;border-radius:5px;background:var(--bcvc-surface-soft)}
+.bcvc-skeleton-line{height:10px;margin:2px 0 10px;border-radius:var(--bct-radius-full);background:var(--bcvc-surface-soft)}
 .bcvc-skeleton-line:first-child{width:44%}.bcvc-skeleton-line:last-child{width:82%;margin-bottom:0}
-.bcvc-skeleton::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.06),transparent);animation:bcvc-shimmer 1.4s infinite}
+.bcvc-skeleton::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,var(--bcvc-hover),transparent);animation:bcvc-shimmer 1.4s infinite}
 .bcvc-footer{display:grid;gap:8px;justify-items:stretch;min-width:0;padding:12px}
 .bcvc-footer:empty{display:none}
 .bcvc-footer-status{margin:0;color:var(--bcvc-text-weak);font-family:inherit;font-size:12px;font-weight:500;line-height:18px;text-align:center}
@@ -416,35 +416,6 @@ body[theme="dark"] .bcvc-avatar-fallback,
 .bcvc-more-button{width:100%;min-height:40px}
 .bcvc-sentinel{width:100%;height:1px}
 @keyframes bcvc-shimmer{to{transform:translateX(100%)}}
-html[dark] #${TABLIST_ID},
-body[theme="dark"] #${TABLIST_ID},
-.theme_dark #${TABLIST_ID}{
-  --bcvc-text:var(--sem-color-content-neutral-cool-strong,var(--Content-Neutral-Cool-Strong,#dfe2ea));
-  --bcvc-text-base:var(--sem-color-content-neutral-cool-base,var(--Content-Neutral-Cool-Base,#c9cedc));
-  --bcvc-text-weak:var(--sem-color-content-neutral-cool-weak,var(--Content-Neutral-Cool-Weak,#8b909b));
-  --bcvc-hover:var(--sem-color-surface-interaction-lighten-hovered,var(--Surface-Interaction-Lighten-Hovered,rgba(255,255,255,.06)));
-}
-html[dark] #betterchzzk-vod-comment-aside,
-body[theme="dark"] #betterchzzk-vod-comment-aside,
-.theme_dark #betterchzzk-vod-comment-aside{
-  --bcvc-surface:var(--Background-Neutral-Base,var(--sem-color-surface-neutral-weakest,var(--Surface-Neutral-Weakest,#141517)));
-  --bcvc-text:var(--sem-color-content-neutral-cool-strong,var(--Content-Neutral-Cool-Strong,#dfe2ea));
-  --bcvc-border:var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak,rgba(255,255,255,.06)));
-  color-scheme:dark;
-}
-html[dark] #${COMMENT_PANEL_ID},
-body[theme="dark"] #${COMMENT_PANEL_ID},
-.theme_dark #${COMMENT_PANEL_ID}{
-  --bcvc-surface:var(--Background-Neutral-Base,var(--sem-color-surface-neutral-weakest,var(--Surface-Neutral-Weakest,#141517)));
-  --bcvc-surface-raised:var(--sem-color-surface-neutral-weakest,var(--Surface-Neutral-Weakest,#1b1c1f));
-  --bcvc-surface-soft:var(--sem-color-surface-neutral-weaker,var(--Surface-Neutral-Weaker,#2e3033));
-  --bcvc-text:var(--sem-color-content-neutral-cool-strong,var(--Content-Neutral-Cool-Strong,#dfe2ea));
-  --bcvc-text-base:var(--sem-color-content-neutral-cool-base,var(--Content-Neutral-Cool-Base,#c9cedc));
-  --bcvc-text-weak:var(--sem-color-content-neutral-cool-weak,var(--Content-Neutral-Cool-Weak,#8b909b));
-  --bcvc-border:var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak,rgba(255,255,255,.06)));
-  --bcvc-hover:var(--sem-color-surface-interaction-lighten-hovered,var(--Surface-Interaction-Lighten-Hovered,rgba(255,255,255,.06)));
-  color-scheme:dark;
-}
 @container (max-width:300px){
   .bcvc-toolbar{align-items:stretch}
   .bcvc-count{flex:1 1 calc(100% - 34px)}
@@ -579,7 +550,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             avatar.setAttribute("data-bcvc-profile-target", "avatar");
             avatar.setAttribute("aria-label", `${authorName} 프로필 보기`);
             avatar.disabled = true;
-            avatar.title = "하단 원본 댓글이 표시되면 프로필을 볼 수 있습니다.";
+            avatar.title = "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요.";
             avatar.setAttribute("aria-describedby", NATIVE_ACTION_HINT_ID);
 
             const apiUrl = model.normalizeImageUrl(item?.row?.user?.profileImageUrl, location.href);
@@ -636,7 +607,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             buff.setAttribute("aria-pressed", "false");
             buff.setAttribute("aria-describedby", NATIVE_ACTION_HINT_ID);
             buff.disabled = true;
-            buff.title = "하단 원본 댓글이 표시되면 버프할 수 있습니다.";
+            buff.title = "하단 원본 댓글이 표시되면 버프할 수 있어요.";
             const label = document.createElement("span");
             label.className = "bcvc-buff-label";
             label.setAttribute("aria-hidden", "true");
@@ -745,7 +716,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
                 author.setAttribute("data-bcvc-profile-target", "author");
                 author.setAttribute("aria-label", `${authorName} 프로필 보기`);
                 author.disabled = true;
-                author.title = "하단 원본 댓글이 표시되면 프로필을 볼 수 있습니다.";
+                author.title = "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요.";
                 author.setAttribute("aria-describedby", NATIVE_ACTION_HINT_ID);
                 meta.appendChild(author);
                 if (user.writer === true) {
@@ -835,8 +806,8 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
                         replyLimit.hidden = true;
                         replyLimit.textContent =
                             replyBudget?.remaining === 0 || visibleReplies.length < replies.length
-                                ? `이 정렬에서는 답글을 ${MAX_REPLIES_PER_ORDER}개까지만 표시합니다.`
-                                : `한 댓글의 답글은 ${MAX_REPLIES_PER_COMMENT}개까지만 표시합니다.`;
+                                ? `이 정렬에서는 답글을 ${MAX_REPLIES_PER_ORDER}개까지만 표시해요.`
+                                : `한 댓글의 답글은 ${MAX_REPLIES_PER_COMMENT}개까지만 표시해요.`;
                     }
                 }
             }
@@ -939,14 +910,14 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             if (state.loadingMore) {
                 const status = document.createElement("p");
                 status.className = "bcvc-footer-status";
-                status.textContent = "댓글을 더 불러오는 중입니다…";
+                status.textContent = "댓글을 더 불러오는 중이에요…";
                 footer.appendChild(status);
                 return footer;
             }
             if (state.moreError) {
                 const status = document.createElement("p");
                 status.className = "bcvc-footer-status";
-                status.textContent = "댓글을 더 불러오지 못했습니다.";
+                status.textContent = "댓글을 더 불러오지 못했어요.";
                 footer.appendChild(status);
                 const retry = document.createElement("button");
                 retry.type = "button";
@@ -973,7 +944,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             if (state.capped) {
                 const status = document.createElement("p");
                 status.className = "bcvc-footer-status";
-                status.textContent = `댓글은 ${MAX_COMMENTS_PER_ORDER.toLocaleString()}개까지 표시합니다.`;
+                status.textContent = `댓글은 ${MAX_COMMENTS_PER_ORDER.toLocaleString()}개까지 표시해요.`;
                 footer.appendChild(status);
             }
             return footer;
@@ -990,7 +961,7 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
             nativeActionHint.id = NATIVE_ACTION_HINT_ID;
             nativeActionHint.className = "bcvc-sr-only";
             nativeActionHint.textContent =
-                "프로필과 버프는 같은 댓글이 하단 원본 댓글 영역에 표시되어 있을 때 사용할 수 있습니다.";
+                "프로필과 버프는 같은 댓글이 하단 원본 댓글 영역에 표시되어 있을 때 사용할 수 있어요.";
             view.appendChild(nativeActionHint);
             view.appendChild(createToolbar(state));
 
@@ -999,15 +970,15 @@ body[theme="dark"] #${COMMENT_PANEL_ID},
                 return view;
             }
             if (state.error && !state.loaded) {
-                view.appendChild(createStateBlock("댓글을 불러오지 못했습니다.", "다시 시도", "retry-initial"));
+                view.appendChild(createStateBlock("댓글을 불러오지 못했어요.", "다시 시도", "retry-initial"));
                 return view;
             }
             if (!state.commentActive) {
-                view.appendChild(createStateBlock("이 영상은 댓글을 사용할 수 없습니다."));
+                view.appendChild(createStateBlock("이 영상은 댓글을 사용할 수 없어요."));
                 return view;
             }
             if (!state.items.length) {
-                view.appendChild(createStateBlock("아직 등록된 댓글이 없습니다."));
+                view.appendChild(createStateBlock("아직 등록된 댓글이 없어요."));
                 return view;
             }
 

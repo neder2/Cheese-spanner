@@ -4175,6 +4175,7 @@ async function createVodBroadcastClockFixture(
 
     evalRepoScript(dom, "shared", "settings.js");
     evalContentScripts(dom);
+    evalRepoScript(dom, "shared", "uiTheme.js");
     evalRepoScript(dom, "features", "vodBroadcastClock.js");
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
 
@@ -4265,6 +4266,101 @@ test("VOD broadcast clock rejects an explicit live id conflict even when the rep
         const panelText = dom.window.document.getElementById("betterchzzk-vod-title-history-panel").textContent;
         assert.match(panelText, /현재 방송의 이전 방제/);
         assert.doesNotMatch(panelText, /충돌한 방송의 이전 방제/);
+    } finally {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener(
+                {
+                    liveWatchHistoryEnabled: { oldValue: true, newValue: false },
+                    vodBroadcastClockEnabled: { oldValue: true, newValue: false },
+                },
+                "sync"
+            );
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    }
+});
+
+test("VOD previous-title toggle and panel use the shared CHZZK theme while the clock keeps its player overlay", async () => {
+    const originalStart = Date.parse("2026-06-28T00:00:00+09:00");
+    const durationSeconds = 60 * 60;
+    const { chrome, dom } = await createVodBroadcastClockFixture(
+        {
+            channelId: "same-channel",
+            channelName: "같은 채널",
+            liveId: "actual-live",
+            liveOpenDate: "2026-06-28 00:00:00",
+            duration: durationSeconds,
+            publishDate: new Date(originalStart + durationSeconds * 1000).toISOString(),
+        },
+        {
+            watchHistory: [
+                {
+                    id: "matching-live",
+                    channelId: "same-channel",
+                    channelName: "같은 채널",
+                    liveId: "actual-live",
+                    title: "Split VOD fixture",
+                    firstWatchedAt: originalStart,
+                    lastWatchedAt: originalStart + 1000,
+                    titleHistory: [
+                        {
+                            title: "테마 확인용 이전 방제",
+                            firstSeenAt: originalStart - 2000,
+                            lastSeenAt: originalStart - 1000,
+                        },
+                    ],
+                },
+            ],
+        }
+    );
+
+    try {
+        const { document } = dom.window;
+        await waitForCondition(() =>
+            document
+                .getElementById("betterchzzk-vod-title-history-panel")
+                ?.textContent.includes("테마 확인용 이전 방제")
+        );
+        const themeStyle = document.getElementById("betterchzzk-ui-theme");
+        const featureStyle = document.getElementById("betterchzzk-vod-broadcast-clock-style");
+        assert.ok(themeStyle, "the feature requests the shared CHZZK theme");
+        assert.ok(
+            themeStyle.compareDocumentPosition(featureStyle) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+            "the shared theme is requested before the feature style"
+        );
+        const css = featureStyle.textContent;
+        assert.match(
+            css,
+            /#betterchzzk-vod-title-history-panel\{[^}]*border:1px solid var\(--bct-border\);[^}]*border-radius:var\(--bct-radius-lg\);[^}]*color:var\(--bct-text\);[^}]*background:var\(--bct-surface\);[^}]*box-shadow:var\(--bct-shadow\);[^}]*font-family:var\(--bct-font\);/s
+        );
+        assert.match(
+            css,
+            /#betterchzzk-vod-title-history-toggle\[aria-expanded="true"\]\{[^}]*color:var\(--bct-brand-text\);/s
+        );
+        assert.match(css, /\.bcbc-title-history-time\{[^}]*color:var\(--bct-text-muted\);/s);
+        assert.doesNotMatch(
+            css,
+            /prefers-color-scheme|theme_dark|data-theme/,
+            "the panel follows CHZZK's theme, not the OS"
+        );
+        assert.doesNotMatch(css, /var\(--bct-[\w-]+,/, "shared theme variables carry no local fallback");
+        // The clock pill sits on the video controls: fixed overlay colors and the copied native control font stay.
+        const clockRule = css.match(/#betterchzzk-vod-broadcast-clock\{[^}]*\}/)?.[0] || "";
+        assert.match(clockRule, /color:#fff;[^}]*background:rgba\(0,0,0,0\.38\);[^}]*font-family:inherit;/s);
+        assert.doesNotMatch(
+            css.replace(/#betterchzzk-vod-broadcast-clock\{[^}]*\}/, ""),
+            /#[0-9a-f]{3,8}\b|rgba?\(/i,
+            "only the player overlay keeps fixed colors"
+        );
+        const formalCopy = [
+            ...fs
+                .readFileSync(path.join(repoRoot, "features", "vodBroadcastClock.js"), "utf8")
+                .matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g),
+        ]
+            .map((match) => match[2])
+            .filter((text) => /[가-힣]/.test(text) && /(?:습|합|됩|입)니다/.test(text));
+        assert.deepEqual(formalCopy, [], "VOD clock statuses use 해요체");
     } finally {
         for (const listener of chrome.testState.storageChangeListeners) {
             listener(
