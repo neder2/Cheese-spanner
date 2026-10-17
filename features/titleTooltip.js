@@ -51,7 +51,7 @@
 [data-bctt-active="1"]{
   background:var(--bct-brand-weak) !important;
   border-radius:var(--bct-radius-sm);
-  box-shadow:0 0 0 1px var(--bct-brand-weak);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--bct-brand-text) 40%,transparent);
 }
 @media (max-width: 520px){
   .bctt-tooltip{ max-width:calc(100vw - 16px); }

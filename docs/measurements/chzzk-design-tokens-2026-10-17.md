@@ -58,6 +58,7 @@ HTML은 처음 받았을 때와 같은 두 CSS 파일 이름을 연결했어요.
 | 더 약한 테두리      | `--sem-color-border-neutral-weaker`               | `#202224`   | `#e1e1e5`   | `--bct-border-weaker`       |
 | 기본 테두리         | `--sem-color-border-neutral-base`                 | `#4d4d4d`   | `#c0c1c2`   | `--bct-border-strong`       |
 | 반투명 선           | `--sem-color-border-neutral-alpha-weak`           | `#ffffff26` | `#00000026` | `--bct-border-alpha`        |
+| 더 옅은 반투명 선   | `--sem-color-border-neutral-alpha-weaker`         | `#ffffff1a` | `#0000001a` | `--bct-border-alpha-weaker` |
 | 주 글자             | `--sem-color-content-neutral-primary`             | `#ffffff`   | `#0e0f10`   | `--bct-text`                |
 | 본문 글자           | `--sem-color-content-neutral-cool-strong`         | `#c9cedc`   | `#2e3033`   | `--bct-text-body`           |
 | 보조 글자           | `--sem-color-content-neutral-cool-base`           | `#9da5b6`   | `#4d4d4d`   | `--bct-text-muted`          |

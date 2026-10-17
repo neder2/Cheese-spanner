@@ -1953,7 +1953,7 @@ test("integration: manifest loads the pure model before the isolated top-frame f
 });
 
 // shared/uiTheme.js owns the only light/dark fallback table and the single "BetterChzzk Pretendard" @font-face for
-// in-page UI (spec 5.1, 6). The panel keeps only theme-independent colors: the live dot, the warning mark with its
+// in-page UI (shared/AGENTS.md, features/AGENTS.md). The panel keeps only theme-independent colors: the live dot, the warning mark with its
 // white glyph, and the white toggle knob with its shadow.
 const CHAT_FIXED_COLORS = ["#ff4545", "#f08c00", "#fff", "#0000004d"];
 const chatCssColors = (css) => [...css.matchAll(/#[0-9a-f]{3,8}(?![\w-])|rgba?\([^)]*\)/gi)].map(([color]) => color);

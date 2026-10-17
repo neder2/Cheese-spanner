@@ -4478,7 +4478,7 @@ test("multiview reports quality save failure without interrupting selected playb
     assert.equal(h.storage[`betterChzzkMultiviewQuality:${B}`], undefined);
 });
 
-// shared/uiTheme.js owns the only light/dark fallback table for in-page UI (spec 5.1, 6). The multiview keeps
+// shared/uiTheme.js owns the only light/dark fallback table for in-page UI (shared/AGENTS.md, features/AGENTS.md). The multiview keeps
 // theme-independent colors only where it draws on the video itself, like the native player: white/black
 // controls, gradients and labels, the invalid drop outline, and CHZZK's static neutrals of the on-video error screen.
 const MULTIVIEW_FIXED_COLORS = [
