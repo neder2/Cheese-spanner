@@ -1332,7 +1332,7 @@ test("options reset asks for confirmation before restoring defaults", async (t) 
 });
 
 test("options copy uses the polite 해요체 tone", () => {
-    // Spec §8: visible option sentences, status messages and confirmations use 해요체; noun labels stay.
+    // Copy rule (docs/business-rules.md, 화면 디자인): visible option sentences, status messages and confirmations use 해요체; noun labels stay.
     for (const file of [
         "options.html",
         "options.js",

@@ -192,7 +192,7 @@ test("extension page tokens follow the measured CHZZK palette", () => {
             assert.equal(blocks[theme][name], normalize(value), `${theme} ${name}`);
         }
     }
-    // Spec §3.4: these lighter CHZZK shades fail small-text contrast and stay out of text tokens.
+    // Contrast rule (small text >= 4.5:1): these lighter CHZZK shades fail small-text contrast and stay out of text tokens.
     for (const name of ["--text", "--text-muted", "--text-dim", "--accent-text", "--focus-ring"]) {
         assert.notEqual(blocks.dark[name], "#697183", `dark ${name}`);
         assert.notEqual(blocks.light[name], "#168f5c", `light ${name}`);
@@ -213,7 +213,7 @@ test("extension page token pairs keep small text at 4.5:1", () => {
         for (const name of ["--text", "--text-muted"]) {
             pairs.push([`${name} on --surface-3`, token[name], token["--surface-3"]]);
         }
-        // Brand text (spec §3.4 fixes light #23815a) and the retained warning colors are guarded on the
+        // Brand text (small light brand text uses #23815a) and the retained warning colors are guarded on the
         // page and card surfaces.
         for (const surface of [token["--bg"], token["--surface"]]) {
             pairs.push([`--accent-text on ${surface}`, token["--accent-text"], surface]);

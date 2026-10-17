@@ -8,7 +8,7 @@ const STYLE_ID = "betterchzzk-ui-theme";
 const FONT_PATH = "vendor/fonts/PretendardVariable.woff2";
 const EXTENSION_ORIGIN = "chrome-extension://cheese-spanner-test/";
 
-// spec §3.2, measured from the public CHZZK CSS on 2026-10-17
+// measured from the public CHZZK CSS on 2026-10-17 (docs/measurements/chzzk-design-tokens-2026-10-17.md)
 // (docs/measurements/chzzk-design-tokens-2026-10-17.md): [variable, semantic token, dark, light].
 const COLOR_TOKENS = [
     ["--bct-bg", "--sem-color-background-neutral-base", "#141517", "#ffffff"],

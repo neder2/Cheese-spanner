@@ -2,7 +2,7 @@
 
 ## 목적과 방법
 
-1.4.5 화면 디자인 통일의 기준값(명세 §3)과 공통 테마 모듈 `shared/uiTheme.js`의 대체값 근거를 남겨요. 같은 날 명세 작성 때 받은 값을 공통 테마 모듈 착수 시점(2026-10-17 21:02 KST)에 같은 방법으로 다시 받아 비교했어요.
+1.4.5 화면 디자인 통일의 기준값과 공통 테마 모듈 `shared/uiTheme.js`의 대체값 근거를 남겨요. 같은 날 처음 받은 값을 공통 테마 모듈 착수 시점(2026-10-17 21:02 KST)에 같은 방법으로 다시 받아 비교했어요.
 
 인증정보·쿠키 없이 `curl -sS -L`(일반 Chrome User-Agent)로 공개 HTML·CSS·JS를 받아 정적으로 읽었어요. 받은 파일은 저장소 밖 임시 디렉터리에 두고 실행하지 않았어요. 내장 브라우저는 `chzzk.naver.com`을 막으므로 실제 페이지의 DOM·computed style은 측정하지 않았어요. **실제 Chrome 화면은 미확인**이에요.
 
@@ -16,7 +16,7 @@
 | `https://ssl.pstatic.net/static/nng/glive/resource/p/static/js/index-uNhAs37B.js`    | `200` | 5,526,594  | `79eff47113da`    |
 | `https://ssl.pstatic.net/static/nng/glive/resource/p/static/js/vendor-CwePr91W.js`   | `200` | 6,463,234  | `567ff0e53e98`    |
 
-HTML은 명세 §3.1과 같은 두 CSS 파일 이름을 연결했어요. 아래 토큰 값도 명세 §3.2와 모두 같았어요.
+HTML은 처음 받았을 때와 같은 두 CSS 파일 이름을 연결했어요. 아래 토큰 값도 처음 받은 값과 모두 같았어요.
 
 ## 루트 테마 표식
 
@@ -26,7 +26,7 @@ HTML은 명세 §3.1과 같은 두 CSS 파일 이름을 연결했어요. 아래 
 - 테마는 주소의 `theme=light|dark` 강제값 → localStorage `theme` 저장값 → 기본값 순서로 정해요. 기본값은 스튜디오 iframe만 라이트이고 나머지는 다크예요.
 - `<html>`에서 `light`·`theme_dark` 클래스를 지운 뒤 다크면 `theme_dark`, 라이트면 `light`를 붙여요. `data-theme`에는 테마 이름(`dark`/`light`)을 쓰고 `style.colorScheme`도 같은 이름으로 지정해요.
 
-명세 §3.1의 표식 종류(클래스 `theme_dark`/`light`, `data-theme`, `colorScheme`), 기본 다크, 스튜디오 iframe 라이트와 같아요. 이번 재확인에서 이 스크립트가 팝업 경로 전용이라는 점을 추가로 확인했어요. 토큰 이름 체계와 표식 방식 자체는 바뀌지 않았어요.
+처음 확인한 표식 종류(클래스 `theme_dark`/`light`, `data-theme`, `colorScheme`), 기본 다크, 스튜디오 iframe 라이트와 같아요. 이번 재확인에서 이 스크립트가 팝업 경로 전용이라는 점을 추가로 확인했어요. 토큰 이름 체계와 표식 방식 자체는 바뀌지 않았어요.
 
 ### 본 화면의 React 테마 공급자(정적 코드 읽기)
 
@@ -36,7 +36,7 @@ HTML은 명세 §3.1과 같은 두 CSS 파일 이름을 연결했어요. 아래 
 
 정리하면 라이트 표식(`light` 클래스, `data-theme="light"`)은 두 경로가 같아요. 다크는 클래스 `theme_dark`가 공통이고, `data-theme`은 경로·시점에 따라 `dark` 또는 `theme_dark`일 수 있어요. 공통 테마 모듈은 다크 규칙에 `[data-theme="theme_dark"]`도 넣었어요. 표식이 없을 때도 다크이므로 결과는 같아요.
 
-명세 §5.3은 `features/chatTools/panel.js`의 `[data-theme="theme_dark"]`가 실측 값(`dark`)과 맞지 않는다고 적었어요. 이 판단은 팝업 경로의 인라인 스크립트 기준이에요. 본 화면에서는 React 공급자가 그 값을 쓸 수 있으므로, 이전 동작의 영향을 findings에 적을 때 이 근거와 실제 Chrome 확인 결과를 함께 반영해야 해요.
+처음에는 `features/chatTools/panel.js`의 `[data-theme="theme_dark"]`가 실측 값(`dark`)과 맞지 않는다고 보았어요. 이 판단은 팝업 경로의 인라인 스크립트 기준이에요. 본 화면에서는 React 공급자가 그 값을 쓸 수 있으므로, 이전 동작의 영향을 findings에 적을 때 이 근거와 실제 Chrome 확인 결과를 함께 반영해야 해요.
 
 ### CSS의 테마 선택자
 

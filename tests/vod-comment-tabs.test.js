@@ -11,7 +11,7 @@ function evalRepoScript(dom, ...parts) {
     dom.window.eval(fs.readFileSync(path.join(ROOT, ...parts), "utf8"));
 }
 
-// The three comment-body placeholders copy CHZZK's own wording; every other notice uses 해요체 (spec §8).
+// The three comment-body placeholders copy CHZZK's own wording; every other notice uses 해요체 (docs/business-rules.md, 화면 디자인).
 const NATIVE_COMMENT_BODY_COPY = [
     "삭제된 댓글입니다.",
     "내용을 표시할 수 없는 댓글입니다.",

@@ -9,9 +9,9 @@ const {
     waitForCondition,
 } = require("./helpers/extension-page-fixture.js");
 
-// spec §6 / §8 for the discovery panels: category tools (방송 목록), video search (다시보기 검색) and the
+// Design rules (shared/AGENTS.md, features/AGENTS.md) for the discovery panels: category tools (방송 목록), video search (다시보기 검색) and the
 // monthly broadcast calendar. Each panel asks for the shared CHZZK theme (shared/uiTheme.js) before its own
-// style, keeps no theme fallback table of its own and keeps the font classification of spec §6.3.
+// style, keeps no theme fallback table of its own and keeps the two-class font rule in features/AGENTS.md.
 
 const THEME_STYLE_ID = "betterchzzk-ui-theme";
 const CATEGORY_STYLE_ID = "betterchzzk-category-tools-style";
@@ -20,7 +20,7 @@ const MONTHLY_STYLE_ID = "betterchzzk-monthly-broadcast-time-style";
 const MONTHLY_CHANNEL_ID = "0123456789abcdef0123456789abcdef";
 const MONTHLY_FONT_FAMILY =
     '"Sandoll Nemony2", "Sandoll Nemony", "Apple SD Gothic Neo", "Apple SD Gothic NEO", "Malgun Gothic", "맑은 고딕", sans-serif';
-// Badges drawn on top of card media keep theme-independent colors (spec §6.2).
+// Badges drawn on top of card media keep theme-independent colors (features/AGENTS.md).
 const CATEGORY_FIXED_COLOR_SELECTORS = ['[data-bcgt-follower-badge="1"]', '[data-bcgt-live-elapsed-badge="1"]'];
 const COLOR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?)\(|\b(?:white|black)\b/i;
 const THEME_SELECTOR = /\[class\*=|\[dark\]|\[theme=|theme_dark|data-theme|(?:^|[\s,(])\.light\b/;
@@ -242,7 +242,7 @@ function assertSharedThemeContract(document, styleId, fixedColorSelectors = []) 
     return { css, rules };
 }
 
-// Small text must not use the low-contrast shared tokens (spec §3.4, shared/AGENTS.md).
+// Small text must not use the low-contrast shared tokens (shared/AGENTS.md).
 function assertSmallTextTokens(rules) {
     const aliases = new Map();
     for (const rule of rules)
@@ -331,7 +331,7 @@ test("category tools request the shared theme and keep only the media badge colo
     assert.equal(declaration(rules, ".bcgt-category-summary .bcgt-category-row", "background"), "var(--bcgt-chip-bg)");
     assert.match(css, /--bcgt-chip-bg:var\(--bct-brand\);--bcgt-chip-text:var\(--bct-on-brand\)/);
 
-    // Native font classification (spec §6.3): the bar copies the host font and the follower badge keeps its stack.
+    // Native font classification (features/AGENTS.md): the bar copies the host font and the follower badge keeps its stack.
     assert.doesNotMatch(css, /--bct-font/);
     assert.equal(declaration(rules, "#betterchzzk-category-tools", "font-family"), "var(--bcgt-font-family)");
     assert.match(declaration(rules, '[data-bcgt-follower-badge="1"]', "font-family"), /^"Sandoll Nemony2",/);
