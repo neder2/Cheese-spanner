@@ -512,6 +512,14 @@
                 if (EFFECT_OPTION_KEYS.includes(key)) stages[value ? "effects-on" : "effects-off"][key] = value;
                 else stages.sync[key] = value;
             }
+            // Keys the file leaves out keep their stored values, so a partial file is checked as the stored state
+            // after these writes: the speed shortcut trio falls back to its defaults as a whole on a duplicate,
+            // which would change keys the file never named while the preview reports only the file's keys.
+            const written = { ...stages["effects-off"], ...stages.sync, ...stages["effects-on"] };
+            const effective = schema.normalizeOptions({ ...syncData, ...written });
+            for (const key of schema.OPTION_KEYS) {
+                if (!Object.is(effective[key], desired[key])) return fail("option-combination");
+            }
             for (const [permission, keys] of Object.entries(PERMISSION_OPTION_KEYS)) {
                 const enabled = keys.filter((key) => turnsOn(key) && desired[key] === true);
                 summary.permissionOptionKeys.push(...enabled);

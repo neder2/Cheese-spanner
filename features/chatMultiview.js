@@ -1027,10 +1027,20 @@
     }
 
     // ── 패널 ───────────────────────────────────────────────────────────────────
-    function cellMin() {
+    // 채팅 내용이 배율에 맞게 들어가는 칸의 최소 크기예요. 화면이 좁을 때 그리드가 칸을 이만큼까지 줄여 보여요.
+    function contentMin() {
         const base = config.input ? INPUT_CELL_MIN : LIST_CELL_MIN;
         const ratio = config.scale / 100;
         return { width: Math.ceil(base.width * ratio), height: Math.ceil(base.height * ratio) };
+    }
+    // 저장하는 칸 크기는 배율을 적용해 화면에 보이는 CSS px이에요(shared/chatMultiview.js). 끌어서 정하는 크기도
+    // 저장 범위(최소 240×180·최대 1600×2160) 안에서만 움직여야 놓은 뒤 저장값으로 다시 계산해도 크기가 튀지 않아요.
+    function cellMin() {
+        const min = contentMin();
+        return {
+            width: Math.max(min.width, model.MIN_CHAT_WIDTH),
+            height: Math.max(min.height, model.MIN_CHAT_HEIGHT),
+        };
     }
     function viewportSpace() {
         return {
@@ -1100,7 +1110,7 @@
     }
     // 프레임을 옮기거나 다시 불러오지 않고 그리드 열·행 값만 바꿔요.
     function layoutGrid(target, { columns, rows }) {
-        const min = cellMin();
+        const min = contentMin();
         const vars = {
             "--bccmv-columns": String(columns),
             "--bccmv-rows": String(rows),
@@ -1298,8 +1308,16 @@
                 min = cellMin();
             const width = drag.width + (drag.corner.endsWith("right") ? -dx : dx);
             const height = drag.height + (drag.corner.startsWith("bottom") ? -dy : dy);
-            const panelWidth = clampTo(width, span(drag.columns, min.width), space.width);
-            const panelHeight = clampTo(height, span(drag.rows, min.height), space.height);
+            const panelWidth = clampTo(
+                width,
+                span(drag.columns, min.width),
+                Math.min(space.width, span(drag.columns, model.MAX_CHAT_WIDTH))
+            );
+            const panelHeight = clampTo(
+                height,
+                span(drag.rows, min.height),
+                Math.min(space.height, span(drag.rows, model.MAX_CHAT_HEIGHT))
+            );
             target.displaySize = {
                 width: Math.round((panelWidth - span(drag.columns, 0)) / drag.columns),
                 height: Math.round((panelHeight - span(drag.rows, 0)) / drag.rows),
@@ -1370,11 +1388,13 @@
     }
     function setSheet(target, name) {
         if (panel !== target) return;
-        if (target.sheetName === "add" && name !== "add") {
+        // Judge by the sheet on screen: an empty panel shows the add sheet without choosing it.
+        const leavingAdd = sheetOf(target) === "add";
+        target.sheetName = name;
+        if (leavingAdd && sheetOf(target) !== "add") {
             cancelRequest(target);
             clearResults(target);
         }
-        target.sheetName = name;
         render();
         if (name === "add") target.input.focus();
     }

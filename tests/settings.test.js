@@ -28,6 +28,7 @@ const expectedDefaults = {
     volumeTooltipEnabled: false,
     playerZoomEnabled: false,
     playerZoomMode: "manual",
+    playerZoomShortcutKey: "alt",
     ambientEnabled: false,
     ambientIntensity: 60,
     hideLiveBadgeEnabled: false,

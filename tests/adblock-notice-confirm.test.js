@@ -277,7 +277,7 @@ const nonTargets = {
     "dialog role": (n) => n.el.setAttribute("role", "dialog"),
     "missing aria-modal": (n) => n.el.removeAttribute("aria-modal"),
     "different title": (n) => {
-        n.el.querySelector("strong").textContent = "광고 차단 프로그램을 사용하시나요?";
+        n.el.querySelector("strong").textContent = "광고 차단 프로그램 설정을 확인해 주세요.";
     },
     "different description": (n) => {
         n.el.querySelector("p").textContent = "광고 차단 프로그램을 끄고 다시 시도해 주세요.";
@@ -434,7 +434,133 @@ const unmeasuredHandlers = [
     "e=>{e.isTrusted&&(xe(!1),xe.log())}",
     "e=>{e.target.isTrusted&&xe(!1)}",
     "(e,t)=>{e.isTrusted&&xe(!1)}",
+    "e=>{e.isTrusted&&xe(false,xe(!1))}",
+    "e=>{if(e.isTrusted){xe(false);xe(!1)}}",
+    "e=>{if(e.isTrusted){xe(false)}else{xe(false)}}",
+    "e=>{if(!e.isTrusted){xe(false)}}",
+    "e=>{e.isTrusted&&xe.call(null,false)}",
+    "e=>{e.isTrusted&&xe(e.value=false)}",
+    "e=>{e.isTrusted&&xe(false);e.report()}",
+    "async e=>{e.isTrusted&&xe(false)}",
 ];
+
+const equivalentConfirmHandlers = [
+    "e=>{e.isTrusted&&xe(false)}",
+    "(e)=>{e.isTrusted&&xe(!1);}",
+    "(event) => { (event.isTrusted) && xe((false)); }",
+    "e=>e.isTrusted&&xe(false)",
+    "e=>{if(e.isTrusted)xe(false)}",
+    "(e)=>{if(e.isTrusted){xe(!1);}}",
+];
+
+for (const handler of equivalentConfirmHandlers) {
+    test(`one trusted false setter accepts an equivalent expression: ${handler}`, async (t) => {
+        const f = fixture(t);
+        const n = f.notice({ handler });
+        n.mount();
+        f.options(true);
+        await flush();
+        assert.deepEqual(n.calls, [false]);
+        assert.equal(n.backdrop.isConnected, false);
+        assert.equal(f.result().last, "removed");
+        assert.equal(f.forge(n.button), true, "the same button is never called twice");
+    });
+}
+
+test("notice wording and neutral wrappers preserve the same native confirmation", async (t) => {
+    const f = fixture(t);
+    const n = f.notice();
+    const title = f.w.document.createElement("h2");
+    title.textContent = "광고 차단 프로그램을 사용하시나요?";
+    n.el.querySelector("strong").replaceWith(title);
+    const paragraph = n.el.querySelector("p");
+    paragraph.textContent = "광고 차단 프로그램 사용은 재생 환경에 영향을 줄 수 있습니다.";
+    const followup = f.w.document.createElement("p");
+    followup.textContent = "사용 중인 확장 프로그램이 있다면 삭제한 뒤 서비스를 이용해 주세요.";
+    paragraph.after(followup);
+    const inside = f.w.document.createElement("div");
+    n.el.replaceWith(inside);
+    inside.append(n.el);
+    n.mount();
+    const outside = f.w.document.createElement("div");
+    n.backdrop.replaceWith(outside);
+    outside.append(n.backdrop);
+    f.options(true);
+    await flush();
+    assert.deepEqual(n.calls, [false]);
+    assert.equal(n.backdrop.isConnected, false);
+    assert.equal(f.shortcuts.blocked, 0, "only the native close releases modal state");
+    assert.equal(f.w.document.body.style.overflow, "");
+});
+
+test("semantic notice matching preserves independent anchors and rejects unsafe wrappers", async (t) => {
+    const f = fixture(t);
+    f.options(true);
+    const changes = [
+        [
+            "missing playback warning",
+            (n) => {
+                n.el.querySelector("p").textContent =
+                    "광고 차단 프로그램 사용 중인 확장 프로그램을 삭제 후 서비스를 이용해 주세요.";
+            },
+        ],
+        [
+            "missing extension removal guidance",
+            (n) => {
+                n.el.querySelector("p").textContent =
+                    "광고 차단 프로그램 사용 시 재생 환경에 영향을 미칠 수 있어 서비스를 이용할 수 없습니다.";
+            },
+        ],
+        [
+            "different help URL on a revised title",
+            (n) => {
+                n.el.querySelector("strong").textContent = "광고 차단 프로그램을 사용하시나요?";
+                n.el.querySelector("a").href = "https://help.naver.com/alias/navergame/other.naver";
+            },
+        ],
+        [
+            "interactive wrapper",
+            (n) => {
+                const wrapper = f.w.document.createElement("div");
+                wrapper.setAttribute("role", "button");
+                n.el.replaceWith(wrapper);
+                wrapper.append(n.el);
+            },
+        ],
+        [
+            "wrapper has another action",
+            (n) => {
+                const wrapper = f.w.document.createElement("div");
+                n.el.replaceWith(wrapper);
+                wrapper.append(n.el, f.w.document.createElement("button"));
+            },
+        ],
+        [
+            "portal wrapper has another dialog",
+            (n) => {
+                const wrapper = f.w.document.createElement("div");
+                const sibling = f.w.document.createElement("div");
+                sibling.setAttribute("role", "dialog");
+                n.backdrop.replaceWith(wrapper);
+                wrapper.append(n.backdrop, sibling);
+            },
+        ],
+    ];
+    for (const [name, change] of changes) {
+        const n = f.notice();
+        n.mount();
+        change(n);
+        await flush();
+        assert.deepEqual(n.calls, [], name);
+        assert.equal(f.requests.length, 0, `${name}: isolated refuses`);
+        assert.equal(f.forge(n.button), true, `${name}: MAIN refuses`);
+        assert.equal(n.concealed(), false, name);
+        f.requests.length = 0;
+        n.unmount();
+        f.w.document.body.replaceChildren();
+        await flush();
+    }
+});
 
 test("React links must be current, unique and the measured confirm shape", async (t) => {
     const f = fixture(t);

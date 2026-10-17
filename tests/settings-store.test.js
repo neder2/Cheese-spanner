@@ -357,6 +357,88 @@ test("settings files are strict, report unknown option keys, and keep cross-opti
     });
 });
 
+test("a partial file is checked against the speed shortcuts it keeps, before anything is written", async () => {
+    const stored = {
+        playbackSpeedHalfKeyCode: "KeyQ",
+        playbackSpeedDoubleKeyCode: "BracketLeft",
+        playbackSpeedResetKeyCode: "KeyW",
+    };
+    const effective = (sync) => {
+        const options = settings.normalizeOptions(sync);
+        return [
+            options.playbackSpeedHalfKeyCode,
+            options.playbackSpeedDoubleKeyCode,
+            options.playbackSpeedResetKeyCode,
+        ];
+    };
+    const conflicting = file({ options: { playbackSpeedHalfKeyCode: "BracketLeft" } });
+    const parsed = catalog.parseBackup(JSON.stringify(conflicting));
+    assert.equal(parsed.ok, true);
+    assert.deepEqual(catalog.planImport({ sync: stored, local: {} }, parsed.backup), {
+        ok: false,
+        error: "option-combination",
+    });
+
+    const h = harness({ sync: stored });
+    for (const action of ["preview", "apply"]) {
+        const result = await h.send(
+            { type: BACKUP, version: 1, action, backup: conflicting, fingerprint: "x" },
+            optionsSender
+        );
+        assert.deepEqual(result, { ok: false, error: "invalid-file" }, `${action} rejects the merged duplicate`);
+    }
+    assert.equal(h.calls.filter(([, method]) => method === "set").length, 0);
+    assert.deepEqual(h.sync, stored, "raw values stay");
+    assert.deepEqual(effective(h.sync), ["KeyQ", "BracketLeft", "KeyW"], "shortcuts in use stay");
+
+    // A raw duplicate already resolved to the defaults must not come back into effect through a partial write.
+    const brokenStored = { ...stored, playbackSpeedHalfKeyCode: "KeyW" };
+    const unrelated = catalog.parseBackup(JSON.stringify(file({ options: { playbackSpeedHalfKeyCode: "KeyE" } })));
+    assert.deepEqual(catalog.planImport({ sync: brokenStored, local: {} }, unrelated.backup), {
+        ok: false,
+        error: "option-combination",
+    });
+
+    const fitting = file({ options: { playbackSpeedHalfKeyCode: "KeyE" } });
+    const preview = await h.send({ type: BACKUP, version: 1, action: "preview", backup: fitting }, optionsSender);
+    assert.equal(preview.ok, true);
+    assert.equal(preview.changes, 1);
+    // Another tab moves the double-speed key onto the imported key after the preview.
+    await h.optionsPageWrite({ playbackSpeedDoubleKeyCode: "KeyE" });
+    h.calls.length = 0;
+    const stale = await h.send(
+        { type: BACKUP, version: 1, action: "apply", backup: fitting, fingerprint: preview.fingerprint },
+        optionsSender
+    );
+    assert.deepEqual(stale, { ok: false, error: "invalid-file" });
+    assert.equal(h.calls.filter(([, method]) => method === "set").length, 0);
+    assert.deepEqual(effective(h.sync), ["KeyQ", "KeyE", "KeyW"]);
+
+    await h.optionsPageWrite({ playbackSpeedDoubleKeyCode: "BracketLeft" });
+    const again = await h.send({ type: BACKUP, version: 1, action: "preview", backup: fitting }, optionsSender);
+    const applied = await h.send(
+        { type: BACKUP, version: 1, action: "apply", backup: fitting, fingerprint: again.fingerprint },
+        optionsSender
+    );
+    assert.equal(applied.result.status, "applied");
+    assert.deepEqual(effective(h.sync), ["KeyE", "BracketLeft", "KeyW"], "a fitting partial file keeps the others");
+
+    const whole = file({
+        options: {
+            playbackSpeedHalfKeyCode: "BracketLeft",
+            playbackSpeedDoubleKeyCode: "BracketRight",
+            playbackSpeedResetKeyCode: "Backslash",
+        },
+    });
+    const wholePreview = await h.send({ type: BACKUP, version: 1, action: "preview", backup: whole }, optionsSender);
+    const wholeApplied = await h.send(
+        { type: BACKUP, version: 1, action: "apply", backup: whole, fingerprint: wholePreview.fingerprint },
+        optionsSender
+    );
+    assert.equal(wholeApplied.result.status, "applied");
+    assert.deepEqual(effective(h.sync), ["BracketLeft", "BracketRight", "Backslash"], "a whole file still applies");
+});
+
 test("export, change and import restore the backed-up values in effect-safe stage order", async () => {
     const h = harness({
         sync: {

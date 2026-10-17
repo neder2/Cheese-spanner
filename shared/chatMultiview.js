@@ -8,6 +8,8 @@
  *   channels는 최대 4개·중복 없음, channelId는 소문자 32자리 16진수, channelName은 앞뒤 공백이 없는
  *   0~100 code point 문자열이다. chatWidth 240~1600·chatHeight 180~2160은 채팅 한 칸의 CSS px 정수이고
  *   패널 크기는 칸 수에 맞춰 화면에서 계산한다(2026-10-12 사용자 요청: 칸이 넓게 늘어나지 않게).
+ *   칸 크기는 scale을 적용한 뒤 화면에 보이는 크기이며 배율 적용 전 값이 아니다. 콘텐츠의 크기 손잡이도 이
+ *   범위 안에서만 움직여 끄는 동안 보인 크기와 저장 뒤 크기가 같다(2026-10-17).
  *   corner는 패널을 붙인 화면 모서리(bottom-right/bottom-left/top-right/top-left), x·y는 그 모서리에서
  *   패널까지의 CSS px 거리(0~7680 정수), input은 칸의 채팅 입력창 표시 여부, scale은 채팅 크기 퍼센트(70~150)다.
  *   같은 날 이전 형식(version 1: 패널 width·height, 아래 모서리 corner, 선택 input·scale)은 채널·위치 모서리·

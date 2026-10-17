@@ -73,6 +73,40 @@ test("saved options load before any default-enabled popup action", async (t) => 
     assert.equal(p.clicks(), 1);
 });
 
+test("the measured popup close label closes once and keeps other actions untouched", async (t) => {
+    const f = fixture(t);
+    const p = f.popup();
+    p.button.setAttribute("aria-label", "팝업 닫기");
+    const untouched = [];
+    for (const label of ["광고 닫기", "팝업 닫기 및 설치", "닫기 설정", "확인"]) {
+        const other = f.popup();
+        other.button.setAttribute("aria-label", label);
+        untouched.push({ label, other });
+    }
+    f.options(true);
+    await flush();
+    f.frame();
+    assert.equal(p.clicks(), 1);
+    assert.equal(p.el.isConnected, false);
+    for (const { label, other } of untouched) {
+        assert.equal(other.clicks(), 0, label);
+        assert.equal(other.el.isConnected, true, label);
+    }
+});
+
+test("both measured close labels count toward ambiguity", async (t) => {
+    const f = fixture(t);
+    const p = f.popup();
+    const second = p.button.cloneNode(true);
+    second.setAttribute("aria-label", "팝업 닫기");
+    second.addEventListener("click", () => assert.fail("ambiguous second close button clicked"));
+    p.el.append(second);
+    f.options(true);
+    await flush();
+    assert.equal(p.clicks(), 0);
+    assert.equal(p.el.hasAttribute("data-betterchzzk-adblock-popup-closing"), false);
+});
+
 const visibilityCycles = {
     hidden: (el, hidden) => {
         el.hidden = hidden;

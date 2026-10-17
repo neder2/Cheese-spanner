@@ -1430,6 +1430,73 @@ test("a left VOD chat takes the reserved info column and banner along so its ove
     assert.equal(right.style.cssText, nativeColumnStyle, "native inline styles are restored");
 });
 
+test("the chat height cap follows a native height that changes with the chat width", async (t) => {
+    // Model of the measured VOD relation (player height + 85px overhang): a wider chat narrows the player, so the
+    // native chat gets shorter. Mock numbers, not a Chrome measurement.
+    const f = await fixture(t, { route: "/video/123", sidebar: false, storedHeight: 450 });
+    const aside = f.doc.getElementById("vod-aside");
+    const base = aside.getBoundingClientRect;
+    const nativeHeight = (chatWidth) => Math.round(((1088 - chatWidth) * 9) / 16) + 85;
+    aside.getBoundingClientRect = () => {
+        const box = base();
+        const applied = Number.parseFloat(aside.style.getPropertyValue("--bcpr-height"));
+        const height = Number.isFinite(applied) ? applied : nativeHeight(box.width);
+        return { ...box, height, bottom: box.top + height };
+    };
+    f.resize(1100);
+    await f.flush();
+    const grip = () => f.doc.querySelector('[data-bcpr-handle="chat-height"]');
+    assert.equal(aside.style.getPropertyValue("--bcpr-height"), "450px", "450px fits the 498px native chat");
+    assert.equal(grip().getAttribute("aria-valuemax"), "498");
+
+    f.drag("chat", 200);
+    await f.flush();
+    assert.equal(f.width(aside), 553);
+    assert.equal(aside.hasAttribute("data-bcpr-height"), false, "450px no longer fits the 386px native chat");
+    assert.equal(grip().getAttribute("aria-valuemax"), "386");
+    assert.equal(f.writes.filter((write) => Object.hasOwn(write, HEIGHT_KEY)).length, 0, "the height choice stays");
+    assert.equal(f.store.data[HEIGHT_KEY], 450);
+
+    f.drag("chat", -200);
+    await f.flush();
+    assert.equal(f.width(aside), 353);
+    assert.equal(aside.style.getPropertyValue("--bcpr-height"), "450px", "the saved height returns with the room");
+    assert.equal(grip().getAttribute("aria-valuemax"), "498");
+});
+
+test("a left VOD chat finds an info column and banner that are added or replaced later without a resize", async (t) => {
+    const f = await fixture(t, { route: "/video/123", sidebar: false, initialOptions: { chatPosition: "left" } });
+    const body = f.doc.getElementById("layout-body");
+    const column = () => '<div class="_content_right_t" style="flex:none;width:353px"></div>';
+    body.insertAdjacentHTML(
+        "beforeend",
+        '<div class="_area_t"><div class="_content_t" style="display:flex">' +
+            '<div class="_content_left_t"><h3>제목</h3></div>' +
+            column() +
+            "</div></div>"
+    );
+    await f.flush();
+    const first = f.doc.querySelector("._content_right_t");
+    assert.equal(first.getAttribute("data-bcpr-side"), "left", "a later info column joins the left chat");
+
+    first.insertAdjacentHTML("afterend", column());
+    first.remove();
+    await f.flush();
+    const replaced = f.doc.querySelector("._content_right_t");
+    assert.notEqual(replaced, first);
+    assert.equal(replaced.getAttribute("data-bcpr-side"), "left", "a same-size replacement keeps the left side");
+    assert.equal(replaced.style.getPropertyValue("--bcpr-companion-width"), "353px");
+
+    body.insertAdjacentHTML("afterbegin", '<div class="_banner_t" style="position:absolute;top:43px;right:0"></div>');
+    await f.flush();
+    assert.equal(f.doc.querySelector("._banner_t").getAttribute("data-bcpr-side"), "left", "a late banner follows");
+
+    // Chat rows stay outside this discovery: a message, even one with a banner-like class, never resyncs the layout.
+    f.doc.getElementById("messages").insertAdjacentHTML("beforeend", '<div class="_banner_msg">채팅</div>');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.frames.size, 0, "chat rows schedule no layout sync");
+});
+
 test("fullscreen keeps the native side and height, keeps width support, and restores both choices on exit", async (t) => {
     // 2026-10-09 Codex Chrome: a VOD chat opened inside fullscreen kept the left side, the saved height and both grips.
     const f = await fixture(t, {

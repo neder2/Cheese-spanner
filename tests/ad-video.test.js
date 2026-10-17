@@ -555,6 +555,12 @@ function liveSchedule(adUnitId = "w_live_chzzk_naver_va") {
     };
 }
 
+function prependScheduleHooks(owner, count) {
+    for (let index = 0; index < count; index++) {
+        owner.memoizedState = { memoizedState: { value: index }, next: owner.memoizedState };
+    }
+}
+
 test("live pre-roll and mid-roll use SDK ownership and known units independently of DOM names", (t) => {
     const window = createPage(t);
     window.eval(source);
@@ -2047,4 +2053,257 @@ test("PiP mid-roll sharing still requires the current registered content manager
     registry.delete(h.controller.viewSlot);
     h.manager.loadWithAdSchedule(input);
     assert.equal(h.calls.at(-1).schedule, input);
+});
+
+test("schedule ownership retains a unique adjacent ref pair after unrelated leading hooks", (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    for (const prefix of [1, 4, 12]) {
+        const h = createScheduleHarness(window);
+        prependScheduleHooks(h.owner, prefix);
+        h.owner.alternate = { ...h.owner, memoizedProps: { ...h.owner.memoizedProps } };
+        prependScheduleHooks(h.owner.alternate, 1);
+        new window.WeakMap().set(h.container, h.manager);
+        const input = liveSchedule("SHIFTED_REF_UNIT");
+        assert.equal(h.manager.loadWithAdSchedule(input, "native-argument"), "loaded");
+        assert.equal(h.calls.at(-1).schedule.adBreaks[0].adSources.length, 0);
+        assert.equal(h.calls.at(-1).rest[0], "native-argument");
+        assert.equal(h.calls.at(-1).receiver, h.manager);
+        assert.equal(input.adBreaks[0].adSources.length, 1);
+        assert.equal(h.manager.startAdSchedule(), "SCHEDULE_COMPLETE");
+    }
+});
+
+test("shifted schedule refs reject ambiguous, nonadjacent and unreadable hook ownership", (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    let getterCalls = 0;
+    const variants = [
+        (h, pair) => {
+            pair.next.next = { memoizedState: h.videoRef, next: { memoizedState: h.containerRef, next: null } };
+        },
+        (_h, pair) => {
+            pair.next = { memoizedState: { unrelated: true }, next: pair.next };
+        },
+        (_h, pair) => {
+            [pair.memoizedState, pair.next.memoizedState] = [pair.next.memoizedState, pair.memoizedState];
+        },
+        (h) => prependScheduleHooks(h.owner, 64),
+        (h, pair) => (pair.next.next = h.owner.memoizedState),
+        (_h, pair) => {
+            Object.defineProperty(pair, "memoizedState", {
+                get() {
+                    getterCalls++;
+                    throw new Error("do not inspect accessor hooks");
+                },
+            });
+        },
+        (h) => {
+            Object.defineProperty(h.owner.memoizedState, "next", {
+                get() {
+                    getterCalls++;
+                    throw new Error("do not traverse accessor hooks");
+                },
+            });
+        },
+        (h) => {
+            h.owner.alternate = { ...h.owner, memoizedProps: { ...h.owner.memoizedProps, channelId: "other" } };
+        },
+        (h, pair) => {
+            h.owner.memoizedState = { memoizedState: h.videoRef, next: null };
+            h.owner.return = { memoizedProps: h.owner.memoizedProps, memoizedState: pair.next, return: null };
+        },
+    ];
+    for (const change of variants) {
+        const h = createScheduleHarness(window);
+        const pair = h.owner.memoizedState;
+        prependScheduleHooks(h.owner, 2);
+        change(h, pair);
+        new window.WeakMap().set(h.container, h.manager);
+        const input = liveSchedule("SHIFTED_REF_UNIT");
+        h.manager.loadWithAdSchedule(input);
+        assert.equal(h.calls.at(-1).schedule, input, "uncertain refs must preserve the native schedule");
+    }
+    assert.equal(getterCalls, 0);
+});
+
+test("a malformed leading ref pair cannot fall back to later apparently valid refs", (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    let getterCalls = 0;
+    for (const malformed of ["video", "container", "hook"]) {
+        const h = createScheduleHarness(window);
+        const pair = h.owner.memoizedState;
+        const hidden = {};
+        Object.defineProperty(hidden, "current", {
+            get() {
+                getterCalls++;
+                return malformed === "video" ? h.video : h.container;
+            },
+        });
+        h.owner.memoizedState = {
+            memoizedState: malformed === "video" ? hidden : h.videoRef,
+            next: { memoizedState: malformed === "container" ? hidden : h.containerRef, next: pair },
+        };
+        if (malformed === "hook") {
+            Object.defineProperty(h.owner.memoizedState, "memoizedState", {
+                get() {
+                    getterCalls++;
+                    return h.videoRef;
+                },
+            });
+        }
+        new window.WeakMap().set(h.container, h.manager);
+        const input = liveSchedule("SHIFTED_REF_UNIT");
+        h.manager.loadWithAdSchedule(input);
+        assert.equal(h.calls.at(-1).schedule, input);
+    }
+    assert.equal(getterCalls, 0);
+});
+
+test("shifted schedule refs recheck their complete observed chain before applying", (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    for (const mutate of [
+        (h) => (h.owner.memoizedState.next = h.owner.memoizedState.next.next),
+        (h, pair) => {
+            pair.next.next = { memoizedState: h.videoRef, next: { memoizedState: h.containerRef, next: null } };
+        },
+        (h) => (h.owner.alternate.memoizedProps = { ...h.owner.memoizedProps, liveId: 2 }),
+        (h) => (h.owner.alternate.memoizedState = null),
+        (h) => (h.videoRef.current = window.document.createElement("video")),
+    ]) {
+        const h = createScheduleHarness(window);
+        const pair = h.owner.memoizedState;
+        prependScheduleHooks(h.owner, 3);
+        h.owner.alternate = { ...h.owner, memoizedProps: { ...h.owner.memoizedProps } };
+        new window.WeakMap().set(h.container, h.manager);
+        let changed = false;
+        h.manager.getAdDisplayContainerInfo = () => {
+            if (!changed) {
+                changed = true;
+                mutate(h, pair);
+            }
+            return h.info;
+        };
+        const input = liveSchedule("SHIFTED_REF_UNIT");
+        h.manager.loadWithAdSchedule(input);
+        assert.equal(h.calls.at(-1).schedule, input);
+    }
+});
+
+test("shifted PiP refs preserve the main video and require the registered shared display", (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    const h = createPipScheduleHarness(window, true);
+    prependScheduleHooks(h.owner, 3);
+    const slot = h.controller.videoSlot;
+    const video = slot.video;
+    video.currentTime = 123;
+    video.setAttribute("src", "https://media.example/content.m3u8");
+    const before = { source: video.getAttribute("src"), time: video.currentTime, paused: video.paused };
+    h.controller.viewSlot = h.playerRoot.appendChild(window.document.createElement("div"));
+    const info = { adVideoContainer: h.controller.viewSlot, contentVideo: slot };
+    const shared = { getAdDisplayContainerInfo: () => info, loadWithAdSchedule() {}, startAdSchedule() {} };
+    const registry = new window.WeakMap();
+    registry.set(h.controller.viewSlot, shared);
+    registry.set(h.container, h.manager);
+    h.manager.getAdDisplayContainerInfo = () => info;
+    window.history.replaceState(null, "", "/lives");
+    const input = liveSchedule("SHIFTED_PIP_REF_UNIT");
+    h.manager.loadWithAdSchedule(input);
+    assert.equal(h.calls.at(-1).schedule.adBreaks[0].adSources.length, 0);
+    assert.equal(h.controller.videoSlot, slot);
+    assert.equal(slot.video, video);
+    assert.deepEqual({ source: video.getAttribute("src"), time: video.currentTime, paused: video.paused }, before);
+    registry.delete(h.controller.viewSlot);
+    h.manager.loadWithAdSchedule(input);
+    assert.equal(h.calls.at(-1).schedule, input);
+});
+
+test("measured schedule refs do not depend on unrelated ancestor state or long hook tails", (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    for (const kind of ["state", "cycle", "long"]) {
+        const h = createScheduleHarness(window);
+        const ancestor = { memoizedState: { unrelated: true }, memoizedProps: {}, return: null };
+        if (kind === "cycle") {
+            ancestor.memoizedState = { memoizedState: { unrelated: true }, next: null };
+            ancestor.memoizedState.next = ancestor.memoizedState;
+        } else if (kind === "long") {
+            ancestor.memoizedState = null;
+            prependScheduleHooks(ancestor, 64);
+        }
+        h.owner.return = ancestor;
+        const tail = { memoizedState: null };
+        prependScheduleHooks(tail, 64);
+        h.owner.memoizedState.next.next = tail.memoizedState;
+        new window.WeakMap().set(h.container, h.manager);
+        const input = liveSchedule("KNOWN_PAIR_WITH_UNRELATED_ANCESTOR");
+        h.manager.loadWithAdSchedule(input);
+        assert.equal(h.calls.at(-1).schedule.adBreaks[0].adSources.length, 0);
+        assert.equal(input.adBreaks[0].adSources.length, 1);
+    }
+
+    const h = createScheduleHarness(window);
+    const conflicting = {
+        memoizedProps: { ...h.owner.memoizedProps },
+        memoizedState: { memoizedState: { current: null }, next: { memoizedState: h.containerRef, next: null } },
+        return: null,
+    };
+    h.owner.return = conflicting;
+    new window.WeakMap().set(h.container, h.manager);
+    const input = liveSchedule("CONFLICTING_ANCESTOR");
+    h.manager.loadWithAdSchedule(input);
+    assert.equal(h.calls.at(-1).schedule, input, "an ancestor claiming the same container must not be skipped");
+});
+
+test("schedule ownership rejects an ancestor newly claiming the container during display inspection", (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    for (const shifted of [false, true]) {
+        for (const alternate of [false, true]) {
+            const h = createScheduleHarness(window);
+            if (shifted) prependScheduleHooks(h.owner, 3);
+            const ancestor = { memoizedState: null, memoizedProps: {}, return: null };
+            if (alternate) ancestor.alternate = { ...ancestor };
+            h.owner.return = ancestor;
+            const otherVideo = h.root.appendChild(window.document.createElement("video"));
+            new window.WeakMap().set(h.container, h.manager);
+            h.manager.getAdDisplayContainerInfo = () => {
+                const target = alternate ? ancestor.alternate : ancestor;
+                target.memoizedState = {
+                    memoizedState: { current: otherVideo },
+                    next: { memoizedState: h.containerRef, next: null },
+                };
+                target.memoizedProps = { channelId: "other-channel", liveId: 2 };
+                return h.info;
+            };
+            const input = liveSchedule("LATE_ANCESTOR_OWNER");
+            h.manager.loadWithAdSchedule(input);
+            assert.equal(h.calls.at(-1).schedule, input, "a newly conflicting candidate must invalidate ownership");
+            assert.equal(input.adBreaks[0].adSources.length, 1);
+        }
+    }
+});
+
+test("unrelated ancestor state changes do not invalidate unchanged schedule ownership", (t) => {
+    const window = createPage(t);
+    window.eval(source);
+    for (const shifted of [false, true]) {
+        const h = createScheduleHarness(window);
+        if (shifted) prependScheduleHooks(h.owner, 3);
+        const ancestor = { memoizedState: null, memoizedProps: {}, return: null };
+        h.owner.return = ancestor;
+        new window.WeakMap().set(h.container, h.manager);
+        h.manager.getAdDisplayContainerInfo = () => {
+            ancestor.memoizedState = { unrelated: "new-state" };
+            ancestor.memoizedProps = { unrelated: true };
+            return h.info;
+        };
+        const input = liveSchedule("UNCHANGED_OWNER");
+        h.manager.loadWithAdSchedule(input);
+        assert.equal(h.calls.at(-1).schedule.adBreaks[0].adSources.length, 0);
+        assert.equal(input.adBreaks[0].adSources.length, 1);
+    }
 });

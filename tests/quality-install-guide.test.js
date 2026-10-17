@@ -6,7 +6,7 @@ const { JSDOM } = require("jsdom");
 const read = (file) => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-// 실측한 고화질 설치 안내 두 변형. 구조는 같고 문단·설치 버튼 문구가 다르다.
+// 화면 실측 두 변형과 공개 번들에서 확인한 기본 화질 두 변형. 문구·설치·미설치 선택을 짝지어 둔다.
 const GUIDE_HTML = {
     // 2026-09-14 Chrome 커넥터 안내
     connector: `<div class="_dimmed_10lql_28"><div class="_layer_10lql_38">
@@ -20,6 +20,18 @@ const GUIDE_HTML = {
             <p class="_text_10lql_50">이미 확장 프로그램을 설치했다면<br><a href="https://help.naver.com/alias/navergame/chzzk6.naver" target="_blank" rel="noreferrer" class="_link_10lql_63">여기</a>를 참고해주세요.</p>
             <div class="_button_10lql_70"><button type="button">확장 프로그램 설치</button></div>
             <div class="_button_10lql_70"><button type="button">설치없이 일반 화질 시청</button></div>
+        </div></div>`,
+    // 2026-10-17 공개 번들·한국어 locale의 p2pMinScanline < 720 분기(화면 실측 아님).
+    connectorLower: `<div class="_dimmed_10lql_28"><div class="_layer_10lql_38">
+            <p>더 높은 화질로 시청하려면<br><strong>네이버 라이브 스트리밍 커넥터</strong>가 필요합니다.</p>
+            <div class="_button_10lql_70"><button type="button">설치하고 더 높은 화질 시청</button></div>
+            <div class="_button_10lql_70"><button type="button">설치없이 기본 화질 시청</button></div>
+        </div></div>`,
+    extensionLower: `<div class="_dimmed_10lql_28"><div class="_layer_10lql_38">
+            <p>크롬, 엣지 브라우저에서 더 높은 화질로 시청하려면<br><strong>브라우저 확장 프로그램</strong>을 먼저 설치해주세요.</p>
+            <p>이미 확장 프로그램을 설치했다면<br><a href="https://help.naver.com/alias/navergame/chzzk6.naver" target="_blank" rel="noreferrer">여기</a>를 참고해주세요.</p>
+            <div class="_button_10lql_70"><button type="button">확장 프로그램 설치</button></div>
+            <div class="_button_10lql_70"><button type="button">설치없이 기본 화질 시청</button></div>
         </div></div>`,
 };
 
@@ -559,7 +571,7 @@ test("guide variants are matched only as the measured pairs of message and insta
         [
             "extension",
             (g) => {
-                g.install.textContent = "확장 프로그램 설치하기";
+                g.install.textContent = "다른 확장 프로그램 설치하기";
             },
         ],
         [
@@ -585,4 +597,254 @@ test("guide variants are matched only as the measured pairs of message and insta
         await flush();
     }
     assert.equal(f.state().attempts, 0);
+});
+
+// 아래 소변경은 실브라우저에서 관측한 새 문구가 아닌 보수적인 호환성 회귀다.
+test("guide meaning survives punctuation and bounded wording changes within each measured pair", async (t) => {
+    const f = fixture(t);
+    f.options();
+    for (const [variant, message, install, decline] of [
+        [
+            "connector",
+            "고화질 시청을 위해 네이버 라이브 스트리밍 커넥터가 필요합니다!",
+            "설치하고 고화질 시청하기",
+            "설치 없이 일반 화질로 시청하기",
+        ],
+        [
+            "connector",
+            "고화질 시청을 위해서는 ‘네이버 라이브 스트리밍 커넥터’가 필요해요.",
+            "설치하고 고화질 시청",
+            "설치없이 일반 화질 시청",
+        ],
+        [
+            "extension",
+            "크롬 · 엣지 브라우저에서 고화질 시청을 위해 브라우저 확장 프로그램을 먼저 설치합니다!",
+            "확장 프로그램 설치하기",
+            "설치 없이 일반 화질 시청하기",
+        ],
+        [
+            "extension",
+            "크롬, 엣지 브라우저에서 고화질 시청을 위해서는 브라우저 확장 프로그램을 설치해 주세요.",
+            "확장 프로그램 설치",
+            "설치 없이 일반 화질로 시청",
+        ],
+    ]) {
+        const g = f.guide({ variant });
+        g.layer.querySelector("p").textContent = message;
+        g.install.textContent = install;
+        g.decline.textContent = decline;
+        g.mount();
+        await flush();
+        assert.deepEqual(g.calls, { decline: 1, install: 0 }, message);
+        g.parent.remove();
+    }
+    assert.equal(f.state().attempts, 4);
+});
+
+test("the lower-resolution pairs present in the current public bundle use only their native basic-quality choice", async (t) => {
+    const f = fixture(t);
+    f.options();
+    for (const variant of ["connectorLower", "extensionLower"]) {
+        const g = f.guide({ variant });
+        g.mount();
+        await flush();
+        assert.deepEqual(g.calls, { decline: 1, install: 0 }, variant);
+        assert.equal(g.root.isConnected, false);
+        g.parent.remove();
+    }
+    assert.equal(f.state().attempts, 2);
+});
+
+test("high and lower-resolution guide evidence cannot be mixed to authorize a choice", async (t) => {
+    const f = fixture(t);
+    f.options();
+    for (const [variant, field, text] of [
+        ["connectorLower", "install", "설치하고 고화질 시청"],
+        ["connectorLower", "decline", "설치없이 일반 화질 시청"],
+        ["extensionLower", "decline", "설치없이 일반 화질 시청"],
+        ["connector", "decline", "설치없이 기본 화질 시청"],
+        ["extension", "decline", "설치없이 기본 화질 시청"],
+        ["extensionLower", "install", "설치하고 더 높은 화질 시청"],
+    ]) {
+        const g = f.guide({ variant });
+        g[field].textContent = text;
+        g.mount();
+        await flush();
+        assert.deepEqual(g.calls, { decline: 0, install: 0 }, `${variant}: ${text}`);
+        g.parent.remove();
+        await flush();
+    }
+});
+
+test("shallow neutral wrappers and message markup changes preserve only the native decline action", async (t) => {
+    const f = fixture(t);
+    const g = f.guide({ variant: "extension", remove: false });
+    for (const node of [g.root, g.layer]) {
+        for (let index = 0; index < 2; index++) {
+            const wrapper = f.w.document.createElement("div");
+            node.replaceWith(wrapper);
+            wrapper.append(node);
+        }
+    }
+    const message = g.layer.querySelector("p");
+    const replacement = f.w.document.createElement("div");
+    replacement.innerHTML = `<span>${message.innerHTML}</span>`;
+    message.replaceWith(replacement);
+    g.decline.innerHTML = "<span>설치 없이</span> <strong>일반 화질 시청</strong>";
+    const media = f.w.document.createElement("video");
+    media.setAttribute("src", "/main-content.m3u8");
+    media.currentTime = 42;
+    const calls = { play: 0, pause: 0, load: 0 };
+    for (const method of Object.keys(calls)) media[method] = () => calls[method]++;
+    g.parent.append(media);
+    g.mount();
+    f.options();
+    await flush();
+    assert.deepEqual(g.calls, { decline: 1, install: 0 });
+    assert.deepEqual(calls, { play: 0, pause: 0, load: 0 });
+    assert.equal(media.currentTime, 42);
+    assert.equal(media.getAttribute("src"), "/main-content.m3u8");
+    assert.equal(media.parentElement, g.parent);
+    assert.ok(g.root.isConnected, "a native handler that leaves the guide open is not replaced by DOM removal");
+    replacement.append(" ");
+    g.root.classList.add("still-visible");
+    await flush();
+    assert.equal(g.calls.decline, 1, "a visible guide is not retried after a harmless wording or class update");
+});
+
+test("partial phrases, negation, other services and unsupported choices remain untouched", async (t) => {
+    const f = fixture(t);
+    f.options();
+    for (const [variant, field, text] of [
+        ["connector", "message", "네이버 라이브 스트리밍 커넥터가 필요합니다."],
+        ["connector", "message", "고화질 시청을 위해서는 다른 서비스 라이브 스트리밍 커넥터가 필요합니다."],
+        ["connector", "message", "고화질 시청을 위해서는 네이버 라이브 스트리밍 커넥터가 필요하지 않습니다."],
+        [
+            "extension",
+            "message",
+            "크롬, 엣지 브라우저에서 고화질 시청을 위해 브라우저 확장 프로그램을 설치하지 마세요.",
+        ],
+        ["extension", "message", "고화질 시청을 위해 브라우저 확장 프로그램을 설치합니다."],
+        ["extension", "install", "브라우저 설정 변경"],
+        ["extension", "decline", "설치하고 일반 화질 시청"],
+        ["extension", "decline", "설치 없이 고화질 시청"],
+        ["extension", "decline", "일반 화질 시청"],
+        ["extension", "decline", "설치 없이 일반 화질 시청 및 결제"],
+    ]) {
+        const g = f.guide({ variant });
+        (field === "message" ? g.layer.querySelector("p") : g[field]).textContent = text;
+        g.mount();
+        await flush();
+        assert.deepEqual(g.calls, { decline: 0, install: 0 }, text);
+        assert.ok(g.root.isConnected);
+        g.parent.remove();
+        await flush();
+    }
+});
+
+test("hidden message or install evidence cannot authorize a visible decline control", async (t) => {
+    const f = fixture(t);
+    f.options();
+    for (const field of ["message", "install"]) {
+        const g = f.guide({ variant: "extension" });
+        const evidence = field === "message" ? g.layer.querySelector("p") : g.install;
+        evidence.hidden = true;
+        g.mount();
+        await flush();
+        assert.deepEqual(g.calls, { decline: 0, install: 0 }, field);
+        evidence.hidden = false;
+        await flush();
+        assert.deepEqual(g.calls, { decline: 1, install: 0 }, field);
+        g.parent.remove();
+    }
+});
+
+test("extra actions and nested dialog boundaries invalidate otherwise matching guides", async (t) => {
+    const f = fixture(t);
+    f.options();
+    for (const change of [
+        (g) => g.layer.insertAdjacentHTML("beforeend", '<a href="/purchase">구매하기</a>'),
+        (g) => g.layer.insertAdjacentHTML("beforeend", '<div role="button" tabindex="0">다음</div>'),
+        (g) => g.layer.insertAdjacentHTML("beforeend", '<input type="checkbox">'),
+        (g) => g.root.insertAdjacentHTML("beforeend", '<button type="button">재생</button>'),
+        (g) => g.layer.querySelector("a").setAttribute("href", "https://example.com/chzzk6.naver"),
+        (g) => g.layer.setAttribute("role", "dialog"),
+        (g) => {
+            const wrapper = f.w.document.createElement("div");
+            wrapper.setAttribute("role", "dialog");
+            g.root.replaceWith(wrapper);
+            wrapper.append(g.root);
+        },
+    ]) {
+        const g = f.guide({ variant: "extension" });
+        change(g);
+        g.mount();
+        await flush();
+        assert.deepEqual(g.calls, { decline: 0, install: 0 });
+        assert.ok(g.root.isConnected);
+        g.parent.remove();
+        await flush();
+    }
+});
+
+test("a complete player inside another dialog does not authorize its installation guide", async (t) => {
+    const f = fixture(t);
+    f.options();
+    for (const attributes of [{ role: "dialog" }, { role: "alertdialog" }, { "aria-modal": "true" }]) {
+        const g = f.guide({ variant: "extension" });
+        const dialog = f.w.document.createElement("div");
+        for (const [name, value] of Object.entries(attributes)) dialog.setAttribute(name, value);
+        dialog.append(g.parent);
+        f.w.document.body.append(dialog);
+        await flush();
+        assert.deepEqual(g.calls, { decline: 0, install: 0 }, JSON.stringify(attributes));
+        assert.ok(g.root.isConnected, "a guide in another dialog stays available for the user");
+        dialog.remove();
+        await flush();
+    }
+    assert.equal(f.state().attempts, 0);
+});
+
+test("guide traversal rejects distant wrappers, large subtrees and conflicting guide messages", async (t) => {
+    const f = fixture(t);
+    f.options();
+    for (const change of [
+        (g) => {
+            for (let index = 0; index < 3; index++) {
+                const wrapper = f.w.document.createElement("div");
+                g.root.replaceWith(wrapper);
+                wrapper.append(g.root);
+            }
+        },
+        (g) => {
+            for (let index = 0; index < 3; index++) {
+                const wrapper = f.w.document.createElement("div");
+                g.layer.replaceWith(wrapper);
+                wrapper.append(g.layer);
+            }
+        },
+        (g) => {
+            for (let index = 0; index < 100; index++) g.layer.append(f.w.document.createElement("span"));
+        },
+        (g) => {
+            g.layer.insertAdjacentHTML(
+                "afterbegin",
+                "<p>고화질 시청을 위해서는 네이버 라이브 스트리밍 커넥터가 필요합니다.</p>"
+            );
+        },
+        (g) => {
+            const nested = f.w.document.createElement("div");
+            nested.className = "_layer_other";
+            g.layer.append(nested);
+        },
+    ]) {
+        const g = f.guide({ variant: "extension" });
+        change(g);
+        g.mount();
+        await flush();
+        assert.deepEqual(g.calls, { decline: 0, install: 0 });
+        assert.ok(g.root.isConnected);
+        g.parent.remove();
+        await flush();
+    }
 });

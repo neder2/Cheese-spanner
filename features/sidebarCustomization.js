@@ -1123,6 +1123,11 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         return meta;
     }
 
+    // 저장 직전에 현재 팔로잉 목록의 직접 행인지 다시 확인해요. 페이지가 복사·이동한 행의 표시 속성은 저장 근거가 아니에요.
+    function isCurrentFollowingRow(row) {
+        return row instanceof HTMLElement && row.parentElement === findFollowingList(getSidebar())?.list;
+    }
+
     function hasNavigationModifier(event) {
         return event.altKey || event.ctrlKey || event.metaKey || event.shiftKey;
     }
@@ -1230,7 +1235,8 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         if (button instanceof HTMLButtonElement) {
             event.preventDefault();
             event.stopPropagation();
-            setPinMode(!pinModeEnabled);
+            // 고정 모드는 고정 목록 저장으로 이어지므로 페이지 스크립트의 합성 클릭(isTrusted false)으로 켜지 않아요.
+            if (event.isTrusted) setPinMode(!pinModeEnabled);
             return;
         }
         const refreshButton = event.target instanceof Element ? event.target.closest(REFRESH_BUTTON_SELECTOR) : null;
@@ -1249,6 +1255,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
             navigateSourceLink(event, meta);
             return;
         }
+        if (!event.isTrusted || !isCurrentFollowingRow(meta.row)) return;
         event.preventDefault();
         event.stopPropagation();
         togglePinned(meta.channelId);
@@ -1257,6 +1264,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     function handleKeyDown(event) {
         if (
             !pinModeEnabled ||
+            !event.isTrusted ||
             event.repeat ||
             hasNavigationModifier(event) ||
             (event.key !== " " && event.key !== "Spacebar")
@@ -1264,7 +1272,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
             return;
         }
         const meta = getPinTargetMeta(event.target);
-        if (!meta) return;
+        if (!meta || !isCurrentFollowingRow(meta.row)) return;
         event.preventDefault();
         event.stopPropagation();
         togglePinned(meta.channelId);
@@ -1301,10 +1309,12 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
             onObserved: observeSidebar,
             onBodyReady: observeSidebar,
         });
+        const epoch = pinChangeEpoch;
         storageGet(storage, STORAGE_KEY)
             .then((data) => {
                 if (!runtimeInstalled || generation !== runtimeGeneration) return;
-                setPersistedPinnedIds(data?.[STORAGE_KEY]);
+                // A storage.onChanged that arrived during this read is newer than the late read result.
+                if (epoch === pinChangeEpoch) setPersistedPinnedIds(data?.[STORAGE_KEY]);
                 if (featureOptions.followingPinEnabled) syncPinUi();
             })
             .catch((error) => {

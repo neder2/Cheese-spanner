@@ -18,18 +18,28 @@
     const STATUS_ATTR = "data-betterchzzk-adblock-notice-confirm";
     const NOTICE_AREA = "ad_blocking_info_layer";
     const NOTICE = `[role="alertdialog"][aria-modal="true"][data-nlog-area="${NOTICE_AREA}"]`;
-    const DIALOG = '[role="alertdialog"], [role="dialog"], [aria-modal="true"]';
+    const POPUP =
+        '[role="alertdialog"], [role="dialog"], [aria-modal="true"], [class^="popup_container__"], [class*=" popup_container__"]';
     const BACKDROP = '[class^="_dimmed_"], [class*=" _dimmed_"]';
     const REACT_PROPS_PREFIX = "__reactProps$";
-    // 2026-10-11 strings-ko_kr.json의 ad_block.title·description·confirm과 mX의 도움말 링크.
-    const TITLE = "광고차단프로그램을사용중이신가요?";
-    const DESCRIPTION =
-        "광고차단프로그램사용시재생환경에영향을미칠수있으니사용중인확장프로그램이있다면,삭제후서비스를이용해주세요.";
+    // 2026-10-11·10-17 안내의 식별자·도움말과 의미를 유지하며 조사·문장 분리만 허용한다.
+    const NOTICE_TITLE = /^광고차단프로그램(?:을)?사용(?:중이신가요|중인가요|하시나요|하고계신가요)[?？.!。！]*$/;
+    const NOTICE_DESCRIPTION = [
+        "광고차단프로그램",
+        "사용",
+        "재생환경",
+        "영향",
+        "확장프로그램",
+        "삭제",
+        "서비스",
+        "이용",
+    ];
+    const NOTICE_HEADINGS = "strong, h1, h2, h3, h4, h5, h6, [role=heading]";
     const CONFIRM = "확인";
     const HELP_URL = "https://help.naver.com/alias/navergame/chzzkars49.naver";
     const ROUTE = /^\/(?:live\/[^/]+|video\/\d+)\/?$/;
-    // 2026-09-14·09-16·10-11 배포본의 라이브·다시보기 confirmHandler가 모두 이 형태였다.
-    const HANDLER_SHAPE = /^([A-Za-z_$][\w$]*)=>\{\1\.isTrusted&&[A-Za-z_$][\w$]*\(!1\)\}$/;
+    // 2026-09-14·09-16·10-11·10-17의 단일 신뢰 조건·false 호출 의미만 허용한다.
+    const HANDLER_ARROW = /^(?:([A-Za-z_$][\w$]*)|\(([A-Za-z_$][\w$]*)\))=>(.+)$/;
     const functionToString = Function.prototype.toString;
     const invoked = new WeakSet();
     const counts = { invoked: 0, refused: 0 };
@@ -38,10 +48,62 @@
     if (root?.hasAttribute(READY_ATTR)) return;
     root?.setAttribute(READY_ATTR, "1");
 
-    const compact = (value) =>
+    const normalizeCompact = (value) =>
         String(value || "")
             .toLowerCase()
             .replace(/\s+/g, "");
+
+    // Keep this target validation identical to the isolated helper; no marker grants trust.
+    function hasOnlyNoticeChild(parent, child) {
+        return (
+            parent?.children.length === 1 &&
+            parent.firstElementChild === child &&
+            Array.from(parent.childNodes).every((node) => node === child || !node.textContent.trim())
+        );
+    }
+
+    function isNoticeWrapper(parent, child) {
+        return (
+            parent?.tagName === "DIV" &&
+            !parent.matches(POPUP) &&
+            !["role", "data-nlog-area", "tabindex", "contenteditable"].some((name) => parent.hasAttribute(name)) &&
+            hasOnlyNoticeChild(parent, child)
+        );
+    }
+
+    function findNoticeBackdrop(popup) {
+        let child = popup;
+        let backdrop = child.parentElement;
+        for (let depth = 0; depth < 2 && !backdrop?.matches(BACKDROP); depth++) {
+            if (!isNoticeWrapper(backdrop, child)) return null;
+            child = backdrop;
+            backdrop = child.parentElement;
+        }
+        if (!backdrop?.matches(BACKDROP) || backdrop.matches(POPUP) || !hasOnlyNoticeChild(backdrop, child))
+            return null;
+        child = backdrop;
+        for (let depth = 0; depth < 2 && child.parentElement !== document.body; depth++) {
+            if (!isNoticeWrapper(child.parentElement, child)) return null;
+            child = child.parentElement;
+        }
+        return child.parentElement === document.body ? backdrop : null;
+    }
+
+    function hasNoticeCopy(popup) {
+        const titles = Array.from(popup.querySelectorAll(NOTICE_HEADINGS)).filter(
+            (node) => !node.parentElement.closest(NOTICE_HEADINGS)
+        );
+        if (titles.length !== 1 || !NOTICE_TITLE.test(normalizeCompact(titles[0].textContent))) return false;
+        const text = Array.from(popup.querySelectorAll("p"), (node) => normalizeCompact(node.textContent)).join("");
+        if (text.length > 1000) return false;
+        let position = 0;
+        return NOTICE_DESCRIPTION.every((anchor) => {
+            const index = text.indexOf(anchor, position);
+            if (index < 0) return false;
+            position = index + anchor.length;
+            return true;
+        });
+    }
 
     function findNotice(button) {
         if (
@@ -52,30 +114,22 @@
         )
             return null;
         const notice = button.closest(NOTICE);
-        const backdrop = notice?.parentElement;
         if (
             !notice ||
             document.querySelectorAll(`[data-nlog-area="${NOTICE_AREA}"]`).length !== 1 ||
-            !backdrop?.matches(BACKDROP) ||
-            backdrop.parentElement !== document.body ||
-            backdrop.children.length !== 1 ||
-            backdrop.closest(DIALOG) ||
-            notice.querySelector(DIALOG)
+            !findNoticeBackdrop(notice) ||
+            notice.querySelector(POPUP)
         )
             return null;
-        const titles = notice.querySelectorAll("strong");
         const links = notice.querySelectorAll("a");
         const buttons = notice.querySelectorAll("button");
-        const paragraphs = Array.from(notice.querySelectorAll("p"), (item) => compact(item.textContent));
         if (
-            titles.length !== 1 ||
-            compact(titles[0].textContent) !== TITLE ||
-            !paragraphs.includes(DESCRIPTION) ||
+            !hasNoticeCopy(notice) ||
             links.length !== 1 ||
             links[0].getAttribute("href") !== HELP_URL ||
             buttons.length !== 1 ||
             buttons[0] !== button ||
-            compact(button.textContent) !== CONFIRM ||
+            normalizeCompact(button.textContent) !== CONFIRM ||
             button.type !== "button" ||
             button.disabled ||
             button.getAttribute("aria-disabled") === "true"
@@ -90,6 +144,22 @@
         if (keys.length !== 1) return null;
         const props = element[keys[0]];
         return props && typeof props === "object" ? { key: keys[0], props } : null;
+    }
+
+    function isConfirmHandler(source) {
+        if (source.length > 512) return false;
+        const arrow = HANDLER_ARROW.exec(source.replace(/\s+/g, ""));
+        if (!arrow) return false;
+        const parameter = (arrow[1] || arrow[2]).replace(/\$/g, "\\$");
+        const condition = `(?:${parameter}\\.isTrusted|\\(${parameter}\\.isTrusted\\))`;
+        const value = "(?:false|!1|\\((?:false|!1)\\))";
+        const call = `[A-Za-z_$][\\w$]*\\(${value}\\)`;
+        const body = arrow[3];
+        if (!body.startsWith("{")) return new RegExp(`^${condition}&&${call}$`).test(body);
+        if (!body.endsWith("}")) return false;
+        // No return, assignment, member call, second statement, else or other event property is accepted.
+        const statement = `${condition}&&${call};?|if\\(${condition}\\)(?:${call};?|\\{${call};?\\})`;
+        return new RegExp(`^(?:${statement})$`).test(body.slice(1, -1));
     }
 
     function findConfirmHandler(button, notice) {
@@ -111,7 +181,7 @@
         } catch (_) {
             return null;
         }
-        return HANDLER_SHAPE.test(source.replace(/\s+/g, "")) ? props.onClick : null;
+        return isConfirmHandler(source) ? props.onClick : null;
     }
 
     function publish(status) {

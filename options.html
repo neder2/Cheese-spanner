@@ -535,7 +535,7 @@
                     <details
                         class="option-group"
                         data-option-group="player-view"
-                        data-search-terms="라이브 표시 화면 확대"
+                        data-search-terms="라이브 표시 화면 확대 단축키"
                     >
                         <summary>
                             <span class="option-group-title"
@@ -577,11 +577,23 @@
                                 <select class="quality-select" data-option="playerZoomMode">
                                     <option value="manual">확대 버튼을 켠 동안</option>
                                     <option value="always">영상 위에서 항상</option>
+                                    <option value="shortcut">단축키를 누른 채 휠</option>
+                                </select>
+                            </label>
+                            <label class="toggle-row" data-depends-on="playerZoomEnabled">
+                                <span><strong>확대 단축키</strong></span>
+                                <select class="quality-select" data-option="playerZoomShortcutKey">
+                                    <option value="alt">Alt (Mac: Option)</option>
+                                    <option value="ctrl">Ctrl</option>
+                                    <option value="shift">Shift</option>
+                                    <option value="meta">Command (Mac)</option>
                                 </select>
                             </label>
                             <p class="setting-note">
                                 휠은 커서 중심으로 확대하고, 슬라이더는 1% 단위로 조절합니다. 최대 5배까지 확대하며,
-                                드래그 이동과 원래 크기 복원을 지원합니다.
+                                드래그 이동과 원래 크기 복원을 지원합니다. 단축키 방식은 확대 버튼 없이 지정한 키를 누른
+                                채 영상 위에서 휠을 돌릴 때만 확대·축소하고, 키 없이 돌린 휠은 페이지 스크롤에 그대로
+                                넘깁니다. Ctrl을 지정하면 영상 위에서는 브라우저 확대 대신 화면 확대가 동작합니다.
                             </p>
                         </div>
                     </details>

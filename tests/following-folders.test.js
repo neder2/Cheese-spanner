@@ -1661,6 +1661,29 @@ test("folder names drag to reorder folders inside the sidebar only", async (t) =
     await waitForCondition(() => order().join() === "게임,토크,음악");
 });
 
+test("a folder dragged down onto another folder takes that folder's place", async (t) => {
+    const saved = stateOf(folder("games", "게임", [C]), folder("talk", "토크"), folder("music", "음악"));
+    const { chrome, dom, document, clock } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    await waitForCondition(() => headerButton(document, "음악"));
+    const order = () => storedState(chrome).folders.map((item) => item.name);
+    const headers = () => visualOrder(dom).filter((entry) => entry.startsWith("["));
+
+    // README: 폴더 이름을 끌어 다른 폴더 위에 놓기. Dropping on the next folder must move, like dropping on one above.
+    const first = createDataTransfer();
+    dragEvent(dom, "dragstart", nameButton(document, "게임"), { dataTransfer: first });
+    hold(dom, clock, header(document, "토크"), { dataTransfer: first });
+    assert.deepEqual(headers(), ["[토크]", "[게임]", "[음악]", "[폴더 밖 채널]"]);
+    dragEvent(dom, "drop", header(document, "토크"), { dataTransfer: first });
+    await waitForCondition(() => order().join() === "토크,게임,음악");
+
+    const second = createDataTransfer();
+    dragEvent(dom, "dragstart", nameButton(document, "토크"), { dataTransfer: second });
+    hold(dom, clock, header(document, "음악"), { dataTransfer: second });
+    assert.deepEqual(headers(), ["[게임]", "[음악]", "[토크]", "[폴더 밖 채널]"]);
+    dragEvent(dom, "drop", header(document, "음악"), { dataTransfer: second });
+    await waitForCondition(() => order().join() === "게임,음악,토크");
+});
+
 test("a held channel previews its landing spot, drops show at once, failed saves roll back, and collapsed folders open while held", async (t) => {
     const saved = stateOf(folder("games", "게임", [C]), folder("talk", "토크", [D], true));
     const { chrome, dom, document, store, clock } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });

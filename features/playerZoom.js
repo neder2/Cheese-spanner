@@ -26,8 +26,11 @@
         ".pzp-pc__bottom, .pzp-pc__top, .pzp-pc__settings, [class*='bottom-buttons'], " +
         "[data-bcmv-video], [data-bcmv-channel], [data-bcfp-tooltip], #betterchzzk-stream-info";
     const VIDEO_STYLES = ["transform", "transform-origin", "clip-path", "transition", "will-change"];
+    const MODIFIERS = ["ctrlKey", "metaKey", "altKey", "shiftKey"];
+    const SHORTCUT_KEYS = { alt: "altKey", ctrl: "ctrlKey", shift: "shiftKey", meta: "metaKey" };
     let enabled = false;
     let mode = "manual";
+    let shortcutKey = "alt";
     let suspended = false;
     let state = null;
     let observer = null;
@@ -36,7 +39,7 @@
     let suppressClick = false;
 
     const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-    const active = () => state && (mode === "always" || state.manual);
+    const active = () => state && (mode !== "manual" || state.manual);
     const current = () =>
         enabled && !suspended && isPlaybackRoute() && state?.video.isConnected && state.player.contains(state.video);
 
@@ -59,7 +62,7 @@
         if (!state) return;
         const { toggle, panel, reset, range, value } = state;
         if (toggle) {
-            if (toggle.hidden !== (mode === "always")) toggle.hidden = mode === "always";
+            if (toggle.hidden !== (mode !== "manual")) toggle.hidden = mode !== "manual";
             const label = state.manual ? "확대 모드 끄기" : "확대 모드 켜기";
             if (toggle.getAttribute("aria-label") !== label) toggle.setAttribute("aria-label", label);
             if (toggle.getAttribute("aria-pressed") !== String(state.manual))
@@ -154,9 +157,10 @@
         updateControls();
     }
 
-    function surface(event) {
+    // `modifier` is the only modifier that may be held; without it every modifier must be released.
+    function surface(event, modifier = null) {
         if (!current() || !active() || event.defaultPrevented) return null;
-        if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return null;
+        if (MODIFIERS.some((name) => Boolean(event[name]) !== (name === modifier))) return null;
         const target = event.composedPath()[0] || event.target;
         if (!(target instanceof Element) || !state.player.contains(target) || target.closest(EXCLUDED)) return null;
         // Native wrappers can receive the pointer instead of the video they contain.
@@ -174,17 +178,21 @@
     }
 
     function onWheel(event) {
-        if (!Number.isFinite(event.deltaY) || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
-        const box = surface(event);
+        const shortcut = mode === "shortcut";
+        let { deltaX, deltaY } = event;
+        // Chromium turns Shift+wheel into a horizontal delta.
+        if (shortcut && shortcutKey === "shift" && !deltaY) [deltaX, deltaY] = [0, deltaX];
+        if (!Number.isFinite(deltaY) || !deltaY || Math.abs(deltaX) > Math.abs(deltaY)) return;
+        const box = surface(event, shortcut ? SHORTCUT_KEYS[shortcutKey] : null);
         if (!box) return;
-        if (mode === "always" && state.scale === 1 && event.deltaY > 0) {
+        if (mode === "always" && state.scale === 1 && deltaY > 0) {
             const now = performance.now();
             if (now >= state.scrollBlockedUntil) return;
             // Keep the rest of a zoom-out gesture from spilling into page scrolling.
             state.scrollBlockedUntil = now + MIN_SCALE_SCROLL_DELAY_MS;
         }
         const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? box.height : 1;
-        const delta = clamp(event.deltaY * unit, -240, 240);
+        const delta = clamp(deltaY * unit, -240, 240);
         const next = clamp(state.scale * Math.exp((-delta * Math.log(1.2)) / 100), 1, 5);
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -537,7 +545,10 @@ html.theme_dark #${ID}-reset:hover:not(:disabled) { background:rgba(255,255,255,
 
     bindFeatureOptions((options) => {
         const nextEnabled = options.playerZoomEnabled === true;
-        const nextMode = options.playerZoomMode === "always" ? "always" : "manual";
+        const nextMode = ["always", "shortcut"].includes(options.playerZoomMode) ? options.playerZoomMode : "manual";
+        shortcutKey = Object.hasOwn(SHORTCUT_KEYS, options.playerZoomShortcutKey)
+            ? options.playerZoomShortcutKey
+            : "alt";
         if (mode !== nextMode) {
             resetZoom();
             if (state) state.manual = false;

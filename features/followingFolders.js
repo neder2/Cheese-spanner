@@ -1753,8 +1753,9 @@ ${ORDER_RULES}
         let command = null;
         const folder = getFolder(folderDrag.folderId);
         if (key && folder) {
-            const others = folderState.folders.filter((item) => item.id !== folder.id);
-            const index = key === REST_DROP ? others.length : others.findIndex((item) => item.id === key.slice(2));
+            // 놓은 폴더의 자리를 차지해요. 위로 끌면 그 폴더 앞, 아래로 끌면 그 폴더 뒤라서 바로 아래 폴더에 놓아도
+            // 순서가 바뀌어요. 폴더 밖 채널에 놓으면 맨 끝이에요.
+            const index = key === REST_DROP ? folderState.folders.length - 1 : (folderPosition.get(key.slice(2)) ?? -1);
             if (index >= 0 && index !== folderPosition.get(folder.id))
                 command = { type: "moveTo", folderId: folder.id, index };
         }

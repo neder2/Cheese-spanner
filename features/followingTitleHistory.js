@@ -3,8 +3,9 @@
  *
  * 동작 위치: isolated world, https://chzzk.naver.com/following 본문의 라이브 카드.
  * 하는 일: 서비스 워커(shared/followingTitleCollector.js)가 1분마다 모은 방송별 제목 이력을 읽기만 한다.
- *   저장된 이전 방제가 있는 카드만 live-detail로 현재 라이브 ID를 확인하고(카드 제목이 바뀌거나 2분이 지나면 다시 확인),
+ *   저장된 이전 방제가 있는 카드만 live-detail로 현재 라이브 ID를 확인하고(카드 제목·주소가 바뀌면 다시 확인),
  *   저장된 이력의 라이브 ID와 같을 때만 현재 제목을 뺀 이전 방제를 제목 오른쪽 버튼으로 시각과 함께 펼쳐 보여 준다.
+ *   확인값은 2분 동안만 쓰고 1분 30초가 지나면 미리 다시 확인한다. 만료된 뒤 확인 중·실패 구간에는 보여 주지 않는다.
  *   다른 방송의 제목은 보이지 않는다.
  * 수명주기: 옵션을 끄거나 라우트가 바뀌면 observer·listener·요청·UI를 정리하고, SPA 이동 후 재설치한다.
  * 옵션 키: followingTitleHistoryEnabled.
@@ -38,6 +39,8 @@
     const LIVE_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v3/channels";
     const MAX_FETCH_CONCURRENCY = 3;
     const VERIFY_TTL_MS = 2 * 60 * 1000;
+    // 같은 방송이면 유효기간 안에 새 확인이 끝나도록 미리 다시 확인해요. 만료로 버튼·열린 패널이 끊기지 않아요.
+    const VERIFY_REFRESH_MS = 90 * 1000;
     const RETRY_COOLDOWN_MS = 15 * 1000;
     const FETCH_TIMEOUT_MS = 8000;
 
@@ -59,6 +62,7 @@
     const fetchControllers = new Map();
     const lastFetches = new Map();
     const verifiedLives = new Map();
+    const panelRenderKeys = new WeakMap();
 
     function isEnabled() {
         return Boolean(featureOptions.followingTitleHistoryEnabled && storage);
@@ -210,20 +214,26 @@
             document.body.appendChild(panel);
         }
 
-        const fragment = document.createDocumentFragment();
-        for (const row of rows) {
-            const item = document.createElement("div");
-            item.className = "bcfth-row";
-            const time = document.createElement("span");
-            time.className = "bcfth-time";
-            time.textContent = formatSeenRange(row);
-            const title = document.createElement("strong");
-            title.className = "bcfth-title";
-            title.textContent = row.title;
-            item.append(time, title);
-            fragment.appendChild(item);
+        // 열린 패널은 화면 동기화마다 다시 불려요. 같은 내용이면 다시 그리지 않아야 자기 변경이 본문 관찰을 깨워
+        // 매 프레임 다시 그리는 반복이 생기지 않고, 펼친 제목을 선택할 수도 있어요(다시보기 이전 방제와 같은 방식).
+        const renderKey = JSON.stringify(rows.map((row) => [row.title, row.firstSeenAt, row.lastSeenAt]));
+        if (panelRenderKeys.get(panel) !== renderKey) {
+            const fragment = document.createDocumentFragment();
+            for (const row of rows) {
+                const item = document.createElement("div");
+                item.className = "bcfth-row";
+                const time = document.createElement("span");
+                time.className = "bcfth-time";
+                time.textContent = formatSeenRange(row);
+                const title = document.createElement("strong");
+                title.className = "bcfth-title";
+                title.textContent = row.title;
+                item.append(time, title);
+                fragment.appendChild(item);
+            }
+            panel.replaceChildren(fragment);
+            panelRenderKeys.set(panel, renderKey);
         }
-        panel.replaceChildren(fragment);
         panel.hidden = false;
         positionPanel(button, panel);
     }
@@ -274,6 +284,12 @@
             button.addEventListener("click", (event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                // 치지직이 같은 제목 링크의 주소만 다른 채널로 바꿨을 수 있어요. 만든 때의 채널을 쓰기 전에 다시 읽어요.
+                if (!isCandidateCurrent(candidate, button)) {
+                    closePanel();
+                    scheduleSync();
+                    return;
+                }
                 const shouldOpen =
                     activeChannelId !== candidate.channelId || button.getAttribute("aria-expanded") !== "true";
                 closePanel();
@@ -297,11 +313,27 @@
         if (activeChannelId === candidate.channelId) renderPanel(button, entry, candidate.title);
     }
 
-    // 지금 카드 제목으로 확인한 live-detail 라이브 ID가 저장된 이력의 라이브 ID와 같을 때만 그 이력을 써요.
+    function isCandidateCurrent(candidate, button) {
+        return (
+            candidate.link.isConnected &&
+            button.parentElement === candidate.link.parentElement &&
+            extractChannelId(candidate.link.getAttribute("href") || "") === candidate.channelId
+        );
+    }
+
+    // 시계가 뒤로 간 확인값도 지금 방송의 근거로 쓰지 않아요.
+    function verificationAge(verified, now = Date.now()) {
+        const age = now - verified.verifiedAt;
+        return age >= 0 ? age : Infinity;
+    }
+
+    // 지금 카드 제목으로 2분 안에 확인한 live-detail 라이브 ID가 저장된 이력의 라이브 ID와 같을 때만 그 이력을 써요.
+    // 만료된 확인값은 다시 확인하는 중이거나 확인이 실패해도 지금 방송의 근거가 아니에요.
     function getVerifiedEntry(channelId, title) {
         const verified = verifiedLives.get(channelId);
         const entry = storeEntries.get(channelId);
-        return verified && entry && verified.title === title && verified.liveId === entry.liveId ? entry : null;
+        if (!verified || !entry || verificationAge(verified) > VERIFY_TTL_MS) return null;
+        return verified.title === title && verified.liveId === entry.liveId ? entry : null;
     }
 
     // 카드의 채널이 지금 어떤 방송인지만 확인해요. 제목은 서비스 워커가 모은 이력을 쓰고 여기서 저장하지 않아요.
@@ -309,7 +341,7 @@
     function shouldVerify(candidate) {
         const verified = verifiedLives.get(candidate.channelId);
         if (!verified || verified.title !== candidate.title) return true;
-        if (Date.now() - verified.verifiedAt > VERIFY_TTL_MS) return true;
+        if (verificationAge(verified) > VERIFY_REFRESH_MS) return true;
         const entryLiveId = storeEntries.get(candidate.channelId)?.liveId || "";
         return Boolean(entryLiveId) && entryLiveId !== verified.liveId && entryLiveId !== verified.entryLiveId;
     }
@@ -437,7 +469,7 @@
         // 확인한 방송은 2분 동안 유효해 팔로잉을 잠시 떠났다 돌아와도 다시 묻지 않아요. 지난 확인만 버려요.
         const now = Date.now();
         for (const [channelId, verified] of verifiedLives) {
-            if (now - verified.verifiedAt > VERIFY_TTL_MS) verifiedLives.delete(channelId);
+            if (verificationAge(verified, now) > VERIFY_TTL_MS) verifiedLives.delete(channelId);
         }
         lastFetches.clear();
         abortFetches();
@@ -501,12 +533,26 @@ html.theme_dark #${PANEL_ID} .bcfth-time{color:var(--sem-color-content-neutral-c
         domObserver = createMutationObserverSync({
             onMutations(mutations) {
                 if (!isFollowingRoute()) return;
-                if (mutations.some((mutation) => mutation.type === "childList" || mutation.type === "characterData")) {
+                // 제목은 그대로 두고 링크 주소만 다른 채널로 바뀌어도 이전 채널의 버튼·패널을 정리해야 해요.
+                if (
+                    mutations.some(
+                        (mutation) =>
+                            mutation.type === "childList" ||
+                            mutation.type === "characterData" ||
+                            (mutation.type === "attributes" && mutation.target instanceof HTMLAnchorElement)
+                    )
+                ) {
                     scheduleSync();
                 }
             },
             onBodyReady: scheduleSync,
-            options: { childList: true, subtree: true, characterData: true },
+            options: {
+                childList: true,
+                subtree: true,
+                characterData: true,
+                attributes: true,
+                attributeFilter: ["href"],
+            },
         });
         removeStorageChangeListener = startStorageChangeListener(handleStorageChange);
         window.addEventListener("resize", handleViewportChange, true);

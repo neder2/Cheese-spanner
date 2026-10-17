@@ -150,7 +150,7 @@ test("immediate pin repair revalidates reused links and restores replaced lists"
     const nativeSidebar = document.getElementById("sidebar").outerHTML;
     evalSidebarScripts(dom);
     await waitForCondition(() => document.getElementById("liveC").hasAttribute("data-bcsf-pinned"));
-    document.getElementById("betterchzzk-following-pin-mode").click();
+    dispatchClick(dom, document.getElementById("betterchzzk-following-pin-mode"));
     await waitForCondition(() => document.querySelector("#liveC a").getAttribute("aria-pressed") === "true");
     dom.window.requestAnimationFrame = () => 12345;
     const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -459,8 +459,31 @@ function waitForCondition(predicate, { timeoutMs = 2000, intervalMs = 20 } = {})
     });
 }
 
+// JSDOM marks dispatchEvent() and click() as untrusted; its internal dispatch keeps the flag like a real user event.
+function dispatchTrusted(target, event) {
+    const impl = Object.getOwnPropertySymbols(event).find((symbol) => symbol.description === "impl");
+    event[impl].isTrusted = true;
+    target[impl]._dispatch(event[impl]);
+    return event;
+}
+
+// Models a real mouse click; untrustedClick() below is the page-script equivalent.
 function dispatchClick(dom, element, init = {}) {
+    return dispatchTrusted(
+        element,
+        new dom.window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ...init })
+    );
+}
+
+function untrustedClick(dom, element, init = {}) {
     const event = new dom.window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ...init });
+    element.dispatchEvent(event);
+    return event;
+}
+
+function dispatchKey(dom, element, key, { trusted = true } = {}) {
+    const event = new dom.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    if (trusted) return dispatchTrusted(element, event);
     element.dispatchEvent(event);
     return event;
 }
@@ -1122,11 +1145,11 @@ test("source navigation preserves native links, modifiers and pin editing, and c
     link.href = "/live/channel-pinned";
     assert.equal(navigations.length, 0);
 
-    document.getElementById("betterchzzk-following-pin-mode").click();
+    dispatchClick(dom, document.getElementById("betterchzzk-following-pin-mode"));
     assert.equal(wasIntercepted(link), true);
     await waitForCondition(() => chrome.testState.sync[STORAGE_KEY].length === 0);
     assert.equal(navigations.length, 0, "pin mode toggles the pin without navigating");
-    document.getElementById("betterchzzk-following-pin-mode").click();
+    dispatchClick(dom, document.getElementById("betterchzzk-following-pin-mode"));
     chrome.testState.emitSync({ [STORAGE_KEY]: { newValue: ["channel-pinned"] } });
     await waitForCondition(() => document.querySelector("[data-bcsf-source-row] a"));
     link = document.querySelector("[data-bcsf-source-row] a");
@@ -1319,7 +1342,7 @@ test("sidebar customization scopes cheese hiding and exposes pin mode beside nat
     assert.match(style.textContent, /#087a4b/);
 
     liveA.querySelector("a").setAttribute("role", "link");
-    modeButton.click();
+    dispatchClick(dom, modeButton);
     await waitForCondition(() => list.getAttribute("data-bcsf-pin-mode") === "1");
     assert.equal(modeButton.getAttribute("aria-pressed"), "true");
     assert.match(modeButton.getAttribute("aria-label"), /고정 모드 끄기/);
@@ -1327,7 +1350,7 @@ test("sidebar customization scopes cheese hiding and exposes pin mode beside nat
     assert.equal(liveA.querySelector("a").getAttribute("aria-pressed"), "true");
     assert.equal(liveC.querySelector("a").getAttribute("aria-pressed"), "false");
 
-    modeButton.click();
+    dispatchClick(dom, modeButton);
     await waitForCondition(() => !list.hasAttribute("data-bcsf-pin-mode"));
     assert.equal(liveA.querySelector("a").getAttribute("role"), "link");
     assert.equal(liveA.querySelector("a").hasAttribute("aria-pressed"), false);
@@ -1376,7 +1399,7 @@ test("following pins persist, sync across tabs, survive remounts, and clean up w
     assert.equal(lastNativeDefaultPrevented, false, "pin mode off keeps native channel navigation");
     assert.deepEqual(Array.from(chrome.testState.sync[STORAGE_KEY]), []);
 
-    document.getElementById("betterchzzk-following-pin-mode").click();
+    dispatchClick(dom, document.getElementById("betterchzzk-following-pin-mode"));
     await waitForCondition(() => document.getElementById("followingList").hasAttribute("data-bcsf-pin-mode"));
     dispatchClick(dom, liveCViewer);
     await waitForCondition(() => chrome.testState.sync[STORAGE_KEY]?.includes("channel-c"));
@@ -1403,7 +1426,7 @@ test("following pins persist, sync across tabs, survive remounts, and clean up w
     assert.equal(document.getElementById("betterchzzk-following-pin-mode").getAttribute("aria-pressed"), "true");
 
     const offlineLink = document.querySelector("#offlineB a");
-    offlineLink.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+    dispatchKey(dom, offlineLink, " ");
     await waitForCondition(() => chrome.testState.sync[STORAGE_KEY]?.includes("channel-b"));
     assert.equal(document.getElementById("offlineB").getAttribute("data-bcsf-order-group"), "offline-pinned");
     assert.equal(document.getElementById("offlineB").getAttribute("data-bcsf-pinned"), "1");
@@ -1494,14 +1517,14 @@ test("pinned status icons follow channel names outside edit mode and track row u
     });
     dispatchClick(dom, iconA);
     assert.equal(nativeClicks, 1, "status keeps normal navigation while edit mode is off");
-    modeButton.click();
+    dispatchClick(dom, modeButton);
     await waitForCondition(() => modeButton.getAttribute("aria-pressed") === "true");
     assert.equal(liveA.querySelector(iconSelector), iconA, "mode changes do not duplicate or replace icons");
     dispatchClick(dom, iconA);
     await waitForCondition(() => !liveA.querySelector(iconSelector));
     assert.equal(nativeClicks, 1, "status clicks in edit mode unpin without navigating");
     assert.deepEqual(Array.from(chrome.testState.sync[STORAGE_KEY]), ["channel-b"]);
-    modeButton.click();
+    dispatchClick(dom, modeButton);
     await waitForCondition(() => modeButton.getAttribute("aria-pressed") === "false");
     assert.equal(document.querySelectorAll(iconSelector).length, 1);
 
@@ -1575,7 +1598,7 @@ test("a failed sync write rolls the optimistic pin state back", async (t) => {
     evalSidebarScripts(dom);
     await waitForCondition(() => dom.window.document.getElementById("betterchzzk-following-pin-mode"));
     const { document } = dom.window;
-    document.getElementById("betterchzzk-following-pin-mode").click();
+    dispatchClick(dom, document.getElementById("betterchzzk-following-pin-mode"));
     await waitForCondition(() => document.querySelector("#liveA a").getAttribute("role") === "button");
     chrome.testState.syncArea.state.failNextSet = true;
     dispatchClick(dom, document.querySelector("#liveA a"));
@@ -1591,6 +1614,67 @@ test("a failed sync write rolls the optimistic pin state back", async (t) => {
     );
 });
 
+test("synthetic clicks, Space and rows outside the following list cannot start a pin save", async (t) => {
+    const chrome = createFakeChrome({ followingPinEnabled: true, [STORAGE_KEY]: [] });
+    const dom = createSidebarDom(chrome);
+    const settingsWrites = [];
+    const forward = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = (message, callback) => {
+        if (message?.type === "betterchzzk:settings-store") settingsWrites.push(message);
+        forward(message, callback);
+    };
+    t.after(() => dom.window.close());
+    evalSidebarScripts(dom);
+    await waitForCondition(() => dom.window.document.getElementById("betterchzzk-following-pin-mode"));
+    const { document } = dom.window;
+    const list = document.getElementById("followingList");
+    const modeButton = document.getElementById("betterchzzk-following-pin-mode");
+    // Nothing is expected to change: give a scheduled sync and any write a chance to run before checking.
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
+    // Prevent jsdom's unimplemented document navigation after the feature has seen each click.
+    document.addEventListener("click", (event) => event.preventDefault());
+
+    for (const click of [() => modeButton.click(), () => untrustedClick(dom, modeButton)]) {
+        click();
+        await settle();
+        assert.equal(modeButton.getAttribute("aria-pressed"), "false", "a page script cannot enter pin mode");
+        assert.equal(list.hasAttribute("data-bcsf-pin-mode"), false);
+    }
+
+    dispatchClick(dom, modeButton);
+    await waitForCondition(() => list.getAttribute("data-bcsf-pin-mode") === "1");
+    const liveCLink = document.querySelector("#liveC a");
+    let nativeClicks = 0;
+    liveCLink.addEventListener("click", () => (nativeClicks += 1));
+    liveCLink.click();
+    untrustedClick(dom, document.getElementById("liveCViewer"));
+    dispatchKey(dom, document.querySelector("#offlineB a"), " ", { trusted: false });
+    await settle();
+    assert.equal(settingsWrites.length, 0, "synthetic input must not request a pin save");
+    assert.deepEqual(Array.from(chrome.testState.sync[STORAGE_KEY]), []);
+    assert.equal(liveCLink.getAttribute("aria-pressed"), "false");
+    assert.equal(nativeClicks, 1, "the synthetic click still reaches the page without saving");
+
+    // A copied row carrying the extension markers is not a row of the current following list.
+    const copy = document.getElementById("liveA").cloneNode(true);
+    copy.id = "copiedRow";
+    document.querySelector("main ul").append(copy);
+    copy.setAttribute("data-bcsf-row", "1");
+    copy.setAttribute("data-bcsf-channel-id", "channel-a");
+    dispatchClick(dom, copy.querySelector(".name_text"));
+    dispatchKey(dom, copy.querySelector("a"), " ");
+    await settle();
+    assert.equal(settingsWrites.length, 0, "rows outside the following list must not request a pin save");
+
+    dispatchClick(dom, liveCLink);
+    await waitForCondition(() => chrome.testState.sync[STORAGE_KEY]?.includes("channel-c"));
+    dispatchKey(dom, liveCLink, " ");
+    await waitForCondition(() => !chrome.testState.sync[STORAGE_KEY]?.includes("channel-c"));
+    assert.equal(settingsWrites.length, 2, "real mouse and keyboard input still pin and unpin");
+    dispatchClick(dom, modeButton);
+    await waitForCondition(() => !list.hasAttribute("data-bcsf-pin-mode"));
+});
+
 async function openPinMode(chrome) {
     const dom = createSidebarDom(chrome);
     const settingsWrites = [];
@@ -1602,7 +1686,7 @@ async function openPinMode(chrome) {
     evalSidebarScripts(dom);
     await waitForCondition(() => dom.window.document.getElementById("betterchzzk-following-pin-mode"));
     const { document } = dom.window;
-    document.getElementById("betterchzzk-following-pin-mode").click();
+    dispatchClick(dom, document.getElementById("betterchzzk-following-pin-mode"));
     await waitForCondition(() => document.querySelector("#liveA a").getAttribute("role") === "button");
     return { dom, document, settingsWrites };
 }
@@ -1669,6 +1753,30 @@ test("pin conflicts retry a bounded number of times and then roll back without a
     assert.equal(document.getElementById("liveA").getAttribute("data-bcsf-order-group"), "live");
 });
 
+test("a pin change that arrives during the first pin read wins over the late read", async (t) => {
+    const chrome = createFakeChrome({ followingPinEnabled: true, [STORAGE_KEY]: ["channel-b"] });
+    const get = chrome.storage.sync.get;
+    let raced = false;
+    chrome.storage.sync.get = (keys, callback) =>
+        get(keys, (result) => {
+            if (!raced && Object.hasOwn(result, STORAGE_KEY)) {
+                raced = true;
+                // Another tab or a settings file replaced the pins while this document's first read was in flight.
+                chrome.testState.emitSync({ [STORAGE_KEY]: { oldValue: ["channel-b"], newValue: ["channel-c"] } });
+            }
+            callback(result);
+        });
+    const dom = createSidebarDom(chrome);
+    t.after(() => dom.window.close());
+    evalSidebarScripts(dom);
+    const { document } = dom.window;
+
+    await waitForCondition(() => raced && document.getElementById("liveC").hasAttribute("data-bcsf-order-group"));
+    await waitForSync();
+    assert.equal(document.getElementById("liveC").getAttribute("data-bcsf-order-group"), "pinned");
+    assert.equal(document.getElementById("offlineB").getAttribute("data-bcsf-order-group"), "offline");
+});
+
 test("pin mode does not intercept the native following refresh control", async (t) => {
     const chrome = createFakeChrome({ followingPinEnabled: true, followingRefreshSeconds: 10 });
     const dom = createSidebarDom(chrome);
@@ -1688,7 +1796,7 @@ test("pin mode does not intercept the native following refresh control", async (
     evalRepoScript(dom, "features", "followingRefresh.js");
     await waitForCondition(() => dom.window.document.getElementById("betterchzzk-following-pin-mode"));
 
-    dom.window.document.getElementById("betterchzzk-following-pin-mode").click();
+    dispatchClick(dom, dom.window.document.getElementById("betterchzzk-following-pin-mode"));
     await waitForCondition(
         () =>
             dom.window.document.getElementById("betterchzzk-following-pin-mode").getAttribute("aria-pressed") === "true"

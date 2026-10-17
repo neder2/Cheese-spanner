@@ -996,3 +996,200 @@ test("the page feature ignores other routes, sidebar links, and the disabled opt
     assert.equal(disabled.document.querySelector("[data-bcfth-toggle]"), null);
     assert.equal(disabled.document.getElementById("betterchzzk-following-title-history-style"), null);
 });
+
+test("an open previous title panel stays put while nothing changes", async () => {
+    const chrome = createFakeChrome({
+        local: { [STORAGE_KEY]: { version: 1, entries: [storedEntry(["이전 제목", "첫 번째 제목"])] } },
+    });
+    const { document, dom } = createFollowingDom({ chrome });
+    evalFeatureScripts(dom);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "toggle was not rendered");
+
+    document.querySelector("button[data-bcfth-toggle]").click();
+    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+    assert.equal(panel.hidden, false);
+    const row = panel.firstElementChild;
+    let redraws = 0;
+    const watcher = new dom.window.MutationObserver((records) => {
+        redraws += records.length;
+    });
+    watcher.observe(panel, { childList: true });
+    // 화면 동기화(requestAnimationFrame) 여러 번이 지나갈 시간이에요. 바뀐 것이 없으면 다시 그리지 않아야 해요.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    watcher.disconnect();
+    assert.equal(redraws, 0, "the panel's own redraw must not wake the page observer into a redraw loop");
+    assert.equal(panel.firstElementChild, row, "rows stay the same nodes so their text can be selected");
+    assert.equal(panel.hidden, false);
+});
+
+test("an href-only change to another channel drops the old toggle and open panel before the new check", async (t) => {
+    const chrome = createFakeChrome({
+        local: {
+            [STORAGE_KEY]: {
+                version: 1,
+                entries: [
+                    storedEntry(["이전 제목", "첫 번째 제목"]),
+                    storedEntry(["다른 채널 이전 제목", "첫 번째 제목"], {
+                        channelId: OTHER_CHANNEL,
+                        liveId: "live-9",
+                    }),
+                ],
+            },
+        },
+    });
+    const { document, dom, state } = createFollowingDom({
+        chrome,
+        liveIds: { [CHANNEL]: "live-1", [OTHER_CHANNEL]: "live-9" },
+    });
+    let releaseOtherCheck = () => {};
+    const otherCheck = new Promise((resolve) => {
+        releaseOtherCheck = resolve;
+    });
+    t.after(() => releaseOtherCheck());
+    const pageFetch = dom.window.fetch;
+    dom.window.fetch = async (...args) => {
+        const response = await pageFetch(...args);
+        if (state.requests.at(-1) === OTHER_CHANNEL) await otherCheck;
+        return response;
+    };
+    evalFeatureScripts(dom);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "toggle was not rendered");
+    const panelTitles = () =>
+        Array.from(
+            document.querySelectorAll("#betterchzzk-following-title-history-panel .bcfth-title"),
+            (node) => node.textContent
+        );
+    const oldButton = document.querySelector("button[data-bcfth-toggle]");
+    oldButton.click();
+    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+    assert.equal(panel.hidden, false);
+    // 처음 화면 동기화가 끝날 시간이에요.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(panelTitles(), ["이전 제목"]);
+
+    // 같은 제목 링크 노드에서 주소만 다른 채널로 바뀌었어요. 제목 텍스트·화면 크기는 그대로예요.
+    document.getElementById("liveTitle").setAttribute("href", `/live/${OTHER_CHANNEL}`);
+    await waitFor(() => !oldButton.isConnected, "the previous channel's toggle stayed on the reused link");
+    assert.equal(panel.hidden, true, "the previous channel's open panel stayed");
+    await waitFor(() => state.requests.includes(OTHER_CHANNEL), "the new channel was not checked");
+    assert.equal(document.querySelector("[data-bcfth-toggle]"), null, "nothing is shown before the new check");
+
+    releaseOtherCheck();
+    await waitFor(
+        () =>
+            document.querySelector("button[data-bcfth-toggle]")?.getAttribute("data-bcfth-channel-id") ===
+            OTHER_CHANNEL,
+        "the new channel's toggle was not shown after its check"
+    );
+    document.querySelector("button[data-bcfth-toggle]").click();
+    assert.deepEqual(panelTitles(), ["다른 채널 이전 제목"]);
+});
+
+test("a toggle reads its link again before opening, even before the page observer runs", async () => {
+    const chrome = createFakeChrome({
+        local: { [STORAGE_KEY]: { version: 1, entries: [storedEntry(["이전 제목", "첫 번째 제목"])] } },
+    });
+    const { document, dom } = createFollowingDom({ chrome, liveIds: { [CHANNEL]: "live-1", [OTHER_CHANNEL]: "x" } });
+    evalFeatureScripts(dom);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "toggle was not rendered");
+    const button = document.querySelector("button[data-bcfth-toggle]");
+
+    // 주소가 바뀐 직후, 관찰 콜백과 화면 동기화가 돌기 전에 누른 경우예요.
+    document.getElementById("liveTitle").setAttribute("href", `/live/${OTHER_CHANNEL}`);
+    button.click();
+    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+    assert.ok(!panel || panel.hidden, "the old channel's titles opened under another channel's link");
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+});
+
+test("an expired check is never used while its re-check is pending or after it fails", async () => {
+    const chrome = createFakeChrome({
+        local: { [STORAGE_KEY]: { version: 1, entries: [storedEntry(["이전 제목", "첫 번째 제목"])] } },
+    });
+    const { document, dom, state } = createFollowingDom({ chrome });
+    const realNow = dom.window.Date.now.bind(dom.window.Date);
+    let offset = 0;
+    dom.window.Date.now = () => realNow() + offset;
+    const pageFetch = dom.window.fetch;
+    let mode = "ok";
+    let releaseCheck = () => {};
+    dom.window.fetch = async (...args) => {
+        const response = await pageFetch(...args);
+        if (mode === "fail") throw new TypeError("Failed to fetch");
+        if (mode === "hold") await new Promise((resolve) => (releaseCheck = resolve));
+        return response;
+    };
+    evalFeatureScripts(dom);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "toggle was not rendered");
+    const panel = () => document.getElementById("betterchzzk-following-title-history-panel");
+    const info = document.querySelector("._information_card");
+    // 같은 제목으로 다시 켠 방송이지만 수집기는 아직 이전 방송 이력을 들고 있어요.
+    state.liveIds[CHANNEL] = "live-2";
+
+    offset = 2 * 60_000 + 1000;
+    const staleButton = document.querySelector("button[data-bcfth-toggle]");
+    staleButton.click();
+    assert.ok(!panel() || panel().hidden, "an expired check opened the previous live's titles");
+
+    mode = "fail";
+    info.textContent = "카테고리 · 1,240명";
+    await waitFor(() => state.requests.length === 2, "the expired check was not repeated");
+    await waitFor(() => !document.querySelector("[data-bcfth-toggle]"), "the failed re-check kept the toggle");
+    assert.equal(staleButton.isConnected, false);
+
+    // 실패 뒤 다시 시도할 때까지 기다리는 동안에도, 다시 확인하는 중에도 이전 확인값을 쓰지 않아요.
+    offset += 16_000;
+    mode = "hold";
+    info.textContent = "카테고리 · 1,250명";
+    await waitFor(() => state.requests.length === 3, "the failed check was not retried after the cooldown");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(document.querySelector("[data-bcfth-toggle]"), null, "a pending re-check reused the expired one");
+
+    // 같은 방송으로 다시 확인되면 이력을 다시 써요.
+    state.liveIds[CHANNEL] = "live-1";
+    mode = "ok";
+    releaseCheck();
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "the confirmed live was not shown again");
+});
+
+test("a valid check is refreshed before it expires so an open panel stays open", async () => {
+    const chrome = createFakeChrome({
+        local: { [STORAGE_KEY]: { version: 1, entries: [storedEntry(["이전 제목", "첫 번째 제목"])] } },
+    });
+    const { document, dom, state } = createFollowingDom({ chrome });
+    const realNow = dom.window.Date.now.bind(dom.window.Date);
+    let offset = 0;
+    dom.window.Date.now = () => realNow() + offset;
+    const pageFetch = dom.window.fetch;
+    let hold = false;
+    let releaseCheck = () => {};
+    dom.window.fetch = async (...args) => {
+        const response = await pageFetch(...args);
+        if (hold) await new Promise((resolve) => (releaseCheck = resolve));
+        return response;
+    };
+    evalFeatureScripts(dom);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "toggle was not rendered");
+    const button = document.querySelector("button[data-bcfth-toggle]");
+    button.click();
+    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+    const row = panel.firstElementChild;
+    const info = document.querySelector("._information_card");
+
+    offset = 100_000;
+    hold = true;
+    info.textContent = "카테고리 · 1,240명";
+    await waitFor(() => state.requests.length === 2, "a check close to expiry was not refreshed");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(panel.hidden, false, "the still-valid check keeps the panel open while refreshing");
+    assert.equal(button.isConnected, true);
+
+    hold = false;
+    releaseCheck();
+    offset = 2 * 60_000 + 30_000;
+    info.textContent = "카테고리 · 1,250명";
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(state.requests.length, 2, "the refreshed check is reused within its own two minutes");
+    assert.equal(panel.hidden, false);
+    assert.equal(panel.firstElementChild, row, "the refresh does not redraw the same titles");
+});

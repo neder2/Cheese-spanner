@@ -35,6 +35,7 @@
     const NATIVE_SIDE = Object.freeze({ sidebar: "left", chat: "right" });
     const TARGETS =
         '#sidebar, #layout-body, #header, #header button[aria-controls="navigation"], #aside-chatting, #vod-aside, #betterchzzk-vod-comment-aside';
+    const COMPANIONS = '[class*="content_right"], [class*="_banner_"]';
     const panels = ["sidebar", "chat"];
     let selected = model.normalizeState(null),
         selectedHeight = null,
@@ -838,6 +839,19 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
             for (const node of resizedNodes) resizeObserver?.observe(node);
         }
     }
+    // The native height depends on the applied width (VOD: player height + overhang), so it is read after the
+    // widths are applied, releasing only the extension height for that synchronous read. The selection is untouched
+    // and the restored height leaves the native signature and the observed size unchanged.
+    function measureNativeHeight(entry) {
+        if (!entry) return;
+        const applied = entry.node.hasAttribute(HEIGHT) ? entry.node.style.getPropertyValue(HEIGHT_VARIABLE) : "";
+        if (applied) applyHeight(entry, null);
+        entry.nativeHeight = entry.node.getBoundingClientRect().height;
+        if (applied) {
+            setVariable(entry.node, HEIGHT_VARIABLE, applied);
+            setAttribute(entry.node, HEIGHT, "1");
+        }
+    }
     function syncHeight() {
         const entry = entries.chat;
         if (!heightUsable(entry)) {
@@ -881,8 +895,6 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
             }
             if (!entry.node.hasAttribute(WIDTH)) entry.nativeWidth = entry.node.getBoundingClientRect().width;
         }
-        if (entries.chat && !entries.chat.node.hasAttribute(HEIGHT))
-            entries.chat.nativeHeight = entries.chat.node.getBoundingClientRect().height;
         const geo = geometry();
         if (confirmedLayout && confirmedLayout.key !== layoutKey(geo)) confirmedLayout = null;
         const layout = confirmedLayout || model.calculateLayout(selected, geo);
@@ -900,6 +912,7 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
                 updateAria(entry.handle, range, entry.node.getBoundingClientRect().width);
             } else unmountHandle(entry);
         }
+        measureNativeHeight(entries.chat);
         syncHeight();
         syncCompanionWidth(entries.chat);
         observeGeometry();
@@ -911,6 +924,9 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
         schedule();
     }
     function relevantMutations(rows) {
+        // A left VOD chat also carries its info column and banner; React can replace them at the same size, which
+        // no ResizeObserver reports, so their own additions/removals are discovered too (only while that is wanted).
+        const companions = placementWanted("chat") && /^\/video\//.test(location.pathname);
         return rows.some((row) => {
             // Message and following-row churn never triggers full target discovery.
             const owner =
@@ -925,7 +941,8 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
                         !node.isConnected &&
                         (heightHandle?.node === node || Object.values(entries).some((entry) => entry?.handle === node))
                     );
-                return node.matches(TARGETS) || !!node.querySelector(TARGETS);
+                if (node.matches(TARGETS) || node.querySelector(TARGETS)) return true;
+                return companions && (node.matches(COMPANIONS) || !!node.querySelector(COMPANIONS));
             });
         });
     }

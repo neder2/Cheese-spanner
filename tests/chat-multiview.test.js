@@ -33,6 +33,7 @@ const TRUSTED_TYPES = new Set([
     "pointerdown",
     "pointermove",
     "pointerup",
+    "pointercancel",
     "dragstart",
     "dragend",
     "dragover",
@@ -1292,6 +1293,76 @@ test("the chat size presets, corner buttons, and resize handle save only from tr
     assert.ok(f.panel(), "Escape ends the drag before closing anything");
 });
 
+// 2026-10-17 report: at 70% with the input off the handle shrank a chat to 168×126 but the saved size snapped to
+// 240×180, so the panel grew after release. Saved sizes are the on-screen CSS px of one chat, kept in the model's bounds.
+test("a released resize keeps its size at every chat scale, input mode, and the model's bounds", async (t) => {
+    const cases = [];
+    for (const scale of [70, 100, 150])
+        for (const input of [false, true]) for (const ids of [[A], [A, B]]) cases.push({ scale, input, ids });
+    for (const { scale, input, ids } of cases) {
+        const name = `${scale}% input ${input ? "on" : "off"} ${ids.length} chat(s)`;
+        const f = fixture(t, { stored: layout(ids, { scale, input }) });
+        // Wide enough for two of the largest minimum chats side by side, so only the handle limits the size.
+        Object.defineProperty(f.w, "innerWidth", { configurable: true, value: 1600 });
+        await f.open();
+        const panel = f.panel();
+        const size = () => [parseInt(panel.style.width, 10), parseInt(panel.style.height, 10)];
+        const handle = panel.querySelector(".bccmv-resize");
+        const grid = panel.querySelector(".bccmv-grid");
+        const span = (count, cell) => count * cell + (count - 1) * 4 + 8;
+        const base = input ? { width: 340, height: 320 } : { width: 240, height: 180 };
+        const min = {
+            width: Math.max(chatModel.MIN_CHAT_WIDTH, Math.ceil((base.width * scale) / 100)),
+            height: Math.max(chatModel.MIN_CHAT_HEIGHT, Math.ceil((base.height * scale) / 100)),
+        };
+        // Docked bottom-right, the handle is on the top-left: dragging right and down shrinks every chat.
+        f.trusted(handle, "pointerdown", { clientX: 400, clientY: 400 });
+        f.trusted(handle, "pointermove", { clientX: 3000, clientY: 3000 });
+        const dragged = size();
+        assert.equal(grid.dataset.columns, String(ids.length), name);
+        assert.deepEqual(
+            dragged,
+            [span(ids.length, min.width), span(1, min.height)],
+            name + ": the handle stops at the smallest size that can be saved"
+        );
+        const before = f.storeMessages.length;
+        f.trusted(handle, "pointerup", { clientX: 3000, clientY: 3000 });
+        await waitForCondition(() => f.storeMessages.length === before + 1 && f.stored().chatWidth === min.width);
+        await settle();
+        assert.deepEqual(size(), dragged, name + ": the panel keeps the released size after saving");
+        assert.equal(f.stored().chatHeight, min.height, name);
+        assert.equal(f.stored().scale, scale, name);
+    }
+
+    // A large screen: the handle stops at the saved maximum instead of shrinking back after release.
+    const f = fixture(t, { stored: layout([A]) });
+    Object.defineProperty(f.w, "innerWidth", { configurable: true, value: 3840 });
+    Object.defineProperty(f.w, "innerHeight", { configurable: true, value: 2600 });
+    await f.open();
+    const panel = f.panel();
+    const size = () => [parseInt(panel.style.width, 10), parseInt(panel.style.height, 10)];
+    const handle = panel.querySelector(".bccmv-resize");
+    f.trusted(handle, "pointerdown", { clientX: 3000, clientY: 1900 });
+    f.trusted(handle, "pointermove", { clientX: -3000, clientY: -3000 });
+    const dragged = size();
+    assert.equal(dragged[0], chatModel.MAX_CHAT_WIDTH + 8, "the width stops at the saved maximum");
+    f.trusted(handle, "pointerup", { clientX: -3000, clientY: -3000 });
+    await waitForCondition(() => f.stored()?.chatWidth === chatModel.MAX_CHAT_WIDTH);
+    await settle();
+    assert.deepEqual(size(), dragged);
+    assert.equal(f.stored().chatHeight, dragged[1] - 8, "the window limits the height, and that height is saved");
+
+    // A cancelled drag saves nothing and returns to the saved size.
+    const saves = f.storeMessages.length;
+    f.trusted(handle, "pointerdown", { clientX: 2000, clientY: 1900 });
+    f.trusted(handle, "pointermove", { clientX: 2600, clientY: 2400 });
+    assert.notDeepEqual(size(), dragged);
+    f.trusted(handle, "pointercancel", { clientX: 2600, clientY: 2400 });
+    assert.deepEqual(size(), dragged);
+    await settle();
+    assert.equal(f.storeMessages.length, saves);
+});
+
 test("dragging a chat's name bar moves the whole panel and docks it to the nearest screen corner", async (t) => {
     const f = fixture(t, { stored: layout([A, B]) });
     await f.open();
@@ -1725,6 +1796,33 @@ test("the add and settings sheets toggle from the bar, and Escape closes an open
     assert.equal(f.w.document.activeElement, f.addToggle());
     f.trusted(f.panel(), "keydown", { key: "Escape", target: f.addToggle() });
     assert.equal(f.panel(), null);
+});
+
+test("leaving the add sheet an empty panel shows by itself cancels its pending lookup", async (t) => {
+    const f = fixture(t);
+    await f.open();
+    assert.ok(f.sheetShown("add"), "an empty panel shows the add sheet without a chosen sheet");
+    const lookup = deferred();
+    f.setFetch(() => lookup.promise);
+    f.typeText("https://chzzk.naver.com/live/" + A);
+    f.enter();
+    assert.equal(f.requests.length, 1);
+
+    f.openSettings();
+    assert.equal(f.requests[0].signal.aborted, true, "switching to settings cancels the lookup");
+    lookup.resolve({ code: 200, content: { channelId: A, channelName: nameOf(A) } });
+    await settle();
+    assert.equal(f.storeMessages.length, 0, "a late lookup neither adds nor saves a chat");
+    assert.equal(f.cell(A), null);
+
+    // Closing settings shows the empty panel's add sheet again, and a new lookup still adds.
+    f.settingsToggle().click();
+    assert.ok(f.sheetShown("add"));
+    f.setFetch(async () => ({ code: 200, content: { channelId: B, channelName: nameOf(B) } }));
+    f.typeText(B);
+    f.enter();
+    await waitForCondition(() => f.cell(B));
+    assert.equal(f.storeMessages.length, 1);
 });
 
 // ── 프레임 범위와 정적 경계 ──────────────────────────────────────────────────

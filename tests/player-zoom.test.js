@@ -474,6 +474,54 @@ test("zoom ignores player controls, overlays, previews, modifiers, and horizonta
     assert.equal(f.doc.querySelector("aside video").style.transform, "");
 });
 
+test("shortcut mode zooms only with the chosen key held and needs no player button", (t) => {
+    const f = fixture(t, { playerZoomEnabled: true, playerZoomMode: "shortcut" });
+    assert.equal(f.toggle().hidden, true);
+    assertWheelDelivery(f, -100, false);
+    assertWheelDelivery(f, 100, false);
+    for (const extra of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true, shiftKey: true }])
+        assertWheelDelivery(f, -100, false, extra);
+    assert.equal(f.video().style.transform, "");
+    // At 100% the held key still owns the wheel, so the browser never scrolls or zooms the page instead.
+    assertWheelDelivery(f, 100, true, { altKey: true });
+    assert.equal(f.video().style.transform, "");
+    assert.equal(f.wheel(-100, { altKey: true }).defaultPrevented, true);
+    closeTo(transform(f.video()).scale, 1.2);
+    assert.equal(f.panel().hidden, false);
+    assert.equal(f.value().textContent, "120%");
+    // Releasing the key keeps the zoom; plain wheels go back to the page.
+    assertWheelDelivery(f, -100, false);
+    closeTo(transform(f.video()).scale, 1.2);
+    for (const selector of ["#native", ".pzp-pc__volume input", "aside video"])
+        assertWheelDelivery(f, -100, false, { altKey: true }, f.doc.querySelector(selector));
+    // Panning a zoomed video still uses a plain drag.
+    f.pointer("pointerdown");
+    f.pointer("pointermove", { clientX: 330 });
+    f.pointer("pointerup", { clientX: 330, buttons: 0 });
+    closeTo(transform(f.video()).x, -40 + 30);
+    assert.equal(f.wheel(100, { altKey: true }).defaultPrevented, true);
+    assert.equal(f.video().style.transform, "");
+    assert.equal(f.panel().hidden, true);
+
+    f.apply({ playerZoomEnabled: true, playerZoomMode: "shortcut", playerZoomShortcutKey: "ctrl" });
+    assertWheelDelivery(f, -100, false, { altKey: true });
+    assert.equal(f.wheel(-100, { ctrlKey: true }).defaultPrevented, true);
+    closeTo(transform(f.video()).scale, 1.2);
+    f.reset().click();
+
+    // Chromium reports Shift+wheel as horizontal movement.
+    f.apply({ playerZoomEnabled: true, playerZoomMode: "shortcut", playerZoomShortcutKey: "shift" });
+    assert.equal(f.wheel(0, { shiftKey: true, deltaX: -100 }).defaultPrevented, true);
+    closeTo(transform(f.video()).scale, 1.2);
+    f.apply({ playerZoomEnabled: true, playerZoomMode: "shortcut", playerZoomShortcutKey: "meta" });
+    assert.equal(f.wheel(-100, { metaKey: true }).defaultPrevented, true);
+    closeTo(transform(f.video()).scale, 1.44);
+    f.apply({ playerZoomEnabled: true, playerZoomMode: "manual" });
+    assert.equal(f.video().style.transform, "");
+    assert.equal(f.toggle().hidden, false);
+    assertWheelDelivery(f, -100, false, { metaKey: true });
+});
+
 test("zoom leaves non-finite and already prevented wheels alone", (t) => {
     const f = fixture(t);
     f.wheel();
@@ -842,7 +890,7 @@ test("late player mounting and control removal do not rescan for unrelated chat 
     assert.ok(transform(f.video()).scale > 1);
 });
 
-test("settings expose and persist the two activation modes with dependency and safe defaults", async (t) => {
+test("settings expose and persist the three activation modes and shortcut key with safe defaults", async (t) => {
     const chrome = createFakeChrome();
     const dom = createDom("options.html", "options.html", chrome);
     t.after(() => dom.window.close());
@@ -851,28 +899,43 @@ test("settings expose and persist the two activation modes with dependency and s
     const { document: doc, BetterChzzkSettings: settings } = dom.window;
     const enabled = doc.querySelector('[data-option="playerZoomEnabled"]');
     const mode = doc.querySelector('[data-option="playerZoomMode"]');
+    const key = doc.querySelector('[data-option="playerZoomShortcutKey"]');
     await waitForCondition(() => doc.getElementById("notice").dataset.state === "saved");
     assert.equal(enabled.checked, false);
     assert.equal(mode.value, "manual");
     assert.equal(mode.disabled, true);
     assert.deepEqual(
         Array.from(mode.options, (option) => option.value),
-        ["manual", "always"]
+        ["manual", "always", "shortcut"]
     );
     assert.ok(mode.closest("label").textContent.includes("확대 적용 방식"));
-    for (const value of [undefined, null, "invalid", true, 1])
+    assert.equal(key.value, "alt");
+    assert.equal(key.disabled, true);
+    assert.deepEqual(
+        Array.from(key.options, (option) => option.value),
+        ["alt", "ctrl", "shift", "meta"]
+    );
+    assert.ok(key.closest("label").textContent.includes("확대 단축키"));
+    for (const value of [undefined, null, "invalid", true, 1]) {
         assert.equal(settings.normalizeOptions({ playerZoomMode: value }).playerZoomMode, "manual");
+        assert.equal(settings.normalizeOptions({ playerZoomShortcutKey: value }).playerZoomShortcutKey, "alt");
+    }
     enabled.checked = true;
     dispatch(dom, enabled, "change");
     assert.equal(mode.disabled, false);
-    mode.value = "always";
+    assert.equal(key.disabled, false);
+    mode.value = "shortcut";
     dispatch(dom, mode, "change");
+    key.value = "ctrl";
+    dispatch(dom, key, "change");
     doc.getElementById("save").click();
     await waitForCondition(
         () =>
-            chrome.testState.sync.playerZoomMode === "always" && doc.getElementById("notice").dataset.state === "saved"
+            chrome.testState.sync.playerZoomMode === "shortcut" &&
+            doc.getElementById("notice").dataset.state === "saved"
     );
     assert.equal(chrome.testState.sync.playerZoomEnabled, true);
+    assert.equal(chrome.testState.sync.playerZoomShortcutKey, "ctrl");
     const manifest = JSON.parse(readRepoFile("manifest.json"));
     const entry = manifest.content_scripts.find((item) => item.js.includes("features/playerZoom.js"));
     assert.notEqual(entry.world, "MAIN");

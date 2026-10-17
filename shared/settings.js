@@ -70,6 +70,7 @@
         volumeTooltipEnabled: { kind: "bool", default: false, feature: true },
         playerZoomEnabled: { kind: "bool", default: false, feature: true },
         playerZoomMode: { kind: "zoomMode", default: "manual" },
+        playerZoomShortcutKey: { kind: "choice", values: ["alt", "ctrl", "shift", "meta"], default: "alt" },
         ambientEnabled: { kind: "bool", default: false, feature: true },
         ambientIntensity: { kind: "int", default: 60, min: 10, max: 100 },
         hideLiveBadgeEnabled: { kind: "bool", default: false, feature: true },
@@ -345,7 +346,7 @@
         if (spec.kind === "bool") return normalizeBoolean(value, fallback);
         if (spec.kind === "theme") return ["system", "light", "dark"].includes(value) ? value : fallback;
         if (spec.kind === "quality") return ["1080p", "720p", "480p"].includes(value) ? value : fallback;
-        if (spec.kind === "zoomMode") return ["manual", "always"].includes(value) ? value : fallback;
+        if (spec.kind === "zoomMode") return ["manual", "always", "shortcut"].includes(value) ? value : fallback;
         if (spec.kind === "choice") return spec.values.includes(value) ? value : fallback;
         if (spec.kind === "int") return normalizeInteger(value, fallback, spec.min, spec.max);
         if (spec.kind === "number") return normalizeNumber(value, fallback, spec.min, spec.max, spec.step);

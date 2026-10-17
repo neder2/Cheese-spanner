@@ -325,6 +325,79 @@
         );
     }
 
+    function getScheduleHookRef(hook) {
+        if (!isRecord(hook)) return null;
+        const state = Object.getOwnPropertyDescriptor(hook, "memoizedState");
+        if (!state || !Object.hasOwn(state, "value")) return null;
+        const ref = state.value;
+        const current = isRecord(ref) ? Object.getOwnPropertyDescriptor(ref, "current") : null;
+        if (current && !Object.hasOwn(current, "value")) return null;
+        return { hook, ref, current: current?.value };
+    }
+
+    function getScheduleRefs(fiber, container) {
+        const state = Object.getOwnPropertyDescriptor(fiber, "memoizedState");
+        if (!state) return null;
+        if (!Object.hasOwn(state, "value")) return { invalid: true };
+        if (state.value == null) return null;
+        const first = getScheduleHookRef(state.value);
+        const firstNext = isRecord(state.value) && Object.getOwnPropertyDescriptor(state.value, "next");
+        const second = firstNext?.value == null ? null : getScheduleHookRef(firstNext.value);
+        if (!first || !firstNext || !Object.hasOwn(firstNext, "value"))
+            return { invalid: true, matched: second?.current === container };
+        if (firstNext.value != null && !second) return { invalid: true };
+        // 실측된 첫 두 ref 경로는 뒤의 custom hook 개수·형식에 새 조건을 붙이지 않는다.
+        if (second?.current === container) return { videoRef: first.ref, containerRef: second.ref, hooks: null };
+
+        // 같은 컴포넌트 앞에 일반 hook이 추가돼도 기존 순서의 유일한 인접 ref만 허용한다.
+        // 읽을 수 없는 첫 후보·중복·순환·긴 목록에서 다른 후보를 골라 승인하지 않는다.
+        const hooks = [];
+        const seen = new Set();
+        let match = null;
+        let hook = state.value;
+        while (hook != null) {
+            if (hooks.length >= 48 || seen.has(hook)) return { invalid: true, matched: Boolean(match) };
+            seen.add(hook);
+            const entry = getScheduleHookRef(hook);
+            const next = entry && Object.getOwnPropertyDescriptor(hook, "next");
+            if (!entry || !next || !Object.hasOwn(next, "value")) return { invalid: true, matched: Boolean(match) };
+            if (entry.current === container) {
+                const previous = hooks.at(-1);
+                if (match || !(previous?.current instanceof HTMLVideoElement)) return { invalid: true, matched: true };
+                match = { videoRef: previous.ref, containerRef: entry.ref, hooks };
+            }
+            hooks.push({ ...entry, next: next.value });
+            hook = next.value;
+        }
+        return match;
+    }
+
+    function hasCurrentScheduleRefs(fiber, container, refs) {
+        const current = getScheduleRefs(fiber, container);
+        return (
+            current &&
+            !current.invalid &&
+            current.videoRef === refs.videoRef &&
+            current.containerRef === refs.containerRef &&
+            (refs.hooks === null
+                ? current.hooks === null
+                : current.hooks?.length === refs.hooks.length &&
+                  refs.hooks.every((entry, index) => {
+                      const next = current.hooks[index];
+                      return (
+                          next.hook === entry.hook &&
+                          next.ref === entry.ref &&
+                          next.current === entry.current &&
+                          next.next === entry.next
+                      );
+                  }))
+        );
+    }
+
+    function isScheduleRefCandidate(refs) {
+        return Boolean(refs && (!refs.invalid || refs.matched));
+    }
+
     function getScheduleOwner(container) {
         const route = location.pathname;
         const routeChannelId = /^\/live\/([^/]+)\/?$/.exec(route)?.[1];
@@ -342,18 +415,22 @@
         let owner = ownData(host.fiber, "return");
         for (let depth = 0; owner && depth < 8; depth++, owner = ownData(owner, "return")) {
             const alternate = ownData(owner, "alternate");
-            chain.push({ fiber: owner, parent: ownData(owner, "return"), alternate });
-            const peers = (alternate ? [owner, alternate] : [owner]).map((fiber) => {
-                const first = ownData(fiber, "memoizedState");
-                return {
-                    fiber,
-                    videoRef: ownData(first, "memoizedState"),
-                    containerRef: ownData(ownData(first, "next"), "memoizedState"),
-                };
+            const peers = (alternate ? [owner, alternate] : [owner]).map((fiber) => ({
+                fiber,
+                refs: getScheduleRefs(fiber, container),
+            }));
+            chain.push({
+                fiber: owner,
+                parent: ownData(owner, "return"),
+                alternate,
+                peers: peers.map(({ fiber, refs }) => ({ fiber, candidate: isScheduleRefCandidate(refs) })),
             });
-            if (!peers.some(({ containerRef }) => ownData(containerRef, "current") === container)) continue;
+            if (!peers.some(({ refs }) => isScheduleRefCandidate(refs))) continue;
+            if (peers.some(({ refs }) => refs?.invalid)) return null;
             // 어느 쪽이 최신인지 추측하지 않는다. 같은 컴포넌트의 후보가 모순되면 모두 통과시킨다.
-            for (const { fiber, videoRef, containerRef } of peers) {
+            for (const { fiber, refs } of peers) {
+                if (!refs) return null;
+                const { videoRef, containerRef } = refs;
                 if (ownData(containerRef, "current") !== container) return null;
                 const video = ownData(videoRef, "current");
                 const props = ownData(fiber, "memoizedProps");
@@ -389,7 +466,7 @@
                         found.pip?.root !== pip?.root)
                 )
                     return null;
-                candidates.push({ fiber, props, videoRef, containerRef });
+                candidates.push({ fiber, props, videoRef, containerRef, refs });
                 found ||= {
                     container,
                     video,
@@ -424,14 +501,18 @@
             ownData(owner.video, owner.videoHost.key) === owner.videoHost.fiber &&
             ownData(owner.host.fiber, "return") === owner.chain[0]?.fiber &&
             owner.chain.every(
-                ({ fiber, parent, alternate }) =>
-                    ownData(fiber, "return") === parent && ownData(fiber, "alternate") === alternate
+                ({ fiber, parent, alternate, peers }) =>
+                    ownData(fiber, "return") === parent &&
+                    ownData(fiber, "alternate") === alternate &&
+                    // 처음엔 무관했던 조상이 같은 컨테이너의 소유를 주장하기 시작해도 다시 판단한다.
+                    peers.every(
+                        ({ fiber: peer, candidate }) =>
+                            isScheduleRefCandidate(getScheduleRefs(peer, owner.container)) === candidate
+                    )
             ) &&
-            owner.candidates.every(({ fiber, props, videoRef, containerRef }) => {
-                const first = ownData(fiber, "memoizedState");
+            owner.candidates.every(({ fiber, props, videoRef, containerRef, refs }) => {
                 return (
-                    ownData(first, "memoizedState") === videoRef &&
-                    ownData(ownData(first, "next"), "memoizedState") === containerRef &&
+                    hasCurrentScheduleRefs(fiber, owner.container, refs) &&
                     ownData(videoRef, "current") === owner.video &&
                     ownData(containerRef, "current") === owner.container &&
                     ownData(fiber, "memoizedProps") === props &&

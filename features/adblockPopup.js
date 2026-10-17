@@ -16,10 +16,19 @@
     const NOTICE_REQUEST = "betterchzzk:adblock-notice-confirm";
     const NOTICE_AREA = "ad_blocking_info_layer";
     const NOTICE = `[role="alertdialog"][aria-modal="true"][data-nlog-area="${NOTICE_AREA}"]`;
-    // 2026-10-11 strings-ko_kr.json의 ad_block.title·description·confirm과 안내의 도움말 링크.
-    const NOTICE_TITLE = "광고차단프로그램을사용중이신가요?";
-    const NOTICE_DESCRIPTION =
-        "광고차단프로그램사용시재생환경에영향을미칠수있으니사용중인확장프로그램이있다면,삭제후서비스를이용해주세요.";
+    // 2026-10-11·10-17 안내의 식별자·도움말과 의미를 유지하며 조사·문장 분리만 허용한다.
+    const NOTICE_TITLE = /^광고차단프로그램(?:을)?사용(?:중이신가요|중인가요|하시나요|하고계신가요)[?？.!。！]*$/;
+    const NOTICE_DESCRIPTION = [
+        "광고차단프로그램",
+        "사용",
+        "재생환경",
+        "영향",
+        "확장프로그램",
+        "삭제",
+        "서비스",
+        "이용",
+    ];
+    const NOTICE_HEADINGS = "strong, h1, h2, h3, h4, h5, h6, [role=heading]";
     const NOTICE_CONFIRM = "확인";
     const NOTICE_HELP_URL = "https://help.naver.com/alias/navergame/chzzkars49.naver";
     const NOTICE_ROUTE = /^\/(?:live\/[^/]+|video\/\d+)\/?$/;
@@ -152,6 +161,58 @@
         return true;
     }
 
+    // Keep this target validation identical to the MAIN helper; neither world trusts the other's marker.
+    function hasOnlyNoticeChild(parent, child) {
+        return (
+            parent?.children.length === 1 &&
+            parent.firstElementChild === child &&
+            Array.from(parent.childNodes).every((node) => node === child || !node.textContent.trim())
+        );
+    }
+
+    function isNoticeWrapper(parent, child) {
+        return (
+            parent?.tagName === "DIV" &&
+            !parent.matches(POPUP) &&
+            !["role", "data-nlog-area", "tabindex", "contenteditable"].some((name) => parent.hasAttribute(name)) &&
+            hasOnlyNoticeChild(parent, child)
+        );
+    }
+
+    function findNoticeBackdrop(popup) {
+        let child = popup;
+        let backdrop = child.parentElement;
+        for (let depth = 0; depth < 2 && !backdrop?.matches(BACKDROP); depth++) {
+            if (!isNoticeWrapper(backdrop, child)) return null;
+            child = backdrop;
+            backdrop = child.parentElement;
+        }
+        if (!backdrop?.matches(BACKDROP) || backdrop.matches(POPUP) || !hasOnlyNoticeChild(backdrop, child))
+            return null;
+        child = backdrop;
+        for (let depth = 0; depth < 2 && child.parentElement !== document.body; depth++) {
+            if (!isNoticeWrapper(child.parentElement, child)) return null;
+            child = child.parentElement;
+        }
+        return child.parentElement === document.body ? backdrop : null;
+    }
+
+    function hasNoticeCopy(popup) {
+        const titles = Array.from(popup.querySelectorAll(NOTICE_HEADINGS)).filter(
+            (node) => !node.parentElement.closest(NOTICE_HEADINGS)
+        );
+        if (titles.length !== 1 || !NOTICE_TITLE.test(normalizeCompact(titles[0].textContent))) return false;
+        const text = Array.from(popup.querySelectorAll("p"), (node) => normalizeCompact(node.textContent)).join("");
+        if (text.length > 1000) return false;
+        let position = 0;
+        return NOTICE_DESCRIPTION.every((anchor) => {
+            const index = text.indexOf(anchor, position);
+            if (index < 0) return false;
+            position = index + anchor.length;
+            return true;
+        });
+    }
+
     // Exact measured notice only, judged by connection, identity and its confirm button rather than visibility.
     // MAIN repeats these checks with the current React props before calling.
     function findNoticeConfirm(popup) {
@@ -163,23 +224,12 @@
             popup.querySelector(POPUP)
         )
             return null;
-        const backdrop = popup.parentElement;
-        if (
-            document.querySelectorAll(`[data-nlog-area="${NOTICE_AREA}"]`).length !== 1 ||
-            !backdrop?.matches(BACKDROP) ||
-            backdrop.parentElement !== document.body ||
-            backdrop.children.length !== 1
-        )
+        if (document.querySelectorAll(`[data-nlog-area="${NOTICE_AREA}"]`).length !== 1 || !findNoticeBackdrop(popup))
             return null;
-        const titles = popup.querySelectorAll("strong");
         const links = popup.querySelectorAll("a");
         const buttons = popup.querySelectorAll("button");
         const button = buttons[0];
-        return titles.length === 1 &&
-            normalizeCompact(titles[0].textContent) === NOTICE_TITLE &&
-            Array.from(popup.querySelectorAll("p"), (item) => normalizeCompact(item.textContent)).includes(
-                NOTICE_DESCRIPTION
-            ) &&
+        return hasNoticeCopy(popup) &&
             links.length === 1 &&
             links[0].getAttribute("href") === NOTICE_HELP_URL &&
             buttons.length === 1 &&
@@ -258,7 +308,7 @@
                 const rect = button.getBoundingClientRect();
                 return (
                     button.closest(POPUP) === popup &&
-                    normalizeCompact(button.getAttribute("aria-label")) === "닫기" &&
+                    ["닫기", "팝업닫기"].includes(normalizeCompact(button.getAttribute("aria-label"))) &&
                     !button.disabled &&
                     button.getAttribute("aria-disabled") !== "true" &&
                     isShown(button) &&
