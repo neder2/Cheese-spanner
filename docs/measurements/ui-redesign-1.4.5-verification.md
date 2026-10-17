@@ -21,7 +21,7 @@
 - `format:check`가 잡은 `.claude/settings.local.json`은 전역 git ignore 대상인 로컬 설정 파일이에요. 저장소에 없고 이번 작업과도 무관해서 고치지 않았어요.
 - 각 작업은 자기 작업 공간에서 관련 테스트·변경 파일 lint·prettier를 통과한 뒤 합쳤어요.
 - 다른 작업 커밋과 합친 뒤에는 말투 검사 테스트(`tests/discovery-panel-theme.test.js`)가 실패했어요. 그 작업이 새로 단 주석의 `아니다`를 존댓말 어미로 잘못 잡은 탓이에요. 검사를 '받침 ㅂ 음절 + 니다'(합니다·없습니다·입니다)로 바로잡았고, 강도는 그대로예요.
-- 최종 커밋 기준의 전체 재검사 결과는 `docs/tracking/status.md`의 이번 항목에 적어요.
+- 최종 코드 커밋 `c4a2709` 기준: `npm run test:all -- --test-concurrency=2` exit 0(1,850개 통과), `npm run lint` exit 0, 이번에 바뀐 파일 전체 `npx prettier --check` exit 0이에요.
 
 ## 확장 페이지 임시 확인 화면
 

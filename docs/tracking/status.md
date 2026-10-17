@@ -18,7 +18,7 @@
 - 실측: [치지직 디자인 토큰](../measurements/chzzk-design-tokens-2026-10-17.md)(공개 HTML·CSS를 `curl`로 받아 정적 확인).
 - 검증: [검증 기록](../measurements/ui-redesign-1.4.5-verification.md)
     - 화면별 작업을 합친 뒤 `test:all -- --test-concurrency=2` 1,850개 통과, `lint` 통과했어요. `format:check`는 저장소 밖 `.claude/settings.local.json`만 걸렸고, 바뀐 70개 파일 prettier는 통과했어요.
-    - 최종 커밋 기준 재검사 결과는 이 항목 끝에 적어요.
+    - 최종 코드 커밋 `c4a2709` 기준 `test:all -- --test-concurrency=2` 1,850개 통과(exit 0), `lint` exit 0이고, 이번에 바뀐 파일 전체의 prettier 검사도 통과했어요. 전체 `format:check`는 저장소 밖 `.claude/settings.local.json`만 걸려요.
     - 설정 320~1280px·기록 1280/375px 임시 화면에서 다크·라이트 가로 넘침은 0이었어요. 치지직 안 14개 표면은 정적 캡처로 다크·라이트를 측정했어요.
 - 미확인: 확장을 다시 불러온 **실제 Chrome·치지직 화면은 확인하지 않았어요**(내장 브라우저가 치지직을 막음). 점검 목록은 검증 기록 마지막 절에 있어요. 커밋 상태는 각 작업을 `Cheese Spanner 1.4.5`로 커밋·병합했고, push·버전 증가·릴리스는 하지 않았어요.
 
