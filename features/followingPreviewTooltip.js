@@ -8,7 +8,7 @@
  *   소리를 켜면서 CSS로 확대한다. 팔로잉 영상에는 소리 상태 아이콘과 전환 피드백을 표시하고,
  *   목록 영상에는 우클릭 동작 안내 툴팁만 표시한다. 페이지 이동·포인터 이탈·DOM 제거 시 정리한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
- *   cleanEntryTitle, compactSpaces, fetchJson, injectStyleOnce, normalizeChzzkImageUrl,
+ *   cleanEntryTitle, compactSpaces, ensureUiTheme(선택), fetchJson, injectStyleOnce, normalizeChzzkImageUrl,
  *   normalizeChzzkMediaUrl, normSpace, onReady, parseChzzkDate, startPageChangeDetection,
  *   settingsStoreSet, touchMapEntry), vendor/hls.light.min.js가 제공하는 전역 window.Hls.
  * 옵션 키: followingPreviewTooltipEnabled, followingPreviewSoundEnabled,
@@ -112,17 +112,10 @@
     const ELAPSED_REFRESH_MS = 1000;
     const UNKNOWN_TITLE = "\uC81C\uBAA9 \uC5C6\uB294 \uB77C\uC774\uBE0C";
     const LOADING_TITLE = "\uBBF8\uB9AC\uBCF4\uAE30 \uBD88\uB7EC\uC624\uB294 \uC911";
-    const ERROR_TITLE = "\uBBF8\uB9AC\uBCF4\uAE30\uB97C \uBD88\uB7EC\uC62C \uC218 \uC5C6\uC2B5\uB2C8\uB2E4";
-    const PREVIEW_FONT_URL = chrome.runtime.getURL("vendor/fonts/PretendardVariable.woff2");
+    const ERROR_TITLE = "\uBBF8\uB9AC\uBCF4\uAE30\uB97C \uBD88\uB7EC\uC62C \uC218 \uC5C6\uC5B4\uC694";
+    // Colors, radii, the popover shadow and the bundled Pretendard face come from shared/uiTheme.js (--bct-*).
+    // Marks drawn over the video or thumbnail keep fixed colors because they sit on the picture, not the theme.
     const STYLE_TEXT = `
-/* Pretendard 1.3.9, SIL OFL 1.1: vendor/fonts/Pretendard.LICENSE.txt */
-@font-face{
-  font-family:"BetterChzzk Pretendard";
-  src:url("${PREVIEW_FONT_URL}") format("woff2");
-  font-style:normal;
-  font-weight:100 900;
-  font-display:swap;
-}
 #${TOOLTIP_ID}{
   position:fixed;
   left:0;
@@ -131,12 +124,12 @@
   width:${CARD_WIDTH}px;
   max-width:calc(100vw - 16px);
   overflow:hidden;
-  border:1px solid rgba(17,17,20,0.16);
-  border-radius:8px;
-  background:var(--sem-color-background-neutral-base,#FFFFFF);
-  color:#111114;
-  box-shadow:0 8px 24px rgba(0,0,0,0.16);
-  font-family:"BetterChzzk Pretendard", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  border:1px solid var(--bct-border-alpha);
+  border-radius:var(--bct-radius-md);
+  background-color:var(--bct-bg);
+  color:var(--bct-text);
+  box-shadow:var(--bct-shadow);
+  font-family:var(--bct-font);
   font-size:12px;
   line-height:1.35;
   z-index:2147483647;
@@ -207,7 +200,7 @@
   z-index:2147483646 !important;
   scale:1.45;
   transform-origin:var(--bcfp-expand-origin, center center);
-  border-radius:8px;
+  border-radius:var(--bct-radius-md);
   box-shadow:0 18px 48px rgba(0,0,0,0.38);
   transition:scale 120ms ease-out, box-shadow 120ms ease-out;
 }
@@ -225,7 +218,7 @@
   width:30px;
   height:30px;
   border:1px solid rgba(255,255,255,0.64);
-  border-radius:999px;
+  border-radius:var(--bct-radius-full);
   background:rgba(5,7,10,0.78);
   color:#FFFFFF;
   box-shadow:0 4px 12px rgba(0,0,0,0.32);
@@ -235,7 +228,7 @@
   line-height:1;
 }
 #${TOOLTIP_ID} .bcfp-sound-unlock:focus-visible{
-  outline:2px solid #00FFA3;
+  outline:2px solid var(--bct-brand);
   outline-offset:2px;
 }
 .bcfp-sound-feedback-host{
@@ -254,13 +247,13 @@
   padding:5px;
   box-sizing:border-box;
   border:1px solid rgba(255,255,255,0.3);
-  border-radius:999px;
+  border-radius:var(--bct-radius-full);
   background:rgba(5,7,10,0.78);
   color:#FFFFFF;
   box-shadow:0 3px 12px rgba(0,0,0,0.34);
   backdrop-filter:blur(6px);
   pointer-events:auto;
-  font-family:"BetterChzzk Pretendard", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family:var(--bct-font);
   font-size:12px;
   font-weight:500;
   line-height:16px;
@@ -276,7 +269,7 @@
   max-width:180px;
   padding:5px 7px;
   border:1px solid rgba(255,255,255,0.24);
-  border-radius:6px;
+  border-radius:var(--bct-radius-sm);
   background:rgba(5,7,10,0.94);
   color:#FFFFFF;
   box-shadow:0 3px 12px rgba(0,0,0,0.34);
@@ -306,12 +299,12 @@
   padding:5px 8px;
   box-sizing:border-box;
   border:1px solid rgba(255,255,255,0.24);
-  border-radius:6px;
+  border-radius:var(--bct-radius-sm);
   background:rgba(5,7,10,0.9);
   color:#FFFFFF;
   box-shadow:0 3px 12px rgba(0,0,0,0.34);
   pointer-events:none;
-  font-family:"BetterChzzk Pretendard", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family:var(--bct-font);
   font-size:12px;
   font-weight:700;
   line-height:15px;
@@ -335,7 +328,7 @@
   color:#D8DCE3;
 }
 .bcfp-sound-feedback[data-sound="on"] .bcfp-sound-feedback-icon{
-  color:#00FFA3;
+  color:var(--bct-brand);
 }
 .bcfp-sound-feedback .bcfp-sound-feedback-label{
   display:block;
@@ -378,7 +371,7 @@
   text-overflow:ellipsis;
 }
 #${TOOLTIP_ID} .bcfp-channel{
-  color:var(--sem-color-content-neutral-warm-strong,#697183);
+  color:var(--bct-text-muted);
   font-size:12px;
   font-weight:500;
   white-space:nowrap;
@@ -387,12 +380,12 @@
 #${TOOLTIP_ID} .bcfp-channel-name{min-width:0;overflow:hidden;text-overflow:ellipsis;}
 #${TOOLTIP_ID} .bcfp-channel-window{flex:none;width:14px;height:14px;}
 #${TOOLTIP_ID} a.bcfp-channel:hover{text-decoration:underline;}
-#${TOOLTIP_ID} a.bcfp-channel:focus-visible{outline:2px solid currentColor;outline-offset:-2px;text-decoration:underline;}
+#${TOOLTIP_ID} a.bcfp-channel:focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:-2px;text-decoration:underline;}
 #${TOOLTIP_ID} .bcfp-title{
   display:-webkit-box;
   -webkit-box-orient:vertical;
   -webkit-line-clamp:2;
-  color:#111114;
+  color:var(--bct-text);
   font-size:14px;
   font-weight:600;
   line-height:1.5;
@@ -404,7 +397,7 @@
   display:flex;
   align-items:center;
   gap:5px;
-  color:#697183;
+  color:var(--bct-text-muted);
   font-size:12px;
   font-weight:500;
   white-space:nowrap;
@@ -417,10 +410,10 @@
   max-width:100%;
   padding:1px 9px;
   box-sizing:border-box;
-  border:1px solid var(--sem-color-surface-brand-strongest-static,#00ffa3);
-  border-radius:6px;
-  background:var(--sem-color-surface-brand-strongest-static,#00ffa3);
-  color:var(--sem-color-content-neutral-inverse-static,#0e0f10);
+  border:1px solid var(--bct-brand);
+  border-radius:var(--bct-radius-sm);
+  background-color:var(--bct-brand);
+  color:var(--bct-on-brand);
   font:inherit;
   line-height:1.5;
   text-decoration:none;
@@ -430,8 +423,8 @@
   cursor:pointer;
 }
 #${TOOLTIP_ID} .bcfp-category:hover{
-  border-color:var(--sem-color-surface-brand-stronger-static,#00e693);
-  background:var(--sem-color-surface-brand-stronger-static,#00e693);
+  border-color:color-mix(in srgb,var(--bct-brand) 90%,var(--bct-on-brand));
+  background-color:color-mix(in srgb,var(--bct-brand) 90%,var(--bct-on-brand));
 }
 #${TOOLTIP_ID} .bcfp-category:focus-visible{outline:2px solid currentColor;outline-offset:-2px;}
 #${TOOLTIP_ID} .bcfp-meta > span:not([data-bcfp-elapsed]){
@@ -442,7 +435,7 @@
 #${TOOLTIP_ID} [data-bcfp-elapsed]{
   flex:none;
   margin-left:auto;
-  color:#111114;
+  color:var(--bct-text);
   font-size:13px;
   font-weight:600;
   line-height:1.5;
@@ -450,50 +443,12 @@
 }
 #${TOOLTIP_ID}[data-state="loading"] .bcfp-title,
 #${TOOLTIP_ID}[data-state="error"] .bcfp-title{
-  color:#4F5968;
+  color:var(--bct-text-muted);
 }
 [${ACTIVE_ATTR}="1"]{
-  background:rgba(0,255,163,0.12) !important;
-  border-radius:6px;
-  box-shadow:0 0 0 1px rgba(0,168,107,0.32);
-}
-html[dark] #${TOOLTIP_ID},
-body[theme="dark"] #${TOOLTIP_ID},
-html.theme_dark #${TOOLTIP_ID}{
-  border-color:rgba(157,165,182,0.22);
-  background:var(--sem-color-background-neutral-base,#1B1D20);
-  color:#F2F4F7;
-  box-shadow:0 8px 24px rgba(0,0,0,0.28);
-}
-html[dark] #${TOOLTIP_ID} .bcfp-channel,
-body[theme="dark"] #${TOOLTIP_ID} .bcfp-channel,
-html.theme_dark #${TOOLTIP_ID} .bcfp-channel,
-html[dark] #${TOOLTIP_ID} .bcfp-meta,
-body[theme="dark"] #${TOOLTIP_ID} .bcfp-meta,
-html.theme_dark #${TOOLTIP_ID} .bcfp-meta{
-  color:#9DA5B6;
-}
-html[dark] #${TOOLTIP_ID} .bcfp-title,
-body[theme="dark"] #${TOOLTIP_ID} .bcfp-title,
-html.theme_dark #${TOOLTIP_ID} .bcfp-title,
-html[dark] #${TOOLTIP_ID} [data-bcfp-elapsed],
-body[theme="dark"] #${TOOLTIP_ID} [data-bcfp-elapsed],
-html.theme_dark #${TOOLTIP_ID} [data-bcfp-elapsed]{
-  color:#F2F4F7;
-}
-html[dark] #${TOOLTIP_ID}[data-state="loading"] .bcfp-title,
-body[theme="dark"] #${TOOLTIP_ID}[data-state="loading"] .bcfp-title,
-html.theme_dark #${TOOLTIP_ID}[data-state="loading"] .bcfp-title,
-html[dark] #${TOOLTIP_ID}[data-state="error"] .bcfp-title,
-body[theme="dark"] #${TOOLTIP_ID}[data-state="error"] .bcfp-title,
-html.theme_dark #${TOOLTIP_ID}[data-state="error"] .bcfp-title{
-  color:#C6CCD6;
-}
-html[dark] [${ACTIVE_ATTR}="1"],
-body[theme="dark"] [${ACTIVE_ATTR}="1"],
-html.theme_dark [${ACTIVE_ATTR}="1"]{
-  background:rgba(0,255,163,0.16) !important;
-  box-shadow:0 0 0 1px rgba(0,255,163,0.4);
+  background-color:var(--bct-brand-weak) !important;
+  border-radius:var(--bct-radius-sm);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--bct-brand-text) 30%,transparent);
 }
 @media (max-width: 520px){
   #${TOOLTIP_ID}{
@@ -2401,6 +2356,7 @@ html.theme_dark [${ACTIVE_ATTR}="1"]{
         if (listenersInstalled) return;
 
         listenersInstalled = true;
+        BetterChzzk.utils.ensureUiTheme?.();
         injectStyleOnce(STYLE_ID, STYLE_TEXT);
         document.addEventListener("pointerover", handlePointerOver, true);
         document.addEventListener("pointerout", handlePointerOut, true);

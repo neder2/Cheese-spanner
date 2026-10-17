@@ -5,6 +5,12 @@ const test = require("node:test");
 const vm = require("node:vm");
 const { JSDOM } = require("jsdom");
 const { waitForCondition: waitForSharedCondition } = require("./helpers/wait-for-condition.js");
+const {
+    assertUsesSharedTheme,
+    colorLiterals,
+    computedThemeValue,
+    cssBlocks,
+} = require("./helpers/bct-theme-assertions.js");
 
 const repoRoot = path.join(__dirname, "..");
 const KEY = "betterchzzk:following-folders:v1";
@@ -506,6 +512,7 @@ function loadFeature(dom, chrome, { pin = false } = {}) {
         ["shared", "data.js"],
         ["shared", "selectors.js"],
         ["content.js"],
+        ["shared", "uiTheme.js"],
         ["shared", "followingFolders.js"],
     ]) {
         dom.window.eval(readRepoFile(...parts));
@@ -729,6 +736,75 @@ test("folders stay inactive by default and the max-row limit alone never reads o
     assert.equal(document.getElementById("betterchzzk-following-folders-rows-style"), null);
     assert.equal(document.getElementById("betterchzzk-following-folders-style"), null);
     assert.equal(markerCount(document), 0);
+});
+
+test("folder menus and the drag card use the shared theme and Pretendard while sidebar rows keep the native font", async (t) => {
+    const saved = stateOf(folder("games", "게임", [B, C]), folder("talk", "토크", [D], true));
+    const { dom, document, window } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    document.getElementById("sidebar").style.fontFamily = "NativeSans";
+    await waitForCondition(() => header(document, "폴더 밖 채널"));
+    const style = document.getElementById("betterchzzk-following-folders-style");
+    assertUsesSharedTheme(assert, window, style, "following folders");
+    assert.deepEqual([...new Set(colorLiterals(style.textContent))], ["#ff4545"], "only the fixed live dot remains");
+    // Small text avoids the low-contrast dim and base brand colors; dim stays on icons and disabled items.
+    assert.doesNotMatch(style.textContent, /--bct-brand-text-base/);
+    for (const { selector, declarations } of cssBlocks(style.textContent)) {
+        if (/(^|;)color:var\(--bct-text-dim\)/.test(declarations))
+            assert.match(selector, /bcff-toggle|bcff-more|:disabled|svg$/, `${selector} keeps dim color for icons`);
+        // Header rows, the status line and the new-folder spot sit among native rows and keep the site's font.
+        if (selector.startsWith("#sidebar"))
+            assert.doesNotMatch(declarations, /font-family|font:(?!inherit)/, `${selector} keeps the native font`);
+    }
+    for (const node of [header(document, "게임"), header(document, "폴더 밖 채널"), nameButton(document, "게임")])
+        assert.equal(window.getComputedStyle(node).fontFamily, "NativeSans");
+
+    const pretendard = /^"BetterChzzk Pretendard", -apple-system/;
+    const dataTransfer = createDataTransfer();
+    let dragImage = null;
+    dataTransfer.setDragImage = (node) => {
+        dragImage = node;
+    };
+    dragEvent(dom, "dragstart", document.querySelector("#rowB a"), { dataTransfer });
+    assert.equal(dragImage?.id, "betterchzzk-following-folders-drag-card");
+    assert.match(computedThemeValue(window, dragImage, "font-family"), pretendard);
+    assert.equal(window.getComputedStyle(dragImage).fontWeight, "600");
+    dragEvent(dom, "dragend", document.querySelector("#rowB a"));
+
+    const menu = await openMenu(dom, document, "게임");
+    for (const node of [menu, menu.querySelector(".bcff-item")])
+        assert.match(computedThemeValue(window, node, "font-family"), pretendard);
+    press(dom, byLabel(menu, "‘게임’ 폴더 삭제"));
+    await waitForCondition(() => menu.querySelector(".bcff-danger[data-armed]"));
+    const armed = menu.querySelector(".bcff-danger[data-armed]");
+    const root = document.documentElement;
+    const value = (node, property) => computedThemeValue(window, node, property);
+    for (const [label, mark, expected] of [
+        ["default dark", () => {}, ["#1c1d1f", "#ffffff", "12px", "#ff5454", "rgba(0, 0, 0, 0)"]],
+        [
+            "light",
+            () => {
+                root.className = "light";
+                root.setAttribute("data-theme", "light");
+            },
+            ["#ffffff", "#0e0f10", "12px", "#e02020", "rgba(0, 0, 0, 0)"],
+        ],
+    ]) {
+        mark();
+        assert.deepEqual(
+            [
+                value(menu, "background-color"),
+                value(menu, "color"),
+                value(menu, "border-radius"),
+                value(armed, "color"),
+                value(armed, "background-color"),
+            ],
+            expected,
+            label
+        );
+        assert.ok(value(menu, "box-shadow").startsWith(value(root, "--bct-shadow")), `${label} popover shadow`);
+        // The armed delete is a danger outline, so its small text stays on the plain menu surface.
+        assert.equal(value(armed, "box-shadow"), `inset 0 0 0 1px ${expected[3]}`, label);
+    }
 });
 
 test("enabled folders without saved folders add nothing to the sidebar until a channel is dragged", async (t) => {
