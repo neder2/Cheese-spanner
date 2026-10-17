@@ -109,6 +109,7 @@ function fixture(t, options = { playerZoomEnabled: true, playerZoomMode: "always
     setVideoBox(doc.querySelector(".pzp-pc video"));
     doc.querySelector("aside video").getBoundingClientRect = () => ({ width: 1600, height: 900 });
     w.eval(readRepoFile("content.js"));
+    w.eval(readRepoFile("shared/uiTheme.js"));
     const main = w.BetterChzzk.utils.getMainVideoElement;
     w.BetterChzzk.utils.getMainVideoElement = () => {
         mainLookups++;
@@ -685,19 +686,41 @@ test("zoom panel and slider have accessible names and theme-specific slider toke
     assert.equal(f.range().type, "range");
     assert.equal(f.range().getAttribute("aria-label"), "화면 확대 배율");
     assert.equal(f.range().getAttribute("aria-valuetext"), "120%");
+    assert.ok(f.doc.getElementById("betterchzzk-ui-theme"), "the panel requests the shared CHZZK theme");
     const fills = [];
-    for (const theme of ["theme_light", "theme_dark"]) {
-        f.doc.documentElement.className = theme;
+    for (const [className, theme] of [
+        ["light", "light"],
+        ["theme_dark", "dark"],
+    ]) {
+        f.doc.documentElement.className = className;
+        f.doc.documentElement.dataset.theme = theme;
         assert.equal(f.reset().type, "button");
         assert.ok(f.reset().getAttribute("aria-label"));
         const style = f.w.getComputedStyle(f.panel());
         assert.notEqual(style.color, style.backgroundColor);
         assert.notEqual(style.display, "none");
-        // JSDOM does not resolve background var() fallbacks; inspect the selected theme tokens.
-        fills.push(style.getPropertyValue("--bcz-fill"));
+        // JSDOM does not substitute var(); follow the slider token into the shared theme value for this marker.
+        const fill = style.getPropertyValue("--bcz-fill").trim();
+        assert.match(fill, /^var\(--bct-[a-z-]+\)$/);
+        fills.push(f.w.getComputedStyle(f.doc.documentElement).getPropertyValue(fill.slice(4, -1)).trim());
     }
-    assert.ok(fills.every((fill) => fill.includes("--Content-neutral-strong")));
+    assert.ok(
+        fills.every((fill) => fill.startsWith("var(--sem-")),
+        "the slider follows CHZZK semantic tokens"
+    );
     assert.notEqual(fills[0], fills[1]);
+    const panelRules = Array.from(f.doc.getElementById(`${ID}-style`).sheet.cssRules).filter((rule) =>
+        /-(?:panel|reset|range|value)\b/.test(rule.selectorText || "")
+    );
+    assert.ok(panelRules.length >= 4);
+    for (const rule of panelRules) {
+        assert.doesNotMatch(rule.selectorText, /theme_dark|theme_light/, "no own theme table");
+        assert.doesNotMatch(
+            rule.style.cssText,
+            /#[0-9a-f]{3,8}\b|rgba?\(|--(?:Content|Border|Surface)-/i,
+            `${rule.selectorText} uses the shared theme variables`
+        );
+    }
 });
 
 test("manual mode exposes the slider at 100% and adjusts by one percent around the visible centre", (t) => {

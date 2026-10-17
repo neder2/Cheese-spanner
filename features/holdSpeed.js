@@ -157,6 +157,8 @@
     }
 
     function ensureOverlay() {
+        // Over the video the colors stay fixed in both themes; only the radius and bundled font are shared.
+        root.utils.ensureUiTheme?.();
         injectStyleOnce(
             STYLE_ID,
             `
@@ -165,10 +167,13 @@
   z-index:2147483647;
   transform:translateX(-50%);
   padding:8px 13px;
-  border-radius:8px;
+  border-radius:var(--bct-radius-md);
   background:rgba(17,19,24,.86);
   color:#fff;
-  font:700 15px/20px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  font-family:var(--bct-font);
+  font-size:15px;
+  font-weight:700;
+  line-height:20px;
   pointer-events:none;
   box-shadow:0 6px 20px rgba(0,0,0,.24);
 }
