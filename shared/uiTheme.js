@@ -39,6 +39,7 @@
         ["--bct-border-weaker", "--sem-color-border-neutral-weaker", "#202224", "#e1e1e5"],
         ["--bct-border-strong", "--sem-color-border-neutral-base", "#4d4d4d", "#c0c1c2"],
         ["--bct-border-alpha", "--sem-color-border-neutral-alpha-weak", "#ffffff26", "#00000026"],
+        ["--bct-border-alpha-weaker", "--sem-color-border-neutral-alpha-weaker", "#ffffff1a", "#0000001a"],
         ["--bct-text", "--sem-color-content-neutral-primary", "#ffffff", "#0e0f10"],
         ["--bct-text-body", "--sem-color-content-neutral-cool-strong", "#c9cedc", "#2e3033"],
         ["--bct-text-muted", "--sem-color-content-neutral-cool-base", "#9da5b6", "#4d4d4d"],
