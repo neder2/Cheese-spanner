@@ -26,7 +26,8 @@
 │           ├── 0002-history-writer.md     → 기록 단일 쓰기 경계
 │           ├── 0003-profile-storage.md    → 프로필 단위 기록 보관
 │           ├── 0004-live-start-effects.md → 알림·자동 입장의 중복 방지 우선
-│           └── 0005-history-backup.md     → 시청·내 채팅 백업과 보존 우선 병합
+│           ├── 0005-history-backup.md     → 시청·내 채팅 백업과 보존 우선 병합
+│           └── 0006-ui-theme.md           → 치지직 맞춤 디자인과 공통 테마 모듈
 ├── shared/
 │   └── AGENTS.md                          → 공용 설정·데이터·기록·워커 보조 기능
 └── features/
