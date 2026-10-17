@@ -18,6 +18,7 @@
 .history-page .hero {
     grid-template-columns: 32px minmax(0, 1fr) auto;
     gap: 12px;
+    border-radius: 12px;
 }
 
 .history-page .brand-mark {
@@ -39,15 +40,16 @@
 .history-page .history-refresh-button {
     gap: 6px;
     min-height: 32px;
-    padding: 4px 12px 4px 10px;
-    border-color: var(--border);
+    padding: 4px 14px 4px 12px;
+    border-color: var(--border-strong);
+    border-radius: 999px;
     background: transparent;
-    color: var(--text-muted);
-    font-size: 12px;
+    color: var(--text);
+    font-size: 13px;
 }
 
 .history-page .history-refresh-button:hover {
-    color: var(--text);
+    background: var(--surface-2);
 }
 
 .history-page :is(.history-refresh-button, .history-nav-button, .history-search) svg {
@@ -63,7 +65,7 @@
 
 .history-page .settings-card {
     padding: 16px;
-    border-radius: 14px;
+    border-radius: 12px;
 }
 
 .history-layout {
@@ -95,7 +97,7 @@
 
 .history-page .history-toolbar h2 {
     font-size: 15px;
-    font-weight: 650;
+    font-weight: 700;
 }
 
 .history-page .history-calendar-card .history-nav-button {
@@ -105,7 +107,7 @@
     min-height: 32px;
     padding: 0;
     border-color: transparent;
-    border-radius: 8px;
+    border-radius: 999px;
     background: transparent;
     color: var(--text-muted);
 }
@@ -177,11 +179,12 @@
 }
 
 .history-page .history-day[data-today="1"] {
-    box-shadow: inset 0 0 0 1.5px var(--accent-text);
+    box-shadow: inset 0 0 0 2px var(--accent-text);
 }
 
+/* The ring marks today; the number keeps the main text color so it stays readable on every watch level. */
 .history-page .history-day[data-today="1"] .history-day-number {
-    color: var(--accent-text);
+    color: var(--text);
     font-weight: 700;
 }
 
@@ -198,13 +201,14 @@
 }
 
 .history-page .history-day[data-future="1"] {
-    opacity: 0.35;
+    color: var(--text-dim);
+    opacity: 0.5;
     cursor: default;
 }
 
 .history-page .history-day-number {
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
     line-height: 1.2;
 }
 
@@ -233,12 +237,14 @@
 .history-month-total span {
     color: var(--text-muted);
     font-size: 12px;
+    font-weight: 600;
 }
 
 .history-month-total strong {
     color: var(--accent-text);
-    font-size: 17px;
-    font-weight: 700;
+    font-size: 20px;
+    font-weight: 750;
+    letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums;
 }
 
@@ -264,7 +270,7 @@
     min-height: 28px;
     margin: 0;
     padding: 2px 10px;
-    border-color: var(--success-border);
+    border-color: transparent;
     border-radius: 999px;
     background: var(--accent-weak);
     color: var(--accent-text);
@@ -301,16 +307,17 @@
 .history-page .history-stat span {
     color: var(--text-muted);
     font-size: 12px;
-    font-weight: 400;
+    font-weight: 600;
 }
 
 .history-page .history-stat strong,
 .history-page .history-stat:last-child strong {
     margin: 0;
     color: var(--text);
-    font-size: 17px;
-    font-weight: 700;
+    font-size: 20px;
+    font-weight: 750;
     line-height: 1.3;
+    letter-spacing: -0.02em;
     white-space: normal;
     overflow-wrap: anywhere;
 }
@@ -342,7 +349,7 @@
     color: var(--text-muted);
     font: inherit;
     font-size: 14px;
-    font-weight: 500;
+    font-weight: 700;
     cursor: pointer;
 }
 
@@ -351,9 +358,8 @@
 }
 
 .history-view-tabs button[aria-selected="true"] {
-    border-bottom-color: var(--accent);
+    border-bottom-color: var(--text);
     color: var(--text);
-    font-weight: 650;
 }
 
 .history-page .history-filter-row {
@@ -379,13 +385,25 @@
     pointer-events: none;
 }
 
+/* Toolbar: pill search, 8px selects, outlined pill button. */
 .history-page .history-filter-row .history-search input[type="search"] {
     width: 100%;
     min-width: 0;
     height: 36px;
-    padding-inline: 34px 12px;
-    border-radius: 8px;
+    padding-inline: 34px 14px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: var(--surface-2);
     font-size: 13px;
+}
+
+.history-page .history-filter-row .history-search input[type="search"]:focus {
+    border-color: transparent;
+    box-shadow: none;
+}
+
+.history-page .history-filter-row .history-search input::placeholder {
+    color: var(--text-dim);
 }
 
 .history-page .history-filter-row select,
@@ -394,18 +412,29 @@
     height: 36px;
     min-height: 36px;
     padding: 0 10px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 8px;
-    background: var(--surface-2);
+    background: var(--surface);
     color: var(--text);
     font: inherit;
     font-size: 13px;
-    font-weight: 400;
+    font-weight: 600;
     line-height: 1.5;
 }
 
+.history-page .history-filter-row .secondary-button {
+    width: auto;
+    padding: 0 14px;
+    border-radius: 999px;
+    background: transparent;
+}
+
+.history-page .history-filter-row .secondary-button:hover {
+    background: var(--surface-2);
+}
+
 .history-page .history-filter-row .secondary-button[aria-pressed="true"] {
-    border-color: var(--success-border);
+    border-color: transparent;
     background: var(--accent-weak);
     color: var(--accent-text);
 }
@@ -424,7 +453,7 @@
     gap: 8px 16px;
     margin-block: 6px;
     padding: 8px 10px;
-    border-radius: 10px;
+    border-radius: 8px;
 }
 
 .history-page .history-selection-actions {
@@ -435,7 +464,13 @@
 
 .history-page .history-selection-row .secondary-button {
     min-height: 30px;
-    padding: 2px 10px;
+    padding: 2px 12px;
+    border-radius: 999px;
+    background: transparent;
+}
+
+.history-page .history-selection-row .secondary-button.danger-button {
+    border-color: color-mix(in srgb, var(--danger) 45%, transparent);
 }
 
 /* One record: title and facts on the left, row actions in a fixed column on the right. */
@@ -470,6 +505,32 @@
 
 .history-list[data-selection-mode="true"] .history-item {
     grid-template-columns: 24px minmax(0, 1fr) auto;
+}
+
+/* Channel icons (verified profile images only). A missing or unloaded icon is hidden and keeps no column. */
+.history-page {
+    --history-channel-icon-size: 40px;
+}
+
+.history-page :is(.history-ranking, .history-activity-list) {
+    --history-channel-icon-size: 32px;
+}
+
+.history-channel-icon {
+    display: block;
+    flex: none;
+    width: var(--history-channel-icon-size);
+    height: var(--history-channel-icon-size);
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.history-page .history-item:has(> .history-channel-icon:not([hidden])) {
+    grid-template-columns: var(--history-channel-icon-size) minmax(0, 1fr) auto;
+}
+
+.history-list[data-selection-mode="true"] .history-item:has(> .history-channel-icon:not([hidden])) {
+    grid-template-columns: 24px var(--history-channel-icon-size) minmax(0, 1fr) auto;
 }
 
 .history-page .history-item-select {
@@ -521,6 +582,11 @@
     white-space: nowrap;
 }
 
+.history-page .history-item-channel {
+    color: var(--text);
+    font-weight: 600;
+}
+
 .history-item-meta > * + *::before {
     content: "·";
     margin-inline: 6px;
@@ -550,20 +616,30 @@
     min-height: 28px;
     height: auto;
     padding: 3px 8px 3px 10px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 999px;
     background: transparent;
     color: var(--text-muted);
     font: inherit;
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 600;
     line-height: 1.4;
     white-space: nowrap;
     cursor: pointer;
 }
 
-.history-page .history-entry-chats {
+/* Brand tint pill on an opaque card base, so brand text keeps 4.5:1 even on a selected (tinted) row. */
+.history-page .history-entry-chats,
+.history-page .history-entry-chats:hover,
+.history-page :is(.history-entry-chats, .history-entry-detail)[aria-expanded="true"] {
+    border-color: transparent;
+    background: linear-gradient(var(--accent-weak), var(--accent-weak)), var(--surface);
     color: var(--accent-text);
+}
+
+.history-page .history-entry-chats:hover,
+.history-page :is(.history-entry-chats, .history-entry-detail)[aria-expanded="true"] {
+    border-color: var(--success-border);
 }
 
 .history-page :is(.history-entry-chats, .history-entry-detail)::after {
@@ -576,16 +652,9 @@
     transform: translateY(-1px) rotate(45deg);
 }
 
-.history-page :is(.history-entry-chats, .history-entry-detail):hover {
-    border-color: var(--border-strong);
+.history-page .history-entry-detail:hover:not([aria-expanded="true"]) {
     background: var(--surface-2);
     color: var(--text);
-}
-
-.history-page :is(.history-entry-chats, .history-entry-detail)[aria-expanded="true"] {
-    border-color: var(--success-border);
-    background: var(--accent-weak);
-    color: var(--accent-text);
 }
 
 .history-page :is(.history-entry-chats, .history-entry-detail)[aria-expanded="true"]::after {
@@ -599,7 +668,7 @@
     margin: 0;
     padding: 12px;
     border: 0;
-    border-radius: 10px;
+    border-radius: 8px;
     background: var(--surface-2);
 }
 
@@ -641,6 +710,7 @@
     min-height: 30px;
     margin-top: 8px;
     padding: 2px 12px;
+    border-radius: 999px;
     font-size: 12px;
 }
 
@@ -802,9 +872,11 @@
 }
 
 .history-page .history-pagination .secondary-button {
+    width: auto;
     min-height: 30px;
-    padding: 2px 12px;
-    border-color: var(--border);
+    padding: 2px 14px;
+    border-color: var(--border-strong);
+    border-radius: 999px;
     background: transparent;
     font-size: 12px;
 }
@@ -856,6 +928,10 @@
     font-size: 14px;
 }
 
+.history-page .history-ranking li:has(> .history-channel-icon:not([hidden])) {
+    grid-template-columns: 24px var(--history-channel-icon-size) minmax(0, 1fr) auto;
+}
+
 .history-ranking-bar {
     grid-column: 2 / -1;
     display: block;
@@ -863,6 +939,11 @@
     overflow: hidden;
     border-radius: 2px;
     background: var(--surface-3);
+}
+
+/* The bar keeps starting under the channel name when an icon column is present. */
+.history-ranking li:has(> .history-channel-icon:not([hidden])) .history-ranking-bar {
+    grid-column: 3 / -1;
 }
 
 .history-ranking-bar::after {
@@ -891,9 +972,17 @@
 }
 
 .history-page .history-activity-heading .secondary-button {
+    width: auto;
     min-height: 36px;
-    padding: 0 12px;
+    padding: 0 14px;
+    border-color: var(--border-strong);
+    border-radius: 999px;
+    background: transparent;
     font-size: 13px;
+}
+
+.history-page .history-activity-heading .secondary-button:hover:not(:disabled) {
+    background: var(--surface-2);
 }
 
 .history-donation-import {
@@ -901,7 +990,7 @@
     gap: 8px;
     margin-block: 8px 12px;
     padding: 12px 14px;
-    border-radius: 10px;
+    border-radius: 8px;
     background: var(--surface-2);
     color: var(--text-muted);
     font-size: 12px;
@@ -950,6 +1039,11 @@
     gap: 2px 8px;
     margin-bottom: 4px;
     min-width: 0;
+}
+
+.history-activity-group:has(> .history-channel-icon:not([hidden])) {
+    align-items: center;
+    margin-bottom: 6px;
 }
 
 .history-activity-channel {
@@ -1022,7 +1116,7 @@
     gap: 10px;
     padding: 16px;
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: 12px;
     background: var(--surface);
     color: var(--text);
     font-size: 13px;
@@ -1056,10 +1150,29 @@
     margin-top: 2px;
 }
 
+/* Management actions are outlined pills; destructive ones use the danger outline. */
 .history-page .history-management .secondary-button {
+    width: auto;
     min-height: 34px;
-    padding: 4px 12px;
+    padding: 4px 14px;
+    border-color: var(--border-strong);
+    border-radius: 999px;
+    background: transparent;
     font-size: 13px;
+}
+
+.history-page .history-management .secondary-button:hover:not(:disabled) {
+    background: var(--surface-2);
+}
+
+.history-page .history-management .secondary-button.danger-button {
+    border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+    color: var(--danger);
+}
+
+.history-page .history-management .secondary-button.danger-button:hover:not(:disabled) {
+    border-color: var(--danger);
+    background: var(--danger-bg);
 }
 
 .history-backup > button {
@@ -1070,7 +1183,7 @@
     display: grid;
     gap: 12px;
     padding: 14px;
-    border-radius: 10px;
+    border-radius: 8px;
     background: var(--surface-2);
 }
 
@@ -1123,7 +1236,7 @@
     gap: 4px;
     padding: 16px;
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: 12px;
     background: var(--surface);
 }
 
@@ -1276,6 +1389,10 @@
         gap: 8px 10px;
     }
 
+    .history-page .history-list {
+        --history-channel-icon-size: 32px;
+    }
+
     .history-page .history-item-actions {
         flex-direction: column;
         align-items: flex-end;
@@ -1319,6 +1436,14 @@
 
     .history-list[data-selection-mode="true"] .history-item {
         grid-template-columns: 24px minmax(0, 1fr);
+    }
+
+    .history-page .history-item:has(> .history-channel-icon:not([hidden])) {
+        grid-template-columns: var(--history-channel-icon-size) minmax(0, 1fr);
+    }
+
+    .history-list[data-selection-mode="true"] .history-item:has(> .history-channel-icon:not([hidden])) {
+        grid-template-columns: 24px var(--history-channel-icon-size) minmax(0, 1fr);
     }
 
     .history-page .history-item-actions {
