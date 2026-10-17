@@ -16,6 +16,7 @@ const ENTRY_ID = "betterchzzk-chat-multiview";
 const PANEL_ID = ENTRY_ID + "-panel";
 const [A, B, C, D, E] = ["a", "b", "c", "d", "e"].map((letter) => letter.repeat(32));
 const MAIN_CHANNEL = "f".repeat(32);
+const THEME_SCRIPT = "shared/uiTheme.js";
 const SCRIPTS = [
     "shared/settings.js",
     "shared/data.js",
@@ -89,7 +90,7 @@ const pageHtml = (withHeader) =>
     '<main id="layout-body"><div class="player"><video id="main-video"></video></div>' +
     '<aside id="aside-chatting"><div role="log" id="main-chat-log"></div></aside></main>';
 
-function fixture(t, { enabled = true, stored, withHeader = true, holdReads = false } = {}) {
+function fixture(t, { enabled = true, stored, withHeader = true, holdReads = false, withTheme = false } = {}) {
     const chrome = createFakeChrome({
         sync: { chatMultiviewEnabled: enabled },
         local: stored === undefined ? {} : { [KEY]: clone(stored) },
@@ -167,7 +168,12 @@ function fixture(t, { enabled = true, stored, withHeader = true, holdReads = fal
         return { ok: true, json: async () => json };
     };
     w.chrome = chrome;
-    for (const file of SCRIPTS) w.eval(read(file));
+    // The manifest loads the shared in-page theme right after content.js. Most tests leave it out on purpose,
+    // so the feature must also work when the optional ensureUiTheme request is missing.
+    const scripts = withTheme
+        ? SCRIPTS.flatMap((file) => (file === "content.js" ? [file, THEME_SCRIPT] : [file]))
+        : SCRIPTS;
+    for (const file of scripts) w.eval(read(file));
     t.after(() => {
         w.dispatchEvent(new w.Event("pagehide"));
         w.close();
@@ -1936,6 +1942,7 @@ test("integration: manifest loads the pure model before the isolated top-frame f
         "shared/settings.js",
         "shared/data.js",
         "content.js",
+        THEME_SCRIPT,
         "shared/chatMultiview.js",
         "features/chatWeeklyRanking.js",
     ]) {
@@ -1943,4 +1950,129 @@ test("integration: manifest loads the pure model before the isolated top-frame f
         assert.ok(index >= 0 && index < featureIndex, dependency + " loads before the feature");
     }
     assert.match(read("options.html"), /data-option="chatMultiviewEnabled"/);
+});
+
+// shared/uiTheme.js owns the only light/dark fallback table and the single "BetterChzzk Pretendard" @font-face for
+// in-page UI (spec 5.1, 6). The panel keeps only theme-independent colors: the live dot, the warning mark with its
+// white glyph, and the white toggle knob with its shadow.
+const CHAT_FIXED_COLORS = ["#ff4545", "#f08c00", "#fff", "#0000004d"];
+const chatCssColors = (css) => [...css.matchAll(/#[0-9a-f]{3,8}(?![\w-])|rgba?\([^)]*\)/gi)].map(([color]) => color);
+
+test("chat multiview uses the shared theme font instead of declaring its own @font-face", async (t) => {
+    const source = read("features/chatMultiview.js");
+    assert.doesNotMatch(source, /@font-face|PretendardVariable\.woff2|runtime\??\.getURL/);
+    const f = fixture(t, { enabled: false, stored: layout([A]), withTheme: true });
+    await waitForCondition(() => f.w.document.getElementById(ENTRY_ID + "-style"));
+    assert.equal(f.w.document.getElementById("betterchzzk-ui-theme"), null, "no theme while the option is off");
+    f.changeSync({ chatMultiviewEnabled: true });
+    await f.open();
+    const d = f.w.document;
+    assert.equal(d.querySelectorAll("#betterchzzk-ui-theme").length, 1);
+    const fontFaces = [...d.querySelectorAll("style")].flatMap((style) =>
+        [...style.textContent.matchAll(/@font-face\{[^}]*\}/g)].map(([rule]) => rule)
+    );
+    assert.equal(fontFaces.length, 1, "one shared @font-face in the document");
+    assert.match(fontFaces[0], /font-family:"BetterChzzk Pretendard";src:url\("chrome-extension:\/\/better-chzzk\//);
+    assert.match(d.getElementById("betterchzzk-ui-theme").textContent, /@font-face/);
+    const css = d.getElementById(ENTRY_ID + "-style").textContent;
+    assert.match(css, new RegExp("\\n#" + ENTRY_ID + "\\{[^}]*font:14px/1\\.4 var\\(--bct-font\\)"));
+    assert.match(css, new RegExp("\\n#" + PANEL_ID + "\\{[^}]*font:13px/1\\.5 var\\(--bct-font\\)"));
+    assert.doesNotMatch(css, /BetterChzzk Pretendard|system-ui|Segoe UI/, "the font stack lives in the theme only");
+
+    // The chat frames get only the hide style: no theme variables or fonts are needed inside them.
+    const a = f.attachFrame(A);
+    a.load();
+    assert.equal(f.cell(A).dataset.state, "ready");
+    const frameStyle = a.doc.getElementById("betterchzzk-chat-multiview-frame-style");
+    assert.ok(frameStyle);
+    assert.equal(a.doc.querySelectorAll("style").length, 1);
+    assert.equal(a.doc.getElementById("betterchzzk-ui-theme"), null);
+    assert.doesNotMatch(frameStyle.textContent, /var\(|@font-face|font-family/);
+});
+
+test("chat multiview colors, radii, shadow and states come from the shared theme without a fallback palette", async (t) => {
+    const f = fixture(t, { stored: layout([A]), withTheme: true });
+    await f.open();
+    const d = f.w.document;
+    const css = d.getElementById(ENTRY_ID + "-style").textContent;
+    const defined = new Set(
+        [...d.getElementById("betterchzzk-ui-theme").textContent.matchAll(/(--bct-[a-z-]+):/g)].map(([, name]) => name)
+    );
+    const used = [...css.matchAll(/var\((--bct-[a-z-]+)(\)|,)/g)];
+    assert.ok(used.length > 15);
+    for (const [, name, end] of used) {
+        assert.ok(defined.has(name), name + " is defined by shared/uiTheme.js");
+        assert.equal(end, ")", name + " is used without a feature fallback");
+    }
+    assert.doesNotMatch(css, /var\(--sem-|var\(--(?:Surface|Content|Border)-/);
+    assert.doesNotMatch(css, /theme_dark|data-theme/);
+    for (const color of chatCssColors(css))
+        assert.ok(CHAT_FIXED_COLORS.includes(color.toLowerCase()), color + " is not a theme color");
+    const variables = css.match(new RegExp("\\n#" + ENTRY_ID + ",#" + PANEL_ID + "\\{([^}]*)\\}"))?.[1] || "";
+    for (const pair of [
+        "--bccmv-surface:var(--bct-surface)",
+        "--bccmv-weak:var(--bct-surface-weak)",
+        "--bccmv-base:var(--bct-surface-base)",
+        "--bccmv-bg:var(--bct-bg)",
+        "--bccmv-text:var(--bct-text)",
+        "--bccmv-strong:var(--bct-text-body)",
+        "--bccmv-muted:var(--bct-text-muted)",
+        "--bccmv-faint:var(--bct-text-dim)",
+        "--bccmv-brand:var(--bct-brand-text)",
+        "--bccmv-brand-fill:var(--bct-brand)",
+        "--bccmv-brand-soft:var(--bct-brand-weak)",
+        "--bccmv-on-brand:var(--bct-on-brand)",
+        "--bccmv-line:var(--bct-border-alpha-weaker)",
+        "--bccmv-line-strong:var(--bct-border-alpha)",
+        "--bccmv-hover:var(--bct-hover)",
+        "--bccmv-shadow:var(--bct-shadow)",
+        "--bccmv-border:var(--bct-border-strong)",
+    ])
+        assert.ok(variables.includes(pair), pair);
+    const P = "#" + PANEL_ID;
+    const rule = (selector) => {
+        const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return css.match(new RegExp("(?:^|\\n)" + escaped + "\\{([^}]*)\\}"))?.[1] || "";
+    };
+    assert.match(rule(P), /border-radius:var\(--bct-radius-lg\)/);
+    assert.match(rule(P + " button"), /border-radius:var\(--bct-radius-md\)/);
+    assert.match(rule(P + " :is(button,input):focus-visible"), /outline:2px solid var\(--bct-focus-ring\)/);
+    assert.match(rule("#" + ENTRY_ID + ">button:focus-visible"), /outline:2px solid var\(--bct-focus-ring\)/);
+    assert.match(rule(P + " button:hover:not(:disabled)"), /background:var\(--bccmv-hover\)/);
+    // Small text never uses the dim text color (3.7:1 in dark) or small brand text on a tinted surface (light).
+    for (const selector of [
+        P + " .bccmv-result-detail",
+        P + " .bccmv-results-hint",
+        P + " .bccmv-setting-help",
+        P + " .bccmv-empty-hint",
+    ])
+        assert.match(rule(selector), /color:var\(--bccmv-muted\)/, selector);
+    // Selected and current states use the brand tint with primary text, which keeps 4.5:1 in both themes.
+    for (const selector of [
+        P + " .bccmv-result-state",
+        P + ' .bccmv-bar button[aria-expanded="true"]',
+        P + ' .bccmv-group button[aria-pressed="true"]',
+        P + ' .bccmv-nav-chip[aria-current="true"]',
+    ])
+        assert.match(rule(selector), /background:var\(--bccmv-brand-soft\);color:var\(--bccmv-text\)/, selector);
+    assert.match(
+        rule("#" + ENTRY_ID + '>button[aria-expanded="true"]'),
+        /background:var\(--bccmv-brand-soft\);border-color:var\(--bct-brand-text-base\)/
+    );
+    for (const [, value] of css.matchAll(/border-radius:([^;}]*)/g))
+        assert.match(
+            value,
+            /^(?:var\(--bct-radius-(?:sm|md|lg|full)\)|50%|0 3px 0 0|0 0 0 3px|0 0 3px 0)$/,
+            "radius " + value
+        );
+    for (const [, value] of css.matchAll(/box-shadow:([^;}]*)/g))
+        assert.match(
+            value,
+            /^(?:var\(--bccmv-shadow\),0 0 0 1px var\(--bccmv-line\)|none|0 1px 2px #0000004d)$/,
+            value
+        );
+    // User decision 2026-10-12: 4px padding and gaps, controls only on hover or focus.
+    assert.match(rule(P), /padding:4px/);
+    assert.match(rule(P), /gap:4px/);
+    assert.match(rule(P + " .bccmv-bar"), /opacity:0;pointer-events:none/);
 });
