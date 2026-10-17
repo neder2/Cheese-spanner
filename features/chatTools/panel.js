@@ -1,5 +1,5 @@
 /** 운영자 패널의 DOM, 닉네임 필터, 선택·스크롤과 노출 기반 읽음 판정을 소유한다.
- * isolated world. 의존: chatTools.parser, utils.normSpace / injectStyleOnce.
+ * isolated world. 의존: chatTools.parser, utils.normSpace / injectStyleOnce / ensureUiTheme(선택, 공통 --bct-* 테마).
  * createPanel은 수집 기록을 render로 받고 onRead / onNavigate로 사용자 동작을 전달한다.
  * 원본 채팅 binding과 수집 상태를 수정하지 않으며 remove에서 observer·RAF·listener를 해제한다.
  */
@@ -38,17 +38,12 @@
 
     const PINNED_NOTICE_RE = /pin|pinned|fixed|sticky|notice|announcement|announce|\uACE0\uC815|\uACF5\uC9C0/i;
 
+    // Colors, radii, shadow and font come from shared/uiTheme.js (--bct-*), which follows CHZZK's root theme.
     const STYLE_TEXT = `
 [${MODERATOR_HIGHLIGHT_ATTR}="1"]{
-  --bcct-highlight-tint:color-mix(in srgb, var(${MODERATOR_HIGHLIGHT_COLOR}, currentColor) 85%, #000);
-  background-color:color-mix(in srgb, var(--bcct-highlight-tint) 10%, transparent)!important;
-  border-radius:4px;
-  box-shadow:0 0 0 1px color-mix(in srgb, var(--bcct-highlight-tint) 32%, transparent);
-}
-/* 2026-09-05 치지직의 루트 theme_dark 클래스·data-theme 기준. 본문색과 행 크기는 유지한다. */
-html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"]{
-  --bcct-highlight-tint:color-mix(in srgb, var(${MODERATOR_HIGHLIGHT_COLOR}, currentColor) 85%, #fff);
+  --bcct-highlight-tint:color-mix(in srgb, var(${MODERATOR_HIGHLIGHT_COLOR}, currentColor) 85%, var(--bct-text));
   background-color:color-mix(in srgb, var(--bcct-highlight-tint) 12%, transparent)!important;
+  border-radius:var(--bct-radius-sm);
   box-shadow:0 0 0 1px color-mix(in srgb, var(--bcct-highlight-tint) 40%, transparent);
 }
 [data-bcct-blind-masked="1"]{
@@ -79,17 +74,21 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
   margin:0 2px 0 0;
   padding:0;
   border:0;
-  border-radius:8px;
+  border-radius:var(--bct-radius-md);
   background:transparent;
-  color:#69737f;
+  color:var(--bct-text-muted);
   cursor:pointer;
   font:inherit;
   transition:background-color .12s ease,color .12s ease;
 }
 .bcct-moderator-trigger:hover,
 .bcct-moderator-trigger[aria-expanded="true"]{
-  background:rgba(0,0,0,0.05);
-  color:#00c471;
+  background:var(--bct-hover);
+  color:var(--bct-brand-text);
+}
+.bcct-moderator-trigger:focus-visible{
+  outline:2px solid var(--bct-focus-ring);
+  outline-offset:-2px;
 }
 .bcct-moderator-trigger svg{
   width:19px;
@@ -119,12 +118,12 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
   min-width:13px;
   height:13px;
   padding:0 3px;
-  border:2px solid #fff;
-  border-radius:999px;
-  background:#00c471;
-  color:#fff;
+  border:2px solid var(--bct-bg);
+  border-radius:var(--bct-radius-full);
+  background:var(--bct-brand);
+  color:var(--bct-on-brand);
   font-size:9px;
-  font-weight:500;
+  font-weight:600;
   line-height:1;
   box-sizing:border-box;
 }
@@ -132,9 +131,9 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
   display:none;
 }
 .bcct-moderator-trigger[data-unread="1"]{
-  background:rgba(0,196,113,.14);
-  color:#007f50;
-  box-shadow:inset 0 0 0 1px rgba(0,196,113,.4);
+  background:var(--bct-brand-weak);
+  color:var(--bct-brand-text);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--bct-brand-text) 40%, transparent);
 }
 .bcct-moderator-actions{
   display:inline-flex!important;
@@ -165,12 +164,12 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
   z-index:2147483646;
   width:min(344px, calc(100vw - 24px));
   max-height:min(var(--bcct-box-height,420px), calc(100vh - 120px));
-  border:1px solid rgba(0,0,0,0.1);
-  border-radius:10px;
-  background:var(--sem-color-background-neutral-base,#fff);
-  color:#151619;
-  box-shadow:0 10px 28px rgba(15,18,22,0.14);
-  font-family:inherit;
+  border:1px solid var(--bct-border);
+  border-radius:var(--bct-radius-lg);
+  background:var(--bct-surface);
+  color:var(--bct-text);
+  box-shadow:var(--bct-shadow);
+  font-family:var(--bct-font);
   overflow:hidden;
 }
 .bcct-moderator-box[data-open="0"]{
@@ -184,8 +183,8 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
   gap:10px;
   border:0;
   padding:12px 14px;
-  border-bottom:1px solid #eef1f4;
-  background:#fff;
+  border-bottom:1px solid var(--bct-border);
+  background:var(--bct-surface);
   font:inherit;
   font-size:14px;
   font-weight:700;
@@ -209,11 +208,11 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
   min-width:18px;
   height:18px;
   padding:0 6px;
-  border-radius:999px;
-  background:#e9fff5;
-  color:#007f50;
+  border-radius:var(--bct-radius-full);
+  background:var(--bct-brand);
+  color:var(--bct-on-brand);
   font-size:12px;
-  font-weight:500;
+  font-weight:600;
   line-height:1;
   box-sizing:border-box;
 }
@@ -225,9 +224,9 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
   height:28px;
   flex:0 0 auto;
   border:0;
-  border-radius:8px;
+  border-radius:var(--bct-radius-md);
   background:transparent;
-  color:#8a94a1;
+  color:var(--bct-text-muted);
   cursor:pointer;
   font-size:16px;
   font-weight:600;
@@ -236,8 +235,8 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
   transition:background-color .12s ease,color .12s ease;
 }
 .bcct-moderator-box__close:hover{
-  background:#f1f3f5;
-  color:#151619;
+  background:var(--bct-hover);
+  color:var(--bct-text);
 }
 .bcct-moderator-box__list{
   display:flex;
@@ -255,18 +254,22 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
   max-height:84px;
   overflow:auto;
   padding:8px 12px;
-  border-bottom:1px solid rgba(128,128,128,.2);
+  border-bottom:1px solid var(--bct-border);
 }
 .bcct-moderator-author,
 .bcct-moderator-bottom{
-  border:1px solid rgba(128,128,128,.35);
-  border-radius:6px;
+  border:1px solid var(--bct-border-strong);
+  border-radius:var(--bct-radius-full);
   background:transparent;
   color:inherit;
   font:inherit;
   font-size:12px;
   cursor:pointer;
   padding:4px 7px;
+}
+.bcct-moderator-author:hover,
+.bcct-moderator-bottom:hover{
+  background:var(--bct-hover);
 }
 .bcct-moderator-author{
   display:inline-flex;
@@ -294,14 +297,14 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
   white-space:nowrap;
 }
 .bcct-moderator-author[aria-pressed="true"]{
-  background:rgba(0,196,113,.16);
-  border-color:#007f50;
+  background:var(--bct-brand-weak);
+  border-color:var(--bct-brand-text);
 }
 .bcct-moderator-author__unread{
   flex:none;
   padding:0 4px;
-  border-radius:4px;
-  background:rgba(0,196,113,.18);
+  border-radius:var(--bct-radius-sm);
+  background:var(--bct-brand-weak);
   font-weight:700;
 }
 .bcct-moderator-summary{
@@ -323,7 +326,7 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
   display:block;
   width:100%;
   border:0;
-  border-bottom:1px solid #f1f3f5;
+  border-bottom:1px solid var(--bct-border-weaker);
   background:transparent;
   color:inherit;
   cursor:text;
@@ -337,16 +340,16 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
   transition:background-color .12s ease;
 }
 .bcct-moderator-row:hover{
-  background:#f4fbf8;
+  background:var(--bct-hover);
 }
 .bcct-moderator-row[data-unread="1"]{
-  box-shadow:inset 3px 0 #00a86b;
+  box-shadow:inset 3px 0 var(--bct-brand-text);
 }
 .bcct-moderator-box__close:focus-visible,
 .bcct-moderator-row:focus-visible,
 .bcct-moderator-author:focus-visible,
 .bcct-moderator-bottom:focus-visible{
-  outline:2px solid #00a86b;
+  outline:2px solid var(--bct-focus-ring);
   outline-offset:-2px;
 }
 .bcct-moderator-row:last-child{
@@ -355,7 +358,7 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
 .bcct-moderator-row__meta{
   display:inline;
   margin-right:6px;
-  color:#007f50;
+  color:var(--bct-brand-text);
   font-size:12px;
   font-weight:700;
   line-height:18px;
@@ -363,7 +366,7 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
 .bcct-moderator-row__time{
   display:inline;
   margin-right:4px;
-  color:var(--sem-color-content-neutral-cool-base,var(--Content-Neutral-Cool-Base,#697183));
+  color:var(--bct-text-muted);
   font-size:12px;
   font-weight:400;
   font-variant-numeric:tabular-nums;
@@ -379,7 +382,7 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
 }
 .bcct-moderator-row__text{
   display:inline;
-  color:#25282d;
+  color:var(--bct-text-body);
   font-size:13px;
   line-height:1.5;
   white-space:normal;
@@ -387,7 +390,7 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
 }
 .bcct-moderator-box__empty{
   padding:18px 12px;
-  color:#8a94a1;
+  color:var(--bct-text-muted);
   font-size:12px;
   line-height:18px;
   text-align:center;
@@ -397,83 +400,6 @@ html:is(.theme_dark, [data-theme="theme_dark"]) [${MODERATOR_HIGHLIGHT_ATTR}="1"
     right:4px;
     width:calc(100vw - 16px);
   }
-}
-html[dark] .bcct-moderator-box,
-body[theme="dark"] .bcct-moderator-box,
-html.theme_dark .bcct-moderator-box{
-  border-color:rgba(255,255,255,0.14);
-  background:var(--sem-color-background-neutral-base,#1f2125);
-  color:#f1f3f5;
-}
-html[dark] .bcct-moderator-trigger,
-body[theme="dark"] .bcct-moderator-trigger,
-html.theme_dark .bcct-moderator-trigger{
-  color:#c9cdd3;
-}
-html[dark] .bcct-moderator-trigger:hover,
-html[dark] .bcct-moderator-trigger[aria-expanded="true"],
-body[theme="dark"] .bcct-moderator-trigger:hover,
-body[theme="dark"] .bcct-moderator-trigger[aria-expanded="true"],
-html.theme_dark .bcct-moderator-trigger:hover,
-html.theme_dark .bcct-moderator-trigger[aria-expanded="true"]{
-  background:rgba(255,255,255,0.1);
-  color:#00c471;
-}
-html[dark] .bcct-moderator-trigger__count,
-body[theme="dark"] .bcct-moderator-trigger__count,
-html.theme_dark .bcct-moderator-trigger__count{
-  border-color:#1f2125;
-}
-html[dark] .bcct-moderator-box__header,
-body[theme="dark"] .bcct-moderator-box__header,
-html.theme_dark .bcct-moderator-box__header{
-  border-bottom-color:rgba(255,255,255,0.1);
-  background:#1f2125;
-}
-html[dark] .bcct-moderator-box__count,
-body[theme="dark"] .bcct-moderator-box__count,
-html.theme_dark .bcct-moderator-box__count{
-  background:rgba(0,196,113,0.15);
-  color:#00c471;
-}
-html[dark] .bcct-moderator-box__close,
-body[theme="dark"] .bcct-moderator-box__close,
-html.theme_dark .bcct-moderator-box__close{
-  color:#c9cdd3;
-}
-html[dark] .bcct-moderator-box__close:hover,
-body[theme="dark"] .bcct-moderator-box__close:hover,
-html.theme_dark .bcct-moderator-box__close:hover{
-  background:rgba(255,255,255,0.09);
-  color:#f1f3f5;
-}
-html[dark] .bcct-moderator-row,
-body[theme="dark"] .bcct-moderator-row,
-html.theme_dark .bcct-moderator-row{
-  border-bottom-color:rgba(255,255,255,0.08);
-}
-html[dark] .bcct-moderator-row:hover,
-body[theme="dark"] .bcct-moderator-row:hover,
-html.theme_dark .bcct-moderator-row:hover{
-  background:rgba(0,196,113,0.12);
-}
-html[dark] .bcct-moderator-row__text,
-body[theme="dark"] .bcct-moderator-row__text,
-html.theme_dark .bcct-moderator-row__text{
-  color:#f1f3f5;
-}
-html:is(.theme_dark,[dark]) .bcct-moderator-row__meta,
-body[theme="dark"] .bcct-moderator-row__meta{
-  color:var(--sem-color-content-brand-base,#00e693);
-}
-html:is(.theme_dark,[dark]) .bcct-moderator-row__time,
-body[theme="dark"] .bcct-moderator-row__time{
-  color:var(--sem-color-content-neutral-warm-strong,#9da5b6);
-}
-html[dark] .bcct-moderator-box__empty,
-body[theme="dark"] .bcct-moderator-box__empty,
-html.theme_dark .bcct-moderator-box__empty{
-  color:#9aa3ad;
 }
 `;
 
@@ -774,7 +700,7 @@ html.theme_dark .bcct-moderator-box__empty{
             if (!moderatorMessages.length && !empty) {
                 empty = document.createElement("div");
                 empty.className = "bcct-moderator-box__empty";
-                empty.textContent = "아직 수집된 메시지가 없습니다.";
+                empty.textContent = "아직 수집된 메시지가 없어요.";
                 moderatorList.appendChild(empty);
             } else if (moderatorMessages.length) empty?.remove();
             renderModeratorActivity(actors);
@@ -1341,7 +1267,10 @@ html.theme_dark .bcct-moderator-box__empty{
             render,
             configure,
             reset,
-            installStyles: () => injectStyleOnce(STYLE_ID, STYLE_TEXT),
+            installStyles: () => {
+                root.utils.ensureUiTheme?.();
+                injectStyleOnce(STYLE_ID, STYLE_TEXT);
+            },
             removeStyles: () => document.getElementById(STYLE_ID)?.remove(),
         };
     };

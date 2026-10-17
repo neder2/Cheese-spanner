@@ -739,6 +739,7 @@ function evalFeatureScripts(dom) {
         "shared/data.js",
         "shared/followingTitleHistory.js",
         "content.js",
+        "shared/uiTheme.js",
         "features/followingTitleHistory.js",
     ]) {
         dom.window.eval(readRepoFile(file));
@@ -811,6 +812,36 @@ test("previous titles of the same live open beside the current title like the re
     assert.equal(panel.hidden, true);
     assert.equal(button.getAttribute("aria-label"), "이전 방제 1개 보기");
     assert.deepEqual(chrome.testState.localWrites, [], "the page only reads the worker's history");
+});
+
+test("the previous title toggle and panel use the shared CHZZK theme and Pretendard", async () => {
+    const chrome = createFakeChrome({
+        local: {
+            [STORAGE_KEY]: { version: 1, entries: [storedEntry(["첫 번째 제목", "두 번째 제목", "첫 번째 제목"])] },
+        },
+    });
+    const { document, dom } = createFollowingDom({ chrome });
+    evalFeatureScripts(dom);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "previous title toggle was not rendered");
+
+    const themeStyle = document.getElementById("betterchzzk-ui-theme");
+    const featureStyle = document.getElementById("betterchzzk-following-title-history-style");
+    assert.ok(themeStyle, "the feature requests the shared CHZZK theme");
+    assert.ok(
+        themeStyle.compareDocumentPosition(featureStyle) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+        "the shared theme is requested before the feature style"
+    );
+    const css = featureStyle.textContent;
+    assert.match(
+        css,
+        /#betterchzzk-following-title-history-panel\{[^}]*border:1px solid var\(--bct-border\);[^}]*border-radius:var\(--bct-radius-lg\);[^}]*color:var\(--bct-text\);[^}]*background:var\(--bct-surface\);[^}]*box-shadow:var\(--bct-shadow\);[^}]*font-family:var\(--bct-font\)/s
+    );
+    assert.match(css, /\[data-bcfth-toggle="1"\]\[aria-expanded="true"\]\{[^}]*color:var\(--bct-brand-text\)/s);
+    assert.match(css, /\.bcfth-time\{[^}]*color:var\(--bct-text-muted\)/s);
+    assert.doesNotMatch(css, /theme_dark|data-theme|prefers-color-scheme/, "no local theme selectors");
+    assert.doesNotMatch(css, /var\(--bct-[\w-]+,/, "shared theme variables carry no local fallback");
+    assert.doesNotMatch(css, /var\(--(?:sem|Content|Surface|Background|Border)-/, "CHZZK tokens only through --bct-*");
+    assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b|rgba?\(/i, "no static color fallback");
 });
 
 test("titles stored for an earlier live of the same channel are never shown", async () => {

@@ -112,6 +112,7 @@ function loadChatTools(dom, { onParse } = {}) {
     evalRepoScript(dom, "shared", "settings.js");
     evalRepoScript(dom, "shared", "data.js");
     evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "shared", "uiTheme.js");
     evalRepoScript(dom, "features", "chatTools", "parser.js");
     if (onParse) {
         const namespace = dom.window.BetterChzzk.chatTools;
@@ -902,6 +903,56 @@ test("welcome message removal restores a remounted welcome row when disabled", a
     assert.equal(dom.window.document.getElementById("betterchzzk-chat-welcome-message-style"), null);
     assert.notEqual(dom.window.getComputedStyle(welcomeRow).display, "none");
     assert.notEqual(dom.window.getComputedStyle(welcome).display, "none");
+});
+
+test("chat tools panel uses the shared CHZZK theme, Pretendard and 해요체 notices", async (t) => {
+    const { dom } = createPageDom(
+        [
+            '<div class="chat-row" data-chat-id="blind-theme">',
+            '<span class="nickname">viewer</span>',
+            '<span class="message">블라인드 처리된 메시지입니다.</span>',
+            '<span class="message-hidden" style="display:none">숨겨진 원문</span>',
+            "</div>",
+        ].join("")
+    );
+    t.after(() => closeChatToolsDom(dom));
+    loadChatTools(dom);
+    const { document } = dom.window;
+
+    await waitForCondition(
+        () => document.querySelector(".bcct-blind-reveal") && document.querySelector(".bcct-moderator-box__empty")
+    );
+    assert.equal(document.querySelector(".bcct-blind-reveal").title, "블라인드된 메시지의 원문이에요.");
+    assert.equal(document.querySelector(".bcct-moderator-box__empty").textContent, "아직 수집된 메시지가 없어요.");
+
+    const themeStyle = document.getElementById("betterchzzk-ui-theme");
+    const panelStyle = document.getElementById("betterchzzk-chat-tools-style");
+    assert.ok(themeStyle, "chat tools request the shared CHZZK theme");
+    assert.ok(
+        themeStyle.compareDocumentPosition(panelStyle) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
+        "the shared theme is requested before the chat tools style"
+    );
+    const css = panelStyle.textContent;
+    assert.match(
+        css,
+        /\.bcct-moderator-box\{[^}]*background:var\(--bct-surface\);[^}]*color:var\(--bct-text\);[^}]*box-shadow:var\(--bct-shadow\);[^}]*font-family:var\(--bct-font\);/s
+    );
+    // The moderator tint leans toward the theme's primary text (near black in light, white in dark).
+    assert.match(
+        css,
+        /--bcct-highlight-tint:color-mix\(in srgb, var\(--bcct-moderator-highlight-color, currentColor\) 85%, var\(--bct-text\)\)/
+    );
+    assert.doesNotMatch(css, /theme_dark|data-theme|html\[dark\]|body\[theme=/, "no local theme selectors");
+    assert.doesNotMatch(css, /var\(--bct-[\w-]+,/, "shared theme variables carry no local fallback");
+    assert.doesNotMatch(css, /var\(--(?:sem|Content|Surface|Background|Border)-/, "CHZZK tokens only through --bct-*");
+    assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b|rgba?\(/i, "no static color fallback");
+
+    for (const file of ["features/chatTools.js", "features/chatTools/panel.js"]) {
+        const formal = [...readRepoFile(file).matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g)]
+            .map((match) => match[2])
+            .filter((text) => /[가-힣]/.test(text) && /(?:습|합|됩|입)니다/.test(text));
+        assert.deepEqual(formal, [], `${file} notices use 해요체`);
+    }
 });
 
 test("blind message with hidden original text replaces the notice with a strikethrough original", async (t) => {

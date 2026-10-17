@@ -149,7 +149,12 @@ function fixture(t, fetcher = async () => response()) {
         },
     };
     doc.documentElement.setAttribute("data-betterchzzk-auto-quality-state", JSON.stringify({ enabled: false }));
-    for (const file of ["features/autoQualityPage.js", "shared/liveTiming.js", "features/streamInfoModel.js"])
+    for (const file of [
+        "shared/uiTheme.js",
+        "features/autoQualityPage.js",
+        "shared/liveTiming.js",
+        "features/streamInfoModel.js",
+    ])
         w.eval(fs.readFileSync(path.join(__dirname, "..", file), "utf8"));
     const createModel = w.BetterChzzk.streamInfoModel.create;
     const samples = [];
@@ -996,11 +1001,30 @@ test("layout exposes current values first, readable chart legends and a sticky c
         ["현재 재생 방식", "라이브 지연(추정)"]
     );
     assert.match(f.text(), /세로 점선: 재생 방식 변경/);
-    const css = f.doc.getElementById("betterchzzk-stream-info-style").textContent;
+    const panelStyle = f.doc.getElementById("betterchzzk-stream-info-style");
+    const css = panelStyle.textContent;
     assert.match(css, /position:sticky/);
     assert.match(css, /max-inline-size:calc\(100% - 16px\)/);
     assert.match(css, /minmax\(0,1fr\) minmax\(0,1fr\)/);
-    assert.match(css, /html\.theme_dark/);
+    // Both themes come from the shared CHZZK theme (shared/uiTheme.js) instead of a local html.theme_dark table.
+    const themeStyle = f.doc.getElementById("betterchzzk-ui-theme");
+    assert.ok(themeStyle, "stream info requests the shared CHZZK theme");
+    assert.ok(
+        themeStyle.compareDocumentPosition(panelStyle) & f.w.Node.DOCUMENT_POSITION_FOLLOWING,
+        "the shared theme is requested before the stream info style"
+    );
+    assert.match(
+        css,
+        /#betterchzzk-stream-info\{[^}]*border:1px solid var\(--bct-border\);[^}]*background:var\(--bct-surface\);[^}]*color:var\(--bct-text\);[^}]*font:13px\/1\.5 var\(--bct-font\);[^}]*box-shadow:var\(--bct-shadow\);[^}]*--bcsi-delay:var\(--bct-brand-text\);[^}]*--bcsi-buffer:var\(--bct-text-muted\)/s
+    );
+    assert.doesNotMatch(css, /theme_dark|data-theme/, "no local theme selectors");
+    assert.doesNotMatch(css, /var\(--bct-[\w-]+,/, "shared theme variables carry no local fallback");
+    assert.doesNotMatch(css, /var\(--(?:sem|Content|Surface|Background|Border)-/i, "CHZZK tokens only through --bct-*");
+    assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b|rgba?\(/i, "no static color fallback");
+    const formalCopy = [...source.matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g)]
+        .map((match) => match[2])
+        .filter((text) => /[가-힣]/.test(text) && /(?:습|합|됩|입)니다/.test(text));
+    assert.deepEqual(formalCopy, [], "stream info notices use 해요체");
     assert.match(css, /stroke-dasharray:5 4/);
     assert.match(css, /font-variant-numeric:tabular-nums/);
     assert.equal(panel.querySelector("header button").getAttribute("aria-label"), "스트림 정보 닫기");

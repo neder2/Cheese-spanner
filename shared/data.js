@@ -768,7 +768,7 @@
         signal,
     } = {}) {
         const normalizedObjectId = compactSpaces(objectId);
-        if (!normalizedObjectId) throw new Error("댓글 대상이 없습니다.");
+        if (!normalizedObjectId) throw new Error("댓글 대상이 없어요.");
 
         const deviceId = await getCommentDeviceId();
         const params = new URLSearchParams({

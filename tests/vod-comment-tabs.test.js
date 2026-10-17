@@ -11,6 +11,40 @@ function evalRepoScript(dom, ...parts) {
     dom.window.eval(fs.readFileSync(path.join(ROOT, ...parts), "utf8"));
 }
 
+// The three comment-body placeholders copy CHZZK's own wording; every other notice uses 해요체 (spec §8).
+const NATIVE_COMMENT_BODY_COPY = [
+    "삭제된 댓글입니다.",
+    "내용을 표시할 수 없는 댓글입니다.",
+    "클린봇이 부적절한 표현을 감지한 댓글입니다.",
+];
+
+function formalCopyLiterals(source) {
+    const literals = [];
+    for (const match of source.matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g)) {
+        if (/[가-힣]/.test(match[2]) && /(?:습|합|됩|입)니다/.test(match[2])) literals.push(match[2]);
+    }
+    return literals;
+}
+
+// Colors must come from the shared CHZZK theme (shared/uiTheme.js), not from a local light/dark fallback table.
+function assertSharedThemePalette(css) {
+    assert.doesNotMatch(css, /var\(--bct-[\w-]+,/, "shared theme variables carry no local fallback");
+    assert.doesNotMatch(
+        css,
+        /var\(--(?:sem|Content|Surface|Background|Border)-/,
+        "palette reads CHZZK tokens only through --bct-*"
+    );
+    assert.doesNotMatch(
+        css,
+        /(?:html\[dark\]|body\[theme="dark"\]|\.theme_dark) #betterchzzk-vod-comment-(?:panel|aside|tabs)/,
+        "no theme-specific palette blocks"
+    );
+    assert.doesNotMatch(css, /color-scheme:\s*light/, "the panel inherits CHZZK's root color-scheme");
+    // Allowed fixed values: default profile images and the native-mimic BEST badge.
+    const withoutAllowed = css.replace(/url\("[^"]*"\)/g, "").replace(/background:#41bd53;color:#fff;/, "");
+    assert.doesNotMatch(withoutAllowed, /#[0-9a-f]{3,8}\b|rgba?\(/i, "no static color fallback");
+}
+
 function deferred() {
     let resolve;
     let reject;
@@ -247,6 +281,7 @@ function createFixture({
         },
     };
 
+    evalRepoScript(dom, "shared", "uiTheme.js");
     evalRepoScript(dom, "features", "vodComments", "model.js");
     evalRepoScript(dom, "features", "vodComments", "repository.js");
     evalRepoScript(dom, "features", "vodComments", "nativeAdapter.js");
@@ -361,12 +396,23 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     assert.equal(commentPanel.style.getPropertyValue("--bcvc-font-family"), "system-ui, sans-serif");
     assert.equal(commentPanel.style.getPropertyValue("--bcvc-toolbar-font-family"), "system-ui, sans-serif");
     assert.equal(container.style.getPropertyValue("--bcvc-panel-height"), "496px");
-    const css = document.getElementById("betterchzzk-vod-comment-tabs-style").textContent;
-    assert.match(css, /--Content-Neutral-Cool-Strong/);
-    assert.match(css, /--Surface-Brand-Alpha-Weaker/);
-    assert.match(css, /html\[dark\] #betterchzzk-vod-comment-panel/);
-    assert.match(css, /body\[theme="dark"\] #betterchzzk-vod-comment-panel/);
-    assert.match(css, /\.theme_dark #betterchzzk-vod-comment-panel/);
+    const commentStyle = document.getElementById("betterchzzk-vod-comment-tabs-style");
+    const css = commentStyle.textContent;
+    const themeStyle = document.getElementById("betterchzzk-ui-theme");
+    assert.ok(themeStyle, "the comment view requests the shared CHZZK theme");
+    assert.ok(
+        themeStyle.compareDocumentPosition(commentStyle) & fixture.window.Node.DOCUMENT_POSITION_FOLLOWING,
+        "the shared theme is requested before the comment style"
+    );
+    assert.match(
+        css,
+        /#betterchzzk-vod-comment-panel\{[^}]*--bcvc-surface:var\(--bct-bg\);[^}]*--bcvc-text:var\(--bct-text-body\);[^}]*--bcvc-text-weak:var\(--bct-text-muted\);[^}]*--bcvc-brand:var\(--bct-brand-text\);/s
+    );
+    assert.match(
+        css,
+        /#betterchzzk-vod-comment-tabs\{[^}]*--bcvc-text:var\(--bct-text-body\);[^}]*--bcvc-hover:var\(--bct-hover\);/s
+    );
+    assertSharedThemePalette(css);
     assert.match(css, /font-family:var\(--bcvc-font-family,inherit\)/);
     assert.match(
         css,
@@ -497,8 +543,11 @@ test("VOD comments mount a comment-only side panel when replay chat is unavailab
         css,
         /#betterchzzk-vod-comment-aside #betterchzzk-vod-comment-comment-tab::after\{\s*display:none;\s*\}/
     );
-    assert.match(css, /html\[dark\] #betterchzzk-vod-comment-aside/);
-    assert.match(css, /body\[theme="dark"\] #betterchzzk-vod-comment-aside/);
+    assert.match(
+        css,
+        /#betterchzzk-vod-comment-aside\{[^}]*--bcvc-surface:var\(--bct-bg\);[^}]*--bcvc-border:var\(--bct-border-alpha\);/s
+    );
+    assertSharedThemePalette(css);
     assert.equal(vodColumn.getAttribute("data-bcvc-comment-only-vod-column"), "1");
     assert.equal(fixture.window.getComputedStyle(vodColumn).marginTop, "0px");
     assert.equal(vodColumn.parentElement, vodColumnParent, "the native VOD column must stay in its React-owned tree");
@@ -732,6 +781,22 @@ test("VOD comments load from the API without a lower comment DOM and render safe
     assert.doesNotMatch(injectedStyle, /\.bcvc-avatar-fallback::before/);
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-buff-label").textContent, "버프");
     assert.match(document.querySelector("[data-bcvc-comment-key='id:2']").textContent, /클린봇/);
+    assert.equal(
+        document.querySelector("[data-bcvc-comment-key='id:2'] .bcvc-message").textContent,
+        "클린봇이 부적절한 표현을 감지한 댓글입니다."
+    );
+    assert.equal(
+        document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-avatar").title,
+        "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요."
+    );
+    assert.equal(
+        document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-author").title,
+        "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요."
+    );
+    assert.equal(
+        document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-buff").title,
+        "하단 원본 댓글이 표시되면 버프할 수 있어요."
+    );
 
     const panel = document.getElementById("betterchzzk-vod-comment-panel");
     const firstRow = document.querySelector("[data-bcvc-comment-key='id:1']");
@@ -1056,9 +1121,17 @@ test("VOD comment rows render observed replies and tolerate nullable or deleted 
     );
     const cappedRow = document.querySelector("[data-bcvc-comment-key='id:8']");
     assert.equal(cappedRow.querySelectorAll("[data-bcvc-reply='1']").length, 50);
-    assert.match(cappedRow.querySelector(".bcvc-reply-limit").textContent, /50개까지만/);
+    assert.match(cappedRow.querySelector(".bcvc-reply-limit").textContent, /50개까지만 표시해요\./);
     assert.match(document.querySelector("[data-bcvc-comment-key='id:3']").textContent, /알 수 없음/);
     assert.match(document.querySelector("[data-bcvc-comment-key*='fallback:']").textContent, /표시할 수 없는 댓글/);
+    assert.equal(
+        document.querySelector("[data-bcvc-comment-key*='fallback:'] .bcvc-message").textContent,
+        "내용을 표시할 수 없는 댓글입니다."
+    );
+    assert.equal(
+        document.querySelector("[data-bcvc-comment-key='id:5'] .bcvc-message").textContent,
+        "삭제된 댓글입니다."
+    );
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:5'] .bcvc-avatar"), null);
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:5'] .bcvc-buff"), null);
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:6'] .bcvc-date").textContent, "20260231010101");
@@ -1130,7 +1203,10 @@ test("VOD comment rendering caps total nested replies without hiding the limit",
     clickCommentTab(document);
     await waitForCondition(() => document.querySelectorAll("[data-bcvc-reply='1']").length === 300);
     assert.equal(document.querySelectorAll("[data-bcvc-reply='1']").length, 300);
-    assert.match(document.querySelector("[data-bcvc-comment-key='id:7'] .bcvc-reply-limit").textContent, /300개까지만/);
+    assert.match(
+        document.querySelector("[data-bcvc-comment-key='id:7'] .bcvc-reply-limit").textContent,
+        /300개까지만 표시해요\./
+    );
 });
 
 test("VOD mirrored timecodes invoke the matching native comment control", async (t) => {
@@ -1181,17 +1257,36 @@ test("VOD comment initial errors expose retry and distinguish empty or disabled 
 
     clickCommentTab(document);
     await waitForCondition(() => document.querySelector("[data-bcvc-action='retry-initial']"));
-    assert.match(document.getElementById("betterchzzk-vod-comment-panel").textContent, /불러오지 못했습니다/);
+    assert.match(document.getElementById("betterchzzk-vod-comment-panel").textContent, /댓글을 불러오지 못했어요\./);
 
     document.querySelector("[data-bcvc-action='retry-initial']").click();
     await waitForCondition(() =>
-        /아직 등록된 댓글/.test(document.getElementById("betterchzzk-vod-comment-panel").textContent)
+        /아직 등록된 댓글이 없어요\./.test(document.getElementById("betterchzzk-vod-comment-panel").textContent)
     );
     document.querySelector("[data-bcvc-action='refresh']").click();
     await waitForCondition(() =>
-        /댓글을 사용할 수 없습니다/.test(document.getElementById("betterchzzk-vod-comment-panel").textContent)
+        /이 영상은 댓글을 사용할 수 없어요\./.test(document.getElementById("betterchzzk-vod-comment-panel").textContent)
     );
     assert.equal(call, 3);
+});
+
+test("VOD comment notices use 해요체 and only the three native comment-body placeholders keep CHZZK wording", () => {
+    const found = [];
+    for (const parts of [
+        ["features", "vodComments", "view.js"],
+        ["features", "vodComments", "nativeAdapter.js"],
+        ["features", "vodComments", "model.js"],
+        ["features", "vodCommentTabs.js"],
+        ["shared", "data.js"],
+    ]) {
+        const source = fs.readFileSync(path.join(ROOT, ...parts), "utf8");
+        for (const literal of formalCopyLiterals(source)) found.push(`${parts.join("/")}: ${literal}`);
+    }
+    assert.deepEqual(
+        found,
+        NATIVE_COMMENT_BODY_COPY.map((text) => `features/vodComments/view.js: ${text}`),
+        "only the native-mimic comment-body copy may keep 합니다체"
+    );
 });
 
 test("VOD comment pagination coalesces observer requests and appends without replacing existing rows", async (t) => {
