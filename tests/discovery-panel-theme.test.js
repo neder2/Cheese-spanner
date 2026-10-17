@@ -458,6 +458,11 @@ test("discovery panels use polite 해요체 copy in every user-visible string", 
         "features/monthlyBroadcastTime.js",
         "features/monthlyBroadcastTime/model.js",
         "features/monthlyBroadcastTime/repository.js",
-    ])
-        assert.doesNotMatch(readRepoFile(file), /[가-힣]니다/, `${file} keeps no 합니다체 sentence`);
+    ]) {
+        // 합니다체 어미는 받침 ㅂ 음절 뒤의 '니다'(합니다·없습니다·입니다)예요. 주석의 '아니다' 같은 한다체는 제외해요.
+        const formal = [...readRepoFile(file).matchAll(/([가-힣])니다/g)]
+            .map((match) => match[0])
+            .filter((text) => (text.charCodeAt(0) - 0xac00) % 28 === 17);
+        assert.deepEqual(formal, [], `${file} keeps no 합니다체 sentence`);
+    }
 });
