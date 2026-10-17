@@ -21,8 +21,8 @@
  *   값에 같은 명령을 제한된 횟수만 다시 적용하고(되돌리기는 다시 적용하지 않는다), 저장 성공이나
  *   storage.onChanged로 확인한 값만 화면에 반영한다.
  * 의존: BetterChzzkFollowingFolders, BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
- *   createMutationObserverSync, injectStyleOnce, normSpace, normalizeChzzkChannelId, normalizeChzzkImageUrl,
- *   settingsStoreSet, startPageChangeDetection, startStorageChangeListener, storageGet),
+ *   createMutationObserverSync, ensureUiTheme(선택), injectStyleOnce, normSpace, normalizeChzzkChannelId,
+ *   normalizeChzzkImageUrl, settingsStoreSet, startPageChangeDetection, startStorageChangeListener, storageGet),
  *   BetterChzzk.selectors(CHZZK, queryChain).
  * 옵션 키: followingFoldersEnabled, followingListMaxRows.
  * DOM 마커: #betterchzzk-following-folders-*, data-bcff-* 속성.
@@ -226,26 +226,34 @@
         { length: MAX_ORDER + 1 },
         (_, order) => `#sidebar [${LIST_ATTR}="1"]>[${ORDER_ATTR}="${order}"]{order:${order}!important}`
     ).join("\n");
-    // 2026-10-11 치지직 공개 CSS의 시맨틱 토큰을 쓰고, 없을 때만 정적 기본값을 써요.
-    const BRAND = "var(--sem-color-content-brand-base,var(--Content-Brand-Strong,#00a86b))";
-    const BRAND_FILL = "var(--sem-color-surface-brand-strongest-static,#00ffa3)";
-    const BRAND_SOFT = "var(--sem-color-surface-brand-alpha-weak,var(--Surface-Brand-Alpha-Weak,#00b97a26))";
-    const BRAND_LINE = "var(--sem-color-border-brand-alpha-base,#00b97a4d)";
-    const ON_BRAND = "var(--sem-color-content-neutral-inverse-static,#0e0f10)";
-    const TEXT = "var(--sem-color-content-neutral-primary,var(--Content-Neutral-Primary,#16181c))";
-    const STRONG = "var(--sem-color-content-neutral-cool-strong,#2e3033)";
-    const MUTED = "var(--sem-color-content-neutral-cool-base,var(--Content-Neutral-Cool-Base,#5b6475))";
-    const FAINT = "var(--sem-color-content-neutral-cool-weak,#6d6e70)";
-    const SURFACE = "var(--sem-color-surface-neutral-weaker,var(--Surface-Neutral-Base,#fff))";
-    const FIELD = "var(--sem-color-surface-neutral-weak,var(--Surface-Neutral-Strong,#f0f1f2))";
-    const BACKGROUND = "var(--sem-color-background-neutral-base,#fff)";
-    const LINE = "var(--sem-color-border-neutral-alpha-weaker,#0000001a)";
-    const LINE_STRONG = "var(--sem-color-border-neutral-alpha-weak,#00000026)";
-    const HOVER =
-        "var(--sem-color-surface-interaction-lighten-hovered,var(--Surface-Interaction-Lighten-Hovered,#0000000d))";
-    const SHADOW =
-        "0 6px 6px 0 var(--sem-color-shadow-strong,#0000001a),0 6px 18px 6px var(--sem-color-shadow-base,#0000000d)";
-    const DANGER = "#e5484d";
+    // 색·모서리·팝오버 그림자·번들 Pretendard는 shared/uiTheme.js의 공통 변수(--bct-*)를 써요.
+    // 머리 행·안내 줄·새 폴더 자리는 치지직 원본 행 사이에 있어 원본 글꼴을 그대로 따르고,
+    // ⋯ 메뉴·채널 선택 창·되돌리기 안내·드래그 카드는 확장 팝오버라 --bct-font를 써요.
+    // 작은 글자는 두 테마 모두 4.5:1 이상인 MUTED·BRAND를 쓰고, FAINT는 아이콘·비활성에만 써요.
+    const BRAND = "var(--bct-brand-text)";
+    const BRAND_FILL = "var(--bct-brand)";
+    const BRAND_SOFT = "var(--bct-brand-weak)";
+    // 치지직 border-brand-alpha-base(브랜드 30%)에 맞는 공통 변수가 없어 브랜드 글자색을 섞어요.
+    const BRAND_LINE = "color-mix(in srgb,var(--bct-brand-text) 30%,transparent)";
+    const FOCUS = "var(--bct-focus-ring)";
+    const ON_BRAND = "var(--bct-on-brand)";
+    const TEXT = "var(--bct-text)";
+    const STRONG = "var(--bct-text-body)";
+    const MUTED = "var(--bct-text-muted)";
+    const FAINT = "var(--bct-text-dim)";
+    const SURFACE = "var(--bct-surface)";
+    const FIELD = "var(--bct-surface-weak)";
+    const BACKGROUND = "var(--bct-bg)";
+    const LINE = "var(--bct-border-alpha-weaker)";
+    const LINE_STRONG = "var(--bct-border-alpha)";
+    const HOVER = "var(--bct-hover)";
+    const SHADOW = "var(--bct-shadow)";
+    const DANGER = "var(--bct-danger)";
+    const RADIUS_SM = "var(--bct-radius-sm)";
+    const RADIUS_MD = "var(--bct-radius-md)";
+    const RADIUS_LG = "var(--bct-radius-lg)";
+    const RADIUS_FULL = "var(--bct-radius-full)";
+    // 라이브 점은 테마와 무관한 고정 색이에요.
     const LIVE = "#ff4545";
     const STYLE_TEXT = `
 #sidebar [${LIST_ATTR}="1"]{display:flex!important;flex-direction:column!important;align-items:stretch!important}
@@ -254,30 +262,30 @@ ${ORDER_RULES}
 #sidebar [${LIST_ATTR}="1"]>[${HIDDEN_ATTR}="1"]{display:none!important}
 #sidebar [${MAX_ROWS_ATTR}="1"]{overflow-y:auto!important;scrollbar-width:thin}
 #sidebar [${MAX_ROWS_ATTR}="1"]>*{flex-shrink:0!important}
-#sidebar [${HEADER_ATTR}]{position:relative;display:flex;align-items:center;box-sizing:border-box;margin:0;padding:0;list-style:none;border-radius:8px}
+#sidebar [${HEADER_ATTR}]{position:relative;display:flex;align-items:center;box-sizing:border-box;margin:0;padding:0;list-style:none;border-radius:${RADIUS_MD}}
 #sidebar [${HEADER_ATTR}="folder"]{min-height:32px;margin-top:6px;padding:0 4px 0 2px;color:${STRONG};cursor:pointer}
 #sidebar [${HEADER_ATTR}="folder"]:hover{background:${HOVER}}
-#sidebar [${HEADER_ATTR}] button{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;margin:0;padding:0;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;cursor:pointer}
-#sidebar [${HEADER_ATTR}] button:focus-visible,#sidebar [${HEADER_ATTR}] input:focus-visible{outline:2px solid ${BRAND};outline-offset:-2px}
+#sidebar [${HEADER_ATTR}] button{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;margin:0;padding:0;border:0;border-radius:${RADIUS_SM};background:transparent;color:inherit;font:inherit;cursor:pointer}
+#sidebar [${HEADER_ATTR}] button:focus-visible,#sidebar [${HEADER_ATTR}] input:focus-visible{outline:2px solid ${FOCUS};outline-offset:-2px}
 #sidebar [${HEADER_ATTR}] .bcff-toggle,#sidebar [${HEADER_ATTR}] .bcff-more{flex:none;width:24px;height:24px;color:${FAINT}}
 #sidebar [${HEADER_ATTR}] .bcff-toggle:hover,#sidebar [${HEADER_ATTR}] .bcff-more:hover{color:${TEXT};background:${HOVER}}
 #sidebar [${HEADER_ATTR}] svg{width:16px;height:16px;pointer-events:none}
 #sidebar [${HEADER_ATTR}] .bcff-toggle svg{width:12px;height:12px;transition:transform .15s}
 #sidebar [${HEADER_ATTR}] .bcff-toggle[aria-expanded="false"] svg{transform:rotate(-90deg)}
 #sidebar [${HEADER_ATTR}] .bcff-name{flex:0 1 auto;justify-content:flex-start;min-width:0;padding:3px 2px;font-size:13px;font-weight:700;line-height:18px;text-align:start;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#sidebar [${HEADER_ATTR}] .bcff-name[data-bcff-count]::after{content:attr(data-bcff-count);margin-left:6px;font-weight:500;font-size:12px;color:${FAINT};font-variant-numeric:tabular-nums}
+#sidebar [${HEADER_ATTR}] .bcff-name[data-bcff-count]::after{content:attr(data-bcff-count);margin-left:6px;font-weight:500;font-size:12px;color:${MUTED};font-variant-numeric:tabular-nums}
 #sidebar [${HEADER_ATTR}] .bcff-spacer{flex:1;min-width:4px}
 #sidebar [${HEADER_ATTR}] .bcff-live{flex:none;margin-right:4px;font-size:12px;color:${STRONG};font-variant-numeric:tabular-nums}
 #sidebar [${HEADER_ATTR}] .bcff-live::before{content:"";display:inline-block;width:6px;height:6px;margin-right:5px;border-radius:50%;background:${LIVE};vertical-align:1px}
 #sidebar [${HEADER_ATTR}] .bcff-live::after{content:attr(data-bcff-live)}
 #sidebar [${HEADER_ATTR}] .bcff-more{opacity:0}
 #sidebar [${HEADER_ATTR}]:hover .bcff-more,#sidebar [${HEADER_ATTR}]:focus-within .bcff-more,#sidebar [${HEADER_ATTR}] .bcff-more[aria-expanded="true"]{opacity:1}
-#sidebar [${HEADER_ATTR}] .bcff-rename{flex:1;min-width:0;height:26px;margin:0 2px;padding:0 8px;box-sizing:border-box;border:1px solid ${BRAND};border-radius:6px;background:${SURFACE};color:${TEXT};font:inherit;font-size:13px;font-weight:700;outline:none;cursor:text}
+#sidebar [${HEADER_ATTR}] .bcff-rename{flex:1;min-width:0;height:26px;margin:0 2px;padding:0 8px;box-sizing:border-box;border:1px solid ${BRAND};border-radius:${RADIUS_SM};background:${SURFACE};color:${TEXT};font:inherit;font-size:13px;font-weight:700;outline:none;cursor:text}
 #sidebar [${HEADER_ATTR}] .bcff-rename[aria-invalid="true"]{border-color:${DANGER}}
 #sidebar [${HEADER_ATTR}] .bcff-rename~:is(.bcff-spacer,.bcff-live){display:none}
-#sidebar [${HEADER_ATTR}] .bcff-rename-hint{position:absolute;left:28px;top:100%;z-index:5;margin-top:2px;padding:4px 8px;border-radius:6px;background:${SURFACE};box-shadow:${SHADOW},0 0 0 1px ${LINE};color:${MUTED};font-size:11px;line-height:16px;white-space:nowrap;pointer-events:none}
+#sidebar [${HEADER_ATTR}] .bcff-rename-hint{position:absolute;left:28px;top:100%;z-index:5;margin-top:2px;padding:4px 8px;border-radius:${RADIUS_SM};background:${SURFACE};box-shadow:${SHADOW},0 0 0 1px ${LINE};color:${MUTED};font-size:11px;line-height:16px;white-space:nowrap;pointer-events:none}
 #sidebar [${HEADER_ATTR}] .bcff-rename-hint[data-error]{color:${DANGER}}
-#sidebar [${HEADER_ATTR}="rest"]{min-height:28px;margin-top:10px;padding:0 10px;color:${FAINT};font-size:12px;font-weight:600;line-height:18px}
+#sidebar [${HEADER_ATTR}="rest"]{min-height:28px;margin-top:10px;padding:0 10px;color:${MUTED};font-size:12px;font-weight:600;line-height:18px}
 #sidebar [${HEADER_ATTR}="rest"] .bcff-header-name{display:block}
 #sidebar [${LIST_ATTR}="1"][${COMPACT_ATTR}="1"] [${HEADER_ATTR}]{min-height:8px;margin-top:4px;padding:0;border-top:1px solid ${LINE_STRONG};border-radius:0}
 #sidebar [${LIST_ATTR}="1"][${COMPACT_ATTR}="1"] [${HEADER_ATTR}]>:not(.bcff-toggle){display:none!important}
@@ -286,72 +294,72 @@ ${ORDER_RULES}
 #sidebar [${LIST_ATTR}]>[${DROP_ATTR}]{background:${BRAND_SOFT}!important}
 #sidebar [${LIST_ATTR}]>[${DROP_ATTR}]>a{border-radius:0}
 #sidebar [${HEADER_ATTR}][${DROP_ATTR}]{box-shadow:inset 0 0 0 1px ${BRAND_LINE};color:${TEXT}}
-#sidebar [${HEADER_ATTR}][${DROP_ATTR}]::after{content:attr(${HINT_ATTR});position:absolute;right:10px;font-size:12px;font-weight:700;color:${BRAND};pointer-events:none}
+#sidebar [${HEADER_ATTR}][${DROP_ATTR}]::after{content:attr(${HINT_ATTR});position:absolute;right:10px;font-size:12px;font-weight:700;color:${TEXT};pointer-events:none}
 #sidebar [${HEADER_ATTR}][${DROP_ATTR}] :is(.bcff-more,.bcff-live){visibility:hidden}
 #sidebar [${LIST_ATTR}]>[${SOURCE_ATTR}]{opacity:.55}
 #sidebar [${LIST_ATTR}]>[${SOURCE_ATTR}][${DROP_ATTR}]{opacity:1;box-shadow:inset 3px 0 0 ${BRAND}}
-#${DRAG_CARD_ID}{position:fixed;top:-1000px;left:-1000px;z-index:-1;display:flex;align-items:center;gap:10px;box-sizing:border-box;max-width:240px;padding:8px 16px 8px 8px;border:1px solid ${LINE_STRONG};border-radius:9999px;background:${SURFACE};color:${TEXT};font:600 14px/1.3 system-ui,-apple-system,"Apple SD Gothic Neo",sans-serif;pointer-events:none}
+#${DRAG_CARD_ID}{position:fixed;top:-1000px;left:-1000px;z-index:-1;display:flex;align-items:center;gap:10px;box-sizing:border-box;max-width:240px;padding:8px 16px 8px 8px;border:1px solid ${LINE_STRONG};border-radius:${RADIUS_FULL};background:${SURFACE};color:${TEXT};font-family:var(--bct-font);font-size:14px;font-weight:600;line-height:1.3;pointer-events:none}
 #${DRAG_CARD_ID} .bcff-drag-avatar{display:grid;place-items:center;flex:none;width:32px;height:32px;overflow:hidden;border-radius:50%;background:${FIELD};color:${MUTED};font-size:13px;font-weight:700}
 #${DRAG_CARD_ID} .bcff-drag-avatar img{display:block;width:100%;height:100%;object-fit:cover}
 #${DRAG_CARD_ID} .bcff-drag-avatar svg{width:18px;height:18px}
 #${DRAG_CARD_ID} .bcff-drag-text{display:flex;flex-direction:column;min-width:0}
 #${DRAG_CARD_ID} .bcff-drag-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#${DRAG_CARD_ID} .bcff-drag-detail{overflow:hidden;color:${FAINT};font-size:12px;font-weight:500;text-overflow:ellipsis;white-space:nowrap}
+#${DRAG_CARD_ID} .bcff-drag-detail{overflow:hidden;color:${MUTED};font-size:12px;font-weight:500;text-overflow:ellipsis;white-space:nowrap}
 #${DRAG_CARD_ID} .bcff-drag-detail[data-live="1"]::before{content:"";display:inline-block;width:6px;height:6px;margin-right:5px;border-radius:50%;background:${LIVE};vertical-align:1px}
-#sidebar [${NEW_ZONE_ATTR}]{position:sticky;bottom:12px;z-index:2;display:flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;min-height:44px;margin:8px 0 0;padding:0 10px;list-style:none;border:1px dashed ${LINE_STRONG};border-radius:8px;background:${BACKGROUND};box-shadow:0 -12px 16px ${BACKGROUND};color:${MUTED};font-size:13px;font-weight:600}
-#sidebar [${NEW_ZONE_ATTR}][${DROP_ATTR}]{border-color:${BRAND};color:${BRAND};background:color-mix(in srgb,${BRAND_FILL} 14%,${BACKGROUND})!important}
-#sidebar [${STATUS_ATTR}]{display:flex;flex-direction:column;align-items:flex-start;gap:8px;box-sizing:border-box;margin:4px 0 6px;padding:10px 12px;list-style:none;border:1px dashed ${LINE_STRONG};border-radius:8px;color:${MUTED};font-size:12px;line-height:1.5}
+#sidebar [${NEW_ZONE_ATTR}]{position:sticky;bottom:12px;z-index:2;display:flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;min-height:44px;margin:8px 0 0;padding:0 10px;list-style:none;border:1px dashed ${LINE_STRONG};border-radius:${RADIUS_MD};background:${BACKGROUND};box-shadow:0 -12px 16px ${BACKGROUND};color:${MUTED};font-size:13px;font-weight:600}
+#sidebar [${NEW_ZONE_ATTR}][${DROP_ATTR}]{border-color:${BRAND};color:${BRAND};background:color-mix(in srgb,${BRAND_FILL} 10%,${BACKGROUND})!important}
+#sidebar [${STATUS_ATTR}]{display:flex;flex-direction:column;align-items:flex-start;gap:8px;box-sizing:border-box;margin:4px 0 6px;padding:10px 12px;list-style:none;border:1px dashed ${LINE_STRONG};border-radius:${RADIUS_MD};color:${MUTED};font-size:12px;line-height:1.5}
 #sidebar [${STATUS_ATTR}] p{margin:0;overflow-wrap:anywhere}
-#sidebar [${STATUS_ATTR}] button{min-height:28px;margin:0;padding:0 12px;border:0;border-radius:6px;background:${FIELD};color:${TEXT};font:inherit;font-weight:600;cursor:pointer}
-#sidebar [${STATUS_ATTR}] button:focus-visible{outline:2px solid ${BRAND};outline-offset:2px}
-#sidebar [${STATUS_ATTR}] button[data-armed]{color:${DANGER};background:color-mix(in srgb,${DANGER} 14%,transparent)}
-#${LAYER_ID},#${TOAST_ID}{position:fixed;z-index:10020;box-sizing:border-box;border-radius:12px;background:${SURFACE};box-shadow:${SHADOW},0 0 0 1px ${LINE};color:${TEXT};font-family:inherit;font-size:13px;line-height:1.5;text-align:start}
+#sidebar [${STATUS_ATTR}] button{min-height:28px;margin:0;padding:0 12px;border:0;border-radius:${RADIUS_SM};background:${FIELD};color:${TEXT};font:inherit;font-weight:600;cursor:pointer}
+#sidebar [${STATUS_ATTR}] button:focus-visible{outline:2px solid ${FOCUS};outline-offset:2px}
+#sidebar [${STATUS_ATTR}] button[data-armed]{color:${DANGER};background-color:transparent;box-shadow:inset 0 0 0 1px ${DANGER}}
+#${LAYER_ID},#${TOAST_ID}{position:fixed;z-index:10020;box-sizing:border-box;border-radius:${RADIUS_LG};background-color:${SURFACE};box-shadow:${SHADOW},0 0 0 1px ${LINE};color:${TEXT};font-family:var(--bct-font);font-size:13px;line-height:1.5;text-align:start}
 #${LAYER_ID} *,#${TOAST_ID} *{box-sizing:border-box}
 #${LAYER_ID} :is(h2,h3,p,ul,ol){margin:0;padding:0}
 #${LAYER_ID} button{display:flex;align-items:center;gap:10px;margin:0;border:0;background:transparent;color:inherit;font:inherit;text-align:start;cursor:pointer}
 #${LAYER_ID} button:disabled{color:${FAINT};cursor:default}
-#${LAYER_ID} :is(button,input):focus-visible{outline:2px solid ${BRAND};outline-offset:-2px}
+#${LAYER_ID} :is(button,input):focus-visible{outline:2px solid ${FOCUS};outline-offset:-2px}
 #${LAYER_ID} svg{flex:none;width:16px;height:16px;color:${MUTED};pointer-events:none}
 #${LAYER_ID}[data-kind="menu"]{padding:6px}
-#${LAYER_ID} .bcff-item{width:100%;min-height:36px;padding:0 10px;border-radius:8px;font-size:13px}
+#${LAYER_ID} .bcff-item{width:100%;min-height:36px;padding:0 10px;border-radius:${RADIUS_MD};font-size:13px}
 #${LAYER_ID} .bcff-item:hover:not(:disabled){background:${HOVER}}
-#${LAYER_ID} .bcff-item kbd{margin-left:auto;font:11px/1 inherit;color:${FAINT}}
+#${LAYER_ID} .bcff-item kbd{margin-left:auto;font:inherit;font-size:11px;line-height:1;color:${MUTED}}
 #${LAYER_ID} .bcff-separator{height:1px;margin:6px 4px;background:${LINE}}
 #${LAYER_ID} .bcff-danger,#${LAYER_ID} .bcff-danger svg{color:${DANGER}}
-#${LAYER_ID} .bcff-danger[data-armed]{background:color-mix(in srgb,${DANGER} 14%,transparent)}
+#${LAYER_ID} .bcff-danger[data-armed]{background-color:transparent;box-shadow:inset 0 0 0 1px ${DANGER}}
 #${LAYER_ID} .bcff-state-text{padding:8px 10px;color:${MUTED};font-size:12px;overflow-wrap:anywhere}
 #${LAYER_ID}[data-kind="picker"]{display:flex;flex-direction:column}
 #${LAYER_ID} .bcff-picker-top{display:flex;align-items:center;gap:8px;padding:14px 10px 10px 16px}
 #${LAYER_ID} .bcff-picker-top h2{flex:1;min-width:0;font-size:15px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#${LAYER_ID} .bcff-icon-button{justify-content:center;width:28px;height:28px;padding:0;border-radius:6px}
+#${LAYER_ID} .bcff-icon-button{justify-content:center;width:28px;height:28px;padding:0;border-radius:${RADIUS_SM}}
 #${LAYER_ID} .bcff-icon-button:hover{background:${HOVER}}
 #${LAYER_ID} .bcff-search{position:relative;display:block;margin:0 12px 8px}
 #${LAYER_ID} .bcff-search svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:${FAINT}}
-#${LAYER_ID} .bcff-search input{width:100%;height:36px;margin:0;padding:0 10px 0 34px;border:1px solid transparent;border-radius:8px;background:${FIELD};color:${TEXT};font:inherit;font-size:13px;outline:none}
+#${LAYER_ID} .bcff-search input{width:100%;height:36px;margin:0;padding:0 10px 0 34px;border:1px solid transparent;border-radius:${RADIUS_MD};background:${FIELD};color:${TEXT};font:inherit;font-size:13px;outline:none}
 #${LAYER_ID} .bcff-search input:focus{border-color:${BRAND}}
-#${LAYER_ID} .bcff-search input::placeholder{color:${FAINT}}
+#${LAYER_ID} .bcff-search input::placeholder{color:${MUTED}}
 #${LAYER_ID} .bcff-picks{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 6px 6px;list-style:none;scrollbar-width:thin}
-#${LAYER_ID} .bcff-pick{width:100%;min-height:48px;padding:6px 10px;border-radius:8px}
+#${LAYER_ID} .bcff-pick{width:100%;min-height:48px;padding:6px 10px;border-radius:${RADIUS_MD}}
 #${LAYER_ID} .bcff-pick:hover{background:${HOVER}}
 #${LAYER_ID} .bcff-avatar{display:grid;place-items:center;flex:none;width:32px;height:32px;overflow:hidden;border-radius:50%;background:${FIELD};color:${MUTED};font-size:13px;font-weight:700}
 #${LAYER_ID} .bcff-avatar img{display:block;width:100%;height:100%;object-fit:cover}
 #${LAYER_ID} .bcff-pick[data-live="0"] .bcff-avatar{opacity:.55}
 #${LAYER_ID} .bcff-pick-info{display:flex;flex:1;flex-direction:column;min-width:0}
 #${LAYER_ID} .bcff-pick-name{overflow:hidden;font-size:14px;font-weight:600;text-overflow:ellipsis;white-space:nowrap}
-#${LAYER_ID} .bcff-pick-detail{overflow:hidden;color:${FAINT};font-size:12px;text-overflow:ellipsis;white-space:nowrap}
+#${LAYER_ID} .bcff-pick-detail{overflow:hidden;color:${MUTED};font-size:12px;text-overflow:ellipsis;white-space:nowrap}
 #${LAYER_ID} .bcff-pick-detail[data-live="1"]::before{content:"";display:inline-block;width:6px;height:6px;margin-right:5px;border-radius:50%;background:${LIVE};vertical-align:1px}
-#${LAYER_ID} .bcff-check{display:grid;place-items:center;flex:none;width:20px;height:20px;border:1.5px solid ${LINE_STRONG};border-radius:6px}
+#${LAYER_ID} .bcff-check{display:grid;place-items:center;flex:none;width:20px;height:20px;border:1.5px solid ${LINE_STRONG};border-radius:${RADIUS_SM}}
 #${LAYER_ID} .bcff-check svg{width:12px;height:12px;opacity:0;color:${ON_BRAND}}
 #${LAYER_ID} .bcff-pick[aria-pressed="true"] .bcff-check{border-color:${BRAND_FILL};background:${BRAND_FILL}}
 #${LAYER_ID} .bcff-pick[aria-pressed="true"] .bcff-check svg{opacity:1}
-#${LAYER_ID} .bcff-picker-empty{padding:12px 10px;color:${FAINT};font-size:12px}
-#${LAYER_ID} .bcff-picker-foot{padding:10px 12px 12px;border-top:1px solid ${LINE};color:${FAINT};font-size:12px}
+#${LAYER_ID} .bcff-picker-empty{padding:12px 10px;color:${MUTED};font-size:12px}
+#${LAYER_ID} .bcff-picker-foot{padding:10px 12px 12px;border-top:1px solid ${LINE};color:${MUTED};font-size:12px}
 #${TOAST_ID}{display:flex;align-items:center;gap:12px;min-width:240px;max-width:min(380px,calc(100vw - 16px));padding:10px 10px 10px 16px;overflow:hidden}
 #${TOAST_ID} .bcff-toast-text{flex:1;min-width:0;overflow-wrap:anywhere}
 #${TOAST_ID}[data-kind="error"] .bcff-toast-text{color:${DANGER}}
-#${TOAST_ID} button{flex:none;margin:0;padding:6px 8px;border:0;border-radius:6px;background:transparent;color:${BRAND};font:inherit;font-weight:700;cursor:pointer}
+#${TOAST_ID} button{flex:none;margin:0;padding:6px 8px;border:0;border-radius:${RADIUS_SM};background:transparent;color:${BRAND};font:inherit;font-weight:700;cursor:pointer}
 #${TOAST_ID} button:hover{background:${HOVER}}
-#${TOAST_ID} button:focus-visible{outline:2px solid ${BRAND};outline-offset:-2px}
+#${TOAST_ID} button:focus-visible{outline:2px solid ${FOCUS};outline-offset:-2px}
 #${TOAST_ID} .bcff-toast-bar{position:absolute;left:0;bottom:0;height:2px;width:100%;background:${BRAND};transform-origin:left center;animation:bcff-toast ${TOAST_MS}ms linear forwards}
 #${TOAST_ID}:is(:hover,:focus-within) .bcff-toast-bar{animation-play-state:paused}
 @keyframes bcff-toast{from{transform:scaleX(1)}to{transform:scaleX(0)}}
@@ -2722,6 +2730,7 @@ ${ORDER_RULES}
     }
 
     function ensureStyle() {
+        BetterChzzk.utils.ensureUiTheme?.();
         const existing = document.getElementById(STYLE_ID);
         if (existing && existing.textContent !== STYLE_TEXT) existing.remove();
         injectStyleOnce(STYLE_ID, STYLE_TEXT);

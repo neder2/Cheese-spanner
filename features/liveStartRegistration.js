@@ -566,6 +566,7 @@
     function start() {
         if (running || !globalThis.chrome?.runtime?.sendMessage) return;
         running = true;
+        BetterChzzk.utils.ensureUiTheme?.();
         injectStyleOnce(STYLE_ID, CSS);
         removeOptions = bindFeatureOptions((next) => {
             if (!running) return;
@@ -582,38 +583,37 @@
         deactivate();
         document.getElementById(STYLE_ID)?.remove();
     }
+    // Colors, radii, the popover shadow and the bundled Pretendard face come from shared/uiTheme.js (--bct-*).
     const CSS = `
-/* Pretendard 1.3.9, SIL OFL 1.1: vendor/fonts/Pretendard.LICENSE.txt */
-@font-face{font-family:"BetterChzzk Pretendard";src:url("${chrome.runtime.getURL("vendor/fonts/PretendardVariable.woff2")}") format("woff2");font-style:normal;font-weight:100 900;font-display:swap}
-#${ID}{display:inline-flex;align-self:center;flex:none;margin-right:8px;font:14px/1.4 "BetterChzzk Pretendard",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-#${ID}>button,#${PANEL_ID} button{box-sizing:border-box;min-height:34px;padding:6px 12px;border:1px solid var(--sem-color-border-neutral-base,var(--Border-Neutral-Weak,#cdd1d8));border-radius:8px;background:var(--sem-color-surface-neutral-weak,var(--Surface-Neutral-Strong,#f0f1f4));color:var(--sem-color-content-neutral-primary,var(--Content-Neutral-Primary,#16181c));font:inherit;font-size:14px;font-weight:600;line-height:1.4;white-space:nowrap;cursor:pointer}
-#${ID}>button{border-radius:9999px;font-weight:650}
-#${ID}>button:hover,#${PANEL_ID} button:hover{border-color:currentColor}
-#${ID}>button:focus-visible,#${PANEL_ID} :is(button,input):focus-visible{outline:2px solid var(--sem-color-content-brand-strong,var(--Content-Brand-Strong,#00784f));outline-offset:2px}
-#${ID}>button[aria-expanded="true"],#${PANEL_ID} button[aria-pressed="true"]{color:var(--sem-color-content-brand-strong,var(--Content-Brand-Strong,#00784f));border-color:currentColor}
-#${PANEL_ID}{position:fixed;z-index:10020;box-sizing:border-box;overflow:auto;overscroll-behavior:contain;padding:16px;border:1px solid var(--sem-color-border-neutral-base,var(--Border-Neutral-Weak,#cdd1d8));border-radius:12px;box-shadow:0 8px 32px #0003;background:var(--sem-color-surface-neutral-weaker,var(--Surface-Neutral-Base,#fff));color:var(--sem-color-content-neutral-primary,var(--Content-Neutral-Primary,#16181c));font:14px/1.5 "BetterChzzk Pretendard",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+#${ID}{display:inline-flex;align-self:center;flex:none;margin-right:8px;font-family:var(--bct-font);font-size:14px;font-style:normal;font-weight:400;line-height:1.4}
+#${ID}>button,#${PANEL_ID} button{box-sizing:border-box;min-height:34px;padding:6px 12px;border:1px solid var(--bct-border-strong);border-radius:var(--bct-radius-md);background-color:var(--bct-surface-weak);color:var(--bct-text);font:inherit;font-size:14px;font-weight:600;line-height:1.4;white-space:nowrap;cursor:pointer}
+#${ID}>button{border-radius:var(--bct-radius-full);font-weight:650}
+#${ID}>button:hover,#${PANEL_ID} button:not(.bcls-remove):hover{border-color:currentColor;background-image:linear-gradient(var(--bct-hover),var(--bct-hover))}
+#${ID}>button:focus-visible,#${PANEL_ID} :is(button,input):focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:2px}
+#${ID}>button[aria-expanded="true"],#${PANEL_ID} button[aria-pressed="true"]{color:var(--bct-brand-text);border-color:currentColor;background-color:transparent}
+#${PANEL_ID}{position:fixed;z-index:10020;box-sizing:border-box;overflow:auto;overscroll-behavior:contain;padding:16px;border:1px solid var(--bct-border-strong);border-radius:var(--bct-radius-lg);box-shadow:var(--bct-shadow);background-color:var(--bct-surface);color:var(--bct-text);font-family:var(--bct-font);font-size:14px;font-style:normal;font-weight:400;line-height:1.5}
 #${PANEL_ID} h2,#${PANEL_ID} h3,#${PANEL_ID} p{margin:0}
 #${PANEL_ID} h2{font-size:17px;font-weight:700}
 #${PANEL_ID} h3{font-size:13px;margin:16px 0 8px}
 #${PANEL_ID} .bcls-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
-#${PANEL_ID} .bcls-hint,#${PANEL_ID} .bcls-message{font-size:12px;overflow-wrap:anywhere;margin-top:10px;color:var(--sem-color-content-neutral-warm-stronger,var(--Content-Neutral-Secondary,#555b66))}
+#${PANEL_ID} .bcls-hint,#${PANEL_ID} .bcls-message{font-size:12px;overflow-wrap:anywhere;margin-top:10px;color:var(--bct-text-body)}
 #${PANEL_ID} .bcls-message:empty{display:none}
 #${PANEL_ID} .bcls-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:16px}
 #${PANEL_ID} .bcls-search label{grid-column:1/-1;font-size:13px;font-weight:600}
-#${PANEL_ID} input{box-sizing:border-box;min-width:0;width:100%;padding:8px 10px;border:1px solid var(--sem-color-border-neutral-base,var(--Border-Neutral-Weak,#cdd1d8));border-radius:8px;background:transparent;color:inherit;font:inherit}
+#${PANEL_ID} input{box-sizing:border-box;min-width:0;width:100%;padding:8px 10px;border:1px solid var(--bct-border-strong);border-radius:var(--bct-radius-md);background:transparent;color:inherit;font:inherit}
 #${PANEL_ID} .bcls-list{box-sizing:content-box;list-style:none;margin:-4px;padding:4px;max-height:245px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
-#${PANEL_ID} .bcls-row{display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--sem-color-border-neutral-base,var(--Border-Neutral-Weak,#cdd1d8))}
+#${PANEL_ID} .bcls-row{display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--bct-border-strong)}
 #${PANEL_ID} .bcls-row:last-child{border-bottom:0}
 #${PANEL_ID} .bcls-actions{display:flex;align-items:center;gap:4px}
 #${PANEL_ID} .bcls-actions button{display:flex;align-items:center;justify-content:center;gap:4px;min-height:30px;padding:4px 6px;font-size:12px;white-space:nowrap;text-align:center}
 #${PANEL_ID} .bcls-actions .bcls-remove{position:relative;flex:none;width:16px;height:24px;min-height:24px;padding:0;border:0;border-radius:0;background:transparent;font-size:18px;font-weight:500;line-height:1}
 #${PANEL_ID} .bcls-actions .bcls-remove::before{content:"";position:absolute;inset:-4px}
 #${PANEL_ID} .bcls-state{flex:none;font-size:11px;font-weight:600}
-#${PANEL_ID} .bcls-avatar{width:32px;height:32px;flex:none;border-radius:50%;overflow:hidden;background:var(--sem-color-surface-neutral-weak,var(--Surface-Neutral-Strong,#f0f1f4))}
+#${PANEL_ID} .bcls-avatar{width:32px;height:32px;flex:none;border-radius:50%;overflow:hidden;background-color:var(--bct-surface-weak)}
 #${PANEL_ID} .bcls-avatar img{display:block;width:100%;height:100%;object-fit:cover}
 #${PANEL_ID} .bcls-info{flex:1;min-width:0}
 #${PANEL_ID} .bcls-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#${PANEL_ID} .bcls-detail{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--sem-color-content-neutral-warm-stronger,var(--Content-Neutral-Secondary,#555b66))}
+#${PANEL_ID} .bcls-detail{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--bct-text-body)}
 #${PANEL_ID} button:disabled{opacity:.55;cursor:default}
 #${PANEL_ID} [hidden]{display:none!important}
 `;

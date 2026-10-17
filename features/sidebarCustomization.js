@@ -11,8 +11,8 @@
  *   보충 행의 일반 클릭은 routeBridgePage.js에 DOM 이벤트로 전달해 치지직 라우터로 이동한다.
  *   팔로잉 링크 드래그는 고정 옵션과 독립적으로 URL 데이터를 전달하며, 드래그 종료 때 원래 속성을 복구한다.
  * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
- *   createMutationObserverSync, fetchJson, injectStyleOnce, normSpace, normalizeChzzkChannelId,
- *   normalizeChzzkImageUrl,
+ *   createMutationObserverSync, ensureUiTheme(선택), fetchJson, injectStyleOnce, normSpace,
+ *   normalizeChzzkChannelId, normalizeChzzkImageUrl,
  *   settingsStoreSet, startPageChangeDetection, startStorageChangeListener, storageGet), BetterChzzk.selectors(CHZZK, queryChain).
  *   고정 목록 저장은 워커의 설정 저장 잠금을 거쳐 설정 파일 적용·다른 문서와 직렬화돼요. 마지막으로 읽은
  *   저장값을 기대값으로 보내고, 충돌하면 워커가 돌려준 최신 목록에 고정·해제 하나만 다시 적용해요(최대 3회).
@@ -93,6 +93,9 @@
         "studio",
         "video",
     ]);
+    // Pin marks sit among native rows: they keep the native font and take brand colors from shared/uiTheme.js.
+    // CHZZK's border-brand-alpha-base (brand at 30%) has no shared variable, so the local line mixes the brand text.
+    const BRAND_LINE_PROPERTY = "--bcsf-brand-line:color-mix(in srgb,var(--bct-brand-text) 30%,transparent)";
     const STYLE_TEXT = `
 #sidebar [${OFFLINE_HIDDEN_ATTR}="1"],
 #sidebar [${SECTION_HIDDEN_ATTR}="1"]{
@@ -147,7 +150,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
   height:12px;
   margin-inline-start:4px;
   vertical-align:middle;
-  color:var(--sem-color-content-brand-strong,var(--Content-Accent-Strong,#087a4b));
+  color:var(--bct-brand-text);
 }
 #sidebar [${PIN_INDICATOR_ATTR}="1"] svg{
   width:100%;
@@ -159,16 +162,18 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
   cursor:pointer;
 }
 #sidebar [${LIST_ATTR}="1"][${PIN_MODE_ATTR}="1"] [${ROW_ATTR}="1"][${PINNED_ATTR}="1"]{
-  border-radius:8px;
-  box-shadow:inset 0 0 0 1px var(--sem-color-border-brand-alpha-base,var(--Border-Accent-Strong,#087a4b))!important;
+  border-radius:var(--bct-radius-md);
+  ${BRAND_LINE_PROPERTY};
+  box-shadow:inset 0 0 0 1px var(--bcsf-brand-line)!important;
 }
 #${MODE_BUTTON_ID}{
   align-items:center;
   justify-content:center;
 }
 #${MODE_BUTTON_ID}[aria-pressed="true"]{
-  color:var(--sem-color-content-brand-strong,var(--Content-Accent-Strong,#087a4b))!important;
-  box-shadow:inset 0 0 0 1px var(--sem-color-border-brand-alpha-base,var(--Border-Accent-Strong,#087a4b))!important;
+  color:var(--bct-brand-text)!important;
+  ${BRAND_LINE_PROPERTY};
+  box-shadow:inset 0 0 0 1px var(--bcsf-brand-line)!important;
 }
 #${MODE_BUTTON_ID} svg{
   width:16px;
@@ -602,6 +607,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     }
 
     function ensureStyle() {
+        BetterChzzk.utils.ensureUiTheme?.();
         injectStyleOnce(STYLE_ID, STYLE_TEXT);
     }
 

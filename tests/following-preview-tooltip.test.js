@@ -5,6 +5,13 @@ const test = require("node:test");
 const { JSDOM } = require("jsdom");
 const { waitForCondition } = require("./helpers/extension-page-fixture.js");
 const { forwardSettingsStore } = require("./helpers/settings-store-emulation.js");
+const {
+    assertUsesSharedTheme,
+    colorLiterals,
+    computedThemeValue,
+    cssBlocks,
+    flattenStyleRules,
+} = require("./helpers/bct-theme-assertions.js");
 
 const repoRoot = path.join(__dirname, "..");
 const openDoms = new Set();
@@ -107,6 +114,7 @@ function evalFollowingPreviewTooltipScripts(dom) {
     evalRepoScript(dom, "shared", "settings.js");
     evalRepoScript(dom, "shared", "data.js");
     evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "shared", "uiTheme.js");
     evalRepoScript(dom, "features", "followingPreviewTooltip.js");
 }
 
@@ -293,7 +301,7 @@ test("open following preview follows its resized anchor without a synthetic wind
     assert.equal(tip.hasAttribute("data-show"), false);
 });
 
-test("preview fonts use a bundled CHZZK-only resource and follow the feature lifetime", async () => {
+test("preview fonts use the shared bundled CHZZK-only face and follow the feature lifetime", async () => {
     const chrome = createFakeChrome({ sync: { followingPreviewTooltipEnabled: false } });
     const readOptions = chrome.storage.sync.get.bind(chrome.storage.sync);
     const initialOptionsApplied = new Promise((resolve) => {
@@ -309,6 +317,7 @@ test("preview fonts use a bundled CHZZK-only resource and follow the feature lif
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await initialOptionsApplied;
     assert.equal(document.getElementById("betterchzzk-following-preview-style"), null);
+    assert.equal(document.getElementById("betterchzzk-ui-theme"), null, "a disabled preview requests no theme");
 
     const setEnabled = (enabled) => {
         for (const listener of [...chrome.testState.storageChangeListeners]) {
@@ -320,10 +329,18 @@ test("preview fonts use a bundled CHZZK-only resource and follow the feature lif
         await waitForCondition(() => document.getElementById("betterchzzk-following-preview-style"));
         const styles = document.querySelectorAll("#betterchzzk-following-preview-style");
         assert.equal(styles.length, 1);
-        const faces = Array.from(styles[0].sheet.cssRules).filter((rule) => rule.type === 5);
+        assert.equal(
+            Array.from(styles[0].sheet.cssRules).filter((rule) => rule.type === 5).length,
+            0,
+            "the preview declares no font face of its own"
+        );
+        assert.doesNotMatch(styles[0].textContent, /@font-face|PretendardVariable|getURL/);
+        const themes = document.querySelectorAll("#betterchzzk-ui-theme");
+        assert.equal(themes.length, 1, "the shared theme is requested once and kept without duplicates");
+        const faces = Array.from(themes[0].sheet.cssRules).filter((rule) => rule.type === 5);
         assert.equal(faces.length, 1);
         // JSDOM omits font source and variable-weight descriptors from CSSFontFaceRule.
-        const fontDeclaration = styles[0].textContent.match(/@font-face\s*\{([^}]+)\}/)[1];
+        const fontDeclaration = themes[0].textContent.match(/@font-face\s*\{([^}]+)\}/)[1];
         const url = new URL(fontDeclaration.match(/src:\s*url\(["']?([^"')]+)/)[1]);
         assert.equal(url.protocol, "chrome-extension:");
         const resource = url.pathname.slice(1);
@@ -340,13 +357,97 @@ test("preview fonts use a bundled CHZZK-only resource and follow the feature lif
         const tip = document.getElementById("betterchzzk-following-preview");
         assert.ok(tip);
         const family = faces[0].style.getPropertyValue("font-family").replace(/["']/g, "");
-        assert.ok(dom.window.getComputedStyle(tip).fontFamily.includes(family));
+        assert.equal(family, "BetterChzzk Pretendard");
+        const tipFamily = computedThemeValue(dom.window, tip, "font-family").replace(/["']/g, "");
+        assert.ok(tipFamily.startsWith(`${family}, `), tipFamily);
         assert.equal(dom.window.getComputedStyle(document.body).fontFamily, "serif");
 
         setEnabled(false);
         await waitForCondition(() => !document.getElementById("betterchzzk-following-preview-style"));
         assert.equal(document.getElementById("betterchzzk-following-preview"), null);
     }
+});
+
+test("the preview card and row highlight follow the shared theme while video overlays keep fixed colors", async () => {
+    const { document, dom, item, link } = createFollowingPreviewDom();
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForCondition(() => document.getElementById("betterchzzk-following-preview-style"));
+    const style = document.getElementById("betterchzzk-following-preview-style");
+    assertUsesSharedTheme(assert, dom.window, style, "following preview");
+
+    // Fixed colors are left only on marks drawn over the video or thumbnail.
+    const overlay = /bcfp-media|video\.bcfp-|bcfp-sound|bcfp-list-hint|data-bcfp-list-expanded/;
+    for (const { selector, declarations } of cssBlocks(style.textContent)) {
+        if (colorLiterals(declarations).length === 0) continue;
+        assert.match(selector, overlay, `${selector} keeps no static theme color`);
+    }
+    // The 2026-10 user decision keeps the elapsed time larger at the end of the info line.
+    const elapsedRule = flattenStyleRules(style.sheet.cssRules).find(
+        (rule) => rule.selectorText === "#betterchzzk-following-preview [data-bcfp-elapsed]"
+    );
+    assert.equal(elapsedRule.style.getPropertyValue("font-size"), "13px");
+    assert.equal(elapsedRule.style.getPropertyValue("font-weight"), "600");
+    assert.equal(elapsedRule.style.getPropertyValue("margin-left"), "auto");
+
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    const tip = document.getElementById("betterchzzk-following-preview");
+    assert.equal(tip.getAttribute("data-show"), "1");
+    assert.equal(tip.dataset.state, "loading", "the DOM card opens before the live-detail request");
+    const title = tip.querySelector(".bcfp-title");
+    const channel = tip.querySelector(".bcfp-channel");
+    const value = (element, property) => computedThemeValue(dom.window, element, property);
+    const root = document.documentElement;
+    for (const [label, mark, expected] of [
+        ["default dark", () => {}, ["#141517", "#ffffff", "#9da5b6", "#9da5b6", "#00ffa326"]],
+        [
+            "light",
+            () => {
+                root.className = "light";
+                root.setAttribute("data-theme", "light");
+            },
+            ["#ffffff", "#0e0f10", "#4d4d4d", "#4d4d4d", "#1bb37326"],
+        ],
+        [
+            "dark",
+            () => {
+                root.className = "theme_dark";
+                root.setAttribute("data-theme", "dark");
+            },
+            ["#141517", "#ffffff", "#9da5b6", "#9da5b6", "#00ffa326"],
+        ],
+    ]) {
+        mark();
+        assert.deepEqual(
+            [
+                value(tip, "background-color"),
+                value(tip, "color"),
+                value(title, "color"),
+                value(channel, "color"),
+                value(item, "background-color"),
+            ],
+            expected,
+            label
+        );
+        assert.equal(value(tip, "box-shadow"), value(root, "--bct-shadow"), `${label} shares the popover shadow`);
+    }
+});
+
+test("a preview that cannot load shows a polite error title in the muted theme color", async () => {
+    const { document, dom, link } = createFollowingPreviewDom();
+    document.querySelector("#liveLink .live_title").remove();
+    dom.window.fetch = async () => {
+        throw new TypeError("offline");
+    };
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForCondition(() => document.getElementById("betterchzzk-following-preview-style"));
+
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForCondition(() => document.getElementById("betterchzzk-following-preview")?.dataset.state === "error");
+    const title = document.querySelector("#betterchzzk-following-preview .bcfp-title");
+    assert.equal(title.textContent, "\uBBF8\uB9AC\uBCF4\uAE30\uB97C \uBD88\uB7EC\uC62C \uC218 \uC5C6\uC5B4\uC694");
+    assert.equal(computedThemeValue(dom.window, title, "color"), "#9da5b6");
 });
 
 test("following preview delays live-detail fetches while opening the DOM card immediately", async () => {
@@ -726,7 +827,7 @@ test("following preview prefers low-latency LLHLS in the hover card and reuses c
     assert.match(source, /LIVE_AUTO_PLAY_API_BASE/);
     assert.match(source, /auto-play-info/);
     assert.match(source, /PREVIEW_PLAYBACK_DELAY_MS = 300/);
-    assert.match(dom.window.getComputedStyle(tip).fontFamily, /^"BetterChzzk Pretendard", system-ui/);
+    assert.match(computedThemeValue(dom.window, tip, "font-family"), /^"BetterChzzk Pretendard", -apple-system/);
     assert.doesNotMatch(source, /following-preview:play/);
     assert.doesNotMatch(source, /webpackChunkglive_fe_pc/);
     assert.doesNotMatch(source, /LiveProvider\.fromJSON/);

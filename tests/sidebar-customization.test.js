@@ -5,6 +5,7 @@ const test = require("node:test");
 const { JSDOM } = require("jsdom");
 const { waitForCondition: waitForSharedCondition } = require("./helpers/wait-for-condition.js");
 const { forwardSettingsStore } = require("./helpers/settings-store-emulation.js");
+const { assertUsesSharedTheme, colorLiterals, computedThemeValue } = require("./helpers/bct-theme-assertions.js");
 
 const repoRoot = path.join(__dirname, "..");
 const STORAGE_KEY = "betterchzzkPinnedFollowingChannelIds";
@@ -444,6 +445,7 @@ function evalSidebarScripts(dom) {
     evalRepoScript(dom, "shared", "data.js");
     evalRepoScript(dom, "shared", "selectors.js");
     evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "shared", "uiTheme.js");
     evalRepoScript(dom, "features", "sidebarCustomization.js");
 }
 
@@ -1339,12 +1341,29 @@ test("sidebar customization scopes cheese hiding and exposes pin mode beside nat
     );
     assert.deepEqual(getVisualRowIds(dom, list), ["liveA", "liveC", "offlineB"]);
     assert.match(style.textContent, /data-bcsf-pin-mode[^}]+data-bcsf-pinned/s);
-    assert.match(style.textContent, /#087a4b/);
+    // Pin marks sit among native rows: brand colors come from the shared theme and the native font is kept.
+    assertUsesSharedTheme(assert, dom.window, style, "sidebar pins");
+    assert.deepEqual(colorLiterals(style.textContent), [], "no static theme colors remain in the feature");
+    assert.doesNotMatch(style.textContent, /font-family|font:/);
+    const pinIcon = liveA.querySelector("[data-bcsf-pin-indicator]");
+    assert.equal(computedThemeValue(dom.window, pinIcon, "color"), "#00ffa3");
 
     liveA.querySelector("a").setAttribute("role", "link");
     dispatchClick(dom, modeButton);
     await waitForCondition(() => list.getAttribute("data-bcsf-pin-mode") === "1");
     assert.equal(modeButton.getAttribute("aria-pressed"), "true");
+    const pinRing = "inset 0 0 0 1px color-mix(in srgb, #00ffa3 30%, transparent)";
+    assert.equal(computedThemeValue(dom.window, modeButton, "color"), "#00ffa3");
+    assert.equal(computedThemeValue(dom.window, modeButton, "box-shadow"), pinRing);
+    assert.equal(computedThemeValue(dom.window, liveA, "box-shadow"), pinRing);
+    assert.equal(computedThemeValue(dom.window, liveC, "box-shadow"), "", "only pinned rows are ringed");
+    document.documentElement.className = "light";
+    document.documentElement.setAttribute("data-theme", "light");
+    assert.equal(computedThemeValue(dom.window, pinIcon, "color"), "#23815a");
+    assert.equal(computedThemeValue(dom.window, modeButton, "color"), "#23815a");
+    assert.equal(computedThemeValue(dom.window, liveA, "box-shadow"), pinRing.replace("#00ffa3", "#23815a"));
+    document.documentElement.removeAttribute("class");
+    document.documentElement.removeAttribute("data-theme");
     assert.match(modeButton.getAttribute("aria-label"), /고정 모드 끄기/);
     assert.equal(liveA.querySelector("a").getAttribute("role"), "button");
     assert.equal(liveA.querySelector("a").getAttribute("aria-pressed"), "true");

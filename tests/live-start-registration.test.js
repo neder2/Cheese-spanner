@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
 const { createFakeChrome, waitForCondition } = require("./helpers/extension-page-fixture.js");
+const { assertUsesSharedTheme, colorLiterals, computedThemeValue } = require("./helpers/bct-theme-assertions.js");
 const read = (file) => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
 const CHANNEL = "a".repeat(32),
     SECOND = "b".repeat(32);
@@ -95,6 +96,7 @@ function fixture(t, { channels = [], enabled = true, visible = true, withHeader 
         "shared/settings.js",
         "shared/data.js",
         "content.js",
+        "shared/uiTheme.js",
         "shared/liveStart.js",
         "features/liveStartRegistration.js",
     ];
@@ -537,4 +539,66 @@ test("synthetic registration clicks cannot change notification, auto-entry or re
         kind: "set-notify",
         channel: { channelId: SECOND, notify: true },
     });
+});
+
+test("the header entry and panel use the shared theme and the shared bundled Pretendard face", async (t) => {
+    const saved = { ...channel(), notify: true, autoOpen: false };
+    const f = fixture(t, { channels: [saved] });
+    await f.open();
+    const { document } = f.w;
+    const style = document.getElementById(ID + "-style");
+    assertUsesSharedTheme(assert, f.w, style, "live-start registration");
+    assert.deepEqual(colorLiterals(style.textContent), [], "no static theme colors remain in the feature");
+
+    const themes = document.querySelectorAll("#betterchzzk-ui-theme");
+    assert.equal(themes.length, 1);
+    const faces = Array.from(themes[0].sheet.cssRules).filter((rule) => rule.type === 5);
+    assert.equal(faces.length, 1);
+    assert.equal(faces[0].style.getPropertyValue("font-family").replace(/["']/g, ""), "BetterChzzk Pretendard");
+    assert.ok(
+        themes[0].textContent.includes('url("chrome-extension://better-chzzk/vendor/fonts/PretendardVariable.woff2")')
+    );
+    const entry = document.getElementById(ID);
+    for (const node of [entry, f.trigger(), f.panel(), f.input(), f.action()]) {
+        const family = computedThemeValue(f.w, node, "font-family");
+        assert.match(family, /^"BetterChzzk Pretendard", -apple-system/, node.id || node.tagName);
+    }
+
+    const value = (node, property) => computedThemeValue(f.w, node, property);
+    const root = document.documentElement;
+    const hint = f.panel().querySelector(".bcls-hint");
+    const pressed = f.action(CHANNEL, "notify");
+    const idle = f.action(CHANNEL, "autoOpen");
+    assert.equal(pressed.getAttribute("aria-pressed"), "true");
+    for (const [label, mark, expected] of [
+        [
+            "default dark",
+            () => {},
+            ["#1c1d1f", "#ffffff", "#c9cedc", "#00ffa3", "rgba(0, 0, 0, 0)", "#ffffff", "#202224"],
+        ],
+        [
+            "light",
+            () => {
+                root.className = "light";
+                root.setAttribute("data-theme", "light");
+            },
+            ["#ffffff", "#0e0f10", "#2e3033", "#23815a", "rgba(0, 0, 0, 0)", "#0e0f10", "#f0f1f2"],
+        ],
+    ]) {
+        mark();
+        assert.deepEqual(
+            [
+                value(f.panel(), "background-color"),
+                value(f.panel(), "color"),
+                value(hint, "color"),
+                value(pressed, "color"),
+                value(pressed, "background-color"),
+                value(idle, "color"),
+                value(idle, "background-color"),
+            ],
+            expected,
+            label
+        );
+        assert.equal(value(f.panel(), "box-shadow"), value(root, "--bct-shadow"), `${label} shares the popover shadow`);
+    }
 });
