@@ -140,28 +140,26 @@
     }
 
     function injectStyleOnce() {
+        BetterChzzk.utils.ensureUiTheme?.();
         BetterChzzk.utils.injectStyleOnce(
             STYLE_ID,
             `
 #${BAR_ID}{
-  --bcvs-accent:var(--sem-color-content-brand-strong,var(--Content-Brand-Strong, #00FFA3));
-  --bcvs-bg:var(--sem-color-surface-neutral-base,var(--Surface-Neutral-Base, #2E3033));
-  --bcvs-bg-hover:var(--sem-color-surface-neutral-strongest,var(--Surface-Neutral-Strongest, #DFE2EA));
-  --bcvs-bg-elev:var(--sem-color-surface-neutral-strongest,var(--Surface-Neutral-Strongest, #DFE2EA));
-  --bcvs-border:var(--sem-color-border-neutral-weak,var(--Border-Neutral-Weak, #2E3033));
-  --bcvs-border-strong:var(--sem-color-border-neutral-strong,var(--Border-Neutral-Strong, #697183));
-  --bcvs-text:var(--sem-color-content-neutral-cool-base,var(--Content-Neutral-Cool-Base, #9DA5B6));
-  --bcvs-text-strong:var(--sem-color-content-neutral-cool-strong,var(--Content-Neutral-Cool-Strong, #C9CEDC));
-  --bcvs-input-text:color-mix(in srgb, var(--bcvs-text-strong) 82%, #FFFFFF);
-  --bcvs-text-hover:var(--sem-color-content-neutral-inverse,var(--Content-Neutral-Inverse, #111114));
-  --bcvs-text-focus:var(--sem-color-content-neutral-inverse,var(--Content-Neutral-Inverse, #111114));
-  --bcvs-text-dim:var(--sem-color-content-neutral-cool-weak,var(--Content-Neutral-Cool-Weak, #697183));
-  --bcvs-font-family:inherit;
+  /* 공통 테마(shared/uiTheme.js)의 --bct-* 변수만 가리킨다. 원본 필터 칩 옆에서는 syncBarWithHostUi가
+     비선택 칩의 크기·모서리·색을 덮어써 원본과 맞추고, 글꼴은 확장 Pretendard를 쓴다. */
+  --bcvs-accent:var(--bct-brand-text);
+  --bcvs-bg:var(--bct-surface-base);
+  --bcvs-border:var(--bct-border);
+  --bcvs-border-strong:var(--bct-border-strong);
+  --bcvs-text:var(--bct-text-muted);
+  --bcvs-text-strong:var(--bct-text);
+  --bcvs-hover:var(--bct-hover);
+  --bcvs-focus:var(--bct-focus-ring);
   --bcvs-font-size:13px;
   --bcvs-font-weight:400;
   --bcvs-line-height:16px;
   --bcvs-height:28px;
-  --bcvs-radius:14px;
+  --bcvs-radius:var(--bct-radius-full);
 
   position:relative;
   display:inline-flex;
@@ -172,17 +170,12 @@
   background:transparent;
   border:0;
   color:var(--bcvs-text);
-  font-family:var(--bcvs-font-family);
+  font-family:var(--bct-font);
   font-size:var(--bcvs-font-size);
   font-weight:var(--bcvs-font-weight);
   line-height:var(--bcvs-line-height);
   box-sizing:border-box;
   vertical-align:middle;
-}
-html[dark] #${BAR_ID},
-body[theme="dark"] #${BAR_ID},
-.theme_dark #${BAR_ID}{
-  --bcvs-input-text:var(--bcvs-text-strong);
 }
 #${BAR_ID} .bcvs-input-wrap{
   position:relative;
@@ -192,7 +185,7 @@ body[theme="dark"] #${BAR_ID},
   align-items:center;
   height:var(--bcvs-height);
   padding:0 10px;
-  background:var(--bcvs-bg);
+  background-color:var(--bcvs-bg);
   border:1px solid var(--bcvs-border);
   border-radius:var(--bcvs-radius);
   transition:border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
@@ -200,50 +193,41 @@ body[theme="dark"] #${BAR_ID},
 }
 #${BAR_ID}[data-mode="inline"]{align-self:center;margin-left:6px;}
 #${BAR_ID}[data-mode="block"]{display:flex;width:100%;margin:16px 0 20px;font-size:14px;}
-#${BAR_ID}[data-mode="block"] .bcvs-input-wrap{flex:1 1 auto;width:auto;height:36px;padding:0 12px;border-radius:6px;}
-#${BAR_ID} .bcvs-input-wrap:hover{background:var(--bcvs-bg-hover);border-color:var(--bcvs-border-strong);}
-#${BAR_ID} .bcvs-input-wrap:hover input[type="search"],
-#${BAR_ID} .bcvs-input-wrap:hover .bcvs-icon,
-#${BAR_ID} .bcvs-input-wrap:hover .bcvs-clear{color:var(--bcvs-text-hover);}
+#${BAR_ID}[data-mode="block"] .bcvs-input-wrap{flex:1 1 auto;width:auto;height:36px;padding:0 12px;border-radius:var(--bct-radius-md);}
+#${BAR_ID} .bcvs-input-wrap:hover{border-color:var(--bcvs-border-strong);background-image:linear-gradient(var(--bcvs-hover),var(--bcvs-hover));}
 #${BAR_ID} .bcvs-input-wrap:focus-within{
-  background:var(--bcvs-bg-elev);
-  border-color:var(--bcvs-accent);
-  box-shadow:0 0 0 1px var(--bcvs-accent);
+  border-color:var(--bcvs-focus);
+  box-shadow:0 0 0 1px var(--bcvs-focus);
   color:var(--bcvs-text-strong);
 }
-#${BAR_ID} .bcvs-input-wrap:focus-within input[type="search"],
-#${BAR_ID} .bcvs-input-wrap:focus-within .bcvs-icon,
-#${BAR_ID} .bcvs-input-wrap:focus-within .bcvs-clear{color:var(--bcvs-text-focus);}
 #${BAR_ID} .bcvs-icon{width:14px;height:14px;flex:0 0 auto;opacity:0.75;margin-right:4px;color:currentColor;}
 #${BAR_ID}[data-mode="block"] .bcvs-icon{width:16px;height:16px;margin-right:8px;}
 #${BAR_ID} .bcvs-input-wrap:focus-within .bcvs-icon{opacity:1;}
 #${BAR_ID} input[type="search"]{
   flex:1 1 auto;min-width:0;height:100%;padding:0;margin:0;
-  border:0;background:transparent;color:var(--bcvs-input-text);font:inherit;outline:none;
+  border:0;background:transparent;color:var(--bcvs-text-strong);font:inherit;outline:none;
   -webkit-appearance:none;appearance:none;
 }
 #${BAR_ID} input[type="search"]::-webkit-search-cancel-button{display:none;}
-#${BAR_ID} input[type="search"]::placeholder{color:var(--bcvs-text-dim);}
-#${BAR_ID} .bcvs-input-wrap:hover input[type="search"]::placeholder{color:var(--bcvs-text-hover);}
-#${BAR_ID} .bcvs-input-wrap:focus-within input[type="search"]::placeholder{color:var(--bcvs-text-focus);}
+#${BAR_ID} input[type="search"]::placeholder{color:var(--bcvs-text);}
 #${BAR_ID} .bcvs-clear{
   display:none;flex:0 0 auto;width:24px;height:24px;margin-left:6px;
-  border:0;background:transparent;color:var(--bcvs-text-dim);
+  border:0;background:transparent;color:var(--bcvs-text);
   cursor:pointer;padding:0;border-radius:50%;
   align-items:center;justify-content:center;
 }
-#${BAR_ID} .bcvs-clear:hover{color:var(--bcvs-text-strong);background:var(--sem-color-surface-interaction-lighten-hovered,var(--Surface-Interaction-Lighten-Hovered, rgba(255,255,255,0.06)));}
+#${BAR_ID} .bcvs-clear:hover{color:var(--bcvs-text-strong);background:var(--bcvs-hover);}
 #${BAR_ID}[data-has-query="1"] .bcvs-clear{display:inline-flex;}
-#${BAR_ID} .bcvs-clear:focus-visible{outline:2px solid var(--bcvs-accent);outline-offset:2px;}
+#${BAR_ID} .bcvs-clear:focus-visible{outline:2px solid var(--bcvs-focus);outline-offset:2px;}
 #${BAR_ID} .bcvs-status{font-variant-numeric:tabular-nums;}
 #${BAR_ID} .bcvs-meter{
   display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;
-  color:var(--bcvs-text-dim);white-space:nowrap;
+  color:var(--bct-text-muted);white-space:nowrap;
   min-height:var(--bcvs-height);
 }
 #${BAR_ID} .bcvs-spinner{
   width:12px;height:12px;border-radius:50%;
-  border:2px solid var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.24)));
+  border:2px solid var(--bct-border-alpha);
   border-top-color:var(--bcvs-accent);
   animation:bcvs-spin 0.8s linear infinite;flex:0 0 auto;
   visibility:hidden;
@@ -261,16 +245,22 @@ body[theme="dark"] #${BAR_ID},
 [${LOAD_MORE_ATTR}] button{
   height:36px;
   padding:0 16px;
-  border:1px solid var(--sem-color-border-neutral-weak,var(--Border-Neutral-Weak, #2E3033));
-  border-radius:8px;
-  background:var(--sem-color-surface-neutral-base,var(--Surface-Neutral-Base, #2E3033));
-  color:var(--sem-color-content-neutral-cool-strong,var(--Content-Neutral-Cool-Strong, #C9CEDC));
+  border:1px solid var(--bct-border);
+  border-radius:var(--bct-radius-md);
+  background-color:var(--bct-surface-base);
+  color:var(--bct-text-body);
   font:inherit;
+  font-family:var(--bct-font);
   cursor:pointer;
 }
 [${LOAD_MORE_ATTR}] button:hover{
-  border-color:var(--sem-color-border-neutral-strong,var(--Border-Neutral-Strong, #697183));
-  color:#fff;
+  border-color:var(--bct-border-strong);
+  background-image:linear-gradient(var(--bct-hover),var(--bct-hover));
+  color:var(--bct-text);
+}
+[${LOAD_MORE_ATTR}] button:focus-visible{
+  outline:2px solid var(--bct-focus-ring);
+  outline-offset:2px;
 }
 .bcvs-comment-card,
 .bcvs-comment-host{
@@ -294,11 +284,11 @@ body[theme="dark"] #${BAR_ID},
   max-height:30px !important;
   margin:0 !important;
   padding:0 !important;
-  border:1px solid var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.28)));
+  border:1px solid var(--bct-border-alpha);
   border-radius:50%;
-  background:var(--sem-color-surface-neutral-alpha-inverse-strongest,var(--Surface-Neutral-Alpha-Inverse-Strongest, rgba(27,29,32,0.94)));
-  color:var(--sem-color-content-neutral-cool-base,var(--Content-Neutral-Cool-Base, #9DA5B6));
-  box-shadow:0 2px 8px rgba(0,0,0,0.24);
+  background:var(--bct-surface);
+  color:var(--bct-text-muted);
+  box-shadow:var(--bct-shadow);
   box-sizing:border-box;
   cursor:default;
   pointer-events:auto !important;
@@ -317,10 +307,14 @@ body[theme="dark"] #${BAR_ID},
 .bcvs-comment-hit:hover,
 .bcvs-comment-hit:focus-visible,
 .bcvs-comment-hit[data-active="1"]{
-  border-color:var(--sem-color-border-brand-alpha-base,var(--Border-Brand-Alpha-Base, rgba(0,255,163,0.5)));
-  background:var(--sem-color-surface-brand-alpha-weak,var(--Surface-Brand-Alpha-Weak, rgba(0,255,163,0.16)));
-  color:var(--sem-color-content-brand-base,var(--Content-Brand-Base, #00E693));
+  border-color:var(--bct-brand-text);
+  background:var(--bct-brand-weak);
+  color:var(--bct-brand-text);
   outline:none;
+}
+.bcvs-comment-hit:focus-visible{
+  outline:2px solid var(--bct-focus-ring);
+  outline-offset:2px;
 }
 .bcvs-comment-tooltip{
   display:none;
@@ -330,12 +324,12 @@ body[theme="dark"] #${BAR_ID},
   width:max-content;
   max-width:min(460px, calc(100vw - 32px));
   padding:8px 10px;
-  border:1px solid var(--sem-color-border-neutral-alpha-weak,var(--Border-Neutral-Alpha-Weak, rgba(157,165,182,0.22)));
-  border-radius:6px;
-  background:var(--sem-color-surface-neutral-weaker,var(--Surface-Neutral-Weaker, #1B1D20));
-  color:var(--sem-color-content-neutral-primary,var(--Content-Neutral-Primary, #F2F4F7));
-  box-shadow:0 10px 30px rgba(0,0,0,0.3);
-  font-family:inherit;
+  border:1px solid var(--bct-border);
+  border-radius:var(--bct-radius-sm);
+  background:var(--bct-surface);
+  color:var(--bct-text);
+  box-shadow:var(--bct-shadow);
+  font-family:var(--bct-font);
   font-size:12px;
   font-weight:500;
   line-height:17px;
@@ -353,14 +347,15 @@ body[theme="dark"] #${BAR_ID},
   margin:1px 0;
   padding:1px 4px;
   border:1px solid transparent;
-  border-radius:4px;
+  border-radius:var(--bct-radius-sm);
   white-space:pre-wrap;
   box-sizing:border-box;
 }
+/* 작은 브랜드 글자는 라이트의 옅은 브랜드 면 위에서 4.5:1에 못 미쳐, 일치 줄은 면과 테두리로 표시한다. */
 .bcvs-comment-tooltip-line[data-hit="1"]{
-  border-color:var(--sem-color-border-brand-alpha-base,var(--Border-Brand-Alpha-Base, rgba(0,255,163,0.5)));
-  background:var(--sem-color-surface-brand-alpha-weak,var(--Surface-Brand-Alpha-Weak, rgba(0,255,163,0.14)));
-  color:var(--sem-color-content-brand-base,var(--Content-Brand-Base, #00E693));
+  border-color:var(--bct-brand-text-base);
+  background:var(--bct-brand-weak);
+  color:var(--bct-text);
 }
 .bcvs-comment-tooltip[data-show="1"]{
   display:block;
@@ -1610,9 +1605,9 @@ body[theme="dark"] #${BAR_ID},
         const controls = getVisibleControls(host);
         if (!controls.length) return;
 
+        // 글꼴 계열은 확장 Pretendard(--bct-font)로 고정하고, 칩 줄과 맞물리는 크기·굵기·줄 높이만 따른다.
         const fontSource = controls[0];
         const fontStyle = getComputedStyle(fontSource);
-        bar.style.setProperty("--bcvs-font-family", fontStyle.fontFamily);
         bar.style.setProperty("--bcvs-font-size", fontStyle.fontSize);
         bar.style.setProperty("--bcvs-font-weight", fontStyle.fontWeight);
         bar.style.setProperty("--bcvs-line-height", fontStyle.lineHeight);
@@ -1631,8 +1626,7 @@ body[theme="dark"] #${BAR_ID},
         if (cs.borderRadius) bar.style.setProperty("--bcvs-radius", cs.borderRadius);
         if (!isTransparentColor(cs.backgroundColor)) {
             bar.style.setProperty("--bcvs-bg", cs.backgroundColor);
-            // hover/focus 반전색은 CSS의 치지직 토큰(--sem-color-surface-neutral-strongest 등)이
-            // 테마에 맞게 처리하므로 여기서 덮어쓰지 않는다.
+            // 마우스 올림·초점은 CSS가 공통 테마의 hover 겹침과 초점 고리로 처리하므로 여기서 덮어쓰지 않는다.
         }
         if (cs.borderColor) bar.style.setProperty("--bcvs-border", cs.borderColor);
         if (cs.color) bar.style.setProperty("--bcvs-text", cs.color);

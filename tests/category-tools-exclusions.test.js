@@ -514,7 +514,12 @@ test("result order, duplicate selection, fifty-result notice, long names and tex
     );
     assert.match(
         ui.window.document.getElementById("betterchzzk-category-tools-style").textContent,
-        /var\(--bcgt-menu-field-bg\)/
+        /\[data-category-search\]\{[^}]*background:var\(--bcgt-menu-field-bg\)/
+    );
+    // The field color is the shared theme's weak surface (shared/uiTheme.js), not a feature fallback.
+    assert.match(
+        ui.window.document.getElementById("betterchzzk-category-tools-style").textContent,
+        /--bcgt-menu-field-bg:var\(--bct-surface-weak\);/
     );
 });
 
