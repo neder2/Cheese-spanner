@@ -2990,7 +2990,7 @@ test("quality and unified popup preferences save independently", async (t) => {
     assert.equal(queryOption(document, "autoQualityDismissInstallGuide"), null);
     assert.equal(
         dismissGuide.closest(".toggle-row").nextElementSibling.textContent.trim(),
-        "시청에 방해되는 팝업을 제거합니다."
+        "시청에 방해되는 팝업을 제거해요."
     );
     assert.equal(dismissGuide.checked, true);
     assert.equal(dismissGuide.disabled, false);

@@ -11,7 +11,8 @@
 .history-body {
     --options-font: "Pretendard Variable", system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
     --options-text-title: 22px;
-    --options-text-section: 17px;
+    --options-text-section: 18px;
+    --options-text-group: 15px;
     --options-text-body: 14px;
     --options-text-caption: 13px;
     --options-text-meta: 12px;
@@ -54,13 +55,13 @@
 }
 
 .options-body .option-group > summary {
-    font-size: var(--options-text-body);
-    font-weight: 650;
+    font-size: var(--options-text-group);
+    font-weight: 700;
 }
 
 .options-body .toggle-row strong {
     font-size: var(--options-text-body);
-    font-weight: 500;
+    font-weight: 600;
     line-height: 1.5;
 }
 
@@ -72,12 +73,8 @@
 
 .options-body .options-page .tab {
     font-size: var(--options-text-caption);
-    font-weight: 500;
+    font-weight: 600;
     line-height: 1.5;
-}
-
-.options-body .options-page .tab.is-active {
-    font-weight: 650;
 }
 
 .header-controls {
@@ -89,16 +86,17 @@
 .options-body .options-page .theme-toggle {
     display: grid;
     place-items: center;
-    flex: 0 0 28px;
-    width: 28px;
-    min-height: 28px;
-    height: 28px;
+    flex: 0 0 32px;
+    width: 32px;
+    min-height: 32px;
+    height: 32px;
     padding: 0;
     border: 0;
-    border-radius: 6px;
+    border-radius: 999px;
     background: transparent;
     color: var(--text-muted);
     box-shadow: none;
+    cursor: pointer;
 }
 
 .options-body .options-page .theme-toggle:hover {
@@ -107,8 +105,8 @@
 }
 
 .theme-toggle svg {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
 }
 
 .options-body :is(.search-field input, .number-grid input, .quality-select, textarea) {
@@ -123,8 +121,13 @@
 }
 
 .live-start-channels {
-    margin-top: 16px;
     min-width: 0;
+    padding: 12px 0 8px;
+}
+
+.live-start-channels > label {
+    font-size: var(--options-text-body);
+    font-weight: 600;
 }
 
 .live-start-add {
@@ -138,9 +141,9 @@
     min-width: 0;
     flex: 1;
     min-height: 36px;
-    padding: 6px 10px;
+    padding: 6px 12px;
     border: 1px solid var(--border-strong);
-    border-radius: 6px;
+    border-radius: 8px;
     background: var(--surface-2);
     color: var(--text);
     font: inherit;
@@ -162,9 +165,10 @@
 
 .live-start-list li {
     min-width: 0;
-    padding: 10px;
+    padding: 10px 12px;
     border: 1px solid var(--border);
     border-radius: 8px;
+    background: var(--surface-2);
 }
 
 .live-start-list a {
@@ -201,8 +205,25 @@
 .live-start-channels .secondary-button {
     width: auto;
     min-height: 36px;
-    padding: 6px 12px;
+    height: auto;
+    padding: 6px 14px;
     flex-shrink: 0;
+    line-height: 1.4;
+}
+
+.options-body .live-start-channel-actions .secondary-button {
+    min-height: 32px;
+}
+
+/* 채널 삭제는 위험 동작이라 위험색 테두리 버튼으로 보인다. */
+.options-body .live-start-channel-actions [data-action="remove"] {
+    border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+    color: var(--danger);
+}
+
+.options-body .live-start-channel-actions [data-action="remove"]:hover:not(:disabled) {
+    border-color: var(--danger);
+    background: var(--danger-bg);
 }
 
 .live-start-channels [data-error="true"] {

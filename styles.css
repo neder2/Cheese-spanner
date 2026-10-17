@@ -1017,7 +1017,7 @@ h1 {
 }
 
 .options-body .history-storage-warning {
-    margin: 12px;
+    margin: 12px 0;
 }
 
 .history-body details.history-storage-warning {
@@ -1095,7 +1095,7 @@ h1 {
 }
 
 .options-body .history-storage-guide {
-    margin: 12px;
+    margin: 12px 0;
 }
 
 .reset-row {
@@ -2670,7 +2670,7 @@ h1 {
     width: 32px;
     height: 32px;
     list-style: none;
-    border-radius: 8px;
+    border-radius: 999px;
     color: var(--text-muted);
     cursor: pointer;
 }
@@ -2698,13 +2698,14 @@ h1 {
     z-index: 60;
     display: grid;
     justify-content: stretch;
-    gap: 4px;
-    width: 170px;
+    gap: 2px;
+    width: 184px;
     margin: 0;
-    padding: 8px;
+    padding: 6px;
     border: 1px solid var(--border);
     border-radius: 12px;
     background: var(--surface);
+    box-shadow: var(--shadow-2);
 }
 
 .options-body .header-menu .header-menu-content .release-notes-link,
@@ -2712,10 +2713,27 @@ h1 {
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    min-height: 36px;
+    min-height: 38px;
     margin: 0;
     padding: 8px 10px;
-    font-size: 12px;
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.options-body .header-menu .header-menu-content .release-notes-link {
+    text-decoration: none;
+}
+
+.options-body .header-menu .header-menu-content :is(.release-notes-link, .reset-button):hover {
+    color: var(--text);
+    background: var(--surface-2);
+}
+
+.options-body .header-menu .header-menu-content #reset:hover {
+    color: var(--danger);
+    background: var(--danger-bg);
 }
 
 .options-body .brand-mark,
@@ -2797,10 +2815,25 @@ h1 {
     backdrop-filter: none;
 }
 
+/* 시안 A: 테두리 없는 약한 면의 알약 검색창. 초점은 공통 브랜드 초점 고리 하나만 쓴다. */
+.options-body .search-field > svg {
+    left: 15px;
+    width: 16px;
+    height: 16px;
+}
+
 .options-body .search-field input {
-    height: 44px;
-    font-size: 13px;
+    height: 40px;
+    padding-left: 40px;
+    border-color: transparent;
     border-radius: 999px;
+    background: var(--surface-2);
+    font-size: 13px;
+    box-shadow: none;
+}
+
+.options-body .search-field input:focus {
+    border-color: transparent;
     box-shadow: none;
 }
 
@@ -2809,6 +2842,12 @@ h1 {
     outline-offset: 2px;
 }
 
+.options-body .options-page .search-field input:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 0;
+}
+
+/* 분류 탭은 한 줄 가로 스크롤을 유지한 알약 칩이다. 초점 고리가 잘리지 않게 안쪽 여백을 4px 이상 둔다. */
 .options-body .options-page .tab-bar {
     display: flex;
     flex-wrap: nowrap;
@@ -2816,9 +2855,8 @@ h1 {
     overflow-x: auto;
     overscroll-behavior-x: contain;
     gap: 4px;
-    padding: 4px 4px 8px;
+    padding: 4px 4px 6px;
     border: 0;
-    border-bottom: 1px solid var(--border);
     border-radius: 0;
     background: transparent;
     box-shadow: none;
@@ -2838,13 +2876,16 @@ h1 {
     flex: 0 0 auto;
     flex-direction: row;
     min-width: 0;
-    min-height: 36px;
-    padding: 7px 10px;
-    gap: 6px;
-    border-radius: 6px;
+    min-height: 34px;
+    padding: 0 11px;
+    gap: 5px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    color: var(--text-muted);
+    background: transparent;
     font-size: 12px;
     line-height: 1.4;
-    font-weight: 400;
+    font-weight: 600;
 }
 
 .options-body .tab span {
@@ -2855,23 +2896,21 @@ h1 {
     display: block;
     width: 14px;
     height: 14px;
-    stroke-width: 1.5;
+    stroke-width: 1.8;
+    opacity: 1;
 }
 
-.options-body .tab.is-active {
+.options-body .options-page .tab:hover:not(.is-active) {
     color: var(--text);
     background: var(--surface-2);
-    box-shadow: none;
-    font-weight: 600;
 }
 
-.options-body .tab.is-active::after {
-    content: "";
-    position: absolute;
-    bottom: 0;
-    inset-inline: 12px;
-    height: 2px;
-    background: var(--accent-text);
+/* 선택된 칩은 반전한다(주 글자색 바탕에 배경색 글자). */
+.options-body .options-page .tab.is-active {
+    border-color: var(--text);
+    color: var(--bg);
+    background: var(--text);
+    box-shadow: none;
 }
 
 .options-body .settings-card {
@@ -2886,7 +2925,7 @@ h1 {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 14px;
+    margin-bottom: 12px;
 }
 
 .section-heading-icon {
@@ -2901,33 +2940,49 @@ h1 {
 }
 
 .options-body .section-heading h2 {
-    font-size: 16px;
-    font-weight: 600;
+    font-size: 18px;
+    font-weight: 700;
 }
 
+/* 묶음 카드: 패널 면, 약한 테두리 1px, 모서리 12px. 머리 줄은 제목과 오른쪽 접힘 화살표다. */
 .options-body .option-group {
     margin-top: 12px;
     border: 1px solid var(--border);
-    border-radius: 18px;
+    border-radius: 12px;
     background: var(--surface);
 }
 
 .options-body .option-group > summary {
     min-height: 48px;
     padding: 12px 16px;
-    border-radius: 17px;
+    border-radius: 11px;
     color: var(--text);
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 1.5;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.options-body .option-group[open] > summary {
+    border-radius: 11px 11px 0 0;
+    background: transparent;
 }
 
 .options-body .option-group > summary:hover {
     background: var(--surface-2);
 }
 
-.options-body .option-group[open] > summary {
-    background: transparent;
+.options-body .option-group > summary::after {
+    width: 7px;
+    height: 7px;
+    margin: 0 4px 0 0;
+    border-color: var(--text-muted);
+    transform: rotate(-45deg);
+}
+
+.options-body .option-group[open] > summary::after {
+    margin: -4px 4px 0 0;
+    border-color: var(--text-muted);
+    transform: rotate(45deg);
 }
 
 .option-group-title {
@@ -2950,46 +3005,56 @@ h1 {
 }
 
 .options-body .option-group-body {
-    padding: 0 16px 12px;
+    padding: 0 16px 4px;
 }
 
-/* 한 묶음 안의 하위 묶음은 구분선과 강조 막대로 나눈다. */
+/* 한 묶음 안의 하위 묶음은 구분선과 작은 굵은 보조 글자 소제목으로 나눈다(색 막대 없음). */
 .options-body .option-subheading {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 12px 0 2px;
-    padding-top: 14px;
+    margin: 0;
+    padding: 16px 0 4px;
     border-top: 1px solid var(--border);
-    color: var(--text);
-    font-size: 12px;
-    font-weight: 650;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 700;
     line-height: 1.5;
     overflow-wrap: anywhere;
 }
 
-.options-body .option-subheading::before {
-    content: "";
-    flex: none;
-    width: 3px;
-    height: 12px;
-    border-radius: 2px;
-    background: var(--accent);
-}
-
 .options-body .option-subheading:first-child {
-    margin-top: 0;
-    padding-top: 2px;
+    padding-top: 4px;
     border-top: 0;
 }
 
+/* 설정 줄: 왼쪽 이름·설명, 오른쪽 조작. 줄 사이는 약한 테두리 구분선이고, 줄 아래 설명은 그 줄에 붙는다. */
 .options-body .toggle-row {
-    min-height: 46px;
+    min-height: 48px;
     margin: 0;
-    padding: 10px 0;
+    padding: 12px 0;
     border: 0;
     border-radius: 0;
     gap: 16px;
+}
+
+.options-body .option-group-body :is(.toggle-row, .number-grid, .live-start-channels) {
+    border-top: 1px solid var(--border);
+}
+
+.options-body .option-group-body > :first-child,
+.options-body .option-group-body .option-subheading + * {
+    border-top: 0;
+}
+
+.options-body .option-group-body :is(.toggle-row, .number-grid):has(+ .setting-note) {
+    padding-bottom: 4px;
+}
+
+/* 비활성 줄은 내용만 흐리게 해 구분선 굵기·색을 다른 줄과 같게 둔다. */
+.options-body .option-group-body :is(.toggle-row, .number-grid).is-disabled {
+    opacity: 1;
+}
+
+.options-body .option-group-body :is(.toggle-row, .number-grid).is-disabled > * {
+    opacity: 0.48;
 }
 
 .options-body .toggle-row:hover {
@@ -2997,9 +3062,23 @@ h1 {
 }
 
 .options-body .toggle-row strong {
-    font-size: 13px;
-    font-weight: 400;
+    font-size: 14px;
+    font-weight: 600;
     line-height: 1.5;
+}
+
+.options-body .option-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 6px;
+    color: var(--text-muted);
+    background: var(--surface-3);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.5;
+    vertical-align: 1px;
+    white-space: nowrap;
 }
 
 .options-body .toggle-row small,
@@ -3010,14 +3089,15 @@ h1 {
 }
 
 .options-body .option-group-body > .setting-note {
-    margin: 0 0 8px;
+    margin: 0 0 12px;
     padding: 0;
 }
 
 .options-body .options-page .option-group-body > .number-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px 24px;
-    margin: 4px 0 8px;
+    margin: 0;
+    padding: 12px 0;
 }
 
 .options-body .number-grid label {
@@ -3038,16 +3118,105 @@ h1 {
     line-height: 1.5;
 }
 
+/* 선택 상자·숫자 입력: 모서리 8px, 기본 테두리. 초점은 공통 초점 고리 하나만 보인다. */
+.options-body :is(.quality-select, .number-grid input) {
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    color: var(--text);
+    background: var(--surface-2);
+}
+
+.options-body .quality-select {
+    min-height: 34px;
+    padding: 5px 10px;
+}
+
 .options-body .number-grid input {
     height: 34px;
     padding: 4px 8px;
-    background: var(--surface-2);
     font-size: 13px;
     font-variant-numeric: tabular-nums;
 }
 
+.options-body .number-grid input:focus {
+    box-shadow: none;
+}
+
 .options-body .number-grid em {
     font-size: 12px;
+}
+
+/* 토글: 꺼짐은 기본 테두리색 트랙, 켜짐은 브랜드 채움 트랙. 손잡이는 테마와 무관한 흰색, 켜지면 브랜드 위 글자색이다. */
+.options-body .toggle-row input[type="checkbox"] {
+    flex: none;
+    width: 40px;
+    height: 24px;
+    border: 0;
+    background: var(--border-strong);
+}
+
+.options-body .toggle-row input[type="checkbox"]::before {
+    left: 3px;
+    top: 3px;
+    width: 18px;
+    height: 18px;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.options-body .toggle-row input[type="checkbox"]:checked {
+    background: var(--accent);
+}
+
+.options-body .toggle-row input[type="checkbox"]:checked::before {
+    background: var(--accent-contrast);
+    transform: translateX(16px);
+}
+
+.options-body .toggle-row input[type="checkbox"]:checked:not(:disabled):active::before {
+    transform: translateX(12px);
+}
+
+.options-body .options-page .toggle-row input[type="checkbox"]:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+    box-shadow: none;
+}
+
+/* 버튼: 주 동작은 브랜드 채움 알약, 보조 동작은 테두리 알약, 위험 동작은 위험색 테두리 알약이다. */
+.options-body :is(.primary-button, .secondary-button) {
+    border-radius: 999px;
+}
+
+.options-body .primary-button {
+    border-color: var(--accent);
+}
+
+.options-body .secondary-button {
+    border-color: var(--border-strong);
+    color: var(--text);
+    background: transparent;
+}
+
+.options-body .primary-button:hover:not(:disabled) {
+    border-color: var(--accent);
+    filter: brightness(0.94);
+}
+
+.options-body .secondary-button:hover:not(:disabled) {
+    border-color: var(--border-strong);
+    background: var(--surface-2);
+}
+
+.options-body .secondary-button.danger-button {
+    border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+    color: var(--danger);
+    background: transparent;
+}
+
+.options-body .secondary-button.danger-button:hover:not(:disabled) {
+    border-color: var(--danger);
+    background: var(--danger-bg);
 }
 
 .options-body .shortcut-reset-button {
@@ -3056,10 +3225,11 @@ h1 {
     height: auto;
     align-self: center;
     justify-self: start;
-    padding: 6px 10px;
+    padding: 6px 14px;
     line-height: 1.5;
 }
 
+/* 저장 막대: 화면 아래 고정. 왼쪽 상태 점과 문구, 오른쪽 변경 취소(옅은 버튼)와 옵션 저장(브랜드 알약). */
 .options-body .options-page .save-row {
     position: fixed;
     left: 50%;
@@ -3067,10 +3237,10 @@ h1 {
     z-index: 50;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto 144px;
-    gap: 12px;
+    gap: 8px;
     align-items: center;
     width: min(992px, 100%);
-    padding: 14px 16px max(14px, env(safe-area-inset-bottom));
+    padding: 12px 16px max(12px, env(safe-area-inset-bottom));
     border-top: 1px solid var(--border);
     background: var(--bg);
     transform: translateX(-50%);
@@ -3084,12 +3254,13 @@ h1 {
 
 .discard-button {
     min-height: 36px;
-    padding: 6px 8px;
+    padding: 6px 14px;
     border: 0;
-    border-radius: 6px;
+    border-radius: 999px;
     color: var(--text-muted);
     background: transparent;
-    font-size: 12px;
+    font-size: 13px;
+    font-weight: 600;
     white-space: nowrap;
     cursor: pointer;
 }
@@ -3121,25 +3292,34 @@ h1 {
     font-size: 12px;
 }
 
+.options-body .status-pill::before {
+    opacity: 1;
+}
+
 .options-body .status-pill[data-state="saved"] {
     color: var(--text-muted);
 }
 
+.options-body .status-pill[data-state="saved"]::before {
+    background: var(--accent-text);
+}
+
 .options-body .options-page .save-row .save-button {
     width: 100%;
-    min-height: 44px;
+    min-height: 40px;
     height: auto;
-    padding: 11px 14px;
-    gap: 7px;
+    padding: 8px 14px;
+    gap: 6px;
     border-radius: 999px;
-    font-size: 13px;
-    line-height: 1.5;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.4;
 }
 
 .save-button svg {
     flex: none;
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     fill: none;
     stroke: currentColor;
     stroke-width: 3;
@@ -3156,7 +3336,8 @@ h1 {
 }
 
 .options-body .message {
-    bottom: 92px;
+    bottom: 80px;
+    border-radius: 12px;
 }
 
 @media (max-width: 680px) {
@@ -3201,6 +3382,10 @@ h1 {
         padding-inline: 12px;
     }
 
+    .options-body .discard-button {
+        padding-inline: 10px;
+    }
+
     .options-body .save-feedback small {
         font-size: 11px;
     }
@@ -3216,9 +3401,8 @@ h1 {
 /* 설정 파일 불러오기 미리보기 — 2026-10-08 */
 .options-body .settings-backup-panel {
     margin: 0 0 12px;
-    padding: 14px 16px;
+    padding: 16px;
     border: 1px solid var(--border);
-    border-top: 2px solid var(--accent);
     border-radius: 12px;
     background: var(--surface);
     color: var(--text);
@@ -3296,8 +3480,20 @@ h1 {
     gap: 8px;
 }
 
+.options-body .settings-backup-actions > :is(.primary-button, .secondary-button),
 .options-body .panel-size-reset {
-    margin: 4px 0 2px;
+    width: auto;
+    max-width: 100%;
+    min-height: 36px;
+    height: auto;
+    padding: 8px 16px;
+    line-height: 1.4;
+    white-space: normal;
+    text-align: center;
+}
+
+.options-body .panel-size-reset {
+    margin: 0 0 8px;
 }
 
 @media (max-width: 420px) {
