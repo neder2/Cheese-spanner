@@ -324,7 +324,7 @@ test("options captures readable playback speed keys and blocks duplicate or rese
     press(doubleKey, "KeyM", { key: "m" });
     press(doubleKey, "KeyC", { key: "c" });
     assert.equal(doubleKey.value, "]", "the native subtitle key must stay reserved");
-    assert.match(message.textContent, /겹쳐 지정할 수 없습니다/);
+    assert.match(message.textContent, /겹쳐 지정할 수 없어요/);
 
     press(doubleKey, "KeyW", { key: "w" });
     assert.equal(doubleKey.value, "W");
@@ -623,6 +623,9 @@ test("options retain responsive popup controls and visible keyboard focus", (t) 
         ".tab:focus-visible",
         ".primary-button:focus-visible",
         ".secondary-button:focus-visible",
+        // The CHZZK-style switch and pill search drop their own box-shadow rings, so each keeps one explicit ring.
+        '.options-body .options-page .toggle-row input[type="checkbox"]:focus-visible',
+        ".options-body .options-page .search-field input:focus-visible",
     ]) {
         const focus = declarations(selector, 420);
         assert.ok(
@@ -1178,7 +1181,7 @@ test("ad options save independently and wait for registration before reporting r
     assert.equal(document.getElementById("notice").dataset.state, "saving");
     reply({ ok: true, enabled: true });
     assert.equal(document.getElementById("notice").dataset.state, "saved");
-    assert.match(document.getElementById("adVideoStatus").textContent, /준비가 끝났습니다/);
+    assert.match(document.getElementById("adVideoStatus").textContent, /준비가 끝났어요/);
     input.checked = false;
     dispatch(dom, input, "change");
     document.getElementById("save").click();
@@ -1240,7 +1243,7 @@ test("options page shows initial storage read failures without overwriting exist
 
     assert.equal(document.getElementById("notice").dataset.state, "error");
     assert.equal(autoQuality.disabled, true);
-    assert.equal(message.textContent, "설정을 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.");
+    assert.equal(message.textContent, "설정을 불러오지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.");
 
     autoQuality.checked = false;
     dispatch(dom, autoQuality, "change");
@@ -1248,7 +1251,7 @@ test("options page shows initial storage read failures without overwriting exist
 
     assert.equal(chrome.testState.sync.autoQualityEnabled, true);
     assert.equal(document.getElementById("notice").dataset.state, "error");
-    assert.equal(message.textContent, "설정을 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.");
+    assert.equal(message.textContent, "설정을 불러오지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.");
 });
 
 test("options page shows storage write failures without updating saved options", async (t) => {
@@ -1285,7 +1288,7 @@ test("options page shows storage write failures without updating saved options",
     assert.equal(document.getElementById("notice").dataset.state, "error");
     assert.equal(
         document.getElementById("message").textContent,
-        "설정을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."
+        "설정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요."
     );
 });
 
@@ -1326,4 +1329,37 @@ test("options reset asks for confirmation before restoring defaults", async (t) 
     assert.equal(queryOption(document, "followingPinOfflineToTopEnabled").checked, false);
     assert.equal(chrome.testState.sync.followingPinOfflineToTopEnabled, false);
     assert.deepEqual(chrome.testState.sync.betterchzzkPinnedFollowingChannelIds, ["channel-a"]);
+});
+
+test("options copy uses the polite 해요체 tone", () => {
+    // Spec §8: visible option sentences, status messages and confirmations use 해요체; noun labels stay.
+    for (const file of [
+        "options.html",
+        "options.js",
+        "optionsLiveStart.js",
+        "optionsSettingsBackup.js",
+        "optionsUpdateGuide.js",
+    ]) {
+        assert.doesNotMatch(readRepoFile(file), /(습니다|입니다|합니다|됩니다)/, file);
+    }
+});
+
+test("experimental status is a badge with unchanged text that stays inside the searchable row", (t) => {
+    const dom = createDom("options.html", "options.html");
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    const { document } = dom.window;
+    const input = queryOption(document, "adVideoEnabled");
+    const row = input.closest(".toggle-row");
+    const title = row.querySelector("strong");
+    assert.equal(title.querySelector(".option-badge")?.textContent, "실험적");
+    assert.equal(title.textContent.replace(/\s+/g, " ").trim(), "동영상 광고 차단 실험적");
+    assert.equal(input.getAttribute("aria-describedby"), "adVideoNote");
+    const search = document.getElementById("settingsSearch");
+    for (const query of ["실험적", "동영상 광고 차단", "adVideoEnabled"]) {
+        search.value = query;
+        dispatch(dom, search, "input");
+        assert.equal(input.closest(".search-miss"), null, query);
+    }
 });

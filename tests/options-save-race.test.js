@@ -422,7 +422,7 @@ test("a long-open options page saves only its edits and keeps a value changed el
     assert.equal(stored.autoQualityEnabled, true);
     assert.equal(ui.option("skipSeconds").value, "10", "the form shows the value read inside the settings lock");
     assert.equal(ui.notice().dataset.state, "saved");
-    assert.equal(ui.message(), "옵션을 저장했습니다.");
+    assert.equal(ui.message(), "옵션을 저장했어요.");
 });
 
 test("storage changes refresh untouched fields, keep pending edits, and survive a write in flight", async (t) => {
@@ -480,7 +480,7 @@ for (const notified of [true, false]) {
         assert.equal(ui.notice().dataset.state, "saved");
         assert.equal(
             ui.message(),
-            "옵션을 저장했습니다. 저장하기 전에 다른 곳에서도 바뀐 항목 1개는 이 화면에서 고른 값으로 저장했습니다."
+            "옵션을 저장했어요. 저장하기 전에 다른 곳에서도 바뀐 항목 1개는 이 화면에서 고른 값으로 저장했어요."
         );
     });
 }
@@ -566,7 +566,7 @@ test("a speed key saved elsewhere never mixes into this page's unsaved speed key
     assert.equal(ui.notice().dataset.state, "saved");
     assert.equal(
         ui.message(),
-        "옵션을 저장했습니다. 저장하기 전에 다른 곳에서도 바뀐 항목 1개는 이 화면에서 고른 값으로 저장했습니다."
+        "옵션을 저장했어요. 저장하기 전에 다른 곳에서도 바뀐 항목 1개는 이 화면에서 고른 값으로 저장했어요."
     );
 });
 
@@ -588,7 +588,7 @@ test("speed keys from elsewhere apply as one unit, and a touched key keeps this 
     assert.deepEqual(speedTrio(stored), ["KeyB", "KeyA", "KeyD"]);
     assert.equal(
         ui.message(),
-        "옵션을 저장했습니다. 저장하기 전에 다른 곳에서도 바뀐 항목 2개는 이 화면에서 고른 값으로 저장했습니다."
+        "옵션을 저장했어요. 저장하기 전에 다른 곳에서도 바뀐 항목 2개는 이 화면에서 고른 값으로 저장했어요."
     );
 });
 

@@ -44,12 +44,12 @@ const {
 } = BetterChzzkSettings;
 
 const storage = globalThis.chrome?.storage?.sync;
-const OPTIONS_LOAD_ERROR_MESSAGE = "설정을 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.";
+const OPTIONS_LOAD_ERROR_MESSAGE = "설정을 불러오지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.";
 const OPTIONS_LOAD_BLOCKED_SAVE_MESSAGE =
-    "설정을 불러오지 못해 저장하지 않았습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.";
-const OPTIONS_SAVE_ERROR_MESSAGE = "설정을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.";
+    "설정을 불러오지 못해 저장하지 않았어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.";
+const OPTIONS_SAVE_ERROR_MESSAGE = "설정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
 const optionsSaveConflictMessage = (count) =>
-    `저장하기 전에 다른 곳에서도 바뀐 항목 ${count}개는 이 화면에서 고른 값으로 저장했습니다.`;
+    `저장하기 전에 다른 곳에서도 바뀐 항목 ${count}개는 이 화면에서 고른 값으로 저장했어요.`;
 const NOTICE_STATE_LABELS = {
     loading: "불러오는 중",
     dirty: "변경됨",
@@ -61,8 +61,8 @@ const NOTICE_STATE_LABELS = {
 // 팔로잉 미리보기 영상(HLS)은 pstatic.net에서 내려오므로 선택 권한으로 두고,
 // 기능을 켜는 순간에만 요청한다. 이미 허용된 상태의 request는 팝업 없이 승인된다.
 const PREVIEW_HOST_PERMISSION = { origins: ["https://*.pstatic.net/*"] };
-const PREVIEW_PERMISSION_DENIED_MESSAGE = "권한이 거부되어 팔로잉 미리보기를 켜지 않았습니다.";
-const SHORTCUT_KEY_UNAVAILABLE_MESSAGE = "이 키는 기존 재생 조작과 겹쳐 지정할 수 없습니다.";
+const PREVIEW_PERMISSION_DENIED_MESSAGE = "권한이 거부되어 팔로잉 미리보기를 켜지 않았어요.";
+const SHORTCUT_KEY_UNAVAILABLE_MESSAGE = "이 키는 기존 재생 조작과 겹쳐 지정할 수 없어요.";
 const SHORTCUT_KEY_DUPLICATE_MESSAGE = "배속 감소·증가·초기화는 서로 다른 키로 지정해 주세요.";
 
 let hideMessageTimer = 0;
@@ -392,12 +392,12 @@ function startSave(normalized, message, save = createSaveSnapshot(normalized)) {
                                     status.hidden = false;
                                     status.textContent =
                                         result?.ok && result.enabled !== values.adVideoEnabled
-                                            ? "다른 곳에서 광고 설정이 변경됐습니다. 설정을 다시 열어 현재 값을 확인해 주세요."
+                                            ? "다른 곳에서 광고 설정이 변경됐어요. 설정을 다시 열어 현재 값을 확인해 주세요."
                                             : result?.ok
                                               ? values.adVideoEnabled
-                                                  ? "적용 준비가 끝났습니다. 치지직 탭을 새로고침해 주세요."
-                                                  : "동영상 광고 차단을 껐습니다. 이미 반영된 상태는 새로고침하면 복원됩니다."
-                                              : "설정은 저장됐지만 적용 준비에 실패했습니다. 확장을 다시 로드한 뒤 설정을 확인해 주세요.";
+                                                  ? "적용 준비가 끝났어요. 치지직 탭을 새로고침해 주세요."
+                                                  : "동영상 광고 차단을 껐어요. 이미 반영된 상태는 새로고침하면 복원돼요."
+                                              : "설정은 저장됐지만 적용 준비에 실패했어요. 확장을 다시 로드한 뒤 설정을 확인해 주세요.";
                                 }
                                 finishSave(save, stored, message);
                             }
@@ -549,18 +549,18 @@ function saveCurrentOptions() {
                     needsNotifications
                         ? "권한이 거부되어 저장하지 않았어요. 데스크톱 알림을 끈 상태로 다른 옵션을 저장할 수 있어요."
                         : newlyEnabledMedia.includes("liveMultiviewEnabled")
-                          ? "영상 호스트 권한이 거부되어 멀티뷰를 켜지 않았습니다."
+                          ? "영상 호스트 권한이 거부되어 멀티뷰를 켜지 않았어요."
                           : PREVIEW_PERMISSION_DENIED_MESSAGE,
                     "error"
                 );
                 return;
             }
-            startSave(normalized, "옵션을 저장했습니다.", save);
+            startSave(normalized, "옵션을 저장했어요.", save);
         });
         return;
     }
 
-    commitSave("옵션을 저장했습니다.");
+    commitSave("옵션을 저장했어요.");
 }
 
 // 검색창이나 숫자 입력에서 Enter를 눌러도 페이지가 다시 로드되지 않게 한다.
@@ -670,13 +670,13 @@ document.addEventListener("click", (event) => {
 
 resetButton.addEventListener("click", () => {
     if (optionsLoadState !== "ready" || saveInFlight || externalBusy) return;
-    if (!window.confirm("모든 설정을 기본값으로 되돌릴까요? 직접 바꾼 키와 수치도 함께 초기화됩니다.")) return;
+    if (!window.confirm("모든 설정을 기본값으로 되돌릴까요? 직접 바꾼 키와 수치도 함께 초기화돼요.")) return;
     headerMenu.open = false;
     headerMenu.querySelector("summary").focus();
     renderOptions(DEFAULT_OPTIONS);
     // Restoring defaults is an explicit choice for every option, including ones changed elsewhere meanwhile.
     markOptionsTouched(OPTION_KEYS);
-    commitSave("기본값으로 복원했습니다.");
+    commitSave("기본값으로 복원했어요.");
 });
 
 if (storage) {
@@ -1218,7 +1218,7 @@ function applySearch(query) {
     }
 
     if (searchEmptyEl) {
-        searchEmptyEl.textContent = `‘${query.trim()}’에 해당하는 설정이 없습니다.`;
+        searchEmptyEl.textContent = `‘${query.trim()}’에 해당하는 설정이 없어요.`;
         searchEmptyEl.classList.toggle("hidden", directMatches.length > 0);
     }
     if (searchStatusEl) {
