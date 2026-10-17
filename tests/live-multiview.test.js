@@ -14,7 +14,18 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 45));
 const html =
     '<div id="sidebar"></div><div id="video-region"><div class="chzzk_player type_live"><div class="pzp-pc pzp-pc--controls"><video class="webplayer-internal-video"></video><div class="pzp-pc__bottom-buttons--right"><button class="pzp-pc__viewmode-button" aria-label="넓은 화면">넓은 화면</button></div></div></div></div><section id="native-info">원래 방송 제목과 상호작용</section><aside id="aside-chatting"><div class="chat-header"><h2>채팅</h2><div class="chat-fold"><button type="button" aria-label="채팅 접기">접기</button></div><div class="chat-menu"><button type="button" aria-haspopup="true" aria-label="더보기 메뉴">⋮</button></div></div><div id="native-chat" role="log">원래 채팅</div></aside>';
 
-function setup(t, { local = {}, savedSession, readFailure = false, writeFailure = false, sourcePending = false } = {}) {
+function setup(
+    t,
+    {
+        local = {},
+        savedSession,
+        readFailure = false,
+        writeFailure = false,
+        sourcePending = false,
+        enabled = true,
+        withTheme = false,
+    } = {}
+) {
     const dom = new JSDOM(html, {
         url: `https://chzzk.naver.com/live/${A}`,
         runScripts: "outside-only",
@@ -163,7 +174,10 @@ function setup(t, { local = {}, savedSession, readFailure = false, writeFailure 
     evalFile("shared/settings.js");
     evalFile("shared/data.js");
     evalFile("content.js");
-    featureOptions = w.BetterChzzkSettings.normalizeOptions({ liveMultiviewEnabled: true });
+    // The manifest loads the shared in-page theme right after content.js; most tests leave it out on purpose,
+    // so the feature must also work when the optional ensureUiTheme request is missing.
+    if (withTheme) evalFile("shared/uiTheme.js");
+    featureOptions = w.BetterChzzkSettings.normalizeOptions({ liveMultiviewEnabled: enabled });
     Object.assign(w.BetterChzzk.utils, {
         bindFeatureOptions(fn) {
             optionListeners.add(fn);
@@ -4462,4 +4476,125 @@ test("multiview reports quality save failure without interrupting selected playb
     assert.equal(h.instances[0].nextLevel, 1);
     assert.match(h.w.document.querySelector(".bcmv-quality-status").textContent, /화질 저장 실패/);
     assert.equal(h.storage[`betterChzzkMultiviewQuality:${B}`], undefined);
+});
+
+// shared/uiTheme.js owns the only light/dark fallback table for in-page UI (spec 5.1, 6). The multiview keeps
+// theme-independent colors only where it draws on the video itself, like the native player: white/black
+// controls, gradients and labels, the invalid drop outline, and CHZZK's static neutrals of the on-video error screen.
+const MULTIVIEW_FIXED_COLORS = [
+    "#fff",
+    "#000",
+    "#000b",
+    "#0006",
+    "#a6acb8",
+    "#2e3033",
+    "#4d4d4d",
+    "#1c1d1f",
+    "rgba(0,0,0,.6)",
+    "rgba(0,0,0,.7)",
+    "rgba(0,0,0,.8)",
+    "rgba(0,0,0,.18)",
+    "rgba(255,255,255,.5)",
+    "rgba(255,255,255,.15)",
+    "rgba(255,255,255,.2)",
+];
+const cssColors = (css) => [...css.matchAll(/#[0-9a-f]{3,8}(?![\w-])|rgba?\([^)]*\)/gi)].map(([color]) => color);
+const cssRule = (css, selector) => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return css.match(new RegExp("(?:^|\\n)" + escaped + "\\{([^}]*)\\}"))?.[1] ?? null;
+};
+const themeVariables = (w) =>
+    new Set(
+        [...w.document.getElementById("betterchzzk-ui-theme").textContent.matchAll(/(--bct-[a-z-]+):/g)].map(
+            ([, name]) => name
+        )
+    );
+
+test("multiview requests the shared theme only after it is enabled and keeps the CHZZK font family", async (t) => {
+    const h = setup(t, { enabled: false, withTheme: true });
+    const d = h.w.document;
+    assert.equal(d.getElementById("betterchzzk-ui-theme"), null, "no theme while the option is off");
+    assert.equal(d.getElementById("betterchzzk-multiview-style"), null);
+    h.w.chrome.runtime.getURL = (file) => `chrome-extension://fixture/${file}`;
+    h.configure(true);
+    await tick();
+    const theme = d.getElementById("betterchzzk-ui-theme"),
+        style = d.getElementById("betterchzzk-multiview-style");
+    assert.ok(theme && style);
+    assert.equal(
+        theme.compareDocumentPosition(style) & h.w.Node.DOCUMENT_POSITION_FOLLOWING,
+        h.w.Node.DOCUMENT_POSITION_FOLLOWING,
+        "the theme is requested before the multiview style"
+    );
+    // README: multiview guides, controls and settings keep the font family CHZZK uses, not the bundled font.
+    const css = style.textContent;
+    assert.match(
+        cssRule(css, "[data-bcmv-host],#betterchzzk-multiview-panel"),
+        /--bcmv-font:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic","맑은 고딕",sans-serif/
+    );
+    assert.match(cssRule(css, "#betterchzzk-multiview"), /font:12px\/1\.4 var\(--bcmv-font\)/);
+    assert.match(css, /\.bcmv-panel\{[^}]*font:13px\/1\.5 var\(--bcmv-font\)/);
+    assert.doesNotMatch(css, /@font-face|BetterChzzk Pretendard|--bct-font/);
+    h.configure(false);
+    await tick();
+    assert.equal(d.getElementById("betterchzzk-multiview-style"), null);
+    h.configure(true);
+    await tick();
+    assert.equal(d.querySelectorAll("#betterchzzk-ui-theme").length, 1, "the theme is shared, never duplicated");
+    assert.equal(d.querySelectorAll("#betterchzzk-multiview-style").length, 1);
+});
+
+test("multiview styles take theme colors, radii, shadow and states from the shared theme", (t) => {
+    const h = setup(t, { withTheme: true });
+    const css = h.w.document.getElementById("betterchzzk-multiview-style").textContent;
+    const defined = themeVariables(h.w);
+    const used = [...css.matchAll(/var\((--bct-[a-z-]+)(\)|,)/g)];
+    assert.ok(used.length > 20);
+    for (const [, name, end] of used) {
+        assert.ok(defined.has(name), `${name} is defined by shared/uiTheme.js`);
+        assert.equal(end, ")", `${name} is used without a feature fallback`);
+    }
+    assert.doesNotMatch(
+        css,
+        /var\(--sem-|var\(--(?:Surface|Content|Border)-|--bcmv-(?:fallback|tool-fallback|chat-fallback)/
+    );
+    assert.doesNotMatch(css, /theme_dark|data-theme|\.light\b/, "the theme module alone picks light or dark values");
+    for (const color of cssColors(css))
+        assert.ok(MULTIVIEW_FIXED_COLORS.includes(color.toLowerCase()), `${color} is not a theme color`);
+
+    const P = "#betterchzzk-multiview-panel";
+    assert.match(
+        cssRule(css, "[data-bcmv-host],#betterchzzk-multiview-panel"),
+        /--bcmv-surface:var\(--bct-surface\);--bcmv-content:var\(--bct-text\);--bcmv-border:var\(--bct-border-strong\)/
+    );
+    const panelVars = css.match(/\n\.bcmv-panel\{(--bcmv-[^}]*)\}/)?.[1] || "";
+    for (const pair of [
+        "--bcmv-accent:var(--bct-brand-text)",
+        "--bcmv-danger:var(--bct-danger)",
+        "--bcmv-tool-surface:var(--bct-surface-weak)",
+        "--bcmv-brand-fill:var(--bct-brand)",
+        "--bcmv-line:var(--bct-border)",
+    ])
+        assert.ok(panelVars.includes(pair), pair);
+    const panel = css.match(/\n\.bcmv-panel\{(position:fixed[^}]*)\}/)?.[1] || "";
+    assert.match(panel, /border-radius:var\(--bct-radius-lg\)/);
+    assert.match(panel, /box-shadow:var\(--bct-shadow\)/);
+    assert.match(panel, /border:1px solid var\(--bcmv-line\)/);
+    assert.match(cssRule(css, `${P} :focus-visible`), /outline:2px solid var\(--bct-focus-ring\)/);
+    assert.match(cssRule(css, "#betterchzzk-multiview :focus-visible"), /outline:2px solid var\(--bct-brand\)/);
+    assert.match(cssRule(css, `${P} button:not(:disabled):hover`), /background:var\(--bct-hover\)/);
+    assert.match(cssRule(css, `${P} .bcmv-layout-toggle[aria-checked="true"]`), /color:var\(--bct-on-brand\)/);
+    assert.match(cssRule(css, `${P} .bcmv-layout-toggle`), /border-radius:var\(--bct-radius-full\)/);
+    assert.match(
+        cssRule(css, '#betterchzzk-multiview-chat-settings[aria-expanded="true"]'),
+        /color:var\(--bct-brand-text-base\);background:var\(--bct-brand-weak\)/
+    );
+    assert.match(cssRule(css, "#betterchzzk-multiview-chat-settings:hover"), /background:var\(--bct-hover\)/);
+    for (const [, value] of css.matchAll(/border-radius:([^;}]*)/g))
+        assert.match(value, /^(?:var\(--bct-radius-(?:sm|md|lg|full)\)|50%|14px)$/, `radius ${value}`);
+    // The only raw 14px radius is the native player tooltip the cell controls copy.
+    assert.equal([...css.matchAll(/border-radius:14px/g)].length, 1);
+    assert.match(cssRule(css, "#betterchzzk-multiview .bcmv-controls button::after"), /border-radius:14px/);
+    for (const [, value] of css.matchAll(/box-shadow:([^;}]*)/g))
+        assert.match(value, /^(?:var\(--bct-shadow\)|none)$/, `shadow ${value}`);
 });
