@@ -28,6 +28,7 @@
 | `followingTitleHistory.js`                   | 팔로잉 라이브 제목 이력 저장값 정규화·목록 응답 해석·조회 병합이에요. DOM·chrome 비의존으로 콘텐츠와 워커에서 로드해요                        |
 | `followingTitleCollector.js`                 | 워커의 1분 알람·목록 조회(일반 치지직 탭 우선, 탭이 없거나 실패하면 같은 알람에서 워커)·제목 이력 단일 저장이에요. 페이지 DOM을 다루지 않아요 |
 | `chatMultiview.js`                           | 채팅 멀티뷰 구성 검증·변경과 네이티브 채팅 프레임 주소 계산이에요. DOM·chrome 비의존으로 콘텐츠와 워커에서 로드해요                           |
+| `uiTheme.js`                                 | 치지직 안 확장 UI의 공통 `--bct-*` 변수·대체값 한 벌·확장 글꼴 선언이에요. isolated 전용이며 기능별 모양·표시 조건은 넣지 않아요              |
 
 ## 변경 시 지켜야 할 조건
 
@@ -68,6 +69,22 @@
 알림은 `tests/live-start.test.js`, 등록은 `tests/live-start-registration.test.js`, 동적 스크립트는 `tests/ad-video-registration.test.js`를 확인해요. world·단일 writer·로컬 실행 코드 경계는 `tests/release-safety.test.js`가 보호해요.
 
 공용 계산·유틸의 작은 변경은 직접 테스트와 영향을 받는 소비자 테스트, 변경 파일 lint·포맷 검사로 마쳐요. 설정 스키마·저장 형식·쓰기 큐·권한·발신자 검증·world·로딩 경계·manifest·의존성·검사 설정을 바꾸거나 영향 범위를 특정하기 어렵거나 여러 기능을 넓게 바꿨다면 전체 test:all·lint·format:check를 실행해요. 릴리스 전과 전체 검사 요청에도 전체 검증을 해요. 테스트는 `--test-concurrency=2`로 제한하고 검사 명령을 순차 실행하며 여러 테스트 묶음을 겹치지 않아요. 선택한 검사 범위와 전체 생략 이유를 남겨요.
+
+## 치지직 안 공통 테마
+
+`uiTheme.js`는 치지직 안 확장 UI의 색·모서리·그림자·글꼴 기준을 소유해요. 변수는 `:root`에 `var(--sem-…, 대체값)` 형태로 선언해 치지직 시맨틱 토큰을 그대로 따르고, 토큰이 없을 때만 대체값을 써요. 대체값은 `docs/measurements/chzzk-design-tokens-2026-10-17.md`의 실측값 한 벌이며 이 파일에만 둬요. 치지직 값이나 표식이 바뀌면 날짜가 있는 실측 기록을 남기고 이 표만 고쳐요.
+
+- 대체값은 루트 표식으로 골라요. 라이트는 `html.light`·`html[data-theme="light"]`, 다크는 `html.theme_dark`·`html[data-theme="dark"]`·`html[data-theme="theme_dark"]`이고, 표식이 없으면 치지직 기본인 다크예요. 두 표식이 엇갈리면 뒤에 둔 다크 규칙이 이겨요. 근거 없는 `[class*="dark"]` 판별이나 `prefers-color-scheme` 분기를 추가하지 않아요.
+- manifest isolated 목록에서 `content.js` 바로 뒤에 둬요. `content.js`의 `injectStyleOnce`를 쓰고, `shared/updateGuideView.js`와 모든 `features/*`보다 먼저 로드돼야 해요. 더 앞에 로드되면 로드 순서 오류를 던지고 요청 함수를 등록하지 않아요. MAIN world·서비스 워커·확장 페이지(options·history·replay-pending)는 이 파일을 읽지 않아요. 확장 페이지는 `styles.css`의 자체 토큰을 써요.
+- 요청 함수는 `BetterChzzk.utils`에 병합한 `ensureUiTheme()` 하나예요. 요청 전에는 아무것도 하지 않고, 첫 요청에 `#betterchzzk-ui-theme` `<style>` 하나를 `<html>`에 넣어요. 반복 요청은 아무것도 바꾸지 않아요. 이 스타일은 변수와 `"BetterChzzk Pretendard"` `@font-face`만 담아 그 자체로 보이는 효과가 없으므로, 기능을 꺼도 지우지 않아요.
+- 글꼴 주소는 `chrome.runtime.getURL("vendor/fonts/PretendardVariable.woff2")`로 만든 패키지 파일이에요. 이 파일은 `web_accessible_resources`에서 치지직 출처에만 열려 있어요. 외부 글꼴 서버·원격 URL·`@import`를 추가하지 않고, 기능 안에 `@font-face`를 다시 선언하지 않아요.
+- 확장 스타일이 들어간 UI를 다른 문서(예: 채팅 멀티뷰 칸 프레임)에 그리게 되면 그 문서에도 같은 정의가 있어야 해요. 지금 함수는 현재 문서만 다뤄요. 필요해지면 이 모듈이 대상 문서를 받도록 넓히고, 기능 안에 정의를 복사하지 않아요.
+
+변수 이름은 다음과 같아요. 면 `--bct-bg`·`--bct-surface`(패널·카드·팝오버)·`--bct-surface-weak`(입력·검색)·`--bct-surface-base`(배지·트랙), 마우스 올림 `--bct-hover`, 테두리 `--bct-border`·`--bct-border-weaker`·`--bct-border-strong`·`--bct-border-alpha`, 글자 `--bct-text`·`--bct-text-body`·`--bct-text-muted`·`--bct-text-dim`, 브랜드 `--bct-brand-text`·`--bct-brand-text-base`·`--bct-brand`(채움)·`--bct-on-brand`·`--bct-brand-weak`, 위험 `--bct-danger`, 그림자 `--bct-shadow-color`·`--bct-shadow-color-strong`·`--bct-shadow`(팝오버·패널·툴팁 공통), 모서리 `--bct-radius-sm`(6)·`--bct-radius-md`(8)·`--bct-radius-lg`(12)·`--bct-radius-full`(원형), 초점 `--bct-focus-ring`, 글꼴 `--bct-font`이에요.
+
+작은 글자(18px 미만)는 4.5:1을 지켜요. `--bct-text-dim`(다크 3.7:1)과 `--bct-brand-text-base`(라이트 4.1:1)는 큰 글자·비활성·글자가 아닌 표시에만 써요. 라이트의 작은 `--bct-brand-text`·`--bct-danger`는 `--bct-bg`·`--bct-surface` 위에서만 4.5:1을 넘고, 약한 면·기본 면 위에서는 기준에 못 미쳐요.
+
+회귀는 `tests/ui-theme.test.js`(요청 전 미주입·1회 주입·변수와 글꼴만 선언·원격 URL 없음·표식별 대체값·대비·로드 순서), `tests/release-safety.test.js`(MAIN 제외·isolated 포함), `tests/extension-pages.test.js`의 manifest 순서 검사가 보호해요. 로딩 순서를 바꾸면 전체 검증을 해요.
 
 ## 새 기능 안내 공용부
 

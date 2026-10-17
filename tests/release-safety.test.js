@@ -229,6 +229,14 @@ test("MAIN-world scripts stay behind the unprivileged DOM bridge boundary", () =
     const violations = [];
 
     assert.ok(mainWorldScripts.length > 0, "manifest must declare the MAIN-world bridge scripts");
+    // The shared theme reads the extension font URL; it belongs to the isolated world only.
+    assert.equal(mainWorldScripts.includes("shared/uiTheme.js"), false);
+    assert.ok(
+        (manifest.content_scripts || []).some(
+            (entry) => entry.world !== "MAIN" && entry.js?.includes("shared/uiTheme.js")
+        ),
+        "the shared theme module must be packaged as an isolated content script"
+    );
 
     for (const file of mainWorldScripts) {
         const source = readRepoFile(file);

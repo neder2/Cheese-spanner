@@ -1024,6 +1024,10 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     assert.ok(
         isolatedScript.js.indexOf("shared/updateGuideView.js") < isolatedScript.js.indexOf("features/updateGuide.js")
     );
+    // The shared CHZZK theme uses content.js utils and must precede the update guide view and every feature.
+    assert.equal(isolatedScript.js.indexOf("shared/uiTheme.js"), isolatedScript.js.indexOf("content.js") + 1);
+    assert.ok(isolatedScript.js.indexOf("shared/uiTheme.js") < isolatedScript.js.indexOf("shared/updateGuideView.js"));
+    assert.equal(mainScript.js.includes("shared/uiTheme.js"), false);
     assert.ok(isolatedScript.js.includes("features/updateGuide.js"));
     assert.ok(isolatedScript.js.includes("vendor/hls.light.min.js"));
     assert.ok(isolatedScript.js.includes("features/followingPreviewTooltip.js"));
