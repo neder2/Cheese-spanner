@@ -44,17 +44,19 @@
 
     const WEEKDAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
     const CALENDAR_LEVEL_HOURS = 3;
-    // Perceptual green ramps; each pair is [background, text/watch marker].
-    const CALENDAR_LEVEL_COLORS = [
-        { light: ["#dff9e9", "#07150f"], dark: ["#1e3327", "#ffffff"] },
-        { light: ["#b4eecc", "#07150f"], dark: ["#274b37", "#ffffff"] },
-        { light: ["#7edfaa", "#07150f"], dark: ["#2a6547", "#ffffff"] },
-        { light: ["#38cf8a", "#07150f"], dark: ["#318058", "#ffffff"] },
-        { light: ["#03b875", "#07150f"], dark: ["#319c69", "#07150f"] },
-        { light: ["#0a9c62", "#07150f"], dark: ["#2dba7a", "#07150f"] },
-        { light: ["#0c8051", "#ffffff"], dark: ["#2fd78d", "#07150f"] },
-        { light: ["#11623e", "#ffffff"], dark: ["#4deba0", "#07150f"] },
-        { light: ["#11452c", "#ffffff"], dark: ["#80fbba", "#07150f"] },
+    // Brand tint over the calendar surface per level, from the shared theme (shared/uiTheme.js) in either theme.
+    // Levels 1-4 keep the primary text and 5-9 switch to the on-brand text; both keep 4.5:1 day numbers with the
+    // shared dark/light fallbacks (tests/discovery-panel-theme.test.js). The text also colors the watch marker.
+    const CALENDAR_LEVELS = [
+        { mix: 12, text: "--bct-text" },
+        { mix: 22, text: "--bct-text" },
+        { mix: 32, text: "--bct-text" },
+        { mix: 43, text: "--bct-text" },
+        { mix: 58, text: "--bct-on-brand" },
+        { mix: 66, text: "--bct-on-brand" },
+        { mix: 74, text: "--bct-on-brand" },
+        { mix: 82, text: "--bct-on-brand" },
+        { mix: 90, text: "--bct-on-brand" },
     ];
 
     const WATCH_HISTORY_STORAGE_KEY = "betterChzzkLiveWatchHistory";
@@ -214,6 +216,7 @@
     }
 
     function injectStyleOnce() {
+        BetterChzzk.utils.ensureUiTheme?.();
         BetterChzzk.utils.injectStyleOnce(
             STYLE_ID,
             `
@@ -221,8 +224,10 @@
   align-items:center !important;
 }
 #${WIDGET_ID}{
-  ${CALENDAR_LEVEL_COLORS.map(
-      ({ light }, index) => `--bcmb-duration-${index + 1}-bg:${light[0]};--bcmb-duration-${index + 1}-fg:${light[1]};`
+  ${CALENDAR_LEVELS.map(
+      ({ mix, text }, index) =>
+          `--bcmb-duration-${index + 1}-bg:color-mix(in srgb,var(--bct-brand-text) ${mix}%,var(--bct-surface));` +
+          `--bcmb-duration-${index + 1}-fg:var(${text});`
   ).join("\n  ")}
   position:relative;
   display:inline-flex;
@@ -235,10 +240,10 @@
   min-height:34px;
   margin:0 10px 0 0;
   padding:0 11px 0 8px;
-  border:1px solid rgba(17,17,20,0.08);
-  border-radius:17px;
-  background:#f0f2f5;
-  color:#111114;
+  border:1px solid var(--bct-border-alpha-weaker);
+  border-radius:var(--bct-radius-full);
+  background-color:var(--bct-surface-weak);
+  color:var(--bct-text);
   box-shadow:none;
   box-sizing:border-box;
   font-family:${WIDGET_FONT_FAMILY};
@@ -251,8 +256,12 @@
   cursor:pointer;
 }
 #${WIDGET_ID}:hover{
-  border-color:rgba(0,168,107,0.28);
-  background:#e9fbf4;
+  border-color:var(--bct-border-alpha);
+  background-image:linear-gradient(var(--bct-hover),var(--bct-hover));
+}
+#${WIDGET_ID}:focus-visible{
+  outline:2px solid var(--bct-focus-ring);
+  outline-offset:2px;
 }
 #${WIDGET_ID}::after{
   content:"";
@@ -269,22 +278,6 @@
 #${WIDGET_ID}[data-open="1"]::after{
   display:block;
 }
-html[dark] #${WIDGET_ID},
-body[theme="dark"] #${WIDGET_ID},
-[class*="dark"] #${WIDGET_ID}{
-  ${CALENDAR_LEVEL_COLORS.map(
-      ({ dark }, index) => `--bcmb-duration-${index + 1}-bg:${dark[0]};--bcmb-duration-${index + 1}-fg:${dark[1]};`
-  ).join("\n  ")}
-  border-color:rgba(157,165,182,0.18);
-  background:#24262a;
-  color:#f2f4f7;
-}
-html[dark] #${WIDGET_ID}:hover,
-body[theme="dark"] #${WIDGET_ID}:hover,
-[class*="dark"] #${WIDGET_ID}:hover{
-  border-color:rgba(0,255,163,0.34);
-  background:#28332f;
-}
 #${WIDGET_ID} .bcmb-icon{
   display:inline-flex;
   align-items:center;
@@ -293,8 +286,8 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   height:22px;
   min-width:22px;
   border-radius:50%;
-  color:#07150f;
-  background:#00ffa3;
+  color:var(--bct-on-brand);
+  background:var(--bct-brand);
 }
 #${WIDGET_ID} .bcmb-icon svg{
   width:14px;
@@ -307,7 +300,7 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   min-width:0;
 }
 #${WIDGET_ID} .bcmb-label{
-  color:#697183;
+  color:var(--bct-text-muted);
   font-size:12px;
   font-weight:800;
   letter-spacing:0;
@@ -330,11 +323,11 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   right:0;
   width:232px;
   padding:12px;
-  border:1px solid rgba(17,17,20,0.1);
-  border-radius:8px;
-  background:#fff;
-  color:#111114;
-  box-shadow:0 8px 24px rgba(0,0,0,0.16);
+  border:1px solid var(--bct-border);
+  border-radius:var(--bct-radius-lg);
+  background:var(--bct-surface);
+  color:var(--bct-text);
+  box-shadow:var(--bct-shadow);
   box-sizing:border-box;
   z-index:2147483647;
   cursor:default;
@@ -365,7 +358,7 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   font-weight:900;
 }
 #${WIDGET_ID} .bcmb-calendar-count{
-  color:#00a86b;
+  color:var(--bct-brand-text);
   font-size:12px;
   font-weight:900;
 }
@@ -388,23 +381,26 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   height:26px;
   margin:0;
   padding:0;
-  border:1px solid rgba(105,113,131,0.18);
+  border:1px solid var(--bct-border);
   border-radius:50%;
-  background:#f6f7f9;
-  color:#111114;
+  background-color:var(--bct-surface-weak);
+  color:var(--bct-text);
   font-family:inherit;
   font-size:18px;
   font-weight:900;
   line-height:1;
   cursor:pointer;
 }
-#${WIDGET_ID} .bcmb-nav:hover{
-  border-color:rgba(0,168,107,0.35);
-  background:#e9fbf4;
+#${WIDGET_ID} .bcmb-nav:hover:not(:disabled){
+  border-color:var(--bct-border-strong);
+  background-image:linear-gradient(var(--bct-hover),var(--bct-hover));
+}
+#${WIDGET_ID} .bcmb-nav:focus-visible{
+  outline:2px solid var(--bct-focus-ring);
+  outline-offset:2px;
 }
 #${WIDGET_ID} .bcmb-nav:disabled{
-  color:#c9cedc;
-  background:#f6f7f9;
+  color:var(--bct-text-dim);
   cursor:default;
 }
 #${WIDGET_ID} .bcmb-weekdays,
@@ -419,7 +415,7 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   align-items:center;
   justify-content:center;
   height:18px;
-  color:#697183;
+  color:var(--bct-text-muted);
   font-size:11px;
   font-weight:800;
 }
@@ -429,8 +425,8 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   align-items:center;
   justify-content:center;
   height:24px;
-  border-radius:6px;
-  color:#8b93a3;
+  border-radius:var(--bct-radius-sm);
+  color:var(--bct-text-muted);
   font-size:12px;
   font-weight:800;
   box-sizing:border-box;
@@ -444,11 +440,11 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   min-width:176px;
   max-width:268px;
   padding:7px;
-  border:1px solid rgba(255,255,255,0.08);
-  border-radius:8px;
-  background:#111114;
-  color:#fff;
-  box-shadow:0 6px 18px rgba(0,0,0,0.2);
+  border:1px solid var(--bct-border);
+  border-radius:var(--bct-radius-md);
+  background:var(--bct-surface);
+  color:var(--bct-text);
+  box-shadow:var(--bct-shadow);
   font-size:11px;
   font-weight:700;
   line-height:14px;
@@ -470,7 +466,7 @@ body[theme="dark"] #${WIDGET_ID}:hover,
 #${WIDGET_ID} .bcmb-day-tip-title{
   display:block;
   margin-bottom:6px;
-  color:#00ffa3;
+  color:var(--bct-brand-text);
   font-size:11px;
   font-weight:900;
 }
@@ -485,43 +481,44 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   margin-top:4px;
 }
 #${WIDGET_ID} .bcmb-day-tip-label{
-  color:#9da5b6;
+  color:var(--bct-text-muted);
   font-weight:800;
 }
 #${WIDGET_ID} .bcmb-day-tip-value{
-  color:#fff;
+  color:var(--bct-text);
   font-weight:900;
   text-align:right;
   word-break:keep-all;
 }
 #${WIDGET_ID} .bcmb-day-tip-row-broadcast .bcmb-day-tip-label{
-  color:#b9c2d2;
+  color:var(--bct-text-body);
 }
+/* 방송 항목은 마우스 올림 면을 겹쳐 쓰므로, 라이트에서 4.5:1에 못 미치는 작은 브랜드 글자 대신 일반 글자를 쓴다. */
 #${WIDGET_ID} .bcmb-day-tip-row-watch{
   padding-top:4px;
-  border-top:1px solid rgba(0,255,163,0.14);
-}
-#${WIDGET_ID} .bcmb-day-tip-row-watch .bcmb-day-tip-label{
-  color:#72f0c7;
+  border-top:1px solid var(--bct-border);
 }
 #${WIDGET_ID} .bcmb-day-tip-row-watch .bcmb-day-tip-value{
-  color:#b8ffe8;
   font-weight:800;
 }
 #${WIDGET_ID} .bcmb-day-tip-item{
   display:block;
   position:relative;
   padding:7px 8px 7px 10px;
-  border-left:2px solid rgba(0,255,163,0.48);
-  border-radius:6px;
-  background:rgba(255,255,255,0.045);
+  border-left:2px solid var(--bct-brand-text-base);
+  border-radius:var(--bct-radius-sm);
+  background:var(--bct-hover);
   color:inherit;
   text-decoration:none;
 }
 #${WIDGET_ID} a.bcmb-day-tip-item:hover,
 #${WIDGET_ID} a.bcmb-day-tip-item:focus{
-  border-left-color:#00ffa3;
-  background:rgba(255,255,255,0.09);
+  border-left-color:var(--bct-brand-text);
+  background-image:linear-gradient(var(--bct-hover),var(--bct-hover));
+}
+#${WIDGET_ID} a.bcmb-day-tip-item:focus-visible{
+  outline:2px solid var(--bct-focus-ring);
+  outline-offset:1px;
 }
 #${WIDGET_ID} .bcmb-day-tip-item + .bcmb-day-tip-item{
   margin-top:7px;
@@ -532,7 +529,7 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   left:50%;
   top:100%;
   border:5px solid transparent;
-  border-top-color:#111114;
+  border-top-color:var(--bct-surface);
   transform:translateX(-50%);
 }
 #${WIDGET_ID} .bcmb-day:hover .bcmb-day-tip,
@@ -543,10 +540,14 @@ body[theme="dark"] #${WIDGET_ID}:hover,
 #${WIDGET_ID} .bcmb-day[data-video-no]{
   cursor:pointer;
 }
+#${WIDGET_ID} .bcmb-day:focus-visible{
+  outline:2px solid var(--bct-focus-ring);
+  outline-offset:1px;
+}
 #${WIDGET_ID} .bcmb-day[data-has-broadcast="1"],
 #${WIDGET_ID} .bcmb-day[data-live="1"]{
-  color:var(--bcmb-duration-fg, #07150f);
-  background:var(--bcmb-duration-bg, #dff9e9);
+  color:var(--bcmb-duration-fg);
+  background:var(--bcmb-duration-bg);
 }
 #${WIDGET_ID} .bcmb-day[data-watch="1"]::before{
   content:"";
@@ -558,7 +559,7 @@ body[theme="dark"] #${WIDGET_ID}:hover,
   border-radius:50%;
   background:currentColor;
 }
-${CALENDAR_LEVEL_COLORS.map(
+${CALENDAR_LEVELS.map(
     (_, index) => `#${WIDGET_ID} [data-level="${index + 1}"]{
   --bcmb-duration-bg:var(--bcmb-duration-${index + 1}-bg);
   --bcmb-duration-fg:var(--bcmb-duration-${index + 1}-fg);
@@ -568,7 +569,7 @@ ${CALENDAR_LEVEL_COLORS.map(
   box-shadow:inset 0 0 0 2px currentColor;
 }
 #${WIDGET_ID} .bcmb-day[data-future="1"]{
-  color:#c9cedc;
+  color:var(--bct-text-dim);
   background:transparent;
 }
 #${WIDGET_ID} .bcmb-calendar-foot{
@@ -576,7 +577,7 @@ ${CALENDAR_LEVEL_COLORS.map(
   align-items:baseline;
   gap:${CALENDAR_FOOT_GAP_PX}px;
   margin-top:10px;
-  color:#697183;
+  color:var(--bct-text-muted);
   font-size:${CALENDAR_FOOT_NOTE_MAX_FONT_PX}px;
   font-weight:800;
   line-height:14px;
@@ -598,7 +599,7 @@ ${CALENDAR_LEVEL_COLORS.map(
   width:8px;
   height:8px;
   border-radius:2px;
-  background:var(--bcmb-duration-bg, #dff9e9);
+  background:var(--bcmb-duration-bg);
 }
 #${WIDGET_ID} .bcmb-calendar-foot-note{
   flex:0 1 auto;
@@ -610,7 +611,7 @@ ${CALENDAR_LEVEL_COLORS.map(
 #${WIDGET_ID} .bcmb-calendar-watch-total{
   flex:0 0 auto;
   margin-left:auto;
-  color:#00a86b;
+  color:var(--bct-brand-text);
   font-weight:900;
   white-space:nowrap;
 }
@@ -618,40 +619,7 @@ ${CALENDAR_LEVEL_COLORS.map(
   opacity:0.42;
 }
 #${WIDGET_ID} .bcmb-calendar[data-loading="1"] .bcmb-calendar-count{
-  color:#697183;
-}
-html[dark] #${WIDGET_ID} .bcmb-calendar,
-body[theme="dark"] #${WIDGET_ID} .bcmb-calendar,
-[class*="dark"] #${WIDGET_ID} .bcmb-calendar{
-  border-color:rgba(157,165,182,0.18);
-  background:#1b1d20;
-  color:#f2f4f7;
-}
-html[dark] #${WIDGET_ID} .bcmb-nav,
-body[theme="dark"] #${WIDGET_ID} .bcmb-nav,
-[class*="dark"] #${WIDGET_ID} .bcmb-nav{
-  border-color:rgba(157,165,182,0.18);
-  background:#24262a;
-  color:#f2f4f7;
-}
-html[dark] #${WIDGET_ID} .bcmb-nav:disabled,
-body[theme="dark"] #${WIDGET_ID} .bcmb-nav:disabled,
-[class*="dark"] #${WIDGET_ID} .bcmb-nav:disabled{
-  color:#697183;
-}
-html[dark] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
-body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before,
-[class*="dark"] #${WIDGET_ID} .bcmb-day[data-watch="1"]::before{
-  background:#00ffa3;
-}
-/* 시청 점도 각 단계의 날짜 글자색을 따라 배경과 대비를 유지한다. */
-html[dark] #${WIDGET_ID} .bcmb-day[data-has-broadcast="1"][data-watch="1"]::before,
-body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-has-broadcast="1"][data-watch="1"]::before,
-[class*="dark"] #${WIDGET_ID} .bcmb-day[data-has-broadcast="1"][data-watch="1"]::before,
-html[dark] #${WIDGET_ID} .bcmb-day[data-live="1"][data-watch="1"]::before,
-body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-live="1"][data-watch="1"]::before,
-[class*="dark"] #${WIDGET_ID} .bcmb-day[data-live="1"][data-watch="1"]::before{
-  background:currentColor;
+  color:var(--bct-text-muted);
 }
 #${WIDGET_ID}[data-state="loading"] .bcmb-icon svg{
   animation:bcmb-spin 0.8s linear infinite;
@@ -664,8 +632,8 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-live="1"][data-watch="1"]::befor
 }
 #${WIDGET_ID}[data-state="error"] .bcmb-icon,
 #${WIDGET_ID}[data-state="empty"] .bcmb-icon{
-  color:#697183;
-  background:rgba(105,113,131,0.14);
+  color:var(--bct-text-muted);
+  background:var(--bct-surface-base);
 }
 @keyframes bcmb-spin{to{transform:rotate(360deg);}}
 @media (max-width: 980px){
@@ -713,9 +681,9 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-live="1"][data-watch="1"]::befor
   <span class="bcmb-calendar-limit" hidden>조회 상한에 도달해 일부만 표시해요.</span>
   <span class="bcmb-weekdays" aria-hidden="true"></span>
   <span class="bcmb-days"></span>
-  <span class="bcmb-calendar-legend" role="img" aria-label="방송 시간에 따라 3시간 단위로 9단계로 표시하며, 가장 진한 색은 24시간 이상입니다.">
+  <span class="bcmb-calendar-legend" role="img" aria-label="방송 시간에 따라 3시간 단위로 9단계로 표시하며, 가장 진한 색은 24시간 이상이에요.">
     <span aria-hidden="true">3시간 단위</span>
-    <span class="bcmb-calendar-legend-scale" aria-hidden="true">${CALENDAR_LEVEL_COLORS.map(
+    <span class="bcmb-calendar-legend-scale" aria-hidden="true">${CALENDAR_LEVELS.map(
         (_, index) => `<span class="bcmb-calendar-legend-step" data-level="${index + 1}"></span>`
     ).join("")}</span>
     <span aria-hidden="true">24시간+</span>
@@ -1836,7 +1804,7 @@ body[theme="dark"] #${WIDGET_ID} .bcmb-day[data-live="1"][data-watch="1"]::befor
 
     function getCalendarLevel(seconds) {
         const level = Math.floor(Math.max(0, Number(seconds) || 0) / (CALENDAR_LEVEL_HOURS * 60 * 60)) + 1;
-        return String(Math.min(CALENDAR_LEVEL_COLORS.length, level));
+        return String(Math.min(CALENDAR_LEVELS.length, level));
     }
 
     function isOurNode(node) {
