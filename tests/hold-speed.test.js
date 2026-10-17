@@ -453,6 +453,30 @@ test("a held second click does not enter fullscreen and unrelated keyboard or bu
     assert.equal(dispatchPointer(fixture, "click").defaultPrevented, false);
 });
 
+test("speed feedback over the video keeps fixed overlay colors and uses the bundled font from the shared theme", (t) => {
+    const requests = [];
+    const fixture = createFixture({
+        beforeLoad({ document, window }) {
+            window.BetterChzzk.utils.ensureUiTheme = () =>
+                requests.push(document.getElementById("betterchzzk-hold-speed-style"));
+        },
+    });
+    t.after(() => fixture.dom.window.close());
+    dispatchPointer(fixture, "pointerdown");
+    fixture.timers.advance(350);
+    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay").textContent, "2배속");
+    assert.ok(requests.length >= 1);
+    assert.equal(requests[0], null, "the shared theme is requested before the overlay style");
+    const rule = fixture.document.getElementById("betterchzzk-hold-speed-style").sheet.cssRules[0].style;
+    assert.equal(rule.getPropertyValue("font-family"), "var(--bct-font)");
+    assert.equal(rule.getPropertyValue("border-radius"), "var(--bct-radius-md)");
+    // The overlay sits on the video, so its colors stay independent of the CHZZK page theme.
+    assert.equal(rule.getPropertyValue("background"), "rgba(17, 19, 24, 0.86)");
+    assert.equal(rule.getPropertyValue("color"), "rgb(255, 255, 255)");
+    dispatchPointer(fixture, "pointerup");
+    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+});
+
 test("mouse holds use the visible viewport for hit testing and speed feedback after zoom", (t) => {
     const fixture = createFixture({
         beforeLoad({ video, window }) {

@@ -203,6 +203,7 @@ async function fixture(
         "shared/data.js",
         "features/routeBridgePage.js",
         "content.js",
+        "shared/uiTheme.js",
         "features/panelResizeModel.js",
     ])
         evalRepoScript(dom, file);
@@ -1128,12 +1129,20 @@ test("keyboard events remain untouched and mouse dragging preserves input focus 
     const liveGuide = rules.find((rule) => rule.selectorText === '#aside-chatting > [data-bcpr-handle="chat"]::after');
     assert.ok(liveGuide, "live guide must cover the native separator outside the chat edge");
     assert.equal(liveGuide.style.getPropertyValue("left"), "-1px");
+    // The single boundary highlight uses the shared CHZZK brand text color (--sem-color-content-brand-strong).
+    assert.ok(f.doc.getElementById("betterchzzk-ui-theme"), "the shared theme is requested with the handle style");
     const highlights = rules.filter(
         (rule) =>
             rule.selectorText?.includes("[data-bcpr-handle]") &&
-            rule.style.getPropertyValue("background").includes("--sem-color-content-brand-strong")
+            rule.style.getPropertyValue("background").includes("--bct-brand-text")
     );
     assert.equal(highlights.length, 1);
+    assert.equal(highlights[0].style.getPropertyValue("background"), "var(--bct-brand-text)");
+    assert.equal(
+        rules.some((rule) => /--sem-|#[0-9a-f]{3,8}\b|rgba?\(/i.test(rule.style?.cssText || "")),
+        false,
+        "no own fallback palette"
+    );
     assert.equal(
         highlights[0].selectorText,
         "[data-bcpr-handle]:hover::after, [data-bcpr-handle][data-bcpr-dragging]::after"

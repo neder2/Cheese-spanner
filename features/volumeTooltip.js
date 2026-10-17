@@ -13,7 +13,8 @@
  *       홈·목록에서는 탭 선택을 미리 확정하지 않고 현재 탭의 명시 조작과 출력 볼륨을 저장한다.
  * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions, injectStyleOnce,
  *   getMainVideoElement, getVideoViewportRect, createMutationObserverSync, createThrottledDomSync, isPlaybackRoute, isVisible,
- *   mutationMatchesSelector, onReady, startPageChangeDetection, runtimeSendMessage), 브라우저 Web Audio API(AudioContext).
+ *   mutationMatchesSelector, onReady, startPageChangeDetection, runtimeSendMessage, shared/uiTheme.js의 ensureUiTheme),
+ *   브라우저 Web Audio API(AudioContext).
  * 옵션 키: volumeTooltipEnabled, audioCompressorEnabled, audioCompressorThreshold, audioCompressorKnee,
  *   audioCompressorRatio, audioCompressorAttack, audioCompressorRelease, audioCompressorMakeupGain.
  * DOM 마커: #betterchzzk-volume-tooltip, #betterchzzk-volume-tooltip-style, #betterchzzk-audio-compressor,
@@ -650,6 +651,8 @@
     }
 
     function injectButtonStyle() {
+        // Track and icon colors copy the native control row over the video; only the focus ring is shared.
+        BetterChzzk.utils.ensureUiTheme?.();
         injectStyleOnce(
             STYLE_ID,
             `
@@ -672,7 +675,7 @@
 #${SLIDER_ID}::-moz-range-thumb{width:var(--bcac-thumb-size,10px);height:var(--bcac-thumb-size,10px);border:0;border-radius:50%;background:var(--bcac-fill,#fff);}
 #${SLIDER_ID}:is(:hover,:focus-visible,:active)::-webkit-slider-thumb{transform:scale(1.4);}
 #${SLIDER_ID}:is(:hover,:focus-visible,:active)::-moz-range-thumb{transform:scale(1.4);}
-#${BUTTON_ID}:focus-visible,#${SLIDER_ID}:focus-visible{outline:2px solid var(--sem-color-content-brand-strong,var(--Content-Brand-Strong,#00ffa3));outline-offset:3px;}
+#${BUTTON_ID}:focus-visible,#${SLIDER_ID}:focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:3px;}
 #${SLIDER_ID}:disabled{opacity:.35;cursor:default;}
 #${CONTROL_ID} .bcac-volume:hover > .betterchzzk-player-tooltip,#${CONTROL_ID} .bcac-volume:focus-within > .betterchzzk-player-tooltip{visibility:visible;}
 #${CONTROL_ID}:has(.bcac-volume:hover,.bcac-volume:focus-within) #${BUTTON_ID} > .betterchzzk-player-tooltip{visibility:hidden;}

@@ -482,25 +482,25 @@
     function routeChanged() {
         stopPlayback();
         if (!enabled || suspended || !isPlaybackRoute()) return;
+        // The panel follows the shared CHZZK theme; the toggle stays a native control-bar button over the video.
+        BetterChzzk.utils.ensureUiTheme?.();
         injectStyleOnce(
             `${ID}-style`,
             `
 #${ID}-toggle { position:relative; display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; padding:6px; border:0; background:transparent; color:inherit; cursor:pointer; flex-shrink:0; }
 #${ID}-toggle[aria-pressed="true"] { color:var(--Content-brand-strong,#00ffa3); }
 .pzp-pc:not(.pzp-pc--controls) #${ID}-toggle:not(:focus-visible) { opacity:0; pointer-events:none; }
-#${ID}-panel { --bcz-fill:var(--Content-neutral-strong,#40444b); --bcz-track:var(--Border-neutral-weak,#d7d9de); position:absolute; right:16px; bottom:64px; z-index:50; display:flex; align-items:center; gap:6px; box-sizing:border-box; width:180px; max-width:calc(100% - 32px); padding:4px 6px; border:1px solid var(--Border-neutral-weak,#dadde3); border-radius:8px; background:var(--Surface-neutral-base,#fff); color:var(--Content-neutral-strong,#20242c); font:500 12px/1.5 sans-serif; cursor:default; user-select:none; transform:none; transition:none; }
-html.theme_dark #${ID}-panel { --bcz-fill:var(--Content-neutral-strong,#e7e9ed); --bcz-track:var(--Border-neutral-weak,#555961); background:var(--Surface-neutral-base,#202124); color:var(--Content-neutral-strong,#f1f3f5); border-color:var(--Border-neutral-weak,#454850); }
+#${ID}-panel { --bcz-fill:var(--bct-text-body); --bcz-track:var(--bct-border-strong); position:absolute; right:16px; bottom:64px; z-index:50; display:flex; align-items:center; gap:6px; box-sizing:border-box; width:180px; max-width:calc(100% - 32px); padding:4px 6px; border:1px solid var(--bct-border); border-radius:var(--bct-radius-md); background:var(--bct-surface); color:var(--bct-text); box-shadow:var(--bct-shadow); font-family:var(--bct-font); font-size:12px; font-weight:500; line-height:1.5; cursor:default; user-select:none; transform:none; transition:none; }
 #${ID}-value { flex:0 0 4.5ch; text-align:right; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
-#${ID}-reset { display:flex; align-items:center; justify-content:center; flex:0 0 24px; box-sizing:border-box; width:24px; height:24px; padding:4px; border:0; border-radius:4px; background:transparent; color:inherit; font:inherit; cursor:pointer; transition:scale 120ms ease-out; }
+#${ID}-reset { display:flex; align-items:center; justify-content:center; flex:0 0 24px; box-sizing:border-box; width:24px; height:24px; padding:4px; border:0; border-radius:var(--bct-radius-sm); background:transparent; color:inherit; font:inherit; cursor:pointer; transition:scale 120ms ease-out; }
 #${ID}-reset svg { display:block; flex:none; }
-#${ID}-reset:hover:not(:disabled) { background:rgba(0,0,0,.06); }
-html.theme_dark #${ID}-reset:hover:not(:disabled) { background:rgba(255,255,255,.08); }
+#${ID}-reset:hover:not(:disabled) { background:var(--bct-hover); }
 #${ID}-reset:active:not(:disabled) { scale:0.96; }
 #${ID}-reset:disabled { opacity:.4; cursor:default; }
 #${ID}-range { appearance:none; -webkit-appearance:none; display:block; flex:1 1 0%; box-sizing:border-box; width:0; min-width:0; height:24px; margin:0; padding:0; border:0; border-radius:4px; background:transparent; color:inherit; cursor:pointer; }
 #${ID}-range::-webkit-slider-runnable-track { height:2px; border-radius:1px; background:linear-gradient(to right,var(--bcz-fill) var(--bcz-progress,0%),var(--bcz-track) var(--bcz-progress,0%)); }
 #${ID}-range::-webkit-slider-thumb { appearance:none; -webkit-appearance:none; width:10px; height:10px; margin-top:-4px; border:0; border-radius:50%; background:var(--bcz-fill); }
-#${ID}-toggle:focus-visible, #${ID}-reset:focus-visible, #${ID}-range:focus-visible { outline:2px solid var(--Content-brand-strong,#00d694); outline-offset:2px; }
+#${ID}-toggle:focus-visible, #${ID}-reset:focus-visible, #${ID}-range:focus-visible { outline:2px solid var(--bct-focus-ring); outline-offset:2px; }
 #${ID}-toggle[hidden], #${ID}-panel[hidden] { display:none; }
 @media(prefers-reduced-motion:reduce) { #${ID}-reset { transition:none; } #${ID}-reset:active:not(:disabled) { scale:1; } }
 [data-bcz-pannable], [data-bcz-pannable] .pzp-pc__video, video[data-bcz-zoomed] { cursor:grab; }

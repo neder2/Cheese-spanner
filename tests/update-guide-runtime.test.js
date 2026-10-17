@@ -850,3 +850,26 @@ test("a late commit after BFCache stays consumed and normal unload or explicit s
     assert.equal(stopped.listeners.size, 0);
     assert.equal(stopped.messages.length, 0);
 });
+
+test("automatic and replayed notices request the shared CHZZK theme before inserting their style", async (t) => {
+    const f = fixture(t);
+    const requests = [];
+    const guideStyles = () =>
+        [...f.doc.querySelectorAll("style")].filter((style) => style.textContent.includes("[data-bcug-view]")).length;
+    // features/updateGuide.js reads the merged shared utils at use time, as shared/uiTheme.js provides them.
+    f.win.BetterChzzk.utils.ensureUiTheme = () => requests.push({ styles: guideStyles(), toast: !!f.toast() });
+    await f.advance(2000);
+    assert.ok(f.toast());
+    assert.ok(requests.length >= 1);
+    assert.deepEqual(requests[0], { styles: 0, toast: false }, "the theme is requested before the toast style");
+    assert.equal(guideStyles(), 1);
+    const beforeReplay = requests.length;
+    assert.equal(f.replay()?.ok, true);
+    assert.ok(f.doc.querySelector("[data-bcug-view]"));
+    assert.ok(requests.length > beforeReplay, "manual replay requests the theme as well");
+    assert.equal(requests.at(-1).styles, 0, "the replay requests the theme before inserting its own style");
+    assert.equal(guideStyles(), 1);
+    await f.advance(20000);
+    assert.equal(f.doc.querySelector("[data-bcug-view]"), null);
+    assert.equal(guideStyles(), 0);
+});

@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { JSDOM } = require("jsdom");
-const { evalRepoScript } = require("./helpers/extension-page-fixture.js");
+const { evalRepoScript, readRepoFile } = require("./helpers/extension-page-fixture.js");
 
 function fixture(t, { oneCard = false, summaryOnly = false, maliciousText = false } = {}) {
     const dom = new JSDOM(
@@ -173,4 +173,256 @@ test("summary-only releases show their authored summary without invented items o
     assert.equal(root.querySelectorAll("button").length, 1);
     root.querySelector("button").click();
     assert.equal(f.doc.querySelector("[data-bcug-view]"), null);
+});
+
+// Extension page tokens (styles.css) the shared view may fall back to on the options page, which has no
+// CHZZK theme module.
+const EXTENSION_TOKENS = new Set([
+    "--bg",
+    "--surface",
+    "--surface-2",
+    "--surface-3",
+    "--border",
+    "--border-strong",
+    "--text",
+    "--text-muted",
+    "--text-dim",
+    "--accent",
+    "--accent-text",
+    "--accent-weak",
+    "--accent-contrast",
+    "--focus-ring",
+    "--shadow-1",
+    "--shadow-2",
+    "--options-font",
+]);
+
+function splitTopLevel(text, separator) {
+    const parts = [];
+    let depth = 0,
+        start = 0;
+    for (let index = 0; index < text.length; index++) {
+        if (text[index] === "(") depth++;
+        else if (text[index] === ")") depth--;
+        else if (text[index] === separator && depth === 0) {
+            parts.push(text.slice(start, index));
+            start = index + 1;
+        }
+    }
+    parts.push(text.slice(start));
+    return parts.map((part) => part.trim()).filter(Boolean);
+}
+
+// Top-level style rules of the shared CSS text; @media and @keyframes blocks only hold layout and motion.
+function topLevelRules(css) {
+    const rules = [];
+    let index = 0;
+    while (index < css.length) {
+        const open = css.indexOf("{", index);
+        if (open < 0) break;
+        const selector = css.slice(index, open).trim();
+        let depth = 1,
+            close = open + 1;
+        for (; close < css.length && depth; close++) {
+            if (css[close] === "{") depth++;
+            else if (css[close] === "}") depth--;
+        }
+        if (!selector.startsWith("@")) {
+            const declarations = splitTopLevel(css.slice(open + 1, close - 1), ";").map((item) => {
+                const colon = item.indexOf(":");
+                return [item.slice(0, colon).trim(), item.slice(colon + 1).trim()];
+            });
+            rules.push({ selector, declarations });
+        }
+        index = close;
+    }
+    return rules;
+}
+
+// JSDOM keeps custom properties but does not substitute var(); follow the chain like the browser does.
+function resolveVars(win, element, value, depth = 0) {
+    assert.ok(depth < 20, `variable chain too deep: ${value}`);
+    let output = "",
+        index = 0;
+    for (;;) {
+        const start = value.indexOf("var(", index);
+        if (start < 0) return output + value.slice(index);
+        output += value.slice(index, start);
+        let level = 0,
+            end = start + 3,
+            comma = -1;
+        for (; end < value.length; end++) {
+            if (value[end] === "(") level++;
+            else if (value[end] === ")" && --level === 0) break;
+            else if (value[end] === "," && level === 1 && comma < 0) comma = end;
+        }
+        const name = value.slice(start + 4, comma < 0 ? end : comma).trim();
+        const own = win.getComputedStyle(element).getPropertyValue(name).trim();
+        const next = own || (comma < 0 ? "" : value.slice(comma + 1, end).trim());
+        assert.ok(next, `${name} resolves to a value`);
+        output += resolveVars(win, element, next, depth + 1);
+        index = end + 1;
+    }
+}
+
+function parseColor(text) {
+    const mix = text.match(/^color-mix\(in srgb,\s*(#[0-9a-f]{3,8})\s+([\d.]+)%,\s*transparent\)$/i);
+    if (mix) {
+        const [red, green, blue, alpha] = parseColor(mix[1]);
+        return [red, green, blue, (alpha * Number(mix[2])) / 100];
+    }
+    if (/^transparent$/i.test(text)) return [0, 0, 0, 0];
+    let hex = text.slice(1);
+    if (hex.length <= 4) hex = [...hex].map((digit) => digit + digit).join("");
+    const channels = [0, 2, 4].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
+    return [...channels, hex.length === 8 ? Number.parseInt(hex.slice(6, 8), 16) / 255 : 1];
+}
+
+const COLOR_PATTERN =
+    /color-mix\(in srgb,\s*#[0-9a-f]{3,8}\s+[\d.]+%,\s*transparent\)|#[0-9a-f]{3,8}\b|\btransparent\b/gi;
+
+// Colors are compared as they appear on the card surface so translucent hover layers can be matched.
+// Whitespace is dropped because JSDOM serializes custom property values with inconsistent spacing.
+function describe(value, surface) {
+    const colors = [];
+    const text = value
+        .replace(COLOR_PATTERN, (match) => {
+            const [red, green, blue, alpha] = parseColor(match);
+            colors.push([red, green, blue].map((channel, index) => channel * alpha + surface[index] * (1 - alpha)));
+            return "<color>";
+        })
+        .replace(/\s+/g, "");
+    return { text, colors };
+}
+
+function renderedGuide(t, { page, theme }) {
+    const chzzk = page === "chzzk";
+    const rootMarker = chzzk
+        ? theme === "light"
+            ? ' class="light" data-theme="light"'
+            : ' class="theme_dark" data-theme="dark"'
+        : ` data-theme="${theme}"`;
+    const optionsStyles = chzzk
+        ? ""
+        : `<style>${readRepoFile("styles.css")}</style><style>${readRepoFile("options-brand.css")}</style>`;
+    const dom = new JSDOM(
+        `<!doctype html><html${rootMarker}><head>${optionsStyles}</head><body${chzzk ? "" : ' class="options-body"'}></body></html>`,
+        {
+            url: chzzk ? "https://chzzk.naver.com/live/test" : "chrome-extension://better-chzzk/options.html",
+            runScripts: "outside-only",
+            pretendToBeVisual: true,
+        }
+    );
+    t.after(() => dom.window.close());
+    if (chzzk) {
+        dom.window.chrome = { runtime: { getURL: (file) => `chrome-extension://better-chzzk/${file}` } };
+        for (const file of ["shared/data.js", "content.js", "shared/uiTheme.js"]) evalRepoScript(dom, file);
+        dom.window.BetterChzzk.utils.ensureUiTheme();
+    }
+    evalRepoScript(dom, "shared/updateGuide.js");
+    evalRepoScript(dom, "shared/updateGuideView.js");
+    const views = dom.window.BetterChzzkUpdateGuideView;
+    const guide = dom.window.BetterChzzkUpdateGuide.getGuide("1.4.1");
+    const view = views.create({ document: dom.window.document, guide, focusOnOpen: false });
+    assert.equal(view.open(), true);
+    t.after(() => view.destroy());
+    const root = dom.window.document.querySelector("[data-bcug-view]");
+    const progress = dom.window.document.createElement("div");
+    progress.dataset.bcugProgress = "";
+    const fill = dom.window.document.createElement("span");
+    fill.dataset.bcugProgressFill = "";
+    progress.append(fill);
+    root.prepend(progress);
+    const resolve = (value, element = root) => resolveVars(dom.window, element, value);
+    const surface = parseColor(resolve("var(--bcug-surface)"));
+    const declarations = new Map();
+    for (const rule of topLevelRules(views.CSS_TEXT)) {
+        const plain = rule.selector.replace(/::?[a-z-]+(\([^)]*\))?/g, "");
+        const element = splitTopLevel(plain, ",")
+            .map((selector) => (root.matches(selector) ? root : root.querySelector(selector)))
+            .find(Boolean);
+        for (const [property, value] of rule.declarations) {
+            if (property.startsWith("--")) continue;
+            declarations.set(`${rule.selector} { ${property} }`, resolve(value, element || root));
+        }
+    }
+    return { surface, declarations, resolve };
+}
+
+test("the new-version notice is a flat card without a gradient, decorative icon or its own theme palette", () => {
+    const dom = new JSDOM("<body></body>", { runScripts: "outside-only" });
+    evalRepoScript(dom, "shared/updateGuideView.js");
+    const css = dom.window.BetterChzzkUpdateGuideView.CSS_TEXT;
+    dom.window.close();
+    assert.doesNotMatch(css, /gradient\(/i, "no radial or linear gradient decoration");
+    assert.doesNotMatch(css, /url\(|[{;]\s*content\s*:/i, "no decorative sparkle icon or pseudo-element content");
+    assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?)\(/i, "no static color values");
+    assert.doesNotMatch(css, /prefers-color-scheme|theme_dark|theme_light|data-theme|--sem-/, "no own theme table");
+    const rules = topLevelRules(css);
+    const aliases = rules.flatMap((rule) => rule.declarations).filter(([property]) => property.startsWith("--bcug-"));
+    assert.ok(aliases.length >= 8);
+    for (const [property, value] of aliases) {
+        const match = value.match(/^var\((--bct-[a-z-]+),\s*(.+)\)$/);
+        assert.ok(match, `${property} reads the shared CHZZK theme first`);
+        const fallback = match[2];
+        const extension = fallback.match(/^var\((--[a-z0-9-]+)\)$/) || fallback.match(/var\((--[a-z0-9-]+)\)/);
+        if (extension) assert.ok(EXTENSION_TOKENS.has(extension[1]), `${property} falls back to ${extension[1]}`);
+        else assert.match(fallback, /^\d+px$/, `${property} only falls back to an extension token or a radius`);
+    }
+    for (const rule of rules) {
+        for (const [property, value] of rule.declarations) {
+            if (property.startsWith("--") || !/color|background|border|outline|shadow|font-family/.test(property))
+                continue;
+            assert.doesNotMatch(value, /var\(--(?!bcug-)/, `${rule.selector} ${property} uses the notice aliases`);
+        }
+    }
+});
+
+test("the notice looks the same with CHZZK theme variables and with extension page tokens", (t) => {
+    for (const theme of ["dark", "light"]) {
+        const chzzk = renderedGuide(t, { page: "chzzk", theme });
+        const options = renderedGuide(t, { page: "options", theme });
+        assert.deepEqual([...chzzk.declarations.keys()], [...options.declarations.keys()]);
+        for (const [key, value] of chzzk.declarations) {
+            const other = options.declarations.get(key);
+            if (/\{ font-family \}$/.test(key) && value !== "inherit") {
+                assert.match(value, /^"BetterChzzk Pretendard",/, `${theme} CHZZK ${key} uses the bundled font`);
+                assert.match(other, /^"Pretendard Variable",/, `${theme} options ${key} uses the bundled font`);
+                continue;
+            }
+            if (/:focus-visible \{ outline \}$/.test(key)) {
+                // Each surface keeps its own brand focus token (CHZZK --bct-focus-ring, options --focus-ring).
+                assert.equal(value, `2px solid ${chzzk.resolve("var(--bct-focus-ring)")}`, `${theme} CHZZK ${key}`);
+                assert.equal(other, `2px solid ${options.resolve("var(--focus-ring)")}`, `${theme} options ${key}`);
+                continue;
+            }
+            const left = describe(value, chzzk.surface),
+                right = describe(other, options.surface);
+            assert.equal(left.text, right.text, `${theme} ${key}`);
+            assert.equal(left.colors.length, right.colors.length, `${theme} ${key}`);
+            left.colors.forEach((color, index) =>
+                color.forEach((channel, part) =>
+                    assert.ok(
+                        Math.abs(channel - right.colors[index][part]) <= 2,
+                        `${theme} ${key}: ${value} vs ${other}`
+                    )
+                )
+            );
+        }
+        const card = "[data-bcug-view],[data-bcug-toast]";
+        assert.ok(chzzk.declarations.size >= 40, "every drawn declaration is compared");
+        assert.match(chzzk.declarations.get(`${card} { border-radius }`), /^12px$/);
+        assert.equal(chzzk.declarations.get(`${card} { background }`), theme === "dark" ? "#1c1d1f" : "#ffffff");
+        assert.equal(options.declarations.get(`${card} { background }`), theme === "dark" ? "#1c1d1f" : "#ffffff");
+        assert.equal(
+            chzzk.declarations.get("[data-bcug-heading] button:hover { background }"),
+            theme === "dark" ? "#ffffff0d" : "#0000000d",
+            "hover uses the shared CHZZK hover token"
+        );
+        assert.equal(
+            chzzk.declarations.get("[data-bcug-progress-fill] { background }"),
+            "#00ffa3",
+            "the 20-second gauge keeps the brand fill"
+        );
+    }
 });

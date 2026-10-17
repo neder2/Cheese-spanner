@@ -2493,6 +2493,51 @@ test("title tooltip shows full text when a card title is truncated", async () =>
     assert.equal(title.getAttribute("data-bctt-active"), "1");
 });
 
+test("title tooltip draws with the shared CHZZK theme and bundled font instead of its own palette", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            '<html class="light" data-theme="light"><body>',
+            '<main><article class="card">',
+            '<a class="card_title" href="/live/abc">테마를 따르는 아주 긴 방송 제목 전체 내용</a>',
+            "</article></main>",
+            "</body></html>",
+        ].join(""),
+        "https://chzzk.naver.com/lives",
+        chrome
+    );
+    const { document } = dom.window;
+    const title = document.querySelector(".card_title");
+    Object.defineProperty(title, "scrollWidth", { configurable: true, get: () => 600 });
+    Object.defineProperty(title, "clientWidth", { configurable: true, get: () => 200 });
+    title.getBoundingClientRect = () => ({ left: 40, top: 120, right: 240, bottom: 140, width: 200, height: 20 });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "shared", "uiTheme.js");
+    evalRepoScript(dom, "features", "titleTooltip.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForTitleTooltipDelay();
+
+    assert.ok(document.querySelector(".bctt-tooltip[data-show='1']"));
+    assert.ok(document.getElementById("betterchzzk-ui-theme"), "the tooltip requests the shared theme");
+    const style = document.getElementById("betterchzzk-title-tooltip-style");
+    assert.doesNotMatch(style.textContent, /#[0-9a-f]{3,8}\b|rgba?\(|\[class\*="dark"\]|html\[dark\]|theme="dark"/i);
+    const rules = Array.from(style.sheet.cssRules);
+    const tooltip = rules.find((rule) => rule.selectorText === ".bctt-tooltip").style;
+    assert.equal(tooltip.getPropertyValue("background"), "var(--bct-surface)");
+    assert.equal(tooltip.getPropertyValue("color"), "var(--bct-text)");
+    assert.equal(tooltip.getPropertyValue("border"), "1px solid var(--bct-border)");
+    assert.equal(tooltip.getPropertyValue("border-radius"), "var(--bct-radius-sm)");
+    assert.equal(tooltip.getPropertyValue("box-shadow"), "var(--bct-shadow)");
+    assert.equal(tooltip.getPropertyValue("font-family"), "var(--bct-font)");
+    const active = rules.find((rule) => rule.selectorText === '[data-bctt-active="1"]').style;
+    assert.equal(active.getPropertyValue("background"), "var(--bct-brand-weak)");
+});
+
 test("title tooltip excludes hidden navigation text from the full title", async () => {
     const chrome = createFakeChrome();
     const dom = createPageDom(
@@ -2948,6 +2993,31 @@ test("audio compressor has its own control after the native volume control", asy
     assert.equal(volumeButton.parentElement, volumeControl);
     assert.ok(button.nextElementSibling.contains(document.getElementById("betterchzzk-audio-compressor-volume")));
     assert.equal(button.classList.contains(["knife", "audio", "compressor"].join("-")), false);
+});
+
+test("audio compressor focus ring uses the shared CHZZK theme while its track copies native colors", async () => {
+    const { dom, document } = createAudioCompressorFixture();
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "shared", "uiTheme.js");
+    evalRepoScript(dom, "shared", "volumeControls.js");
+    evalRepoScript(dom, "features", "volumeTooltip.js");
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    await waitForCondition(() => document.getElementById("betterchzzk-audio-compressor"));
+
+    assert.ok(document.getElementById("betterchzzk-ui-theme"), "the compressor control requests the shared theme");
+    const rules = Array.from(document.getElementById("betterchzzk-audio-compressor-style").sheet.cssRules);
+    const focus = rules.filter((rule) => rule.style?.getPropertyValue("outline").includes("2px solid"));
+    assert.equal(focus.length, 1);
+    assert.equal(focus[0].style.getPropertyValue("outline"), "2px solid var(--bct-focus-ring)");
+    assert.match(focus[0].selectorText, /#betterchzzk-audio-compressor:focus-visible/);
+    assert.match(focus[0].selectorText, /#betterchzzk-audio-compressor-volume:focus-visible/);
+    assert.equal(
+        rules.some((rule) => /--sem-|Content-Brand/i.test(rule.style?.cssText || "")),
+        false,
+        "no own brand fallback chain"
+    );
 });
 
 test("audio compressor button tooltip reports graph setup failures", async () => {

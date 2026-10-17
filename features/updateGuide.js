@@ -203,6 +203,8 @@
             },
         });
         tutorial = next;
+        // The shared view draws with the CHZZK theme variables, so request them before it inserts its style.
+        ns.utils.ensureUiTheme?.();
         if (!next.open()) {
             tutorial = null;
             next.destroy();
@@ -224,6 +226,7 @@
         startCountdown(toast, removeToast);
     }
     function prepareToast() {
+        ns.utils.ensureUiTheme?.();
         const node = document.createElement("section");
         node.dataset.bcugToast = "";
         node.setAttribute("aria-label", "치즈 스패너 새 기능 안내");

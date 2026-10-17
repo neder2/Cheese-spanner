@@ -6,7 +6,7 @@
  *   150ms 지연 후 커스텀 툴팁을 표시한다. 숨김 텍스트(sr-only 등)는 제외하고 읽을 수 있는
  *   텍스트만 모아 전체 제목으로 사용하며, 스크롤/리사이즈 시 위치를 재계산한다.
  *   라우트 변경 시 툴팁을 숨기고, 옵션 변경에 따라 리스너를 설치/제거한다.
- * 의존: BetterChzzkSettings(shared/settings.js), BetterChzzk.utils(content.js)
+ * 의존: BetterChzzkSettings(shared/settings.js), BetterChzzk.utils(content.js, 공통 테마 ensureUiTheme은 shared/uiTheme.js)
  * 옵션 키: titleTooltipEnabled
  * DOM 마커: .bctt-tooltip, data-bctt-tooltip, data-bctt-active
  */
@@ -24,6 +24,7 @@
     const VISUALLY_HIDDEN_TOKEN_RE = /(^|[\s_-])(blind|sr-only|screen-reader|visually-hidden|a11y-hidden)([\s_-]|$)/i;
     const HOVER_OPEN_DELAY_MS = 150;
     const TOOLTIP_MAX_WIDTH = 420;
+    // Colors, radius, shadow and the bundled font come from the shared CHZZK theme (shared/uiTheme.js).
     const STYLE_TEXT = `
 .bctt-tooltip{
   display:none;
@@ -32,12 +33,12 @@
   width:max-content;
   max-width:min(420px, calc(100vw - 32px));
   padding:8px 10px;
-  border:1px solid rgba(17,17,20,0.14);
-  border-radius:6px;
-  background:#fff;
-  color:#111114;
-  box-shadow:0 8px 24px rgba(0,0,0,0.18);
-  font-family:inherit;
+  border:1px solid var(--bct-border);
+  border-radius:var(--bct-radius-sm);
+  background:var(--bct-surface);
+  color:var(--bct-text);
+  box-shadow:var(--bct-shadow);
+  font-family:var(--bct-font);
   font-size:13px;
   font-weight:600;
   line-height:18px;
@@ -48,23 +49,9 @@
 }
 .bctt-tooltip[data-show="1"]{ display:block; }
 [data-bctt-active="1"]{
-  background:rgba(0,255,163,0.12) !important;
-  border-radius:4px;
-  box-shadow:0 0 0 1px rgba(0,168,107,0.32);
-}
-html[dark] .bctt-tooltip,
-body[theme="dark"] .bctt-tooltip,
-[class*="dark"] .bctt-tooltip{
-  border-color:rgba(157,165,182,0.22);
-  background:#1B1D20;
-  color:#F2F4F7;
-  box-shadow:0 10px 30px rgba(0,0,0,0.34);
-}
-html[dark] [data-bctt-active="1"],
-body[theme="dark"] [data-bctt-active="1"],
-[class*="dark"] [data-bctt-active="1"]{
-  background:rgba(0,255,163,0.16) !important;
-  box-shadow:0 0 0 1px rgba(0,255,163,0.4);
+  background:var(--bct-brand-weak) !important;
+  border-radius:var(--bct-radius-sm);
+  box-shadow:0 0 0 1px var(--bct-brand-weak);
 }
 @media (max-width: 520px){
   .bctt-tooltip{ max-width:calc(100vw - 16px); }
@@ -87,6 +74,7 @@ body[theme="dark"] [data-bctt-active="1"],
     }
 
     function injectStyle() {
+        BetterChzzk.utils.ensureUiTheme?.();
         injectStyleOnce(STYLE_ID, STYLE_TEXT);
     }
 

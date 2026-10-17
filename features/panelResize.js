@@ -68,6 +68,7 @@
     const schedule = createThrottledDomSync(sync, 0);
 
     function styles() {
+        root.utils.ensureUiTheme?.();
         injectStyleOnce(
             STYLE_ID,
             `
@@ -89,7 +90,7 @@ aside[${WIDTH}="chat"] .bcct-moderator-box { max-width:calc(100% - 16px); }
 [${HANDLE}="sidebar"]::after { left:auto;right:0; }
 #aside-chatting > [${HANDLE}="chat"]::after { left:-1px; }
 [${HANDLE}]:hover::after, [${HANDLE}][data-bcpr-dragging]::after {
-  background:var(--sem-color-content-brand-strong,var(--Content-Brand-Strong,#00b87c));
+  background:var(--bct-brand-text);
 }
 ${CHAT_ASIDES}[${HEIGHT}] {
   box-sizing:border-box!important;height:var(${HEIGHT_VARIABLE})!important;
