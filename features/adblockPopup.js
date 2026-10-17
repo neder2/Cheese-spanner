@@ -150,6 +150,55 @@
         );
     }
 
+    function hasClassFamily(element, prefix) {
+        return Array.from(element.classList).some(
+            (token) => token.startsWith(prefix) && /^\d+$/.test(token.slice(prefix.length))
+        );
+    }
+
+    function hasOwnPopupElement(popup, selector, matches = () => true) {
+        return Array.from(popup.querySelectorAll(selector)).some(
+            (element) => element.closest(POPUP) === popup && matches(element)
+        );
+    }
+
+    function isRequiredPopup(popup) {
+        // 2026-10-17 Chrome profile DOM: module identity + local controls, never nickname/copy alone.
+        // Numeric CSS suffixes and intermediate wrappers may change; unrelated modules stay untrusted.
+        if (
+            hasClassFamily(popup, "_container_xwsra_") &&
+            hasOwnPopupElement(popup, 'button[class*="_profile_xwsra_"]', (element) =>
+                hasClassFamily(element, "_profile_xwsra_")
+            )
+        )
+            return true;
+        if (
+            hasClassFamily(popup, "_container_y6scg_") &&
+            ["_contents_y6scg_", "_control_y6scg_"].every((prefix) =>
+                hasOwnPopupElement(popup, `[class*="${prefix}"]`, (element) => hasClassFamily(element, prefix))
+            )
+        )
+            return true;
+        // Current native video/shop report forms include user-supplied titles. Both purpose and form
+        // structure must belong to this popup; a sibling profile/report must not exempt an ad notice.
+        return [
+            ["신고하기", "radiogroup", "radio"],
+            ["스트리머샵신고하기", "group", "checkbox"],
+        ].some(
+            ([title, role, type]) =>
+                hasOwnPopupElement(
+                    popup,
+                    NOTICE_HEADINGS,
+                    (element) => normalizeCompact(element.textContent) === title
+                ) &&
+                hasOwnPopupElement(
+                    popup,
+                    `ul[role="${role}"] input[name="report-reason"][type="${type}"]`,
+                    (input) => input.closest(`ul[role="${role}"]`)?.closest(POPUP) === popup
+                )
+        );
+    }
+
     function isShown(element) {
         if (!element.isConnected) return false;
         for (let node = element; node instanceof HTMLElement; node = node.parentElement) {
@@ -295,6 +344,7 @@
             if (
                 popup.querySelector(POPUP) ||
                 !isAdblockPopupLike(popup) ||
+                isRequiredPopup(popup) ||
                 !isShown(popup) ||
                 rect.width <= 0 ||
                 rect.height <= 0
@@ -421,6 +471,8 @@
                         "disabled",
                         "aria-disabled",
                         "aria-label",
+                        "name",
+                        "type",
                     ],
                     childList: true,
                     characterData: true,

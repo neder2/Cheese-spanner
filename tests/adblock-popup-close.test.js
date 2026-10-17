@@ -60,6 +60,241 @@ function fixture(t, { defaultEnabled = false } = {}) {
     return { w, options, popup, frame };
 }
 
+function profilePopup(f, { kind, nickname, label = "팝업 닫기", close = true }) {
+    const p = f.popup({ close, text: "프로필 정보 · 변경된 제목" });
+    p.button.setAttribute("aria-label", label);
+    const wrapper = f.w.document.createElement("section");
+    const actions = { profile: 0, report: 0, block: 0 };
+    if (kind === "own") {
+        p.el.className = "other-token _container_xwsra_203 another-token";
+        wrapper.innerHTML = `<div><button type="button" class="extra _profile_xwsra_407"><span>${nickname}</span></button></div>`;
+        wrapper.querySelector("button").addEventListener("click", () => actions.profile++);
+    } else {
+        p.el.className = "other-token _container_y6scg_309 another-token";
+        wrapper.innerHTML = `<div class="_contents_y6scg_501"><div>${nickname}</div><button type="button" data-action="report">메시지 신고</button><button type="button" data-action="block">사용자 차단</button></div><div><div class="_control_y6scg_602"></div></div>`;
+        wrapper.querySelector('[data-action="report"]').addEventListener("click", () => actions.report++);
+        wrapper.querySelector('[data-action="block"]').addEventListener("click", () => actions.block++);
+        wrapper.querySelector("._control_y6scg_602").append(p.button);
+    }
+    p.el.append(wrapper);
+    return { ...p, wrapper, actions };
+}
+
+function reportPopup(f, { shop = false, label = "팝업 닫기", close = true } = {}) {
+    const p = f.popup({ close, text: "Adblock 광고 차단 관련 영상·상품 제목" });
+    p.button.setAttribute("aria-label", label);
+    const heading = f.w.document.createElement("h2");
+    heading.textContent = shop ? "스트리머샵\n신고하기" : "신고 하기";
+    p.el.prepend(heading);
+    const form = f.w.document.createElement("form");
+    form.innerHTML = `<section><ul role="${shop ? "group" : "radiogroup"}"><li><input type="${shop ? "checkbox" : "radio"}" name="report-reason"></li></ul></section><button type="submit">신고하기</button><button type="button">사용자 차단</button>`;
+    const actions = { report: 0, block: 0, submit: 0 };
+    form.querySelector('[type="submit"]').addEventListener("click", () => actions.report++);
+    form.querySelector('button[type="button"]').addEventListener("click", () => actions.block++);
+    form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        actions.submit++;
+    });
+    p.el.append(form);
+    return { ...p, actions };
+}
+
+// These fixtures use the two observed profile module families, with changed numeric suffixes and copy.
+for (const kind of ["own", "other"]) {
+    for (const nickname of ["Adblock연구소", "광고문의 · 사용자 차단"]) {
+        for (const label of ["닫기", "팝업 닫기"]) {
+            test(`${kind} profile with ${nickname} preserves ${label} and user actions`, async (t) => {
+                const f = fixture(t);
+                const p = profilePopup(f, { kind, nickname, label });
+                f.w.document.body.style.cssText = "overflow:hidden;padding-right:17px";
+                const bodyStyle = f.w.document.body.style.cssText;
+                f.options(true);
+                await flush();
+                f.frame();
+                await flush();
+                assert.equal(p.clicks(), 0);
+                assert.equal(p.el.isConnected, true);
+                assert.equal(p.el.hasAttribute("data-betterchzzk-adblock-popup-closing"), false);
+                assert.equal(f.w.getComputedStyle(p.el).visibility, "visible");
+                assert.equal(f.w.document.body.style.cssText, bodyStyle);
+                assert.deepEqual(p.actions, { profile: 0, report: 0, block: 0 });
+            });
+        }
+    }
+}
+
+for (const shop of [false, true]) {
+    for (const label of ["닫기", "팝업 닫기"]) {
+        test(`${shop ? "shop" : "video"} report with ad words preserves ${label} and submission`, async (t) => {
+            const f = fixture(t);
+            const p = reportPopup(f, { shop, label });
+            f.options(true);
+            await flush();
+            f.frame();
+            await flush();
+            assert.equal(p.clicks(), 0);
+            assert.equal(p.el.isConnected, true);
+            assert.equal(p.el.hasAttribute("data-betterchzzk-adblock-popup-closing"), false);
+            assert.deepEqual(p.actions, { report: 0, block: 0, submit: 0 });
+        });
+    }
+}
+
+test("normal sibling popups do not exempt an ad notice or conceal their shared backdrop", async (t) => {
+    const f = fixture(t);
+    const profile = profilePopup(f, { kind: "own", nickname: "Adblock연구소" });
+    const report = reportPopup(f);
+    const ad = f.popup();
+    const backdrop = f.w.document.createElement("div");
+    backdrop.className = "_dimmed_jao35_2";
+    f.w.document.body.append(backdrop);
+    backdrop.append(profile.el, report.el, ad.el);
+    f.options(true);
+    await flush();
+    f.frame();
+    assert.equal(ad.clicks(), 1);
+    assert.equal(ad.el.isConnected, false);
+    for (const p of [profile, report]) {
+        assert.equal(p.clicks(), 0);
+        assert.equal(p.el.isConnected, true);
+        assert.equal(p.el.hasAttribute("data-betterchzzk-adblock-popup-closing"), false);
+    }
+    assert.equal(f.w.getComputedStyle(backdrop).visibility, "visible");
+    assert.deepEqual(report.actions, { report: 0, block: 0, submit: 0 });
+});
+
+test("reused profile roots follow their current local structure without a permanent exemption", async (t) => {
+    const f = fixture(t);
+    const p = profilePopup(f, { kind: "own", nickname: "Adblock연구소", close: false });
+    p.el.querySelector("strong").textContent = "광고 차단 안내";
+    f.options(true);
+    await flush();
+    assert.equal(p.clicks(), 0);
+    p.wrapper.remove();
+    await flush();
+    f.frame();
+    assert.equal(p.clicks(), 1);
+    p.el.append(p.wrapper);
+    await flush();
+    assert.equal(p.clicks(), 1);
+    assert.equal(p.el.hasAttribute("data-betterchzzk-adblock-popup-closing"), false);
+    p.wrapper.remove();
+    await flush();
+    f.frame();
+    assert.equal(p.clicks(), 2);
+    assert.deepEqual(p.actions, { profile: 0, report: 0, block: 0 });
+});
+
+for (const [attribute, invalid] of [
+    ["name", "unrelated"],
+    ["type", "text"],
+]) {
+    test(`report input ${attribute} changes recheck the current popup without replacing nodes`, async (t) => {
+        const f = fixture(t);
+        const p = reportPopup(f, { close: false });
+        const input = p.el.querySelector("input");
+        const original = input.getAttribute(attribute);
+        f.options(true);
+        await flush();
+        assert.equal(p.clicks(), 0);
+        input.setAttribute(attribute, invalid);
+        await flush();
+        f.frame();
+        assert.equal(p.clicks(), 1);
+        input.setAttribute(attribute, original);
+        await flush();
+        assert.equal(p.clicks(), 1);
+        assert.equal(p.el.hasAttribute("data-betterchzzk-adblock-popup-closing"), false);
+        input.setAttribute(attribute, invalid);
+        await flush();
+        f.frame();
+        assert.equal(p.clicks(), 2);
+        assert.equal(p.el.isConnected, true);
+        assert.deepEqual(p.actions, { report: 0, block: 0, submit: 0 });
+    });
+}
+
+test("a child popup cannot borrow profile evidence from its parent popup", async (t) => {
+    const f = fixture(t);
+    const parent = profilePopup(f, { kind: "own", nickname: "Adblock연구소" });
+    const child = f.popup();
+    child.el.className = "_container_xwsra_901";
+    parent.wrapper.append(child.el);
+    f.options(true);
+    await flush();
+    f.frame();
+    assert.equal(child.clicks(), 1);
+    assert.equal(child.el.isConnected, false);
+    assert.equal(parent.clicks(), 0);
+    assert.equal(parent.el.isConnected, true);
+});
+
+test("incomplete or unrelated normal-popup hints do not exempt ad notices", async (t) => {
+    const f = fixture(t);
+    const cases = [
+        ["own root only", "_container_xwsra_2", ""],
+        ["own child only", "", '<button type="button" class="_profile_xwsra_38">프로필</button>'],
+        ["own nonbutton", "_container_xwsra_2", '<div class="_profile_xwsra_38">프로필</div>'],
+        ["own lookalike token", "prefix_container_xwsra_2", '<button class="_profile_xwsra_38">프로필</button>'],
+        ["own nonnumeric suffix", "_container_xwsra_next", '<button class="_profile_xwsra_38">프로필</button>'],
+        ["own child token suffix", "_container_xwsra_2", '<button class="_profile_xwsra_38_extra">프로필</button>'],
+        ["other missing contents", "_container_y6scg_2", '<div class="_control_y6scg_300"></div>'],
+        ["other missing control", "_container_y6scg_2", '<div class="_contents_y6scg_5"></div>'],
+        ["other children only", "", '<div class="_contents_y6scg_5"></div><div class="_control_y6scg_300"></div>'],
+        ["ordinary profile class", "profile", '<button type="button" class="profile">사용 중인 프로필</button>'],
+        ["report heading only", "", "<h2>신고하기</h2>"],
+        ["report input only", "", '<ul role="radiogroup"><li><input type="radio" name="report-reason"></li></ul>'],
+        [
+            "report body copy only",
+            "",
+            '<p>신고하기</p><ul role="radiogroup"><li><input type="radio" name="report-reason"></li></ul>',
+        ],
+        [
+            "report input outside group",
+            "",
+            '<h2>신고하기</h2><ul role="radiogroup"></ul><input type="radio" name="report-reason">',
+        ],
+        [
+            "report unrelated input",
+            "",
+            '<h2>신고하기</h2><ul role="radiogroup"><li><input type="radio" name="unrelated"></li></ul>',
+        ],
+        [
+            "report wrong input type",
+            "",
+            '<h2>신고하기</h2><ul role="radiogroup"><li><input type="text" name="report-reason"></li></ul>',
+        ],
+        ["normal words only", "", "<p>프로필 · 공유 · 신고 · 로그인 · 사용자 차단</p>"],
+    ];
+    const popups = cases.map(([name, className, html]) => {
+        const p = f.popup();
+        p.el.className = className;
+        p.el.insertAdjacentHTML("beforeend", html);
+        return { name, ...p };
+    });
+    f.options(true);
+    await flush();
+    f.frame();
+    for (const p of popups) {
+        assert.equal(p.clicks(), 1, p.name);
+        assert.equal(p.el.isConnected, false, p.name);
+    }
+});
+
+test("a report input cannot borrow a group outside its popup", async (t) => {
+    const f = fixture(t);
+    const p = f.popup();
+    p.el.insertAdjacentHTML("beforeend", '<h2>신고하기</h2><input type="radio" name="report-reason">');
+    const group = f.w.document.createElement("ul");
+    group.setAttribute("role", "radiogroup");
+    f.w.document.body.append(group);
+    group.append(p.el);
+    f.options(true);
+    await flush();
+    assert.equal(p.clicks(), 1);
+    assert.equal(p.el.isConnected, false);
+});
+
 test("saved options load before any default-enabled popup action", async (t) => {
     const f = fixture(t, { defaultEnabled: true });
     const p = f.popup();

@@ -61,6 +61,10 @@
     const FOLLOWER_BADGE_WRAP_ATTR = "data-bcgt-follower-wrap";
     const LIVE_ELAPSED_BADGE_ATTR = "data-bcgt-live-elapsed-badge";
     const LIVE_THUMB_HOST_ATTR = "data-bcgt-live-thumb-host";
+    // CSS가 진행 시간 배지를 보여 주는 조건(썸네일 호버·초점)과 같아야 한다.
+    const ACTIVE_LIVE_ELAPSED_BADGE_SELECTOR = [":hover", ":focus-within"]
+        .map((state) => `[${LIVE_THUMB_HOST_ATTR}="1"]${state} [${LIVE_ELAPSED_BADGE_ATTR}="1"]`)
+        .join(", ");
     const GLOBAL_SORT_LABELS = Object.freeze({
         인기: "인기",
         시청자순: "인기",
@@ -113,6 +117,15 @@
     let lastListStateKey = "";
     let cachedGrid = null;
     let cachedGridKey = "";
+    let globalSortControlCache = [];
+    const tabLineCache = new Map();
+    // 카드 링크의 카테고리·태그 해석은 href 문자열에만 달려 있어 문자열마다 한 번만 한다.
+    const HREF_PARSE_CACHE_LIMIT = 2000;
+    const categoryHrefCache = new Map();
+    const tagHrefCache = new Map();
+    let cardHrefMemo = null;
+    let tagSearchHiddenHost = null;
+    let tagSearchAnchor = null;
     let runtimeInstalled = false;
     let globalListenersInstalled = false;
     let removePageChangeDetection = null;
@@ -909,18 +922,51 @@
             : null;
     }
 
-    function categoryFromLink(anchor) {
+    function readCachedHref(cache, href, parse) {
+        if (cache.has(href)) return cache.get(href);
+        if (cache.size >= HREF_PARSE_CACHE_LIMIT) cache.clear();
+        const value = parse(href);
+        cache.set(href, value);
+        return value;
+    }
+
+    function parseCategoryHref(href) {
         try {
-            const url = new URL(anchor.getAttribute("href"), location.origin);
+            const url = new URL(href, location.origin);
             if (url.origin !== "https://chzzk.naver.com") return null;
             const match = url.pathname.match(/^\/category\/([^/]+)\/([^/]+)\/lives\/?$/);
             if (!match) return null;
             const categoryType = decodeURIComponent(match[1]);
             const categoryId = decodeURIComponent(match[2]);
-            return categoryKey(categoryType, categoryId) ? { categoryType, categoryId } : null;
+            return categoryKey(categoryType, categoryId) ? Object.freeze({ categoryType, categoryId }) : null;
         } catch (_) {
             return null;
         }
+    }
+
+    function categoryFromHref(href) {
+        return readCachedHref(categoryHrefCache, String(href ?? ""), parseCategoryHref);
+    }
+
+    function categoryFromLink(anchor) {
+        return categoryFromHref(anchor.getAttribute("href"));
+    }
+
+    // 같은 동기 구간에서는 페이지가 카드 링크를 바꿀 수 없어 카드마다 링크 주소를 한 번만 읽는다.
+    // 다음 microtask에서 비우므로 await로 화면에 양보한 뒤의 재판정은 언제나 현재 DOM을 새로 읽는다.
+    function readCardHrefs(card) {
+        if (!cardHrefMemo) {
+            cardHrefMemo = new WeakMap();
+            queueMicrotask(() => {
+                cardHrefMemo = null;
+            });
+        }
+        let hrefs = cardHrefMemo.get(card);
+        if (!hrefs) {
+            hrefs = Array.from(card.querySelectorAll("a[href]"), (anchor) => anchor.getAttribute("href") || "");
+            cardHrefMemo.set(card, hrefs);
+        }
+        return hrefs;
     }
 
     function currentRowCategory(row) {
@@ -940,19 +986,23 @@
                 return null;
             return categoryIdentityFromMeta(meta);
         }
-        const categories = Array.from(card.querySelectorAll("a[href]")).map(categoryFromLink).filter(Boolean);
+        const categories = readCardHrefs(card).map(categoryFromHref).filter(Boolean);
         if (!categories.length || categories.some((category) => categoryKey(category) !== categoryKey(categories[0])))
             return null;
         return categories[0];
     }
 
-    function tagFromLink(anchor) {
+    function parseTagHref(href) {
         try {
-            const url = new URL(anchor.getAttribute("href"), location.origin);
+            const url = new URL(href, location.origin);
             return url.origin === "https://chzzk.naver.com" ? url.searchParams.get("tags") || "" : "";
         } catch (_) {
             return "";
         }
+    }
+
+    function tagFromHref(href) {
+        return readCachedHref(tagHrefCache, String(href ?? ""), parseTagHref);
     }
 
     function currentRowTags(row) {
@@ -975,7 +1025,7 @@
                 : [];
         }
         // 원본 카드는 현재 태그 링크를 읽고, 카드에 일부 태그만 보일 수 있어 같은 채널의 메타데이터 태그도 함께 본다.
-        return [...Array.from(card.querySelectorAll("a[href]"), tagFromLink).filter(Boolean), ...metaTags];
+        return [...readCardHrefs(card).map(tagFromHref).filter(Boolean), ...metaTags];
     }
 
     function passesRowCategoryExclusions(row) {
@@ -1573,9 +1623,27 @@
         );
     }
 
+    function isCachedTabLineCurrent(cached, minWidth) {
+        const { node, controls, minCount } = cached;
+        if (!node.isConnected || controls.length < minCount) return false;
+        if (
+            !controls.every(({ el, text }) => el.isConnected && node.contains(el) && normSpace(el.textContent) === text)
+        )
+            return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width >= minWidth && rect.height >= 24;
+    }
+
     function findTabLineByLabels(labels, minCount, minWidth) {
-        const controls = Array.from(document.querySelectorAll("button, a")).filter((el) =>
-            labels.includes(normSpace(el.textContent))
+        // 탭 줄과 그 안의 탭 문구가 그대로면 적용마다 문서의 모든 링크를 다시 세지 않는다.
+        const cacheKey = labels.join("|");
+        const cached = tabLineCache.get(cacheKey);
+        if (cached && isCachedTabLineCurrent(cached, minWidth)) return cached.node;
+        tabLineCache.delete(cacheKey);
+
+        // 확장이 표시한 카드 안의 링크(태그 등)는 문구가 같아도 탭이 아니다.
+        const controls = Array.from(document.querySelectorAll("button, a")).filter(
+            (el) => labels.includes(normSpace(el.textContent)) && !el.closest(`[${CARD_ATTR}="1"]`)
         );
         if (controls.length < minCount) return null;
 
@@ -1601,6 +1669,15 @@
                 best = node;
                 bestScore = score;
             }
+        }
+        if (best) {
+            tabLineCache.set(cacheKey, {
+                node: best,
+                minCount,
+                controls: controls
+                    .filter((el) => best.contains(el))
+                    .map((el) => ({ el, text: normSpace(el.textContent) })),
+            });
         }
         return best;
     }
@@ -1666,25 +1743,48 @@
         return context.tabLines.get(key);
     }
 
+    function readGlobalSortControl(el) {
+        if (!(el instanceof HTMLElement) || !el.isConnected) return null;
+        const text = normSpace(el.textContent);
+        if (!Object.hasOwn(GLOBAL_SORT_LABELS, text)) return null;
+        // 확장 UI와 확장이 표시한 카드 안의 링크(태그 등)는 문구가 같아도 정렬 버튼이 아니다.
+        if (el.closest(`#${BAR_ID}, #${MENU_ID}, #${CATEGORY_ADD_ID}, #${CATEGORY_SUMMARY_ID}, [${CARD_ATTR}="1"]`))
+            return null;
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0 || rect.top >= 220) return null;
+        return { el, text, area: rect.width * rect.height };
+    }
+
     function getGlobalSortControls(context = null) {
         if (context?.globalSortControls) return context.globalSortControls;
-        const labels = Object.keys(GLOBAL_SORT_LABELS);
-        const byLabel = new Map();
-        for (const el of document.querySelectorAll("button, a, [role='button'], [role='tab']")) {
-            if (!(el instanceof HTMLElement)) continue;
-            if (el.closest(`#${BAR_ID}, #${MENU_ID}, #${CATEGORY_ADD_ID}, #${CATEGORY_SUMMARY_ID}`)) continue;
-            const text = normSpace(el.textContent);
-            if (!labels.includes(text)) continue;
-            const rect = el.getBoundingClientRect();
-            if (rect.width <= 0 || rect.height <= 0 || rect.top >= 220) continue;
-            const candidate = { el, area: rect.width * rect.height };
-            const existing = byLabel.get(text);
-            if (!existing || candidate.area < existing.area) byLabel.set(text, candidate);
+        // 찾아 둔 정렬 버튼이 같은 문구로 계속 보이면 문서 전체를 다시 훑지 않는다.
+        // 다시 그려져 떨어지거나 문구가 바뀌면 그때만 새로 찾는다.
+        let controls =
+            globalSortControlCache.length &&
+            globalSortControlCache.every(({ el, text }) => readGlobalSortControl(el)?.text === text)
+                ? globalSortControlCache.map(({ el }) => el)
+                : null;
+        if (!controls) {
+            const byLabel = new Map();
+            for (const el of document.querySelectorAll("button, a, [role='button'], [role='tab']")) {
+                const candidate = readGlobalSortControl(el);
+                if (!candidate) continue;
+                const existing = byLabel.get(candidate.text);
+                if (!existing || candidate.area < existing.area) byLabel.set(candidate.text, candidate);
+            }
+            const found = Object.keys(GLOBAL_SORT_LABELS)
+                .map((label) => byLabel.get(label))
+                .filter(Boolean);
+            globalSortControlCache = found.length >= 3 ? found.map(({ el, text }) => ({ el, text })) : [];
+            controls = found.map(({ el }) => el);
         }
-
-        const controls = labels.map((label) => byLabel.get(label)?.el).filter(Boolean);
         if (context) context.globalSortControls = controls;
         return controls;
+    }
+
+    function clearPageControlCaches() {
+        globalSortControlCache = [];
+        tabLineCache.clear();
     }
 
     function rgbLuminance(value) {
@@ -1762,6 +1862,8 @@
         if (!isFeatureEnabled()) return;
         if (!isGlobalSortClickTarget(event.target)) return;
         const route = getRoute();
+        // 정렬을 바꾸면 사이트가 정렬 줄을 다시 그릴 수 있어 찾아 둔 버튼을 버린다.
+        clearPageControlCaches();
         const grid = findGrid(route);
         if (grid) clearInjectedCards(grid);
         resetSearchWork();
@@ -1851,22 +1953,6 @@
         return rect;
     }
 
-    function findGlobalTagSearch() {
-        const inputs = Array.from(document.querySelectorAll("input")).filter((input) => {
-            if (!(input instanceof HTMLElement)) return false;
-            if (input.closest(`#${BAR_ID}`) || input.closest(`#${MENU_ID}, #${CATEGORY_ADD_ID}`)) return false;
-            const label = [
-                input.getAttribute("placeholder"),
-                input.getAttribute("aria-label"),
-                input.getAttribute("title"),
-            ].join(" ");
-            if (!/태그/.test(label)) return false;
-            const rect = input.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-        });
-        return inputs[0] || null;
-    }
-
     function findGlobalTagSearchInput() {
         const inputs = Array.from(document.querySelectorAll("input"));
         for (const input of inputs) {
@@ -1929,19 +2015,60 @@
     }
 
     function getGlobalTagSearchAnchor(host) {
-        const input = findGlobalTagSearchInput() || findGlobalTagSearch();
+        const input = findGlobalTagSearchInput();
         const tagHost = getGlobalTagSearchHost(input);
         return getDirectChildWithin(host, tagHost);
     }
 
-    function hideGlobalTagSearch() {
-        restoreHiddenGlobalTagSearch();
-        const input = findGlobalTagSearchInput() || findGlobalTagSearch();
-        const host = getGlobalTagSearchHost(input);
-        if (host) host.setAttribute(HIDDEN_TAG_SEARCH_ATTR, "1");
+    function containsGlobalTagSearchInput(root) {
+        if (!(root instanceof HTMLElement) || !root.isConnected) return false;
+        const inputs = root.matches("input") ? [root] : Array.from(root.querySelectorAll("input"));
+        return inputs.some((input) => {
+            if (input.closest(`#${BAR_ID}`) || input.closest(`#${MENU_ID}, #${CATEGORY_ADD_ID}`)) return false;
+            const label = [
+                input.getAttribute("placeholder"),
+                input.getAttribute("aria-label"),
+                input.getAttribute("title"),
+            ].join(" ");
+            return /태그/.test(label);
+        });
     }
 
-    function restoreHiddenGlobalTagSearch() {
+    // 숨김·앞 칸 표식은 붙인 요소를 기억해 바뀐 곳만 고친다. 같은 값을 지웠다 다시 붙이거나
+    // 적용마다 문서 전체에서 표식을 찾으면 그만큼 속성 변경과 탐색이 생긴다.
+    function syncTagSearchMarks(hiddenHost = null, anchor = null) {
+        if (tagSearchHiddenHost !== hiddenHost) {
+            tagSearchHiddenHost?.removeAttribute(HIDDEN_TAG_SEARCH_ATTR);
+            tagSearchHiddenHost = hiddenHost;
+        }
+        if (tagSearchAnchor !== anchor) {
+            tagSearchAnchor?.removeAttribute(TAG_SEARCH_ANCHOR_ATTR);
+            tagSearchAnchor = anchor;
+        }
+        if (hiddenHost) setAttributeIfChanged(hiddenHost, HIDDEN_TAG_SEARCH_ATTR, "1");
+        if (anchor) setAttributeIfChanged(anchor, TAG_SEARCH_ANCHOR_ATTR, "1");
+    }
+
+    function hideGlobalTagSearch() {
+        // 이미 숨긴 칸이 지금도 태그 검색 입력을 담고 있으면 그대로 둔다. 숨긴 입력은 크기가 0이라
+        // 새로 찾으려면 숨김을 먼저 풀어야 하므로, 칸이 바뀌었을 때만 풀고 다시 찾는다.
+        const hidden = tagSearchHiddenHost;
+        if (
+            hidden?.isConnected &&
+            hidden.getAttribute(HIDDEN_TAG_SEARCH_ATTR) === "1" &&
+            containsGlobalTagSearchInput(hidden)
+        ) {
+            syncTagSearchMarks(hidden, null);
+            return;
+        }
+        restoreHiddenGlobalTagSearch();
+        syncTagSearchMarks(getGlobalTagSearchHost(findGlobalTagSearchInput()), null);
+    }
+
+    function restoreHiddenGlobalTagSearch({ sweep = false } = {}) {
+        syncTagSearchMarks(null, null);
+        if (!sweep) return;
+        // 도구를 뗄 때는 기억하지 못한 표식(이전 실행이 남긴 것 등)까지 문서에서 지운다.
         document
             .querySelectorAll(`[${HIDDEN_TAG_SEARCH_ATTR}="1"]`)
             .forEach((el) => el.removeAttribute(HIDDEN_TAG_SEARCH_ATTR));
@@ -1960,6 +2087,21 @@
         });
     }
 
+    // 같은 값을 다시 쓰면 속성 변경 기록과 스타일 재계산만 생기므로 바뀐 값만 쓴다.
+    function setAttributeIfChanged(el, name, value) {
+        if (el.getAttribute(name) !== value) el.setAttribute(name, value);
+    }
+
+    function setStyleIfChanged(style, name, value) {
+        if (style.getPropertyValue(name) !== value) style.setProperty(name, value);
+    }
+
+    function clearToolbarPosition(bar) {
+        for (const name of ["left", "top", "width"]) {
+            if (bar.style.getPropertyValue(name)) bar.style.removeProperty(name);
+        }
+    }
+
     function syncFontWithHostUi(bar, host) {
         if (!bar || !host) return;
         const controls = getVisibleHostControls(host);
@@ -1970,16 +2112,16 @@
         if (!fontSource) return;
 
         const fontStyle = getComputedStyle(fontSource);
-        bar.style.setProperty("--bcgt-font-family", fontStyle.fontFamily);
-        bar.style.setProperty("--bcgt-font-weight", fontStyle.fontWeight);
-        bar.style.setProperty("--bcgt-font-size", "13px");
-        bar.style.setProperty("--bcgt-line-height", "16px");
+        setStyleIfChanged(bar.style, "--bcgt-font-family", fontStyle.fontFamily);
+        setStyleIfChanged(bar.style, "--bcgt-font-weight", fontStyle.fontWeight);
+        setStyleIfChanged(bar.style, "--bcgt-font-size", "13px");
+        setStyleIfChanged(bar.style, "--bcgt-line-height", "16px");
 
         const menu = document.getElementById(MENU_ID);
         if (menu) {
-            menu.style.fontFamily = fontStyle.fontFamily;
-            menu.style.fontSize = "13px";
-            menu.style.lineHeight = "16px";
+            setStyleIfChanged(menu.style, "font-family", fontStyle.fontFamily);
+            setStyleIfChanged(menu.style, "font-size", "13px");
+            setStyleIfChanged(menu.style, "line-height", "16px");
         }
     }
 
@@ -2151,11 +2293,9 @@
         const byId = new Set();
         for (const card of Array.from(document.querySelectorAll(`[${CARD_ATTR}="1"]`))) {
             if (!(card instanceof HTMLElement) || !card.isConnected) continue;
-            const link = Array.from(card.querySelectorAll("a[href]")).find((item) =>
-                getItemId(route, item.getAttribute("href"))
-            );
-            if (!link) continue;
-            const id = getItemId(route, link.getAttribute("href"));
+            const href = readCardHrefs(card).find((item) => getItemId(route, item));
+            if (!href) continue;
+            const id = getItemId(route, href);
             if (!id || byCard.has(card) || byId.has(id)) continue;
             prepareCardIdentity(card, id);
             byCard.add(card);
@@ -2366,10 +2506,8 @@
     function isCurrentFollowerRow(route, row) {
         const card = row?.entry?.card;
         if (!card?.isConnected || card.getAttribute(CARD_ID_ATTR) !== row.entry.id) return false;
-        const link = Array.from(card.querySelectorAll("a[href]")).find((item) =>
-            getItemId(route, item.getAttribute("href"))
-        );
-        return getItemId(route, link?.getAttribute("href")) === row.entry.id;
+        const href = readCardHrefs(card).find((item) => getItemId(route, item));
+        return getItemId(route, href) === row.entry.id;
     }
 
     // 필터가 없을 때 팔로워 배지는 화면 근처 카드만 채운다.
@@ -3100,10 +3238,13 @@
         return profileImg;
     }
 
-    function syncFollowerBadge(card, meta) {
-        const channelId = meta?.channelId;
+    function readFollowerBadgeCount(channelId) {
         const cached = channelId ? readFollowerCache(channelId) : { hit: false, count: 0 };
-        const count = cached.hit ? cached.count : 0;
+        return cached.hit ? cached.count : 0;
+    }
+
+    function syncFollowerBadge(card, meta) {
+        const count = readFollowerBadgeCount(meta?.channelId);
         const label = formatFollowerBadgeCount(count);
         if (!label) {
             if (card.__bcgtFollowerBadgeKey || card.querySelector(`[${FOLLOWER_BADGE_ATTR}="1"]`)) {
@@ -3137,10 +3278,27 @@
     function inferChannelIdFromCard(route, entry) {
         if (entry?.meta?.channelId) return entry.meta.channelId;
         if (route.tab === "lives" && entry?.id) return entry.id;
-        const channelHref = Array.from(entry?.card?.querySelectorAll("a[href]") || [])
-            .map((anchor) => anchor.getAttribute("href") || "")
-            .find((href) => /^\/[a-f0-9]{32}(?:[/?#]|$)/i.test(href));
+        const channelHref = (entry?.card ? readCardHrefs(entry.card) : []).find((href) =>
+            /^\/[a-f0-9]{32}(?:[/?#]|$)/i.test(href)
+        );
         return channelHref ? channelHref.match(/^\/([a-f0-9]{32})/i)?.[1] || "" : "";
+    }
+
+    function prepareFollowerBadges(route, rows) {
+        // 배지를 붙일 카드의 프로필 이미지를 먼저 모두 찾아 둔다. 찾는 동안 이미지 크기를 읽으므로
+        // 쓰기와 섞으면 처음 보는 카드마다 레이아웃을 다시 계산하게 된다.
+        const targets = rows.map((row) => ({
+            card: row.entry.card,
+            meta: { ...row.meta, channelId: row.meta?.channelId || inferChannelIdFromCard(route, row.entry) },
+        }));
+        for (const { card, meta } of targets) {
+            if (formatFollowerBadgeCount(readFollowerBadgeCount(meta.channelId))) getCachedProfileImage(card);
+        }
+        return targets;
+    }
+
+    function writeFollowerBadges(targets) {
+        for (const { card, meta } of targets) syncFollowerBadge(card, meta);
     }
 
     function syncFollowerBadges(route, rows) {
@@ -3148,10 +3306,7 @@
             clearFollowerBadges();
             return;
         }
-        for (const row of rows) {
-            const channelId = row.meta?.channelId || inferChannelIdFromCard(route, row.entry);
-            syncFollowerBadge(row.entry.card, { ...row.meta, channelId });
-        }
+        writeFollowerBadges(prepareFollowerBadges(route, rows));
     }
 
     function clearLiveElapsedTimer() {
@@ -3160,16 +3315,33 @@
         liveElapsedTimer = 0;
     }
 
+    function refreshLiveElapsedBadge(badge, now = Date.now()) {
+        const start = Number(badge.getAttribute("data-bcgt-live-start")) || 0;
+        if (!start) return;
+        const text = formatDuration(Math.max(0, (now - start) / 1000));
+        if (!text) return;
+        if (badge.textContent !== text) badge.textContent = text;
+        setAttributeIfChanged(badge, "title", `방송 진행 시간 ${text}`);
+    }
+
     function updateLiveElapsedBadgesNow(root = document) {
-        const now = Date.now();
-        const badges = Array.from(root.querySelectorAll(`[${LIVE_ELAPSED_BADGE_ATTR}="1"]`));
-        for (const badge of badges) {
-            const start = Number(badge.getAttribute("data-bcgt-live-start")) || 0;
-            if (!start) continue;
-            const text = formatDuration(Math.max(0, (now - start) / 1000));
-            if (text && badge.textContent !== text) badge.textContent = text;
+        if (!root.querySelector(`[${LIVE_ELAPSED_BADGE_ATTR}="1"]`)) {
+            clearLiveElapsedTimer();
+            return;
         }
-        if (!badges.length) clearLiveElapsedTimer();
+        // 배지는 썸네일에 마우스를 올리거나 초점이 있을 때만 보이므로(CSS) 보이는 배지만 고친다.
+        // 숨은 배지까지 매초 고치면 카드 수만큼 DOM 변경이 생겨 다른 기능의 변경 감시까지 깨운다.
+        const now = Date.now();
+        for (const badge of root.querySelectorAll(ACTIVE_LIVE_ELAPSED_BADGE_SELECTOR)) {
+            refreshLiveElapsedBadge(badge, now);
+        }
+    }
+
+    function handleLiveElapsedHostActivate(event) {
+        // 보이기 시작하는 순간의 배지가 옛 값을 잠깐 보여 주지 않게 바로 맞춘다.
+        const host = event.target?.closest?.(`[${LIVE_THUMB_HOST_ATTR}="1"]`);
+        const badge = host?.querySelector(`[${LIVE_ELAPSED_BADGE_ATTR}="1"]`);
+        if (badge) refreshLiveElapsedBadge(badge);
     }
 
     function ensureLiveElapsedTimer() {
@@ -3230,14 +3402,14 @@
         return host;
     }
 
-    function syncLiveElapsedBadge(card, meta) {
+    function syncLiveElapsedBadge(card, meta, host = undefined) {
         const label = formatElapsedSince(meta?.publishDate);
         if (!label) {
             removeLiveElapsedBadge(card);
             return;
         }
 
-        const host = getCachedLiveThumbnailHost(card);
+        if (host === undefined) host = getCachedLiveThumbnailHost(card);
         if (!host) {
             removeLiveElapsedBadge(card);
             return;
@@ -3250,25 +3422,42 @@
             badge.setAttribute(LIVE_ELAPSED_BADGE_ATTR, "1");
             host.appendChild(badge);
         }
+        // 진행 시간 글자는 배지가 보일 때 고치므로, 방송 시작 시각이 바뀐 배지에만 처음 값을 쓴다.
         const start = String(parseDateTime(meta.publishDate));
-        const title = `방송 진행 시간 ${label}`;
-        const renderKey = `${label}|${start}|${title}`;
-        if (card.__bcgtLiveElapsedKey !== renderKey) {
+        if (card.__bcgtLiveElapsedKey !== start || badge.getAttribute("data-bcgt-live-start") !== start) {
+            const title = `방송 진행 시간 ${label}`;
             if (badge.textContent !== label) badge.textContent = label;
             if (badge.getAttribute("data-bcgt-live-start") !== start) badge.setAttribute("data-bcgt-live-start", start);
             if (badge.getAttribute("title") !== title) badge.setAttribute("title", title);
-            card.__bcgtLiveElapsedKey = renderKey;
+            card.__bcgtLiveElapsedKey = start;
         }
         ensureLiveElapsedTimer();
     }
 
-    function syncLiveElapsedBadges(route, rows) {
-        if (!areLiveElapsedBadgesEnabled() || route?.tab !== "lives") {
-            clearLiveElapsedBadges();
-            return;
-        }
-        for (const row of rows) syncLiveElapsedBadge(row.entry.card, row.meta);
-        updateLiveElapsedBadgesNow();
+    function prepareLiveElapsedBadges(rows) {
+        // 썸네일 칸을 먼저 모두 찾아 둔다. 찾는 동안 이미지 크기를 읽으므로 쓰기와 섞지 않는다.
+        return rows.map((row) => {
+            const card = row.entry.card;
+            const host = formatElapsedSince(row.meta?.publishDate) ? getCachedLiveThumbnailHost(card) : null;
+            return { card, meta: row.meta, host };
+        });
+    }
+
+    function writeLiveElapsedBadges(targets) {
+        // 보이는 배지는 호버·초점이 시작될 때와 1초 타이머에서 고치므로 적용마다 다시 찾지 않는다.
+        for (const { card, meta, host } of targets) syncLiveElapsedBadge(card, meta, host);
+    }
+
+    // 목록 적용에서는 두 배지의 읽기를 모두 마친 뒤 쓰기를 해서 레이아웃 계산을 한 번으로 묶는다.
+    function syncCardBadges(route, rows) {
+        const elapsedEnabled = areLiveElapsedBadgesEnabled() && route?.tab === "lives";
+        const followerEnabled = areFollowerBadgesEnabled();
+        const elapsedTargets = elapsedEnabled ? prepareLiveElapsedBadges(rows) : null;
+        const followerTargets = followerEnabled ? prepareFollowerBadges(route, rows) : null;
+        if (elapsedTargets) writeLiveElapsedBadges(elapsedTargets);
+        else clearLiveElapsedBadges();
+        if (followerTargets) writeFollowerBadges(followerTargets);
+        else clearFollowerBadges();
     }
 
     function applyCardAttrs(card, meta) {
@@ -4101,12 +4290,10 @@
                 // 카테고리 페이지와 동일한 모습이 되도록 콘텐츠 탭(라이브/동영상) 줄 오른쪽에 붙인다.
                 if (hideTagSearch) hideGlobalTagSearch();
                 else restoreHiddenGlobalTagSearch();
-                tabLine.setAttribute(TABS_ATTR, "1");
-                bar.setAttribute("data-mode", "category-inline");
+                setAttributeIfChanged(tabLine, TABS_ATTR, "1");
+                setAttributeIfChanged(bar, "data-mode", "category-inline");
                 bar.removeAttribute("data-tag-search-hidden");
-                bar.style.left = "";
-                bar.style.top = "";
-                bar.style.width = "";
+                clearToolbarPosition(bar);
                 if (bar.parentElement !== tabLine) tabLine.appendChild(bar);
                 cleanupUnusedGlobalFallback(null);
                 document
@@ -4121,23 +4308,27 @@
                 document.querySelectorAll(`[${GLOBAL_SORT_ATTR}="1"]`).forEach((el) => {
                     if (el !== host || host.id !== GLOBAL_FALLBACK_ID) el.removeAttribute(GLOBAL_SORT_ATTR);
                 });
-                if (host.id === GLOBAL_FALLBACK_ID) host.setAttribute(GLOBAL_SORT_ATTR, "1");
+                if (host.id === GLOBAL_FALLBACK_ID) setAttributeIfChanged(host, GLOBAL_SORT_ATTR, "1");
                 else host.removeAttribute(GLOBAL_SORT_ATTR);
-                bar.setAttribute("data-mode", "global-inline");
-                bar.setAttribute("data-tag-search-hidden", hideTagSearch ? "1" : "0");
-                bar.style.left = "";
-                bar.style.top = "";
-                bar.style.width = "";
+                setAttributeIfChanged(bar, "data-mode", "global-inline");
+                setAttributeIfChanged(bar, "data-tag-search-hidden", hideTagSearch ? "1" : "0");
+                clearToolbarPosition(bar);
                 if (hideTagSearch) {
                     if (bar.parentElement !== host) host.appendChild(bar);
                     hideGlobalTagSearch();
                 } else {
-                    restoreHiddenGlobalTagSearch();
+                    // 태그 검색 칸 크기를 읽기 전에 숨김은 풀되, 같은 앞 칸 표식은 지웠다 다시 붙이지 않는다.
+                    syncTagSearchMarks(null, tagSearchAnchor);
                     const tagAnchor = getGlobalTagSearchAnchor(host);
                     if (tagAnchor && tagAnchor !== bar) {
-                        tagAnchor.setAttribute(TAG_SEARCH_ANCHOR_ATTR, "1");
-                        host.insertBefore(bar, tagAnchor);
-                    } else if (bar.parentElement !== host) host.appendChild(bar);
+                        syncTagSearchMarks(null, tagAnchor);
+                        // 이미 제자리인 툴바를 다시 끼우면 툴바 제거 기록이 생겨 적용이 또 예약된다.
+                        if (bar.parentElement !== host || bar.nextSibling !== tagAnchor)
+                            host.insertBefore(bar, tagAnchor);
+                    } else {
+                        syncTagSearchMarks(null, null);
+                        if (bar.parentElement !== host) host.appendChild(bar);
+                    }
                 }
                 cleanupUnusedGlobalFallback(host);
                 syncFontWithHostUi(bar, host);
@@ -4147,11 +4338,9 @@
             restoreHiddenGlobalTagSearch();
             const tabLine = getContextTabLine(context, route);
             if (!tabLine) return false;
-            tabLine.setAttribute(TABS_ATTR, "1");
-            bar.setAttribute("data-mode", "category-inline");
-            bar.style.left = "";
-            bar.style.top = "";
-            bar.style.width = "";
+            setAttributeIfChanged(tabLine, TABS_ATTR, "1");
+            setAttributeIfChanged(bar, "data-mode", "category-inline");
+            clearToolbarPosition(bar);
             if (bar.parentElement !== tabLine) tabLine.appendChild(bar);
             syncFontWithHostUi(bar, tabLine);
         }
@@ -4373,8 +4562,7 @@
                 },
             }));
             rememberFollowerRefreshRows(route, visibleRows);
-            syncLiveElapsedBadges(route, visibleRows);
-            syncFollowerBadges(route, visibleRows);
+            syncCardBadges(route, visibleRows);
             for (const entry of entries) setCardHidden(entry.card, false);
             removeEmptyMessage(grid);
             updateStatus(entries.length, entries.length);
@@ -4448,8 +4636,7 @@
         rememberFollowerRefreshRows(route, visible);
 
         const visibleSet = new Set(visible.map((row) => row.entry.card));
-        syncLiveElapsedBadges(route, rows);
-        syncFollowerBadges(route, rows);
+        syncCardBadges(route, rows);
         for (const row of rows) {
             setCardHidden(row.entry.card, !visibleSet.has(row.entry.card) || !passesRowCategoryExclusions(row));
         }
@@ -4520,7 +4707,7 @@
         if (bar) bar.remove();
         if (menu) menu.remove();
         if (fallback) fallback.remove();
-        restoreHiddenGlobalTagSearch();
+        restoreHiddenGlobalTagSearch({ sweep: true });
         clearInjectedCards();
         clearFollowerBadges();
         clearLiveElapsedBadges();
@@ -4540,6 +4727,7 @@
         lastListStateKey = "";
         cachedGrid = null;
         cachedGridKey = "";
+        clearPageControlCaches();
         if (preserveCount) resetSearchWork();
         else resetMetadata("");
         orderCounter = 0;
@@ -4739,6 +4927,8 @@
         globalListenersInstalled = true;
         document.addEventListener("click", handleDocumentClick, true);
         document.addEventListener("visibilitychange", handleVisibilityChange, true);
+        document.addEventListener("pointerover", handleLiveElapsedHostActivate, true);
+        document.addEventListener("focusin", handleLiveElapsedHostActivate, true);
         removePageChangeDetection = startPageChangeDetection(handlePageChange);
         window.addEventListener("resize", handleViewportChange, true);
         window.addEventListener("scroll", handleScrollPositionMenu, true);
@@ -4773,6 +4963,8 @@
         globalListenersInstalled = false;
         document.removeEventListener("click", handleDocumentClick, true);
         document.removeEventListener("visibilitychange", handleVisibilityChange, true);
+        document.removeEventListener("pointerover", handleLiveElapsedHostActivate, true);
+        document.removeEventListener("focusin", handleLiveElapsedHostActivate, true);
         if (removePageChangeDetection) {
             removePageChangeDetection();
             removePageChangeDetection = null;

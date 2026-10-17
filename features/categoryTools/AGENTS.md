@@ -18,6 +18,9 @@
 - `globalLiveCountEnabled`는 검색·필터와 독립이에요. 집계만 켜면 검색 UI·배지·카드 변경·태그 검색 숨김을 실행하지 않아요. 어느 한 기능을 끌 때 다른 소비자가 사용하는 페이지 요청은 보존해요.
 - 전체 방송의 공유 페이지는 제한된 캐시를 사용하고, 집계로 읽은 연속 페이지도 검색 메타데이터에 한 번만 반영해요. 집계 캐시가 만료된 뒤 오래된 자료에 새 시각만 붙이지 않아요. 직접 제거된 toolbar는 복구하되 자체 삽입·옵션 OFF가 다시 예약을 만들지 않도록 확인해요.
 
+- 적용은 무관한 DOM 변화마다 다시 돌므로 카드 수에 비례하는 문서 탐색을 늘리지 않아요. 정렬 버튼·라이브/동영상 탭 줄은 찾은 요소를 적용 사이에 재사용하고, 떨어지거나 문구가 바뀌었을 때·정렬 클릭·도구 해제 때만 다시 찾아요. 확장이 표시한 카드 안의 링크는 문구가 같아도 정렬·탭 후보가 아니에요. 카드 링크의 카테고리·태그 해석은 href 문자열별 캐시(최대 2,000개)를 쓰고, 카드 링크 목록은 같은 동기 구간에서만 재사용해 await로 양보한 뒤의 최종 재판정은 현재 DOM을 새로 읽어요.
+- 배지 처리는 모든 카드의 이미지 크기 읽기를 마친 뒤 쓰기를 해요. 진행 시간 배지는 CSS상 썸네일 호버·초점일 때만 보이므로 처음 값을 쓴 뒤에는 호버·초점이 시작될 때와 1초 타이머에서 보이는 배지만 고쳐요. 숨은 배지를 매초 고치면 카드 수만큼 DOM 변경이 생겨요.
+- 툴바·태그 검색 표식·위치 스타일은 바뀐 값만 써요. 이미 제자리인 툴바를 다시 끼우면 툴바 제거 기록으로 보여 적용이 다시 예약돼요. 태그 검색 표식은 붙인 요소를 기억해 고치고, 도구를 뗄 때만 문서 전체에서 남은 표식을 지워요.
 - 전체 방송의 현재 목록 검색은 입력 초안과 적용 검색어를 분리해요. 별도 적용 버튼 없이 Enter에서만 갱신하고 IME 확정 Enter·반복 키·동일 값 재제출은 새 작업을 만들지 않아요. 지우기 클릭은 빈 검색어를 한 번 제출하고 Escape는 적용값으로 되돌려요. 카테고리 경로의 기존 입력 검색과 숫자 필터·카테고리 이름 검색은 유지해요.
 
 ## 카테고리 제외
@@ -36,7 +39,7 @@
 
 ## 검증
 
-`tests/category-tools-filter-model.test.js`는 단위·프리셋·범위, `tests/category-tools-repository.test.js`는 커서·공유·중복·캐시·상한·취소·재시도를 보호해요. `tests/category-tools-lifecycle.test.js`는 오래된 팔로워 결과가 재사용 카드에 붙지 않는지, 검색과 배지가 서로 지연시키지 않는지, disable·SPA가 예약을 끝내는지 확인해요. 통합 목록 동작은 `tests/extension-pages.test.js`, 중복 예약은 `tests/dom-scheduling.test.js`에서도 확인해요.
+`tests/category-tools-filter-model.test.js`는 단위·프리셋·범위, `tests/category-tools-repository.test.js`는 커서·공유·중복·캐시·상한·취소·재시도를 보호해요. `tests/category-tools-apply-cost.test.js`는 안정 상태 적용의 문서 전체 링크 탐색 0회, href 재해석 0회, 숨은 진행 시간 배지 무변경, 배지의 읽기·쓰기 순서, 툴바·태그 검색 표식의 재기록 없음을 호출 횟수로 지켜요. `tests/category-tools-lifecycle.test.js`는 오래된 팔로워 결과가 재사용 카드에 붙지 않는지, 검색과 배지가 서로 지연시키지 않는지, disable·SPA가 예약을 끝내는지 확인해요. 통합 목록 동작은 `tests/extension-pages.test.js`, 중복 예약은 `tests/dom-scheduling.test.js`에서도 확인해요.
 
 제외 변경은 `tests/category-exclusions-store.test.js`, `tests/category-tools-exclusions.test.js`와 filter-model·repository에서 두 탭의 개별 변경·지속 복원·상한·실패 보존·정확한 정체성·신뢰한 버튼·검색 취소를 확인해요. 공용 선행 로드를 바꾸면 lifecycle·extension-pages·refactoring-data-modules의 실제 로드도 맞춰요. 실제 Chrome의 이름 검색 요청·현재 카드 링크·SPA 발신 URL·기본 Enter/Space·두 테마·새로고침과 재시작은 자동 fixture와 별도로 확인해요.
 
