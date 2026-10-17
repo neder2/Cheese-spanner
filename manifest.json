@@ -39,6 +39,7 @@
                 "shared/categoryExclusions.js",
                 "shared/selectors.js",
                 "content.js",
+                "shared/uiTheme.js",
                 "shared/updateGuide.js",
                 "shared/updateGuideView.js",
                 "shared/liveStart.js",
