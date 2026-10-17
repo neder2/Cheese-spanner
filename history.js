@@ -11,6 +11,8 @@
  * 통신: chrome.storage.local 키 "betterChzzkLiveWatchHistory"는 읽기와 변경 감지에만 사용한다.
  * 삭제·초기화·다시보기 캐시는 runtime 메시지로 background 단일 writer에 요청한다.
  * api.chzzk.naver.com의 채널 영상 목록/영상 상세 API를 호출해 다시보기 videoNo를 찾는다.
+ * 화면에 보이는 목록 줄의 채널마다 페이지 수명 동안 한 번 공개 채널 정보를 로그인 정보 없이 조회해
+ * 검증된 프로필 사진만 장식 아이콘으로 넣는다. 조회 결과는 어떤 저장소에도 쓰지 않는다.
  * 구조(위→아래 순서):
  * - 상수/DOM 참조/전역 상태 선언 (STORAGE_KEY, API_BASE 등, 각 엘리먼트 참조, entries 등 상태 변수)
  * - 제목 이력/표시 텍스트 포맷터 (getEntryTitleRows, formatDateLabel, formatDuration 등)
@@ -21,6 +23,7 @@
  * - 월 선택/집계 헬퍼 (ensureSelectedMonth, getMonthScopeBounds, getUniqueWatchSecondsForMonth)
  * - 목록 정렬/필터/선택 상태 (getVisibleRows, renderSelectionControls, setEntrySelected 등)
  * - 다시보기 열기 흐름 (persistReplayVideoNo, openUrlInNewTab, handleTitleClick)
+ * - 채널 아이콘 조회·표시 (requestChannelIcons, lookupChannelIcon, syncChannelIcon)
  * - 렌더링 함수 (renderCalendar, renderList, renderSummary, renderAll)
  * - 채널별 시청 순위와 내 채팅·일반 후원 집계/보관 내역 (renderRanking, renderActivity)
  * - 기본 라이브 내역, 순위, 활동 탭과 공통 기간·검색, 10개 단위 페이지 이동
@@ -52,6 +55,8 @@ const TARGET_WINDOW_MS = 7 * DAY_MS;
 const MAX_REPLAY_LOOKUP_CACHE_ENTRIES = 80;
 const DISPLAY_WATCH_RANGE_MERGE_GAP_MS = 5 * 60 * 1000;
 const SESSION_MERGE_GAP_MS = 60 * 1000;
+const CHANNEL_ICON_CONCURRENCY = 4;
+const CHANNEL_ICON_TIMEOUT_MS = 8000;
 
 const storage = globalThis.chrome?.storage?.local;
 const {
@@ -74,6 +79,7 @@ const {
     mergeDailySeconds: mergeSessionDailySeconds,
     mergeWatchRanges,
     normalizeChzzkChannelId,
+    normalizeChzzkImageUrl,
     normalizeChzzkLiveUrl,
     normalizeDailySeconds,
     normalizeForMatch,
@@ -151,6 +157,11 @@ const expandedChatLimits = new Map();
 const ENTRY_CHAT_PAGE_SIZE = 50;
 const replayLookupCache = new Map();
 const resolvingReplayEntryIds = new Set();
+// Channel ID -> { status: "queued" | "requesting" | "loading" | "ready" | "failed", url }. Page memory only.
+const channelIconStates = new Map();
+const channelIconQueue = [];
+const channelIconAbortController = new AbortController();
+let channelIconActiveLookups = 0;
 
 function resetViewPages() {
     for (const view of viewNames) viewPages[view] = 0;
@@ -183,6 +194,7 @@ function setHistoryView(view, { focus = false } = {}) {
     }
     historySortEl.hidden = view !== "history";
     selectionToggle.hidden = view !== "history";
+    requestChannelIcons(document.getElementById(`${view}Panel`));
 }
 
 function getScopeLabel() {
@@ -1542,6 +1554,132 @@ function buildSessionList(row) {
     return list;
 }
 
+// Channel icons are decorative: only a verified profile image is shown, and any failure leaves the text-only row.
+function getChannelIconHosts(channelId) {
+    return Array.from(document.querySelectorAll("[data-channel-icon-host]")).filter(
+        (host) => host.dataset.channelIconHost === channelId
+    );
+}
+
+function getChannelIcon(host) {
+    return host.querySelector(":scope > .history-channel-icon");
+}
+
+function createChannelIcon(channelId, state) {
+    const icon = document.createElement("img");
+    icon.className = "history-channel-icon";
+    icon.alt = "";
+    icon.decoding = "async";
+    icon.setAttribute("referrerpolicy", "no-referrer");
+    icon.dataset.channelId = channelId;
+    // Hidden icons take no grid or flex space until the image has actually loaded.
+    icon.hidden = state.status !== "ready";
+    icon.addEventListener(
+        "load",
+        () => {
+            if (state.status === "failed") return;
+            state.status = "ready";
+            for (const host of getChannelIconHosts(channelId)) {
+                const current = getChannelIcon(host);
+                if (current?.dataset.channelId === channelId) current.hidden = false;
+            }
+        },
+        { once: true }
+    );
+    icon.addEventListener(
+        "error",
+        () => {
+            state.status = "failed";
+            icon.remove();
+            for (const host of getChannelIconHosts(channelId)) getChannelIcon(host)?.remove();
+        },
+        { once: true }
+    );
+    icon.src = state.url;
+    return icon;
+}
+
+// A host shows the icon only while its current channel ID has a verified image; late results re-check it here.
+function syncChannelIcon(host) {
+    const channelId = host.dataset.channelIconHost;
+    const state = channelIconStates.get(channelId);
+    const current = getChannelIcon(host);
+    if (!state?.url || !["loading", "ready"].includes(state.status)) {
+        current?.remove();
+        return;
+    }
+    if (current?.dataset.channelId === channelId) return;
+    current?.remove();
+    const anchor = host.querySelector(
+        ":scope > .history-item-main, :scope > .history-ranking-copy, :scope > .history-activity-channel"
+    );
+    host.insertBefore(createChannelIcon(channelId, state), anchor);
+}
+
+function setChannelIconHost(host, value) {
+    const channelId = normalizeChzzkChannelId(value);
+    if (!channelId) return;
+    host.dataset.channelIconHost = channelId;
+    syncChannelIcon(host);
+}
+
+async function lookupChannelIcon(channelId) {
+    const state = channelIconStates.get(channelId);
+    state.status = "requesting";
+    let url = "";
+    try {
+        const json = await fetchJson(`${API_BASE}/${encodeURIComponent(channelId)}`, {
+            credentials: "omit",
+            headers: { Accept: "application/json" },
+            signal: channelIconAbortController.signal,
+            timeoutMs: CHANNEL_ICON_TIMEOUT_MS,
+        });
+        if (json?.code === 200 && json.content?.channelId === channelId) {
+            url = normalizeChzzkImageUrl(json.content.channelImageUrl);
+        }
+    } catch (_) {
+        // Failed, timed-out, or cancelled lookups stay text-only and are not retried in this page.
+    }
+    if (!url || channelIconAbortController.signal.aborted) {
+        state.status = "failed";
+        return;
+    }
+    state.status = "loading";
+    state.url = url;
+    for (const host of getChannelIconHosts(channelId)) syncChannelIcon(host);
+}
+
+function pumpChannelIconLookups() {
+    while (
+        !channelIconAbortController.signal.aborted &&
+        channelIconActiveLookups < CHANNEL_ICON_CONCURRENCY &&
+        channelIconQueue.length
+    ) {
+        channelIconActiveLookups += 1;
+        lookupChannelIcon(channelIconQueue.shift()).finally(() => {
+            channelIconActiveLookups -= 1;
+            pumpChannelIconLookups();
+        });
+    }
+}
+
+// Only rows in the visible panel are looked up; each channel is requested at most once per page lifetime.
+function requestChannelIcons(root) {
+    if (!root || channelIconAbortController.signal.aborted || root.closest("[hidden]")) return;
+    for (const host of root.querySelectorAll("[data-channel-icon-host]")) {
+        const channelId = host.dataset.channelIconHost;
+        if (channelIconStates.has(channelId)) continue;
+        channelIconStates.set(channelId, { status: "queued", url: "" });
+        channelIconQueue.push(channelId);
+    }
+    pumpChannelIconLookups();
+}
+
+function cancelChannelIconLookups() {
+    channelIconAbortController.abort();
+    for (const channelId of channelIconQueue.splice(0)) channelIconStates.get(channelId).status = "failed";
+}
+
 function buildHistoryEmptyState() {
     const empty = document.createElement("div");
     empty.className = "history-empty";
@@ -1694,6 +1832,7 @@ function renderList() {
         }
 
         item.append(selectLabel, body, actions);
+        setChannelIconHost(item, entry.channelId);
         const chatPanel = buildEntryChatPanel(entry, activityCounts, chatPanelId);
         item.appendChild(chatPanel);
         if (entry.id === focusedEntryId) {
@@ -1728,6 +1867,7 @@ function renderList() {
         if (list && scrollTop > 0) list.scrollTop = scrollTop;
     }
     if (hadListFocus) (focusTarget || historySearchEl).focus({ preventScroll: true });
+    requestChannelIcons(historyListEl);
 }
 
 function renderSummary() {
@@ -1888,6 +2028,7 @@ function renderRanking(donations = getDonationView()) {
         item.dataset.channelId = group.id;
         appendText(item, "history-ranking-position", String(viewPages.ranking * VIEW_PAGE_SIZE + index + 1));
         const copy = document.createElement("div");
+        copy.className = "history-ranking-copy";
         appendText(copy, "history-ranking-name", group.name);
         const meta = [`${group.count}개 방송`];
         if (group.chatCount) meta.push(`내 채팅 ${group.chatCount.toLocaleString()}개`);
@@ -1903,6 +2044,7 @@ function renderRanking(donations = getDonationView()) {
         bar.setAttribute("aria-hidden", "true");
         bar.style.setProperty("--ratio", String(maxSeconds > 0 ? Math.min(1, group.seconds / maxSeconds) : 0));
         item.appendChild(bar);
+        setChannelIconHost(item, group.id);
         fragment.appendChild(item);
     });
     if (!ranked.length) {
@@ -1912,6 +2054,7 @@ function renderRanking(donations = getDonationView()) {
         fragment.appendChild(empty);
     }
     channelRankingEl.replaceChildren(fragment);
+    requestChannelIcons(channelRankingEl);
 }
 
 // Consecutive rows from one broadcast or channel share a heading instead of repeating it on every row.
@@ -1926,6 +2069,7 @@ function appendActivityRows(fragment, rows) {
             heading.className = "history-activity-group";
             appendText(heading, "history-activity-channel", row.channelName);
             if (row.title) appendText(heading, "history-activity-broadcast", row.title).title = row.title;
+            setChannelIconHost(heading, row.channelId);
             item.appendChild(heading);
         }
         const line = document.createElement("div");
@@ -1967,6 +2111,7 @@ function renderActivity(donations = getDonationView()) {
             fragment,
             getPageRows("activity", donations.rows).map((row) => ({
                 group: row.channelId || row.channelName,
+                channelId: row.channelId,
                 channelName: row.channelName,
                 at: row.at,
                 amount: row.amount,
@@ -1980,6 +2125,7 @@ function renderActivity(donations = getDonationView()) {
             fragment.appendChild(empty);
         }
         activityListEl.replaceChildren(fragment);
+        requestChannelIcons(activityListEl);
         return;
     }
     const matching = entries.filter(matchesHistoryQuery);
@@ -2002,6 +2148,7 @@ function renderActivity(donations = getDonationView()) {
         fragment,
         getPageRows("activity", rows).map(({ entry, activity }) => ({
             group: entry.id,
+            channelId: entry.channelId,
             channelName: entry.channelName,
             title: entry.title,
             at: activity.at,
@@ -2016,6 +2163,7 @@ function renderActivity(donations = getDonationView()) {
         fragment.appendChild(empty);
     }
     activityListEl.replaceChildren(fragment);
+    requestChannelIcons(activityListEl);
 }
 
 function hideMessage() {
@@ -2344,6 +2492,7 @@ donationImportCancel.addEventListener("click", () => {
     showDonationImportStatus("가져오기를 취소하고 있어요.");
 });
 window.addEventListener("pagehide", () => donationImportPort?.disconnect());
+window.addEventListener("pagehide", cancelChannelIconLookups);
 clearDonationImportButton.addEventListener("click", async () => {
     if (!confirm("갱신으로 받은 후원 내역과 조회 상태를 초기화할까요? 실시간으로 저장한 기록은 유지돼요.")) return;
     try {
