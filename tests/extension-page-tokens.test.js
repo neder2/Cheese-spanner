@@ -82,7 +82,7 @@ const EXPECTED = {
         "--text-dim": "#6d6e70",
         "--accent": "#00ffa3",
         "--accent-text": "#23815a",
-        "--accent-weak": "#1bb37326",
+        "--accent-weak": "#1bb3730d",
         "--accent-contrast": "#0e0f10",
         "--focus-ring": "#23815a",
         "--warning": "#9f6b00",
@@ -91,8 +91,8 @@ const EXPECTED = {
         "--danger-bg": "rgba(199,55,55,0.08)",
         "--success-bg": "#1bb3730d",
         "--success-border": "#1bb3734d",
-        "--history-level-2": "#1bb3734d",
-        "--history-level-3": "#1bb37366",
+        "--history-level-2": "#1bb37326",
+        "--history-level-3": "#1bb3734d",
         "--bg-translucent": "rgba(255,255,255,0.85)",
         "--shadow-1": "02px2px0#0000001a,02px6px2px#0000000d",
         "--shadow-2": "04px4px0#0000001a,04px12px4px#0000000d",
@@ -214,11 +214,20 @@ test("extension page token pairs keep small text at 4.5:1", () => {
             pairs.push([`${name} on --surface-3`, token[name], token["--surface-3"]]);
         }
         // Brand text (spec §3.4 fixes light #23815a) and the retained warning colors are guarded on the
-        // page and card surfaces; light #23815a reaches only about 4.3:1 on --surface-2.
+        // page and card surfaces.
         for (const surface of [token["--bg"], token["--surface"]]) {
             pairs.push([`--accent-text on ${surface}`, token["--accent-text"], surface]);
+            pairs.push([
+                `--accent-text on --accent-weak over ${surface}`,
+                token["--accent-text"],
+                token["--accent-weak"],
+                surface,
+            ]);
             pairs.push([`--warning on ${surface}`, token["--warning"], surface]);
         }
+        // Deliberately skipped in light: #23815a on --surface-2 is about 4.26:1, so this pair must not be
+        // used for small text. Its one current use (.history-entry-chats in styles.css) is restyled by the
+        // history page task in history-layout.css.
         if (theme === "dark") {
             pairs.push(["--accent-text on --surface-2", token["--accent-text"], token["--surface-2"]]);
         }
