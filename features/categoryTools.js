@@ -5,7 +5,9 @@
  * 하는 일:
  *   - 전체 라이브의 방송 수·시청자 합계를 검색·필터와 독립적으로 표시하고 공유 조회의 소비자 수명을 관리한다.
  *   - /lives에서 직접 선택한 카테고리 제외를 프로필에 보관하고 현재 카드 정체성과 여러 탭의 최신 목록으로 판정한다.
- *   - 탭/정렬 줄 옆에 검색 입력과 필터(팔로워 수, 조회수/시청자 수, 진행 시간 범위) 버튼이 있는 툴바를 DOM에 삽입한다.
+ *   - 탭/정렬 줄 옆에 검색 입력과 필터(팔로워 수, 조회수/시청자 수, 진행 시간의 전체·이상·이하·범위) 버튼이 있는 툴바를,
+ *     그 줄 아래에 적용 중인 조건 칩·모두 해제·결과 수를 보여 주는 적용 조건 줄을 DOM에 삽입한다.
+ *   - 검색어와 숫자 조건을 이 탭의 사이트 sessionStorage에 목록 주소별로 두고 돌아오거나 새로고침하면 되살린다.
  *   - Chzzk API(v1/v2 lives, videos, clips, channels)에서 메타데이터를 페이지네이션으로 받아 캐싱하고,
  *     검색어/필터 조건에 맞는 카드를 기존 DOM 카드를 템플릿 삼아 추가로 주입한 뒤 조건에 안 맞는 카드는 숨긴다.
  *   - 검색 결과 카드는 24개 단위로 추가하고 바닥 근처에서 이어서 표시한다. 썸네일은 브라우저 지연 로딩을 사용한다.
@@ -22,6 +24,7 @@
  *   categoryToolsFollowerFilterPreset1~6, categoryToolsViewFilterPreset1~6, categoryToolsDurationFilterPreset1~6,
  *   categoryToolsFollowerFetchMaxPerPass, categoryToolsFollowerFetchConcurrency, categoryToolsFollowerFetchDelayMs.
  * DOM 마커: id betterchzzk-category-tools(바), betterchzzk-category-filter-menu(필터 메뉴),
+ *   betterchzzk-category-filter-chips(적용 조건 줄),
  *   betterchzzk-category-tools-fallback(정렬 줄을 못 찾을 때 대체 호스트), betterchzzk-category-tools-style;
  *   data-bcgt-* 프리픽스 속성들(카드/주입/숨김/순서/배지 마킹용).
  * 구조 (위→아래 순서):
@@ -29,9 +32,9 @@
  *   - 라우트 판별(getRoute)과 탭 줄·정렬 줄·콘텐츠 좌표 탐색 함수들.
  *   - 카드 링크/그리드 탐색과 카드 엔트리 생성(findGrid, getCardEntries 등).
  *   - repository.js가 소유하는 메타데이터·팔로워 조회를 화면의 대상 ID와 연결한다.
- *   - 필터 상태(followerFilter*, viewFilter*, durationFilter*)와 팔로워 배지 갱신 대상 DOM을 관리한다.
- *   - 필터 모델(categoryTools/filterModel.js)의 수치 계산을 이용한 프리셋 버튼/드래그 선택,
- *     필터 메뉴 빌드(buildMenu)와 위치 계산(positionMenu).
+ *   - 종류별 필터 상태(filterStates의 mode·min·max)와 검색 단어, 팔로워 배지 갱신 대상 DOM을 관리한다.
+ *   - 필터 모델(categoryTools/filterModel.js)의 모드·조건 문구·검색 단어·탭 기록 계산을 이용한 필터 메뉴
+ *     빌드(buildMenu)와 위치 계산(positionMenu), 적용 조건 줄(syncAppliedConditions)과 탭 기록 저장·복원.
  *   - 주입 카드 생성(buildInjectedCard/buildInjectedLiveCard)과 팔로워·경과시간 배지 동기화.
  *   - 툴바 빌드/마운트(buildToolbar, mountToolbar)와 메인 적용 루프(applyTools).
  *     searchController.js는 다음 페이지 탐색·대기·취소를 소유하고 화면은 스크롤 여유를 전달한다.
@@ -76,19 +79,17 @@
     });
     const DEFAULT_PROFILE_IMAGE_URL =
         "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2080%2080'%3E%3Crect%20width='80'%20height='80'%20rx='40'%20fill='%23E7EAEE'/%3E%3Ccircle%20cx='40'%20cy='31'%20r='14'%20fill='%239DA5B6'/%3E%3Cpath%20d='M18%2068c3-15%2015-24%2022-24s19%209%2022%2024'%20fill='%239DA5B6'/%3E%3C/svg%3E";
+    const APPLIED_CONDITIONS_ID = "betterchzzk-category-filter-chips";
+    const SEARCH_HINT_ID = "betterchzzk-category-search-hint";
+    // 검색어·숫자 조건은 이 탭의 사이트 sessionStorage에 목록 주소별로 둔다(탭을 닫으면 사라진다).
+    const LIST_FILTER_SESSION_KEY = "betterChzzkListFilterSession";
     let currentQuery = "";
-    let followerFilterMin = 0;
-    let followerFilterMax = 0;
-    let viewFilterMin = 0;
-    let viewFilterMax = 0;
-    let durationFilterMin = 0;
-    let durationFilterMax = 0;
-    let followerFilterCustom = "";
-    let followerFilterMaxCustom = "";
-    let viewFilterCustom = "";
-    let viewFilterMaxCustom = "";
-    let durationFilterCustom = "";
-    let durationFilterMaxCustom = "";
+    let filterStates = null;
+    // 방송을 보고 돌아와 이전 조건을 되살린 뒤 사용자가 아직 조건을 바꾸지 않은 상태.
+    let restoredConditionsPending = false;
+    // 도구를 떼거나 목록 주소가 바뀌어 메모리 조건을 비운 뒤, 다음 장착에서 탭 기록을 다시 읽어야 하는 상태.
+    let listFiltersNeedRestore = true;
+    let searchTermsCache = { query: null, terms: null };
     let observer = null;
     let applying = false;
     let applyQueued = false;
@@ -102,8 +103,6 @@
     let toolbarRescueFrame = 0;
     let toolbarRescueGeneration = 0;
     let searchApplyTimer = 0;
-    let filterOptionDrag = null;
-    let suppressNextOptionClick = false;
     let liveElapsedTimer = 0;
     let durationFilterRefreshTimer = 0;
     let featureOptions = BetterChzzkSettings.normalizeOptions();
@@ -187,17 +186,30 @@
         touchMapEntry,
     } = BetterChzzk.utils;
     const {
+        FILTER_KINDS,
         passesCountRange,
         parseFilterInputForKind,
         formatFilterInputForKind,
         getFilterPresetValues,
-        getFilterPresetRanges,
-        formatFilterOptionLabel,
-        combineFilterOptionRanges,
-        hasFilterOptionRange,
+        createFilterState,
+        effectiveRange,
+        isActiveRange,
+        setFilterMode,
+        setFilterSingleValue,
+        setFilterRangeValue,
+        formatConditionValue,
+        formatConditionLabel,
+        normalizeSearchText,
+        parseSearchTerms,
+        hasSearchTerms,
+        matchesSearchTerms,
+        removeSearchTerm,
+        readListFilterSession,
+        writeListFilterRoute,
         passesCategoryExclusions,
         passesTagExclusions,
     } = BetterChzzk.categoryToolsFilterModel;
+    filterStates = createFilterStates();
     const { routeKey } = BetterChzzk.categoryToolsRepository;
     const dataRepository = BetterChzzk.categoryToolsRepository.createRepository({
         fetchJson,
@@ -1113,6 +1125,7 @@
         return Boolean(
             document.getElementById(BAR_ID) ||
             document.getElementById(MENU_ID) ||
+            document.getElementById(APPLIED_CONDITIONS_ID) ||
             document.getElementById(GLOBAL_FALLBACK_ID) ||
             document.querySelector(
                 `[${CARD_ATTR}="1"],[${INJECTED_ATTR}="1"],[${EMPTY_ATTR}="1"],[${FOLLOWER_BADGE_ATTR}="1"],[${LIVE_ELAPSED_BADGE_ATTR}="1"]`
@@ -1284,12 +1297,53 @@
 #${BAR_ID} .bcgt-clear:hover{color:var(--bcgt-text-strong);background:var(--bcgt-hover);}
 #${BAR_ID}[data-has-query="1"] .bcgt-clear{display:inline-flex;}
 #${BAR_ID} :is(.bcgt-clear,.bcgt-filter):focus-visible{outline:2px solid var(--bcgt-focus);outline-offset:2px;}
-#${BAR_ID} .bcgt-status{font-variant-numeric:tabular-nums;}
-#${BAR_ID} .bcgt-meter{
-  display:inline-flex;align-items:center;flex:0 0 auto;
-  color:var(--bcgt-text);white-space:nowrap;
-  min-height:var(--bcgt-height);
+/* 필터 버튼은 줄 오른쪽 끝이라 상위 요소가 바깥으로 나온 테두리를 잘라내므로 초점 테두리를 안쪽에 그린다. */
+#${BAR_ID} .bcgt-filter:focus-visible{outline-offset:-2px;}
+#${SEARCH_HINT_ID}{
+  /* 툴바가 든 탭 줄의 상위 요소가 넘친 부분을 잘라내므로 메뉴처럼 문서에 고정 위치로 띄운다. */
+  position:fixed;top:0;left:0;z-index:2147483644;
+  display:none;width:max-content;max-width:min(320px, calc(100vw - 16px));padding:6px 10px;
+  border:1px solid var(--bct-border);border-radius:var(--bct-radius-md);
+  background:var(--bct-surface);box-shadow:var(--bct-shadow);color:var(--bct-text-body);
+  font-family:inherit;font-size:12px;line-height:18px;font-weight:400;
+  white-space:normal;word-break:keep-all;overflow-wrap:anywhere;pointer-events:none;
+  box-sizing:border-box;
 }
+#${SEARCH_HINT_ID}[data-open="1"]{display:block;}
+#${APPLIED_CONDITIONS_ID}{
+  /* 툴바와 같은 줄 안에서 order로 맨 아래 줄을 차지한다. 이번 조건은 옅은 브랜드 면, 영구 제외는 채운 브랜드색이다. */
+  order:1000;flex:0 0 100%;width:100%;min-width:0;
+  display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:4px 0 8px;
+  color:var(--bct-text-muted);font-family:inherit;font-size:12px;line-height:18px;font-weight:400;
+  box-sizing:border-box;
+}
+#${APPLIED_CONDITIONS_ID}[hidden]{display:none;}
+#${APPLIED_CONDITIONS_ID} .bcgt-applied-label{flex:0 0 auto;font-weight:700;}
+#${APPLIED_CONDITIONS_ID} .bcgt-applied-chips{display:contents;}
+#${APPLIED_CONDITIONS_ID} .bcgt-chip{
+  display:inline-flex;align-items:center;max-width:100%;height:26px;
+  border:1px solid var(--bct-brand-text-base);border-radius:var(--bct-radius-full);
+  background:var(--bct-brand-weak);color:var(--bct-text);box-sizing:border-box;
+}
+#${APPLIED_CONDITIONS_ID} .bcgt-chip[data-negative="1"]{border-color:var(--bct-danger);background:transparent;}
+#${APPLIED_CONDITIONS_ID} .bcgt-chip-body{
+  min-width:0;height:100%;padding:0 4px 0 10px;border:0;border-radius:var(--bct-radius-full);
+  background:transparent;color:inherit;font:inherit;font-weight:700;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;
+}
+#${APPLIED_CONDITIONS_ID} .bcgt-chip-remove{
+  flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;
+  width:20px;height:20px;margin-right:3px;padding:0;border:0;border-radius:50%;
+  background:transparent;color:inherit;cursor:pointer;
+}
+#${APPLIED_CONDITIONS_ID} :is(.bcgt-chip-body,.bcgt-chip-remove):hover{background:var(--bct-hover);}
+#${APPLIED_CONDITIONS_ID} .bcgt-applied-clear{
+  height:26px;padding:0 6px;border:0;background:transparent;color:var(--bct-text-muted);
+  font:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer;
+}
+#${APPLIED_CONDITIONS_ID} .bcgt-applied-clear:hover{color:var(--bct-text);}
+#${APPLIED_CONDITIONS_ID} .bcgt-status{margin-left:auto;font-variant-numeric:tabular-nums;white-space:nowrap;}
+#${APPLIED_CONDITIONS_ID} button:focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:2px;}
 #${BAR_ID} .bcgt-spinner{
   width:12px;height:12px;border-radius:50%;
   border:2px solid var(--bct-border-alpha);
@@ -1298,11 +1352,13 @@
   display:none;margin-left:6px;
 }
 #${BAR_ID}[data-loading="1"] .bcgt-spinner{display:block;}
-/* 스피너는 검색창 안에 두고, 결과 수가 없을 때는 빈 결과 영역의 간격을 접는다. 결과 수 영역(aria-live)은 계속 둔다. */
-#${BAR_ID} .bcgt-meter:has(.bcgt-status:empty){margin-left:-6px;}
 @keyframes bcgt-spin{to{transform:rotate(360deg);}}
 @media (prefers-reduced-motion:reduce){#${BAR_ID} .bcgt-spinner{animation:none;}}
 #${BAR_ID} .bcgt-filter-wrap{position:relative;display:inline-flex;margin-left:auto;}
+/* 접힘은 아래(▾), 메뉴가 열리면 위(▴)를 가리킨다. */
+#${BAR_ID} .bcgt-filter-caret{display:inline-block;transition:transform 120ms ease;}
+#${BAR_ID}[data-menu-open="1"] .bcgt-filter-caret{transform:rotate(180deg);}
+@media (prefers-reduced-motion:reduce){#${BAR_ID} .bcgt-filter-caret{transition:none;}}
 #${BAR_ID} .bcgt-filter{
   display:inline-flex;
   align-items:center;
@@ -1343,7 +1399,7 @@
   left:0;
   right:auto;
   display:none;
-  width:560px;
+  width:420px;
   max-width:calc(100vw - 16px);
   padding:8px;
   border:1px solid var(--bcgt-menu-border);
@@ -1362,20 +1418,59 @@
 #${MENU_ID}[data-open="1"], #${CATEGORY_ADD_ID}[data-open="1"]{display:block;}
 #${CATEGORY_ADD_ID}{width:400px;box-sizing:border-box;}
 #${MENU_ID} .bcgt-filter-groups{
-  display:grid;
-  grid-template-columns:minmax(0, 1fr) minmax(0, 1fr);
-  gap:12px;
+  display:flex;
+  flex-direction:column;
 }
 #${MENU_ID} .bcgt-filter-group{
   display:flex;
   min-width:0;
   flex-direction:column;
-  gap:4px;
+  gap:8px;
+  padding:10px 4px;
+  border-top:1px solid var(--bct-border-weaker);
 }
-#${MENU_ID} .bcgt-filter-group[data-filter-group="duration"]{
-  grid-column:1 / -1;
-}
+#${MENU_ID} .bcgt-filter-group:first-child{border-top:0;}
 #${MENU_ID} .bcgt-filter-group[hidden]{display:none;}
+#${MENU_ID} .bcgt-filter-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;}
+#${MENU_ID} .bcgt-mode-list{display:inline-flex;flex:0 0 auto;gap:2px;padding:2px;border-radius:var(--bct-radius-full);background:var(--bct-surface-weak);}
+#${MENU_ID} .bcgt-mode{
+  height:26px;
+  padding:0 10px;
+  border:1px solid transparent;
+  border-radius:var(--bct-radius-full);
+  background:transparent;
+  color:var(--bcgt-menu-text-sub);
+  font:inherit;
+  font-size:12px;
+  font-weight:700;
+  white-space:nowrap;
+  cursor:pointer;
+}
+#${MENU_ID} .bcgt-mode:hover{color:var(--bcgt-menu-text);}
+/* 라이트의 옅은 브랜드 면 위 브랜드 글자는 대비가 모자라, 선택은 옅은 면과 브랜드 테두리·본문 글자로 보인다. */
+#${MENU_ID} .bcgt-mode[aria-pressed="true"]{
+  border-color:var(--bcgt-menu-brand-border);
+  background:var(--bcgt-menu-checked-bg);
+  color:var(--bcgt-menu-text);
+}
+#${MENU_ID} .bcgt-filter-body{display:flex;flex-direction:column;gap:6px;min-width:0;}
+#${MENU_ID} .bcgt-filter-body[hidden]{display:none;}
+#${MENU_ID} .bcgt-quick-list{display:flex;flex-wrap:wrap;gap:6px;}
+#${MENU_ID} .bcgt-quick{
+  height:28px;
+  padding:0 11px;
+  border:1px solid var(--bcgt-menu-border);
+  border-radius:var(--bct-radius-full);
+  background:transparent;
+  color:var(--bcgt-menu-text);
+  font:inherit;
+  font-weight:700;
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+  cursor:pointer;
+}
+#${MENU_ID} .bcgt-quick:hover{background:var(--bcgt-menu-hover);}
+#${MENU_ID} .bcgt-quick[aria-pressed="true"]{border-color:var(--bcgt-menu-brand-border);background:var(--bcgt-menu-checked-bg);}
 #${CATEGORY_ADD_ID} .bcgt-category-exclusions{display:flex;flex-direction:column;gap:8px;min-width:0;}
 #${CATEGORY_ADD_ID} .bcgt-category-search-label{display:flex;flex-direction:column;gap:4px;color:var(--bcgt-menu-text-sub);}
 #${CATEGORY_ADD_ID} .bcgt-category-hint{color:var(--bcgt-menu-text-sub);font-size:12px;line-height:18px;overflow-wrap:anywhere;}
@@ -1391,49 +1486,11 @@
 #${CATEGORY_ADD_ID} .bcgt-category-button[hidden]{display:none;}
 #${CATEGORY_ADD_ID} :is(.bcgt-category-button,[data-category-search]):focus-visible{outline:2px solid var(--bcgt-menu-focus);outline-offset:2px;}
 #${CATEGORY_ADD_ID} :is([data-category-search-status],[data-category-store-status],[data-category-selected-status]){color:var(--bcgt-menu-text-sub);overflow-wrap:anywhere;line-height:20px;}
-#${MENU_ID} .bcgt-option-list{
-  display:flex;
-  min-width:0;
-  flex-direction:column;
-  gap:4px;
-}
-#${MENU_ID} [data-filter-options="duration"]{
-  display:grid;
-  grid-template-columns:repeat(4, minmax(0, 1fr));
-}
 #${MENU_ID} .bcgt-filter-title{
-  padding:2px 8px 4px;
-  color:var(--bcgt-menu-text-sub);
-  font-size:12px;
+  color:var(--bcgt-menu-text);
+  font-size:13px;
   font-weight:800;
-}
-#${MENU_ID} .bcgt-option{
-  display:flex;
-  width:100%;
-  height:28px;
-  align-items:center;
-  padding:0 10px;
-  border:0;
-  border-radius:var(--bct-radius-md);
-  background:transparent;
-  color:var(--bcgt-menu-text);
-  font:inherit;
-  font-weight:700;
-  text-align:left;
   white-space:nowrap;
-  cursor:pointer;
-  user-select:none;
-  touch-action:none;
-}
-#${MENU_ID} .bcgt-option:hover{background:var(--bcgt-menu-hover);}
-#${MENU_ID} .bcgt-option[aria-pressed="true"],
-#${MENU_ID} .bcgt-option[data-in-range="1"]{
-  color:var(--bcgt-menu-text);
-  background:var(--bcgt-menu-checked-bg);
-}
-#${MENU_ID} .bcgt-option[aria-pressed="true"],
-#${MENU_ID} .bcgt-option[data-range-edge="1"]{
-  box-shadow:inset 0 0 0 1px var(--bcgt-menu-brand-border);
 }
 #${MENU_ID} .bcgt-custom{
   display:flex;
@@ -1479,11 +1536,14 @@
 #${MENU_ID} :is(button,input):focus-visible{outline:2px solid var(--bcgt-menu-focus);outline-offset:2px;}
 #${MENU_ID} .bcgt-reset-row{
   display:flex;
-  justify-content:flex-end;
-  margin-top:10px;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-top:4px;
   padding-top:8px;
   border-top:1px solid var(--bcgt-menu-border);
 }
+#${MENU_ID} .bcgt-filter-note{color:var(--bcgt-menu-text-sub);font-size:12px;line-height:16px;}
 #${MENU_ID} .bcgt-reset{
   display:inline-flex;
   align-items:center;
@@ -1523,12 +1583,7 @@
     width:calc(100vw - 16px);
     max-height:min(74vh, 560px);
   }
-  #${MENU_ID} .bcgt-filter-groups{
-    grid-template-columns:1fr;
-  }
-  #${MENU_ID} [data-filter-options="duration"]{
-    grid-template-columns:repeat(2, minmax(0, 1fr));
-  }
+  #${MENU_ID} .bcgt-filter-head{flex-wrap:wrap;}
 }
 [${FOLLOWER_BADGE_WRAP_ATTR}="1"]{
   display:inline-flex !important;
@@ -2229,9 +2284,7 @@
         return cachedGrid;
     }
 
-    function getCardDomText(card) {
-        if (card.__bcgtDomText) return card.__bcgtDomText;
-
+    function readCardDomParts(card) {
         const parts = [];
         const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, {
             acceptNode(node) {
@@ -2242,9 +2295,25 @@
             },
         });
         while (walker.nextNode()) parts.push(walker.currentNode.nodeValue || "");
+        return parts;
+    }
+
+    function getCardDomText(card) {
+        if (card.__bcgtDomText) return card.__bcgtDomText;
+
+        const parts = readCardDomParts(card);
+        card.__bcgtDomFields = parts.map(normalizeSearchText).filter(Boolean);
         const text = normSpace(parts.join(" "));
         card.__bcgtDomText = text;
         return text;
+    }
+
+    // 검색 단어는 카드 글자 조각마다 따로 찾는다. 조각을 이어 붙이면 칸 경계를 넘어 엉뚱하게 일치한다.
+    function getCardDomFields(card) {
+        if (!Array.isArray(card.__bcgtDomFields)) {
+            card.__bcgtDomFields = readCardDomParts(card).map(normalizeSearchText).filter(Boolean);
+        }
+        return card.__bcgtDomFields;
     }
 
     function createCardEntry(card, id, meta = null) {
@@ -2265,6 +2334,7 @@
         const previousId = card.getAttribute(CARD_ID_ATTR);
         if (previousId && previousId !== id) {
             delete card.__bcgtDomText;
+            delete card.__bcgtDomFields;
             card.removeAttribute(HIDE_ATTR);
             card.removeAttribute(ORDER_ATTR);
             removeFollowerBadge(card);
@@ -2513,31 +2583,46 @@
         });
     }
 
-    function buildSearchText(row) {
-        const meta = row.meta || {};
-        const metaText = buildMetaSearchText(meta);
-        const card = row.entry?.card;
-        const cacheKey = `${row.entry.domText}|${metaText}`;
-        if (card?.__bcgtSearchTextKey === cacheKey && card.__bcgtSearchText) return card.__bcgtSearchText;
+    function createFilterStates() {
+        return Object.fromEntries(FILTER_KINDS.map((kind) => [kind, createFilterState()]));
+    }
 
-        const text = normalize([row.entry.domText, metaText].join(" "));
-        if (card) {
-            card.__bcgtSearchTextKey = cacheKey;
-            card.__bcgtSearchText = text;
+    function filterRange(kind) {
+        return effectiveRange(filterStates[kind]);
+    }
+
+    function currentSearchTerms() {
+        if (searchTermsCache.query !== currentQuery) {
+            searchTermsCache = { query: currentQuery, terms: parseSearchTerms(currentQuery) };
         }
-        return text;
+        return searchTermsCache.terms;
+    }
+
+    function buildMetaSearchFields(meta) {
+        if (!meta) return [];
+        if (Array.isArray(meta._bcgtSearchFields)) return meta._bcgtSearchFields;
+        const fields = [meta.title, meta.channelName, meta.categoryName, ...(Array.isArray(meta.tags) ? meta.tags : [])]
+            .map(normalizeSearchText)
+            .filter(Boolean);
+        if (meta.id) meta._bcgtSearchFields = fields;
+        return fields;
+    }
+
+    function rowSearchFields(row) {
+        const card = row.entry?.card;
+        return [...(card ? getCardDomFields(card) : []), ...buildMetaSearchFields(row.meta)];
     }
 
     function hasFollowerFilter() {
-        return followerFilterMin > 0 || followerFilterMax > 0;
+        return isActiveRange(filterRange("followers"));
     }
 
     function hasViewFilter() {
-        return viewFilterMin > 0 || viewFilterMax > 0;
+        return isActiveRange(filterRange("views"));
     }
 
     function hasDurationFilter() {
-        return durationFilterMin > 0 || durationFilterMax > 0;
+        return isActiveRange(filterRange("duration"));
     }
 
     function hasActiveFilters() {
@@ -2549,11 +2634,12 @@
     }
 
     function activeFilterCount() {
-        return (hasFollowerFilter() ? 1 : 0) + (hasViewFilter() ? 1 : 0) + (hasDurationFilter() ? 1 : 0);
+        return FILTER_KINDS.filter((kind) => isActiveRange(filterRange(kind))).length;
     }
 
     function passesViewFilter(meta) {
-        return passesCountRange(meta?.views, viewFilterMin, viewFilterMax);
+        const { min, max } = filterRange("views");
+        return passesCountRange(meta?.views, min, max);
     }
 
     function getLiveElapsedSeconds(meta, now = Date.now()) {
@@ -2566,7 +2652,8 @@
         if (!hasDurationFilter()) return true;
         const elapsed = getLiveElapsedSeconds(meta);
         if (elapsed === null) return false;
-        return passesCountRange(elapsed, durationFilterMin, durationFilterMax);
+        const { min, max } = filterRange("duration");
+        return passesCountRange(elapsed, min, max);
     }
 
     function clearDurationFilterRefreshTimer() {
@@ -2579,17 +2666,18 @@
         clearDurationFilterRefreshTimer();
         if (!hasDurationFilter()) return;
 
+        const { min: durationMin, max: durationMax } = filterRange("duration");
         const now = Date.now();
         let nextAt = Number.POSITIVE_INFINITY;
         for (const meta of metadata || []) {
             const start = parseDateTime(meta?.publishDate);
             if (!start || start > now) continue;
             const elapsed = Math.floor((now - start) / 1000);
-            if (durationFilterMin > 0 && elapsed < durationFilterMin) {
-                nextAt = Math.min(nextAt, start + durationFilterMin * 1000);
+            if (durationMin > 0 && elapsed < durationMin) {
+                nextAt = Math.min(nextAt, start + durationMin * 1000);
             }
-            if (durationFilterMax > 0 && elapsed <= durationFilterMax) {
-                nextAt = Math.min(nextAt, start + (durationFilterMax + 1) * 1000);
+            if (durationMax > 0 && elapsed <= durationMax) {
+                nextAt = Math.min(nextAt, start + (durationMax + 1) * 1000);
             }
         }
         if (!Number.isFinite(nextAt)) return;
@@ -2608,22 +2696,20 @@
         viewFilterSnapshotNextOrder = 0;
     }
 
-    function getViewFilterSnapshotKey(route, query = normalize(currentQuery)) {
-        if (!hasViewFilter()) return "";
-        return [
-            routeKey(route),
-            query,
-            viewFilterMin,
-            viewFilterMax,
-            followerFilterMin,
-            followerFilterMax,
-            durationFilterMin,
-            durationFilterMax,
-        ].join("|");
+    function filterRangesKey() {
+        return FILTER_KINDS.map((kind) => {
+            const { min, max } = filterRange(kind);
+            return `${min}-${max}`;
+        }).join("|");
     }
 
-    function syncViewFilterSnapshot(route, query = normalize(currentQuery)) {
-        const key = getViewFilterSnapshotKey(route, query);
+    function getViewFilterSnapshotKey(route, searchKey = currentSearchTerms().key) {
+        if (!hasViewFilter()) return "";
+        return [routeKey(route), searchKey, filterRangesKey()].join("|");
+    }
+
+    function syncViewFilterSnapshot(route, searchKey = currentSearchTerms().key) {
+        const key = getViewFilterSnapshotKey(route, searchKey);
         if (!key) {
             resetViewFilterSnapshot();
             return "";
@@ -2684,210 +2770,32 @@
         const channelId = meta?.channelId;
         const cached = channelId ? readFollowerCache(channelId) : { hit: false };
         if (!cached.hit || cached.count === null) return false;
-        return passesCountRange(cached.count, followerFilterMin, followerFilterMax);
+        const { min, max } = filterRange("followers");
+        return passesCountRange(cached.count, min, max);
     }
 
-    function passesMetaFilters(meta, query = "") {
+    function passesMetaFilters(meta, terms = currentSearchTerms()) {
         if (!passesMetaCategoryExclusions(meta)) return false;
-        if (query && !buildMetaSearchText(meta).includes(query)) return false;
+        if (!matchesSearchTerms(buildMetaSearchFields(meta), terms)) return false;
         if (!passesViewFilter(meta) && !isViewFilterSnapshotId(meta?.id)) return false;
         if (!passesDurationFilter(meta)) return false;
         return passesFollowerFilter(meta);
     }
 
-    function buildFilterOptionButtons(kind, unit) {
-        return getFilterPresetRanges(kind, featureOptions)
-            .map(
-                ({ min, max }) =>
-                    `<button type="button" class="bcgt-option" data-filter-kind="${kind}" data-filter-min="${min}" data-filter-max="${max}" aria-pressed="false">${formatFilterOptionLabel(kind, min, max, unit)}</button>`
-            )
-            .join("");
-    }
-
-    function syncFilterOptionButtons(menu, route = getRoute()) {
-        if (!menu) return;
-        const isLiveList = route?.tab === "lives";
-        const viewUnit = isLiveList ? "명" : "회";
-        const renderKey = [
-            getFilterPresetValues("followers", featureOptions).join(","),
-            getFilterPresetValues("views", featureOptions).join(","),
-            getFilterPresetValues("duration", featureOptions).join(","),
-            viewUnit,
-        ].join("|");
-        if (menu.__bcgtFilterOptionsKey === renderKey) return;
-
-        const followerOptions = menu.querySelector('[data-filter-options="followers"]');
-        const viewOptions = menu.querySelector('[data-filter-options="views"]');
-        const durationOptions = menu.querySelector('[data-filter-options="duration"]');
-        if (followerOptions) followerOptions.innerHTML = buildFilterOptionButtons("followers", "명");
-        if (viewOptions) viewOptions.innerHTML = buildFilterOptionButtons("views", viewUnit);
-        if (durationOptions) durationOptions.innerHTML = buildFilterOptionButtons("duration", "시간");
-        menu.__bcgtFilterOptionsKey = renderKey;
-    }
-
-    function getFilterState(kind) {
-        if (kind === "followers") {
-            return {
-                min: followerFilterMin,
-                max: followerFilterMax,
-                minCustom: followerFilterCustom,
-                maxCustom: followerFilterMaxCustom,
-            };
-        }
-        if (kind === "duration") {
-            return {
-                min: durationFilterMin,
-                max: durationFilterMax,
-                minCustom: durationFilterCustom,
-                maxCustom: durationFilterMaxCustom,
-            };
-        }
-        return {
-            min: viewFilterMin,
-            max: viewFilterMax,
-            minCustom: viewFilterCustom,
-            maxCustom: viewFilterMaxCustom,
-        };
-    }
-
-    function setFilterValue(kind, min, customValue = "", max = 0, maxCustomValue = "") {
-        if (kind === "followers") {
-            followerFilterMin = min;
-            followerFilterMax = max;
-            followerFilterCustom = customValue;
-            followerFilterMaxCustom = maxCustomValue;
-        }
-        if (kind === "views") {
-            viewFilterMin = min;
-            viewFilterMax = max;
-            viewFilterCustom = customValue;
-            viewFilterMaxCustom = maxCustomValue;
-        }
-        if (kind === "duration") {
-            durationFilterMin = min;
-            durationFilterMax = max;
-            durationFilterCustom = customValue;
-            durationFilterMaxCustom = maxCustomValue;
-        }
-    }
-
-    function setFilterMin(kind, min, customValue = "") {
-        if (kind === "followers") {
-            followerFilterMin = min;
-            followerFilterCustom = customValue;
-        }
-        if (kind === "views") {
-            viewFilterMin = min;
-            viewFilterCustom = customValue;
-        }
-        if (kind === "duration") {
-            durationFilterMin = min;
-            durationFilterCustom = customValue;
-        }
-    }
-
-    function setFilterMax(kind, max, customValue = "") {
-        if (kind === "followers") {
-            followerFilterMax = max;
-            followerFilterMaxCustom = customValue;
-        }
-        if (kind === "views") {
-            viewFilterMax = max;
-            viewFilterMaxCustom = customValue;
-        }
-        if (kind === "duration") {
-            durationFilterMax = max;
-            durationFilterMaxCustom = customValue;
-        }
+    function setFilterState(kind, state) {
+        if (!FILTER_KINDS.includes(kind)) return;
+        filterStates = { ...filterStates, [kind]: state };
     }
 
     function resetDurationFilterState() {
-        durationFilterMin = 0;
-        durationFilterMax = 0;
-        durationFilterCustom = "";
-        durationFilterMaxCustom = "";
+        setFilterState("duration", createFilterState());
         clearDurationFilterRefreshTimer();
     }
 
     function resetFilterState() {
-        followerFilterMin = 0;
-        followerFilterMax = 0;
-        viewFilterMin = 0;
-        viewFilterMax = 0;
-        followerFilterCustom = "";
-        followerFilterMaxCustom = "";
-        viewFilterCustom = "";
-        viewFilterMaxCustom = "";
-        resetDurationFilterState();
+        filterStates = createFilterStates();
+        clearDurationFilterRefreshTimer();
         resetViewFilterSnapshot();
-    }
-
-    function setFilterRangeFromOptions(kind, firstRange, lastRange) {
-        const { min, max } = combineFilterOptionRanges(firstRange, lastRange);
-        setFilterValue(
-            kind,
-            min,
-            min > 0 ? formatFilterInputForKind(kind, min) : "",
-            max,
-            formatFilterInputForKind(kind, max)
-        );
-    }
-
-    function getFilterOptionAtPoint(x, y, kind) {
-        const target = document.elementFromPoint(x, y);
-        const option = target?.closest?.(".bcgt-option");
-        if (!option || option.getAttribute("data-filter-kind") !== kind) return null;
-        return option;
-    }
-
-    function optionFilterRange(option) {
-        return {
-            min: Number(option?.getAttribute("data-filter-min")) || 0,
-            max: Number(option?.getAttribute("data-filter-max")) || 0,
-        };
-    }
-
-    function isFilterRangeActive(kind, range) {
-        const state = getFilterState(kind);
-        return state.min === range.min && state.max === range.max;
-    }
-
-    function updateFilterDrag(event, finish = false) {
-        if (!filterOptionDrag) return false;
-        const option = getFilterOptionAtPoint(event.clientX, event.clientY, filterOptionDrag.kind);
-        if (!option) return filterOptionDrag.moved;
-
-        const range = optionFilterRange(option);
-        const moved =
-            filterOptionDrag.moved ||
-            range.min !== filterOptionDrag.startRange.min ||
-            range.max !== filterOptionDrag.startRange.max;
-        if (!moved) return false;
-
-        filterOptionDrag.moved = true;
-        if (
-            range.min !== filterOptionDrag.currentRange.min ||
-            range.max !== filterOptionDrag.currentRange.max ||
-            finish
-        ) {
-            filterOptionDrag.currentRange = range;
-            setFilterRangeFromOptions(filterOptionDrag.kind, filterOptionDrag.startRange, range);
-            updateUiState();
-            scheduleMenuPosition();
-        }
-        return true;
-    }
-
-    function endFilterDrag(event) {
-        if (!filterOptionDrag) return;
-        const moved = updateFilterDrag(event, true);
-        filterOptionDrag = null;
-        if (!moved) return;
-        suppressNextOptionClick = true;
-        scheduleApply();
-        setTimeout(() => {
-            suppressNextOptionClick = false;
-        }, 0);
     }
 
     function buildMetaSearchText(meta) {
@@ -3838,7 +3746,7 @@
         );
     }
 
-    async function syncInjectedCards(route, grid, entries, metadata, query, isCurrent) {
+    async function syncInjectedCards(route, grid, entries, metadata, terms, isCurrent) {
         pendingInjectedRender = false;
         if (!isAutoLoadActive()) return [];
 
@@ -3855,7 +3763,7 @@
 
         for (const meta of metadata.values()) {
             if (!meta.id || renderedIds.has(meta.id)) continue;
-            if (!passesMetaFilters(meta, query)) continue;
+            if (!passesMetaFilters(meta, terms)) continue;
             if (existingCount + builtCount >= injectedRenderLimit) {
                 pendingInjectedRender = true;
                 break;
@@ -3877,6 +3785,70 @@
         return injectedEntries;
     }
 
+    const FILTER_GROUP_TITLES = Object.freeze({ followers: "팔로워 수", views: "조회수", duration: "진행 시간" });
+    const FILTER_MODE_LABELS = Object.freeze([
+        ["none", "전체"],
+        ["min", "이상"],
+        ["max", "이하"],
+        ["range", "범위"],
+    ]);
+    // 사용자가 직접 친 입력 원문. 값이 같으면 다시 그릴 때도 원문(예: 2천)을 그대로 보여 준다.
+    const filterInputDrafts = new Map();
+
+    function filterGroupHtml(kind) {
+        const title = FILTER_GROUP_TITLES[kind];
+        const inputMode = kind === "duration" ? "decimal" : "numeric";
+        const example = kind === "duration" ? "예: 1.5" : "예: 2천";
+        const modes = FILTER_MODE_LABELS.map(
+            ([mode, label]) =>
+                `<button type="button" class="bcgt-mode" data-filter-kind="${kind}" data-filter-mode="${mode}" aria-pressed="${mode === "none"}">${label}</button>`
+        ).join("");
+        return `
+  <section class="bcgt-filter-group" data-filter-group="${kind}" aria-labelledby="bcgt-filter-title-${kind}">
+    <div class="bcgt-filter-head">
+      <div class="bcgt-filter-title" id="bcgt-filter-title-${kind}">${title}</div>
+      <div class="bcgt-mode-list" role="group" aria-labelledby="bcgt-filter-title-${kind}">${modes}</div>
+    </div>
+    <div class="bcgt-filter-body" data-filter-body="single" hidden>
+      <div class="bcgt-quick-list" data-filter-quick="${kind}"></div>
+      <label class="bcgt-custom" data-custom-kind="${kind}">
+        <span>직접</span>
+        <input type="text" inputmode="${inputMode}" data-filter-value-input="${kind}" aria-label="${title} 기준값" placeholder="${example}" />
+        <span data-filter-suffix="${kind}"></span>
+      </label>
+    </div>
+    <div class="bcgt-filter-body" data-filter-body="range" hidden>
+      <div class="bcgt-custom" data-custom-kind="${kind}">
+        <input type="text" inputmode="${inputMode}" data-filter-min-input="${kind}" aria-label="최소 ${title}" placeholder="최소" />
+        <span>~</span>
+        <input type="text" inputmode="${inputMode}" data-filter-max-input="${kind}" aria-label="최대 ${title}" placeholder="최대" />
+        <span data-filter-unit="${kind}"></span>
+      </div>
+    </div>
+  </section>`;
+    }
+
+    function filterInputBound(input) {
+        if (input.hasAttribute("data-filter-value-input")) return "value";
+        if (input.hasAttribute("data-filter-max-input")) return "max";
+        return input.hasAttribute("data-filter-min-input") ? "min" : "";
+    }
+
+    function filterInputKind(input) {
+        return (
+            input.getAttribute("data-filter-value-input") ||
+            input.getAttribute("data-filter-min-input") ||
+            input.getAttribute("data-filter-max-input") ||
+            ""
+        );
+    }
+
+    function clearFilterInputDrafts(kind = "") {
+        for (const key of Array.from(filterInputDrafts.keys())) {
+            if (!kind || key.startsWith(`${kind}:`)) filterInputDrafts.delete(key);
+        }
+    }
+
     function buildMenu() {
         const menu = document.createElement("div");
         menu.id = MENU_ID;
@@ -3885,109 +3857,56 @@
         menu.setAttribute("aria-label", "목록 필터");
         menu.setAttribute("data-open", "0");
         menu.innerHTML = `
-<div class="bcgt-filter-groups">
-  <section class="bcgt-filter-group" aria-label="팔로워 수">
-    <div class="bcgt-filter-title">팔로워 수</div>
-    <div class="bcgt-option-list" data-filter-options="followers"></div>
-    <div class="bcgt-custom" data-custom-kind="followers">
-      <span>직접</span>
-      <input type="text" inputmode="numeric" data-filter-min-input="followers" aria-label="최소 팔로워 수" placeholder="최소" />
-      <span>~</span>
-      <input type="text" inputmode="numeric" data-filter-max-input="followers" aria-label="최대 팔로워 수" placeholder="최대" />
-      <span>명</span>
-    </div>
-  </section>
-  <section class="bcgt-filter-group" aria-label="조회수" data-filter-group="views">
-    <div class="bcgt-filter-title" data-view-filter-title>조회수</div>
-    <div class="bcgt-option-list" data-filter-options="views"></div>
-    <div class="bcgt-custom" data-custom-kind="views">
-      <span>직접</span>
-      <input type="text" inputmode="numeric" data-filter-min-input="views" aria-label="최소 조회수 또는 시청자 수" placeholder="최소" />
-      <span>~</span>
-      <input type="text" inputmode="numeric" data-filter-max-input="views" aria-label="최대 조회수 또는 시청자 수" placeholder="최대" />
-      <span data-view-filter-unit>회</span>
-    </div>
-  </section>
-  <section class="bcgt-filter-group" aria-label="진행 시간" data-filter-group="duration">
-    <div class="bcgt-filter-title">진행 시간</div>
-    <div class="bcgt-option-list" data-filter-options="duration"></div>
-    <div class="bcgt-custom" data-custom-kind="duration">
-      <span>직접</span>
-      <input type="text" inputmode="decimal" data-filter-min-input="duration" aria-label="최소 진행 시간" placeholder="최소" />
-      <span>~</span>
-      <input type="text" inputmode="decimal" data-filter-max-input="duration" aria-label="최대 진행 시간" placeholder="최대" />
-      <span>시간</span>
-    </div>
-  </section>
+<div class="bcgt-filter-groups">${FILTER_KINDS.map(filterGroupHtml).join("")}
 </div>
 <div class="bcgt-reset-row">
-  <button type="button" class="bcgt-reset" data-filter-reset aria-label="&#54596;&#53552; &#52488;&#44592;&#54868;">&#54596;&#53552; &#52488;&#44592;&#54868;</button>
+  <span class="bcgt-filter-note">방송을 보고 돌아와도 이 탭에서 유지돼요</span>
+  <button type="button" class="bcgt-reset" data-filter-reset>필터 초기화</button>
 </div>
 `;
-        syncFilterOptionButtons(menu);
-        const resetButton = menu.querySelector("[data-filter-reset]");
-        if (resetButton) {
-            resetButton.addEventListener("click", (e) => {
-                e.stopPropagation();
-                resetFilterState();
-                updateUiState();
-                scheduleApply();
-                scheduleMenuPosition();
-            });
-        }
-        menu.addEventListener("pointermove", (e) => {
-            if (!filterOptionDrag) return;
-            e.preventDefault();
-            updateFilterDrag(e);
-        });
-        menu.addEventListener("pointerup", (e) => endFilterDrag(e));
-        menu.addEventListener("pointercancel", () => {
-            filterOptionDrag = null;
-        });
-        menu.addEventListener("pointerdown", (e) => {
-            const option = e.target?.closest?.(".bcgt-option");
-            if (!option || !menu.contains(option) || e.button !== 0) return;
-            const kind = option.getAttribute("data-filter-kind");
-            const range = optionFilterRange(option);
-            filterOptionDrag = {
-                kind,
-                startRange: range,
-                currentRange: range,
-                moved: false,
-            };
-            option.setPointerCapture?.(e.pointerId);
-        });
-        menu.addEventListener("click", (e) => {
-            const option = e.target?.closest?.(".bcgt-option");
-            if (!option || !menu.contains(option)) return;
-            e.stopPropagation();
-            if (suppressNextOptionClick) {
-                suppressNextOptionClick = false;
+        menu.addEventListener("click", (event) => {
+            const target = event.target?.closest?.("button, input");
+            if (!target || !menu.contains(target)) return;
+            event.stopPropagation();
+            if (!(target instanceof HTMLButtonElement)) return;
+            const kind = target.getAttribute("data-filter-kind");
+            if (target.classList.contains("bcgt-mode")) {
+                setFilterState(kind, setFilterMode(filterStates[kind], target.getAttribute("data-filter-mode")));
+                commitFilterChange();
                 return;
             }
-            const kind = option.getAttribute("data-filter-kind");
-            const range = optionFilterRange(option);
-            if (hasFilterOptionRange(range) && isFilterRangeActive(kind, range)) {
-                setFilterValue(kind, 0, "", 0, "");
-            } else {
-                setFilterRangeFromOptions(kind, range, range);
+            if (target.classList.contains("bcgt-quick")) {
+                const value = Number(target.getAttribute("data-filter-value")) || 0;
+                const state = filterStates[kind];
+                const current = state.mode === "max" ? state.max : state.min;
+                // 고른 빠른 값을 다시 누르면 값만 비워 조건을 푼다.
+                setFilterState(kind, setFilterSingleValue(state, current === value ? 0 : value));
+                commitFilterChange();
+                return;
             }
-            updateUiState();
-            scheduleApply();
-            scheduleMenuPosition();
+            if (target.hasAttribute("data-filter-reset")) {
+                clearFilterInputDrafts();
+                resetFilterState();
+                commitFilterChange();
+                // 초기화하면 이 버튼이 비활성화돼 초점이 빠지므로 첫 조건 버튼으로 옮겨 Escape가 메뉴에 계속 닿게 한다.
+                menu.querySelector(".bcgt-mode")?.focus();
+            }
         });
-        for (const input of menu.querySelectorAll("[data-filter-min-input], [data-filter-max-input]")) {
-            input.addEventListener("click", (e) => e.stopPropagation());
-            input.addEventListener("input", () => {
-                const isMax = input.hasAttribute("data-filter-max-input");
-                const kind = input.getAttribute(isMax ? "data-filter-max-input" : "data-filter-min-input");
-                const value = parseFilterInputForKind(kind, input.value);
-                if (isMax) setFilterMax(kind, value, input.value);
-                else setFilterMin(kind, value, input.value);
-                updateUiState();
-                scheduleApply();
-            });
-        }
+        menu.addEventListener("input", (event) => {
+            const input = event.target;
+            if (!(input instanceof HTMLInputElement) || !menu.contains(input)) return;
+            const kind = filterInputKind(input);
+            const bound = filterInputBound(input);
+            if (!FILTER_KINDS.includes(kind) || !bound) return;
+            const value = parseFilterInputForKind(kind, input.value);
+            filterInputDrafts.set(`${kind}:${bound}`, input.value);
+            const state = filterStates[kind];
+            setFilterState(
+                kind,
+                bound === "value" ? setFilterSingleValue(state, value) : setFilterRangeValue(state, bound, value)
+            );
+            commitFilterChange();
+        });
         menu.addEventListener("keydown", (event) => {
             if (event.key !== "Escape") return;
             event.preventDefault();
@@ -4020,6 +3939,44 @@
     function positionMenu() {
         positionPopup(document.getElementById(MENU_ID), document.getElementById(BAR_ID)?.querySelector(".bcgt-filter"));
         positionPopup(categoryAddView?.menu, categorySummaryView?.root.querySelector("[data-category-add-open]"));
+        positionSearchHint();
+    }
+
+    function ensureSearchHint() {
+        let hint = document.getElementById(SEARCH_HINT_ID);
+        if (!hint && document.body) {
+            hint = document.createElement("div");
+            hint.id = SEARCH_HINT_ID;
+            hint.setAttribute("data-open", "0");
+            document.body.appendChild(hint);
+        }
+        return hint;
+    }
+
+    function isSearchHintOpen() {
+        return document.getElementById(SEARCH_HINT_ID)?.getAttribute("data-open") === "1";
+    }
+
+    function positionSearchHint() {
+        const hint = document.getElementById(SEARCH_HINT_ID);
+        const wrap = document.querySelector(`#${BAR_ID} .bcgt-input-wrap`);
+        if (!hint || !wrap || !isSearchHintOpen()) return;
+        const rect = wrap.getBoundingClientRect();
+        const width = hint.offsetWidth;
+        const height = hint.offsetHeight;
+        // 입력칸 위에 띄워 아래의 적용 조건 줄·결과 수를 가리지 않는다. 위에 자리가 없을 때만 아래에 둔다.
+        const above = rect.top - height - 6;
+        const top = above >= 8 ? above : rect.bottom + 6;
+        const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - width - 8));
+        setStyleIfChanged(hint.style, "top", `${Math.round(top)}px`);
+        setStyleIfChanged(hint.style, "left", `${Math.round(left)}px`);
+    }
+
+    function showSearchHint(open) {
+        const hint = open ? ensureSearchHint() : document.getElementById(SEARCH_HINT_ID);
+        if (!hint) return;
+        setAttributeIfChanged(hint, "data-open", open ? "1" : "0");
+        if (open) positionSearchHint();
     }
 
     function positionPopup(menu, button) {
@@ -4062,7 +4019,11 @@
         if (menu && event?.target instanceof Node && menu.contains(event.target)) return;
         const now = performance.now();
         if (now > ignoreScrollTrackingUntil) lastUserScrollAt = now;
-        if (menu.getAttribute("data-open") === "1" || categoryAddView?.menu.getAttribute("data-open") === "1")
+        if (
+            menu.getAttribute("data-open") === "1" ||
+            categoryAddView?.menu.getAttribute("data-open") === "1" ||
+            isSearchHintOpen()
+        )
             scheduleMenuPosition();
     }
 
@@ -4071,10 +4032,98 @@
         scheduleMenuPosition();
     }
 
+    function isLiveListRoute(route = getRoute()) {
+        return route?.tab === "lives";
+    }
+
+    function filterUnit(kind, liveList) {
+        if (kind === "duration") return "시간";
+        return kind === "views" && !liveList ? "회" : "명";
+    }
+
+    function syncQuickButtons(menu, liveList) {
+        for (const kind of FILTER_KINDS) {
+            const list = menu.querySelector(`[data-filter-quick="${kind}"]`);
+            if (!list) continue;
+            const unit = filterUnit(kind, liveList);
+            const values = getFilterPresetValues(kind, featureOptions);
+            const renderKey = `${unit}|${values.join(",")}`;
+            if (list.__bcgtQuickKey === renderKey) continue;
+            list.innerHTML = values
+                .map(
+                    (value) =>
+                        `<button type="button" class="bcgt-quick" data-filter-kind="${kind}" data-filter-value="${value}" aria-pressed="false">${formatConditionValue(kind, value)}${unit}</button>`
+                )
+                .join("");
+            list.__bcgtQuickKey = renderKey;
+        }
+    }
+
+    function filterInputText(kind, bound, value) {
+        const draft = filterInputDrafts.get(`${kind}:${bound}`);
+        if (draft !== undefined && parseFilterInputForKind(kind, draft) === value) return draft;
+        return value ? formatFilterInputForKind(kind, value) : "";
+    }
+
+    function syncMenuState(menu, route) {
+        const liveList = isLiveListRoute(route);
+        const viewTitle = liveList ? "시청자 수" : "조회수";
+        syncQuickButtons(menu, liveList);
+        for (const kind of FILTER_KINDS) {
+            const group = menu.querySelector(`[data-filter-group="${kind}"]`);
+            if (!group) continue;
+            const title = kind === "views" ? viewTitle : FILTER_GROUP_TITLES[kind];
+            if (kind === "views") {
+                const titleEl = group.querySelector(".bcgt-filter-title");
+                if (titleEl && titleEl.textContent !== viewTitle) titleEl.textContent = viewTitle;
+            }
+            if (kind === "duration") group.hidden = !liveList || !canUseMetadataForCurrentList(route);
+            const state = filterStates[kind];
+            const unit = filterUnit(kind, liveList);
+            const single = state.mode === "max" ? state.max : state.min;
+            for (const button of group.querySelectorAll(".bcgt-mode")) {
+                setAttributeIfChanged(
+                    button,
+                    "aria-pressed",
+                    String(button.getAttribute("data-filter-mode") === state.mode)
+                );
+            }
+            const singleBody = group.querySelector('[data-filter-body="single"]');
+            const rangeBody = group.querySelector('[data-filter-body="range"]');
+            if (singleBody) singleBody.hidden = state.mode !== "min" && state.mode !== "max";
+            if (rangeBody) rangeBody.hidden = state.mode !== "range";
+            for (const button of group.querySelectorAll(".bcgt-quick")) {
+                const pressed = Number(button.getAttribute("data-filter-value")) === single && single > 0;
+                setAttributeIfChanged(button, "aria-pressed", String(pressed));
+            }
+            const suffix = group.querySelector(`[data-filter-suffix="${kind}"]`);
+            const suffixText = `${unit} ${state.mode === "max" ? "이하" : "이상"}`;
+            if (suffix && suffix.textContent !== suffixText) suffix.textContent = suffixText;
+            const unitEl = group.querySelector(`[data-filter-unit="${kind}"]`);
+            if (unitEl && unitEl.textContent !== unit) unitEl.textContent = unit;
+            const inputs = [
+                [group.querySelector(`[data-filter-value-input="${kind}"]`), "value", single, `${title} 기준값`],
+                [group.querySelector(`[data-filter-min-input="${kind}"]`), "min", state.min, `최소 ${title}`],
+                [group.querySelector(`[data-filter-max-input="${kind}"]`), "max", state.max, `최대 ${title}`],
+            ];
+            for (const [input, bound, value, label] of inputs) {
+                if (!input) continue;
+                setAttributeIfChanged(input, "aria-label", label);
+                if (document.activeElement !== input) input.value = filterInputText(kind, bound, value);
+            }
+            for (const custom of group.querySelectorAll("[data-custom-kind]")) {
+                setAttributeIfChanged(custom, "data-active", isActiveRange(filterRange(kind)) ? "1" : "0");
+            }
+        }
+        const resetButton = menu.querySelector("[data-filter-reset]");
+        if (resetButton) resetButton.disabled = !hasNumericFilters();
+    }
+
     function updateUiState() {
         const bar = document.getElementById(BAR_ID);
         if (!bar) return;
-        const draft = bar.querySelector("input")?.value || "";
+        const input = bar.querySelector('input[type="search"]');
+        const draft = input?.value || "";
         bar.setAttribute("data-has-query", draft || currentQuery ? "1" : "0");
         bar.setAttribute("data-search-draft", draft !== currentQuery ? "1" : "0");
         bar.setAttribute("data-has-filter", hasNumericFilters() ? "1" : "0");
@@ -4083,61 +4132,47 @@
             const count = activeFilterCount();
             label.textContent = count ? `필터 ${count}` : "필터";
         }
-        const menu = document.getElementById(MENU_ID);
         const route = getRoute();
-        const isLiveList = route?.tab === "lives";
-        const viewFilterLabel = isLiveList ? "시청자 수" : "조회수";
-        const viewFilterUnit = isLiveList ? "명" : "회";
-        syncFilterOptionButtons(menu, route);
-        const viewFilterGroup = menu?.querySelector('[data-filter-group="views"]');
-        if (viewFilterGroup) viewFilterGroup.setAttribute("aria-label", viewFilterLabel);
-        for (const [bound, label] of [
-            ["min", "최소"],
-            ["max", "최대"],
-        ]) {
-            menu?.querySelector(`[data-filter-${bound}-input="views"]`)?.setAttribute(
-                "aria-label",
-                `${label} ${viewFilterLabel}`
-            );
+        const hint = document.getElementById(SEARCH_HINT_ID);
+        if (hint) {
+            // 전체 방송은 Enter로만 적용하고 카테고리 목록은 입력하면 바로 적용한다.
+            const hintText =
+                route?.scope === "global-lives"
+                    ? "띄어쓰기로 여러 단어를 모두 찾고, -단어는 빼요. Enter로 적용해요."
+                    : "띄어쓰기로 여러 단어를 모두 찾고, -단어는 빼요.";
+            if (hint.textContent !== hintText) hint.textContent = hintText;
         }
-        const durationFilterGroup = menu?.querySelector('[data-filter-group="duration"]');
-        if (durationFilterGroup) {
-            durationFilterGroup.hidden = !isLiveList || !canUseMetadataForCurrentList(route);
-        }
-        const viewFilterTitle = menu?.querySelector("[data-view-filter-title]");
-        if (viewFilterTitle) viewFilterTitle.textContent = viewFilterLabel;
-        const viewFilterUnitEl = menu?.querySelector("[data-view-filter-unit]");
-        if (viewFilterUnitEl) viewFilterUnitEl.textContent = viewFilterUnit;
-        const resetButton = menu?.querySelector("[data-filter-reset]");
-        if (resetButton) resetButton.disabled = !hasNumericFilters();
-        for (const option of menu?.querySelectorAll(".bcgt-option") || []) {
-            const kind = option.getAttribute("data-filter-kind");
-            const { min, max: optionMax } = optionFilterRange(option);
-            const state = getFilterState(kind);
-            const hasRange = state.min > 0 || state.max > 0;
-            const optionHasRange = min > 0 || optionMax > 0;
-            const optionEnd = optionMax > 0 ? optionMax : min > 0 ? Number.POSITIVE_INFINITY : 0;
-            const stateEnd = state.max > 0 ? state.max : Number.POSITIVE_INFINITY;
-            const inRange = hasRange && optionHasRange && min >= state.min && optionEnd <= stateEnd;
-            const isEdge = inRange && (min === state.min || optionEnd === stateEnd);
-            option.setAttribute("aria-pressed", state.min === min && state.max === optionMax ? "true" : "false");
-            option.setAttribute("data-in-range", inRange ? "1" : "0");
-            option.setAttribute("data-range-edge", isEdge ? "1" : "0");
-        }
-        for (const input of menu?.querySelectorAll("[data-filter-min-input], [data-filter-max-input]") || []) {
-            const isMax = input.hasAttribute("data-filter-max-input");
-            const kind = input.getAttribute(isMax ? "data-filter-max-input" : "data-filter-min-input");
-            const state = getFilterState(kind);
-            const value = isMax ? state.maxCustom : state.minCustom;
-            if (document.activeElement !== input) input.value = value;
-        }
-        for (const custom of menu?.querySelectorAll("[data-custom-kind]") || []) {
-            const kind = custom.getAttribute("data-custom-kind");
-            const state = getFilterState(kind);
-            const hasCustomRange = (state.minCustom && state.min > 0) || (state.maxCustom && state.max > 0);
-            custom.setAttribute("data-active", hasCustomRange ? "1" : "0");
-        }
+        const menu = document.getElementById(MENU_ID);
+        if (menu) syncMenuState(menu, route);
+        syncAppliedConditions();
         syncCategoryAdd();
+    }
+
+    function commitFilterChange() {
+        restoredConditionsPending = false;
+        updateUiState();
+        scheduleApply();
+        saveListFilters();
+        scheduleMenuPosition();
+    }
+
+    function openFilterMenu({ focus = true } = {}) {
+        const bar = document.getElementById(BAR_ID);
+        const filter = bar?.querySelector(".bcgt-filter");
+        if (!bar || !filter) return;
+        closeCategoryAdd();
+        const menu = ensureMenu();
+        bar.setAttribute("data-menu-open", "1");
+        filter.setAttribute("aria-expanded", "true");
+        menu.setAttribute("data-open", "1");
+        updateUiState();
+        scheduleMenuPosition();
+        if (!focus) return;
+        // 켜진 조건이 있으면 그 조건 버튼으로, 없으면 첫 조건 버튼으로 초점을 옮긴다.
+        const pressed = Array.from(menu.querySelectorAll('.bcgt-mode[aria-pressed="true"]')).find(
+            (button) => button.getAttribute("data-filter-mode") !== "none" && !button.closest("[hidden]")
+        );
+        (pressed || menu.querySelector("button"))?.focus();
     }
 
     function buildToolbar() {
@@ -4154,7 +4189,7 @@
   <svg class="bcgt-icon" viewBox="0 0 24 24" aria-hidden="true">
     <path fill="currentColor" d="M10 4a6 6 0 1 0 3.74 10.7l4.28 4.29 1.42-1.42-4.29-4.28A6 6 0 0 0 10 4Zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/>
   </svg>
-  <input type="search" aria-label="현재 목록 검색" placeholder="현재 목록 검색" autocomplete="off" spellcheck="false" />
+  <input type="search" aria-label="현재 목록 검색" placeholder="현재 목록 검색" autocomplete="off" spellcheck="false" maxlength="100" aria-describedby="${SEARCH_HINT_ID}" />
   <span class="bcgt-spinner" aria-hidden="true"></span>
   <button type="button" class="bcgt-clear" aria-label="검색어 지우기">
     <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
@@ -4162,19 +4197,17 @@
     </svg>
   </button>
 </div>
-<span class="bcgt-meter">
-  <span class="bcgt-status" aria-live="polite"></span>
-</span>
 <span class="bcgt-filter-wrap">
   <button type="button" class="bcgt-filter" aria-expanded="false" aria-controls="${MENU_ID}">
     <span class="bcgt-filter-label">필터</span>
-    <span aria-hidden="true">▴</span>
+    <span class="bcgt-filter-caret" aria-hidden="true">▾</span>
   </button>
 </span>
 `;
         const input = bar.querySelector("input");
         const clear = bar.querySelector(".bcgt-clear");
         const filter = bar.querySelector(".bcgt-filter");
+        ensureSearchHint();
         let isComposing = false;
         let compositionEnter = false;
         const isExplicitSearch = () => getRoute()?.scope === "global-lives";
@@ -4191,8 +4224,7 @@
             if (!bar.isConnected || document.getElementById(BAR_ID) !== bar || isComposing) return;
             if (input.value === currentQuery) return;
             currentQuery = input.value;
-            updateUiState();
-            scheduleApply();
+            commitFilterChange();
         };
 
         const scheduleInputApply = () => {
@@ -4234,7 +4266,9 @@
         });
         input.addEventListener("blur", () => {
             compositionEnter = false;
+            showSearchHint(false);
         });
+        input.addEventListener("focus", () => showSearchHint(true));
         clear.addEventListener("click", () => {
             input.value = "";
             // 적용 버튼이 없으므로 지우기 클릭은 한 번의 명시적 제출로 검색을 해제한다.
@@ -4244,19 +4278,8 @@
         });
         filter.addEventListener("click", (e) => {
             e.stopPropagation();
-            const open = bar.getAttribute("data-menu-open") === "1";
-            if (open) {
-                closeMenu();
-            } else {
-                closeCategoryAdd();
-                const menu = ensureMenu();
-                bar.setAttribute("data-menu-open", "1");
-                filter.setAttribute("aria-expanded", "true");
-                menu.setAttribute("data-open", "1");
-                updateUiState();
-                scheduleMenuPosition();
-                menu.querySelector("button")?.focus();
-            }
+            if (bar.getAttribute("data-menu-open") === "1") closeMenu();
+            else openFilterMenu();
         });
         updateUiState();
         return bar;
@@ -4338,17 +4361,29 @@
         if (key !== lastRouteKey) {
             currentQuery = "";
             resetFilterState();
+            clearFilterInputDrafts();
             resetMetadata("");
             orderCounter = 0;
             dataRepository.cancelFollowers();
             clearFollowerHydrationTimer();
             clearLoading();
-            const input = bar.querySelector("input");
+            restoredConditionsPending = false;
+            appliedStatusText = "";
+            listFiltersNeedRestore = true;
+            const input = bar.querySelector('input[type="search"]');
             if (input) input.value = "";
             lastRouteKey = key;
             lastListStateKey = "";
             cachedGrid = null;
             cachedGridKey = "";
+            updateUiState();
+        }
+        if (listFiltersNeedRestore && isFeatureEnabled()) {
+            // 이 탭에서 같은 목록 주소에 두었던 조건을 되살린다(방송을 보고 돌아오기·새로고침·기능 OFF→ON).
+            listFiltersNeedRestore = false;
+            restoredConditionsPending = restoreListFilters(key);
+            const input = bar.querySelector('input[type="search"]');
+            if (input) input.value = currentQuery;
             updateUiState();
         }
         syncCategorySummary({ findHost: true });
@@ -4371,27 +4406,209 @@
         if (empty) empty.remove();
     }
 
+    const CHIP_REMOVE_ICON =
+        '<svg width="10" height="10" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18.3 5.71 12 12.01l-6.3-6.3-1.41 1.41 6.3 6.3-6.3 6.3 1.41 1.41 6.3-6.3 6.3 6.3 1.41-1.41-6.3-6.3 6.3-6.3z"/></svg>';
+    let appliedStatusText = "";
+
+    function hasAppliedConditions() {
+        return hasSearchTerms(currentSearchTerms()) || hasNumericFilters();
+    }
+
+    function appliedConditionItems() {
+        const liveList = isLiveListRoute();
+        const conditions = FILTER_KINDS.filter((kind) => isActiveRange(filterRange(kind))).map((kind) => ({
+            label: formatConditionLabel(kind, filterRange(kind), { liveList }),
+            removeKind: kind,
+        }));
+        const words = currentSearchTerms().tokens.map((token, index) => ({
+            label: token.negative ? `“${token.raw.slice(1)}” 빼기` : `“${token.raw}” 포함`,
+            removeTerm: index,
+            negative: token.negative,
+        }));
+        return [...conditions, ...words];
+    }
+
+    function buildAppliedChip(item) {
+        const chip = document.createElement("span");
+        chip.className = "bcgt-chip";
+        if (item.negative) chip.setAttribute("data-negative", "1");
+        const body = document.createElement("button");
+        body.type = "button";
+        body.className = "bcgt-chip-body";
+        // 숫자 조건 칩은 필터 메뉴를, 검색 단어 칩은 검색창을 연다. 검색어는 사용자 입력이라 글자로만 넣는다.
+        body.setAttribute(item.removeKind ? "data-open-filter" : "data-focus-search", "");
+        body.textContent = item.label;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "bcgt-chip-remove";
+        if (item.removeKind) remove.setAttribute("data-remove-kind", item.removeKind);
+        else remove.setAttribute("data-remove-term", String(item.removeTerm));
+        remove.setAttribute("aria-label", `${item.label} 해제`);
+        remove.innerHTML = CHIP_REMOVE_ICON;
+        chip.append(body, remove);
+        return chip;
+    }
+
+    function createAppliedConditionsRoot() {
+        const root = document.createElement("div");
+        root.id = APPLIED_CONDITIONS_ID;
+        root.className = "bcgt-applied";
+        root.setAttribute("role", "group");
+        root.setAttribute("aria-label", "적용 중인 검색·필터 조건");
+        root.innerHTML =
+            '<span class="bcgt-applied-label"></span><span class="bcgt-applied-chips"></span>' +
+            '<button type="button" class="bcgt-applied-clear">모두 해제</button>' +
+            '<span class="bcgt-status" aria-live="polite"></span>';
+        root.addEventListener("click", handleAppliedConditionsClick);
+        return root;
+    }
+
+    // 툴바와 같은 줄(host) 안에 두고 CSS order로 맨 아래 줄에 보인다. 제외 줄은 정렬 줄에서는 마지막 자리를,
+    // 대체 위치에서는 툴바 바로 뒤 자리를 지키므로 그 자리를 비켜 끼워 두 요소가 서로 옮기며 적용을 다시
+    // 예약하지 않게 한다.
+    function ensureAppliedConditionsRoot() {
+        const bar = document.getElementById(BAR_ID);
+        const host = bar?.parentElement;
+        if (!bar || !host || !isFeatureEnabled()) return null;
+        const root = document.getElementById(APPLIED_CONDITIONS_ID) || createAppliedConditionsRoot();
+        if (root.parentElement !== host) {
+            const summary = document.getElementById(CATEGORY_SUMMARY_ID);
+            if (summary?.parentElement !== host) host.appendChild(root);
+            else if (summary.getAttribute("data-placement") === "sort-line") host.insertBefore(root, summary);
+            else summary.after(root);
+        }
+        return root;
+    }
+
+    function syncAppliedConditions() {
+        const existing = document.getElementById(APPLIED_CONDITIONS_ID);
+        if (!hasAppliedConditions()) {
+            if (existing) {
+                if (!existing.hidden) existing.hidden = true;
+                const status = existing.querySelector(".bcgt-status");
+                if (status?.textContent) status.textContent = "";
+            }
+            return;
+        }
+        const root = ensureAppliedConditionsRoot();
+        if (!root) return;
+        if (root.hidden) root.hidden = false;
+        const items = appliedConditionItems();
+        const labelText = restoredConditionsPending ? "이어서 적용 중" : "적용 중";
+        const renderKey = JSON.stringify([labelText, items.map((item) => item.label)]);
+        if (root.__bcgtRenderKey !== renderKey) {
+            const label = root.querySelector(".bcgt-applied-label");
+            label.textContent = labelText;
+            if (restoredConditionsPending) label.title = "방송을 보고 돌아와도 이 탭에서는 조건이 유지돼요";
+            else label.removeAttribute("title");
+            root.querySelector(".bcgt-applied-chips").replaceChildren(...items.map(buildAppliedChip));
+            root.__bcgtRenderKey = renderKey;
+        }
+        const status = root.querySelector(".bcgt-status");
+        if (status && status.textContent !== appliedStatusText) status.textContent = appliedStatusText;
+    }
+
+    function searchInput() {
+        return document.querySelector(`#${BAR_ID} input[type="search"]`);
+    }
+
+    function applySearchQuery(query) {
+        currentQuery = query;
+        const input = searchInput();
+        if (input) input.value = query;
+        commitFilterChange();
+    }
+
+    function focusAfterAppliedChange() {
+        const root = document.getElementById(APPLIED_CONDITIONS_ID);
+        const next = root && !root.hidden ? root.querySelector(".bcgt-chip-remove, .bcgt-applied-clear") : null;
+        (next || document.querySelector(`#${BAR_ID} .bcgt-filter`))?.focus();
+    }
+
+    function handleAppliedConditionsClick(event) {
+        const button = event.target?.closest?.("button");
+        if (!button || !event.currentTarget.contains(button)) return;
+        event.stopPropagation();
+        if (button.classList.contains("bcgt-applied-clear")) {
+            // 모두 해제는 검색어와 숫자 조건만 지운다. 카테고리·태그 제외와 집계 설정은 그대로 둔다.
+            clearFilterInputDrafts();
+            resetFilterState();
+            applySearchQuery("");
+            focusAfterAppliedChange();
+            return;
+        }
+        const removeKind = button.getAttribute("data-remove-kind");
+        if (removeKind) {
+            clearFilterInputDrafts(removeKind);
+            setFilterState(removeKind, createFilterState());
+            commitFilterChange();
+            focusAfterAppliedChange();
+            return;
+        }
+        if (button.hasAttribute("data-remove-term")) {
+            // 단어 칩 해제는 명시한 조작이라 전체 방송에서도 Enter 없이 바로 적용한다.
+            applySearchQuery(removeSearchTerm(currentQuery, Number(button.getAttribute("data-remove-term"))));
+            focusAfterAppliedChange();
+            return;
+        }
+        if (button.hasAttribute("data-open-filter")) {
+            openFilterMenu();
+            return;
+        }
+        if (button.hasAttribute("data-focus-search")) searchInput()?.focus();
+    }
+
     function updateStatus(visible, total) {
-        const status = document.querySelector(`#${BAR_ID} .bcgt-status`);
-        if (!status) return;
-        // 카테고리 제외는 검색·필터와 독립된 줄에서 관리하므로 결과 수는 검색어·숫자 필터에만 표시한다.
-        status.textContent = currentQuery || hasNumericFilters() ? `${visible} / ${total}` : "";
+        // 카테고리 제외는 독립된 줄에서 관리하므로 결과 수는 검색어·숫자 조건이 있을 때만 적용 조건 줄에 보인다.
+        // 전체 수는 사이트 전체가 아니라 이번에 확인한 목록 범위다.
+        appliedStatusText = hasAppliedConditions() ? `확인한 ${total}개 중 ${visible}개` : "";
+        syncAppliedConditions();
+    }
+
+    function readStoredListFilters() {
+        try {
+            return readListFilterSession(window.sessionStorage.getItem(LIST_FILTER_SESSION_KEY));
+        } catch (_) {
+            return null;
+        }
+    }
+
+    // 사용자가 조건을 바꿨을 때만 지금 목록 주소의 기록을 고친다. 경로 이동·도구 해제·기능 OFF 같은
+    // 자동 초기화는 기록을 지우지 않는다. 저장소를 쓸 수 없으면 이 문서의 메모리 조건만으로 계속 동작한다.
+    function saveListFilters() {
+        const route = getRoute();
+        const key = route ? routeKey(route) : "";
+        if (!key || key !== lastRouteKey || !isFeatureEnabled()) return;
+        const stored = readStoredListFilters();
+        if (!stored) return;
+        try {
+            const next = writeListFilterRoute(stored, key, { query: currentQuery, filters: filterStates }, Date.now());
+            window.sessionStorage.setItem(LIST_FILTER_SESSION_KEY, JSON.stringify(next));
+        } catch (_) {
+            // 용량·차단 오류는 화면 조건을 바꾸지 않는다.
+        }
+    }
+
+    function restoreListFilters(key) {
+        const record = readStoredListFilters()?.routes?.[key];
+        if (!record) return false;
+        currentQuery = record.query;
+        filterStates = createFilterStates();
+        for (const kind of FILTER_KINDS) {
+            if (record.filters[kind]) filterStates[kind] = { ...record.filters[kind] };
+        }
+        return hasAppliedConditions();
     }
 
     function isAutoLoadActive() {
-        return Boolean(normalize(currentQuery)) || hasActiveFilters();
+        return hasSearchTerms(currentSearchTerms()) || hasActiveFilters();
     }
 
     function getActiveFilterKey() {
         return [
             lastListStateKey,
-            normalize(currentQuery),
-            followerFilterMin,
-            followerFilterMax,
-            viewFilterMin,
-            viewFilterMax,
-            durationFilterMin,
-            durationFilterMax,
+            currentSearchTerms().key,
+            filterRangesKey(),
             hasCategoryExclusions() ? categoryStateEpoch : 0,
         ].join("|");
     }
@@ -4562,8 +4779,8 @@
         const metadata = canUseMetadata ? await ensureMetadata(route) : new Map();
         if (!isCurrent()) return;
         scheduleDurationFilterRefresh(metadata.values());
-        const query = normalize(currentQuery);
-        syncViewFilterSnapshot(route, query);
+        const terms = currentSearchTerms();
+        syncViewFilterSnapshot(route, terms.key);
         const renderKey = getActiveFilterKey();
         if (renderKey !== injectedRenderKey) {
             injectedRenderKey = renderKey;
@@ -4579,13 +4796,13 @@
         const metadataCandidates = Array.from(metadata.values()).filter((meta) => {
             if (!meta?.id) return false;
             if (!passesCurrentMetadataCategory(meta)) return false;
-            if (query && !buildMetaSearchText(meta).includes(query)) return false;
+            if (!matchesSearchTerms(buildMetaSearchFields(meta), terms)) return false;
             if (!passesDurationFilter(meta)) return false;
             return passesViewFilter(meta) || isViewFilterSnapshotId(meta.id);
         });
 
         const scrollAnchor = captureScrollAnchor(grid);
-        const injectedEntries = await syncInjectedCards(route, grid, entries, metadata, query, isCurrent);
+        const injectedEntries = await syncInjectedCards(route, grid, entries, metadata, terms, isCurrent);
         await yieldToUi();
         if (!isCurrent()) return;
         if (injectedEntries.length) entries = entries.concat(injectedEntries);
@@ -4604,7 +4821,7 @@
         let checkedRows = 0;
         for (const row of rows) {
             if (
-                (!query || buildSearchText(row).includes(query)) &&
+                matchesSearchTerms(rowSearchFields(row), terms) &&
                 passesStickyViewFilter(row) &&
                 passesDurationFilter(row.meta)
             ) {
@@ -4695,6 +4912,8 @@
         const fallback = document.getElementById(GLOBAL_FALLBACK_ID);
         if (bar) bar.remove();
         if (menu) menu.remove();
+        document.getElementById(APPLIED_CONDITIONS_ID)?.remove();
+        document.getElementById(SEARCH_HINT_ID)?.remove();
         if (fallback) fallback.remove();
         restoreHiddenGlobalTagSearch({ sweep: true });
         clearInjectedCards();
@@ -4711,7 +4930,11 @@
         document.querySelectorAll(`[${EMPTY_ATTR}="1"]`).forEach((el) => el.remove());
         currentQuery = "";
         resetFilterState();
+        clearFilterInputDrafts();
         resetViewFilterSnapshot();
+        restoredConditionsPending = false;
+        appliedStatusText = "";
+        listFiltersNeedRestore = true;
         if (!preserveCount) lastRouteKey = "";
         lastListStateKey = "";
         cachedGrid = null;
@@ -4772,7 +4995,14 @@
 
     function isOurNode(node) {
         if (!node || node.nodeType !== 1) return false;
-        if (node.id === BAR_ID || node.id === MENU_ID || node.id === CATEGORY_ADD_ID || node.id === GLOBAL_FALLBACK_ID)
+        if (
+            node.id === BAR_ID ||
+            node.id === MENU_ID ||
+            node.id === CATEGORY_ADD_ID ||
+            node.id === GLOBAL_FALLBACK_ID ||
+            node.id === APPLIED_CONDITIONS_ID ||
+            node.id === SEARCH_HINT_ID
+        )
             return true;
         if (node.getAttribute && node.getAttribute(EMPTY_ATTR) === "1") return true;
         if (node.getAttribute && node.getAttribute(INJECTED_ATTR) === "1") return true;
@@ -4784,6 +5014,7 @@
             if (categorySummaryView?.root.contains(node)) return true;
             if (node.closest(`#${MENU_ID}, #${CATEGORY_ADD_ID}`)) return true;
             if (node.closest(`#${GLOBAL_FALLBACK_ID}`)) return true;
+            if (node.closest(`#${APPLIED_CONDITIONS_ID}`)) return true;
             if (node.closest(`[${INJECTED_ATTR}="1"]`)) return true;
             if (node.closest(`[${EMPTY_ATTR}="1"]`)) return true;
             if (node.closest(`[${FOLLOWER_BADGE_ATTR}="1"]`)) return true;
@@ -4800,6 +5031,7 @@
                 node.id === MENU_ID ||
                 node.id === CATEGORY_ADD_ID ||
                 node.id === CATEGORY_SUMMARY_ID ||
+                node.id === APPLIED_CONDITIONS_ID ||
                 node.classList?.contains("bcgt-live-count")
             )
                 return false;
@@ -4918,6 +5150,7 @@
         document.addEventListener("visibilitychange", handleVisibilityChange, true);
         document.addEventListener("pointerover", handleLiveElapsedHostActivate, true);
         document.addEventListener("focusin", handleLiveElapsedHostActivate, true);
+        window.addEventListener("pageshow", handlePageShow, true);
         removePageChangeDetection = startPageChangeDetection(handlePageChange);
         window.addEventListener("resize", handleViewportChange, true);
         window.addEventListener("scroll", handleScrollPositionMenu, true);
@@ -4932,6 +5165,14 @@
         }
         scheduleApply();
         syncCategoryExclusionRuntime();
+    }
+
+    // 뒤로-앞으로 캐시로 돌아오면 문서가 그대로 되살아나 기록을 다시 읽지 않는다. 그래도 사용자에게는
+    // 방송을 보고 돌아온 것과 같으므로 남아 있는 조건을 '이어서 적용 중'으로 알린다.
+    function handlePageShow(event) {
+        if (!event?.persisted || !isFeatureEnabled() || !hasAppliedConditions()) return;
+        restoredConditionsPending = true;
+        updateUiState();
     }
 
     function handleDocumentEnd(event) {
@@ -4954,6 +5195,7 @@
         document.removeEventListener("visibilitychange", handleVisibilityChange, true);
         document.removeEventListener("pointerover", handleLiveElapsedHostActivate, true);
         document.removeEventListener("focusin", handleLiveElapsedHostActivate, true);
+        window.removeEventListener("pageshow", handlePageShow, true);
         if (removePageChangeDetection) {
             removePageChangeDetection();
             removePageChangeDetection = null;

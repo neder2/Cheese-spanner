@@ -67,7 +67,7 @@
         skipWheelAltStep: { kind: "int", default: 10, min: 1, max: 600 },
         volumeWheelEnabled: { kind: "bool", default: true, feature: true },
         volumeWheelStep: { kind: "int", default: 5, min: 1, max: 50 },
-        volumeTooltipEnabled: { kind: "bool", default: false, feature: true },
+        volumeTooltipEnabled: { kind: "bool", default: true, feature: true },
         playerZoomEnabled: { kind: "bool", default: false, feature: true },
         playerZoomMode: { kind: "zoomMode", default: "manual" },
         playerZoomShortcutKey: { kind: "choice", values: ["alt", "ctrl", "shift", "meta"], default: "alt" },

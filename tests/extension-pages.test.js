@@ -1421,11 +1421,15 @@ test("category filter stays open during automatic refresh and closes only on use
     assert.equal(refreshes, 2, "returning to the visible tab still refreshes the sidebar");
     assertOpen();
 
-    const preset = menu.querySelector('[data-filter-kind="views"][data-filter-min="100"]');
+    const minMode = menu.querySelector('.bcgt-mode[data-filter-kind="views"][data-filter-mode="min"]');
+    userClick(minMode);
+    minMode.click();
+    assertOpen();
+    const preset = menu.querySelector('.bcgt-quick[data-filter-kind="views"][data-filter-value="100"]');
     userClick(preset);
     preset.click();
     assertOpen();
-    const input = menu.querySelector('[data-filter-min-input="views"]');
+    const input = menu.querySelector('[data-filter-value-input="views"]');
     userClick(input);
     input.value = "200";
     dispatch(dom, input, "input");
@@ -1519,7 +1523,7 @@ test("category injected search results join the current pass without rescanning 
     input.value = "Match";
     dispatch(dom, input, "input");
     input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "3 / 3");
+    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "확인한 3개 중 3개");
     assert.equal(inserted, true);
     assert.equal(elapsedReads, 1, "the elapsed badge is synchronized once per filtered apply");
     assert.equal(badgeReads, 1, "a filtered apply visits the existing badge once after computing its rows");
@@ -1567,7 +1571,7 @@ test("category search bounds injected cards and continues cached results on scro
     input.value = "Match";
     dispatch(dom, input, "input");
     input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent.endsWith(" / 150"));
+    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent.startsWith("확인한 150개 중 "));
     const injected = () => [...grid.querySelectorAll('[data-bcgt-injected="1"]')];
     const firstCount = injected().length;
     assert.ok(firstCount > 0 && firstCount <= 24, `first render should be bounded, got ${firstCount}`);
@@ -1596,13 +1600,13 @@ test("category search bounds injected cards and continues cached results on scro
         await waitForCondition(() => injected().length > previousCount);
         assert.ok(injected().length <= previousCount + 24, "scroll adds only one bounded render batch");
     }
-    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "150 / 150");
+    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "확인한 150개 중 150개");
     assert.equal(new Set(injected().map((card) => card.getAttribute("data-bcgt-card-id"))).size, 148);
     assert.equal(requests, requestsBeforeScroll, "cached pages should not be fetched again");
     input.value = "No matching broadcast";
     dispatch(dom, input, "input");
     input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent.startsWith("0 /"));
+    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent.endsWith(" 중 0개"));
     assert.equal(injected().length, 0, "a new query discards obsolete extension-owned cards");
 });
 
@@ -1739,9 +1743,9 @@ test("category follower filtering continues candidates that do not yet have a DO
     counts.get("native-b")(0);
     await waitForCondition(() => counts.has("candidate-c"));
     counts.get("candidate-c")(1000);
-    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "1 / 3");
+    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "확인한 3개 중 1개");
     assert.ok(document.querySelector('[data-bcgt-injected="1"][data-bcgt-card-id="candidate-c"]'));
-    assert.equal(document.querySelector(".bcgt-status").textContent, "1 / 3");
+    assert.equal(document.querySelector(".bcgt-status").textContent, "확인한 3개 중 1개");
     assert.equal(counts.size, 3);
 });
 
@@ -1812,11 +1816,11 @@ test("category tools respect the currently observed viewer-order tab labels", as
     input.value = "Native";
     dispatch(dom, input, "input");
     input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "3 / 3");
+    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "확인한 3개 중 3개");
     tabs[0].setAttribute("aria-selected", "false");
     tabs[1].setAttribute("aria-selected", "true");
     tabs[1].click();
-    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "2 / 2");
+    await waitForCondition(() => document.querySelector(".bcgt-status")?.textContent === "확인한 2개 중 2개");
     assert.equal(
         document.querySelector('[data-bcgt-injected="1"]'),
         null,
@@ -1982,7 +1986,7 @@ test("global lives duration filter uses openDate and keeps the native list path"
     await loadCategoryToolsPage(dom);
 
     try {
-        await waitForCondition(() => document.querySelector('[data-filter-options="duration"] .bcgt-option'));
+        await waitForCondition(() => document.querySelector('.bcgt-quick[data-filter-kind="duration"]'));
 
         assert.equal(document.querySelector('[data-bcgt-time-chip="1"]'), null);
         assert.equal(
@@ -1999,25 +2003,27 @@ test("global lives duration filter uses openDate and keeps the native list path"
         assert.equal(durationGroup.hidden, false);
         assert.equal(menu.getAttribute("data-open"), "1");
 
-        const durationRanges = Array.from(
-            menu.querySelectorAll('[data-filter-kind="duration"]'),
-            (button) => button.getAttribute("data-filter-min") + ":" + button.getAttribute("data-filter-max")
+        const durationQuickValues = Array.from(
+            menu.querySelectorAll('.bcgt-quick[data-filter-kind="duration"]'),
+            (button) => [button.getAttribute("data-filter-value"), button.textContent]
         );
-        assert.deepEqual(durationRanges, [
-            "0:0",
-            "0:3600",
-            "3600:7200",
-            "7200:14400",
-            "14400:21600",
-            "21600:43200",
-            "43200:86400",
-            "86400:0",
+        assert.deepEqual(durationQuickValues, [
+            ["3600", "1시간"],
+            ["7200", "2시간"],
+            ["14400", "4시간"],
+            ["21600", "6시간"],
+            ["43200", "12시간"],
+            ["86400", "24시간"],
         ]);
 
-        const twoToFourHours = menu.querySelector(
-            '[data-filter-kind="duration"][data-filter-min="7200"][data-filter-max="14400"]'
-        );
-        twoToFourHours.click();
+        menu.querySelector('.bcgt-mode[data-filter-kind="duration"][data-filter-mode="range"]').click();
+        const durationMin = menu.querySelector('[data-filter-min-input="duration"]');
+        const durationMax = menu.querySelector('[data-filter-max-input="duration"]');
+        assert.equal(durationMin.closest("[data-filter-body]").hidden, false, "range inputs appear in range mode");
+        durationMin.value = "2";
+        durationMin.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+        durationMax.value = "4";
+        durationMax.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
 
         await waitForCondition(
             () =>
@@ -2030,6 +2036,13 @@ test("global lives duration filter uses openDate and keeps the native list path"
         );
 
         assert.equal(toolbar.querySelector(".bcgt-filter-label").textContent, "필터 1");
+        assert.deepEqual(
+            Array.from(
+                document.querySelectorAll("#betterchzzk-category-filter-chips .bcgt-chip-body"),
+                (chip) => chip.textContent
+            ),
+            ["진행 2~4시간"]
+        );
         const injected = document.querySelector('[data-bcgt-injected="1"][data-bcgt-card-id="injected-pass"]');
         const injectedChannel = injected.querySelector("a._channel");
         const injectedPreviewHost = injected.querySelector('[data-bcgt-live-preview-host="1"]');
@@ -2060,8 +2073,6 @@ test("global lives duration filter uses openDate and keeps the native list path"
         assert.match(injectedProfile.getAttribute("src"), /^data:image\/svg\+xml,/);
         assert.equal(injected.innerHTML.includes("evil.example"), false);
 
-        const durationMin = menu.querySelector('[data-filter-min-input="duration"]');
-        const durationMax = menu.querySelector('[data-filter-max-input="duration"]');
         durationMin.value = "0.25";
         durationMin.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
         durationMax.value = "1";

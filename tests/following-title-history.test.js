@@ -1224,3 +1224,297 @@ test("a valid check is refreshed before it expires so an open panel stays open",
     assert.equal(panel.hidden, false);
     assert.equal(panel.firstElementChild, row, "the refresh does not redraw the same titles");
 });
+
+function createLiveDom({
+    chrome = createFakeChrome(),
+    title = "첫 번째 제목",
+    liveIds = { [CHANNEL]: "live-1" },
+    url = `https://chzzk.naver.com/live/${CHANNEL}`,
+    sidebarTitle = "",
+} = {}) {
+    const dom = new JSDOM(
+        [
+            "<!doctype html><body>",
+            `<aside><a href="/live/${OTHER_CHANNEL}"><h3>${sidebarTitle || "사이드바 방송"}</h3></a></aside>`,
+            "<main>",
+            '<div class="pzp-pc"><video></video><div class="pzp-pc__title">',
+            `<h2>${title}</h2>`,
+            "</div></div>",
+            '<div class="video_information_container">',
+            `<div id="titleRow" class="video_information_row"><h2 id="liveTitle" class="video_information_title">${title}</h2></div>`,
+            '<div class="video_information_count">1,234명 시청 중</div>',
+            "</div>",
+            '<section id="chat"><div id="chatList"></div></section>',
+            "</main>",
+            "</body>",
+        ].join(""),
+        { url, runScripts: "outside-only", pretendToBeVisual: true }
+    );
+    const state = { requests: [], liveIds, longTimers: [] };
+    dom.window.chrome = chrome;
+    dom.window.fetch = async (requestUrl) => {
+        const channelId = String(requestUrl).match(/\/service\/v3\/channels\/([^/]+)\/live-detail$/)?.[1];
+        assert.ok(channelId, `unexpected request ${requestUrl}`);
+        state.requests.push(channelId);
+        return { ok: true, json: async () => ({ code: 200, content: { liveId: state.liveIds[channelId] } }) };
+    };
+    // 라이브 화면의 재확인 예약(90초·2분·15초)은 테스트가 시각을 옮긴 뒤 직접 실행해요.
+    const pageSetTimeout = dom.window.setTimeout.bind(dom.window);
+    dom.window.setTimeout = (callback, delay = 0, ...args) => {
+        if (delay < 15_000) return pageSetTimeout(callback, delay, ...args);
+        const timer = { callback, delay, cleared: false };
+        state.longTimers.push(timer);
+        return -state.longTimers.length;
+    };
+    const pageClearTimeout = dom.window.clearTimeout.bind(dom.window);
+    dom.window.clearTimeout = (id) => {
+        if (id < 0) state.longTimers[-id - 1].cleared = true;
+        else pageClearTimeout(id);
+    };
+    openDoms.add(dom);
+    return { chrome, document: dom.window.document, dom, state };
+}
+
+function runLongTimers(state) {
+    const timers = state.longTimers.filter((timer) => !timer.cleared);
+    for (const timer of timers) timer.cleared = true;
+    for (const timer of timers) timer.callback();
+}
+
+const livePanelTitles = (document) =>
+    Array.from(
+        document.querySelectorAll("#betterchzzk-following-title-history-panel .bcfth-title"),
+        (node) => node.textContent
+    );
+
+test("the live page shows previous titles of the same live right after the broadcast title", async () => {
+    const chrome = createFakeChrome({
+        local: {
+            [STORAGE_KEY]: {
+                version: 1,
+                entries: [storedEntry(["아침 제목", "점심 제목", "첫 번째 제목"])],
+            },
+        },
+    });
+    const { document, dom, state } = createLiveDom({ chrome, sidebarTitle: "첫 번째 제목" });
+    evalFeatureScripts(dom);
+
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "live title toggle was not rendered");
+    const wrap = document.getElementById("betterchzzk-live-title-history");
+    const button = document.querySelector("button[data-bcfth-toggle]");
+    assert.equal(document.querySelectorAll("button[data-bcfth-toggle]").length, 1);
+    assert.equal(wrap.previousElementSibling, document.getElementById("liveTitle"), "not the sidebar or player title");
+    assert.equal(button.parentElement, wrap);
+    assert.equal(button.getAttribute("aria-label"), "이전 방제 2개 보기");
+    assert.deepEqual(state.requests, [CHANNEL]);
+
+    button.click();
+    assert.equal(button.getAttribute("aria-label"), "이전 방제 접기");
+    assert.equal(document.getElementById("betterchzzk-following-title-history-panel").hidden, false);
+    assert.deepEqual(livePanelTitles(document), ["아침 제목", "점심 제목"]);
+
+    button.click();
+    assert.equal(document.getElementById("betterchzzk-following-title-history-panel").hidden, true);
+    assert.deepEqual(chrome.testState.localWrites, [], "the live page only reads the worker's history");
+});
+
+test("the live page shows nothing for another live, a channel without history, or a single title", async () => {
+    const restarted = createLiveDom({
+        chrome: createFakeChrome({
+            local: { [STORAGE_KEY]: { version: 1, entries: [storedEntry(["이전 제목", "첫 번째 제목"])] } },
+        }),
+        liveIds: { [CHANNEL]: "live-2" },
+    });
+    evalFeatureScripts(restarted.dom);
+    await waitFor(() => restarted.state.requests.length === 1, "the live was not checked");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(restarted.document.querySelector("[data-bcfth-toggle]"), null, "an earlier live's titles were shown");
+
+    const single = createLiveDom({
+        chrome: createFakeChrome({
+            local: {
+                [STORAGE_KEY]: {
+                    version: 1,
+                    entries: [
+                        storedEntry(["첫 번째 제목"]),
+                        storedEntry(["다른 채널 이전", "첫 번째 제목"], { channelId: OTHER_CHANNEL }),
+                    ],
+                },
+            },
+        }),
+    });
+    evalFeatureScripts(single.dom);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(single.state.requests, [], "nothing previous to show needs no live check");
+    assert.equal(single.document.querySelector("[data-bcfth-toggle]"), null);
+});
+
+test("a title change on the live page is checked again and the new title leaves the list", async (t) => {
+    const chrome = createFakeChrome({
+        local: { [STORAGE_KEY]: { version: 1, entries: [storedEntry(["이전 제목", "첫 번째 제목"])] } },
+    });
+    const { document, dom, state } = createLiveDom({ chrome });
+    let releaseCheck = () => {};
+    let hold = false;
+    t.after(() => releaseCheck());
+    const pageFetch = dom.window.fetch;
+    dom.window.fetch = async (...args) => {
+        const response = await pageFetch(...args);
+        if (hold) await new Promise((resolve) => (releaseCheck = resolve));
+        return response;
+    };
+    evalFeatureScripts(dom);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "live title toggle was not rendered");
+
+    hold = true;
+    document.getElementById("liveTitle").textContent = "새 제목";
+    await waitFor(() => state.requests.length === 2, "the changed title was not checked again");
+    assert.equal(document.querySelector("[data-bcfth-toggle]"), null, "nothing is shown before the new check");
+
+    hold = false;
+    releaseCheck();
+    await waitFor(
+        () => document.querySelector("button[data-bcfth-toggle]")?.getAttribute("aria-label") === "이전 방제 2개 보기",
+        "the changed title did not count both earlier titles"
+    );
+    document.querySelector("button[data-bcfth-toggle]").click();
+    assert.deepEqual(livePanelTitles(document), ["이전 제목", "첫 번째 제목"]);
+});
+
+test("chat updates on the live page neither redraw the panel nor send live checks", async () => {
+    const chrome = createFakeChrome({
+        local: { [STORAGE_KEY]: { version: 1, entries: [storedEntry(["이전 제목", "첫 번째 제목"])] } },
+    });
+    const { document, dom, state } = createLiveDom({ chrome });
+    evalFeatureScripts(dom);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "live title toggle was not rendered");
+    document.querySelector("button[data-bcfth-toggle]").click();
+    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+    const row = panel.firstElementChild;
+    let changes = 0;
+    const watcher = new dom.window.MutationObserver((records) => {
+        changes += records.length;
+    });
+    watcher.observe(panel, { childList: true, subtree: true });
+    watcher.observe(document.getElementById("titleRow"), { childList: true });
+
+    const chatList = document.getElementById("chatList");
+    for (let index = 0; index < 40; index++) {
+        const message = document.createElement("div");
+        message.textContent = `채팅 ${index}`;
+        chatList.appendChild(message);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    watcher.disconnect();
+    assert.equal(changes, 0);
+    assert.equal(panel.firstElementChild, row);
+    assert.equal(panel.hidden, false);
+    assert.deepEqual(state.requests, [CHANNEL]);
+});
+
+test("the live page refreshes its check before it expires and drops titles once a check expires", async () => {
+    const chrome = createFakeChrome({
+        local: { [STORAGE_KEY]: { version: 1, entries: [storedEntry(["이전 제목", "첫 번째 제목"])] } },
+    });
+    const { document, dom, state } = createLiveDom({ chrome });
+    const realNow = dom.window.Date.now.bind(dom.window.Date);
+    let offset = 0;
+    dom.window.Date.now = () => realNow() + offset;
+    const pageFetch = dom.window.fetch;
+    let fail = false;
+    dom.window.fetch = async (...args) => {
+        const response = await pageFetch(...args);
+        if (fail) throw new TypeError("Failed to fetch");
+        return response;
+    };
+    evalFeatureScripts(dom);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "live title toggle was not rendered");
+    const button = document.querySelector("button[data-bcfth-toggle]");
+    button.click();
+    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+
+    // 화면이 그대로여도 90초가 지나면 스스로 다시 확인하고, 같은 방송이면 패널이 그대로 열려 있어요.
+    offset = 91_000;
+    runLongTimers(state);
+    await waitFor(() => state.requests.length === 2, "the live page did not refresh its check on its own");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(panel.hidden, false);
+    assert.equal(button.isConnected, true);
+
+    // 다음 재확인이 실패하고 2분이 지나면 화면 변경이 없어도 버튼·패널을 거둬요.
+    fail = true;
+    offset = 91_000 + 91_000;
+    runLongTimers(state);
+    await waitFor(() => state.requests.length === 3, "the second refresh was not sent");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    offset = 91_000 + 121_000;
+    runLongTimers(state);
+    await waitFor(() => !document.querySelector("[data-bcfth-toggle]"), "an expired check kept the live toggle");
+    assert.equal(panel.hidden, true);
+});
+
+test("moving to another live drops the previous channel's toggle and panel", async () => {
+    const chrome = createFakeChrome({
+        local: {
+            [STORAGE_KEY]: {
+                version: 1,
+                entries: [
+                    storedEntry(["이전 제목", "첫 번째 제목"]),
+                    storedEntry(["다른 채널 이전", "다른 채널 제목"], { channelId: OTHER_CHANNEL, liveId: "live-9" }),
+                ],
+            },
+        },
+    });
+    const { document, dom, state } = createLiveDom({
+        chrome,
+        liveIds: { [CHANNEL]: "live-1", [OTHER_CHANNEL]: "live-9" },
+    });
+    evalFeatureScripts(dom);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "live title toggle was not rendered");
+    document.querySelector("button[data-bcfth-toggle]").click();
+
+    dom.window.history.pushState({}, "", `/live/${OTHER_CHANNEL}`);
+    dom.window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
+    await waitFor(() => !document.querySelector("[data-bcfth-toggle]"), "the previous channel's toggle stayed");
+    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+    assert.ok(!panel || panel.hidden);
+
+    const title = document.getElementById("liveTitle");
+    title.textContent = "다른 채널 제목";
+    await waitFor(
+        () =>
+            document.querySelector("button[data-bcfth-toggle]")?.getAttribute("data-bcfth-channel-id") ===
+            OTHER_CHANNEL,
+        "the new channel's toggle was not shown"
+    );
+    assert.ok(state.requests.includes(OTHER_CHANNEL));
+    document.querySelector("button[data-bcfth-toggle]").click();
+    assert.deepEqual(livePanelTitles(document), ["다른 채널 이전"]);
+});
+
+test("Space and Enter on the live title toggle open and close it without reaching the page's play shortcut", async () => {
+    const chrome = createFakeChrome({
+        local: { [STORAGE_KEY]: { version: 1, entries: [storedEntry(["이전 제목", "첫 번째 제목"])] } },
+    });
+    const { document, dom } = createLiveDom({ chrome });
+    const pageKeys = [];
+    // 치지직처럼 문서에서 Space를 재생 단축키로 받는 처리예요.
+    document.addEventListener("keydown", (event) => pageKeys.push(event.key));
+    evalFeatureScripts(dom);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "live title toggle was not rendered");
+    const button = document.querySelector("button[data-bcfth-toggle]");
+    const press = (key) => {
+        const event = new dom.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+        button.dispatchEvent(event);
+        return event;
+    };
+
+    const space = press(" ");
+    assert.equal(space.defaultPrevented, true);
+    assert.equal(button.getAttribute("aria-expanded"), "true");
+    assert.equal(document.getElementById("betterchzzk-following-title-history-panel").hidden, false);
+    press("Enter");
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+    assert.deepEqual(pageKeys, [], "the page's Space shortcut must not see the toggle's key");
+});

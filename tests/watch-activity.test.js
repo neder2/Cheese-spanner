@@ -522,6 +522,7 @@ async function liveHistoryFixture(t, { detail, pausedVideo = false }) {
     dom.window.fetch = async (url) => {
         const identity = String(url).includes("getUserStatus");
         if (identity) f.identityRequests++;
+        if (!identity && f.failDetail) throw new TypeError("Failed to fetch");
         const body = identity ? { code: 200, content: { loggedIn: true, userIdHash: "viewer" } } : f.detail;
         return { ok: true, json: async () => body };
     };
@@ -707,6 +708,60 @@ test("live history keeps one watch session across a transient same-broadcast CLO
     assert.deepEqual(Object.keys(f.entries()), ["live:100"]);
     assert.equal(f.entries()["live:100"].sessionDetails.length, 1);
     assert.equal(new Set(f.mutations().map((row) => row.operation.session.id)).size, 1);
+});
+
+test("live history stops attaching chat once live-detail keeps failing after the last confirmation", async (t) => {
+    const f = await liveHistoryFixture(t, { detail: liveDetail(), pausedVideo: true });
+    f.appendChat("확인된 방송 채팅");
+    await waitForCondition(() => f.activityTexts("live:100").length === 1);
+
+    // 한 번의 조회 실패는 넘겨요.
+    f.failDetail = true;
+    f.elapsed += METADATA_REFRESH_MS;
+    await f.refresh();
+    f.appendChat("한 번 실패 뒤 채팅");
+    await waitForCondition(() => f.activityTexts("live:100").length === 2);
+
+    // 연달아 실패하면 같은 채널의 새 방송일 수 있어 지난 방송에 붙이지 않아요.
+    f.elapsed += METADATA_REFRESH_MS;
+    await f.refresh();
+    f.appendChat("연속 실패 뒤 채팅");
+    await f.settle();
+    f.elapsed += METADATA_REFRESH_MS * 10;
+    await f.refresh();
+    f.appendChat("10분 뒤 채팅");
+    await f.settle();
+    assert.deepEqual(f.activityTexts("live:100"), ["확인된 방송 채팅", "한 번 실패 뒤 채팅"]);
+
+    // 새 방송이 확인되면 그 방송에만 새 채팅을 붙여요.
+    f.failDetail = false;
+    f.detail = liveDetail({ liveId: "101", liveTitle: "새 방송", openDate: "2026-09-18 12:30:00" });
+    f.elapsed += METADATA_REFRESH_MS;
+    await f.refresh();
+    f.appendChat("새 방송 채팅");
+    await waitForCondition(() => f.activityTexts("live:101").length === 1);
+    assert.deepEqual(f.activityTexts("live:100"), ["확인된 방송 채팅", "한 번 실패 뒤 채팅"]);
+    assert.deepEqual(f.activityTexts("live:101"), ["새 방송 채팅"]);
+});
+
+test("live history resumes chat when the same broadcast is confirmed again after repeated failures", async (t) => {
+    const f = await liveHistoryFixture(t, { detail: liveDetail(), pausedVideo: true });
+    f.failDetail = true;
+    for (let failures = 0; failures < 2; failures += 1) {
+        f.elapsed += METADATA_REFRESH_MS;
+        await f.refresh();
+    }
+    f.appendChat("확인 실패 중 채팅");
+    await f.settle();
+    assert.deepEqual(f.entries(), {});
+
+    f.failDetail = false;
+    f.elapsed += METADATA_REFRESH_MS;
+    await f.refresh();
+    f.appendChat("재확인 뒤 채팅");
+    await waitForCondition(() => f.activityTexts("live:100").length === 1);
+    assert.deepEqual(Object.keys(f.entries()), ["live:100"]);
+    assert.deepEqual(f.activityTexts("live:100"), ["재확인 뒤 채팅"]);
 });
 
 test("history ranks channels by unique time and shows safe transcripts, counts, period filters, and deletion", async (t) => {

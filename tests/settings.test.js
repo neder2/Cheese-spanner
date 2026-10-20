@@ -25,7 +25,7 @@ const expectedDefaults = {
     skipWheelAltStep: 10,
     volumeWheelEnabled: true,
     volumeWheelStep: 5,
-    volumeTooltipEnabled: false,
+    volumeTooltipEnabled: true,
     playerZoomEnabled: false,
     playerZoomMode: "manual",
     playerZoomShortcutKey: "alt",

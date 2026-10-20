@@ -91,7 +91,8 @@ function createFixture(t) {
                 if (!document.getElementById(BAR_ID)) document.body.appendChild(buildToolbar());
                 syncGlobalLiveCount({ scope: "global-lives", tab: "lives" });
             },
-            setFollowerMinimum: (min) => setFilterValue("followers", min),
+            setFollowerMinimum: (min) =>
+                setFilterState("followers", BetterChzzk.categoryToolsFilterModel.filterStateFromRange(min, 0)),
             remember: (card) => rememberFollowerRefreshRows(getRoute(), [{
                 entry: { card, id: "channel-a", domText: "Alpha" },
                 meta: { channelId: "channel-a", views: 10 }

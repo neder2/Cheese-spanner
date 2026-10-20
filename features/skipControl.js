@@ -116,6 +116,8 @@
     let skipSeconds = featureOptions.skipSeconds;
     let storedSkipSeconds = skipSeconds;
     let persistTimer = null;
+    // Saves sent but not yet answered; their storage echoes can arrive after a newer local choice.
+    let persistInFlight = 0;
     let skipSyncRafId = null;
     let delayedSkipSyncTimer = null;
     let skipPillEl = null;
@@ -244,8 +246,13 @@
         if (persistTimer) clearTimeout(persistTimer);
         persistTimer = setTimeout(() => {
             persistTimer = null;
+            persistInFlight += 1;
             // Saved through the worker's settings lock; a failure keeps the value in this document only.
-            settingsStoreSet("sync", { skipSeconds }).catch(() => {});
+            settingsStoreSet("sync", { skipSeconds })
+                .catch(() => {})
+                .finally(() => {
+                    persistInFlight -= 1;
+                });
         }, 250);
     }
 
@@ -1975,9 +1982,9 @@
         const next = normalizeSkipSeconds(options.skipSeconds);
         const storedChanged = next !== storedSkipSeconds;
         storedSkipSeconds = next;
-        // Unrelated option changes and the echo of an older save must not revert a pending or failed wheel
-        // value; only a stored value changed elsewhere replaces this document's choice.
-        if (storedChanged && !persistTimer) skipSeconds = next;
+        // Unrelated option changes and the echo of an older save must not revert a pending, in-flight or failed
+        // wheel value; only a stored value changed elsewhere replaces this document's choice.
+        if (storedChanged && !persistTimer && !persistInFlight) skipSeconds = next;
     }
 
     function applyOptions(options) {

@@ -143,7 +143,7 @@ test("category duration filters convert entered hours to seconds and format hour
     assert.equal(model.formatFilterInputForKind("duration", 3660), "1.02");
 });
 
-test("category filter presets use only supplied settings, deduplicate thresholds and preserve inclusive ranges", () => {
+test("category filter quick values use only supplied settings and deduplicate thresholds", () => {
     const model = loadFilterModel();
     const options = Object.freeze({
         categoryToolsFollowerFilterPreset1: 10000,
@@ -159,79 +159,176 @@ test("category filter presets use only supplied settings, deduplicate thresholds
     assert.deepEqual(plain(model.getFilterPresetValues("followers", options)), [1000, 5000, 10000]);
     assert.deepEqual(plain(model.getFilterPresetValues("views", options)), [100]);
     assert.deepEqual(plain(model.getFilterPresetValues("duration", options)), [3600, 7200]);
-    assert.deepEqual(plain(model.getFilterPresetRanges("followers", options)), [
-        { min: 0, max: 0 },
-        { min: 0, max: 1000 },
-        { min: 1000, max: 5000 },
-        { min: 5000, max: 10000 },
-        { min: 10000, max: 0 },
-    ]);
-    assert.deepEqual(plain(model.getFilterPresetRanges("duration", options)), [
-        { min: 0, max: 0 },
-        { min: 0, max: 3600 },
-        { min: 3600, max: 7200 },
-        { min: 7200, max: 0 },
-    ]);
-    assert.deepEqual(plain(model.getFilterPresetRanges("followers", {})), [{ min: 0, max: 0 }]);
+    assert.deepEqual(plain(model.getFilterPresetValues("followers", {})), []);
 
     const revisedOptions = { ...options, categoryToolsViewFilterPreset1: 200 };
     assert.deepEqual(plain(model.getFilterPresetValues("views", revisedOptions)), [200]);
     assert.deepEqual(plain(model.getFilterPresetValues("views", options)), [100]);
 });
 
-test("category filter labels retain count units and duration wording", () => {
+test("category filter modes keep one inclusive effective range and carry values between modes", () => {
     const model = loadFilterModel();
-    assert.equal(model.formatFilterOptionLabel("followers", 0, 0, "명"), "전체");
-    assert.equal(model.formatFilterOptionLabel("followers", 0, 1000, "명"), "1,000명 이하");
-    assert.equal(model.formatFilterOptionLabel("followers", 10000, 0, "명"), "1만명 ~ 최대");
-    assert.equal(model.formatFilterOptionLabel("views", 100, 500, "회"), "100회 ~ 500회");
-    assert.equal(model.formatFilterOptionLabel("duration", 7200, 14400, "시간"), "2시간 ~ 4시간");
-    assert.equal(model.formatFilterOptionLabel("duration", 7200, 0, "시간"), "2시간 이상");
+    const none = Object.freeze(model.createFilterState());
+    assert.deepEqual(plain(model.effectiveRange(none)), { min: 0, max: 0 });
+    assert.equal(model.isActiveRange(model.effectiveRange(none)), false);
+
+    const atLeast = Object.freeze(model.setFilterSingleValue(model.setFilterMode(none, "min"), 1000));
+    assert.deepEqual(plain(atLeast), { mode: "min", min: 1000, max: 0 });
+    assert.equal(
+        model.isActiveRange(model.effectiveRange(model.setFilterMode(none, "min"))),
+        false,
+        "a mode alone is not a condition"
+    );
+
+    const atMost = model.setFilterMode(atLeast, "max");
+    assert.deepEqual(plain(atMost), { mode: "max", min: 0, max: 1000 }, "이상↔이하 keeps the value");
+    assert.deepEqual(plain(model.setFilterMode(atLeast, "range")), { mode: "range", min: 1000, max: 0 });
+    assert.deepEqual(plain(model.setFilterMode(atMost, "range")), { mode: "range", min: 0, max: 1000 });
+    const hidden = model.setFilterMode(atLeast, "none");
+    assert.deepEqual(plain(model.effectiveRange(hidden)), { min: 0, max: 0 });
+    assert.deepEqual(
+        plain(model.setFilterMode(hidden, "min")),
+        { mode: "min", min: 1000, max: 0 },
+        "전체 keeps the last value"
+    );
+    assert.equal(model.setFilterMode(atLeast, "unknown"), atLeast);
+
+    const range = model.setFilterRangeValue(model.setFilterRangeValue(none, "min", 5000), "max", 1000);
+    assert.deepEqual(plain(range), { mode: "range", min: 5000, max: 1000 });
+    assert.deepEqual(plain(model.effectiveRange(range)), { min: 1000, max: 5000 }, "input order does not matter");
+    assert.deepEqual(plain(model.effectiveRange(model.setFilterRangeValue(none, "max", 300))), { min: 0, max: 300 });
+    assert.deepEqual(plain(model.setFilterSingleValue(atMost, 2.9)), { mode: "max", min: 0, max: 2 });
+    assert.deepEqual(plain(model.setFilterSingleValue(atLeast, -5)), { mode: "min", min: 0, max: 0 });
+
+    assert.deepEqual(plain(model.filterStateFromRange(100, 500)), { mode: "range", min: 100, max: 500 });
+    assert.deepEqual(plain(model.filterStateFromRange(100, 0)), { mode: "min", min: 100, max: 0 });
+    assert.deepEqual(plain(model.filterStateFromRange(0, 500)), { mode: "max", min: 0, max: 500 });
+    assert.deepEqual(plain(model.filterStateFromRange(0, 0)), { mode: "none", min: 0, max: 0 });
 });
 
-test("category filter drag ranges are direction independent and preserve open ends", () => {
+test("category condition labels name the kind, list unit, value and direction", () => {
     const model = loadFilterModel();
-    for (const [first, last, expected] of [
-        [
-            { min: 1000, max: 5000 },
-            { min: 10000, max: 30000 },
-            { min: 1000, max: 30000 },
-        ],
-        [
-            { min: 0, max: 1000 },
-            { min: 10000, max: 0 },
-            { min: 0, max: 0 },
-        ],
-        [
-            { min: 1000, max: 5000 },
-            { min: 10000, max: 0 },
-            { min: 1000, max: 0 },
-        ],
-        [
-            { min: 0, max: 0 },
-            { min: 1000, max: 5000 },
-            { min: 0, max: 5000 },
-        ],
-        [
-            { min: 0, max: 0 },
-            { min: 0, max: 0 },
-            { min: 0, max: 0 },
-        ],
-        [
-            { min: 1000, max: 1000 },
-            { min: 1000, max: 1000 },
-            { min: 1000, max: 0 },
-        ],
+    assert.equal(model.formatConditionLabel("followers", { min: 10000, max: 0 }), "팔로워 1만명 이상");
+    assert.equal(model.formatConditionLabel("views", { min: 0, max: 300 }, { liveList: true }), "시청자 300명 이하");
+    assert.equal(
+        model.formatConditionLabel("views", { min: 1000, max: 5000 }, { liveList: false }),
+        "조회수 1천~5천회"
+    );
+    assert.equal(model.formatConditionLabel("duration", { min: 7200, max: 14400 }), "진행 2~4시간");
+    assert.equal(model.formatConditionLabel("duration", { min: 0, max: 5400 }), "진행 1.5시간 이하");
+    assert.equal(model.formatConditionLabel("followers", { min: 0, max: 0 }), "");
+    for (const [value, label] of [
+        [300, "300"],
+        [1000, "1천"],
+        [1500, "1,500"],
+        [15000, "1.5만"],
+        [12345, "12,345"],
+        [100000, "10만"],
     ]) {
-        Object.freeze(first);
-        Object.freeze(last);
-        assert.deepEqual(plain(model.combineFilterOptionRanges(first, last)), expected);
-        assert.deepEqual(plain(model.combineFilterOptionRanges(last, first)), expected);
+        assert.equal(model.formatConditionValue("followers", value), label);
     }
-    assert.equal(model.hasFilterOptionRange({ min: 0, max: 0 }), false);
-    assert.equal(model.hasFilterOptionRange({ min: 0, max: 1000 }), true);
-    assert.equal(model.hasFilterOptionRange({ min: 1000, max: 0 }), true);
-    assert.equal(model.hasFilterOptionRange(null), false);
+});
+
+test("search terms need every word inside one field and drop cards with a minus word", () => {
+    const model = loadFilterModel();
+    const terms = model.parseSearchTerms("  롤   -대회 - -- LoL ");
+    assert.deepEqual(plain(terms.include), ["롤", "lol"]);
+    assert.deepEqual(plain(terms.exclude), ["대회"]);
+    assert.equal(terms.key, "롤 -대회 lol");
+    assert.equal(model.parseSearchTerms("롤  -대회   LoL").key, terms.key, "spacing alone does not change the search");
+    assert.equal(model.hasSearchTerms(model.parseSearchTerms(" - ")), false);
+
+    const fields = ["롤솔랭다이아", "정글러하늘", "리그오브레전드", "lol"].map(model.normalizeSearchText);
+    assert.equal(model.matchesSearchTerms(fields, terms), true);
+    assert.equal(
+        model.matchesSearchTerms([...fields, "lck대회"], terms),
+        false,
+        "a minus word in any field hides the card"
+    );
+    assert.equal(model.matchesSearchTerms(["롤솔랭"], terms), false, "every include word is required");
+    assert.equal(
+        model.matchesSearchTerms(["채널a", "리그"], model.parseSearchTerms("a리그")),
+        false,
+        "no match across fields"
+    );
+    assert.equal(model.matchesSearchTerms(["채널a리그"], model.parseSearchTerms("A리그")), true, "case is ignored");
+    assert.equal(model.matchesSearchTerms([], model.parseSearchTerms("")), true);
+
+    assert.equal(model.removeSearchTerm("롤 -대회  듀오", 1), "롤 듀오");
+    assert.equal(model.removeSearchTerm("롤", 0), "");
+    assert.equal(
+        model.parseSearchTerms(`${"가".repeat(99)} 나`).tokens.length,
+        1,
+        "only the first 100 characters count"
+    );
+});
+
+test("tab filter records keep only validated routes and values and the 20 newest lists", () => {
+    const model = loadFilterModel();
+    const empty = { version: 1, routes: {} };
+    assert.deepEqual(plain(model.readListFilterSession(null)), empty);
+    assert.deepEqual(plain(model.readListFilterSession("{not json")), empty);
+    assert.deepEqual(plain(model.readListFilterSession(JSON.stringify({ version: 2, routes: {} }))), empty);
+    assert.deepEqual(plain(model.readListFilterSession(JSON.stringify({ version: 1, routes: [] }))), empty);
+
+    const raw = JSON.stringify({
+        version: 1,
+        routes: {
+            "global-lives/lives": {
+                savedAt: 20,
+                query: "롤 -대회",
+                filters: {
+                    views: { mode: "min", min: 300, max: 0 },
+                    duration: { mode: "range", min: 14400, max: 3600 },
+                    followers: { mode: "none", min: 1000, max: 0 },
+                },
+            },
+            "GAME/League_of_Legends/videos": {
+                savedAt: 10,
+                query: "x".repeat(101),
+                filters: {
+                    views: { mode: "max", min: 0, max: 10000001 },
+                    followers: { mode: "min", min: 5000, max: 0 },
+                    duration: { mode: "min", min: 3600, max: 0 },
+                },
+            },
+            "evil/route": { savedAt: 30, query: "롤", filters: {} },
+            "GAME/A/lives": { savedAt: 40, query: "", filters: { views: { mode: "min", min: 1.5, max: 0 } } },
+        },
+    });
+    assert.deepEqual(plain(model.readListFilterSession(raw)), {
+        version: 1,
+        routes: {
+            "global-lives/lives": {
+                savedAt: 20,
+                query: "롤 -대회",
+                filters: {
+                    views: { mode: "min", min: 300, max: 0 },
+                    duration: { mode: "range", min: 3600, max: 14400 },
+                },
+            },
+            "GAME/League_of_Legends/videos": {
+                savedAt: 10,
+                query: "",
+                filters: { followers: { mode: "min", min: 5000, max: 0 } },
+            },
+        },
+    });
+
+    let session = model.writeListFilterRoute(empty, "global-lives/lives", { query: "롤", filters: {} }, 5);
+    assert.deepEqual(plain(session.routes["global-lives/lives"]), { savedAt: 5, query: "롤", filters: {} });
+    session = model.writeListFilterRoute(session, "global-lives/lives", { query: " ", filters: {} }, 6);
+    assert.deepEqual(plain(session.routes), {}, "a list without conditions is removed");
+    for (let index = 0; index < 21; index++) {
+        session = model.writeListFilterRoute(
+            session,
+            `GAME/C${index}/lives`,
+            { query: `q${index}`, filters: {} },
+            100 + index
+        );
+    }
+    assert.equal(Object.keys(session.routes).length, 20);
+    assert.equal(Object.hasOwn(session.routes, "GAME/C0/lives"), false, "the oldest list is dropped first");
 });
 
 test("category count filters include both boundaries and treat unavailable counts as zero", () => {

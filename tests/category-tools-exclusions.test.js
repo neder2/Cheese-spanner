@@ -1338,7 +1338,13 @@ test("toolbar category boxes show stored exclusions without opening filters and 
         ]
     );
     await ui.hooks.apply();
-    assert.equal(bar.querySelector(".bcgt-status").textContent, "", "exclusions alone do not show a filter count");
+    const applied = ui.window.document.getElementById("betterchzzk-category-filter-chips");
+    assert.ok(!applied || applied.hidden, "exclusions alone do not show the applied-condition row");
+    assert.equal(
+        applied?.querySelector(".bcgt-status")?.textContent ?? "",
+        "",
+        "exclusions alone do not show a filter count"
+    );
     assert.notEqual(
         ui.window.document.querySelector("[data-category-exclusions]")?.parentElement.getAttribute("data-open"),
         "1"

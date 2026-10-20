@@ -20,6 +20,9 @@
     const FLUSH_RETRY_MAX_ATTEMPTS = 5;
     const FLUSH_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
     const METADATA_REFRESH_MS = 60000;
+    // 방송이 정해진 세션에서 이보다 오래 확인하지 못한 채 조회가 실패하면 새 활동을 멈춰요. 한 번의 실패는 넘기고
+    // 연달아 실패하면 마지막으로 확인한 방송을 계속 현재 방송으로 보지 않아요.
+    const LIVE_CONFIRMATION_STALE_MS = METADATA_REFRESH_MS * 1.5;
     const FETCH_TIMEOUT_MS = 10000;
     const MAX_TICK_SECONDS = 10;
     const HISTORY_MAX_WATCHED_RANGES_PER_SESSION = 200;
@@ -310,12 +313,18 @@
             }
             // 같은 방송의 종료·미확인 응답은 시청 세션과 기존 활동을 유지하고 새 활동 연결만 멈춘다.
             current.liveUnconfirmed = !liveConfirmed;
+            if (liveConfirmed) current.liveConfirmedAt = Date.now();
             mergeMetadata(current, pageMetadata);
             mergeMetadata(current, nextMetadata, { persistThumbnail: true, persistTitle: true });
             await promoteSessionRecordId(current);
             if (current.activities.length) void flushSession({ target: current });
         } catch (_) {
-            if (isCurrentMetadataRequest(current, requestId, channelId)) mergeMetadata(current, pageMetadata);
+            if (isCurrentMetadataRequest(current, requestId, channelId)) {
+                mergeMetadata(current, pageMetadata);
+                // 조회가 실패하는 동안 같은 채널이 새 방송을 켰을 수 있어요. 다시 확인될 때까지 새 활동을 붙이지 않아요.
+                if (getPinnedLiveId(current) && Date.now() - current.liveConfirmedAt > LIVE_CONFIRMATION_STALE_MS)
+                    current.liveUnconfirmed = true;
+            }
         } finally {
             if (session === current) scheduleMetadataRefresh();
         }
@@ -672,6 +681,7 @@
             startedAt: now,
             lastWatchedAt: now,
             lastSeenAt: now,
+            liveConfirmedAt: now,
             watchedSeconds: 0,
             dailySeconds: {},
             watchedRanges: [],

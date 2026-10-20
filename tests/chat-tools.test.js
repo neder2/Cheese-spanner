@@ -669,6 +669,35 @@ test("an emptied id-less chat list refilled with the same backlog keeps one reco
     assert.equal(unreadCount(document), 3);
 });
 
+test("an emptied id-less chat list does not merge a repeated notice whose message time differs", async (t) => {
+    const timed = (time) =>
+        managerChat("같은 관리자", "곧 시작해요").replace(
+            'class="_item_sg7hy_7"',
+            `class="_item_sg7hy_7" data-bcmt-time="${time}"`
+        );
+    const { dom } = createPageDom(timed("09:00"));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 1);
+    const list = document.querySelector(".chat-list");
+
+    // 같은 시각의 백로그는 기존 기록으로 이어요.
+    list.textContent = "";
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    list.innerHTML = timed("09:00");
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    assert.equal(moderatorRows(document).length, 1);
+
+    // 비운 목록에 처음 온 같은 문구라도 원본 시각이 다르면 새 공지예요.
+    list.textContent = "";
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    list.innerHTML = timed("09:30");
+    await waitForCondition(() => moderatorRows(document).length === 2);
+    assert.deepEqual(collectedTexts(document), ["곧 시작해요", "곧 시작해요"]);
+    assert.equal(unreadCount(document), 2);
+});
+
 test("native moderator highlights follow nickname colors without changing text or collecting viewers", async (t) => {
     const { dom } = createPageDom(
         realChzzkChatRow({

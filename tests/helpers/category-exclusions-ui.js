@@ -217,7 +217,7 @@ async function createCategoryUI(
             apply: applyTools,
             options: (value) => applyInitialOptions(BetterChzzkSettings.normalizeOptions(value)),
             pageChange: handlePageChange,
-            numeric: (kind, min, max = 0) => { setFilterValue(kind, min, "", max, ""); updateUiState(); },
+            numeric: (kind, min, max = 0) => { setFilterState(kind, BetterChzzk.categoryToolsFilterModel.filterStateFromRange(min, max)); updateUiState(); },
             refresh: refreshFollowerHydrationRows,
             appliedQuery: () => currentQuery,
             listSearch: (query) => { currentQuery = query; updateUiState(); },

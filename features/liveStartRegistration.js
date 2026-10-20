@@ -12,6 +12,7 @@
         normalizeChzzkImageUrl,
         onReady,
         startPageChangeDetection,
+        startStorageChangeListener,
         storageGet,
     } = BetterChzzk.utils;
     const part = (name) => '[class^="_' + name + '_"], [class*=" _' + name + '_"]';
@@ -29,7 +30,8 @@
         panel = null,
         observer = null,
         removeOptions = null,
-        removeRoute = null;
+        removeRoute = null,
+        removeStorageListener = null;
     const pending = new Set();
     const profileCache = new Map();
     const ACTIONS = [
@@ -537,7 +539,7 @@
             onObserved: schedule,
             onBodyReady: schedule,
         });
-        chrome.storage.onChanged.addListener(onStorageChange);
+        removeStorageListener = startStorageChangeListener(onStorageChange);
         document.addEventListener("pointerdown", dismiss);
         document.addEventListener("keydown", dismiss);
         document.addEventListener("focusin", dismiss);
@@ -557,7 +559,9 @@
         frame = 0;
         removeRoute?.();
         removeRoute = null;
-        chrome.storage.onChanged.removeListener(onStorageChange);
+        // 확장을 새로고침한 뒤 남은 이 스크립트에는 chrome.storage가 없어요. 등록할 때 잡아 둔 해제 함수만 써요.
+        removeStorageListener?.();
+        removeStorageListener = null;
         document.removeEventListener("pointerdown", dismiss);
         document.removeEventListener("keydown", dismiss);
         document.removeEventListener("focusin", dismiss);

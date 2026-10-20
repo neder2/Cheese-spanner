@@ -316,6 +316,45 @@ test("skip seconds keep a pending or failed wheel value until storage changes el
     assert.equal(value(), "30");
 });
 
+test("skip seconds ignore an older save's echo while a newer save is still in flight", async (t) => {
+    const page = await openSkipPage(t, { path: "/live/test-channel", sync: { skipSeconds: 10 } });
+    const { chrome, dom, document, state } = page;
+    const pill = await waitForSkipPill(document);
+    const value = () => pill.querySelector(".bc-value").textContent;
+    const held = [];
+    chrome.runtime.sendMessage = (message, callback) => {
+        // Every save stays unanswered until the test answers it, like a slow worker queue.
+        if (message?.type === SETTINGS_STORE_MESSAGE_TYPE) held.push({ values: { ...message.values }, callback });
+    };
+
+    wheelOn(dom, pill, { deltaY: -100 });
+    await delay(SKIP_SAVE_DEBOUNCE_WAIT_MS);
+    wheelOn(dom, pill, { deltaY: -100 });
+    await delay(SKIP_SAVE_DEBOUNCE_WAIT_MS);
+    assert.deepEqual(
+        held.map((row) => row.values),
+        [{ skipSeconds: 11 }, { skipSeconds: 12 }]
+    );
+    assert.equal(value(), "12");
+
+    // The first save lands and echoes while the second is still waiting in the queue.
+    emitSyncChange(chrome, { skipSeconds: { oldValue: 10, newValue: 11 } });
+    held[0].callback({ ok: true });
+    await nextTask();
+    assert.equal(value(), "12");
+
+    // Even if the newer save fails, this document keeps the user's latest choice.
+    held[1].callback({ ok: false, error: "storage-write-failed" });
+    await nextTask();
+    assert.equal(value(), "12");
+    page.keydown(document.body, "ArrowLeft");
+    assert.equal(state.currentTime, 20);
+
+    // A value stored elsewhere after the saves settle still replaces it.
+    emitSyncChange(chrome, { skipSeconds: { oldValue: 11, newValue: 30 } });
+    assert.equal(value(), "30");
+});
+
 test("volume wheel leaves Ctrl+wheel and trackpad pinch zoom to the browser", async (t) => {
     const chrome = createFakeChrome();
     const dom = new JSDOM(

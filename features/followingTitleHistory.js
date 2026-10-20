@@ -1,21 +1,25 @@
 /**
- * features/followingTitleHistory.js — 팔로잉 본문의 라이브 카드에 이전 방제를 다시보기와 같은 버튼·패널로 보여 준다.
+ * features/followingTitleHistory.js — 라이브 시청 화면의 방송 제목과 팔로잉 본문의 라이브 카드에 이전 방제를
+ *   다시보기와 같은 버튼·패널로 보여 준다.
  *
- * 동작 위치: isolated world, https://chzzk.naver.com/following 본문의 라이브 카드.
+ * 동작 위치: isolated world, https://chzzk.naver.com/live/{channelId}의 방송 제목,
+ *   https://chzzk.naver.com/following 본문의 라이브 카드.
  * 하는 일: 서비스 워커(shared/followingTitleCollector.js)가 1분마다 모은 방송별 제목 이력을 읽기만 한다.
  *   저장된 이전 방제가 있는 카드만 live-detail로 현재 라이브 ID를 확인하고(카드 제목·주소가 바뀌면 다시 확인),
  *   저장된 이력의 라이브 ID와 같을 때만 현재 제목을 뺀 이전 방제를 제목 오른쪽 버튼으로 시각과 함께 펼쳐 보여 준다.
+ *   라이브 화면은 저장된 제목과 글자가 같은 방송 제목 요소를 찾아 그 뒤에 버튼을 두고, 그 요소의 제목 변경을 따라간다.
  *   확인값은 2분 동안만 쓰고 1분 30초가 지나면 미리 다시 확인한다. 만료된 뒤 확인 중·실패 구간에는 보여 주지 않는다.
  *   다른 방송의 제목은 보이지 않는다.
  * 수명주기: 옵션을 끄거나 라우트가 바뀌면 observer·listener·요청·UI를 정리하고, SPA 이동 후 재설치한다.
  * 옵션 키: followingTitleHistoryEnabled.
- * DOM 마커: #betterchzzk-following-title-history-style/panel,
+ * DOM 마커: #betterchzzk-following-title-history-style/panel, #betterchzzk-live-title-history,
  *   [data-bcfth-host], [data-bcfth-title], [data-bcfth-toggle].
  */
 (() => {
     const {
         bindFeatureOptions,
         createMutationObserverSync,
+        createThrottledDomSync,
         fetchJson,
         formatKstDateTime,
         formatKstTime,
@@ -31,6 +35,7 @@
 
     const STYLE_ID = "betterchzzk-following-title-history-style";
     const PANEL_ID = "betterchzzk-following-title-history-panel";
+    const LIVE_WRAP_ID = "betterchzzk-live-title-history";
     const HOST_ATTR = "data-bcfth-host";
     const TITLE_ATTR = "data-bcfth-title";
     const BUTTON_ATTR = "data-bcfth-toggle";
@@ -43,6 +48,18 @@
     const VERIFY_REFRESH_MS = 90 * 1000;
     const RETRY_COOLDOWN_MS = 15 * 1000;
     const FETCH_TIMEOUT_MS = 8000;
+    // 라이브 화면 제목 요소는 실측 클래스가 없어 저장된 제목과 글자가 같은 요소만 써요(다시보기 이전 방제와 같은 방식).
+    const LIVE_TITLE_SELECTOR = [
+        "h1",
+        "h2",
+        "h3",
+        "[class*='video_information_title']",
+        "[class*='live_information'] [class*='title']",
+        "[class*='live_title']",
+        "[class*='liveTitle']",
+    ].join(", ");
+    const LIVE_TITLE_EXCLUDE_SELECTOR = `aside, nav, a[href], [class*='pzp'], #${PANEL_ID}, #${LIVE_WRAP_ID}`;
+    const LIVE_SEARCH_THROTTLE_MS = 300;
 
     const storage = globalThis.chrome?.storage?.local;
     let featureOptions = BetterChzzkSettings.normalizeOptions();
@@ -58,6 +75,9 @@
     let storeEntries = new Map();
     let activeFetchCount = 0;
     let activeChannelId = "";
+    let liveTitleEl = null;
+    let liveTimer = 0;
+    let liveSearchSync = null;
     const fetchQueue = new Map();
     const fetchControllers = new Map();
     const lastFetches = new Map();
@@ -70,6 +90,19 @@
 
     function isFollowingRoute() {
         return location.pathname.replace(/\/+$/, "") === "/following";
+    }
+
+    function getLiveRouteChannelId() {
+        const match = location.pathname.match(/^\/live\/([^/]+)\/?$/);
+        try {
+            return normalizeChzzkChannelId(match ? decodeURIComponent(match[1]) : "");
+        } catch (_) {
+            return "";
+        }
+    }
+
+    function isSupportedRoute() {
+        return isFollowingRoute() || Boolean(getLiveRouteChannelId());
     }
 
     function extractChannelId(href) {
@@ -108,9 +141,9 @@
         return document.querySelector("main, [role='main'], #layout-body");
     }
 
-    function getTitleText(link) {
-        if (!(link instanceof HTMLAnchorElement)) return "";
-        const clone = link.cloneNode(true);
+    function getTitleText(element) {
+        if (!(element instanceof HTMLElement)) return "";
+        const clone = element.cloneNode(true);
         clone.querySelectorAll(`.blind, [aria-hidden="true"], [${BUTTON_ATTR}]`).forEach((node) => node.remove());
         return normalizeTitle(clone.textContent || "");
     }
@@ -276,39 +309,58 @@
         let button = findCandidateButton(host, candidate.channelId);
         if (!(button instanceof HTMLButtonElement)) {
             button?.remove();
-            button = document.createElement("button");
-            button.type = "button";
-            button.setAttribute(BUTTON_ATTR, "1");
-            button.setAttribute(CHANNEL_ATTR, candidate.channelId);
-            button.innerHTML = '<span class="bcfth-chevron" aria-hidden="true"></span>';
-            button.addEventListener("click", (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                // 치지직이 같은 제목 링크의 주소만 다른 채널로 바꿨을 수 있어요. 만든 때의 채널을 쓰기 전에 다시 읽어요.
-                if (!isCandidateCurrent(candidate, button)) {
-                    closePanel();
-                    scheduleSync();
-                    return;
-                }
-                const shouldOpen =
-                    activeChannelId !== candidate.channelId || button.getAttribute("aria-expanded") !== "true";
-                closePanel();
-                if (!shouldOpen) return;
-                const title = getTitleText(candidate.link);
-                const verifiedEntry = getVerifiedEntry(candidate.channelId, title);
-                if (!verifiedEntry) {
-                    scheduleSync();
-                    return;
-                }
-                activeChannelId = candidate.channelId;
-                setButtonExpanded(button, true);
-                renderPanel(button, verifiedEntry, title);
+            // 치지직이 같은 제목 링크의 주소만 다른 채널로 바꿨을 수 있어요. 만든 때의 채널을 쓰기 전에 다시 읽어요.
+            button = createToggleButton(candidate.channelId, {
+                isCurrent: (toggle) => isCandidateCurrent(candidate, toggle),
+                readTitle: () => getTitleText(candidate.link),
             });
             candidate.link.insertAdjacentElement("afterend", button);
         }
+        syncToggle(button, candidate, entry, rows.length);
+    }
 
-        button.setAttribute("aria-controls", PANEL_ID);
-        button.setAttribute(COUNT_ATTR, String(rows.length));
+    function createToggleButton(channelId, { isCurrent, readTitle }) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.setAttribute(BUTTON_ATTR, "1");
+        button.setAttribute(CHANNEL_ATTR, channelId);
+        button.innerHTML = '<span class="bcfth-chevron" aria-hidden="true"></span>';
+        // 방송 화면에서는 치지직이 Space를 재생 단축키로 가져가 버튼 대신 영상이 멈췄어요(2026-10-20 실측).
+        // 버튼에 초점이 있을 때 Enter·Space는 여기서 직접 처리하고 페이지로 넘기지 않아요.
+        button.addEventListener("keydown", (event) => {
+            if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (!event.repeat) button.click();
+        });
+        button.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!isCurrent(button)) {
+                closePanel();
+                scheduleSync();
+                return;
+            }
+            const shouldOpen = activeChannelId !== channelId || button.getAttribute("aria-expanded") !== "true";
+            closePanel();
+            if (!shouldOpen) return;
+            const title = readTitle();
+            const verifiedEntry = getVerifiedEntry(channelId, title);
+            if (!verifiedEntry) {
+                scheduleSync();
+                return;
+            }
+            activeChannelId = channelId;
+            setButtonExpanded(button, true);
+            renderPanel(button, verifiedEntry, title);
+        });
+        return button;
+    }
+
+    function syncToggle(button, candidate, entry, count) {
+        if (button.getAttribute("aria-controls") !== PANEL_ID) button.setAttribute("aria-controls", PANEL_ID);
+        if (button.getAttribute(COUNT_ATTR) !== String(count)) button.setAttribute(COUNT_ATTR, String(count));
         setButtonExpanded(button, activeChannelId === candidate.channelId);
         if (activeChannelId === candidate.channelId) renderPanel(button, entry, candidate.title);
     }
@@ -357,7 +409,7 @@
     }
 
     function pumpFetchQueue() {
-        if (!runtimeInstalled || !isEnabled() || !isFollowingRoute()) return;
+        if (!runtimeInstalled || !isEnabled() || !isSupportedRoute()) return;
         while (activeFetchCount < MAX_FETCH_CONCURRENCY && fetchQueue.size) {
             const [channelId, candidate] = fetchQueue.entries().next().value;
             fetchQueue.delete(channelId);
@@ -399,8 +451,138 @@
             });
     }
 
+    // 저장된 제목과 글자가 같은 방송 제목 요소 중 다른 일치 요소를 품지 않은 가장 안쪽 요소를 골라요.
+    // 사이드바·링크·플레이어 안의 같은 글자는 다른 채널 카드이거나 화면 위 겹침이라 쓰지 않아요.
+    function findLiveTitleElement(entry) {
+        const titles = new Set(entry.titleHistory.map((row) => row.title));
+        const matches = [];
+        for (const element of document.querySelectorAll(LIVE_TITLE_SELECTOR)) {
+            if (!(element instanceof HTMLElement) || element.closest(LIVE_TITLE_EXCLUDE_SELECTOR)) continue;
+            if (titles.has(getTitleText(element))) matches.push(element);
+        }
+        return (
+            matches.find((element) => !matches.some((other) => other !== element && element.contains(other))) || null
+        );
+    }
+
+    function isLiveTitleCurrent(channelId, button) {
+        const wrap = document.getElementById(LIVE_WRAP_ID);
+        return (
+            getLiveRouteChannelId() === channelId &&
+            liveTitleEl instanceof HTMLElement &&
+            liveTitleEl.isConnected &&
+            wrap?.previousElementSibling === liveTitleEl &&
+            button.parentElement === wrap
+        );
+    }
+
+    function removeLiveToggle() {
+        const wrap = document.getElementById(LIVE_WRAP_ID);
+        if (!wrap) return;
+        if (wrap.querySelector(`[${BUTTON_ATTR}][aria-expanded="true"]`)) closePanel();
+        wrap.remove();
+    }
+
+    function renderLiveToggle(candidate, entry) {
+        const rows = getPreviousRows(entry, candidate.title);
+        let wrap = document.getElementById(LIVE_WRAP_ID);
+        if (!(wrap instanceof HTMLElement)) {
+            wrap?.remove();
+            wrap = document.createElement("span");
+            wrap.id = LIVE_WRAP_ID;
+        }
+        if (wrap.previousElementSibling !== liveTitleEl) liveTitleEl.insertAdjacentElement("afterend", wrap);
+
+        let button = wrap.querySelector(`[${BUTTON_ATTR}]`);
+        if (!(button instanceof HTMLButtonElement) || button.getAttribute(CHANNEL_ATTR) !== candidate.channelId) {
+            if (button?.getAttribute("aria-expanded") === "true") closePanel();
+            button?.remove();
+            button = createToggleButton(candidate.channelId, {
+                isCurrent: (toggle) => isLiveTitleCurrent(candidate.channelId, toggle),
+                readTitle: () => getTitleText(liveTitleEl),
+            });
+            wrap.appendChild(button);
+        }
+        syncToggle(button, candidate, entry, rows.length);
+    }
+
+    function clearLiveTimer() {
+        if (liveTimer) clearTimeout(liveTimer);
+        liveTimer = 0;
+    }
+
+    // 라이브 화면은 카드 목록처럼 화면 변경이 이어지지 않아요. 미리 다시 확인할 때·확인값이 끝날 때·실패 뒤
+    // 다시 시도할 때 중 가장 가까운 시각에 한 번 다시 맞춰요.
+    function scheduleLiveTimer(channelId) {
+        clearLiveTimer();
+        const now = Date.now();
+        const verifiedAt = verifiedLives.get(channelId)?.verifiedAt || 0;
+        const requestedAt = lastFetches.get(channelId)?.requestedAt || 0;
+        const deadlines = [
+            verifiedAt && verifiedAt + VERIFY_REFRESH_MS + 1,
+            verifiedAt && verifiedAt + VERIFY_TTL_MS + 1,
+            requestedAt > verifiedAt && requestedAt + RETRY_COOLDOWN_MS + 1,
+        ].filter((time) => time && time > now);
+        if (!deadlines.length) return;
+        liveTimer = setTimeout(
+            () => {
+                liveTimer = 0;
+                scheduleSync();
+            },
+            Math.min(...deadlines) - now
+        );
+    }
+
+    function syncLiveTitle() {
+        const channelId = getLiveRouteChannelId();
+        const entry = storeEntries.get(channelId);
+        if (!entry) {
+            liveTitleEl = null;
+            clearLiveTimer();
+            removeLiveToggle();
+            return;
+        }
+        // 한 번 찾은 제목 요소는 글자가 저장된 제목과 달라져도(방제 변경) 계속 따라가요.
+        if (!(liveTitleEl instanceof HTMLElement) || !liveTitleEl.isConnected) {
+            liveTitleEl = findLiveTitleElement(entry);
+        }
+        const title = getTitleText(liveTitleEl);
+        // 저장된 이전 방제가 없으면 버튼을 만들 수 없으니 방송 확인 요청도 보내지 않아요.
+        if (!title || !getPreviousRows(entry, title).length) {
+            clearLiveTimer();
+            removeLiveToggle();
+            return;
+        }
+        const candidate = { channelId, title };
+        const verifiedEntry = getVerifiedEntry(channelId, title);
+        if (verifiedEntry) renderLiveToggle(candidate, verifiedEntry);
+        else removeLiveToggle();
+        queueVerification(candidate);
+        scheduleLiveTimer(channelId);
+    }
+
+    // 라이브 화면은 채팅이 계속 바뀌어요. 찾은 제목 요소와 그 자리의 변경만 받고, 아직 못 찾았을 때만 묶어서 다시 찾아요.
+    function handleLiveMutations(mutations) {
+        const entry = storeEntries.get(getLiveRouteChannelId());
+        if (!entry) return;
+        if (liveTitleEl instanceof HTMLElement && liveTitleEl.isConnected) {
+            const wrap = document.getElementById(LIVE_WRAP_ID);
+            if (
+                (wrap && wrap.previousElementSibling !== liveTitleEl) ||
+                mutations.some(
+                    (mutation) => liveTitleEl.contains(mutation.target) || mutation.target === liveTitleEl.parentElement
+                )
+            ) {
+                scheduleSync();
+            }
+            return;
+        }
+        // 저장된 제목이 하나뿐이면 그 제목을 보이는 요소에는 이전 방제가 없어요. 다음 수집에서 줄이 늘면 다시 찾아요.
+        if (entry.titleHistory.length > 1 || liveTitleEl) liveSearchSync?.();
+    }
+
     async function syncCandidates() {
-        if (!runtimeInstalled || !isEnabled() || !isFollowingRoute()) {
+        if (!runtimeInstalled || !isEnabled() || !isSupportedRoute()) {
             cleanupUi();
             return;
         }
@@ -411,8 +593,15 @@
             console.warn("[Cheese Spanner] 팔로잉 방제 이력 로드 실패", error);
             return;
         }
-        if (!runtimeInstalled || !isEnabled() || !isFollowingRoute()) return;
+        if (!runtimeInstalled || !isEnabled() || !isSupportedRoute()) return;
 
+        if (isFollowingRoute()) syncFollowingCards();
+        else syncLiveTitle();
+
+        if (activeChannelId && !document.querySelector(`[${BUTTON_ATTR}][aria-expanded="true"]`)) closePanel();
+    }
+
+    function syncFollowingCards() {
         const candidates = collectCandidates();
         const candidateByLink = new Map(candidates.map((candidate) => [candidate.link, candidate]));
         // 치지직이 같은 제목 링크를 다른 채널 카드로 재사용하면 이전 채널의 버튼을 남기지 않아요.
@@ -437,8 +626,6 @@
             else removeCandidateButton(candidate);
             queueVerification(candidate);
         }
-
-        if (activeChannelId && !document.querySelector(`[${BUTTON_ATTR}][aria-expanded="true"]`)) closePanel();
     }
 
     function scheduleSync() {
@@ -451,6 +638,9 @@
 
     function cleanupUi() {
         closePanel();
+        liveTitleEl = null;
+        clearLiveTimer();
+        document.getElementById(LIVE_WRAP_ID)?.remove();
         document.querySelectorAll(`[${BUTTON_ATTR}]`).forEach((button) => button.remove());
         document.querySelectorAll(`[${HOST_ATTR}]`).forEach((host) => host.removeAttribute(HOST_ATTR));
         document.querySelectorAll(`[${TITLE_ATTR}]`).forEach((title) => title.removeAttribute(TITLE_ATTR));
@@ -500,6 +690,7 @@
             `
 [${HOST_ATTR}="1"]{position:relative!important}
 [${TITLE_ATTR}="1"]{box-sizing:border-box!important;padding-right:30px!important}
+#${LIVE_WRAP_ID}{position:relative;display:inline-flex;flex:0 0 auto;align-self:center;width:24px;height:24px;margin-left:8px;vertical-align:middle;line-height:1;z-index:20}
 [${BUTTON_ATTR}="1"]{
   position:absolute;top:0;right:0;z-index:2;display:inline-flex;align-items:center;justify-content:center;
   width:24px;height:24px;min-width:24px;margin:0;padding:0;border:1px solid var(--bct-border-alpha);
@@ -528,10 +719,14 @@
         runtimeInstalled = true;
         runtimeGeneration += 1;
         injectStyles();
+        liveSearchSync = createThrottledDomSync(syncCandidates, LIVE_SEARCH_THROTTLE_MS);
         removePageChangeDetection = startPageChangeDetection(handlePageChange);
         domObserver = createMutationObserverSync({
             onMutations(mutations) {
-                if (!isFollowingRoute()) return;
+                if (!isFollowingRoute()) {
+                    if (getLiveRouteChannelId()) handleLiveMutations(mutations);
+                    return;
+                }
                 // 제목은 그대로 두고 링크 주소만 다른 채널로 바뀌어도 이전 채널의 버튼·패널을 정리해야 해요.
                 if (
                     mutations.some(
@@ -565,6 +760,8 @@
         runtimeGeneration += 1;
         if (syncFrame) cancelAnimationFrame(syncFrame);
         syncFrame = 0;
+        liveSearchSync?.cancel();
+        liveSearchSync = null;
         abortFetches();
         domObserver?.disconnectAll?.();
         domObserver?.disconnect();

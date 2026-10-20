@@ -417,6 +417,10 @@
             if (!String(parsed.id || "").startsWith("row:") || binding.root !== chatRoot) return false;
             if (binding.author !== parsed.author || binding.role !== parsed.role || binding.text !== parsed.text)
                 return false;
+            // 원본 메시지 시각(분 단위)이 양쪽에 있고 다르면 같은 문구의 다른 메시지예요. 시각이 같거나 한쪽에
+            // 없을 때는 같은 메시지라는 근거가 아니므로 기존 판단을 따라요.
+            const knownTimestamp = binding.message.timestamp;
+            if (knownTimestamp && parsed.timestamp && knownTimestamp !== parsed.timestamp) return false;
 
             const nextRowReuseSignal = getCacheRowReuseSignal(parsed.node);
             return !(binding.rowReuseSignal && nextRowReuseSignal && binding.rowReuseSignal !== nextRowReuseSignal);

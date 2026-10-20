@@ -343,7 +343,7 @@ ${ORDER_RULES}
 #${LAYER_ID} .bcff-pick:hover{background:${HOVER}}
 #${LAYER_ID} .bcff-avatar{display:grid;place-items:center;flex:none;width:32px;height:32px;overflow:hidden;border-radius:50%;background:${FIELD};color:${MUTED};font-size:13px;font-weight:700}
 #${LAYER_ID} .bcff-avatar img{display:block;width:100%;height:100%;object-fit:cover}
-#${LAYER_ID} .bcff-pick[data-live="0"] .bcff-avatar{opacity:.55}
+#${LAYER_ID} .bcff-pick:not([data-live="1"]) .bcff-avatar{opacity:.55}
 #${LAYER_ID} .bcff-pick-info{display:flex;flex:1;flex-direction:column;min-width:0}
 #${LAYER_ID} .bcff-pick-name{overflow:hidden;font-size:14px;font-weight:600;text-overflow:ellipsis;white-space:nowrap}
 #${LAYER_ID} .bcff-pick-detail{overflow:hidden;color:${MUTED};font-size:12px;text-overflow:ellipsis;white-space:nowrap}
@@ -453,6 +453,9 @@ ${ORDER_RULES}
     let undo = null;
     // 접힌 폴더 머리 행의 방송 중 수에 쓰는, 지금 목록에서 방송 중인 채널 ID예요.
     let liveChannelIds = new Set();
+    // 원본 목록이 아직 다 그려지지 않았을 때 그려진 채널 ID예요. 그 밖의 폴더 채널은 방송 상태를 모르는 채널이에요.
+    // 목록이 끝까지 그려졌으면 null이에요.
+    let partialChannelIds = null;
     // 사용자가 원본 목록을 직접 접으면 다음에 폴더를 펼칠 때까지 대신 펼치지 않아요.
     let nativeExpandHeld = false;
     // 대신 누른 `더보기`의 응답 대기: { button, rows }. 원본 행 수가 바뀌기 전에는 다시 누르지 않아요.
@@ -636,9 +639,9 @@ ${ORDER_RULES}
         );
     }
 
-    function rememberChannel(channelId, name, isLive) {
+    function rememberChannel(channelId, name) {
         knownChannels.delete(channelId);
-        knownChannels.set(channelId, { name, isLive });
+        knownChannels.set(channelId, { name });
         while (knownChannels.size > MAX_KNOWN_CHANNELS) knownChannels.delete(knownChannels.keys().next().value);
     }
 
@@ -936,6 +939,14 @@ ${ORDER_RULES}
         return folder.channelIds.filter((channelId) => liveChannelIds.has(channelId)).length;
     }
 
+    // 원본 목록이 덜 그려져 방송 상태를 확인하지 못한 폴더 채널 수예요. 끝까지 펼쳐도 없던 채널은 세지 않아요.
+    function uncheckedCount(folder) {
+        if (!partialChannelIds) return 0;
+        return folder.channelIds.filter(
+            (channelId) => !partialChannelIds.has(channelId) && !unreachableChannelIds.has(channelId)
+        ).length;
+    }
+
     function buildFolderHeader(header, folder) {
         const toggle = el("button", "bcff-toggle");
         toggle.type = "button";
@@ -1050,8 +1061,17 @@ ${ORDER_RULES}
             setAttr(nameButton, KEY_ATTR, `folder:${folder.id}:name`);
         }
         const lives = folder.collapsed ? liveCount(folder) : 0;
+        // 확인한 방송 중 채널만 세요. 아직 목록에 없는 채널이 남았으면 실제로는 더 많을 수 있다고 표시해요.
+        const unchecked = lives ? uncheckedCount(folder) : 0;
         live.hidden = lives === 0;
-        setAttr(live, "data-bcff-live", String(lives));
+        setAttr(live, "data-bcff-live", unchecked ? `${lives}+` : String(lives));
+        if (unchecked)
+            setAttr(
+                live,
+                "title",
+                `방송 중 ${lives}개 확인 · 목록에 아직 없는 채널 ${unchecked}개는 방송 여부를 확인하지 못했어요`
+            );
+        else removeAttr(live, "title");
         setAttr(more, "aria-label", `${folder.name} 폴더 메뉴`);
         setAttr(more, KEY_ATTR, `folder:${folder.id}:more`);
         setAttr(more, "aria-expanded", String(layer?.kind === "menu" && layer.folderId === folder.id));
@@ -1122,10 +1142,16 @@ ${ORDER_RULES}
         syncCompact();
         // 행 정체성은 캐시된 href 판정만 읽어요. 이름은 채널 선택 창을 열 때만 읽어요.
         liveChannelIds = new Set();
+        const renderedChannelIds = new Set();
         for (const child of currentList.children) {
             const info = getRowInfo(child);
-            if (info?.isLive) liveChannelIds.add(info.channelId);
+            if (!info) continue;
+            renderedChannelIds.add(info.channelId);
+            if (info.isLive) liveChannelIds.add(info.channelId);
         }
+        // `더보기` 버튼이 있고 아직 `접기`가 아니면 원본 목록이 덜 그려진 상태예요.
+        partialChannelIds =
+            findNativeListButton()?.getAttribute("aria-expanded") === "false" ? renderedChannelIds : null;
         syncHeaders();
         for (const child of Array.from(currentList.children)) syncChild(child);
         if (activeDrag || folderDrag) setAttr(currentList, DRAGGING_ATTR, "1");
@@ -2488,7 +2514,7 @@ ${ORDER_RULES}
             if (!info || !isValidChannelId(info.channelId) || seen.has(info.channelId)) continue;
             seen.add(info.channelId);
             const name = getRowName(child, info);
-            rememberChannel(info.channelId, name, info.isLive);
+            rememberChannel(info.channelId, name);
             channels.push({ channelId: info.channelId, name, isLive: info.isLive, image: getRowImage(child) });
         }
         return channels;
@@ -2514,12 +2540,15 @@ ${ORDER_RULES}
             channels.push({
                 channelId,
                 name: known?.name || `현재 목록에 없는 채널 (${channelId.slice(0, 8)})`,
-                isLive: Boolean(known?.isLive),
+                // 지금 목록에 없으면 방송 여부를 모르므로 오프라인으로 단정하지 않아요.
+                isLive: null,
                 image: "",
             });
         }
         channels.sort(
-            (left, right) => Number(right.isLive) - Number(left.isLive) || left.name.localeCompare(right.name, "ko")
+            (left, right) =>
+                Number(right.isLive === true) - Number(left.isLive === true) ||
+                left.name.localeCompare(right.name, "ko")
         );
         const items = channels
             .filter((channel) => !term || channel.name.toLowerCase().includes(term))
@@ -2553,7 +2582,8 @@ ${ORDER_RULES}
                 );
         });
         button.setAttribute("aria-pressed", String(inFolder));
-        button.dataset.live = channel.isLive ? "1" : "0";
+        const liveState = channel.isLive === true ? "1" : channel.isLive === false ? "0" : "unknown";
+        button.dataset.live = liveState;
         const avatar = el("span", "bcff-avatar");
         avatar.setAttribute("aria-hidden", "true");
         if (channel.image) {
@@ -2569,8 +2599,12 @@ ${ORDER_RULES}
             avatar.append(image);
         } else avatar.textContent = Array.from(channel.name)[0] || "";
         const info = el("span", "bcff-pick-info");
-        const detail = el("span", "bcff-pick-detail", channel.isLive ? "방송 중" : "오프라인");
-        detail.dataset.live = channel.isLive ? "1" : "0";
+        const detail = el(
+            "span",
+            "bcff-pick-detail",
+            liveState === "1" ? "방송 중" : liveState === "0" ? "오프라인" : "목록에 없어 방송 여부 모름"
+        );
+        detail.dataset.live = liveState;
         if (other) detail.textContent += ` · ‘${other.name}’에 있음`;
         info.append(el("span", "bcff-pick-name", channel.name), detail);
         const check = el("span", "bcff-check");

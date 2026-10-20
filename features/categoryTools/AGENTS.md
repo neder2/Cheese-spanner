@@ -2,7 +2,7 @@
 
 ## 책임
 
-`filterModel.js`는 단위·프리셋·포함 범위와 정확한 카테고리 제외 판정을 소유하고 UI 상태·설정을 자체로 저장하지 않아요. `repository.js`는 목록 커서·메타데이터·팔로워·카테고리 이름 요청과 bounded 캐시를 소유해요. `searchController.js`는 추가 탐색의 실행·대기·취소를 조정해요. DOM 카드와 toolbar·제외 선택 UI는 상위 `categoryTools.js`가 소유해요. 지속 선택의 검증·실제 저장은 공용 categoryExclusions와 서비스 워커의 전용 큐가 맡아요.
+`filterModel.js`는 단위·프리셋·포함 범위, 전체·이상·이하·범위 모드와 실제 조건, 조건 칩 문구, 검색 단어 해석·칸 단위 일치, 탭 기록 검증과 정확한 카테고리 제외 판정을 소유해요. UI 상태·설정을 자체로 저장하지 않고 sessionStorage에도 접근하지 않아요. `repository.js`는 목록 커서·메타데이터·팔로워·카테고리 이름 요청과 bounded 캐시를 소유해요. `searchController.js`는 추가 탐색의 실행·대기·취소를 조정해요. DOM 카드와 toolbar·필터 메뉴·적용 조건 줄·제외 선택 UI, 탭 sessionStorage 읽기·쓰기는 상위 `categoryTools.js`가 소유해요. 지속 선택의 검증·실제 저장은 공용 categoryExclusions와 서비스 워커의 전용 큐가 맡아요.
 
 여기에 DOM 조작·네이티브 카드 복제·옵션 폼을 넣지 않아요. 상위 화면에서도 별도 페이지 조회·캐시·반복 타이머를 만들어 같은 일을 중복 소유하지 않아요.
 
@@ -13,7 +13,10 @@
 - 실패·타임아웃·상한 도달·완료 상태를 구분해요. 메타데이터 재시도는 기존 bounded backoff와 취소를 지키며 새 무제한 반복을 추가하지 않아요.
 - 팔로워 0명과 미조회·조회 실패는 다르게 캐시해요. 상한·실패 캐시 만료를 유지해요. 채널 수는 경로 독립 자료여서 기존 bounded 캐시를 이동마다 무조건 지우는 것도 계약 변경이에요.
 - 조회 batch·동시성·간격은 설정을 따르고, 화면 바깥 결과를 위해 무한 페이지 탐색하지 않아요. 로딩 중 새 요청은 동일 탐색을 다시 시작하지 않아요.
-- 범위는 양끝 포함이며 드래그 방향에 따라 달라지지 않아요. 모델의 누락 숫자 처리와 화면의 ‘확인 중/조회 실패’ 표현은 구분해요.
+- 범위는 양끝 포함이며 입력 순서와 무관해요. 모드만 고르고 값이 없으면 조건이 아니에요(배지 수·칩·결과 수에 넣지 않아요). 모델의 누락 숫자 처리와 화면의 ‘확인 중/조회 실패’ 표현은 구분해요.
+- 검색은 띄어쓰기 단어 AND와 `-단어` 제외예요. 단어마다 메타데이터 필드와 카드 텍스트 노드 조각 중 한 칸 안에서 찾고 칸을 이어 붙인 문자열로 비교하지 않아요. 적용 키·시청자 표시 보존 키는 정규화한 단어 목록을 써서 띄어쓰기만 다른 검색이 새 탐색을 만들지 않게 해요.
+- 적용 조건 줄(`#betterchzzk-category-filter-chips`)은 툴바와 같은 host 안에 두고 CSS order로 맨 아래 줄을 차지해요. 제외 줄이 host의 마지막 자리를 지키므로 그 앞에 끼워 넣고, 같은 내용이면 다시 그리지 않아요. 확장 소유 노드로 관찰에서 빼되 사이트가 지우면 다시 붙여요. 결과 수(`.bcgt-status`, aria-live)는 이 줄에만 있고 검색어·숫자 조건이 없으면 줄을 숨겨요. 검색어 칩은 사용자 입력이라 글자로만 넣어요.
+- 탭 기록은 사이트 sessionStorage `betterChzzkListFilterSession`(version 1, 목록 주소 키별, 최대 20개, 검색어 100자, 인원·횟수 1천만·진행 시간 168시간 상한)이에요. 읽을 때마다 모델로 검증해 틀린 항목·종류만 버리고, 사용자 조작(검색 적용, 칩 해제, 모두 해제, 메뉴 조작, 필터 초기화)에서만 그 주소 항목을 고쳐 써요. 경로 이동·`removeTools()`·기능 OFF의 자동 초기화는 기록을 쓰지 않고 다음 장착에서 다시 읽어요. 저장소 예외는 메모리 조건만으로 계속 동작해요.
 - 전체 라이브 집계는 liveId로 중복을 제거하고 시청자 10명 이상이라는 현재 집계 범위를 표시해요. 사이트 전체의 완전한 총계로 바꾸지 않아요.
 - `globalLiveCountEnabled`는 검색·필터와 독립이에요. 집계만 켜면 검색 UI·배지·카드 변경·태그 검색 숨김을 실행하지 않아요. 어느 한 기능을 끌 때 다른 소비자가 사용하는 페이지 요청은 보존해요.
 - 전체 방송의 공유 페이지는 제한된 캐시를 사용하고, 집계로 읽은 연속 페이지도 검색 메타데이터에 한 번만 반영해요. 집계 캐시가 만료된 뒤 오래된 자료에 새 시각만 붙이지 않아요. 직접 제거된 toolbar는 복구하되 자체 삽입·옵션 OFF가 다시 예약을 만들지 않도록 확인해요.
@@ -39,7 +42,7 @@
 
 ## 검증
 
-`tests/category-tools-filter-model.test.js`는 단위·프리셋·범위, `tests/category-tools-repository.test.js`는 커서·공유·중복·캐시·상한·취소·재시도를 보호해요. `tests/category-tools-apply-cost.test.js`는 안정 상태 적용의 문서 전체 링크 탐색 0회, href 재해석 0회, 숨은 진행 시간 배지 무변경, 배지의 읽기·쓰기 순서, 툴바·태그 검색 표식의 재기록 없음을 호출 횟수로 지켜요. `tests/category-tools-lifecycle.test.js`는 오래된 팔로워 결과가 재사용 카드에 붙지 않는지, 검색과 배지가 서로 지연시키지 않는지, disable·SPA가 예약을 끝내는지 확인해요. 통합 목록 동작은 `tests/extension-pages.test.js`, 중복 예약은 `tests/dom-scheduling.test.js`에서도 확인해요.
+`tests/category-tools-filter-model.test.js`는 단위·프리셋·모드·조건 문구·검색 단어·탭 기록 검증, `tests/category-tools-list-filters.test.js`는 칩 줄·검색 단어·떠났다 돌아오기·새로고침·주소별 분리·자동 초기화와 모두 해제·손상/차단 저장소·메뉴 모드와 초기화 뒤 초점, `tests/category-tools-repository.test.js`는 커서·공유·중복·캐시·상한·취소·재시도를 보호해요. `tests/category-tools-apply-cost.test.js`는 안정 상태 적용의 문서 전체 링크 탐색 0회, href 재해석 0회, 숨은 진행 시간 배지 무변경, 배지의 읽기·쓰기 순서, 툴바·태그 검색 표식의 재기록 없음을 호출 횟수로 지켜요. `tests/category-tools-lifecycle.test.js`는 오래된 팔로워 결과가 재사용 카드에 붙지 않는지, 검색과 배지가 서로 지연시키지 않는지, disable·SPA가 예약을 끝내는지 확인해요. 통합 목록 동작은 `tests/extension-pages.test.js`, 중복 예약은 `tests/dom-scheduling.test.js`에서도 확인해요.
 
 제외 변경은 `tests/category-exclusions-store.test.js`, `tests/category-tools-exclusions.test.js`와 filter-model·repository에서 두 탭의 개별 변경·지속 복원·상한·실패 보존·정확한 정체성·신뢰한 버튼·검색 취소를 확인해요. 공용 선행 로드를 바꾸면 lifecycle·extension-pages·refactoring-data-modules의 실제 로드도 맞춰요. 실제 Chrome의 이름 검색 요청·현재 카드 링크·SPA 발신 URL·기본 Enter/Space·두 테마·새로고침과 재시작은 자동 fixture와 별도로 확인해요.
 

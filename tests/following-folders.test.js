@@ -1134,6 +1134,32 @@ test("a collapsed folder keeps its live count beside the menu button while the p
     assert.match(style, /\.bcff-more\{opacity:0\}/, "the menu button keeps its place, so the count does not move");
 });
 
+test("a collapsed folder marks its live count partial while the native list has not built its channels yet", async (t) => {
+    const saved = stateOf(folder("games", "게임", [A, E], true));
+    const { dom, document } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved }, { collapsedList: true });
+    await waitForCondition(() => headerButton(document, "게임"));
+    const live = () => header(document, "게임").querySelector(".bcff-live");
+    assert.equal(live().hidden, false);
+    assert.equal(live().getAttribute("data-bcff-live"), "1+", "E is live but its row is not built yet");
+    assert.match(live().getAttribute("title"), /방송 중 1개 확인.*채널 1개는 방송 여부를 확인하지 못했어요/);
+
+    const picker = await openPicker(dom, document, "게임");
+    const pick = (channelId) => picker.querySelector(`[data-bcff-key="pick:games:${channelId}"]`);
+    assert.equal(pick(A).dataset.live, "1");
+    assert.equal(pick(A).querySelector(".bcff-pick-detail").textContent, "방송 중");
+    assert.equal(pick(E).dataset.live, "unknown");
+    assert.equal(pick(E).querySelector(".bcff-pick-detail").textContent, "목록에 없어 방송 여부 모름");
+    trustedKey(dom, picker.querySelector('[data-bcff-key="picker-filter"]'), "Escape");
+    await waitForCondition(() => !layer(document));
+
+    // The site builds the rest of the list; the collapsed folder itself never asks for it.
+    const more = document.getElementById("moreButton");
+    more.click();
+    more.click();
+    await waitForCondition(() => live().getAttribute("data-bcff-live") === "2");
+    assert.equal(live().hasAttribute("title"), false);
+});
+
 test("an open folder presses 더보기 until its channels are built, and the user's own 접기 holds until a folder opens", async (t) => {
     const saved = stateOf(folder("games", "게임", [A]), folder("talk", "토크", [E], true));
     const { chrome, dom, document, store } = await setup(

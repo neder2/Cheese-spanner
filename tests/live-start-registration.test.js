@@ -602,3 +602,15 @@ test("the header entry and panel use the shared theme and the shared bundled Pre
         assert.equal(value(f.panel(), "box-shadow"), value(root, "--bct-shadow"), `${label} shares the popover shadow`);
     }
 });
+test("leaving a page after the extension reloaded cleans up without the storage API", async (t) => {
+    const f = fixture(t, { channels: [{ ...channel(), notify: true }] });
+    await f.open();
+    const errors = [];
+    f.w.addEventListener("error", (event) => errors.push(event.error || event.message));
+    // 확장을 새로고침하면 이미 열린 탭에 남은 이전 스크립트에서는 chrome.storage가 사라져요.
+    delete f.w.chrome.storage;
+    f.w.dispatchEvent(new f.w.Event("pagehide"));
+    assert.deepEqual(errors, []);
+    assert.equal(f.trigger(), null);
+    assert.equal(f.panel(), null);
+});
