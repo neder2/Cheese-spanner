@@ -121,6 +121,8 @@
         chatPosition: { kind: "choice", values: ["right", "left"], default: "right" },
         chatTimestampEnabled: { kind: "bool", default: false, feature: true },
         vodChatTimestampEnabled: { kind: "bool", default: false, feature: true },
+        // 로그인 계정의 작성자 해시로만 비교해요. 계정 해시는 저장하지 않아요(features/vodOwnChat.js).
+        vodOwnChatHighlightEnabled: { kind: "bool", default: true, feature: true },
         chatWeeklyRankingHidden: { kind: "bool", default: false, feature: true },
         chatWelcomeMessageRemovalEnabled: { kind: "bool", default: false, feature: true },
         chatToolsShowBlindEnabled: { kind: "bool", default: false, feature: true },

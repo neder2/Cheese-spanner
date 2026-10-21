@@ -90,3 +90,15 @@ test("1.4.4 briefly announces folders, chat multiview and the following title hi
     assert.ok(Object.isFrozen(guide.cards));
     assert.doesNotMatch(guide.summary, /앰비언트|카테고리 제외/);
 });
+
+test("1.4.5 briefly announces the list filter, the live page title history, and own replay chats", () => {
+    const guide = catalog.getGuide("1.4.5");
+    assert.equal(
+        guide.summary,
+        "방송 목록 필터 개선(이상·이하·범위, 보고 와도 유지), 방송 화면 제목 옆에서 이전 방제 확인, 다시보기에서 내 채팅 강조"
+    );
+    assert.equal(guide.cards.length, 0);
+    assert.ok(Object.isFrozen(guide.cards));
+    assert.doesNotMatch(guide.summary, /\./, "the summary separates items with commas only");
+    assert.doesNotMatch(guide.summary, /팔로잉 폴더|채팅 멀티뷰/);
+});

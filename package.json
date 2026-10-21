@@ -1,6 +1,6 @@
 {
     "name": "cheese-spanner",
-    "version": "1.4.4",
+    "version": "1.4.5",
     "private": true,
     "description": "Development tooling for the Cheese Spanner browser extension.",
     "type": "commonjs",

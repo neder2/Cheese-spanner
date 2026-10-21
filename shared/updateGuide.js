@@ -56,6 +56,15 @@
             summary: "팔로잉 폴더·채팅 멀티뷰 추가(설정에서 켜기). 팔로잉 방제를 자동으로 모아 팔로잉 화면에서 확인.",
             cards: Object.freeze([]),
         }),
+        // 2026-10-21 사용자 확정 문구(마침표 없이 반점으로 구분). 디자인 통일은 보면 알 수 있어 넣지 않았다.
+        // 방송 목록 필터의 이동 목적지(categories)는 있지만 사용자가 카드 없는 요약 한 줄을 골랐다.
+        "1.4.5": Object.freeze({
+            version: "1.4.5",
+            title: "새 기능",
+            summary:
+                "방송 목록 필터 개선(이상·이하·범위, 보고 와도 유지), 방송 화면 제목 옆에서 이전 방제 확인, 다시보기에서 내 채팅 강조",
+            cards: Object.freeze([]),
+        }),
     });
     globalThis.BetterChzzkUpdateGuide = Object.freeze({
         MESSAGE_TYPE: "betterchzzk:update-guide",
