@@ -4120,7 +4120,14 @@ test("live watch history splits same-channel broadcasts when live detail changes
 
 async function createVodBroadcastClockFixture(
     detail,
-    { currentTime = 2, linkedDetails = {}, videoNo = "12345", watchHistory = [] } = {}
+    {
+        currentTime = 2,
+        linkedDetails = {},
+        nativeDate = "",
+        statusRow = true,
+        videoNo = "12345",
+        watchHistory = [],
+    } = {}
 ) {
     const chrome = createFakeChrome({
         local: {
@@ -4138,7 +4145,19 @@ async function createVodBroadcastClockFixture(
             "<main>",
             '<video id="video"></video>',
             '<div class="pzp-vod-time" id="time">0:00 / 1:00</div>',
-            '<h1 id="title">Split VOD fixture</h1>',
+            '<div class="_container_17x81_2" id="vod-info">',
+            '<div class="_row_17x81_8" id="vod-title-row"><h1 id="title">Split VOD fixture</h1></div>',
+            statusRow
+                ? [
+                      '<div class="_row_17x81_8 _status_17x81_19" id="native-video-meta">',
+                      '<div class="_data_17x81_70"><strong class="_count_17x81_83">조회수 100회</strong>',
+                      nativeDate
+                          ? `<span class="_count_17x81_83" id="native-date">${nativeDate}</span><span class="_label_17x81_79" id="native-date-label">등록일</span>`
+                          : "",
+                      "</div></div>",
+                  ].join("")
+                : "",
+            "</div>",
             "</main>",
             "</body>",
         ].join(""),
@@ -4168,8 +4187,10 @@ async function createVodBroadcastClockFixture(
         right: 496,
         bottom: 408,
     });
+    const requests = [];
     dom.window.fetch = async (url) => {
         const requestedVideoNo = decodeURIComponent(String(url).split("/").pop());
+        requests.push(requestedVideoNo);
         const requestedDetail = requestedVideoNo === videoNo ? detail : linkedDetails[requestedVideoNo];
         assert.ok(requestedDetail, `unexpected VOD detail request: ${requestedVideoNo}`);
         return {
@@ -4199,6 +4220,7 @@ async function createVodBroadcastClockFixture(
         clock: document.getElementById("betterchzzk-vod-broadcast-clock"),
         chrome,
         dom,
+        requests,
         video,
     };
 }
@@ -4215,6 +4237,322 @@ test("VOD broadcast clock keeps normal VOD start time without a split offset", a
     assert.equal(clock.querySelector(".bcbc-time").textContent, "00:00:02");
     assert.match(clock.title, /2026-06-28 00:00:00 KST/);
     assert.equal(clock.title.includes("VOD"), false);
+});
+
+// The start shows a year prefix only outside the current KST year, so fixtures dated 2026 accept both forms.
+const RANGE_YEAR_2026 = "(?:2026\\.)?";
+
+test("VOD broadcast range joins the native status row without watch history and uses duration instead of publish time", async () => {
+    const { dom, requests, video } = await createVodBroadcastClockFixture({
+        videoType: "REPLAY",
+        liveOpenDate: "2026-10-17 17:07:39",
+        duration: 34711,
+        publishDate: "2026-10-18 02:55:46",
+    });
+    const { document } = dom.window;
+    const range = document.getElementById("betterchzzk-vod-broadcast-range");
+    assert.ok(range);
+    assert.equal(range.parentElement.id, "native-video-meta");
+    assert.equal(range.nextElementSibling, null, "the range is the last group of the status row");
+    assert.equal(range.dataset.bcbcPlacement, "status-row");
+    assert.equal(document.querySelector("[data-betterchzzk-vod-date-hidden]"), null, "a lone view count stays");
+    assert.equal(document.getElementById("vod-title-row").nextElementSibling.id, "native-video-meta");
+    assert.match(range.textContent, new RegExp(`^${RANGE_YEAR_2026}10\\.17\\(토\\) 17:07 ~ 10\\.18\\(일\\) 02:46$`));
+    assert.equal(range.querySelector(".bcbc-range-start").dateTime, "2026-10-17T08:07:39.000Z");
+    assert.equal(range.querySelector(".bcbc-range-end").dateTime, "2026-10-17T17:46:10.000Z");
+    assert.equal(range.hasAttribute("title"), false, "the range shows no tooltip");
+    assert.equal(range.querySelector("[title]"), null);
+    assert.match(range.getAttribute("aria-label"), /한국 시간, 영상 길이 기준/);
+    assert.equal(document.getElementById("betterchzzk-vod-title-history-toggle"), null);
+    assert.deepEqual(requests, ["12345"]);
+
+    const mutations = [];
+    const observer = new dom.window.MutationObserver((records) => mutations.push(...records));
+    observer.observe(range, { childList: true, subtree: true, attributes: true, characterData: true });
+    video.currentTime = 120;
+    video.dispatchEvent(new dom.window.Event("timeupdate"));
+    await waitForCondition(() => document.querySelector(".bcbc-time")?.textContent === "17:09:39");
+    assert.equal(mutations.length, 0, "playback must not rewrite static start/end timestamps");
+    assert.deepEqual(requests, ["12345"], "the range shares the existing metadata request");
+    observer.disconnect();
+});
+
+test("VOD broadcast range stays one unbroken group in the native count color", async () => {
+    const { dom } = await createVodBroadcastClockFixture({
+        liveOpenDate: "2026-10-25 19:00:00",
+        duration: 3600,
+    });
+    const { document } = dom.window;
+    const range = document.getElementById("betterchzzk-vod-broadcast-range");
+    assert.equal(range.querySelector(".bcbc-range-end").textContent, "20:00");
+    const rules = [...document.getElementById("betterchzzk-vod-broadcast-clock-style").sheet.cssRules];
+    const style = rules.find((rule) => rule.selectorText === "#betterchzzk-vod-broadcast-range").style;
+    // The native status row wraps whole groups, so the range itself must not break between start and end.
+    assert.equal(style.getPropertyValue("white-space"), "nowrap");
+    assert.equal(style.getPropertyValue("color"), "var(--bct-text-body)");
+    assert.equal(style.getPropertyValue("font-family"), "inherit");
+});
+
+test("VOD broadcast range dates an end on another day and adds years outside the reference year", async () => {
+    const { dom } = await createVodBroadcastClockFixture({
+        liveOpenDate: "2025-12-31 23:00:00",
+        duration: 7200,
+    });
+    const range = dom.window.document.getElementById("betterchzzk-vod-broadcast-range");
+    assert.equal(range.textContent, "2025.12.31(수) 23:00 ~ 2026.01.01(목) 01:00");
+    assert.equal(range.querySelector(".bcbc-range-next-day"), null);
+
+    const { dom: longDom } = await createVodBroadcastClockFixture({
+        liveOpenDate: "2026-10-25 12:00:00",
+        duration: 50 * 60 * 60,
+    });
+    const longRange = longDom.window.document.getElementById("betterchzzk-vod-broadcast-range");
+    assert.match(
+        longRange.textContent,
+        new RegExp(`^${RANGE_YEAR_2026}10\\.25\\(일\\) 12:00 ~ 10\\.27\\(화\\) 14:00$`)
+    );
+});
+
+test("VOD broadcast range replaces any native date with its own dated range", async () => {
+    const { dom } = await createVodBroadcastClockFixture(
+        { liveOpenDate: "2026-10-25 23:10:00", duration: 6000 },
+        { nativeDate: "10.25" }
+    );
+    const { document } = dom.window;
+    const findRange = () => document.getElementById("betterchzzk-vod-broadcast-range");
+    const nativeDate = document.getElementById("native-date");
+    assert.equal(findRange().querySelector(".bcbc-range-start").dateTime, "2026-10-25T14:10:00.000Z");
+
+    // Same-day, relative, later publish day and other-year dates all give way to the same range.
+    for (const text of ["10.25", "17시간 전", "10.26", "2025.10.25", "2026.10.25."]) {
+        nativeDate.textContent = text;
+        await waitForCondition(() => nativeDate.hasAttribute("data-betterchzzk-vod-date-hidden"));
+        assert.match(
+            findRange().textContent,
+            new RegExp(`^${RANGE_YEAR_2026}10\\.25\\(일\\) 23:10 ~ 10\\.26\\(월\\) 00:50$`)
+        );
+        assert.equal(findRange().dataset.bcbcPlacement, "native-date");
+        assert.equal(findRange().hasAttribute("data-bcbc-separator"), true, "the range keeps the native dot");
+        assert.equal(dom.window.getComputedStyle(nativeDate).display, "none");
+        assert.equal(nativeDate.textContent, text, "the native text itself is never rewritten");
+        assert.equal(findRange().parentElement, nativeDate.parentElement);
+        // The native hover label stays right after the date; the range follows it.
+        assert.equal(nativeDate.nextElementSibling.id, "native-date-label");
+        assert.equal(findRange().previousElementSibling.id, "native-date-label");
+    }
+    assert.equal(document.querySelectorAll("#betterchzzk-vod-broadcast-range").length, 1);
+});
+
+test("VOD broadcast range restores a replaced native date when it goes away", async (t) => {
+    const removals = {
+        "clock option off": (dom, chrome) => {
+            chrome.testState.sync.vodBroadcastClockEnabled = false;
+            for (const listener of chrome.testState.storageChangeListeners) {
+                listener({ vodBroadcastClockEnabled: { newValue: false } }, "sync");
+            }
+        },
+        "route change": (dom) => {
+            dom.window.history.pushState({}, "", "/lives");
+            dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+        },
+        "title mismatch": (dom) => {
+            dom.window.document.getElementById("title").firstChild.data = "Another title";
+        },
+    };
+    for (const [name, remove] of Object.entries(removals)) {
+        await t.test(name, async () => {
+            const { dom, chrome } = await createVodBroadcastClockFixture(
+                { liveOpenDate: "2026-10-25 23:10:00", duration: 6000 },
+                { nativeDate: "17시간 전" }
+            );
+            try {
+                const { document } = dom.window;
+                const nativeDate = document.getElementById("native-date");
+                assert.equal(nativeDate.hasAttribute("data-betterchzzk-vod-date-hidden"), true);
+                remove(dom, chrome);
+                await waitForCondition(() => !document.getElementById("betterchzzk-vod-broadcast-range"));
+                assert.equal(nativeDate.hasAttribute("data-betterchzzk-vod-date-hidden"), false);
+                assert.equal(document.querySelector("[data-betterchzzk-vod-date-hidden]"), null);
+            } finally {
+                dom.window.close();
+            }
+        });
+    }
+});
+
+test("VOD broadcast range falls back below the heading and moves into a status row rendered later", async () => {
+    const { dom, requests } = await createVodBroadcastClockFixture(
+        { liveOpenDate: "2026-10-25 19:00:00", duration: 3600 },
+        { statusRow: false }
+    );
+    const { document } = dom.window;
+    const findRange = () => document.getElementById("betterchzzk-vod-broadcast-range");
+    assert.equal(findRange().previousElementSibling.id, "vod-title-row");
+    assert.equal(findRange().dataset.bcbcPlacement, "below-title");
+    // Wait out the 800ms startup re-sync so only the DOM observer can move the range.
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    assert.equal(findRange().dataset.bcbcPlacement, "below-title");
+
+    const status = document.createElement("div");
+    status.className = "_row_17x81_8 _status_17x81_19";
+    status.id = "late-status";
+    document.getElementById("vod-info").appendChild(status);
+    await waitForCondition(() => findRange().parentElement === status);
+    assert.equal(findRange().dataset.bcbcPlacement, "status-row");
+    assert.equal(document.querySelectorAll("#betterchzzk-vod-broadcast-range").length, 1);
+    assert.deepEqual(requests, ["12345"]);
+});
+
+test("VOD broadcast range uses the corrected segment start for split recordings", async () => {
+    const { dom } = await createVodBroadcastClockFixture({
+        liveOpenDate: "2026-06-28 20:00:00",
+        duration: 3600,
+        publishDate: "2026-06-29 14:05:00",
+    });
+    const range = dom.window.document.getElementById("betterchzzk-vod-broadcast-range");
+    assert.match(
+        range.querySelector(".bcbc-range-start").textContent,
+        new RegExp(`^${RANGE_YEAR_2026}06\\.29\\(월\\) 13:00$`)
+    );
+    assert.equal(range.querySelector(".bcbc-range-end").textContent, "14:00");
+});
+
+test("VOD broadcast range leaves an unavailable duration unknown instead of using the upload date", async (t) => {
+    for (const duration of [undefined, null, 0, -1, "invalid", Infinity, 1e20]) {
+        await t.test(String(duration), async () => {
+            const { dom } = await createVodBroadcastClockFixture({
+                liveOpenDate: "2026-10-25 12:00:00",
+                duration,
+                publishDate: "2026-10-25 15:00:00",
+            });
+            try {
+                const range = dom.window.document.getElementById("betterchzzk-vod-broadcast-range");
+                assert.match(
+                    range.querySelector(".bcbc-range-start").textContent,
+                    new RegExp(`^${RANGE_YEAR_2026}10\\.25\\(일\\) 12:00$`)
+                );
+                const end = range.querySelector(".bcbc-range-end");
+                assert.equal(end.textContent, "확인 불가");
+                assert.equal(end.hasAttribute("datetime"), false);
+            } finally {
+                dom.window.close();
+            }
+        });
+    }
+});
+
+test("VOD broadcast range rejects mismatched video details and uploaded videos", async (t) => {
+    for (const detail of [{ videoNo: "67890" }, { videoType: "UPLOAD" }]) {
+        await t.test(JSON.stringify(detail), async () => {
+            const { dom } = await createVodBroadcastClockFixture({
+                liveOpenDate: "2026-10-25 12:00:00",
+                duration: 3600,
+                ...detail,
+            });
+            try {
+                assert.equal(dom.window.document.getElementById("betterchzzk-vod-broadcast-range"), null);
+            } finally {
+                dom.window.close();
+            }
+        });
+    }
+});
+
+test("VOD broadcast range follows title replacement, exact title identity and external removal", async () => {
+    const { dom, requests } = await createVodBroadcastClockFixture({
+        liveOpenDate: "2026-10-25 12:00:00",
+        duration: 3600,
+    });
+    const { document } = dom.window;
+    const title = document.getElementById("title");
+    const replacement = title.cloneNode(true);
+    replacement.getBoundingClientRect = title.getBoundingClientRect;
+    title.replaceWith(replacement);
+    const findRange = () => document.getElementById("betterchzzk-vod-broadcast-range");
+    findRange().remove();
+    await waitForCondition(findRange);
+    assert.equal(findRange().parentElement.id, "native-video-meta");
+    assert.equal(document.querySelectorAll("#betterchzzk-vod-broadcast-range").length, 1);
+
+    replacement.firstChild.data = "Another title";
+    await waitForCondition(() => !findRange());
+    replacement.firstChild.data = "Split VOD fixture";
+    await waitForCondition(findRange);
+    assert.deepEqual(requests, ["12345"]);
+});
+
+test("VOD broadcast range follows the clock option and clears immediately on route changes", async () => {
+    const { dom, chrome, requests } = await createVodBroadcastClockFixture({
+        liveOpenDate: "2026-10-25 12:00:00",
+        duration: 3600,
+    });
+    const { document } = dom.window;
+    const findRange = () => document.getElementById("betterchzzk-vod-broadcast-range");
+    const changeClockOption = (enabled) => {
+        chrome.testState.sync.vodBroadcastClockEnabled = enabled;
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ vodBroadcastClockEnabled: { newValue: enabled } }, "sync");
+        }
+    };
+    changeClockOption(false);
+    await waitForCondition(() => !findRange());
+    changeClockOption(true);
+    await waitForCondition(findRange);
+    assert.equal(document.querySelectorAll("#betterchzzk-vod-broadcast-range").length, 1);
+    assert.deepEqual(requests, ["12345"], "re-enabling reuses cached detail");
+
+    let resolveDetail;
+    dom.window.fetch = () =>
+        new Promise((resolve) => {
+            resolveDetail = resolve;
+        });
+    dom.window.history.pushState({}, "", "/video/67890");
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    assert.equal(findRange(), null);
+    await waitForCondition(() => resolveDetail);
+    dom.window.history.pushState({}, "", "/lives");
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    resolveDetail({
+        ok: true,
+        json: async () => ({
+            content: {
+                videoNo: "67890",
+                videoTitle: "Split VOD fixture",
+                liveOpenDate: "2026-10-25 15:00:00",
+                duration: 3600,
+            },
+        }),
+    });
+    // Let the late response pass the metadata promise and the 120ms DOM-sync throttle.
+    await waitForAsyncCallbacks(250);
+    assert.equal(findRange(), null);
+});
+
+test("VOD broadcast range waits for the matching native title after SPA navigation", async () => {
+    const { dom, requests } = await createVodBroadcastClockFixture(
+        { liveOpenDate: "2026-10-25 12:00:00", duration: 3600 },
+        {
+            linkedDetails: {
+                67890: { videoTitle: "New video", liveOpenDate: "2026-10-24 21:00:00", duration: 7200 },
+            },
+        }
+    );
+    const { document } = dom.window;
+    const findRange = () => document.getElementById("betterchzzk-vod-broadcast-range");
+    dom.window.history.pushState({}, "", "/video/67890");
+    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    assert.equal(findRange(), null);
+    await waitForCondition(() => document.querySelector(".bcbc-time")?.textContent === "21:00:02");
+    assert.equal(findRange(), null, "new metadata must not be attached to the old heading");
+
+    document.getElementById("title").firstChild.data = "New video";
+    await waitForCondition(findRange);
+    assert.match(
+        findRange().querySelector(".bcbc-range-start").textContent,
+        new RegExp(`^${RANGE_YEAR_2026}10\\.24\\(토\\) 21:00$`)
+    );
+    assert.equal(findRange().querySelector(".bcbc-range-end").textContent, "23:00");
+    assert.deepEqual(requests, ["12345", "67890"]);
 });
 
 test("VOD broadcast clock rejects an explicit live id conflict even when the replay video number matches", async () => {
@@ -4372,6 +4710,12 @@ test("VOD previous-title toggle and panel use the shared CHZZK theme while the c
             .map((match) => match[2])
             .filter((text) => /[가-힣]/.test(text) && /(?:습|합|됩|입)니다/.test(text));
         assert.deepEqual(formalCopy, [], "VOD clock statuses use 해요체");
+        assert.ok(document.getElementById("betterchzzk-vod-broadcast-range"));
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ vodBroadcastClockEnabled: { oldValue: true, newValue: false } }, "sync");
+        }
+        await waitForCondition(() => !document.getElementById("betterchzzk-vod-broadcast-range"));
+        assert.ok(document.getElementById("betterchzzk-vod-title-history-toggle"), "title history stays enabled");
     } finally {
         for (const listener of chrome.testState.storageChangeListeners) {
             listener(
@@ -4417,6 +4761,7 @@ test("VOD broadcast clock stays hidden when the broadcast start time is unavaila
             "<main>",
             '<video id="video"></video>',
             '<div class="pzp-vod-time" id="time">0:00 / 1:00</div>',
+            '<h2 id="title">VOD without start time</h2>',
             "</main>",
             "</body>",
         ].join(""),
@@ -4426,6 +4771,14 @@ test("VOD broadcast clock stays hidden when the broadcast start time is unavaila
     const { document } = dom.window;
     const video = document.getElementById("video");
     const time = document.getElementById("time");
+    document.getElementById("title").getBoundingClientRect = () => ({
+        width: 480,
+        height: 36,
+        left: 16,
+        top: 372,
+        right: 496,
+        bottom: 408,
+    });
 
     video.getBoundingClientRect = () => ({
         width: 640,
@@ -4448,7 +4801,14 @@ test("VOD broadcast clock stays hidden when the broadcast start time is unavaila
         detailRequests++;
         return {
             ok: true,
-            json: async () => ({ content: { videoNo: "12345", videoTitle: "VOD without start time" } }),
+            json: async () => ({
+                content: {
+                    videoNo: "12345",
+                    videoTitle: "VOD without start time",
+                    duration: 3600,
+                    publishDate: "2026-10-25 15:00:00",
+                },
+            }),
         };
     };
 
@@ -4462,6 +4822,7 @@ test("VOD broadcast clock stays hidden when the broadcast start time is unavaila
 
     assert.equal(detailRequests, 1);
     assert.equal(document.getElementById("betterchzzk-vod-broadcast-clock"), null);
+    assert.equal(document.getElementById("betterchzzk-vod-broadcast-range"), null);
 });
 
 function bindLiveTimeShiftVideoState(video, state) {

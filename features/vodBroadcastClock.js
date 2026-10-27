@@ -1,6 +1,6 @@
 /**
  * features/vodBroadcastClock.js — 다시보기(VOD) 재생 위치를 실제 방송 시각으로 환산해 표시하고,
- *   같은 방송의 이전 방제 이력을 보여주는 기능.
+ *   제목 아래 상태 줄에 다시보기 구간의 시작·종료 시각을, 제목 옆에 같은 방송의 이전 방제 이력을 보여주는 기능.
  *
  * 동작 위치: https://chzzk.naver.com/video/{videoNo} 다시보기 시청 페이지 (isolated content script).
  * 하는 일: video-detail API로 방송 시작 시각과 길이를 가져와 currentTime에 더해 실시각 시계를
@@ -13,7 +13,8 @@
  *   injectStyleOnce, parseChzzkDate, startPageChangeDetection, startStorageChangeListener,
  *   storageGet, touchMapEntry 등), chrome.storage.local.
  * 옵션 키: vodBroadcastClockEnabled, liveWatchHistoryEnabled(방제 이력 펼침 기능 노출 여부로 재사용).
- * DOM 마커: #betterchzzk-vod-broadcast-clock(시계), #betterchzzk-vod-title-history(방제 이력 래퍼),
+ * DOM 마커: #betterchzzk-vod-broadcast-clock(시계), #betterchzzk-vod-broadcast-range(시작·종료),
+ *   #betterchzzk-vod-title-history(방제 이력 래퍼),
  *   #betterchzzk-vod-title-history-toggle(펼침 버튼), #betterchzzk-vod-title-history-panel(패널),
  *   data-bcbc-placement 속성으로 시계 삽입 위치 구분.
  * 통신: chrome.storage.local 키 "betterChzzkLiveWatchHistory"를 읽기 전용으로 조회한다. 이 키는
@@ -29,6 +30,8 @@
  */
 (() => {
     const CLOCK_ID = "betterchzzk-vod-broadcast-clock";
+    const BROADCAST_RANGE_ID = "betterchzzk-vod-broadcast-range";
+    const NATIVE_DATE_HIDDEN_ATTR = "data-betterchzzk-vod-date-hidden";
     const STYLE_ID = "betterchzzk-vod-broadcast-clock-style";
     const TITLE_HISTORY_WRAP_ID = "betterchzzk-vod-title-history";
     const TITLE_HISTORY_BUTTON_ID = "betterchzzk-vod-title-history-toggle";
@@ -65,6 +68,7 @@
         RIGHT_BUTTONS_SELECTOR,
         VOD_TITLE_SELECTOR,
         `#${CLOCK_ID}`,
+        `#${BROADCAST_RANGE_ID}`,
         `#${TITLE_HISTORY_WRAP_ID}`,
         `#${TITLE_HISTORY_BUTTON_ID}`,
         `#${TITLE_HISTORY_PANEL_ID}`,
@@ -115,6 +119,8 @@
     let clockEl = null;
     let clockTextEl = null;
     let clockAnchorEl = null;
+    let broadcastRangeTitleEl = null;
+    let hiddenNativeDateEl = null;
     let currentVideoNo = "";
     let currentStartMs = NaN;
     let currentOriginalStartMs = NaN;
@@ -583,6 +589,39 @@
 #${CLOCK_ID} .bcbc-time{
   min-width:0;
 }
+#${BROADCAST_RANGE_ID}{
+  display:block;
+  flex:0 0 auto;
+  margin:0;
+  color:var(--bct-text-body);
+  font-family:inherit;
+  font-size:13px;
+  font-weight:600;
+  line-height:16px;
+  letter-spacing:-0.3px;
+  white-space:nowrap;
+  font-variant-numeric:tabular-nums;
+}
+#${BROADCAST_RANGE_ID}[data-bcbc-placement="below-title"]{
+  margin:6px 0;
+}
+[${NATIVE_DATE_HIDDEN_ATTR}]{
+  display:none !important;
+}
+#${BROADCAST_RANGE_ID}[data-bcbc-separator]{
+  position:relative;
+  padding-left:8px;
+}
+#${BROADCAST_RANGE_ID}[data-bcbc-separator]::before{
+  content:"";
+  position:absolute;
+  top:7px;
+  left:0;
+  width:2px;
+  height:2px;
+  border-radius:50%;
+  background-color:var(--sem-color-content-neutral-cool-weaker, var(--bct-text-dim));
+}
 #${TITLE_HISTORY_WRAP_ID}{
   position:relative;
   display:inline-flex;
@@ -936,6 +975,7 @@
         currentVideoNo = videoNo;
         clockAnchorEl = null;
         removeClock();
+        removeBroadcastRange();
         removeTitleHistoryExpander();
         loadMetadata(videoNo);
     }
@@ -1042,8 +1082,8 @@
         setElementTitleIfChanged(clock, lines.join("\n"));
     }
 
-    function findVodTitleElement(video) {
-        const expectedTitle = cleanTitle(currentHistoryInfo?.replayTitle);
+    function findVodTitleElement(video, title = currentHistoryInfo?.replayTitle) {
+        const expectedTitle = cleanTitle(title);
         const expectedNorm = normalizeForMatch(expectedTitle);
         if (!expectedNorm) return null;
 
@@ -1077,6 +1117,156 @@
 
         candidates.sort((a, b) => b.score - a.score);
         return candidates[0]?.el || null;
+    }
+
+    function removeBroadcastRange() {
+        document.getElementById(BROADCAST_RANGE_ID)?.remove();
+        broadcastRangeTitleEl = null;
+        restoreNativeDate();
+    }
+
+    function hideNativeDate(el) {
+        if (hiddenNativeDateEl !== el) restoreNativeDate();
+        hiddenNativeDateEl = el;
+        setAttributeIfChanged(el, NATIVE_DATE_HIDDEN_ATTR, "1");
+    }
+
+    function restoreNativeDate() {
+        // Also clear replaced nodes that are no longer tracked, so a native date is never left hidden.
+        for (const el of document.querySelectorAll(`[${NATIVE_DATE_HIDDEN_ATTR}]`)) {
+            el.removeAttribute(NATIVE_DATE_HIDDEN_ATTR);
+        }
+        hiddenNativeDateEl?.removeAttribute(NATIVE_DATE_HIDDEN_ATTR);
+        hiddenNativeDateEl = null;
+    }
+
+    function syncBroadcastRange(video) {
+        if (
+            !isClockEnabled() ||
+            metadataState !== "ready" ||
+            !Number.isFinite(currentStartMs) ||
+            pickString(currentVideoDetail?.videoNo) !== currentVideoNo ||
+            (currentVideoDetail?.videoType && currentVideoDetail.videoType !== "REPLAY")
+        ) {
+            removeBroadcastRange();
+            return;
+        }
+
+        const title = getVideoDetailTitle(currentVideoDetail);
+        const expectedTitle = normalizeForMatch(title);
+        const matchesTitle = (el) =>
+            el instanceof HTMLElement &&
+            el.isConnected &&
+            Boolean(expectedTitle) &&
+            !el.closest("a, aside, #sidebar, [class*='pzp']") &&
+            normalizeForMatch(getElementTitleText(el)) === expectedTitle;
+        if (!matchesTitle(broadcastRangeTitleEl)) {
+            broadcastRangeTitleEl = findVodTitleElement(video, title);
+        }
+        if (!matchesTitle(broadcastRangeTitleEl)) {
+            removeBroadcastRange();
+            return;
+        }
+
+        let range = document.getElementById(BROADCAST_RANGE_ID);
+        if (!range) {
+            range = document.createElement("div");
+            range.id = BROADCAST_RANGE_ID;
+            range.setAttribute("role", "group");
+            range.setAttribute("aria-label", "다시보기 시작·종료 시각(한국 시간, 영상 길이 기준)");
+            const start = document.createElement("time");
+            start.className = "bcbc-range-start";
+            const end = document.createElement("time");
+            end.className = "bcbc-range-end";
+            range.append(start, " ~ ", end);
+        }
+
+        // The observed heading row is followed by a wrapping status row (category, tags, views, date).
+        // Join that row as its own group; without it, fall back to a line below the heading.
+        const titleRow = broadcastRangeTitleEl.parentElement;
+        const container = titleRow.parentElement;
+        const isNativeTitleRow = titleRow.matches("[class*='_row_']") && container?.matches("[class*='_container_']");
+        const statusRow = isNativeTitleRow
+            ? Array.from(container.children).find((el) => el !== titleRow && el.matches("[class*='_status_']"))
+            : null;
+
+        const duration = getVideoDurationSeconds(currentVideoDetail);
+        const endMs = currentStartMs + duration * 1000;
+        // "10.25(일) 17:56 ~ 23:08", or "10.26(월) 17:59 ~ 10.27(화) 00:02" when the end falls on another day.
+        const endValid = Number.isFinite(endMs) && Number.isFinite(new Date(endMs).getTime());
+        for (const [kind, ms, text] of [
+            [
+                "start",
+                currentStartMs,
+                `${formatRangeDate(currentStartMs, Date.now())} ${formatRangeClock(currentStartMs)}`,
+            ],
+            [
+                "end",
+                endMs,
+                !endValid
+                    ? "확인 불가"
+                    : sameKstDate(currentStartMs, endMs)
+                      ? formatRangeClock(endMs)
+                      : `${formatRangeDate(endMs, currentStartMs)} ${formatRangeClock(endMs)}`,
+            ],
+        ]) {
+            const time = range.querySelector(`.bcbc-range-${kind}`);
+            if (time.textContent !== text) time.textContent = text;
+            if (kind === "start" || endValid) setAttributeIfChanged(time, "datetime", new Date(ms).toISOString());
+            else if (time.hasAttribute("datetime")) time.removeAttribute("datetime");
+        }
+
+        // The native date (absolute "10.25" or relative "17시간 전", by publish time) is hidden and the
+        // dated range takes its place, keeping the native dot separator.
+        // The group's hover label uses a descendant selector, so the range goes last, after that label.
+        const nativeDateEl = findNativeDateElement(statusRow);
+        if (nativeDateEl) {
+            hideNativeDate(nativeDateEl);
+            setAttributeIfChanged(range, "data-bcbc-placement", "native-date");
+            if (nativeDateEl.previousElementSibling?.matches("[class*='_count_']")) {
+                setAttributeIfChanged(range, "data-bcbc-separator", "");
+            } else if (range.hasAttribute("data-bcbc-separator")) range.removeAttribute("data-bcbc-separator");
+            const host = nativeDateEl.parentElement;
+            if (range.parentElement !== host || range.nextElementSibling) host.appendChild(range);
+            return;
+        }
+        restoreNativeDate();
+        if (range.hasAttribute("data-bcbc-separator")) range.removeAttribute("data-bcbc-separator");
+        if (statusRow) {
+            setAttributeIfChanged(range, "data-bcbc-placement", "status-row");
+            if (range.parentElement !== statusRow || range.nextElementSibling) statusRow.appendChild(range);
+            return;
+        }
+        setAttributeIfChanged(range, "data-bcbc-placement", "below-title");
+        let anchor = broadcastRangeTitleEl;
+        if (isNativeTitleRow) {
+            anchor = titleRow;
+        } else if (anchor.nextElementSibling?.id === TITLE_HISTORY_WRAP_ID) {
+            anchor = anchor.nextElementSibling;
+        }
+        if (range.parentElement !== anchor.parentElement || range.previousElementSibling !== anchor) {
+            anchor.insertAdjacentElement("afterend", range);
+        }
+    }
+
+    const RANGE_WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+
+    // "10.25(일)", with the year ("2025.10.25(토)") outside the reference year.
+    function formatRangeDate(ms, yearReferenceMs) {
+        const parts = getKstParts(ms);
+        const yearText = getKstParts(yearReferenceMs).year === parts.year ? "" : `${parts.year}.`;
+        return `${yearText}${pad2(parts.month)}.${pad2(parts.day)}(${RANGE_WEEKDAYS[parts.weekday]})`;
+    }
+
+    function formatRangeClock(ms) {
+        const parts = getKstParts(ms);
+        return `${pad2(parts.hours)}:${pad2(parts.minutes)}`;
+    }
+
+    // The observed group is "조회수 N회" then the date; a lone count is the view count, never a date.
+    function findNativeDateElement(statusRow) {
+        const counts = statusRow?.querySelectorAll("[class*='_data_'] [class*='_count_']") || [];
+        return counts.length > 1 ? counts[counts.length - 1] : null;
     }
 
     function removeTitleHistoryExpander() {
@@ -1289,6 +1479,7 @@
         currentVideoNo = "";
         resetMetadata();
         removeClock();
+        removeBroadcastRange();
         removeTitleHistoryExpander();
         detachVideoListeners();
     }
@@ -1305,6 +1496,7 @@
         const video = getMainVideo();
         if (isTitleHistoryEnabled()) syncTitleHistoryExpander(video);
         else removeTitleHistoryExpander();
+        syncBroadcastRange(video);
 
         if (!isClockEnabled()) {
             removeClock();
@@ -1377,9 +1569,19 @@
 
     function mutationCouldAffectClock(mutation) {
         if (mutationMatchesSelector(mutation, RELEVANT_DOM_SELECTOR)) return true;
+        const target = mutation.target instanceof Element ? mutation.target : mutation.target.parentElement;
+        // A status row or native date rendered after the heading changes the range placement and text.
+        const infoContainer = broadcastRangeTitleEl?.parentElement?.parentElement;
+        if (
+            infoContainer?.matches("[class*='_container_']") &&
+            infoContainer.contains(target) &&
+            !target.closest(`#${BROADCAST_RANGE_ID}`)
+        ) {
+            return true;
+        }
         return (
-            mutation.target instanceof Element &&
-            Boolean(mutation.target.closest?.(`${LEFT_BUTTONS_SELECTOR}, ${RIGHT_BUTTONS_SELECTOR}`))
+            target instanceof Element &&
+            Boolean(target.closest(`${VOD_TITLE_SELECTOR}, ${LEFT_BUTTONS_SELECTOR}, ${RIGHT_BUTTONS_SELECTOR}`))
         );
     }
 
@@ -1394,6 +1596,7 @@
         return {
             childList: true,
             subtree: true,
+            characterData: true,
             attributes: true,
             attributeFilter: ["class", "style", "hidden", "aria-hidden"],
         };
