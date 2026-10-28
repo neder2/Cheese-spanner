@@ -5,7 +5,7 @@
  */
 (() => {
     "use strict";
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     const namespace = (root.chatTools = root.chatTools || {});
     const { normSpace } = root.utils;
     // React가 className을 다시 설정해도 유지되는 data 속성으로 원문 표시 상태를 연결한다.
@@ -101,7 +101,7 @@
         const el = node instanceof Element ? node : node?.parentElement;
         return Boolean(
             el?.closest(
-                `[${MODERATOR_BOX_ATTR}], [${MODERATOR_TRIGGER_ATTR}], [${MODERATOR_ACTION_GROUP_ATTR}], #betterchzzk-multiview-chat-settings, .bcct-blind-reveal`
+                `[${MODERATOR_BOX_ATTR}], [${MODERATOR_TRIGGER_ATTR}], [${MODERATOR_ACTION_GROUP_ATTR}], #cheese-spanner-multiview-chat-settings, .bcct-blind-reveal`
             )
         );
     }

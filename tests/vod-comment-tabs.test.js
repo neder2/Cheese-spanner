@@ -36,7 +36,7 @@ function assertSharedThemePalette(css) {
     );
     assert.doesNotMatch(
         css,
-        /(?:html\[dark\]|body\[theme="dark"\]|\.theme_dark) #betterchzzk-vod-comment-(?:panel|aside|tabs)/,
+        /(?:html\[dark\]|body\[theme="dark"\]|\.theme_dark) #cheese-spanner-vod-comment-(?:panel|aside|tabs)/,
         "no theme-specific palette blocks"
     );
     assert.doesNotMatch(css, /color-scheme:\s*light/, "the panel inherits CHZZK's root color-scheme");
@@ -247,10 +247,10 @@ function createFixture({
         };
     }
 
-    window.BetterChzzkSettings = {
+    window.CheeseSpannerSettings = {
         normalizeOptions: () => ({ ...options }),
     };
-    window.BetterChzzk = {
+    window.CheeseSpanner = {
         utils: {
             bindFeatureOptions(callback) {
                 optionListeners.push(callback);
@@ -287,9 +287,9 @@ function createFixture({
     evalRepoScript(dom, "features", "vodComments", "nativeAdapter.js");
     evalRepoScript(dom, "features", "vodComments", "view.js");
     if (trackLifecycle) {
-        const nativeAdapterModule = window.BetterChzzk.vodComments.nativeAdapter;
-        const viewModule = window.BetterChzzk.vodComments.view;
-        window.BetterChzzk.vodComments.nativeAdapter = Object.freeze({
+        const nativeAdapterModule = window.CheeseSpanner.vodComments.nativeAdapter;
+        const viewModule = window.CheeseSpanner.vodComments.view;
+        window.CheeseSpanner.vodComments.nativeAdapter = Object.freeze({
             createNativeAdapter(config) {
                 const adapter = nativeAdapterModule.createNativeAdapter(config);
                 return Object.freeze({
@@ -309,7 +309,7 @@ function createFixture({
                 });
             },
         });
-        window.BetterChzzk.vodComments.view = Object.freeze({
+        window.CheeseSpanner.vodComments.view = Object.freeze({
             createCommentView(config) {
                 const view = viewModule.createCommentView(config);
                 return Object.freeze({
@@ -361,7 +361,7 @@ function waitForCondition(predicate, { timeoutMs = 1000, intervalMs = 10 } = {})
 }
 
 function clickCommentTab(document) {
-    document.getElementById("betterchzzk-vod-comment-comment-tab").click();
+    document.getElementById("cheese-spanner-vod-comment-comment-tab").click();
 }
 
 test("VOD comment tabs preserve the native chat heading treatment and defer prefetch until after mount", async (t) => {
@@ -374,13 +374,13 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     const heading = document.querySelector(".native-chat-header h2");
     const close = document.getElementById("native-close");
     const chatLog = document.querySelector("[role='log']");
-    const tablist = document.getElementById("betterchzzk-vod-comment-tabs");
-    const commentPanel = document.getElementById("betterchzzk-vod-comment-panel");
+    const tablist = document.getElementById("cheese-spanner-vod-comment-tabs");
+    const commentPanel = document.getElementById("cheese-spanner-vod-comment-panel");
     const container = document.querySelector(".native-chat-container");
 
     assert.ok(tablist);
-    assert.equal(document.getElementById("betterchzzk-vod-comment-chat-tab").textContent, "라이브 채팅 다시보기");
-    assert.equal(document.getElementById("betterchzzk-vod-comment-comment-tab").textContent, "댓글");
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-chat-tab").textContent, "라이브 채팅 다시보기");
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-comment-tab").textContent, "댓글");
     assert.equal(
         heading.parentElement.querySelector("h2"),
         heading,
@@ -396,9 +396,9 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     assert.equal(commentPanel.style.getPropertyValue("--bcvc-font-family"), "system-ui, sans-serif");
     assert.equal(commentPanel.style.getPropertyValue("--bcvc-toolbar-font-family"), "system-ui, sans-serif");
     assert.equal(container.style.getPropertyValue("--bcvc-panel-height"), "496px");
-    const commentStyle = document.getElementById("betterchzzk-vod-comment-tabs-style");
+    const commentStyle = document.getElementById("cheese-spanner-vod-comment-tabs-style");
     const css = commentStyle.textContent;
-    const themeStyle = document.getElementById("betterchzzk-ui-theme");
+    const themeStyle = document.getElementById("cheese-spanner-ui-theme");
     assert.ok(themeStyle, "the comment view requests the shared CHZZK theme");
     assert.ok(
         themeStyle.compareDocumentPosition(commentStyle) & fixture.window.Node.DOCUMENT_POSITION_FOLLOWING,
@@ -406,11 +406,11 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     );
     assert.match(
         css,
-        /#betterchzzk-vod-comment-panel\{[^}]*--bcvc-surface:var\(--bct-bg\);[^}]*--bcvc-text:var\(--bct-text-body\);[^}]*--bcvc-text-weak:var\(--bct-text-muted\);[^}]*--bcvc-brand:var\(--bct-brand-text\);/s
+        /#cheese-spanner-vod-comment-panel\{[^}]*--bcvc-surface:var\(--bct-bg\);[^}]*--bcvc-text:var\(--bct-text-body\);[^}]*--bcvc-text-weak:var\(--bct-text-muted\);[^}]*--bcvc-brand:var\(--bct-brand-text\);/s
     );
     assert.match(
         css,
-        /#betterchzzk-vod-comment-tabs\{[^}]*--bcvc-text:var\(--bct-text-body\);[^}]*--bcvc-hover:var\(--bct-hover\);/s
+        /#cheese-spanner-vod-comment-tabs\{[^}]*--bcvc-text:var\(--bct-text-body\);[^}]*--bcvc-hover:var\(--bct-hover\);/s
     );
     assertSharedThemePalette(css);
     assert.match(css, /font-family:var\(--bcvc-font-family,inherit\)/);
@@ -426,25 +426,28 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     assert.match(css, /button\[aria-selected="true"\]\{\s*color:var\(--bcvc-text/);
     assert.match(css, /container-type:inline-size/);
     assert.match(css, /@container\s*\(max-width:300px\)/);
-    assert.match(css, /#betterchzzk-vod-comment-chat-tab,\s*#betterchzzk-vod-comment-comment-tab\{[^}]*flex:1 1 50%/s);
+    assert.match(
+        css,
+        /#cheese-spanner-vod-comment-chat-tab,\s*#cheese-spanner-vod-comment-comment-tab\{[^}]*flex:1 1 50%/s
+    );
     assert.match(css, /container-name:bcvc-tabs/);
     assert.match(css, /@container bcvc-tabs\s*\(max-width:240px\)/);
     assert.match(
         css,
-        /#betterchzzk-vod-comment-chat-tab\{[^}]*flex:1 1 auto[^}]*justify-content:flex-start[^}]*padding-right:2px[^}]*padding-left:2px/s
+        /#cheese-spanner-vod-comment-chat-tab\{[^}]*flex:1 1 auto[^}]*justify-content:flex-start[^}]*padding-right:2px[^}]*padding-left:2px/s
     );
-    assert.match(css, /#betterchzzk-vod-comment-comment-tab\{[^}]*flex:0 0 52px/s);
+    assert.match(css, /#cheese-spanner-vod-comment-comment-tab\{[^}]*flex:0 0 52px/s);
     assert.match(css, /height:var\(--bcvc-panel-height/);
     assert.doesNotMatch(css, /\[data-bcvc-container="1"\]\{[^}]*position:relative!important/s);
     assert.doesNotMatch(css, /\[data-bcvc-container="1"\]\{[^}]*height:100%!important/s);
     assert.match(css, /\[data-bcvc-native-log="1"\]\{[^}]*min-height:0!important/s);
-    assert.doesNotMatch(css, /#betterchzzk-vod-comment-panel\{[^}]*bottom:0/s);
+    assert.doesNotMatch(css, /#cheese-spanner-vod-comment-panel\{[^}]*bottom:0/s);
     assert.doesNotMatch(css, /font:\s*\d/);
 
     assert.equal(fixture.runIdleCallbacks(), 1);
     await waitForCondition(() => fixture.requests.length === 1);
-    assert.equal(document.getElementById("betterchzzk-vod-comment-chat-tab").getAttribute("aria-selected"), "true");
-    assert.equal(document.getElementById("betterchzzk-vod-comment-panel").hidden, true);
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-chat-tab").getAttribute("aria-selected"), "true");
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-panel").hidden, true);
 });
 
 test("VOD comment option updates only run lifecycle work on enabled transitions", async (t) => {
@@ -454,13 +457,13 @@ test("VOD comment option updates only run lifecycle work on enabled transitions"
         fixture.dom.window.close();
     });
 
-    await waitForCondition(() => fixture.document.getElementById("betterchzzk-vod-comment-tabs"));
-    const initialPanel = fixture.document.getElementById("betterchzzk-vod-comment-panel");
+    await waitForCondition(() => fixture.document.getElementById("cheese-spanner-vod-comment-tabs"));
+    const initialPanel = fixture.document.getElementById("cheese-spanner-vod-comment-panel");
     const afterInitialMount = { ...fixture.lifecycle };
 
     fixture.emitOptions({ autoQualityEnabled: false });
 
-    assert.strictEqual(fixture.document.getElementById("betterchzzk-vod-comment-panel"), initialPanel);
+    assert.strictEqual(fixture.document.getElementById("cheese-spanner-vod-comment-panel"), initialPanel);
     assert.deepEqual(
         fixture.lifecycle,
         afterInitialMount,
@@ -469,7 +472,7 @@ test("VOD comment option updates only run lifecycle work on enabled transitions"
 
     fixture.emitOptions({ vodCommentTabsEnabled: false });
 
-    assert.equal(fixture.document.getElementById("betterchzzk-vod-comment-tabs"), null);
+    assert.equal(fixture.document.getElementById("cheese-spanner-vod-comment-tabs"), null);
     assert.equal(fixture.lifecycle.adapterDetach, afterInitialMount.adapterDetach + 1);
     assert.equal(fixture.lifecycle.viewDestroy, afterInitialMount.viewDestroy + 1);
     assert.equal(fixture.lifecycle.idleCancel, afterInitialMount.idleCancel + 1);
@@ -479,8 +482,8 @@ test("VOD comment option updates only run lifecycle work on enabled transitions"
     assert.deepEqual(fixture.lifecycle, afterDisable, "unrelated updates while disabled must not repeat teardown work");
 
     fixture.emitOptions({ vodCommentTabsEnabled: true });
-    await waitForCondition(() => fixture.document.getElementById("betterchzzk-vod-comment-tabs"));
-    assert.notStrictEqual(fixture.document.getElementById("betterchzzk-vod-comment-panel"), initialPanel);
+    await waitForCondition(() => fixture.document.getElementById("cheese-spanner-vod-comment-tabs"));
+    assert.notStrictEqual(fixture.document.getElementById("cheese-spanner-vod-comment-panel"), initialPanel);
     assert.equal(fixture.lifecycle.adapterAttach, afterDisable.adapterAttach + 1);
 });
 
@@ -496,7 +499,7 @@ test("VOD comment tab shares an in-flight first-page prefetch instead of startin
     await waitForCondition(() => fixture.requests.length === 1);
     clickCommentTab(fixture.document);
 
-    const panel = fixture.document.getElementById("betterchzzk-vod-comment-panel");
+    const panel = fixture.document.getElementById("cheese-spanner-vod-comment-panel");
     assert.ok(panel.querySelector(".bcvc-skeleton-list"));
     assert.equal(fixture.requests.length, 1, "tab open must share the prefetch request already in progress");
 
@@ -518,15 +521,15 @@ test("VOD comments mount a comment-only side panel when replay chat is unavailab
     const { document } = fixture;
 
     await waitForCondition(() => /채팅 없이 보는 댓글/.test(document.body.textContent));
-    const ownedAside = document.getElementById("betterchzzk-vod-comment-aside");
-    const commentTab = document.getElementById("betterchzzk-vod-comment-comment-tab");
-    const tablist = document.getElementById("betterchzzk-vod-comment-tabs");
-    const panel = document.getElementById("betterchzzk-vod-comment-panel");
+    const ownedAside = document.getElementById("cheese-spanner-vod-comment-aside");
+    const commentTab = document.getElementById("cheese-spanner-vod-comment-comment-tab");
+    const tablist = document.getElementById("cheese-spanner-vod-comment-tabs");
+    const panel = document.getElementById("cheese-spanner-vod-comment-panel");
     let vodColumn = document.querySelector(".native-vod-column");
     const vodColumnParent = vodColumn.parentElement;
     assert.ok(ownedAside);
     assert.equal(ownedAside.parentElement, document.querySelector(".native-player-row"));
-    assert.equal(document.getElementById("betterchzzk-vod-comment-chat-tab"), null);
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-chat-tab"), null);
     assert.equal(commentTab.getAttribute("aria-selected"), "true");
     assert.equal(panel.hidden, false);
     assert.equal(tablist.style.getPropertyValue("--bcvc-heading-font-family"), "Verdana, sans-serif");
@@ -534,18 +537,18 @@ test("VOD comments mount a comment-only side panel when replay chat is unavailab
     assert.equal(tablist.style.getPropertyValue("--bcvc-heading-font-weight"), "650");
     assert.equal(tablist.style.getPropertyValue("--bcvc-heading-line-height"), "24px");
     assert.equal(tablist.style.getPropertyValue("--bcvc-heading-letter-spacing"), "-0.4px");
-    const css = document.getElementById("betterchzzk-vod-comment-tabs-style").textContent;
+    const css = document.getElementById("cheese-spanner-vod-comment-tabs-style").textContent;
     assert.match(
         css,
-        /#betterchzzk-vod-comment-aside #betterchzzk-vod-comment-comment-tab\{[^}]*justify-content:center[^}]*text-align:center[^}]*cursor:default/s
+        /#cheese-spanner-vod-comment-aside #cheese-spanner-vod-comment-comment-tab\{[^}]*justify-content:center[^}]*text-align:center[^}]*cursor:default/s
     );
     assert.doesNotMatch(
         css,
-        /#betterchzzk-vod-comment-aside #betterchzzk-vod-comment-comment-tab::after\{\s*display:none;\s*\}/
+        /#cheese-spanner-vod-comment-aside #cheese-spanner-vod-comment-comment-tab::after\{\s*display:none;\s*\}/
     );
     assert.match(
         css,
-        /#betterchzzk-vod-comment-aside\{[^}]*--bcvc-surface:var\(--bct-bg\);[^}]*--bcvc-border:var\(--bct-border-alpha\);/s
+        /#cheese-spanner-vod-comment-aside\{[^}]*--bcvc-surface:var\(--bct-bg\);[^}]*--bcvc-border:var\(--bct-border-alpha\);/s
     );
     assertSharedThemePalette(css);
     assert.equal(vodColumn.getAttribute("data-bcvc-comment-only-vod-column"), "1");
@@ -570,16 +573,19 @@ test("VOD comments mount a comment-only side panel when replay chat is unavailab
     document.querySelector(".native-player-row").insertAdjacentHTML("beforeend", chatAsideHtml());
     await waitForCondition(
         () =>
-            !document.getElementById("betterchzzk-vod-comment-aside") &&
-            document.getElementById("betterchzzk-vod-comment-chat-tab")
+            !document.getElementById("cheese-spanner-vod-comment-aside") &&
+            document.getElementById("cheese-spanner-vod-comment-chat-tab")
     );
 
     assert.equal(document.querySelector(".native-player-row").hasAttribute("data-bcvc-comment-only-host"), false);
     assert.equal(vodColumn.getAttribute("data-bcvc-comment-only-vod-column"), null);
     assert.equal(vodColumn.style.marginTop, "-378px");
     assert.equal(vodColumn.parentElement, vodColumnParent);
-    assert.equal(document.getElementById("betterchzzk-vod-comment-comment-tab").getAttribute("aria-selected"), "true");
-    assert.match(document.getElementById("betterchzzk-vod-comment-panel").textContent, /채팅 없이 보는 댓글/);
+    assert.equal(
+        document.getElementById("cheese-spanner-vod-comment-comment-tab").getAttribute("aria-selected"),
+        "true"
+    );
+    assert.match(document.getElementById("cheese-spanner-vod-comment-panel").textContent, /채팅 없이 보는 댓글/);
     assert.equal(document.querySelector("[role='log']").getAttribute("data-bcvc-tab-hidden"), "1");
     assert.equal(fixture.requests.length, 1, "native chat appearing later must reuse the loaded comment state");
 });
@@ -594,7 +600,7 @@ test("VOD comments do not replace temporarily hidden native chat with the commen
     });
     const { document } = fixture;
 
-    await waitForCondition(() => document.getElementById("betterchzzk-vod-comment-tabs"));
+    await waitForCondition(() => document.getElementById("cheese-spanner-vod-comment-tabs"));
     const section = document.getElementById("player-layout");
     const playerRow = document.createElement("div");
     playerRow.className = "native-player-row";
@@ -606,15 +612,15 @@ test("VOD comments do not replace temporarily hidden native chat with the commen
 
     await delay(750);
     assert.equal(
-        document.getElementById("betterchzzk-vod-comment-aside"),
+        document.getElementById("cheese-spanner-vod-comment-aside"),
         null,
         "a collapsed native chat must not be mistaken for a chatless VOD"
     );
 
     section.insertAdjacentHTML("beforeend", chatAsideHtml());
-    await waitForCondition(() => document.getElementById("betterchzzk-vod-comment-chat-tab"));
+    await waitForCondition(() => document.getElementById("cheese-spanner-vod-comment-chat-tab"));
 
-    assert.equal(document.getElementById("betterchzzk-vod-comment-aside"), null);
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-aside"), null);
     assert.equal(fixture.requests.length, 0, "restoring native chat must not fetch comments before the tab is opened");
 });
 
@@ -629,21 +635,21 @@ test("VOD comment tabs mount after a delayed chat log and reuse cached comments 
     });
     const { document } = fixture;
 
-    assert.equal(document.getElementById("betterchzzk-vod-comment-tabs"), null);
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-tabs"), null);
     const log = document.createElement("div");
     log.className = "native-chat-log";
     log.setAttribute("role", "log");
     log.textContent = "뒤늦게 마운트된 채팅";
     document.querySelector(".native-chat-container").appendChild(log);
-    await waitForCondition(() => document.getElementById("betterchzzk-vod-comment-tabs"));
+    await waitForCondition(() => document.getElementById("cheese-spanner-vod-comment-tabs"));
 
     clickCommentTab(document);
     await waitForCondition(() =>
-        /유지할 댓글/.test(document.getElementById("betterchzzk-vod-comment-panel").textContent)
+        /유지할 댓글/.test(document.getElementById("cheese-spanner-vod-comment-panel").textContent)
     );
     assert.equal(fixture.requests.length, 1);
 
-    const oldPanel = document.getElementById("betterchzzk-vod-comment-panel");
+    const oldPanel = document.getElementById("cheese-spanner-vod-comment-panel");
     const oldRow = document.querySelector("[data-bcvc-comment-key='id:1']");
     oldPanel.scrollTop = 137;
 
@@ -654,12 +660,12 @@ test("VOD comment tabs mount after a delayed chat log and reuse cached comments 
     await waitForCondition(
         () =>
             document.getElementById("vod-aside") !== oldAside &&
-            document.getElementById("betterchzzk-vod-comment-comment-tab")?.getAttribute("aria-selected") === "true"
+            document.getElementById("cheese-spanner-vod-comment-comment-tab")?.getAttribute("aria-selected") === "true"
     );
 
-    assert.match(document.getElementById("betterchzzk-vod-comment-panel").textContent, /유지할 댓글/);
+    assert.match(document.getElementById("cheese-spanner-vod-comment-panel").textContent, /유지할 댓글/);
     assert.equal(
-        document.getElementById("betterchzzk-vod-comment-panel"),
+        document.getElementById("cheese-spanner-vod-comment-panel"),
         oldPanel,
         "same-VOD timeline shell replacement must move the existing comment panel"
     );
@@ -669,7 +675,7 @@ test("VOD comment tabs mount after a delayed chat log and reuse cached comments 
         "same-VOD timeline shell replacement must preserve existing comment rows"
     );
     assert.equal(fixture.requests.length, 1, "same-VOD remount must reuse the loaded order state");
-    assert.equal(document.getElementById("betterchzzk-vod-comment-panel").scrollTop, 137);
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-panel").scrollTop, 137);
     assert.equal(document.querySelector("#vod-aside [role='log']").getAttribute("data-bcvc-tab-hidden"), "1");
     assert.equal(oldAside.hasAttribute("data-bcvc-mounted"), false);
 });
@@ -686,16 +692,16 @@ test("VOD comments reattach extension-owned nodes removed by a native timeline r
 
     clickCommentTab(document);
     await waitForCondition(() => document.querySelector("[data-bcvc-comment-key='id:1']"));
-    const panel = document.getElementById("betterchzzk-vod-comment-panel");
+    const panel = document.getElementById("cheese-spanner-vod-comment-panel");
     const row = document.querySelector("[data-bcvc-comment-key='id:1']");
-    const tablist = document.getElementById("betterchzzk-vod-comment-tabs");
+    const tablist = document.getElementById("cheese-spanner-vod-comment-tabs");
 
     panel.remove();
     tablist.remove();
     await waitForCondition(
         () =>
-            document.getElementById("betterchzzk-vod-comment-panel") === panel &&
-            document.getElementById("betterchzzk-vod-comment-tabs") === tablist
+            document.getElementById("cheese-spanner-vod-comment-panel") === panel &&
+            document.getElementById("cheese-spanner-vod-comment-tabs") === tablist
     );
 
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:1']"), row);
@@ -736,7 +742,7 @@ test("VOD comments load from the API without a lower comment DOM and render safe
         { limit: 10, objectId: "12345", offset: 0, orderType: "POPULAR" }
     );
     assert.ok(document.querySelector(".bcvc-skeleton-list"));
-    assert.equal(document.getElementById("betterchzzk-vod-comment-panel").getAttribute("aria-busy"), "true");
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-panel").getAttribute("aria-busy"), "true");
 
     pending.resolve(
         apiContent({
@@ -775,7 +781,7 @@ test("VOD comments load from the API without a lower comment DOM and render safe
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:2'] .bcvc-buff-count"), null);
     const fallbackAvatar = document.querySelector("[data-bcvc-comment-key='id:2'] .bcvc-avatar-fallback");
     assert.equal(fallbackAvatar.textContent, "");
-    const injectedStyle = document.getElementById("betterchzzk-vod-comment-tabs-style").textContent;
+    const injectedStyle = document.getElementById("cheese-spanner-vod-comment-tabs-style").textContent;
     assert.match(injectedStyle, /default_profile_light\.png/);
     assert.match(injectedStyle, /default_profile_dark\.png/);
     assert.doesNotMatch(injectedStyle, /\.bcvc-avatar-fallback::before/);
@@ -798,7 +804,7 @@ test("VOD comments load from the API without a lower comment DOM and render safe
         "하단 원본 댓글이 표시되면 버프할 수 있어요."
     );
 
-    const panel = document.getElementById("betterchzzk-vod-comment-panel");
+    const panel = document.getElementById("cheese-spanner-vod-comment-panel");
     const firstRow = document.querySelector("[data-bcvc-comment-key='id:1']");
     let bubbledClicks = 0;
     const onBubbledClick = () => {
@@ -814,11 +820,11 @@ test("VOD comments load from the API without a lower comment DOM and render safe
     assert.equal(bubbledClicks, 0, "timecode controls must not bubble into the native React tree");
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:1']"), firstRow);
 
-    document.getElementById("betterchzzk-vod-comment-chat-tab").click();
-    document.getElementById("betterchzzk-vod-comment-comment-tab").click();
+    document.getElementById("cheese-spanner-vod-comment-chat-tab").click();
+    document.getElementById("cheese-spanner-vod-comment-comment-tab").click();
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:1']"), firstRow);
     assert.equal(panel.scrollTop, 91);
-    document.getElementById("betterchzzk-vod-comment-comment-tab").click();
+    document.getElementById("cheese-spanner-vod-comment-comment-tab").click();
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:1']"), firstRow);
 });
 
@@ -954,10 +960,10 @@ test("VOD comment rows reuse native Chzzk profile and buff visuals without cloni
     nativeAvatarButton.setAttribute("aria-disabled", "true");
     await waitForCondition(() => mirroredAvatar.disabled);
     assert.equal(mirroredAuthor.disabled, false, "the author control must remain independently available");
-    assert.equal(mirroredAvatar.getAttribute("aria-describedby"), "betterchzzk-vod-comment-native-action-hint");
+    assert.equal(mirroredAvatar.getAttribute("aria-describedby"), "cheese-spanner-vod-comment-native-action-hint");
     document.getElementById("commentArea").remove();
     await waitForCondition(() => mirroredAuthor.disabled && mirroredBuff.disabled);
-    assert.equal(mirroredBuff.getAttribute("aria-describedby"), "betterchzzk-vod-comment-native-action-hint");
+    assert.equal(mirroredBuff.getAttribute("aria-describedby"), "cheese-spanner-vod-comment-native-action-hint");
 
     const replacementArea = document.createElement("div");
     replacementArea.id = "commentArea";
@@ -1105,7 +1111,7 @@ test("VOD comment rows render observed replies and tolerate nullable or deleted 
     assert.equal(reply.closest(".bcvc-replies")?.getAttribute("role"), "list");
     assert.equal(reply.querySelector(".bcvc-mention")?.textContent, "작성자 1");
     assert.equal(reply.querySelector(".bcvc-message")?.textContent.trim(), "작성자 1답글 00:30");
-    const injectedStyle = document.getElementById("betterchzzk-vod-comment-tabs-style").textContent;
+    const injectedStyle = document.getElementById("cheese-spanner-vod-comment-tabs-style").textContent;
     assert.match(injectedStyle, /\.bcvc-replies\{[^}]*margin:4px 0 0 12px[^}]*\}/s);
     assert.match(injectedStyle, /\.bcvc-replies \.bcvc-comment\{[^}]*padding:9px 0 5px 30px[^}]*\}/s);
     assert.match(injectedStyle, /\.bcvc-replies \.bcvc-avatar\{[^}]*width:22px[^}]*height:22px[^}]*\}/s);
@@ -1257,15 +1263,17 @@ test("VOD comment initial errors expose retry and distinguish empty or disabled 
 
     clickCommentTab(document);
     await waitForCondition(() => document.querySelector("[data-bcvc-action='retry-initial']"));
-    assert.match(document.getElementById("betterchzzk-vod-comment-panel").textContent, /댓글을 불러오지 못했어요\./);
+    assert.match(document.getElementById("cheese-spanner-vod-comment-panel").textContent, /댓글을 불러오지 못했어요\./);
 
     document.querySelector("[data-bcvc-action='retry-initial']").click();
     await waitForCondition(() =>
-        /아직 등록된 댓글이 없어요\./.test(document.getElementById("betterchzzk-vod-comment-panel").textContent)
+        /아직 등록된 댓글이 없어요\./.test(document.getElementById("cheese-spanner-vod-comment-panel").textContent)
     );
     document.querySelector("[data-bcvc-action='refresh']").click();
     await waitForCondition(() =>
-        /이 영상은 댓글을 사용할 수 없어요\./.test(document.getElementById("betterchzzk-vod-comment-panel").textContent)
+        /이 영상은 댓글을 사용할 수 없어요\./.test(
+            document.getElementById("cheese-spanner-vod-comment-panel").textContent
+        )
     );
     assert.equal(call, 3);
 });
@@ -1306,7 +1314,7 @@ test("VOD comment pagination coalesces observer requests and appends without rep
     clickCommentTab(document);
     await waitForCondition(() => document.querySelectorAll("[data-bcvc-comment-key]").length === 10);
     const firstRow = document.querySelector("[data-bcvc-comment-key='id:1']");
-    const panel = document.getElementById("betterchzzk-vod-comment-panel");
+    const panel = document.getElementById("cheese-spanner-vod-comment-panel");
     const focusTarget = document.querySelector("[data-bcvc-action='refresh']");
     panel.scrollTop = 80;
     focusTarget.focus();
@@ -1355,7 +1363,7 @@ test("VOD comment sorts cache loaded rows while refresh reloads only the active 
 
     clickCommentTab(document);
     await waitForCondition(() =>
-        /POPULAR 댓글/.test(document.getElementById("betterchzzk-vod-comment-panel").textContent)
+        /POPULAR 댓글/.test(document.getElementById("cheese-spanner-vod-comment-panel").textContent)
     );
     assert.deepEqual(
         Array.from(document.querySelectorAll("[data-bcvc-action='sort']")).map((button) => ({
@@ -1373,13 +1381,13 @@ test("VOD comment sorts cache loaded rows while refresh reloads only the active 
     desc.focus();
     desc.click();
     await waitForCondition(() =>
-        /DESC 댓글/.test(document.getElementById("betterchzzk-vod-comment-panel").textContent)
+        /DESC 댓글/.test(document.getElementById("cheese-spanner-vod-comment-panel").textContent)
     );
     assert.equal(document.activeElement, document.querySelector("[data-bcvc-action='sort'][data-bcvc-order='DESC']"));
     const popular = document.querySelector("[data-bcvc-action='sort'][data-bcvc-order='POPULAR']");
     popular.focus();
     popular.click();
-    assert.match(document.getElementById("betterchzzk-vod-comment-panel").textContent, /POPULAR 댓글/);
+    assert.match(document.getElementById("cheese-spanner-vod-comment-panel").textContent, /POPULAR 댓글/);
     assert.equal(
         document.activeElement,
         document.querySelector("[data-bcvc-action='sort'][data-bcvc-order='POPULAR']")
@@ -1413,26 +1421,26 @@ test("VOD comment tabs abort stale VOD work and clean up on route exit or disabl
     const oldSignal = fixture.requests[0].signal;
     fixture.emitRoute("/video/67890");
     assert.equal(oldSignal.aborted, true);
-    await waitForCondition(() => document.getElementById("betterchzzk-vod-comment-chat-tab"));
-    assert.equal(document.getElementById("betterchzzk-vod-comment-chat-tab").getAttribute("aria-selected"), "true");
+    await waitForCondition(() => document.getElementById("cheese-spanner-vod-comment-chat-tab"));
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-chat-tab").getAttribute("aria-selected"), "true");
     assert.equal(document.querySelector("[role='log']").getAttribute("data-bcvc-tab-hidden"), null);
 
     clickCommentTab(document);
     await waitForCondition(() =>
-        /새 VOD 댓글/.test(document.getElementById("betterchzzk-vod-comment-panel").textContent)
+        /새 VOD 댓글/.test(document.getElementById("cheese-spanner-vod-comment-panel").textContent)
     );
     firstRequest.resolve(apiContent({ rows: [apiComment(1, "늦은 이전 댓글")] }));
     await delay();
-    assert.doesNotMatch(document.getElementById("betterchzzk-vod-comment-panel").textContent, /늦은 이전 댓글/);
+    assert.doesNotMatch(document.getElementById("cheese-spanner-vod-comment-panel").textContent, /늦은 이전 댓글/);
 
     fixture.emitRoute("/lives");
-    assert.equal(document.getElementById("betterchzzk-vod-comment-tabs"), null);
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-tabs"), null);
     assert.equal(document.getElementById("vod-aside").hasAttribute("data-bcvc-mounted"), false);
     fixture.emitRoute("/video/99999");
-    await waitForCondition(() => document.getElementById("betterchzzk-vod-comment-tabs"));
+    await waitForCondition(() => document.getElementById("cheese-spanner-vod-comment-tabs"));
     fixture.emitOptions({ vodCommentTabsEnabled: false });
-    assert.equal(document.getElementById("betterchzzk-vod-comment-tabs"), null);
-    assert.equal(document.getElementById("betterchzzk-vod-comment-panel"), null);
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-tabs"), null);
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-panel"), null);
     assert.equal(document.querySelector("[role='log']").getAttribute("aria-hidden"), null);
 });
 
@@ -1443,8 +1451,8 @@ test("VOD comment tab keyboard navigation keeps roving tabindex", (t) => {
         fixture.dom.window.close();
     });
     const { document, window } = fixture;
-    const chat = document.getElementById("betterchzzk-vod-comment-chat-tab");
-    const comments = document.getElementById("betterchzzk-vod-comment-comment-tab");
+    const chat = document.getElementById("cheese-spanner-vod-comment-chat-tab");
+    const comments = document.getElementById("cheese-spanner-vod-comment-comment-tab");
 
     chat.focus();
     chat.dispatchEvent(new window.KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" }));
@@ -1470,34 +1478,37 @@ test("VOD tabs survive fullscreen panel reopen and restore native panels outside
     });
     clickCommentTab(document);
     await waitForCondition(() =>
-        document.getElementById("betterchzzk-vod-comment-panel")?.textContent.includes("전체화면 댓글")
+        document.getElementById("cheese-spanner-vod-comment-panel")?.textContent.includes("전체화면 댓글")
     );
     const root = document.getElementById("player-layout");
     let fullscreen = root;
     Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => fullscreen });
     document.dispatchEvent(new window.Event("fullscreenchange"));
-    assert.ok(document.getElementById("betterchzzk-vod-comment-comment-tab"));
-    assert.equal(document.getElementById("betterchzzk-vod-comment-comment-tab").getAttribute("aria-selected"), "true");
+    assert.ok(document.getElementById("cheese-spanner-vod-comment-comment-tab"));
+    assert.equal(
+        document.getElementById("cheese-spanner-vod-comment-comment-tab").getAttribute("aria-selected"),
+        "true"
+    );
     const oldAside = document.getElementById("vod-aside");
     oldAside.remove();
-    await waitForCondition(() => !document.getElementById("betterchzzk-vod-comment-panel"));
+    await waitForCondition(() => !document.getElementById("cheese-spanner-vod-comment-panel"));
     root.insertAdjacentHTML("beforeend", chatAsideHtml());
-    await waitForCondition(() => document.getElementById("betterchzzk-vod-comment-comment-tab"));
+    await waitForCondition(() => document.getElementById("cheese-spanner-vod-comment-comment-tab"));
     assert.equal(document.querySelectorAll("[role='tablist']").length, 1);
-    document.getElementById("betterchzzk-vod-comment-chat-tab").click();
+    document.getElementById("cheese-spanner-vod-comment-chat-tab").click();
     assert.equal(document.querySelector("#vod-aside [role='log']").hasAttribute("data-bcvc-tab-hidden"), false);
     clickCommentTab(document);
     assert.equal(fixture.requests.length, 1);
     fullscreen = fixture.video;
     document.dispatchEvent(new window.Event("fullscreenchange"));
-    assert.equal(document.getElementById("betterchzzk-vod-comment-panel"), null);
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-panel"), null);
     assert.equal(document.querySelector("#vod-aside [role='log']").hasAttribute("data-bcvc-tab-hidden"), false);
     fullscreen = null;
     document.dispatchEvent(new window.Event("fullscreenchange"));
-    assert.ok(document.getElementById("betterchzzk-vod-comment-panel"));
+    assert.ok(document.getElementById("cheese-spanner-vod-comment-panel"));
     fixture.emitRoute("/video/67890");
     await waitForCondition(
-        () => document.getElementById("betterchzzk-vod-comment-chat-tab")?.getAttribute("aria-selected") === "true"
+        () => document.getElementById("cheese-spanner-vod-comment-chat-tab")?.getAttribute("aria-selected") === "true"
     );
     fixture.emitOptions({ vodCommentTabsEnabled: false });
     assert.equal(document.querySelector("[data-bcvc-mounted]"), null);
@@ -1510,7 +1521,7 @@ test("VOD comment body keeps body typography before native comments arrive and a
         fixture.emitOptions({ vodCommentTabsEnabled: false });
         fixture.dom.window.close();
     });
-    const panel = () => document.getElementById("betterchzzk-vod-comment-panel");
+    const panel = () => document.getElementById("cheese-spanner-vod-comment-panel");
     assert.equal(panel().style.getPropertyValue("--bcvc-font-family"), "system-ui, sans-serif");
     document.getElementById("below-player").innerHTML =
         '<div id="commentArea" style="font-family:Verdana,sans-serif"><div id="commentBox-1">원본 댓글</div></div>';
@@ -1526,7 +1537,7 @@ test("VOD comment body keeps body typography before native comments arrive and a
     await waitForCondition(() => panel());
     assert.equal(panel().style.getPropertyValue("--bcvc-font-family"), "system-ui, sans-serif");
     assert.equal(
-        document.getElementById("betterchzzk-vod-comment-tabs").style.getPropertyValue("--bcvc-heading-font-family"),
+        document.getElementById("cheese-spanner-vod-comment-tabs").style.getPropertyValue("--bcvc-heading-font-family"),
         "Arial, sans-serif"
     );
 });

@@ -71,7 +71,7 @@ function fixture(fetchJson, callbacks = {}) {
     ]) {
         vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
     }
-    const repository = context.BetterChzzk.categoryToolsRepository.createRepository({
+    const repository = context.CheeseSpanner.categoryToolsRepository.createRepository({
         fetchJson: (url, options) => {
             const match = url.match(/\/categories\/([^/]+)\/([^/]+)\/info$/);
             if (match) {
@@ -87,7 +87,7 @@ function fixture(fetchJson, callbacks = {}) {
             }
             return fetchJson(url, options);
         },
-        touchMapEntry: context.BetterChzzk.utils.touchMapEntry,
+        touchMapEntry: context.CheeseSpanner.utils.touchMapEntry,
         ...callbacks,
     });
     return {
@@ -106,7 +106,7 @@ function fixture(fetchJson, callbacks = {}) {
             return timer.delay;
         },
         searchController(callbacks) {
-            return context.BetterChzzk.categoryToolsSearchController.createSearchController({
+            return context.CheeseSpanner.categoryToolsSearchController.createSearchController({
                 repository,
                 ...callbacks,
             });

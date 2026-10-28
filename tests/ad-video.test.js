@@ -15,14 +15,14 @@ function createPage(t, pathname = "/live/measured-channel", initialState = "1") 
     });
     t.after(() => dom.window.close());
     if (initialState !== null) {
-        dom.window.document.documentElement.setAttribute("data-betterchzzk-ad-video-state", initialState);
+        dom.window.document.documentElement.setAttribute("data-cheese-spanner-ad-video-state", initialState);
     }
     return dom.window;
 }
 
 function setEnabled(window, enabled) {
-    window.document.documentElement.setAttribute("data-betterchzzk-ad-video-state", enabled ? "1" : "0");
-    window.document.dispatchEvent(new window.Event("betterchzzk:ad-video:state"));
+    window.document.documentElement.setAttribute("data-cheese-spanner-ad-video-state", enabled ? "1" : "0");
+    window.document.dispatchEvent(new window.Event("cheese-spanner:ad-video:state"));
 }
 
 function parse(window, value) {
@@ -160,7 +160,7 @@ test("object video slots block the measured Asian Games pre-roll without replaci
     assert.equal(controller.contentVideoElement, slot);
     assert.equal(slot.video, video);
     assert.equal(video.currentTime, 125);
-    const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    const status = JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"));
     assert.equal(status.blockedWrappedLiveRequests, 1);
     assert.equal(status.blockedLiveSources, 0);
 });
@@ -290,7 +290,7 @@ test("wrapped live requests keep their outer client and only omit the identified
         assert.equal(inner._videoScheduleInfo.adScheduleParam.adScheduleId, id);
         assert.equal(controller.videoSlot.currentTime, 123);
     }
-    const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    const status = JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"));
     assert.equal(status.blockedWrappedLiveRequests, 2, "reassigning a source must not stack request guards");
     assert.equal(status.blockedLiveSources, 0, "the outer source stays attached");
 });
@@ -326,7 +326,7 @@ test("wrapped live filtering passes through unmeasured wrappers, sources, contai
         assert.equal(controller.srcObject, state.wrapped);
         assert.deepEqual(Object.getOwnPropertyDescriptor(state.wrapped._init, "linearAdRequest"), before);
     }
-    const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    const status = JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"));
     assert.equal(status.blockedWrappedLiveRequests, 0);
 });
 
@@ -369,7 +369,7 @@ test("wrapped live request guards recheck routes, ownership, remounts and replac
     assert.equal((await state.wrapped.initAd()).client, state.linearClient);
     setEnabled(window, true);
     assert.equal((await state.wrapped.initAd()).client, state.linearClient, "reactivation still requires a reload");
-    const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    const status = JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"));
     assert.equal(status.blockedWrappedLiveRequests, 2);
     assert.equal(status.reloadRequired, true);
 });
@@ -408,7 +408,8 @@ test("known live schedules are blocked independently of VOD schedules", (t) => {
         assert.equal(controller.srcObject, null);
     }
     assert.equal(
-        JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status")).blockedLiveSources,
+        JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"))
+            .blockedLiveSources,
         2
     );
 });
@@ -593,7 +594,7 @@ test("live pre-roll and mid-roll use SDK ownership and known units independently
         assert.equal(h.manager.startAdSchedule(), "SCHEDULE_COMPLETE");
         h.root.remove();
     }
-    const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    const status = JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"));
     assert.equal(status.blockedLiveSchedules, 4);
     assert.equal(status.blockedLivePreRollSchedules, 2);
 });
@@ -646,7 +647,7 @@ test("live schedule filtering rechecks routes, ownership, remounts and option li
     setEnabled(window, true);
     assertPass();
     assert.equal(
-        JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status")).reloadRequired,
+        JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status")).reloadRequired,
         true
     );
 });
@@ -734,7 +735,8 @@ test("schedule application preserves each native Promise, call and processing co
         return result;
     };
     new window.WeakMap().set(h.container, h.manager);
-    const status = () => JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    const status = () =>
+        JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"));
     const schedule = liveSchedule();
     assert.equal(h.manager.loadWithAdSchedule(schedule, "extra"), result);
     assert.equal(h.calls.length, 1);
@@ -811,7 +813,8 @@ test("VOD ad sources never reach preparation while main video setters remain unt
     mainVideo.srcObject = ad;
     assert.equal(mainVideo.srcObject, ad);
     assert.equal(
-        JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status")).blockedVodSources,
+        JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"))
+            .blockedVodSources,
         1
     );
 });
@@ -852,7 +855,7 @@ test("source guard follows settings, SPA routes and newly created controllers wi
     controller.srcObject = ad;
     assert.equal(controller.srcObject, ad);
     assert.equal(
-        JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status")).reloadRequired,
+        JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status")).reloadRequired,
         true
     );
 });
@@ -905,7 +908,8 @@ test("source application preserves setter return identity and counts only a retu
     });
     const setter = window.Object.getOwnPropertyDescriptor(controller, "srcObject").set;
     const ad = createVodAdSource();
-    const status = () => JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    const status = () =>
+        JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"));
     assert.equal(setter.call(controller, ad), result);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].receiver, controller);
@@ -937,7 +941,7 @@ test("measured ad decision changes only the two boolean flags and preserves resp
     });
     assert.equal(measured.content.livePlaybackJson.liveId, true);
     assert.equal(
-        JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status")).changedParses,
+        JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status")).changedParses,
         1
     );
 });
@@ -962,7 +966,8 @@ test("explicit player ad decisions disable pre-roll and mid-roll on live and VOD
             }
         }
         assert.equal(
-            JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status")).changedParses,
+            JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"))
+                .changedParses,
             3
         );
         const input = {
@@ -998,7 +1003,7 @@ test("explicit ad decisions preserve unknown fields, invalid flags, and reviver 
         true
     );
     assert.equal(
-        JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status")).changedParses,
+        JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status")).changedParses,
         0
     );
 });
@@ -1039,7 +1044,10 @@ test("retired grid settings leave P2P playback metadata unchanged with ads enabl
     for (const gridEnabled of [false, true]) {
         for (const adsEnabled of [false, true]) {
             const window = createPage(t);
-            window.document.documentElement.setAttribute("data-betterchzzk-grid-bypass-state", gridEnabled ? "1" : "0");
+            window.document.documentElement.setAttribute(
+                "data-cheese-spanner-grid-bypass-state",
+                gridEnabled ? "1" : "0"
+            );
             const originalParse = window.JSON.parse;
             if (adsEnabled) window.eval(source);
             const playback = {
@@ -1085,7 +1093,7 @@ test("disable preserves a later wrapper and requires reload before reactivation"
     assert.equal(laterCalls, 1);
     setEnabled(window, true);
     assert.deepEqual(parse(window, measured), measured);
-    const state = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    const state = JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"));
     assert.equal(state.active, false);
     assert.equal(state.reloadRequired, true);
     window.eval(source);
@@ -1095,7 +1103,7 @@ test("disable preserves a later wrapper and requires reload before reactivation"
 test("isolated bridge waits for real settings and turns off the running hook", (t) => {
     const window = createPage(t, "/live/measured-channel", null);
     let optionsChanged;
-    window.BetterChzzk = {
+    window.CheeseSpanner = {
         utils: {
             bindFeatureOptions(fn) {
                 optionsChanged = fn;
@@ -1106,7 +1114,7 @@ test("isolated bridge waits for real settings and turns off the running hook", (
         },
     };
     window.eval(bridge);
-    assert.equal(window.document.documentElement.hasAttribute("data-betterchzzk-ad-video-state"), false);
+    assert.equal(window.document.documentElement.hasAttribute("data-cheese-spanner-ad-video-state"), false);
     window.eval(source);
     optionsChanged({ adVideoEnabled: true });
     assert.equal(parse(window, measured).content.livePlaybackJson.liveId, false);
@@ -1221,7 +1229,7 @@ test("wrapped sources keep outer identity with additive fields and direct-source
     assert.equal((await state.wrapped.initAd()).client, undefined);
     assert.equal(extraReads, 0);
     assert.equal(state.wrapped._init.metadata.preserve, true);
-    const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    const status = JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"));
     assert.equal(status.blockedLiveSources, 0);
     assert.equal(status.blockedWrappedLiveRequests, 1);
 });
@@ -1334,7 +1342,7 @@ test("new independent schedule IDs use native component refs instead of DOM name
     assert.equal(h.calls[0].schedule.adBreaks[0].adSources.length, 0);
     assert.equal(h.calls[0].schedule.adBreaks[1], untouched);
     assert.equal(schedule.adBreaks[0].adSources.length, 1);
-    const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    const status = JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"));
     assert.equal(status.blockedLiveSchedules, 1);
     assert.equal(status.blockedLivePreRollSchedules, 0, "new IDs have no inferred pre-roll attribution");
 });
@@ -1430,7 +1438,8 @@ test("a deferred decision that fails ownership inspection never retries an alrea
     assert.equal(controller.srcObject, ad);
     assert.equal(nativeCalls, 2);
     assert.equal(
-        JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status")).blockedVodSources,
+        JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"))
+            .blockedVodSources,
         0
     );
 });
@@ -1551,7 +1560,7 @@ test("an outer request without an inner request coexists with independent entry 
     assert.notEqual(entry.video, mid.video);
     assert.equal(controller.videoSlot.currentTime, 321);
     assert.equal(controller.videoSlot.playbackRate, 1.25);
-    assert.deepEqual(JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status")), {
+    assert.deepEqual(JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status")), {
         active: true,
         changedParses: 0,
         blockedVodSources: 0,
@@ -1601,7 +1610,7 @@ test("JSON-bypassed inputs are handled only when they reach an owned source or s
             assert.equal(h.calls.at(-1).schedule, schedule);
             assert.equal(h.manager.startAdSchedule(), "prepare");
         }
-        const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+        const status = JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"));
         assert.equal(status.changedParses, 0);
         assert.equal(status.blockedLiveSources + status.blockedVodSources, 1);
         assert.equal(status.blockedLiveSchedules, pathname.startsWith("/live/") ? 1 : 0);
@@ -1652,7 +1661,7 @@ test("inputs outside every supported boundary and account, waterfall, network an
     ])
         assert.deepEqual(parse(window, value), value);
     assert.deepEqual(untouched(), apis);
-    const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    const status = JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"));
     for (const [key, value] of Object.entries(status)) {
         if (key !== "active" && key !== "reloadRequired") assert.equal(value, 0, key);
     }
@@ -1810,7 +1819,7 @@ test("schedule ownership rejects conflicting or unreadable alternate candidates 
         }
     }
     assert.equal(getterCalls, 0, "accessor metadata is rejected without invoking it");
-    const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+    const status = JSON.parse(window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status"));
     assert.equal(status.blockedLiveSchedules, 0);
 });
 
@@ -1942,7 +1951,9 @@ test("live PiP schedules created after leaving the live route keep native comple
             assert.equal(input.adBreaks[0].adSources.length, 1);
             assert.equal(h.manager.startAdSchedule(), "SCHEDULE_COMPLETE");
             assert.equal(h.controller.videoSlot, videoSlot);
-            const status = JSON.parse(window.document.documentElement.getAttribute("data-betterchzzk-ad-video-status"));
+            const status = JSON.parse(
+                window.document.documentElement.getAttribute("data-cheese-spanner-ad-video-status")
+            );
             assert.equal(status.blockedLiveSchedules, 1);
             assert.equal(status.blockedLivePreRollSchedules, 0);
         }

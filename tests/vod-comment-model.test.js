@@ -15,7 +15,7 @@ function createModelFixture() {
     dom.window.eval(MODEL_SOURCE);
     return {
         dom,
-        model: dom.window.BetterChzzk.vodComments.model,
+        model: dom.window.CheeseSpanner.vodComments.model,
     };
 }
 

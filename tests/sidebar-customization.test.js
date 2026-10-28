@@ -40,7 +40,7 @@ test("offline hiding is independent of pinning and follows href reuse, routes, a
     chrome.testState.emitSync({ followingOfflineHidden: { newValue: false } });
     await waitForCondition(() => !hidden("offlineB"));
     assert.equal(document.querySelector("[data-bcsf-offline-hidden]"), null);
-    assert.equal(document.getElementById("betterchzzk-sidebar-customization-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-sidebar-customization-style"), null);
     chrome.testState.emitSync({ followingOfflineHidden: { newValue: true } });
     await waitForCondition(() => hidden("offlineB"));
     assert.equal(requests, 0);
@@ -151,7 +151,7 @@ test("immediate pin repair revalidates reused links and restores replaced lists"
     const nativeSidebar = document.getElementById("sidebar").outerHTML;
     evalSidebarScripts(dom);
     await waitForCondition(() => document.getElementById("liveC").hasAttribute("data-bcsf-pinned"));
-    dispatchClick(dom, document.getElementById("betterchzzk-following-pin-mode"));
+    dispatchClick(dom, document.getElementById("cheese-spanner-following-pin-mode"));
     await waitForCondition(() => document.querySelector("#liveC a").getAttribute("aria-pressed") === "true");
     dom.window.requestAnimationFrame = () => 12345;
     const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -214,7 +214,7 @@ test("initial saved pins apply without RAF and immediate repair stops when pinni
     evalSidebarScripts(dom);
     await waitForCondition(() => finishPinRead);
     flushFrame();
-    assert.equal(document.getElementById("betterchzzk-following-pin-mode"), null);
+    assert.equal(document.getElementById("cheese-spanner-following-pin-mode"), null);
     finishPinRead();
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(document.getElementById("liveC").getAttribute("data-bcsf-pinned"), "1");
@@ -225,7 +225,7 @@ test("initial saved pins apply without RAF and immediate repair stops when pinni
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(row.hasAttribute("data-bcsf-pinned"), false);
     assert.equal(row.querySelector("[data-bcsf-pin-indicator]"), null);
-    assert.equal(document.getElementById("betterchzzk-following-pin-mode"), null);
+    assert.equal(document.getElementById("cheese-spanner-following-pin-mode"), null);
     chrome.testState.emitSync({ followingPinEnabled: { newValue: true } });
     flushFrame();
     assert.equal(row.getAttribute("data-bcsf-pinned"), "1");
@@ -296,7 +296,7 @@ test("sidebar sections hide independently, restore reused nodes, and survive sid
     await waitForCondition(() => document.querySelectorAll("[data-bcsf-section-hidden]").length === 4);
     chrome.testState.emitSync(Object.fromEntries(entries.map(([key]) => [key, { newValue: false }])));
     await waitForCondition(() => !document.querySelector("[data-bcsf-section-hidden]"));
-    assert.equal(document.getElementById("betterchzzk-sidebar-customization-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-sidebar-customization-style"), null);
 });
 
 test("partner section recognizes the current title outside its icon link and clears reused sections", async (t) => {
@@ -326,7 +326,7 @@ test("partner section recognizes the current title outside its icon link and cle
     await waitForCondition(() => document.getElementById("partnerSection").hasAttribute("data-bcsf-section-hidden"));
     chrome.testState.emitSync({ sidebarPartnerStreamersHidden: { newValue: false } });
     await waitForCondition(() => !document.querySelector("[data-bcsf-section-hidden]"));
-    assert.equal(document.getElementById("betterchzzk-sidebar-customization-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-sidebar-customization-style"), null);
 });
 
 function readRepoFile(...parts) {
@@ -550,7 +550,7 @@ test("following links export native drag URLs with pinning off and restore their
     const sidebar = d.getElementById("sidebar");
     assert.equal(sidebar.getAttribute("data-bcsf-link-dragging"), "1");
     assert.match(
-        d.getElementById("betterchzzk-sidebar-drag-style").textContent,
+        d.getElementById("cheese-spanner-sidebar-drag-style").textContent,
         /#sidebar\[data-bcsf-link-dragging\] \[class\*="_item_"\] \[class\^="_tooltip_"\]\{display:none!important\}/
     );
     pointer("pointercancel");
@@ -632,7 +632,7 @@ test("following pins preserve native row DOM and never request a replacement lis
     }));
     let sourceRequests = 0;
     let networkRequests = 0;
-    document.addEventListener("betterchzzk:following-source-request", () => sourceRequests++);
+    document.addEventListener("cheese-spanner:following-source-request", () => sourceRequests++);
     dom.window.fetch = () => {
         networkRequests++;
         throw new Error("Pin sorting must not fetch a replacement list");
@@ -648,7 +648,7 @@ test("following pins preserve native row DOM and never request a replacement lis
     }
     assert.equal(document.getElementById("liveCViewer").textContent, "321명");
     assert.deepEqual(getVisualRowIds(dom, list), ["liveC", "liveA", "offlineB"]);
-    assert.equal(document.getElementById("betterchzzk-following-list"), null);
+    assert.equal(document.getElementById("cheese-spanner-following-list"), null);
     assert.equal(document.querySelector("[data-bcsf-native-hidden], [data-bcsf-source-state]"), null);
     assert.equal(sourceRequests, 0);
     assert.equal(networkRequests, 0);
@@ -1093,7 +1093,7 @@ test("collapsed source channel clicks use the native router without replacing th
     const sidebar = document.getElementById("sidebar");
     const link = document.querySelector("[data-bcsf-source-row] a");
     const routeChanges = [];
-    dom.window.addEventListener("betterchzzk:routechange", (event) => routeChanges.push(event.detail.href));
+    dom.window.addEventListener("cheese-spanner:routechange", (event) => routeChanges.push(event.detail.href));
     const length = dom.window.history.length;
 
     assert.equal(dispatchClick(dom, link.querySelector("span")).defaultPrevented, true);
@@ -1147,11 +1147,11 @@ test("source navigation preserves native links, modifiers and pin editing, and c
     link.href = "/live/channel-pinned";
     assert.equal(navigations.length, 0);
 
-    dispatchClick(dom, document.getElementById("betterchzzk-following-pin-mode"));
+    dispatchClick(dom, document.getElementById("cheese-spanner-following-pin-mode"));
     assert.equal(wasIntercepted(link), true);
     await waitForCondition(() => chrome.testState.sync[STORAGE_KEY].length === 0);
     assert.equal(navigations.length, 0, "pin mode toggles the pin without navigating");
-    dispatchClick(dom, document.getElementById("betterchzzk-following-pin-mode"));
+    dispatchClick(dom, document.getElementById("cheese-spanner-following-pin-mode"));
     chrome.testState.emitSync({ [STORAGE_KEY]: { newValue: ["channel-pinned"] } });
     await waitForCondition(() => document.querySelector("[data-bcsf-source-row] a"));
     link = document.querySelector("[data-bcsf-source-row] a");
@@ -1174,7 +1174,7 @@ test("source navigation resolves the current sidebar router after remount and re
     const link = replacement.querySelector("[data-bcsf-source-row] a");
     const request = () =>
         link.dispatchEvent(
-            new dom.window.CustomEvent("betterchzzk:following-navigate", {
+            new dom.window.CustomEvent("cheese-spanner:following-navigate", {
                 bubbles: true,
                 cancelable: true,
             })
@@ -1216,7 +1216,7 @@ test("offline pins lead their offline group by default and optionally join all p
     await waitForCondition(() => document.getElementById("liveA").hasAttribute("data-bcsf-pinned"));
     assert.deepEqual(getVisualRowIds(dom, list), defaultOrder);
     assert.deepEqual(Array.from(list.children), nativeNodes, "sorting must not move React-owned nodes");
-    assert.equal(document.getElementById("betterchzzk-following-pin-mode").getAttribute("aria-pressed"), "false");
+    assert.equal(document.getElementById("cheese-spanner-following-pin-mode").getAttribute("aria-pressed"), "false");
 
     chrome.testState.emitSync({ followingPinOfflineToTopEnabled: { newValue: true } });
     await waitForCondition(() => getVisualRowIds(dom, list).join() === allPinsOrder.join());
@@ -1311,13 +1311,13 @@ test("sidebar customization scopes cheese hiding and exposes pin mode beside nat
     await waitForCondition(() => dom.window.document.getElementById("followingList")?.hasAttribute("data-bcsf-list"));
 
     const { document } = dom.window;
-    const style = document.getElementById("betterchzzk-sidebar-customization-style");
+    const style = document.getElementById("cheese-spanner-sidebar-customization-style");
     const list = document.getElementById("followingList");
     const liveA = document.getElementById("liveA");
     const offlineB = document.getElementById("offlineB");
     const liveC = document.getElementById("liveC");
     const refreshButton = document.getElementById("followingRefresh");
-    const modeButton = document.getElementById("betterchzzk-following-pin-mode");
+    const modeButton = document.getElementById("cheese-spanner-following-pin-mode");
 
     assert.equal(document.documentElement.getAttribute("data-bcsf-cheese-hidden"), "1");
     assert.match(style.textContent, /#sidebar a\[href="\/cheezefarm"\]/);
@@ -1375,7 +1375,7 @@ test("sidebar customization scopes cheese hiding and exposes pin mode beside nat
     assert.equal(liveA.querySelector("a").hasAttribute("aria-pressed"), false);
 
     refreshButton.remove();
-    await waitForCondition(() => !document.getElementById("betterchzzk-following-pin-mode"));
+    await waitForCondition(() => !document.getElementById("cheese-spanner-following-pin-mode"));
     assert.equal(
         document.querySelector("[data-bcsf-pin-mode-button]"),
         null,
@@ -1385,7 +1385,7 @@ test("sidebar customization scopes cheese hiding and exposes pin mode beside nat
     chrome.testState.emitSync({ sidebarCheeseFarmHidden: { oldValue: true, newValue: false } });
     await waitForCondition(() => !document.documentElement.hasAttribute("data-bcsf-cheese-hidden"));
     assert.equal(document.documentElement.hasAttribute("data-bcsf-cheese-hidden"), false);
-    assert.ok(document.getElementById("betterchzzk-sidebar-customization-style"), "pin styles stay installed");
+    assert.ok(document.getElementById("cheese-spanner-sidebar-customization-style"), "pin styles stay installed");
 });
 
 test("following pins persist, sync across tabs, survive remounts, and clean up when disabled", async (t) => {
@@ -1394,7 +1394,7 @@ test("following pins persist, sync across tabs, survive remounts, and clean up w
     t.after(() => dom.window.close());
 
     evalSidebarScripts(dom);
-    await waitForCondition(() => dom.window.document.getElementById("betterchzzk-following-pin-mode"));
+    await waitForCondition(() => dom.window.document.getElementById("cheese-spanner-following-pin-mode"));
 
     const { document } = dom.window;
     const liveCLink = document.querySelector("#liveC a");
@@ -1418,7 +1418,7 @@ test("following pins persist, sync across tabs, survive remounts, and clean up w
     assert.equal(lastNativeDefaultPrevented, false, "pin mode off keeps native channel navigation");
     assert.deepEqual(Array.from(chrome.testState.sync[STORAGE_KEY]), []);
 
-    dispatchClick(dom, document.getElementById("betterchzzk-following-pin-mode"));
+    dispatchClick(dom, document.getElementById("cheese-spanner-following-pin-mode"));
     await waitForCondition(() => document.getElementById("followingList").hasAttribute("data-bcsf-pin-mode"));
     dispatchClick(dom, liveCViewer);
     await waitForCondition(() => chrome.testState.sync[STORAGE_KEY]?.includes("channel-c"));
@@ -1426,7 +1426,7 @@ test("following pins persist, sync across tabs, survive remounts, and clean up w
     assert.deepEqual(Array.from(chrome.testState.sync[STORAGE_KEY]), ["channel-c"]);
     assert.equal(nativeClicks, 1, "pin mode clicks must not reach the native following link");
     assert.equal(rowClicks, 1, "viewer-count clicks must be intercepted at the verified following row");
-    assert.equal(document.getElementById("betterchzzk-following-pin-mode").getAttribute("aria-pressed"), "true");
+    assert.equal(document.getElementById("cheese-spanner-following-pin-mode").getAttribute("aria-pressed"), "true");
     assert.equal(document.getElementById("liveC").getAttribute("data-bcsf-order-group"), "pinned");
 
     dispatchClick(dom, liveCLink, { ctrlKey: true });
@@ -1442,7 +1442,7 @@ test("following pins persist, sync across tabs, survive remounts, and clean up w
     await waitForCondition(() => !chrome.testState.sync[STORAGE_KEY]?.includes("channel-c"));
     dispatchClick(dom, liveCLink, { detail: 0 });
     await waitForCondition(() => chrome.testState.sync[STORAGE_KEY]?.includes("channel-c"));
-    assert.equal(document.getElementById("betterchzzk-following-pin-mode").getAttribute("aria-pressed"), "true");
+    assert.equal(document.getElementById("cheese-spanner-following-pin-mode").getAttribute("aria-pressed"), "true");
 
     const offlineLink = document.querySelector("#offlineB a");
     dispatchKey(dom, offlineLink, " ");
@@ -1474,22 +1474,23 @@ test("following pins persist, sync across tabs, survive remounts, and clean up w
         "</li></ul>",
     ].join("");
     await waitForCondition(
-        () => document.getElementById("betterchzzk-following-pin-mode")?.nextElementSibling?.id === "followingRefresh2"
+        () =>
+            document.getElementById("cheese-spanner-following-pin-mode")?.nextElementSibling?.id === "followingRefresh2"
     );
-    assert.equal(document.getElementById("betterchzzk-following-pin-mode").className, "replacement-icon-button");
-    assert.equal(document.getElementById("betterchzzk-following-pin-mode").getAttribute("aria-pressed"), "true");
+    assert.equal(document.getElementById("cheese-spanner-following-pin-mode").className, "replacement-icon-button");
+    assert.equal(document.getElementById("cheese-spanner-following-pin-mode").getAttribute("aria-pressed"), "true");
     assert.equal(document.querySelector("#remountedA a").getAttribute("aria-pressed"), "true");
     assert.equal(document.getElementById("remountedA").getAttribute("data-bcsf-order-group"), "pinned");
 
     chrome.testState.emitSync({ followingPinEnabled: { oldValue: true, newValue: false } });
-    await waitForCondition(() => !document.getElementById("betterchzzk-following-pin-mode"));
+    await waitForCondition(() => !document.getElementById("cheese-spanner-following-pin-mode"));
     assert.equal(document.querySelector("[data-bcsf-pin-mode-button]"), null);
     assert.equal(document.querySelector("[data-bcsf-list]"), null);
     assert.equal(document.querySelector("[data-bcsf-row]"), null);
     assert.equal(document.querySelector("[data-bcsf-pin-target]"), null);
     assert.equal(document.querySelector("#remountedA a").hasAttribute("role"), false);
     assert.equal(document.querySelector("#remountedA a").hasAttribute("aria-pressed"), false);
-    assert.equal(document.getElementById("betterchzzk-sidebar-customization-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-sidebar-customization-style"), null);
     assert.deepEqual(Array.from(chrome.testState.sync[STORAGE_KEY]), ["channel-a", "channel-b"]);
 });
 
@@ -1509,7 +1510,7 @@ test("pinned status icons follow channel names outside edit mode and track row u
 
     evalSidebarScripts(dom);
     await waitForCondition(() => liveA.getAttribute("data-bcsf-order-group") === "pinned");
-    const modeButton = document.getElementById("betterchzzk-following-pin-mode");
+    const modeButton = document.getElementById("cheese-spanner-following-pin-mode");
     const iconA = liveA.querySelector(iconSelector);
     assert.ok(iconA, "pinned live channels show a status icon without entering edit mode");
     assert.equal(nameA.lastChild, iconA, "the icon stays inside the native name line");
@@ -1575,7 +1576,7 @@ test("pinned status icons follow channel names outside edit mode and track row u
     chrome.testState.emitSync({ followingPinEnabled: { newValue: true } });
     await waitForCondition(() => liveC.querySelector(iconSelector));
     assert.equal(document.querySelectorAll(iconSelector).length, 1);
-    assert.equal(document.getElementById("betterchzzk-following-pin-mode").getAttribute("aria-pressed"), "false");
+    assert.equal(document.getElementById("cheese-spanner-following-pin-mode").getAttribute("aria-pressed"), "false");
 });
 
 test("native flex name lines keep the status icon inside the line after badges", async (t) => {
@@ -1615,9 +1616,9 @@ test("a failed sync write rolls the optimistic pin state back", async (t) => {
     t.after(() => dom.window.close());
 
     evalSidebarScripts(dom);
-    await waitForCondition(() => dom.window.document.getElementById("betterchzzk-following-pin-mode"));
+    await waitForCondition(() => dom.window.document.getElementById("cheese-spanner-following-pin-mode"));
     const { document } = dom.window;
-    dispatchClick(dom, document.getElementById("betterchzzk-following-pin-mode"));
+    dispatchClick(dom, document.getElementById("cheese-spanner-following-pin-mode"));
     await waitForCondition(() => document.querySelector("#liveA a").getAttribute("role") === "button");
     chrome.testState.syncArea.state.failNextSet = true;
     dispatchClick(dom, document.querySelector("#liveA a"));
@@ -1639,15 +1640,15 @@ test("synthetic clicks, Space and rows outside the following list cannot start a
     const settingsWrites = [];
     const forward = chrome.runtime.sendMessage;
     chrome.runtime.sendMessage = (message, callback) => {
-        if (message?.type === "betterchzzk:settings-store") settingsWrites.push(message);
+        if (message?.type === "cheese-spanner:settings-store") settingsWrites.push(message);
         forward(message, callback);
     };
     t.after(() => dom.window.close());
     evalSidebarScripts(dom);
-    await waitForCondition(() => dom.window.document.getElementById("betterchzzk-following-pin-mode"));
+    await waitForCondition(() => dom.window.document.getElementById("cheese-spanner-following-pin-mode"));
     const { document } = dom.window;
     const list = document.getElementById("followingList");
-    const modeButton = document.getElementById("betterchzzk-following-pin-mode");
+    const modeButton = document.getElementById("cheese-spanner-following-pin-mode");
     // Nothing is expected to change: give a scheduled sync and any write a chance to run before checking.
     const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
     // Prevent jsdom's unimplemented document navigation after the feature has seen each click.
@@ -1699,13 +1700,13 @@ async function openPinMode(chrome) {
     const settingsWrites = [];
     const forward = chrome.runtime.sendMessage;
     chrome.runtime.sendMessage = (message, callback) => {
-        if (message?.type === "betterchzzk:settings-store") settingsWrites.push(JSON.parse(JSON.stringify(message)));
+        if (message?.type === "cheese-spanner:settings-store") settingsWrites.push(JSON.parse(JSON.stringify(message)));
         forward(message, callback);
     };
     evalSidebarScripts(dom);
-    await waitForCondition(() => dom.window.document.getElementById("betterchzzk-following-pin-mode"));
+    await waitForCondition(() => dom.window.document.getElementById("cheese-spanner-following-pin-mode"));
     const { document } = dom.window;
-    dispatchClick(dom, document.getElementById("betterchzzk-following-pin-mode"));
+    dispatchClick(dom, document.getElementById("cheese-spanner-following-pin-mode"));
     await waitForCondition(() => document.querySelector("#liveA a").getAttribute("role") === "button");
     return { dom, document, settingsWrites };
 }
@@ -1813,12 +1814,13 @@ test("pin mode does not intercept the native following refresh control", async (
     });
     evalSidebarScripts(dom);
     evalRepoScript(dom, "features", "followingRefresh.js");
-    await waitForCondition(() => dom.window.document.getElementById("betterchzzk-following-pin-mode"));
+    await waitForCondition(() => dom.window.document.getElementById("cheese-spanner-following-pin-mode"));
 
-    dispatchClick(dom, dom.window.document.getElementById("betterchzzk-following-pin-mode"));
+    dispatchClick(dom, dom.window.document.getElementById("cheese-spanner-following-pin-mode"));
     await waitForCondition(
         () =>
-            dom.window.document.getElementById("betterchzzk-following-pin-mode").getAttribute("aria-pressed") === "true"
+            dom.window.document.getElementById("cheese-spanner-following-pin-mode").getAttribute("aria-pressed") ===
+            "true"
     );
     assert.equal(intervals.length, 1);
     assert.equal(intervals[0].ms, 10000);
@@ -1826,7 +1828,7 @@ test("pin mode does not intercept the native following refresh control", async (
 
     assert.equal(refreshClicks, 1);
     assert.equal(
-        dom.window.document.getElementById("betterchzzk-following-pin-mode").getAttribute("aria-pressed"),
+        dom.window.document.getElementById("cheese-spanner-following-pin-mode").getAttribute("aria-pressed"),
         "true"
     );
 });

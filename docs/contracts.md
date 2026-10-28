@@ -6,6 +6,22 @@
 
 일반 JSON 조회는 기존 로그인 세션을 포함한 요청을 사용해요. 공용 `fetchJson`의 기본 타임아웃은 12초지만 소비자가 다른 값을 줄 수 있어요. HTTP 실패는 `HTTP <상태>` 오류, JSON 해석 실패는 파싱 오류로 전달돼요. 내부 타임아웃과 외부 취소가 모두 AbortError일 수 있으므로 취소 이유는 호출자의 signal과 함께 판단해요. 응답의 `code/content` 검증은 API 소비자별로 달라요. HTTP 성공만으로 모든 API의 내용까지 정상이라고 단정하지 않아요.
 
+## 옛 이름으로 남긴 영속 식별자
+
+2026-10-21에 전역 이름·확장 메시지·DOM 마커·로그를 `CheeseSpanner`·`cheese-spanner` 계열로 바꿨어요. 아래 식별자는 업데이트 뒤에도 사용자 브라우저에 남는 값을 가리키므로 의도적으로 옛 이름을 유지해요. 이전 경로 없이 이름만 바꾸면 기존 기록·설정을 읽지 못하거나, 옛 이름의 알람·등록이 남아 중복으로 동작해요.
+
+- 확장 sync: `betterchzzkPinnedFollowingChannelIds`, `betterchzzk:following-folders:v1`
+- 확장 local: `betterChzzkLiveWatchHistory`, `betterchzzkFollowingLiveTitleHistory`, `betterchzzkCategoryExclusionsV1`, `betterchzzkCommentDeviceId`, `betterChzzkAmbientPlayerOff`, `betterchzzk:chat-multiview:v1`, `betterchzzk:panel-resize:sidebar-width:v1`·`chat-width:v1`·`chat-height:v1`, `betterchzzk:live-start-channels`·`-state`·`-status`, `betterchzzk:following-list-state`, `betterchzzk:update-guide-state`, `betterchzzk:audio-compressor-tabs`·`-preference`, `betterChzzkMultiviewDelay:{id}`, `betterChzzkMultiviewQuality:{id}`
+- 확장 session: `betterchzzk:audio-compressor-cleanup-pending`
+- 치지직 사이트 sessionStorage: `betterChzzkMultiviewSession`, `betterChzzkListFilterSession`
+- 옵션 페이지 localStorage: `betterChzzkOptionsLastTabId`, `betterChzzkOptionsLastTab`(옛 탭 순번), `betterChzzkOptionsGroupOpen:{id}`
+- `chrome.alarms` 이름: `betterchzzk:live-start`, `betterchzzk:following-title-history`
+- 방송 알림 ID 접두사: `betterchzzk:live-start:`
+- `persistAcrossSessions` 동적 광고 콘텐츠 스크립트 ID: `betterchzzk-ad-video`
+- 정리하거나 접근하지 않음을 확인하는 데만 쓰는 옛 키: `betterchzzkUpdateNotice`, `betterchzzkUpdateReadVersion`, `betterchzzk:quality-update-notice`, `betterChzzkChatToolsModeratorCache`, `betterchzzk:panel-resize:v1`, `betterchzzk:vod-chat-resume`, `betterchzzk:vod-chat-reload:`, `betterchzzk:audio-compressor-active`, `betterchzzk:auto-quality:state-cache`
+
+설정 파일 백업·복원도 이 키를 직접 읽고 쓰므로 키를 바꿀 때는 이전 경로와 함께 백업 경로도 고쳐야 해요. 새로 만드는 영속 키는 `cheese-spanner:` 접두사를 써요.
+
 ## 외부 데이터 입력
 
 | 입력·호출                                                                                                                      | 사용하는 응답                                                                                                               | 실패·변형의 처리                                                                                                                                                                                          |
@@ -53,7 +69,7 @@ HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 �
 | 확인형 안내        | live·video의 유일한 `ad_blocking_info_layer` 안내, 제한된 문구 변형·중립 래퍼·고정 도움말, 활성 `확인` 버튼과 같은 단일 `__reactProps$*`                                                                                                                                                                                                     | 표시와 무관하게 검증한 단일 신뢰 조건·false 호출의 onClick만 1회 실행, 실제 제거까지 최대 1초 숨겨요. 거절·예외·초과·반복은 안내를 남겨요                                                                                                                                                                    |
 | 사이드바 이동      | 현재 사이드바의 링크와 React Router navigator                                                                                                                                                                                                                                                                                                | 처리 가능한 이동만 위임하고 원래 React 노드를 임의로 옮기지 않아요                                                                                                                                                                                                                                           |
 | 팔로잉 목록 더보기 | `nav[aria-label="팔로우"]`의 목록 아래 `더보기`·`접기` 버튼(aria-expanded). 2026-10-13 공개 번들 `index-VdvK-ysl.js` 기준 목록은 최대 505개를 받아 접힌 5개로 시작하고, `더보기`마다 50개씩 늘며 모두 보일 때만 `접기`(true)가 돼요. `접기`는 5개로 돌아가요. 목록 새로고침은 첫 `더보기` 때의 개수(55개)로 다시 잘라요. 행 key는 순번이에요 | 폴더가 펼친 폴더의 빠진 채널을 위해서만 대신 눌러요. 행 수가 바뀐 것을 확인한 뒤에만 다시 누르고, 끝까지 펼쳐도 없던 채널은 다시 누를 이유로 삼지 않아요. 사용자가 직접 `접기`를 누르면 다음 폴더 펼침까지 두어요                                                                                            |
-| 패널 너비          | 펼친 `#sidebar`와 같은 부모의 `#layout-body`, 일반 live/video에서 영상 형제와 가로로 나란한 `#aside-chatting`·`#vod-aside`·`#betterchzzk-vod-comment-aside`                                                                                                                                                                                  | 현재 대응 여백·표시 영역이 확인될 때만 가로 너비와 경계를 적용해요. 접힘·겹침·화면 밖 배치·다른 전체화면 요소 밖에서는 지정을 해제해요                                                                                                                                                                       |
+| 패널 너비          | 펼친 `#sidebar`와 같은 부모의 `#layout-body`, 일반 live/video에서 영상 형제와 가로로 나란한 `#aside-chatting`·`#vod-aside`·`#cheese-spanner-vod-comment-aside`                                                                                                                                                                               | 현재 대응 여백·표시 영역이 확인될 때만 가로 너비와 경계를 적용해요. 접힘·겹침·화면 밖 배치·다른 전체화면 요소 밖에서는 지정을 해제해요                                                                                                                                                                       |
 | 패널 위치·높이     | 위와 같은 노드와 VOD 래퍼의 정보 줄 마지막 열 `[class*="content_right"]`·직속 `[class*="_banner_"]`(왼쪽 채팅일 때 같은 marker, 열 폭 `--bcpr-companion-width`). 사이드바 오른쪽은 보이는 `#sidebar`와 같은 부모의 `#layout-body`, 상위 셸이 화면보다 넓지 않을 때만, 채팅 왼쪽·높이는 채팅이 영상 옆 가로 배치일 때만                       | 채팅 `data-bcpr-side="left"`(CSS order -1), 사이드바 `data-bcpr-side="right"`와 본문 `data-bcpr-sidebar-side="right"`·`--bcpr-sidebar-space`, 채팅 `data-bcpr-height`·`--bcpr-height`. 원래 여백 값은 marker를 뺀 상태에서 읽어요                                                                            |
 | 앰비언트 효과      | 현재 메인 video를 포함한 최상위 pzp 플레이어 사각형, 같은 플레이어의 `:scope > .pzp-pc__settings[role="menu"]` 기본 메뉴, 확장 멀티뷰의 `[data-bcmv-host="active"]`                                                                                                                                                                          | 확장 소유 고정 레이어만 배치하고 영상은 축소 캔버스에 그리기만 해요. 원본 노드 스타일·픽셀 값은 다루지 않으며 미확인 시 표시하지 않아요                                                                                                                                                                      |
 | 헤더·배너·목록     | `#header`, `#sidebar`, `#layout-body`와 관측한 역할·클래스·인접 관계                                                                                                                                                                                                                                                                         | 정확한 대상에만 표시·보정을 적용해요. 단어·넓은 클래스 조각만으로 관련 없는 요소를 숨기지 않아요                                                                                                                                                                                                             |
@@ -67,9 +83,9 @@ HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 �
 
 원본 날짜 묶음 `._data_*`는 `position:relative`이고, 마우스를 올리면 `._data_*:hover ._label_*`(자손 선택자)로 안내를 띄워요. 안내는 묶음의 오른쪽 끝(`right:0`)에 맞춰져요.
 
-상세의 현재 `videoNo`와 제목이 일치하면 `#betterchzzk-vod-broadcast-range`를 상태 줄에 붙여요.
+상세의 현재 `videoNo`와 제목이 일치하면 `#cheese-spanner-vod-broadcast-range`를 상태 줄에 붙여요.
 
-- 원본 날짜는 공개 시각 기준이라 절대 표기(`10.25`), 상대 표기(`17시간 전`), 자정 뒤 공개면 시작일과 다른 날짜가 될 수 있어요. 어느 경우든 원본 날짜에 `data-betterchzzk-vod-date-hidden`을 붙여 숨기고, 날짜 묶음의 마지막 자식(숨은 안내 뒤)으로 범위를 넣어요(`data-bcbc-placement="native-date"`). 원본 글자는 바꾸지 않고, 원본의 구분점(`._count_ + ._count_::before`)과 같은 점을 범위 앞에 그려요.
+- 원본 날짜는 공개 시각 기준이라 절대 표기(`10.25`), 상대 표기(`17시간 전`), 자정 뒤 공개면 시작일과 다른 날짜가 될 수 있어요. 어느 경우든 원본 날짜에 `data-cheese-spanner-vod-date-hidden`을 붙여 숨기고, 날짜 묶음의 마지막 자식(숨은 안내 뒤)으로 범위를 넣어요(`data-bcbc-placement="native-date"`). 원본 글자는 바꾸지 않고, 원본의 구분점(`._count_ + ._count_::before`)과 같은 점을 범위 앞에 그려요.
 - 표시는 `10.25(일) 17:56 ~ 23:08`처럼 시작 날짜·요일을 항상 붙이고, 올해가 아니면 연도를 포함해요. 종료가 다른 날이면 같은 형식의 날짜·요일을 붙여요(`10.26(월) 17:59 ~ 10.27(화) 00:02`).
 - 범위가 사라지면(옵션 OFF·라우트 이탈·제목 불일치) 숨김을 바로 풀어요.
 - 날짜 묶음에 조회수 하나뿐이면 날짜가 없는 것으로 보고, 상태 줄의 마지막 묶음으로 둬요(`status-row`).
@@ -113,9 +129,9 @@ HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 �
 
 ## 설정 저장 큐
 
-백업 대상 설정을 쓰는 모든 writer는 확장 출처 Web Lock `betterchzzk:options-storage` 안에서 써요. 옵션 페이지·서비스 워커는 직접 잠그고, 치지직 콘텐츠는 `BetterChzzk.utils.settingsStoreSet(area, values, expected?)`로 워커에 요청해요.
+백업 대상 설정을 쓰는 모든 writer는 확장 출처 Web Lock `cheese-spanner:options-storage` 안에서 써요. 옵션 페이지·서비스 워커는 직접 잠그고, 치지직 콘텐츠는 `CheeseSpanner.utils.settingsStoreSet(area, values, expected?)`로 워커에 요청해요.
 
-- 요청: `{type:"betterchzzk:settings-store",version:1,area:"sync"|"local",values,expected?}`. 최상위 필드는 이 다섯 개만 허용해요. `values`는 1~8개 키예요.
+- 요청: `{type:"cheese-spanner:settings-store",version:1,area:"sync"|"local",values,expected?}`. 최상위 필드는 이 다섯 개만 허용해요. `values`는 1~8개 키예요.
 - 발신자: 같은 확장 ID, 음이 아닌 정수 `tab.id`, `frameId` 0, `sender.url`의 출처가 정확한 `https://chzzk.naver.com`(자격 증명 없음).
 - 허용 키: sync는 `betterchzzkPinnedFollowingChannelIds`(최대 64개, 중복 없는 채널 ID), `betterchzzk:following-folders:v1`(폴더 모델 `parseState` 통과), `skipSeconds`·`ambientIntensity`·`followingPreviewSoundEnabled`(옵션 정규화와 같은 값). local은 세 패널 크기 키, `betterchzzk:chat-multiview:v1`(채팅 멀티뷰 모델 `parseConfig` 통과), `betterChzzkMultiviewDelay:{32자리}`(`{version:1,delaySeconds}` 또는 `{version:2,basis:"live-edge-clock",delaySeconds}`), `betterChzzkMultiviewQuality:{32자리}`(0~8640 정수). 그 밖의 키는 `key-not-allowed`예요.
 - `expected`: `{키: {value}|{absent:true}}`. 잠금 안에서 최신 값을 읽어 다르면 쓰지 않고 `{ok:false,error:"conflict",current}`로 응답해요.
@@ -136,11 +152,11 @@ HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 �
 
 모든 구역은 선택이며 없는 구역은 현재 값을 유지해요. 알 수 없는 최상위·구역 필드, 잘못된 값, 단축키 중복 같은 옵션 조합 오류는 파일 전체를 거부해요. 방송 대상 항목은 `channelId`(소문자 32자리), `channelName`(앞뒤 공백 없음, 100자 이하), 선택 `channelImageUrl`(허용 이미지 URL), `notify`·`autoOpen` boolean만 허용하고 최대 32개예요.
 
-옵션 페이지만 `{type:"betterchzzk:settings-backup",version:1,action}`을 보내요. `export`는 `{ok:true,backup,omitted}`이고, 읽지 못했거나 4000개를 넘는 멀티뷰 구역은 일부만 넣지 않고 통째로 빼 `omitted`에 `multiviewDelays`·`multiviewQualities`로 알려요. `preview`(`backup`)는 `{ok:true,fingerprint,summary,ignoredOptionKeys,changes}`예요. `summary.permissionOptionKeys`는 파일이 꺼짐→켜짐으로 바꾸는 권한 필요 옵션이고, 현재 켜져 있지만 파일이 바꾸지 않는 옵션은 권한 요청 대상이 아니에요. `summary.keptOffOptionKeys`는 그 가운데 사용자가 켜지 않기로 고른 옵션이에요. `apply`(`backup`, `fingerprint`, 선택 `disabledOptionKeys`: 파일이 켜려는 권한 필요 옵션에만 적용하고 현재 켜진 옵션은 끄지 않아요)는 `{ok:true,result}`예요. `result.status`는 `applied`(`conflicts`: 적용 중 다른 곳에서 바뀌어 쓰지 않았거나 확인이 필요한 `area:key` 목록), `unchanged`, `reconfirm`(새 `fingerprint`·`summary`·`changes`), `failed`(`stage`, `rolledBack`, `failed`: 되돌리기 읽기·쓰기 실패 키, `conflicted`: 다른 곳에서 바뀌어 되돌리지 않은 키)예요. 적용 단계 순서는 `effects-off`→`sync`→`local`→`live-start`→`effects-on`이에요.
+옵션 페이지만 `{type:"cheese-spanner:settings-backup",version:1,action}`을 보내요. `export`는 `{ok:true,backup,omitted}`이고, 읽지 못했거나 4000개를 넘는 멀티뷰 구역은 일부만 넣지 않고 통째로 빼 `omitted`에 `multiviewDelays`·`multiviewQualities`로 알려요. `preview`(`backup`)는 `{ok:true,fingerprint,summary,ignoredOptionKeys,changes}`예요. `summary.permissionOptionKeys`는 파일이 꺼짐→켜짐으로 바꾸는 권한 필요 옵션이고, 현재 켜져 있지만 파일이 바꾸지 않는 옵션은 권한 요청 대상이 아니에요. `summary.keptOffOptionKeys`는 그 가운데 사용자가 켜지 않기로 고른 옵션이에요. `apply`(`backup`, `fingerprint`, 선택 `disabledOptionKeys`: 파일이 켜려는 권한 필요 옵션에만 적용하고 현재 켜진 옵션은 끄지 않아요)는 `{ok:true,result}`예요. `result.status`는 `applied`(`conflicts`: 적용 중 다른 곳에서 바뀌어 쓰지 않았거나 확인이 필요한 `area:key` 목록), `unchanged`, `reconfirm`(새 `fingerprint`·`summary`·`changes`), `failed`(`stage`, `rolledBack`, `failed`: 되돌리기 읽기·쓰기 실패 키, `conflicted`: 다른 곳에서 바뀌어 되돌리지 않은 키)예요. 적용 단계 순서는 `effects-off`→`sync`→`local`→`live-start`→`effects-on`이에요.
 
 ## 채팅 멀티뷰·팔로잉 폴더 저장 형식
 
-채팅 멀티뷰 local `betterchzzk:chat-multiview:v1`(키 이름은 호환 식별자)은 `{version:2,channels:[{channelId,channelName}],chatWidth,chatHeight,corner,x,y,input,scale}`이고 채널은 최대 4개예요. `chatWidth`(240~1600)·`chatHeight`(180~2160)는 채팅 한 칸의 크기이고 패널 크기는 칸 수·화면에서 계산해요. 이 값은 `scale`을 적용한 뒤 화면에 보이는 CSS px이며 배율을 바꿔도 다시 계산하지 않아요. 표시할 때는 배율에 맞춘 채팅 최소(입력창 끔 240×180·켬 340×320에 배율을 곱한 값)보다 작으면 그 최소로 보여 주고, 크기 손잡이는 이 최소와 저장 범위 중 더 엄격한 경계 안에서만 움직여 놓은 뒤 저장값으로 다시 계산해도 크기가 바뀌지 않아요(2026-10-17). 화면보다 큰 패널은 화면에 맞춘 뒤 칸 안에서 스크롤해요. `corner`는 패널을 붙인 화면 모서리(`bottom-right`·`bottom-left`·`top-right`·`top-left`), `x`·`y`는 그 모서리에서의 거리(0~7680)예요. `input`은 칸의 채팅 입력창 표시(boolean, 기본 false), `scale`은 칸의 채팅 크기 퍼센트(70~150 정수, 기본 100)예요. 같은 날 먼저 쓰던 `version:1`(패널 `width`·`height`, 아래 모서리 `corner`, 선택 `input`·`scale`)은 채널·모서리·입력창·채팅 크기를 옮기고 칸 크기·거리는 기본값으로 읽어요. 칸의 프레임 주소는 `https://chzzk.naver.com/live/{소문자 32자리}/chat`만 사용해요. 확인된 칸 문서에는 확장 소유 `<style id="betterchzzk-chat-multiview-frame-style">` 하나만 넣어 `aside#aside-chatting` 직속의 네이티브 머리(첫 자식 `div:has(> h2)`)·`_banner_`·주간 랭킹 상자(`features/chatWeeklyRanking.js`와 같은 규칙)·입력 도구 `_tools_` 안 `_donation_`, 입력창을 끈 경우 `_area_`를 숨겨요(2026-10-12 공개 번들 `index-VdvK-ysl.js` 기준). 같은 스타일은 채팅 상자의 부모(`div:has(> aside#aside-chatting)`, 공개 CSS `index-B5SHICxp.css`의 `._container_1gtzb_1{min-width:353px}`)의 최소 너비를 풀고 `html`·`body`의 가로 넘침을 숨겨 353px보다 좁은 칸에 좌우 스크롤이 생기지 않게 해요. 팔로잉 폴더 sync `betterchzzk:following-folders:v1`은 `{version:1,folders:[{id,name,channelIds,collapsed}]}`이며 상한은 폴더 10개·이름 20자·지정 150개예요. 정확한 검증은 각각 `shared/chatMultiview.js`, `shared/followingFolders.js`가 소유해요.
+채팅 멀티뷰 local `betterchzzk:chat-multiview:v1`(키 이름은 호환 식별자)은 `{version:2,channels:[{channelId,channelName}],chatWidth,chatHeight,corner,x,y,input,scale}`이고 채널은 최대 4개예요. `chatWidth`(240~1600)·`chatHeight`(180~2160)는 채팅 한 칸의 크기이고 패널 크기는 칸 수·화면에서 계산해요. 이 값은 `scale`을 적용한 뒤 화면에 보이는 CSS px이며 배율을 바꿔도 다시 계산하지 않아요. 표시할 때는 배율에 맞춘 채팅 최소(입력창 끔 240×180·켬 340×320에 배율을 곱한 값)보다 작으면 그 최소로 보여 주고, 크기 손잡이는 이 최소와 저장 범위 중 더 엄격한 경계 안에서만 움직여 놓은 뒤 저장값으로 다시 계산해도 크기가 바뀌지 않아요(2026-10-17). 화면보다 큰 패널은 화면에 맞춘 뒤 칸 안에서 스크롤해요. `corner`는 패널을 붙인 화면 모서리(`bottom-right`·`bottom-left`·`top-right`·`top-left`), `x`·`y`는 그 모서리에서의 거리(0~7680)예요. `input`은 칸의 채팅 입력창 표시(boolean, 기본 false), `scale`은 칸의 채팅 크기 퍼센트(70~150 정수, 기본 100)예요. 같은 날 먼저 쓰던 `version:1`(패널 `width`·`height`, 아래 모서리 `corner`, 선택 `input`·`scale`)은 채널·모서리·입력창·채팅 크기를 옮기고 칸 크기·거리는 기본값으로 읽어요. 칸의 프레임 주소는 `https://chzzk.naver.com/live/{소문자 32자리}/chat`만 사용해요. 확인된 칸 문서에는 확장 소유 `<style id="cheese-spanner-chat-multiview-frame-style">` 하나만 넣어 `aside#aside-chatting` 직속의 네이티브 머리(첫 자식 `div:has(> h2)`)·`_banner_`·주간 랭킹 상자(`features/chatWeeklyRanking.js`와 같은 규칙)·입력 도구 `_tools_` 안 `_donation_`, 입력창을 끈 경우 `_area_`를 숨겨요(2026-10-12 공개 번들 `index-VdvK-ysl.js` 기준). 같은 스타일은 채팅 상자의 부모(`div:has(> aside#aside-chatting)`, 공개 CSS `index-B5SHICxp.css`의 `._container_1gtzb_1{min-width:353px}`)의 최소 너비를 풀고 `html`·`body`의 가로 넘침을 숨겨 353px보다 좁은 칸에 좌우 스크롤이 생기지 않게 해요. 팔로잉 폴더 sync `betterchzzk:following-folders:v1`은 `{version:1,folders:[{id,name,channelIds,collapsed}]}`이며 상한은 폴더 10개·이름 20자·지정 150개예요. 정확한 검증은 각각 `shared/chatMultiview.js`, `shared/followingFolders.js`가 소유해요.
 
 ## 팔로잉 라이브 제목 이력 저장 형식
 
@@ -148,36 +164,36 @@ local `betterchzzkFollowingLiveTitleHistory`(키 이름은 호환 식별자)는 
 
 - 조회 경로: 알람 `betterchzzk:following-title-history`(1분)마다 목록을 한 번 읽어요. 열린 일반(비시크릿)·로드 완료·버리지 않은 치지직 탭이 있으면 그 탭 최상위 프레임 isolated world에 패키지 함수를 `chrome.scripting.executeScript`로 실행해 `credentials:"include"`로 읽어요. 스크립트를 넣지 못한 탭은 다음 탭으로 넘어가며(최대 3개), 탭이 없거나 탭에서 목록을 받지 못하면(실행 실패·status 0·5xx·401/403) 같은 알람에서 워커가 `fetchJson`으로 읽어요. 탭이 200을 받았는데 형식만 다르면 워커로 넘기지 않아요. 함수는 `location.origin`이 `https://chzzk.naver.com`일 때만 요청하고 상태 코드와 JSON만 돌려줘요.
 - 표시: 팔로잉 본문은 이전 방제가 저장된 채널의 카드만 v3 `live-detail` `content.liveId`로 확인하고, 확인할 때의 카드 제목이 그대로이며 라이브 ID가 저장된 이력의 `liveId`와 같을 때만 현재 카드 제목과 다른 줄을 보여 줘요(펼칠 때도 다시 확인). 카드 제목이나 제목 링크의 주소(`href`)가 바뀌면 다시 확인하고, 버튼을 누를 때도 현재 링크의 채널이 버튼의 채널과 같은지 다시 읽어요. 확인 결과는 2분 동안만 쓰며 경로 이동에도 그동안 유지해요. 같은 방송이면 버튼·열린 패널이 끊기지 않도록 확인한 지 90초가 지나면 미리 다시 확인하고, 2분이 지난 확인값은 다시 확인하는 중이거나 확인이 실패해도 표시·패널 열기에 쓰지 않아요(2026-10-17). 저장된 라이브 ID가 달라져도 다시 확인해요.
-- 라이브 화면 표시(2026-10-20): `/live/{channelId}`에서 그 채널의 저장 이력이 있으면, 사이드바·링크·플레이어(`pzp`) 밖의 제목 후보(`h1`~`h3`, `video_information_title` 등) 중 글자가 저장된 제목과 같은 가장 안쪽 요소를 방송 제목으로 쓰고 바로 뒤에 `#betterchzzk-live-title-history` 버튼을 둬요. 실제 제목 요소의 클래스는 실측하지 않았어요. 찾은 요소의 글자가 바뀌면(방제 변경) 그 제목으로 다시 확인해요. 확인·유효기간 규칙은 팔로잉과 같고, 화면 변경이 없어도 90초 재확인·2분 만료·실패 15초 뒤 재시도 시각에 스스로 다시 맞춰요. 채팅 변경은 받지 않고, 제목 요소를 아직 못 찾은 동안만 300ms로 묶어 다시 찾아요.
+- 라이브 화면 표시(2026-10-20): `/live/{channelId}`에서 그 채널의 저장 이력이 있으면, 사이드바·링크·플레이어(`pzp`) 밖의 제목 후보(`h1`~`h3`, `video_information_title` 등) 중 글자가 저장된 제목과 같은 가장 안쪽 요소를 방송 제목으로 쓰고 바로 뒤에 `#cheese-spanner-live-title-history` 버튼을 둬요. 실제 제목 요소의 클래스는 실측하지 않았어요. 찾은 요소의 글자가 바뀌면(방제 변경) 그 제목으로 다시 확인해요. 확인·유효기간 규칙은 팔로잉과 같고, 화면 변경이 없어도 90초 재확인·2분 만료·실패 15초 뒤 재시도 시각에 스스로 다시 맞춰요. 채팅 변경은 받지 않고, 제목 요소를 아직 못 찾은 동안만 300ms로 묶어 다시 찾아요.
 - 근거: 응답 필드는 2026-10-12 치지직 공개 번들(`index-VdvK-ysl.js`)의 팔로잉 화면이 같은 경로에서 쓰는 `liveInfo.liveId`·`liveTitle`·`channel.channelId`이고, 비로그인 GET은 HTTP 401 `{"code":401,"message":"권한이 없습니다."}`였어요. **로그인 상태의 실제 응답과 워커 요청에 로그인 세션이 실리는지는 아직 확인하지 않았어요.**
 
 ## 두 실행 영역의 교환
 
 이벤트·속성은 공유 화면의 통신 수단이며 공개된 외부 확장 API가 아니에요. 이벤트 대상·현재 경로·형식·현재 요청을 검증해요. 아래 채팅 요청은 대상 노드에서 동기적으로 요청하고 값을 읽는 형태예요.
 
-| 요청·입력                                                                                                  | 결과·출력                                                            | 실패 조건                                                                                                            |
-| ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| window `betterchzzk:routechange`, detail `{href, source}`                                                  | 공용 감지 후 `betterchzzk:routechange:detected`                      | 같은 href는 중복 라우트 변경으로 처리하지 않아요                                                                     |
-| `data-betterchzzk-auto-quality-state`의 `{enabled, quality}` + window `betterchzzk:auto-quality:state`     | MAIN의 활성·선호 화질 상태                                           | 잘못된 입력은 검증된 기본값·비활성 경로로 처리해요                                                                   |
-| `data-betterchzzk-auto-quality-request`의 `{requestId, quality}` + window `betterchzzk:auto-quality:apply` | result 속성에 같은 requestId와 status·reason, 필요 시 `waitForEvent` | 응답 ID 불일치·handler 없음은 성공이 아니에요. pending·blocked·selected·already와 이벤트 대기를 구분해요             |
-| `data-betterchzzk-ad-video-state`의 `1` 또는 `0` + document `betterchzzk:ad-video:state`                   | 동적 광고 훅의 활성 상태·진단 속성                                   | 저장 옵션이 읽히기 전에는 응답을 변경하지 않아요. 재활성화에 새 문서가 필요할 수 있어요                              |
-| `data-betterchzzk-volume-wheel-options`의 `{enabled, step}` + window `betterchzzk:volume-wheel-options`    | 현재 메인 볼륨 영역의 휠 처리                                        | 재생 경로·대상 밖에서는 원래 이벤트를 유지해요                                                                       |
-| message container의 `betterchzzk:chat-timestamp-source-request`                                            | `data-bcmt-source-time`의 유효한 밀리초 시각                         | 원본 시각이 없거나 범위가 잘못되면 속성을 지워요. ready 이벤트로 로드 순서 차이를 처리해요                           |
-| VOD message container의 `betterchzzk:chat-user-source-request`                                             | `data-bcoc-source-user`의 작성 계정 해시(`[A-Za-z0-9_-]{1,128}`)     | 값이 없거나 형식이 다르면 속성을 지워요. 현재 계정 해시와 같을 때 `data-bcoc-own` 표식만 붙이고 저장·전송하지 않아요 |
-| 채팅 행의 `data-bcwa-user` + `betterchzzk:watch-activity-source`                                           | `data-bcwa-source`에 `{id, at, kind, text, amount}`                  | 작성자·상태·시각·지원 활동 종류가 다르면 결과를 남기지 않아요. 읽은 임시 속성은 제거해요                             |
-| 현재 팔로잉 보충 링크의 `betterchzzk:following-navigate`                                                   | 페이지 라우터가 처리한 경우 이벤트 취소로 응답해요                   | 오래된 행·지원되지 않는 이동은 처리 성공으로 표시하지 않아요                                                         |
+| 요청·입력                                                                                                        | 결과·출력                                                            | 실패 조건                                                                                                            |
+| ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| window `cheese-spanner:routechange`, detail `{href, source}`                                                     | 공용 감지 후 `cheese-spanner:routechange:detected`                   | 같은 href는 중복 라우트 변경으로 처리하지 않아요                                                                     |
+| `data-cheese-spanner-auto-quality-state`의 `{enabled, quality}` + window `cheese-spanner:auto-quality:state`     | MAIN의 활성·선호 화질 상태                                           | 잘못된 입력은 검증된 기본값·비활성 경로로 처리해요                                                                   |
+| `data-cheese-spanner-auto-quality-request`의 `{requestId, quality}` + window `cheese-spanner:auto-quality:apply` | result 속성에 같은 requestId와 status·reason, 필요 시 `waitForEvent` | 응답 ID 불일치·handler 없음은 성공이 아니에요. pending·blocked·selected·already와 이벤트 대기를 구분해요             |
+| `data-cheese-spanner-ad-video-state`의 `1` 또는 `0` + document `cheese-spanner:ad-video:state`                   | 동적 광고 훅의 활성 상태·진단 속성                                   | 저장 옵션이 읽히기 전에는 응답을 변경하지 않아요. 재활성화에 새 문서가 필요할 수 있어요                              |
+| `data-cheese-spanner-volume-wheel-options`의 `{enabled, step}` + window `cheese-spanner:volume-wheel-options`    | 현재 메인 볼륨 영역의 휠 처리                                        | 재생 경로·대상 밖에서는 원래 이벤트를 유지해요                                                                       |
+| message container의 `cheese-spanner:chat-timestamp-source-request`                                               | `data-bcmt-source-time`의 유효한 밀리초 시각                         | 원본 시각이 없거나 범위가 잘못되면 속성을 지워요. ready 이벤트로 로드 순서 차이를 처리해요                           |
+| VOD message container의 `cheese-spanner:chat-user-source-request`                                                | `data-bcoc-source-user`의 작성 계정 해시(`[A-Za-z0-9_-]{1,128}`)     | 값이 없거나 형식이 다르면 속성을 지워요. 현재 계정 해시와 같을 때 `data-bcoc-own` 표식만 붙이고 저장·전송하지 않아요 |
+| 채팅 행의 `data-bcwa-user` + `cheese-spanner:watch-activity-source`                                              | `data-bcwa-source`에 `{id, at, kind, text, amount}`                  | 작성자·상태·시각·지원 활동 종류가 다르면 결과를 남기지 않아요. 읽은 임시 속성은 제거해요                             |
+| 현재 팔로잉 보충 링크의 `cheese-spanner:following-navigate`                                                      | 페이지 라우터가 처리한 경우 이벤트 취소로 응답해요                   | 오래된 행·지원되지 않는 이동은 처리 성공으로 표시하지 않아요                                                         |
 
 자동 화질 state는 기존 enabled·quality만 전달해요. 폐기한 lowLatencyEnabled 입력과 liveLowLatencyEnabled 저장값은 제어를 활성화하지 않아요. 독립 저지연 결과와 멀티뷰 메인 딜레이 전달 속성은 더 이상 발행하지 않아요. 기존 화질 요청·응답과 읽기 전용 스트림 정보 계약은 유지해요.
 
 ### 현재 스트림 정보 읽기
 
-isolated는 현재 메인 video의 `data-bcsi-request`에 `{version:1, requestId}`를 쓰고 같은 video에서 `betterchzzk:stream-info:read` 이벤트를 발생시켜요. requestId는 길이 1–128의 문자열이며 다른 요청 필드를 받지 않아요. MAIN은 document capture 리스너에서 현재 메인·소유권·라이브 경로를 확인하고 같은 video의 `data-bcsi-result`에 동기로 응답해요. 잘못된 요청이나 다른 video에는 응답하지 않아요.
+isolated는 현재 메인 video의 `data-bcsi-request`에 `{version:1, requestId}`를 쓰고 같은 video에서 `cheese-spanner:stream-info:read` 이벤트를 발생시켜요. requestId는 길이 1–128의 문자열이며 다른 요청 필드를 받지 않아요. MAIN은 document capture 리스너에서 현재 메인·소유권·라이브 경로를 확인하고 같은 video의 `data-bcsi-result`에 동기로 응답해요. 잘못된 요청이나 다른 video에는 응답하지 않아요.
 
 결과 필드는 `{version, requestId, route, status, reason, mode, trackId, sourceToken, trackWidth, trackHeight, onLive}`예요. version은 1, route는 pathname, status는 `ready | unavailable`이에요. ready의 reason은 `ok`이고, unavailable의 reason은 `unsupported-route | player-missing | ambiguous-player | track-missing | player-changed`예요. mode는 `low-latency | standard | unknown`이며 저지연은 확인된 `low-latency`·`low-latency-p2p`, 일반은 `main`·`p2p` 종류에만 대응해요.
 
 trackId는 확인된 문자열 또는 null, 크기는 유효한 양수 숫자 또는 null, onLive는 확인한 boolean 또는 null이에요. sourceToken은 메인·provider·소스를 구분하는 페이지 내 임시 문자열이며 원격 미디어 URL이나 React 객체를 넘기지 않아요. unavailable에서는 mode가 unknown이고 나머지 트랙·소스·크기·onLive는 모두 null이에요. 읽는 동안 소유권이 바뀌면 player-changed로 처리하고, 같은 pane을 공유해도 서로 다른 소유 플레이어가 있으면 모호한 결과예요.
 
-isolated는 version·requestId·route·값 형식을 확인한 뒤 두 임시 속성을 지워요. 응답이 없거나 잘못되면 현재 방식은 확인 불가예요. 과거 `data-betterchzzk-low-latency-result`를 현재 선택의 근거로 사용하지 않아요. 이 조회는 제어 래퍼 설치·선택·재생·seek·배속 변경을 실행하지 않고, 자동 화질 설정이 꺼져도 작동해요. DOM 이벤트에는 확장 저장소·탭·네트워크 같은 특권 명령을 연결하지 않아요.
+isolated는 version·requestId·route·값 형식을 확인한 뒤 두 임시 속성을 지워요. 응답이 없거나 잘못되면 현재 방식은 확인 불가예요. 과거 `data-cheese-spanner-low-latency-result`를 현재 선택의 근거로 사용하지 않아요. 이 조회는 제어 래퍼 설치·선택·재생·seek·배속 변경을 실행하지 않고, 자동 화질 설정이 꺼져도 작동해요. DOM 이벤트에는 확장 저장소·탭·네트워크 같은 특권 명령을 연결하지 않아요.
 
 패널의 기존 v3 live-detail 조회에서는 OPEN 상태, 요청과 같은 `channel.channelId`, 양수 safe integer liveId로 방송 정체성을 확인해요. 메인·소스 전환 뒤 새 응답으로 동일 방송을 확인해야 최근 자료를 합칠 수 있어요. 경로·대상·소스가 바뀐 요청의 응답은 버리고 현재 전환의 조회로 이어가며 별도 반복 메타데이터 조회를 추가하지 않아요.
 
@@ -187,7 +203,7 @@ Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 �
 
 ### 카테고리 제외
 
-요청은 `{type:"betterchzzk:category-exclusions",version:1,operation}`이며 최상위 필드는 이 세 개만 허용해요. operation은 아래 형식만 받고, 전체 배열 교체·전체 초기화 명령은 없어요.
+요청은 `{type:"cheese-spanner:category-exclusions",version:1,operation}`이며 최상위 필드는 이 세 개만 허용해요. operation은 아래 형식만 받고, 전체 배열 교체·전체 초기화 명령은 없어요.
 
 | 동작      | operation 입력                                                  |
 | --------- | --------------------------------------------------------------- |
@@ -214,17 +230,17 @@ Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 �
 
 워커의 독립 큐가 수신 순서대로 최신 local 값을 읽어 개별 추가·해제를 적용해요. 같은 항목 추가·없는 항목 해제는 저장·revision 증가 없는 성공이고 기존 이름·순서를 바꾸지 않아요. 실제 변경은 저장 콜백 성공 뒤 증가한 revision을 응답해요. 손상·읽기·쓰기·상한 오류에서는 기존 값을 보존해요. 콘텐츠는 확인된 최초 옵션 완료 뒤 활성 전체 방송에서 구독해요. 새 구독의 첫 정상 읽기·변경을 현재 기준으로 받은 뒤 같은 구독의 오래된 revision은 무시해요. 실제 키 삭제는 이전 요청 세대를 무효화하고 빈 상태로 반영해요. 손상 변경 알림은 마지막 정상 상태를 보존하면서 이전 읽기·변경·대기를 무효화해 늦은 콜백이 오류 안내를 지우지 못하게 해요. 이전 구독의 성공·실패·finally도 현재 UI를 바꾸지 못해요.
 
-시청 기록 메시지는 `{type: "betterchzzk:watch-history-mutation", version: 1, operation}`이에요. 세션·활동에는 recordId, 채널 메타데이터 entry, 식별자·입장/종료 시각·누적 시청량·시간대를 가진 session, 선택적 activities를 보내요. 세션 시각은 밀리초이고 watchedSeconds는 초예요. 성공은 `{ok:true,result}`, 버전·출처·스키마·저장 오류는 `{ok:false,error}`예요. 시크릿 탭에서 온 세션 갱신·활동 추가·기록 ID 연결은 저장소를 읽거나 쓰지 않고 `{ok:true,result:{status:"ignored",reason:"incognito"}}`로 응답해요(오류로 답하면 콘텐츠가 닫힌 세션을 계속 재시도하기 때문이에요).
+시청 기록 메시지는 `{type: "cheese-spanner:watch-history-mutation", version: 1, operation}`이에요. 세션·활동에는 recordId, 채널 메타데이터 entry, 식별자·입장/종료 시각·누적 시청량·시간대를 가진 session, 선택적 activities를 보내요. 세션 시각은 밀리초이고 watchedSeconds는 초예요. 성공은 `{ok:true,result}`, 버전·출처·스키마·저장 오류는 `{ok:false,error}`예요. 시크릿 탭에서 온 세션 갱신·활동 추가·기록 ID 연결은 저장소를 읽거나 쓰지 않고 `{ok:true,result:{status:"ignored",reason:"incognito"}}`로 응답해요(오류로 답하면 콘텐츠가 닫힌 세션을 계속 재시도하기 때문이에요).
 
 지원 operation은 세션 스냅샷 갱신, 활동 추가, 임시→live 기록 ID 연결, 다시보기 번호 저장, 선택 삭제, 전체 삭제, 후원 가져온 내역 초기화예요. 활동 추가는 검증된 `live:` 기록을 요구하고, 삭제는 대상 ID와 cutoffAt을 함께 보내요. 과거 후원 월 교체는 서비스 워커의 조회 작업 전용이며 일반 발신자의 직접 요청은 거부돼요.
 
-컴프레서 읽기는 `{type:"betterchzzk:audio-compressor-state", kind:"get"}`, 쓰기는 `{type:"betterchzzk:audio-compressor-state", kind:"set", state:{active:true, volume:0.75}}` 형식이에요. state의 active는 boolean, volume은 0 이상 1 이하의 유한 숫자예요. set의 명시 저장 시 소수 둘째 자리로 반올림하며, 유효한 기존 값의 승계·get 스냅샷은 그대로 보존해요. 같은 확장의 최상위 치지직 sender 탭만 허용하고 본문의 tabId로 대상을 바꿀 수 없어요. get은 기존 탭 선택을 우선하며 없으면 마지막 기본 선택의 스냅샷을 그 탭에 저장해요. 페이지 소비자는 옵션 준비·기능 활성화·첫 재생 경로 진입 뒤 get을 시작하며 홈·목록에서는 등록하지 않아요. 진행 중인 첫 조회는 반복 경로 동기화에서 공유해요. set은 발신 탭 선택과 앞으로 등록될 탭의 기본 선택을 함께 저장해요. 결과는 `{ok:true,state:{active,volume}}` 또는 `{ok:false,error}`이고 필요한 저장이 성공한 뒤에만 성공 응답해요. 최초 기본 선택은 남아 있는 마지막 유효 탭 선택이며 아무 선택도 없으면 비활성·볼륨 1이에요. 다른 열린 탭에 변경을 전파하지 않아요.
+컴프레서 읽기는 `{type:"cheese-spanner:audio-compressor-state", kind:"get"}`, 쓰기는 `{type:"cheese-spanner:audio-compressor-state", kind:"set", state:{active:true, volume:0.75}}` 형식이에요. state의 active는 boolean, volume은 0 이상 1 이하의 유한 숫자예요. set의 명시 저장 시 소수 둘째 자리로 반올림하며, 유효한 기존 값의 승계·get 스냅샷은 그대로 보존해요. 같은 확장의 최상위 치지직 sender 탭만 허용하고 본문의 tabId로 대상을 바꿀 수 없어요. get은 기존 탭 선택을 우선하며 없으면 마지막 기본 선택의 스냅샷을 그 탭에 저장해요. 페이지 소비자는 옵션 준비·기능 활성화·첫 재생 경로 진입 뒤 get을 시작하며 홈·목록에서는 등록하지 않아요. 진행 중인 첫 조회는 반복 경로 동기화에서 공유해요. set은 발신 탭 선택과 앞으로 등록될 탭의 기본 선택을 함께 저장해요. 결과는 `{ok:true,state:{active,volume}}` 또는 `{ok:false,error}`이고 필요한 저장이 성공한 뒤에만 성공 응답해요. 최초 기본 선택은 남아 있는 마지막 유효 탭 선택이며 아무 선택도 없으면 비활성·볼륨 1이에요. 다른 열린 탭에 변경을 전파하지 않아요.
 
-방송 등록은 `{type:"betterchzzk:live-start:channels", kind, channel}`을 사용해요. 옵션 페이지는 add·update·remove·개별 선택을, 치지직 최상위 콘텐츠는 set-notify·set-auto-open·remove를 요청할 수 있어요. 채널 ID와 notify/autoOpen boolean을 검증하고 최대 32개를 보관해요. 결과는 `{ok:true,channels}` 또는 `{ok:false,error}`예요.
+방송 등록은 `{type:"cheese-spanner:live-start:channels", kind, channel}`을 사용해요. 옵션 페이지는 add·update·remove·개별 선택을, 치지직 최상위 콘텐츠는 set-notify·set-auto-open·remove를 요청할 수 있어요. 채널 ID와 notify/autoOpen boolean을 검증하고 최대 32개를 보관해요. 결과는 `{ok:true,channels}` 또는 `{ok:false,error}`예요.
 
-광고 등록 동기화 `{type:"betterchzzk:ad-video:sync"}`는 options.html에서만 요청해요. 등록 조정 후 `{ok:true,enabled}`, 출처·등록 오류는 `{ok:false}`예요.
+광고 등록 동기화 `{type:"cheese-spanner:ad-video:sync"}`는 options.html에서만 요청해요. 등록 조정 후 `{ok:true,enabled}`, 출처·등록 오류는 `{ok:false}`예요.
 
-후원 조회 port 이름은 `betterchzzk:donation-history-import`이고 history.html만 연결해요. 요청은 `start` 또는 `cancel`이에요. 진행·저장·완료·오류를 구분해 전달하고, 동시에 다른 조회가 있거나 미로그인·계정 변경·불완전 데이터이면 error를 보내요. 저장 진입 전 연결 해제·취소는 조회를 중단하며, 이미 저장 중인 결과까지 취소됐다고 약속하지 않아요. 완료는 저장 결과가 확인된 뒤에만 보내요.
+후원 조회 port 이름은 `cheese-spanner:donation-history-import`이고 history.html만 연결해요. 요청은 `start` 또는 `cancel`이에요. 진행·저장·완료·오류를 구분해 전달하고, 동시에 다른 조회가 있거나 미로그인·계정 변경·불완전 데이터이면 error를 보내요. 저장 진입 전 연결 해제·취소는 조회를 중단하며, 이미 저장 중인 결과까지 취소됐다고 약속하지 않아요. 완료는 저장 결과가 확인된 뒤에만 보내요.
 
 ## 시청·내 채팅 파일 백업
 
@@ -247,7 +263,7 @@ Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 �
 
 `dailySeconds`는 KST `YYYY-MM-DD`→시청 초, `dailyCounts`는 같은 날짜→일반 채팅 횟수예요. 수치와 시각은 음이 아닌 안전한 정수이고, 실제 세션·메시지·생성 시각은 양의 밀리초 Unix 값이에요. 미측정 메타데이터 시각은 0, 없는 표시값은 빈 문자열, 없는 목록은 빈 배열을 사용해요. `closed`는 boolean이에요. 메시지에는 후원 종류·금액이 없으며 일반 채팅 ID와 시각이 일치해야 해요. 별칭은 파일에 포함된 정식 방송과 같은 채널의 임시 ID를 연결해요. `backupRestore` 같은 대상 저장소의 복원 상태는 이 파일 형식에 들어가지 않아요.
 
-백업 요청은 `{type:"betterchzzk:watch-history-backup",version:1,action}`이에요. `export`는 추가 입력 없이 `{status:"exported",backup}`을 반환해요. `preview`는 `backup`을 받아 `{status:"preview",confirmationToken,summary,items}`를 반환해요. `import`는 같은 `backup`과 `confirmationToken`을 받아 `{status:"applied"|"unchanged",summary,items}` 또는 다시 확인할 `{status:"reconfirm",confirmationToken,summary,items}`를 반환해요.
+백업 요청은 `{type:"cheese-spanner:watch-history-backup",version:1,action}`이에요. `export`는 추가 입력 없이 `{status:"exported",backup}`을 반환해요. `preview`는 `backup`을 받아 `{status:"preview",confirmationToken,summary,items}`를 반환해요. `import`는 같은 `backup`과 `confirmationToken`을 받아 `{status:"applied"|"unchanged",summary,items}` 또는 다시 확인할 `{status:"reconfirm",confirmationToken,summary,items}`를 반환해요.
 
 응답 외피는 `{ok:true,result}` 또는 `{ok:false,error:{code,message}}`예요. 오류 코드는 `UNTRUSTED_SENDER`, `INVALID_REQUEST`, `INVALID_FILE`, `UNSUPPORTED_VERSION`, `LIMIT_EXCEEDED`, `STORAGE_READ_FAILED`, `STORAGE_WRITE_FAILED`예요. 읽기·저장 오류와 응답을 확인하지 못한 상태를 UI에서 구별해요.
 
@@ -259,7 +275,7 @@ Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 �
 
 패키지 자료는 설치 버전과 문자열로 정확히 일치해야 해요. 첫 자료는 1.4.1이며 버전별 title·summary·cards를 포함해요. cards는 id·title·summary·instructions·target·settingsTarget을 가지며 목적지는 panels, history, stream으로 한정해요. cards가 비어 있으면 요약만 표시해요.
 
-요청은 type=betterchzzk:update-guide, protocol=1, action, guideVersion을 사용해요. claim/commit/release에는 문서마다 생성한 clientId를 넣어요. claim은 ok:true, show:false와 예약 성공 시 token을 반환하고 commit/release는 같은 token을 받아요. 실제 표시 권한은 commit의 ok:true, show:true뿐이에요. 오류는 ok:false, show:false이며 자유 URL·선택자나 다른 탭 ID를 받지 않아요.
+요청은 type=cheese-spanner:update-guide, protocol=1, action, guideVersion을 사용해요. claim/commit/release에는 문서마다 생성한 clientId를 넣어요. claim은 ok:true, show:false와 예약 성공 시 token을 반환하고 commit/release는 같은 token을 받아요. 실제 표시 권한은 commit의 ok:true, show:true뿐이에요. 오류는 ok:false, show:false이며 자유 URL·선택자나 다른 탭 ID를 받지 않아요.
 
 예약은 탭·documentId에 결합하고 documentId가 없으면 검증한 탭·frame·URL·clientId에 결합해요. 30초 만료, 옵션 변경, 문서 변경, 워커 재시작으로 낡은 예약을 승인하지 않아요. local 키 betterchzzk:update-guide-state에는 schemaVersion:1, version, status 한 건을 저장하며 status는 pending, seen, suppressed예요. 읽기 오류·손상 상태는 자동 표시를 중단해요.
 

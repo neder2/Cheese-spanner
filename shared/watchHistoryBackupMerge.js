@@ -1,7 +1,7 @@
 /** Pure backup merge planning. The background writer owns every storage operation. */
 (() => {
     "use strict";
-    const backup = globalThis.BetterChzzkWatchHistoryBackup;
+    const backup = globalThis.CheeseSpannerWatchHistoryBackup;
     const { LIMITS } = backup;
     const DEFAULT_MAX_STORAGE_BYTES = 10 * 1024 * 1024;
     const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -72,7 +72,7 @@
     function messageDaily(messages) {
         const counts = {};
         for (const row of messages) {
-            const date = globalThis.BetterChzzk.utils.getKstDateKey(row.at);
+            const date = globalThis.CheeseSpanner.utils.getKstDateKey(row.at);
             counts[date] = (counts[date] || 0) + 1;
         }
         return counts;
@@ -100,7 +100,7 @@
     }
 
     function rangeTotals(ranges) {
-        const utils = globalThis.BetterChzzk.utils;
+        const utils = globalThis.CheeseSpanner.utils;
         const exact = utils.mergeWatchRanges(ranges, 0);
         const byDate = {};
         for (const range of exact) utils.addWatchRangeToRangesByDate(byDate, range);
@@ -781,7 +781,7 @@
         return { history: changed ? history : clone(rawHistory || {}), changed, summary, items, confirmationMeaning };
     }
 
-    globalThis.BetterChzzkWatchHistoryBackupMerge = Object.freeze({
+    globalThis.CheeseSpannerWatchHistoryBackupMerge = Object.freeze({
         mergeBackup,
         restoreAfterBarrier,
         compactRestoreScope,

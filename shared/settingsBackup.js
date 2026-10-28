@@ -2,9 +2,9 @@
  * shared/settingsBackup.js — 설정 저장 경계와 설정 파일이 공유하는 대상 키 목록·엄격 검증·파일 형식·적용 계획.
  *
  * 실행 컨텍스트: 서비스 워커(importScripts)와 옵션 페이지. DOM·chrome API를 쓰지 않아요.
- * 의존: BetterChzzkSettings(옵션 스키마), BetterChzzkLiveStart(방송 대상 상한), BetterChzzk.utils의
- *   normalizeChzzkImageUrl(있으면), 위임 모델 BetterChzzkFollowingFolders·BetterChzzkChatMultiview(있으면).
- * 공개 API: globalThis.BetterChzzkSettingsBackup — 상수, validateStoreEntry, createBackup, parseBackup,
+ * 의존: CheeseSpannerSettings(옵션 스키마), CheeseSpannerLiveStart(방송 대상 상한), CheeseSpanner.utils의
+ *   normalizeChzzkImageUrl(있으면), 위임 모델 CheeseSpannerFollowingFolders·CheeseSpannerChatMultiview(있으면).
+ * 공개 API: globalThis.CheeseSpannerSettingsBackup — 상수, validateStoreEntry, createBackup, parseBackup,
  *   targetKeys, fingerprint, planImport, sameValue.
  * 저장 자체는 shared/settingsStore.js(워커)가 설정 저장 잠금 안에서 수행해요.
  */
@@ -14,8 +14,8 @@
     const FILE_KIND = "cheese-spanner.settings-backup";
     const FORMAT_VERSION = 1;
     const MAX_FILE_BYTES = 1024 * 1024;
-    const STORE_MESSAGE_TYPE = "betterchzzk:settings-store";
-    const BACKUP_MESSAGE_TYPE = "betterchzzk:settings-backup";
+    const STORE_MESSAGE_TYPE = "cheese-spanner:settings-store";
+    const BACKUP_MESSAGE_TYPE = "cheese-spanner:settings-backup";
     const PINS_KEY = "betterchzzkPinnedFollowingChannelIds";
     const MAX_PINS = 64;
     const FOLDERS_KEY = "betterchzzk:following-folders:v1";
@@ -35,7 +35,7 @@
     const MAX_MULTIVIEW_CHANNELS = 4000;
     const MULTIVIEW_CHANNEL = /^[a-f0-9]{32}$/;
     const LIVE_START_CHANNEL = /^[a-f0-9]{32}$/;
-    // Same identity rule as BetterChzzk.utils.normalizeChzzkChannelId used by the pin feature.
+    // Same identity rule as CheeseSpanner.utils.normalizeChzzkChannelId used by the pin feature.
     const PIN_CHANNEL = /^[A-Za-z0-9_-]{1,100}$/;
     // Options a chzzk page can change through its own controls; everything else is written by options pages.
     const CONTENT_SYNC_OPTION_KEYS = Object.freeze(["skipSeconds", "ambientIntensity", "followingPreviewSoundEnabled"]);
@@ -64,7 +64,7 @@
 
     const ok = (value) => ({ ok: true, value });
     const fail = (error) => ({ ok: false, error });
-    const settings = () => globalThis.BetterChzzkSettings;
+    const settings = () => globalThis.CheeseSpannerSettings;
 
     // Values can come from another realm (structured clone, page tests), so avoid instanceof checks.
     function isPlainObject(value) {
@@ -110,13 +110,13 @@
         return ok([...value]);
     }
     function validateFolders(value) {
-        const model = globalThis.BetterChzzkFollowingFolders;
+        const model = globalThis.CheeseSpannerFollowingFolders;
         if (typeof model?.parseState !== "function") return fail("unsupported-folders");
         const result = model.parseState(value);
         return result?.ok ? ok(result.state) : fail("invalid-folders");
     }
     function validateChatMultiview(value) {
-        const model = globalThis.BetterChzzkChatMultiview;
+        const model = globalThis.CheeseSpannerChatMultiview;
         if (typeof model?.parseConfig !== "function") return fail("unsupported-chat-multiview");
         const result = model.parseConfig(value);
         return result?.ok ? ok(result.config) : fail("invalid-chat-multiview");
@@ -150,9 +150,9 @@
         return Number.isInteger(value) && value >= 0 && value <= 8640 ? ok(value) : fail("invalid-multiview-quality");
     }
     function validateLiveStartChannels(value) {
-        const max = globalThis.BetterChzzkLiveStart?.MAX_CHANNELS ?? 32;
+        const max = globalThis.CheeseSpannerLiveStart?.MAX_CHANNELS ?? 32;
         if (!Array.isArray(value) || value.length > max) return fail("invalid-live-start-channels");
-        const normalizeImage = globalThis.BetterChzzk?.utils?.normalizeChzzkImageUrl;
+        const normalizeImage = globalThis.CheeseSpanner?.utils?.normalizeChzzkImageUrl;
         const seen = new Set();
         const channels = [];
         for (const item of value) {
@@ -254,7 +254,7 @@
             delete sync.pinnedChannelIds;
             omitted.push("pinnedChannelIds");
         }
-        const folders = globalThis.BetterChzzkFollowingFolders;
+        const folders = globalThis.CheeseSpannerFollowingFolders;
         if (typeof folders?.parseState === "function") {
             const state = Object.hasOwn(syncData, FOLDERS_KEY)
                 ? readValid(validateFolders, syncData[FOLDERS_KEY])
@@ -267,7 +267,7 @@
             local.panelSizes[name] = readValid(validatePanelSize, localData[key] ?? null) ?? null;
         }
         if (Object.hasOwn(localData, LIVE_START_CHANNELS_KEY)) {
-            const normalize = globalThis.BetterChzzkLiveStart?.normalizeChannels;
+            const normalize = globalThis.CheeseSpannerLiveStart?.normalizeChannels;
             const channels =
                 typeof normalize === "function"
                     ? readValid(validateLiveStartChannels, normalize(localData[LIVE_START_CHANNELS_KEY]))
@@ -294,7 +294,7 @@
             delete local[name];
             omitted.push(name);
         }
-        const chat = globalThis.BetterChzzkChatMultiview;
+        const chat = globalThis.CheeseSpannerChatMultiview;
         if (typeof chat?.normalizeConfig === "function") {
             const config = Object.hasOwn(localData, CHAT_MULTIVIEW_KEY)
                 ? readValid(validateChatMultiview, localData[CHAT_MULTIVIEW_KEY])
@@ -611,7 +611,7 @@
         return { ok: true, stages: plannedStages, summary };
     }
 
-    globalThis.BetterChzzkSettingsBackup = Object.freeze({
+    globalThis.CheeseSpannerSettingsBackup = Object.freeze({
         FILE_KIND,
         FORMAT_VERSION,
         MAX_FILE_BYTES,

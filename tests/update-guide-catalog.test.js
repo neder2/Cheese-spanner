@@ -6,7 +6,7 @@ const { test } = require("node:test");
 const root = path.join(__dirname, "..");
 const context = vm.createContext({});
 vm.runInContext(fs.readFileSync(path.join(root, "shared/updateGuide.js"), "utf8"), context);
-const catalog = context.BetterChzzkUpdateGuide;
+const catalog = context.CheeseSpannerUpdateGuide;
 
 test("catalog matches exact versions and contains local text and known destinations", () => {
     for (const value of ["1.4.0", "__proto__", "1.4.10", null]) assert.equal(catalog.getGuide(value), null);
@@ -101,4 +101,13 @@ test("1.4.5 briefly announces the list filter, the live page title history, and 
     assert.ok(Object.isFrozen(guide.cards));
     assert.doesNotMatch(guide.summary, /\./, "the summary separates items with commas only");
     assert.doesNotMatch(guide.summary, /팔로잉 폴더|채팅 멀티뷰/);
+});
+
+test("1.4.6 briefly announces the replay start and end time where the date was, and bug fixes", () => {
+    const guide = catalog.getGuide("1.4.6");
+    assert.equal(guide.summary, "다시보기 조회수 옆 날짜 자리에 방송 시작·종료 시각 표시, 각종 버그 수정");
+    assert.equal(guide.cards.length, 0);
+    assert.ok(Object.isFrozen(guide.cards));
+    assert.doesNotMatch(guide.summary, /\./, "the summary separates items with commas only");
+    assert.doesNotMatch(guide.summary, /방송 목록 필터|내 채팅|사이트 액세스/);
 });

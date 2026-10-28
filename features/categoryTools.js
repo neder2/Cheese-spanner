@@ -15,20 +15,20 @@
  *     방송 경과 시간 배지를 썸네일 위에 표시한다(1초 간격 갱신).
  *   - MutationObserver와 scroll 이벤트로 라우트 변화·무한 스크롤을 감지해 자동으로 다음 메타데이터 페이지를 불러온다.
  *   - 옵션 변경 시(bindFeatureOptions) 런타임을 설치/해체하고 배지·툴바 상태를 다시 동기화한다.
- * 의존: 전역 BetterChzzkSettings.normalizeOptions/bindFeatureOptions, BetterChzzk.categoryToolsFilterModel,
- *   BetterChzzk.categoryToolsRepository/categoryToolsSearchController, 전역 BetterChzzk.utils
+ * 의존: 전역 CheeseSpannerSettings.normalizeOptions/bindFeatureOptions, CheeseSpanner.categoryToolsFilterModel,
+ *   CheeseSpanner.categoryToolsRepository/categoryToolsSearchController, 전역 CheeseSpanner.utils
  *   (createMutationObserverSync, createThrottledDomSync, fetchJson, normSpace, normalizeChzzkImageUrl,
  *   normalizeCompact, onReady, setLoadingReason, sleep, startPageChangeDetection, touchMapEntry, injectStyleOnce).
  * 옵션 키: categoryToolsEnabled, globalLiveCountEnabled, categoryToolsMaxMetadataPages, categoryToolsHideGlobalTagSearch,
  *   categoryToolsFollowerBadgesEnabled, categoryToolsLiveElapsedEnabled, categoryToolsExclusionsEnabled,
  *   categoryToolsFollowerFilterPreset1~6, categoryToolsViewFilterPreset1~6, categoryToolsDurationFilterPreset1~6,
  *   categoryToolsFollowerFetchMaxPerPass, categoryToolsFollowerFetchConcurrency, categoryToolsFollowerFetchDelayMs.
- * DOM 마커: id betterchzzk-category-tools(바), betterchzzk-category-filter-menu(필터 메뉴),
- *   betterchzzk-category-filter-chips(적용 조건 줄),
- *   betterchzzk-category-tools-fallback(정렬 줄을 못 찾을 때 대체 호스트), betterchzzk-category-tools-style;
+ * DOM 마커: id cheese-spanner-category-tools(바), cheese-spanner-category-filter-menu(필터 메뉴),
+ *   cheese-spanner-category-filter-chips(적용 조건 줄),
+ *   cheese-spanner-category-tools-fallback(정렬 줄을 못 찾을 때 대체 호스트), cheese-spanner-category-tools-style;
  *   data-bcgt-* 프리픽스 속성들(카드/주입/숨김/순서/배지 마킹용).
  * 구조 (위→아래 순서):
- *   - 상수/전역 상태, BetterChzzk.utils 구조분해, 옵션 게터 함수들.
+ *   - 상수/전역 상태, CheeseSpanner.utils 구조분해, 옵션 게터 함수들.
  *   - 라우트 판별(getRoute)과 탭 줄·정렬 줄·콘텐츠 좌표 탐색 함수들.
  *   - 카드 링크/그리드 탐색과 카드 엔트리 생성(findGrid, getCardEntries 등).
  *   - repository.js가 소유하는 메타데이터·팔로워 조회를 화면의 대상 ID와 연결한다.
@@ -42,10 +42,10 @@
  *   - 옵션 변경 반영(applyOptions)과 초기 구동(bindFeatureOptions, onReady).
  */
 (() => {
-    const BAR_ID = "betterchzzk-category-tools";
-    const MENU_ID = "betterchzzk-category-filter-menu";
-    const GLOBAL_FALLBACK_ID = "betterchzzk-category-tools-fallback";
-    const STYLE_ID = "betterchzzk-category-tools-style";
+    const BAR_ID = "cheese-spanner-category-tools";
+    const MENU_ID = "cheese-spanner-category-filter-menu";
+    const GLOBAL_FALLBACK_ID = "cheese-spanner-category-tools-fallback";
+    const STYLE_ID = "cheese-spanner-category-tools-style";
     const TABS_ATTR = "data-bcgt-tabs";
     const GLOBAL_SORT_ATTR = "data-bcgt-global-sort";
     const CATEGORY_SUMMARY_HOST_ATTR = "data-bcgt-exclusion-host";
@@ -79,8 +79,8 @@
     });
     const DEFAULT_PROFILE_IMAGE_URL =
         "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2080%2080'%3E%3Crect%20width='80'%20height='80'%20rx='40'%20fill='%23E7EAEE'/%3E%3Ccircle%20cx='40'%20cy='31'%20r='14'%20fill='%239DA5B6'/%3E%3Cpath%20d='M18%2068c3-15%2015-24%2022-24s19%209%2022%2024'%20fill='%239DA5B6'/%3E%3C/svg%3E";
-    const APPLIED_CONDITIONS_ID = "betterchzzk-category-filter-chips";
-    const SEARCH_HINT_ID = "betterchzzk-category-search-hint";
+    const APPLIED_CONDITIONS_ID = "cheese-spanner-category-filter-chips";
+    const SEARCH_HINT_ID = "cheese-spanner-category-search-hint";
     // 검색어·숫자 조건은 이 탭의 사이트 sessionStorage에 목록 주소별로 둔다(탭을 닫으면 사라진다).
     const LIST_FILTER_SESSION_KEY = "betterChzzkListFilterSession";
     let currentQuery = "";
@@ -105,7 +105,7 @@
     let searchApplyTimer = 0;
     let liveElapsedTimer = 0;
     let durationFilterRefreshTimer = 0;
-    let featureOptions = BetterChzzkSettings.normalizeOptions();
+    let featureOptions = CheeseSpannerSettings.normalizeOptions();
     let featureOptionsReady = false;
     let viewFilterSnapshotKey = "";
     let viewFilterSnapshotIds = new Set();
@@ -141,8 +141,8 @@
     let categoryStoreError = "";
     let categorySubscription = null;
     let categoryStateRestored = false;
-    const CATEGORY_ADD_ID = "betterchzzk-category-add-panel";
-    const CATEGORY_SUMMARY_ID = "betterchzzk-category-exclusions";
+    const CATEGORY_ADD_ID = "cheese-spanner-category-add-panel";
+    const CATEGORY_SUMMARY_ID = "cheese-spanner-category-exclusions";
     let categorySummaryHost = null;
     let categoryAddView = null;
     let categorySummaryView = null;
@@ -161,7 +161,7 @@
         isTagExclusion,
         normalizeState: normalizeCategoryState,
         createEmptyState: createEmptyCategoryState,
-    } = BetterChzzk.categoryExclusions;
+    } = CheeseSpanner.categoryExclusions;
 
     // 검색/필터 자동 탐색은 화면 아래 여유가 생기면 멈췄다가 바닥 근처에서 이어서 탐색한다.
     const AUTO_LOAD_BOTTOM_MARGIN_PX = 600;
@@ -184,7 +184,7 @@
         sleep,
         startPageChangeDetection,
         touchMapEntry,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
     const {
         FILTER_KINDS,
         passesCountRange,
@@ -208,10 +208,10 @@
         writeListFilterRoute,
         passesCategoryExclusions,
         passesTagExclusions,
-    } = BetterChzzk.categoryToolsFilterModel;
+    } = CheeseSpanner.categoryToolsFilterModel;
     filterStates = createFilterStates();
-    const { routeKey } = BetterChzzk.categoryToolsRepository;
-    const dataRepository = BetterChzzk.categoryToolsRepository.createRepository({
+    const { routeKey } = CheeseSpanner.categoryToolsRepository;
+    const dataRepository = CheeseSpanner.categoryToolsRepository.createRepository({
         fetchJson,
         touchMapEntry,
         onRetryReady(key) {
@@ -283,7 +283,7 @@
             }
         );
     }
-    const metadataSearchController = BetterChzzk.categoryToolsSearchController.createSearchController({
+    const metadataSearchController = CheeseSpanner.categoryToolsSearchController.createSearchController({
         repository: dataRepository,
         onApply: scheduleApply,
         onLoading: (on) => setLoading(on, "metadata"),
@@ -1138,8 +1138,8 @@
     }
 
     function injectStyleOnce() {
-        BetterChzzk.utils.ensureUiTheme?.();
-        BetterChzzk.utils.injectStyleOnce(
+        CheeseSpanner.utils.ensureUiTheme?.();
+        CheeseSpanner.utils.injectStyleOnce(
             STYLE_ID,
             `
 [${TABS_ATTR}="1"]{
@@ -5278,7 +5278,7 @@
         if (featureOptionsReady) applyOptions(options);
     });
     // 일반 변경 callback은 초기 읽기보다 먼저 올 수 있다. 공용 진행 조회에 초기 확인만 함께 등록한다.
-    BetterChzzkSettings.getOptions(applyInitialOptions);
+    CheeseSpannerSettings.getOptions(applyInitialOptions);
     window.addEventListener("pagehide", handleDocumentEnd, true);
 
     onReady(() => {

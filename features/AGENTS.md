@@ -6,16 +6,16 @@
 
 기능은 기존 IIFE·전역 네임스페이스를 사용해요. isolated 기능은 공용 `bindFeatureOptions`, `startPageChangeDetection`, observer·DOM 예약 유틸을 먼저 확인해요. 옵션 OFF·SPA 이탈·대상 교체 시 UI와 observer·listener·timer·RAF·요청을 정리하고, 늦은 응답이 재설치하지 못하게 해요.
 
-설정 파일 백업 대상 키(고정·폴더·패널 크기·멀티뷰 딜레이/화질·채팅 멀티뷰 구성과 콘텐츠가 바꾸는 `skipSeconds`·`ambientIntensity`·`followingPreviewSoundEnabled`)는 `chrome.storage`에 직접 쓰지 않고 `BetterChzzk.utils.settingsStoreSet(area, values, expected?)`로 워커의 설정 저장 큐에 요청해요. 새 백업 대상 키를 추가하면 `shared/settingsBackup.js`의 허용 목록과 검증, 설정 파일 형식을 함께 갱신해요.
+설정 파일 백업 대상 키(고정·폴더·패널 크기·멀티뷰 딜레이/화질·채팅 멀티뷰 구성과 콘텐츠가 바꾸는 `skipSeconds`·`ambientIntensity`·`followingPreviewSoundEnabled`)는 `chrome.storage`에 직접 쓰지 않고 `CheeseSpanner.utils.settingsStoreSet(area, values, expected?)`로 워커의 설정 저장 큐에 요청해요. 새 백업 대상 키를 추가하면 `shared/settingsBackup.js`의 허용 목록과 검증, 설정 파일 형식을 함께 갱신해요.
 
-MAIN 파일은 isolated의 `BetterChzzk`와 `BetterChzzkSettings`를 읽지 않아요. 페이지 객체를 다루는 파일의 테스트를 통과시키려고 확장 storage·메시지·직접 네트워크 권한을 추가하지 않아요.
+MAIN 파일은 isolated의 `CheeseSpanner`와 `CheeseSpannerSettings`를 읽지 않아요. 페이지 객체를 다루는 파일의 테스트를 통과시키려고 확장 storage·메시지·직접 네트워크 권한을 추가하지 않아요.
 
-치지직 안에 그리는 확장 UI는 `shared/uiTheme.js`의 공통 `--bct-*` 변수를 써요. 자기 스타일을 넣기 전에 `BetterChzzk.utils.ensureUiTheme?.()`를 부르고, `var(--bct-…)`에 대체값을 붙이지 않아요. 색·모서리·그림자의 대체값 표(라이트·다크 묶음)나 `@font-face`를 기능 안에 다시 두지 않아요. 기능별 변수 이름(예: `--bccmv-text`)을 남긴다면 값은 공통 변수를 가리키게 해요. 필요한 치지직 토큰이 공통 변수에 없으면 `shared/uiTheme.js`에 변수를 추가해요. 변수 목록·대비 제한은 `shared/AGENTS.md`의 공통 테마 절을 따라요. 치지직 원본 사이에 끼워 넣거나 원본을 흉내 내는 요소(사이드바 행, 플레이어 메뉴 항목, 채팅 시각, 다시보기 댓글 탭 등)는 지금처럼 원본의 실제 스타일(computed style 복사 포함)을 따르고, 테마·DOM 교체 때 다시 동기화해요. 썸네일·영상 위에 얹는 표시는 테마와 무관한 고정 색을 유지해요.
+치지직 안에 그리는 확장 UI는 `shared/uiTheme.js`의 공통 `--bct-*` 변수를 써요. 자기 스타일을 넣기 전에 `CheeseSpanner.utils.ensureUiTheme?.()`를 부르고, `var(--bct-…)`에 대체값을 붙이지 않아요. 색·모서리·그림자의 대체값 표(라이트·다크 묶음)나 `@font-face`를 기능 안에 다시 두지 않아요. 기능별 변수 이름(예: `--bccmv-text`)을 남긴다면 값은 공통 변수를 가리키게 해요. 필요한 치지직 토큰이 공통 변수에 없으면 `shared/uiTheme.js`에 변수를 추가해요. 변수 목록·대비 제한은 `shared/AGENTS.md`의 공통 테마 절을 따라요. 치지직 원본 사이에 끼워 넣거나 원본을 흉내 내는 요소(사이드바 행, 플레이어 메뉴 항목, 채팅 시각, 다시보기 댓글 탭 등)는 지금처럼 원본의 실제 스타일(computed style 복사 포함)을 따르고, 테마·DOM 교체 때 다시 동기화해요. 썸네일·영상 위에 얹는 표시는 테마와 무관한 고정 색을 유지해요.
 
 글꼴은 두 분류예요.
 
 - **치지직 글꼴을 따르는 곳(지금 그대로 유지)**: 코드가 원본 요소의 computed 글꼴을 복사하거나 README·AGENTS가 치지직·원본 글꼴을 따른다고 적은 곳이에요. 월간 달력(`monthlyBroadcastTime.js`, Sandoll Nemony2 지정), 방송 목록 필터 배지·바(`categoryTools.js`), 플레이어 버튼 툴팁(`volumeTooltip.js` 등), 다시보기 댓글(`vodComments/`)과 댓글 탭(`vodCommentTabs.js`), 멀티뷰 안내·컨트롤·설정(`liveMultiview/`), 지연 표시(`timeMachineLagLabel.js`), 그 밖의 원본 끼움 요소가 여기에 들어가요.
-- **그 밖의 확장 소유 패널·툴팁·카드**: `var(--bct-font)`(번들 `"BetterChzzk Pretendard"`, 대체 스택 `-apple-system, BlinkMacSystemFont, system-ui, "Malgun Gothic", sans-serif`)로 통일해요. 영상/댓글 검색, 채팅 모아보기, 스트림 정보, 팔로잉 폴더 메뉴·대화상자, 이전 방제 패널, 제목 툴팁, 새 버전 안내, 채팅 멀티뷰 패널, 라이브 알림 등록, 팔로잉 미리보기가 여기에 들어가요.
+- **그 밖의 확장 소유 패널·툴팁·카드**: `var(--bct-font)`(번들 `"CheeseSpanner Pretendard"`, 대체 스택 `-apple-system, BlinkMacSystemFont, system-ui, "Malgun Gothic", sans-serif`)로 통일해요. 영상/댓글 검색, 채팅 모아보기, 스트림 정보, 팔로잉 폴더 메뉴·대화상자, 이전 방제 패널, 제목 툴팁, 새 버전 안내, 채팅 멀티뷰 패널, 라이브 알림 등록, 팔로잉 미리보기가 여기에 들어가요.
 - 분류가 애매하면 코드가 원본 computed 글꼴을 복사하는지, README·AGENTS가 원본을 따른다고 적는지로 판단해요. 그래도 애매하면 사용자에게 물어요.
 
 ## 기능별 소유권

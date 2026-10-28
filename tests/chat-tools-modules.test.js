@@ -34,7 +34,7 @@ function createModules(t, rows = "") {
         return id;
     };
     dom.window.clearTimeout = (id) => pending.delete(id);
-    const namespace = dom.window.BetterChzzk.chatTools;
+    const namespace = dom.window.CheeseSpanner.chatTools;
     const root = dom.window.document.querySelector(".chat-list");
     const published = [];
     const store = namespace.createMessageStore({ onChange: (messages) => published.push(messages) });

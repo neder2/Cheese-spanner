@@ -11,10 +11,10 @@
 (() => {
     "use strict";
 
-    const INSTALLED = "__betterChzzkAdVideoPageInstalled";
-    const STATE_ATTR = "data-betterchzzk-ad-video-state";
-    const STATUS_ATTR = "data-betterchzzk-ad-video-status";
-    const STATE_EVENT = "betterchzzk:ad-video:state";
+    const INSTALLED = "__cheeseSpannerAdVideoPageInstalled";
+    const STATE_ATTR = "data-cheese-spanner-ad-video-state";
+    const STATUS_ATTR = "data-cheese-spanner-ad-video-status";
+    const STATE_EVENT = "cheese-spanner:ad-video:state";
     if (window[INSTALLED]) return;
 
     const previousParse = JSON.parse;
@@ -560,7 +560,7 @@
 
     function wrapLiveSchedule(container, manager) {
         const load = manager?.loadWithAdSchedule;
-        if (typeof load !== "function" || load.__betterChzzkLiveAdSchedule || !hasScheduleApi(manager)) return;
+        if (typeof load !== "function" || load.__cheeseSpannerLiveAdSchedule || !hasScheduleApi(manager)) return;
         const wrappedLoad = function (schedule, ...rest) {
             let filtered = schedule;
             try {
@@ -585,7 +585,7 @@
             // 빈 광고 항목의 완료 처리는 네이티브 스케줄러가 수행한다.
             return Reflect.apply(load, this, [filtered, ...rest]);
         };
-        previousDefineProperty(wrappedLoad, "__betterChzzkLiveAdSchedule", { value: true });
+        previousDefineProperty(wrappedLoad, "__cheeseSpannerLiveAdSchedule", { value: true });
         previousDefineProperty(manager, "loadWithAdSchedule", {
             value: wrappedLoad,
             configurable: true,
@@ -762,7 +762,7 @@
         });
         return Reflect.apply(previousDefineProperty, this, [target, key, view]);
     };
-    previousDefineProperty(wrappedDefineProperty, "__betterChzzkAdVideoDefinePatch", { value: true });
+    previousDefineProperty(wrappedDefineProperty, "__cheeseSpannerAdVideoDefinePatch", { value: true });
 
     function getAdDecisionChange(value, length) {
         if (value?.code !== 200 || value.message !== null) return null;

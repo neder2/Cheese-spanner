@@ -7,7 +7,7 @@ const { webcrypto } = require("node:crypto");
 
 const ROOT = path.resolve(__dirname, "..");
 const KEY = "betterchzzk:update-guide-state";
-const TYPE = "betterchzzk:update-guide";
+const TYPE = "cheese-spanner:update-guide";
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const state = (version = "1.4.1", status = "pending") => ({ schemaVersion: 1, version, status });
 
@@ -83,15 +83,15 @@ function harness(initial = {}, initialVersion = "1.4.1", additionalGuideVersions
     for (const file of ["shared/updateGuide.js", "shared/updateGuideController.js"])
         vm.runInContext(fs.readFileSync(path.join(ROOT, file), "utf8"), context, { filename: file });
     const catalog = {
-        ...context.BetterChzzkUpdateGuide,
+        ...context.CheeseSpannerUpdateGuide,
         getGuide(value) {
             return (
-                context.BetterChzzkUpdateGuide.getGuide(value) ||
+                context.CheeseSpannerUpdateGuide.getGuide(value) ||
                 (additionalGuideVersions.includes(value) ? { version: value } : null)
             );
         },
     };
-    let controller = context.BetterChzzkUpdateGuideController.createController({ chrome, catalog });
+    let controller = context.CheeseSpannerUpdateGuideController.createController({ chrome, catalog });
     const sender = {
         id: runtime.id,
         tab: { id: 3, active: true },
@@ -135,7 +135,7 @@ function harness(initial = {}, initialVersion = "1.4.1", additionalGuideVersions
             version = value;
         },
         restart() {
-            controller = context.BetterChzzkUpdateGuideController.createController({ chrome, catalog });
+            controller = context.CheeseSpannerUpdateGuideController.createController({ chrome, catalog });
         },
         holdWrite() {
             pauseWrite = true;

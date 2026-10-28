@@ -129,16 +129,16 @@ test("options page renders defaults and dependency-disabled controls without ext
     evalRepoScript(dom, "shared", "settings.js");
     evalRepoScript(dom, "options.js");
 
-    const { document, BetterChzzkSettings } = dom.window;
+    const { document, CheeseSpannerSettings } = dom.window;
     const optionInputs = Array.from(document.querySelectorAll("[data-option]"));
     const notice = document.getElementById("notice");
 
     assert.deepEqual(
         optionInputs.map((input) => input.dataset.option).sort(),
-        [...BetterChzzkSettings.OPTION_KEYS].sort(),
+        [...CheeseSpannerSettings.OPTION_KEYS].sort(),
         "each schema option must appear exactly once"
     );
-    assert.equal(queryOption(document, "skipSeconds").value, String(BetterChzzkSettings.DEFAULT_OPTIONS.skipSeconds));
+    assert.equal(queryOption(document, "skipSeconds").value, String(CheeseSpannerSettings.DEFAULT_OPTIONS.skipSeconds));
     assert.equal(queryOption(document, "vodBroadcastClockEnabled").checked, true);
     assert.equal(queryOption(document, "adVideoEnabled").checked, true);
     assert.equal(document.getElementById("save").disabled, true, "변경 전에는 저장 버튼이 비활성화된다");
@@ -360,7 +360,7 @@ test("playback shortcut reset restores only the three keys and keeps changes pen
     t.after(() => dom.window.close());
     evalRepoScript(dom, "shared", "settings.js");
     evalRepoScript(dom, "options.js");
-    const { document, BetterChzzkSettings } = dom.window;
+    const { document, CheeseSpannerSettings } = dom.window;
     await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
 
     const reset = document.getElementById("resetPlaybackSpeedShortcuts");
@@ -382,9 +382,9 @@ test("playback shortcut reset restores only the three keys and keeps changes pen
     reset.click();
     for (const key of Object.keys(customKeys)) {
         const input = queryOption(document, key);
-        const defaultCode = BetterChzzkSettings.DEFAULT_OPTIONS[key];
+        const defaultCode = CheeseSpannerSettings.DEFAULT_OPTIONS[key];
         assert.equal(input.dataset.shortcutCode, defaultCode);
-        assert.equal(input.value, BetterChzzkSettings.getPlaybackSpeedShortcutLabel(defaultCode));
+        assert.equal(input.value, CheeseSpannerSettings.getPlaybackSpeedShortcutLabel(defaultCode));
     }
     assert.equal(skip.value, "29", "unrelated unsaved edits survive the local reset");
     assert.equal(queryOption(document, "holdSpeedEnabled").checked, false);
@@ -405,7 +405,7 @@ test("playback shortcut reset restores only the three keys and keeps changes pen
     document.getElementById("save").click();
     await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
     for (const key of Object.keys(customKeys)) {
-        assert.equal(chrome.testState.sync[key], BetterChzzkSettings.DEFAULT_OPTIONS[key]);
+        assert.equal(chrome.testState.sync[key], CheeseSpannerSettings.DEFAULT_OPTIONS[key]);
     }
     assert.equal(chrome.testState.sync.skipSeconds, 17);
     assert.equal(chrome.testState.sync.holdSpeedEnabled, false);
@@ -758,7 +758,7 @@ test("options theme previews, discards, persists after save, and can follow the 
     document.getElementById("save").click();
     await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
     assert.equal(chrome.testState.sync.optionsTheme, "system");
-    assert.equal(dom.window.BetterChzzkSettings.normalizeOptions({ optionsTheme: "invalid" }).optionsTheme, "system");
+    assert.equal(dom.window.CheeseSpannerSettings.normalizeOptions({ optionsTheme: "invalid" }).optionsTheme, "system");
 });
 
 test("category wheel scrolls horizontally only when it can consume a vertical step", (t) => {
@@ -1127,10 +1127,10 @@ test("unreleased ad auto skip is absent from settings and search while old store
     evalRepoScript(dom, "shared", "settings.js");
     evalRepoScript(dom, "options.js");
     await waitForAsyncCallbacks();
-    const { document, BetterChzzkSettings } = dom.window;
+    const { document, CheeseSpannerSettings } = dom.window;
     assert.equal(queryOption(document, "adAutoSkipEnabled"), null);
     assert.equal(
-        Object.hasOwn(BetterChzzkSettings.normalizeOptions(chrome.testState.sync), "adAutoSkipEnabled"),
+        Object.hasOwn(CheeseSpannerSettings.normalizeOptions(chrome.testState.sync), "adAutoSkipEnabled"),
         false
     );
     assert.equal(document.getElementById("save").disabled, true, "hidden stored values do not make the form dirty");
@@ -1149,7 +1149,7 @@ test("unreleased ad auto skip is absent from settings and search while old store
     assert.equal(chrome.testState.sync.adVideoEnabled, true);
     assert.equal(chrome.testState.sync.adAutoSkipEnabled, true, "hiding does not delete the old stored value");
     assert.equal(
-        Object.hasOwn(BetterChzzkSettings.normalizeOptions(chrome.testState.sync), "adAutoSkipEnabled"),
+        Object.hasOwn(CheeseSpannerSettings.normalizeOptions(chrome.testState.sync), "adAutoSkipEnabled"),
         false
     );
     assert.equal(document.getElementById("notice").dataset.state, "saved");
@@ -1159,7 +1159,7 @@ test("ad options save independently and wait for registration before reporting r
     const chrome = createFakeChrome({ sync: { adVideoEnabled: false, adblockPopupEnabled: false } });
     let reply;
     chrome.runtime.sendMessage = (message, callback) => {
-        assert.equal(message.type, "betterchzzk:ad-video:sync");
+        assert.equal(message.type, "cheese-spanner:ad-video:sync");
         reply = callback;
     };
     const dom = createDom("options.html", "options.html", chrome);

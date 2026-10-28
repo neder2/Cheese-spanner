@@ -17,8 +17,9 @@ const SECOND = "b".repeat(32);
 const CHANNELS = "betterchzzk:live-start-channels";
 const STATE = "betterchzzk:live-start-state";
 const STATUS = "betterchzzk:live-start-status";
-const TYPE = "betterchzzk:live-start:channels";
+const TYPE = "cheese-spanner:live-start:channels";
 const ALARM = "betterchzzk:live-start";
+const API_ORIGIN = "https://api.chzzk.naver.com/*";
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const rule = (id = CHANNEL) => ({ channelId: id, channelName: "테스트 방송", notify: true, autoOpen: true });
 const snapshot = (id = 10, open = false, channelId = CHANNEL) => ({
@@ -56,6 +57,8 @@ function monitor(options = {}) {
     let response = snapshot();
     let fetcher = null;
     let granted = options.granted !== false;
+    // Site access can withhold the declared API host while chzzk.naver.com stays granted.
+    let apiGranted = options.apiAccess !== false;
     let failSet = false;
     let failNotification = false;
     let tabs = options.tabs || [];
@@ -98,7 +101,11 @@ function monitor(options = {}) {
     const chrome = {
         runtime,
         storage: { local: area(local, "local"), sync: area(sync, "sync"), onChanged: changed },
-        permissions: { contains: async () => granted, onAdded: createEvent(), onRemoved: createEvent() },
+        permissions: {
+            contains: async (query) => (query?.origins ? apiGranted : granted),
+            onAdded: createEvent(),
+            onRemoved: createEvent(),
+        },
         alarms: {
             onAlarm: createEvent(),
             get: async (name) => alarms.get(name),
@@ -154,13 +161,13 @@ function monitor(options = {}) {
     ]) {
         vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context, { filename: file });
     }
-    const settingsStore = context.BetterChzzkSettingsStore.createController({ chrome });
+    const settingsStore = context.CheeseSpannerSettingsStore.createController({ chrome });
     return {
         chrome,
         backup(message, sender = { id: "test", url: "chrome-extension://test/options.html" }) {
             return new Promise((resolve) =>
                 settingsStore.handleMessage(
-                    { type: "betterchzzk:settings-backup", version: 1, ...message },
+                    { type: "cheese-spanner:settings-backup", version: 1, ...message },
                     sender,
                     resolve
                 )
@@ -173,7 +180,7 @@ function monitor(options = {}) {
         opened,
         focused,
         requests,
-        model: context.BetterChzzkLiveStart,
+        model: context.CheeseSpannerLiveStart,
         enableNotificationsApi: () => {
             chrome.notifications = notificationApi;
         },
@@ -208,6 +215,11 @@ function monitor(options = {}) {
         async permission(value) {
             granted = value;
             chrome.permissions[value ? "onAdded" : "onRemoved"].emit({ permissions: ["notifications"] });
+            await flush();
+        },
+        async apiAccess(value) {
+            apiGranted = value;
+            chrome.permissions[value ? "onAdded" : "onRemoved"].emit({ permissions: [], origins: [API_ORIGIN] });
             await flush();
         },
         send(kind, channel, sender = { id: "test", url: "chrome-extension://test/options.html" }) {
@@ -313,6 +325,31 @@ test("notification permission and auto-open remain independent, revocation and r
     assert.equal(m.notifications.length, 1);
     await m.options({ liveStartAutoOpenEnabled: false });
     assert.equal(m.alarms.size, 0);
+});
+
+test("withheld API site access pauses checks with its own status and restored access starts from a baseline", async () => {
+    const m = monitor({ apiAccess: false });
+    await flush();
+    assert.equal(m.requests.length, 0, "a withheld host would only produce failing extension-origin requests");
+    assert.equal(m.alarms.has(ALARM), false);
+    assert.match(m.local[STATUS].error, /사이트 액세스/);
+    assert.match(m.local[STATUS].error, /api\.chzzk\.naver\.com/);
+    m.setResponse(snapshot(20, true));
+    await m.apiAccess(true);
+    assert.equal(m.requests.length, 1);
+    assert.equal(m.alarms.has(ALARM), true);
+    assert.equal(m.local[STATUS].error, "");
+    assert.equal(m.notifications.length, 0, "a broadcast already running when access returns is the baseline");
+    assert.equal(m.opened.length, 0);
+    m.setResponse(snapshot(21, true));
+    await m.tick();
+    assert.equal(m.notifications.length, 1);
+    assert.equal(m.opened.length, 1);
+    await m.apiAccess(false);
+    const requests = m.requests.length;
+    await m.tick();
+    assert.equal(m.requests.length, requests);
+    assert.match(m.local[STATUS].error, /사이트 액세스/);
 });
 
 test("turning off a feature aborts requests and suppresses late response side effects", async () => {
@@ -766,6 +803,45 @@ test("page registration enforces the channel limit and does not acknowledge fail
     assert.equal(m.local[CHANNELS], undefined);
 });
 
+test("page registration explains withheld API access and never returns raw lookup or storage errors", async () => {
+    const m = monitor({
+        local: {},
+        sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false },
+        apiAccess: false,
+    });
+    await flush();
+    const sender = { id: "test", tab: { id: 1 }, frameId: 0, url: `https://chzzk.naver.com/live/${CHANNEL}` };
+    const withheld = await m.send("set-notify", { channelId: CHANNEL, notify: true }, sender);
+    assert.equal(withheld.ok, false);
+    assert.match(withheld.error, /사이트 액세스/);
+    assert.match(withheld.error, /치지직 API 접근 허용/);
+    assert.equal(m.requests.length, 0);
+    assert.equal(m.local[CHANNELS], undefined);
+    await m.apiAccess(true);
+    m.setFetch(async () => {
+        throw new TypeError("Failed to fetch");
+    });
+    const offline = await m.send("set-notify", { channelId: CHANNEL, notify: true }, sender);
+    assert.equal(offline.ok, false);
+    assert.equal(offline.error, "채널 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    assert.equal(m.local[CHANNELS], undefined);
+    m.setFetch(async () => ({ code: 200, content: { channelId: CHANNEL, channelName: "확인된 채널" } }));
+    const save = m.chrome.storage.local.set;
+    m.chrome.storage.local.set = (values, callback) => {
+        if (!Object.hasOwn(values, CHANNELS)) return save(values, callback);
+        queueMicrotask(() => {
+            m.chrome.runtime.lastError = { message: "QUOTA_BYTES quota exceeded" };
+            callback();
+            m.chrome.runtime.lastError = null;
+        });
+    };
+    const unsaved = await m.send("set-notify", { channelId: CHANNEL, notify: true }, sender);
+    assert.equal(unsaved.ok, false);
+    assert.equal(unsaved.error, "채널 설정을 저장하지 못했어요.");
+    m.chrome.storage.local.set = save;
+    assert.equal((await m.send("set-notify", { channelId: CHANNEL, notify: true }, sender)).ok, true);
+});
+
 test("live-start controls have their own accessible options tab", async (t) => {
     const chrome = createFakeChrome();
     const dom = createDom("options.html", "options.html", chrome);
@@ -956,4 +1032,67 @@ test("channel editor validates, adds, toggles, deletes and reports failed saves 
     doc.querySelector('[data-action="remove"]').click();
     await waitForCondition(() => !m.local[CHANNELS].length && !input.disabled);
     assert.match(doc.getElementById("liveStartChannelList").textContent, /등록한 채널이 없어요/);
+});
+
+test("channel editor asks for withheld API site access in a click before looking channels up", async (t) => {
+    const m = monitor({
+        local: {},
+        sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false },
+        apiAccess: false,
+    });
+    await flush();
+    m.chrome.runtime.sendMessage = (message, callback) => {
+        void m.send(message.kind, message.channel).then(callback);
+    };
+    const requested = [];
+    m.chrome.permissions.request = (spec, callback) => {
+        requested.push(clone(spec));
+        void m.apiAccess(true).then(() => callback(true));
+    };
+    const dom = createDom("options.html", "options.html", m.chrome);
+    t.after(() => dom.window.close());
+    for (const file of [
+        ["shared", "settings.js"],
+        ["options.js"],
+        ["shared", "data.js"],
+        ["shared", "liveStart.js"],
+        ["optionsLiveStart.js"],
+    ])
+        evalRepoScript(dom, ...file);
+    const doc = dom.window.document;
+    const input = doc.getElementById("liveStartChannelInput");
+    const access = doc.getElementById("liveStartHostAccess");
+    const message = doc.getElementById("liveStartChannelMessage");
+    await waitForCondition(() => !input.disabled && !access.hidden);
+    let lookups = 0;
+    dom.window.fetch = async () => {
+        lookups++;
+        return {
+            ok: true,
+            json: async () => ({ code: 200, content: { channelId: CHANNEL, channelName: "확인된 채널" } }),
+        };
+    };
+    input.value = CHANNEL;
+    doc.getElementById("liveStartChannelAdd").click();
+    await waitForCondition(() => !input.disabled && /사이트 액세스/.test(message.textContent));
+    assert.equal(message.dataset.error, "true");
+    assert.equal(lookups, 0);
+    assert.equal(m.local[CHANNELS], undefined);
+    access.click();
+    assert.deepEqual(requested, [{ origins: [API_ORIGIN] }]);
+    await waitForCondition(() => access.hidden);
+    assert.match(message.textContent, /허용했어요/);
+    doc.getElementById("liveStartChannelAdd").click();
+    await waitForCondition(() => m.local[CHANNELS]?.length === 1 && !input.disabled);
+    assert.equal(lookups, 1);
+    await m.apiAccess(false);
+    await waitForCondition(() => !access.hidden);
+    input.value = SECOND;
+    doc.getElementById("liveStartChannelAdd").click();
+    await waitForCondition(() => !input.disabled && /사이트 액세스/.test(message.textContent));
+    // Access restored on the browser's extension page clears the guidance it no longer needs.
+    await m.apiAccess(true);
+    await waitForCondition(() => access.hidden);
+    assert.equal(message.textContent, "");
+    assert.equal(lookups, 1);
 });

@@ -17,15 +17,15 @@
  *   followingListMaxRows가 있으면 목록 안 스크롤로 표시 높이만 제한한다.
  * 저장 경계: chrome.storage.sync `betterchzzk:following-folders:v1`은 직접 읽고 변경을 구독만 한다. 쓰기는
  *   신뢰된 사용자 클릭·키·드롭에서 만든 개별 명령을 마지막으로 확인한 원본값에 적용해
- *   BetterChzzk.utils.settingsStoreSet("sync", …, 기대값)으로만 요청한다. 워커가 conflict로 거절하면 받은 최신
+ *   CheeseSpanner.utils.settingsStoreSet("sync", …, 기대값)으로만 요청한다. 워커가 conflict로 거절하면 받은 최신
  *   값에 같은 명령을 제한된 횟수만 다시 적용하고(되돌리기는 다시 적용하지 않는다), 저장 성공이나
  *   storage.onChanged로 확인한 값만 화면에 반영한다.
- * 의존: BetterChzzkFollowingFolders, BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
+ * 의존: CheeseSpannerFollowingFolders, CheeseSpannerSettings.normalizeOptions, CheeseSpanner.utils(bindFeatureOptions,
  *   createMutationObserverSync, ensureUiTheme(선택), injectStyleOnce, normSpace, normalizeChzzkChannelId,
  *   normalizeChzzkImageUrl, settingsStoreSet, startPageChangeDetection, startStorageChangeListener, storageGet),
- *   BetterChzzk.selectors(CHZZK, queryChain).
+ *   CheeseSpanner.selectors(CHZZK, queryChain).
  * 옵션 키: followingFoldersEnabled, followingListMaxRows.
- * DOM 마커: #betterchzzk-following-folders-*, data-bcff-* 속성.
+ * DOM 마커: #cheese-spanner-following-folders-*, data-bcff-* 속성.
  */
 (() => {
     const {
@@ -43,9 +43,9 @@
         parseStoredValue,
         statesEqual,
         toExpected,
-    } = globalThis.BetterChzzkFollowingFolders;
-    const { normalizeOptions } = BetterChzzkSettings;
-    const { CHZZK, queryChain } = BetterChzzk.selectors;
+    } = globalThis.CheeseSpannerFollowingFolders;
+    const { normalizeOptions } = CheeseSpannerSettings;
+    const { CHZZK, queryChain } = CheeseSpanner.selectors;
     const {
         bindFeatureOptions,
         createMutationObserverSync,
@@ -56,16 +56,16 @@
         startPageChangeDetection,
         startStorageChangeListener,
         storageGet,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
 
-    const STYLE_ID = "betterchzzk-following-folders-style";
-    const ROWS_STYLE_ID = "betterchzzk-following-folders-rows-style";
+    const STYLE_ID = "cheese-spanner-following-folders-style";
+    const ROWS_STYLE_ID = "cheese-spanner-following-folders-rows-style";
     // 2026-10-11까지 쓰던 새 폴더 버튼의 표식이에요. 재주입 전 문서에 남은 버튼만 지워요.
     const LEGACY_MANAGE_ATTR = "data-bcff-manage-button";
     const STATUS_ATTR = "data-bcff-status";
-    const LAYER_ID = "betterchzzk-following-folders-layer";
-    const DRAG_CARD_ID = "betterchzzk-following-folders-drag-card";
-    const TOAST_ID = "betterchzzk-following-folders-toast";
+    const LAYER_ID = "cheese-spanner-following-folders-layer";
+    const DRAG_CARD_ID = "cheese-spanner-following-folders-drag-card";
+    const TOAST_ID = "cheese-spanner-following-folders-toast";
     const LIST_ATTR = "data-bcff-list";
     const ORDER_ATTR = "data-bcff-order";
     const HIDDEN_ATTR = "data-bcff-hidden";
@@ -84,7 +84,7 @@
     const PIN_SOURCE_ROW_ATTR = "data-bcsf-source-row";
     const PIN_MODE_BUTTON_ATTR = "data-bcsf-pin-mode-button";
     // 폴더 순서 끌기에만 쓰는 확장 전용 형식이에요. 링크가 없어 사이드바 밖 대상은 받지 않아요.
-    const FOLDER_DRAG_TYPE = "application/x-betterchzzk-following-folder";
+    const FOLDER_DRAG_TYPE = "application/x-cheese-spanner-following-folder";
     // 폴더 구역마다 머리 행 1칸과 고정 순위 4칸을 둔다. 폴더 밖 채널은 항상 마지막 구역이다.
     const SECTION_SLOTS = 5;
     const REST_SECTION = MAX_FOLDERS;
@@ -381,7 +381,7 @@ ${ORDER_RULES}
             });
         },
         write(state, expectedRawValue) {
-            const settingsStoreSet = BetterChzzk.utils.settingsStoreSet;
+            const settingsStoreSet = CheeseSpanner.utils.settingsStoreSet;
             if (typeof settingsStoreSet !== "function") {
                 return Promise.reject(Object.assign(new Error("settings store unavailable"), { code: "unavailable" }));
             }
@@ -633,7 +633,7 @@ ${ORDER_RULES}
                 (button) =>
                     !button.hasAttribute(LEGACY_MANAGE_ATTR) &&
                     !button.hasAttribute(PIN_MODE_BUTTON_ATTR) &&
-                    !button.closest("[id^='betterchzzk-']") &&
+                    !button.closest("[id^='cheese-spanner-']") &&
                     REFRESH_LABEL_RE.test(normSpace(button.getAttribute("aria-label")))
             ) || null
         );
@@ -714,7 +714,7 @@ ${ORDER_RULES}
         const parsed = parseStoredValue(rawValue);
         if (parsed.ok) setFolderState(parsed.state, "ready");
         else {
-            console.warn("[Better Chzzk] 저장된 팔로잉 폴더 정보가 올바르지 않아 표시하지 않았어요.", parsed.error);
+            console.warn("[Cheese Spanner] 저장된 팔로잉 폴더 정보가 올바르지 않아 표시하지 않았어요.", parsed.error);
             setFolderState(null, "corrupt");
         }
     }
@@ -734,7 +734,7 @@ ${ORDER_RULES}
             },
             (error) => {
                 if (!foldersActive || generation !== foldersGeneration || epoch !== changeEpoch) return;
-                console.warn("[Better Chzzk] 팔로잉 폴더 정보 읽기 실패", error);
+                console.warn("[Cheese Spanner] 팔로잉 폴더 정보 읽기 실패", error);
                 // 마지막 정상 상태는 읽기 오류 대비로 유지하고, 처음 읽기 실패만 오류 상태로 둔다.
                 if (stateStatus === "ready" || stateStatus === "corrupt") return;
                 stateStatus = "read-error";
@@ -855,7 +855,7 @@ ${ORDER_RULES}
                 return result;
             })
             .catch((error) => {
-                console.warn("[Better Chzzk] 팔로잉 폴더 변경 처리 실패", error);
+                console.warn("[Cheese Spanner] 팔로잉 폴더 변경 처리 실패", error);
                 if (!isCurrentGeneration(generation)) return { ok: false, error: "stopped" };
                 if (removeOptimistic(entry)) rebuildStates({ animate: true });
                 notify(SAVE_FAILED_MESSAGE, "error");
@@ -1316,7 +1316,7 @@ ${ORDER_RULES}
     function findNativeListButton() {
         if (!currentSection) return null;
         for (const button of currentSection.querySelectorAll("button[aria-expanded]")) {
-            if (currentList?.contains(button) || button.closest("[id^='betterchzzk-']")) continue;
+            if (currentList?.contains(button) || button.closest("[id^='cheese-spanner-']")) continue;
             if (NATIVE_LIST_LABELS.has(normSpace(button.getAttribute("aria-label")))) return button;
         }
         return null;
@@ -2764,7 +2764,7 @@ ${ORDER_RULES}
     }
 
     function ensureStyle() {
-        BetterChzzk.utils.ensureUiTheme?.();
+        CheeseSpanner.utils.ensureUiTheme?.();
         const existing = document.getElementById(STYLE_ID);
         if (existing && existing.textContent !== STYLE_TEXT) existing.remove();
         injectStyleOnce(STYLE_ID, STYLE_TEXT);

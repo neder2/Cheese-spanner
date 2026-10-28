@@ -22,7 +22,7 @@ function fixture(t, { defaultEnabled = false } = {}) {
     };
     w.cancelAnimationFrame = (id) => frames.delete(id);
     const listeners = new Set();
-    w.BetterChzzkSettings = {
+    w.CheeseSpannerSettings = {
         normalizeOptions: () => ({ adblockPopupEnabled: defaultEnabled }),
         getOptions(callback) {
             listeners.add(callback);
@@ -114,7 +114,7 @@ for (const kind of ["own", "other"]) {
                 await flush();
                 assert.equal(p.clicks(), 0);
                 assert.equal(p.el.isConnected, true);
-                assert.equal(p.el.hasAttribute("data-betterchzzk-adblock-popup-closing"), false);
+                assert.equal(p.el.hasAttribute("data-cheese-spanner-adblock-popup-closing"), false);
                 assert.equal(f.w.getComputedStyle(p.el).visibility, "visible");
                 assert.equal(f.w.document.body.style.cssText, bodyStyle);
                 assert.deepEqual(p.actions, { profile: 0, report: 0, block: 0 });
@@ -134,7 +134,7 @@ for (const shop of [false, true]) {
             await flush();
             assert.equal(p.clicks(), 0);
             assert.equal(p.el.isConnected, true);
-            assert.equal(p.el.hasAttribute("data-betterchzzk-adblock-popup-closing"), false);
+            assert.equal(p.el.hasAttribute("data-cheese-spanner-adblock-popup-closing"), false);
             assert.deepEqual(p.actions, { report: 0, block: 0, submit: 0 });
         });
     }
@@ -157,7 +157,7 @@ test("normal sibling popups do not exempt an ad notice or conceal their shared b
     for (const p of [profile, report]) {
         assert.equal(p.clicks(), 0);
         assert.equal(p.el.isConnected, true);
-        assert.equal(p.el.hasAttribute("data-betterchzzk-adblock-popup-closing"), false);
+        assert.equal(p.el.hasAttribute("data-cheese-spanner-adblock-popup-closing"), false);
     }
     assert.equal(f.w.getComputedStyle(backdrop).visibility, "visible");
     assert.deepEqual(report.actions, { report: 0, block: 0, submit: 0 });
@@ -177,7 +177,7 @@ test("reused profile roots follow their current local structure without a perman
     p.el.append(p.wrapper);
     await flush();
     assert.equal(p.clicks(), 1);
-    assert.equal(p.el.hasAttribute("data-betterchzzk-adblock-popup-closing"), false);
+    assert.equal(p.el.hasAttribute("data-cheese-spanner-adblock-popup-closing"), false);
     p.wrapper.remove();
     await flush();
     f.frame();
@@ -204,7 +204,7 @@ for (const [attribute, invalid] of [
         input.setAttribute(attribute, original);
         await flush();
         assert.equal(p.clicks(), 1);
-        assert.equal(p.el.hasAttribute("data-betterchzzk-adblock-popup-closing"), false);
+        assert.equal(p.el.hasAttribute("data-cheese-spanner-adblock-popup-closing"), false);
         input.setAttribute(attribute, invalid);
         await flush();
         f.frame();
@@ -300,7 +300,7 @@ test("saved options load before any default-enabled popup action", async (t) => 
     const p = f.popup();
     await flush();
     assert.equal(p.clicks(), 0);
-    assert.equal(p.el.hasAttribute("data-betterchzzk-adblock-popup-closing"), false);
+    assert.equal(p.el.hasAttribute("data-cheese-spanner-adblock-popup-closing"), false);
     f.options(false);
     await flush();
     assert.equal(p.clicks(), 0);
@@ -339,7 +339,7 @@ test("both measured close labels count toward ambiguity", async (t) => {
     f.options(true);
     await flush();
     assert.equal(p.clicks(), 0);
-    assert.equal(p.el.hasAttribute("data-betterchzzk-adblock-popup-closing"), false);
+    assert.equal(p.el.hasAttribute("data-cheese-spanner-adblock-popup-closing"), false);
 });
 
 const visibilityCycles = {
@@ -552,7 +552,7 @@ test("SPA changes and replaced buttons use current popup state without duplicate
     f.frame();
     assert.equal(p.clicks(), 1);
     f.w.history.pushState({}, "", "/video/123");
-    f.w.dispatchEvent(new f.w.Event("betterchzzk:routechange"));
+    f.w.dispatchEvent(new f.w.Event("cheese-spanner:routechange"));
     await flush();
     f.frame();
     assert.equal(p.clicks(), 2);
@@ -599,7 +599,7 @@ test("native async removal releases concealment and a thrown click restores imme
     assert.equal(f.w.getComputedStyle(p.el).visibility, "hidden");
     await flush();
     assert.equal(p.el.isConnected, false);
-    assert.equal(p.el.hasAttribute("data-betterchzzk-adblock-popup-closing"), false);
+    assert.equal(p.el.hasAttribute("data-cheese-spanner-adblock-popup-closing"), false);
     f.frame();
     const failing = f.popup({ close: false });
     let attempts = 0;

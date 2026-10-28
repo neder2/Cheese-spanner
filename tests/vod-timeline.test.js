@@ -17,7 +17,7 @@ function evalRepoScript(...parts) {
 evalRepoScript("shared", "data.js");
 evalRepoScript("shared", "vodTimeline.js");
 
-const { mergeBroadcastSegment, normalizeVideoDetail, resolveSegmentStartInfo } = dom.window.BetterChzzk.vodTimeline;
+const { mergeBroadcastSegment, normalizeVideoDetail, resolveSegmentStartInfo } = dom.window.CheeseSpanner.vodTimeline;
 const SPLIT_SECONDS = 17 * 60 * 60;
 const SPLIT_MS = SPLIT_SECONDS * 1000;
 const START_TEXT = "2026-07-10T19:01:32+09:00";
@@ -299,9 +299,9 @@ test("mergeBroadcastSegment deduplicates video numbers, fills only blank titles,
 });
 
 test("vodTimeline public API is frozen and duplicate evaluation is idempotent", () => {
-    const api = dom.window.BetterChzzk.vodTimeline;
+    const api = dom.window.CheeseSpanner.vodTimeline;
     evalRepoScript("shared", "vodTimeline.js");
 
     assert.equal(Object.isFrozen(api), true);
-    assert.equal(dom.window.BetterChzzk.vodTimeline, api);
+    assert.equal(dom.window.CheeseSpanner.vodTimeline, api);
 });

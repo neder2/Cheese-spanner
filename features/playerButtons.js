@@ -5,7 +5,7 @@
 (() => {
     "use strict";
 
-    const { bindFeatureOptions, injectStyleOnce, onReady } = BetterChzzk.utils;
+    const { bindFeatureOptions, injectStyleOnce, onReady } = CheeseSpanner.utils;
     const targets = [
         ["playerClipHidden", ".pzp-pc__bottom-buttons-right button.custom__clip-button"],
         ["playerPipHidden", ".pzp-pc__bottom-buttons-right button.pzp-pc__pip-button"],
@@ -14,7 +14,7 @@
 
     function syncStyles() {
         for (const [key, selector] of targets) {
-            const id = `betterchzzk-player-${key}-style`;
+            const id = `cheese-spanner-player-${key}-style`;
             if (!options[key]) {
                 document.getElementById(id)?.remove();
             } else if (document.documentElement) {

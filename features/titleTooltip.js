@@ -6,12 +6,12 @@
  *   150ms 지연 후 커스텀 툴팁을 표시한다. 숨김 텍스트(sr-only 등)는 제외하고 읽을 수 있는
  *   텍스트만 모아 전체 제목으로 사용하며, 스크롤/리사이즈 시 위치를 재계산한다.
  *   라우트 변경 시 툴팁을 숨기고, 옵션 변경에 따라 리스너를 설치/제거한다.
- * 의존: BetterChzzkSettings(shared/settings.js), BetterChzzk.utils(content.js, 공통 테마 ensureUiTheme은 shared/uiTheme.js)
+ * 의존: CheeseSpannerSettings(shared/settings.js), CheeseSpanner.utils(content.js, 공통 테마 ensureUiTheme은 shared/uiTheme.js)
  * 옵션 키: titleTooltipEnabled
  * DOM 마커: .bctt-tooltip, data-bctt-tooltip, data-bctt-active
  */
 (() => {
-    const STYLE_ID = "betterchzzk-title-tooltip-style";
+    const STYLE_ID = "cheese-spanner-title-tooltip-style";
     const TOOLTIP_CLASS = "bctt-tooltip";
     const TOOLTIP_ATTR = "data-bctt-tooltip";
     const ACTIVE_ATTR = "data-bctt-active";
@@ -58,7 +58,7 @@
 }
 `;
 
-    let featureOptions = BetterChzzkSettings.normalizeOptions();
+    let featureOptions = CheeseSpannerSettings.normalizeOptions();
     let tooltip = null;
     let activeTitleEl = null;
     let pendingTitleEl = null;
@@ -67,14 +67,14 @@
     let listenersInstalled = false;
     let removePageChangeDetection = null;
 
-    const { bindFeatureOptions, injectStyleOnce, normSpace, onReady, startPageChangeDetection } = BetterChzzk.utils;
+    const { bindFeatureOptions, injectStyleOnce, normSpace, onReady, startPageChangeDetection } = CheeseSpanner.utils;
 
     function isFeatureEnabled() {
         return featureOptions.titleTooltipEnabled;
     }
 
     function injectStyle() {
-        BetterChzzk.utils.ensureUiTheme?.();
+        CheeseSpanner.utils.ensureUiTheme?.();
         injectStyleOnce(STYLE_ID, STYLE_TEXT);
     }
 

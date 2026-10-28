@@ -4,26 +4,26 @@
  *
  * 동작 위치: 재생 라우트(VOD/라이브) 하단 컨트롤 바 부근 DOM. isolated world, content.js 이후 로드.
  * 하는 일:
- *   - #betterchzzk-skip-pill(초 단위 스킵 값 표시/조절 pill)과 #betterchzzk-live-fast-forward(라이브 빨리감기
+ *   - #cheese-spanner-skip-pill(초 단위 스킵 값 표시/조절 pill)과 #cheese-spanner-live-fast-forward(라이브 빨리감기
  *     버튼)를 좌측 버튼 컨테이너 또는 시간 표시 요소 옆에 주입·재배치한다.
  *   - ArrowLeft/ArrowRight로 skipSeconds만큼, comma/period로 1/60초(60fps 기준) 프레임 단위 seek를 처리한다.
  *     방향키를 직접 쓰는 위젯(볼륨 슬라이더·설정 메뉴 항목 등, 탐색 바 제외)에 초점이 있으면 방향키를 양보한다.
  *   - 라이브 일시정지 중 버퍼가 밀려도 사용자가 멈춘 지점을 기억했다가 재생 재개 시 그 지점으로 복원하고,
  *     라이브 엣지에서 벗어난(타임시프트) 상태를 감지해 사용자 seek 제스처가 아니면 제한된 횟수만 원위치로 되돌린다.
  *   - MutationObserver와 페이지 전환 감지로 라우트가 바뀔 때마다 pill/버튼/가드를 재부착한다.
- * 의존: 전역 BetterChzzkSettings(DEFAULT_SKIP_SECONDS, normalizeSkipSeconds,
- *   normalizeOptions), 전역 BetterChzzk.utils(bindFeatureOptions, createMutationObserverSync,
+ * 의존: 전역 CheeseSpannerSettings(DEFAULT_SKIP_SECONDS, normalizeSkipSeconds,
+ *   normalizeOptions), 전역 CheeseSpanner.utils(bindFeatureOptions, createMutationObserverSync,
  *   createThrottledDomSync, getVisibleArea, getVideoViewportRect, isEditableTarget, isLiveRoute, isPlaybackRoute,
  *   isVisible, isExtensionPreviewVideo,
  *   mutationMatchesSelector, normalizeCompact, onReady, pickLargestVisible, startPageChangeDetection,
  *   injectStyleOnce), chrome.storage.sync.
  * 옵션 키: skipControlEnabled, skipKeyboardEnabled, skipPillEnabled, skipLivePillEnabled,
  *   skipLivePauseResumeEnabled, skipSeconds, skipWheelStep, skipWheelShiftStep, skipWheelAltStep.
- * 공개 API: BetterChzzk.skipControl.markPlaybackToggleIntent()는 다른 재생 키 소유자가 확정한 라이브
+ * 공개 API: CheeseSpanner.skipControl.markPlaybackToggleIntent()는 다른 재생 키 소유자가 확정한 라이브
  *   일시정지 의도를 재개 가드에 전달한다.
- * DOM 마커: id="betterchzzk-skip-pill", id="betterchzzk-live-fast-forward",
- *   id="betterchzzk-skip-style"(주입 스타일), data-bctm-text-patched(라이브 엣지 버튼 패치 표시),
- *   data-bc-placement(pill 배치 모드), data-better-chzzk-live-fast-forward.
+ * DOM 마커: id="cheese-spanner-skip-pill", id="cheese-spanner-live-fast-forward",
+ *   id="cheese-spanner-skip-style"(주입 스타일), data-bctm-text-patched(라이브 엣지 버튼 패치 표시),
+ *   data-bc-placement(pill 배치 모드), data-cheese-spanner-live-fast-forward.
  * 구조:
  *   - 상수/상태 선언, isSkipEnabled/isPillEnabled 등 기능 on/off 판정 함수.
  *   - 라이브 엣지·재생 토글·시크 제스처 버튼을 텍스트/신호로 식별하는 looksLike*, containsAnyTerm 계열.
@@ -38,10 +38,10 @@
  *   - installRuntime/teardownRuntime/applyOptions: 옵션 변경과 라우트 변경에 따른 전체 생명주기 관리.
  */
 (() => {
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
-    const SKIP_PILL_ID = "betterchzzk-skip-pill";
-    const LIVE_FAST_FORWARD_BUTTON_ID = "betterchzzk-live-fast-forward";
-    const SKIP_STYLE_ID = "betterchzzk-skip-style";
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
+    const SKIP_PILL_ID = "cheese-spanner-skip-pill";
+    const LIVE_FAST_FORWARD_BUTTON_ID = "cheese-spanner-live-fast-forward";
+    const SKIP_STYLE_ID = "cheese-spanner-skip-style";
     const VOD_TIME_SELECTOR = "div.pzp-vod-time, div.pzp-pc__vod-time, div.pzp-pc-vod-time";
     const LIVE_TIME_SELECTOR = "div.pzp-live-time, div.pzp-pc__live-time, div.pzp-pc-live-time";
     const TIME_SELECTOR = `${VOD_TIME_SELECTOR}, ${LIVE_TIME_SELECTOR}`;
@@ -92,7 +92,7 @@
     // 치지직 플레이어는 프레임레이트를 노출하지 않으므로 주류인 1080p60 기준(60fps)으로 이동한다.
     const FRAME_STEP_SECONDS = 1 / 60;
     const OWNED_LIVE_CONTROL_IDS = new Set([SKIP_PILL_ID, LIVE_FAST_FORWARD_BUTTON_ID]);
-    const { DEFAULT_SKIP_SECONDS, normalizeSkipSeconds, normalizeOptions } = BetterChzzkSettings;
+    const { DEFAULT_SKIP_SECONDS, normalizeSkipSeconds, normalizeOptions } = CheeseSpannerSettings;
     const {
         bindFeatureOptions,
         createMutationObserverSync,
@@ -110,7 +110,7 @@
         pickLargestVisible,
         settingsStoreSet,
         startPageChangeDetection,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
 
     let featureOptions = normalizeOptions();
     let skipSeconds = featureOptions.skipSeconds;
@@ -222,7 +222,7 @@
     function isOwnedLiveControl(el) {
         return (
             el instanceof HTMLElement &&
-            (OWNED_LIVE_CONTROL_IDS.has(el.id) || el.dataset?.betterChzzkLiveFastForward === "1")
+            (OWNED_LIVE_CONTROL_IDS.has(el.id) || el.dataset?.cheeseSpannerLiveFastForward === "1")
         );
     }
 
@@ -992,7 +992,7 @@
     }
 
     function injectSkipStyleOnce() {
-        BetterChzzk.utils.injectStyleOnce(
+        CheeseSpanner.utils.injectStyleOnce(
             SKIP_STYLE_ID,
             `
 #${SKIP_PILL_ID}{
@@ -1289,7 +1289,7 @@
         setAttributeIfChanged(button, "label", LIVE_FAST_FORWARD_LABEL);
         setAttributeIfChanged(button, "aria-label", LIVE_FAST_FORWARD_LABEL);
         setAttributeIfChanged(button, "tooltip", LIVE_FAST_FORWARD_LABEL);
-        BetterChzzk.utils.syncPlayerButtonTooltip(button, LIVE_FAST_FORWARD_LABEL);
+        CheeseSpanner.utils.syncPlayerButtonTooltip(button, LIVE_FAST_FORWARD_LABEL);
         if (button.hasAttribute("title")) button.removeAttribute("title");
     }
 
@@ -1302,7 +1302,7 @@
 
         if (button.disabled !== disabled) button.disabled = disabled;
         syncLiveFastForwardButtonLabels(button);
-        button.dataset.betterChzzkReady = available ? "1" : "0";
+        button.dataset.cheeseSpannerReady = available ? "1" : "0";
     }
 
     function seekLiveToBufferedEnd(video = getMainVideoElement()) {
@@ -1355,7 +1355,7 @@
         button.id = LIVE_FAST_FORWARD_BUTTON_ID;
         button.type = "button";
         syncLiveFastForwardButtonLabels(button);
-        button.dataset.betterChzzkLiveFastForward = "1";
+        button.dataset.cheeseSpannerLiveFastForward = "1";
         button.innerHTML = `
 <ui-next-media-icon class="bc-live-ff-icon" aria-hidden="true">
   <svg viewBox="0 0 24 24" focusable="false">

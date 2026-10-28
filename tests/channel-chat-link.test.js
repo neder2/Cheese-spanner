@@ -8,7 +8,7 @@ const { JSDOM } = require("jsdom");
 // 공식 /live/{channelId}/chat에서 채팅 화면이 열리는 것을 비로그인 상태로 확인했다.
 const CHANNEL_A = "a".repeat(32);
 const CHANNEL_B = "b".repeat(32);
-const LINK_ID = "betterchzzk-channel-chat-link";
+const LINK_ID = "cheese-spanner-channel-chat-link";
 function channelMarkup(id) {
     return `<a href="https://game.naver.com/profile/${id}">프로필</a>
     <div role="tablist"><button role="tab" type="button">홈</button>
@@ -98,7 +98,7 @@ test("chat link survives delayed tabs and remounts, and option changes clean up 
     await waitFor(() => document.getElementById(LINK_ID));
     setEnabled(false);
     assert.equal(document.getElementById(LINK_ID), null);
-    assert.equal(document.getElementById("betterchzzk-channel-chat-link-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-channel-chat-link-style"), null);
     main.innerHTML = "";
     setEnabled(true);
     assert.equal(document.getElementById(LINK_ID), null);

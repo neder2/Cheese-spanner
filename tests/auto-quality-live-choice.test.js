@@ -33,10 +33,10 @@ function fixture(t, initialPlayback = {}) {
     };
     const state = (enabled, quality = "1080p") => {
         w.document.documentElement.setAttribute(
-            "data-betterchzzk-auto-quality-state",
+            "data-cheese-spanner-auto-quality-state",
             JSON.stringify({ enabled, quality })
         );
-        w.dispatchEvent(new w.Event("betterchzzk:auto-quality:state"));
+        w.dispatchEvent(new w.Event("cheese-spanner:auto-quality:state"));
     };
     const mount = ({ started = true, paused = false, readyState = 4 } = {}) => {
         const host = w.document.createElement("div");
@@ -130,18 +130,18 @@ function fixture(t, initialPlayback = {}) {
     w.eval(source);
     const request = (quality = "1080p") => {
         w.document.documentElement.setAttribute(
-            "data-betterchzzk-auto-quality-request",
+            "data-cheese-spanner-auto-quality-request",
             JSON.stringify({ requestId: `${Date.now()}:${Math.random()}`, quality })
         );
-        w.dispatchEvent(new w.Event("betterchzzk:auto-quality:apply"));
-        return JSON.parse(w.document.documentElement.getAttribute("data-betterchzzk-auto-quality-result"));
+        w.dispatchEvent(new w.Event("cheese-spanner:auto-quality:apply"));
+        return JSON.parse(w.document.documentElement.getAttribute("data-cheese-spanner-auto-quality-result"));
     };
     let disableIsolated = null;
     const loadIsolated = async () => {
         await flush();
         let preferences = { autoQualityEnabled: true, autoQualityPreferred: "1080p", adblockPopupEnabled: false };
         const listeners = new Set();
-        w.BetterChzzkSettings = {
+        w.CheeseSpannerSettings = {
             DEFAULT_QUALITY: "1080p",
             normalizeOptions: () => ({ ...preferences }),
             getOptions: (callback) => callback({ ...preferences }),
@@ -178,7 +178,7 @@ test("both worlds coalesce saved option changes and stop polling while the nativ
     await f.runNextTimer();
     await f.runNextTimer();
     assert.equal(f.timers.size, 0, "neither world polls for playing");
-    const result = JSON.parse(f.w.document.documentElement.getAttribute("data-betterchzzk-auto-quality-result"));
+    const result = JSON.parse(f.w.document.documentElement.getAttribute("data-cheese-spanner-auto-quality-result"));
     assert.equal(result.waitForEvent, true);
     f.initial.startPlayback();
     await f.runNextTimer();
@@ -428,7 +428,7 @@ test("route and DOM replacement detach old menu hooks; late completion cannot co
     );
     f.request();
     f.w.history.pushState({}, "", "/live/measured-b");
-    f.w.dispatchEvent(new f.w.Event("betterchzzk:routechange"));
+    f.w.dispatchEvent(new f.w.Event("cheese-spanner:routechange"));
     assert.equal(p.pane.$dispatch, p.original);
     p.host.remove();
     const next = f.mount();
@@ -512,8 +512,10 @@ async function drain(f) {
 }
 
 const selectedHeight = (p) => p.tracks.find((track) => track.selected).height;
-const lastResult = (f) => JSON.parse(f.w.document.documentElement.getAttribute("data-betterchzzk-auto-quality-result"));
-const lastStatus = (f) => JSON.parse(f.w.document.documentElement.getAttribute("data-betterchzzk-auto-quality-status"));
+const lastResult = (f) =>
+    JSON.parse(f.w.document.documentElement.getAttribute("data-cheese-spanner-auto-quality-result"));
+const lastStatus = (f) =>
+    JSON.parse(f.w.document.documentElement.getAttribute("data-cheese-spanner-auto-quality-status"));
 
 function chooseInNativeMenu(p, height) {
     for (const track of p.tracks) track.selected = track.height === height;
@@ -626,7 +628,7 @@ test("a saved quality, a replaced player, re-enabling and a route change still a
     chooseInNativeMenu(next, 480);
 
     f.w.history.pushState({}, "", "/live/measured-b");
-    f.w.dispatchEvent(new f.w.Event("betterchzzk:routechange"));
+    f.w.dispatchEvent(new f.w.Event("cheese-spanner:routechange"));
     assert.equal(f.request("720p").status, "pending");
     await drain(f);
     assert.deepEqual(next.selections, ["muxed-720", "muxed-720", "muxed-720"], "a new route is a new entry");
@@ -642,7 +644,7 @@ test("the previous stream left in the same player is not recorded as the next ro
 
     // The URL changes first; the isolated world asks at once while the old stream still shows 1080p.
     f.w.history.pushState({}, "", "/live/measured-b");
-    f.w.dispatchEvent(new f.w.Event("betterchzzk:routechange"));
+    f.w.dispatchEvent(new f.w.Event("cheese-spanner:routechange"));
     assert.equal(f.request().status, "already");
     await drain(f);
 

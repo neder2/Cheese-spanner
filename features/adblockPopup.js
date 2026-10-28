@@ -11,9 +11,9 @@
 (() => {
     const POPUP =
         '[role="alertdialog"], [role="dialog"], [aria-modal="true"], [class^="popup_container__"], [class*=" popup_container__"]';
-    const CLOSING_ATTR = "data-betterchzzk-adblock-popup-closing";
+    const CLOSING_ATTR = "data-cheese-spanner-adblock-popup-closing";
     const BACKDROP = '[class^="_dimmed_"], [class*=" _dimmed_"]';
-    const NOTICE_REQUEST = "betterchzzk:adblock-notice-confirm";
+    const NOTICE_REQUEST = "cheese-spanner:adblock-notice-confirm";
     const NOTICE_AREA = "ad_blocking_info_layer";
     const NOTICE = `[role="alertdialog"][aria-modal="true"][data-nlog-area="${NOTICE_AREA}"]`;
     // 2026-10-11·10-17 안내의 식별자·도움말과 의미를 유지하며 조사·문장 분리만 허용한다.
@@ -34,7 +34,7 @@
     const NOTICE_ROUTE = /^\/(?:live\/[^/]+|video\/\d+)\/?$/;
     // dab 반영과 프리롤 AD_NOT_DISPLAYED가 각각 한 번 켤 수 있다. 그 이상 반복되면 재생 오류일 수 있어 남긴다.
     const NOTICE_CONFIRM_LIMIT = 2;
-    const NOTICE_RESULT_ATTR = "data-betterchzzk-adblock-notice-result";
+    const NOTICE_RESULT_ATTR = "data-cheese-spanner-adblock-notice-result";
     // 2026-10-11 Edge 실측에서 호출 뒤 React 제거까지 2.5~3.9ms였다. 페이지 로딩 중 긴 작업을 감안한 상한이다.
     const NOTICE_REMOVAL_WAIT_MS = 1000;
     const {
@@ -46,7 +46,7 @@
         startPageChangeDetection,
         injectStyleOnce,
         hasNativeHideMutation,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
     let options = null;
     let observer = null;
     let removeRouteListener = null;
@@ -77,7 +77,7 @@
 
     function ensureConcealStyle() {
         injectStyleOnce(
-            "betterchzzk-adblock-popup-style",
+            "cheese-spanner-adblock-popup-style",
             `
 [${CLOSING_ATTR}="1"] { visibility:hidden !important; opacity:0 !important; pointer-events:none !important; }
 `
@@ -134,10 +134,10 @@
 
     function publishReady() {
         document.documentElement.setAttribute(
-            "data-betterchzzk-adblock-popup-ready",
+            "data-cheese-spanner-adblock-popup-ready",
             JSON.stringify({ href: location.href, at: Date.now() })
         );
-        window.dispatchEvent(new Event("betterchzzk:adblock-popup:ready"));
+        window.dispatchEvent(new Event("cheese-spanner:adblock-popup:ready"));
     }
 
     function isAdblockPopupLike(popup) {

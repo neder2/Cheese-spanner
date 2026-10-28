@@ -9,7 +9,7 @@ const {
     waitForCondition,
 } = require("./helpers/extension-page-fixture.js");
 
-const store = globalThis.BetterChzzkWatchHistoryStore;
+const store = globalThis.CheeseSpannerWatchHistoryStore;
 const NOW = Date.parse("2026-09-18T12:00:00+09:00");
 const DAY = "2026-09-18";
 
@@ -202,7 +202,7 @@ async function collectorFixture(t, { deferred = false } = {}) {
     ])
         evalRepoScript(dom, file);
     const captured = [];
-    const collector = dom.window.BetterChzzk.watchActivity.createCollector((value, channel) =>
+    const collector = dom.window.CheeseSpanner.watchActivity.createCollector((value, channel) =>
         captured.push({ value, channel })
     );
     const config = { channelId: "channel-a", since: NOW, chat: true, donations: true };

@@ -38,8 +38,8 @@
         heading.dataset.bcugHeading = "";
         const title = element("h2", `치즈 스패너 ${guide.version} ${guide.title}`);
         title.id = root.hasAttribute("data-bcug-toast")
-            ? "betterchzzk-update-toast-title"
-            : "betterchzzk-update-guide-title";
+            ? "cheese-spanner-update-toast-title"
+            : "cheese-spanner-update-guide-title";
         const close = element("button", "×");
         close.type = "button";
         close.dataset.bcugAction = "close";
@@ -136,5 +136,5 @@
             },
         };
     }
-    globalThis.BetterChzzkUpdateGuideView = Object.freeze({ create, renderContent, CSS_TEXT, WIDTH });
+    globalThis.CheeseSpannerUpdateGuideView = Object.freeze({ create, renderContent, CSS_TEXT, WIDTH });
 })();

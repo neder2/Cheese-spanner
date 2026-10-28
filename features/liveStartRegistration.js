@@ -1,9 +1,9 @@
 /* Header channel search and device-local live notification registration. Isolated world. */
 (() => {
-    const ID = "betterchzzk-live-start-registration";
+    const ID = "cheese-spanner-live-start-registration";
     const PANEL_ID = ID + "-panel";
     const STYLE_ID = ID + "-style";
-    const { CHANNELS_KEY, MAX_CHANNELS, normalizeChannels } = globalThis.BetterChzzkLiveStart;
+    const { CHANNELS_KEY, MAX_CHANNELS, normalizeChannels } = globalThis.CheeseSpannerLiveStart;
     const {
         bindFeatureOptions,
         createMutationObserverSync,
@@ -14,7 +14,7 @@
         startPageChangeDetection,
         startStorageChangeListener,
         storageGet,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
     const part = (name) => '[class^="_' + name + '_"], [class*=" _' + name + '_"]';
     const WATCH = "#" + ID + ", " + part("container") + ", " + part("section");
     let running = false,
@@ -124,7 +124,7 @@
         try {
             chrome.runtime.sendMessage(
                 {
-                    type: "betterchzzk:live-start:channels",
+                    type: "cheese-spanner:live-start:channels",
                     kind: action.kind,
                     channel: { channelId: id, ...(!removing ? { [action.key]: enabled } : {}) },
                 },
@@ -570,7 +570,7 @@
     function start() {
         if (running || !globalThis.chrome?.runtime?.sendMessage) return;
         running = true;
-        BetterChzzk.utils.ensureUiTheme?.();
+        CheeseSpanner.utils.ensureUiTheme?.();
         injectStyleOnce(STYLE_ID, CSS);
         removeOptions = bindFeatureOptions((next) => {
             if (!running) return;

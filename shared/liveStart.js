@@ -5,6 +5,9 @@
     const STATUS_KEY = "betterchzzk:live-start-status";
     const MAX_CHANNELS = 32;
     const CHANNEL_ID = /^[a-f0-9]{32}$/i;
+    // Declared in host_permissions, but the browser's site access setting can withhold it. Without it the
+    // worker's and options page's lookups become CORS requests that the API rejects.
+    const API_HOST_PERMISSION = Object.freeze({ origins: Object.freeze(["https://api.chzzk.naver.com/*"]) });
 
     function parseChannelId(value) {
         const text = typeof value === "string" ? value.trim() : "";
@@ -33,7 +36,7 @@
             )
                 continue;
             const channelId = item.channelId.toLowerCase();
-            const channelImageUrl = BetterChzzk.utils.normalizeChzzkImageUrl(item.channelImageUrl);
+            const channelImageUrl = CheeseSpanner.utils.normalizeChzzkImageUrl(item.channelImageUrl);
             seen.add(channelId);
             result.push({
                 channelId,
@@ -60,11 +63,12 @@
         };
     }
 
-    globalThis.BetterChzzkLiveStart = Object.freeze({
+    globalThis.CheeseSpannerLiveStart = Object.freeze({
         CHANNELS_KEY,
         STATE_KEY,
         STATUS_KEY,
         MAX_CHANNELS,
+        API_HOST_PERMISSION,
         parseChannelId,
         normalizeChannels,
         parseSnapshot,

@@ -2,17 +2,17 @@
  * features/vodComments/nativeAdapter.js — 치지직 원본 댓글 DOM을 측정하고 동작을 위임한다.
  *
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트.
- * 의존: BetterChzzk.vodComments.model.
+ * 의존: CheeseSpanner.vodComments.model.
  */
 (() => {
     "use strict";
 
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     const namespace = (root.vodComments = root.vodComments || {});
     if (namespace.nativeAdapter) return;
 
     const model = namespace.model;
-    const NATIVE_ACTION_HINT_ID = "betterchzzk-vod-comment-native-action-hint";
+    const NATIVE_ACTION_HINT_ID = "cheese-spanner-vod-comment-native-action-hint";
     const NATIVE_BUFF_BUTTON_CLASS_RE = /^_buff_button_[A-Za-z0-9_-]+$/;
     const NATIVE_BUFF_ICON_CLASS_RE = /^_buff_icon_[A-Za-z0-9_-]+$/;
     const NATIVE_BUFF_COUNT_CLASS_RE = /^_buff_count_[A-Za-z0-9_-]+$/;

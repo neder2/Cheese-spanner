@@ -10,12 +10,12 @@ const {
     waitForCondition,
 } = require("./helpers/extension-page-fixture.js");
 
-const ID = "betterchzzk-player-zoom";
+const ID = "cheese-spanner-player-zoom";
 const markup = `<div class="pzp-pc pzp-pc--controls" tabindex="0">
 <div class="pzp-pc__video"><video style="object-fit:contain"></video></div>
 <div class="pzp-pc__bottom"><div class="pzp-pc__bottom-buttons-right"><button id="native">설정</button></div>
 <div class="pzp-pc__volume"><button>볼륨</button><input type="range"></div><div role="slider"></div></div>
-<div role="menu"><button>메뉴</button></div><div id="betterchzzk-stream-info">정보</div></div>`;
+<div role="menu"><button>메뉴</button></div><div id="cheese-spanner-stream-info">정보</div></div>`;
 
 function transform(video) {
     const match = video.style.transform.match(/^translate\(([-\d.e+]+)px, ([-\d.e+]+)px\) scale\(([-\d.e+]+)\)$/);
@@ -82,7 +82,7 @@ function fixture(t, options = { playerZoomEnabled: true, playerZoomMode: "always
             resizers.delete(this);
         }
     };
-    w.BetterChzzkSettings = {
+    w.CheeseSpannerSettings = {
         getOptions(fn) {
             fn(options);
         },
@@ -110,8 +110,8 @@ function fixture(t, options = { playerZoomEnabled: true, playerZoomMode: "always
     doc.querySelector("aside video").getBoundingClientRect = () => ({ width: 1600, height: 900 });
     w.eval(readRepoFile("content.js"));
     w.eval(readRepoFile("shared/uiTheme.js"));
-    const main = w.BetterChzzk.utils.getMainVideoElement;
-    w.BetterChzzk.utils.getMainVideoElement = () => {
+    const main = w.CheeseSpanner.utils.getMainVideoElement;
+    w.CheeseSpanner.utils.getMainVideoElement = () => {
         mainLookups++;
         return main();
     };
@@ -146,7 +146,7 @@ function fixture(t, options = { playerZoomEnabled: true, playerZoomMode: "always
     };
     const route = (path) => {
         w.history.replaceState(null, "", path);
-        w.dispatchEvent(new w.Event("betterchzzk:routechange"));
+        w.dispatchEvent(new w.Event("cheese-spanner:routechange"));
     };
     t.after(() => {
         apply({ playerZoomEnabled: false });
@@ -444,7 +444,7 @@ test("zoom ignores player controls, overlays, previews, modifiers, and horizonta
         ".pzp-pc__volume input",
         "[role=slider]",
         "[role=menu]",
-        "#betterchzzk-stream-info",
+        "#cheese-spanner-stream-info",
         "aside video",
         "aside input",
     ]) {
@@ -686,7 +686,7 @@ test("zoom panel and slider have accessible names and theme-specific slider toke
     assert.equal(f.range().type, "range");
     assert.equal(f.range().getAttribute("aria-label"), "화면 확대 배율");
     assert.equal(f.range().getAttribute("aria-valuetext"), "120%");
-    assert.ok(f.doc.getElementById("betterchzzk-ui-theme"), "the panel requests the shared CHZZK theme");
+    assert.ok(f.doc.getElementById("cheese-spanner-ui-theme"), "the panel requests the shared CHZZK theme");
     const fills = [];
     for (const [className, theme] of [
         ["light", "light"],
@@ -870,7 +870,7 @@ test("the real volume wheel handler and video zoom consume only their own surfac
     volume.getBoundingClientRect = () => ({ left: 150, top: 470, right: 220, bottom: 510, width: 70, height: 40 });
     f.video().volume = 0.5;
     f.doc.documentElement.setAttribute(
-        "data-betterchzzk-volume-wheel-options",
+        "data-cheese-spanner-volume-wheel-options",
         JSON.stringify({ enabled: true, step: 5 })
     );
     f.w.eval(readRepoFile("shared/volumeControlsPage.js"));
@@ -919,7 +919,7 @@ test("settings expose and persist the three activation modes and shortcut key wi
     t.after(() => dom.window.close());
     evalRepoScript(dom, "shared/settings.js");
     evalRepoScript(dom, "options.js");
-    const { document: doc, BetterChzzkSettings: settings } = dom.window;
+    const { document: doc, CheeseSpannerSettings: settings } = dom.window;
     const enabled = doc.querySelector('[data-option="playerZoomEnabled"]');
     const mode = doc.querySelector('[data-option="playerZoomMode"]');
     const key = doc.querySelector('[data-option="playerZoomShortcutKey"]');

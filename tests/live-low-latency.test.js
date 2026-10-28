@@ -22,10 +22,10 @@ function fixture(t, initial = {}) {
     w.clearTimeout = (id) => timers.delete(id);
     const state = (lowLatencyEnabled, enabled = false, quality = "1080p") => {
         w.document.documentElement.setAttribute(
-            "data-betterchzzk-auto-quality-state",
+            "data-cheese-spanner-auto-quality-state",
             JSON.stringify({ enabled, quality, lowLatencyEnabled })
         );
-        w.dispatchEvent(new w.Event("betterchzzk:auto-quality:state"));
+        w.dispatchEvent(new w.Event("cheese-spanner:auto-quality:state"));
     };
     const mount = (options = {}) => {
         const host = w.document.createElement("div");
@@ -168,7 +168,7 @@ function fixture(t, initial = {}) {
         }
         assert.equal(timers.size, 0, "waiting or completed requests must not poll");
     };
-    const result = () => JSON.parse(w.document.documentElement.getAttribute("data-betterchzzk-low-latency-result"));
+    const result = () => JSON.parse(w.document.documentElement.getAttribute("data-cheese-spanner-low-latency-result"));
     t.after(() => {
         state(false);
         timers.clear();
@@ -182,7 +182,7 @@ function fixture(t, initial = {}) {
 test("retired low latency preference is absent from settings and the options page", (t) => {
     const f = fixture(t);
     f.w.eval(read("shared/settings.js"));
-    const settings = f.w.BetterChzzkSettings;
+    const settings = f.w.CheeseSpannerSettings;
     for (const keys of [settings.OPTION_KEYS, settings.FEATURE_KEYS, settings.STORAGE_OPTION_KEYS])
         assert.equal(keys.includes("liveLowLatencyEnabled"), false);
     const normalized = settings.normalizeOptions({ autoQualityEnabled: false, liveLowLatencyEnabled: true });
@@ -207,7 +207,7 @@ test("an old enabled bridge cannot select tracks after fresh load, media events 
         await f.drain();
         assert.deepEqual(f.p.selections, []);
         f.w.history.pushState({}, "", "/live/measured-b");
-        f.w.dispatchEvent(new f.w.Event("betterchzzk:routechange"));
+        f.w.dispatchEvent(new f.w.Event("cheese-spanner:routechange"));
         f.p.host.remove();
         const next = f.mount();
         next.emit("playing");
@@ -226,7 +226,7 @@ test("removing the preference preserves native tracks and read-only stream diagn
             track.selected = track.id === (mode === "standard" ? "main-720" : "low-latency-720");
         await f.drain();
         f.p.video.setAttribute("data-bcsi-request", JSON.stringify({ version: 1, requestId: mode }));
-        f.p.video.dispatchEvent(new f.w.Event("betterchzzk:stream-info:read"));
+        f.p.video.dispatchEvent(new f.w.Event("cheese-spanner:stream-info:read"));
         const result = JSON.parse(f.p.video.getAttribute("data-bcsi-result"));
         assert.equal(result.mode, mode);
         assert.equal(result.status, "ready");
@@ -253,7 +253,7 @@ test("the isolated bridge ignores even unnormalized retired saved values", async
     f.state(false);
     const preferences = { autoQualityEnabled: false, autoQualityPreferred: "1080p", liveLowLatencyEnabled: true };
     const listeners = new Set();
-    f.w.BetterChzzkSettings = {
+    f.w.CheeseSpannerSettings = {
         DEFAULT_QUALITY: "1080p",
         normalizeOptions: () => ({ ...preferences }),
         getOptions(callback) {
@@ -267,7 +267,8 @@ test("the isolated bridge ignores even unnormalized retired saved values", async
     f.w.eval(read("content.js"));
     f.w.eval(read("features/autoQuality.js"));
     await f.drain();
-    const bridge = () => JSON.parse(f.w.document.documentElement.getAttribute("data-betterchzzk-auto-quality-state"));
+    const bridge = () =>
+        JSON.parse(f.w.document.documentElement.getAttribute("data-cheese-spanner-auto-quality-state"));
     assert.deepEqual(bridge(), { enabled: false, quality: "1080p" });
     for (const callback of listeners) callback({ ...preferences, liveLowLatencyEnabled: false });
     await f.drain();

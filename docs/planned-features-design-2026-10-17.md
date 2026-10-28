@@ -29,7 +29,7 @@
 
 ### 저장 위치와 형식
 
-확장 **local** 단일 키 `betterchzzk:multiview-presets:v1`에 전체를 한 번에 교체해요. sync가 아닌 이유는 채널별 딜레이·화질·채팅 멀티뷰 구성과 같은 영역에 두고, sync 항목 8KB 한도를 피하며, 기기 이동은 설정 파일로 하기 위해서예요.
+확장 **local** 단일 키 `cheese-spanner:multiview-presets:v1`에 전체를 한 번에 교체해요. sync가 아닌 이유는 채널별 딜레이·화질·채팅 멀티뷰 구성과 같은 영역에 두고, sync 항목 8KB 한도를 피하며, 기기 이동은 설정 파일로 하기 위해서예요.
 
 ```text
 {
@@ -68,7 +68,7 @@
 - 멀티뷰 설정 패널(채팅 상단 멀티뷰 설정 버튼)에 **조합** 영역을 추가해요. 영역에는 저장한 조합 목록(이름·채널 수·`불러오기`·`삭제`)과 `현재 구성 저장` 버튼이 있어요. 버튼을 누르면 같은 영역 안에 이름 입력과 `저장`이 열려요(별도 모달 없음, Escape로 닫기).
 - 채널 이름은 `players.get(id)?.name`(live-detail의 `channelName`)을 그대로 넣고 없으면 빈 문자열이에요. 메인 채널 이름은 메인 플레이어 상태에서 같은 방식으로 읽고, 없으면 빈 문자열이에요.
 - 같은 이름이 있으면 **두 번 눌러 확정**해요(팔로잉 폴더 삭제와 같은 패턴). 첫 누름은 `같은 이름을 덮어써요 — 다시 누르면 저장`으로 바뀌고 3초 안에 다시 누르면 교체, 아니면 원래로 돌아가요.
-- 저장 경로는 `BetterChzzk.utils.settingsStoreSet("local", { [KEY]: next }, { [KEY]: expectedCurrent })`예요. `chrome.storage.local.set`을 직접 호출하지 않아요. `conflict`면 `error.current`로 목록을 다시 읽어 안내하고 자동 재시도하지 않아요(채팅 멀티뷰 구성 저장과 같은 규칙). 그 밖의 실패는 현재 문서의 메모리 목록을 유지하고 저장 실패를 안내해요.
+- 저장 경로는 `CheeseSpanner.utils.settingsStoreSet("local", { [KEY]: next }, { [KEY]: expectedCurrent })`예요. `chrome.storage.local.set`을 직접 호출하지 않아요. `conflict`면 `error.current`로 목록을 다시 읽어 안내하고 자동 재시도하지 않아요(채팅 멀티뷰 구성 저장과 같은 규칙). 그 밖의 실패는 현재 문서의 메모리 목록을 유지하고 저장 실패를 안내해요.
 - 목록 읽기는 `storageGet`, 다른 탭의 변경은 `storage.onChanged`로 반영해요. 열림 상태·이름 입력 중 내용은 저장하지 않아요.
 
 ### 불러오기 동작
@@ -166,15 +166,15 @@
 
 ## 파일 소유권
 
-| 영역                     | 파일                                                                                                                                                                                                                                                                                                                                                                                                |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 멀티뷰 조합 형식·검증    | 새 `shared/multiviewPresets.js`(DOM·chrome 비의존 IIFE, `globalThis.BetterChzzkMultiviewPresets`: `STORAGE_KEY`, 상한, `parseState`, `isSameState`, `upsertPreset`, `removePreset`). manifest isolated 목록에서 `features/liveMultiview/model.js` 앞, `background.js`의 `shared/followingFolders.js`·`shared/chatMultiview.js` `importScripts` 줄에 함께 로드해요. 옵션 페이지에는 로드하지 않아요. |
-| 멀티뷰 조합 적용·UI      | `features/liveMultiview/model.js`(`snapshotPreset`, `applyPreset` 순수 매핑), `runtime.js`(목록 읽기·`onChanged`·`settingsStoreSet` 어댑터·액션 `save-preset`/`load-preset`/`delete-preset`·적용 뒤 reconcile), `settingsPanel.js`(조합 영역·방송 추가 패널의 조합 목록·두 번 확정·focus 복원)                                                                                                      |
-| 설정 저장 경계·설정 파일 | `shared/settingsBackup.js`(새 local 구역·허용 키·`textList` 깊은 비교), `optionsSettingsBackup.js`(구역 라벨·요약), `shared/settingsStore.js`는 변경 없음을 확인                                                                                                                                                                                                                                    |
-| 채팅 옵션                | `shared/settings.js`(`textList` 종류·옵션 2개), `options.html`(채팅 관리 묶음의 토글·textarea·도움말), `options.js`(textarea↔배열 변환·깊은 비교 변경 판정·상한 안내)                                                                                                                                                                                                                               |
-| 채팅 수집·표시           | `features/chatTools/parser.js`(언급 표식 상수·키워드 정규화·매칭 함수), `messageStore.js`(조건·표식 주입, 공용 순번), `panel.js`(종류 필터·병합 렌더·언급 스타일), `features/chatTools.js`(두 번째 인스턴스·옵션 적용·상자 표시 조건·강조 스타일)                                                                                                                                                   |
-| 공용                     | `manifest.json` 로드 순서, `background.js` importScripts                                                                                                                                                                                                                                                                                                                                            |
-| 문서                     | `docs/contracts.md`, `docs/security.md`, `docs/business-rules.md`, `features/liveMultiview/AGENTS.md`, `features/chatTools/AGENTS.md`, README, `docs/tracking/status.md`·`findings.md`, 릴리스 때 `docs/update-history.md`와 새 기능 안내                                                                                                                                                           |
+| 영역                     | 파일                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 멀티뷰 조합 형식·검증    | 새 `shared/multiviewPresets.js`(DOM·chrome 비의존 IIFE, `globalThis.CheeseSpannerMultiviewPresets`: `STORAGE_KEY`, 상한, `parseState`, `isSameState`, `upsertPreset`, `removePreset`). manifest isolated 목록에서 `features/liveMultiview/model.js` 앞, `background.js`의 `shared/followingFolders.js`·`shared/chatMultiview.js` `importScripts` 줄에 함께 로드해요. 옵션 페이지에는 로드하지 않아요. |
+| 멀티뷰 조합 적용·UI      | `features/liveMultiview/model.js`(`snapshotPreset`, `applyPreset` 순수 매핑), `runtime.js`(목록 읽기·`onChanged`·`settingsStoreSet` 어댑터·액션 `save-preset`/`load-preset`/`delete-preset`·적용 뒤 reconcile), `settingsPanel.js`(조합 영역·방송 추가 패널의 조합 목록·두 번 확정·focus 복원)                                                                                                        |
+| 설정 저장 경계·설정 파일 | `shared/settingsBackup.js`(새 local 구역·허용 키·`textList` 깊은 비교), `optionsSettingsBackup.js`(구역 라벨·요약), `shared/settingsStore.js`는 변경 없음을 확인                                                                                                                                                                                                                                      |
+| 채팅 옵션                | `shared/settings.js`(`textList` 종류·옵션 2개), `options.html`(채팅 관리 묶음의 토글·textarea·도움말), `options.js`(textarea↔배열 변환·깊은 비교 변경 판정·상한 안내)                                                                                                                                                                                                                                 |
+| 채팅 수집·표시           | `features/chatTools/parser.js`(언급 표식 상수·키워드 정규화·매칭 함수), `messageStore.js`(조건·표식 주입, 공용 순번), `panel.js`(종류 필터·병합 렌더·언급 스타일), `features/chatTools.js`(두 번째 인스턴스·옵션 적용·상자 표시 조건·강조 스타일)                                                                                                                                                     |
+| 공용                     | `manifest.json` 로드 순서, `background.js` importScripts                                                                                                                                                                                                                                                                                                                                              |
+| 문서                     | `docs/contracts.md`, `docs/security.md`, `docs/business-rules.md`, `features/liveMultiview/AGENTS.md`, `features/chatTools/AGENTS.md`, README, `docs/tracking/status.md`·`findings.md`, 릴리스 때 `docs/update-history.md`와 새 기능 안내                                                                                                                                                             |
 
 ## 검증 계획
 

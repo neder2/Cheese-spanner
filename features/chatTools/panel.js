@@ -5,7 +5,7 @@
  */
 (() => {
     "use strict";
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     const namespace = (root.chatTools = root.chatTools || {});
     const { normSpace, injectStyleOnce } = root.utils;
     const {
@@ -22,7 +22,7 @@
         roleLabel,
         resolveMutationElement,
     } = namespace.parser;
-    const STYLE_ID = "betterchzzk-chat-tools-style";
+    const STYLE_ID = "cheese-spanner-chat-tools-style";
 
     const MODERATOR_ROW_ATTR = "data-bcct-moderator-row";
 

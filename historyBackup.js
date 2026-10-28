@@ -2,14 +2,14 @@
 (() => {
     "use strict";
 
-    const MESSAGE_TYPE = "betterchzzk:watch-history-backup";
+    const MESSAGE_TYPE = "cheese-spanner:watch-history-backup";
     const RESPONSE_TIMEOUT_MS = 30000;
     let initialized = false;
 
     function init({ reload }) {
         if (initialized) return;
         initialized = true;
-        const api = globalThis.BetterChzzkWatchHistoryBackup;
+        const api = globalThis.CheeseSpannerWatchHistoryBackup;
         const element = (suffix) => document.getElementById(`historyBackup${suffix}`);
         const area = element("");
         const exportButton = element("Export");
@@ -384,5 +384,5 @@
         setPhase("idle");
     }
 
-    globalThis.BetterChzzkHistoryBackup = Object.freeze({ init });
+    globalThis.CheeseSpannerHistoryBackup = Object.freeze({ init });
 })();

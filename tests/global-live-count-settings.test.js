@@ -378,7 +378,7 @@ test("a failed migration write releases the waiting explicit save", async (t) =>
 
 test("a late initial subscription read does not roll back a newer aggregate choice", async () => {
     const fixture = createFixture({ categoryToolsEnabled: false, skipSeconds: 17 });
-    const settings = fixture.context.BetterChzzkSettings;
+    const settings = fixture.context.CheeseSpannerSettings;
     fixture.control.deferReads = true;
     const initial = new Promise((resolve) => settings.getOptions(resolve));
     fixture.chrome.storage.sync.set({ globalLiveCountEnabled: true });
@@ -392,7 +392,7 @@ test("a late initial subscription read does not roll back a newer aggregate choi
 
 test("global count normalization and sync subscriptions keep both toggles independent", async () => {
     const fixture = createFixture({ categoryToolsEnabled: false, globalLiveCountEnabled: true });
-    const settings = fixture.context.BetterChzzkSettings;
+    const settings = fixture.context.CheeseSpannerSettings;
     assert.equal(settings.normalizeOptions({ categoryToolsEnabled: true }).globalLiveCountEnabled, false);
     for (const category of [false, true]) {
         for (const aggregate of [false, true]) {

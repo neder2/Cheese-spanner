@@ -6,7 +6,7 @@
 
 ## 선택
 
-- 치지직 안 확장 UI의 공통 기준을 `shared/uiTheme.js` 하나에 둬요. 이 모듈은 첫 요청 때 `:root`에 `--bct-*` 변수와 단일 `"BetterChzzk Pretendard"` @font-face만 넣어요. 변수는 치지직 `--sem-*`를 그대로 따르고, 토큰이 없을 때 쓰는 대체값 표는 이 모듈에만 있어요. 기능은 `ensureUiTheme?.()`를 부르고 대체값 없이 `var(--bct-…)`를 써요.
+- 치지직 안 확장 UI의 공통 기준을 `shared/uiTheme.js` 하나에 둬요. 이 모듈은 첫 요청 때 `:root`에 `--bct-*` 변수와 단일 `"CheeseSpanner Pretendard"` @font-face만 넣어요. 변수는 치지직 `--sem-*`를 그대로 따르고, 토큰이 없을 때 쓰는 대체값 표는 이 모듈에만 있어요. 기능은 `ensureUiTheme?.()`를 부르고 대체값 없이 `var(--bct-…)`를 써요.
 - 확장 페이지는 `styles.css`의 기존 변수 이름을 유지하고 값만 치지직 실측값으로 바꿔요.
 - 글꼴은 확장 소유 패널은 번들 Pretendard, 치지직 글꼴을 따르는 화면과 원본 끼움 요소는 원본 글꼴로 나눠요.
 

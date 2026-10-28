@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 require("../shared/settings.js");
 require("../shared/adVideoRegistration.js");
-const { CONTENT_SCRIPT, createController } = globalThis.BetterChzzkAdVideoRegistration;
+const { CONTENT_SCRIPT, createController } = globalThis.CheeseSpannerAdVideoRegistration;
 
 function createRegistration(enabled) {
     let desired = enabled;
@@ -11,7 +11,7 @@ function createRegistration(enabled) {
     let beforeRegister = async () => {};
     const controller = createController({
         readEnabled: async () =>
-            globalThis.BetterChzzkSettings.normalizeOptions({ adVideoEnabled: desired }).adVideoEnabled,
+            globalThis.CheeseSpannerSettings.normalizeOptions({ adVideoEnabled: desired }).adVideoEnabled,
         scripting: {
             async getRegisteredContentScripts({ ids }) {
                 assert.deepEqual(ids, [CONTENT_SCRIPT.id]);

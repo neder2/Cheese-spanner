@@ -1,6 +1,6 @@
 /** Normalizes observed video/comment data and computes search/progress values without DOM state. */
 (() => {
-    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
+    const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     const { pickArray, pickChzzkVideoNo, normalizeCompact: normalize } = root.utils;
     function pickPublishDate(video) {
         return video.publishDate || video.publishDateAt || video.liveOpenDate || "";

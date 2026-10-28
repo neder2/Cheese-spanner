@@ -1,8 +1,8 @@
 (() => {
     "use strict";
 
-    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
-    const MESSAGE_TYPE = "betterchzzk:category-exclusions";
+    const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
+    const MESSAGE_TYPE = "cheese-spanner:category-exclusions";
     const STORAGE_KEY = "betterchzzkCategoryExclusionsV1";
     const VERSION = 1;
     const MAX_CATEGORIES = 100;

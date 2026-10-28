@@ -72,7 +72,7 @@ async function createOptionsFixture(t, initial = { autoQualityEnabled: true }, {
         },
     };
     const dom = new JSDOM(readRepoFile("options.html"), {
-        url: "chrome-extension://better-chzzk/options.html",
+        url: "chrome-extension://cheese-spanner/options.html",
         runScripts: "outside-only",
         pretendToBeVisual: true,
     });
@@ -382,7 +382,7 @@ require("../shared/settings.js");
 
 // A profile that has saved the options page before stores every option key.
 function savedProfile(overrides) {
-    return { ...globalThis.BetterChzzkSettings.DEFAULT_OPTIONS, ...overrides };
+    return { ...globalThis.CheeseSpannerSettings.DEFAULT_OPTIONS, ...overrides };
 }
 
 function optionControls(dom) {
@@ -456,7 +456,7 @@ test("storage changes refresh untouched fields, keep pending edits, and survive 
     assert.equal(ui.option("ambientIntensity").value, "80");
     assert.equal(ui.option("skipSeconds").value, "10");
     assert.equal(ui.notice().dataset.state, "saved");
-    assert.equal(dom.window.BetterChzzkOptionsPage.hasUnsavedChanges(), false);
+    assert.equal(dom.window.CheeseSpannerOptionsPage.hasUnsavedChanges(), false);
 });
 
 for (const notified of [true, false]) {
@@ -501,7 +501,7 @@ test("a failed save keeps values changed elsewhere and retries only the user's e
     assert.equal(stored.skipSeconds, 10);
     assert.equal(ui.notice().dataset.state, "error");
     assert.equal(ui.option("skipSeconds").value, "10");
-    assert.equal(dom.window.BetterChzzkOptionsPage.hasUnsavedChanges(), true);
+    assert.equal(dom.window.CheeseSpannerOptionsPage.hasUnsavedChanges(), true);
 
     ui.save();
     await waitForCallbacks();
@@ -516,7 +516,7 @@ test("a page that reloads the stored options before saving keeps the newer store
     const { dom, setCalls, stored } = await createOptionsFixture(t, { autoQualityEnabled: false, skipSeconds: 5 });
     const ui = optionControls(dom);
     stored.skipSeconds = 10;
-    assert.equal(await dom.window.BetterChzzkOptionsPage.reloadSavedOptions(), true);
+    assert.equal(await dom.window.CheeseSpannerOptionsPage.reloadSavedOptions(), true);
     assert.equal(ui.option("skipSeconds").value, "10");
     ui.setChecked("autoQualityEnabled", true);
     ui.save();
@@ -604,5 +604,5 @@ test("a duplicated speed key in the form is never saved as the default keys", as
     assert.equal(setCalls.length, 0);
     assert.deepEqual(speedTrio(stored), ["KeyA", "KeyB", "KeyD"]);
     assert.equal(ui.message(), "배속 감소·증가·초기화는 서로 다른 키로 지정해 주세요.");
-    assert.equal(dom.window.BetterChzzkOptionsPage.hasUnsavedChanges(), true, "the edit stays pending");
+    assert.equal(dom.window.CheeseSpannerOptionsPage.hasUnsavedChanges(), true, "the edit stays pending");
 });

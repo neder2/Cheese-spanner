@@ -12,7 +12,7 @@
  *   다른 방송의 제목은 보이지 않는다.
  * 수명주기: 옵션을 끄거나 라우트가 바뀌면 observer·listener·요청·UI를 정리하고, SPA 이동 후 재설치한다.
  * 옵션 키: followingTitleHistoryEnabled.
- * DOM 마커: #betterchzzk-following-title-history-style/panel, #betterchzzk-live-title-history,
+ * DOM 마커: #cheese-spanner-following-title-history-style/panel, #cheese-spanner-live-title-history,
  *   [data-bcfth-host], [data-bcfth-title], [data-bcfth-toggle].
  */
 (() => {
@@ -29,13 +29,13 @@
         startPageChangeDetection,
         startStorageChangeListener,
         storageGet,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
     const { STORAGE_KEY, getPreviousRows, normalizeId, normalizeStore, normalizeTitle } =
-        globalThis.BetterChzzkFollowingTitleHistory;
+        globalThis.CheeseSpannerFollowingTitleHistory;
 
-    const STYLE_ID = "betterchzzk-following-title-history-style";
-    const PANEL_ID = "betterchzzk-following-title-history-panel";
-    const LIVE_WRAP_ID = "betterchzzk-live-title-history";
+    const STYLE_ID = "cheese-spanner-following-title-history-style";
+    const PANEL_ID = "cheese-spanner-following-title-history-panel";
+    const LIVE_WRAP_ID = "cheese-spanner-live-title-history";
     const HOST_ATTR = "data-bcfth-host";
     const TITLE_ATTR = "data-bcfth-title";
     const BUTTON_ATTR = "data-bcfth-toggle";
@@ -62,7 +62,7 @@
     const LIVE_SEARCH_THROTTLE_MS = 300;
 
     const storage = globalThis.chrome?.storage?.local;
-    let featureOptions = BetterChzzkSettings.normalizeOptions();
+    let featureOptions = CheeseSpannerSettings.normalizeOptions();
     let runtimeInstalled = false;
     let domObserver = null;
     let removePageChangeDetection = null;
@@ -684,7 +684,7 @@
 
     function injectStyles() {
         // Colors, radii, shadow and Pretendard come from shared/uiTheme.js (--bct-*), which follows CHZZK's root theme.
-        BetterChzzk.utils.ensureUiTheme?.();
+        CheeseSpanner.utils.ensureUiTheme?.();
         injectStyleOnce(
             STYLE_ID,
             `

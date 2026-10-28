@@ -145,10 +145,10 @@ function harness({ quota, bytesInUse = false } = {}) {
     };
 }
 function request(action, extra = {}) {
-    return { type: "betterchzzk:watch-history-backup", version: 1, action, ...extra };
+    return { type: "cheese-spanner:watch-history-backup", version: 1, action, ...extra };
 }
 function mutation(operation) {
-    return { type: "betterChzzk:watch-history-mutation", version: 1, operation };
+    return { type: "cheese-spanner:watch-history-mutation", version: 1, operation };
 }
 function file() {
     const { store, backup } = load();
@@ -312,7 +312,7 @@ test("the merged history must fit beside the other local values with headroom; o
     for (const bytesInUse of [true, false]) {
         const probe = harness();
         const backup = file();
-        const headroom = probe.context.BetterChzzkWatchHistoryBackupController.STORAGE_HEADROOM_BYTES;
+        const headroom = probe.context.CheeseSpannerWatchHistoryBackupController.STORAGE_HEADROOM_BYTES;
         const probed = await probe.send(request("preview", { backup }));
         await probe.send(request("import", { backup, confirmationToken: probed.result.confirmationToken }));
         const historyBytes = probe.itemBytes(key);

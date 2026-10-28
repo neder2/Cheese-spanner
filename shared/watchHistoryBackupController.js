@@ -1,7 +1,7 @@
 /** Background-only request coordination; queue and storage capabilities are injected by the single writer. */
 (() => {
     "use strict";
-    const MESSAGE_TYPE = "betterchzzk:watch-history-backup";
+    const MESSAGE_TYPE = "cheese-spanner:watch-history-backup";
     const TOKEN_TTL_MS = 5 * 60 * 1000;
     const MAX_TOKENS = 8;
     // Room left for the other local writers (live-start state, new watch sessions, settings) after a restore.
@@ -91,8 +91,8 @@
         storageKey,
     }) {
         const tokens = new Map();
-        const fileApi = globalThis.BetterChzzkWatchHistoryBackup;
-        const merger = globalThis.BetterChzzkWatchHistoryBackupMerge;
+        const fileApi = globalThis.CheeseSpannerWatchHistoryBackup;
+        const merger = globalThis.CheeseSpannerWatchHistoryBackupMerge;
         function storageCall(method, keys) {
             return new Promise((resolve, reject) => {
                 storageArea[method](keys, (value) => {
@@ -194,7 +194,7 @@
         }
         return Object.freeze({ handle });
     }
-    globalThis.BetterChzzkWatchHistoryBackupController = Object.freeze({
+    globalThis.CheeseSpannerWatchHistoryBackupController = Object.freeze({
         MESSAGE_TYPE,
         STORAGE_HEADROOM_BYTES,
         createController,

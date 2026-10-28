@@ -1,5 +1,30 @@
 # 치즈 스패너 현재 상태
 
+## 2026-10-28 1.4.6 공개 (커밋·태그·GitHub Release)
+
+- 요청: 사용자가 1.4.6 공개를 승인했어요("공개 진행"). 범위는 Claude가 제안한 커밋·push·태그 `v1.4.6`·GitHub Release(최종 ZIP 첨부)예요.
+- 공개일이 업데이트 내역 제목·README 링크의 2026-10-28과 같아 바꾸지 않았어요. 최종 ZIP(SHA-256 `29762ad8…`)은 다시 만들지 않았어요. 공개 기록을 더한 문서는 ZIP에 들어가지 않아요.
+- 하지 않은 것: 스토어 제출, main 병합, 이슈 #5 답변 게시
+- 남은 일: 아래 릴리스 준비 항목의 미확인(이슈 #5 권한 요청 창 수락·실제 사이트 액세스 화면·제보자 확인, 다시보기 긴 제목·태그 줄바꿈)은 그대로예요.
+
+## 2026-10-28 1.4.6 릴리스 준비 (미커밋, 필수 점검·최종 ZIP 완료, 공개 대기)
+
+- 요청: 사용자가 이슈 #5 수정을 1.4.6에 두고 업데이트하기로 하고 릴리스 준비를 요청했어요("1.4.6에 두고 업데이트 할거임. 릴리즈 준비해줘"). 커밋·push·태그·Release·스토어 제출은 요청받지 않아 하지 않았어요.
+- 범위: 다시보기 시작·종료 시각, 이슈 #5 사이트 액세스 안내, 이름 변경이 들어가요. 블라인드 원문 복구와 사이드바 보정은 이 저장소에 소스가 없어 빠졌어요.
+- 변경:
+    - 버전: manifest·package·lockfile 루트 1.4.6, `tests/extension-pages`의 버전 고정
+    - 안내 자료: `shared/updateGuide.js` 1.4.6과 `update-guide-catalog` 고정 검사. 카드는 없어요. 사용자가 추천 A안에 버그 수정을 더해 확정했어요("a에 추가로 그냥 각종 버그 수정한걸 간단히 써서"). 확정 요약은 `다시보기 조회수 옆 날짜 자리에 방송 시작·종료 시각 표시, 각종 버그 수정`이에요.
+    - 문서: `docs/update-history.md` 1.4.6 절(준비일 2026-10-28), README의 버전·`1.4.6 변경 사항`·5절·기능 표·설정 표, 스토어 설명 1줄, 개인정보 관행 문서의 버전
+- 테스트: 10-27에 한 번 난 `extension-pages` 종료 뒤 `activeElement` 오류의 원인이 테스트 대기 경합임을 확정했어요. 그 검사가 저장 완료를 기다리도록 고쳤고, 런타임은 바꾸지 않았어요.
+- 검증: 자세한 결과는 [1.4.6 검증 기록](../release-1.4.6-verification.md)에 있어요.
+    - 전체 `test:all` 1,907개, `lint`, `git diff --check`가 통과했어요. `format:check`는 범위 밖 `.claude/settings.local.json`에서만 실패했어요.
+    - 최종 ZIP `web-ext-artifacts/cheese_spanner-1.4.6.zip`(SHA-256 `29762ad8…`)의 123개 파일이 작업 트리와 같아요. 1.4.5 ZIP 대비 파일·권한 변화가 없어요.
+    - Chrome for Testing 분리 프로필에서 1.4.5 배포 ZIP을 후보 ZIP으로 실제 업데이트하고 안내를 CDP로 확인했어요. 한 탭 최초 1회, 새로고침·새 탭·BFCache·재시작 뒤 재표시 없음, 20초·호버·키보드 초점, 숨은 탭·전체화면·입력 중 보류, 동작 줄이기·좁은 폭·라이트/다크, 라이브 화면 배치·SPA, 팝업 다시보기를 봤어요.
+    - 최종 ZIP으로 실제 업데이트, 확정 문구 2줄 표시(1400px·420px), 좁은 라이브 화면의 공간 보류를 다시 확인했어요.
+    - 이슈 #5의 패널 안내 표시도 확인했어요.
+- 남은 일: 공개일이 2026-10-28이 아니면 업데이트 내역 제목과 README 링크를 맞춰요. 커밋·push·태그·Release·스토어 제출은 사용자 요청을 기다려요.
+- 미확인: 이슈 #5의 권한 요청 창 수락, 실제 사이트 액세스 화면 전환, 제보자 확인을 하지 않았어요. 다시보기의 긴 제목·태그 줄바꿈도 확인하지 않았어요. 사용자 Chrome·Edge에서는 확인하지 않았어요.
+
 ## 2026-10-21 1.4.5 공개 (커밋·태그·GitHub Release)
 
 - 요청: 사용자가 남은 필수 점검 항목을 실제 Chrome에서 직접 확인했다고 알리고("남은 항목 직접 확인했어") 커밋·push·태그 `v1.4.5`·Release(zip 첨부)와 ZIP 재생성(기존 파일 덮어쓰기)을 요청했어요. 확인 범위와 최종 ZIP은 [검증 기록](../release-1.4.5-verification.md)에 있어요.
@@ -10,7 +35,7 @@
 
 - 요청: 사용자가 기본 켜짐·로그인 시 동작하는 다시보기 본인 채팅 강조를 요청했어요. 설치 때 닉네임을 저장해 비교하는 안을 먼저 냈고, 다시보기 채팅 닉네임이 바뀌는지 조사한 뒤 "그럼 일단 해시 비교로 구현해줘"로 정했어요.
 - 조사(같은 날, 로그인 없이 공개 API·화면): VOD 채팅 API의 메시지마다 `userIdHash`와 작성 당시 `profile`이 있고, 2025-05와 2026-10 다시보기에 함께 나온 121명 중 29명의 닉네임이 달랐어요. 화면도 옛 닉네임을 보여 줬어요. `/video/7284936` 행의 React `chatMessage.user`는 `profile.userIdHash`와 16/16개 같았어요. 그래서 닉네임이 아니라 계정 해시로 비교해요.
-- 구현: `features/chatTimestampPage.js`(MAIN)가 `betterchzzk:chat-user-source-request`를 받으면 그 행의 `chatMessage.user`를 형식 검증 뒤 `data-bcoc-source-user`에 넘겨요. 새 isolated `features/vodOwnChat.js`가 `/video/*`에서 `getUserStatus`로 현재 계정 해시를 메모리에만 받아 같은 행에 `data-bcoc-own`을 붙여요(공통 테마의 `--bct-brand-weak` 배경과 3px 왼쪽 선). 미로그인·실패·잘못된 해시면 표식이 없고, 계정 변경 신호(`userStatus.idhash`)·탭 복귀·이동·OFF 때 다시 확인하거나 정리해요. 옵션 `vodOwnChatHighlightEnabled`(기본 true, **채팅 도구 → 채팅 표시**), manifest isolated 목록에서 `chatTimestamp.js` 뒤. 새 권한·호스트·저장 없음.
+- 구현: `features/chatTimestampPage.js`(MAIN)가 `cheese-spanner:chat-user-source-request`를 받으면 그 행의 `chatMessage.user`를 형식 검증 뒤 `data-bcoc-source-user`에 넘겨요. 새 isolated `features/vodOwnChat.js`가 `/video/*`에서 `getUserStatus`로 현재 계정 해시를 메모리에만 받아 같은 행에 `data-bcoc-own`을 붙여요(공통 테마의 `--bct-brand-weak` 배경과 3px 왼쪽 선). 미로그인·실패·잘못된 해시면 표식이 없고, 계정 변경 신호(`userStatus.idhash`)·탭 복귀·이동·OFF 때 다시 확인하거나 정리해요. 옵션 `vodOwnChatHighlightEnabled`(기본 true, **채팅 도구 → 채팅 표시**), manifest isolated 목록에서 `chatTimestamp.js` 뒤. 새 권한·호스트·저장 없음.
 - 테스트: `tests/vod-own-chat.test.js` 5개(닉네임과 무관한 해시 일치·저장 없음·테마 색만 사용, 새 행·재사용 행, 미로그인·실패·잘못된 값·라이브 경로, 계정 전환, 기본값·OFF 정리·manifest 순서)와 `settings` 기본값·기능 키. 5개 모두 기능 파일을 비운 사본에서 실패하고 구현본에서 통과했어요.
 - 문서: README(1.4.5 변경 사항·기능 표·8절·설정 표), 업데이트 내역 1.4.5 그 밖의 변경, PRIVACY getUserStatus 용도, security, contracts(React 메시지·브리지 표), features/AGENTS. 이후 사용자 요청("문구에 짧게 넣어줘")으로 1.4.5 안내 요약 끝에 `, 다시보기에서 내 채팅 강조`를 더하고 `update-guide-catalog` 고정값, README 안내 설명, 스토어 설명(`로그인하면 다시보기 채팅에서 내가 쓴 채팅을 강조합니다.`)을 맞췄어요.
 - 남은 일: 강조 모양은 시안 비교 없이 정했어요. 로그인한 실제 Chrome에서 본인 채팅 강조·다른 사람 미강조·라이트/다크·스크롤 재사용을 확인하지 않았어요. 1.4.5 [검증 기록](../release-1.4.5-verification.md)의 임시 ZIP·1.4.4 대비 차이는 이 기능 전 기준이라 다시 만들어야 해요.
@@ -27,7 +52,7 @@
 
 - 요청·결정: 사용자가 팔로잉 라이브 제목 이력을 처음부터 "방송 볼 때 제목 오른쪽"에 원했다고 알렸어요. 1.4.4에는 팔로잉 본문 카드에만 들어갔어요. 사용자 지시("수정하고 테스트")로 라이브 시청 화면에 버튼을 더했어요. 팔로잉 카드 버튼을 없앨지는 사용자가 정하지 않아 그대로 뒀어요. 기준은 `1.4.5` branch, HEAD `4ab9911`과 기존 미커밋 변경이에요.
 - 구현(`features/followingTitleHistory.js`, manifest·권한·옵션 키 변경 없음):
-    - `/live/{channelId}`에서 그 채널의 저장 이력이 있으면 사이드바·링크·플레이어 밖 제목 후보 중 글자가 저장된 제목과 같은 가장 안쪽 요소 바로 뒤에 다시보기와 같은 버튼(`#betterchzzk-live-title-history`)을 둬요.
+    - `/live/{channelId}`에서 그 채널의 저장 이력이 있으면 사이드바·링크·플레이어 밖 제목 후보 중 글자가 저장된 제목과 같은 가장 안쪽 요소 바로 뒤에 다시보기와 같은 버튼(`#cheese-spanner-live-title-history`)을 둬요.
     - 표시 조건은 팔로잉과 같아요. live-detail 라이브 ID가 저장값과 같아야 하고, 확인값은 2분까지 쓰며 90초부터 미리 다시 확인해요.
     - 찾은 제목 요소의 글자가 바뀌면 다시 확인해요. 화면 변경이 없어도 재확인·만료·실패 재시도 시각에 스스로 다시 맞춰요.
     - 채팅 변경은 받지 않고, 제목을 아직 못 찾은 동안만 300ms로 묶어 다시 찾아요.
@@ -81,7 +106,7 @@
     - 기록 채널 사진은 조회해서 넣어요.
     - 기존 사용자 결정 세부는 유지해요.
 - 구현:
-    - `shared/uiTheme.js`(새 파일, manifest에서 `content.js` 바로 뒤)가 `ensureUiTheme()` 요청 시 `:root`의 `--bct-*` 변수와 단일 `"BetterChzzk Pretendard"` @font-face를 넣어요. 변수는 치지직 `--sem-*`를 따르고 실측 대체값 한 벌을 가져요.
+    - `shared/uiTheme.js`(새 파일, manifest에서 `content.js` 바로 뒤)가 `ensureUiTheme()` 요청 시 `:root`의 `--bct-*` 변수와 단일 `"CheeseSpanner Pretendard"` @font-face를 넣어요. 변수는 치지직 `--sem-*`를 따르고 실측 대체값 한 벌을 가져요.
     - `styles.css` 토큰은 이름은 그대로 두고 값만 치지직 실측값으로 바꿨어요(라이트 위험색 `#c73737`, 경고색은 대비 때문에 유지).
     - 설정 화면은 시안 A 모양으로 바꿨어요: 알약 칩, 카드 안 평평한 줄, 토글, 저장 막대, `실험적` 배지.
     - 기록 페이지는 시안 A 모양에 채널 사진(공개 채널 정보 조회, `credentials: "omit"`, 저장 없음)을 더했어요. `replay-pending.html`도 같은 토큰을 써요.
@@ -157,7 +182,7 @@
 ## 2026-10-17 멀티뷰 조합 저장·채팅 키워드 강조 설계 (계획, 미구현)
 
 - 요청: 사용자가 라이브 멀티뷰 조합 저장·불러오기와 채팅 키워드·언급 강조 두 기능의 설계를 요청했고, 구현 전에 범위와 저장 형식을 먼저 정리하기로 했어요. 기준은 `1.4.5` branch, HEAD `acbc587`이며 같은 날의 미커밋 수정 위에서 문서만 작성했어요. 런타임·테스트·manifest는 바꾸지 않았어요.
-- 설계: [설계 문서](../planned-features-design-2026-10-17.md)에 범위·저장 형식·UI·경계·파일 소유권·검증 계획과 결정이 필요한 항목 6개를 적었어요. 멀티뷰 조합은 확장 local 단일 키 `betterchzzk:multiview-presets:v1`(조합 10개·이름 20자·채널 2~6개·배치 포함)에 두고 설정 저장 큐·설정 파일에 새 구역으로 넣는 안이에요. 채팅 키워드는 sync 옵션 2개(`chatToolsKeywordHighlightEnabled`, 새 종류 `textList`의 `chatToolsHighlightKeywords`)와 모아보기 저장소의 조건 주입(두 번째 인스턴스)으로 기존 상자에 `언급` 필터를 더하는 안이에요.
+- 설계: [설계 문서](../planned-features-design-2026-10-17.md)에 범위·저장 형식·UI·경계·파일 소유권·검증 계획과 결정이 필요한 항목 6개를 적었어요. 멀티뷰 조합은 확장 local 단일 키 `cheese-spanner:multiview-presets:v1`(조합 10개·이름 20자·채널 2~6개·배치 포함)에 두고 설정 저장 큐·설정 파일에 새 구역으로 넣는 안이에요. 채팅 키워드는 sync 옵션 2개(`chatToolsKeywordHighlightEnabled`, 새 종류 `textList`의 `chatToolsHighlightKeywords`)와 모아보기 저장소의 조건 주입(두 번째 인스턴스)으로 기존 상자에 `언급` 필터를 더하는 안이에요.
 - 한계: 실제 Chrome·치지직 화면은 확인하지 않았어요. 로그인 닉네임 자동 감지는 `getUserStatus` 닉네임 필드가 실측되지 않아 v1에서 제외하고 직접 입력으로 두었어요.
 - 다음: 사용자가 결정 항목을 확정하면 구현을 시작해요. 두 기능은 `shared/settingsBackup.js`·`optionsSettingsBackup.js`만 겹치므로 순서를 정해 병행할 수 있어요.
 

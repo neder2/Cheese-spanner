@@ -19,7 +19,7 @@ function loadDataModules(folder, globals = {}) {
     });
     vm.runInContext(read("shared/data.js"), context);
     vm.runInContext(read("shared/categoryExclusions.js"), context);
-    context.BetterChzzk.utils.normSpace = context.BetterChzzk.utils.compactSpaces;
+    context.CheeseSpanner.utils.normSpace = context.CheeseSpanner.utils.compactSpaces;
     // The existing timeline module uses window only for namespace registration.
     context.window = context;
     vm.runInContext(read("shared/vodTimeline.js"), context);
@@ -27,7 +27,7 @@ function loadDataModules(folder, globals = {}) {
     for (const file of [`features/${folder}/model.js`, `features/${folder}/repository.js`]) {
         vm.runInContext(read(file), context);
     }
-    return context.BetterChzzk;
+    return context.CheeseSpanner;
 }
 
 test("refactored feature modules precede their consumers in the isolated world", () => {

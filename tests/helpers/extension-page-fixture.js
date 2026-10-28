@@ -7,7 +7,7 @@ const { forwardSettingsStore } = require("./settings-store-emulation.js");
 require("../../shared/data.js");
 require("../../shared/watchHistoryStore.js");
 
-const watchHistoryStore = globalThis.BetterChzzkWatchHistoryStore;
+const watchHistoryStore = globalThis.CheeseSpannerWatchHistoryStore;
 const repoRoot = path.join(__dirname, "../..");
 
 function readRepoFile(...parts) {
@@ -59,7 +59,7 @@ function createFakeChrome({ sync = {}, local = {}, permissionGranted = true } = 
     const runtimeMessages = [];
     let fakeChrome = null;
     const runtime = {
-        id: "better-chzzk",
+        id: "cheese-spanner",
         sendMessage(message, callback) {
             runtimeMessages.push(message);
             if (forwardSettingsStore(fakeChrome, message, callback)) return;
@@ -112,7 +112,7 @@ function createFakeChrome({ sync = {}, local = {}, permissionGranted = true } = 
 
 function createDom(htmlFile, urlPath, chrome) {
     const dom = new JSDOM(readRepoFile(htmlFile), {
-        url: `chrome-extension://better-chzzk/${urlPath}`,
+        url: `chrome-extension://cheese-spanner/${urlPath}`,
         runScripts: "outside-only",
         pretendToBeVisual: true,
     });

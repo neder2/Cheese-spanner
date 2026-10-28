@@ -7,8 +7,8 @@
  * 마우스를 올리거나 키보드 초점이 들어왔을 때만 보인다. 확인된 칸 문서에는 확장 소유 스타일 하나만 넣어 네이티브
  * 머리·배너·주간 랭킹·후원 버튼과, 설정에서 끈 경우 입력 영역을 숨긴다. 채팅 크기는 프레임 바깥의 배율로만 바꾼다.
  * 크기는 채팅 한 칸 기준이고 패널은 칸 수만큼 커진다. 칸 머리를 끌면 패널이 옮겨지고 가까운 화면 모서리에 붙는다.
- * 의존: shared/chatMultiview.js(BetterChzzkChatMultiview), BetterChzzk.utils(shared/data.js·content.js),
- *   랭킹 상자 규칙은 features/chatWeeklyRanking.js의 BetterChzzk.chatWeeklyRanking(있으면).
+ * 의존: shared/chatMultiview.js(CheeseSpannerChatMultiview), CheeseSpanner.utils(shared/data.js·content.js),
+ *   랭킹 상자 규칙은 features/chatWeeklyRanking.js의 CheeseSpanner.chatWeeklyRanking(있으면).
  * 경계:
  *   - 프레임 주소는 model.frameUrl(검증한 채널 ID)뿐이다. 실패는 해당 칸에만 표시하고
  *     다른 경로·새 창으로 대체하지 않는다.
@@ -23,14 +23,14 @@
  */
 (() => {
     if (window.top !== window) return;
-    const model = globalThis.BetterChzzkChatMultiview;
-    const root = window.BetterChzzk;
+    const model = globalThis.CheeseSpannerChatMultiview;
+    const root = window.CheeseSpanner;
     if (!model || !root?.utils) return;
 
-    const ID = "betterchzzk-chat-multiview";
+    const ID = "cheese-spanner-chat-multiview";
     const PANEL_ID = ID + "-panel";
     const STYLE_ID = ID + "-style";
-    const LIVE_START_ENTRY_ID = "betterchzzk-live-start-registration";
+    const LIVE_START_ENTRY_ID = "cheese-spanner-live-start-registration";
     const KEY = model.STORAGE_KEY;
     // features/chatTools.js가 독립 채팅 경로(2026-09-08 확인)에서도 첫 채팅 루트 후보로 쓰는 네이티브 로그 역할이에요.
     const NATIVE_CHAT_SELECTOR = '[role="log"]';
@@ -49,7 +49,7 @@
     const PANEL_PADDING = 4;
     const EMPTY_PANEL = Object.freeze({ width: 400, height: 320 });
     const MESSAGE_MS = 5000;
-    const FRAME_STYLE_ID = "betterchzzk-chat-multiview-frame-style";
+    const FRAME_STYLE_ID = "cheese-spanner-chat-multiview-frame-style";
     // 칸(네이티브 채팅 팝업, 2026-10-12 공개 번들 `index-VdvK-ysl.js`)에서 숨길 부분이에요. 모두 `aside#aside-chatting`
     // 직속 상자로 제한해 채팅 목록·고정 메시지는 남겨요. 머리는 첫 자식의 제목 h2(채팅 제목·채팅 크기·메뉴),
     // 배너는 `_banner_`, 입력 영역은 `_area_`, 후원 버튼은 입력 도구 `_tools_` 안의 `_donation_`이에요.
@@ -242,7 +242,7 @@
     // 다른 탭이 먼저 바꿨으면 error.code "conflict"와 error.current로 거절돼요.
     // 클라이언트에서 직접 저장하는 대체 경로는 두지 않아요.
     function saveConfig(previous, next) {
-        const store = window.BetterChzzk?.utils?.settingsStoreSet;
+        const store = window.CheeseSpanner?.utils?.settingsStoreSet;
         if (typeof store !== "function") {
             const error = new Error("Settings store is unavailable");
             error.code = "unavailable";

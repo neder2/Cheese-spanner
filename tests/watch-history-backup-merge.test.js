@@ -39,7 +39,7 @@ test("newer absolute snapshots add only their delta and overlapping tabs remain 
     const both = merger.mergeBackup(merged.history, createFile(backup, other), { now: NOW });
     const entry = both.history.entries["live:100"];
     assert.equal(entry.watchedSeconds, 150);
-    assert.equal(context.BetterChzzk.utils.getUniqueWatchTotals(entry, entry.sessionDetails).watchedSeconds, 90);
+    assert.equal(context.CheeseSpanner.utils.getUniqueWatchTotals(entry, entry.sessionDetails).watchedSeconds, 90);
 });
 
 test("ambiguous historical totals keep the entire current record and report why; identical historical totals are unchanged", () => {

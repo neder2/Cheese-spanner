@@ -46,7 +46,7 @@
 
 ## 설정 저장 경계
 
-백업 대상 키의 writer는 모두 확장 출처 Web Lock `betterchzzk:options-storage` 안에서 최신 값을 읽고 써요. 옵션 페이지·워커는 `withOptionsStorageLock`을 직접 쓰고, 콘텐츠는 `settingsStoreSet`으로 워커 큐에 요청해요. 잠금을 잡은 채 네트워크 요청을 기다리지 않아요(방송 대상 채널 조회는 잠금 밖). 설정 파일 적용은 잠금을 한 번 잡은 상태에서 최신 값·미리보기 지문 비교·단계별 쓰기·되돌리기까지 끝내고, 효과 옵션은 끄는 쪽 먼저·켜는 쪽 마지막이에요. 잠금 밖 변경(다른 기기 Chrome sync)이 관측된 키는 이후 단계에서 쓰지 않고 되돌리지도 않으며 결과에 따로 알려요. 시청 기록·카테고리 제외·안내 큐와 합치지 않아요.
+백업 대상 키의 writer는 모두 확장 출처 Web Lock `cheese-spanner:options-storage` 안에서 최신 값을 읽고 써요. 옵션 페이지·워커는 `withOptionsStorageLock`을 직접 쓰고, 콘텐츠는 `settingsStoreSet`으로 워커 큐에 요청해요. 잠금을 잡은 채 네트워크 요청을 기다리지 않아요(방송 대상 채널 조회는 잠금 밖). 설정 파일 적용은 잠금을 한 번 잡은 상태에서 최신 값·미리보기 지문 비교·단계별 쓰기·되돌리기까지 끝내고, 효과 옵션은 끄는 쪽 먼저·켜는 쪽 마지막이에요. 잠금 밖 변경(다른 기기 Chrome sync)이 관측된 키는 이후 단계에서 쓰지 않고 되돌리지도 않으며 결과에 따로 알려요. 시청 기록·카테고리 제외·안내 큐와 합치지 않아요.
 
 회귀는 `tests/settings-store.test.js`(발신자·허용 목록·기대값 충돌·도착 순서·읽기와 쓰기 사이 끼어든 writer·잠금 없는 대조군·되돌리기 실패/충돌 구분), `tests/live-start.test.js`(복원 직후 진행 중 방송 기준화), `tests/options-settings-backup.test.js`(옵션 UI)와 기존 writer 테스트의 저장 흉내(`tests/helpers/settings-store-emulation.js`)가 보호해요.
 
@@ -76,7 +76,7 @@
 
 - 대체값은 루트 표식으로 골라요. 라이트는 `html.light`·`html[data-theme="light"]`, 다크는 `html.theme_dark`·`html[data-theme="dark"]`·`html[data-theme="theme_dark"]`이고, 표식이 없으면 치지직 기본인 다크예요. 두 표식이 엇갈리면 뒤에 둔 다크 규칙이 이겨요. 근거 없는 `[class*="dark"]` 판별이나 `prefers-color-scheme` 분기를 추가하지 않아요.
 - manifest isolated 목록에서 `content.js` 바로 뒤에 둬요. `content.js`의 `injectStyleOnce`를 쓰고, `shared/updateGuideView.js`와 모든 `features/*`보다 먼저 로드돼야 해요. 더 앞에 로드되면 로드 순서 오류를 던지고 요청 함수를 등록하지 않아요. MAIN world·서비스 워커·확장 페이지(options·history·replay-pending)는 이 파일을 읽지 않아요. 확장 페이지는 `styles.css`의 자체 토큰을 써요.
-- 요청 함수는 `BetterChzzk.utils`에 병합한 `ensureUiTheme()` 하나예요. 요청 전에는 아무것도 하지 않고, 첫 요청에 `#betterchzzk-ui-theme` `<style>` 하나를 `<html>`에 넣어요. 반복 요청은 아무것도 바꾸지 않아요. 이 스타일은 변수와 `"BetterChzzk Pretendard"` `@font-face`만 담아 그 자체로 보이는 효과가 없으므로, 기능을 꺼도 지우지 않아요.
+- 요청 함수는 `CheeseSpanner.utils`에 병합한 `ensureUiTheme()` 하나예요. 요청 전에는 아무것도 하지 않고, 첫 요청에 `#cheese-spanner-ui-theme` `<style>` 하나를 `<html>`에 넣어요. 반복 요청은 아무것도 바꾸지 않아요. 이 스타일은 변수와 `"CheeseSpanner Pretendard"` `@font-face`만 담아 그 자체로 보이는 효과가 없으므로, 기능을 꺼도 지우지 않아요.
 - 글꼴 주소는 `chrome.runtime.getURL("vendor/fonts/PretendardVariable.woff2")`로 만든 패키지 파일이에요. 이 파일은 `web_accessible_resources`에서 치지직 출처에만 열려 있어요. 외부 글꼴 서버·원격 URL·`@import`를 추가하지 않고, 기능 안에 `@font-face`를 다시 선언하지 않아요.
 - 확장 스타일이 들어간 UI를 다른 문서(예: 채팅 멀티뷰 칸 프레임)에 그리게 되면 그 문서에도 같은 정의가 있어야 해요. 지금 함수는 현재 문서만 다뤄요. 필요해지면 이 모듈이 대상 문서를 받도록 넓히고, 기능 안에 정의를 복사하지 않아요.
 

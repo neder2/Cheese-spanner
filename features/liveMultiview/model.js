@@ -1,6 +1,6 @@
 /** 멀티뷰의 입력·탭 구성·채널별 영구 딜레이와 탐색 범위 계산. */
 (() => {
-    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
+    const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     const CHANNEL = /^[a-f0-9]{32}$/;
     const DELAY_PREFIX = "betterChzzkMultiviewDelay:";
     const SESSION_KEY = "betterChzzkMultiviewSession";

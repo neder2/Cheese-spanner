@@ -101,7 +101,7 @@ function fixture(
         onMessage: { addListener: (fn) => listeners.add(fn), removeListener: (fn) => listeners.delete(fn) },
     };
     win.chrome = { runtime };
-    win.BetterChzzk = {
+    win.CheeseSpanner = {
         utils: {
             getMainVideoElement: () => doc.querySelector("video"),
             startPageChangeDetection: (fn) => {
@@ -112,7 +112,7 @@ function fixture(
             },
         },
     };
-    win.BetterChzzkSettings = {
+    win.CheeseSpannerSettings = {
         getOptions: (fn) => fn(options),
         addOptionsChangeListener: (fn) => {
             optionsListener = fn;
@@ -126,7 +126,7 @@ function fixture(
     const inject = () => evalRepoScript(dom, "features/updateGuide.js");
     inject();
     t.after(() => {
-        win.BetterChzzk.updateGuide?.stop();
+        win.CheeseSpanner.updateGuide?.stop();
         win.close();
     });
     const flush = async () => {
@@ -151,9 +151,13 @@ function fixture(
     } = {}) {
         let response;
         for (const fn of listeners)
-            fn({ type: "betterchzzk:update-guide", protocol: 1, action: "replay", guideVersion }, sender, (value) => {
-                response = value;
-            });
+            fn(
+                { type: "cheese-spanner:update-guide", protocol: 1, action: "replay", guideVersion },
+                sender,
+                (value) => {
+                    response = value;
+                }
+            );
         return response;
     }
     return {
@@ -718,8 +722,8 @@ test("real worker protocol consumes an upgrade once and a second document cannot
         },
     };
     evalRepoScript({ window: first.win }, "shared/updateGuideController.js");
-    const catalog = first.win.BetterChzzkUpdateGuide;
-    const controller = first.win.BetterChzzkUpdateGuideController.createController({ chrome, catalog });
+    const catalog = first.win.CheeseSpannerUpdateGuide;
+    const controller = first.win.CheeseSpannerUpdateGuideController.createController({ chrome, catalog });
     await controller.onInstalled({ reason: "update", previousVersion: "1.4.0" });
     assert.equal(local[catalog.STORAGE_KEY].status, "pending");
     for (const [index, f] of [first, second].entries()) {
@@ -844,7 +848,7 @@ test("a late commit after BFCache stays consumed and normal unload or explicit s
 
     const stopped = fixture(t);
     stopped.win.dispatchEvent(new stopped.win.PageTransitionEvent("pagehide", { persisted: true }));
-    stopped.win.BetterChzzk.updateGuide.stop();
+    stopped.win.CheeseSpanner.updateGuide.stop();
     stopped.win.dispatchEvent(new stopped.win.PageTransitionEvent("pageshow", { persisted: true }));
     await stopped.advance(30000);
     assert.equal(stopped.listeners.size, 0);
@@ -857,7 +861,7 @@ test("automatic and replayed notices request the shared CHZZK theme before inser
     const guideStyles = () =>
         [...f.doc.querySelectorAll("style")].filter((style) => style.textContent.includes("[data-bcug-view]")).length;
     // features/updateGuide.js reads the merged shared utils at use time, as shared/uiTheme.js provides them.
-    f.win.BetterChzzk.utils.ensureUiTheme = () => requests.push({ styles: guideStyles(), toast: !!f.toast() });
+    f.win.CheeseSpanner.utils.ensureUiTheme = () => requests.push({ styles: guideStyles(), toast: !!f.toast() });
     await f.advance(2000);
     assert.ok(f.toast());
     assert.ok(requests.length >= 1);

@@ -64,11 +64,11 @@ function createRepositoryFixture(options = {}) {
     });
     dom.window.eval(MODEL_SOURCE);
     dom.window.eval(REPOSITORY_SOURCE);
-    const { createCommentRepository } = dom.window.BetterChzzk.vodComments.repository;
+    const { createCommentRepository } = dom.window.CheeseSpanner.vodComments.repository;
     return {
         createCommentRepository,
         dom,
-        model: dom.window.BetterChzzk.vodComments.model,
+        model: dom.window.CheeseSpanner.vodComments.model,
         repository: options.fetchPage ? createCommentRepository(options) : null,
     };
 }

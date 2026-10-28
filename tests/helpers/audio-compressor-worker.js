@@ -4,7 +4,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const repoRoot = path.join(__dirname, "..", "..");
-const TYPE = "betterchzzk:audio-compressor-state";
+const TYPE = "cheese-spanner:audio-compressor-state";
 
 // This VM is a test-only Chrome transport. It loads the complete worker and its packaged imports.
 function createAudioCompressorWorker(chrome) {
@@ -81,7 +81,7 @@ function createAudioCompressorWorker(chrome) {
         for (const file of files) vm.runInContext(fs.readFileSync(path.join(repoRoot, file), "utf8"), context);
     };
     // Source injection is only for reproducing a regression with the preserved pre-change worker.
-    const sourcePath = process.env.BETTERCHZZK_AUDIO_COMPRESSOR_TEST_SOURCE || path.join(repoRoot, "background.js");
+    const sourcePath = process.env.CHEESE_SPANNER_AUDIO_COMPRESSOR_TEST_SOURCE || path.join(repoRoot, "background.js");
     vm.runInContext(fs.readFileSync(sourcePath, "utf8"), context);
     return {
         messages,

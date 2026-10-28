@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const test = require("node:test");
 
 const repoRoot = path.join(__dirname, "..");
-const TYPE = "betterchzzk:audio-compressor-state";
+const TYPE = "cheese-spanner:audio-compressor-state";
 const KEY = "betterchzzk:audio-compressor-tabs";
 const PREFERENCE_KEY = "betterchzzk:audio-compressor-preference";
 const CLEANUP_KEY = "betterchzzk:audio-compressor-cleanup-pending";

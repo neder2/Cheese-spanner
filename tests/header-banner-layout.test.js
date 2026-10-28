@@ -52,7 +52,7 @@ async function fixture(t, markup = layout) {
     ])
         evalRepoScript(dom, file);
     t.after(() => {
-        dom.window.BetterChzzk.headerBannerLayout.stop();
+        dom.window.CheeseSpanner.headerBannerLayout.stop();
         dom.window.close();
     });
     await new Promise((resolve) => setImmediate(resolve));
@@ -116,7 +116,7 @@ test("hidden or removed banners release corrections, while native zero offsets a
     f.resize(0);
     await waitForCondition(() => !header.hasAttribute("data-bchbl-offset-transform"));
     assert.equal(header.style.transform, "translateY(51px)");
-    assert.equal(doc.getElementById("betterchzzk-header-banner-layout-style"), null);
+    assert.equal(doc.getElementById("cheese-spanner-header-banner-layout-style"), null);
     f.resize(51);
     await waitForCondition(() => header.hasAttribute("data-bchbl-offset-transform"));
     header.style.transform = "translateY(0px)";
@@ -176,12 +176,12 @@ test("watchparty sticky title follows the actual header when a hidden skin leave
     f.dom.window.history.pushState({}, "", "/watchparty/535");
     await waitForCondition(() => body.style.getPropertyValue("--bchbl-sticky-top") === "60px");
     assert.equal(title.style.top, "111px", "native React state remains intact");
-    const rule = doc.getElementById("betterchzzk-header-banner-sticky-style").sheet.cssRules[0];
+    const rule = doc.getElementById("cheese-spanner-header-banner-sticky-style").sheet.cssRules[0];
     assert.equal(title.matches(rule.selectorText), true);
     assert.equal(rule.style.getPropertyValue("top"), "var(--bchbl-sticky-top)");
     // JSDOM does not retain !important on this var() declaration in CSSOM.
     assert.match(
-        doc.getElementById("betterchzzk-header-banner-sticky-style").textContent,
+        doc.getElementById("cheese-spanner-header-banner-sticky-style").textContent,
         /top: var\(--bchbl-sticky-top\) !important/
     );
     bottom = 72;
@@ -202,5 +202,5 @@ test("watchparty sticky title follows the actual header when a hidden skin leave
     await waitForCondition(() => body.hasAttribute("data-bchbl-sticky"));
     banner.remove();
     await waitForCondition(() => !body.hasAttribute("data-bchbl-sticky"));
-    assert.equal(doc.getElementById("betterchzzk-header-banner-sticky-style"), null);
+    assert.equal(doc.getElementById("cheese-spanner-header-banner-sticky-style"), null);
 });

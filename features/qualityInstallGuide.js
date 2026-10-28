@@ -8,7 +8,7 @@
     const BACKDROP = '[class^="_dimmed_"], [class*=" _dimmed_"]';
     const LAYER = '[class^="_layer_"], [class*=" _layer_"]';
     const PLAYER = '[class^="_player_"], [class*=" _player_"]';
-    const STATE_ATTR = "data-betterchzzk-auto-quality-guide";
+    const STATE_ATTR = "data-cheese-spanner-auto-quality-guide";
     const DIALOG = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]';
     const ACTION =
         "button, a, input, select, textarea, summary, [role=button], [role=link], [tabindex], [contenteditable]";
@@ -52,7 +52,7 @@
         normalizeCompact,
         startPageChangeDetection,
         hasNativeHideMutation,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
     const entries = new Map();
     let options = null;
     let observer = null;

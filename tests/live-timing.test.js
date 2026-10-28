@@ -5,9 +5,9 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 function setup() {
-    const context = vm.createContext({ BetterChzzk: { utils: { existing: 7 } } });
+    const context = vm.createContext({ CheeseSpanner: { utils: { existing: 7 } } });
     vm.runInContext(fs.readFileSync(path.join(__dirname, "../shared/liveTiming.js"), "utf8"), context);
-    return context.BetterChzzk.utils;
+    return context.CheeseSpanner.utils;
 }
 
 test("shared native timing preserves the observed staircase clock and merges utilities", () => {

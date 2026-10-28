@@ -1,5 +1,5 @@
 /**
- * shared/selectors.js — 치지직 의존 DOM 셀렉터 단일 공급원 (BetterChzzk.selectors)
+ * shared/selectors.js — 치지직 의존 DOM 셀렉터 단일 공급원 (CheeseSpanner.selectors)
  *
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트 전용. shared/data.js 다음, content.js 이전에 로드된다.
  *   MAIN world 스크립트(routeBridgePage/autoQualityPage/volumeWheelPage)는 별도 world라 여기 접근 불가.
@@ -18,7 +18,7 @@
     "use strict";
 
     const root = typeof window !== "undefined" ? window : globalThis;
-    const ns = (root.BetterChzzk = root.BetterChzzk || {});
+    const ns = (root.CheeseSpanner = root.CheeseSpanner || {});
     if (ns.selectors) return;
 
     // 치지직 비공개 클래스 의존 폴백 체인. 앞 항목이 더 구체적/우선.
@@ -142,7 +142,7 @@
             if (warned.has(key)) return;
             warned.add(key);
             console.warn(
-                `[Better Chzzk] selector stale: ${key} — 치지직 DOM 변경 가능성. shared/selectors.js 확인 필요.`
+                `[Cheese Spanner] selector stale: ${key} — 치지직 DOM 변경 가능성. shared/selectors.js 확인 필요.`
             );
         };
         setTimeout(check, timeoutMs);

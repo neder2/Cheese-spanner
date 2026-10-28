@@ -2,11 +2,11 @@
  * shared/settingsStore.js — 서비스 워커의 설정 저장 큐와 설정 파일 적용.
  *
  * 실행 컨텍스트: background.js(importScripts)만. DOM을 쓰지 않아요.
- * 하는 일: 치지직 콘텐츠가 요청한 설정 쓰기(betterchzzk:settings-store)를 발신자·키·값·기대값으로 검증하고,
- *   옵션 페이지가 요청한 설정 파일 내보내기·미리보기·적용(betterchzzk:settings-backup)을 처리해요.
+ * 하는 일: 치지직 콘텐츠가 요청한 설정 쓰기(cheese-spanner:settings-store)를 발신자·키·값·기대값으로 검증하고,
+ *   옵션 페이지가 요청한 설정 파일 내보내기·미리보기·적용(cheese-spanner:settings-backup)을 처리해요.
  *   모든 쓰기는 옵션 페이지·설치 정규화·방송 대상 쓰기와 같은 설정 저장 잠금(withOptionsStorageLock) 안에서
  *   최신 값을 읽은 뒤 실행되므로 서로 끼어들지 않아요. 시청 기록·카테고리 제외·안내 큐와 분리돼요.
- * 의존: BetterChzzkSettings(잠금·옵션 발신자 검증), BetterChzzkSettingsBackup(대상 키·검증·계획).
+ * 의존: CheeseSpannerSettings(잠금·옵션 발신자 검증), CheeseSpannerSettingsBackup(대상 키·검증·계획).
  */
 (() => {
     "use strict";
@@ -23,9 +23,9 @@
 
     function createController({
         chrome,
-        withLock = globalThis.BetterChzzkSettings.withOptionsStorageLock,
-        isOptionsPageSender = globalThis.BetterChzzkSettings.isOptionsPageSender,
-        catalog = globalThis.BetterChzzkSettingsBackup,
+        withLock = globalThis.CheeseSpannerSettings.withOptionsStorageLock,
+        isOptionsPageSender = globalThis.CheeseSpannerSettings.isOptionsPageSender,
+        catalog = globalThis.CheeseSpannerSettingsBackup,
         now = () => Date.now(),
     }) {
         let queue = Promise.resolve();
@@ -157,7 +157,11 @@
 
         function exportBackup() {
             return enqueue(async () => {
-                const syncKeys = [...globalThis.BetterChzzkSettings.OPTION_KEYS, catalog.PINS_KEY, catalog.FOLDERS_KEY];
+                const syncKeys = [
+                    ...globalThis.CheeseSpannerSettings.OPTION_KEYS,
+                    catalog.PINS_KEY,
+                    catalog.FOLDERS_KEY,
+                ];
                 const [syncData, localData] = await Promise.all([read("sync", syncKeys), readAllLocal()]);
                 return catalog.createBackup({
                     syncData,
@@ -177,7 +181,7 @@
 
         function readDisabledKeys(value) {
             if (value === undefined) return [];
-            const keys = globalThis.BetterChzzkSettings.OPTION_KEYS;
+            const keys = globalThis.CheeseSpannerSettings.OPTION_KEYS;
             if (!Array.isArray(value) || value.length > 16 || value.some((key) => !keys.includes(key)))
                 throw failure("invalid-request");
             return [...new Set(value)];
@@ -377,5 +381,5 @@
         return { handleMessage, store, exportBackup, preview, apply, enqueue };
     }
 
-    globalThis.BetterChzzkSettingsStore = Object.freeze({ createController });
+    globalThis.CheeseSpannerSettingsStore = Object.freeze({ createController });
 })();

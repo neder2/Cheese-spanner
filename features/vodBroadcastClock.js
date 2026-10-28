@@ -4,38 +4,38 @@
  *
  * 동작 위치: https://chzzk.naver.com/video/{videoNo} 다시보기 시청 페이지 (isolated content script).
  * 하는 일: video-detail API로 방송 시작 시각과 길이를 가져와 currentTime에 더해 실시각 시계를
- *   렌더링하고(#betterchzzk-vod-broadcast-clock), 17시간 단위로 분할된 장시간 VOD의 세그먼트
+ *   렌더링하고(#cheese-spanner-vod-broadcast-clock), 17시간 단위로 분할된 장시간 VOD의 세그먼트
  *   오프셋을 보정한다. 시청 기록 스토리지를 읽어 현재 다시보기와 같은 방송으로 추정되는
  *   기록을 채널/liveId/방영 시간대/제목 유사도로 점수화해 매칭하고, 일치하면 방제 변경 이력을
- *   펼침 버튼(#betterchzzk-vod-title-history-toggle)과 패널로 노출한다.
- * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.vodTimeline, BetterChzzk.utils (addTitleHistory, bindFeatureOptions,
+ *   펼침 버튼(#cheese-spanner-vod-title-history-toggle)과 패널로 노출한다.
+ * 의존: CheeseSpannerSettings.normalizeOptions, CheeseSpanner.vodTimeline, CheeseSpanner.utils (addTitleHistory, bindFeatureOptions,
  *   createMutationObserverSync, createThrottledDomSync, fetchJson, getVodVideoNoFromPath,
  *   injectStyleOnce, parseChzzkDate, startPageChangeDetection, startStorageChangeListener,
  *   storageGet, touchMapEntry 등), chrome.storage.local.
  * 옵션 키: vodBroadcastClockEnabled, liveWatchHistoryEnabled(방제 이력 펼침 기능 노출 여부로 재사용).
- * DOM 마커: #betterchzzk-vod-broadcast-clock(시계), #betterchzzk-vod-broadcast-range(시작·종료),
- *   #betterchzzk-vod-title-history(방제 이력 래퍼),
- *   #betterchzzk-vod-title-history-toggle(펼침 버튼), #betterchzzk-vod-title-history-panel(패널),
+ * DOM 마커: #cheese-spanner-vod-broadcast-clock(시계), #cheese-spanner-vod-broadcast-range(시작·종료),
+ *   #cheese-spanner-vod-title-history(방제 이력 래퍼),
+ *   #cheese-spanner-vod-title-history-toggle(펼침 버튼), #cheese-spanner-vod-title-history-panel(패널),
  *   data-bcbc-placement 속성으로 시계 삽입 위치 구분.
  * 통신: chrome.storage.local 키 "betterChzzkLiveWatchHistory"를 읽기 전용으로 조회한다. 이 키는
  *   features/liveWatchHistory.js가 채널/라이브 단위로 적재하며, chrome.storage.onChanged를 통해
  *   변경 시 자체 스냅샷·매칭 캐시를 무효화한다.
  * 구조: CLOCK_ID 등 상수/선택자 → 옵션 판정(isClockEnabled 등) → 컨트롤 영역 탐지(findLeftButtonsContainer 등) →
  *   시청 기록 스냅샷 조회 및 매칭 점수화(getWatchHistorySnapshot, scoreHistoryMatch, findHistoryInfo) →
- *   video-detail API 조회 및 공용 분할 VOD 시간축 계산(fetchVideoDetail, BetterChzzk.vodTimeline) →
+ *   video-detail API 조회 및 공용 분할 VOD 시간축 계산(fetchVideoDetail, CheeseSpanner.vodTimeline) →
  *   시계 DOM 생성/배치(createClockElement, mountClock, updateClockText) →
  *   방제 이력 펼침 UI(syncTitleHistoryExpander, renderTitleHistoryPanel) →
  *   전체 동기화 진입점(syncVodBroadcastClock) → 라우트/DOM 변경 감지(handlePageChange, startDomObserver) →
  *   런타임 설치/해제(installRuntime, teardownRuntime) → 옵션 바인딩(applyOptions).
  */
 (() => {
-    const CLOCK_ID = "betterchzzk-vod-broadcast-clock";
-    const BROADCAST_RANGE_ID = "betterchzzk-vod-broadcast-range";
-    const NATIVE_DATE_HIDDEN_ATTR = "data-betterchzzk-vod-date-hidden";
-    const STYLE_ID = "betterchzzk-vod-broadcast-clock-style";
-    const TITLE_HISTORY_WRAP_ID = "betterchzzk-vod-title-history";
-    const TITLE_HISTORY_BUTTON_ID = "betterchzzk-vod-title-history-toggle";
-    const TITLE_HISTORY_PANEL_ID = "betterchzzk-vod-title-history-panel";
+    const CLOCK_ID = "cheese-spanner-vod-broadcast-clock";
+    const BROADCAST_RANGE_ID = "cheese-spanner-vod-broadcast-range";
+    const NATIVE_DATE_HIDDEN_ATTR = "data-cheese-spanner-vod-date-hidden";
+    const STYLE_ID = "cheese-spanner-vod-broadcast-clock-style";
+    const TITLE_HISTORY_WRAP_ID = "cheese-spanner-vod-title-history";
+    const TITLE_HISTORY_BUTTON_ID = "cheese-spanner-vod-title-history-toggle";
+    const TITLE_HISTORY_PANEL_ID = "cheese-spanner-vod-title-history-panel";
     const WATCH_HISTORY_STORAGE_KEY = "betterChzzkLiveWatchHistory";
     const VIDEO_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/videos";
     const VOD_TIME_SELECTOR = "div.pzp-vod-time, div.pzp-pc__vod-time, div.pzp-pc-vod-time";
@@ -112,9 +112,9 @@
         startStorageChangeListener,
         storageGet,
         touchMapEntry,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
 
-    let featureOptions = BetterChzzkSettings.normalizeOptions();
+    let featureOptions = CheeseSpannerSettings.normalizeOptions();
     let attachedVideo = null;
     let clockEl = null;
     let clockTextEl = null;
@@ -537,7 +537,7 @@
     function injectClockStyleOnce() {
         // The clock pill sits on the video controls: fixed overlay colors and the copied native control font.
         // The previous-title toggle and panel use shared/uiTheme.js (--bct-*), which follows CHZZK's root theme.
-        BetterChzzk.utils.ensureUiTheme?.();
+        CheeseSpanner.utils.ensureUiTheme?.();
         injectStyleOnce(
             STYLE_ID,
             `
@@ -789,7 +789,7 @@
         if (!(timeEl instanceof HTMLElement)) return timeEl;
 
         const next = timeEl.nextElementSibling;
-        if (next instanceof HTMLElement && next.id === "betterchzzk-skip-pill") return next;
+        if (next instanceof HTMLElement && next.id === "cheese-spanner-skip-pill") return next;
         return timeEl;
     }
 
@@ -932,7 +932,7 @@
                 if (metadataToken !== token || currentVideoNo !== videoNo) return;
 
                 currentVideoDetail = detail;
-                const startInfo = await BetterChzzk.vodTimeline.resolveSegmentStartInfo(detail, {
+                const startInfo = await CheeseSpanner.vodTimeline.resolveSegmentStartInfo(detail, {
                     fetchDetail: fetchVideoDetail,
                     signal,
                 });

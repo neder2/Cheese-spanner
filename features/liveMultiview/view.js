@@ -1,6 +1,6 @@
 /** 멀티뷰 DOM 요소와 신뢰된 조작 바인딩. isolated world 전용. */
 (() => {
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     const controlActions = new WeakMap();
     function text(node, value) {
         if (node && node.textContent !== value) node.textContent = value;

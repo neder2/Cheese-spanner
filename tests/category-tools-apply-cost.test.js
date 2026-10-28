@@ -19,7 +19,7 @@ test("steady global list applies reuse the found sort row and tab line instead o
     const fixture = createFixture(t);
     await fixture.apply();
     await fixture.apply();
-    const toolbar = fixture.document.getElementById("betterchzzk-category-tools");
+    const toolbar = fixture.document.getElementById("cheese-spanner-category-tools");
     assert.equal(toolbar?.parentElement?.id, "tabs");
 
     fixture.reset();
@@ -119,7 +119,7 @@ test("a placed toolbar beside the visible native tag search is not re-inserted o
     });
     await fixture.apply();
     await fixture.apply();
-    const toolbar = fixture.document.getElementById("betterchzzk-category-tools");
+    const toolbar = fixture.document.getElementById("cheese-spanner-category-tools");
     assert.equal(toolbar.nextSibling?.id, "tag-box");
     assert.equal(fixture.document.getElementById("tag-box").getAttribute("data-bcgt-tag-search-anchor"), "1");
 

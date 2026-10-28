@@ -5,8 +5,8 @@ const test = require("node:test");
 const { JSDOM } = require("jsdom");
 
 const repoRoot = path.join(__dirname, "..");
-const REACT_PROPS_KEY = "__reactProps$betterChzzkTest";
-const SOURCE_REQUEST_EVENT = "betterchzzk:chat-timestamp-source-request";
+const REACT_PROPS_KEY = "__reactProps$cheeseSpannerTest";
+const SOURCE_REQUEST_EVENT = "cheese-spanner:chat-timestamp-source-request";
 
 function readRepoFile(...parts) {
     return fs.readFileSync(path.join(repoRoot, ...parts), "utf8");
@@ -218,7 +218,7 @@ function loadChatTimestamp(dom) {
 }
 
 function closePageDom(dom) {
-    dom.window.BetterChzzk?.chatTimestamp?.teardownRuntime?.();
+    dom.window.CheeseSpanner?.chatTimestamp?.teardownRuntime?.();
     dom.window.close();
 }
 
@@ -256,7 +256,7 @@ test("existing server-loaded chats use their original time and timestamp CSS has
     assert.equal(message.textContent, "시청자안녕하세요");
     assert.equal(message.firstElementChild.tagName, "BUTTON");
 
-    const style = dom.window.document.getElementById("betterchzzk-chat-timestamp-style");
+    const style = dom.window.document.getElementById("cheese-spanner-chat-timestamp-style");
     assert.match(style.textContent, /content:\s*attr\(data-bcmt-time\)/);
     assert.doesNotMatch(style.textContent, /content:[^;]*\[/);
     assert.match(style.textContent, /--Content-Neutral-Cool-Base, #9da5b6/);
@@ -412,12 +412,12 @@ test("SPA route changes clear markers outside live and restore original times on
     assert.equal(message.getAttribute("data-bcmt-time"), "18:03");
 
     dom.window.history.pushState({}, "", "/video/1234");
-    dom.window.dispatchEvent(new dom.window.CustomEvent("betterchzzk:routechange", { detail: { source: "test" } }));
+    dom.window.dispatchEvent(new dom.window.CustomEvent("cheese-spanner:routechange", { detail: { source: "test" } }));
     await waitForCondition(() => !message.hasAttribute("data-bcmt-time"));
     assert.equal(message.hasAttribute("data-bcmt-source-time"), false);
 
     dom.window.history.pushState({}, "", "/live/test-channel");
-    dom.window.dispatchEvent(new dom.window.CustomEvent("betterchzzk:routechange", { detail: { source: "test" } }));
+    dom.window.dispatchEvent(new dom.window.CustomEvent("cheese-spanner:routechange", { detail: { source: "test" } }));
     await waitForCondition(() => message.getAttribute("data-bcmt-time") === "18:03");
     closePageDom(dom);
 });
@@ -431,18 +431,18 @@ test("the independent default-off option stamps existing server rows when enable
 
     const document = dom.window.document;
     const wrapper = document.querySelector("._wrapper_sg7hy_25");
-    assert.equal(dom.window.BetterChzzkSettings.DEFAULT_OPTIONS.chatTimestampEnabled, false);
-    assert.equal(dom.window.BetterChzzkSettings.FEATURE_KEYS.includes("chatTimestampEnabled"), true);
-    assert.equal(document.getElementById("betterchzzk-chat-timestamp-style"), null);
+    assert.equal(dom.window.CheeseSpannerSettings.DEFAULT_OPTIONS.chatTimestampEnabled, false);
+    assert.equal(dom.window.CheeseSpannerSettings.FEATURE_KEYS.includes("chatTimestampEnabled"), true);
+    assert.equal(document.getElementById("cheese-spanner-chat-timestamp-style"), null);
     assert.equal(wrapper.querySelector("[data-bcmt-time]"), null);
 
     dom.window.chrome.testState.setSync({ chatTimestampEnabled: true });
     assert.equal(wrapper.querySelector('[data-chat-id="before-enable"] [data-bcmt-time]')?.dataset.bcmtTime, "18:04");
-    assert.ok(document.getElementById("betterchzzk-chat-timestamp-style"));
+    assert.ok(document.getElementById("cheese-spanner-chat-timestamp-style"));
 
     dom.window.chrome.testState.setSync({ chatTimestampEnabled: false });
     assert.equal(wrapper.querySelector("[data-bcmt-time], [data-bcmt-source-time]"), null);
-    assert.equal(document.getElementById("betterchzzk-chat-timestamp-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-chat-timestamp-style"), null);
     wrapper.append(createChatRow(dom, { chatId: "while-off", text: "꺼진 동안", messageTime: serverTime(18, 5) }));
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(wrapper.querySelector('[data-chat-id="while-off"] [data-bcmt-time]'), null);
@@ -520,8 +520,8 @@ test("the VOD option defaults off and toggles immediately while live timestamps 
     loadChatTimestamp(dom);
     const document = dom.window.document;
     const message = document.querySelector("[class*='chatting_message']");
-    assert.equal(dom.window.BetterChzzkSettings.DEFAULT_OPTIONS.vodChatTimestampEnabled, false);
-    assert.ok(dom.window.BetterChzzkSettings.FEATURE_KEYS.includes("vodChatTimestampEnabled"));
+    assert.equal(dom.window.CheeseSpannerSettings.DEFAULT_OPTIONS.vodChatTimestampEnabled, false);
+    assert.ok(dom.window.CheeseSpannerSettings.FEATURE_KEYS.includes("vodChatTimestampEnabled"));
     assert.equal(message.hasAttribute("data-bcmt-time"), false);
 
     dom.window.chrome.testState.setSync({ vodChatTimestampEnabled: true });
@@ -538,7 +538,7 @@ test("the VOD option defaults off and toggles immediately while live timestamps 
     assert.equal(message.dataset.bcmtTime, "18:04");
     assert.equal(sourceRequests, 1);
     dom.window.chrome.testState.setSync({ chatTimestampEnabled: false, vodChatTimestampEnabled: false });
-    assert.equal(document.getElementById("betterchzzk-chat-timestamp-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-chat-timestamp-style"), null);
 
     const optionsDom = new JSDOM(readRepoFile("options.html"));
     t.after(() => optionsDom.window.close());
@@ -590,7 +590,7 @@ test("VOD remount, SPA video changes, and return from live preserve the independ
     const document = dom.window.document;
     const navigate = (path) => {
         dom.window.history.pushState({}, "", path);
-        dom.window.dispatchEvent(new dom.window.CustomEvent("betterchzzk:routechange"));
+        dom.window.dispatchEvent(new dom.window.CustomEvent("cheese-spanner:routechange"));
     };
     const remountedLog = document.querySelector("[role='log']").cloneNode(false);
     const newRow = createChatRow(dom, { chatId: "remounted", messageTime: serverTime(18, 2) });

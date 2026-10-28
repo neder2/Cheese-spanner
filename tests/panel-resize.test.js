@@ -101,7 +101,7 @@ async function fixture(
     function bindRects() {
         doc.getElementById("layout-body").getBoundingClientRect = () => rect(0, viewport - 12);
         for (const node of doc.querySelectorAll(
-            "#sidebar, #aside-chatting, #vod-aside, #betterchzzk-vod-comment-aside"
+            "#sidebar, #aside-chatting, #vod-aside, #cheese-spanner-vod-comment-aside"
         )) {
             node.getBoundingClientRect = () => {
                 if (node.style.display === "none" || node.hidden) return rect(0, 0, 0, 0);
@@ -121,7 +121,7 @@ async function fixture(
         }
         doc.getElementById("player-row").getBoundingClientRect = () => rect(bodyLeft(), viewport - 12 - bodySpace());
         doc.querySelector("main").getBoundingClientRect = () => {
-            const aside = doc.querySelector("#aside-chatting, #vod-aside, #betterchzzk-vod-comment-aside");
+            const aside = doc.querySelector("#aside-chatting, #vod-aside, #cheese-spanner-vod-comment-aside");
             const asideWidth =
                 aside?.style.display === "none" ? 0 : width(aside, Number.parseFloat(aside?.style.width) || 0);
             const left = aside?.getAttribute("data-bcpr-side") === "left" ? bodyLeft() + asideWidth : bodyLeft();
@@ -207,14 +207,14 @@ async function fixture(
         "features/panelResizeModel.js",
     ])
         evalRepoScript(dom, file);
-    win.BetterChzzk.utils.bindFeatureOptions = (apply) => {
+    win.CheeseSpanner.utils.bindFeatureOptions = (apply) => {
         optionsChanged = apply;
         if (!delayedOptions) apply({ sidebarResizeEnabled: true, chatResizeEnabled: true, ...initialOptions });
         return () => {};
     };
     t.after(() => {
         for (const cleanup of cleanups) cleanup();
-        win.BetterChzzk.panelResize?.stop();
+        win.CheeseSpanner.panelResize?.stop();
         win.close();
     });
     evalRepoScript(dom, "features/panelResize.js");
@@ -386,21 +386,21 @@ async function integratedFixture(t, { free = false } = {}) {
         };
     const requests = [],
         subscribers = new Set();
-    let options = win.BetterChzzkSettings.normalizeOptions({
+    let options = win.CheeseSpannerSettings.normalizeOptions({
         liveMultiviewEnabled: true,
         chatToolsModeratorBoxEnabled: true,
     });
     const configure = (patch) => {
-        options = win.BetterChzzkSettings.normalizeOptions({ ...options, ...patch });
+        options = win.CheeseSpannerSettings.normalizeOptions({ ...options, ...patch });
         for (const apply of subscribers) apply(options);
     };
-    win.BetterChzzk.utils.bindFeatureOptions = (apply) => {
+    win.CheeseSpanner.utils.bindFeatureOptions = (apply) => {
         subscribers.add(apply);
         apply(options);
         return () => subscribers.delete(apply);
     };
     // Secondary discovery stays pending: no decoder/network simulation is needed to test layout ownership.
-    win.BetterChzzk.utils.fetchJson = (url, init) => {
+    win.CheeseSpanner.utils.fetchJson = (url, init) => {
         requests.push({ url, signal: init.signal });
         return new Promise(() => {});
     };
@@ -690,7 +690,7 @@ test("SPA comment-only replacement shares document selection; storage failures r
     old.remove();
     f.win.history.pushState({}, "", "/video/123");
     const aside = f.doc.createElement("aside");
-    aside.id = "betterchzzk-vod-comment-aside";
+    aside.id = "cheese-spanner-vod-comment-aside";
     aside.style.cssText = "position:relative;width:353px;flex:0 0 353px;max-width:35%;min-width:280px;overflow:hidden";
     f.doc.getElementById("player-row").setAttribute("data-bcvc-comment-only-host", "1");
     f.doc.getElementById("player-row").append(aside);
@@ -1109,7 +1109,7 @@ test("keyboard events remain untouched and mouse dragging preserves input focus 
     assert.equal(f.writes.length, 1);
     assert.equal(f.doc.activeElement, input);
     assert.equal(h.hasAttribute("data-bcpr-dragging"), false);
-    const rules = [...f.doc.getElementById("betterchzzk-panel-resize-style").sheet.cssRules];
+    const rules = [...f.doc.getElementById("cheese-spanner-panel-resize-style").sheet.cssRules];
     const base = rules.find((rule) => rule.selectorText === "[data-bcpr-handle]");
     assert.equal(base.style.getPropertyValue("width"), "8px");
     assert.equal(base.style.getPropertyValue("background"), "transparent");
@@ -1130,7 +1130,7 @@ test("keyboard events remain untouched and mouse dragging preserves input focus 
     assert.ok(liveGuide, "live guide must cover the native separator outside the chat edge");
     assert.equal(liveGuide.style.getPropertyValue("left"), "-1px");
     // The single boundary highlight uses the shared CHZZK brand text color (--sem-color-content-brand-strong).
-    assert.ok(f.doc.getElementById("betterchzzk-ui-theme"), "the shared theme is requested with the handle style");
+    assert.ok(f.doc.getElementById("cheese-spanner-ui-theme"), "the shared theme is requested with the handle style");
     const highlights = rules.filter(
         (rule) =>
             rule.selectorText?.includes("[data-bcpr-handle]") &&
@@ -1156,7 +1156,7 @@ test("keyboard events remain untouched and mouse dragging preserves input focus 
 
 test("explicit stop during the first read stays stopped after callbacks, options and pageshow", async (t) => {
     const f = await fixture(t, { delayedRead: true, stored: { sidebarWidthPx: 280, chatWidthPx: 400 } });
-    f.win.BetterChzzk.panelResize.stop();
+    f.win.CheeseSpanner.panelResize.stop();
     f.finishRead();
     f.options({});
     f.win.dispatchEvent(new f.win.PageTransitionEvent("pageshow", { persisted: true }));
@@ -1214,7 +1214,7 @@ for (const panel of ["sidebar", "chat"]) {
 }
 
 const HEIGHT_KEY = "betterchzzk:panel-resize:chat-height:v1";
-const placementRules = (f) => [...f.doc.getElementById("betterchzzk-panel-placement-style").sheet.cssRules];
+const placementRules = (f) => [...f.doc.getElementById("cheese-spanner-panel-placement-style").sheet.cssRules];
 
 test("chat left placement marks only the native aside, mirrors its boundary and keeps the width choice", async (t) => {
     const f = await fixture(t, { sidebar: false, initialOptions: { chatPosition: "left" } });
@@ -1259,7 +1259,7 @@ test("chat left placement marks only the native aside, mirrors its boundary and 
     await f.flush();
     assert.equal(chat.hasAttribute("data-bcpr-side"), false);
     assert.equal(chat.style.cssText, original);
-    assert.equal(f.doc.getElementById("betterchzzk-panel-placement-style"), null);
+    assert.equal(f.doc.getElementById("cheese-spanner-panel-placement-style"), null);
     assert.equal(video.parentElement.parentElement, row);
 });
 
@@ -1338,7 +1338,7 @@ test("chat height drags the native chat only, keeps its input, resets on double 
     assert.equal(grip.tabIndex, -1);
     assert.equal(chat.hasAttribute("data-bcpr-height"), false, "the native height stays until the user drags");
     // Chrome 2026-10-09: the native input area (position:relative; z-index:1000) covered a z-index:3 grip.
-    const gripRule = [...f.doc.getElementById("betterchzzk-panel-resize-style").sheet.cssRules].find(
+    const gripRule = [...f.doc.getElementById("cheese-spanner-panel-resize-style").sheet.cssRules].find(
         (rule) => rule.selectorText === '[data-bcpr-handle="chat-height"]'
     );
     assert.ok(Number(gripRule.style.getPropertyValue("z-index")) > 1000, "the grip stacks above the chat input area");

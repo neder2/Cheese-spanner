@@ -80,7 +80,7 @@ function cssBlocks(cssText) {
 // static fallbacks for shared variables or its own @font-face; every shared variable it uses must exist.
 function assertUsesSharedTheme(assert, window, style, label) {
     const css = style.textContent;
-    const theme = window.document.getElementById("betterchzzk-ui-theme");
+    const theme = window.document.getElementById("cheese-spanner-ui-theme");
     assert.ok(theme, `${label} requests the shared theme`);
     assert.ok(
         theme.compareDocumentPosition(style) & window.Node.DOCUMENT_POSITION_FOLLOWING,

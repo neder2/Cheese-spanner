@@ -115,7 +115,7 @@ function loadChatTools(dom, { onParse } = {}) {
     evalRepoScript(dom, "shared", "uiTheme.js");
     evalRepoScript(dom, "features", "chatTools", "parser.js");
     if (onParse) {
-        const namespace = dom.window.BetterChzzk.chatTools;
+        const namespace = dom.window.CheeseSpanner.chatTools;
         const parser = namespace.parser;
         namespace.parser = {
             ...parser,
@@ -784,7 +784,7 @@ test("native highlights clean up during row reuse, remount, option changes and c
     }
     await waitForCondition(() => !row.hasAttribute("data-bcct-moderator-highlight"));
     assert.equal(row.style.getPropertyValue("--bcct-moderator-highlight-color"), "");
-    assert.ok(document.getElementById("betterchzzk-chat-tools-style"), "blind-text feature remains enabled");
+    assert.ok(document.getElementById("cheese-spanner-chat-tools-style"), "blind-text feature remains enabled");
     for (const listener of chrome.testState.storageChangeListeners) {
         listener({ chatToolsModeratorBoxEnabled: { oldValue: false, newValue: true } }, "sync");
     }
@@ -839,7 +839,7 @@ test("welcome message removal stays off by default and survives enable, remount,
     let welcome = welcomeRow.firstElementChild;
     let ordinaryChat = welcomeRow.nextElementSibling;
 
-    assert.equal(dom.window.document.getElementById("betterchzzk-chat-welcome-message-style"), null);
+    assert.equal(dom.window.document.getElementById("cheese-spanner-chat-welcome-message-style"), null);
     assert.notEqual(dom.window.getComputedStyle(welcomeRow).display, "none");
     assert.notEqual(dom.window.getComputedStyle(welcome).display, "none");
     assert.notEqual(dom.window.getComputedStyle(ordinaryChat).display, "none");
@@ -852,7 +852,7 @@ test("welcome message removal stays off by default and survives enable, remount,
             "sync"
         );
     }
-    await waitForCondition(() => dom.window.document.getElementById("betterchzzk-chat-welcome-message-style"));
+    await waitForCondition(() => dom.window.document.getElementById("cheese-spanner-chat-welcome-message-style"));
 
     chatLog.innerHTML =
         '<div class="_item_8lqsk_7 _big_padding_8lqsk_53">' +
@@ -863,7 +863,7 @@ test("welcome message removal stays off by default and survives enable, remount,
     welcome = welcomeRow.firstElementChild;
     ordinaryChat = welcomeRow.nextElementSibling;
 
-    assert.equal(dom.window.document.querySelectorAll("#betterchzzk-chat-welcome-message-style").length, 1);
+    assert.equal(dom.window.document.querySelectorAll("#cheese-spanner-chat-welcome-message-style").length, 1);
     assert.equal(dom.window.getComputedStyle(welcomeRow).display, "none");
     assert.equal(dom.window.getComputedStyle(welcome).display, "none");
     assert.notEqual(dom.window.getComputedStyle(ordinaryChat).display, "none");
@@ -877,7 +877,7 @@ test("welcome message removal stays off by default and survives enable, remount,
         );
     }
 
-    assert.equal(dom.window.document.getElementById("betterchzzk-chat-welcome-message-style"), null);
+    assert.equal(dom.window.document.getElementById("cheese-spanner-chat-welcome-message-style"), null);
     assert.notEqual(dom.window.getComputedStyle(welcomeRow).display, "none");
     assert.notEqual(dom.window.getComputedStyle(welcome).display, "none");
 
@@ -890,7 +890,7 @@ test("welcome message removal stays off by default and survives enable, remount,
         );
     }
 
-    assert.equal(dom.window.document.querySelectorAll("#betterchzzk-chat-welcome-message-style").length, 1);
+    assert.equal(dom.window.document.querySelectorAll("#cheese-spanner-chat-welcome-message-style").length, 1);
     assert.equal(dom.window.getComputedStyle(welcomeRow).display, "none");
     assert.equal(dom.window.getComputedStyle(welcome).display, "none");
 });
@@ -904,7 +904,7 @@ test("welcome message removal restores a remounted welcome row when disabled", a
     t.after(() => closeChatToolsDom(dom));
 
     loadChatTools(dom);
-    await waitForCondition(() => dom.window.document.getElementById("betterchzzk-chat-welcome-message-style"));
+    await waitForCondition(() => dom.window.document.getElementById("cheese-spanner-chat-welcome-message-style"));
 
     const chatLog = dom.window.document.querySelector("[role='log']");
     chatLog.innerHTML =
@@ -929,7 +929,7 @@ test("welcome message removal restores a remounted welcome row when disabled", a
         );
     }
 
-    assert.equal(dom.window.document.getElementById("betterchzzk-chat-welcome-message-style"), null);
+    assert.equal(dom.window.document.getElementById("cheese-spanner-chat-welcome-message-style"), null);
     assert.notEqual(dom.window.getComputedStyle(welcomeRow).display, "none");
     assert.notEqual(dom.window.getComputedStyle(welcome).display, "none");
 });
@@ -954,8 +954,8 @@ test("chat tools panel uses the shared CHZZK theme, Pretendard and 해요체 not
     assert.equal(document.querySelector(".bcct-blind-reveal").title, "블라인드된 메시지의 원문이에요.");
     assert.equal(document.querySelector(".bcct-moderator-box__empty").textContent, "아직 수집된 메시지가 없어요.");
 
-    const themeStyle = document.getElementById("betterchzzk-ui-theme");
-    const panelStyle = document.getElementById("betterchzzk-chat-tools-style");
+    const themeStyle = document.getElementById("cheese-spanner-ui-theme");
+    const panelStyle = document.getElementById("cheese-spanner-chat-tools-style");
     assert.ok(themeStyle, "chat tools request the shared CHZZK theme");
     assert.ok(
         themeStyle.compareDocumentPosition(panelStyle) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
@@ -1096,7 +1096,7 @@ test("ordinary chat mentioning cleanbot is not classified as a blind notice", as
     await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
 
     const row = dom.window.document.querySelector('[data-chat-id="cleanbot-mention"]');
-    const parsed = dom.window.BetterChzzk.chatTools.parseChatMessage(row);
+    const parsed = dom.window.CheeseSpanner.chatTools.parseChatMessage(row);
     assert.equal(parsed.isBlind, false);
     assert.equal(row.querySelector(".bcct-blind-reveal"), null);
     assert.equal(row.querySelector("[data-bcct-blind-masked]"), null);
@@ -1952,7 +1952,7 @@ test("moderator box height follows its option without changing the chat or the d
     await waitForCondition(() => height() === "600px");
     const chat = document.querySelector(".live_chatting_area");
     assert.equal(chat.getAttribute("style"), null, "the native chat keeps its own size");
-    const css = document.getElementById("betterchzzk-chat-tools-style").textContent;
+    const css = document.getElementById("cheese-spanner-chat-tools-style").textContent;
     assert.match(css, /max-height:min\(var\(--bcct-box-height,420px\), calc\(100vh - 120px\)\)/);
     assert.match(css, /max-height:calc\(var\(--bcct-box-height,420px\) - 144px\)/);
     for (const [value, expected] of [
@@ -2169,7 +2169,7 @@ test("original cache is bounded and is cleared on root replacement and runtime r
     t.after(() => closeChatToolsDom(dom));
     loadChatTools(dom);
     await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
-    const store = dom.window.BetterChzzk.chatTools.createMessageStore();
+    const store = dom.window.CheeseSpanner.chatTools.createMessageStore();
     const list = dom.window.document.querySelector(".chat-list");
     store.adoptRoot(list);
     const row = dom.window.document.createElement("div");
@@ -2200,7 +2200,7 @@ test("changing only a message ID cannot seed the next identity with the old orig
     t.after(() => closeChatToolsDom(dom));
     loadChatTools(dom);
     await waitForCondition(() => dom.window.document.querySelector(".bcct-moderator-trigger"));
-    const store = dom.window.BetterChzzk.chatTools.createMessageStore();
+    const store = dom.window.CheeseSpanner.chatTools.createMessageStore();
     store.adoptRoot(dom.window.document.querySelector(".chat-list"));
     const row = dom.window.document.querySelector(".chat-row");
     const parsed = { author: "viewer", text: "이전 원문", textEl: row.firstElementChild, isBlind: false };

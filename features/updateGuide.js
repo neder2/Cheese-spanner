@@ -1,9 +1,9 @@
 // Updates are consumed by the worker before this document may display its notice.
 (() => {
     "use strict";
-    const ns = globalThis.BetterChzzk;
-    const catalog = globalThis.BetterChzzkUpdateGuide,
-        views = globalThis.BetterChzzkUpdateGuideView;
+    const ns = globalThis.CheeseSpanner;
+    const catalog = globalThis.CheeseSpannerUpdateGuide,
+        views = globalThis.CheeseSpannerUpdateGuideView;
     if (
         !ns ||
         ns.updateGuide ||
@@ -14,7 +14,7 @@
     )
         return;
     const runtime = globalThis.chrome?.runtime,
-        settings = globalThis.BetterChzzkSettings;
+        settings = globalThis.CheeseSpannerSettings;
     if (!runtime || !settings || !ns.utils?.startPageChangeDetection) return;
     const guide = catalog.getGuide(runtime.getManifest().version);
     const DISPLAY_DURATION_MS = 20000;

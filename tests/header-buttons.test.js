@@ -25,7 +25,7 @@ function fixture(t) {
     const { window } = dom;
     const { document } = window;
     let apply, ready;
-    window.BetterChzzk = {
+    window.CheeseSpanner = {
         utils: {
             bindFeatureOptions(fn) {
                 apply = fn;
@@ -97,7 +97,7 @@ test("header options default off and have accessible independent settings contro
     const dom = new JSDOM(read("options.html"), { runScripts: "outside-only" });
     t.after(() => dom.window.close());
     dom.window.eval(read("shared/settings.js"));
-    const settings = dom.window.BetterChzzkSettings;
+    const settings = dom.window.CheeseSpannerSettings;
     for (const key of keys) {
         assert.equal(settings.DEFAULT_OPTIONS[key], false);
         assert.equal(settings.normalizeOptions({ [key]: true })[key], true);

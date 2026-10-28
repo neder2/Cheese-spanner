@@ -1,6 +1,6 @@
 /**
  * Memory-only playback observations; no DOM, clocks, timers, storage or media control.
- * BetterChzzk.streamInfoModel.create({ sampleIntervalMs = 1000, stallThresholdMs = 500 })
+ * CheeseSpanner.streamInfoModel.create({ sampleIntervalMs = 1000, stallThresholdMs = 500 })
  * returns sample(input), event(type, input), read(now), suspend(now, reason = "hidden"),
  * switchSource(now, { preserveHistory = true }), and reset(). All return a detached read view.
  *
@@ -15,7 +15,7 @@
  */
 (() => {
     "use strict";
-    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
+    const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     const { nativeTiming, bufferedSeconds } = root.utils.liveTiming;
     const WINDOW_MS = 60000;
     const MAX_SAMPLES = 120;

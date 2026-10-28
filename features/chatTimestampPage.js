@@ -8,21 +8,21 @@
  *   React 객체나 콜백은 호출·수정하지 않으며, 서버 시각이 없거나 잘못되면 기존 source marker를 지운다.
  *   다시보기 본인 채팅 강조(features/vodOwnChat.js)가 요청하면 같은 범위에서 chatMessage.user(작성 계정 해시)를
  *   찾아 data-bcoc-source-user에 기록한다(2026-10-21 실측: 다시보기 행의 user가 profile.userIdHash와 같음).
- * 통신: betterchzzk:chat-timestamp-source-request·betterchzzk:chat-user-source-request 이벤트의 target,
+ * 통신: cheese-spanner:chat-timestamp-source-request·cheese-spanner:chat-user-source-request 이벤트의 target,
  *   data-bcmt-source-time·data-bcoc-source-user DOM 속성,
- *   isolated-first 로드를 복구하는 betterchzzk:chat-timestamp-page-ready 이벤트.
+ *   isolated-first 로드를 복구하는 cheese-spanner:chat-timestamp-page-ready 이벤트.
  * 참고: cheese-knife의 chatMessage.time 활용 방식(MIT). 고지는 THIRD_PARTY_NOTICES.md를 따른다.
  */
 (() => {
     "use strict";
 
-    const SOURCE_REQUEST_EVENT = "betterchzzk:chat-timestamp-source-request";
-    const USER_REQUEST_EVENT = "betterchzzk:chat-user-source-request";
+    const SOURCE_REQUEST_EVENT = "cheese-spanner:chat-timestamp-source-request";
+    const USER_REQUEST_EVENT = "cheese-spanner:chat-user-source-request";
     const SOURCE_USER_ATTR = "data-bcoc-source-user";
     const USER_HASH_RE = /^[A-Za-z0-9_-]{1,128}$/;
-    const PAGE_READY_EVENT = "betterchzzk:chat-timestamp-page-ready";
+    const PAGE_READY_EVENT = "cheese-spanner:chat-timestamp-page-ready";
     const SOURCE_TIME_ATTR = "data-bcmt-source-time";
-    const READY_ATTR = "data-betterchzzk-chat-timestamp-page-ready";
+    const READY_ATTR = "data-cheese-spanner-chat-timestamp-page-ready";
     const LIVE_CHAT_LOG_SELECTOR = "aside#aside-chatting [role='log']";
     const VOD_CHAT_LOG_SELECTOR = "aside#vod-aside [role='log']";
     const MESSAGE_CONTAINER_SELECTOR = "[class*='chatting_message'], [class*='chat-message']";

@@ -5,7 +5,7 @@
  * liveId 20936615 and channel.channelId matching the route. OPEN is the live status.
  */
 (() => {
-    const { bindFeatureOptions, createMutationObserverSync, fetchJson, startPageChangeDetection } = BetterChzzk.utils;
+    const { bindFeatureOptions, createMutationObserverSync, fetchJson, startPageChangeDetection } = CheeseSpanner.utils;
     const PLAYER_SELECTOR = "[class*='_player_']";
     const END_SELECTOR = `#layout-body ${PLAYER_SELECTOR} p`;
     const POLL_MS = 30000;

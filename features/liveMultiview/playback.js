@@ -1,6 +1,6 @@
 /** 멀티뷰 플레이어·미디어 이벤트·딜레이 저장 큐의 수명주기를 소유해요. */
 (() => {
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     const model = root.multiviewModel;
     // Delay/quality choices are written through the worker's settings lock (settings restore boundary).
     const { fetchJson, storageGet, settingsStoreSet, normalizeChzzkMediaUrl } = root.utils;

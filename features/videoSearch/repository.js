@@ -1,6 +1,6 @@
 /** Owns channel indexes, request generations and comment search scheduling; reports data changes to the view. */
 (() => {
-    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
+    const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     function createRepository({
         fetchJson,
         fetchChzzkCommentPage,

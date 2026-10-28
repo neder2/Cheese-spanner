@@ -6,7 +6,7 @@
  *   검증하고, 만들기(채널과 함께 만들기 포함)·이름 변경·삭제·순서 이동(한 칸·지정 위치)·채널 지정/해제·
  *   접기·되돌리기·손상 초기화 명령을 최신 저장 원본값에 적용한 다음 값을 계산한다. 실제 저장은 콘텐츠가 settingsStoreSet의 기대값 비교와 함께 요청하며,
  *   이 모듈은 그 기대값 형식({value}/{absent:true})의 변환만 제공한다.
- * 노출: globalThis.BetterChzzkFollowingFolders.
+ * 노출: globalThis.CheeseSpannerFollowingFolders.
  */
 (() => {
     "use strict";
@@ -363,7 +363,7 @@
         return `f${Date.now().toString(36)}-${random}`.slice(0, 24);
     }
 
-    globalThis.BetterChzzkFollowingFolders = Object.freeze({
+    globalThis.CheeseSpannerFollowingFolders = Object.freeze({
         STORAGE_KEY,
         VERSION,
         MAX_FOLDERS,

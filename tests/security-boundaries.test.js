@@ -13,7 +13,7 @@ function load() {
         vm.runInContext(fs.readFileSync(path.join(repo, file), "utf8"), context);
     }
     vm.runInContext(`Date.now = () => ${NOW}`, context);
-    return { context, utils: context.BetterChzzk.utils, store: context.BetterChzzkWatchHistoryStore };
+    return { context, utils: context.CheeseSpanner.utils, store: context.CheeseSpannerWatchHistoryStore };
 }
 
 function session(endAt = 1e15) {
@@ -104,7 +104,7 @@ test("range splitting rejects non-finite and excessive spans without producing p
         globalThis.maps = [];
         for (const endAt of [Infinity, NaN, 1e15, 8.64e15 + 1]) {
             const byDate = {};
-            BetterChzzk.utils.addWatchRangeToRangesByDate(byDate, { startAt: ${NOW}, endAt });
+            CheeseSpanner.utils.addWatchRangeToRangesByDate(byDate, { startAt: ${NOW}, endAt });
             maps.push(byDate);
         }
     `,
@@ -112,7 +112,7 @@ test("range splitting rejects non-finite and excessive spans without producing p
         { timeout: 1000 }
     );
     assert.ok(context.maps.every((map) => Object.keys(map).length === 0));
-    assert.equal(context.BetterChzzk.utils.mergeWatchRanges([{ startAt: NOW, endAt: Infinity }]).length, 0);
+    assert.equal(context.CheeseSpanner.utils.mergeWatchRanges([{ startAt: NOW, endAt: Infinity }]).length, 0);
 });
 
 test("valid midnight ranges preserve KST day allocation and scope intersections", () => {

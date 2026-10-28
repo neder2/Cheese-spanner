@@ -29,7 +29,7 @@ function loadStore(extra = {}) {
     const context = createContext(extra);
     vm.runInContext(sources.data, context, { filename: "shared/data.js" });
     vm.runInContext(sources.store, context, { filename: "shared/watchHistoryStore.js" });
-    return { context, store: context.BetterChzzkWatchHistoryStore };
+    return { context, store: context.CheeseSpannerWatchHistoryStore };
 }
 
 function createSnapshot(now, overrides = {}) {
@@ -100,7 +100,7 @@ for (const initialCount of [1999, 2000]) {
 
 test("shared URL helpers allow only trusted CHZZK media, images, and live links", () => {
     const { context } = loadStore();
-    const utils = context.BetterChzzk.utils;
+    const utils = context.CheeseSpanner.utils;
 
     assert.equal(
         utils.normalizeChzzkMediaUrl("https://nvelop-livecloud.pstatic.net/live/playlist.m3u8#fragment"),
@@ -221,7 +221,7 @@ test("unique watch totals deduplicate overlapping tabs while preserving range an
         },
     ];
 
-    const totals = context.BetterChzzk.utils.getUniqueWatchTotals(
+    const totals = context.CheeseSpanner.utils.getUniqueWatchTotals(
         { watchedSeconds: 1250, dailySeconds: { [dateKey]: 1250 } },
         sessions
     );
@@ -660,7 +660,7 @@ function createBackgroundHarness() {
     function send(message, sender) {
         return new Promise((resolve) => {
             const keepAlive = onMessageListener(message, sender, resolve);
-            if (keepAlive !== true && message?.type !== context.BetterChzzkWatchHistoryStore.MESSAGE_TYPE) {
+            if (keepAlive !== true && message?.type !== context.CheeseSpannerWatchHistoryStore.MESSAGE_TYPE) {
                 resolve(undefined);
             }
         });
@@ -673,7 +673,7 @@ function createBackgroundHarness() {
         },
         local,
         send,
-        store: context.BetterChzzkWatchHistoryStore,
+        store: context.CheeseSpannerWatchHistoryStore,
     };
 }
 

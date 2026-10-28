@@ -1,12 +1,12 @@
 /** Preserve CHZZK's measured banner offsets when cosmetic filters reset the surrounding layout. */
 (() => {
     "use strict";
-    const root = window.BetterChzzk;
+    const root = window.CheeseSpanner;
     if (root.headerBannerLayout) return;
     const { createMutationObserverSync, injectStyleOnce, onReady, startPageChangeDetection } = root.utils;
-    const STYLE_ID = "betterchzzk-header-banner-layout-style";
+    const STYLE_ID = "cheese-spanner-header-banner-layout-style";
     const MARKER = "data-bchbl-offset";
-    const STICKY_STYLE_ID = "betterchzzk-header-banner-sticky-style";
+    const STICKY_STYLE_ID = "cheese-spanner-header-banner-sticky-style";
     const STICKY_MARKER = "data-bchbl-sticky";
     const STICKY_VARIABLE = "--bchbl-sticky-top";
     const properties = [

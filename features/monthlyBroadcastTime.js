@@ -11,14 +11,14 @@
  *   - 캘린더 날짜 셀을 클릭하면 그날 첫 방송 다시보기(/video/{videoNo})로 이동하고, 툴팁의 방송 항목은
  *     개별 앵커라 특정 방송으로 이동할 수 있다. 보조키(Ctrl/Cmd/Shift)·가운데 클릭은 새 탭.
  *   - 라우트 변경, DOM 변화, storage 변경을 감지해 위젯 mount/unmount와 재계산을 스케줄링한다.
- * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.vodTimeline(normalizeVideoDetail,
- *   mergeBroadcastSegment), BetterChzzk.monthlyBroadcastModel/monthlyBroadcastRepository,
- *   BetterChzzk.utils(bindFeatureOptions, fetchJson,
+ * 의존: 전역 CheeseSpannerSettings.normalizeOptions, CheeseSpanner.vodTimeline(normalizeVideoDetail,
+ *   mergeBroadcastSegment), CheeseSpanner.monthlyBroadcastModel/monthlyBroadcastRepository,
+ *   CheeseSpanner.utils(bindFeatureOptions, fetchJson,
  *   createMutationObserverSync, createThrottledDomSync, startPageChangeDetection, startStorageChangeListener,
  *   storageGet, KST 날짜/시간 포맷 및 watch-range 유틸 등), chrome.storage.local.
  * 옵션 키: monthlyBroadcastTimeEnabled, monthlyBroadcastTimeCalendarEnabled, monthlyBroadcastTimeWatchEnabled,
  *   monthlyBroadcastTimeWindowDays, monthlyBroadcastTimeMaxPages, monthlyBroadcastTimeMaxCalendarPages.
- * DOM 마커: #betterchzzk-monthly-broadcast-time(위젯 루트), #betterchzzk-monthly-broadcast-time-style(스타일 태그),
+ * DOM 마커: #cheese-spanner-monthly-broadcast-time(위젯 루트), #cheese-spanner-monthly-broadcast-time-style(스타일 태그),
  *   data-bcmb-host(위젯이 붙은 호스트 요소 표시).
  * 통신: chrome.storage.local의 betterChzzkLiveWatchHistory 키를 읽어(background가 liveWatchHistory.js의
  *   누적 snapshot mutation을 직렬 반영) 시청 시간을 방송 시작 시각과 매칭한다. 자체 DOM 변형은 옵저버
@@ -36,8 +36,8 @@
  *   - applyOptions/bindFeatureOptions 호출 — 옵션 변경 반영 및 초기 구동.
  */
 (() => {
-    const WIDGET_ID = "betterchzzk-monthly-broadcast-time";
-    const STYLE_ID = "betterchzzk-monthly-broadcast-time-style";
+    const WIDGET_ID = "cheese-spanner-monthly-broadcast-time";
+    const STYLE_ID = "cheese-spanner-monthly-broadcast-time-style";
     const HOST_ATTR = "data-bcmb-host";
 
     const REFRESH_MS = 10 * 60 * 1000;
@@ -99,7 +99,7 @@
     let currentChannelId = null;
     let observer = null;
     let lastUrl = location.href;
-    let featureOptions = BetterChzzkSettings.normalizeOptions();
+    let featureOptions = CheeseSpannerSettings.normalizeOptions();
     let watchHistoryEntries = [];
     let watchHistoryLoaded = false;
     let watchHistoryLoading = false;
@@ -132,7 +132,7 @@
         startPageChangeDetection,
         storageGet,
         touchMapEntry,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
     const {
         getKstMonthInfo,
         normalizeWatchHistory,
@@ -142,14 +142,14 @@
         getMonthCalendarAverageSeconds,
         shiftMonth,
         isFutureMonth,
-    } = BetterChzzk.monthlyBroadcastModel;
+    } = CheeseSpanner.monthlyBroadcastModel;
     function getStartWatchInfo(channelId, start) {
-        return BetterChzzk.monthlyBroadcastModel.getStartWatchInfo(watchHistoryEntries, channelId, start);
+        return CheeseSpanner.monthlyBroadcastModel.getStartWatchInfo(watchHistoryEntries, channelId, start);
     }
     function getChannelWatchSeconds(channelId) {
-        return BetterChzzk.monthlyBroadcastModel.getChannelWatchSeconds(watchHistoryEntries, channelId);
+        return CheeseSpanner.monthlyBroadcastModel.getChannelWatchSeconds(watchHistoryEntries, channelId);
     }
-    const repository = BetterChzzk.monthlyBroadcastRepository.createRepository({ fetchJson });
+    const repository = CheeseSpanner.monthlyBroadcastRepository.createRepository({ fetchJson });
     const scheduleThrottledMount = createThrottledDomSync(runScheduledMount, 160);
 
     function isFeatureEnabled() {
@@ -216,8 +216,8 @@
     }
 
     function injectStyleOnce() {
-        BetterChzzk.utils.ensureUiTheme?.();
-        BetterChzzk.utils.injectStyleOnce(
+        CheeseSpanner.utils.ensureUiTheme?.();
+        CheeseSpanner.utils.injectStyleOnce(
             STYLE_ID,
             `
 [${HOST_ATTR}="1"]{

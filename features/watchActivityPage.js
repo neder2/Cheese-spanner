@@ -2,12 +2,12 @@
 (() => {
     "use strict";
 
-    const REQUEST_EVENT = "betterchzzk:watch-activity-source";
-    const READY_EVENT = "betterchzzk:watch-activity-ready";
+    const REQUEST_EVENT = "cheese-spanner:watch-activity-source";
+    const READY_EVENT = "cheese-spanner:watch-activity-ready";
     const SOURCE_ATTR = "data-bcwa-source";
     const USER_ATTR = "data-bcwa-user";
     const ROW_SELECTOR = "aside#aside-chatting [role='log'] > [class*='_wrapper_'] > [class*='_item_']";
-    const READY_ATTR = "data-betterchzzk-watch-activity-page-ready";
+    const READY_ATTR = "data-cheese-spanner-watch-activity-page-ready";
     if (document.documentElement?.hasAttribute(READY_ATTR)) return;
     document.documentElement?.setAttribute(READY_ATTR, "1");
 

@@ -7,7 +7,7 @@ const QUIET = { categoryToolsFollowerBadgesEnabled: false, categoryToolsLiveElap
 const GLOBAL_KEY = "global-lives/lives";
 
 function appliedRow(fixture) {
-    return fixture.document.getElementById("betterchzzk-category-filter-chips");
+    return fixture.document.getElementById("cheese-spanner-category-filter-chips");
 }
 
 function chips(fixture) {
@@ -21,7 +21,7 @@ function appliedLabel(fixture) {
 }
 
 function searchInput(fixture) {
-    return fixture.document.querySelector('#betterchzzk-category-tools input[type="search"]');
+    return fixture.document.querySelector('#cheese-spanner-category-tools input[type="search"]');
 }
 
 function search(fixture, query) {
@@ -32,9 +32,9 @@ function search(fixture, query) {
 }
 
 function menu(fixture) {
-    const bar = fixture.document.getElementById("betterchzzk-category-tools");
+    const bar = fixture.document.getElementById("cheese-spanner-category-tools");
     if (bar.getAttribute("data-menu-open") !== "1") bar.querySelector(".bcgt-filter").click();
-    return fixture.document.getElementById("betterchzzk-category-filter-menu");
+    return fixture.document.getElementById("cheese-spanner-category-filter-menu");
 }
 
 function viewersAtLeast(fixture, value) {
@@ -75,7 +75,7 @@ test("search words and the applied-condition row filter together and return afte
     assert.deepEqual(fixture.visibleCardIds(), ["card-0"]);
     assert.equal(appliedLabel(fixture), "이어서 적용 중");
     assert.equal(
-        fixture.document.querySelector("#betterchzzk-category-tools .bcgt-filter-label").textContent,
+        fixture.document.querySelector("#cheese-spanner-category-tools .bcgt-filter-label").textContent,
         "필터 1"
     );
 
@@ -223,7 +223,7 @@ test("filter menu modes show matching inputs and reset keeps keyboard focus insi
     assert.equal(panel.getAttribute("data-open"), "0");
     assert.equal(
         fixture.document.activeElement,
-        fixture.document.querySelector("#betterchzzk-category-tools .bcgt-filter")
+        fixture.document.querySelector("#cheese-spanner-category-tools .bcgt-filter")
     );
 });
 
@@ -236,7 +236,7 @@ test("the applied-condition row and the exclusion row keep their places without 
         await fixture.apply();
         await fixture.apply();
         const row = appliedRow(fixture);
-        const summary = fixture.document.getElementById("betterchzzk-category-exclusions");
+        const summary = fixture.document.getElementById("cheese-spanner-category-exclusions");
         assert.ok(row && !row.hidden && summary, `both rows are mounted (tab line: ${tabLine})`);
 
         const records = [];
@@ -256,7 +256,7 @@ test("the search hint floats outside the clipped tool row and only while the sea
     const fixture = createFixture(t, { options: QUIET });
     await fixture.apply();
     const input = searchInput(fixture);
-    const hint = fixture.document.getElementById("betterchzzk-category-search-hint");
+    const hint = fixture.document.getElementById("cheese-spanner-category-search-hint");
     assert.ok(hint, "the hint exists so aria-describedby resolves");
     assert.equal(input.getAttribute("aria-describedby"), hint.id);
     assert.equal(hint.parentElement, fixture.document.body, "it is not inside a site row that can clip it");
@@ -269,7 +269,7 @@ test("the search hint floats outside the clipped tool row and only while the sea
 
     await fixture.navigate("https://chzzk.naver.com/category/GAME/League_of_Legends/lives");
     await fixture.apply();
-    const categoryHint = fixture.document.getElementById("betterchzzk-category-search-hint");
+    const categoryHint = fixture.document.getElementById("cheese-spanner-category-search-hint");
     assert.equal(
         categoryHint.textContent,
         "띄어쓰기로 여러 단어를 모두 찾고, -단어는 빼요.",

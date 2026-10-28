@@ -15,7 +15,7 @@ test("banner setting hides only measured slots and restores them without touchin
     const { window } = dom;
     const { document } = window;
     let setOptions;
-    window.BetterChzzk = {
+    window.CheeseSpanner = {
         utils: {
             bindFeatureOptions(fn) {
                 setOptions = fn;

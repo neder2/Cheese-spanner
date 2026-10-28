@@ -3,7 +3,7 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Better Chzzk 통나무 수령 버튼 CSS 재현</title>
+        <title>Cheese Spanner 통나무 수령 버튼 CSS 재현</title>
         <link rel="stylesheet" href="./reward-auto-collect-css-repro.css" />
     </head>
     <body>
@@ -135,7 +135,7 @@
                     });
                 });
 
-                window.BetterChzzkSettings = {
+                window.CheeseSpannerSettings = {
                     normalizeOptions() {
                         return {
                             rewardAutoCollectEnabled: true,
@@ -143,10 +143,10 @@
                     },
                 };
 
-                window.BetterChzzk = {
+                window.CheeseSpanner = {
                     utils: {
                         bindFeatureOptions(applyOptions) {
-                            applyOptions(window.BetterChzzkSettings.normalizeOptions());
+                            applyOptions(window.CheeseSpannerSettings.normalizeOptions());
                             return () => {};
                         },
                         createMutationObserverSync(config) {

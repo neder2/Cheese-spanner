@@ -6,17 +6,17 @@
  *   주기적으로 button.click()을 호출해 CHZZK 자체 refetch 로직을 그대로 트리거한다. 탭이 보이지
  *   않거나(document.visibilityState) 오프라인(navigator.onLine)이면 주기 새로고침을 건너뛰고,
  *   탭이 다시 보이면 즉시 한 번 새로고침한 뒤 그 시점부터 주기를 다시 계산한다.
- * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils.bindFeatureOptions/normSpace.
+ * 의존: 전역 CheeseSpannerSettings.normalizeOptions, CheeseSpanner.utils.bindFeatureOptions/normSpace.
  * 옵션 키: followingRefreshEnabled, followingRefreshSeconds.
  */
 (() => {
     // CHZZK owns the actual sidebar refetch. Keep a cached handle to its native
     // refresh button instead of synthesizing global focus events every tick.
-    const { normalizeOptions } = BetterChzzkSettings;
-    const { bindFeatureOptions, normSpace } = BetterChzzk.utils;
+    const { normalizeOptions } = CheeseSpannerSettings;
+    const { bindFeatureOptions, normSpace } = CheeseSpanner.utils;
 
     const REFRESH_BUTTON_SELECTOR = 'button[aria-label], [role="button"][aria-label]';
-    const EXTENSION_OWNED_ROOT_SELECTOR = "[id^='betterchzzk-']";
+    const EXTENSION_OWNED_ROOT_SELECTOR = "[id^='cheese-spanner-']";
     const REFRESH_LABEL_RE = /새로고침|refresh/i;
     const FOLLOWING_SECTION_RE = /팔로(잉|우)|following|follow/i;
     const FOLLOWING_HREF_RE = /(^|\/)following(?:[/?#]|$)/i;

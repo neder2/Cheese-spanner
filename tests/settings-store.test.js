@@ -7,8 +7,8 @@ require("../shared/liveStart.js");
 require("../shared/settingsBackup.js");
 require("../shared/settingsStore.js");
 
-const settings = globalThis.BetterChzzkSettings;
-const catalog = globalThis.BetterChzzkSettingsBackup;
+const settings = globalThis.CheeseSpannerSettings;
+const catalog = globalThis.CheeseSpannerSettingsBackup;
 const STORE = catalog.STORE_MESSAGE_TYPE;
 const BACKUP = catalog.BACKUP_MESSAGE_TYPE;
 const A = "a".repeat(32);
@@ -18,7 +18,7 @@ const contentSender = { id: "ext", tab: { id: 3 }, frameId: 0, url: "https://chz
 const optionsSender = { id: "ext", frameId: 0, url: "chrome-extension://ext/options.html" };
 
 // Minimal pure stand-ins for the delegated folder and chat multiview models (their own tests own the rules).
-globalThis.BetterChzzkFollowingFolders = {
+globalThis.CheeseSpannerFollowingFolders = {
     STORAGE_KEY: catalog.FOLDERS_KEY,
     EMPTY_STATE: Object.freeze({ version: 1, folders: [] }),
     parseState(value) {
@@ -27,7 +27,7 @@ globalThis.BetterChzzkFollowingFolders = {
             : { ok: false, error: "invalid" };
     },
 };
-globalThis.BetterChzzkChatMultiview = {
+globalThis.CheeseSpannerChatMultiview = {
     STORAGE_KEY: catalog.CHAT_MULTIVIEW_KEY,
     parseConfig(value) {
         return value?.version === 1 && Array.isArray(value.channels)
@@ -135,7 +135,7 @@ function harness({ sync = {}, local = {}, exclusive = true } = {}) {
         },
     };
     const lock = createLock({ exclusive });
-    const controller = globalThis.BetterChzzkSettingsStore.createController({
+    const controller = globalThis.CheeseSpannerSettingsStore.createController({
         chrome,
         withLock: lock,
         isOptionsPageSender: (sender) => sender?.url === "chrome-extension://ext/options.html",

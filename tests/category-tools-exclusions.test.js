@@ -509,16 +509,16 @@ test("result order, duplicate selection, fifty-result notice, long names and tex
     assert.equal(menu.getAttribute("data-open"), "0");
     assert.equal(ui.window.document.activeElement, ui.window.document.querySelector("[data-category-add-open]"));
     assert.match(
-        ui.window.document.getElementById("betterchzzk-category-tools-style").textContent,
+        ui.window.document.getElementById("cheese-spanner-category-tools-style").textContent,
         /overflow-wrap:anywhere/
     );
     assert.match(
-        ui.window.document.getElementById("betterchzzk-category-tools-style").textContent,
+        ui.window.document.getElementById("cheese-spanner-category-tools-style").textContent,
         /\[data-category-search\]\{[^}]*background:var\(--bcgt-menu-field-bg\)/
     );
     // The field color is the shared theme's weak surface (shared/uiTheme.js), not a feature fallback.
     assert.match(
-        ui.window.document.getElementById("betterchzzk-category-tools-style").textContent,
+        ui.window.document.getElementById("cheese-spanner-category-tools-style").textContent,
         /--bcgt-menu-field-bg:var\(--bct-surface-weak\);/
     );
 });
@@ -1243,7 +1243,7 @@ test("real option binding starts an initially enabled category feature exactly o
 
 test("global list search keeps a draft until Enter, rejects IME and repeated submissions, and clear submits once", async (t) => {
     const ui = await createCategoryUI(t);
-    const bar = ui.window.document.getElementById("betterchzzk-category-tools");
+    const bar = ui.window.document.getElementById("cheese-spanner-category-tools");
     const input = bar.querySelector("input");
     assert.equal(bar.querySelector(".bcgt-search-apply"), null, "the toolbar has no separate apply button");
     const event = (type, options = {}) =>
@@ -1300,7 +1300,7 @@ test("global list search keeps a draft until Enter, rejects IME and repeated sub
 
 test("global list draft survives menu close but route changes and new documents reset it", async (t) => {
     const ui = await createCategoryUI(t);
-    const bar = ui.window.document.getElementById("betterchzzk-category-tools");
+    const bar = ui.window.document.getElementById("cheese-spanner-category-tools");
     const input = bar.querySelector("input");
     input.value = "Alpha";
     input.dispatchEvent(new ui.window.Event("input", { bubbles: true }));
@@ -1322,13 +1322,13 @@ test("global list draft survives menu close but route changes and new documents 
 
 test("toolbar category boxes show stored exclusions without opening filters and remove only through trusted worker requests", async (t) => {
     const ui = await createCategoryUI(t, { worker: withState(1, [category(), category("SPORTS", "A", "게임 하나")]) });
-    const bar = ui.window.document.getElementById("betterchzzk-category-tools");
+    const bar = ui.window.document.getElementById("cheese-spanner-category-tools");
     const summary = bar.nextElementSibling;
     assert.equal(summary.hidden, false);
     assert.equal(summary.className, "bcgt-category-summary");
     assert.equal(bar.contains(summary), false, "summary cannot wrap the existing search toolbar");
     assert.equal(summary.querySelectorAll(".bcgt-category-row").length, 2);
-    assert.equal(summary.id, "betterchzzk-category-exclusions");
+    assert.equal(summary.id, "cheese-spanner-category-exclusions");
     assert.equal(summary.querySelector(".bcgt-category-type"), null, "compact boxes do not print the type");
     assert.deepEqual(
         [...summary.querySelectorAll(".bcgt-category-row")].map((row) => [row.textContent, row.title]),
@@ -1338,7 +1338,7 @@ test("toolbar category boxes show stored exclusions without opening filters and 
         ]
     );
     await ui.hooks.apply();
-    const applied = ui.window.document.getElementById("betterchzzk-category-filter-chips");
+    const applied = ui.window.document.getElementById("cheese-spanner-category-filter-chips");
     assert.ok(!applied || applied.hidden, "exclusions alone do not show the applied-condition row");
     assert.equal(
         applied?.querySelector(".bcgt-status")?.textContent ?? "",
@@ -1388,7 +1388,7 @@ test("empty exclusions expose an independent add panel with mutual dismissal and
     assert.equal(button.getAttribute("aria-expanded"), "true");
     assert.equal(document.activeElement, panel.querySelector("input"));
     assert.equal(panel.querySelector("[data-category-selected]"), null);
-    const filters = document.getElementById("betterchzzk-category-filter-menu");
+    const filters = document.getElementById("cheese-spanner-category-filter-menu");
     assert.equal(filters.querySelector("[data-category-exclusions]"), null);
     ui.input("게임");
     ui.runDelay();
@@ -1436,8 +1436,8 @@ test("add panel mutations do not rescan cards and a removed summary cancels its 
     assert.equal(ui.window.document.querySelectorAll("[data-category-add]").length, 0);
     assert.equal(ui.window.document.querySelector("[data-category-add-open]").getAttribute("aria-expanded"), "false");
     assert.equal(
-        ui.window.document.getElementById("betterchzzk-category-tools").nextElementSibling.id,
-        "betterchzzk-category-exclusions"
+        ui.window.document.getElementById("cheese-spanner-category-tools").nextElementSibling.id,
+        "cheese-spanner-category-exclusions"
     );
 });
 
@@ -1476,7 +1476,7 @@ test("Enter adds a typed streamer tag without category results and hides only ex
     ]);
     assert.equal(input.value, "");
     assert.equal(status.textContent, "‘롤토체스’ 태그를 제외했어요.");
-    const chip = document.querySelector("#betterchzzk-category-exclusions .bcgt-category-row");
+    const chip = document.querySelector("#cheese-spanner-category-exclusions .bcgt-category-row");
     assert.equal(chip.textContent, "#롤토체스×");
     assert.equal(chip.title, "롤토체스 · 태그");
     await ui.hooks.apply();
@@ -1552,14 +1552,14 @@ test("the exclusion option hides the row and stops filtering without erasing the
     const document = ui.window.document;
     await ui.hooks.apply();
     assert.equal(hidden(ui, "a"), true);
-    assert.ok(document.getElementById("betterchzzk-category-exclusions"));
+    assert.ok(document.getElementById("cheese-spanner-category-exclusions"));
     ui.open();
     ui.options({ categoryToolsExclusionsEnabled: false });
     await ui.hooks.apply();
-    assert.equal(document.getElementById("betterchzzk-category-exclusions"), null);
-    assert.equal(document.getElementById("betterchzzk-category-add-panel"), null);
+    assert.equal(document.getElementById("cheese-spanner-category-exclusions"), null);
+    assert.equal(document.getElementById("cheese-spanner-category-add-panel"), null);
     assert.equal(hidden(ui, "a"), false);
-    assert.ok(document.getElementById("betterchzzk-category-tools"), "search and filters stay available");
+    assert.ok(document.getElementById("cheese-spanner-category-tools"), "search and filters stay available");
     assert.equal(ui.categorySubscriptions(), 0);
     const requests = ui.messages.length;
     ui.emit(state(2, [category(), category("SPORTS", "A", "게임 하나")]));

@@ -1,6 +1,6 @@
-// Page tests route BetterChzzk.utils.settingsStoreSet through the same fake storage area the worker would use.
+// Page tests route CheeseSpanner.utils.settingsStoreSet through the same fake storage area the worker would use.
 // The real worker boundary (sender, allowlist, value validation, lock) is covered by tests/settings-store.test.js.
-const SETTINGS_STORE_MESSAGE_TYPE = "betterchzzk:settings-store";
+const SETTINGS_STORE_MESSAGE_TYPE = "cheese-spanner:settings-store";
 
 function stable(value) {
     if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;

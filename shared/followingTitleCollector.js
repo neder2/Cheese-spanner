@@ -11,9 +11,9 @@
  */
 (() => {
     if (!globalThis.chrome?.alarms?.onAlarm) return;
-    const model = globalThis.BetterChzzkFollowingTitleHistory;
-    const { cleanEntryTitle, storageGet, storageSet, fetchJson } = BetterChzzk.utils;
-    const { normalizeOptions } = BetterChzzkSettings;
+    const model = globalThis.CheeseSpannerFollowingTitleHistory;
+    const { cleanEntryTitle, storageGet, storageSet, fetchJson } = CheeseSpanner.utils;
+    const { normalizeOptions } = CheeseSpannerSettings;
     const OPTION_KEY = "followingTitleHistoryEnabled";
     const ALARM = "betterchzzk:following-title-history";
     const PERIOD_MINUTES = 1;

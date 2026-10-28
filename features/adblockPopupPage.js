@@ -7,15 +7,15 @@
  *   { isTrusted: true } 인수로 한 번 호출한다. 브라우저의 신뢰된 클릭이 아니라 사이트 콜백의 입력 검사를 통과시키는 호출이다.
  *   감지·dab·재생 정보·전역 이벤트·React 내부와 body 스크롤은 바꾸지 않고, 닫힘 여부는 네이티브 제거로만 판단된다.
  *   isolated가 호출 전에 안내를 잠시 숨기므로 가시성·크기가 아니라 연결·문서 소속·구조·현재 콜백으로 판단한다.
- * 통신: betterchzzk:adblock-notice-confirm 요청 이벤트의 target, 호출했을 때만 event.preventDefault(),
- *   진단용 data-betterchzzk-adblock-notice-confirm 속성. 페이지가 보낸 함수명·선택자·코드는 받지 않는다.
+ * 통신: cheese-spanner:adblock-notice-confirm 요청 이벤트의 target, 호출했을 때만 event.preventDefault(),
+ *   진단용 data-cheese-spanner-adblock-notice-confirm 속성. 페이지가 보낸 함수명·선택자·코드는 받지 않는다.
  */
 (() => {
     "use strict";
 
-    const REQUEST_EVENT = "betterchzzk:adblock-notice-confirm";
-    const READY_ATTR = "data-betterchzzk-adblock-notice-page-ready";
-    const STATUS_ATTR = "data-betterchzzk-adblock-notice-confirm";
+    const REQUEST_EVENT = "cheese-spanner:adblock-notice-confirm";
+    const READY_ATTR = "data-cheese-spanner-adblock-notice-page-ready";
+    const STATUS_ATTR = "data-cheese-spanner-adblock-notice-confirm";
     const NOTICE_AREA = "ad_blocking_info_layer";
     const NOTICE = `[role="alertdialog"][aria-modal="true"][data-nlog-area="${NOTICE_AREA}"]`;
     const POPUP =

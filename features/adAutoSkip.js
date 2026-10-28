@@ -10,7 +10,7 @@
     const PLAYER_SELECTOR = ".chzzk_player .pzp-pc";
     const BUTTON_SELECTOR = '.vod_player_wrap.pc > button.btn_skip[data-role="skipBtn"]';
     const { bindFeatureOptions, createMutationObserverSync, isPlaybackRoute, isVisible, mutationMatchesSelector } =
-        BetterChzzk.utils;
+        CheeseSpanner.utils;
     let enabled = false;
     let observer = null;
     let hostObserver = null;
@@ -22,7 +22,7 @@
 
     function publishStatus() {
         document.documentElement?.setAttribute(
-            "data-betterchzzk-ad-auto-skip-status",
+            "data-cheese-spanner-ad-auto-skip-status",
             JSON.stringify({ enabled, clickAttempts })
         );
     }
@@ -148,12 +148,12 @@
 
     bindFeatureOptions((options) => {
         const nextEnabled = options.adAutoSkipEnabled;
-        if (!document.documentElement?.hasAttribute("data-betterchzzk-ad-auto-skip-status")) publishStatus();
+        if (!document.documentElement?.hasAttribute("data-cheese-spanner-ad-auto-skip-status")) publishStatus();
         if (enabled === nextEnabled) return;
         enabled = nextEnabled;
         publishStatus();
         if (enabled) {
-            removeRouteListener = BetterChzzk.utils.startPageChangeDetection(syncRoute);
+            removeRouteListener = CheeseSpanner.utils.startPageChangeDetection(syncRoute);
             syncRoute();
         } else {
             removeRouteListener?.();

@@ -9,7 +9,7 @@
  * 설정 저장 잠금 안에서 다시 읽은 최신 값 위에 저장한다. 다른 곳의 변경은 storage.onChanged로 폼에 반영한다.
  * 옵션 간 의존 관계(data-depends-on)에 따라 하위 컨트롤을 비활성화하고, 탭 전환과
  * 설정 검색(검색어로 카드 항목 필터링), 기본값 복원 버튼을 처리한다.
- * 의존: BetterChzzkSettings(shared/settings.js가 노출하는 DEFAULT_OPTIONS, OPTION_KEYS,
+ * 의존: CheeseSpannerSettings(shared/settings.js가 노출하는 DEFAULT_OPTIONS, OPTION_KEYS,
  * normalizeOptions), globalThis.chrome.storage.sync, globalThis.chrome.permissions,
  * window.localStorage.
  * 통신: chrome.storage.sync에 각 data-option 키를 읽고 쓴다(다른 파일들이 같은 키를 구독해 기능을
@@ -41,7 +41,7 @@ const {
     normalizeOptions,
     migrateLegacyChatToolsOption,
     withOptionsStorageLock,
-} = BetterChzzkSettings;
+} = CheeseSpannerSettings;
 
 const storage = globalThis.chrome?.storage?.sync;
 const OPTIONS_LOAD_ERROR_MESSAGE = "설정을 불러오지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.";
@@ -406,7 +406,7 @@ function startSave(normalized, message, save = createSaveSnapshot(normalized)) {
                                 return;
                             }
                             try {
-                                chrome.runtime.sendMessage({ type: "betterchzzk:ad-video:sync" }, (result) => {
+                                chrome.runtime.sendMessage({ type: "cheese-spanner:ad-video:sync" }, (result) => {
                                     const messageError = chrome.runtime.lastError;
                                     finishAdVideoSave(messageError ? null : result);
                                 });
@@ -711,7 +711,7 @@ if (storage) {
 // Keyboard path for the mouse-only size boundaries: clear the profile-local choices under the settings lock.
 resetPanelSizesButton?.addEventListener("click", () => {
     const local = globalThis.chrome?.storage?.local;
-    const keys = Object.values(globalThis.BetterChzzkSettingsBackup?.PANEL_KEYS || {});
+    const keys = Object.values(globalThis.CheeseSpannerSettingsBackup?.PANEL_KEYS || {});
     if (typeof local?.set !== "function" || !keys.length) {
         showMessage("저장한 크기를 초기화하지 못했어요. 잠시 후 다시 시도해 주세요.", "error");
         return;
@@ -785,7 +785,7 @@ function setExternalBusy(value) {
 }
 
 // The settings file UI (optionsSettingsBackup.js) reads page state, locks editing during a restore and asks for a reload.
-globalThis.BetterChzzkOptionsPage = Object.freeze({
+globalThis.CheeseSpannerOptionsPage = Object.freeze({
     isReady: () => optionsLoadState === "ready" && !saveInFlight && !externalBusy,
     hasUnsavedChanges: () =>
         optionsLoadState === "ready" && !!savedOptions && !areOptionsEqual(readOptionsFromForm(), savedOptions),
@@ -1026,10 +1026,10 @@ function rememberGroupOpen(group) {
     try {
         groupStateStorage?.set({ [state.key]: group.open }, () => {
             const error = globalThis.chrome?.runtime?.lastError;
-            if (error) console.warn("[BetterChzzk] 옵션 묶음 상태 저장 실패:", error.message);
+            if (error) console.warn("[CheeseSpanner] 옵션 묶음 상태 저장 실패:", error.message);
         });
     } catch (error) {
-        console.warn("[BetterChzzk] 옵션 묶음 상태 저장 실패:", error);
+        console.warn("[CheeseSpanner] 옵션 묶음 상태 저장 실패:", error);
     }
 }
 
@@ -1051,7 +1051,7 @@ try {
         (stored) => {
             const error = globalThis.chrome?.runtime?.lastError;
             if (error) {
-                console.warn("[BetterChzzk] 옵션 묶음 상태 불러오기 실패:", error.message);
+                console.warn("[CheeseSpanner] 옵션 묶음 상태 불러오기 실패:", error.message);
                 return;
             }
             for (const [group, state] of groupStates) {
@@ -1068,7 +1068,7 @@ try {
         }
     );
 } catch (error) {
-    console.warn("[BetterChzzk] 옵션 묶음 상태 불러오기 실패:", error);
+    console.warn("[CheeseSpanner] 옵션 묶음 상태 불러오기 실패:", error);
 }
 
 function normalizeSearchText(text) {
@@ -1265,7 +1265,7 @@ function showGuideTarget(target) {
     node.focus({ preventScroll: true });
     return true;
 }
-globalThis.BetterChzzkOptionsNavigation = Object.freeze({ showGuideTarget });
+globalThis.CheeseSpannerOptionsNavigation = Object.freeze({ showGuideTarget });
 function revealGuideHash() {
     const match = location.hash.match(/^#update-guide-(panels|history|stream|categories)$/);
     if (match) showGuideTarget(match[1]);

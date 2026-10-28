@@ -4,22 +4,22 @@
  * 실행 컨텍스트: isolated world(확장 컨텍스트).
  * 동작 위치: 메인 볼륨 컨트롤의 좌우 범위와 볼륨 바 상하 8px. 표시 중심은 볼륨 바 시작점에서 오른쪽 40px 위에 고정.
  * 하는 일: 이 파일은 서로 독립된 두 개의 IIFE로 구성된다.
- *   (1) 볼륨 툴팁 — 공용 판정으로 메인 소속을 확인한 볼륨 컨트롤 주변 hover 시 #betterchzzk-volume-tooltip 요소를
+ *   (1) 볼륨 툴팁 — 공용 판정으로 메인 소속을 확인한 볼륨 컨트롤 주변 hover 시 #cheese-spanner-volume-tooltip 요소를
  *       표시하고, video의 volumechange 이벤트를 구독해 텍스트를 갱신한다. 전체화면 시 fullscreenElement로 이동.
  *   (2) 오디오 컴프레서(cheese-knife 기반, 출처 주석은 코드 내 유지) — 볼륨 컨트롤 옆에 토글 버튼을 삽입하고,
  *       Web Audio API로 MediaElementSource → DynamicsCompressor → Gain 그래프를 구성/해제한다. MutationObserver와
  *       startPageChangeDetection으로 플레이어 재마운트에 맞춰 버튼과 그래프 상태를 재동기화하며,
  *       버튼 오른쪽 볼륨바로 압축 후 출력 크기를 조절하며, 첫 재생 화면 진입 때 background에서 선택을 복원한다.
  *       홈·목록에서는 탭 선택을 미리 확정하지 않고 현재 탭의 명시 조작과 출력 볼륨을 저장한다.
- * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions, injectStyleOnce,
+ * 의존: 전역 CheeseSpannerSettings.normalizeOptions, CheeseSpanner.utils(bindFeatureOptions, injectStyleOnce,
  *   getMainVideoElement, getVideoViewportRect, createMutationObserverSync, createThrottledDomSync, isPlaybackRoute, isVisible,
  *   mutationMatchesSelector, onReady, startPageChangeDetection, runtimeSendMessage, shared/uiTheme.js의 ensureUiTheme),
  *   브라우저 Web Audio API(AudioContext).
  * 옵션 키: volumeTooltipEnabled, audioCompressorEnabled, audioCompressorThreshold, audioCompressorKnee,
  *   audioCompressorRatio, audioCompressorAttack, audioCompressorRelease, audioCompressorMakeupGain.
- * DOM 마커: #betterchzzk-volume-tooltip, #betterchzzk-volume-tooltip-style, #betterchzzk-audio-compressor,
- *   #betterchzzk-audio-compressor-control, #betterchzzk-audio-compressor-volume,
- *   #betterchzzk-audio-compressor-style, data-better-chzzk-audio-compressor, data-better-chzzk-ready.
+ * DOM 마커: #cheese-spanner-volume-tooltip, #cheese-spanner-volume-tooltip-style, #cheese-spanner-audio-compressor,
+ *   #cheese-spanner-audio-compressor-control, #cheese-spanner-audio-compressor-volume,
+ *   #cheese-spanner-audio-compressor-style, data-cheese-spanner-audio-compressor, data-cheese-spanner-ready.
  * 구조:
  *   - 볼륨 툴팁 IIFE (ensureTooltipElement, showTooltip/hideTooltip, watchVideo, applyOptions).
  *   - cheese-knife 출처 라이선스 주석(수정 금지).
@@ -31,19 +31,19 @@
  *     - installRuntime: MutationObserver + 페이지 변경 감지 설치(1회).
  */
 (() => {
-    const TOOLTIP_ID = "betterchzzk-volume-tooltip";
-    const STYLE_ID = "betterchzzk-volume-tooltip-style";
+    const TOOLTIP_ID = "cheese-spanner-volume-tooltip";
+    const STYLE_ID = "cheese-spanner-volume-tooltip-style";
     const { getVolumeControlCandidates, getVolumeControlForVideo, getMainVideoElement, isPlaybackRoute } =
-        globalThis.BetterChzzkVolumeControls;
+        globalThis.CheeseSpannerVolumeControls;
     // Preserve the control row width; only narrow its vertical hover band.
     const VOLUME_SLIDER_SELECTOR = ".pzp-pc__volume-slider, .pzp-pc-volume-slider";
     const HOVER_VERTICAL_PADDING = 8;
     const TOOLTIP_HORIZONTAL_OFFSET = 40;
     const EXCLUDED_HOVER_SELECTOR =
-        "#betterchzzk-skip-pill, #betterchzzk-live-fast-forward, [data-bcfp-player-mount], [data-bcfp-tooltip], .bcfp-player, .bcmv-cell";
+        "#cheese-spanner-skip-pill, #cheese-spanner-live-fast-forward, [data-bcfp-player-mount], [data-bcfp-tooltip], .bcfp-player, .bcmv-cell";
 
-    const { normalizeOptions } = BetterChzzkSettings;
-    const { bindFeatureOptions, getVideoViewportRect, injectStyleOnce, startPageChangeDetection } = BetterChzzk.utils;
+    const { normalizeOptions } = CheeseSpannerSettings;
+    const { bindFeatureOptions, getVideoViewportRect, injectStyleOnce, startPageChangeDetection } = CheeseSpanner.utils;
 
     let featureOptions = normalizeOptions();
     let tooltipEl = null;
@@ -90,7 +90,7 @@
         if (tooltipEl?.isConnected && tooltipEl.parentElement === getTooltipMount()) return tooltipEl;
         injectStyle();
         if (!tooltipEl) {
-            tooltipEl = BetterChzzk.utils.createPlayerTooltip();
+            tooltipEl = CheeseSpanner.utils.createPlayerTooltip();
             tooltipEl.id = TOOLTIP_ID;
         }
         getTooltipMount().appendChild(tooltipEl);
@@ -102,7 +102,7 @@
         const videoRect = getVideoViewportRect(video);
         const nativeTooltip = control
             .closest(".pzp-pc")
-            ?.querySelector(".pzp-pc__volume-button .pzp-button__tooltip:not(.betterchzzk-player-tooltip)");
+            ?.querySelector(".pzp-pc__volume-button .pzp-button__tooltip:not(.cheese-spanner-player-tooltip)");
         // This tooltip is mounted outside the scaled native control row. Copy its rendered scale too.
         const scaleTarget = nativeTooltip?.offsetWidth > 0 ? nativeTooltip : control;
         const ratio =
@@ -302,15 +302,15 @@
 /*
  * The audio compressor below is derived from cheese-knife
  * (https://github.com/jebibot/cheese-knife) — Copyright (c) 2023- jebibot,
- * MIT License — and was modified for Better Chzzk.
+ * MIT License — and was modified for Cheese Spanner.
  * Full license text: THIRD_PARTY_NOTICES.md
  */
 (() => {
-    const BUTTON_ID = "betterchzzk-audio-compressor";
-    const CONTROL_ID = "betterchzzk-audio-compressor-control";
-    const SLIDER_ID = "betterchzzk-audio-compressor-volume";
-    const STYLE_ID = "betterchzzk-audio-compressor-style";
-    const STATE_MESSAGE = "betterchzzk:audio-compressor-state";
+    const BUTTON_ID = "cheese-spanner-audio-compressor";
+    const CONTROL_ID = "cheese-spanner-audio-compressor-control";
+    const SLIDER_ID = "cheese-spanner-audio-compressor-volume";
+    const STYLE_ID = "cheese-spanner-audio-compressor-style";
+    const STATE_MESSAGE = "cheese-spanner:audio-compressor-state";
     const RESUME_EVENTS = ["pointerdown", "keydown", "click"];
     const VOLUME_CONTROL_SELECTOR = [
         ".pzp-pc__volume-control",
@@ -326,7 +326,7 @@
     const EXTERNAL_COMPRESSOR_SELECTOR = ".knife-comp";
     const SMOOTHING_SECONDS = 0.01;
 
-    const { normalizeOptions } = BetterChzzkSettings;
+    const { normalizeOptions } = CheeseSpannerSettings;
     const {
         bindFeatureOptions,
         createMutationObserverSync,
@@ -340,7 +340,7 @@
         onReady,
         runtimeSendMessage,
         startPageChangeDetection,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
 
     const graphs = new WeakMap();
     let featureOptions = normalizeOptions();
@@ -652,7 +652,7 @@
 
     function injectButtonStyle() {
         // Track and icon colors copy the native control row over the video; only the focus ring is shared.
-        BetterChzzk.utils.ensureUiTheme?.();
+        CheeseSpanner.utils.ensureUiTheme?.();
         injectStyleOnce(
             STYLE_ID,
             `
@@ -677,8 +677,8 @@
 #${SLIDER_ID}:is(:hover,:focus-visible,:active)::-moz-range-thumb{transform:scale(1.4);}
 #${BUTTON_ID}:focus-visible,#${SLIDER_ID}:focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:3px;}
 #${SLIDER_ID}:disabled{opacity:.35;cursor:default;}
-#${CONTROL_ID} .bcac-volume:hover > .betterchzzk-player-tooltip,#${CONTROL_ID} .bcac-volume:focus-within > .betterchzzk-player-tooltip{visibility:visible;}
-#${CONTROL_ID}:has(.bcac-volume:hover,.bcac-volume:focus-within) #${BUTTON_ID} > .betterchzzk-player-tooltip{visibility:hidden;}
+#${CONTROL_ID} .bcac-volume:hover > .cheese-spanner-player-tooltip,#${CONTROL_ID} .bcac-volume:focus-within > .cheese-spanner-player-tooltip{visibility:visible;}
+#${CONTROL_ID}:has(.bcac-volume:hover,.bcac-volume:focus-within) #${BUTTON_ID} > .cheese-spanner-player-tooltip{visibility:hidden;}
 @media(prefers-reduced-motion:reduce){#${CONTROL_ID} .bcac-volume{transition:none;}}
 `
         );
@@ -724,7 +724,7 @@
         button.setAttribute("label", label);
         button.setAttribute("aria-label", label);
         button.setAttribute("tooltip", label);
-        BetterChzzk.utils.syncPlayerButtonTooltip(button, label);
+        CheeseSpanner.utils.syncPlayerButtonTooltip(button, label);
         button.removeAttribute("title");
     }
 
@@ -748,9 +748,9 @@
         const failed = active && video instanceof HTMLVideoElement && graphs.get(video)?.failed === true;
         button.disabled = !isPlaybackRoute() || !usableVideo(video);
         button.setAttribute("aria-pressed", active ? "true" : "false");
-        button.dataset.betterChzzkAudioCompressor = active ? "1" : "0";
-        button.dataset.betterChzzkReady = failed ? "0" : "1";
-        button.dataset.betterChzzkRestoreTrigger = "playback-entry";
+        button.dataset.cheeseSpannerAudioCompressor = active ? "1" : "0";
+        button.dataset.cheeseSpannerReady = failed ? "0" : "1";
+        button.dataset.cheeseSpannerRestoreTrigger = "playback-entry";
         syncButtonLabels(button, failed);
         syncVolumeControl();
     }
@@ -764,8 +764,8 @@
             slider.style.setProperty("--bcac-volume", `${percent}%`);
         }
         slider.setAttribute("aria-valuetext", `${percent}%`);
-        slider.disabled = Boolean(buttonEl?.disabled) || buttonEl?.dataset.betterChzzkReady === "0";
-        const tooltip = controlEl.querySelector(".bcac-volume .betterchzzk-player-tooltip");
+        slider.disabled = Boolean(buttonEl?.disabled) || buttonEl?.dataset.cheeseSpannerReady === "0";
+        const tooltip = controlEl.querySelector(".bcac-volume .cheese-spanner-player-tooltip");
         const text = `컴프레서 볼륨 ${percent}%`;
         if (tooltip && tooltip.textContent !== text) tooltip.textContent = text;
     }
@@ -783,7 +783,7 @@
         slider.step = "1";
         slider.setAttribute("aria-label", "컴프레서 볼륨");
         slider.addEventListener("input", () => setCompressorVolume(Number(slider.value) / 100));
-        volume.append(slider, BetterChzzk.utils.createPlayerTooltip());
+        volume.append(slider, CheeseSpanner.utils.createPlayerTooltip());
         control.append(button, volume);
         for (const eventName of ["pointerdown", "pointerup", "click", "keydown", "keyup"]) {
             volume.addEventListener(eventName, (event) => event.stopPropagation());

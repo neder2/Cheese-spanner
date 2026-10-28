@@ -24,13 +24,13 @@ const {
 } = require("./helpers/watch-history-backup-fixture.js");
 
 const KEY = "betterChzzkLiveWatchHistory";
-const TYPE = "betterchzzk:watch-history-backup";
+const TYPE = "cheese-spanner:watch-history-backup";
 
 async function openBackup(t, initialHistory = {}) {
     const { context, store, backup } = load({ crypto: webcrypto, TextEncoder });
     vm.runInContext(fs.readFileSync(path.join(root, "shared/watchHistoryBackupController.js"), "utf8"), context);
     const chrome = createFakeChrome({ local: { [KEY]: initialHistory } });
-    chrome.runtime.getURL = (file) => `chrome-extension://better-chzzk/${file}`;
+    chrome.runtime.getURL = (file) => `chrome-extension://cheese-spanner/${file}`;
     chrome.runtime.getManifest = () => ({ version: "1.4.0" });
     const state = {
         writes: 0,
@@ -43,7 +43,7 @@ async function openBackup(t, initialHistory = {}) {
         heldResponses: [],
     };
     let queue = Promise.resolve();
-    const controller = context.BetterChzzkWatchHistoryBackupController.createController({
+    const controller = context.CheeseSpannerWatchHistoryBackupController.createController({
         runtime: chrome.runtime,
         now: () => state.now,
         enqueue(task) {

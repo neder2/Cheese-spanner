@@ -2,14 +2,14 @@
  * features/vodCommentTabs.js — VOD 댓글 탭 모듈의 옵션·라우트·mount 수명주기를 조립한다.
  *
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트.
- * 의존: BetterChzzkSettings, BetterChzzk.utils, BetterChzzk.vodComments의 model/repository/
+ * 의존: CheeseSpannerSettings, CheeseSpanner.utils, CheeseSpanner.vodComments의 model/repository/
  *   nativeAdapter/view 모듈.
  * 옵션 키: vodCommentTabsEnabled.
  */
 (() => {
     "use strict";
 
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     if (root.vodCommentTabs) return;
 
     const {
@@ -30,7 +30,7 @@
 
     const MOUNT_SYNC_DELAY_MS = 80;
     const MOUNT_GAP_GRACE_MS = 600;
-    const COMMENT_ONLY_ASIDE_ID = "betterchzzk-vod-comment-aside";
+    const COMMENT_ONLY_ASIDE_ID = "cheese-spanner-vod-comment-aside";
     const ANCHOR_SELECTOR = [
         "#player_layout",
         "#vod-aside",
@@ -43,7 +43,7 @@
         "#vod-aside h6",
     ].join(",");
 
-    let featureOptions = BetterChzzkSettings.normalizeOptions();
+    let featureOptions = CheeseSpannerSettings.normalizeOptions();
     let runtimeInstalled = false;
     let bodyObserver = null;
     let ensureTimerId = 0;

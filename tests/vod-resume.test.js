@@ -89,8 +89,8 @@ function fixture(
     Object.defineProperty(video, "videoTracks", { configurable: true, get: () => tracks });
     const root = w.document.documentElement;
     const setQualityState = (enabled, preferred = "1080p") => {
-        root.setAttribute("data-betterchzzk-auto-quality-state", JSON.stringify({ enabled, quality: preferred }));
-        w.dispatchEvent(new w.Event("betterchzzk:auto-quality:state"));
+        root.setAttribute("data-cheese-spanner-auto-quality-state", JSON.stringify({ enabled, quality: preferred }));
+        w.dispatchEvent(new w.Event("cheese-spanner:auto-quality:state"));
     };
     setQualityState(quality);
 
@@ -127,7 +127,7 @@ function fixture(
 
     function navigate(href) {
         w.history.pushState({ native: "preserved" }, "", href);
-        w.dispatchEvent(new w.Event("betterchzzk:routechange"));
+        w.dispatchEvent(new w.Event("cheese-spanner:routechange"));
     }
 
     function loadQuality() {
@@ -136,10 +136,10 @@ function fixture(
 
     function requestQuality(preferred = "1080p") {
         root.setAttribute(
-            "data-betterchzzk-auto-quality-request",
+            "data-cheese-spanner-auto-quality-request",
             JSON.stringify({ requestId: String(now), quality: preferred })
         );
-        w.dispatchEvent(new w.Event("betterchzzk:auto-quality:apply"));
+        w.dispatchEvent(new w.Event("cheese-spanner:auto-quality:apply"));
     }
 
     return {
@@ -345,10 +345,10 @@ function restoreFixture(
     });
     host._corePlayer = { videoTracks: tracks };
     const setQualityState = (enabled, quality = "1080p") => {
-        root.setAttribute("data-betterchzzk-auto-quality-state", JSON.stringify({ enabled, quality }));
-        w.dispatchEvent(new w.Event("betterchzzk:auto-quality:state"));
+        root.setAttribute("data-cheese-spanner-auto-quality-state", JSON.stringify({ enabled, quality }));
+        w.dispatchEvent(new w.Event("cheese-spanner:auto-quality:state"));
     };
-    root.setAttribute("data-betterchzzk-auto-quality-state", JSON.stringify({ enabled: true, quality: "1080p" }));
+    root.setAttribute("data-cheese-spanner-auto-quality-state", JSON.stringify({ enabled: true, quality: "1080p" }));
     t.after(() => {
         setQualityState(false);
         timers.clear();
@@ -386,9 +386,9 @@ function restoreFixture(
         setQualityState,
         selectedHeight: () => tracks[trackIndex].height,
         request(requestId = String(now), quality = "1080p") {
-            root.setAttribute("data-betterchzzk-auto-quality-request", JSON.stringify({ requestId, quality }));
-            w.dispatchEvent(new w.Event("betterchzzk:auto-quality:apply"));
-            return JSON.parse(root.getAttribute("data-betterchzzk-auto-quality-result"));
+            root.setAttribute("data-cheese-spanner-auto-quality-request", JSON.stringify({ requestId, quality }));
+            w.dispatchEvent(new w.Event("cheese-spanner:auto-quality:apply"));
+            return JSON.parse(root.getAttribute("data-cheese-spanner-auto-quality-result"));
         },
         // The native menu changes the track without going through the extension's selection path.
         chooseManually(height) {
@@ -411,7 +411,7 @@ function restoreFixture(
         },
         navigate(path) {
             w.history.pushState({}, "", path);
-            w.dispatchEvent(new w.Event("betterchzzk:routechange"));
+            w.dispatchEvent(new w.Event("cheese-spanner:routechange"));
         },
         userPause(intent) {
             if (intent === "key") w.dispatchEvent(new w.KeyboardEvent("keydown", { key: " ", bubbles: true }));
@@ -612,7 +612,7 @@ for (const [suffix, position] of [
         await f.advance(2000);
         f.chooseManually(480);
         f.w.history.replaceState({}, "", `/video/123${suffix}`);
-        f.w.dispatchEvent(new f.w.Event("betterchzzk:routechange"));
+        f.w.dispatchEvent(new f.w.Event("cheese-spanner:routechange"));
         await f.advance(5000);
         assert.equal(f.request("same-preference").status, "already");
         await f.advance(5000);

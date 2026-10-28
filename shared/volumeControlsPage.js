@@ -8,7 +8,7 @@
     // Skip controls copy native button classes for appearance, including volume classes.
     // Their identity takes precedence over those copied classes in both execution worlds.
     const NON_VOLUME_CONTROL_SELECTOR =
-        "#betterchzzk-skip-pill, #betterchzzk-live-fast-forward, #betterchzzk-audio-compressor-control, #betterchzzk-audio-compressor";
+        "#cheese-spanner-skip-pill, #cheese-spanner-live-fast-forward, #cheese-spanner-audio-compressor-control, #cheese-spanner-audio-compressor";
     const VOLUME_CONTROL_SELECTOR = [
         "[class*='pzp'][class*='volume']",
         ".pzp-pc__volume",
@@ -212,7 +212,7 @@
         return pickLargestVisible(videos) || videos[0] || null;
     }
 
-    globalThis.BetterChzzkVolumeControls = Object.freeze({
+    globalThis.CheeseSpannerVolumeControls = Object.freeze({
         getVolumeControlCandidates,
         getVolumeControlForVideo,
         getMainVideoElement,

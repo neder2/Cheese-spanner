@@ -12,8 +12,8 @@ const {
     waitForCondition,
 } = require("./helpers/extension-page-fixture.js");
 
-const LAYER_ID = "betterchzzk-ambient";
-const STYLE_ID = "betterchzzk-ambient-style";
+const LAYER_ID = "cheese-spanner-ambient";
+const STYLE_ID = "cheese-spanner-ambient-style";
 // Geometry from docs/measurements/panel-resize-2026-09-28.md: 2048x996 live page with a
 // 240px expanded sidebar, a 60px header, a 1455px main column and a 353px chat.
 const PLAYER = { left: 240, top: 60, width: 1455, height: 818 };
@@ -111,7 +111,7 @@ function fixture(t, sync = { ambientEnabled: true }, path = "/live/test-channel"
     w.eval(readRepoFile("content.js"));
     w.eval(readRepoFile("features", "ambientGlow.js"));
     t.after(() => {
-        w.BetterChzzk.ambientGlow?.stop();
+        w.CheeseSpanner.ambientGlow?.stop();
         dom.window.close();
     });
     const layer = () => doc.getElementById(LAYER_ID);
@@ -167,13 +167,13 @@ function fixture(t, sync = { ambientEnabled: true }, path = "/live/test-channel"
             }
             for (const listener of [...chrome.testState.storageChangeListeners]) listener(payload, "local");
         },
-        row: () => doc.getElementById("betterchzzk-ambient-row"),
-        expand: () => doc.getElementById("betterchzzk-ambient-expand"),
-        toggle: () => doc.getElementById("betterchzzk-ambient-toggle"),
-        strength: () => doc.getElementById("betterchzzk-ambient-strength"),
+        row: () => doc.getElementById("cheese-spanner-ambient-row"),
+        expand: () => doc.getElementById("cheese-spanner-ambient-expand"),
+        toggle: () => doc.getElementById("cheese-spanner-ambient-toggle"),
+        strength: () => doc.getElementById("cheese-spanner-ambient-strength"),
         async route(path) {
             w.history.pushState(null, "", path);
-            w.dispatchEvent(new w.CustomEvent("betterchzzk:routechange"));
+            w.dispatchEvent(new w.CustomEvent("cheese-spanner:routechange"));
         },
     };
 }
@@ -200,7 +200,7 @@ test("enabled glow surrounds the player, spills over chat and sidebar, and never
     // Same z-index as the native header container, appended last, so the header is lit too.
     assert.match(css, /z-index:10000;/);
     assert.equal(layer, f.doc.body.lastElementChild);
-    assert.match(css, /html\.theme_dark #betterchzzk-ambient\{mix-blend-mode:screen\}/);
+    assert.match(css, /html\.theme_dark #cheese-spanner-ambient\{mix-blend-mode:screen\}/);
     assert.match(css, /mix-blend-mode:multiply/);
 
     // 288px layer margin on every side (3x the 96px blur, doubled on 2026-10-08 so the light
@@ -320,8 +320,8 @@ test("the gear menu row keeps strength folded until its label is clicked and the
     // Buttons center their text by default; the native track has no left, so it must be pinned
     // or it drifts right of its knob (seen in a 2026-10-08 render with the live player CSS).
     const css = f.doc.getElementById(STYLE_ID).textContent;
-    assert.match(css, /#betterchzzk-ambient-toggle \.pzp-ui-toggle__handle:before\{left:0\}/);
-    assert.match(css, /:is\(#betterchzzk-ambient-expand,#betterchzzk-ambient-toggle\)\{[^}]*text-align:start/);
+    assert.match(css, /#cheese-spanner-ambient-toggle \.pzp-ui-toggle__handle:before\{left:0\}/);
+    assert.match(css, /:is\(#cheese-spanner-ambient-expand,#cheese-spanner-ambient-toggle\)\{[^}]*text-align:start/);
     assert.equal(toggle.getAttribute("aria-checked"), "true");
     assert.equal(expand.getAttribute("aria-expanded"), "false");
     assert.equal(f.strength().hidden, true, "strength starts folded");
@@ -423,7 +423,7 @@ test("a re-rendered gear menu gets one row again and the keyboard reaches label 
     f.doc.querySelector(".pzp-pc__settings").outerHTML = MENU;
     await waitForCondition(() => f.row()?.parentElement === f.doc.querySelector(".pzp-pc__settings"));
     for (const id of ["row", "expand", "toggle", "strength"])
-        assert.equal(f.doc.querySelectorAll(`#betterchzzk-ambient-${id}`).length, 1);
+        assert.equal(f.doc.querySelectorAll(`#cheese-spanner-ambient-${id}`).length, 1);
     assert.equal(f.row().nextElementSibling, f.strength());
 
     const key = (target, value) =>

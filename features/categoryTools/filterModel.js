@@ -1,6 +1,6 @@
 /** 카테고리 목록 필터의 입력·모드·조건·검색 단어·탭 기록 계산. UI 상태와 저장은 호출자가 소유한다. */
 (() => {
-    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
+    const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     const FOLLOWER_FILTER_PRESET_KEYS = Object.freeze([
         "categoryToolsFollowerFilterPreset1",
         "categoryToolsFollowerFilterPreset2",

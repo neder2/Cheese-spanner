@@ -7,7 +7,7 @@
  * 검색/정렬, 항목 선택/삭제, 세션(입장~퇴장) 세부 보기를 제공하며, 클릭 시 치지직 API로 다시보기
  * 영상을 찾아 새 탭으로 연다. storage.onChanged를 구독해 다른 곳의 변경도 반영한다.
  * 의존: globalThis.chrome.storage.local, globalThis.chrome.runtime,
- * globalThis.BetterChzzk.utils(shared/data.js가 채움).
+ * globalThis.CheeseSpanner.utils(shared/data.js가 채움).
  * 통신: chrome.storage.local 키 "betterChzzkLiveWatchHistory"는 읽기와 변경 감지에만 사용한다.
  * 삭제·초기화·다시보기 캐시는 runtime 메시지로 background 단일 writer에 요청한다.
  * api.chzzk.naver.com의 채널 영상 목록/영상 상세 API를 호출해 다시보기 videoNo를 찾는다.
@@ -33,7 +33,7 @@
  * - 이벤트 리스너 등록과 초기 로드 호출 (파일 최하단)
  */
 const STORAGE_KEY = "betterChzzkLiveWatchHistory";
-const WATCH_HISTORY_MESSAGE_TYPE = "betterChzzk:watch-history-mutation";
+const WATCH_HISTORY_MESSAGE_TYPE = "cheese-spanner:watch-history-mutation";
 const WATCH_HISTORY_MESSAGE_VERSION = 1;
 const API_BASE = "https://api.chzzk.naver.com/service/v1/channels";
 const VIDEO_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/videos";
@@ -96,7 +96,7 @@ const {
     sumWatchRanges,
     sumWatchRangesByDate,
     touchMapEntry,
-} = globalThis.BetterChzzk?.utils || {};
+} = globalThis.CheeseSpanner?.utils || {};
 
 const noticeEl = document.getElementById("notice");
 const totalWatchTimeEl = document.getElementById("totalWatchTime");
@@ -117,7 +117,7 @@ const channelRankingEl = document.getElementById("channelRanking");
 const activityTypeEl = document.getElementById("activityType");
 const activityListEl = document.getElementById("activityList");
 const activitySummaryEl = document.getElementById("activitySummary");
-const donationHistory = globalThis.BetterChzzkDonationHistory;
+const donationHistory = globalThis.CheeseSpannerDonationHistory;
 const donationImportRefresh = document.getElementById("donationImportRefresh");
 const donationImportControls = document.getElementById("donationImportControls");
 const donationImportCancel = document.getElementById("donationImportCancel");
@@ -2505,5 +2505,5 @@ clearDonationImportButton.addEventListener("click", async () => {
 });
 
 setHistoryView(activeHistoryView);
-globalThis.BetterChzzkHistoryBackup?.init({ reload: () => loadHistory({ silent: true }) });
+globalThis.CheeseSpannerHistoryBackup?.init({ reload: () => loadHistory({ silent: true }) });
 loadHistory({ resetToLatest: true });

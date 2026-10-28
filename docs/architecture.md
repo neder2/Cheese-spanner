@@ -25,7 +25,7 @@ MAIN world와 isolated world는 JavaScript 전역을 공유하지 않아요. 공
 
 VOD의 영구 이어보기는 네이티브 상세·시청 이벤트의 소유예요. 채팅 복구용 자동 새로고침과 sessionStorage 위치 전달 경로는 제거됐어요. MAIN 자동 화질은 명시적 URL 시간의 초기 안정화 보정만 수행하며 완료·사용자 취소 뒤 같은 시간을 재적용하지 않아요. 이 경로에 background 기록 writer나 새 네트워크 요청을 연결하지 않아요.
 
-isolated 영역은 `shared/settings.js` → `shared/data.js` → `shared/categoryExclusions.js` → `shared/selectors.js` → `content.js` → `shared/uiTheme.js` 순서로 공용 기반을 준비해요. `content.js`는 이미 등록된 `BetterChzzk.utils`를 보존하며 DOM·라우트 기능을 추가해요. `shared/uiTheme.js`는 기능이 요청할 때만 치지직 토큰을 따르는 공통 테마 변수와 확장 글꼴 선언을 문서에 한 번 넣어요. MAIN world와 확장 페이지는 이 파일을 읽지 않아요. 기능의 model·repository·view는 해당 기능의 조립 파일보다 먼저 로드돼요.
+isolated 영역은 `shared/settings.js` → `shared/data.js` → `shared/categoryExclusions.js` → `shared/selectors.js` → `content.js` → `shared/uiTheme.js` 순서로 공용 기반을 준비해요. `content.js`는 이미 등록된 `CheeseSpanner.utils`를 보존하며 DOM·라우트 기능을 추가해요. `shared/uiTheme.js`는 기능이 요청할 때만 치지직 토큰을 따르는 공통 테마 변수와 확장 글꼴 선언을 문서에 한 번 넣어요. MAIN world와 확장 페이지는 이 파일을 읽지 않아요. 기능의 model·repository·view는 해당 기능의 조립 파일보다 먼저 로드돼요.
 
 서비스 워커는 settings·data·categoryExclusions·donationHistory·watchHistoryStore·adVideoRegistration·liveStart·liveStartMonitor·followingFolders·chatMultiview·settingsBackup·settingsStore·donationHistoryImport를 로드해요. `shared/` 전체가 워커용이라는 뜻은 아니에요. selectors·vodTimeline처럼 페이지 컨텍스트에 의존하는 파일을 디렉터리 단위로 일괄 로드하지 않아요.
 

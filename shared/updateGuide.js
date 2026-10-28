@@ -65,9 +65,17 @@
                 "방송 목록 필터 개선(이상·이하·범위, 보고 와도 유지), 방송 화면 제목 옆에서 이전 방제 확인, 다시보기에서 내 채팅 강조",
             cards: Object.freeze([]),
         }),
+        // 2026-10-28 사용자 확정 문구(추천 A안에 버그 수정 한마디를 더함, 1.4.5처럼 반점으로만 구분).
+        // 시작·종료 시각은 기본 켜짐이라 켜는 곳 대신 보이는 자리를 알리고, 방송 알림 수정은 버그 수정에 묶었다.
+        "1.4.6": Object.freeze({
+            version: "1.4.6",
+            title: "새 기능",
+            summary: "다시보기 조회수 옆 날짜 자리에 방송 시작·종료 시각 표시, 각종 버그 수정",
+            cards: Object.freeze([]),
+        }),
     });
-    globalThis.BetterChzzkUpdateGuide = Object.freeze({
-        MESSAGE_TYPE: "betterchzzk:update-guide",
+    globalThis.CheeseSpannerUpdateGuide = Object.freeze({
+        MESSAGE_TYPE: "cheese-spanner:update-guide",
         STORAGE_KEY: "betterchzzk:update-guide-state",
         OPTION_KEY: "updateGuideEnabled",
         FIRST_VERSION: "1.4.1",

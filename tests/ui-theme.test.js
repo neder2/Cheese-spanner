@@ -4,7 +4,7 @@ const { JSDOM } = require("jsdom");
 const { readRepoFile } = require("./helpers/extension-page-fixture.js");
 
 const MODULE = "shared/uiTheme.js";
-const STYLE_ID = "betterchzzk-ui-theme";
+const STYLE_ID = "cheese-spanner-ui-theme";
 const FONT_PATH = "vendor/fonts/PretendardVariable.woff2";
 const EXTENSION_ORIGIN = "chrome-extension://cheese-spanner-test/";
 
@@ -41,7 +41,7 @@ const STATIC_TOKENS = [
     ["--bct-radius-full", "var(--sem-radius-circular, 9999px)"],
     [
         "--bct-font",
-        '"BetterChzzk Pretendard", -apple-system, BlinkMacSystemFont, system-ui, "Malgun Gothic", sans-serif',
+        '"CheeseSpanner Pretendard", -apple-system, BlinkMacSystemFont, system-ui, "Malgun Gothic", sans-serif',
     ],
     ["--bct-shadow", "0 4px 4px 0 var(--bct-shadow-color-strong), 0 4px 12px 4px var(--bct-shadow-color)"],
     ["--bct-focus-ring", "var(--bct-brand-text)"],
@@ -114,10 +114,10 @@ function contrast(foreground, background) {
 
 test("loading the theme module merges one request function and injects nothing until a feature asks", (t) => {
     const page = createPage(t, { scripts: ["shared/data.js", "content.js"] });
-    const before = { ...page.window.BetterChzzk.utils };
+    const before = { ...page.window.CheeseSpanner.utils };
     const styleCount = page.document.querySelectorAll("style").length;
     page.window.eval(readRepoFile(MODULE));
-    const { utils } = page.window.BetterChzzk;
+    const { utils } = page.window.CheeseSpanner;
 
     assert.equal(typeof utils.ensureUiTheme, "function");
     for (const [name, value] of Object.entries(before)) assert.equal(utils[name], value, `utils.${name} is preserved`);
@@ -130,13 +130,13 @@ test("loading the theme module merges one request function and injects nothing u
 test("the theme module refuses to load ahead of content.js instead of registering a broken request", (t) => {
     const page = createPage(t, { scripts: ["shared/data.js"] });
     assert.throws(() => page.window.eval(readRepoFile(MODULE)), /content\.js/);
-    assert.equal(page.window.BetterChzzk.utils.ensureUiTheme, undefined);
+    assert.equal(page.window.CheeseSpanner.utils.ensureUiTheme, undefined);
     assert.equal(themeStyle(page.document), null);
 });
 
 test("the first request injects one root style and repeated requests do nothing", (t) => {
     const page = createPage(t);
-    const { ensureUiTheme } = page.window.BetterChzzk.utils;
+    const { ensureUiTheme } = page.window.CheeseSpanner.utils;
 
     ensureUiTheme();
     const style = themeStyle(page.document);
@@ -154,7 +154,7 @@ test("the first request injects one root style and repeated requests do nothing"
 
 test("the injected style only declares theme variables and the single bundled font face", (t) => {
     const page = createPage(t);
-    page.window.BetterChzzk.utils.ensureUiTheme();
+    page.window.CheeseSpanner.utils.ensureUiTheme();
     const style = themeStyle(page.document);
     const css = style.textContent;
     const fontUrl = EXTENSION_ORIGIN + FONT_PATH;
@@ -176,7 +176,7 @@ test("the injected style only declares theme variables and the single bundled fo
 
     const fontFaces = css.match(/@font-face\s*\{[^}]*\}/g) || [];
     assert.equal(fontFaces.length, 1);
-    assert.match(fontFaces[0], /font-family:\s*"BetterChzzk Pretendard"\s*[;}]/);
+    assert.match(fontFaces[0], /font-family:\s*"CheeseSpanner Pretendard"\s*[;}]/);
     assert.match(fontFaces[0], /font-weight:\s*100 900\s*[;}]/);
     assert.match(fontFaces[0], /font-style:\s*normal\s*[;}]/);
     assert.match(fontFaces[0], /font-display:\s*swap\s*[;}]/);
@@ -194,7 +194,7 @@ test("the injected style only declares theme variables and the single bundled fo
 
 test("theme variables follow CHZZK semantic tokens with one fallback set chosen by the root markers", (t) => {
     const page = createPage(t);
-    page.window.BetterChzzk.utils.ensureUiTheme();
+    page.window.CheeseSpanner.utils.ensureUiTheme();
     const style = themeStyle(page.document);
     const base = ruleFor(style, ROOT_SELECTORS.base);
     const light = ruleFor(style, ROOT_SELECTORS.light);
@@ -279,7 +279,7 @@ test("manifest loads the theme module once, in the isolated world, right after c
     const mainWorld = manifest.content_scripts.filter((item) => item.world === "MAIN").flatMap((item) => item.js);
     assert.equal(mainWorld.includes(MODULE), false);
     require("../shared/adVideoRegistration.js");
-    assert.equal(globalThis.BetterChzzkAdVideoRegistration.CONTENT_SCRIPT.js.includes(MODULE), false);
+    assert.equal(globalThis.CheeseSpannerAdVideoRegistration.CONTENT_SCRIPT.js.includes(MODULE), false);
     assert.doesNotMatch(readRepoFile("background.js"), /uiTheme/);
     for (const page of ["options.html", "history.html", "replay-pending.html"])
         assert.doesNotMatch(readRepoFile(page), /uiTheme/, `${page} keeps its own extension page tokens`);

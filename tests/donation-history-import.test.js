@@ -10,8 +10,8 @@ const {
 require("../shared/donationHistory.js");
 require("../shared/donationHistoryImport.js");
 
-const data = globalThis.BetterChzzkDonationHistory;
-const store = globalThis.BetterChzzkWatchHistoryStore;
+const data = globalThis.CheeseSpannerDonationHistory;
+const store = globalThis.CheeseSpannerWatchHistoryStore;
 const NOW = Date.parse("2026-09-19T12:00:00+09:00");
 const MONTH = "2026-09";
 const apiRow = (index = 0, changes = {}) => ({
@@ -402,20 +402,20 @@ function importController(t, { requestPage, owner = "viewer", history = { donati
     let stored = history,
         writes = 0,
         requests = 0;
-    const original = globalThis.BetterChzzk.utils.fetchJson;
-    globalThis.BetterChzzk.utils.fetchJson = async (url, options) => {
+    const original = globalThis.CheeseSpanner.utils.fetchJson;
+    globalThis.CheeseSpanner.utils.fetchJson = async (url, options) => {
         requests++;
         return requestPage ? requestPage(options, new URL(url)) : response([apiRow()]);
     };
     t.after(() => {
-        globalThis.BetterChzzk.utils.fetchJson = original;
+        globalThis.CheeseSpanner.utils.fetchJson = original;
     });
     const chrome = {
         runtime: { id: "test", getURL: () => "chrome-extension://test/history.html", onConnect },
         tabs: { query: async () => [{ id: 1, active: true }] },
         scripting: { executeScript: async () => [{ result: owner }] },
     };
-    globalThis.BetterChzzkDonationHistoryImport.install({
+    globalThis.CheeseSpannerDonationHistoryImport.install({
         chrome,
         readHistory: async () => stored,
         writeHistory: async (operation) => {

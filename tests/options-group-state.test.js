@@ -199,7 +199,7 @@ test("search expansion and clearing never replace the user's saved group choices
 });
 
 test("history cards restore independent choices and search without changing settings or history", async (t) => {
-    const historyKey = globalThis.BetterChzzkWatchHistoryStore.STORAGE_KEY;
+    const historyKey = globalThis.CheeseSpannerWatchHistoryStore.STORAGE_KEY;
     const savedHistory = { records: [], updatedAt: 123 };
     const chrome = createFakeChrome({
         sync: { liveWatchHistoryEnabled: false, liveWatchHistoryMinMinutes: 17 },

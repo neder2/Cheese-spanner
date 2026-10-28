@@ -10,7 +10,7 @@ const {
     waitForCondition,
 } = require("./helpers/extension-page-fixture.js");
 
-const BACKUP = "betterchzzk:settings-backup";
+const BACKUP = "cheese-spanner:settings-backup";
 // Page objects come from the JSDOM realm; compare their JSON values.
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const PANEL_KEYS = [
@@ -201,7 +201,7 @@ test("reloading saved options keeps fields edited during the read and refreshes 
     dispatch(h.dom, chat, "change");
     h.chrome.testState.sync.sidebarPosition = "right";
     h.chrome.testState.sync.chatPosition = "right";
-    assert.equal(await h.dom.window.BetterChzzkOptionsPage.reloadSavedOptions(), true);
+    assert.equal(await h.dom.window.CheeseSpannerOptionsPage.reloadSavedOptions(), true);
     assert.equal(chat.value, "left", "the in-flight edit survives");
     assert.equal(queryOption(h.document, "sidebarPosition").value, "right");
     assert.equal(h.document.getElementById("notice").dataset.state, "dirty");
@@ -531,7 +531,7 @@ test("an export that leaves out a section names it and the reason", async (t) =>
     h.document.getElementById("exportSettingsFile").click();
     await waitForCondition(() => h.downloads[0]?.name);
     assert.match(h.message(), /저장값을 읽지 못한 팔로잉 고정 구역은 빠졌어요/);
-    const max = h.dom.window.BetterChzzkSettingsBackup.MAX_MULTIVIEW_CHANNELS.toLocaleString("ko-KR");
+    const max = h.dom.window.CheeseSpannerSettingsBackup.MAX_MULTIVIEW_CHANNELS.toLocaleString("ko-KR");
     assert.ok(h.message().includes(`멀티뷰 화질 구역은 저장한 채널이 ${max}개를 넘어 파일에 넣지 않았어요`));
     assert.doesNotMatch(h.message(), /멀티뷰 딜레이/);
 });

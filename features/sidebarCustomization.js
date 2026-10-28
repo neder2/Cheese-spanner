@@ -10,21 +10,21 @@
  *   않으며, 목록 갱신·DOM 재마운트·노드 재사용 때 현재 href를 다시 검증한다.
  *   보충 행의 일반 클릭은 routeBridgePage.js에 DOM 이벤트로 전달해 치지직 라우터로 이동한다.
  *   팔로잉 링크 드래그는 고정 옵션과 독립적으로 URL 데이터를 전달하며, 드래그 종료 때 원래 속성을 복구한다.
- * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
+ * 의존: CheeseSpannerSettings.normalizeOptions, CheeseSpanner.utils(bindFeatureOptions,
  *   createMutationObserverSync, ensureUiTheme(선택), fetchJson, injectStyleOnce, normSpace,
  *   normalizeChzzkChannelId, normalizeChzzkImageUrl,
- *   settingsStoreSet, startPageChangeDetection, startStorageChangeListener, storageGet), BetterChzzk.selectors(CHZZK, queryChain).
+ *   settingsStoreSet, startPageChangeDetection, startStorageChangeListener, storageGet), CheeseSpanner.selectors(CHZZK, queryChain).
  *   고정 목록 저장은 워커의 설정 저장 잠금을 거쳐 설정 파일 적용·다른 문서와 직렬화돼요. 마지막으로 읽은
  *   저장값을 기대값으로 보내고, 충돌하면 워커가 돌려준 최신 목록에 고정·해제 하나만 다시 적용해요(최대 3회).
  * 옵션 키: sidebarCheeseFarmHidden, followingPinEnabled, followingPinOfflineToTopEnabled, followingOfflineHidden.
  *   sidebarPopularCategoriesHidden, sidebarUpcomingScheduleHidden, sidebarPartnerStreamersHidden,
  *   sidebarServiceLinksHidden.
  * 저장 키: chrome.storage.sync.betterchzzkPinnedFollowingChannelIds (채널 ID 배열, 최대 64개).
- * DOM 마커: #betterchzzk-sidebar-customization-style, #betterchzzk-following-pin-mode, data-bcsf-* 속성.
+ * DOM 마커: #cheese-spanner-sidebar-customization-style, #cheese-spanner-following-pin-mode, data-bcsf-* 속성.
  */
 (() => {
-    const { normalizeOptions } = BetterChzzkSettings;
-    const { CHZZK, queryChain } = BetterChzzk.selectors;
+    const { normalizeOptions } = CheeseSpannerSettings;
+    const { CHZZK, queryChain } = CheeseSpanner.selectors;
     const {
         bindFeatureOptions,
         createMutationObserverSync,
@@ -37,13 +37,13 @@
         startStorageChangeListener,
         storageGet,
         startPageChangeDetection,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
 
     const STORAGE_KEY = "betterchzzkPinnedFollowingChannelIds";
     const MAX_PINNED_CHANNELS = 64;
     const MAX_PIN_WRITE_ATTEMPTS = 3;
-    const STYLE_ID = "betterchzzk-sidebar-customization-style";
-    const MODE_BUTTON_ID = "betterchzzk-following-pin-mode";
+    const STYLE_ID = "cheese-spanner-sidebar-customization-style";
+    const MODE_BUTTON_ID = "cheese-spanner-following-pin-mode";
     const CHEESE_HIDDEN_ATTR = "data-bcsf-cheese-hidden";
     const SECTION_HIDDEN_ATTR = "data-bcsf-section-hidden";
     const OFFLINE_HIDDEN_ATTR = "data-bcsf-offline-hidden";
@@ -505,7 +505,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         const headers = { Accept: "application/json" };
         const badgeAssetsPromise = fetchJson(BADGE_ASSET_API_URL, { headers, signal: controller.signal }).catch(
             (error) => {
-                if (!controller.signal.aborted) console.warn("[Better Chzzk] 팔로잉 채널 배지 자산 조회 실패", error);
+                if (!controller.signal.aborted) console.warn("[Cheese Spanner] 팔로잉 채널 배지 자산 조회 실패", error);
                 return null;
             }
         );
@@ -527,7 +527,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
             .catch((error) => {
                 if (!runtimeInstalled || generation !== runtimeGeneration || controller.signal.aborted) return;
                 sourceNextRetryAt = Date.now() + SOURCE_RETRY_DELAY_MS;
-                console.warn("[Better Chzzk] 팔로잉 고정용 전체 목록 조회 실패", error);
+                console.warn("[Cheese Spanner] 팔로잉 고정용 전체 목록 조회 실패", error);
             })
             .finally(() => {
                 if (sourceFetchController !== controller) return;
@@ -607,7 +607,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     }
 
     function ensureStyle() {
-        BetterChzzk.utils.ensureUiTheme?.();
+        CheeseSpanner.utils.ensureUiTheme?.();
         injectStyleOnce(STYLE_ID, STYLE_TEXT);
     }
 
@@ -1089,7 +1089,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
             .catch(() => {})
             .then(() => writePinOperation(operation))
             .catch((error) => {
-                console.warn("[Better Chzzk] 팔로잉 채널 고정 저장 실패", error);
+                console.warn("[Cheese Spanner] 팔로잉 채널 고정 저장 실패", error);
             })
             .finally(() => {
                 // Success shows the stored list; failure drops only this operation from the optimistic view.
@@ -1105,7 +1105,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         if (!normalizedId) return;
         const operation = { channelId: normalizedId, pinned: !pinnedChannelIds.has(normalizedId) };
         if (operation.pinned && pinnedChannelIds.size >= MAX_PINNED_CHANNELS) {
-            console.warn(`[Better Chzzk] 팔로잉 채널은 최대 ${MAX_PINNED_CHANNELS}개까지 고정할 수 있습니다.`);
+            console.warn(`[Cheese Spanner] 팔로잉 채널은 최대 ${MAX_PINNED_CHANNELS}개까지 고정할 수 있습니다.`);
             return;
         }
         pendingPinOperations.push(operation);
@@ -1150,7 +1150,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
 
     // 2026-10-11 사용자 보고: 끄는 동안 치지직 행 툴팁(방송 제목, 행 안의 단일 클래스 _tooltip_*)이 그대로 남았어요.
     // 끄는 동안 마우스가 행을 떠났다는 신호가 오지 않으므로, 끌기 중에만 사이드바의 그 툴팁을 감춰요.
-    const DRAG_STYLE_ID = "betterchzzk-sidebar-drag-style";
+    const DRAG_STYLE_ID = "cheese-spanner-sidebar-drag-style";
     const DRAGGING_ATTR = "data-bcsf-link-dragging";
     const DRAG_STYLE_TEXT = `#sidebar[${DRAGGING_ATTR}] [class*="_item_"] [class^="_tooltip_"]{display:none!important}`;
 
@@ -1229,7 +1229,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
             return;
         }
         const handled = !link.dispatchEvent(
-            new CustomEvent("betterchzzk:following-navigate", { bubbles: true, cancelable: true })
+            new CustomEvent("cheese-spanner:following-navigate", { bubbles: true, cancelable: true })
         );
         if (!handled) return;
         event.preventDefault();
@@ -1325,7 +1325,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
             })
             .catch((error) => {
                 if (!runtimeInstalled || generation !== runtimeGeneration) return;
-                console.warn("[Better Chzzk] 팔로잉 채널 고정 목록 로드 실패", error);
+                console.warn("[Cheese Spanner] 팔로잉 채널 고정 목록 로드 실패", error);
                 pinnedIdsLoaded = true;
                 scheduleSync();
             });

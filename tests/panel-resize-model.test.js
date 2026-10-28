@@ -6,11 +6,11 @@ const vm = require("node:vm");
 
 function setup() {
     const existing = { utils: { sentinel: true } };
-    const context = vm.createContext({ BetterChzzk: existing });
+    const context = vm.createContext({ CheeseSpanner: existing });
     vm.runInContext(fs.readFileSync(path.join(__dirname, "../features/panelResizeModel.js"), "utf8"), context);
-    assert.equal(context.BetterChzzk, existing);
+    assert.equal(context.CheeseSpanner, existing);
     assert.equal(existing.utils.sentinel, true);
-    return context.BetterChzzk.panelResizeModel;
+    return context.CheeseSpanner.panelResizeModel;
 }
 
 const plain = (value) => JSON.parse(JSON.stringify(value));

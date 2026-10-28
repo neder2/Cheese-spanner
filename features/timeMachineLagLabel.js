@@ -9,16 +9,16 @@
  *     않는다.
  *   - 대상 버튼의 텍스트 노드를 찾아 원본 텍스트를 저장한 뒤 지연 라벨을 이어붙이고(patchLiveText),
  *     기능이 꺼지거나 라이브를 벗어나면 원본 텍스트로 복원한다(restoreLiveText).
- *   - 적절한 버튼을 찾지 못하면 좌측 버튼 컨테이너에 별도 라벨 요소(#betterchzzk-live-lag-label)를 붙이는
+ *   - 적절한 버튼을 찾지 못하면 좌측 버튼 컨테이너에 별도 라벨 요소(#cheese-spanner-live-lag-label)를 붙이는
  *     fallback 경로를 쓴다.
  *   - MutationObserver, timeupdate/progress 이벤트, 1초 간격 fallback 인터벌, 페이지 전환 감지를 함께
  *     사용해 라벨을 최신 상태로 유지한다.
- * 의존: 전역 BetterChzzkSettings.normalizeOptions, 전역 BetterChzzk.utils(bindFeatureOptions,
+ * 의존: 전역 CheeseSpannerSettings.normalizeOptions, 전역 CheeseSpanner.utils(bindFeatureOptions,
  *   createMutationObserverSync, createThrottledDomSync, getMainVideoElement, getVisibleArea, isLiveRoute,
  *   mutationMatchesSelector, normalizeCompact, onReady, startPageChangeDetection).
  * 옵션 키: timeMachineLagLabelEnabled.
- * DOM 마커: data-bctm-text-patched(패치된 버튼 표시), id="betterchzzk-live-lag-label"(fallback 라벨),
- *   id="betterchzzk-live-lag-patch-style"/id="betterchzzk-live-lag-label-style"(주입 스타일).
+ * DOM 마커: data-bctm-text-patched(패치된 버튼 표시), id="cheese-spanner-live-lag-label"(fallback 라벨),
+ *   id="cheese-spanner-live-lag-patch-style"/id="cheese-spanner-live-lag-label-style"(주입 스타일).
  * 구조:
  *   - 상수/상태 선언, isFeatureEnabled 및 텍스트 정규화(compact/containsAnyTerm) 유틸.
  *   - isInLikelyVideoControlArea 등 버튼이 실제 컨트롤 바 안에 있는지 위치로 판별하는 함수군.
@@ -31,9 +31,9 @@
  */
 (() => {
     const TEXT_PATCHED_ATTR = "data-bctm-text-patched";
-    const PATCH_STYLE_ID = "betterchzzk-live-lag-patch-style";
-    const FALLBACK_LABEL_ID = "betterchzzk-live-lag-label";
-    const FALLBACK_LABEL_STYLE_ID = "betterchzzk-live-lag-label-style";
+    const PATCH_STYLE_ID = "cheese-spanner-live-lag-patch-style";
+    const FALLBACK_LABEL_ID = "cheese-spanner-live-lag-label";
+    const FALLBACK_LABEL_STYLE_ID = "cheese-spanner-live-lag-label-style";
     const BUTTON_SELECTOR = "button, [role='button']";
     const LIVE_TIME_SELECTOR = [
         "div.pzp-live-time",
@@ -93,9 +93,9 @@
         normalizeCompact: compact,
         onReady,
         startPageChangeDetection,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
 
-    let featureOptions = BetterChzzkSettings.normalizeOptions();
+    let featureOptions = CheeseSpannerSettings.normalizeOptions();
     let attachedVideo = null;
     let activeButtonEl = null;
     let activeTextNode = null;

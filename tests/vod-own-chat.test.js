@@ -6,7 +6,7 @@ const { JSDOM } = require("jsdom");
 const { waitForCondition } = require("./helpers/wait-for-condition.js");
 
 const repoRoot = path.join(__dirname, "..");
-const REACT_PROPS_KEY = "__reactProps$betterChzzkTest";
+const REACT_PROPS_KEY = "__reactProps$cheeseSpannerTest";
 const USER_URL = "https://comm-api.game.naver.com/nng_main/v1/user/getUserStatus";
 const ME = "0123456789abcdef0123456789abcdef";
 const OTHER = "fedcba9876543210fedcba9876543210";
@@ -14,7 +14,7 @@ const openDoms = new Set();
 
 test.afterEach(() => {
     for (const dom of openDoms) {
-        dom.window.BetterChzzk?.vodOwnChat?.teardown?.();
+        dom.window.CheeseSpanner?.vodOwnChat?.teardown?.();
         dom.window.close();
     }
     openDoms.clear();
@@ -159,7 +159,7 @@ test("the logged-in account's replay chats are highlighted by account hash, not 
     assert.deepEqual(ownTexts(document), ["내 채팅", "또 내 채팅"]);
     assert.deepEqual(state.requests, [{ url: USER_URL, credentials: "include" }]);
     assert.deepEqual(dom.window.chrome.testState.localWrites, [], "the account hash is not stored");
-    const css = document.getElementById("betterchzzk-vod-own-chat-style").textContent;
+    const css = document.getElementById("cheese-spanner-vod-own-chat-style").textContent;
     assert.match(css, /\[data-bcoc-own\]\{[^}]*background-color:var\(--bct-brand-weak\)/);
     assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b|rgba?\(/i, "colors only through the shared theme");
 });
@@ -230,14 +230,14 @@ test("switching accounts re-checks and moves the highlight", async () => {
 test("the option is on by default and turning it off removes every marker", async () => {
     const { dom, document } = createVodDom({ rows: [{ user: ME, text: "내 채팅" }] });
     load(dom);
-    assert.equal(dom.window.BetterChzzkSettings.DEFAULT_OPTIONS.vodOwnChatHighlightEnabled, true);
-    assert.ok(dom.window.BetterChzzkSettings.FEATURE_KEYS.includes("vodOwnChatHighlightEnabled"));
+    assert.equal(dom.window.CheeseSpannerSettings.DEFAULT_OPTIONS.vodOwnChatHighlightEnabled, true);
+    assert.ok(dom.window.CheeseSpannerSettings.FEATURE_KEYS.includes("vodOwnChatHighlightEnabled"));
     await waitFor(() => ownTexts(document).length === 1, "own chat was not highlighted");
 
     dom.window.chrome.testState.setSync({ vodOwnChatHighlightEnabled: false });
     await waitFor(() => !document.querySelector("[data-bcoc-own]"), "turning off kept the highlight");
     assert.equal(document.querySelector("[data-bcoc-source-user]"), null);
-    assert.equal(document.getElementById("betterchzzk-vod-own-chat-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-vod-own-chat-style"), null);
 
     const optionsHtml = readRepoFile("options.html");
     assert.match(optionsHtml, /data-option="vodOwnChatHighlightEnabled"/);

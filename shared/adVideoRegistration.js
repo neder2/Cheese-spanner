@@ -68,5 +68,5 @@
         return Object.freeze({ reconcile });
     }
 
-    globalThis.BetterChzzkAdVideoRegistration = Object.freeze({ CONTENT_SCRIPT, createController });
+    globalThis.CheeseSpannerAdVideoRegistration = Object.freeze({ CONTENT_SCRIPT, createController });
 })();

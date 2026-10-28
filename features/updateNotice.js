@@ -1,9 +1,9 @@
 // 공지 형식 보관용. 현재 manifest와 background에서는 로드하지 않는다.
 // 다음 공지에서 재사용할 때 본문·버전과 표시 조건을 함께 갱신한다.
 (() => {
-    const FLAG = "__betterChzzkQualityUpdateNotice";
+    const FLAG = "__cheeseSpannerQualityUpdateNotice";
     const KEY = "betterchzzk:quality-update-notice";
-    const ID = "betterchzzk-quality-update-notice";
+    const ID = "cheese-spanner-quality-update-notice";
     if (location.origin !== "https://chzzk.naver.com" || window.top !== window) return;
     if (typeof window[FLAG] === "function") {
         window[FLAG]();

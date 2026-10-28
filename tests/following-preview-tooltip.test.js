@@ -51,7 +51,7 @@ function createFakeChrome({ sync = {} } = {}) {
 
     const fake = {
         runtime: {
-            getURL: (resource) => `chrome-extension://better-chzzk/${resource}`,
+            getURL: (resource) => `chrome-extension://cheese-spanner/${resource}`,
             sendMessage: (message, callback) => forwardSettingsStore(fake, message, callback),
         },
         storage: {
@@ -287,7 +287,7 @@ test("open following preview follows its resized anchor without a synthetic wind
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    const tip = document.getElementById("betterchzzk-following-preview");
+    const tip = document.getElementById("cheese-spanner-following-preview");
     assert.equal(tip.style.left, "206px");
     right = 280;
     for (const observer of observers) if (observer.nodes.has(item)) observer.callback([{ target: item }]);
@@ -316,8 +316,8 @@ test("preview fonts use the shared bundled CHZZK-only face and follow the featur
     evalFollowingPreviewTooltipScripts(dom);
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await initialOptionsApplied;
-    assert.equal(document.getElementById("betterchzzk-following-preview-style"), null);
-    assert.equal(document.getElementById("betterchzzk-ui-theme"), null, "a disabled preview requests no theme");
+    assert.equal(document.getElementById("cheese-spanner-following-preview-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-ui-theme"), null, "a disabled preview requests no theme");
 
     const setEnabled = (enabled) => {
         for (const listener of [...chrome.testState.storageChangeListeners]) {
@@ -326,8 +326,8 @@ test("preview fonts use the shared bundled CHZZK-only face and follow the featur
     };
     for (let cycle = 0; cycle < 2; cycle++) {
         setEnabled(true);
-        await waitForCondition(() => document.getElementById("betterchzzk-following-preview-style"));
-        const styles = document.querySelectorAll("#betterchzzk-following-preview-style");
+        await waitForCondition(() => document.getElementById("cheese-spanner-following-preview-style"));
+        const styles = document.querySelectorAll("#cheese-spanner-following-preview-style");
         assert.equal(styles.length, 1);
         assert.equal(
             Array.from(styles[0].sheet.cssRules).filter((rule) => rule.type === 5).length,
@@ -335,7 +335,7 @@ test("preview fonts use the shared bundled CHZZK-only face and follow the featur
             "the preview declares no font face of its own"
         );
         assert.doesNotMatch(styles[0].textContent, /@font-face|PretendardVariable|getURL/);
-        const themes = document.querySelectorAll("#betterchzzk-ui-theme");
+        const themes = document.querySelectorAll("#cheese-spanner-ui-theme");
         assert.equal(themes.length, 1, "the shared theme is requested once and kept without duplicates");
         const faces = Array.from(themes[0].sheet.cssRules).filter((rule) => rule.type === 5);
         assert.equal(faces.length, 1);
@@ -354,17 +354,17 @@ test("preview fonts use the shared bundled CHZZK-only face and follow the featur
         assert.match(fontDeclaration, /font-weight:\s*100 900\s*;/);
 
         link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-        const tip = document.getElementById("betterchzzk-following-preview");
+        const tip = document.getElementById("cheese-spanner-following-preview");
         assert.ok(tip);
         const family = faces[0].style.getPropertyValue("font-family").replace(/["']/g, "");
-        assert.equal(family, "BetterChzzk Pretendard");
+        assert.equal(family, "CheeseSpanner Pretendard");
         const tipFamily = computedThemeValue(dom.window, tip, "font-family").replace(/["']/g, "");
         assert.ok(tipFamily.startsWith(`${family}, `), tipFamily);
         assert.equal(dom.window.getComputedStyle(document.body).fontFamily, "serif");
 
         setEnabled(false);
-        await waitForCondition(() => !document.getElementById("betterchzzk-following-preview-style"));
-        assert.equal(document.getElementById("betterchzzk-following-preview"), null);
+        await waitForCondition(() => !document.getElementById("cheese-spanner-following-preview-style"));
+        assert.equal(document.getElementById("cheese-spanner-following-preview"), null);
     }
 });
 
@@ -372,8 +372,8 @@ test("the preview card and row highlight follow the shared theme while video ove
     const { document, dom, item, link } = createFollowingPreviewDom();
     evalFollowingPreviewTooltipScripts(dom);
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
-    await waitForCondition(() => document.getElementById("betterchzzk-following-preview-style"));
-    const style = document.getElementById("betterchzzk-following-preview-style");
+    await waitForCondition(() => document.getElementById("cheese-spanner-following-preview-style"));
+    const style = document.getElementById("cheese-spanner-following-preview-style");
     assertUsesSharedTheme(assert, dom.window, style, "following preview");
 
     // Fixed colors are left only on marks drawn over the video or thumbnail.
@@ -384,14 +384,14 @@ test("the preview card and row highlight follow the shared theme while video ove
     }
     // The 2026-10 user decision keeps the elapsed time larger at the end of the info line.
     const elapsedRule = flattenStyleRules(style.sheet.cssRules).find(
-        (rule) => rule.selectorText === "#betterchzzk-following-preview [data-bcfp-elapsed]"
+        (rule) => rule.selectorText === "#cheese-spanner-following-preview [data-bcfp-elapsed]"
     );
     assert.equal(elapsedRule.style.getPropertyValue("font-size"), "13px");
     assert.equal(elapsedRule.style.getPropertyValue("font-weight"), "600");
     assert.equal(elapsedRule.style.getPropertyValue("margin-left"), "auto");
 
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    const tip = document.getElementById("betterchzzk-following-preview");
+    const tip = document.getElementById("cheese-spanner-following-preview");
     assert.equal(tip.getAttribute("data-show"), "1");
     assert.equal(tip.dataset.state, "loading", "the DOM card opens before the live-detail request");
     const title = tip.querySelector(".bcfp-title");
@@ -441,11 +441,13 @@ test("a preview that cannot load shows a polite error title in the muted theme c
     };
     evalFollowingPreviewTooltipScripts(dom);
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
-    await waitForCondition(() => document.getElementById("betterchzzk-following-preview-style"));
+    await waitForCondition(() => document.getElementById("cheese-spanner-following-preview-style"));
 
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    await waitForCondition(() => document.getElementById("betterchzzk-following-preview")?.dataset.state === "error");
-    const title = document.querySelector("#betterchzzk-following-preview .bcfp-title");
+    await waitForCondition(
+        () => document.getElementById("cheese-spanner-following-preview")?.dataset.state === "error"
+    );
+    const title = document.querySelector("#cheese-spanner-following-preview .bcfp-title");
     assert.equal(title.textContent, "\uBBF8\uB9AC\uBCF4\uAE30\uB97C \uBD88\uB7EC\uC62C \uC218 \uC5C6\uC5B4\uC694");
     assert.equal(computedThemeValue(dom.window, title, "color"), "#9da5b6");
 });
@@ -465,13 +467,13 @@ test("following preview delays live-detail fetches while opening the DOM card im
     await waitForAsyncCallbacks();
 
     assert.deepEqual(
-        JSON.parse(document.documentElement.getAttribute("data-betterchzzk-live-preview-fast-hover-options")),
+        JSON.parse(document.documentElement.getAttribute("data-cheese-spanner-live-preview-fast-hover-options")),
         { enabled: true }
     );
 
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
 
-    let tip = document.getElementById("betterchzzk-following-preview");
+    let tip = document.getElementById("cheese-spanner-following-preview");
     assert.ok(tip);
     assert.equal(tip.getAttribute("data-show"), "1");
     assert.equal(tip.dataset.state, "loading");
@@ -488,7 +490,7 @@ test("following preview delays live-detail fetches while opening the DOM card im
     assert.equal(item.hasAttribute("data-bcfp-active"), false);
 
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    tip = document.getElementById("betterchzzk-following-preview");
+    tip = document.getElementById("cheese-spanner-following-preview");
     assert.ok(tip);
     assert.equal(calls.length, 0);
 
@@ -526,7 +528,7 @@ test("dragging a following link hides its hover card and cancels pending preview
     await waitForAsyncCallbacks();
     document.addEventListener("dragstart", (event) => event.stopPropagation(), true);
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    const tip = document.getElementById("betterchzzk-following-preview");
+    const tip = document.getElementById("cheese-spanner-following-preview");
     assert.equal(tip.getAttribute("data-show"), "1");
     link.dispatchEvent(new dom.window.Event("dragstart", { bubbles: true }));
     await waitForFollowingPreviewFetchDelay();
@@ -547,7 +549,7 @@ test("following preview channel name opens channel home in a new tab including o
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    const name = document.querySelector("#betterchzzk-following-preview .bcfp-channel");
+    const name = document.querySelector("#cheese-spanner-following-preview .bcfp-channel");
     assert.equal(name.tagName, "A");
     assert.equal(name.getAttribute("href"), "/channel-123");
     assert.equal(name.getAttribute("target"), "_blank");
@@ -564,7 +566,7 @@ test("following preview channel name opens channel home in a new tab including o
     }
     assert.equal(previewLinkDefaultPrevented(dom, name, "auxclick", { button: 1 }), false);
     assert.equal(link.getAttribute("href"), "/live/channel-123");
-    assert.equal(document.querySelector("#betterchzzk-following-preview .bcfp-title").tagName, "DIV");
+    assert.equal(document.querySelector("#cheese-spanner-following-preview .bcfp-title").tagName, "DIV");
 });
 
 test("following preview channel link rejects reused and disconnected source rows", async () => {
@@ -574,12 +576,12 @@ test("following preview channel link rejects reused and disconnected source rows
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    const oldName = document.querySelector("#betterchzzk-following-preview .bcfp-channel");
+    const oldName = document.querySelector("#cheese-spanner-following-preview .bcfp-channel");
     link.setAttribute("href", "/live/next-channel");
     assert.equal(previewLinkDefaultPrevented(dom, oldName), true);
-    assert.equal(document.getElementById("betterchzzk-following-preview").hasAttribute("data-show"), false);
+    assert.equal(document.getElementById("cheese-spanner-following-preview").hasAttribute("data-show"), false);
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
-    const newName = document.querySelector("#betterchzzk-following-preview .bcfp-channel");
+    const newName = document.querySelector("#cheese-spanner-following-preview .bcfp-channel");
     assert.equal(newName.getAttribute("href"), "/next-channel");
     assert.equal(previewLinkDefaultPrevented(dom, newName), false);
     item.remove();
@@ -599,10 +601,10 @@ test("following preview category chips link observed GAME and ETC categories in 
         };
         evalFollowingPreviewTooltipScripts(dom);
         document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
-        await waitForCondition(() => document.getElementById("betterchzzk-following-preview-style"));
+        await waitForCondition(() => document.getElementById("cheese-spanner-following-preview-style"));
         link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
         await waitForCondition(
-            () => document.getElementById("betterchzzk-following-preview")?.dataset.state === "ready"
+            () => document.getElementById("cheese-spanner-following-preview")?.dataset.state === "ready"
         );
         const category = document.querySelector(".bcfp-category");
         assert.ok(category, "a resolved category has a visible navigation chip");
@@ -637,10 +639,10 @@ test("category names without valid navigation metadata remain plain text", async
         });
         evalFollowingPreviewTooltipScripts(dom);
         document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
-        await waitForCondition(() => document.getElementById("betterchzzk-following-preview-style"));
+        await waitForCondition(() => document.getElementById("cheese-spanner-following-preview-style"));
         link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
         await waitForCondition(
-            () => document.getElementById("betterchzzk-following-preview")?.dataset.state === "ready"
+            () => document.getElementById("cheese-spanner-following-preview")?.dataset.state === "ready"
         );
         assert.equal(document.querySelector(".bcfp-meta").textContent, "카테고리 이름");
         assert.equal(document.querySelector(".bcfp-meta a, .bcfp-meta button"), null);
@@ -656,13 +658,13 @@ test("category navigation rejects a reused source row and a hidden preview", asy
     });
     evalFollowingPreviewTooltipScripts(dom);
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
-    await waitForCondition(() => document.getElementById("betterchzzk-following-preview-style"));
+    await waitForCondition(() => document.getElementById("cheese-spanner-following-preview-style"));
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
     await waitForCondition(() => document.querySelector(".bcfp-category"));
     const category = document.querySelector(".bcfp-category");
     link.setAttribute("href", "/live/next-channel");
     assert.equal(previewLinkDefaultPrevented(dom, category), true);
-    assert.equal(document.getElementById("betterchzzk-following-preview").hasAttribute("data-show"), false);
+    assert.equal(document.getElementById("cheese-spanner-following-preview").hasAttribute("data-show"), false);
     const staleClick = new dom.window.MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
     category.dispatchEvent(staleClick);
     assert.equal(staleClick.defaultPrevented, true, "a detached preview link cannot navigate either");
@@ -679,7 +681,7 @@ test("only collapsed pinned following rows bridge the preserved preview gap", as
 
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
 
-    const tip = document.getElementById("betterchzzk-following-preview");
+    const tip = document.getElementById("cheese-spanner-following-preview");
     assert.ok(tip);
     assert.equal(tip.getAttribute("data-show"), "1");
     assert.equal(Number.parseFloat(tip.style.left), item.getBoundingClientRect().right + 10);
@@ -726,7 +728,7 @@ test("following preview loading card prefers live thumbnails over channel profil
     await waitForFollowingPreviewDelay();
     await waitForAsyncCallbacks();
 
-    const tip = document.getElementById("betterchzzk-following-preview");
+    const tip = document.getElementById("cheese-spanner-following-preview");
     assert.ok(tip);
     assert.equal(tip.dataset.state, "loading");
     assert.match(tip.querySelector(".bcfp-media img").getAttribute("src"), /live-thumbnail\.jpg/);
@@ -750,7 +752,7 @@ test("following preview does not render untrusted thumbnail URLs", async () => {
     await waitForFollowingPreviewDelay();
     await waitForAsyncCallbacks();
 
-    const tip = document.getElementById("betterchzzk-following-preview");
+    const tip = document.getElementById("cheese-spanner-following-preview");
     assert.ok(tip);
     assert.equal(tip.dataset.state, "loading");
     assert.equal(tip.querySelector(".bcfp-media img"), null);
@@ -816,7 +818,7 @@ test("following preview prefers low-latency LLHLS in the hover card and reuses c
 
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
 
-    let tip = document.getElementById("betterchzzk-following-preview");
+    let tip = document.getElementById("cheese-spanner-following-preview");
     assert.ok(tip);
     assert.equal(tip.getAttribute("data-show"), "1");
     assert.equal(tip.dataset.state, "loading");
@@ -827,7 +829,7 @@ test("following preview prefers low-latency LLHLS in the hover card and reuses c
     assert.match(source, /LIVE_AUTO_PLAY_API_BASE/);
     assert.match(source, /auto-play-info/);
     assert.match(source, /PREVIEW_PLAYBACK_DELAY_MS = 300/);
-    assert.match(computedThemeValue(dom.window, tip, "font-family"), /^"BetterChzzk Pretendard", -apple-system/);
+    assert.match(computedThemeValue(dom.window, tip, "font-family"), /^"CheeseSpanner Pretendard", -apple-system/);
     assert.doesNotMatch(source, /following-preview:play/);
     assert.doesNotMatch(source, /webpackChunkglive_fe_pc/);
     assert.doesNotMatch(source, /LiveProvider\.fromJSON/);
@@ -840,9 +842,11 @@ test("following preview prefers low-latency LLHLS in the hover card and reuses c
     assert.equal(item.getAttribute("data-bcfp-active"), "1");
     assert.equal(calls.length, 0);
 
-    await waitForCondition(() => document.getElementById("betterchzzk-following-preview")?.dataset.state === "ready");
+    await waitForCondition(
+        () => document.getElementById("cheese-spanner-following-preview")?.dataset.state === "ready"
+    );
 
-    tip = document.getElementById("betterchzzk-following-preview");
+    tip = document.getElementById("cheese-spanner-following-preview");
     assert.equal(tip.dataset.state, "ready");
     assert.equal(tip.querySelector(".bcfp-channel").textContent, "API \uCC44\uB110");
     assert.equal(tip.querySelector(".bcfp-title").textContent, "API \uBC29\uC1A1 \uC81C\uBAA9");
@@ -895,7 +899,7 @@ test("following preview prefers low-latency LLHLS in the hover card and reuses c
     await waitForFollowingPreviewDelay();
     await waitForAsyncCallbacks();
 
-    tip = document.getElementById("betterchzzk-following-preview");
+    tip = document.getElementById("cheese-spanner-following-preview");
     assert.equal(tip.getAttribute("data-show"), "1");
     assert.equal(tip.dataset.state, "ready");
     assert.equal(calls.length, 2);
@@ -1085,7 +1089,7 @@ async function runSoundPreview(dom, link, document) {
     await waitForAsyncCallbacks();
     await waitForAsyncCallbacks();
 
-    const tip = document.getElementById("betterchzzk-following-preview");
+    const tip = document.getElementById("cheese-spanner-following-preview");
     const video = tip.querySelector("video.bcfp-player");
     assert.ok(video);
 
@@ -1187,7 +1191,7 @@ test("following preview falls back to muted playback and unlocks sound from the 
     await waitForAsyncCallbacks();
     await waitForAsyncCallbacks();
 
-    const tip = document.getElementById("betterchzzk-following-preview");
+    const tip = document.getElementById("cheese-spanner-following-preview");
     const video = tip.querySelector("video.bcfp-player");
     assert.ok(video);
 
@@ -1546,7 +1550,7 @@ test("filtered injected live cards get a muted hover player and right click enla
     assert.equal(hlsState.instances[2].autoLevelCapping, 3);
 
     dom.window.history.pushState({}, "", "/following");
-    dom.window.dispatchEvent(new dom.window.CustomEvent("betterchzzk:routechange", { detail: { source: "test" } }));
+    dom.window.dispatchEvent(new dom.window.CustomEvent("cheese-spanner:routechange", { detail: { source: "test" } }));
     await waitForAsyncCallbacks();
     assert.equal(host.hasAttribute("data-bcfp-list-expanded"), false);
     assert.equal(hlsState.instances[2].autoLevelCapping, 1);
@@ -1612,7 +1616,7 @@ test("following preview aborts stale live-detail requests during rapid hover", a
     assert.equal(calls[1].signal.aborted, false);
     assert.match(calls[1].url, /channel-456/);
     assert.equal(
-        document.querySelector("#betterchzzk-following-preview[data-show='1'] .bcfp-title").textContent,
+        document.querySelector("#cheese-spanner-following-preview[data-show='1'] .bcfp-title").textContent,
         "\uB450 \uBC88\uC9F8 \uBC29\uC1A1"
     );
 
@@ -1641,7 +1645,7 @@ test("following preview tooltip ignores live links outside the following sidebar
     await waitForAsyncCallbacks();
 
     assert.equal(fetchCount, 0);
-    assert.equal(document.getElementById("betterchzzk-following-preview"), null);
+    assert.equal(document.getElementById("cheese-spanner-following-preview"), null);
 });
 
 test("following preview tooltip removes listeners and UI when the option is disabled", async () => {
@@ -1666,7 +1670,7 @@ test("following preview tooltip removes listeners and UI when the option is disa
     await waitForFollowingPreviewDelay();
     await waitForAsyncCallbacks();
 
-    assert.ok(document.querySelector("#betterchzzk-following-preview[data-show='1']"));
+    assert.ok(document.querySelector("#cheese-spanner-following-preview[data-show='1']"));
     assert.equal(item.getAttribute("data-bcfp-active"), "1");
 
     for (const listener of [...chrome.testState.storageChangeListeners]) {
@@ -1675,17 +1679,17 @@ test("following preview tooltip removes listeners and UI when the option is disa
     await waitForAsyncCallbacks();
 
     assert.deepEqual(
-        JSON.parse(document.documentElement.getAttribute("data-betterchzzk-live-preview-fast-hover-options")),
+        JSON.parse(document.documentElement.getAttribute("data-cheese-spanner-live-preview-fast-hover-options")),
         { enabled: false }
     );
 
-    assert.equal(document.getElementById("betterchzzk-following-preview"), null);
-    assert.equal(document.getElementById("betterchzzk-following-preview-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-following-preview"), null);
+    assert.equal(document.getElementById("cheese-spanner-following-preview-style"), null);
     assert.equal(item.hasAttribute("data-bcfp-active"), false);
 
     link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
     await waitForFollowingPreviewDelay();
     await waitForAsyncCallbacks();
 
-    assert.equal(document.getElementById("betterchzzk-following-preview"), null);
+    assert.equal(document.getElementById("cheese-spanner-following-preview"), null);
 });

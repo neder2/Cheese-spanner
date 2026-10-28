@@ -3,7 +3,11 @@ const test = require("node:test");
 const { JSDOM } = require("jsdom");
 const { createFakeChrome, readRepoFile, waitForCondition } = require("./helpers/extension-page-fixture.js");
 
-const OWN_CONTROLS = ["betterchzzk-skip-pill", "betterchzzk-live-fast-forward", "betterchzzk-audio-compressor"];
+const OWN_CONTROLS = [
+    "cheese-spanner-skip-pill",
+    "cheese-spanner-live-fast-forward",
+    "cheese-spanner-audio-compressor",
+];
 const box = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
 
 async function fixture(t, route) {
@@ -136,7 +140,7 @@ async function fixture(t, route) {
 test("control viewport follows pan and resize, then clears on reset, disable and video replacement", async (t) => {
     const f = await fixture(t, "/live/test-channel");
     const viewport = (video = f.video) => {
-        const rect = f.w.BetterChzzk.utils.getVideoViewportRect(video);
+        const rect = f.w.CheeseSpanner.utils.getVideoViewportRect(video);
         return box(rect.left, rect.top, rect.width, rect.height);
     };
     const original = f.ids.map((id) => f.doc.getElementById(id));
@@ -157,7 +161,7 @@ test("control viewport follows pan and resize, then clears on reset, disable and
     await f.settleControls();
     assert.deepEqual(f.removed, []);
     for (const node of original) assert.ok(node.isConnected);
-    f.doc.getElementById("betterchzzk-player-zoom-reset").click();
+    f.doc.getElementById("cheese-spanner-player-zoom-reset").click();
     assert.deepEqual(viewport(), f.video.getBoundingClientRect());
     f.zoom(1.5);
     f.change({ playerZoomEnabled: false });
@@ -165,7 +169,7 @@ test("control viewport follows pan and resize, then clears on reset, disable and
     f.change({ playerZoomEnabled: true });
     f.zoom(1.5);
     f.w.history.replaceState(null, "", "/live/another-channel");
-    f.w.dispatchEvent(new f.w.Event("betterchzzk:routechange"));
+    f.w.dispatchEvent(new f.w.Event("cheese-spanner:routechange"));
     assert.deepEqual(viewport(), f.video.getBoundingClientRect());
     f.zoom(1.5);
     const replacement = f.doc.createElement("video");

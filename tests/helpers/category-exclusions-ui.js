@@ -150,7 +150,7 @@ async function createCategoryUI(
     window.cancelAnimationFrame = (id) => frames.delete(id);
     const load = (file) => window.eval(fs.readFileSync(path.join(ROOT, file), "utf8"));
     load("shared/settings.js");
-    if (!bootstrapOptions) window.BetterChzzkSettings.getOptions = () => {};
+    if (!bootstrapOptions) window.CheeseSpannerSettings.getOptions = () => {};
     load("shared/data.js");
     load("shared/categoryExclusions.js");
     if (bootstrapOptions) load("content.js");
@@ -165,9 +165,9 @@ async function createCategoryUI(
         channel: { channelId: `channel-${id}`, channelName: id },
     }));
     const fetches = [];
-    Object.assign(window.BetterChzzk.utils, {
+    Object.assign(window.CheeseSpanner.utils, {
         ...(!bootstrapOptions ? { bindFeatureOptions() {}, onReady() {} } : {}),
-        normSpace: window.BetterChzzk.utils.compactSpaces,
+        normSpace: window.CheeseSpanner.utils.compactSpaces,
         injectStyleOnce(id, css) {
             const style = window.document.createElement("style");
             style.id = id;
@@ -215,9 +215,9 @@ async function createCategoryUI(
     window.eval(`${source.slice(0, end)}
         globalThis.categoryUIHooks = {
             apply: applyTools,
-            options: (value) => applyInitialOptions(BetterChzzkSettings.normalizeOptions(value)),
+            options: (value) => applyInitialOptions(CheeseSpannerSettings.normalizeOptions(value)),
             pageChange: handlePageChange,
-            numeric: (kind, min, max = 0) => { setFilterState(kind, BetterChzzk.categoryToolsFilterModel.filterStateFromRange(min, max)); updateUiState(); },
+            numeric: (kind, min, max = 0) => { setFilterState(kind, CheeseSpanner.categoryToolsFilterModel.filterStateFromRange(min, max)); updateUiState(); },
             refresh: refreshFollowerHydrationRows,
             appliedQuery: () => currentQuery,
             listSearch: (query) => { currentQuery = query; updateUiState(); },
@@ -279,7 +279,7 @@ async function createCategoryUI(
         },
         open() {
             window.document.querySelector("[data-category-add-open]").click();
-            return window.document.getElementById("betterchzzk-category-add-panel");
+            return window.document.getElementById("cheese-spanner-category-add-panel");
         },
         input(value, type = "input") {
             const input = window.document.querySelector("[data-category-search]");

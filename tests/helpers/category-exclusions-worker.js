@@ -169,7 +169,7 @@ function createCategoryExclusionsStorage(initial = {}) {
 function loadCategoryExclusions(context = vm.createContext({ URL })) {
     const file = "shared/categoryExclusions.js";
     vm.runInContext(fs.readFileSync(path.join(ROOT, file), "utf8"), context, { filename: file });
-    return context.BetterChzzk.categoryExclusions;
+    return context.CheeseSpanner.categoryExclusions;
 }
 
 function createCategoryExclusionsWorker(storage = createCategoryExclusionsStorage()) {

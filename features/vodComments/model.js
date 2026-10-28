@@ -7,7 +7,7 @@
 (() => {
     "use strict";
 
-    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
+    const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     const namespace = (root.vodComments = root.vodComments || {});
     if (namespace.model) return;
 

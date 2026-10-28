@@ -2,8 +2,8 @@
 (() => {
     "use strict";
     function install({ chrome, readHistory, writeHistory }) {
-        const data = globalThis.BetterChzzkDonationHistory;
-        const { fetchJson } = globalThis.BetterChzzk.utils;
+        const data = globalThis.CheeseSpannerDonationHistory;
+        const { fetchJson } = globalThis.CheeseSpanner.utils;
         let active = null;
 
         async function identifyInTab(tabId) {
@@ -133,5 +133,5 @@
             });
         });
     }
-    globalThis.BetterChzzkDonationHistoryImport = { install };
+    globalThis.CheeseSpannerDonationHistoryImport = { install };
 })();

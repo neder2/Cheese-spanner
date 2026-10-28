@@ -1,13 +1,13 @@
 /** 채팅 기능의 옵션·SPA·observer 수명주기와 dirty 행 처리를 연결한다.
  * isolated world: parser → messageStore → panel → chatTools.js 순서로 로드한다.
  * 원본 DOM 변경을 store에 전달하고, 패널에는 store의 불변 스냅샷만 넘긴다.
- * 외부 계약: BetterChzzk.chatTools.parseChatMessage / renderModeratorBox / syncBlindReveal.
+ * 외부 계약: CheeseSpanner.chatTools.parseChatMessage / renderModeratorBox / syncBlindReveal.
  * 옵션은 bindFeatureOptions, SPA는 startPageChangeDetection으로 동기화한다.
  * chrome.storage.local에는 제거된 모아보기 캐시의 정리 요청만 보낸다.
  */
 (() => {
     "use strict";
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     const namespace = (root.chatTools = root.chatTools || {});
     const {
         bindFeatureOptions,
@@ -35,7 +35,7 @@
         resolveMutationElement,
         getTopLevelMutationElements,
     } = namespace.parser;
-    const WELCOME_MESSAGE_STYLE_ID = "betterchzzk-chat-welcome-message-style";
+    const WELCOME_MESSAGE_STYLE_ID = "cheese-spanner-chat-welcome-message-style";
 
     const BLIND_PROCESSED_ATTR = "data-bcct-blind-processed";
 
@@ -122,7 +122,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
 }
 `;
 
-    let featureOptions = BetterChzzkSettings.normalizeOptions();
+    let featureOptions = CheeseSpannerSettings.normalizeOptions();
     let chatRoot = null;
     let observer = null;
     let removePageChangeDetection = null;

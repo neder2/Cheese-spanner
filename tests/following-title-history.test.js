@@ -44,7 +44,7 @@ async function flush() {
 function loadModel() {
     const context = vm.createContext({});
     vm.runInContext(readRepoFile("shared", "followingTitleHistory.js"), context);
-    return context.BetterChzzkFollowingTitleHistory;
+    return context.CheeseSpannerFollowingTitleHistory;
 }
 
 function liveItem(channelId, liveId, liveTitle, channelName = "테스트 채널") {
@@ -799,7 +799,7 @@ test("previous titles of the same live open beside the current title like the re
     assert.deepEqual(state.requests, [CHANNEL]);
 
     button.click();
-    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+    const panel = document.getElementById("cheese-spanner-following-title-history-panel");
     assert.equal(button.getAttribute("aria-expanded"), "true");
     assert.equal(button.getAttribute("aria-label"), "이전 방제 접기");
     assert.equal(panel.hidden, false);
@@ -824,8 +824,8 @@ test("the previous title toggle and panel use the shared CHZZK theme and Pretend
     evalFeatureScripts(dom);
     await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "previous title toggle was not rendered");
 
-    const themeStyle = document.getElementById("betterchzzk-ui-theme");
-    const featureStyle = document.getElementById("betterchzzk-following-title-history-style");
+    const themeStyle = document.getElementById("cheese-spanner-ui-theme");
+    const featureStyle = document.getElementById("cheese-spanner-following-title-history-style");
     assert.ok(themeStyle, "the feature requests the shared CHZZK theme");
     assert.ok(
         themeStyle.compareDocumentPosition(featureStyle) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
@@ -834,7 +834,7 @@ test("the previous title toggle and panel use the shared CHZZK theme and Pretend
     const css = featureStyle.textContent;
     assert.match(
         css,
-        /#betterchzzk-following-title-history-panel\{[^}]*border:1px solid var\(--bct-border\);[^}]*border-radius:var\(--bct-radius-lg\);[^}]*color:var\(--bct-text\);[^}]*background:var\(--bct-surface\);[^}]*box-shadow:var\(--bct-shadow\);[^}]*font-family:var\(--bct-font\)/s
+        /#cheese-spanner-following-title-history-panel\{[^}]*border:1px solid var\(--bct-border\);[^}]*border-radius:var\(--bct-radius-lg\);[^}]*color:var\(--bct-text\);[^}]*background:var\(--bct-surface\);[^}]*box-shadow:var\(--bct-shadow\);[^}]*font-family:var\(--bct-font\)/s
     );
     assert.match(css, /\[data-bcfth-toggle="1"\]\[aria-expanded="true"\]\{[^}]*color:var\(--bct-brand-text\)/s);
     assert.match(css, /\.bcfth-time\{[^}]*color:var\(--bct-text-muted\)/s);
@@ -1025,7 +1025,7 @@ test("the page feature ignores other routes, sidebar links, and the disabled opt
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(disabled.state.requests, []);
     assert.equal(disabled.document.querySelector("[data-bcfth-toggle]"), null);
-    assert.equal(disabled.document.getElementById("betterchzzk-following-title-history-style"), null);
+    assert.equal(disabled.document.getElementById("cheese-spanner-following-title-history-style"), null);
 });
 
 test("an open previous title panel stays put while nothing changes", async () => {
@@ -1037,7 +1037,7 @@ test("an open previous title panel stays put while nothing changes", async () =>
     await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "toggle was not rendered");
 
     document.querySelector("button[data-bcfth-toggle]").click();
-    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+    const panel = document.getElementById("cheese-spanner-following-title-history-panel");
     assert.equal(panel.hidden, false);
     const row = panel.firstElementChild;
     let redraws = 0;
@@ -1087,12 +1087,12 @@ test("an href-only change to another channel drops the old toggle and open panel
     await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "toggle was not rendered");
     const panelTitles = () =>
         Array.from(
-            document.querySelectorAll("#betterchzzk-following-title-history-panel .bcfth-title"),
+            document.querySelectorAll("#cheese-spanner-following-title-history-panel .bcfth-title"),
             (node) => node.textContent
         );
     const oldButton = document.querySelector("button[data-bcfth-toggle]");
     oldButton.click();
-    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+    const panel = document.getElementById("cheese-spanner-following-title-history-panel");
     assert.equal(panel.hidden, false);
     // 처음 화면 동기화가 끝날 시간이에요.
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1128,7 +1128,7 @@ test("a toggle reads its link again before opening, even before the page observe
     // 주소가 바뀐 직후, 관찰 콜백과 화면 동기화가 돌기 전에 누른 경우예요.
     document.getElementById("liveTitle").setAttribute("href", `/live/${OTHER_CHANNEL}`);
     button.click();
-    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+    const panel = document.getElementById("cheese-spanner-following-title-history-panel");
     assert.ok(!panel || panel.hidden, "the old channel's titles opened under another channel's link");
     assert.equal(button.getAttribute("aria-expanded"), "false");
 });
@@ -1152,7 +1152,7 @@ test("an expired check is never used while its re-check is pending or after it f
     };
     evalFeatureScripts(dom);
     await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "toggle was not rendered");
-    const panel = () => document.getElementById("betterchzzk-following-title-history-panel");
+    const panel = () => document.getElementById("cheese-spanner-following-title-history-panel");
     const info = document.querySelector("._information_card");
     // 같은 제목으로 다시 켠 방송이지만 수집기는 아직 이전 방송 이력을 들고 있어요.
     state.liveIds[CHANNEL] = "live-2";
@@ -1203,7 +1203,7 @@ test("a valid check is refreshed before it expires so an open panel stays open",
     await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "toggle was not rendered");
     const button = document.querySelector("button[data-bcfth-toggle]");
     button.click();
-    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+    const panel = document.getElementById("cheese-spanner-following-title-history-panel");
     const row = panel.firstElementChild;
     const info = document.querySelector("._information_card");
 
@@ -1283,7 +1283,7 @@ function runLongTimers(state) {
 
 const livePanelTitles = (document) =>
     Array.from(
-        document.querySelectorAll("#betterchzzk-following-title-history-panel .bcfth-title"),
+        document.querySelectorAll("#cheese-spanner-following-title-history-panel .bcfth-title"),
         (node) => node.textContent
     );
 
@@ -1300,7 +1300,7 @@ test("the live page shows previous titles of the same live right after the broad
     evalFeatureScripts(dom);
 
     await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "live title toggle was not rendered");
-    const wrap = document.getElementById("betterchzzk-live-title-history");
+    const wrap = document.getElementById("cheese-spanner-live-title-history");
     const button = document.querySelector("button[data-bcfth-toggle]");
     assert.equal(document.querySelectorAll("button[data-bcfth-toggle]").length, 1);
     assert.equal(wrap.previousElementSibling, document.getElementById("liveTitle"), "not the sidebar or player title");
@@ -1310,11 +1310,11 @@ test("the live page shows previous titles of the same live right after the broad
 
     button.click();
     assert.equal(button.getAttribute("aria-label"), "이전 방제 접기");
-    assert.equal(document.getElementById("betterchzzk-following-title-history-panel").hidden, false);
+    assert.equal(document.getElementById("cheese-spanner-following-title-history-panel").hidden, false);
     assert.deepEqual(livePanelTitles(document), ["아침 제목", "점심 제목"]);
 
     button.click();
-    assert.equal(document.getElementById("betterchzzk-following-title-history-panel").hidden, true);
+    assert.equal(document.getElementById("cheese-spanner-following-title-history-panel").hidden, true);
     assert.deepEqual(chrome.testState.localWrites, [], "the live page only reads the worker's history");
 });
 
@@ -1389,7 +1389,7 @@ test("chat updates on the live page neither redraw the panel nor send live check
     evalFeatureScripts(dom);
     await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "live title toggle was not rendered");
     document.querySelector("button[data-bcfth-toggle]").click();
-    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+    const panel = document.getElementById("cheese-spanner-following-title-history-panel");
     const row = panel.firstElementChild;
     let changes = 0;
     const watcher = new dom.window.MutationObserver((records) => {
@@ -1432,7 +1432,7 @@ test("the live page refreshes its check before it expires and drops titles once 
     await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "live title toggle was not rendered");
     const button = document.querySelector("button[data-bcfth-toggle]");
     button.click();
-    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+    const panel = document.getElementById("cheese-spanner-following-title-history-panel");
 
     // 화면이 그대로여도 90초가 지나면 스스로 다시 확인하고, 같은 방송이면 패널이 그대로 열려 있어요.
     offset = 91_000;
@@ -1477,7 +1477,7 @@ test("moving to another live drops the previous channel's toggle and panel", asy
     dom.window.history.pushState({}, "", `/live/${OTHER_CHANNEL}`);
     dom.window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
     await waitFor(() => !document.querySelector("[data-bcfth-toggle]"), "the previous channel's toggle stayed");
-    const panel = document.getElementById("betterchzzk-following-title-history-panel");
+    const panel = document.getElementById("cheese-spanner-following-title-history-panel");
     assert.ok(!panel || panel.hidden);
 
     const title = document.getElementById("liveTitle");
@@ -1513,7 +1513,7 @@ test("Space and Enter on the live title toggle open and close it without reachin
     const space = press(" ");
     assert.equal(space.defaultPrevented, true);
     assert.equal(button.getAttribute("aria-expanded"), "true");
-    assert.equal(document.getElementById("betterchzzk-following-title-history-panel").hidden, false);
+    assert.equal(document.getElementById("cheese-spanner-following-title-history-panel").hidden, false);
     press("Enter");
     assert.equal(button.getAttribute("aria-expanded"), "false");
     assert.deepEqual(pageKeys, [], "the page's Space shortcut must not see the toggle's key");

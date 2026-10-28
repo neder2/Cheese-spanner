@@ -33,7 +33,7 @@ function fixture(t, feature, pathname, overrides = {}) {
     let applyOptions;
     let observer;
     let disconnected = false;
-    Object.assign(window.BetterChzzk.utils, {
+    Object.assign(window.CheeseSpanner.utils, {
         bindFeatureOptions(callback) {
             applyOptions = callback;
         },
@@ -50,7 +50,7 @@ function fixture(t, feature, pathname, overrides = {}) {
     });
     evalFeatureModules(dom, feature);
     evalRepoScript(dom, `features/${feature}.js`);
-    const options = window.BetterChzzkSettings.normalizeOptions({
+    const options = window.CheeseSpannerSettings.normalizeOptions({
         monthlyBroadcastTimeWatchEnabled: false,
         ...overrides,
     });
@@ -112,7 +112,7 @@ test("throttled DOM scheduling cancels timers and frames, ignores stale callback
     };
     window.cancelAnimationFrame = (key) => frames.delete(key);
     for (const file of ["shared/settings.js", "shared/data.js", "content.js"]) evalRepoScript(dom, file);
-    const schedule = window.BetterChzzk.utils.createThrottledDomSync(() => calls++, 160);
+    const schedule = window.CheeseSpanner.utils.createThrottledDomSync(() => calls++, 160);
     schedule();
     const staleTimer = [...timers.values()][0];
     assert.equal(timers.size, 1);
@@ -174,7 +174,7 @@ for (const [feature, pathname, overrides = {}] of [
         assert.equal(f.frames.size, 1);
         f.disable();
         await f.frame();
-        assert.equal(f.dom.window.document.querySelector("[id^='betterchzzk-']:not(style)"), null);
+        assert.equal(f.dom.window.document.querySelector("[id^='cheese-spanner-']:not(style)"), null);
         assert.equal(f.frames.size, 0);
         assert.equal(f.timers.size, 0, "pending work must not schedule another retry after teardown");
     });

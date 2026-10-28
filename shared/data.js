@@ -1,5 +1,5 @@
 /**
- * shared/data.js — DOM에 의존하지 않는 데이터 유틸 (BetterChzzk.utils에 병합 등록)
+ * shared/data.js — DOM에 의존하지 않는 데이터 유틸 (CheeseSpanner.utils에 병합 등록)
  *
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트 + 확장 페이지(history.html) + background service worker.
  *   content.js보다 먼저 로드되고, content.js는 여기 등록된 동명 유틸(compactSpaces, normalizeCompact,
@@ -19,7 +19,7 @@
  *   시청 기록 계열 중심.
  */
 (() => {
-    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
+    const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     const ARRAY_RESPONSE_KEYS = Object.freeze(["data", "videos", "list", "items", "content"]);
     const DEFAULT_WATCH_RANGE_MERGE_GAP_MS = 2000;
     const COMMENT_API_BASE = "https://apis.naver.com/nng_main/nng_comment_api/v1";
@@ -858,7 +858,7 @@
         });
     }
 
-    const SETTINGS_STORE_MESSAGE_TYPE = "betterchzzk:settings-store";
+    const SETTINGS_STORE_MESSAGE_TYPE = "cheese-spanner:settings-store";
 
     function settingsStoreError(code, current) {
         const error = new Error(`Settings store: ${code}`);

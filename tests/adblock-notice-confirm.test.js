@@ -6,10 +6,10 @@ const { JSDOM } = require("jsdom");
 const read = (file) => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-const REQUEST = "betterchzzk:adblock-notice-confirm";
-const STATUS_ATTR = "data-betterchzzk-adblock-notice-confirm";
-const CLOSING_ATTR = "data-betterchzzk-adblock-popup-closing";
-const RESULT_ATTR = "data-betterchzzk-adblock-notice-result";
+const REQUEST = "cheese-spanner:adblock-notice-confirm";
+const STATUS_ATTR = "data-cheese-spanner-adblock-notice-confirm";
+const CLOSING_ATTR = "data-cheese-spanner-adblock-popup-closing";
+const RESULT_ATTR = "data-cheese-spanner-adblock-notice-result";
 // features/adblockPopup.js NOTICE_REMOVAL_WAIT_MS
 const REMOVAL_WAIT_MS = 1000;
 const HELP = "https://help.naver.com/alias/navergame/chzzkars49.naver";
@@ -60,7 +60,7 @@ function fixture(t, { pathname = LIVE, main = true, defaultEnabled = false } = {
         }
     };
     const listeners = new Set();
-    w.BetterChzzkSettings = {
+    w.CheeseSpannerSettings = {
         normalizeOptions: () => ({ adblockPopupEnabled: defaultEnabled }),
         getOptions(callback) {
             listeners.add(callback);
@@ -150,7 +150,7 @@ function fixture(t, { pathname = LIVE, main = true, defaultEnabled = false } = {
     const forge = (button) => button.dispatchEvent(new w.Event(REQUEST, { cancelable: true }));
     const navigate = (pathname) => {
         w.history.pushState({}, "", pathname);
-        w.dispatchEvent(new w.Event("betterchzzk:routechange"));
+        w.dispatchEvent(new w.Event("cheese-spanner:routechange"));
     };
     return {
         w,
@@ -854,7 +854,10 @@ test("the MAIN helper installs once, needs no extension globals and acts only on
     const w = dom.window;
     w.HTMLButtonElement.prototype.getBoundingClientRect = () => ({ width: 402, height: 46 });
     const source = read("features/adblockPopupPage.js");
-    assert.doesNotMatch(source, /BetterChzzk|chrome\.|\bisTrusted\s*=|Event\.prototype|addEventListener\(\s*["']click/);
+    assert.doesNotMatch(
+        source,
+        /CheeseSpanner|chrome\.|\bisTrusted\s*=|Event\.prototype|addEventListener\(\s*["']click/
+    );
     w.eval(source);
     w.eval(source);
     const backdrop = w.document.createElement("div");

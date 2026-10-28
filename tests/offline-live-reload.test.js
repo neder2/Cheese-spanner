@@ -35,7 +35,7 @@ function setup(t, { markup = END, route = `/live/${A}`, enabled = true } = {}) {
         Element: dom.window.Element,
         location,
         AbortController,
-        BetterChzzk: {
+        CheeseSpanner: {
             utils: {
                 bindFeatureOptions(fn) {
                     apply = fn;

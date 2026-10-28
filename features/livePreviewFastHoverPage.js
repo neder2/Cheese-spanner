@@ -6,11 +6,11 @@
  *   해당 mouseover 이벤트가 전파되는 짧은 구간에만 같은 지연을 0ms로 바꾼다. 다른 타이머와
  *   확장 소유 HLS 플레이어에는 관여하지 않으며, React handler 구조가 다르면 아무 작업도 하지 않는다.
  * 옵션 키: followingPreviewTooltipEnabled (followingPreviewTooltip.js가 DOM attribute로 전달).
- * 통신: CONFIG_ATTR(data-betterchzzk-live-preview-fast-hover-options)를 읽고 CONFIG_EVENT를 수신한다.
+ * 통신: CONFIG_ATTR(data-cheese-spanner-live-preview-fast-hover-options)를 읽고 CONFIG_EVENT를 수신한다.
  */
 (() => {
-    const CONFIG_EVENT = "betterchzzk:live-preview-fast-hover-options";
-    const CONFIG_ATTR = "data-betterchzzk-live-preview-fast-hover-options";
+    const CONFIG_EVENT = "cheese-spanner:live-preview-fast-hover-options";
+    const CONFIG_ATTR = "data-cheese-spanner-live-preview-fast-hover-options";
     const LIVE_LINK_SELECTOR = "a[href*='/live/']";
     const NATIVE_HOVER_DELAY_SIGNATURE = "300,300,600";
     const MIN_THUMBNAIL_WIDTH = 160;
@@ -97,7 +97,7 @@
     }
 
     function installEventTimerAcceleration(target) {
-        if (window.setTimeout?.__betterChzzkFastHover === true) return;
+        if (window.setTimeout?.__cheeseSpannerFastHover === true) return;
 
         let restored = false;
         let accelerated = false;
@@ -118,7 +118,7 @@
             restore();
             return Reflect.apply(originalSetTimeout, window, [callback, 0, ...args]);
         };
-        Object.defineProperty(acceleratedSetTimeout, "__betterChzzkFastHover", { value: true });
+        Object.defineProperty(acceleratedSetTimeout, "__cheeseSpannerFastHover", { value: true });
         window.setTimeout = acceleratedSetTimeout;
         queueMicrotask(restore);
     }

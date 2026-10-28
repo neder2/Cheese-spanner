@@ -145,7 +145,7 @@ function createFixture(
     load("shared/settings.js");
     load("shared/data.js");
     load("shared/categoryExclusions.js");
-    Object.assign(window.BetterChzzk.utils, {
+    Object.assign(window.CheeseSpanner.utils, {
         bindFeatureOptions() {},
         createMutationObserverSync: () => ({ disconnect() {} }),
         createThrottledDomSync: () => {
@@ -166,7 +166,7 @@ function createFixture(
             if (href.includes("/followers/count")) return { content: { followerCount: 12345 } };
             return { content: {} };
         },
-        normSpace: window.BetterChzzk.utils.compactSpaces,
+        normSpace: window.CheeseSpanner.utils.compactSpaces,
         injectStyleOnce() {},
         sleep: async () => {},
         onReady() {},
@@ -185,7 +185,7 @@ function createFixture(
     assert.ok(end >= 0);
     window.eval(`${source.slice(0, end)}
         globalThis.categoryApplyCost = {
-            ready: (options) => applyInitialOptions(BetterChzzkSettings.normalizeOptions(options)),
+            ready: (options) => applyInitialOptions(CheeseSpannerSettings.normalizeOptions(options)),
             apply: applyTools,
             exclude: (keys) => {
                 categoryState = { categories: [] };
@@ -228,7 +228,7 @@ function createFixture(
             for (const key of Object.keys(counts)) counts[key] = 0;
             trace.length = 0;
         },
-        categoryKey: (type, id) => window.BetterChzzk.categoryExclusions.categoryKey(type, id),
+        categoryKey: (type, id) => window.CheeseSpanner.categoryExclusions.categoryKey(type, id),
         async navigate(nextUrl) {
             dom.reconfigure({ url: nextUrl });
             hooks.pageChange();

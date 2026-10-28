@@ -36,7 +36,7 @@ function fixture({ options = {}, fetchJson, nowMs = NOW } = {}) {
         window.eval(fs.readFileSync(path.join(repoRoot, file), "utf8"));
     }
     const calls = [];
-    Object.assign(window.BetterChzzk.utils, {
+    Object.assign(window.CheeseSpanner.utils, {
         normSpace: (value) => String(value || "").trim(),
         injectStyleOnce() {},
         bindFeatureOptions() {},
@@ -63,7 +63,7 @@ function fixture({ options = {}, fetchJson, nowMs = NOW } = {}) {
             fetchVideoPageCached: repository.fetchVideoPageCached, fetchVideoDetail: repository.fetchVideoDetail,
             channelStatsCache, loadingTokens, calendarLoadingTokens, applyOptions,
             removeWidget, mountWidget,
-            configure(options) { featureOptions = BetterChzzkSettings.normalizeOptions(options); },
+            configure(options) { featureOptions = CheeseSpannerSettings.normalizeOptions(options); },
             setChannel(channelId) { currentChannelId = channelId; }
         };${source.slice(end)}`
     );
@@ -180,7 +180,7 @@ test("monthly calendar carries split broadcast colors across months without movi
 test("monthly broadcast coverage excludes the ending midnight and future dates", (t) => {
     const f = fixture();
     t.after(() => f.dom.window.close());
-    const model = f.window.BetterChzzk.monthlyBroadcastModel;
+    const model = f.window.CheeseSpanner.monthlyBroadcastModel;
     const month = model.getKstMonthInfo();
     const videos = model.extractVideos({
         content: {
@@ -559,24 +559,24 @@ test("monthly applying a new page limit remounts and reloads without duplicating
         f.hooks.setChannel(null);
         f.hooks.mountWidget();
         await flush();
-        const oldWidget = f.window.document.getElementById("betterchzzk-monthly-broadcast-time");
+        const oldWidget = f.window.document.getElementById("cheese-spanner-monthly-broadcast-time");
         assert.ok(oldWidget);
-        const options = f.window.BetterChzzkSettings.normalizeOptions({
+        const options = f.window.CheeseSpannerSettings.normalizeOptions({
             monthlyBroadcastTimeMaxPages: 1,
             monthlyBroadcastTimeMaxCalendarPages: 2,
         });
         f.hooks.applyOptions(options);
         assert.equal(oldWidget.isConnected, false);
         await waitForCondition(
-            () => f.window.document.getElementById("betterchzzk-monthly-broadcast-time")?.dataset.state === "ready"
+            () => f.window.document.getElementById("cheese-spanner-monthly-broadcast-time")?.dataset.state === "ready"
         );
-        const widgets = f.window.document.querySelectorAll("#betterchzzk-monthly-broadcast-time");
+        const widgets = f.window.document.querySelectorAll("#cheese-spanner-monthly-broadcast-time");
         assert.equal(widgets.length, 1);
         assert.equal(widgets[0].dataset.state, "ready");
         assert.equal(widgets[0].querySelector(".bcmb-calendar-limit").hidden, true);
         assert.equal(f.calls.length, 3);
         f.hooks.applyOptions({ ...options, monthlyBroadcastTimeEnabled: false });
-        assert.equal(f.window.document.getElementById("betterchzzk-monthly-broadcast-time"), null);
+        assert.equal(f.window.document.getElementById("cheese-spanner-monthly-broadcast-time"), null);
     } finally {
         f.hooks.removeWidget();
         f.dom.window.close();

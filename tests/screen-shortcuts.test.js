@@ -15,7 +15,7 @@ function fixture(t) {
     let apply;
     let clicks = 0;
     let native = 0;
-    w.BetterChzzk = {
+    w.CheeseSpanner = {
         utils: {
             bindFeatureOptions(fn) {
                 apply = fn;

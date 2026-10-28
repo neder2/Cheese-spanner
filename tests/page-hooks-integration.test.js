@@ -10,10 +10,10 @@ const ad = read("adVideoPage.js");
 
 function qualityState(window, enabled) {
     window.document.documentElement.setAttribute(
-        "data-betterchzzk-auto-quality-state",
+        "data-cheese-spanner-auto-quality-state",
         JSON.stringify({ enabled, quality: "1080p" })
     );
-    window.dispatchEvent(new window.Event("betterchzzk:auto-quality:state"));
+    window.dispatchEvent(new window.Event("cheese-spanner:auto-quality:state"));
 }
 
 function defineTracks(window) {
@@ -71,7 +71,7 @@ for (const order of ["quality-first", "ad-first"]) {
             t.after(() => dom.window.close());
             const w = dom.window;
             const root = w.document.documentElement;
-            root.setAttribute("data-betterchzzk-ad-video-state", "1");
+            root.setAttribute("data-cheese-spanner-ad-video-state", "1");
             qualityState(w, initiallyEnabled);
             for (const source of order === "quality-first" ? [quality, ad] : [ad, quality]) w.eval(source);
             qualityState(w, true);
@@ -86,15 +86,15 @@ for (const order of ["quality-first", "ad-first"]) {
                 assert.equal(assignAdSource(w), null);
             }
             w.history.replaceState(null, "", "/");
-            w.dispatchEvent(new w.Event("betterchzzk:routechange"));
+            w.dispatchEvent(new w.Event("cheese-spanner:routechange"));
             assert.equal(defineTracks(w).wrapped, false);
             assert.notEqual(assignAdSource(w), null);
             w.history.replaceState(null, "", "/video/456");
-            w.dispatchEvent(new w.Event("betterchzzk:routechange"));
+            w.dispatchEvent(new w.Event("cheese-spanner:routechange"));
             assert.equal(defineTracks(w).wrapped, true);
             assert.equal(assignAdSource(w), null);
-            root.setAttribute("data-betterchzzk-ad-video-state", "0");
-            w.document.dispatchEvent(new w.Event("betterchzzk:ad-video:state"));
+            root.setAttribute("data-cheese-spanner-ad-video-state", "0");
+            w.document.dispatchEvent(new w.Event("cheese-spanner:ad-video:state"));
             assert.notEqual(assignAdSource(w), null);
             assert.equal(defineTracks(w).wrapped, true);
         });

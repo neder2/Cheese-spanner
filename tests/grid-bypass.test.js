@@ -16,7 +16,7 @@ test("retired grid metadata rewriting is absent from the package and option sche
     const dom = new JSDOM(read("options.html"), { runScripts: "outside-only" });
     t.after(() => dom.window.close());
     dom.window.eval(read("shared/settings.js"));
-    const settings = dom.window.BetterChzzkSettings;
+    const settings = dom.window.CheeseSpannerSettings;
     for (const saved of [true, false]) {
         const normalized = settings.normalizeOptions({
             gridBypassEnabled: saved,
@@ -38,11 +38,11 @@ test("auto quality does not rewrite JSON playback metadata even with a stale gri
     });
     const w = dom.window;
     t.after(() => {
-        w.document.documentElement.setAttribute("data-betterchzzk-auto-quality-state", '{"enabled":false}');
-        w.dispatchEvent(new w.Event("betterchzzk:auto-quality:state"));
+        w.document.documentElement.setAttribute("data-cheese-spanner-auto-quality-state", '{"enabled":false}');
+        w.dispatchEvent(new w.Event("cheese-spanner:auto-quality:state"));
         dom.window.close();
     });
-    w.document.documentElement.setAttribute("data-betterchzzk-grid-bypass-state", "1");
+    w.document.documentElement.setAttribute("data-cheese-spanner-grid-bypass-state", "1");
     const original = w.JSON.parse;
     w.eval(read("features/autoQualityPage.js"));
     assert.equal(w.JSON.parse, original);

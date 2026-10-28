@@ -6,7 +6,7 @@
 (() => {
     "use strict";
 
-    const { bindFeatureOptions, injectStyleOnce, onReady } = BetterChzzk.utils;
+    const { bindFeatureOptions, injectStyleOnce, onReady } = CheeseSpanner.utils;
     const targets = [
         ["headerStudioHidden", '#header a[href^="https://studio.chzzk.naver.com/"]'],
         ["headerCheeseHidden", '#header div:has(> a[href="https://game.naver.com/profile#cash"])'],
@@ -19,7 +19,7 @@
 
     function syncStyles() {
         for (const [key, selector] of targets) {
-            const id = `betterchzzk-header-${key}-style`;
+            const id = `cheese-spanner-header-${key}-style`;
             if (!options[key]) {
                 document.getElementById(id)?.remove();
             } else if (document.documentElement) {

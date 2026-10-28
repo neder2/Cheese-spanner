@@ -1,6 +1,6 @@
 /** Owns shared page/detail requests and bounded caches; callers own query cancellation. */
 (() => {
-    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
+    const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     function createRepository({ fetchJson }) {
         const { touchMapEntry, pickArray, isLastPage } = root.utils;
         const {

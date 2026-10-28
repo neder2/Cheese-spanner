@@ -14,10 +14,10 @@ const {
 
 const repoRoot = path.join(__dirname, "..");
 const KEY = "betterchzzk:following-folders:v1";
-const LAYER_SELECTOR = "#betterchzzk-following-folders-layer";
-const TOAST_SELECTOR = "#betterchzzk-following-folders-toast";
-const FOLDER_DRAG_TYPE = "application/x-betterchzzk-following-folder";
-const MANAGE_SELECTOR = "#betterchzzk-following-folders-manage";
+const LAYER_SELECTOR = "#cheese-spanner-following-folders-layer";
+const TOAST_SELECTOR = "#cheese-spanner-following-folders-toast";
+const FOLDER_DRAG_TYPE = "application/x-cheese-spanner-following-folder";
+const MANAGE_SELECTOR = "#cheese-spanner-following-folders-manage";
 const A = "a".repeat(32);
 const B = "b".repeat(32);
 const C = "c".repeat(32);
@@ -54,7 +54,7 @@ function stateOf(...folders) {
 function loadPureModule() {
     const context = vm.createContext({});
     vm.runInContext(readRepoFile("shared", "followingFolders.js"), context);
-    return context.BetterChzzkFollowingFolders;
+    return context.CheeseSpannerFollowingFolders;
 }
 
 function plain(value) {
@@ -376,7 +376,7 @@ function createFakeChrome(initialSync = {}) {
 // The integration owner's worker compares expectations inside one lock; this fake keeps that contract.
 function installSettingsStore(dom, chrome) {
     const store = { calls: [], conflicts: 0, failNext: "", beforeCompare: null, gate: null, queue: Promise.resolve() };
-    dom.window.BetterChzzk.utils.settingsStoreSet = (area, values, expected) => {
+    dom.window.CheeseSpanner.utils.settingsStoreSet = (area, values, expected) => {
         const call = { area, values: clone(values), expected: clone(expected) };
         store.calls.push(call);
         const run = store.queue.then(async () => {
@@ -712,16 +712,16 @@ test("folders stay inactive by default and the max-row limit alone never reads o
     const list = document.getElementById("followingList");
     const originalRows = nativeRowIds(list);
     await settle();
-    assert.equal(document.getElementById("betterchzzk-following-folders-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-following-folders-style"), null);
     assert.equal(document.querySelector(MANAGE_SELECTOR), null);
     assert.equal(markerCount(document), 0);
     assert.equal(chrome.testState.getCalls.flat().includes(KEY), false);
 
     chrome.testState.emitSync({ followingListMaxRows: { newValue: 6 } });
     await waitForCondition(() => list.getAttribute("data-bcff-max-rows") === "1");
-    const rowsStyle = document.getElementById("betterchzzk-following-folders-rows-style");
+    const rowsStyle = document.getElementById("cheese-spanner-following-folders-rows-style");
     assert.match(rowsStyle.textContent, /max-height:288px!important/, "6 rows × 48px fallback before measurement");
-    const baseStyle = document.getElementById("betterchzzk-following-folders-style").textContent;
+    const baseStyle = document.getElementById("cheese-spanner-following-folders-style").textContent;
     const scrollRule = /#sidebar \[data-bcff-max-rows="1"\]\{([^}]*)\}/.exec(baseStyle)?.[1] || "";
     assert.match(scrollRule, /overflow-y:auto!important/);
     assert.doesNotMatch(scrollRule, /overscroll-behavior/, "list scrolling still chains to the sidebar");
@@ -733,8 +733,8 @@ test("folders stay inactive by default and the max-row limit alone never reads o
 
     chrome.testState.emitSync({ followingListMaxRows: { newValue: 0 } });
     await waitForCondition(() => !list.hasAttribute("data-bcff-max-rows"));
-    assert.equal(document.getElementById("betterchzzk-following-folders-rows-style"), null);
-    assert.equal(document.getElementById("betterchzzk-following-folders-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-following-folders-rows-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-following-folders-style"), null);
     assert.equal(markerCount(document), 0);
 });
 
@@ -743,7 +743,7 @@ test("folder menus and the drag card use the shared theme and Pretendard while s
     const { dom, document, window } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
     document.getElementById("sidebar").style.fontFamily = "NativeSans";
     await waitForCondition(() => header(document, "폴더 밖 채널"));
-    const style = document.getElementById("betterchzzk-following-folders-style");
+    const style = document.getElementById("cheese-spanner-following-folders-style");
     assertUsesSharedTheme(assert, window, style, "following folders");
     assert.deepEqual([...new Set(colorLiterals(style.textContent))], ["#ff4545"], "only the fixed live dot remains");
     // Small text avoids the low-contrast dim and base brand colors; dim stays on icons and disabled items.
@@ -758,14 +758,14 @@ test("folder menus and the drag card use the shared theme and Pretendard while s
     for (const node of [header(document, "게임"), header(document, "폴더 밖 채널"), nameButton(document, "게임")])
         assert.equal(window.getComputedStyle(node).fontFamily, "NativeSans");
 
-    const pretendard = /^"BetterChzzk Pretendard", -apple-system/;
+    const pretendard = /^"CheeseSpanner Pretendard", -apple-system/;
     const dataTransfer = createDataTransfer();
     let dragImage = null;
     dataTransfer.setDragImage = (node) => {
         dragImage = node;
     };
     dragEvent(dom, "dragstart", document.querySelector("#rowB a"), { dataTransfer });
-    assert.equal(dragImage?.id, "betterchzzk-following-folders-drag-card");
+    assert.equal(dragImage?.id, "cheese-spanner-following-folders-drag-card");
     assert.match(computedThemeValue(window, dragImage, "font-family"), pretendard);
     assert.equal(window.getComputedStyle(dragImage).fontWeight, "600");
     dragEvent(dom, "dragend", document.querySelector("#rowB a"));
@@ -1126,7 +1126,7 @@ test("a collapsed folder keeps its live count beside the menu button while the p
     assert.equal(live.getAttribute("data-bcff-live"), "2");
     assert.equal(header(document, "토크").querySelector(".bcff-live").hidden, true, "open folders show their rows");
 
-    const style = document.getElementById("betterchzzk-following-folders-style").textContent;
+    const style = document.getElementById("cheese-spanner-following-folders-style").textContent;
     for (const rule of style.split("}").filter((text) => /:hover|:focus-within/.test(text))) {
         if (!/\.bcff-live/.test(rule)) continue;
         assert.doesNotMatch(rule, /display:none|visibility:hidden/, "hover and focus never hide the live count");
@@ -1271,19 +1271,19 @@ test("save failures keep the previous folders and tell the user what happened", 
     await waitForCondition(() => headerButton(document, "게임"));
     store.failNext = "storage-write-failed";
     trustedClick(dom, headerButton(document, "게임"));
-    await waitForCondition(() => document.getElementById("betterchzzk-following-folders-toast"));
-    const toast = document.getElementById("betterchzzk-following-folders-toast");
+    await waitForCondition(() => document.getElementById("cheese-spanner-following-folders-toast"));
+    const toast = document.getElementById("cheese-spanner-following-folders-toast");
     assert.equal(toast.getAttribute("role"), "status");
     assert.match(toast.textContent, /저장하지 못했어요.*이전 상태/);
     assert.deepEqual(storedState(chrome), saved);
     assert.equal(headerButton(document, "게임").getAttribute("aria-expanded"), "true");
     assert.notEqual(dom.window.getComputedStyle(document.getElementById("rowC")).display, "none");
 
-    delete dom.window.BetterChzzk.utils.settingsStoreSet;
+    delete dom.window.CheeseSpanner.utils.settingsStoreSet;
     trustedClick(dom, headerButton(document, "게임"));
     await waitForCondition(() =>
         /확장 프로그램과 연결되지 않아/.test(
-            document.getElementById("betterchzzk-following-folders-toast")?.textContent || ""
+            document.getElementById("cheese-spanner-following-folders-toast")?.textContent || ""
         )
     );
     assert.deepEqual(storedState(chrome), saved);
@@ -1317,7 +1317,7 @@ test("stale writes re-apply the same command to the latest value and stop after 
     const before = store.calls.length;
     trustedClick(dom, headerButton(document, "게임"));
     await waitForCondition(() =>
-        /계속 바뀌어/.test(document.getElementById("betterchzzk-following-folders-toast")?.textContent || "")
+        /계속 바뀌어/.test(document.getElementById("cheese-spanner-following-folders-toast")?.textContent || "")
     );
     await settle(100);
     assert.equal(store.calls.length - before, 3, "first write plus two re-applications");
@@ -1347,7 +1347,11 @@ test("commands queued before an OFF→ON cycle are dropped instead of writing in
     await settle(100);
     assert.equal(store.calls.length, 1, "the old queued collapse must not be sent after re-enabling");
     assert.equal(storedState(chrome).folders[1].collapsed, false);
-    assert.equal(document.getElementById("betterchzzk-following-folders-toast"), null, "dropped commands stay silent");
+    assert.equal(
+        document.getElementById("cheese-spanner-following-folders-toast"),
+        null,
+        "dropped commands stay silent"
+    );
 
     trustedClick(dom, headerButton(document, "토크"));
     await waitForCondition(() => storedState(chrome).folders[1].collapsed === true);
@@ -1381,7 +1385,7 @@ async function moveFolderUpWithArrivalOrder(t, { eventFirst }) {
             eventFirst ? 0 : 40
         )
     );
-    const utils = dom.window.BetterChzzk.utils;
+    const utils = dom.window.CheeseSpanner.utils;
     const send = utils.settingsStoreSet;
     utils.settingsStoreSet = async (...args) => {
         const result = await send(...args);
@@ -1624,7 +1628,7 @@ test("dragging following links onto headers assigns or releases them; synthetic 
     const callsBeforeStale = store.calls.length;
     dragEvent(dom, "drop", header(document, "토크"));
     await waitForCondition(() =>
-        /목록이 바뀌어/.test(document.getElementById("betterchzzk-following-folders-toast")?.textContent || "")
+        /목록이 바뀌어/.test(document.getElementById("cheese-spanner-following-folders-toast")?.textContent || "")
     );
     assert.equal(store.calls.length, callsBeforeStale, "a reused row during drag is not assigned");
 
@@ -1797,11 +1801,11 @@ test("a held channel previews its landing spot, drops show at once, failed saves
     transfer.setDragImage = (element, x, y) => images.push({ id: element.id, text: element.textContent, x, y });
     dragEvent(dom, "dragstart", rowA.querySelector("a"), { dataTransfer: transfer });
     assert.equal(images.length, 1, "the dragged channel follows the pointer as a small card");
-    assert.equal(images[0].id, "betterchzzk-following-folders-drag-card");
+    assert.equal(images[0].id, "cheese-spanner-following-folders-drag-card");
     assert.match(images[0].text, /알파/);
     assert.match(images[0].text, /방송 중/);
     await settle();
-    assert.equal(document.getElementById("betterchzzk-following-folders-drag-card"), null, "the card is removed");
+    assert.equal(document.getElementById("cheese-spanner-following-folders-drag-card"), null, "the card is removed");
     assert.equal(rowA.getAttribute("data-bcff-drag-source"), "1");
 
     dragEvent(dom, "dragover", document.querySelector("#rowC a"), { dataTransfer: transfer });
@@ -1995,7 +1999,7 @@ test("turning folders off removes every marker, closes open layers, and stops fo
     await waitForCondition(() => !document.querySelector("[data-bcff-header]"));
     assert.equal(layer(document), null);
     assert.equal(markerCount(document), 0);
-    assert.equal(document.getElementById("betterchzzk-following-folders-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-following-folders-style"), null);
     assert.notEqual(dom.window.getComputedStyle(document.getElementById("rowC")).display, "none");
     assert.equal(chrome.testState.listeners.length, listenersWhileOn - 1);
 
@@ -2029,7 +2033,7 @@ test("folders combine with pinning: pin ranks order rows inside folders and side
     assert.ok(order("rowC") < order("rowB") && order("rowB") < order("rowD"), "live → pinned offline → offline");
 
     const refresh = document.getElementById("followingRefresh");
-    const pinButton = document.getElementById("betterchzzk-following-pin-mode");
+    const pinButton = document.getElementById("cheese-spanner-following-pin-mode");
     assert.equal(pinButton.nextElementSibling, refresh);
     assert.equal(document.querySelector(MANAGE_SELECTOR), null, "folders add no button to the sidebar header");
 

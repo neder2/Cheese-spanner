@@ -9,7 +9,7 @@ const read = (file) => fs.readFileSync(path.join(__dirname, "..", file), "utf8")
 const CHANNEL = "a".repeat(32),
     SECOND = "b".repeat(32);
 const KEY = "betterchzzk:live-start-channels",
-    ID = "betterchzzk-live-start-registration";
+    ID = "cheese-spanner-live-start-registration";
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const channel = (id = CHANNEL) => ({
     channelId: id,
@@ -45,7 +45,7 @@ function fixture(t, { channels = [], enabled = true, visible = true, withHeader 
         }
         return addListener.call(this, type, callback, ...rest);
     };
-    chrome.runtime.getURL = (file) => "chrome-extension://better-chzzk/" + file;
+    chrome.runtime.getURL = (file) => "chrome-extension://cheese-spanner/" + file;
     w.chrome = chrome;
     const requests = [],
         sent = [];
@@ -155,7 +155,7 @@ function fixture(t, { channels = [], enabled = true, visible = true, withHeader 
         },
         navigate(url) {
             w.history.pushState({}, "", url);
-            w.dispatchEvent(new w.Event("betterchzzk:routechange"));
+            w.dispatchEvent(new w.Event("cheese-spanner:routechange"));
         },
     };
 }
@@ -181,7 +181,7 @@ test("one header button opens search on any page and never adds a channel-area b
     assert.equal(f.action(SECOND).closest("li").querySelector("img").src, channel(SECOND).channelImageUrl);
     f.trustedClick(f.action(SECOND));
     assert.deepEqual(f.sent[0], {
-        type: "betterchzzk:live-start:channels",
+        type: "cheese-spanner:live-start:channels",
         kind: "set-notify",
         channel: { channelId: SECOND, notify: true },
     });
@@ -202,7 +202,7 @@ test("registration removal deletes both channel actions and stays synchronized w
     await f.open();
     f.trustedClick(f.action(CHANNEL, "remove"));
     assert.deepEqual(f.sent[0], {
-        type: "betterchzzk:live-start:channels",
+        type: "cheese-spanner:live-start:channels",
         kind: "remove",
         channel: { channelId: CHANNEL },
     });
@@ -337,7 +337,7 @@ test("desktop notifications and automatic entry can each register a channel and 
         assert.equal(f.action(CHANNEL, key).getAttribute("aria-pressed"), "false");
     f.trustedClick(f.action(CHANNEL, "autoOpen"));
     assert.deepEqual(f.sent[0], {
-        type: "betterchzzk:live-start:channels",
+        type: "cheese-spanner:live-start:channels",
         kind: "set-auto-open",
         channel: { channelId: CHANNEL, autoOpen: true },
     });
@@ -535,7 +535,7 @@ test("synthetic registration clicks cannot change notification, auto-entry or re
     button.dataset.action = "remove";
     f.trustedClick(button);
     assert.deepEqual(f.sent[0], {
-        type: "betterchzzk:live-start:channels",
+        type: "cheese-spanner:live-start:channels",
         kind: "set-notify",
         channel: { channelId: SECOND, notify: true },
     });
@@ -550,18 +550,18 @@ test("the header entry and panel use the shared theme and the shared bundled Pre
     assertUsesSharedTheme(assert, f.w, style, "live-start registration");
     assert.deepEqual(colorLiterals(style.textContent), [], "no static theme colors remain in the feature");
 
-    const themes = document.querySelectorAll("#betterchzzk-ui-theme");
+    const themes = document.querySelectorAll("#cheese-spanner-ui-theme");
     assert.equal(themes.length, 1);
     const faces = Array.from(themes[0].sheet.cssRules).filter((rule) => rule.type === 5);
     assert.equal(faces.length, 1);
-    assert.equal(faces[0].style.getPropertyValue("font-family").replace(/["']/g, ""), "BetterChzzk Pretendard");
+    assert.equal(faces[0].style.getPropertyValue("font-family").replace(/["']/g, ""), "CheeseSpanner Pretendard");
     assert.ok(
-        themes[0].textContent.includes('url("chrome-extension://better-chzzk/vendor/fonts/PretendardVariable.woff2")')
+        themes[0].textContent.includes('url("chrome-extension://cheese-spanner/vendor/fonts/PretendardVariable.woff2")')
     );
     const entry = document.getElementById(ID);
     for (const node of [entry, f.trigger(), f.panel(), f.input(), f.action()]) {
         const family = computedThemeValue(f.w, node, "font-family");
-        assert.match(family, /^"BetterChzzk Pretendard", -apple-system/, node.id || node.tagName);
+        assert.match(family, /^"CheeseSpanner Pretendard", -apple-system/, node.id || node.tagName);
     }
 
     const value = (node, property) => computedThemeValue(f.w, node, property);

@@ -1,6 +1,6 @@
 /** 목록 메타데이터·전체 방송 집계·카테고리 검색의 공유 조회와 독립 취소, 팔로워 캐시·배치·재시도를 소유한다. DOM에는 의존하지 않는다. */
 (() => {
-    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
+    const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     const API_BASE = "https://api.chzzk.naver.com/service";
     const API_PAGE_SIZE = 50;
     const MAX_FOLLOWER_CACHE_ENTRIES = 1000;

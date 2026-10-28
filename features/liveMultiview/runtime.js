@@ -5,11 +5,11 @@
  * 그 부모의 고정된 영상 영역, .pzp-pc--adbreak, HLS/LLHLS live-detail 응답을 확인했다.
  */
 (() => {
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     if (root.liveMultiview) return;
     const model = root.multiviewModel;
     const { bindFeatureOptions, startPageChangeDetection, injectStyleOnce, mutationMatchesSelector } = root.utils;
-    const ID = "betterchzzk-multiview";
+    const ID = "cheese-spanner-multiview";
     const PANEL_ID = `${ID}-panel`;
     const CHAT = "aside#aside-chatting";
     const CHAT_BUTTON_ID = `${ID}-chat-settings`;
@@ -65,7 +65,7 @@
         onLayerChange: () => {
             hideAddDropHint();
             settingsPanel.syncLayer();
-            document.dispatchEvent(new CustomEvent("betterchzzk:multiview-layer-change"));
+            document.dispatchEvent(new CustomEvent("cheese-spanner:multiview-layer-change"));
         },
         onError: notice,
     });
@@ -243,15 +243,15 @@
 .bcmv-banner{position:absolute;top:0;left:0;right:0;z-index:6;background:var(--bcmv-surface);padding:8px;pointer-events:auto}
 .bcmv-banner:empty{display:none}
 /* Keep the launcher in the native button flow with its own predictable box. */
-#betterchzzk-multiview-launcher{position:relative;inset:auto;transform:none;display:inline-flex;align-items:center;justify-content:center;flex:none;box-sizing:border-box;width:36px;height:36px;margin:0 0 0 10px;padding:6px;border:0;border-radius:var(--bct-radius-sm);background:transparent;color:inherit;cursor:pointer}
-#betterchzzk-multiview-launcher svg{width:24px;height:24px;pointer-events:none}
-#betterchzzk-multiview-launcher::before{content:"";position:absolute;top:50%;left:50%;width:44px;height:44px;border-radius:50%;transform:translate(-50%,-50%);background:transparent;pointer-events:none}
-#betterchzzk-multiview-launcher:hover::before{background:rgba(255,255,255,.2)}
-#betterchzzk-multiview-launcher[aria-pressed="true"]{color:var(--bct-brand);background:color-mix(in srgb,var(--bct-brand) 14%,transparent)}
-#betterchzzk-multiview-launcher:focus-visible{outline:2px solid var(--bct-brand);outline-offset:-2px}
+#cheese-spanner-multiview-launcher{position:relative;inset:auto;transform:none;display:inline-flex;align-items:center;justify-content:center;flex:none;box-sizing:border-box;width:36px;height:36px;margin:0 0 0 10px;padding:6px;border:0;border-radius:var(--bct-radius-sm);background:transparent;color:inherit;cursor:pointer}
+#cheese-spanner-multiview-launcher svg{width:24px;height:24px;pointer-events:none}
+#cheese-spanner-multiview-launcher::before{content:"";position:absolute;top:50%;left:50%;width:44px;height:44px;border-radius:50%;transform:translate(-50%,-50%);background:transparent;pointer-events:none}
+#cheese-spanner-multiview-launcher:hover::before{background:rgba(255,255,255,.2)}
+#cheese-spanner-multiview-launcher[aria-pressed="true"]{color:var(--bct-brand);background:color-mix(in srgb,var(--bct-brand) 14%,transparent)}
+#cheese-spanner-multiview-launcher:focus-visible{outline:2px solid var(--bct-brand);outline-offset:-2px}
 /* Native pzp buttons fade individually with --controls (2026-09-06 player CSS). */
-.pzp-pc #betterchzzk-multiview-launcher{opacity:0;pointer-events:none}
-.pzp-pc.pzp-pc--controls #betterchzzk-multiview-launcher{opacity:1;pointer-events:auto}
+.pzp-pc #cheese-spanner-multiview-launcher{opacity:0;pointer-events:none}
+.pzp-pc.pzp-pc--controls #cheese-spanner-multiview-launcher{opacity:1;pointer-events:auto}
 ${CHAT_ACTIONS}{display:inline-flex!important;align-items:center!important;vertical-align:top;gap:0!important;line-height:0;white-space:nowrap;margin-left:auto}
 ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!important;transform:none!important}
 #${CHAT_BUTTON_ID}{display:inline-flex;align-items:center;justify-content:center;flex:none;width:30px;height:30px;margin:0 2px 0 0;padding:0;border:0;border-radius:var(--bct-radius-md);background:transparent;color:var(--bct-text-muted);cursor:pointer}
@@ -438,7 +438,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         link.href = `/live/${id}`;
         persistSession();
         const accepted = !link.dispatchEvent(
-            new CustomEvent("betterchzzk:multiview-navigate", { bubbles: true, cancelable: true })
+            new CustomEvent("cheese-spanner:multiview-navigate", { bubbles: true, cancelable: true })
         );
         if (!accepted) notice("페이지 내부 이동을 사용할 수 없어요. 현재 방송은 유지돼요.");
         return accepted;
@@ -863,9 +863,9 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         if (!launcher?.isConnected || launcher.parentElement !== reference.parentElement) {
             launcher?.remove();
             // React may replace the control bar with a cloned node carrying our old marker.
-            native.querySelectorAll("#betterchzzk-multiview-launcher").forEach((node) => node.remove());
+            native.querySelectorAll("#cheese-spanner-multiview-launcher").forEach((node) => node.remove());
             launcher = button("", "toggle-multiview");
-            launcher.id = "betterchzzk-multiview-launcher";
+            launcher.id = "cheese-spanner-multiview-launcher";
             launcher.className = "pzp-button";
             launcher.append(multiviewIcon());
             launcher.addEventListener("click", (event) => {
@@ -990,7 +990,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
                         return true;
                     return mutationMatchesSelector(
                         mutation,
-                        `${NATIVE}, ${CHAT}, ${CHAT_ACTIONS}, ${MODERATOR_ACTIONS}, [data-bcct-moderator-trigger], video.webplayer-internal-video, .pzp-pc__viewmode-button, #betterchzzk-multiview-launcher`
+                        `${NATIVE}, ${CHAT}, ${CHAT_ACTIONS}, ${MODERATOR_ACTIONS}, [data-bcct-moderator-trigger], video.webplayer-internal-video, .pzp-pc__viewmode-button, #cheese-spanner-multiview-launcher`
                     );
                 })
             )

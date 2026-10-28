@@ -5,8 +5,8 @@
  * liveId 20949832 and openDate "2026-09-06 06:23:31" (KST).
  */
 (() => {
-    const STYLE_ID = "betterchzzk-live-player-display-style";
-    const CLOCK_ID = "betterchzzk-live-start-time";
+    const STYLE_ID = "cheese-spanner-live-player-display-style";
+    const CLOCK_ID = "cheese-spanner-live-start-time";
     const HIDE_ATTR = "data-bclpd-hide-live";
     const STATUS_SELECTOR = "#layout-body [class*='_status_'] > [class*='_data_']";
     const ANCHOR_SELECTOR = `${STATUS_SELECTOR} > span[class*='_count_']`;
@@ -21,8 +21,8 @@
         isSameKstDate,
         parseChzzkDate,
         startPageChangeDetection,
-    } = BetterChzzk.utils;
-    let options = BetterChzzkSettings.normalizeOptions();
+    } = CheeseSpanner.utils;
+    let options = CheeseSpannerSettings.normalizeOptions();
     let channelId = "";
     let request = null;
     let startMs = null;

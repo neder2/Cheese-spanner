@@ -7,19 +7,19 @@
  *   - 현재 표시된 채팅과 새로 추가·재사용된 채팅마다 MAIN-world 브리지에 원본 시각을 요청한다.
  *   - 검증된 millisecond epoch를 브라우저 현지 HH:MM으로 바꿔 data-bcmt-time + ::before로 표시한다.
  *   - 원본 서버 시각이 없거나 잘못된 행에는 현재 시각을 대신 붙이지 않는다.
- * 의존: BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions, createMutationObserverSync,
+ * 의존: CheeseSpannerSettings.normalizeOptions, CheeseSpanner.utils(bindFeatureOptions, createMutationObserverSync,
  *   injectStyleOnce, isLiveRoute, isVodRoute, startPageChangeDetection).
  * 옵션 키: chatTimestampEnabled, vodChatTimestampEnabled(각 기본값 false).
- * 통신: betterchzzk:chat-timestamp-source-request/page-ready 이벤트와 data-bcmt-source-time DOM 속성.
+ * 통신: cheese-spanner:chat-timestamp-source-request/page-ready 이벤트와 data-bcmt-source-time DOM 속성.
  * DOM 마커: data-bcmt-time(표시용 HH:MM), data-bcmt-source-time(검증된 원본 millisecond epoch).
  */
 (() => {
     "use strict";
 
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     if (root.chatTimestamp) return;
 
-    const { normalizeOptions } = BetterChzzkSettings;
+    const { normalizeOptions } = CheeseSpannerSettings;
     const {
         bindFeatureOptions,
         createMutationObserverSync,
@@ -28,11 +28,11 @@
         isVodRoute,
         startPageChangeDetection,
     } = root.utils;
-    const SOURCE_REQUEST_EVENT = "betterchzzk:chat-timestamp-source-request";
-    const PAGE_READY_EVENT = "betterchzzk:chat-timestamp-page-ready";
+    const SOURCE_REQUEST_EVENT = "cheese-spanner:chat-timestamp-source-request";
+    const PAGE_READY_EVENT = "cheese-spanner:chat-timestamp-page-ready";
     const SOURCE_TIME_ATTR = "data-bcmt-source-time";
     const TIMESTAMP_ATTR = "data-bcmt-time";
-    const STYLE_ID = "betterchzzk-chat-timestamp-style";
+    const STYLE_ID = "cheese-spanner-chat-timestamp-style";
     const LIVE_CHAT_LOG_SELECTOR = "aside#aside-chatting [role='log']";
     const VOD_CHAT_LOG_SELECTOR = "aside#vod-aside [role='log']";
     const NICKNAME_BUTTON_SELECTOR = "button[aria-haspopup='true']";

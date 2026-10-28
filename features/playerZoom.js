@@ -1,8 +1,8 @@
 // Cursor-centred zoom for the main player. Native video and controls keep their DOM parents.
 (() => {
     "use strict";
-    if (BetterChzzk.playerZoom) return;
-    BetterChzzk.playerZoom = {};
+    if (CheeseSpanner.playerZoom) return;
+    CheeseSpanner.playerZoom = {};
 
     const {
         bindFeatureOptions,
@@ -16,15 +16,15 @@
         mutationMatchesSelector,
         injectStyleOnce,
         syncPlayerButtonTooltip,
-    } = BetterChzzk.utils;
-    const ID = "betterchzzk-player-zoom";
+    } = CheeseSpanner.utils;
+    const ID = "cheese-spanner-player-zoom";
     const MIN_SCALE_SCROLL_DELAY_MS = 1000;
     const CONTROLS = ".pzp-pc__bottom-buttons-right";
     const EXCLUDED =
         "button, a, input, textarea, select, summary, [contenteditable]:not([contenteditable='false']), " +
         "[role='button'], [role='slider'], [role='menu'], [role='dialog'], [role='separator'], " +
         ".pzp-pc__bottom, .pzp-pc__top, .pzp-pc__settings, [class*='bottom-buttons'], " +
-        "[data-bcmv-video], [data-bcmv-channel], [data-bcfp-tooltip], #betterchzzk-stream-info";
+        "[data-bcmv-video], [data-bcmv-channel], [data-bcfp-tooltip], #cheese-spanner-stream-info";
     const VIDEO_STYLES = ["transform", "transform-origin", "clip-path", "transition", "will-change"];
     const MODIFIERS = ["ctrlKey", "metaKey", "altKey", "shiftKey"];
     const SHORTCUT_KEYS = { alt: "altKey", ctrl: "ctrlKey", shift: "shiftKey", meta: "metaKey" };
@@ -483,7 +483,7 @@
         stopPlayback();
         if (!enabled || suspended || !isPlaybackRoute()) return;
         // The panel follows the shared CHZZK theme; the toggle stays a native control-bar button over the video.
-        BetterChzzk.utils.ensureUiTheme?.();
+        CheeseSpanner.utils.ensureUiTheme?.();
         injectStyleOnce(
             `${ID}-style`,
             `

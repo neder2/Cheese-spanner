@@ -2,8 +2,8 @@
 (() => {
     "use strict";
     const root = globalThis;
-    const utils = root.BetterChzzk?.utils || {};
-    const PORT_NAME = "betterchzzk:donation-history-import";
+    const utils = root.CheeseSpanner?.utils || {};
+    const PORT_NAME = "cheese-spanner:donation-history-import";
     // The native purchase-history year selector starts at 2023 (measured 2026-09-19).
     const FIRST_MONTH = "2023-01";
     const MAX_MONTHS = 120;
@@ -266,7 +266,7 @@
         );
     }
 
-    root.BetterChzzkDonationHistory = {
+    root.CheeseSpannerDonationHistory = {
         PORT_NAME,
         FIRST_MONTH,
         MAX_MONTHS,

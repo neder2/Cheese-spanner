@@ -3,7 +3,7 @@
     "use strict";
     const button = document.getElementById("updateGuideReplay");
     const status = document.getElementById("updateGuideStatus");
-    const catalog = globalThis.BetterChzzkUpdateGuide;
+    const catalog = globalThis.CheeseSpannerUpdateGuide;
     if (!button || !catalog || button.dataset.bcugBound) return;
     button.dataset.bcugBound = "1";
     let guide;

@@ -6,12 +6,12 @@
  *   본인 채팅·일반 후원은 확인 즉시 저장하며, 최소 시청 시간에 미달하면 활동만 저장한다.
  *   live-detail이 현재 방송(OPEN)을 확인하기 전에는 세션·활동을 방송 기록에 연결하지 않는다.
  *   같은 방송의 종료(CLOSE)가 확인되면 시청 세션은 유지하고 다시 OPEN이 될 때까지 새 활동만 버린다.
- * 의존: BetterChzzkSettings와 BetterChzzk.utils의 DOM, 날짜, 범위 병합, runtime 메시지 유틸.
+ * 의존: CheeseSpannerSettings와 CheeseSpanner.utils의 DOM, 날짜, 범위 병합, runtime 메시지 유틸.
  * 통신: 누적 절대값 세션 스냅샷과 provisional→live ID migration을 background 단일 writer에 보낸다.
  * 삭제 barrier 응답을 받으면 기존 세션을 버리고 현재 시각부터 새 세션으로 다시 추적한다.
  */
 (() => {
-    const WATCH_HISTORY_MESSAGE_TYPE = "betterChzzk:watch-history-mutation";
+    const WATCH_HISTORY_MESSAGE_TYPE = "cheese-spanner:watch-history-mutation";
     const WATCH_HISTORY_MESSAGE_VERSION = 1;
     const LIVE_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/channels";
     const TRACK_TICK_MS = 5000;
@@ -27,7 +27,7 @@
     const MAX_TICK_SECONDS = 10;
     const HISTORY_MAX_WATCHED_RANGES_PER_SESSION = 200;
 
-    const { normalizeOptions } = BetterChzzkSettings;
+    const { normalizeOptions } = CheeseSpannerSettings;
     const {
         addTitleHistory,
         bindFeatureOptions,
@@ -46,7 +46,7 @@
         pickString,
         runtimeSendMessage,
         startPageChangeDetection,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
 
     let featureOptions = normalizeOptions();
     let lastUrl = location.href;
@@ -61,7 +61,7 @@
     let runtimeInstalled = false;
     let lifecycleListenersInstalled = false;
     const pendingClosedSessions = new Set();
-    const activityCollector = BetterChzzk.watchActivity?.createCollector((activity, channelId) => {
+    const activityCollector = CheeseSpanner.watchActivity?.createCollector((activity, channelId) => {
         const current = session;
         if (!current || current.closed || current.channelId !== channelId || activity.at < current.enteredAt) return;
         if (

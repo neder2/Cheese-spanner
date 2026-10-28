@@ -13,7 +13,7 @@ const nativeSettings = `<div role="menu" class="pzp-settings pzp-pc-settings pzp
     <div role="menuitem" tabindex="0" class="pzp-ui-setting-home-item pzp-setting-intro-filter">선명한 화면</div>
 </div>`;
 const nativeControls = `<div class="pzp-pc__bottom-buttons-right"><button class="pzp-setting-button pzp-pc__setting-button" aria-label="설정" aria-haspopup="true" aria-expanded="false"></button></div>`;
-const settingsItem = (f) => f.doc.getElementById("betterchzzk-stream-info-settings-item");
+const settingsItem = (f) => f.doc.getElementById("cheese-spanner-stream-info-settings-item");
 const tracks = [{ videoWidth: 1920, videoHeight: 1080, videoBitRate: 8192000 }];
 const response = (items = tracks) => ({
     code: 200,
@@ -100,7 +100,7 @@ function fixture(t, fetcher = async () => response()) {
         return { native, pane, selected };
     };
     const native = mountNative();
-    w.BetterChzzk = {
+    w.CheeseSpanner = {
         utils: {
             bindFeatureOptions(fn) {
                 apply = fn;
@@ -148,7 +148,7 @@ function fixture(t, fetcher = async () => response()) {
             },
         },
     };
-    doc.documentElement.setAttribute("data-betterchzzk-auto-quality-state", JSON.stringify({ enabled: false }));
+    doc.documentElement.setAttribute("data-cheese-spanner-auto-quality-state", JSON.stringify({ enabled: false }));
     for (const file of [
         "shared/uiTheme.js",
         "features/autoQualityPage.js",
@@ -156,10 +156,10 @@ function fixture(t, fetcher = async () => response()) {
         "features/streamInfoModel.js",
     ])
         w.eval(fs.readFileSync(path.join(__dirname, "..", file), "utf8"));
-    const createModel = w.BetterChzzk.streamInfoModel.create;
+    const createModel = w.CheeseSpanner.streamInfoModel.create;
     const samples = [];
     const events = [];
-    w.BetterChzzk.streamInfoModel = {
+    w.CheeseSpanner.streamInfoModel = {
         create: (...args) => {
             const model = createModel(...args);
             return {
@@ -214,9 +214,9 @@ function fixture(t, fetcher = async () => response()) {
         },
         open: () => {
             doc.querySelector(".pzp-setting-button").click();
-            doc.getElementById("betterchzzk-stream-info-settings-item").click();
+            doc.getElementById("cheese-spanner-stream-info-settings-item").click();
         },
-        text: () => doc.getElementById("betterchzzk-stream-info")?.textContent,
+        text: () => doc.getElementById("cheese-spanner-stream-info")?.textContent,
         route: (url) => {
             w.history.replaceState(null, "", url);
             route?.();
@@ -244,8 +244,8 @@ test("native settings open and close stream information without changing existin
     const quality = container.querySelector(".pzp-setting-intro-quality");
     const qualityMarkup = quality.outerHTML;
     const gear = f.doc.querySelector(".pzp-setting-button");
-    assert.equal(f.doc.getElementById("betterchzzk-stream-info-button"), null);
-    assert.equal(f.doc.getElementById("betterchzzk-stream-info-menu"), null);
+    assert.equal(f.doc.getElementById("cheese-spanner-stream-info-button"), null);
+    assert.equal(f.doc.getElementById("cheese-spanner-stream-info-menu"), null);
     assert.equal(settingsItem(f).parentElement, container);
     assert.equal(f.doc.querySelector(".pzp-pc__setting-quality-pane button"), null);
     for (const theme of ["", "theme_dark"]) {
@@ -254,7 +254,7 @@ test("native settings open and close stream information without changing existin
         assert.equal(item.textContent, "스트림 정보 열기");
         assert.equal(item.type, "button");
         assert.equal(item.getAttribute("role"), "menuitem");
-        assert.equal(item.getAttribute("aria-controls"), "betterchzzk-stream-info");
+        assert.equal(item.getAttribute("aria-controls"), "cheese-spanner-stream-info");
         assert.equal(item.getAttribute("aria-expanded"), "false");
         const before = f.requests.length;
         gear.click();
@@ -286,14 +286,17 @@ test("panel is on-demand and shows measured dimensions, declared bitrate, buffer
     assert.match(f.text(), /4\.0초/);
     f.tick(60, 3);
     assert.match(f.text(), /57\.0 FPS/);
-    const labels = Array.from(f.doc.querySelectorAll("#betterchzzk-stream-info dt"), (element) => element.textContent);
+    const labels = Array.from(
+        f.doc.querySelectorAll("#cheese-spanner-stream-info dt"),
+        (element) => element.textContent
+    );
     assert.ok(labels.includes("FPS"));
     assert.doesNotMatch(f.text(), /누적|드롭|출력 프레임|Mbps|라이브 끝과의 차이/);
     assert.match(f.text(), /하드웨어 가속확인 불가/);
     assert.equal(f.requests.length, 1);
     assert.equal(f.timers.size, 1);
     f.doc
-        .getElementById("betterchzzk-stream-info")
+        .getElementById("cheese-spanner-stream-info")
         .dispatchEvent(new f.w.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     assert.equal(f.text(), undefined);
     assert.equal(f.timers.size, 0);
@@ -341,11 +344,11 @@ test("closing, disabling, visibility, navigation and stale requests clean up wit
     assert.match(f.text(), /남은 재생 버퍼4\.00초/);
     assert.equal(f.requests.length, 2);
     f.apply(false);
-    assert.equal(f.doc.querySelector("[id^='betterchzzk-stream-info']"), null);
+    assert.equal(f.doc.querySelector("[id^='cheese-spanner-stream-info']"), null);
     assert.equal(f.timers.size, 0);
     f.apply(true);
     f.apply(true);
-    assert.equal(f.doc.querySelectorAll("#betterchzzk-stream-info-settings-item").length, 1);
+    assert.equal(f.doc.querySelectorAll("#cheese-spanner-stream-info-settings-item").length, 1);
     f.route("/following");
     assert.equal(settingsItem(f), null);
     assert.equal(f.context().defaultPrevented, false);
@@ -366,9 +369,9 @@ test("live panel survives toolbar, source and player replacement while stale han
     f.mutate([next], []);
     assert.match(f.text(), /1920 × 1080/);
     assert.equal(f.timers.size, 1);
-    const panel = f.doc.getElementById("betterchzzk-stream-info");
+    const panel = f.doc.getElementById("cheese-spanner-stream-info");
     f.video.dispatchEvent(new f.w.Event("emptied"));
-    assert.equal(f.doc.getElementById("betterchzzk-stream-info"), panel);
+    assert.equal(f.doc.getElementById("cheese-spanner-stream-info"), panel);
     assert.equal(f.timers.size, 1);
     const oldPlayer = f.doc.querySelector(".pzp-pc");
     const nextPlayer = f.doc.createElement("div");
@@ -378,10 +381,10 @@ test("live panel survives toolbar, source and player replacement while stale han
     nextPlayer.innerHTML = `<video></video>${nativeControls}${nativeSettings}`;
     oldPlayer.replaceWith(nextPlayer);
     f.mutate([nextPlayer], [oldPlayer]);
-    assert.equal(f.doc.getElementById("betterchzzk-stream-info"), panel);
+    assert.equal(f.doc.getElementById("cheese-spanner-stream-info"), panel);
     assert.equal(f.timers.size, 1);
     staleItem.click();
-    assert.equal(f.doc.getElementById("betterchzzk-stream-info"), panel);
+    assert.equal(f.doc.getElementById("cheese-spanner-stream-info"), panel);
     const count = f.requests.length;
     f.video.dispatchEvent(new f.w.Event("emptied"));
     assert.equal(f.requests.length, count, "the detached video no longer owns media events");
@@ -461,7 +464,7 @@ test("metadata failure preserves core metrics and buffering uses the current ran
     assert.equal(f.timers.size, 0);
     f.w.dispatchEvent(new f.w.Event("pageshow"));
     assert.ok(settingsItem(f));
-    assert.equal(f.doc.querySelectorAll("#betterchzzk-stream-info-settings-item").length, 1);
+    assert.equal(f.doc.querySelectorAll("#cheese-spanner-stream-info-settings-item").length, 1);
 });
 
 test("settings activation handles Enter and Space once and leaves native Escape and Tab alone", (t) => {
@@ -481,7 +484,7 @@ test("settings activation handles Enter and Space once and leaves native Escape 
         item.dispatchEvent(new f.w.KeyboardEvent("keydown", { key, repeat: true, bubbles: true, cancelable: true }));
         assert.match(f.text(), /1920 × 1080/);
         assert.equal(f.requests.length, before + 1);
-        f.doc.querySelector('#betterchzzk-stream-info button[aria-label="스트림 정보 닫기"]').click();
+        f.doc.querySelector('#cheese-spanner-stream-info button[aria-label="스트림 정보 닫기"]').click();
         assert.equal(f.doc.activeElement, f.doc.querySelector(".pzp-setting-button"));
         assert.equal(item.textContent, "스트림 정보 열기");
     }
@@ -549,14 +552,14 @@ test("right clicks and context-menu shortcuts pass through without creating stre
     assert.equal(f.context(f.doc.body).defaultPrevented, false);
     assert.equal(f.context(f.video, { shiftKey: true }).defaultPrevented, false);
     f.open();
-    assert.equal(f.context(f.doc.getElementById("betterchzzk-stream-info")).defaultPrevented, false);
+    assert.equal(f.context(f.doc.getElementById("cheese-spanner-stream-info")).defaultPrevented, false);
     f.open();
     for (const init of [{ key: "ContextMenu" }, { key: "F10", shiftKey: true }]) {
         const event = new f.w.KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true });
         player.dispatchEvent(event);
         assert.equal(event.defaultPrevented, false);
     }
-    assert.equal(f.doc.getElementById("betterchzzk-stream-info-menu"), null);
+    assert.equal(f.doc.getElementById("cheese-spanner-stream-info-menu"), null);
     assert.equal(f.text(), undefined);
     assert.equal(f.timers.size, 0);
 });
@@ -564,7 +567,7 @@ test("right clicks and context-menu shortcuts pass through without creating stre
 test("settings remount without duplicate rows, stale handlers, extra sampling or mutation loops", async (t) => {
     const f = fixture(t);
     f.open();
-    const panel = f.doc.getElementById("betterchzzk-stream-info");
+    const panel = f.doc.getElementById("cheese-spanner-stream-info");
     const oldContainer = f.doc.querySelector(".pzp-pc__settings");
     const oldItem = settingsItem(f);
     const replacement = f.doc.createElement("div");
@@ -572,24 +575,24 @@ test("settings remount without duplicate rows, stale handlers, extra sampling or
     const nextContainer = replacement.firstElementChild;
     oldContainer.replaceWith(nextContainer);
     await waitForCondition(() => settingsItem(f)?.parentElement === nextContainer);
-    assert.equal(f.doc.getElementById("betterchzzk-stream-info"), panel);
+    assert.equal(f.doc.getElementById("cheese-spanner-stream-info"), panel);
     assert.equal(settingsItem(f).textContent, "스트림 정보 닫기");
     assert.equal(f.requests.length, 1);
     assert.equal(f.timers.size, 1);
     oldItem.click();
-    assert.equal(f.doc.getElementById("betterchzzk-stream-info"), panel);
+    assert.equal(f.doc.getElementById("cheese-spanner-stream-info"), panel);
     const removedItem = settingsItem(f);
     removedItem.remove();
     await waitForCondition(() => settingsItem(f) && settingsItem(f) !== removedItem);
     removedItem.click();
-    assert.equal(f.doc.getElementById("betterchzzk-stream-info"), panel);
+    assert.equal(f.doc.getElementById("cheese-spanner-stream-info"), panel);
     const secondary = f.doc.createElement("div");
     secondary.className = "pzp-pc";
     secondary.innerHTML = `<video></video>${nativeSettings}`;
     f.doc.querySelector(".pzp-pc").append(secondary);
     await new Promise(setImmediate);
-    assert.equal(secondary.querySelector("#betterchzzk-stream-info-settings-item"), null);
-    assert.equal(f.doc.querySelectorAll("#betterchzzk-stream-info-settings-item").length, 1);
+    assert.equal(secondary.querySelector("#cheese-spanner-stream-info-settings-item"), null);
+    assert.equal(f.doc.querySelectorAll("#cheese-spanner-stream-info-settings-item").length, 1);
     const reads = f.videoReads;
     const changes = [];
     const observer = new f.w.MutationObserver((records) => changes.push(...records));
@@ -626,7 +629,7 @@ test("a settings menu added after player initialization receives one entry", asy
     assert.equal(settingsItem(f), null);
     f.doc.querySelector(".pzp-pc").append(container);
     await waitForCondition(() => settingsItem(f)?.parentElement === container);
-    assert.equal(f.doc.querySelectorAll("#betterchzzk-stream-info-settings-item").length, 1);
+    assert.equal(f.doc.querySelectorAll("#cheese-spanner-stream-info-settings-item").length, 1);
     assert.equal(f.requests.length, 0);
     assert.equal(f.timers.size, 0);
 });
@@ -634,7 +637,7 @@ test("a settings menu added after player initialization receives one entry", asy
 test("live diagnostics use the actual MAIN snapshot and model with one sample per second and accessible graph", async (t) => {
     const f = fixture(t);
     f.doc.documentElement.setAttribute(
-        "data-betterchzzk-low-latency-result",
+        "data-cheese-spanner-low-latency-result",
         JSON.stringify({ status: "applied", selectedTrackId: "low-latency-1080" })
     );
     f.open();
@@ -647,16 +650,16 @@ test("live diagnostics use the actual MAIN snapshot and model with one sample pe
     assert.match(f.text(), /프레임 누락3개 · 5\.0%/);
     assert.match(f.text(), /1\.0초 관측/);
     assert.equal(f.samples.length, 2);
-    assert.equal(f.doc.querySelectorAll("#betterchzzk-stream-info svg path[data-series]").length, 2);
-    assert.ok(f.doc.querySelector('#betterchzzk-stream-info svg[role="img"][aria-describedby]'));
-    assert.equal(f.doc.querySelector("#betterchzzk-stream-info [aria-live]"), null);
+    assert.equal(f.doc.querySelectorAll("#cheese-spanner-stream-info svg path[data-series]").length, 2);
+    assert.ok(f.doc.querySelector('#cheese-spanner-stream-info svg[role="img"][aria-describedby]'));
+    assert.equal(f.doc.querySelector("#cheese-spanner-stream-info [aria-live]"), null);
     assert.equal(f.video.hasAttribute("data-bcsi-request"), false);
     assert.equal(f.video.hasAttribute("data-bcsi-result"), false);
     f.native.selected.kind = "low-latency";
     f.native.selected.id = "low-latency-1080";
     f.tick();
     assert.match(f.text(), /현재 재생 방식저지연/);
-    assert.ok(f.doc.querySelector("#betterchzzk-stream-info [data-mode-change]"));
+    assert.ok(f.doc.querySelector("#cheese-spanner-stream-info [data-mode-change]"));
     assert.equal(f.requests.length, 1);
     assert.equal(f.timers.size, 1);
     assert.deepEqual(f.controlCalls, []);
@@ -667,9 +670,9 @@ test("live source emptying keeps the panel and hides sampling gaps while VOD sti
     f.open();
     await new Promise(setImmediate);
     f.tick();
-    const panel = f.doc.getElementById("betterchzzk-stream-info");
+    const panel = f.doc.getElementById("cheese-spanner-stream-info");
     f.video.dispatchEvent(new f.w.Event("emptied"));
-    assert.equal(f.doc.getElementById("betterchzzk-stream-info"), panel);
+    assert.equal(f.doc.getElementById("cheese-spanner-stream-info"), panel);
     await new Promise(setImmediate);
     f.tick();
     assert.ok(f.samples.at(-1).samples.some((point) => point.gap));
@@ -839,7 +842,7 @@ test("invalid and stale bridge responses stay unknown and are removed without lo
     const f = fixture(t);
     let change = (value) => value;
     f.doc.addEventListener(
-        "betterchzzk:stream-info:read",
+        "cheese-spanner:stream-info:read",
         (event) => {
             const raw = event.target.getAttribute("data-bcsi-result");
             event.target.setAttribute("data-bcsi-result", JSON.stringify(change(JSON.parse(raw))));
@@ -874,7 +877,7 @@ test("live panel rebinds a new main only after fresh identity, retaining same-br
     await new Promise(setImmediate);
     f.tick();
     f.tick();
-    const panel = f.doc.getElementById("betterchzzk-stream-info");
+    const panel = f.doc.getElementById("cheese-spanner-stream-info");
     const replace = () => {
         const old = f.doc.querySelector(".pzp-pc");
         const next = f.doc.createElement("div");
@@ -903,13 +906,13 @@ test("live panel rebinds a new main only after fresh identity, retaining same-br
     replace();
     await new Promise(setImmediate);
     f.tick();
-    assert.equal(f.doc.getElementById("betterchzzk-stream-info"), panel);
+    assert.equal(f.doc.getElementById("cheese-spanner-stream-info"), panel);
     assert.equal(f.samples.at(-1).samples.length, before + 1);
     data = { ...response(), content: { ...response().content, liveId: null } };
     replace();
     await new Promise(setImmediate);
     f.tick();
-    assert.equal(f.doc.getElementById("betterchzzk-stream-info"), panel);
+    assert.equal(f.doc.getElementById("cheese-spanner-stream-info"), panel);
     assert.equal(f.samples.at(-1).samples.length, 1);
     assert.equal(f.timers.size, 1);
     assert.equal(f.requests.length, 3);
@@ -928,7 +931,7 @@ test("an advertisement taking over the main node is a gap and never becomes the 
     wrapper.append(f.video);
     f.mutate([wrapper], []);
     f.tick();
-    assert.ok(f.doc.getElementById("betterchzzk-stream-info"));
+    assert.ok(f.doc.getElementById("cheese-spanner-stream-info"));
     assert.equal(f.samples.at(-1).current.state, "ad");
     assert.equal(f.samples.at(-1).current.buffer, null);
     assert.equal(f.requests.length, 1);
@@ -993,7 +996,7 @@ test("sampling has bounded history and no media writes, and closed panels start 
 test("layout exposes current values first, readable chart legends and a sticky close action in both themes", (t) => {
     const f = fixture(t);
     f.open();
-    const panel = f.doc.getElementById("betterchzzk-stream-info");
+    const panel = f.doc.getElementById("cheese-spanner-stream-info");
     assert.deepEqual(
         Array.from(panel.querySelectorAll("dt"))
             .slice(0, 2)
@@ -1001,13 +1004,13 @@ test("layout exposes current values first, readable chart legends and a sticky c
         ["현재 재생 방식", "라이브 지연(추정)"]
     );
     assert.match(f.text(), /세로 점선: 재생 방식 변경/);
-    const panelStyle = f.doc.getElementById("betterchzzk-stream-info-style");
+    const panelStyle = f.doc.getElementById("cheese-spanner-stream-info-style");
     const css = panelStyle.textContent;
     assert.match(css, /position:sticky/);
     assert.match(css, /max-inline-size:calc\(100% - 16px\)/);
     assert.match(css, /minmax\(0,1fr\) minmax\(0,1fr\)/);
     // Both themes come from the shared CHZZK theme (shared/uiTheme.js) instead of a local html.theme_dark table.
-    const themeStyle = f.doc.getElementById("betterchzzk-ui-theme");
+    const themeStyle = f.doc.getElementById("cheese-spanner-ui-theme");
     assert.ok(themeStyle, "stream info requests the shared CHZZK theme");
     assert.ok(
         themeStyle.compareDocumentPosition(panelStyle) & f.w.Node.DOCUMENT_POSITION_FOLLOWING,
@@ -1015,7 +1018,7 @@ test("layout exposes current values first, readable chart legends and a sticky c
     );
     assert.match(
         css,
-        /#betterchzzk-stream-info\{[^}]*border:1px solid var\(--bct-border\);[^}]*background:var\(--bct-surface\);[^}]*color:var\(--bct-text\);[^}]*font:13px\/1\.5 var\(--bct-font\);[^}]*box-shadow:var\(--bct-shadow\);[^}]*--bcsi-delay:var\(--bct-brand-text\);[^}]*--bcsi-buffer:var\(--bct-text-muted\)/s
+        /#cheese-spanner-stream-info\{[^}]*border:1px solid var\(--bct-border\);[^}]*background:var\(--bct-surface\);[^}]*color:var\(--bct-text\);[^}]*font:13px\/1\.5 var\(--bct-font\);[^}]*box-shadow:var\(--bct-shadow\);[^}]*--bcsi-delay:var\(--bct-brand-text\);[^}]*--bcsi-buffer:var\(--bct-text-muted\)/s
     );
     assert.doesNotMatch(css, /theme_dark|data-theme/, "no local theme selectors");
     assert.doesNotMatch(css, /var\(--bct-[\w-]+,/, "shared theme variables carry no local fallback");
@@ -1110,5 +1113,5 @@ test("source events and main removal invalidate the current mode until a fresh M
     f.video.remove();
     f.mutate([], [f.video]);
     assert.match(f.text(), /현재 재생 방식확인 불가/);
-    assert.ok(f.doc.getElementById("betterchzzk-stream-info"));
+    assert.ok(f.doc.getElementById("cheese-spanner-stream-info"));
 });

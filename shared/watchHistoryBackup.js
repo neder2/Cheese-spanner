@@ -720,7 +720,7 @@
         };
     }
 
-    globalThis.BetterChzzkWatchHistoryBackup = Object.freeze({
+    globalThis.CheeseSpannerWatchHistoryBackup = Object.freeze({
         KIND,
         FORMAT_VERSION,
         LIMITS,

@@ -6,7 +6,7 @@
  *   `/service/v1/channels/following-lives` 응답을 채널·라이브 ID·제목 목록으로 바꾼 뒤 조회 시각의 목록을
  *   방송별 제목 이력에 병합한다. 제목은 공백만 정리한 원문으로 비교해 한 글자·기호 변경도 새 제목으로 남긴다.
  *   같은 채널의 다른 라이브 ID는 새 방송으로 보고 이전 방송의 제목을 이어 붙이지 않는다.
- * 노출: globalThis.BetterChzzkFollowingTitleHistory.
+ * 노출: globalThis.CheeseSpannerFollowingTitleHistory.
  */
 (() => {
     "use strict";
@@ -129,7 +129,7 @@
     }
 
     // 같은 방송에서 제목이 A→B→A로 돌아오면 마지막 A를 새 줄로 남겨 바뀐 순서를 보존해요.
-    // legacyTitle은 1.4.3 저장값을 읽을 때만 쓰는 제목 정리 함수예요(워커가 BetterChzzk.utils.cleanEntryTitle을 넘겨요).
+    // legacyTitle은 1.4.3 저장값을 읽을 때만 쓰는 제목 정리 함수예요(워커가 CheeseSpanner.utils.cleanEntryTitle을 넘겨요).
     function applyPoll(rawStore, items, now, { legacyTitle } = {}) {
         const at = toTime(now);
         const store = normalizeStore(rawStore);
@@ -190,7 +190,7 @@
         return (entry?.titleHistory || []).filter((row) => row.title !== current);
     }
 
-    globalThis.BetterChzzkFollowingTitleHistory = Object.freeze({
+    globalThis.CheeseSpannerFollowingTitleHistory = Object.freeze({
         STORAGE_KEY,
         VERSION,
         MAX_ENTRIES,

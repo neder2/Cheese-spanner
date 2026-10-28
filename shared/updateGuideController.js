@@ -252,5 +252,5 @@
         return { onInstalled, handleMessage, onOptionsChanged };
     }
 
-    globalThis.BetterChzzkUpdateGuideController = Object.freeze({ createController });
+    globalThis.CheeseSpannerUpdateGuideController = Object.freeze({ createController });
 })();

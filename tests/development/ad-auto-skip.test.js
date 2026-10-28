@@ -41,7 +41,7 @@ function createPage(t, { empty = false, pathname = "/live/channel" } = {}) {
         }
     };
     window.HTMLElement.prototype.getBoundingClientRect = () => ({ width: 100, height: 40 });
-    window.BetterChzzkSettings = {
+    window.CheeseSpannerSettings = {
         getOptions(fn) {
             fn({ adAutoSkipEnabled: false });
         },
@@ -174,10 +174,10 @@ test("initial mount and player replacement reconnect while route exit and disabl
     await waitForCondition(() => clicks === 2);
     assert.equal(clicks, 2);
     h.window.history.replaceState(null, "", "/category");
-    h.window.dispatchEvent(new h.window.Event("betterchzzk:routechange:detected"));
+    h.window.dispatchEvent(new h.window.Event("cheese-spanner:routechange:detected"));
     assert.equal(h.observed.size, 0);
     h.window.history.replaceState(null, "", "/video/123");
-    h.window.dispatchEvent(new h.window.Event("betterchzzk:routechange:detected"));
+    h.window.dispatchEvent(new h.window.Event("cheese-spanner:routechange:detected"));
     assert.equal(clicks, 3);
     h.setEnabled(false);
     assert.equal(h.observed.size, 0);

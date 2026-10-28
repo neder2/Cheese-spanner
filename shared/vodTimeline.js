@@ -1,15 +1,15 @@
 /**
  * shared/vodTimeline.js — VOD 상세 응답과 장시간 분할 방송의 시간축을 정규화한다.
  *
- * 실행 컨텍스트: isolated world 콘텐츠 스크립트. content.js가 구성한 BetterChzzk.utils를 사용하며
+ * 실행 컨텍스트: isolated world 콘텐츠 스크립트. content.js가 구성한 CheeseSpanner.utils를 사용하며
  *   네트워크 요청, DOM 조작, storage 접근 없이 순수 계산과 연결 세그먼트 순회만 담당한다.
- * 공개 API: BetterChzzk.vodTimeline.normalizeVideoDetail, resolveSegmentStartInfo,
+ * 공개 API: CheeseSpanner.vodTimeline.normalizeVideoDetail, resolveSegmentStartInfo,
  *   mergeBroadcastSegment.
  */
 (() => {
     "use strict";
 
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     if (root.vodTimeline) return;
 
     const VOD_SPLIT_SEGMENT_MS = 17 * 60 * 60 * 1000;

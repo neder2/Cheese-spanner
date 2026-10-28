@@ -6,7 +6,7 @@ const vm = require("node:vm");
 
 require("../shared/settings.js");
 
-const settings = globalThis.BetterChzzkSettings;
+const settings = globalThis.CheeseSpannerSettings;
 
 const expectedDefaults = {
     optionsTheme: "system",
@@ -458,7 +458,7 @@ function createSettingsWorker(sync) {
                 location: { protocol: "chrome-extension:" },
             });
             vm.runInContext(read("shared/settings.js"), page, { filename: "shared/settings.js" });
-            page.BetterChzzkSettings.getOptions(() => {});
+            page.CheeseSpannerSettings.getOptions(() => {});
         },
     };
 }

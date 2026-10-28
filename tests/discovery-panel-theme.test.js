@@ -13,10 +13,10 @@ const {
 // monthly broadcast calendar. Each panel asks for the shared CHZZK theme (shared/uiTheme.js) before its own
 // style, keeps no theme fallback table of its own and keeps the two-class font rule in features/AGENTS.md.
 
-const THEME_STYLE_ID = "betterchzzk-ui-theme";
-const CATEGORY_STYLE_ID = "betterchzzk-category-tools-style";
-const VIDEO_STYLE_ID = "betterchzzk-video-search-style";
-const MONTHLY_STYLE_ID = "betterchzzk-monthly-broadcast-time-style";
+const THEME_STYLE_ID = "cheese-spanner-ui-theme";
+const CATEGORY_STYLE_ID = "cheese-spanner-category-tools-style";
+const VIDEO_STYLE_ID = "cheese-spanner-video-search-style";
+const MONTHLY_STYLE_ID = "cheese-spanner-monthly-broadcast-time-style";
 const MONTHLY_CHANNEL_ID = "0123456789abcdef0123456789abcdef";
 const MONTHLY_FONT_FAMILY =
     '"Sandoll Nemony2", "Sandoll Nemony", "Apple SD Gothic Neo", "Apple SD Gothic NEO", "Malgun Gothic", "맑은 고딕", sans-serif';
@@ -303,7 +303,7 @@ function contrast(left, right) {
 
 test("category tools request the shared theme and keep only the media badge colors of their own", async (t) => {
     const page = await loadCategoryPage(t);
-    await waitFor(() => page.document.getElementById("betterchzzk-category-tools"));
+    await waitFor(() => page.document.getElementById("cheese-spanner-category-tools"));
     const { css, rules } = assertSharedThemeContract(page.document, CATEGORY_STYLE_ID, CATEGORY_FIXED_COLOR_SELECTORS);
     assertSmallTextTokens(rules);
 
@@ -316,8 +316,8 @@ test("category tools request the shared theme and keep only the media badge colo
         ["--bcgt-focus", "var(--bct-focus-ring)"],
         ["--bcgt-radius", "var(--bct-radius-full)"],
     ])
-        assert.equal(declaration(rules, "#betterchzzk-category-tools, .bcgt-category-summary", name), value, name);
-    const menuSelector = "#betterchzzk-category-filter-menu, #betterchzzk-category-add-panel";
+        assert.equal(declaration(rules, "#cheese-spanner-category-tools, .bcgt-category-summary", name), value, name);
+    const menuSelector = "#cheese-spanner-category-filter-menu, #cheese-spanner-category-add-panel";
     for (const [name, value] of [
         ["--bcgt-menu-bg", "var(--bct-surface)"],
         ["--bcgt-menu-field-bg", "var(--bct-surface-weak)"],
@@ -333,7 +333,7 @@ test("category tools request the shared theme and keep only the media badge colo
 
     // Native font classification (features/AGENTS.md): the bar copies the host font and the follower badge keeps its stack.
     assert.doesNotMatch(css, /--bct-font/);
-    assert.equal(declaration(rules, "#betterchzzk-category-tools", "font-family"), "var(--bcgt-font-family)");
+    assert.equal(declaration(rules, "#cheese-spanner-category-tools", "font-family"), "var(--bcgt-font-family)");
     assert.match(declaration(rules, '[data-bcgt-follower-badge="1"]', "font-family"), /^"Sandoll Nemony2",/);
 });
 
@@ -344,9 +344,9 @@ test("category tools still copy the computed host font into the bar and the filt
             button.style.fontWeight = "600";
         });
     });
-    await waitFor(() => page.document.getElementById("betterchzzk-category-filter-menu"));
-    const bar = page.document.getElementById("betterchzzk-category-tools");
-    const menu = page.document.getElementById("betterchzzk-category-filter-menu");
+    await waitFor(() => page.document.getElementById("cheese-spanner-category-filter-menu"));
+    const bar = page.document.getElementById("cheese-spanner-category-tools");
+    const menu = page.document.getElementById("cheese-spanner-category-filter-menu");
     const native = page.window.getComputedStyle(page.document.querySelector("#tabs button")).fontFamily;
     assert.match(native, /Native Tab/);
     assert.equal(bar.style.getPropertyValue("--bcgt-font-family"), native);
@@ -356,7 +356,9 @@ test("category tools still copy the computed host font into the bar and the filt
 
 test("category tools show the polite empty result message", async (t) => {
     const page = await loadCategoryPage(t);
-    const input = await waitFor(() => page.document.querySelector("#betterchzzk-category-tools input[type='search']"));
+    const input = await waitFor(() =>
+        page.document.querySelector("#cheese-spanner-category-tools input[type='search']")
+    );
     input.value = "결과가 없을 검색어";
     input.dispatchEvent(new page.window.Event("input", { bubbles: true }));
     const empty = await waitFor(() => {
@@ -368,7 +370,7 @@ test("category tools show the polite empty result message", async (t) => {
 
 test("video search requests the shared theme, uses the bundled font and still mirrors native pill colors", async (t) => {
     const page = await loadVideoSearchPage(t);
-    const bar = await waitFor(() => page.document.getElementById("betterchzzk-video-search-bar"));
+    const bar = await waitFor(() => page.document.getElementById("cheese-spanner-video-search-bar"));
     const { rules } = assertSharedThemeContract(page.document, VIDEO_STYLE_ID);
     assertSmallTextTokens(rules);
 
@@ -378,7 +380,11 @@ test("video search requests the shared theme, uses the bundled font and still mi
     assert.equal(bar.style.getPropertyValue("--bcvs-font-family"), "", "the native pill font is not copied");
     assert.equal(bar.style.fontFamily, "");
 
-    for (const selector of ["#betterchzzk-video-search-bar", "[data-bcvs-load-more] button", ".bcvs-comment-tooltip"])
+    for (const selector of [
+        "#cheese-spanner-video-search-bar",
+        "[data-bcvs-load-more] button",
+        ".bcvs-comment-tooltip",
+    ])
         assert.equal(declaration(rules, selector, "font-family"), "var(--bct-font)", selector);
     for (const [name, value] of [
         ["--bcvs-accent", "var(--bct-brand-text)"],
@@ -387,25 +393,25 @@ test("video search requests the shared theme, uses the bundled font and still mi
         ["--bcvs-text", "var(--bct-text-muted)"],
         ["--bcvs-focus", "var(--bct-focus-ring)"],
     ])
-        assert.equal(declaration(rules, "#betterchzzk-video-search-bar", name), value, name);
+        assert.equal(declaration(rules, "#cheese-spanner-video-search-bar", name), value, name);
     assert.equal(declaration(rules, ".bcvs-comment-tooltip", "box-shadow"), "var(--bct-shadow)");
     assert.equal(declaration(rules, ".bcvs-comment-tooltip", "background"), "var(--bct-surface)");
 });
 
 test("monthly calendar requests the shared theme and keeps its specified font stack", async (t) => {
     const page = await loadMonthlyPage(t);
-    const widget = await waitFor(() => page.document.getElementById("betterchzzk-monthly-broadcast-time"));
+    const widget = await waitFor(() => page.document.getElementById("cheese-spanner-monthly-broadcast-time"));
     const { css, rules } = assertSharedThemeContract(page.document, MONTHLY_STYLE_ID);
     assertSmallTextTokens(rules);
 
-    assert.equal(declaration(rules, "#betterchzzk-monthly-broadcast-time", "font-family"), MONTHLY_FONT_FAMILY);
+    assert.equal(declaration(rules, "#cheese-spanner-monthly-broadcast-time", "font-family"), MONTHLY_FONT_FAMILY);
     assert.doesNotMatch(css, /--bct-font/);
     assert.equal(
-        declaration(rules, "#betterchzzk-monthly-broadcast-time .bcmb-calendar", "background"),
+        declaration(rules, "#cheese-spanner-monthly-broadcast-time .bcmb-calendar", "background"),
         "var(--bct-surface)"
     );
     assert.equal(
-        declaration(rules, "#betterchzzk-monthly-broadcast-time .bcmb-calendar", "box-shadow"),
+        declaration(rules, "#cheese-spanner-monthly-broadcast-time .bcmb-calendar", "box-shadow"),
         "var(--bct-shadow)"
     );
     assert.equal(
@@ -420,7 +426,7 @@ test("monthly calendar levels grow in intensity and keep 4.5:1 day numbers in bo
     await waitFor(() => page.document.getElementById(MONTHLY_STYLE_ID));
     const rules = parseRules(page.document.getElementById(MONTHLY_STYLE_ID).textContent);
     const themes = themeFallbacks(page.document);
-    const widgetSelector = "#betterchzzk-monthly-broadcast-time";
+    const widgetSelector = "#cheese-spanner-monthly-broadcast-time";
     for (const theme of ["dark", "light"]) {
         const values = themes[theme];
         let previous = 1;

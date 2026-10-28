@@ -26,7 +26,7 @@ function createNativePreviewDom({ branch = 2, enabled = true, url = "https://chz
         width: 336,
     });
     document.documentElement.setAttribute(
-        "data-betterchzzk-live-preview-fast-hover-options",
+        "data-cheese-spanner-live-preview-fast-hover-options",
         JSON.stringify({ enabled })
     );
 
@@ -108,10 +108,10 @@ test("native hover acceleration stays disabled with the preview option off", () 
     anchor.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true, relatedTarget: null }));
 
     dom.window.document.documentElement.setAttribute(
-        "data-betterchzzk-live-preview-fast-hover-options",
+        "data-cheese-spanner-live-preview-fast-hover-options",
         JSON.stringify({ enabled: true })
     );
-    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:live-preview-fast-hover-options"));
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:live-preview-fast-hover-options"));
     anchor.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true, relatedTarget: null }));
     assert.deepEqual(scheduledDelays, [600, 0], "the same native handler is accelerated once the option is on");
     dom.window.close();

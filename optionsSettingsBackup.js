@@ -5,12 +5,12 @@
  * 하는 일: 헤더 더보기의 두 버튼으로 설정 파일을 내려받고, 고른 파일을 워커에 미리보기 요청해 바뀌는 구역을
  *   보여 준 뒤, 사용자의 적용 클릭에서 필요한 선택 권한을 요청하고 워커에 적용을 요청한다.
  *   파일 읽기·검증·현재 값 비교·쓰기·되돌리기는 모두 워커의 설정 저장 큐(shared/settingsStore.js)가 소유한다.
- * 통신: chrome.runtime 메시지 betterchzzk:settings-backup(export·preview·apply), chrome.permissions.request.
+ * 통신: chrome.runtime 메시지 cheese-spanner:settings-backup(export·preview·apply), chrome.permissions.request.
  */
 (() => {
     "use strict";
-    const catalog = globalThis.BetterChzzkSettingsBackup;
-    const page = globalThis.BetterChzzkOptionsPage;
+    const catalog = globalThis.CheeseSpannerSettingsBackup;
+    const page = globalThis.CheeseSpannerOptionsPage;
     const exportButton = document.getElementById("exportSettingsFile");
     const importButton = document.getElementById("importSettingsFile");
     const fileInput = document.getElementById("settingsFileInput");

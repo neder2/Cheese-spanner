@@ -7,12 +7,12 @@ const { createFakeChrome, waitForCondition } = require("./helpers/extension-page
 
 require("../shared/chatMultiview.js");
 
-const chatModel = globalThis.BetterChzzkChatMultiview;
+const chatModel = globalThis.CheeseSpannerChatMultiview;
 const repoRoot = path.join(__dirname, "..");
 const read = (file) => fs.readFileSync(path.join(repoRoot, file), "utf8");
 const KEY = "betterchzzk:chat-multiview:v1";
-const STORE_TYPE = "betterchzzk:settings-store";
-const ENTRY_ID = "betterchzzk-chat-multiview";
+const STORE_TYPE = "cheese-spanner:settings-store";
+const ENTRY_ID = "cheese-spanner-chat-multiview";
 const PANEL_ID = ENTRY_ID + "-panel";
 const [A, B, C, D, E] = ["a", "b", "c", "d", "e"].map((letter) => letter.repeat(32));
 const MAIN_CHANNEL = "f".repeat(32);
@@ -95,7 +95,7 @@ function fixture(t, { enabled = true, stored, withHeader = true, holdReads = fal
         sync: { chatMultiviewEnabled: enabled },
         local: stored === undefined ? {} : { [KEY]: clone(stored) },
     });
-    chrome.runtime.getURL = (file) => "chrome-extension://better-chzzk/" + file;
+    chrome.runtime.getURL = (file) => "chrome-extension://cheese-spanner/" + file;
     const localReads = [],
         syncReads = [],
         heldReads = [],
@@ -301,7 +301,7 @@ function fixture(t, { enabled = true, stored, withHeader = true, holdReads = fal
         },
         navigate(url) {
             w.history.pushState({}, "", url);
-            w.dispatchEvent(new w.Event("betterchzzk:routechange"));
+            w.dispatchEvent(new w.Event("cheese-spanner:routechange"));
         },
         // Models the same-origin chat document behind one cell's frame.
         attachFrame(id, { chat = true, navigation = true, path: framePath = "/live/" + id + "/chat" } = {}) {
@@ -573,7 +573,7 @@ test("stored values compare structurally for expected-state checks regardless of
 
 test("stays off by default without reading the layout or adding a header button", async (t) => {
     const f = fixture(t, { enabled: false, stored: layout([A]) });
-    assert.equal(f.w.BetterChzzkSettings.DEFAULT_OPTIONS.chatMultiviewEnabled, false);
+    assert.equal(f.w.CheeseSpannerSettings.DEFAULT_OPTIONS.chatMultiviewEnabled, false);
     await waitForCondition(() => f.syncReads.length > 0);
     // The option callback and one animation frame have passed; nothing may appear after them.
     await settle(50);
@@ -932,7 +932,11 @@ test("a following channel link dropped on the panel is looked up and added; othe
 
     f.trusted(f.w, "dragstart");
     assert.ok(panel.hasAttribute("data-bccmv-dragging"), "chat frames stop taking pointer events while dragging");
-    const folderDrag = { types: ["application/x-betterchzzk-following-folder"], dropEffect: "none", getData: () => "" };
+    const folderDrag = {
+        types: ["application/x-cheese-spanner-following-folder"],
+        dropEffect: "none",
+        getData: () => "",
+    };
     const ignored = { defaultPrevented: false };
     f.trusted(panel, "dragover", {
         dataTransfer: folderDrag,
@@ -1538,14 +1542,14 @@ test("SPA navigation keeps open chats and reconnects one header button after the
     const frame = f.frame(A);
     const holder = f.w.document.createElement("div");
     holder.innerHTML = headerHtml(
-        '<span id="betterchzzk-live-start-registration"><button type="button">방송 알림</button></span>'
+        '<span id="cheese-spanner-live-start-registration"><button type="button">방송 알림</button></span>'
     );
     const nextHeader = holder.firstElementChild;
     f.w.document.getElementById("header").replaceWith(nextHeader);
     f.navigate("/" + B);
     await waitForCondition(() => nextHeader.contains(f.entry()));
     assert.equal(f.w.document.querySelectorAll("#" + ENTRY_ID).length, 1);
-    assert.equal(f.w.document.getElementById("betterchzzk-live-start-registration").nextElementSibling.id, ENTRY_ID);
+    assert.equal(f.w.document.getElementById("cheese-spanner-live-start-registration").nextElementSibling.id, ENTRY_ID);
     assert.equal(f.entry().getAttribute("aria-expanded"), "true");
     assert.ok(f.panel());
     assert.equal(f.frame(A), frame);
@@ -1654,7 +1658,7 @@ test("verified chat frames get one extension style that hides the native header,
         native.doc.body.append(page);
     };
     const frameStyle = (doc) => {
-        const style = doc.getElementById("betterchzzk-chat-multiview-frame-style");
+        const style = doc.getElementById("cheese-spanner-chat-multiview-frame-style");
         assert.ok(style, "frame style");
         return style.textContent;
     };
@@ -1665,10 +1669,14 @@ test("verified chat frames get one extension style that hides the native header,
     };
     const a = f.attachFrame(A, { chat: false });
     nativeChat(a);
-    assert.equal(a.doc.getElementById("betterchzzk-chat-multiview-frame-style"), null, "nothing before verification");
+    assert.equal(
+        a.doc.getElementById("cheese-spanner-chat-multiview-frame-style"),
+        null,
+        "nothing before verification"
+    );
     a.load();
     assert.equal(f.cell(A).dataset.state, "ready");
-    assert.equal(a.doc.querySelectorAll("#betterchzzk-chat-multiview-frame-style").length, 1);
+    assert.equal(a.doc.querySelectorAll("#cheese-spanner-chat-multiview-frame-style").length, 1);
     // No sideways scroll under narrow chats: only the chat box's page wrapper loses its minimum width.
     const fit = frameStyle(a.doc).match(/^([^{]*)\{min-width:0!important\}/)?.[1];
     assert.deepEqual(
@@ -1685,7 +1693,7 @@ test("verified chat frames get one extension style that hides the native header,
         "native-ranking",
     ]);
     f.changeLocal(layout([A, B]));
-    assert.equal(a.doc.querySelectorAll("#betterchzzk-chat-multiview-frame-style").length, 1, "never duplicated");
+    assert.equal(a.doc.querySelectorAll("#cheese-spanner-chat-multiview-frame-style").length, 1, "never duplicated");
 
     // Turning the input on in the multiview settings shows each verified chat's input but keeps donation hidden.
     f.openSettings();
@@ -1705,7 +1713,7 @@ test("verified chat frames get one extension style that hides the native header,
     const b = f.attachFrame(B, { path: "/" + B });
     b.load();
     assert.equal(f.cell(B).dataset.state, "left");
-    assert.equal(b.doc.getElementById("betterchzzk-chat-multiview-frame-style"), null);
+    assert.equal(b.doc.getElementById("cheese-spanner-chat-multiview-frame-style"), null);
     assert.equal(f.requests.length, 0);
 });
 
@@ -1870,7 +1878,7 @@ test("content scripts and the dynamic ad script stay in the top frame, so chat f
         assert.notEqual(entry.match_origin_as_fallback, true, entry.js[0]);
     }
     require("../shared/adVideoRegistration.js");
-    const adScript = globalThis.BetterChzzkAdVideoRegistration.CONTENT_SCRIPT;
+    const adScript = globalThis.CheeseSpannerAdVideoRegistration.CONTENT_SCRIPT;
     assert.equal(adScript.allFrames, false);
     assert.notEqual(adScript.matchOriginAsFallback, true);
     const injected = new Set([...manifest.content_scripts.flatMap((entry) => entry.js), ...adScript.js]);
@@ -1952,7 +1960,7 @@ test("integration: manifest loads the pure model before the isolated top-frame f
     assert.match(read("options.html"), /data-option="chatMultiviewEnabled"/);
 });
 
-// shared/uiTheme.js owns the only light/dark fallback table and the single "BetterChzzk Pretendard" @font-face for
+// shared/uiTheme.js owns the only light/dark fallback table and the single "CheeseSpanner Pretendard" @font-face for
 // in-page UI (shared/AGENTS.md, features/AGENTS.md). The panel keeps only theme-independent colors: the live dot, the warning mark with its
 // white glyph, and the white toggle knob with its shadow.
 const CHAT_FIXED_COLORS = ["#ff4545", "#f08c00", "#fff", "#0000004d"];
@@ -1963,30 +1971,33 @@ test("chat multiview uses the shared theme font instead of declaring its own @fo
     assert.doesNotMatch(source, /@font-face|PretendardVariable\.woff2|runtime\??\.getURL/);
     const f = fixture(t, { enabled: false, stored: layout([A]), withTheme: true });
     await waitForCondition(() => f.w.document.getElementById(ENTRY_ID + "-style"));
-    assert.equal(f.w.document.getElementById("betterchzzk-ui-theme"), null, "no theme while the option is off");
+    assert.equal(f.w.document.getElementById("cheese-spanner-ui-theme"), null, "no theme while the option is off");
     f.changeSync({ chatMultiviewEnabled: true });
     await f.open();
     const d = f.w.document;
-    assert.equal(d.querySelectorAll("#betterchzzk-ui-theme").length, 1);
+    assert.equal(d.querySelectorAll("#cheese-spanner-ui-theme").length, 1);
     const fontFaces = [...d.querySelectorAll("style")].flatMap((style) =>
         [...style.textContent.matchAll(/@font-face\{[^}]*\}/g)].map(([rule]) => rule)
     );
     assert.equal(fontFaces.length, 1, "one shared @font-face in the document");
-    assert.match(fontFaces[0], /font-family:"BetterChzzk Pretendard";src:url\("chrome-extension:\/\/better-chzzk\//);
-    assert.match(d.getElementById("betterchzzk-ui-theme").textContent, /@font-face/);
+    assert.match(
+        fontFaces[0],
+        /font-family:"CheeseSpanner Pretendard";src:url\("chrome-extension:\/\/cheese-spanner\//
+    );
+    assert.match(d.getElementById("cheese-spanner-ui-theme").textContent, /@font-face/);
     const css = d.getElementById(ENTRY_ID + "-style").textContent;
     assert.match(css, new RegExp("\\n#" + ENTRY_ID + "\\{[^}]*font:14px/1\\.4 var\\(--bct-font\\)"));
     assert.match(css, new RegExp("\\n#" + PANEL_ID + "\\{[^}]*font:13px/1\\.5 var\\(--bct-font\\)"));
-    assert.doesNotMatch(css, /BetterChzzk Pretendard|system-ui|Segoe UI/, "the font stack lives in the theme only");
+    assert.doesNotMatch(css, /CheeseSpanner Pretendard|system-ui|Segoe UI/, "the font stack lives in the theme only");
 
     // The chat frames get only the hide style: no theme variables or fonts are needed inside them.
     const a = f.attachFrame(A);
     a.load();
     assert.equal(f.cell(A).dataset.state, "ready");
-    const frameStyle = a.doc.getElementById("betterchzzk-chat-multiview-frame-style");
+    const frameStyle = a.doc.getElementById("cheese-spanner-chat-multiview-frame-style");
     assert.ok(frameStyle);
     assert.equal(a.doc.querySelectorAll("style").length, 1);
-    assert.equal(a.doc.getElementById("betterchzzk-ui-theme"), null);
+    assert.equal(a.doc.getElementById("cheese-spanner-ui-theme"), null);
     assert.doesNotMatch(frameStyle.textContent, /var\(|@font-face|font-family/);
 });
 
@@ -1996,7 +2007,9 @@ test("chat multiview colors, radii, shadow and states come from the shared theme
     const d = f.w.document;
     const css = d.getElementById(ENTRY_ID + "-style").textContent;
     const defined = new Set(
-        [...d.getElementById("betterchzzk-ui-theme").textContent.matchAll(/(--bct-[a-z-]+):/g)].map(([, name]) => name)
+        [...d.getElementById("cheese-spanner-ui-theme").textContent.matchAll(/(--bct-[a-z-]+):/g)].map(
+            ([, name]) => name
+        )
     );
     const used = [...css.matchAll(/var\((--bct-[a-z-]+)(\)|,)/g)];
     assert.ok(used.length > 15);

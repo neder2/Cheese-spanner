@@ -24,7 +24,7 @@ function fixture(t, options = {}) {
     const { window } = dom;
     const { document } = window;
     let apply;
-    window.BetterChzzk = {
+    window.CheeseSpanner = {
         utils: {
             bindFeatureOptions(fn) {
                 apply = fn;
@@ -88,7 +88,7 @@ test("player button options default off and have labelled independent controls a
     t.after(() => dom.window.close());
     dom.window.eval(read("shared/settings.js"));
     for (const key of keys) {
-        assert.equal(dom.window.BetterChzzkSettings.DEFAULT_OPTIONS[key], false);
+        assert.equal(dom.window.CheeseSpannerSettings.DEFAULT_OPTIONS[key], false);
         const controls = dom.window.document.querySelectorAll(`[data-option="${key}"]`);
         assert.equal(controls.length, 1);
         assert.equal(controls[0].type, "checkbox");

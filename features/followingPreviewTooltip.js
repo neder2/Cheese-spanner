@@ -7,13 +7,13 @@
  *   그대로 사용한다. 옵션이 켜진 상태에서 우클릭하면 팔로잉은 소리를 토글하고 목록 미리보기는
  *   소리를 켜면서 CSS로 확대한다. 팔로잉 영상에는 소리 상태 아이콘과 전환 피드백을 표시하고,
  *   목록 영상에는 우클릭 동작 안내 툴팁만 표시한다. 페이지 이동·포인터 이탈·DOM 제거 시 정리한다.
- * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
+ * 의존: 전역 CheeseSpannerSettings.normalizeOptions, CheeseSpanner.utils(bindFeatureOptions,
  *   cleanEntryTitle, compactSpaces, ensureUiTheme(선택), fetchJson, injectStyleOnce, normalizeChzzkImageUrl,
  *   normalizeChzzkMediaUrl, normSpace, onReady, parseChzzkDate, startPageChangeDetection,
  *   settingsStoreSet, touchMapEntry), vendor/hls.light.min.js가 제공하는 전역 window.Hls.
  * 옵션 키: followingPreviewTooltipEnabled, followingPreviewSoundEnabled,
  *   followingPreviewVolumePercent, livePreviewRightClickSoundEnabled.
- * DOM 마커: #betterchzzk-following-preview 툴팁, data-bcfp-tooltip/data-bcfp-active/
+ * DOM 마커: #cheese-spanner-following-preview 툴팁, data-bcfp-tooltip/data-bcfp-active/
  *   data-bcfp-player-mount/data-bcfp-player-state/data-bcfp-sound-feedback/data-bcfp-list-hint 속성,
  *   .bcfp-* 클래스.
  * 통신: 우클릭으로 바꾼 팔로잉 소리 선호도를 chrome.storage.sync에 저장한다.
@@ -32,12 +32,12 @@
  *     uninstallListeners — 호버 오픈 지연, 옵션 on/off에 따른 리스너 설치·해제.
  */
 (() => {
-    const STYLE_ID = "betterchzzk-following-preview-style";
-    const TOOLTIP_ID = "betterchzzk-following-preview";
+    const STYLE_ID = "cheese-spanner-following-preview-style";
+    const TOOLTIP_ID = "cheese-spanner-following-preview";
     const TOOLTIP_ATTR = "data-bcfp-tooltip";
     const ACTIVE_ATTR = "data-bcfp-active";
     const HOVER_BRIDGE_ATTR = "data-bcfp-hover-bridge";
-    const MULTIVIEW_LAYER_EVENT = "betterchzzk:multiview-layer-change";
+    const MULTIVIEW_LAYER_EVENT = "cheese-spanner:multiview-layer-change";
     const COLLAPSED_SOURCE_ROW_ATTR = "data-bcsf-source-row";
     const LIVE_LINK_SELECTOR = "a[href*='/live/']";
     const MAIN_CONTENT_SELECTOR = "main, [role='main'], #layout-body";
@@ -85,8 +85,8 @@
     const LIVE_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/channels";
     const LIVE_AUTO_PLAY_API_BASE = "https://api.chzzk.naver.com/service/v1/live";
     const HOVER_OPEN_DELAY_MS = 0;
-    const FAST_HOVER_CONFIG_EVENT = "betterchzzk:live-preview-fast-hover-options";
-    const FAST_HOVER_CONFIG_ATTR = "data-betterchzzk-live-preview-fast-hover-options";
+    const FAST_HOVER_CONFIG_EVENT = "cheese-spanner:live-preview-fast-hover-options";
+    const FAST_HOVER_CONFIG_ATTR = "data-cheese-spanner-live-preview-fast-hover-options";
     const FOLLOWING_PREVIEW_FETCH_DELAY_MS = 100;
     const PREVIEW_PLAYBACK_DELAY_MS = 300;
     const PREVIEW_MAX_HEIGHT = 480;
@@ -471,9 +471,9 @@
         settingsStoreSet,
         startPageChangeDetection,
         touchMapEntry,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
 
-    let featureOptions = BetterChzzkSettings.normalizeOptions();
+    let featureOptions = CheeseSpannerSettings.normalizeOptions();
     let listenersInstalled = false;
     let tooltip = null;
     let hoverBridge = null;
@@ -2356,7 +2356,7 @@
         if (listenersInstalled) return;
 
         listenersInstalled = true;
-        BetterChzzk.utils.ensureUiTheme?.();
+        CheeseSpanner.utils.ensureUiTheme?.();
         injectStyleOnce(STYLE_ID, STYLE_TEXT);
         document.addEventListener("pointerover", handlePointerOver, true);
         document.addEventListener("pointerout", handlePointerOut, true);

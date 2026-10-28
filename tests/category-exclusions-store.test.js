@@ -8,7 +8,7 @@ const {
 } = require("./helpers/category-exclusions-worker.js");
 
 const KEY = "betterchzzkCategoryExclusionsV1";
-const TYPE = "betterchzzk:category-exclusions";
+const TYPE = "cheese-spanner:category-exclusions";
 const copy = (value) => structuredClone(value);
 const category = (categoryId = "League_of_Legends", categoryType = "GAME", categoryValue = "리그 오브 레전드") => ({
     categoryType,
@@ -58,9 +58,9 @@ async function within(promise) {
 }
 
 test("pure validation loads without DOM globals and preserves unrelated namespace fields", () => {
-    const context = vm.createContext({ URL, BetterChzzk: { existing: { retained: true } } });
+    const context = vm.createContext({ URL, CheeseSpanner: { existing: { retained: true } } });
     const module = loadCategoryExclusions(context);
-    assert.equal(context.BetterChzzk.existing.retained, true);
+    assert.equal(context.CheeseSpanner.existing.retained, true);
     assert.equal(module.STORAGE_KEY, KEY);
     assert.equal(module.MESSAGE_TYPE, TYPE);
     assert.deepEqual(copy(module.createEmptyState()), state());
@@ -673,19 +673,19 @@ test("category persistence stays independent of a blocked history writer, guide 
         const gate = storage.pauseNext("get", key);
         const message = {
             history: {
-                type: "betterChzzk:watch-history-mutation",
+                type: "cheese-spanner:watch-history-mutation",
                 version: 1,
                 operation: { kind: "clearHistory", cutoffAt: Date.now() },
             },
             guide: {
-                type: "betterchzzk:update-guide",
+                type: "cheese-spanner:update-guide",
                 protocol: 1,
                 guideVersion: "1.4.1",
                 action: "claim",
                 clientId: "category-independence",
             },
             "live-start": {
-                type: "betterchzzk:live-start:channels",
+                type: "cheese-spanner:live-start:channels",
                 kind: "remove",
                 channel: { channelId: "a".repeat(32) },
             },

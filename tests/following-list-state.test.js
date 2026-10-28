@@ -133,7 +133,7 @@ function createPage(
         button: (kind) => document.querySelector(`[data-kind="${kind}"]`),
         navigate() {
             dom.window.history.pushState({}, "", "/live/channel-a");
-            dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+            dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:routechange"));
         },
     };
 }

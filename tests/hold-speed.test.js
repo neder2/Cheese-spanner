@@ -137,10 +137,10 @@ function createFixture({
         get: () => (hidden ? "hidden" : "visible"),
     });
 
-    window.BetterChzzkSettings = {
+    window.CheeseSpannerSettings = {
         normalizeOptions: () => ({ ...options }),
     };
-    window.BetterChzzk = {
+    window.CheeseSpanner = {
         skipControl: {
             markPlaybackToggleIntent() {
                 playbackToggleIntentCalls += 1;
@@ -266,10 +266,10 @@ test("left-button holds share the Space option and restore speed without togglin
             assert.equal(fixture.video.playbackRate, 1.25);
             fixture.timers.advance(1);
             assert.equal(fixture.video.playbackRate, 2);
-            assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay").textContent, "2배속");
+            assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay").textContent, "2배속");
             dispatchPointer(fixture, "pointerup");
             assert.equal(fixture.video.playbackRate, 1.25);
-            assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+            assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay"), null);
             assert.equal(dispatchPointer(fixture, "click").defaultPrevented, true);
             assert.equal(clicks, 0, "releasing a hold must not become a native playback click");
             assert.equal(fixture.mediaState.paused, paused);
@@ -400,7 +400,7 @@ test("mouse hold cancellation restores speed on lost input, option changes, SPA 
             await Promise.resolve();
             fixture.timers.advance(400);
             assert.equal(fixture.video.playbackRate, 1.5);
-            assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+            assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay"), null);
             assert.equal(fixture.mediaState.pauseCalls + fixture.mediaState.playCalls, 0);
         }
     }
@@ -457,31 +457,31 @@ test("speed feedback over the video keeps fixed overlay colors and uses the bund
     const requests = [];
     const fixture = createFixture({
         beforeLoad({ document, window }) {
-            window.BetterChzzk.utils.ensureUiTheme = () =>
-                requests.push(document.getElementById("betterchzzk-hold-speed-style"));
+            window.CheeseSpanner.utils.ensureUiTheme = () =>
+                requests.push(document.getElementById("cheese-spanner-hold-speed-style"));
         },
     });
     t.after(() => fixture.dom.window.close());
     dispatchPointer(fixture, "pointerdown");
     fixture.timers.advance(350);
-    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay").textContent, "2배속");
+    assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay").textContent, "2배속");
     assert.ok(requests.length >= 1);
     assert.equal(requests[0], null, "the shared theme is requested before the overlay style");
-    const rule = fixture.document.getElementById("betterchzzk-hold-speed-style").sheet.cssRules[0].style;
+    const rule = fixture.document.getElementById("cheese-spanner-hold-speed-style").sheet.cssRules[0].style;
     assert.equal(rule.getPropertyValue("font-family"), "var(--bct-font)");
     assert.equal(rule.getPropertyValue("border-radius"), "var(--bct-radius-md)");
     // The overlay sits on the video, so its colors stay independent of the CHZZK page theme.
     assert.equal(rule.getPropertyValue("background"), "rgba(17, 19, 24, 0.86)");
     assert.equal(rule.getPropertyValue("color"), "rgb(255, 255, 255)");
     dispatchPointer(fixture, "pointerup");
-    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+    assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay"), null);
 });
 
 test("mouse holds use the visible viewport for hit testing and speed feedback after zoom", (t) => {
     const fixture = createFixture({
         beforeLoad({ video, window }) {
             const viewport = video.getBoundingClientRect();
-            window.BetterChzzk.utils.getVideoViewportRect = () => viewport;
+            window.CheeseSpanner.utils.getVideoViewportRect = () => viewport;
             video.getBoundingClientRect = () => ({ left: -950, top: -520, width: 2880, height: 1620 });
         },
     });
@@ -492,7 +492,7 @@ test("mouse holds use the visible viewport for hit testing and speed feedback af
     dispatchPointer(fixture, "pointerdown");
     fixture.timers.advance(350);
     assert.equal(fixture.video.playbackRate, 2);
-    const overlay = fixture.document.getElementById("betterchzzk-hold-speed-overlay");
+    const overlay = fixture.document.getElementById("cheese-spanner-hold-speed-overlay");
     assert.equal(overlay.style.left, "490px");
     assert.ok(Math.abs(Number.parseFloat(overlay.style.top) - 95.6) < 0.000001);
     dispatchPointer(fixture, "pointerup", { target: fixture.document.body });
@@ -505,9 +505,9 @@ test("mouse hold listeners yield to the actual zoom feature when panning begins"
             playbackRate: 1.25,
             options: { playerZoomEnabled: true, playerZoomMode: "always" },
             beforeLoad({ dom, document, video, window }) {
-                const { bindFeatureOptions, startPageChangeDetection } = window.BetterChzzk.utils;
+                const { bindFeatureOptions, startPageChangeDetection } = window.CheeseSpanner.utils;
                 evalRepoScript(dom, "content.js");
-                Object.assign(window.BetterChzzk.utils, { bindFeatureOptions, startPageChangeDetection });
+                Object.assign(window.CheeseSpanner.utils, { bindFeatureOptions, startPageChangeDetection });
                 const controls = document.createElement("div");
                 controls.className = "pzp-pc__bottom-buttons-right";
                 video.parentElement.append(controls);
@@ -574,7 +574,7 @@ test("hold speed turns a short playback Space press into exactly one keyup toggl
     assert.equal(fixture.mediaState.pauseCalls, 1);
     assert.equal(fixture.mediaState.playCalls, 0);
     assert.equal(fixture.video.playbackRate, 1);
-    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+    assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay"), null);
 });
 
 test("hold speed applies fixed 2x without changing playback state and restores the previous rate", (t) => {
@@ -586,7 +586,7 @@ test("hold speed applies fixed 2x without changing playback state and restores t
 
     assert.equal(fixture.video.playbackRate, 2);
     assert.equal(fixture.mediaState.paused, false);
-    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay")?.textContent, "2배속");
+    assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay")?.textContent, "2배속");
 
     dispatchSpace(fixture, "keyup");
     assert.equal(fixture.video.playbackRate, 1.5);
@@ -630,10 +630,10 @@ test("playback speed shortcuts step by 0.25 on live and VOD without changing pau
     assert.equal(fixture.mediaState.paused, true);
     assert.equal(fixture.mediaState.pauseCalls, 0);
     assert.equal(fixture.mediaState.playCalls, 0);
-    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay")?.textContent, "0.75배속");
+    assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay")?.textContent, "0.75배속");
 
     fixture.timers.advance(900);
-    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+    assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay"), null);
 
     fixture.emitRoute("/video/12345");
     const double = dispatchKey(fixture, "keydown", { code: "BracketRight", key: "]" });
@@ -658,7 +658,10 @@ test("speed shortcuts normalize fractional media rates before stepping and displ
         fixture.video.playbackRate = rate;
         dispatchKey(fixture, "keydown", { code });
         assert.equal(fixture.video.playbackRate, expected);
-        assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay")?.textContent, `${expected}배속`);
+        assert.equal(
+            fixture.document.getElementById("cheese-spanner-hold-speed-overlay")?.textContent,
+            `${expected}배속`
+        );
     }
 });
 
@@ -677,7 +680,7 @@ test("speed keys repeatedly step within 0.25 to 4 and reset explicitly to 1x", (
         fixture.video.playbackRate = rate;
         assert.equal(dispatchKey(fixture, "keydown", { code: "Backslash" }).defaultPrevented, true);
         assert.equal(fixture.video.playbackRate, 1);
-        assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay")?.textContent, "1배속");
+        assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay")?.textContent, "1배속");
     }
     assert.equal(fixture.mediaState.pauseCalls, 0);
     assert.equal(fixture.mediaState.playCalls, 0);
@@ -788,7 +791,7 @@ test("holding default and custom speed keys repeats 0.25 steps, respects limits,
         dispatchKey(fixture, "keyup", { code: increase });
         fixture.timers.advance(1000);
         assert.equal(fixture.video.playbackRate, 0.5, "no autonomous repetition after release");
-        assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+        assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay"), null);
         fixture.emitOptions({ playbackSpeedShortcutsEnabled: false });
         assert.equal(dispatchKey(fixture, "keydown", { code: increase, repeat: true }).defaultPrevented, false);
         assert.equal(fixture.video.playbackRate, 0.5);
@@ -817,17 +820,17 @@ test("playback speed shortcut feedback cleans up on route exit, visibility chang
 
     dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[" });
     fixture.emitRoute("/home");
-    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+    assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay"), null);
 
     fixture.emitRoute("/video/12345");
     dispatchKey(fixture, "keydown", { code: "BracketRight", key: "]" });
     fixture.setHidden(true);
-    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+    assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay"), null);
     fixture.setHidden(false);
 
     dispatchKey(fixture, "keydown", { code: "BracketLeft", key: "[" });
     fixture.emitOptions({ playbackSpeedShortcutsEnabled: false });
-    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+    assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay"), null);
     assert.equal(fixture.video.playbackRate, 0.75, "disabling shortcuts must not overwrite the selected rate");
 });
 
@@ -856,7 +859,7 @@ test("hold speed cleans up on blur, hidden documents, SPA exits, option disable,
     fixture.timers.advance(350);
     fixture.window.dispatchEvent(new fixture.window.Event("blur"));
     assert.equal(fixture.video.playbackRate, 1.5);
-    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+    assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay"), null);
     assert.equal(dispatchSpace(fixture, "keyup").defaultPrevented, true);
 
     dispatchSpace(fixture, "keydown");
@@ -889,5 +892,5 @@ test("hold speed cleans up on blur, hidden documents, SPA exits, option disable,
     fixture.timers.advance(0);
 
     assert.equal(fixture.video.playbackRate, 1.5, "the detached original video must recover its rate");
-    assert.equal(fixture.document.getElementById("betterchzzk-hold-speed-overlay"), null);
+    assert.equal(fixture.document.getElementById("cheese-spanner-hold-speed-overlay"), null);
 });

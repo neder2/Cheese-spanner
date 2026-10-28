@@ -2,24 +2,24 @@
  * features/vodComments/view.js — VOD 댓글 탭과 댓글 목록 DOM을 관리한다.
  *
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트.
- * 의존: BetterChzzk.vodComments.model, BetterChzzk.utils.injectStyleOnce(주입), BetterChzzk.utils.ensureUiTheme(선택).
+ * 의존: CheeseSpanner.vodComments.model, CheeseSpanner.utils.injectStyleOnce(주입), CheeseSpanner.utils.ensureUiTheme(선택).
  * 색·모서리는 shared/uiTheme.js의 공통 --bct-* 변수를 따르고, 글꼴은 원본 댓글(body)·원본 heading 측정값을 그대로 쓴다.
  */
 (() => {
     "use strict";
 
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     const namespace = (root.vodComments = root.vodComments || {});
     if (namespace.view) return;
 
     const model = namespace.model;
-    const STYLE_ID = "betterchzzk-vod-comment-tabs-style";
-    const TABLIST_ID = "betterchzzk-vod-comment-tabs";
-    const CHAT_TAB_ID = "betterchzzk-vod-comment-chat-tab";
-    const COMMENT_TAB_ID = "betterchzzk-vod-comment-comment-tab";
-    const CHAT_PANEL_ID = "betterchzzk-vod-comment-chat-panel";
-    const COMMENT_PANEL_ID = "betterchzzk-vod-comment-panel";
-    const NATIVE_ACTION_HINT_ID = "betterchzzk-vod-comment-native-action-hint";
+    const STYLE_ID = "cheese-spanner-vod-comment-tabs-style";
+    const TABLIST_ID = "cheese-spanner-vod-comment-tabs";
+    const CHAT_TAB_ID = "cheese-spanner-vod-comment-chat-tab";
+    const COMMENT_TAB_ID = "cheese-spanner-vod-comment-comment-tab";
+    const CHAT_PANEL_ID = "cheese-spanner-vod-comment-chat-panel";
+    const COMMENT_PANEL_ID = "cheese-spanner-vod-comment-panel";
+    const NATIVE_ACTION_HINT_ID = "cheese-spanner-vod-comment-native-action-hint";
     const { MAX_COMMENTS_PER_ORDER, MAX_REPLIES_PER_COMMENT, MAX_REPLIES_PER_ORDER, SORT_OPTIONS, TIMECODE_SCAN_RE } =
         model;
 
@@ -73,7 +73,7 @@
 [data-bcvc-comment-only-vod-column="1"]{
   margin-top:0!important;
 }
-#betterchzzk-vod-comment-aside{
+#cheese-spanner-vod-comment-aside{
   --bcvc-surface:var(--bct-bg);
   --bcvc-text:var(--bct-text-body);
   --bcvc-border:var(--bct-border-alpha);
@@ -187,10 +187,10 @@
   border-radius:2px 2px 0 0;
   background:var(--bct-brand-text);
 }
-#betterchzzk-vod-comment-aside #${TABLIST_ID}{
+#cheese-spanner-vod-comment-aside #${TABLIST_ID}{
   background:var(--bcvc-surface);
 }
-#betterchzzk-vod-comment-aside #${COMMENT_TAB_ID}{
+#cheese-spanner-vod-comment-aside #${COMMENT_TAB_ID}{
   flex:1 1 100%;
   justify-content:center;
   padding:0 10px;
@@ -198,7 +198,7 @@
   text-align:center;
   cursor:default;
 }
-#betterchzzk-vod-comment-aside #${COMMENT_TAB_ID}:hover{
+#cheese-spanner-vod-comment-aside #${COMMENT_TAB_ID}:hover{
   background:transparent;
   color:var(--bcvc-text);
 }

@@ -1,7 +1,7 @@
 /** Pure live-edge and buffer calculations. Callers supply all media values and monotonic milliseconds. */
 (() => {
     "use strict";
-    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
+    const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     const utils = (root.utils = root.utils || {});
 
     // Preserve the multiview delay domain, including its safe tenth-second limit.

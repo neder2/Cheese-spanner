@@ -8,7 +8,7 @@ const {
     waitForCondition,
 } = require("./helpers/extension-page-fixture.js");
 
-const SETTINGS_STORE_MESSAGE_TYPE = "betterchzzk:settings-store";
+const SETTINGS_STORE_MESSAGE_TYPE = "cheese-spanner:settings-store";
 // Longer than the 250 ms skipSeconds save debounce.
 const SKIP_SAVE_DEBOUNCE_WAIT_MS = 320;
 
@@ -144,8 +144,8 @@ async function openSkipPage(t, { path, sync = {}, video: initial = {}, fakeClock
 }
 
 async function waitForSkipPill(document) {
-    await waitForCondition(() => document.getElementById("betterchzzk-skip-pill"));
-    return document.getElementById("betterchzzk-skip-pill");
+    await waitForCondition(() => document.getElementById("cheese-spanner-skip-pill"));
+    return document.getElementById("cheese-spanner-skip-pill");
 }
 
 function wheelOn(dom, target, init) {

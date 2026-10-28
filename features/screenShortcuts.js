@@ -1,10 +1,10 @@
 // Opt-in native playback controls. The option key is independent of retired rescue settings.
 (() => {
     "use strict";
-    if (BetterChzzk.screenShortcuts) return;
-    BetterChzzk.screenShortcuts = {};
+    if (CheeseSpanner.screenShortcuts) return;
+    CheeseSpanner.screenShortcuts = {};
     const { bindFeatureOptions, getMainVideoElement, getPlayerRoot, isPlaybackRoute, isEditableTarget } =
-        BetterChzzk.utils;
+        CheeseSpanner.utils;
     let enabled = false;
     let holdSpeedEnabled = true;
     const BUTTONS = {

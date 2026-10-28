@@ -20,14 +20,14 @@ function fixture(t, { oneCard = false, summaryOnly = false, maliciousText = fals
     win.cancelAnimationFrame = (id) => frames.delete(id);
     evalRepoScript(dom, "shared/updateGuide.js");
     evalRepoScript(dom, "shared/updateGuideView.js");
-    const guide = structuredClone(win.BetterChzzkUpdateGuide.getGuide("1.4.1"));
+    const guide = structuredClone(win.CheeseSpannerUpdateGuide.getGuide("1.4.1"));
     if (oneCard) guide.cards = guide.cards.slice(0, 1);
     if (summaryOnly) guide.cards = [];
     if (maliciousText) {
         guide.cards[0].title = '<img src="bad" onerror="alert(1)">';
         guide.cards[0].instructions = ["<script>bad()</script>"];
     }
-    const view = win.BetterChzzkUpdateGuideView.create({ document: doc, guide, onClose: () => closes++ });
+    const view = win.CheeseSpannerUpdateGuideView.create({ document: doc, guide, onClose: () => closes++ });
     const opener = doc.getElementById("opener");
     opener.focus();
     t.after(() => {
@@ -308,21 +308,21 @@ function renderedGuide(t, { page, theme }) {
     const dom = new JSDOM(
         `<!doctype html><html${rootMarker}><head>${optionsStyles}</head><body${chzzk ? "" : ' class="options-body"'}></body></html>`,
         {
-            url: chzzk ? "https://chzzk.naver.com/live/test" : "chrome-extension://better-chzzk/options.html",
+            url: chzzk ? "https://chzzk.naver.com/live/test" : "chrome-extension://cheese-spanner/options.html",
             runScripts: "outside-only",
             pretendToBeVisual: true,
         }
     );
     t.after(() => dom.window.close());
     if (chzzk) {
-        dom.window.chrome = { runtime: { getURL: (file) => `chrome-extension://better-chzzk/${file}` } };
+        dom.window.chrome = { runtime: { getURL: (file) => `chrome-extension://cheese-spanner/${file}` } };
         for (const file of ["shared/data.js", "content.js", "shared/uiTheme.js"]) evalRepoScript(dom, file);
-        dom.window.BetterChzzk.utils.ensureUiTheme();
+        dom.window.CheeseSpanner.utils.ensureUiTheme();
     }
     evalRepoScript(dom, "shared/updateGuide.js");
     evalRepoScript(dom, "shared/updateGuideView.js");
-    const views = dom.window.BetterChzzkUpdateGuideView;
-    const guide = dom.window.BetterChzzkUpdateGuide.getGuide("1.4.1");
+    const views = dom.window.CheeseSpannerUpdateGuideView;
+    const guide = dom.window.CheeseSpannerUpdateGuide.getGuide("1.4.1");
     const view = views.create({ document: dom.window.document, guide, focusOnOpen: false });
     assert.equal(view.open(), true);
     t.after(() => view.destroy());
@@ -352,7 +352,7 @@ function renderedGuide(t, { page, theme }) {
 test("the new-version notice is a flat card without a gradient, decorative icon or its own theme palette", () => {
     const dom = new JSDOM("<body></body>", { runScripts: "outside-only" });
     evalRepoScript(dom, "shared/updateGuideView.js");
-    const css = dom.window.BetterChzzkUpdateGuideView.CSS_TEXT;
+    const css = dom.window.CheeseSpannerUpdateGuideView.CSS_TEXT;
     dom.window.close();
     assert.doesNotMatch(css, /gradient\(/i, "no radial or linear gradient decoration");
     assert.doesNotMatch(css, /url\(|[{;]\s*content\s*:/i, "no decorative sparkle icon or pseudo-element content");
@@ -386,7 +386,7 @@ test("the notice looks the same with CHZZK theme variables and with extension pa
         for (const [key, value] of chzzk.declarations) {
             const other = options.declarations.get(key);
             if (/\{ font-family \}$/.test(key) && value !== "inherit") {
-                assert.match(value, /^"BetterChzzk Pretendard",/, `${theme} CHZZK ${key} uses the bundled font`);
+                assert.match(value, /^"CheeseSpanner Pretendard",/, `${theme} CHZZK ${key} uses the bundled font`);
                 assert.match(other, /^"Pretendard Variable",/, `${theme} options ${key} uses the bundled font`);
                 continue;
             }

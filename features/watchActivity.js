@@ -2,14 +2,14 @@
 (() => {
     "use strict";
 
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     if (root.watchActivity) return;
     const { createMutationObserverSync, fetchJson, getLiveChannelIdFromPath } = root.utils;
     const USER_URL = "https://comm-api.game.naver.com/nng_main/v1/user/getUserStatus";
     const LOG_SELECTOR = "aside#aside-chatting [role='log']";
     const ROW_SELECTOR = ":scope > [class*='_wrapper_'] > [class*='_item_']";
-    const REQUEST_EVENT = "betterchzzk:watch-activity-source";
-    const READY_EVENT = "betterchzzk:watch-activity-ready";
+    const REQUEST_EVENT = "cheese-spanner:watch-activity-source";
+    const READY_EVENT = "cheese-spanner:watch-activity-ready";
     const SOURCE_ATTR = "data-bcwa-source";
     const USER_ATTR = "data-bcwa-user";
 

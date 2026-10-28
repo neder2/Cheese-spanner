@@ -1,15 +1,21 @@
 /* MV3 background only. One alarm and one serial queue own live-start actions. */
 (() => {
     if (!globalThis.chrome?.alarms?.onAlarm) return;
-    const { CHANNELS_KEY, STATE_KEY, STATUS_KEY, normalizeChannels, parseSnapshot } = globalThis.BetterChzzkLiveStart;
-    const { storageGet, storageSet, fetchJson } = BetterChzzk.utils;
-    const { normalizeOptions, withOptionsStorageLock } = BetterChzzkSettings;
+    const { CHANNELS_KEY, STATE_KEY, STATUS_KEY, API_HOST_PERMISSION, normalizeChannels, parseSnapshot } =
+        globalThis.CheeseSpannerLiveStart;
+    const { storageGet, storageSet, fetchJson } = CheeseSpanner.utils;
+    const { normalizeOptions, withOptionsStorageLock } = CheeseSpannerSettings;
     const OPTION_KEYS = ["liveStartNotificationsEnabled", "liveStartAutoOpenEnabled"];
     const ALARM = "betterchzzk:live-start";
     const NOTIFICATION_PREFIX = "betterchzzk:live-start:";
     const PERIOD_MINUTES = 1;
     const MAX_SEEN = 16;
     const STATE_SAVE_ERROR = "방송 확인 상태를 저장하지 못해 알림·탭 열기를 멈췄어요. 저장 공간을 확인해 주세요.";
+    const API_ACCESS_STATUS =
+        "확장의 사이트 액세스에서 api.chzzk.naver.com 접근이 꺼져 있어 방송을 확인하지 못해요. 아래 ‘치지직 API 접근 허용’을 눌러 주세요.";
+    const API_ACCESS_ERROR =
+        "확장의 사이트 액세스에서 api.chzzk.naver.com 접근이 꺼져 있어 채널을 확인하지 못했어요. 설정의 ‘방송 알림’ 탭에서 ‘치지직 API 접근 허용’을 눌러 주세요.";
+    const LOOKUP_ERROR = "채널 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.";
     let queue = Promise.resolve();
     let tabQueue = Promise.resolve();
     let generation = 0;
@@ -35,20 +41,29 @@
         return pending;
     }
 
+    // Registration replies show only these messages; raw fetch and storage errors get the generic reply.
+    function userError(message) {
+        return Object.assign(new Error(message), { userFacing: true });
+    }
+
     async function readConfig() {
-        const [rawOptions, local, permission] = await Promise.all([
+        const [rawOptions, local, permission, apiAccess] = await Promise.all([
             storageGet(chrome.storage.sync, OPTION_KEYS),
             storageGet(chrome.storage.local, [CHANNELS_KEY, STATE_KEY]),
             chrome.permissions.contains({ permissions: ["notifications"] }),
+            chrome.permissions.contains(API_HOST_PERMISSION),
         ]);
         const options = normalizeOptions(rawOptions);
-        const channels = normalizeChannels(local[CHANNELS_KEY])
+        const enabled = normalizeChannels(local[CHANNELS_KEY])
             .map((channel) => ({
                 ...channel,
                 notify: channel.notify && options.liveStartNotificationsEnabled && permission,
                 autoOpen: channel.autoOpen && options.liveStartAutoOpenEnabled,
             }))
             .filter((channel) => channel.notify || channel.autoOpen);
+        // Both actions read live-detail, so a withheld API host pauses every channel. Their saved live IDs
+        // drop as when the feature is off, so restored access starts from a baseline.
+        const channels = apiAccess ? enabled : [];
         const states = {};
         for (const channel of channels) {
             const saved = local[STATE_KEY]?.channels?.[channel.channelId];
@@ -67,6 +82,7 @@
             states,
             checkedAt: Number(local[STATE_KEY]?.checkedAt) || 0,
             permissionMissing: options.liveStartNotificationsEnabled && !permission,
+            apiAccessMissing: !apiAccess && enabled.length > 0,
         };
     }
 
@@ -244,9 +260,11 @@
                 [STATUS_KEY]: {
                     checkedAt: 0,
                     activeChannels: 0,
-                    error: config.permissionMissing
-                        ? "알림 권한이 없어 데스크톱 알림이 중지됐어요. 알림 권한 허용을 눌러 주세요."
-                        : "",
+                    error: config.apiAccessMissing
+                        ? API_ACCESS_STATUS
+                        : config.permissionMissing
+                          ? "알림 권한이 없어 데스크톱 알림이 중지됐어요. 알림 권한 허용을 눌러 주세요."
+                          : "",
                 },
             });
             return;
@@ -309,15 +327,21 @@
         )
             refresh();
     });
+    const changesApiAccess = (change) =>
+        Boolean(change.origins?.some((origin) => API_HOST_PERMISSION.origins.includes(origin)));
     chrome.permissions.onAdded?.addListener((change) => {
-        if (!change.permissions?.includes("notifications")) return;
-        resetActions.add("notify");
-        bindNotificationClicks();
+        const notifications = change.permissions?.includes("notifications");
+        if (!notifications && !changesApiAccess(change)) return;
+        if (notifications) {
+            resetActions.add("notify");
+            bindNotificationClicks();
+        }
         refresh();
     });
     chrome.permissions.onRemoved?.addListener((change) => {
-        if (!change.permissions?.includes("notifications")) return;
-        resetActions.add("notify");
+        const notifications = change.permissions?.includes("notifications");
+        if (!notifications && !changesApiAccess(change)) return;
+        if (notifications) resetActions.add("notify");
         refresh();
     });
     chrome.runtime.onStartup?.addListener(() => refresh({ baseline: true }));
@@ -338,8 +362,8 @@
         }
     }
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-        if (message?.type !== "betterchzzk:live-start:channels") return undefined;
-        const fromOptions = BetterChzzkSettings.isOptionsPageSender(sender);
+        if (message?.type !== "cheese-spanner:live-start:channels") return undefined;
+        const fromOptions = CheeseSpannerSettings.isOptionsPageSender(sender);
         if (sender?.id !== chrome.runtime.id || (!fromOptions && !isChannelRegistration(message, sender))) {
             sendResponse({ ok: false, error: "알림 설정 요청의 출처를 확인하지 못했어요." });
             return false;
@@ -359,17 +383,20 @@
                 (!key && !["add", "update", "remove"].includes(message.kind)) ||
                 (key && typeof message.channel[key] !== "boolean")
             )
-                throw new Error("올바른 채널 설정이 아니에요.");
-            const max = globalThis.BetterChzzkLiveStart.MAX_CHANNELS;
+                throw userError("올바른 채널 설정이 아니에요.");
+            const max = globalThis.CheeseSpannerLiveStart.MAX_CHANNELS;
             let profile = null;
             if (key && message.channel[key]) {
                 // Look the channel up before taking the shared settings lock; the lock only covers storage.
                 const data = await storageGet(chrome.storage.local, CHANNELS_KEY);
                 const known = normalizeChannels(data[CHANNELS_KEY]);
                 if (!known.some((channel) => channel.channelId === id)) {
-                    if (known.length >= max) throw new Error("채널은 최대 32개까지 등록할 수 있어요.");
+                    if (known.length >= max) throw userError("채널은 최대 32개까지 등록할 수 있어요.");
+                    if (!(await chrome.permissions.contains(API_HOST_PERMISSION))) throw userError(API_ACCESS_ERROR);
                     const json = await fetchJson(`https://api.chzzk.naver.com/service/v1/channels/${id}`, {
                         timeoutMs: 8000,
+                    }).catch(() => {
+                        throw userError(LOOKUP_ERROR);
                     });
                     if (
                         json?.code !== 200 ||
@@ -377,7 +404,7 @@
                         typeof json.content.channelName !== "string" ||
                         !json.content.channelName.trim()
                     )
-                        throw new Error("채널 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.");
+                        throw userError(LOOKUP_ERROR);
                     profile = json.content;
                 }
             }
@@ -389,8 +416,8 @@
                 if (key) {
                     if (existing) existing[key] = message.channel[key];
                     else if (message.channel[key]) {
-                        if (channels.length >= max) throw new Error("채널은 최대 32개까지 등록할 수 있어요.");
-                        if (!profile) throw new Error("채널 목록이 바뀌었어요. 다시 시도해 주세요.");
+                        if (channels.length >= max) throw userError("채널은 최대 32개까지 등록할 수 있어요.");
+                        if (!profile) throw userError("채널 목록이 바뀌었어요. 다시 시도해 주세요.");
                         channels.push(
                             normalizeChannels([
                                 {
@@ -407,13 +434,13 @@
                 } else if (message.kind === "remove") {
                     channels = channels.filter((channel) => channel.channelId !== id);
                 } else if (message.kind === "add") {
-                    if (existing) throw new Error("이미 등록한 채널이에요.");
-                    if (channels.length >= max) throw new Error("채널은 최대 32개까지 등록할 수 있어요.");
+                    if (existing) throw userError("이미 등록한 채널이에요.");
+                    if (channels.length >= max) throw userError("채널은 최대 32개까지 등록할 수 있어요.");
                     const channel = normalizeChannels([message.channel])[0];
-                    if (!channel.channelName) throw new Error("채널 이름을 확인하지 못했어요.");
+                    if (!channel.channelName) throw userError("채널 이름을 확인하지 못했어요.");
                     channels.push(channel);
                 } else {
-                    if (!existing) throw new Error("삭제된 채널이에요. 목록을 다시 확인해 주세요.");
+                    if (!existing) throw userError("삭제된 채널이에요. 목록을 다시 확인해 주세요.");
                     for (const key of ["notify", "autoOpen"]) {
                         if (typeof message.channel[key] === "boolean") existing[key] = message.channel[key];
                     }
@@ -429,7 +456,11 @@
             })
             .then(
                 (channels) => sendResponse({ ok: true, channels }),
-                (error) => sendResponse({ ok: false, error: error.message || "채널 설정을 저장하지 못했어요." })
+                (error) =>
+                    sendResponse({
+                        ok: false,
+                        error: error?.userFacing ? error.message : "채널 설정을 저장하지 못했어요.",
+                    })
             );
         return true;
     });

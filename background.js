@@ -35,16 +35,16 @@ importScripts("shared/followingFolders.js", "shared/chatMultiview.js");
 importScripts("shared/settingsBackup.js", "shared/settingsStore.js");
 importScripts("shared/donationHistoryImport.js");
 
-const { OPTION_KEYS, getStorageLastError, normalizeOptions, withOptionsStorageLock } = BetterChzzkSettings;
+const { OPTION_KEYS, getStorageLastError, normalizeOptions, withOptionsStorageLock } = CheeseSpannerSettings;
 const {
     MESSAGE_TYPE: WATCH_HISTORY_MESSAGE_TYPE,
     MESSAGE_VERSION: WATCH_HISTORY_MESSAGE_VERSION,
     STORAGE_KEY: WATCH_HISTORY_STORAGE_KEY,
     applyMutation: applyWatchHistoryMutation,
     normalizeMutation: normalizeWatchHistoryMutation,
-} = globalThis.BetterChzzkWatchHistoryStore;
+} = globalThis.CheeseSpannerWatchHistoryStore;
 let watchHistoryMutationQueue = Promise.resolve();
-const COMPRESSOR_STATE_MESSAGE = "betterchzzk:audio-compressor-state";
+const COMPRESSOR_STATE_MESSAGE = "cheese-spanner:audio-compressor-state";
 const COMPRESSOR_TABS_KEY = "betterchzzk:audio-compressor-tabs";
 const COMPRESSOR_PREFERENCE_KEY = "betterchzzk:audio-compressor-preference";
 const COMPRESSOR_CLEANUP_KEY = "betterchzzk:audio-compressor-cleanup-pending";
@@ -56,20 +56,20 @@ let compressorSessionLoaded = false;
 let compressorSessionCleanupStored = false;
 let compressorStartupGuardPending = false;
 const RETIRED_QUALITY_NOTICE_KEY = "betterchzzk:quality-update-notice";
-const updateGuide = globalThis.BetterChzzkUpdateGuideController.createController({
+const updateGuide = globalThis.CheeseSpannerUpdateGuideController.createController({
     chrome,
-    catalog: globalThis.BetterChzzkUpdateGuide,
+    catalog: globalThis.CheeseSpannerUpdateGuide,
 });
-const categoryExclusions = globalThis.BetterChzzk.categoryExclusions.createController({ chrome });
-const settingsStore = globalThis.BetterChzzkSettingsStore.createController({ chrome });
+const categoryExclusions = globalThis.CheeseSpanner.categoryExclusions.createController({ chrome });
+const settingsStore = globalThis.CheeseSpannerSettingsStore.createController({ chrome });
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) =>
     settingsStore.handleMessage(message, sender, sendResponse)
 );
 const adVideoRegistration = chrome.scripting?.getRegisteredContentScripts
-    ? globalThis.BetterChzzkAdVideoRegistration.createController({
+    ? globalThis.CheeseSpannerAdVideoRegistration.createController({
           scripting: chrome.scripting,
           async readEnabled() {
-              return normalizeOptions(await BetterChzzk.utils.storageGet(chrome.storage.sync, "adVideoEnabled"))
+              return normalizeOptions(await CheeseSpanner.utils.storageGet(chrome.storage.sync, "adVideoEnabled"))
                   .adVideoEnabled;
           },
       })
@@ -78,7 +78,7 @@ const adVideoRegistration = chrome.scripting?.getRegisteredContentScripts
 function reconcileAdVideoRegistration() {
     if (!adVideoRegistration) return;
     adVideoRegistration.reconcile().catch((error) => {
-        console.warn("[Better Chzzk] 동영상 광고 차단 등록 실패", error);
+        console.warn("[Cheese Spanner] 동영상 광고 차단 등록 실패", error);
     });
 }
 
@@ -103,7 +103,7 @@ function clearLegacyUpdateNotice() {
         Promise.all([
             chrome.action.setBadgeText({ text: "" }),
             chrome.action.setTitle({ title: "치즈 스패너 설정" }),
-        ]).catch((error) => console.warn("[BetterChzzk] 이전 알림 배지 정리 실패", error));
+        ]).catch((error) => console.warn("[CheeseSpanner] 이전 알림 배지 정리 실패", error));
     }
 }
 
@@ -368,7 +368,7 @@ function enqueueWatchHistoryMutation(operation) {
     });
 }
 
-const watchHistoryBackup = globalThis.BetterChzzkWatchHistoryBackupController.createController({
+const watchHistoryBackup = globalThis.CheeseSpannerWatchHistoryBackupController.createController({
     runtime: chrome.runtime,
     enqueue: enqueueWatchHistoryTask,
     readHistory: async () => (await storageLocalGet(WATCH_HISTORY_STORAGE_KEY))[WATCH_HISTORY_STORAGE_KEY],
@@ -379,22 +379,22 @@ const watchHistoryBackup = globalThis.BetterChzzkWatchHistoryBackupController.cr
     storageKey: WATCH_HISTORY_STORAGE_KEY,
 });
 
-globalThis.BetterChzzkDonationHistoryImport.install({
+globalThis.CheeseSpannerDonationHistoryImport.install({
     chrome,
     readHistory: async () => (await storageLocalGet(WATCH_HISTORY_STORAGE_KEY))[WATCH_HISTORY_STORAGE_KEY],
     writeHistory: enqueueWatchHistoryMutation,
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message?.type === globalThis.BetterChzzk.categoryExclusions.MESSAGE_TYPE) {
+    if (message?.type === globalThis.CheeseSpanner.categoryExclusions.MESSAGE_TYPE) {
         categoryExclusions.handleMessage(message, sender).then(sendResponse);
         return true;
     }
-    if (message?.type === globalThis.BetterChzzkUpdateGuide.MESSAGE_TYPE) {
+    if (message?.type === globalThis.CheeseSpannerUpdateGuide.MESSAGE_TYPE) {
         updateGuide.handleMessage(message, sender).then(sendResponse);
         return true;
     }
-    if (message?.type === globalThis.BetterChzzkWatchHistoryBackupController.MESSAGE_TYPE) {
+    if (message?.type === globalThis.CheeseSpannerWatchHistoryBackupController.MESSAGE_TYPE) {
         watchHistoryBackup.handle(message, sender).then(sendResponse);
         return true;
     }
@@ -410,8 +410,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         );
         return true;
     }
-    if (message?.type === "betterchzzk:ad-video:sync") {
-        if (!BetterChzzkSettings.isOptionsPageSender(sender)) {
+    if (message?.type === "cheese-spanner:ad-video:sync") {
+        if (!CheeseSpannerSettings.isOptionsPageSender(sender)) {
             sendResponse({ ok: false });
             return false;
         }
@@ -460,7 +460,7 @@ chrome.runtime.onInstalled.addListener((details) => {
         () =>
             new Promise((resolve) => {
                 // The legacy chatToolsEnabled key must be read too, or its migration writes both chat tools off.
-                chrome.storage.sync.get(BetterChzzkSettings.STORAGE_OPTION_KEYS, (data) => {
+                chrome.storage.sync.get(CheeseSpannerSettings.STORAGE_OPTION_KEYS, (data) => {
                     if (getStorageLastError()) {
                         resolve();
                         return;
@@ -486,5 +486,5 @@ chrome.runtime.onInstalled.addListener((details) => {
                     });
                 });
             })
-    ).catch((error) => console.warn("[BetterChzzk] 옵션 초기화 실패", error));
+    ).catch((error) => console.warn("[CheeseSpanner] 옵션 초기화 실패", error));
 });

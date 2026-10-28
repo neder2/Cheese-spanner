@@ -208,19 +208,19 @@ function requestAutoQualityApply(dom, quality = "1080p") {
     const requestId = `test-${Date.now()}-${Math.random()}`;
     const { document } = dom.window;
     document.documentElement.setAttribute(
-        "data-betterchzzk-auto-quality-request",
+        "data-cheese-spanner-auto-quality-request",
         JSON.stringify({ requestId, quality })
     );
-    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:auto-quality:apply"));
-    return JSON.parse(document.documentElement.getAttribute("data-betterchzzk-auto-quality-result"));
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:auto-quality:apply"));
+    return JSON.parse(document.documentElement.getAttribute("data-cheese-spanner-auto-quality-result"));
 }
 
 function disableAutoQualityPage(dom) {
     dom.window.document.documentElement.setAttribute(
-        "data-betterchzzk-auto-quality-state",
+        "data-cheese-spanner-auto-quality-state",
         JSON.stringify({ enabled: false, quality: "1080p" })
     );
-    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:auto-quality:state"));
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:auto-quality:state"));
 }
 
 function evalVolumeWheelScripts(dom) {
@@ -235,10 +235,10 @@ test("createMutationObserverSync observes a deferred target when it appears", as
     const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
     evalContentScripts(dom);
 
-    const { BetterChzzk, document } = dom.window;
+    const { CheeseSpanner, document } = dom.window;
     const events = [];
     let target = null;
-    const observer = BetterChzzk.utils.createMutationObserverSync({
+    const observer = CheeseSpanner.utils.createMutationObserverSync({
         target: () => target,
         schedule: () => events.push("scheduled"),
         onBodyReady: () => events.push("ready"),
@@ -259,14 +259,14 @@ test("createMutationObserverSync re-resolves a function target after it is detac
     const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
     evalContentScripts(dom);
 
-    const { BetterChzzk, document } = dom.window;
+    const { CheeseSpanner, document } = dom.window;
     const events = [];
 
     const firstTarget = document.createElement("div");
     document.body.appendChild(firstTarget);
     let target = firstTarget;
 
-    const observer = BetterChzzk.utils.createMutationObserverSync({
+    const observer = CheeseSpanner.utils.createMutationObserverSync({
         target: () => target,
         schedule: () => events.push("scheduled"),
         onBodyReady: (_obs, node) => events.push(node === target ? "ready:new" : "ready:other"),
@@ -301,7 +301,7 @@ test("startPageChangeDetection detects pushState without a DOM mutation through 
     evalContentScripts(dom);
 
     const hrefs = [];
-    const remove = dom.window.BetterChzzk.utils.startPageChangeDetection((event) => {
+    const remove = dom.window.CheeseSpanner.utils.startPageChangeDetection((event) => {
         hrefs.push(event?.detail?.href || dom.window.location.href);
     });
 
@@ -338,7 +338,7 @@ test("shared storage helpers reject chrome lastError", async () => {
             chrome.runtime.lastError = null;
         },
     };
-    const { storageGet, storageRemove, storageSet } = dom.window.BetterChzzk.utils;
+    const { storageGet, storageRemove, storageSet } = dom.window.CheeseSpanner.utils;
 
     await assert.rejects(
         () => storageGet(failingArea, "key"),
@@ -368,7 +368,7 @@ test("shared main video helper ignores following preview player videos", () => {
     );
     evalContentScripts(dom);
 
-    const { BetterChzzk, document } = dom.window;
+    const { CheeseSpanner, document } = dom.window;
     const previewVideo = document.getElementById("previewVideo");
     const mainVideo = document.getElementById("mainVideo");
 
@@ -389,9 +389,9 @@ test("shared main video helper ignores following preview player videos", () => {
         bottom: 180,
     });
 
-    assert.equal(BetterChzzk.utils.isExtensionPreviewVideo(previewVideo), true);
-    assert.equal(BetterChzzk.utils.isExtensionPreviewVideo(mainVideo), false);
-    assert.equal(BetterChzzk.utils.getMainVideoElement(), mainVideo);
+    assert.equal(CheeseSpanner.utils.isExtensionPreviewVideo(previewVideo), true);
+    assert.equal(CheeseSpanner.utils.isExtensionPreviewVideo(mainVideo), false);
+    assert.equal(CheeseSpanner.utils.getMainVideoElement(), mainVideo);
 });
 
 test("shared CHZZK comment helper reuses extension storage device id and page.next request shape", async () => {
@@ -410,7 +410,7 @@ test("shared CHZZK comment helper reuses extension storage device id and page.ne
     };
     evalRepoScript(dom, "shared", "data.js");
 
-    const { fetchChzzkCommentPage } = dom.window.BetterChzzk.utils;
+    const { fetchChzzkCommentPage } = dom.window.CheeseSpanner.utils;
     await fetchChzzkCommentPage({ limit: 10, objectId: "123", offset: 20, orderType: "DESC" });
     await fetchChzzkCommentPage({ limit: 10, objectId: "123", offset: 30, orderType: "DESC" });
 
@@ -426,7 +426,7 @@ test("shared CHZZK comment helper reuses extension storage device id and page.ne
     assert.ok(requests[0].init.headers.deviceId);
     assert.equal(requests[1].init.headers.deviceId, requests[0].init.headers.deviceId);
     assert.equal(chrome.testState.local.betterchzzkCommentDeviceId, requests[0].init.headers.deviceId);
-    assert.equal(dom.window.localStorage.getItem("betterchzzk-comment-device-id"), null);
+    assert.equal(dom.window.localStorage.getItem("cheese-spanner-comment-device-id"), null);
 
     dom.window.close();
 });
@@ -435,7 +435,7 @@ test("shared watch-range helpers normalize, merge, and sum ranges", () => {
     const dom = createPageDom("<!doctype html><body></body>", "https://chzzk.naver.com/", createFakeChrome());
     evalRepoScript(dom, "shared", "data.js");
 
-    const { mergeWatchRanges, sumWatchRanges } = dom.window.BetterChzzk.utils;
+    const { mergeWatchRanges, sumWatchRanges } = dom.window.CheeseSpanner.utils;
     const ranges = [
         { startAt: 5000, endAt: 7000 },
         { start: 1000.4, end: 2000.6 },
@@ -454,7 +454,7 @@ test("shared watch-range helpers normalize, merge, and sum ranges", () => {
     assert.equal(sumWatchRanges(ranges, 1000), 4.801);
 });
 
-const AD_SUPPRESS_ATTR = "data-betterchzzk-suppress-adblock-popup";
+const AD_SUPPRESS_ATTR = "data-cheese-spanner-suppress-adblock-popup";
 const ADBLOCK_POPUP_TITLE =
     "\uAD11\uACE0 \uCC28\uB2E8 \uD504\uB85C\uADF8\uB7A8\uC744 \uC0AC\uC6A9 \uC911\uC774\uC2E0\uAC00\uC694?";
 
@@ -469,7 +469,7 @@ function makeVisibleElement(el, width = 450, height = 260) {
     });
 }
 
-const MONTHLY_BROADCAST_WIDGET_ID = "betterchzzk-monthly-broadcast-time";
+const MONTHLY_BROADCAST_WIDGET_ID = "cheese-spanner-monthly-broadcast-time";
 const MONTHLY_BROADCAST_CHANNEL_ID = "0123456789abcdef0123456789abcdef";
 
 function createDeferred() {
@@ -938,7 +938,7 @@ test("shared selector registry preserves lookup priority and warns once per stal
 
     evalRepoScript(dom, "shared", "selectors.js");
 
-    const { CHZZK, queryChain, queryChainAll, watchSelector } = dom.window.BetterChzzk.selectors;
+    const { CHZZK, queryChain, queryChainAll, watchSelector } = dom.window.CheeseSpanner.selectors;
     assert.equal(queryChain(dom.window.document, CHZZK.popupDimmed)?.id, "legacy-dimmed");
     assert.deepEqual(
         Array.from(queryChainAll(dom.window.document, CHZZK.popupDimmed), (element) => element.id),
@@ -974,7 +974,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.4.5");
+    assert.equal(manifest.version, "1.4.6");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
@@ -1241,7 +1241,7 @@ function createGlobalLivesDom(chrome, { nestedScroll = false } = {}) {
 
     const getDefaultRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
     dom.window.HTMLElement.prototype.getBoundingClientRect = function getFixtureRect() {
-        if (this.id === "betterchzzk-category-tools") {
+        if (this.id === "cheese-spanner-category-tools") {
             return {
                 x: 300,
                 y: 213,
@@ -1358,7 +1358,7 @@ function createVideoSearchDom(chrome) {
 }
 
 function getVideoSearchInput(dom) {
-    return dom.window.document.querySelector("#betterchzzk-video-search-bar input");
+    return dom.window.document.querySelector("#cheese-spanner-video-search-bar input");
 }
 
 function searchVideoSearchInput(dom, value) {
@@ -1396,10 +1396,10 @@ test("category filter stays open during automatic refresh and closes only on use
     };
 
     await loadCategoryToolsPage(dom);
-    await waitForCondition(() => document.getElementById("betterchzzk-category-tools"));
+    await waitForCondition(() => document.getElementById("cheese-spanner-category-tools"));
     evalRepoScript(dom, "features", "followingRefresh.js");
-    const bar = document.getElementById("betterchzzk-category-tools");
-    const menu = document.getElementById("betterchzzk-category-filter-menu");
+    const bar = document.getElementById("cheese-spanner-category-tools");
+    const menu = document.getElementById("cheese-spanner-category-filter-menu");
     const filter = bar.querySelector(".bcgt-filter");
     const assertOpen = () => {
         assert.equal(bar.getAttribute("data-menu-open"), "1");
@@ -1519,7 +1519,7 @@ test("category injected search results join the current pass without rescanning 
             return result;
         };
     }
-    const input = document.querySelector('#betterchzzk-category-tools input[type="search"]');
+    const input = document.querySelector('#cheese-spanner-category-tools input[type="search"]');
     input.value = "Match";
     dispatch(dom, input, "input");
     input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
@@ -1567,7 +1567,7 @@ test("category search bounds injected cards and continues cached results on scro
     };
     await loadCategoryToolsPage(dom);
     await waitForCondition(() => document.querySelector(".bcgt-live-count")?.textContent.includes("150"));
-    const input = document.querySelector('#betterchzzk-category-tools input[type="search"]');
+    const input = document.querySelector('#cheese-spanner-category-tools input[type="search"]');
     input.value = "Match";
     dispatch(dom, input, "input");
     input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
@@ -1769,15 +1769,15 @@ test("global lives category exclusions sit at the right end of the native sort r
     );
     dom.window.fetch = async (url) => ({ ok: true, json: async () => response(String(url)) });
     await loadCategoryToolsPage(dom);
-    await waitForCondition(() => document.getElementById("betterchzzk-category-exclusions"));
+    await waitForCondition(() => document.getElementById("cheese-spanner-category-exclusions"));
     const sortRow = document.getElementById("sort-row");
-    const summary = document.getElementById("betterchzzk-category-exclusions");
+    const summary = document.getElementById("cheese-spanner-category-exclusions");
     assert.equal(summary.parentElement, sortRow, "the exclusion row shares the sort buttons' line");
     assert.equal(sortRow.lastElementChild, summary, "chips and the add button stay at the right end");
     assert.equal(summary.getAttribute("data-placement"), "sort-line");
     assert.equal(sortRow.getAttribute("data-bcgt-exclusion-host"), "1");
     assert.ok(summary.querySelector("[data-category-add-open]"));
-    assert.equal(document.getElementById("betterchzzk-category-tools").contains(summary), false);
+    assert.equal(document.getElementById("cheese-spanner-category-tools").contains(summary), false);
     assert.deepEqual(
         [...sortRow.querySelectorAll(":scope > button")].map((button) => button.textContent),
         ["인기", "최신", "추천"],
@@ -1811,8 +1811,8 @@ test("category tools respect the currently observed viewer-order tab labels", as
     );
     dom.window.fetch = async (url) => ({ ok: true, json: async () => response(String(url)) });
     await loadCategoryToolsPage(dom);
-    await waitForCondition(() => document.querySelector("#betterchzzk-category-tools input"));
-    const input = document.querySelector("#betterchzzk-category-tools input");
+    await waitForCondition(() => document.querySelector("#cheese-spanner-category-tools input"));
+    const input = document.querySelector("#cheese-spanner-category-tools input");
     input.value = "Native";
     dispatch(dom, input, "input");
     input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
@@ -1857,8 +1857,8 @@ test("injected live cards replace the template broadcast in hidden labels and at
     ]);
     dom.window.fetch = async (url) => ({ ok: true, json: async () => response(String(url)) });
     await loadCategoryToolsPage(dom);
-    await waitForCondition(() => document.querySelector("#betterchzzk-category-tools input"));
-    const input = document.querySelector("#betterchzzk-category-tools input");
+    await waitForCondition(() => document.querySelector("#cheese-spanner-category-tools input"));
+    const input = document.querySelector("#cheese-spanner-category-tools input");
     input.value = "Fresh";
     dispatch(dom, input, "input");
     input.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
@@ -1994,11 +1994,11 @@ test("global lives duration filter uses openDate and keeps the native list path"
             false
         );
 
-        const toolbar = document.getElementById("betterchzzk-category-tools");
+        const toolbar = document.getElementById("cheese-spanner-category-tools");
         const filterButton = toolbar.querySelector(".bcgt-filter");
         filterButton.click();
 
-        const menu = document.getElementById("betterchzzk-category-filter-menu");
+        const menu = document.getElementById("cheese-spanner-category-filter-menu");
         const durationGroup = menu.querySelector('[data-filter-group="duration"]');
         assert.equal(durationGroup.hidden, false);
         assert.equal(menu.getAttribute("data-open"), "1");
@@ -2038,7 +2038,7 @@ test("global lives duration filter uses openDate and keeps the native list path"
         assert.equal(toolbar.querySelector(".bcgt-filter-label").textContent, "필터 1");
         assert.deepEqual(
             Array.from(
-                document.querySelectorAll("#betterchzzk-category-filter-chips .bcgt-chip-body"),
+                document.querySelectorAll("#cheese-spanner-category-filter-chips .bcgt-chip-body"),
                 (chip) => chip.textContent
             ),
             ["진행 2~4시간"]
@@ -2153,7 +2153,7 @@ test("video search stores the comment device id in extension storage only", asyn
     const commentRequest = requests.find((request) => request.init?.headers?.deviceId);
     assert.ok(commentRequest.init.headers.deviceId);
     assert.equal(chrome.testState.local.betterchzzkCommentDeviceId, commentRequest.init.headers.deviceId);
-    assert.equal(dom.window.localStorage.getItem("betterchzzk-comment-device-id"), null);
+    assert.equal(dom.window.localStorage.getItem("cheese-spanner-comment-device-id"), null);
 });
 
 test("video search skips generic comment and progress fallbacks", async () => {
@@ -2395,8 +2395,8 @@ test("following refresh ignores the VOD comment refresh control before the nativ
             "<!doctype html>",
             "<body>",
             '<div id="app">',
-            '<aside id="betterchzzk-vod-comment-aside">',
-            '<div id="betterchzzk-vod-comment-panel">',
+            '<aside id="cheese-spanner-vod-comment-aside">',
+            '<div id="cheese-spanner-vod-comment-panel">',
             '<button id="commentRefresh" type="button" aria-label="댓글 새로고침"></button>',
             "</div>",
             "</aside>",
@@ -2534,8 +2534,8 @@ test("title tooltip draws with the shared CHZZK theme and bundled font instead o
     await waitForTitleTooltipDelay();
 
     assert.ok(document.querySelector(".bctt-tooltip[data-show='1']"));
-    assert.ok(document.getElementById("betterchzzk-ui-theme"), "the tooltip requests the shared theme");
-    const style = document.getElementById("betterchzzk-title-tooltip-style");
+    assert.ok(document.getElementById("cheese-spanner-ui-theme"), "the tooltip requests the shared theme");
+    const style = document.getElementById("cheese-spanner-title-tooltip-style");
     assert.doesNotMatch(style.textContent, /#[0-9a-f]{3,8}\b|rgba?\(|\[class\*="dark"\]|html\[dark\]|theme="dark"/i);
     const rules = Array.from(style.sheet.cssRules);
     const tooltip = rules.find((rule) => rule.selectorText === ".bctt-tooltip").style;
@@ -2682,7 +2682,7 @@ test("title tooltip reacts to option changes without leaving stale UI", async ()
     }
     await waitForAsyncCallbacks();
     assert.equal(document.querySelector(".bctt-tooltip"), null);
-    assert.equal(document.getElementById("betterchzzk-title-tooltip-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-title-tooltip-style"), null);
     assert.equal(title.hasAttribute("data-bctt-active"), false);
 
     title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
@@ -2986,7 +2986,7 @@ test("audio compressor button yields to an existing external cheese-knife compre
 
     await loadAudioCompressorFeature(dom);
 
-    assert.equal(document.getElementById("betterchzzk-audio-compressor"), null);
+    assert.equal(document.getElementById("cheese-spanner-audio-compressor"), null);
 });
 
 test("audio compressor has its own control after the native volume control", async () => {
@@ -2994,15 +2994,15 @@ test("audio compressor has its own control after the native volume control", asy
 
     await loadAudioCompressorFeature(dom);
 
-    await waitForCondition(() => document.getElementById("betterchzzk-audio-compressor"));
-    const button = document.getElementById("betterchzzk-audio-compressor");
+    await waitForCondition(() => document.getElementById("cheese-spanner-audio-compressor"));
+    const button = document.getElementById("cheese-spanner-audio-compressor");
 
-    const control = document.getElementById("betterchzzk-audio-compressor-control");
+    const control = document.getElementById("cheese-spanner-audio-compressor-control");
     assert.equal(control.previousElementSibling, volumeControl);
     assert.equal(button.parentElement, control);
     assert.equal(control.firstElementChild, button);
     assert.equal(volumeButton.parentElement, volumeControl);
-    assert.ok(button.nextElementSibling.contains(document.getElementById("betterchzzk-audio-compressor-volume")));
+    assert.ok(button.nextElementSibling.contains(document.getElementById("cheese-spanner-audio-compressor-volume")));
     assert.equal(button.classList.contains(["knife", "audio", "compressor"].join("-")), false);
 });
 
@@ -3015,15 +3015,15 @@ test("audio compressor focus ring uses the shared CHZZK theme while its track co
     evalRepoScript(dom, "features", "volumeTooltip.js");
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
-    await waitForCondition(() => document.getElementById("betterchzzk-audio-compressor"));
+    await waitForCondition(() => document.getElementById("cheese-spanner-audio-compressor"));
 
-    assert.ok(document.getElementById("betterchzzk-ui-theme"), "the compressor control requests the shared theme");
-    const rules = Array.from(document.getElementById("betterchzzk-audio-compressor-style").sheet.cssRules);
+    assert.ok(document.getElementById("cheese-spanner-ui-theme"), "the compressor control requests the shared theme");
+    const rules = Array.from(document.getElementById("cheese-spanner-audio-compressor-style").sheet.cssRules);
     const focus = rules.filter((rule) => rule.style?.getPropertyValue("outline").includes("2px solid"));
     assert.equal(focus.length, 1);
     assert.equal(focus[0].style.getPropertyValue("outline"), "2px solid var(--bct-focus-ring)");
-    assert.match(focus[0].selectorText, /#betterchzzk-audio-compressor:focus-visible/);
-    assert.match(focus[0].selectorText, /#betterchzzk-audio-compressor-volume:focus-visible/);
+    assert.match(focus[0].selectorText, /#cheese-spanner-audio-compressor:focus-visible/);
+    assert.match(focus[0].selectorText, /#cheese-spanner-audio-compressor-volume:focus-visible/);
     assert.equal(
         rules.some((rule) => /--sem-|Content-Brand/i.test(rule.style?.cssText || "")),
         false,
@@ -3048,12 +3048,12 @@ test("audio compressor button tooltip reports graph setup failures", async () =>
     };
 
     await loadAudioCompressorFeature(dom);
-    await waitForCondition(() => document.getElementById("betterchzzk-audio-compressor"));
+    await waitForCondition(() => document.getElementById("cheese-spanner-audio-compressor"));
 
-    const button = document.getElementById("betterchzzk-audio-compressor");
+    const button = document.getElementById("cheese-spanner-audio-compressor");
     button.click();
 
-    assert.equal(button.dataset.betterChzzkReady, "0");
+    assert.equal(button.dataset.cheeseSpannerReady, "0");
     assert.equal(button.getAttribute("tooltip"), "오디오 컴프레서(사용할 수 없음)");
     assert.equal(button.getAttribute("aria-label"), "오디오 컴프레서(사용할 수 없음)");
 });
@@ -3148,7 +3148,7 @@ test("saved quality changes cross the page bridge and switch existing tracks", a
         await waitForCondition(() => trackList.selectedIndex === index);
         assert.equal(trackList.selectedIndex, index);
         const state = JSON.parse(
-            dom.window.document.documentElement.getAttribute("data-betterchzzk-auto-quality-state")
+            dom.window.document.documentElement.getAttribute("data-cheese-spanner-auto-quality-state")
         );
         assert.equal(state.quality, quality);
     }
@@ -3268,7 +3268,7 @@ test("auto quality reopens VOD page apply when the stable video is replaced", ()
     };
     dom.window.clearTimeout = () => {};
 
-    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:auto-quality:state"));
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:auto-quality:state"));
     assert.equal(scheduledTimers.length, 0);
     assert.ok(trackCallbacks.size > 0, "quality discovery subscribes to the native track list");
     for (const callback of trackCallbacks) callback(new dom.window.Event("change"));
@@ -3294,7 +3294,7 @@ test("auto quality reopens VOD page apply when the stable video is replaced", ()
     });
     document.querySelector("main").replaceChildren(replacement);
 
-    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:auto-quality:state"));
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:auto-quality:state"));
     assert.equal(scheduledTimers.length, 1);
     assert.equal(scheduledTimers[0].delay, 0);
 });
@@ -3388,7 +3388,7 @@ test("auto quality playback restore stops at an SPA route boundary", async () =>
     assert.ok(restoreTimer);
 
     dom.window.history.pushState({}, "", "/video/67890");
-    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:routechange"));
 
     const replacement = document.createElement("video");
     let playCalls = 0;
@@ -3423,7 +3423,7 @@ test("auto quality page hook leaves videoTracks descriptors untouched outside pl
         get: getter,
     });
 
-    assert.equal(getter.__betterChzzkVideoTracksWrapped, undefined);
+    assert.equal(getter.__cheeseSpannerVideoTracksWrapped, undefined);
     assert.equal(Object.getOwnPropertyDescriptor(target, "videoTracks").get, getter);
 });
 
@@ -3441,7 +3441,7 @@ test("auto quality publishes state without writing a page localStorage cache", a
     dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForAsyncCallbacks();
 
-    assert.ok(dom.window.document.documentElement.getAttribute("data-betterchzzk-auto-quality-state"));
+    assert.ok(dom.window.document.documentElement.getAttribute("data-cheese-spanner-auto-quality-state"));
     assert.equal(dom.window.localStorage.getItem("betterchzzk:auto-quality:state-cache"), null);
 });
 
@@ -3672,7 +3672,7 @@ test("live watch history starts the next SPA live session while the previous clo
     videoA.replaceWith(videoB);
     dom.window.history.pushState({}, "", "/live/channel-b");
     dom.window.dispatchEvent(
-        new dom.window.CustomEvent("betterchzzk:routechange", {
+        new dom.window.CustomEvent("cheese-spanner:routechange", {
             detail: { href: dom.window.location.href, source: "test" },
         })
     );
@@ -3931,7 +3931,7 @@ test("live watch history ignores a late live A response after moving to live B",
     dom.window.history.pushState({}, "", "/live/channel-b");
     dom.window.document.title = "라이브 B 페이지 제목";
     dom.window.dispatchEvent(
-        new dom.window.CustomEvent("betterchzzk:routechange", {
+        new dom.window.CustomEvent("cheese-spanner:routechange", {
             detail: { href: dom.window.location.href, source: "test" },
         })
     );
@@ -4212,12 +4212,12 @@ async function createVodBroadcastClockFixture(
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
 
     await waitForCondition(() => {
-        const clock = document.getElementById("betterchzzk-vod-broadcast-clock");
+        const clock = document.getElementById("cheese-spanner-vod-broadcast-clock");
         return Boolean(clock?.querySelector(".bcbc-time")?.textContent);
     });
 
     return {
-        clock: document.getElementById("betterchzzk-vod-broadcast-clock"),
+        clock: document.getElementById("cheese-spanner-vod-broadcast-clock"),
         chrome,
         dom,
         requests,
@@ -4250,12 +4250,12 @@ test("VOD broadcast range joins the native status row without watch history and 
         publishDate: "2026-10-18 02:55:46",
     });
     const { document } = dom.window;
-    const range = document.getElementById("betterchzzk-vod-broadcast-range");
+    const range = document.getElementById("cheese-spanner-vod-broadcast-range");
     assert.ok(range);
     assert.equal(range.parentElement.id, "native-video-meta");
     assert.equal(range.nextElementSibling, null, "the range is the last group of the status row");
     assert.equal(range.dataset.bcbcPlacement, "status-row");
-    assert.equal(document.querySelector("[data-betterchzzk-vod-date-hidden]"), null, "a lone view count stays");
+    assert.equal(document.querySelector("[data-cheese-spanner-vod-date-hidden]"), null, "a lone view count stays");
     assert.equal(document.getElementById("vod-title-row").nextElementSibling.id, "native-video-meta");
     assert.match(range.textContent, new RegExp(`^${RANGE_YEAR_2026}10\\.17\\(토\\) 17:07 ~ 10\\.18\\(일\\) 02:46$`));
     assert.equal(range.querySelector(".bcbc-range-start").dateTime, "2026-10-17T08:07:39.000Z");
@@ -4263,7 +4263,7 @@ test("VOD broadcast range joins the native status row without watch history and 
     assert.equal(range.hasAttribute("title"), false, "the range shows no tooltip");
     assert.equal(range.querySelector("[title]"), null);
     assert.match(range.getAttribute("aria-label"), /한국 시간, 영상 길이 기준/);
-    assert.equal(document.getElementById("betterchzzk-vod-title-history-toggle"), null);
+    assert.equal(document.getElementById("cheese-spanner-vod-title-history-toggle"), null);
     assert.deepEqual(requests, ["12345"]);
 
     const mutations = [];
@@ -4283,10 +4283,10 @@ test("VOD broadcast range stays one unbroken group in the native count color", a
         duration: 3600,
     });
     const { document } = dom.window;
-    const range = document.getElementById("betterchzzk-vod-broadcast-range");
+    const range = document.getElementById("cheese-spanner-vod-broadcast-range");
     assert.equal(range.querySelector(".bcbc-range-end").textContent, "20:00");
-    const rules = [...document.getElementById("betterchzzk-vod-broadcast-clock-style").sheet.cssRules];
-    const style = rules.find((rule) => rule.selectorText === "#betterchzzk-vod-broadcast-range").style;
+    const rules = [...document.getElementById("cheese-spanner-vod-broadcast-clock-style").sheet.cssRules];
+    const style = rules.find((rule) => rule.selectorText === "#cheese-spanner-vod-broadcast-range").style;
     // The native status row wraps whole groups, so the range itself must not break between start and end.
     assert.equal(style.getPropertyValue("white-space"), "nowrap");
     assert.equal(style.getPropertyValue("color"), "var(--bct-text-body)");
@@ -4298,7 +4298,7 @@ test("VOD broadcast range dates an end on another day and adds years outside the
         liveOpenDate: "2025-12-31 23:00:00",
         duration: 7200,
     });
-    const range = dom.window.document.getElementById("betterchzzk-vod-broadcast-range");
+    const range = dom.window.document.getElementById("cheese-spanner-vod-broadcast-range");
     assert.equal(range.textContent, "2025.12.31(수) 23:00 ~ 2026.01.01(목) 01:00");
     assert.equal(range.querySelector(".bcbc-range-next-day"), null);
 
@@ -4306,7 +4306,7 @@ test("VOD broadcast range dates an end on another day and adds years outside the
         liveOpenDate: "2026-10-25 12:00:00",
         duration: 50 * 60 * 60,
     });
-    const longRange = longDom.window.document.getElementById("betterchzzk-vod-broadcast-range");
+    const longRange = longDom.window.document.getElementById("cheese-spanner-vod-broadcast-range");
     assert.match(
         longRange.textContent,
         new RegExp(`^${RANGE_YEAR_2026}10\\.25\\(일\\) 12:00 ~ 10\\.27\\(화\\) 14:00$`)
@@ -4319,14 +4319,14 @@ test("VOD broadcast range replaces any native date with its own dated range", as
         { nativeDate: "10.25" }
     );
     const { document } = dom.window;
-    const findRange = () => document.getElementById("betterchzzk-vod-broadcast-range");
+    const findRange = () => document.getElementById("cheese-spanner-vod-broadcast-range");
     const nativeDate = document.getElementById("native-date");
     assert.equal(findRange().querySelector(".bcbc-range-start").dateTime, "2026-10-25T14:10:00.000Z");
 
     // Same-day, relative, later publish day and other-year dates all give way to the same range.
     for (const text of ["10.25", "17시간 전", "10.26", "2025.10.25", "2026.10.25."]) {
         nativeDate.textContent = text;
-        await waitForCondition(() => nativeDate.hasAttribute("data-betterchzzk-vod-date-hidden"));
+        await waitForCondition(() => nativeDate.hasAttribute("data-cheese-spanner-vod-date-hidden"));
         assert.match(
             findRange().textContent,
             new RegExp(`^${RANGE_YEAR_2026}10\\.25\\(일\\) 23:10 ~ 10\\.26\\(월\\) 00:50$`)
@@ -4340,7 +4340,7 @@ test("VOD broadcast range replaces any native date with its own dated range", as
         assert.equal(nativeDate.nextElementSibling.id, "native-date-label");
         assert.equal(findRange().previousElementSibling.id, "native-date-label");
     }
-    assert.equal(document.querySelectorAll("#betterchzzk-vod-broadcast-range").length, 1);
+    assert.equal(document.querySelectorAll("#cheese-spanner-vod-broadcast-range").length, 1);
 });
 
 test("VOD broadcast range restores a replaced native date when it goes away", async (t) => {
@@ -4353,7 +4353,7 @@ test("VOD broadcast range restores a replaced native date when it goes away", as
         },
         "route change": (dom) => {
             dom.window.history.pushState({}, "", "/lives");
-            dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+            dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:routechange"));
         },
         "title mismatch": (dom) => {
             dom.window.document.getElementById("title").firstChild.data = "Another title";
@@ -4368,11 +4368,11 @@ test("VOD broadcast range restores a replaced native date when it goes away", as
             try {
                 const { document } = dom.window;
                 const nativeDate = document.getElementById("native-date");
-                assert.equal(nativeDate.hasAttribute("data-betterchzzk-vod-date-hidden"), true);
+                assert.equal(nativeDate.hasAttribute("data-cheese-spanner-vod-date-hidden"), true);
                 remove(dom, chrome);
-                await waitForCondition(() => !document.getElementById("betterchzzk-vod-broadcast-range"));
-                assert.equal(nativeDate.hasAttribute("data-betterchzzk-vod-date-hidden"), false);
-                assert.equal(document.querySelector("[data-betterchzzk-vod-date-hidden]"), null);
+                await waitForCondition(() => !document.getElementById("cheese-spanner-vod-broadcast-range"));
+                assert.equal(nativeDate.hasAttribute("data-cheese-spanner-vod-date-hidden"), false);
+                assert.equal(document.querySelector("[data-cheese-spanner-vod-date-hidden]"), null);
             } finally {
                 dom.window.close();
             }
@@ -4386,7 +4386,7 @@ test("VOD broadcast range falls back below the heading and moves into a status r
         { statusRow: false }
     );
     const { document } = dom.window;
-    const findRange = () => document.getElementById("betterchzzk-vod-broadcast-range");
+    const findRange = () => document.getElementById("cheese-spanner-vod-broadcast-range");
     assert.equal(findRange().previousElementSibling.id, "vod-title-row");
     assert.equal(findRange().dataset.bcbcPlacement, "below-title");
     // Wait out the 800ms startup re-sync so only the DOM observer can move the range.
@@ -4399,7 +4399,7 @@ test("VOD broadcast range falls back below the heading and moves into a status r
     document.getElementById("vod-info").appendChild(status);
     await waitForCondition(() => findRange().parentElement === status);
     assert.equal(findRange().dataset.bcbcPlacement, "status-row");
-    assert.equal(document.querySelectorAll("#betterchzzk-vod-broadcast-range").length, 1);
+    assert.equal(document.querySelectorAll("#cheese-spanner-vod-broadcast-range").length, 1);
     assert.deepEqual(requests, ["12345"]);
 });
 
@@ -4409,7 +4409,7 @@ test("VOD broadcast range uses the corrected segment start for split recordings"
         duration: 3600,
         publishDate: "2026-06-29 14:05:00",
     });
-    const range = dom.window.document.getElementById("betterchzzk-vod-broadcast-range");
+    const range = dom.window.document.getElementById("cheese-spanner-vod-broadcast-range");
     assert.match(
         range.querySelector(".bcbc-range-start").textContent,
         new RegExp(`^${RANGE_YEAR_2026}06\\.29\\(월\\) 13:00$`)
@@ -4426,7 +4426,7 @@ test("VOD broadcast range leaves an unavailable duration unknown instead of usin
                 publishDate: "2026-10-25 15:00:00",
             });
             try {
-                const range = dom.window.document.getElementById("betterchzzk-vod-broadcast-range");
+                const range = dom.window.document.getElementById("cheese-spanner-vod-broadcast-range");
                 assert.match(
                     range.querySelector(".bcbc-range-start").textContent,
                     new RegExp(`^${RANGE_YEAR_2026}10\\.25\\(일\\) 12:00$`)
@@ -4450,7 +4450,7 @@ test("VOD broadcast range rejects mismatched video details and uploaded videos",
                 ...detail,
             });
             try {
-                assert.equal(dom.window.document.getElementById("betterchzzk-vod-broadcast-range"), null);
+                assert.equal(dom.window.document.getElementById("cheese-spanner-vod-broadcast-range"), null);
             } finally {
                 dom.window.close();
             }
@@ -4468,11 +4468,11 @@ test("VOD broadcast range follows title replacement, exact title identity and ex
     const replacement = title.cloneNode(true);
     replacement.getBoundingClientRect = title.getBoundingClientRect;
     title.replaceWith(replacement);
-    const findRange = () => document.getElementById("betterchzzk-vod-broadcast-range");
+    const findRange = () => document.getElementById("cheese-spanner-vod-broadcast-range");
     findRange().remove();
     await waitForCondition(findRange);
     assert.equal(findRange().parentElement.id, "native-video-meta");
-    assert.equal(document.querySelectorAll("#betterchzzk-vod-broadcast-range").length, 1);
+    assert.equal(document.querySelectorAll("#cheese-spanner-vod-broadcast-range").length, 1);
 
     replacement.firstChild.data = "Another title";
     await waitForCondition(() => !findRange());
@@ -4487,7 +4487,7 @@ test("VOD broadcast range follows the clock option and clears immediately on rou
         duration: 3600,
     });
     const { document } = dom.window;
-    const findRange = () => document.getElementById("betterchzzk-vod-broadcast-range");
+    const findRange = () => document.getElementById("cheese-spanner-vod-broadcast-range");
     const changeClockOption = (enabled) => {
         chrome.testState.sync.vodBroadcastClockEnabled = enabled;
         for (const listener of chrome.testState.storageChangeListeners) {
@@ -4498,7 +4498,7 @@ test("VOD broadcast range follows the clock option and clears immediately on rou
     await waitForCondition(() => !findRange());
     changeClockOption(true);
     await waitForCondition(findRange);
-    assert.equal(document.querySelectorAll("#betterchzzk-vod-broadcast-range").length, 1);
+    assert.equal(document.querySelectorAll("#cheese-spanner-vod-broadcast-range").length, 1);
     assert.deepEqual(requests, ["12345"], "re-enabling reuses cached detail");
 
     let resolveDetail;
@@ -4507,11 +4507,11 @@ test("VOD broadcast range follows the clock option and clears immediately on rou
             resolveDetail = resolve;
         });
     dom.window.history.pushState({}, "", "/video/67890");
-    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:routechange"));
     assert.equal(findRange(), null);
     await waitForCondition(() => resolveDetail);
     dom.window.history.pushState({}, "", "/lives");
-    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:routechange"));
     resolveDetail({
         ok: true,
         json: async () => ({
@@ -4538,9 +4538,9 @@ test("VOD broadcast range waits for the matching native title after SPA navigati
         }
     );
     const { document } = dom.window;
-    const findRange = () => document.getElementById("betterchzzk-vod-broadcast-range");
+    const findRange = () => document.getElementById("cheese-spanner-vod-broadcast-range");
     dom.window.history.pushState({}, "", "/video/67890");
-    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:routechange"));
     assert.equal(findRange(), null);
     await waitForCondition(() => document.querySelector(".bcbc-time")?.textContent === "21:00:02");
     assert.equal(findRange(), null, "new metadata must not be attached to the old heading");
@@ -4609,10 +4609,10 @@ test("VOD broadcast clock rejects an explicit live id conflict even when the rep
     try {
         await waitForCondition(() =>
             dom.window.document
-                .getElementById("betterchzzk-vod-title-history-panel")
+                .getElementById("cheese-spanner-vod-title-history-panel")
                 ?.textContent.includes("현재 방송의 이전 방제")
         );
-        const panelText = dom.window.document.getElementById("betterchzzk-vod-title-history-panel").textContent;
+        const panelText = dom.window.document.getElementById("cheese-spanner-vod-title-history-panel").textContent;
         assert.match(panelText, /현재 방송의 이전 방제/);
         assert.doesNotMatch(panelText, /충돌한 방송의 이전 방제/);
     } finally {
@@ -4668,11 +4668,11 @@ test("VOD previous-title toggle and panel use the shared CHZZK theme while the c
         const { document } = dom.window;
         await waitForCondition(() =>
             document
-                .getElementById("betterchzzk-vod-title-history-panel")
+                .getElementById("cheese-spanner-vod-title-history-panel")
                 ?.textContent.includes("테마 확인용 이전 방제")
         );
-        const themeStyle = document.getElementById("betterchzzk-ui-theme");
-        const featureStyle = document.getElementById("betterchzzk-vod-broadcast-clock-style");
+        const themeStyle = document.getElementById("cheese-spanner-ui-theme");
+        const featureStyle = document.getElementById("cheese-spanner-vod-broadcast-clock-style");
         assert.ok(themeStyle, "the feature requests the shared CHZZK theme");
         assert.ok(
             themeStyle.compareDocumentPosition(featureStyle) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING,
@@ -4681,11 +4681,11 @@ test("VOD previous-title toggle and panel use the shared CHZZK theme while the c
         const css = featureStyle.textContent;
         assert.match(
             css,
-            /#betterchzzk-vod-title-history-panel\{[^}]*border:1px solid var\(--bct-border\);[^}]*border-radius:var\(--bct-radius-lg\);[^}]*color:var\(--bct-text\);[^}]*background:var\(--bct-surface\);[^}]*box-shadow:var\(--bct-shadow\);[^}]*font-family:var\(--bct-font\);/s
+            /#cheese-spanner-vod-title-history-panel\{[^}]*border:1px solid var\(--bct-border\);[^}]*border-radius:var\(--bct-radius-lg\);[^}]*color:var\(--bct-text\);[^}]*background:var\(--bct-surface\);[^}]*box-shadow:var\(--bct-shadow\);[^}]*font-family:var\(--bct-font\);/s
         );
         assert.match(
             css,
-            /#betterchzzk-vod-title-history-toggle\[aria-expanded="true"\]\{[^}]*color:var\(--bct-brand-text\);/s
+            /#cheese-spanner-vod-title-history-toggle\[aria-expanded="true"\]\{[^}]*color:var\(--bct-brand-text\);/s
         );
         assert.match(css, /\.bcbc-title-history-time\{[^}]*color:var\(--bct-text-muted\);/s);
         assert.doesNotMatch(
@@ -4695,10 +4695,10 @@ test("VOD previous-title toggle and panel use the shared CHZZK theme while the c
         );
         assert.doesNotMatch(css, /var\(--bct-[\w-]+,/, "shared theme variables carry no local fallback");
         // The clock pill sits on the video controls: fixed overlay colors and the copied native control font stay.
-        const clockRule = css.match(/#betterchzzk-vod-broadcast-clock\{[^}]*\}/)?.[0] || "";
+        const clockRule = css.match(/#cheese-spanner-vod-broadcast-clock\{[^}]*\}/)?.[0] || "";
         assert.match(clockRule, /color:#fff;[^}]*background:rgba\(0,0,0,0\.38\);[^}]*font-family:inherit;/s);
         assert.doesNotMatch(
-            css.replace(/#betterchzzk-vod-broadcast-clock\{[^}]*\}/, ""),
+            css.replace(/#cheese-spanner-vod-broadcast-clock\{[^}]*\}/, ""),
             /#[0-9a-f]{3,8}\b|rgba?\(/i,
             "only the player overlay keeps fixed colors"
         );
@@ -4710,12 +4710,12 @@ test("VOD previous-title toggle and panel use the shared CHZZK theme while the c
             .map((match) => match[2])
             .filter((text) => /[가-힣]/.test(text) && /(?:습|합|됩|입)니다/.test(text));
         assert.deepEqual(formalCopy, [], "VOD clock statuses use 해요체");
-        assert.ok(document.getElementById("betterchzzk-vod-broadcast-range"));
+        assert.ok(document.getElementById("cheese-spanner-vod-broadcast-range"));
         for (const listener of chrome.testState.storageChangeListeners) {
             listener({ vodBroadcastClockEnabled: { oldValue: true, newValue: false } }, "sync");
         }
-        await waitForCondition(() => !document.getElementById("betterchzzk-vod-broadcast-range"));
-        assert.ok(document.getElementById("betterchzzk-vod-title-history-toggle"), "title history stays enabled");
+        await waitForCondition(() => !document.getElementById("cheese-spanner-vod-broadcast-range"));
+        assert.ok(document.getElementById("cheese-spanner-vod-title-history-toggle"), "title history stays enabled");
     } finally {
         for (const listener of chrome.testState.storageChangeListeners) {
             listener(
@@ -4821,8 +4821,8 @@ test("VOD broadcast clock stays hidden when the broadcast start time is unavaila
     await new Promise((resolve) => setTimeout(resolve, 400));
 
     assert.equal(detailRequests, 1);
-    assert.equal(document.getElementById("betterchzzk-vod-broadcast-clock"), null);
-    assert.equal(document.getElementById("betterchzzk-vod-broadcast-range"), null);
+    assert.equal(document.getElementById("cheese-spanner-vod-broadcast-clock"), null);
+    assert.equal(document.getElementById("cheese-spanner-vod-broadcast-range"), null);
 });
 
 function bindLiveTimeShiftVideoState(video, state) {
@@ -4952,7 +4952,7 @@ test("skip pill wheel decrement keeps one second as the minimum step", async () 
 
     try {
         await loadSkipControlPage(dom);
-        const pill = document.getElementById("betterchzzk-skip-pill");
+        const pill = document.getElementById("cheese-spanner-skip-pill");
         assert.ok(pill);
 
         const wheel = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
@@ -5285,7 +5285,7 @@ for (const route of ["live", "video"]) {
             ".pzp-button{transition:opacity .2s ease-in}.pzp-pc__playback-switch{opacity:0}.pzp-pc.pzp-pc--controls .pzp-pc__playback-switch{opacity:1}";
         document.head.append(style);
         await loadSkipControlPage(dom);
-        const pill = document.getElementById("betterchzzk-skip-pill");
+        const pill = document.getElementById("cheese-spanner-skip-pill");
         assert.ok(pill);
         const changes = [];
         const observer = new dom.window.MutationObserver((records) => changes.push(...records));
@@ -5310,8 +5310,8 @@ for (const route of ["live", "video"]) {
         controls.replaceWith(next);
         next.getBoundingClientRect = controls.getBoundingClientRect;
         next.append(play);
-        await waitForCondition(() => document.getElementById("betterchzzk-skip-pill")?.parentElement === next);
-        assert.equal(document.querySelectorAll("#betterchzzk-skip-pill").length, 1);
+        await waitForCondition(() => document.getElementById("cheese-spanner-skip-pill")?.parentElement === next);
+        assert.equal(document.querySelectorAll("#cheese-spanner-skip-pill").length, 1);
     });
 }
 
@@ -5383,7 +5383,7 @@ test("live fast-forward button seeks to the buffered live edge", async () => {
         await waitForAsyncCallbacks();
         await waitForAsyncCallbacks();
 
-        const button = document.getElementById("betterchzzk-live-fast-forward");
+        const button = document.getElementById("cheese-spanner-live-fast-forward");
         assert.ok(button);
         assert.equal(button.parentElement, controls);
         assert.equal(button.previousElementSibling, play, "fast forward keeps its original position after playback");
@@ -5393,11 +5393,11 @@ test("live fast-forward button seeks to the buffered live edge", async () => {
         assert.equal(button.hasAttribute("title"), false);
         assert.equal(button.classList.contains("knife-ff"), true);
         assert.ok(button.querySelector("ui-next-media-icon.bc-live-ff-icon svg"));
-        assert.equal(button.querySelector(".betterchzzk-player-tooltip").textContent, "빨리 감기");
+        assert.equal(button.querySelector(".cheese-spanner-player-tooltip").textContent, "빨리 감기");
         assert.equal(button.querySelector(".bc-live-ff-icon").textContent.trim(), "");
         assert.equal(button.disabled, false);
 
-        const pill = document.getElementById("betterchzzk-skip-pill");
+        const pill = document.getElementById("cheese-spanner-skip-pill");
         assert.ok(pill);
         for (const control of [button, pill]) {
             assert.equal(control.style.opacity, "", "native fades must not be frozen at their sampled opacity");
@@ -5488,7 +5488,7 @@ test("live fast-forward button jumps to the seekable live edge on a time-machine
         await waitForAsyncCallbacks();
         await waitForAsyncCallbacks();
 
-        const button = document.getElementById("betterchzzk-live-fast-forward");
+        const button = document.getElementById("cheese-spanner-live-fast-forward");
         assert.ok(button);
         assert.equal(button.disabled, false);
 
@@ -5571,7 +5571,7 @@ test("live fast-forward button does not duplicate an external knife button", asy
         await waitForAsyncCallbacks();
         await waitForAsyncCallbacks();
 
-        assert.equal(document.getElementById("betterchzzk-live-fast-forward"), null);
+        assert.equal(document.getElementById("cheese-spanner-live-fast-forward"), null);
         assert.equal(document.getElementById("external-ff"), externalButton);
     } finally {
         for (const listener of chrome.testState.storageChangeListeners) {
@@ -5974,12 +5974,18 @@ for (const permissionGranted of [false, true]) {
         t.after(() => dom.window.close());
         evalRepoScript(dom, "shared", "settings.js");
         evalRepoScript(dom, "options.js");
-        await waitForAsyncCallbacks();
+        // The fake storage answers on Node timers that closing the window does not cancel, so a load or save still
+        // running at teardown would touch the closed document. Each click marks the save in flight before returning.
+        const optionsSettled = () =>
+            waitForCondition(() => dom.window.CheeseSpannerOptionsPage.isReady(), {
+                message: "options load or save did not finish",
+            });
+        await optionsSettled();
         const input = queryOption(dom.window.document, "liveMultiviewEnabled");
         input.checked = true;
         dispatch(dom, input, "change");
         dom.window.document.getElementById("save").click();
-        await waitForAsyncCallbacks();
+        await optionsSettled();
         assert.equal(chrome.testState.permissionRequests.length, 1);
         assert.deepEqual(Array.from(chrome.testState.permissionRequests[0].origins), ["https://*.pstatic.net/*"]);
         assert.equal(input.checked, permissionGranted);
@@ -5989,8 +5995,9 @@ for (const permissionGranted of [false, true]) {
             volume.value = "6";
             dispatch(dom, volume, "input");
             dom.window.document.getElementById("save").click();
-            await waitForAsyncCallbacks();
+            await optionsSettled();
             assert.equal(chrome.testState.permissionRequests.length, 1, "already enabled media must not request again");
+            assert.equal(chrome.testState.sync.volumeWheelStep, 6);
         }
     });
 }
@@ -6256,7 +6263,7 @@ async function createVolumeTooltipPage(t, pathname = "/live/test-channel") {
     });
     const nativeRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
     dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
-        if (this.id !== "betterchzzk-volume-tooltip") return nativeRect.call(this);
+        if (this.id !== "cheese-spanner-volume-tooltip") return nativeRect.call(this);
         const left = Number.parseFloat(this.style.left || "0") - 30;
         const top = Number.parseFloat(this.style.top || "0") - 30;
         return { left, top, right: left + 60, bottom: top + 30, width: 60, height: 30 };
@@ -6280,7 +6287,7 @@ async function createVolumeTooltipPage(t, pathname = "/live/test-channel") {
         chrome,
         hover,
         video: document.getElementById("main-video"),
-        tooltip: () => document.getElementById("betterchzzk-volume-tooltip"),
+        tooltip: () => document.getElementById("cheese-spanner-volume-tooltip"),
     };
 }
 
@@ -6322,7 +6329,7 @@ test("volume tooltip covers main volume controls while staying anchored to the s
     document.getElementById("thumb").dispatchEvent(
         new dom.window.MouseEvent("mouseout", {
             bubbles: true,
-            relatedTarget: document.getElementById("betterchzzk-audio-compressor"),
+            relatedTarget: document.getElementById("cheese-spanner-audio-compressor"),
             clientY: 488,
         })
     );
@@ -6337,8 +6344,8 @@ test("volume tooltip covers main volume controls while staying anchored to the s
         "label-volume",
         "unrelated",
         "secondary-volume",
-        "betterchzzk-audio-compressor",
-        "betterchzzk-audio-compressor-volume",
+        "cheese-spanner-audio-compressor",
+        "cheese-spanner-audio-compressor-volume",
     ]) {
         hover(id);
         assert.equal(tooltip(), null, id);
@@ -6392,7 +6399,7 @@ test("player tooltips share native typography and percentage follows the native 
         assert.equal(style.padding, "6px 12px");
         assert.equal(style.borderRadius, "14px");
         assert.equal(tooltip().style.top, "462px");
-        const compressor = document.querySelector("#betterchzzk-audio-compressor .betterchzzk-player-tooltip");
+        const compressor = document.querySelector("#cheese-spanner-audio-compressor .cheese-spanner-player-tooltip");
         assert.ok(compressor.classList.contains("pzp-button__tooltip--top"));
         assert.equal(dom.window.getComputedStyle(compressor).fontWeight, "400");
     }
@@ -6425,7 +6432,7 @@ test("volume tooltip leaves with the native volume region even while the bar is 
         hover(id);
         assert.ok(tooltip(), id);
     }
-    hover("betterchzzk-audio-compressor");
+    hover("cheese-spanner-audio-compressor");
     assert.equal(tooltip(), null, "the playback percentage is not shown over the compressor");
     slider.dispatchEvent(
         new dom.window.MouseEvent("mouseout", {
@@ -6523,7 +6530,7 @@ test("volume tooltip cleans up options, routes, fullscreen and replaced video on
     assert.equal(tooltip(), null);
     hover("slider");
     dom.window.history.pushState({}, "", "/lives");
-    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:routechange"));
     await waitForAsyncCallbacks();
     assert.equal(tooltip(), null);
     hover("slider");
@@ -6539,7 +6546,7 @@ test("skip amount wheel stays independent from volume when the pill copies volum
     controls.append(document.getElementById("volume-area"));
     evalRepoScript(dom, "features", "skipControl.js");
     await waitForAsyncCallbacks();
-    const pill = document.getElementById("betterchzzk-skip-pill");
+    const pill = document.getElementById("cheese-spanner-skip-pill");
     assert.ok(pill);
     assert.ok(pill.className.includes("volume"), "the native reference's volume class is inherited");
     pill.getBoundingClientRect = controls.getBoundingClientRect;
@@ -6613,7 +6620,7 @@ async function createLiveDisplayPage(
         chrome,
         calls,
         document: dom.window.document,
-        clock: () => dom.window.document.getElementById("betterchzzk-live-start-time"),
+        clock: () => dom.window.document.getElementById("cheese-spanner-live-start-time"),
     };
 }
 
@@ -6626,10 +6633,10 @@ test("live display hides only header badge and remounts the KST start clock with
     assert.notEqual(dom.window.getComputedStyle(document.getElementById("live-edge")).display, "none");
     const status = document.getElementById("live-status");
     status.replaceWith(status.cloneNode(true));
-    document.querySelectorAll("#betterchzzk-live-start-time").forEach((node) => node.remove());
+    document.querySelectorAll("#cheese-spanner-live-start-time").forEach((node) => node.remove());
     await waitForAsyncCallbacks();
     assert.equal(clock().textContent, "06:23 시작");
-    assert.equal(document.querySelectorAll("#betterchzzk-live-start-time").length, 1);
+    assert.equal(document.querySelectorAll("#cheese-spanner-live-start-time").length, 1);
     for (let index = 0; index < 5; index += 1) {
         document.getElementById("streaming").textContent = `${index}:00:00 스트리밍 중`;
         await waitForAsyncCallbacks();
@@ -6642,7 +6649,7 @@ test("live display hides only header badge and remounts the KST start clock with
     changePlayerDisplayOptions(chrome, { liveStartTimeEnabled: false });
     await waitForAsyncCallbacks();
     assert.equal(clock(), null);
-    assert.equal(document.getElementById("betterchzzk-live-player-display-style"), null);
+    assert.equal(document.getElementById("cheese-spanner-live-player-display-style"), null);
     document.getElementById("streaming").textContent = "07:00:00 스트리밍 중";
     await waitForAsyncCallbacks();
     assert.equal(clock(), null);
@@ -6738,7 +6745,7 @@ test("live start clock updates at KST midnight without refetch and clears date t
     await waitForAsyncCallbacks();
     assert.equal(timers.size, 1);
     dom.window.history.pushState({}, "", "/video/123");
-    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:routechange"));
     await waitForAsyncCallbacks();
     assert.equal(clock(), null);
     assert.equal(timers.size, 0);
@@ -6750,7 +6757,7 @@ test("live start clock aborts old routes and ignores late responses and disabled
         fetch: () => new Promise((resolve) => pending.push(resolve)),
     });
     dom.window.history.pushState({}, "", "/live/second-channel");
-    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:routechange"));
     await waitForAsyncCallbacks();
     assert.equal(calls.length, 2);
     assert.equal(calls[0].signal.aborted, true);
@@ -6762,7 +6769,7 @@ test("live start clock aborts old routes and ignores late responses and disabled
     await waitForAsyncCallbacks();
     assert.equal(clock().textContent, "00:05 시작");
     dom.window.history.pushState({}, "", "/live/third-channel");
-    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:routechange"));
     await waitForAsyncCallbacks();
     assert.equal(clock(), null);
     changePlayerDisplayOptions(chrome, { liveStartTimeEnabled: false });
@@ -6772,7 +6779,7 @@ test("live start clock aborts old routes and ignores late responses and disabled
     await waitForAsyncCallbacks();
     assert.equal(clock(), null);
     dom.window.history.pushState({}, "", "/video/123");
-    dom.window.dispatchEvent(new dom.window.Event("betterchzzk:routechange"));
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:routechange"));
     await waitForAsyncCallbacks();
     assert.equal(document.documentElement.hasAttribute("data-bclpd-hide-live"), false);
     assert.equal(calls.length, 3);
@@ -6847,11 +6854,11 @@ test("volume providers survive Chromium's extension-wide script path de-duplicat
         }
     }
     for (const dom of Object.values(worlds))
-        assert.equal(typeof dom.window.BetterChzzkVolumeControls?.getVolumeControlCandidates, "function");
+        assert.equal(typeof dom.window.CheeseSpannerVolumeControls?.getVolumeControlCandidates, "function");
     evalRepoScript(main.dom, "features", "volumeWheelPage.js");
     assert.doesNotThrow(() => evalRepoScript(isolated.dom, "features", "volumeTooltip.js"));
     isolated.dom.window.document.dispatchEvent(new isolated.dom.window.Event("DOMContentLoaded", { bubbles: true }));
-    await waitForCondition(() => isolated.document.getElementById("betterchzzk-audio-compressor"));
+    await waitForCondition(() => isolated.document.getElementById("cheese-spanner-audio-compressor"));
     const slider = isolated.document.createElement("div");
     slider.className = "pzp-pc__volume-slider";
     slider.getBoundingClientRect = isolated.volumeControl.getBoundingClientRect;
@@ -6863,7 +6870,7 @@ test("volume providers survive Chromium's extension-wide script path de-duplicat
             clientY: sliderRect.top + sliderRect.height / 2,
         })
     );
-    assert.ok(isolated.document.getElementById("betterchzzk-volume-tooltip"));
+    assert.ok(isolated.document.getElementById("cheese-spanner-volume-tooltip"));
 });
 
 test("MAIN volume provider stays identical to the canonical shared implementation", () => {
@@ -6901,7 +6908,7 @@ test("live start clock waits for delayed status without scanning on unrelated ch
     assert.equal(clock().textContent, "06:23 시작");
     const layout = document.getElementById("layout-body");
     const replacement = layout.cloneNode(true);
-    replacement.querySelector("#betterchzzk-live-start-time").remove();
+    replacement.querySelector("#cheese-spanner-live-start-time").remove();
     layout.replaceWith(replacement);
     await waitForCondition(() => clock()?.isConnected);
     assert.equal(calls.length, 1);

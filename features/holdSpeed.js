@@ -8,8 +8,8 @@
  *   짧은 클릭은 네이티브에 맡기고, 드래그는 홀드를 취소한다. 별도 사용자 지정 키로
  *   0.25~4배속을 0.25씩 조절하거나 1배속으로 복원하며, 입력 해제, blur, 문서 숨김, 옵션 비활성화, SPA 이탈, 비디오 교체 시 임시
  *   홀드 상태와 안내 오버레이를 정리한다.
- * 의존: BetterChzzkSettings, BetterChzzk.skipControl(markPlaybackToggleIntent),
- *   BetterChzzk.utils(getMainVideoElement, getPlayerRoot, getVideoViewportRect, injectStyleOnce, isLiveRoute, isPlaybackRoute,
+ * 의존: CheeseSpannerSettings, CheeseSpanner.skipControl(markPlaybackToggleIntent),
+ *   CheeseSpanner.utils(getMainVideoElement, getPlayerRoot, getVideoViewportRect, injectStyleOnce, isLiveRoute, isPlaybackRoute,
  *   bindFeatureOptions, startPageChangeDetection).
  * 옵션 키: holdSpeedEnabled, playbackSpeedShortcutsEnabled, playbackSpeedHalfKeyCode,
  *   playbackSpeedDoubleKeyCode, playbackSpeedResetKeyCode. 기존 Half/Double 저장 키는 감소/증가용으로 유지한다.
@@ -17,11 +17,11 @@
 (() => {
     "use strict";
 
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     if (root.holdSpeed) return;
 
-    const OVERLAY_ID = "betterchzzk-hold-speed-overlay";
-    const STYLE_ID = "betterchzzk-hold-speed-style";
+    const OVERLAY_ID = "cheese-spanner-hold-speed-overlay";
+    const STYLE_ID = "cheese-spanner-hold-speed-style";
     const HOLD_THRESHOLD_MS = 350;
     const HOLD_RATE = 2;
     const POINTER_DRAG_DISTANCE = 4;
@@ -44,9 +44,9 @@
         isLiveRoute,
         isPlaybackRoute,
         startPageChangeDetection,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
 
-    let featureOptions = BetterChzzkSettings.normalizeOptions();
+    let featureOptions = CheeseSpannerSettings.normalizeOptions();
     let activePress = null;
     let suppressedSpacePress = false;
     let suppressedPointerClick = null;

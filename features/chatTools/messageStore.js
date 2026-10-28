@@ -6,7 +6,7 @@
  */
 (() => {
     "use strict";
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     const namespace = (root.chatTools = root.chatTools || {});
     const parser = namespace.parser;
     const { normSpace } = root.utils;

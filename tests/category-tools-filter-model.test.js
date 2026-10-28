@@ -9,7 +9,7 @@ function loadFilterModel() {
     for (const file of ["shared/categoryExclusions.js", "features/categoryTools/filterModel.js"]) {
         vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
     }
-    return context.BetterChzzk.categoryToolsFilterModel;
+    return context.CheeseSpanner.categoryToolsFilterModel;
 }
 
 function plain(value) {
@@ -354,8 +354,8 @@ test("tag exclusions compare normalized whole tags only and never partial words"
     for (const file of ["shared/categoryExclusions.js", "features/categoryTools/filterModel.js"]) {
         vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
     }
-    const exclusions = context.BetterChzzk.categoryExclusions;
-    const model = context.BetterChzzk.categoryToolsFilterModel;
+    const exclusions = context.CheeseSpanner.categoryExclusions;
+    const model = context.CheeseSpanner.categoryToolsFilterModel;
     assert.deepEqual(plain(exclusions.createTagExclusion("  ##롤토체스  ")), {
         categoryType: "CHEESE_SPANNER_TAG",
         categoryId: "롤토체스",

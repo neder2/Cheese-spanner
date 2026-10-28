@@ -1,6 +1,6 @@
 /** Broadcast data normalization and calendar arithmetic; no UI or request state. */
 (() => {
-    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
+    const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     const {
         pickArray,
         pickChzzkVideoNo,
@@ -61,7 +61,7 @@
     function mergeVideoDetail(video, detail) {
         if (!video || !detail) return;
 
-        const normalized = BetterChzzk.vodTimeline.normalizeVideoDetail(detail);
+        const normalized = CheeseSpanner.vodTimeline.normalizeVideoDetail(detail);
         if (Number.isFinite(normalized.durationSeconds)) {
             video.duration = normalized.durationSeconds;
         }
@@ -181,7 +181,7 @@
         };
 
         const existing = monthInfo.startKeyIndex[startKey];
-        const entry = BetterChzzk.vodTimeline.mergeBroadcastSegment(existing, incoming);
+        const entry = CheeseSpanner.vodTimeline.mergeBroadcastSegment(existing, incoming);
         monthInfo.startKeyIndex[startKey] = entry;
         // Earlier starts can cover this month; their duration total stays in the start month.
         if (startMs < monthInfo.startMs) return;

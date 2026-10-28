@@ -11,7 +11,7 @@
         list: new Set(["더보기", "접기"]),
     };
     const { bindFeatureOptions, createMutationObserverSync, startPageChangeDetection, storageGet, storageSet } =
-        BetterChzzk.utils;
+        CheeseSpanner.utils;
     const storage = globalThis.chrome?.storage?.local;
     let enabled = false;
     let generation = 0;
@@ -61,7 +61,7 @@
         const state = { ...preference };
         writeQueue = writeQueue
             .then(() => storageSet(storage, { [STORAGE_KEY]: state }))
-            .catch((error) => console.warn("[Better Chzzk] 팔로잉 목록 상태 저장 실패", error));
+            .catch((error) => console.warn("[Cheese Spanner] 팔로잉 목록 상태 저장 실패", error));
     }
 
     function scheduleSync() {
@@ -177,7 +177,7 @@
             .catch((error) => {
                 if (!enabled || token !== generation) return;
                 loaded = true;
-                console.warn("[Better Chzzk] 팔로잉 목록 상태 읽기 실패", error);
+                console.warn("[Cheese Spanner] 팔로잉 목록 상태 읽기 실패", error);
                 if (Object.keys(userChoices).length) savePreference();
                 scheduleSync();
             });

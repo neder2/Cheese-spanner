@@ -2,15 +2,18 @@
 (() => {
     const root = document.getElementById("liveStartChannels");
     if (!root) return;
-    const { CHANNELS_KEY, STATUS_KEY, MAX_CHANNELS, parseChannelId, normalizeChannels } =
-        globalThis.BetterChzzkLiveStart;
-    const { storageGet, fetchJson } = BetterChzzk.utils;
+    const { CHANNELS_KEY, STATUS_KEY, MAX_CHANNELS, API_HOST_PERMISSION, parseChannelId, normalizeChannels } =
+        globalThis.CheeseSpannerLiveStart;
+    const API_ACCESS_MESSAGE =
+        "확장의 사이트 액세스에서 api.chzzk.naver.com 접근이 꺼져 있어 채널을 확인하지 못했어요. 아래 ‘치지직 API 접근 허용’을 눌러 주세요.";
+    const { storageGet, fetchJson } = CheeseSpanner.utils;
     const input = document.getElementById("liveStartChannelInput");
     const add = document.getElementById("liveStartChannelAdd");
     const list = document.getElementById("liveStartChannelList");
     const message = document.getElementById("liveStartChannelMessage");
     const status = document.getElementById("liveStartMonitorStatus");
     const permission = document.getElementById("liveStartPermission");
+    const hostAccess = document.getElementById("liveStartHostAccess");
     let channels = [];
     let ready = false;
     let busy = false;
@@ -98,6 +101,23 @@
         }
     }
 
+    // Site access can withhold the API host while chzzk.naver.com stays granted; lookups here would then
+    // fail as CORS requests, so ask for it instead.
+    async function updateHostAccess() {
+        let granted = true;
+        try {
+            granted = await chrome.permissions.contains(API_HOST_PERMISSION);
+        } catch (_) {
+            // Without an answer the lookup itself reports a failure.
+        }
+        if (!disposed) {
+            hostAccess.hidden = granted;
+            // Guidance left by an earlier add attempt no longer applies once access is back.
+            if (granted && message.textContent === API_ACCESS_MESSAGE) tell("");
+        }
+        return granted;
+    }
+
     async function load() {
         const version = ++loadVersion;
         try {
@@ -109,6 +129,7 @@
             render();
             renderStatus(data[STATUS_KEY]);
             void updatePermission();
+            void updateHostAccess();
         } catch (_) {
             if (disposed) return;
             ready = false;
@@ -119,7 +140,7 @@
 
     function sendChange(kind, channel) {
         return new Promise((resolve, reject) => {
-            chrome.runtime.sendMessage({ type: "betterchzzk:live-start:channels", kind, channel }, (response) => {
+            chrome.runtime.sendMessage({ type: "cheese-spanner:live-start:channels", kind, channel }, (response) => {
                 const error = chrome.runtime.lastError;
                 if (error || !response?.ok)
                     reject(new Error(response?.error || "채널 설정을 저장하지 못했어요. 다시 시도해 주세요."));
@@ -169,6 +190,11 @@
         tell("채널을 확인하고 있어요.");
         controller = new AbortController();
         try {
+            if (!(await updateHostAccess())) {
+                if (!disposed) tell(API_ACCESS_MESSAGE, true);
+                return;
+            }
+            if (disposed) return;
             const json = await fetchJson(`https://api.chzzk.naver.com/service/v1/channels/${channelId}`, {
                 signal: controller.signal,
                 timeoutMs: 8000,
@@ -236,17 +262,40 @@
             void updatePermission();
         });
     });
+    hostAccess.addEventListener("click", () => {
+        // Required host permissions withheld by site access can be granted again from a user gesture.
+        chrome.permissions.request(API_HOST_PERMISSION, (granted) => {
+            const error = chrome.runtime.lastError;
+            if (disposed) return;
+            tell(
+                !error && granted
+                    ? "치지직 API 접근을 허용했어요. 채널 추가와 방송 확인을 다시 사용할 수 있어요."
+                    : "치지직 API 접근을 허용하지 않았어요. 방송 알림과 자동 열기는 이 접근이 있어야 동작해요.",
+                Boolean(error) || !granted
+            );
+            void updateHostAccess();
+        });
+    });
     function onStorageChange(changes, area) {
         if (area === "local" && Object.hasOwn(changes, CHANNELS_KEY)) void load();
         else if (area === "local" && Object.hasOwn(changes, STATUS_KEY)) renderStatus(changes[STATUS_KEY].newValue);
     }
+    // Site access can also change on the browser's extension page while this page stays open.
+    function onPermissionChange() {
+        void updatePermission();
+        void updateHostAccess();
+    }
     chrome?.storage?.onChanged?.addListener(onStorageChange);
+    chrome?.permissions?.onAdded?.addListener(onPermissionChange);
+    chrome?.permissions?.onRemoved?.addListener(onPermissionChange);
     window.addEventListener(
         "pagehide",
         () => {
             disposed = true;
             controller?.abort();
             chrome?.storage?.onChanged?.removeListener(onStorageChange);
+            chrome?.permissions?.onAdded?.removeListener?.(onPermissionChange);
+            chrome?.permissions?.onRemoved?.removeListener?.(onPermissionChange);
         },
         { once: true }
     );

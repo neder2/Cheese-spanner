@@ -1,5 +1,5 @@
 /**
- * shared/settings.js — 옵션 단일 공급원 (globalThis.BetterChzzkSettings)
+ * shared/settings.js — 옵션 단일 공급원 (globalThis.CheeseSpannerSettings)
  *
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트 + service worker(background.js의 importScripts) +
  *   확장 페이지(options.html, history.html). 그래서 window/document 같은 DOM API를 쓰면 안 되고
@@ -440,7 +440,7 @@
     function withOptionsStorageLock(work) {
         // 확장 페이지와 워커가 같은 origin의 잠금을 저장 콜백 완료까지 공유한다.
         const locks = globalThis.navigator?.locks;
-        if (typeof locks?.request === "function") return locks.request("betterchzzk:options-storage", work);
+        if (typeof locks?.request === "function") return locks.request("cheese-spanner:options-storage", work);
         // Web Locks가 없는 단일 컨텍스트에서도 기존 콜백 API를 사용할 수 있다.
         try {
             return Promise.resolve(work());
@@ -539,7 +539,7 @@
         }
     }
 
-    globalThis.BetterChzzkSettings = {
+    globalThis.CheeseSpannerSettings = {
         DEFAULT_QUALITY,
         DEFAULT_SKIP_SECONDS,
         SKIP_MIN,

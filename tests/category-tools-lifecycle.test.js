@@ -50,7 +50,7 @@ function createFixture(t) {
         return id;
     };
     window.clearTimeout = (id) => timers.delete(id);
-    Object.assign(window.BetterChzzk.utils, {
+    Object.assign(window.CheeseSpanner.utils, {
         bindFeatureOptions() {},
         createMutationObserverSync: (config) => {
             observerConfig = config;
@@ -65,7 +65,7 @@ function createFixture(t) {
         fetchJson(url, options) {
             return new Promise((resolve, reject) => requests.push({ url, ...options, resolve, reject }));
         },
-        normSpace: window.BetterChzzk.utils.compactSpaces,
+        normSpace: window.CheeseSpanner.utils.compactSpaces,
         injectStyleOnce() {},
         sleep: async () => {},
         onReady() {},
@@ -87,12 +87,12 @@ function createFixture(t) {
             buildCard: buildInjectedCard,
             mountCount: () => {
                 history.replaceState({}, "", "/lives");
-                applyOptions(BetterChzzkSettings.normalizeOptions({ globalLiveCountEnabled: true }));
+                applyOptions(CheeseSpannerSettings.normalizeOptions({ globalLiveCountEnabled: true }));
                 if (!document.getElementById(BAR_ID)) document.body.appendChild(buildToolbar());
                 syncGlobalLiveCount({ scope: "global-lives", tab: "lives" });
             },
             setFollowerMinimum: (min) =>
-                setFilterState("followers", BetterChzzk.categoryToolsFilterModel.filterStateFromRange(min, 0)),
+                setFilterState("followers", CheeseSpanner.categoryToolsFilterModel.filterStateFromRange(min, 0)),
             remember: (card) => rememberFollowerRefreshRows(getRoute(), [{
                 entry: { card, id: "channel-a", domText: "Alpha" },
                 meta: { channelId: "channel-a", views: 10 }
@@ -102,9 +102,9 @@ function createFixture(t) {
             scroll: handleAutoLoadScroll,
             apply: applyTools,
             applyScheduled: runApply,
-            disable: () => applyOptions(BetterChzzkSettings.normalizeOptions({ categoryToolsEnabled: false })),
+            disable: () => applyOptions(CheeseSpannerSettings.normalizeOptions({ categoryToolsEnabled: false })),
             pageChange: handlePageChange,
-            options: (options) => applyOptions(BetterChzzkSettings.normalizeOptions(options))
+            options: (options) => applyOptions(CheeseSpannerSettings.normalizeOptions(options))
         };
         ${source.slice(end)}`);
     const card = window.document.getElementById("card");
@@ -172,7 +172,7 @@ test("turning search off keeps an in-flight global count and removes all search 
     await hooks.apply();
     assert.equal(requests[0].signal.aborted, false);
     assert.equal(
-        dom.window.document.querySelector("input, .bcgt-filter, .bcgt-status, #betterchzzk-category-filter-menu"),
+        dom.window.document.querySelector("input, .bcgt-filter, .bcgt-status, #cheese-spanner-category-filter-menu"),
         null
     );
     requests[0].resolve(globalPage([globalRow(1, 25)]));
@@ -307,7 +307,7 @@ test("count-only never starts on category, video, clip or player routes", async 
         dom.reconfigure({ url: `https://chzzk.naver.com${pathname}` });
         hooks.pageChange();
         await hooks.apply();
-        assert.equal(dom.window.document.querySelector("#betterchzzk-category-tools"), null);
+        assert.equal(dom.window.document.querySelector("#cheese-spanner-category-tools"), null);
     }
     assert.equal(requests.length, 0);
     hooks.disable();
@@ -319,14 +319,14 @@ test("observer restores a removed count bar once without restarting its request"
     hooks.pageChange();
     hooks.options(countOnly);
     await hooks.apply();
-    const bar = dom.window.document.getElementById("betterchzzk-category-tools");
+    const bar = dom.window.document.getElementById("cheese-spanner-category-tools");
     const host = bar.parentElement;
     bar.remove();
     const before = scheduledApplies();
     mutation({ type: "childList", target: host, removedNodes: [bar], addedNodes: [] });
     assert.equal(scheduledApplies(), before + 1);
     await hooks.apply();
-    const current = dom.window.document.getElementById("betterchzzk-category-tools");
+    const current = dom.window.document.getElementById("cheese-spanner-category-tools");
     mutation({ type: "childList", target: host, removedNodes: [], addedNodes: [current] });
     assert.equal(scheduledApplies(), before + 1, "our insertion does not schedule another restoration");
     assert.equal(requests.length, 1);
@@ -473,7 +473,7 @@ test("global count label survives toolbar remount without duplicate requests and
     for (let i = 0; i < 20; i++) await Promise.resolve();
     assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /방송 0개/);
     assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /시청자 합계 0명/);
-    dom.window.document.getElementById("betterchzzk-category-tools").remove();
+    dom.window.document.getElementById("cheese-spanner-category-tools").remove();
     hooks.mountCount();
     assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /방송 0개/);
     assert.match(dom.window.document.querySelector(".bcgt-live-count").textContent, /시청자 합계 0명/);
@@ -574,7 +574,7 @@ test("category disable during initial metadata loading does not resume card or b
     const pending = hooks.apply();
     assert.equal(requests.length, 1);
     assert.match(requests[0].url, /\/categories\/game\/test\/lives/);
-    assert.ok(dom.window.document.getElementById("betterchzzk-category-tools"));
+    assert.ok(dom.window.document.getElementById("cheese-spanner-category-tools"));
     hooks.disable();
     assert.equal(requests[0].signal.aborted, true);
     requests[0].resolve({
@@ -582,7 +582,7 @@ test("category disable during initial metadata loading does not resume card or b
     });
     await pending;
     assert.equal(requests.length, 1, "a late metadata response must not start follower requests");
-    assert.equal(dom.window.document.getElementById("betterchzzk-category-tools"), null);
+    assert.equal(dom.window.document.getElementById("cheese-spanner-category-tools"), null);
     assert.equal(dom.window.document.querySelector('[data-bcgt-card="1"], [data-bcgt-follower-badge="1"]'), null);
     assert.equal(timers.size, 0);
 });

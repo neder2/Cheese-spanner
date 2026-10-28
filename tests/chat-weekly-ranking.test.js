@@ -18,7 +18,7 @@ for (const theme of ["theme_light", "theme_dark"]) {
         t.after(() => dom.window.close());
         const { document } = dom.window;
         let apply;
-        dom.window.BetterChzzk = {
+        dom.window.CheeseSpanner = {
             utils: {
                 bindFeatureOptions(callback) {
                     apply = callback;

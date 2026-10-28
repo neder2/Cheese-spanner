@@ -25,10 +25,10 @@ function fixture(t) {
     w.Storage.prototype.setItem = () => calls.push("storage");
     const state = (enabled = false) => {
         w.document.documentElement.setAttribute(
-            "data-betterchzzk-auto-quality-state",
+            "data-cheese-spanner-auto-quality-state",
             JSON.stringify({ enabled, quality: "1080p" })
         );
-        w.dispatchEvent(new w.Event("betterchzzk:auto-quality:state"));
+        w.dispatchEvent(new w.Event("cheese-spanner:auto-quality:state"));
     };
     const mount = () => {
         const host = w.document.createElement("div");
@@ -105,7 +105,7 @@ function fixture(t) {
     const read = (video = p.video, payload = { version: 1, requestId: "read-current" }) => {
         video.removeAttribute("data-bcsi-result");
         video.setAttribute("data-bcsi-request", typeof payload === "string" ? payload : JSON.stringify(payload));
-        video.dispatchEvent(new w.Event("betterchzzk:stream-info:read"));
+        video.dispatchEvent(new w.Event("cheese-spanner:stream-info:read"));
         return JSON.parse(video.getAttribute("data-bcsi-result"));
     };
     t.after(() => {
@@ -138,7 +138,7 @@ test("automatic quality OFF still reads the current track synchronously without 
     const paneDescriptors = Object.getOwnPropertyDescriptors(p.pane);
     const playerDescriptors = Object.getOwnPropertyDescriptors(p.player);
     f.w.document.documentElement.setAttribute(
-        "data-betterchzzk-low-latency-result",
+        "data-cheese-spanner-low-latency-result",
         JSON.stringify({ status: "applied", selectedTrackId: "low-latency-720" })
     );
     const result = f.read();

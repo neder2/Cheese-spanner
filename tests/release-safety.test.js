@@ -223,7 +223,7 @@ test("MAIN-world scripts stay behind the unprivileged DOM bridge boundary", () =
         .filter((entry) => entry.world === "MAIN")
         .flatMap((entry) => entry.js || []);
     require("../shared/adVideoRegistration.js");
-    const adScript = globalThis.BetterChzzkAdVideoRegistration.CONTENT_SCRIPT;
+    const adScript = globalThis.CheeseSpannerAdVideoRegistration.CONTENT_SCRIPT;
     assert.equal(adScript.world, "MAIN");
     mainWorldScripts.push(...adScript.js);
     const violations = [];
@@ -324,7 +324,7 @@ test("extension scripts stay in the top frame so native chat frames run without 
         assert.equal(entry.match_origin_as_fallback, undefined);
     }
     require("../shared/adVideoRegistration.js");
-    assert.equal(globalThis.BetterChzzkAdVideoRegistration.CONTENT_SCRIPT.allFrames, false);
+    assert.equal(globalThis.CheeseSpannerAdVideoRegistration.CONTENT_SCRIPT.allFrames, false);
     assert.match(readRepoFile("features", "chatMultiview.js"), /if \(window\.top !== window\) return;/);
 });
 
@@ -345,7 +345,7 @@ test("chat multiview embeds only the native chat popup route and never falls bac
     }
     assert.deepEqual(violations, []);
     require("../shared/chatMultiview.js");
-    const model = globalThis.BetterChzzkChatMultiview;
+    const model = globalThis.CheeseSpannerChatMultiview;
     const id = "a".repeat(32);
     assert.equal(model.frameUrl(id), `https://chzzk.naver.com/live/${id}/chat`);
     for (const invalid of ["A".repeat(32), "a".repeat(31), `${id}/../x`, "", null, `https://evil.example/${id}`])

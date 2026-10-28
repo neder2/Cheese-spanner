@@ -3,7 +3,7 @@ const test = require("node:test");
 const { JSDOM } = require("jsdom");
 const { createFakeChrome, readRepoFile, waitForCondition } = require("./helpers/extension-page-fixture.js");
 
-const LABEL_ID = "betterchzzk-live-lag-label";
+const LABEL_ID = "cheese-spanner-live-lag-label";
 const PATCHED_ATTR = "data-bctm-text-patched";
 
 function fixture(t, { ad = false, buttonAttrs = "" } = {}) {

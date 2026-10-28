@@ -6,15 +6,15 @@
  *   기존 그리드 카드를 템플릿으로 복제해 검색 결과 카드를 만들고, 원본 카드는 숨긴다.
  *   댓글 검색은 별도로 영상별 인기 댓글을 지연 로딩하며, 댓글 히트 아이콘과 툴팁을 붙인다.
  *   MutationObserver와 라우트 변경 감지로 SPA 네비게이션에도 검색 바를 재마운트한다.
- * 의존: BetterChzzkSettings, BetterChzzk.utils, BetterChzzk.videoSearchModel/videoSearchRepository
+ * 의존: CheeseSpannerSettings, CheeseSpanner.utils, CheeseSpanner.videoSearchModel/videoSearchRepository
  * 옵션 키: videoSearchEnabled, videoSearchCommentEnabled, videoSearchMaxPages,
  *   videoSearchRenderBatchSize, videoSearchCommentDelayMs, videoSearchCommentMaxVideos,
  *   videoSearchCommentMaxPagesPerVideo
- * DOM 마커: #betterchzzk-video-search-bar, data-bcvs-grid, data-bcvs-card, data-bcvs-hide,
+ * DOM 마커: #cheese-spanner-video-search-bar, data-bcvs-grid, data-bcvs-card, data-bcvs-hide,
  *   data-bcvs-injected, data-bcvs-load-more, data-bcvs-comment-icon, data-bcvs-comment-tooltip,
  *   data-bcvs-comment-video-no
  * 구조:
- *   - 옵션/상태 변수 선언, BetterChzzk.utils 구조분해 (파일 상단)
+ *   - 옵션/상태 변수 선언, CheeseSpanner.utils 구조분해 (파일 상단)
  *   - videoSearch/model.js: 영상·댓글 정규화, 검색 일치와 시청 진행률 계산.
  *   - videoSearch/repository.js: 채널 인덱스·캐시·요청 취소·댓글 검색. 런타임은 변경 콜백으로 렌더링.
  *   - 카드 템플릿 캡처/적용: captureTemplate, buildInjectedCard, applyPlaybackProgress
@@ -24,8 +24,8 @@
  *   - 마운트 수명주기: ensureBarMounted, removeBar, startObserver, installRuntime, applyOptions
  */
 (() => {
-    const BAR_ID = "betterchzzk-video-search-bar";
-    const STYLE_ID = "betterchzzk-video-search-style";
+    const BAR_ID = "cheese-spanner-video-search-bar";
+    const STYLE_ID = "cheese-spanner-video-search-style";
     const GRID_MARK_ATTR = "data-bcvs-grid";
     const CARD_MARK_ATTR = "data-bcvs-card";
     const HIDE_ATTR = "data-bcvs-hide";
@@ -38,7 +38,7 @@
     const INDEX_APPLY_INTERVAL_MS = 260;
 
     const loadingReasons = new Set();
-    let featureOptions = BetterChzzkSettings.normalizeOptions();
+    let featureOptions = CheeseSpannerSettings.normalizeOptions();
     let currentChannelId = null;
     let currentQuery = "";
     let observer = null;
@@ -74,10 +74,10 @@
         onReady,
         setLoadingReason,
         startPageChangeDetection,
-    } = BetterChzzk.utils;
+    } = CheeseSpanner.utils;
     const { filterVideosByNormalizedQuery, hasCommentMatchNorm, getCommentMatchText, getWatchProgressRatio } =
-        BetterChzzk.videoSearchModel;
-    const repository = BetterChzzk.videoSearchRepository.createRepository({
+        CheeseSpanner.videoSearchModel;
+    const repository = CheeseSpanner.videoSearchRepository.createRepository({
         fetchJson,
         fetchChzzkCommentPage,
         onLoading: setLoading,
@@ -140,8 +140,8 @@
     }
 
     function injectStyleOnce() {
-        BetterChzzk.utils.ensureUiTheme?.();
-        BetterChzzk.utils.injectStyleOnce(
+        CheeseSpanner.utils.ensureUiTheme?.();
+        CheeseSpanner.utils.injectStyleOnce(
             STYLE_ID,
             `
 #${BAR_ID}{

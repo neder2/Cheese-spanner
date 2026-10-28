@@ -1,5 +1,5 @@
 /**
- * shared/chatMultiview.js — 채팅 멀티뷰 구성의 순수 형식·검증·변경 (globalThis.BetterChzzkChatMultiview)
+ * shared/chatMultiview.js — 채팅 멀티뷰 구성의 순수 형식·검증·변경 (globalThis.CheeseSpannerChatMultiview)
  *
  * 실행 컨텍스트: DOM·chrome 비의존. isolated 콘텐츠(features/chatMultiview.js 앞), 옵션 페이지의 설정 파일
  *   검증, 워커 importScripts의 설정 저장 검증에서 함께 로드한다.
@@ -316,7 +316,7 @@
         return "";
     }
 
-    globalThis.BetterChzzkChatMultiview = Object.freeze({
+    globalThis.CheeseSpannerChatMultiview = Object.freeze({
         STORAGE_KEY,
         VERSION,
         MAX_CHANNELS,

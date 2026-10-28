@@ -15,7 +15,7 @@
  */
 (() => {
     "use strict";
-    const root = window.BetterChzzk;
+    const root = window.CheeseSpanner;
     if (root.ambientGlow) return;
     const {
         bindFeatureOptions,
@@ -31,12 +31,12 @@
         storageGet,
         storageSet,
     } = root.utils;
-    const STYLE_ID = "betterchzzk-ambient-style";
-    const LAYER_ID = "betterchzzk-ambient";
-    const ROW_ID = "betterchzzk-ambient-row";
-    const EXPAND_ID = "betterchzzk-ambient-expand";
-    const TOGGLE_ID = "betterchzzk-ambient-toggle";
-    const STRENGTH_ID = "betterchzzk-ambient-strength";
+    const STYLE_ID = "cheese-spanner-ambient-style";
+    const LAYER_ID = "cheese-spanner-ambient";
+    const ROW_ID = "cheese-spanner-ambient-row";
+    const EXPAND_ID = "cheese-spanner-ambient-expand";
+    const TOGGLE_ID = "cheese-spanner-ambient-toggle";
+    const STRENGTH_ID = "cheese-spanner-ambient-strength";
     const READY = "data-bcam-ready";
     // Same native home menu that stream info extends (docs/measurements/stream-info-settings-2026-09-15.md).
     const SETTINGS_MENU = ':scope > .pzp-pc__settings[role="menu"]';
@@ -51,7 +51,7 @@
     const BLUR_PX = 96;
     const SPREAD_PX = BLUR_PX * 3;
     const CANVAS_INSET_PX = BLUR_PX / 2;
-    const PANEL_SELECTOR = "#sidebar, #aside-chatting, #vod-aside, #betterchzzk-vod-comment-aside";
+    const PANEL_SELECTOR = "#sidebar, #aside-chatting, #vod-aside, #cheese-spanner-vod-comment-aside";
     const TARGET_SELECTOR = "video, [class*='pzp']";
     const PLAYER_TARGET_SELECTOR = "video, .pzp-pc__settings";
     const MULTIVIEW_ATTR = "data-bcmv-host";

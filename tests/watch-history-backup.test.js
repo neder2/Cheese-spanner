@@ -14,7 +14,7 @@ function load() {
     for (const filename of ["data.js", "watchHistoryStore.js", "watchHistoryBackup.js"]) {
         vm.runInContext(fs.readFileSync(path.join(repoRoot, "shared", filename), "utf8"), context, { filename });
     }
-    return { api: context.BetterChzzkWatchHistoryBackup, store: context.BetterChzzkWatchHistoryStore };
+    return { api: context.CheeseSpannerWatchHistoryBackup, store: context.CheeseSpannerWatchHistoryStore };
 }
 
 function storedHistory(store) {

@@ -9,21 +9,21 @@
  *   비교하지 않는다. 로그인하지 않았거나 확인에 실패하면 아무것도 표시하지 않고, 아무것도 저장하지 않는다.
  * 수명주기: 옵션 OFF·다시보기 밖으로 이동하면 observer·요청·표식을 정리하고, 계정 변경 신호에 다시 확인한다.
  * 옵션 키: vodOwnChatHighlightEnabled(기본 true).
- * DOM 마커: #betterchzzk-vod-own-chat-style, data-bcoc-own, data-bcoc-source-user.
+ * DOM 마커: #cheese-spanner-vod-own-chat-style, data-bcoc-own, data-bcoc-source-user.
  */
 (() => {
     "use strict";
 
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     if (root.vodOwnChat) return;
 
     const { bindFeatureOptions, createMutationObserverSync, fetchJson, injectStyleOnce, isVodRoute } = root.utils;
     const USER_URL = "https://comm-api.game.naver.com/nng_main/v1/user/getUserStatus";
-    const USER_REQUEST_EVENT = "betterchzzk:chat-user-source-request";
-    const PAGE_READY_EVENT = "betterchzzk:chat-timestamp-page-ready";
+    const USER_REQUEST_EVENT = "cheese-spanner:chat-user-source-request";
+    const PAGE_READY_EVENT = "cheese-spanner:chat-timestamp-page-ready";
     const SOURCE_USER_ATTR = "data-bcoc-source-user";
     const OWN_ATTR = "data-bcoc-own";
-    const STYLE_ID = "betterchzzk-vod-own-chat-style";
+    const STYLE_ID = "cheese-spanner-vod-own-chat-style";
     const VOD_CHAT_LOG_SELECTOR = "aside#vod-aside [role='log']";
     const MESSAGE_CONTAINER_SELECTOR = "[class*='chatting_message'], [class*='chat-message']";
     const USER_HASH_RE = /^[A-Za-z0-9_-]{1,128}$/;

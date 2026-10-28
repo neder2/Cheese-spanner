@@ -1,8 +1,8 @@
 // Read-only playback diagnostics. Sampling and live metadata requests run only while open.
 (() => {
     "use strict";
-    if (BetterChzzk.streamInfo) return;
-    BetterChzzk.streamInfo = {};
+    if (CheeseSpanner.streamInfo) return;
+    CheeseSpanner.streamInfo = {};
     const {
         bindFeatureOptions,
         createMutationObserverSync,
@@ -13,8 +13,8 @@
         mutationMatchesSelector,
         injectStyleOnce,
         fetchJson,
-    } = BetterChzzk.utils;
-    const ID = "betterchzzk-stream-info";
+    } = CheeseSpanner.utils;
+    const ID = "cheese-spanner-stream-info";
     const SETTINGS_MENU = ':scope > .pzp-pc__settings[role="menu"]';
     const AD_VIDEO = '[data-role="imaAdContainerEl"], [data-role="gvAdContainerEl"], #midAdPlayerWrapper';
     const PREVIEW_VIDEO = "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip], [data-bcmv-video]";
@@ -323,7 +323,7 @@
         try {
             target.removeAttribute("data-bcsi-result");
             target.setAttribute("data-bcsi-request", JSON.stringify({ version: 1, requestId }));
-            target.dispatchEvent(new Event("betterchzzk:stream-info:read"));
+            target.dispatchEvent(new Event("cheese-spanner:stream-info:read"));
             const raw = target.getAttribute("data-bcsi-result");
             if (!raw || raw.length > 4096) return null;
             const result = JSON.parse(raw);
@@ -638,7 +638,7 @@
         panelRoute = location.pathname;
         livePanel = isLiveRoute();
         model = livePanel
-            ? BetterChzzk.streamInfoModel.create({ sampleIntervalMs: 1000, stallThresholdMs: 500 })
+            ? CheeseSpanner.streamInfoModel.create({ sampleIntervalMs: 1000, stallThresholdMs: 500 })
             : null;
         panel.id = ID;
         panel.setAttribute("role", "region");
@@ -820,7 +820,7 @@
     function startRuntime() {
         if (observer || suspended) return;
         // Colors, radii, shadow and Pretendard come from shared/uiTheme.js (--bct-*), which follows CHZZK's root theme.
-        BetterChzzk.utils.ensureUiTheme?.();
+        CheeseSpanner.utils.ensureUiTheme?.();
         injectStyleOnce(
             `${ID}-style`,
             `

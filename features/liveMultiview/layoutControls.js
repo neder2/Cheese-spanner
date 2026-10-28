@@ -1,6 +1,6 @@
 /** 화면 배치·드래그·리사이즈와 해당 포인터/키보드 리소스를 소유해요. */
 (() => {
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     const model = root.multiviewModel;
     const { el, text } = root.multiviewView;
     function create({ state, players, persistSession, onOrder: syncPanelOrder, onSwap: swap, onLayerChange, onError }) {

@@ -2,12 +2,12 @@
  * features/vodComments/repository.js — VOD·정렬별 댓글 데이터와 요청 상태를 관리한다.
  *
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트.
- * 의존: BetterChzzk.vodComments.model. fetchPage는 coordinator가 주입한다.
+ * 의존: CheeseSpanner.vodComments.model. fetchPage는 coordinator가 주입한다.
  */
 (() => {
     "use strict";
 
-    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
+    const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     const namespace = (root.vodComments = root.vodComments || {});
     if (namespace.repository) return;
 

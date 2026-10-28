@@ -1,25 +1,25 @@
 /**
- * content.js — isolated world 공용 유틸 모음 (window.BetterChzzk.utils)
+ * content.js — isolated world 공용 유틸 모음 (window.CheeseSpanner.utils)
  *
  * 실행 컨텍스트: isolated world. shared/settings.js, shared/data.js 다음이자 모든 features/* 이전에 로드된다.
- * 하는 일: feature들이 공유하는 DOM·라우트·옵저버 유틸을 window.BetterChzzk.utils에 등록한다.
- *   - 라우트 감지: routeBridgePage.js(MAIN world)가 쏘는 "betterchzzk:routechange"와 popstate/click 등을 모아
- *     "betterchzzk:routechange:detected"로 feature들에 재배포한다 (startPageChangeDetection).
+ * 하는 일: feature들이 공유하는 DOM·라우트·옵저버 유틸을 window.CheeseSpanner.utils에 등록한다.
+ *   - 라우트 감지: routeBridgePage.js(MAIN world)가 쏘는 "cheese-spanner:routechange"와 popstate/click 등을 모아
+ *     "cheese-spanner:routechange:detected"로 feature들에 재배포한다 (startPageChangeDetection).
  *   - getMainVideoElement: 확장이 만든 미리보기 video(data-bcfp-* 계열)를 제외하고 가장 큰 가시 video를 고른다.
  *   - getVideoViewportRect/setVideoViewportTransform: 확장 확대 변환을 기록·해제하고 컨트롤용 표시 영역을 구한다.
  *   - createMutationObserverSync: 대상 노드 대기(startBodyWatch)와 분리 후 재연결 감시가 붙은 옵저버 팩토리.
  *   - bindFeatureOptions: 옵션 최초 로드 + 변경 구독을 한 번에 거는 헬퍼.
- * 의존: BetterChzzkSettings(shared/settings.js). shared/data.js가 먼저 등록한 utils는 스프레드로 보존·재사용한다.
- * 통신: window 이벤트 "betterchzzk:routechange"(수신, MAIN world발) → "betterchzzk:routechange:detected"(발신).
+ * 의존: CheeseSpannerSettings(shared/settings.js). shared/data.js가 먼저 등록한 utils는 스프레드로 보존·재사용한다.
+ * 통신: window 이벤트 "cheese-spanner:routechange"(수신, MAIN world발) → "cheese-spanner:routechange:detected"(발신).
  * 구조: 문자열·가시성 판별 유틸 → 플레이어/편집 대상 판별(getPlayerRoot 등) → 라우트 감지 설치/해제 →
  *   injectStyleOnce → 라우트 판별(isLiveRoute/isVodRoute 등) → createMutationObserverSync →
  *   bindFeatureOptions → root.utils 병합 등록.
  */
 (() => {
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     const existingUtils = root.utils || {};
-    const PAGE_ROUTE_CHANGE_EVENT = "betterchzzk:routechange";
-    const FEATURE_ROUTE_CHANGE_EVENT = "betterchzzk:routechange:detected";
+    const PAGE_ROUTE_CHANGE_EVENT = "cheese-spanner:routechange";
+    const FEATURE_ROUTE_CHANGE_EVENT = "cheese-spanner:routechange:detected";
     const EXTENSION_PREVIEW_VIDEO_SELECTOR =
         "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip], [data-bcmv-video]";
     const ROUTE_CHECK_DELAYS_MS = [0, 80, 250, 800];
@@ -495,17 +495,17 @@
     // Low-specificity defaults also work before the native stylesheet is available.
     function createPlayerTooltip(label = "") {
         injectStyleOnce(
-            "betterchzzk-player-tooltip-style",
+            "cheese-spanner-player-tooltip-style",
             `
-:where(.betterchzzk-player-tooltip){position:absolute;top:-40px;left:50%;transform:translateX(-50%);margin:0;padding:6px 12px;border:0;border-radius:14px;background:rgba(0,0,0,.6);color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI","Malgun Gothic","맑은 고딕",helvetica,Roboto,Arial,sans-serif;font-size:13px;font-weight:400;line-height:normal;letter-spacing:normal;text-align:center;white-space:nowrap;visibility:hidden;-webkit-font-smoothing:antialiased}
-.betterchzzk-player-tooltip{pointer-events:none;z-index:2147483647;font-weight:400}
-[data-bc-player-tooltip]:not(:disabled):hover > .betterchzzk-player-tooltip,
-[data-bc-player-tooltip]:not(:disabled):focus-visible > .betterchzzk-player-tooltip{visibility:visible}
-[data-bc-player-tooltip]:disabled > .betterchzzk-player-tooltip{visibility:hidden!important}
+:where(.cheese-spanner-player-tooltip){position:absolute;top:-40px;left:50%;transform:translateX(-50%);margin:0;padding:6px 12px;border:0;border-radius:14px;background:rgba(0,0,0,.6);color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Segoe UI","Malgun Gothic","맑은 고딕",helvetica,Roboto,Arial,sans-serif;font-size:13px;font-weight:400;line-height:normal;letter-spacing:normal;text-align:center;white-space:nowrap;visibility:hidden;-webkit-font-smoothing:antialiased}
+.cheese-spanner-player-tooltip{pointer-events:none;z-index:2147483647;font-weight:400}
+[data-bc-player-tooltip]:not(:disabled):hover > .cheese-spanner-player-tooltip,
+[data-bc-player-tooltip]:not(:disabled):focus-visible > .cheese-spanner-player-tooltip{visibility:visible}
+[data-bc-player-tooltip]:disabled > .cheese-spanner-player-tooltip{visibility:hidden!important}
 `
         );
         const tooltip = document.createElement("span");
-        tooltip.className = "pzp-button__tooltip pzp-button__tooltip--top betterchzzk-player-tooltip";
+        tooltip.className = "pzp-button__tooltip pzp-button__tooltip--top cheese-spanner-player-tooltip";
         tooltip.setAttribute("aria-hidden", "true");
         tooltip.textContent = label;
         return tooltip;
@@ -513,7 +513,7 @@
 
     function syncPlayerButtonTooltip(button, label) {
         if (!button.hasAttribute("data-bc-player-tooltip")) button.setAttribute("data-bc-player-tooltip", "");
-        let tooltip = button.querySelector(":scope > .betterchzzk-player-tooltip");
+        let tooltip = button.querySelector(":scope > .cheese-spanner-player-tooltip");
         if (!tooltip) {
             tooltip = createPlayerTooltip(label);
             button.appendChild(tooltip);
@@ -522,8 +522,8 @@
     }
 
     function bindFeatureOptions(applyOptions) {
-        BetterChzzkSettings.getOptions(applyOptions);
-        return BetterChzzkSettings.addOptionsChangeListener(applyOptions);
+        CheeseSpannerSettings.getOptions(applyOptions);
+        return CheeseSpannerSettings.addOptionsChangeListener(applyOptions);
     }
 
     root.utils = {

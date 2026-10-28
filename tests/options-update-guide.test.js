@@ -25,7 +25,7 @@ async function fixture(
     const chrome = createFakeChrome();
     const calls = { query: [], send: [], close: 0, writes: [] };
     chrome.runtime.getManifest = () => ({ version });
-    chrome.runtime.getURL = (file) => `chrome-extension://better-chzzk/${file}`;
+    chrome.runtime.getURL = (file) => `chrome-extension://cheese-spanner/${file}`;
     chrome.tabs = {
         getCurrent(callback) {
             callback(popup ? undefined : { id: 9, url: chrome.runtime.getURL("options.html") });
@@ -76,15 +76,15 @@ function chzzkPage(t) {
     const listeners = new Set();
     dom.window.chrome = {
         runtime: {
-            id: "better-chzzk",
-            getURL: (file) => `chrome-extension://better-chzzk/${file}`,
+            id: "cheese-spanner",
+            getURL: (file) => `chrome-extension://cheese-spanner/${file}`,
             getManifest: () => ({ version: "1.4.1" }),
             sendMessage: (_, callback) => callback({ ok: true, show: false }),
             onMessage: { addListener: (fn) => listeners.add(fn), removeListener: (fn) => listeners.delete(fn) },
         },
     };
-    dom.window.BetterChzzk = { utils: { startPageChangeDetection: () => () => {} } };
-    dom.window.BetterChzzkSettings = {
+    dom.window.CheeseSpanner = { utils: { startPageChangeDetection: () => () => {} } };
+    dom.window.CheeseSpannerSettings = {
         getOptions: (callback) => callback({ updateGuideEnabled: false }),
         addOptionsChangeListener: () => () => {},
     };
@@ -94,7 +94,7 @@ function chzzkPage(t) {
     for (const file of ["shared/updateGuide.js", "shared/updateGuideView.js", "features/updateGuide.js"])
         evalRepoScript(dom, file);
     t.after(() => {
-        dom.window.BetterChzzk.updateGuide.stop();
+        dom.window.CheeseSpanner.updateGuide.stop();
         dom.window.close();
     });
     return {
@@ -228,13 +228,13 @@ for (const [target, option, tab] of [
         assert.equal(h.document.querySelector('.tab[aria-selected="true"]').dataset.tab, tab);
         assert.equal(node.closest("details").open, true);
         assert.equal(h.calls.writes.length, 0);
-        assert.equal(h.dom.window.BetterChzzkOptionsNavigation.showGuideTarget("https://outside.test"), false);
+        assert.equal(h.dom.window.CheeseSpannerOptionsNavigation.showGuideTarget("https://outside.test"), false);
     });
 }
 
 test("options sender validation permits only the known page and guide fragments", async (t) => {
     const h = await fixture(t);
-    const check = h.dom.window.BetterChzzkSettings.isOptionsPageSender;
+    const check = h.dom.window.CheeseSpannerSettings.isOptionsPageSender;
     for (const hash of [
         "",
         "#update-guide-panels",

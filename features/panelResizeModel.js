@@ -1,6 +1,6 @@
 /**
  * DOM·저장소·타이머에 의존하지 않는 패널 너비 계산이에요.
- * BetterChzzk.panelResizeModel:
+ * CheeseSpanner.panelResizeModel:
  * - fromStorage(object), normalizeWidth(value): 독립 local 키에서 정수 너비만 읽어요.
  * - normalizeState(object): version 1 문서 내 선택값을 검증해요.
  * - withWidth(state, "sidebar"|"chat", integer|null): 다른 영역을 보존하고 null로 기본 복원해요.
@@ -19,7 +19,7 @@
  */
 (() => {
     "use strict";
-    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
+    const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     const STORAGE_KEYS = Object.freeze({
         sidebar: "betterchzzk:panel-resize:sidebar-width:v1",
         chat: "betterchzzk:panel-resize:chat-width:v1",

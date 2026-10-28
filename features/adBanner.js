@@ -6,8 +6,8 @@
 (() => {
     "use strict";
 
-    const STYLE_ID = "betterchzzk-ad-banner-style";
-    const { bindFeatureOptions, injectStyleOnce, onReady } = BetterChzzk.utils;
+    const STYLE_ID = "cheese-spanner-ad-banner-style";
+    const { bindFeatureOptions, injectStyleOnce, onReady } = CheeseSpanner.utils;
     let enabled = false;
 
     function syncStyle() {

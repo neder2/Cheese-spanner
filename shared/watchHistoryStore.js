@@ -6,7 +6,7 @@
     "use strict";
 
     const STORAGE_KEY = "betterChzzkLiveWatchHistory";
-    const MESSAGE_TYPE = "betterChzzk:watch-history-mutation";
+    const MESSAGE_TYPE = "cheese-spanner:watch-history-mutation";
     const MESSAGE_VERSION = 1;
     const HISTORY_VERSION = 3;
     const HISTORY_MAX_ENTRIES = 2000;
@@ -23,7 +23,7 @@
     const MAX_ACTIVITIES_TOTAL = 3000;
     const DAY_SECONDS = 86400;
     const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
-    const utils = globalThis.BetterChzzk?.utils || {};
+    const utils = globalThis.CheeseSpanner?.utils || {};
 
     function compactString(value, maxLength = MAX_STRING_LENGTH) {
         return String(value ?? "")
@@ -335,7 +335,7 @@
         for (const [entry, ids] of retiredByEntry)
             entry.activities = entry.activities.filter((row) => !ids.has(row.id));
         for (const entry of retiredByEntry.keys())
-            globalThis.BetterChzzkWatchHistoryBackupMerge?.compactRestoreScope(entry);
+            globalThis.CheeseSpannerWatchHistoryBackupMerge?.compactRestoreScope(entry);
     }
 
     function normalizeMutation(value, now = Date.now()) {
@@ -382,7 +382,7 @@
             };
         }
         if (kind === "replaceDonationMonths") {
-            return { kind, snapshot: globalThis.BetterChzzkDonationHistory.normalizeSnapshot(value.snapshot, now) };
+            return { kind, snapshot: globalThis.CheeseSpannerDonationHistory.normalizeSnapshot(value.snapshot, now) };
         }
         if (kind === "clearHistory" || kind === "clearDonationImport") {
             return {
@@ -765,8 +765,8 @@
     function retainEntryForMigration(entry, cutoffAt) {
         if (!entry || getEntryStartedAt(entry) > cutoffAt) return entry;
         const retained = retainEntrySessionsAfter(entry, cutoffAt);
-        return entry.backupRestore && globalThis.BetterChzzkWatchHistoryBackupMerge
-            ? globalThis.BetterChzzkWatchHistoryBackupMerge.restoreAfterBarrier(entry, retained, cutoffAt)
+        return entry.backupRestore && globalThis.CheeseSpannerWatchHistoryBackupMerge
+            ? globalThis.CheeseSpannerWatchHistoryBackupMerge.restoreAfterBarrier(entry, retained, cutoffAt)
             : retained;
     }
 
@@ -954,7 +954,7 @@
         if (!Array.isArray(sourceEntry.sessionDetails) && !Array.isArray(targetEntry?.sessionDetails)) {
             delete entry.sessionDetails;
         }
-        const restoredScopes = globalThis.BetterChzzkWatchHistoryBackupMerge?.mergeRestoreScopes(
+        const restoredScopes = globalThis.CheeseSpannerWatchHistoryBackupMerge?.mergeRestoreScopes(
             sourceEntry,
             targetEntry
         );
@@ -1155,7 +1155,7 @@
             ) {
                 outcome = { changed: false, result: { status: "ignored", reason: "deleted" } };
             } else {
-                history.donationImport = globalThis.BetterChzzkDonationHistory.mergeSnapshot(
+                history.donationImport = globalThis.CheeseSpannerDonationHistory.mergeSnapshot(
                     history.donationImport,
                     operation.snapshot,
                     now
@@ -1163,7 +1163,7 @@
                 outcome = { changed: true, result: { status: "applied" } };
             }
         } else if (operation.kind === "clearDonationImport") {
-            const remaining = globalThis.BetterChzzkDonationHistory.clearBefore(
+            const remaining = globalThis.CheeseSpannerDonationHistory.clearBefore(
                 history.donationImport,
                 operation.cutoffAt
             );
@@ -1264,8 +1264,8 @@
             outcome = { changed, result: { status: changed ? "applied" : "unchanged" } };
         } else {
             let changed = false;
-            if (history.donationImport && globalThis.BetterChzzkDonationHistory) {
-                const remaining = globalThis.BetterChzzkDonationHistory.clearBefore(
+            if (history.donationImport && globalThis.CheeseSpannerDonationHistory) {
+                const remaining = globalThis.CheeseSpannerDonationHistory.clearBefore(
                     history.donationImport,
                     operation.cutoffAt
                 );
@@ -1304,7 +1304,7 @@
             )
                 pruneActivityTranscripts(history.entries);
             if (outcome.result.recordId)
-                globalThis.BetterChzzkWatchHistoryBackupMerge?.compactRestoreScope(
+                globalThis.CheeseSpannerWatchHistoryBackupMerge?.compactRestoreScope(
                     history.entries[outcome.result.recordId]
                 );
             history.updatedAt = Math.max(Math.round(now), history.updatedAt + 1);
@@ -1312,7 +1312,7 @@
         return { history, ...outcome };
     }
 
-    globalThis.BetterChzzkWatchHistoryStore = {
+    globalThis.CheeseSpannerWatchHistoryStore = {
         HISTORY_MAX_RECORD_ALIASES,
         HISTORY_MAX_TOMBSTONES,
         HISTORY_VERSION,

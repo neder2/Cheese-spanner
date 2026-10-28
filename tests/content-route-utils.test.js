@@ -17,7 +17,7 @@ test("live route parsing rejects malformed URI escapes without throwing", () => 
     });
     dom.window.eval(readRepoFile("content.js"));
 
-    const { getLiveChannelIdFromPath } = dom.window.BetterChzzk.utils;
+    const { getLiveChannelIdFromPath } = dom.window.CheeseSpanner.utils;
     assert.equal(getLiveChannelIdFromPath("/live/%E0%A4%A"), "");
     assert.equal(getLiveChannelIdFromPath("/live/%"), "");
     assert.equal(getLiveChannelIdFromPath("/live/%ED%85%8C%EC%8A%A4%ED%8A%B8"), "테스트");
@@ -35,12 +35,12 @@ test("main video selection excludes native ad media and extension previews durin
     for (const video of w.document.querySelectorAll("video"))
         video.getBoundingClientRect = () => ({ width: video === main ? 320 : 1920, height: 1080 });
     w.eval(readRepoFile("content.js"));
-    assert.equal(w.BetterChzzk.utils.getMainVideoElement(), main);
+    assert.equal(w.CheeseSpanner.utils.getMainVideoElement(), main);
     main.remove();
-    assert.equal(w.BetterChzzk.utils.getMainVideoElement(), null, "ads never become the fallback main video");
+    assert.equal(w.CheeseSpanner.utils.getMainVideoElement(), null, "ads never become the fallback main video");
     const replacement = w.document.createElement("video");
     w.document.body.append(replacement);
-    assert.equal(w.BetterChzzk.utils.getMainVideoElement(), replacement);
+    assert.equal(w.CheeseSpanner.utils.getMainVideoElement(), replacement);
 });
 
 test("visible area ignores detached, hidden, and zero-sized controls", (t) => {
@@ -51,7 +51,7 @@ test("visible area ignores detached, hidden, and zero-sized controls", (t) => {
     t.after(() => dom.window.close());
     const w = dom.window;
     w.eval(readRepoFile("content.js"));
-    const { getVisibleArea } = w.BetterChzzk.utils;
+    const { getVisibleArea } = w.CheeseSpanner.utils;
     const control = w.document.createElement("button");
     control.getBoundingClientRect = () => ({ width: 40, height: 20 });
     assert.equal(getVisibleArea(control), 0);

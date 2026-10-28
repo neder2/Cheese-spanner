@@ -296,7 +296,7 @@ test("background wires the new version guide independently of legacy cleanup", a
         url: "https://chzzk.naver.com/live/measured",
     };
     const request = {
-        type: "betterchzzk:update-guide",
+        type: "cheese-spanner:update-guide",
         protocol: 1,
         guideVersion: "1.4.1",
         clientId: "current-client",
@@ -338,7 +338,7 @@ test("guide settings links preserve ad registration authorization without trusti
     const h = harness({ registration: true });
     await flush();
     const base = { id: "fixture-extension", frameId: 0 };
-    const message = { type: "betterchzzk:ad-video:sync" };
+    const message = { type: "cheese-spanner:ad-video:sync" };
     for (const hash of [
         "",
         "#update-guide-panels",

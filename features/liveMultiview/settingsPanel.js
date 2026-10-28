@@ -1,10 +1,10 @@
 /** 설정 패널 DOM·위치 관찰·목록 드래그·포커스 복원을 소유해요. */
 (() => {
-    const root = (window.BetterChzzk = window.BetterChzzk || {});
+    const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     const model = root.multiviewModel;
     const { el, text, button, delayButton, panelIcon } = root.multiviewView;
     const { STATES } = root.multiviewPlayback;
-    const PANEL_ID = "betterchzzk-multiview-panel",
+    const PANEL_ID = "cheese-spanner-multiview-panel",
         CHAT = "aside#aside-chatting";
     function create({
         state,

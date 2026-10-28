@@ -18,7 +18,7 @@ function evaluateFeature(fileName, { url, options = {}, utils = {}, namespaces =
     const closeIndex = source.lastIndexOf("})();");
     assert.notEqual(closeIndex, -1, `${fileName} should end with an IIFE`);
 
-    window.BetterChzzkSettings = {
+    window.CheeseSpannerSettings = {
         getOptions(callback) {
             callback(this.normalizeOptions());
         },
@@ -48,7 +48,7 @@ function evaluateFeature(fileName, { url, options = {}, utils = {}, namespaces =
             ...options,
         }),
     };
-    window.BetterChzzk = {
+    window.CheeseSpanner = {
         ...namespaces,
         utils: {
             addWatchRangeToRangesByDate() {},
@@ -250,10 +250,10 @@ test("video search uses the unselected native pill colors in either theme and af
     document.body.innerHTML = `<nav id="filters">
         <button aria-selected="true">전체</button>
         <button aria-selected="false">지난 방송</button>
-        <div id="betterchzzk-video-search-bar"></div>
+        <div id="cheese-spanner-video-search-bar"></div>
     </nav>`;
     const host = document.getElementById("filters");
-    const bar = document.getElementById("betterchzzk-video-search-bar");
+    const bar = document.getElementById("cheese-spanner-video-search-bar");
     const controls = Array.from(host.querySelectorAll("button"));
     controls.forEach((button) => {
         button.getBoundingClientRect = () => ({ width: 70, height: 28 });
@@ -404,7 +404,7 @@ test("monthly video detail merge reuses the shared timeline normalization withou
                 },
             },
         },
-        hooks: "{ mergeVideoDetail: BetterChzzk.monthlyBroadcastModel.mergeVideoDetail }",
+        hooks: "{ mergeVideoDetail: CheeseSpanner.monthlyBroadcastModel.mergeVideoDetail }",
     });
     const video = {
         duration: 1,

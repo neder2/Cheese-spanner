@@ -20,9 +20,9 @@ function load(extra = {}) {
     }
     return {
         context,
-        store: context.BetterChzzkWatchHistoryStore,
-        backup: context.BetterChzzkWatchHistoryBackup,
-        merger: context.BetterChzzkWatchHistoryBackupMerge,
+        store: context.CheeseSpannerWatchHistoryStore,
+        backup: context.CheeseSpannerWatchHistoryBackup,
+        merger: context.CheeseSpannerWatchHistoryBackupMerge,
     };
 }
 

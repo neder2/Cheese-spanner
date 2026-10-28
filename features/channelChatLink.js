@@ -3,12 +3,12 @@
  * isolated world: settings/data/content 이후 로드. 추가 API 조회나 채팅 전송은 하지 않는다.
  */
 (() => {
-    const LINK_ID = "betterchzzk-channel-chat-link";
-    const STYLE_ID = "betterchzzk-channel-chat-link-style";
+    const LINK_ID = "cheese-spanner-channel-chat-link";
+    const STYLE_ID = "cheese-spanner-channel-chat-link-style";
     const ABOUT_SELECTOR = '[role="tablist"] > button[role="tab"][id="about"]';
     const WATCH_SELECTOR = `${ABOUT_SELECTOR}, [role="tablist"], a[href*="game.naver.com/profile/"], #${LINK_ID}`;
     const { bindFeatureOptions, createMutationObserverSync, injectStyleOnce, startPageChangeDetection } =
-        BetterChzzk.utils;
+        CheeseSpanner.utils;
     let enabled = false;
     let observer = null;
     let removeRouteListener = null;

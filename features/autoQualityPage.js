@@ -16,19 +16,19 @@
  *   videoTracks를 정의하는 경우도 추적한다.
  * 의존: 없음 (isolated world 전역에 접근 불가). window/document만 사용한다.
  * 옵션 키: 없음 — 자동 화질 활성 상태는 STATE_ATTR로 전달받는다.
- * DOM 마커: document.documentElement에 data-betterchzzk-auto-quality-status(진단용 결과) 속성을 쓴다.
- * 통신: isolated world의 features/autoQuality.js가 쓰는 data-betterchzzk-auto-quality-request를 읽고
- *   data-betterchzzk-auto-quality-result에 결과를 써서 응답하며, window Event
- *   betterchzzk:auto-quality:apply(요청 트리거)를 수신한다. 활성화 상태는
- *   data-betterchzzk-auto-quality-state 속성 + betterchzzk:auto-quality:state 이벤트로 받는다.
- *   라우트 변경은 features/routeBridgePage.js가 보내는 betterchzzk:routechange 이벤트로 받는다.
- *   스트림 정보는 현재 메인 video의 data-bcsi-request와 betterchzzk:stream-info:read로 요청하며,
+ * DOM 마커: document.documentElement에 data-cheese-spanner-auto-quality-status(진단용 결과) 속성을 쓴다.
+ * 통신: isolated world의 features/autoQuality.js가 쓰는 data-cheese-spanner-auto-quality-request를 읽고
+ *   data-cheese-spanner-auto-quality-result에 결과를 써서 응답하며, window Event
+ *   cheese-spanner:auto-quality:apply(요청 트리거)를 수신한다. 활성화 상태는
+ *   data-cheese-spanner-auto-quality-state 속성 + cheese-spanner:auto-quality:state 이벤트로 받는다.
+ *   라우트 변경은 features/routeBridgePage.js가 보내는 cheese-spanner:routechange 이벤트로 받는다.
+ *   스트림 정보는 현재 메인 video의 data-bcsi-request와 cheese-spanner:stream-info:read로 요청하며,
  *   제어 옵션과 독립적으로 읽은 최소 현재 트랙 정보를 data-bcsi-result에 동기로 반환한다.
  * 주요 진입점: syncAutoQualityState(설정/라우트), getLiveQualityPlayer(라이브 연결),
  *   applyLiveQualitySelection(메뉴 선택), applyQualityToPlayer(기존 트랙), clearPageAutoApply(정리).
  */
 (() => {
-    const INSTALL_FLAG = "__betterChzzkAutoQualityPageInstalled";
+    const INSTALL_FLAG = "__cheeseSpannerAutoQualityPageInstalled";
 
     if (window[INSTALL_FLAG]) return;
     try {
@@ -37,14 +37,14 @@
         window[INSTALL_FLAG] = true;
     }
 
-    const APPLY_EVENT = "betterchzzk:auto-quality:apply";
-    const REQUEST_ATTR = "data-betterchzzk-auto-quality-request";
-    const RESULT_ATTR = "data-betterchzzk-auto-quality-result";
-    const STATE_EVENT = "betterchzzk:auto-quality:state";
-    const ROUTE_CHANGE_EVENT = "betterchzzk:routechange";
-    const STATE_ATTR = "data-betterchzzk-auto-quality-state";
-    const STATUS_ATTR = "data-betterchzzk-auto-quality-status";
-    const STREAM_INFO_READ_EVENT = "betterchzzk:stream-info:read";
+    const APPLY_EVENT = "cheese-spanner:auto-quality:apply";
+    const REQUEST_ATTR = "data-cheese-spanner-auto-quality-request";
+    const RESULT_ATTR = "data-cheese-spanner-auto-quality-result";
+    const STATE_EVENT = "cheese-spanner:auto-quality:state";
+    const ROUTE_CHANGE_EVENT = "cheese-spanner:routechange";
+    const STATE_ATTR = "data-cheese-spanner-auto-quality-state";
+    const STATUS_ATTR = "data-cheese-spanner-auto-quality-status";
+    const STREAM_INFO_READ_EVENT = "cheese-spanner:stream-info:read";
     const STREAM_INFO_REQUEST_ATTR = "data-bcsi-request";
     const STREAM_INFO_RESULT_ATTR = "data-bcsi-result";
     const DEFAULT_QUALITY = "1080p";
@@ -175,8 +175,8 @@
     const nativeGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
     const nativeReflectGet = Reflect?.get;
     const nativeReflectDefineProperty = Reflect?.defineProperty;
-    const DEFINE_PATCH_FLAG = "__betterChzzkAutoQualityDefinePatch";
-    const DEFINE_PATCH_NATIVE = "__betterChzzkAutoQualityDefineNative";
+    const DEFINE_PATCH_FLAG = "__cheeseSpannerAutoQualityDefinePatch";
+    const DEFINE_PATCH_NATIVE = "__cheeseSpannerAutoQualityDefineNative";
     let qualityTargetInterceptorInstalled = false;
 
     function refreshRouteCache() {
@@ -734,15 +734,15 @@
 
         function markWrappedAccessor(accessor) {
             try {
-                nativeDefineProperty(accessor, "__betterChzzkVideoTracksWrapped", { value: true });
+                nativeDefineProperty(accessor, "__cheeseSpannerVideoTracksWrapped", { value: true });
             } catch (_) {
-                accessor.__betterChzzkVideoTracksWrapped = true;
+                accessor.__cheeseSpannerVideoTracksWrapped = true;
             }
             return accessor;
         }
 
         function wrapAccessor(source, key, accessor) {
-            if (typeof accessor !== "function" || accessor.__betterChzzkVideoTracksWrapped) return accessor;
+            if (typeof accessor !== "function" || accessor.__cheeseSpannerVideoTracksWrapped) return accessor;
 
             const ownDescriptor = nativeGetOwnPropertyDescriptor.call(Object, source, key);
             if (
@@ -844,7 +844,7 @@
     }
 
     function canInstallDefinePatch(current, nativeFn) {
-        return current === nativeFn || isOwnDefinePatch(current) || current?.__betterChzzkAdVideoDefinePatch === true;
+        return current === nativeFn || isOwnDefinePatch(current) || current?.__cheeseSpannerAdVideoDefinePatch === true;
     }
 
     function installQualityTargetInterceptor() {

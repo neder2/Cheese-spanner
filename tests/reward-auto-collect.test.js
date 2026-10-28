@@ -227,7 +227,7 @@ test("reward auto collect rejects executable URL schemes hidden by ASCII whitesp
     const dom = createRewardDom();
     const scope = createRewardScope(dom);
     const anchor = dom.window.document.createElement("a");
-    anchor.setAttribute("href", "java\nscript:globalThis.__betterChzzkRemoteCodeRan = true");
+    anchor.setAttribute("href", "java\nscript:globalThis.__cheeseSpannerRemoteCodeRan = true");
     anchor.setAttribute("role", "button");
     anchor.textContent = "통나무 받기";
     anchor.addEventListener("click", (event) => event.preventDefault());
@@ -239,7 +239,7 @@ test("reward auto collect rejects executable URL schemes hidden by ASCII whitesp
     await wait(350);
 
     assert.equal(tracked.clicks, 0);
-    assert.equal(dom.window.__betterChzzkRemoteCodeRan, undefined);
+    assert.equal(dom.window.__cheeseSpannerRemoteCodeRan, undefined);
 });
 
 test("reward auto collect completes the real two-step watch reward flow", async () => {

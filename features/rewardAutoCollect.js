@@ -10,14 +10,14 @@
  *   - MutationObserver를 채팅 aside에만 연결하고, 변경된 버튼 후보만 모아 증분 검사한다.
  *   - 라이브 채널의 log-power claim 목록을 주기적으로 확인하고 WATCH_1_HOUR를 제외한 claim만 API로 수령한다.
  *     1시간 시청 보상은 치지직이 표시한 버튼을 통해서만 수령한다.
- * 의존: 전역 BetterChzzkSettings.normalizeOptions, BetterChzzk.utils(bindFeatureOptions,
+ * 의존: 전역 CheeseSpannerSettings.normalizeOptions, CheeseSpanner.utils(bindFeatureOptions,
  *   createMutationObserverSync, normSpace, startPageChangeDetection).
  * 옵션 키: rewardAutoCollectEnabled.
  * DOM 마커: data-bcra-clicked(현재 보상 상태의 클릭 완료 표시 attribute).
  */
 (() => {
-    const { normalizeOptions } = BetterChzzkSettings;
-    const { bindFeatureOptions, createMutationObserverSync, normSpace, startPageChangeDetection } = BetterChzzk.utils;
+    const { normalizeOptions } = CheeseSpannerSettings;
+    const { bindFeatureOptions, createMutationObserverSync, normSpace, startPageChangeDetection } = CheeseSpanner.utils;
 
     const CLICKED_ATTR = "data-bcra-clicked";
     const SCAN_ROOT_SELECTOR = "aside#aside-chatting";

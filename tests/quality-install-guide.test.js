@@ -56,7 +56,7 @@ function fixture(t, pathname = "/live/measured") {
         }
     };
     const optionReceivers = new Set();
-    w.BetterChzzkSettings = {
+    w.CheeseSpannerSettings = {
         normalizeOptions: () => ({ adblockPopupEnabled: false }),
         getOptions(callback) {
             optionReceivers.add(callback);
@@ -75,7 +75,7 @@ function fixture(t, pathname = "/live/measured") {
     };
     const route = (pathname) => {
         w.history.pushState({}, "", pathname);
-        w.dispatchEvent(new w.Event("betterchzzk:routechange"));
+        w.dispatchEvent(new w.Event("cheese-spanner:routechange"));
     };
     w.eval(read("content.js"));
     w.eval(read("features/qualityInstallGuide.js"));
@@ -106,7 +106,7 @@ function fixture(t, pathname = "/live/measured") {
         options,
         route,
         active,
-        state: () => JSON.parse(w.document.documentElement.getAttribute("data-betterchzzk-auto-quality-guide")),
+        state: () => JSON.parse(w.document.documentElement.getAttribute("data-cheese-spanner-auto-quality-guide")),
     };
 }
 
@@ -147,7 +147,7 @@ test("one popup option controls both the adblock notice and connector guide with
     f.options({ adblockPopupEnabled: false, autoQualityEnabled: false });
     await flush();
     assert.equal(first.calls.decline, 0);
-    assert.equal(ad.hasAttribute("data-betterchzzk-suppress-adblock-popup"), false);
+    assert.equal(ad.hasAttribute("data-cheese-spanner-suppress-adblock-popup"), false);
     f.options({ adblockPopupEnabled: true, autoQualityEnabled: false });
     await flush();
     assert.equal(first.calls.decline, 1);
@@ -157,7 +157,7 @@ test("one popup option controls both the adblock notice and connector guide with
     next.mount();
     await flush();
     assert.equal(next.calls.decline, 0);
-    assert.equal(ad.hasAttribute("data-betterchzzk-suppress-adblock-popup"), false);
+    assert.equal(ad.hasAttribute("data-cheese-spanner-suppress-adblock-popup"), false);
 });
 
 test("the unified popup setting gates guides independently of auto quality and cleans up on disable", async (t) => {
@@ -238,7 +238,7 @@ test("unrelated, ambiguous and incomplete dialogs remain untouched", async (t) =
             g.parent.className = "_chat_measured";
         },
         (g) => {
-            g.root.className = "betterchzzk-update-notice";
+            g.root.className = "cheese-spanner-update-notice";
         },
     ]) {
         const g = f.guide();

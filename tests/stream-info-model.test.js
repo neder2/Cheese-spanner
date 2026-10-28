@@ -9,7 +9,7 @@ function setup(options) {
     const context = vm.createContext({});
     for (const file of ["shared/liveTiming.js", "features/streamInfoModel.js"])
         vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
-    return context.BetterChzzk.streamInfoModel.create(options);
+    return context.CheeseSpanner.streamInfoModel.create(options);
 }
 
 function sample(now, patch = {}) {

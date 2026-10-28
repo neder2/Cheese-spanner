@@ -18,7 +18,7 @@
 - 공용 모듈은 manifest에서 소비자보다 먼저 로드해요. 서비스 워커의 `importScripts()`와 각 HTML script 목록도 별도로 확인해요. 정적 manifest 밖의 동적 등록은 등록 코드와 함께 검증해요.
 - MAIN과 isolated의 전역을 직접 공유한다고 가정하지 않아요. MAIN은 기존 DOM 속성·이벤트 브리지로만 기능 설정·결과를 교환하고 확장 저장소·메시지·특권 API·직접 네트워크 호출을 추가하지 않아요.
 - 워커가 사용하는 공용 파일에서는 DOM 전역을 무가드로 참조하지 않아요. `shared/`의 모든 파일이 워커 호환이라고 가정하지 않아요.
-- `BetterChzzk.utils`를 교체하지 말고 병합해요. 공용 구현이 있는지 확인한 뒤 새 유틸을 만들고, 새 추상화는 실제 중복과 둘 이상의 소비자가 확인될 때 도입해요.
+- `CheeseSpanner.utils`를 교체하지 말고 병합해요. 공용 구현이 있는지 확인한 뒤 새 유틸을 만들고, 새 추상화는 실제 중복과 둘 이상의 소비자가 확인될 때 도입해요.
 - `shared/settings.js`의 `OPTION_SCHEMA`가 옵션 정의의 단일 공급원이에요. 공개 키·시그니처를 임의로 바꾸지 않아요. 옵션 수정 시 HTML의 `data-option`·`data-depends-on`, 저장·권한 흐름, feature의 적용·정리, 테스트와 사용자 설명을 함께 확인해요.
 - 시청 기록 저장은 background 단일 writer를 통과해요. 콘텐츠 기능과 기록 페이지에서 직접 read-modify-write를 추가하지 않아요. 다른 local 키의 개별 소유권까지 시청 기록 큐로 임의 통합하지 않아요.
 - 콜백형 storage API는 같은 콜백 안에서 `chrome.runtime.lastError`를 즉시 확인해요. 가능한 경우 기존 Promise 래퍼나 `getStorageLastError`를 재사용해요.
@@ -51,7 +51,7 @@
 
 치지직 DOM·React·API·HLS 구성은 외부 의존이에요. 관련 문제 수정 전 현재 화면·응답을 다시 측정해요. 과거 지연값·playlist 태그·mux 구성·토큰 개수를 영구 보장으로 고정하지 않아요. 실측 기록에는 날짜·대상 URL 또는 endpoint·필드나 태그·재현 조건을 남기며 fixture를 모든 현재 방송의 증거로 취급하지 않아요.
 
-`BetterChzzk`, `betterchzzk-*`, 기존 저장 키는 호환 식별자예요. 제품명만 바뀌었다고 일괄 치환하지 않아요. 새 DOM 마커는 기존 ID와 기능별 `data-bc*` 관례를 따라요. 구조 변경 시 관련 주석도 갱신하되 모든 파일에 큰 헤더를 일괄 추가하지 않아요.
+전역 이름은 `CheeseSpanner*`, 확장 메시지·이벤트·DOM ID·속성은 `cheese-spanner` 접두사를 써요. 사용자 브라우저에 남는 저장 키·알람·알림·동적 등록 ID는 [연동 계약](contracts.md#옛-이름으로-남긴-영속-식별자)에 적은 옛 `betterchzzk` 이름을 유지하고, 이전 경로 없이 이름만 바꾸지 않아요. 새 영속 키는 `cheese-spanner:` 접두사를 써요. 새 DOM 마커는 기존 ID와 기능별 `data-bc*` 관례를 따라요. 구조 변경 시 관련 주석도 갱신하되 모든 파일에 큰 헤더를 일괄 추가하지 않아요.
 
 ## 폐기·실험 기능의 검증 경계
 

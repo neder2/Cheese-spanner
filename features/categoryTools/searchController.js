@@ -1,6 +1,6 @@
 /** 카테고리 자동 탐색의 실행·대기 수명주기. 화면은 탐색 조건과 스크롤 여유만 전달한다. */
 (() => {
-    const root = (globalThis.BetterChzzk = globalThis.BetterChzzk || {});
+    const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     const { routeKey } = root.categoryToolsRepository;
     const METADATA_APPLY_INTERVAL_MS = 260;
     const METADATA_BATCH_PAGES = 2;

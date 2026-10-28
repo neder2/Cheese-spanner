@@ -5,7 +5,7 @@
  */
 (() => {
     "use strict";
-    const root = window.BetterChzzk;
+    const root = window.CheeseSpanner;
     if (root.panelResize) return;
     const model = root.panelResizeModel;
     const {
@@ -18,8 +18,8 @@
         startPageChangeDetection,
         storageGet,
     } = root.utils;
-    const STYLE_ID = "betterchzzk-panel-resize-style";
-    const PLACEMENT_STYLE_ID = "betterchzzk-panel-placement-style";
+    const STYLE_ID = "cheese-spanner-panel-resize-style";
+    const PLACEMENT_STYLE_ID = "cheese-spanner-panel-placement-style";
     const VARIABLE = "--bcpr-width";
     const HEIGHT_VARIABLE = "--bcpr-height";
     const SIDE_SPACE_VARIABLE = "--bcpr-sidebar-space";
@@ -31,10 +31,10 @@
     const BODY_SIDE = "data-bcpr-sidebar-side";
     const HANDLE = "data-bcpr-handle";
     const EDGE = "data-bcpr-edge";
-    const CHAT_ASIDES = ":is(#aside-chatting, #vod-aside, #betterchzzk-vod-comment-aside)";
+    const CHAT_ASIDES = ":is(#aside-chatting, #vod-aside, #cheese-spanner-vod-comment-aside)";
     const NATIVE_SIDE = Object.freeze({ sidebar: "left", chat: "right" });
     const TARGETS =
-        '#sidebar, #layout-body, #header, #header button[aria-controls="navigation"], #aside-chatting, #vod-aside, #betterchzzk-vod-comment-aside';
+        '#sidebar, #layout-body, #header, #header button[aria-controls="navigation"], #aside-chatting, #vod-aside, #cheese-spanner-vod-comment-aside';
     const COMPANIONS = '[class*="content_right"], [class*="_banner_"]';
     const panels = ["sidebar", "chat"];
     let selected = model.normalizeState(null),
@@ -118,7 +118,7 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
 }
 [class*="content_right"][${SIDE}="left"]::before { left:auto!important;right:-1px!important; }
 [class*="_banner_"][${SIDE}="left"] { left:0!important;right:auto!important; }
-#betterchzzk-vod-comment-aside[${SIDE}="left"] {
+#cheese-spanner-vod-comment-aside[${SIDE}="left"] {
   border-left:0!important;border-right:1px solid var(--bcvc-border)!important;
 }
 #sidebar[${SIDE}="right"] { left:auto!important;right:0!important; }
@@ -797,7 +797,7 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
             chat: /^\/live\//.test(location.pathname)
                 ? document.getElementById("aside-chatting")
                 : /^\/video\//.test(location.pathname)
-                  ? document.getElementById("vod-aside") || document.getElementById("betterchzzk-vod-comment-aside")
+                  ? document.getElementById("vod-aside") || document.getElementById("cheese-spanner-vod-comment-aside")
                   : null,
         };
         for (const panel of panels) {
@@ -932,7 +932,7 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
             // Message and following-row churn never triggers full target discovery.
             const owner =
                 row.target instanceof Element
-                    ? row.target.closest("#sidebar, #aside-chatting, #vod-aside, #betterchzzk-vod-comment-aside")
+                    ? row.target.closest("#sidebar, #aside-chatting, #vod-aside, #cheese-spanner-vod-comment-aside")
                     : null;
             if (owner && owner !== row.target) return false;
             return [...row.addedNodes, ...row.removedNodes].some((node) => {

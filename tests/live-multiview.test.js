@@ -60,7 +60,7 @@ function setup(
     const routeListeners = new Set();
     let featureOptions, pendingResolve;
     const configure = (patch) => {
-        featureOptions = w.BetterChzzkSettings.normalizeOptions({ ...featureOptions, ...patch });
+        featureOptions = w.CheeseSpannerSettings.normalizeOptions({ ...featureOptions, ...patch });
         for (const listener of optionListeners) listener(featureOptions);
     };
     w.chrome = {
@@ -177,8 +177,8 @@ function setup(
     // The manifest loads the shared in-page theme right after content.js; most tests leave it out on purpose,
     // so the feature must also work when the optional ensureUiTheme request is missing.
     if (withTheme) evalFile("shared/uiTheme.js");
-    featureOptions = w.BetterChzzkSettings.normalizeOptions({ liveMultiviewEnabled: enabled });
-    Object.assign(w.BetterChzzk.utils, {
+    featureOptions = w.CheeseSpannerSettings.normalizeOptions({ liveMultiviewEnabled: enabled });
+    Object.assign(w.CheeseSpanner.utils, {
         bindFeatureOptions(fn) {
             optionListeners.add(fn);
             fn(featureOptions);
@@ -278,7 +278,7 @@ function setup(
         else node.click();
     };
     async function start() {
-        w.document.getElementById("betterchzzk-multiview-launcher")?.click();
+        w.document.getElementById("cheese-spanner-multiview-launcher")?.click();
         await tick();
     }
     async function add(id) {
@@ -345,7 +345,7 @@ test("multiview launcher inherits native fade timing as player controls toggle",
     const style = w.document.createElement("style");
     style.textContent = ".pzp-button{transition:opacity .2s ease-in}";
     w.document.head.prepend(style);
-    const launcher = w.document.getElementById("betterchzzk-multiview-launcher");
+    const launcher = w.document.getElementById("cheese-spanner-multiview-launcher");
     const player = launcher.closest(".pzp-pc");
     assert.equal(w.getComputedStyle(launcher).transition, "opacity .2s ease-in");
     player.classList.remove("pzp-pc--controls");
@@ -380,7 +380,7 @@ test("nickname search shows profile, live state and viewer counts, and selection
     const h = setup(t);
     await h.start();
     const calls = [];
-    h.w.BetterChzzk.utils.fetchJson = async (url, { signal }) => {
+    h.w.CheeseSpanner.utils.fetchJson = async (url, { signal }) => {
         calls.push({ url, signal });
         if (url.includes("/search/"))
             return channelSearchResponse([
@@ -439,7 +439,7 @@ test("nickname search caps and deduplicates results, rejects malformed identitie
             openLive: false,
         })),
     ];
-    h.w.BetterChzzk.utils.fetchJson = async (url) => {
+    h.w.CheeseSpanner.utils.fetchJson = async (url) => {
         if (url.includes("/search/")) return channelSearchResponse(channels, { offset: 5 });
         details += 1;
         return { code: 200, content: { channel: { channelId: B }, status: "OPEN", concurrentUserCount: 0 } };
@@ -456,7 +456,7 @@ test("nickname search caps and deduplicates results, rejects malformed identitie
 test("nickname search requests only five matches and orders them by follower count without showing it", async (t) => {
     const h = setup(t);
     await h.start();
-    h.w.BetterChzzk.utils.fetchJson = async (url) => {
+    h.w.CheeseSpanner.utils.fetchJson = async (url) => {
         assert.equal(new URL(url).searchParams.get("size"), "5");
         return channelSearchResponse(
             [300, 800, 0, 1500, 100].map((followerCount, i) => ({
@@ -480,7 +480,7 @@ test("nickname search requests only five matches and orders them by follower cou
 test("search errors remain retryable and optional viewer lookup failure preserves observed live results", async (t) => {
     const h = setup(t);
     await h.start();
-    h.w.BetterChzzk.utils.fetchJson = async () => {
+    h.w.CheeseSpanner.utils.fetchJson = async () => {
         throw new Error("network unavailable");
     };
     submitMultiviewSearch(h, "이름");
@@ -488,10 +488,10 @@ test("search errors remain retryable and optional viewer lookup failure preserve
         h.w.document.querySelector("[data-bcmv-notice]").textContent.includes("검색하지 못했어요")
     );
     assert.equal(h.w.document.querySelector('[data-action="submit-add"]').disabled, false);
-    h.w.BetterChzzk.utils.fetchJson = async () => channelSearchResponse([]);
+    h.w.CheeseSpanner.utils.fetchJson = async () => channelSearchResponse([]);
     submitMultiviewSearch(h, "없는 이름");
     await waitForChatUi(() => h.w.document.querySelector("[data-bcmv-notice]").textContent === "검색 결과가 없어요.");
-    h.w.BetterChzzk.utils.fetchJson = async (url) => {
+    h.w.CheeseSpanner.utils.fetchJson = async (url) => {
         if (url.includes("/search/"))
             return channelSearchResponse([{ channelId: B, channelName: "방송인", openLive: true }]);
         throw new Error("viewer count unavailable");
@@ -511,7 +511,8 @@ test("search rejects stale responses, cancels on edit and does not duplicate a p
     const h = setup(t);
     await h.start();
     const pending = [];
-    h.w.BetterChzzk.utils.fetchJson = (url, { signal }) => new Promise((resolve) => pending.push({ signal, resolve }));
+    h.w.CheeseSpanner.utils.fetchJson = (url, { signal }) =>
+        new Promise((resolve) => pending.push({ signal, resolve }));
     const input = submitMultiviewSearch(h, "첫 이름");
     input.form.dispatchEvent(new h.w.Event("submit", { bubbles: true, cancelable: true }));
     assert.equal(pending.length, 1);
@@ -531,7 +532,7 @@ test("search and viewer lookups cancel when closing, disabling, navigating or re
             const h = setup(t);
             await h.start();
             const pending = [];
-            h.w.BetterChzzk.utils.fetchJson = async (url, { signal }) => {
+            h.w.CheeseSpanner.utils.fetchJson = async (url, { signal }) => {
                 if (url.includes("/search/"))
                     return channelSearchResponse([{ channelId: B, channelName: "방송인", openLive: true }]);
                 return new Promise((resolve) => pending.push({ signal, resolve }));
@@ -559,7 +560,7 @@ test("search and viewer lookups cancel when closing, disabling, navigating or re
 test("search disables already added and ended broadcasts and preserves the six-channel limit", async (t) => {
     const h = setup(t);
     await h.start();
-    h.w.BetterChzzk.utils.fetchJson = async (url) =>
+    h.w.CheeseSpanner.utils.fetchJson = async (url) =>
         url.includes("/search/")
             ? channelSearchResponse([
                   { channelId: A, channelName: "메인", openLive: true },
@@ -573,7 +574,7 @@ test("search disables already added and ended broadcasts and preserves the six-c
     for (const id of [B, C, "d".repeat(32), "e".repeat(32), "f".repeat(32)]) await h.add(id);
     h.click("controls");
     h.click("add");
-    h.w.BetterChzzk.utils.fetchJson = async (url) =>
+    h.w.CheeseSpanner.utils.fetchJson = async (url) =>
         url.includes("/search/")
             ? channelSearchResponse([{ channelId: "1".repeat(32), channelName: "일곱 번째", openLive: true }])
             : {
@@ -614,7 +615,7 @@ test("multiview delay ignores DOM authority changes and rejects synthetic or for
     h.trustedClick(forged);
     await tick();
     assert.equal(h.writes.length, afterWrites, "cloned controls have no internal authority");
-    const model = h.w.BetterChzzk.multiviewModel;
+    const model = h.w.CheeseSpanner.multiviewModel;
     for (const delay of [1e308, Number.MAX_VALUE, Infinity, NaN]) {
         assert.equal(model.validDelay(delay), false);
         assert.equal(model.readDelay({ version: 2, basis: "live-edge-clock", delaySeconds: delay }), 0);
@@ -642,10 +643,10 @@ test("chat settings stays beside the native menu with collection off and replace
         width: 324,
         height: 44,
     });
-    assert.equal(d.querySelector("#betterchzzk-multiview-chat-settings"), null);
+    assert.equal(d.querySelector("#cheese-spanner-multiview-chat-settings"), null);
     await h.start();
     await h.add(B);
-    const settings = d.querySelector("#betterchzzk-multiview-chat-settings");
+    const settings = d.querySelector("#cheese-spanner-multiview-chat-settings");
     const group = d.querySelector("[data-bcmv-chat-actions]");
     assert.ok(settings);
     assert.equal(group.parentElement, nativeParent);
@@ -673,8 +674,8 @@ test("chat settings stays beside the native menu with collection off and replace
     menu.addEventListener("click", () => nativeClicks++);
     menu.click();
     assert.equal(nativeClicks, 1);
-    d.querySelector("#betterchzzk-multiview-launcher").click();
-    assert.equal(d.querySelector("#betterchzzk-multiview-chat-settings"), null);
+    d.querySelector("#cheese-spanner-multiview-launcher").click();
+    assert.equal(d.querySelector("#cheese-spanner-multiview-chat-settings"), null);
     assert.equal(d.querySelector("[data-bcmv-chat-actions]"), null);
     assert.equal(menu.parentElement, nativeParent);
     settings.click();
@@ -693,14 +694,14 @@ test("chat settings cooperates with the real collection feature in either enable
         if (!collectionFirst) h.evalFile("features/chatTools.js");
         await waitForChatUi(() => d.querySelector("[data-bcct-moderator-trigger]"));
         await tick();
-        const settings = d.querySelector("#betterchzzk-multiview-chat-settings");
+        const settings = d.querySelector("#cheese-spanner-multiview-chat-settings");
         const group = d.querySelector("[data-bcmv-chat-actions]"),
             menu = d.querySelector('.chat-menu button[aria-label="더보기 메뉴"]');
         const collection = d.querySelector("[data-bcct-moderator-trigger]");
         assert.equal(settings.nextElementSibling, collection.parentElement);
         assert.equal(collection.nextElementSibling, menu);
         assert.equal(group.parentElement.className, "chat-menu");
-        assert.equal(group.querySelectorAll("#betterchzzk-multiview-chat-settings").length, 1);
+        assert.equal(group.querySelectorAll("#cheese-spanner-multiview-chat-settings").length, 1);
         collection.click();
         assert.equal(collection.getAttribute("aria-expanded"), "true");
         assert.equal(d.querySelector(".bcmv-panel").hidden, true);
@@ -744,21 +745,22 @@ test("chat settings waits for the native header and repairs cloned headers witho
     );
     await h.start();
     await h.add(B);
-    assert.equal(d.querySelector("#betterchzzk-multiview-chat-settings"), null);
+    assert.equal(d.querySelector("#cheese-spanner-multiview-chat-settings"), null);
     chat.prepend(header);
-    await waitForChatUi(() => d.querySelector("#betterchzzk-multiview-chat-settings"));
-    const oldButton = d.querySelector("#betterchzzk-multiview-chat-settings");
+    await waitForChatUi(() => d.querySelector("#cheese-spanner-multiview-chat-settings"));
+    const oldButton = d.querySelector("#cheese-spanner-multiview-chat-settings");
     const log = d.querySelector("#native-chat"),
         children = [...log.childNodes],
         videos = [...d.querySelectorAll("video")];
     oldButton.click();
     header.replaceWith(header.cloneNode(true));
     await waitForChatUi(
-        () => d.querySelector("#betterchzzk-multiview-chat-settings") !== oldButton && oldButton.parentElement === null
+        () =>
+            d.querySelector("#cheese-spanner-multiview-chat-settings") !== oldButton && oldButton.parentElement === null
     );
-    assert.equal(d.querySelectorAll("#betterchzzk-multiview-chat-settings").length, 1);
+    assert.equal(d.querySelectorAll("#cheese-spanner-multiview-chat-settings").length, 1);
     assert.equal(d.querySelectorAll("[data-bcmv-chat-actions]").length, 1);
-    assert.equal(d.querySelector("#betterchzzk-multiview-chat-settings").getAttribute("aria-expanded"), "true");
+    assert.equal(d.querySelector("#cheese-spanner-multiview-chat-settings").getAttribute("aria-expanded"), "true");
     assert.deepEqual([...log.childNodes], children);
     assert.deepEqual([...d.querySelectorAll("video")], videos);
     h.click("close-panel");
@@ -766,9 +768,9 @@ test("chat settings waits for the native header and repairs cloned headers witho
     assert.equal(d.querySelector(".bcmv-panel").hidden, true);
     h.navigate(C);
     await tick();
-    assert.equal(d.querySelectorAll("#betterchzzk-multiview-chat-settings").length, 1);
+    assert.equal(d.querySelectorAll("#cheese-spanner-multiview-chat-settings").length, 1);
     h.navigate("");
-    assert.equal(d.querySelector("#betterchzzk-multiview-chat-settings"), null);
+    assert.equal(d.querySelector("#cheese-spanner-multiview-chat-settings"), null);
     assert.equal(d.querySelector("[data-bcmv-chat-actions]"), null);
 });
 
@@ -794,7 +796,7 @@ test("multiview controls overlay videos without reserving toolbar or title space
     assert.equal(d.querySelector("[data-bcmv-native]"), native);
     assert.equal(d.querySelector("[data-bcmv-video]"), video);
     h.click("toggle-multiview");
-    assert.equal(d.querySelector("#betterchzzk-multiview"), null);
+    assert.equal(d.querySelector("#cheese-spanner-multiview"), null);
     assert.equal(d.querySelector('[data-bcmv-host="active"]'), null);
     assert.equal(native.parentElement.id, "video-region");
 });
@@ -1381,7 +1383,7 @@ test("settings list reorders spatial slots on drop while keeping geometry, audio
     g.pointer("pointerup", D);
     assert.deepEqual(g.order(), [A, B, D, C, E]);
     const saved = JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"));
-    const tree = h.w.BetterChzzk.multiviewModel.treeLayout;
+    const tree = h.w.CheeseSpanner.multiviewModel.treeLayout;
     assert.deepEqual(
         tree(saved.dockTree).cells.map((c) => c.rect),
         tree(savedSession.dockTree).cells.map((c) => c.rect)
@@ -1648,12 +1650,12 @@ test("chat popup follows resize and remounts, closes accessibly, and cleans its 
     assert.equal(panel.hidden, true);
     assert.equal(
         d.activeElement,
-        d.querySelector("#betterchzzk-multiview-launcher"),
+        d.querySelector("#cheese-spanner-multiview-launcher"),
         "closing without chat returns focus to the player toggle"
     );
     assert.ok(observers.every((o) => [...o.targets].every((target) => target === host)));
     d.body.append(chat);
-    await waitForChatUi(() => d.querySelector("#betterchzzk-multiview-chat-settings"));
+    await waitForChatUi(() => d.querySelector("#cheese-spanner-multiview-chat-settings"));
     h.click("controls");
     d.body.dispatchEvent(new h.w.MouseEvent("pointerdown", { bubbles: true }));
     assert.equal(panel.hidden, true);
@@ -1709,7 +1711,7 @@ test("video context menu toggles its audio and video drag swaps slots without re
     assert.equal(d.querySelector("[data-dragging]"), null);
     assert.deepEqual(
         Array.from(
-            h.w.BetterChzzk.multiviewModel.treeLayout(
+            h.w.CheeseSpanner.multiviewModel.treeLayout(
                 JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession")).dockTree
             ).cells,
             (x) => x.id
@@ -1814,7 +1816,7 @@ test("drag preview makes room by insertion, uses stable slots, and saves only on
     event(videos[1], "pointerup", 450, 500);
     assert.deepEqual(
         Array.from(
-            h.w.BetterChzzk.multiviewModel.treeLayout(JSON.parse(saved()).dockTree).cells,
+            h.w.CheeseSpanner.multiviewModel.treeLayout(JSON.parse(saved()).dockTree).cells,
             (entry) => entry.id
         ).filter(Boolean),
         [A, C, D, E, B]
@@ -1951,7 +1953,7 @@ test("shared divider snaps magnetically, releases with distance, and cancels wit
 
 test("docking at each edge changes the split geometry and preserves valid channel identities", (t) => {
     const h = setup(t),
-        m = h.w.BetterChzzk.multiviewModel;
+        m = h.w.CheeseSpanner.multiviewModel;
     const channels = [A, B, C, "d".repeat(32), "e".repeat(32), "f".repeat(32)].map((id) => ({ id }));
     for (let count = 2; count <= 6; count += 1) {
         const tree = m.defaultTree(channels.slice(0, count)),
@@ -1996,7 +1998,7 @@ test("docking at each edge changes the split geometry and preserves valid channe
 });
 
 test("equal alignment divides a secondary region evenly without changing the main or other regions", (t) => {
-    const m = setup(t).w.BetterChzzk.multiviewModel;
+    const m = setup(t).w.CheeseSpanner.multiviewModel;
     const branch = (axis, ratio, a, b) => ({ axis, ratio, a, b });
     const ids = [B, C, "d".repeat(32), "e".repeat(32), "f".repeat(32)];
     for (let count = 2; count <= 5; count++) {
@@ -2131,7 +2133,7 @@ test("equal alignment button arranges every secondary region regardless of the f
             await tick();
             const d = h.w.document,
                 host = d.querySelector("[data-bcmv-host]"),
-                model = h.w.BetterChzzk.multiviewModel;
+                model = h.w.CheeseSpanner.multiviewModel;
             const bounds = () => ({ left: 0, top: 0, width: 900, height: 506.25 });
             host.getBoundingClientRect = bounds;
             d.querySelector("video[data-bcmv-video]").dispatchEvent(new h.w.Event("resize"));
@@ -2263,7 +2265,7 @@ test("equal alignment button fixes uneven secondary videos while preserving play
 });
 
 test("moving the main exchanges intact sibling groups without changing any video dimensions", (t) => {
-    const m = setup(t).w.BetterChzzk.multiviewModel;
+    const m = setup(t).w.CheeseSpanner.multiviewModel;
     const branch = (axis, ratio, a, b) => ({ axis, ratio, a, b });
     const ids = [B, C, "d".repeat(32), "e".repeat(32), "f".repeat(32)];
     for (let count = 1; count <= 5; count++) {
@@ -2343,7 +2345,7 @@ test("dragging the native main below a secondary row previews, cancels and persi
     const original = saved();
     let navigation = 0,
         clicks = 0;
-    d.addEventListener("betterchzzk:multiview-navigate", () => navigation++);
+    d.addEventListener("cheese-spanner:multiview-navigate", () => navigation++);
     native.addEventListener("click", () => clicks++);
     const pointer = (target, type, x, y) =>
         target.dispatchEvent(
@@ -2503,7 +2505,7 @@ test("edge docking changes divider direction and keeps the playback nodes", asyn
     assert.equal(d.querySelector(`[data-bcmv-channel="${B}"] video`), b);
     assert.equal(d.querySelector(`[data-bcmv-channel="${C}"] video`), c);
     const saved = JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"));
-    assert.equal(h.w.BetterChzzk.multiviewModel.validTree(saved.dockTree, saved.channels), true);
+    assert.equal(h.w.CheeseSpanner.multiviewModel.validTree(saved.dockTree, saved.channels), true);
 });
 
 test("diagonal corner resize keeps the visible video aspect and persists its individual layout", async (t) => {
@@ -2534,7 +2536,7 @@ test("diagonal corner resize keeps the visible video aspect and persists its ind
     pointer(h.w, "pointerup", 540, 202.5);
     const saved = JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"));
     assert.equal(saved.customLayout, true);
-    assert.equal(h.w.BetterChzzk.multiviewModel.validTree(saved.dockTree, saved.channels), true);
+    assert.equal(h.w.CheeseSpanner.multiviewModel.validTree(saved.dockTree, saved.channels), true);
     const reopened = setup(t, { savedSession: saved });
     await tick();
     assert.deepEqual(
@@ -2927,7 +2929,7 @@ test("free window corners resize one video within bounds, keep aspect and allow 
     assert.ok(Math.abs(f.rect(B)[0] + f.rect(B)[2] - 1) < 1e-8);
     assert.equal(f.rect(B)[1], 0);
     for (const corner of ["nw", "ne", "sw", "se"]) {
-        const resized = h.w.BetterChzzk.multiviewModel.resizeWindow([0.2, 0.2, 0.3, 0.3], corner, -20, 20, f.bounds);
+        const resized = h.w.CheeseSpanner.multiviewModel.resizeWindow([0.2, 0.2, 0.3, 0.3], corner, -20, 20, f.bounds);
         assert.ok(resized.every(Number.isFinite));
         assert.ok(
             resized[0] >= 0 &&
@@ -3201,9 +3203,9 @@ test("following preview and its hover bridge stay above free windows through lay
     item.getBoundingClientRect = () => ({ left: 12, top: 80, right: 196, bottom: 132, width: 184, height: 52 });
     link.getBoundingClientRect = item.getBoundingClientRect;
     h.w.chrome.runtime.getURL = (path) => `chrome-extension://fixture/${path}`;
-    const fetchJson = h.w.BetterChzzk.utils.fetchJson;
+    const fetchJson = h.w.CheeseSpanner.utils.fetchJson;
     const requests = [];
-    h.w.BetterChzzk.utils.fetchJson = (url, options) => {
+    h.w.CheeseSpanner.utils.fetchJson = (url, options) => {
         if (!url.includes(`/channels/${D}/`) && !url.includes("/auto-play-info")) return fetchJson(url, options);
         requests.push(url);
         return Promise.resolve({
@@ -3222,10 +3224,10 @@ test("following preview and its hover bridge stay above free windows through lay
     h.setOptions({ followingPreviewTooltipEnabled: true });
     link.dispatchEvent(new h.w.Event("pointerover", { bubbles: true }));
     await waitForCondition(() => {
-        const video = f.d.querySelector("#betterchzzk-following-preview video.bcfp-player");
+        const video = f.d.querySelector("#cheese-spanner-following-preview video.bcfp-player");
         return video && h.instances.some((instance) => instance.video === video);
     });
-    const tip = f.d.getElementById("betterchzzk-following-preview"),
+    const tip = f.d.getElementById("cheese-spanner-following-preview"),
         bridge = f.d.querySelector("[data-bcfp-hover-bridge]"),
         video = tip.querySelector("video"),
         previewPlayer = h.instances.find((instance) => instance.video === video),
@@ -3268,14 +3270,14 @@ test("following preview and its hover bridge stay above free windows through lay
     assert.equal(h.popovers.has(tip), true, "reopening in free mode raises the preview immediately");
     const nextBridge = f.d.querySelector("[data-bcfp-hover-bridge]");
     h.setOptions({ followingPreviewTooltipEnabled: false });
-    assert.equal(f.d.getElementById("betterchzzk-following-preview"), null);
+    assert.equal(f.d.getElementById("cheese-spanner-following-preview"), null);
     assert.equal(h.popovers.has(tip), false);
     assert.equal(h.popovers.has(nextBridge), false);
 });
 
 test("free layout ignores malformed session geometry and remains opt-in for existing tabs", (t) => {
     const h = setup(t),
-        model = h.w.BetterChzzk.multiviewModel;
+        model = h.w.CheeseSpanner.multiviewModel;
     const base = { version: 1, channels: [A, B].map((id) => ({ id })) };
     assert.equal(model.session(base).freeLayoutEnabled, false);
     const state = model.session({
@@ -3297,7 +3299,7 @@ test("free layout ignores malformed session geometry and remains opt-in for exis
 });
 
 test("invalid or old session positions default to centered without invalidating the layout", (t) => {
-    const m = setup(t).w.BetterChzzk.multiviewModel;
+    const m = setup(t).w.CheeseSpanner.multiviewModel;
     for (const position of [undefined, null, [NaN, Infinity], [-0.1, 1.1], ["0", "1"]]) {
         const normalized = m.session({ version: 1, channels: [{ id: A, position }] });
         assert.deepEqual(Array.from(normalized.channels[0].position), [0.5, 0.5]);
@@ -3311,7 +3313,7 @@ test("invalid or old session positions default to centered without invalidating 
 
 test("main keeps its four-cell size and user resizing survives stream additions and removals", async (t) => {
     const h = setup(t),
-        m = h.w.BetterChzzk.multiviewModel;
+        m = h.w.CheeseSpanner.multiviewModel;
     for (let count = 1; count <= 6; count += 1) {
         const defaults = m.autoSplits(count);
         for (const { columns, rows } of [defaults, { columns: [0.3, 0.65], rows: [0.4, 0.75] }]) {
@@ -3344,7 +3346,7 @@ test("main keeps its four-cell size and user resizing survives stream additions 
     assert.equal(d.querySelectorAll(".bcmv-cell").length, 1);
     assert.equal(d.querySelector('.bcmv-cell[data-main="1"]').style.width, "100%");
     assert.equal(d.querySelectorAll(".bcmv-separator").length, 0);
-    assert.equal(d.querySelector("#betterchzzk-multiview-add"), null);
+    assert.equal(d.querySelector("#cheese-spanner-multiview-add"), null);
     assert.ok(d.querySelector('.bcmv-panel input[name="liveUrl"]'));
     await h.add(B);
     h.click("controls");
@@ -3371,12 +3373,12 @@ test("main keeps its four-cell size and user resizing survives stream additions 
     assert.equal(saved.layoutVersion, 3);
     assert.equal(resumed.w.document.querySelector('.bcmv-cell[data-main="1"]').style.width, mainWidth);
     h.click("toggle-multiview");
-    assert.equal(d.querySelector("#betterchzzk-multiview-add"), null);
+    assert.equal(d.querySelector("#cheese-spanner-multiview-add"), null);
 });
 
 test("multiview validates URLs, bounded session layout, stored delay and seekable gaps", (t) => {
     const { w } = setup(t);
-    const m = w.BetterChzzk.multiviewModel;
+    const m = w.CheeseSpanner.multiviewModel;
     assert.equal(m.channelFromUrl(`https://chzzk.naver.com/live/${A}`), A);
     for (const url of [
         `https://evil.test/live/${A}`,
@@ -3421,7 +3423,7 @@ test("six slots preserve native tree; additions reject duplicates and overflow; 
     assert.equal(w.document.querySelectorAll("[data-bcmv-video]").length, 5);
     assert.equal(original.parentElement, parent);
     assert.equal(w.document.getElementById("native-info").textContent, "원래 방송 제목과 상호작용");
-    assert.equal(w.BetterChzzk.utils.getMainVideoElement(), original.querySelector("video"));
+    assert.equal(w.CheeseSpanner.utils.getMainVideoElement(), original.querySelector("video"));
     assert.equal(
         h.instances.every((hls) => !hls.config.enableWorker && hls.config.maxLiveSyncPlaybackRate === 1),
         true
@@ -3881,11 +3883,11 @@ test("remount, mode changes, keyboard resize and disable preserve or clean the r
     previous.replaceWith(replacement);
     await tick();
     assert.equal(h.w.document.querySelector("[data-bcmv-video]"), sub);
-    assert.equal(h.w.document.querySelectorAll("#betterchzzk-multiview").length, 1);
+    assert.equal(h.w.document.querySelectorAll("#cheese-spanner-multiview").length, 1);
     h.configure(false);
     await tick();
     assert.equal(h.w.document.querySelector("[data-bcmv-host]"), null);
-    assert.equal(h.w.document.getElementById("betterchzzk-multiview-style"), null);
+    assert.equal(h.w.document.getElementById("cheese-spanner-multiview-style"), null);
     assert.equal(h.instances[0].destroyed, true);
     assert.equal(h.w.document.querySelector(".chzzk_player"), replacement);
 });
@@ -3896,7 +3898,7 @@ test("Escape coordinates the layout gesture and open settings even when focus mo
     await h.add(B);
     h.click("controls");
     const d = h.w.document;
-    const overlay = d.getElementById("betterchzzk-multiview");
+    const overlay = d.getElementById("cheese-spanner-multiview");
     const panel = d.querySelector(".bcmv-panel");
     const escape = (target) =>
         target.dispatchEvent(new h.w.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
@@ -3922,7 +3924,7 @@ test("player lifecycle owns subscriptions and rejects media or metadata from a c
     const h = setup(t, { sourcePending: true });
     h.configure(false);
     const baseline = h.storageListenerCount();
-    const root = h.w.BetterChzzk;
+    const root = h.w.CheeseSpanner;
     const state = root.multiviewModel.session({ version: 1, active: true, channels: [{ id: A }, { id: B }] });
     const changes = [];
     const players = root.multiviewPlayback.create({
@@ -3978,7 +3980,7 @@ test("adding a stream during a divider preview cancels the gesture before changi
     await h.add(C);
     const restored = JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"));
     assert.equal(restored.channels.length, 3);
-    assert.equal(h.w.BetterChzzk.multiviewModel.validTree(restored.dockTree, restored.channels), true);
+    assert.equal(h.w.CheeseSpanner.multiviewModel.validTree(restored.dockTree, restored.channels), true);
     assert.ok(d.querySelector(`[data-bcmv-channel="${C}"] video`));
     assert.ok(parseFloat(d.querySelector(`[data-bcmv-channel="${C}"]`).style.width) > 0);
     assert.equal(d.querySelector(".bcmv-snap-guide"), null);
@@ -4133,7 +4135,7 @@ test("native multiview button toggles without triggering player clicks and survi
     document.querySelector(".pzp-pc").addEventListener("click", () => {
         playerClicks += 1;
     });
-    let toggle = document.getElementById("betterchzzk-multiview-launcher");
+    let toggle = document.getElementById("cheese-spanner-multiview-launcher");
     assert.equal(toggle.parentElement, controlBar);
     assert.equal(toggle.nextElementSibling, viewmode);
     assert.equal(toggle.getAttribute("aria-label"), "멀티뷰 켜기");
@@ -4143,7 +4145,7 @@ test("native multiview button toggles without triggering player clicks and survi
     assert.ok(toggle.querySelector('svg[aria-hidden="true"]'));
     toggle.click();
     await tick();
-    toggle = document.getElementById("betterchzzk-multiview-launcher");
+    toggle = document.getElementById("cheese-spanner-multiview-launcher");
     assert.equal(toggle.getAttribute("aria-pressed"), "true");
     assert.equal(toggle.getAttribute("aria-label"), "멀티뷰 끄기");
     assert.equal(toggle.querySelector(".pzp-button__tooltip").textContent, "멀티뷰 끄기");
@@ -4154,17 +4156,17 @@ test("native multiview button toggles without triggering player clicks and survi
     const clone = controlBar.cloneNode(true);
     controlBar.replaceWith(clone);
     await tick();
-    assert.equal(document.querySelectorAll("#betterchzzk-multiview-launcher").length, 1);
+    assert.equal(document.querySelectorAll("#cheese-spanner-multiview-launcher").length, 1);
     assert.equal(document.querySelector("[data-bcmv-video]"), sub);
-    toggle = document.getElementById("betterchzzk-multiview-launcher");
+    toggle = document.getElementById("cheese-spanner-multiview-launcher");
     assert.equal(toggle.parentElement, clone);
     toggle.click();
     await tick();
-    assert.equal(document.getElementById("betterchzzk-multiview"), null);
-    assert.equal(document.getElementById("betterchzzk-multiview-launcher").getAttribute("aria-pressed"), "false");
+    assert.equal(document.getElementById("cheese-spanner-multiview"), null);
+    assert.equal(document.getElementById("cheese-spanner-multiview-launcher").getAttribute("aria-pressed"), "false");
     assert.equal(h.instances[0].destroyed, true);
     h.configure(false);
-    assert.equal(document.getElementById("betterchzzk-multiview-launcher"), null);
+    assert.equal(document.getElementById("cheese-spanner-multiview-launcher"), null);
 });
 
 test("multiview button waits for the native mode control instead of floating over the video", async (t) => {
@@ -4174,10 +4176,10 @@ test("multiview button waits for the native mode control instead of floating ove
         parent = viewmode.parentElement;
     viewmode.remove();
     await tick();
-    assert.equal(document.getElementById("betterchzzk-multiview-launcher"), null);
+    assert.equal(document.getElementById("cheese-spanner-multiview-launcher"), null);
     parent.append(viewmode);
     await tick();
-    assert.equal(document.getElementById("betterchzzk-multiview-launcher").parentElement, parent);
+    assert.equal(document.getElementById("cheese-spanner-multiview-launcher").parentElement, parent);
 });
 
 test("multiview button hides with native controls without stopping playback or leaving a focus target", async (t) => {
@@ -4186,7 +4188,7 @@ test("multiview button hides with native controls without stopping playback or l
     await h.start();
     await h.add(B);
     const playerRoot = document.querySelector(".pzp-pc");
-    const toggle = document.getElementById("betterchzzk-multiview-launcher");
+    const toggle = document.getElementById("cheese-spanner-multiview-launcher");
     const sub = document.querySelector("[data-bcmv-video]");
     playerRoot.classList.remove("pzp-pc--controls");
     await tick();
@@ -4208,7 +4210,7 @@ test("multiview button hides with native controls without stopping playback or l
 
 test("live timing compensates playlist steps but exposes actual pauses and stale data", (t) => {
     const h = setup(t),
-        m = h.w.BetterChzzk.multiviewModel;
+        m = h.w.CheeseSpanner.multiviewModel;
     const details = { live: true, edge: 100, age: 0, advancedDateTime: 1000, targetduration: 2 };
     const v = { currentTime: 97 };
     assert.equal(m.hlsTiming(v, details).latency, 3);
@@ -4229,7 +4231,7 @@ test("live timing compensates playlist steps but exposes actual pauses and stale
 
 test("native clock learns observed cadence, preserves pauses and resets across stale or changed sources", (t) => {
     const h = setup(t),
-        m = h.w.BetterChzzk.multiviewModel;
+        m = h.w.CheeseSpanner.multiviewModel;
     const video = h.w.document.querySelector("video"),
         data = h.media(video);
     data.end = 100;
@@ -4505,7 +4507,7 @@ const cssRule = (css, selector) => {
 };
 const themeVariables = (w) =>
     new Set(
-        [...w.document.getElementById("betterchzzk-ui-theme").textContent.matchAll(/(--bct-[a-z-]+):/g)].map(
+        [...w.document.getElementById("cheese-spanner-ui-theme").textContent.matchAll(/(--bct-[a-z-]+):/g)].map(
             ([, name]) => name
         )
     );
@@ -4513,13 +4515,13 @@ const themeVariables = (w) =>
 test("multiview requests the shared theme only after it is enabled and keeps the CHZZK font family", async (t) => {
     const h = setup(t, { enabled: false, withTheme: true });
     const d = h.w.document;
-    assert.equal(d.getElementById("betterchzzk-ui-theme"), null, "no theme while the option is off");
-    assert.equal(d.getElementById("betterchzzk-multiview-style"), null);
+    assert.equal(d.getElementById("cheese-spanner-ui-theme"), null, "no theme while the option is off");
+    assert.equal(d.getElementById("cheese-spanner-multiview-style"), null);
     h.w.chrome.runtime.getURL = (file) => `chrome-extension://fixture/${file}`;
     h.configure(true);
     await tick();
-    const theme = d.getElementById("betterchzzk-ui-theme"),
-        style = d.getElementById("betterchzzk-multiview-style");
+    const theme = d.getElementById("cheese-spanner-ui-theme"),
+        style = d.getElementById("cheese-spanner-multiview-style");
     assert.ok(theme && style);
     assert.equal(
         theme.compareDocumentPosition(style) & h.w.Node.DOCUMENT_POSITION_FOLLOWING,
@@ -4529,24 +4531,24 @@ test("multiview requests the shared theme only after it is enabled and keeps the
     // README: multiview guides, controls and settings keep the font family CHZZK uses, not the bundled font.
     const css = style.textContent;
     assert.match(
-        cssRule(css, "[data-bcmv-host],#betterchzzk-multiview-panel"),
+        cssRule(css, "[data-bcmv-host],#cheese-spanner-multiview-panel"),
         /--bcmv-font:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic","맑은 고딕",sans-serif/
     );
-    assert.match(cssRule(css, "#betterchzzk-multiview"), /font:12px\/1\.4 var\(--bcmv-font\)/);
+    assert.match(cssRule(css, "#cheese-spanner-multiview"), /font:12px\/1\.4 var\(--bcmv-font\)/);
     assert.match(css, /\.bcmv-panel\{[^}]*font:13px\/1\.5 var\(--bcmv-font\)/);
-    assert.doesNotMatch(css, /@font-face|BetterChzzk Pretendard|--bct-font/);
+    assert.doesNotMatch(css, /@font-face|CheeseSpanner Pretendard|--bct-font/);
     h.configure(false);
     await tick();
-    assert.equal(d.getElementById("betterchzzk-multiview-style"), null);
+    assert.equal(d.getElementById("cheese-spanner-multiview-style"), null);
     h.configure(true);
     await tick();
-    assert.equal(d.querySelectorAll("#betterchzzk-ui-theme").length, 1, "the theme is shared, never duplicated");
-    assert.equal(d.querySelectorAll("#betterchzzk-multiview-style").length, 1);
+    assert.equal(d.querySelectorAll("#cheese-spanner-ui-theme").length, 1, "the theme is shared, never duplicated");
+    assert.equal(d.querySelectorAll("#cheese-spanner-multiview-style").length, 1);
 });
 
 test("multiview styles take theme colors, radii, shadow and states from the shared theme", (t) => {
     const h = setup(t, { withTheme: true });
-    const css = h.w.document.getElementById("betterchzzk-multiview-style").textContent;
+    const css = h.w.document.getElementById("cheese-spanner-multiview-style").textContent;
     const defined = themeVariables(h.w);
     const used = [...css.matchAll(/var\((--bct-[a-z-]+)(\)|,)/g)];
     assert.ok(used.length > 20);
@@ -4562,9 +4564,9 @@ test("multiview styles take theme colors, radii, shadow and states from the shar
     for (const color of cssColors(css))
         assert.ok(MULTIVIEW_FIXED_COLORS.includes(color.toLowerCase()), `${color} is not a theme color`);
 
-    const P = "#betterchzzk-multiview-panel";
+    const P = "#cheese-spanner-multiview-panel";
     assert.match(
-        cssRule(css, "[data-bcmv-host],#betterchzzk-multiview-panel"),
+        cssRule(css, "[data-bcmv-host],#cheese-spanner-multiview-panel"),
         /--bcmv-surface:var\(--bct-surface\);--bcmv-content:var\(--bct-text\);--bcmv-border:var\(--bct-border-strong\)/
     );
     const panelVars = css.match(/\n\.bcmv-panel\{(--bcmv-[^}]*)\}/)?.[1] || "";
@@ -4581,20 +4583,20 @@ test("multiview styles take theme colors, radii, shadow and states from the shar
     assert.match(panel, /box-shadow:var\(--bct-shadow\)/);
     assert.match(panel, /border:1px solid var\(--bcmv-line\)/);
     assert.match(cssRule(css, `${P} :focus-visible`), /outline:2px solid var\(--bct-focus-ring\)/);
-    assert.match(cssRule(css, "#betterchzzk-multiview :focus-visible"), /outline:2px solid var\(--bct-brand\)/);
+    assert.match(cssRule(css, "#cheese-spanner-multiview :focus-visible"), /outline:2px solid var\(--bct-brand\)/);
     assert.match(cssRule(css, `${P} button:not(:disabled):hover`), /background:var\(--bct-hover\)/);
     assert.match(cssRule(css, `${P} .bcmv-layout-toggle[aria-checked="true"]`), /color:var\(--bct-on-brand\)/);
     assert.match(cssRule(css, `${P} .bcmv-layout-toggle`), /border-radius:var\(--bct-radius-full\)/);
     assert.match(
-        cssRule(css, '#betterchzzk-multiview-chat-settings[aria-expanded="true"]'),
+        cssRule(css, '#cheese-spanner-multiview-chat-settings[aria-expanded="true"]'),
         /color:var\(--bct-brand-text-base\);background:var\(--bct-brand-weak\)/
     );
-    assert.match(cssRule(css, "#betterchzzk-multiview-chat-settings:hover"), /background:var\(--bct-hover\)/);
+    assert.match(cssRule(css, "#cheese-spanner-multiview-chat-settings:hover"), /background:var\(--bct-hover\)/);
     for (const [, value] of css.matchAll(/border-radius:([^;}]*)/g))
         assert.match(value, /^(?:var\(--bct-radius-(?:sm|md|lg|full)\)|50%|14px)$/, `radius ${value}`);
     // The only raw 14px radius is the native player tooltip the cell controls copy.
     assert.equal([...css.matchAll(/border-radius:14px/g)].length, 1);
-    assert.match(cssRule(css, "#betterchzzk-multiview .bcmv-controls button::after"), /border-radius:14px/);
+    assert.match(cssRule(css, "#cheese-spanner-multiview .bcmv-controls button::after"), /border-radius:14px/);
     for (const [, value] of css.matchAll(/box-shadow:([^;}]*)/g))
         assert.match(value, /^(?:var\(--bct-shadow\)|none)$/, `shadow ${value}`);
 });
