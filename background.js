@@ -93,7 +93,7 @@ function clearLegacyUpdateNotice() {
                 RETIRED_QUALITY_NOTICE_KEY,
             ],
         ],
-        [chrome.storage.sync, ["updateNotificationsEnabled", "gridBypassEnabled", "autoQualityDismissInstallGuide"]],
+        [chrome.storage.sync, ["updateNotificationsEnabled", "autoQualityDismissInstallGuide"]],
     ]) {
         area.remove?.(keys, () => {
             getStorageLastError();

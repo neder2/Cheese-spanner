@@ -19,7 +19,6 @@ function harness({ failRemoval = false, version = "1.3.8", noticeState, registra
     if (noticeState) local["betterchzzk:quality-update-notice"] = noticeState;
     const sync = {
         updateNotificationsEnabled: true,
-        gridBypassEnabled: true,
         autoQualityDismissInstallGuide: true,
         adblockPopupEnabled: false,
         holdSpeedEnabled: false,
@@ -242,7 +241,7 @@ test("the development manifest version cannot recreate or inject the retired not
     ]);
     assert.ok(claims.every((result) => result.show === false));
     assert.equal(h.local[key], undefined);
-    assert.equal(h.sync.gridBypassEnabled, undefined);
+    assert.equal(h.sync.autoQualityDismissInstallGuide, undefined);
     assert.equal(h.sync.holdSpeedEnabled, false);
 });
 
@@ -403,13 +402,9 @@ test("saved notice template preserves copy, confirmation and focus restoration",
     const dialog = w.document.querySelector("dialog");
     assert.ok(dialog.open);
     assert.equal(dialog.querySelector("p").textContent, "팝업같은 거 띄워서 죄송합니다. 꼭 읽어주세요.");
-    assert.match(dialog.textContent, /기존 그리드 우회 방식/);
-    assert.match(dialog.textContent, /수정·변형을 제한하는 네이버 이용약관에 저촉될 소지/);
-    assert.match(dialog.textContent, /배포와 지원을 계속하기 어렵다고 판단해 기존 방식의 지원을 종료/);
-    assert.match(dialog.textContent, /비슷한 이유로 확장 프로그램 이름도 변경했습니다/);
+    assert.match(dialog.textContent, /확장 프로그램 이름을 변경했습니다/);
     assert.match(dialog.textContent, /화질 고정 기능을 강화하고, 시청에 방해되는 팝업을 제거/);
     assert.match(dialog.textContent, /시청 방해 팝업 제거/);
-    assert.match(dialog.textContent, /설치된 그리드 프로그램의 사용을 차단하지 않습니다/);
     assert.equal(w.document.getElementById(dialog.getAttribute("aria-labelledby")).textContent, "중요!!! 공지");
     assert.ok(w.document.getElementById(dialog.getAttribute("aria-describedby")));
     dialog.querySelector("button").click();

@@ -24,7 +24,7 @@
 - 압축 파일 전체의 내용이 작업 트리 원본과 바이트 단위로 일치한다.
 - manifest, 확장 HTML, background import와 동적 광고·공지 스크립트 등을 포함한 로컬 참조 85개가 압축 안에 존재한다.
 - 새 아이콘·옵션 스타일·Pretendard와 HLS 라이선스·THIRD_PARTY_NOTICES.md를 포함한다.
-- tests, docs, store-assets, 개발 설정과 node_modules는 제외했다. 미공개 adAutoSkip, 제거한 gridBypass 파일과 이전 아이콘도 들어 있지 않다.
+- tests, docs, store-assets, 개발 설정과 node_modules는 제외했다. 미공개 adAutoSkip과 이전 아이콘도 들어 있지 않다.
 - 출시가 확정되지 않은 별도 기획안 `docs/feature-expansion-proposal.md`는 이번 릴리즈 커밋에 포함하지 않는다.
 
 ## 실브라우저와 스토어

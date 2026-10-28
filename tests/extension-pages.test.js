@@ -991,7 +991,6 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     assert.deepEqual(manifest.web_accessible_resources, [
         { resources: ["vendor/fonts/PretendardVariable.woff2"], matches: ["https://chzzk.naver.com/*"] },
     ]);
-    assert.equal(mainScript.js.includes("features/gridBypassPage.js"), false);
     assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
     assert.equal(mainScript.js.includes("features/followingPreviewPage.js"), false);
     assert.ok(
@@ -1016,7 +1015,6 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
         isolatedScript.js.indexOf("features/sidebarCustomization.js") <
             isolatedScript.js.indexOf("features/followingRefresh.js")
     );
-    assert.equal(isolatedScript.js.includes("features/gridBypass.js"), false);
     assert.equal(isolatedScript.js.includes("features/updateNotice.js"), false);
     assert.ok(
         isolatedScript.js.indexOf("shared/updateGuide.js") < isolatedScript.js.indexOf("features/updateGuide.js")

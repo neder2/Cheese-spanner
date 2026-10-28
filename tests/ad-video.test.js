@@ -1040,43 +1040,6 @@ test("real playback data, unmeasured shapes, errors, revivers, and unrelated rou
     assert.equal(parse(window, measured).content.livePlaybackJson.liveId, false);
 });
 
-test("retired grid settings leave P2P playback metadata unchanged with ads enabled or disabled", (t) => {
-    for (const gridEnabled of [false, true]) {
-        for (const adsEnabled of [false, true]) {
-            const window = createPage(t);
-            window.document.documentElement.setAttribute(
-                "data-cheese-spanner-grid-bypass-state",
-                gridEnabled ? "1" : "0"
-            );
-            const originalParse = window.JSON.parse;
-            if (adsEnabled) window.eval(source);
-            const playback = {
-                meta: { p2p: true },
-                media: [
-                    {
-                        mediaId: "HLS",
-                        protocol: "HLS",
-                        path: "https://livecloud.pstatic.net/master.m3u8",
-                        p2pPath: "nliveconnector://master",
-                        encodingTrack: [{ videoHeight: 1080 }],
-                    },
-                ],
-            };
-            assert.equal(parse(window, measured).content.livePlaybackJson.liveId, !adsEnabled);
-            const result = parse(window, playback);
-            assert.equal(result.meta.p2p, true);
-            assert.equal(result.media[0].path, playback.media[0].path);
-            assert.deepEqual(result.media[0].encodingTrack, playback.media[0].encodingTrack);
-            if (adsEnabled) {
-                setEnabled(window, false);
-                assert.equal(window.JSON.parse, originalParse);
-                assert.deepEqual(parse(window, measured), measured);
-                assert.equal(parse(window, playback).meta.p2p, true);
-            }
-        }
-    }
-});
-
 test("disable preserves a later wrapper and requires reload before reactivation", (t) => {
     const window = createPage(t);
     window.eval(source);
