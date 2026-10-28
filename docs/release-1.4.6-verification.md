@@ -54,7 +54,7 @@
 - 이름 변경의 저장 연속성(2026-10-28 diff 확인):
     - 그대로인 것: `chrome.storage`·sessionStorage 키(`betterchzzk:*`, `betterChzzk*`, `betterchzzk*`)와 광고 동적 등록 ID `betterchzzk-ad-video`
     - 바뀐 것: 페이지 DOM id·속성, 확장 내부 메시지 종류, 전역 이름, 콘솔 접두어
-    - 페이지 DOM 이름을 지정한 사용자 스타일·차단 규칙은 영향을 받을 수 있어 업데이트 내역에 적었어요.
+    - 페이지 DOM 이름을 지정한 사용자 스타일·차단 규칙은 영향을 받을 수 있어요. 처음에는 업데이트 내역과 README에 적었지만, 공개 뒤 사용자 요청("그 밖의 변경에 내부 코드 바꾼건 쓰지마")으로 두 곳과 Release 본문에서 뺐어요.
 
 ## 자동 검증
 
