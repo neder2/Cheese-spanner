@@ -602,6 +602,19 @@ test("the header entry and panel use the shared theme and the shared bundled Pre
         assert.equal(value(f.panel(), "box-shadow"), value(root, "--bct-shadow"), `${label} shares the popover shadow`);
     }
 });
+test("the open panel stacks above the native in-page PiP instead of under it", async (t) => {
+    const f = fixture(t, { channels: [{ ...channel(), notify: true }] });
+    await f.open();
+    const { document } = f.w;
+    // 2026-11-04 bundle: ._container_*._type_pip_* is position:fixed with z-index 20000 at the bottom right.
+    const NATIVE_PIP_Z = 20000;
+    const style = f.w.getComputedStyle(f.panel());
+    assert.equal(style.getPropertyValue("position"), "fixed");
+    const z = Number(style.getPropertyValue("z-index"));
+    assert.ok(Number.isInteger(z) && z > NATIVE_PIP_Z, "panel z-index " + z + " is above the PiP");
+    // A stacking-context ancestor would cap the value, so the panel stays a direct child of <body>.
+    assert.equal(f.panel().parentElement, document.body);
+});
 test("leaving a page after the extension reloaded cleans up without the storage API", async (t) => {
     const f = fixture(t, { channels: [{ ...channel(), notify: true }] });
     await f.open();

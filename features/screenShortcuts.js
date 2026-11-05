@@ -3,8 +3,15 @@
     "use strict";
     if (CheeseSpanner.screenShortcuts) return;
     CheeseSpanner.screenShortcuts = {};
-    const { bindFeatureOptions, getMainVideoElement, getPlayerRoot, isPlaybackRoute, isEditableTarget } =
-        CheeseSpanner.utils;
+    const {
+        bindFeatureOptions,
+        getMainVideoElement,
+        getPlayerRoot,
+        isLiveAdBreakActive,
+        isNativeAdBreakActive,
+        isPlaybackRoute,
+        isEditableTarget,
+    } = CheeseSpanner.utils;
     let enabled = false;
     let holdSpeedEnabled = true;
     const BUTTONS = {
@@ -21,6 +28,10 @@
         if (event.code === "Space" && holdSpeedEnabled) return;
         const selector = BUTTONS[event.code];
         if (!selector) return;
+        // 2026-11-05 공개 번들 기준 광고 구간의 Space·M은 네이티브가 광고 재생·음소거에 쓰므로 넘긴다. 라이브 광고는
+        // 본영상 플레이어 바깥에서 재생돼 F/T가 숨은 본영상만 전체 화면·넓은 화면으로 바꾸므로 그때는 F/T도 넘긴다.
+        // 다시보기 광고는 플레이어 안에서 재생돼 F/T가 광고를 포함한 화면에 그대로 적용된다.
+        if (event.code === "Space" || event.code === "KeyM" ? isNativeAdBreakActive() : isLiveAdBreakActive()) return;
         const target = event.composedPath()[0] || event.target;
         if (isEditableTarget(target)) return;
         if (
@@ -30,6 +41,8 @@
             )
         )
             return;
+        // Keys inside the stream info panel (streamInfo.js) belong to the panel: Space/Enter close it there.
+        if (target instanceof Element && target.closest("#cheese-spanner-stream-info")) return;
         const video = getMainVideoElement();
         if (!(video instanceof HTMLVideoElement) || !video.isConnected) return;
         const player = getPlayerRoot(video);

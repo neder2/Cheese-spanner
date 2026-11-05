@@ -744,7 +744,15 @@
             for (const key of currentIds) if (key !== id) delete history.entries[key];
             for (const alias of aliases)
                 if (!Object.hasOwn(history.recordAliases, alias.sourceRecordId)) {
-                    history.recordAliases[alias.sourceRecordId] = { targetRecordId: id, migratedAt: alias.migratedAt };
+                    // The source's local tombstone predates this first local alias, so it deleted only that
+                    // provisional session. It is recorded as already settled (as migrateRecordId does) so a later
+                    // migration does not apply it to the whole live record. Only the local value is used: the file
+                    // cannot settle or lower a local deletion barrier.
+                    const sourceBarrierAt = number(history.tombstones?.[alias.sourceRecordId]);
+                    history.recordAliases[alias.sourceRecordId] =
+                        sourceBarrierAt > 0
+                            ? { targetRecordId: id, migratedAt: alias.migratedAt, sourceBarrierAt }
+                            : { targetRecordId: id, migratedAt: alias.migratedAt };
                 }
             changed = true;
         }

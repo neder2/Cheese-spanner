@@ -239,7 +239,8 @@
         };
     }
 
-    function normalizeActivities(value, now = Date.now()) {
+    // Incoming rows pass the writer's clock; stored rows were bounded when written and are not cut by a clock that went back.
+    function normalizeActivities(value, now = Number.POSITIVE_INFINITY) {
         const byId = new Map();
         for (const row of (Array.isArray(value) ? value : []).slice(-MAX_ACTIVITIES_PER_ENTRY)) {
             if (!row || !["chat", "donation"].includes(row.kind)) continue;
@@ -399,7 +400,8 @@
             ...source,
             title: compactString(source.title, 500),
             dailySeconds: normalizeDailySeconds(source.dailySeconds),
-            watchedRanges: normalizeSessionRanges(source),
+            // A stored session keeps ranges up to its own end even when the device clock is now earlier.
+            watchedRanges: normalizeSessionRanges(source, Math.max(Date.now(), finiteNumber(source.leftAt))),
         };
     }
 
@@ -573,15 +575,16 @@
                 ) {
                     continue;
                 }
-                aliases.push({ sourceId, targetRecordId: targetId, migratedAt });
+                const sourceBarrierAt = Math.max(
+                    0,
+                    Math.round(finiteNumber(rawAlias && typeof rawAlias === "object" ? rawAlias.sourceBarrierAt : 0))
+                );
+                aliases.push({ sourceId, targetRecordId: targetId, migratedAt, sourceBarrierAt });
             }
         }
         aliases.sort((a, b) => b.migratedAt - a.migratedAt);
         for (const alias of aliases.slice(0, HISTORY_MAX_RECORD_ALIASES)) {
-            recordAliases[alias.sourceId] = {
-                targetRecordId: alias.targetRecordId,
-                migratedAt: alias.migratedAt,
-            };
+            recordAliases[alias.sourceId] = createAlias(alias.targetRecordId, alias.migratedAt, alias.sourceBarrierAt);
         }
         for (const alias of aliases.slice(HISTORY_MAX_RECORD_ALIASES)) {
             compactedSessionBarrierAt = Math.max(compactedSessionBarrierAt, alias.migratedAt);
@@ -590,10 +593,7 @@
         for (const [sourceId, alias] of Object.entries(recordAliases)) {
             const targetRecordId = resolveRecordId({ recordAliases }, sourceId);
             if (!targetRecordId || targetRecordId === sourceId) continue;
-            flattenedRecordAliases[sourceId] = {
-                targetRecordId,
-                migratedAt: alias.migratedAt,
-            };
+            flattenedRecordAliases[sourceId] = createAlias(targetRecordId, alias.migratedAt, alias.sourceBarrierAt);
         }
         return {
             ...source,
@@ -624,11 +624,25 @@
         return resolved;
     }
 
-    function setRecordAlias(history, sourceRecordId, targetRecordId, migratedAt) {
+    // sourceBarrierAt is the source's deletion barrier already settled for this alias. A source deleted while it
+    // was still a separate record covers only its own session, so a repeated migration must not reapply that
+    // barrier to the whole target; only a newer deletion of the source is applied, and then once.
+    function createAlias(targetRecordId, migratedAt, sourceBarrierAt = 0) {
+        return sourceBarrierAt > 0 ? { targetRecordId, migratedAt, sourceBarrierAt } : { targetRecordId, migratedAt };
+    }
+
+    function setRecordAlias(history, sourceRecordId, targetRecordId, migratedAt, sourceBarrierAt = 0) {
         const before = JSON.stringify(history.recordAliases || {});
         const beforeBarrier = finiteNumber(history.compactedSessionBarrierAt);
         const previous = history.recordAliases?.[sourceRecordId];
-        const alias = previous?.targetRecordId === targetRecordId ? previous : { targetRecordId, migratedAt };
+        const alias =
+            previous?.targetRecordId === targetRecordId
+                ? createAlias(
+                      targetRecordId,
+                      previous.migratedAt,
+                      Math.max(finiteNumber(previous.sourceBarrierAt), sourceBarrierAt)
+                  )
+                : createAlias(targetRecordId, migratedAt, sourceBarrierAt);
         const aliases = createRecordMap(Object.entries(history.recordAliases || {}));
         aliases[sourceRecordId] = alias;
         const rows = Object.entries(aliases).sort(
@@ -676,6 +690,19 @@
         else delete history.entries[recordId];
         changed = true;
         return changed;
+    }
+
+    // A provisional record is named after the one page session that created it (channel:<id>:provisional:<session>).
+    // Deleting it deletes that session wherever its late snapshots are addressed, including the live ID it moves to,
+    // without touching other sessions of that live record.
+    function getProvisionalSessionBarrier(history, sessionId) {
+        const suffix = `:provisional:${sessionId}`;
+        let barrier = 0;
+        for (const [recordId, deletedAt] of Object.entries(history.tombstones || {})) {
+            if (recordId.startsWith("channel:") && recordId.endsWith(suffix))
+                barrier = Math.max(barrier, finiteNumber(deletedAt));
+        }
+        return barrier;
     }
 
     function getEntryStartedAt(entry) {
@@ -979,7 +1006,8 @@
             history.clearedAt,
             finiteNumber(history.compactedSessionBarrierAt),
             finiteNumber(history.tombstones[requestedRecordId]),
-            finiteNumber(history.tombstones[resolvedRecordId])
+            finiteNumber(history.tombstones[resolvedRecordId]),
+            getProvisionalSessionBarrier(history, operation.session.id)
         );
         if (operation.session.enteredAt <= barrier) {
             return { changed: false, result: { status: "ignored", reason: "deleted", barrier } };
@@ -1141,9 +1169,33 @@
         };
     }
 
+    // A session this writer already accepted keeps its own timestamps valid after the device clock goes back:
+    // incoming values may reach the later of now + skew and that session's stored end. The skew is not added on top
+    // of the stored end, so repeated snapshots cannot walk the allowed future forward under a fixed clock.
+    function getAcceptedSessionClock(history, rawOperation, now) {
+        if (!["upsertSessionSnapshot", "appendActivities"].includes(rawOperation?.kind)) return now;
+        const recordId = tryNormalizeRecordId(rawOperation.recordId);
+        const sessionId = compactString(rawOperation.session?.id, 160);
+        if (!recordId || !sessionId) return now;
+        const entry = history.entries[resolveRecordId(history, recordId)];
+        const session = [
+            ...(Array.isArray(entry?.sessionDetails) ? entry.sessionDetails : []),
+            ...normalizeRetiredSessionCheckpoints(entry?.retiredSessionCheckpoints),
+        ].find((row) => row?.id === sessionId);
+        return Math.max(now, Math.round(finiteNumber(session?.leftAt)) - MAX_FUTURE_SKEW_MS);
+    }
+
+    // Shape and identity check for a message before it enters the writer queue. A session snapshot's timestamps depend
+    // on the stored history, so applyMutation judges them inside the queue; every other kind is checked here as well.
+    function normalizeMutationEnvelope(value, now = Date.now()) {
+        const kind = compactString(value?.kind, 80);
+        const sessionKind = kind === "upsertSessionSnapshot" || kind === "appendActivities";
+        return normalizeMutation(value, sessionKind ? Number.POSITIVE_INFINITY : now);
+    }
+
     function applyMutation(value, rawOperation, now = Date.now()) {
-        const operation = normalizeMutation(rawOperation, now);
         const history = normalizeStoredHistory(value);
+        const operation = normalizeMutation(rawOperation, getAcceptedSessionClock(history, rawOperation, now));
         let outcome;
 
         if (operation.kind === "upsertSessionSnapshot" || operation.kind === "appendActivities") {
@@ -1192,12 +1244,22 @@
                     },
                 };
             } else {
-                const sourceBarrier = Math.max(
-                    finiteNumber(history.tombstones[sourceRecordId]),
-                    finiteNumber(history.tombstones[resolvedSourceRecordId])
-                );
-                let changed = applyRecordDeletionBarrier(history, targetRecordId, sourceBarrier);
-                if (resolvedSourceRecordId === targetRecordId) {
+                const sourceTombstone = finiteNumber(history.tombstones[sourceRecordId]);
+                const aliased = resolvedSourceRecordId === targetRecordId;
+                // 이미 대상의 별칭인 출처가 그 뒤에 지워졌다면 같은 기록의 삭제라 대상 전체에 장벽을 둬요. 별칭을 만들 때
+                // 이미 지워져 있던 출처는 그 임시 세션만의 삭제라 대상 전체에 퍼뜨리지 않아요(별칭의 sourceBarrierAt).
+                // 같은 요청을 다시 보내도 한 번 정한 장벽을 다시 적용하지 않아요.
+                if (aliased) {
+                    const settledSourceBarrier = finiteNumber(history.recordAliases?.[sourceRecordId]?.sourceBarrierAt);
+                    const newSourceBarrier = sourceTombstone > settledSourceBarrier ? sourceTombstone : 0;
+                    let changed = applyRecordDeletionBarrier(
+                        history,
+                        targetRecordId,
+                        Math.max(newSourceBarrier, finiteNumber(history.tombstones[targetRecordId]))
+                    );
+                    if (newSourceBarrier > 0)
+                        changed =
+                            setRecordAlias(history, sourceRecordId, targetRecordId, now, newSourceBarrier) || changed;
                     outcome = {
                         changed,
                         result: {
@@ -1207,19 +1269,23 @@
                         },
                     };
                 } else {
-                    changed = setRecordAlias(history, sourceRecordId, targetRecordId, now) || changed;
+                    let changed = setRecordAlias(history, sourceRecordId, targetRecordId, now, sourceTombstone);
                     const sourceEntry = history.entries[sourceRecordId];
                     const targetEntry = history.entries[targetRecordId];
                     if (sourceEntry) {
-                        const barrier = Math.max(
+                        const sharedBarrier = Math.max(
                             history.clearedAt,
-                            finiteNumber(history.compactedSessionBarrierAt),
-                            finiteNumber(history.tombstones[sourceRecordId]),
-                            finiteNumber(history.tombstones[targetRecordId])
+                            finiteNumber(history.compactedSessionBarrierAt)
                         );
                         const mergedEntry = mergeEntriesForMigration(
-                            retainEntryForMigration(sourceEntry, barrier),
-                            retainEntryForMigration(targetEntry, barrier),
+                            retainEntryForMigration(
+                                sourceEntry,
+                                Math.max(sharedBarrier, finiteNumber(history.tombstones[sourceRecordId]))
+                            ),
+                            retainEntryForMigration(
+                                targetEntry,
+                                Math.max(sharedBarrier, finiteNumber(history.tombstones[targetRecordId]))
+                            ),
                             targetRecordId,
                             now
                         );
@@ -1321,6 +1387,7 @@
         STORAGE_KEY,
         applyMutation,
         normalizeMutation,
+        normalizeMutationEnvelope,
         normalizeStoredHistory,
     };
 })();

@@ -803,9 +803,12 @@ body[theme="dark"] .bcvc-avatar-fallback,
                     if (truncated || visibleReplies.length < replies.length) {
                         replyLimit = document.createElement("div");
                         replyLimit.className = "bcvc-reply-limit";
-                        replyLimit.hidden = true;
+                        // 펼칠 답글이 없으면 토글도 없으므로 한도 안내를 바로 보여 답글 없는 댓글처럼 보이지 않게 해요.
+                        replyLimit.hidden = visibleReplies.length > 0;
                         replyLimit.textContent =
-                            replyBudget?.remaining === 0 || visibleReplies.length < replies.length
+                            replyBudget?.remaining === 0 ||
+                            visibleReplies.length < replies.length ||
+                            !visibleReplies.length
                                 ? `이 정렬에서는 답글을 ${MAX_REPLIES_PER_ORDER}개까지만 표시해요.`
                                 : `한 댓글의 답글은 ${MAX_REPLIES_PER_COMMENT}개까지만 표시해요.`;
                     }
@@ -1057,15 +1060,18 @@ body[theme="dark"] .bcvc-avatar-fallback,
         function appendRows(state, added) {
             if (!commentPanel || selectedTab !== "comments") return;
             const list = commentPanel.querySelector("[data-bcvc-list='1']");
-            if (!(list instanceof HTMLElement) || !added.length) {
+            if (!(list instanceof HTMLElement) || !state.commentActive) {
                 renderState(state);
                 return;
             }
-            const fragment = document.createDocumentFragment();
-            const renderedReplies = list.querySelectorAll("[data-bcvc-reply='1']").length;
-            const replyBudget = { remaining: Math.max(0, MAX_REPLIES_PER_ORDER - renderedReplies) };
-            added.forEach((item) => fragment.appendChild(createCommentRow(item, { replyBudget })));
-            list.appendChild(fragment);
+            // 새 행이 없는 추가 페이지(이미 받은 댓글뿐)는 기존 행을 다시 그리지 않아 펼친 답글·본문을 보존해요.
+            if (added.length) {
+                const fragment = document.createDocumentFragment();
+                const renderedReplies = list.querySelectorAll("[data-bcvc-reply='1']").length;
+                const replyBudget = { remaining: Math.max(0, MAX_REPLIES_PER_ORDER - renderedReplies) };
+                added.forEach((item) => fragment.appendChild(createCommentRow(item, { replyBudget })));
+                list.appendChild(fragment);
+            }
             const count = commentPanel.querySelector("[data-bcvc-count='1']");
             if (count)
                 count.textContent = Number.isFinite(state.totalCount)
@@ -1165,8 +1171,11 @@ body[theme="dark"] .bcvc-avatar-fallback,
             }
         }
 
-        function onCommentPanelScroll() {
-            onScroll(commentPanel?.scrollTop || 0);
+        function onCommentPanelScroll(event) {
+            // Chrome은 문서에서 빠지거나 숨겨진 패널에도 지연된 scroll을 보내고 그때 scrollTop은 0이에요. 저장된 위치를 덮어쓰지 않아요.
+            if (!(commentPanel instanceof HTMLElement) || event?.currentTarget !== commentPanel) return;
+            if (!commentPanel.isConnected || commentPanel.hidden || selectedTab !== "comments") return;
+            onScroll(commentPanel.scrollTop || 0);
         }
 
         function updateTabState({ focus = false } = {}) {

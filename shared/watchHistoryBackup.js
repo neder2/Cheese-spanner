@@ -579,8 +579,13 @@
         return {
             id,
             channelId,
-            liveId:
-                id.startsWith("live:") && (!value.liveId || id !== value.id) ? id.slice(5) : storedString(value.liveId),
+            // A channel: record names no broadcast in the file even when an old writer or a failed migration left a liveId;
+            // import already drops it (watchHistoryBackupMerge.js projection), so export must not fail the whole file.
+            liveId: !id.startsWith("live:")
+                ? ""
+                : !value.liveId || id !== value.id
+                  ? id.slice(5)
+                  : storedString(value.liveId),
             channelName: storedString(value.channelName),
             title: storedString(value.title),
             titleHistory: array(value.titleHistory ?? [], LIMITS.titleHistory).map(storedTitle),

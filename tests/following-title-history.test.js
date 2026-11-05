@@ -1518,3 +1518,90 @@ test("Space and Enter on the live title toggle open and close it without reachin
     assert.equal(button.getAttribute("aria-expanded"), "false");
     assert.deepEqual(pageKeys, [], "the page's Space shortcut must not see the toggle's key");
 });
+
+test("the live title panel follows its button below the header and closes once the button scrolls away", async () => {
+    const chrome = createFakeChrome({
+        local: { [STORAGE_KEY]: { version: 1, entries: [storedEntry(["이전 제목", "첫 번째 제목"])] } },
+    });
+    const { document, dom } = createLiveDom({ chrome });
+    // CHZZK's fixed 60px top bar (#header, z-index 10000).
+    const header = document.createElement("div");
+    header.id = "header";
+    header.getBoundingClientRect = () => ({ width: 1024, height: 60, left: 0, top: 0, right: 1024, bottom: 60 });
+    document.body.prepend(header);
+    // CHZZK's fixed expanded sidebar (aside#sidebar, left 0, 240px, z-index 9999) that the panel sits below.
+    const sidebar = document.createElement("div");
+    sidebar.id = "sidebar";
+    sidebar.getBoundingClientRect = () => ({ width: 240, height: 768, left: 0, top: 0, right: 240, bottom: 768 });
+    document.body.prepend(sidebar);
+    evalFeatureScripts(dom);
+    await waitFor(() => document.querySelector("button[data-bcfth-toggle]"), "live title toggle was not rendered");
+    const button = document.querySelector("button[data-bcfth-toggle]");
+    let buttonTop = 200;
+    let buttonLeft = 600;
+    button.getBoundingClientRect = () => ({
+        width: 24,
+        height: 24,
+        left: buttonLeft,
+        top: buttonTop,
+        right: buttonLeft + 24,
+        bottom: buttonTop + 24,
+    });
+    button.click();
+    const panel = document.getElementById("cheese-spanner-following-title-history-panel");
+    assert.equal(panel.hidden, false);
+    assert.equal(panel.style.getPropertyValue("--bcfth-top"), "230px");
+
+    buttonTop = 120;
+    dom.window.dispatchEvent(new dom.window.Event("scroll"));
+    assert.equal(panel.style.getPropertyValue("--bcfth-top"), "150px", "the panel follows its button");
+    assert.equal(panel.hidden, false);
+
+    // The button slid under the header: the panel closes instead of staying pinned at the top over the header
+    // and the live scroll mini player.
+    buttonTop = 20;
+    dom.window.dispatchEvent(new dom.window.Event("scroll"));
+    assert.equal(panel.hidden, true);
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(panel.hidden, true, "a later sync does not reopen it");
+
+    // The same holds when the button leaves the bottom of the viewport.
+    buttonTop = 300;
+    button.click();
+    assert.equal(panel.hidden, false);
+    assert.equal(panel.style.getPropertyValue("--bcfth-top"), "330px");
+    buttonTop = 900;
+    dom.window.dispatchEvent(new dom.window.Event("resize"));
+    assert.equal(panel.hidden, true);
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+
+    // A button near the sidebar: the panel (jsdom 0 rect -> 560px fallback) would open at left 12px under the
+    // sidebar, so it starts just right of the sidebar instead.
+    buttonTop = 200;
+    buttonLeft = 280;
+    button.click();
+    assert.equal(panel.hidden, false);
+    assert.equal(panel.style.getPropertyValue("--bcfth-left"), "246px", "the panel is not hidden under the sidebar");
+    // A button behind the sidebar has left the visible area too.
+    buttonLeft = 100;
+    dom.window.dispatchEvent(new dom.window.Event("scroll"));
+    assert.equal(panel.hidden, true);
+    assert.equal(button.getAttribute("aria-expanded"), "false");
+
+    // With the sidebar moved to the right (panelResize.js right:0) the visible area ends at its left edge: the
+    // panel still opens beside its button, and only a button behind the right sidebar closes it.
+    sidebar.getBoundingClientRect = () => ({ width: 240, height: 768, left: 784, top: 0, right: 1024, bottom: 768 });
+    buttonLeft = 600;
+    button.click();
+    assert.equal(panel.hidden, false, "a right sidebar does not close the panel at once");
+    assert.equal(panel.style.getPropertyValue("--bcfth-left"), "64px");
+    buttonLeft = 900;
+    dom.window.dispatchEvent(new dom.window.Event("scroll"));
+    assert.equal(panel.hidden, true, "a button behind the right sidebar has left the visible area");
+
+    // Below the mini player (1000), the ad mini layers (1001), the header (10000) and PiP/modals (20000).
+    const css = document.getElementById("cheese-spanner-following-title-history-style").textContent;
+    const zIndex = Number(css.match(/#cheese-spanner-following-title-history-panel\{[^}]*z-index:(\d+);/)?.[1]);
+    assert.ok(zIndex < 1000, `panel z-index ${zIndex} paints over CHZZK's floating player`);
+});

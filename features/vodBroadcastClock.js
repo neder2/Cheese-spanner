@@ -36,6 +36,10 @@
     const TITLE_HISTORY_WRAP_ID = "cheese-spanner-vod-title-history";
     const TITLE_HISTORY_BUTTON_ID = "cheese-spanner-vod-title-history-toggle";
     const TITLE_HISTORY_PANEL_ID = "cheese-spanner-vod-title-history-panel";
+    // 2026-11-04 bundle: the scroll/mid-ad mini player (.chzzk_player.miniplayer) is fixed at z-index 1000, the ad
+    // mini layers at 1001, the sidebar at 9999, #header at 10000 and the in-page PiP and modals at 20000. The
+    // previous-title panel stays below all of them so it never covers the floating player or the header.
+    const TITLE_HISTORY_PANEL_Z_INDEX = 999;
     const WATCH_HISTORY_STORAGE_KEY = "betterChzzkLiveWatchHistory";
     const VIDEO_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/videos";
     const VOD_TIME_SELECTOR = "div.pzp-vod-time, div.pzp-pc__vod-time, div.pzp-pc-vod-time";
@@ -80,6 +84,11 @@
     const CONTROL_AREA_AFTER_VIDEO_BOTTOM = 110;
     const CONTROL_AREA_MAX_HEIGHT = 96;
     const HISTORY_START_TOLERANCE_MS = 3 * 60 * 60 * 1000;
+    const HISTORY_SAME_OPEN_TOLERANCE_MS = 20 * 60 * 1000;
+    // Same rule shared/vodTimeline.js uses to confirm split segments of one broadcast: the record's own
+    // live open time must match the replay's start, not merely be near it (a restart can follow within minutes).
+    const HISTORY_SAME_BROADCAST_OPEN_MS = 60 * 1000;
+    const METADATA_RETRY_DELAYS_MS = Object.freeze([5000, 30000, 120000]);
     const MAX_DETAIL_CACHE_ENTRIES = 100;
     const MAX_HISTORY_INFO_CACHE_ENTRIES = 100;
 
@@ -87,7 +96,7 @@
         addTitleHistory,
         bindFeatureOptions,
         cleanEntryTitle,
-        cleanTitle,
+        compactSpaces,
         createMutationObserverSync,
         createThrottledDomSync,
         getVisibleArea,
@@ -125,6 +134,7 @@
     let currentStartMs = NaN;
     let currentOriginalStartMs = NaN;
     let currentSegmentOffsetMs = 0;
+    let currentLinkedVideoNos = [];
     let currentStartSource = "";
     let currentHistoryInfo = null;
     let currentVideoDetail = null;
@@ -132,6 +142,8 @@
     let metadataState = "idle";
     let metadataToken = 0;
     let metadataAbortController = null;
+    let metadataRetryCount = 0;
+    let metadataRetryTimer = 0;
     let historyInfoToken = 0;
     let pageChangeTimer = 0;
     let lastUrl = location.href;
@@ -285,12 +297,14 @@
         watchHistorySnapshotPromise = null;
         historyInfoCache.clear();
         historyInfoToken += 1;
-        currentHistoryInfo = null;
         if (isVodRoute() && currentVideoNo && metadataState !== "loading") {
-            loadHistoryInfo(currentVideoNo, currentVideoDetail, metadataToken);
+            // Another tab writes this key every few seconds; keep the shown rows until the re-read settles
+            // so an unrelated write does not collapse the open panel or drop the button's focus.
+            loadHistoryInfo(currentVideoNo, currentVideoDetail, metadataToken, { keepCurrent: true });
             scheduleSync();
             return;
         }
+        currentHistoryInfo = null;
         if (isVodRoute()) scheduleSync();
     }
 
@@ -366,20 +380,27 @@
         return Number.isFinite(publishMs) ? publishMs : NaN;
     }
 
-    function entryOverlapsVideoWindow(entry, detail) {
+    function entryOverlapsVideoWindow(entry, detail, segmentStartMs = NaN) {
         const videoStartMs = getStartMsFromDetail(detail);
-        const videoEndMs = getVideoEndMsFromDetail(detail);
+        const duration = getVideoDurationSeconds(detail);
+        // A later split segment ends one segment after its own start; the broadcast still began at videoStartMs.
+        const videoEndMs =
+            Number.isFinite(segmentStartMs) && Number.isFinite(duration)
+                ? segmentStartMs + duration * 1000
+                : getVideoEndMsFromDetail(detail);
         if (!Number.isFinite(videoStartMs) || !Number.isFinite(videoEndMs)) return false;
 
         const entryStartMs = Number(entry?.firstWatchedAt) || getEntryStartMs(entry);
         const entryEndMs = Number(entry?.lastWatchedAt) || entryStartMs;
         if (!Number.isFinite(entryStartMs) || !Number.isFinite(entryEndMs)) return false;
 
-        const toleranceMs = 10 * 60 * 1000;
-        return entryEndMs >= videoStartMs - toleranceMs && entryStartMs <= videoEndMs + toleranceMs;
+        // The detail's start is the broadcast's own open time, and a record can only have watched it while it was
+        // live. Any grace would let a record that ended seconds before a quick restart count as watching it, so
+        // only a real overlap is evidence.
+        return entryEndMs > videoStartMs && entryStartMs < videoEndMs;
     }
 
-    function scoreHistoryMatch(entry, videoNo, detail) {
+    function scoreHistoryMatch(entry, videoNo, detail, { linkedVideoNos = [], segmentStartMs = NaN } = {}) {
         let score = 0;
 
         const channelMatch = getHistoryChannelMatch(entry, detail);
@@ -388,26 +409,46 @@
         const liveId = getVideoDetailLiveId(detail);
         if (entry.liveId && liveId && entry.liveId !== liveId) return Number.NEGATIVE_INFINITY;
 
-        const replayVideoNoMatches = Boolean(entry.replayVideoNo && entry.replayVideoNo === videoNo);
+        const sameChannel = channelMatch === "same";
+        const startMs = getStartMsFromDetail(detail);
+        const entryOpenMs = parseChzzkDate(entry?.liveOpenDate)?.getTime();
+        const hasEntryOpen = Number.isFinite(entryOpenMs) && Number.isFinite(startMs);
+        const sameOpen =
+            sameChannel && hasEntryOpen && Math.abs(entryOpenMs - startMs) <= HISTORY_SAME_BROADCAST_OPEN_MS;
+
+        // An older split segment of this broadcast, confirmed through the replay's own segment links.
+        const replayLinkedSegment = Boolean(entry.replayVideoNo && linkedVideoNos.includes(entry.replayVideoNo));
+        const replayVideoNoMatches = Boolean(
+            entry.replayVideoNo && (entry.replayVideoNo === videoNo || replayLinkedSegment)
+        );
+        // A record linked to another replay is another broadcast unless it opened at this broadcast's start.
+        if (entry.replayVideoNo && !replayVideoNoMatches && !sameOpen) return Number.NEGATIVE_INFINITY;
         if (replayVideoNoMatches) score += 1000;
 
         const liveIdMatches = Boolean(entry.liveId && liveId && entry.liveId === liveId);
         if (liveIdMatches) score += 650;
 
-        const sameChannel = channelMatch === "same";
-        if (sameChannel) {
-            score += 80;
-            if (entryOverlapsVideoWindow(entry, detail)) score += 360;
+        const hasIdentityMatch = replayVideoNoMatches || liveIdMatches;
+        // Replay details carry no liveId, so a same-channel record recorded with another live open time
+        // belongs to a different broadcast even when it ended just before this one started.
+        if (!hasIdentityMatch && hasEntryOpen && Math.abs(entryOpenMs - startMs) > HISTORY_SAME_OPEN_TOLERANCE_MS) {
+            return Number.NEGATIVE_INFINITY;
         }
 
-        if (!replayVideoNoMatches && !liveIdMatches && !sameChannel) return score;
+        const overlapsVideo = sameChannel && entryOverlapsVideoWindow(entry, detail, segmentStartMs);
+        // The same channel, a nearby start or a shared title is not this broadcast without one of these.
+        if (!hasIdentityMatch && !sameOpen && !overlapsVideo) return Number.NEGATIVE_INFINITY;
+        if (sameChannel) {
+            score += 80;
+            if (overlapsVideo) score += 360;
+        }
 
-        const startMs = getStartMsFromDetail(detail);
-        const entryStartMs = getEntryStartMs(entry);
-        if (Number.isFinite(startMs) && Number.isFinite(entryStartMs)) {
+        if (sameOpen) score += 300;
+        else {
+            const entryStartMs = getEntryStartMs(entry);
             const diff = Math.abs(startMs - entryStartMs);
-            if (diff <= 20 * 60 * 1000) score += 300;
-            else if (diff <= HISTORY_START_TOLERANCE_MS) score += 120;
+            // A loosely close start alone is no evidence; it only adds weight to identity or watch overlap.
+            if (Number.isFinite(diff) && diff <= HISTORY_START_TOLERANCE_MS) score += 120;
         }
 
         const videoTitleNorm = normalizeForMatch(getVideoDetailTitle(detail));
@@ -427,11 +468,11 @@
         return score;
     }
 
-    function findHistoryInfo(videoNo, detail, entries) {
+    function findHistoryInfo(videoNo, detail, entries, context = {}) {
         let best = null;
 
         for (const entry of entries) {
-            const score = scoreHistoryMatch(entry, videoNo, detail);
+            const score = scoreHistoryMatch(entry, videoNo, detail, context);
             if (!best || score > best.score) best = { entry, score };
         }
 
@@ -444,15 +485,24 @@
         };
     }
 
-    function loadHistoryInfo(videoNo, detail, token) {
+    function loadHistoryInfo(videoNo, detail, token, { keepCurrent = false } = {}) {
         const historyToken = ++historyInfoToken;
-        currentHistoryInfo = null;
+        if (!keepCurrent) currentHistoryInfo = null;
         if (!storage || !videoNo) {
+            currentHistoryInfo = null;
             scheduleSync();
             return;
         }
 
-        const cacheKey = `${videoNo}:${getVideoDetailLiveId(detail)}:${pickStartDateText(detail)}`;
+        // Split links and the segment start come from the same metadata load as detail.
+        const context = { linkedVideoNos: currentLinkedVideoNos, segmentStartMs: currentStartMs };
+        const cacheKey = [
+            videoNo,
+            getVideoDetailLiveId(detail),
+            pickStartDateText(detail),
+            context.linkedVideoNos.join(","),
+            context.segmentStartMs,
+        ].join(":");
         if (historyInfoCache.has(cacheKey)) {
             currentHistoryInfo = touchMapEntry(
                 historyInfoCache,
@@ -470,7 +520,7 @@
                     return;
                 }
                 const entries = getHistoryEntries(historySnapshot);
-                const info = findHistoryInfo(videoNo, detail, entries);
+                const info = findHistoryInfo(videoNo, detail, entries, context);
                 touchMapEntry(historyInfoCache, cacheKey, info, MAX_HISTORY_INFO_CACHE_ENTRIES);
                 currentHistoryInfo = info;
                 scheduleSync();
@@ -687,7 +737,7 @@
   position:fixed;
   left:var(--bcbc-title-history-left, 12px);
   top:var(--bcbc-title-history-top, 12px);
-  z-index:2147483646;
+  z-index:${TITLE_HISTORY_PANEL_Z_INDEX};
   display:grid;
   gap:0;
   width:max-content;
@@ -897,11 +947,32 @@
         return detail;
     }
 
+    function clearMetadataRetry() {
+        if (metadataRetryTimer) clearTimeout(metadataRetryTimer);
+        metadataRetryTimer = 0;
+        metadataRetryCount = 0;
+    }
+
+    function scheduleMetadataRetry(videoNo, token) {
+        if (metadataRetryTimer || metadataRetryCount >= METADATA_RETRY_DELAYS_MS.length) return;
+        const delayMs = METADATA_RETRY_DELAYS_MS[metadataRetryCount];
+        metadataRetryCount += 1;
+        metadataRetryTimer = setTimeout(() => {
+            metadataRetryTimer = 0;
+            // Route changes and option teardown advance the token, so only the same failed request retries.
+            if (metadataToken !== token || currentVideoNo !== videoNo || metadataState !== "error") return;
+            if (!runtimeInstalled || !isVodFeatureEnabled() || !isVodRoute()) return;
+            loadMetadata(videoNo);
+        }, delayMs);
+    }
+
     function resetMetadata() {
+        clearMetadataRetry();
         abortMetadataRequest();
         currentStartMs = NaN;
         currentOriginalStartMs = NaN;
         currentSegmentOffsetMs = 0;
+        currentLinkedVideoNos = [];
         currentStartSource = "";
         currentHistoryInfo = null;
         currentVideoDetail = null;
@@ -921,6 +992,7 @@
         currentStartMs = NaN;
         currentOriginalStartMs = NaN;
         currentSegmentOffsetMs = 0;
+        currentLinkedVideoNos = [];
         currentStartSource = "";
         currentHistoryInfo = null;
         currentVideoDetail = null;
@@ -941,12 +1013,14 @@
                     currentStartMs = startInfo.segmentStartMs;
                     currentOriginalStartMs = startInfo.originalStartMs;
                     currentSegmentOffsetMs = startInfo.segmentOffsetMs;
+                    currentLinkedVideoNos = Array.isArray(startInfo.linkedVideoNos) ? startInfo.linkedVideoNos : [];
                     currentStartSource = pickStartDateText(detail);
                     metadataState = "ready";
                 } else {
                     currentStartMs = NaN;
                     currentOriginalStartMs = NaN;
                     currentSegmentOffsetMs = 0;
+                    currentLinkedVideoNos = [];
                     currentStartSource = "";
                     metadataState = "unavailable";
                 }
@@ -958,11 +1032,14 @@
                 currentStartMs = NaN;
                 currentOriginalStartMs = NaN;
                 currentSegmentOffsetMs = 0;
+                currentLinkedVideoNos = [];
                 currentStartSource = "";
                 currentHistoryInfo = null;
                 currentVideoDetail = null;
                 metadataState = "error";
                 loadHistoryInfo(videoNo, null, token);
+                // A transient network error or the 8 second timeout must not hide the clock for the whole visit.
+                scheduleMetadataRetry(videoNo, token);
                 scheduleSync();
             })
             .finally(() => {
@@ -974,6 +1051,7 @@
         if (currentVideoNo === videoNo) return;
         currentVideoNo = videoNo;
         clockAnchorEl = null;
+        clearMetadataRetry();
         removeClock();
         removeBroadcastRange();
         removeTitleHistoryExpander();
@@ -1063,7 +1141,8 @@
         )) {
             node.remove();
         }
-        return cleanTitle(clone.textContent || "");
+        // The page heading shows the API title as is, so text such as '- 치지직 대회' must stay for matching.
+        return compactSpaces(clone.textContent || "");
     }
 
     function setAttributeIfChanged(el, name, value) {
@@ -1083,7 +1162,7 @@
     }
 
     function findVodTitleElement(video, title = currentHistoryInfo?.replayTitle) {
-        const expectedTitle = cleanTitle(title);
+        const expectedTitle = compactSpaces(title);
         const expectedNorm = normalizeForMatch(expectedTitle);
         if (!expectedNorm) return null;
 
@@ -1310,6 +1389,41 @@
         }
     }
 
+    // 2026-11-04 bundle: #header is CHZZK's fixed top bar (60px, z-index 10000). The visible area starts below it.
+    function getTitleHistoryVisibleTop() {
+        const rect = document.getElementById("header")?.getBoundingClientRect();
+        return rect && rect.height > 0 ? Math.max(0, rect.bottom) : 0;
+    }
+
+    // 2026-11-04 bundle: aside#sidebar is fixed, z-index 9999, 82px wide (240px expanded), at left:0 or, with the
+    // extension's right placement (panelResize.js), at right:0. The panel sits below it, so the visible area ends at
+    // the sidebar's inner edge on whichever side it is. The narrow-window overlay sidebar (z-index 20000 with a dim)
+    // covers the whole page and needs no avoidance.
+    function getTitleHistoryVisibleSpan(viewportWidth) {
+        const rect = document.getElementById("sidebar")?.getBoundingClientRect();
+        if (!rect || !(rect.width > 0) || rect.right <= 0 || rect.left >= viewportWidth)
+            return { left: 0, right: viewportWidth };
+        return rect.left + rect.width / 2 < viewportWidth / 2
+            ? { left: Math.max(0, rect.right), right: viewportWidth }
+            : { left: 0, right: Math.min(viewportWidth, rect.left) };
+    }
+
+    // An unmeasured (0x0) anchor keeps the earlier placement; a measured one under the header or outside the
+    // viewport means the panel has lost its anchor (2026-11-04: it stayed pinned at top:12px over the header).
+    function isTitleHistoryAnchorOutOfView(anchor) {
+        const rect = anchor.getBoundingClientRect();
+        if (!(rect.width > 0 || rect.height > 0)) return false;
+        const viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+        const viewportHeight = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+        const span = getTitleHistoryVisibleSpan(viewportWidth);
+        return (
+            rect.bottom <= getTitleHistoryVisibleTop() ||
+            rect.top >= viewportHeight ||
+            rect.right <= span.left ||
+            rect.left >= span.right
+        );
+    }
+
     function positionTitleHistoryPanel(anchor, panel) {
         if (!titleHistoryExpanded || !(anchor instanceof HTMLElement) || !(panel instanceof HTMLElement)) return;
 
@@ -1317,18 +1431,22 @@
         const viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
         const viewportHeight = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
         const margin = 12;
-        const maxWidth = Math.max(180, Math.min(760, viewportWidth - margin * 2));
+        const minTop = Math.max(margin, getTitleHistoryVisibleTop() + 6);
+        const span = getTitleHistoryVisibleSpan(viewportWidth);
+        const minLeft = Math.max(margin, span.left + 6);
+        const maxRight = Math.min(viewportWidth - margin, span.right - 6);
+        const maxWidth = Math.max(180, Math.min(760, maxRight - minLeft));
 
         if (panel.style.maxWidth !== `${maxWidth}px`) panel.style.maxWidth = `${maxWidth}px`;
 
         const panelRect = panel.getBoundingClientRect();
         const panelWidth = Math.min(panelRect.width || maxWidth, maxWidth);
         const panelHeight = Math.min(panelRect.height || 0, Math.max(160, viewportHeight - margin * 2));
-        const maxLeft = Math.max(margin, viewportWidth - margin - panelWidth);
-        const left = Math.min(Math.max(margin, anchorRect.left), maxLeft);
+        const maxLeft = Math.max(minLeft, maxRight - panelWidth);
+        const left = Math.min(Math.max(minLeft, anchorRect.left), maxLeft);
         const preferredTop = anchorRect.bottom + 6;
-        const maxTop = Math.max(margin, viewportHeight - margin - panelHeight);
-        const top = Math.min(Math.max(margin, preferredTop), maxTop);
+        const maxTop = Math.max(minTop, viewportHeight - margin - panelHeight);
+        const top = Math.min(Math.max(minTop, preferredTop), maxTop);
 
         setPanelStyleValue(panel, "--bcbc-title-history-left", `${Math.round(left)}px`);
         setPanelStyleValue(panel, "--bcbc-title-history-top", `${Math.round(top)}px`);
@@ -1392,6 +1510,10 @@
             panel.remove();
             document.body.appendChild(panel);
         }
+
+        // Same rule as the live/following previous-title panel: once the toggle scrolls under the header or out of
+        // the viewport, the panel closes instead of floating detached over the header or the mini player.
+        if (titleHistoryExpanded && isTitleHistoryAnchorOutOfView(wrap)) titleHistoryExpanded = false;
 
         const titleHistoryLabel = titleHistoryExpanded ? "이전 방제 접기" : `이전 방제 ${rows.length}개 보기`;
         setAttributeIfChanged(button, "aria-controls", TITLE_HISTORY_PANEL_ID);

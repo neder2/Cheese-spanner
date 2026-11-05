@@ -14,6 +14,18 @@ function fixture(t, { defaultEnabled = false } = {}) {
     });
     const w = dom.window;
     w.HTMLButtonElement.prototype.getBoundingClientRect = () => ({ width: 80, height: 30 });
+    // jsdom has no text layout. Text is laid out inside the 1024x768 viewport unless a test places the text of an
+    // element (and its descendants) elsewhere, as Chrome reported for the measured 0x0 and off-screen titles.
+    const textRects = new WeakMap();
+    w.Range.prototype.getClientRects = function () {
+        for (let node = this.startContainer.parentElement; node; node = node.parentElement) {
+            const placed = textRects.get(node);
+            if (placed) return [placed];
+        }
+        return [{ left: 300, top: 300, width: 240, height: 20, right: 540, bottom: 320 }];
+    };
+    const placeText = (element, { left, top, width, height }) =>
+        textRects.set(element, { left, top, width, height, right: left + width, bottom: top + height });
     const frames = new Map();
     let frameId = 0;
     w.requestAnimationFrame = (callback) => {
@@ -57,7 +69,7 @@ function fixture(t, { defaultEnabled = false } = {}) {
         frames.clear();
         callbacks.forEach((callback) => callback());
     };
-    return { w, options, popup, frame };
+    return { w, options, popup, frame, placeText };
 }
 
 function profilePopup(f, { kind, nickname, label = "팝업 닫기", close = true }) {
@@ -166,7 +178,7 @@ test("normal sibling popups do not exempt an ad notice or conceal their shared b
 test("reused profile roots follow their current local structure without a permanent exemption", async (t) => {
     const f = fixture(t);
     const p = profilePopup(f, { kind: "own", nickname: "Adblock연구소", close: false });
-    p.el.querySelector("strong").textContent = "광고 차단 안내";
+    p.el.querySelector("strong").textContent = "광고 차단 프로그램을 사용 중이신가요?";
     f.options(true);
     await flush();
     assert.equal(p.clicks(), 0);
@@ -192,6 +204,8 @@ for (const [attribute, invalid] of [
     test(`report input ${attribute} changes recheck the current popup without replacing nodes`, async (t) => {
         const f = fixture(t);
         const p = reportPopup(f, { close: false });
+        // The report heading makes the title ambiguous, so the measured log area carries the notice identity.
+        p.el.setAttribute("data-nlog-area", "ad_blocking_info_layer");
         const input = p.el.querySelector("input");
         const original = input.getAttribute(attribute);
         f.options(true);
@@ -269,6 +283,8 @@ test("incomplete or unrelated normal-popup hints do not exempt ad notices", asyn
     const popups = cases.map(([name, className, html]) => {
         const p = f.popup();
         p.el.className = className;
+        // Report headings would make the title ambiguous; the measured log area keeps every case an ad notice.
+        p.el.setAttribute("data-nlog-area", "ad_blocking_info_layer");
         p.el.insertAdjacentHTML("beforeend", html);
         return { name, ...p };
     });
@@ -284,6 +300,7 @@ test("incomplete or unrelated normal-popup hints do not exempt ad notices", asyn
 test("a report input cannot borrow a group outside its popup", async (t) => {
     const f = fixture(t);
     const p = f.popup();
+    p.el.setAttribute("data-nlog-area", "ad_blocking_info_layer");
     p.el.insertAdjacentHTML("beforeend", '<h2>신고하기</h2><input type="radio" name="report-reason">');
     const group = f.w.document.createElement("ul");
     group.setAttribute("role", "radiogroup");
@@ -506,7 +523,7 @@ test("late buttons, popup reuse, remount and option changes respect popup identi
     assert.equal(p.clicks(), 1);
     p.el.querySelector("strong").textContent = "다른 안내";
     await flush();
-    p.el.querySelector("strong").textContent = "광고 차단 안내";
+    p.el.querySelector("strong").textContent = "광고 차단 프로그램을 사용하시나요?";
     await flush();
     f.frame();
     assert.equal(p.clicks(), 2);
@@ -633,4 +650,221 @@ test("temporary concealment restores on disable and does not hide a shared backd
     f.frame();
     await flush();
     assert.equal(p.clicks(), 1);
+});
+
+// Ad words in a normal modal's nickname, body or buttons are not the measured notice (findings 2026-10-17).
+// Only the popup's own log area or its single visible measured title approves the close path.
+test("ad words, hidden titles and other popups' evidence never approve the generic close", async (t) => {
+    const f = fixture(t);
+    const normal = (name, html, label = "팝업 닫기") => {
+        const p = f.popup({ text: "사용자 정보" });
+        p.button.setAttribute("aria-label", label);
+        p.el.insertAdjacentHTML("beforeend", html);
+        return { name, ...p };
+    };
+    const popups = [
+        normal("nickname adblock", '<div class="nickname">adblock팬</div>'),
+        normal("nickname ad block words", "<span>광고문의 · 사용자 차단</span>", "닫기"),
+        normal("body ad channel block", "<p>광고채널 차단</p>"),
+        normal(
+            "button copy",
+            '<button type="button">광고 차단 해제</button><button type="button">Adblock 신고</button>'
+        ),
+        normal("old extension wording", "<p>확장 기능을 종료하면 광고가 정상 재생돼요.</p>"),
+        normal("hidden measured title", '<strong style="display:none">광고 차단 프로그램을 사용 중이신가요?</strong>'),
+        normal("aria-hidden measured title", '<h2 aria-hidden="true">광고 차단 프로그램을 사용 중이신가요?</h2>'),
+        normal("measured title beside another heading", "<h2>광고 차단 프로그램을 사용 중이신가요?</h2>"),
+        normal("measured title as body copy", "<p>광고 차단 프로그램을 사용 중이신가요?</p>"),
+    ];
+    // A keyword-only heading is not the measured title either.
+    const keywordTitle = f.popup({ text: "광고 차단 안내" });
+    popups.push({ name: "keyword-only title", ...keywordTitle });
+    // A hidden title alone (no other heading) is still hidden evidence.
+    const hiddenOnly = f.popup();
+    hiddenOnly.el.querySelector("strong").hidden = true;
+    popups.push({ name: "only title hidden", ...hiddenOnly });
+    // A notice title inside a nested child popup cannot approve its normal parent, and the closeless child stays.
+    const parent = normal("parent of nested title", "");
+    const child = f.w.document.createElement("div");
+    child.setAttribute("role", "dialog");
+    child.innerHTML = "<strong>광고 차단 프로그램을 사용 중이신가요?</strong>";
+    parent.el.append(child);
+    popups.push(parent);
+    // A sibling measured notice in the same backdrop closes; the normal sibling modal is untouched.
+    const backdrop = f.w.document.createElement("div");
+    backdrop.className = "_dimmed_jao35_2";
+    f.w.document.body.append(backdrop);
+    const sibling = normal("sibling of a notice", "<p>광고채널 차단</p>");
+    const notice = f.popup();
+    backdrop.append(sibling.el, notice.el);
+    popups.push(sibling);
+    f.options(true);
+    await flush();
+    f.frame();
+    await flush();
+    for (const p of popups) {
+        assert.equal(p.clicks(), 0, p.name);
+        assert.equal(p.el.isConnected, true, p.name);
+        assert.equal(p.el.hasAttribute("data-cheese-spanner-adblock-popup-closing"), false, p.name);
+    }
+    assert.equal(child.isConnected, true);
+    assert.equal(notice.clicks(), 1, "the measured sibling notice still closes once");
+    assert.equal(notice.el.isConnected, false);
+    assert.equal(f.w.getComputedStyle(backdrop).visibility, "visible");
+});
+
+// Codex r2-m1 Chrome reproduction: each of these single-heading normal modals was closed once by the r2 check.
+// Hidden descendants are not rendered evidence, and a strong inside body copy or the close button is not a title.
+test("hidden title descendants and strong in body copy or the close button never approve the generic close", async (t) => {
+    const f = fixture(t);
+    const TITLE = "광고 차단 프로그램을 사용 중이신가요?";
+    const bare = (name, html) => {
+        const p = f.popup();
+        p.el.querySelector("strong").remove();
+        p.button.setAttribute("aria-label", "팝업 닫기");
+        p.el.insertAdjacentHTML("afterbegin", html);
+        return { name, ...p };
+    };
+    const popups = [
+        bare("hidden child of the title", `<h2><span hidden>${TITLE}</span></h2><p>일반 정보</p>`),
+        bare("display:none child of the title", `<h2><span style="display:none">${TITLE}</span></h2><p>일반 정보</p>`),
+        bare("aria-hidden child of the title", `<h2><span aria-hidden="true">${TITLE}</span></h2><p>일반 정보</p>`),
+        bare("strong quoted in body copy", `<p>인용한 도움말 문구: <strong>${TITLE}</strong></p>`),
+    ];
+    const inButton = bare("strong inside the close button", "<p>일반 정보</p>");
+    inButton.button.innerHTML = `<strong>${TITLE}</strong>`;
+    popups.push(inButton);
+    for (const p of popups) assert.equal(p.el.querySelectorAll("strong, h2").length, 1, p.name);
+    // Contrast: the measured placement (popup > div > div > strong) with a visible split title still closes once.
+    const measured = bare(
+        "measured placement",
+        '<div class="_contents_jao35_95"><div><strong><span>광고 차단 프로그램을</span> <span>사용 중이신가요?</span></strong><p>안내 본문</p></div></div>'
+    );
+    f.options(true);
+    await flush();
+    f.frame();
+    await flush();
+    for (const p of popups) {
+        assert.equal(p.clicks(), 0, p.name);
+        assert.equal(p.el.isConnected, true, p.name);
+        assert.equal(p.el.hasAttribute("data-cheese-spanner-adblock-popup-closing"), false, p.name);
+        assert.equal(f.w.getComputedStyle(p.el).visibility, "visible", p.name);
+    }
+    assert.equal(measured.clicks(), 1, "the measured placement still closes once");
+    assert.equal(measured.el.isConnected, false);
+});
+
+test("the measured title variants and the notice log area approve the generic close once", async (t) => {
+    const f = fixture(t);
+    const variants = [
+        f.popup({ text: "광고 차단 프로그램을 사용하고 계신가요?" }),
+        f.popup({ text: "<span>광고 차단 프로그램을</span> <span>사용 중인가요?</span>" }),
+    ];
+    const area = f.popup({ text: "안내" });
+    area.el.setAttribute("data-nlog-area", "ad_blocking_info_layer");
+    area.button.setAttribute("aria-label", "팝업 닫기");
+    f.options(true);
+    await flush();
+    f.frame();
+    for (const p of [...variants, area]) {
+        assert.equal(p.clicks(), 1);
+        assert.equal(p.el.isConnected, false);
+    }
+});
+
+// Codex r3-m1 Chrome reproduction: these single-heading normal modals were each closed once because the title
+// check ignored opacity, zero-size text and text outside the viewport. Only text the user can see is evidence.
+test("transparent, zero-size and off-screen title text never approves the generic close", async (t) => {
+    const f = fixture(t);
+    const TITLE = "광고 차단 프로그램을 사용 중이신가요?";
+    const bare = (name, html) => {
+        const p = f.popup();
+        p.el.querySelector("strong").remove();
+        p.button.setAttribute("aria-label", "팝업 닫기");
+        p.el.insertAdjacentHTML("afterbegin", html);
+        return { name, ...p };
+    };
+    const popups = [
+        bare("opacity:0 child of the title", `<h2><span style="opacity:0">${TITLE}</span></h2><p>일반 정보</p>`),
+        bare("opacity:0 title", `<h2 style="opacity:0">${TITLE}</h2><p>일반 정보</p>`),
+        bare("opacity:0 wrapper", `<div style="opacity:0"><h2>${TITLE}</h2></div><p>일반 정보</p>`),
+        bare(
+            "font-size:0 child of the title",
+            `<h2><span style="font-size:0;line-height:0">${TITLE}</span></h2><p>일반 정보</p>`
+        ),
+        bare("font-size:0 title", `<h2 style="font-size:0;line-height:0">${TITLE}</h2><p>일반 정보</p>`),
+        bare(
+            "off-screen title",
+            `<h2 style="position:absolute;left:-10000px;top:0;white-space:nowrap">${TITLE}</h2><p>일반 정보</p>`
+        ),
+        bare("0x0 text in a sized title", `<h2><span>${TITLE}</span></h2><p>일반 정보</p>`),
+    ];
+    // Chrome geometry of the measured cases: the off-screen title at x=-9013 and 0x0 text in a positive-size title.
+    f.placeText(popups[5].el.querySelector("h2"), { left: -9013, top: 0, width: 320, height: 22 });
+    f.placeText(popups[6].el.querySelector("span"), { left: 300, top: 300, width: 0, height: 0 });
+    // An ancestor outside the popup (its backdrop) that is fully transparent hides the title too.
+    const transparentBackdrop = f.w.document.createElement("div");
+    transparentBackdrop.style.opacity = "0";
+    f.w.document.body.append(transparentBackdrop);
+    const underBackdrop = f.popup();
+    transparentBackdrop.append(underBackdrop.el);
+    popups.push({ name: "opacity:0 ancestor outside the popup", ...underBackdrop });
+    for (const p of popups) assert.equal(p.el.querySelectorAll("strong, h2").length, 1, p.name);
+
+    // Contrasts that are really visible: a font-size:0 wrapper whose title resets the size, a title partly inside
+    // the viewport, an explicitly opaque title and the default measured notice each close once.
+    const resetSize = bare(
+        "font-size:0 wrapper with a sized title",
+        `<div style="font-size:0"><strong style="font-size:16px">${TITLE}</strong></div>`
+    );
+    const partly = bare("title partly inside the viewport", `<h2>${TITLE}</h2>`);
+    f.placeText(partly.el.querySelector("h2"), { left: -120, top: 10, width: 320, height: 22 });
+    const opaque = bare("opaque title", `<h2 style="opacity:1">${TITLE}</h2>`);
+    const measured = f.popup();
+    f.options(true);
+    await flush();
+    f.frame();
+    await flush();
+    for (const p of popups) {
+        assert.equal(p.clicks(), 0, p.name);
+        assert.equal(p.el.isConnected, true, p.name);
+        assert.equal(p.el.hasAttribute("data-cheese-spanner-adblock-popup-closing"), false, p.name);
+        assert.equal(f.w.getComputedStyle(p.el).visibility, "visible", p.name);
+    }
+    for (const p of [resetSize, partly, opaque, measured]) {
+        assert.equal(p.clicks(), 1, `${p.name || "measured notice"} closes once`);
+        assert.equal(p.el.isConnected, false);
+    }
+});
+
+test("a title revealed by a CSS fade or slide-in closes once its transition or animation ends", async (t) => {
+    const f = fixture(t);
+    // A stylesheet rule hides the title at insertion; changing the rule is no mutation inside the popup.
+    const style = f.w.document.createElement("style");
+    style.textContent = ".fade-title{opacity:0}";
+    f.w.document.head.append(style);
+    const fade = f.popup();
+    fade.el.querySelector("strong").className = "fade-title";
+    const slide = f.popup();
+    f.placeText(slide.el.querySelector("strong"), { left: -9013, top: 0, width: 320, height: 22 });
+    f.options(true);
+    await flush();
+    f.frame();
+    await flush();
+    assert.equal(fade.clicks(), 0, "still transparent");
+    assert.equal(slide.clicks(), 0, "still off-screen");
+
+    style.textContent = ".fade-title{opacity:1}";
+    await flush();
+    assert.equal(fade.clicks(), 0, "a stylesheet change alone is not a popup mutation");
+    fade.el.querySelector("strong").dispatchEvent(new f.w.Event("transitionend", { bubbles: true }));
+    assert.equal(fade.clicks(), 1, "the faded-in title closes once");
+    assert.equal(slide.clicks(), 0, "the other popup is still off-screen");
+
+    f.placeText(slide.el.querySelector("strong"), { left: 300, top: 300, width: 320, height: 22 });
+    slide.el.dispatchEvent(new f.w.Event("animationend", { bubbles: true }));
+    assert.equal(slide.clicks(), 1, "the slid-in title closes once");
+    // An unrelated transition elsewhere does not rescan or click again.
+    f.w.document.body.dispatchEvent(new f.w.Event("transitionend", { bubbles: true }));
+    assert.equal(fade.clicks() + slide.clicks(), 2);
 });

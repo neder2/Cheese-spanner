@@ -84,6 +84,19 @@ test("normalizeVideoDetail returns the public normalized shape without mutating 
     assert.deepEqual(input, snapshot);
 });
 
+test("normalizeVideoDetail reads a numeric publishDateAt end even when it comes before publishDate", () => {
+    const endMs = START_MS + SPLIT_MS;
+    const base = { videoNo: 1, duration: SPLIT_SECONDS, liveOpenDate: START_TEXT };
+    assert.equal(normalizeVideoDetail({ ...base, publishDateAt: endMs }).endMs, endMs);
+    assert.equal(
+        normalizeVideoDetail({ ...base, publishDateAt: endMs, publishDate: new Date(endMs).toISOString() }).endMs,
+        endMs
+    );
+    assert.equal(dom.window.CheeseSpanner.utils.parseChzzkDate(String(endMs / 1000)).getTime(), endMs);
+    // Ordinary KST date texts keep their meaning.
+    assert.equal(dom.window.CheeseSpanner.utils.parseChzzkDate("2026-07-10 19:01:32").getTime(), START_MS);
+});
+
 test("resolveSegmentStartInfo keeps a normal VOD at offset zero", async () => {
     const result = await resolveSegmentStartInfo(makeCurrentDetail());
 

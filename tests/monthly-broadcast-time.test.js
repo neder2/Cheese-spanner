@@ -582,3 +582,84 @@ test("monthly applying a new page limit remounts and reloads without duplicating
         f.dom.window.close();
     }
 });
+
+// R1-25 (r5): two 17-hour segments of one broadcast inside the current month, 07-15 10:00 ~ 07-16 20:00.
+function splitWidgetFixture({ failDetails }) {
+    const startMs = Date.parse("2026-07-15T10:00:00+09:00");
+    const kst = (ms) => new Date(ms + 9 * 60 * 60 * 1000).toISOString().slice(0, 19).replace("T", " ");
+    const rows = [0, 1].map((index) => ({
+        videoNo: 700 + index,
+        videoType: "REPLAY",
+        duration: 61200,
+        publishDate: kst(startMs + (index + 1) * 61200 * 1000 + 5 * 60000),
+    }));
+    return fixture({
+        options: { monthlyBroadcastTimeCalendarEnabled: false, monthlyBroadcastTimeWindowDays: 30 },
+        fetchJson: async (url) => {
+            if (url.includes("/service/v2/videos/")) {
+                if (failDetails) throw new Error("detail unavailable");
+                const videoNo = Number(url.split("/").pop());
+                const row = rows.find((candidate) => candidate.videoNo === videoNo);
+                return {
+                    content: {
+                        ...row,
+                        liveOpenDate: kst(startMs),
+                        nextVideo: videoNo === 701 ? { videoNo: 700, duration: 61200 } : null,
+                    },
+                };
+            }
+            return { content: { data: [...rows].reverse(), last: true } };
+        },
+    });
+}
+
+function widgetText(widget) {
+    return {
+        state: widget.dataset.state,
+        value: widget.querySelector(".bcmb-value").textContent,
+        meta: widget.querySelector(".bcmb-meta").textContent,
+    };
+}
+
+test("monthly recent total keeps a zero lower bound visibly incomplete instead of the month summary", async (t) => {
+    const f = splitWidgetFixture({ failDetails: true });
+    t.after(() => f.dom.window.close());
+    const widget = mount(f);
+    await f.hooks.loadStats(CHANNEL);
+
+    const stats = f.hooks.channelStatsCache.get(CHANNEL);
+    assert.equal(stats.totalSeconds, 0);
+    assert.equal(stats.complete, false);
+    const shown = widgetText(widget);
+    assert.notEqual(shown.state, "empty", "an unconfirmed window is not an empty one");
+    assert.equal(shown.value, "0분/일", "the recent window's own average, not the month's");
+    assert.match(shown.meta, /\+/, "the zero is shown as a lower bound");
+    assert.doesNotMatch(shown.meta, /34시간/, "the month estimate does not replace the recent total");
+});
+
+test("monthly recent total shows the exact recent average when the same split details are read", async (t) => {
+    // Contrast: readable details give the complete 34 hours over the 30-day window.
+    const f = splitWidgetFixture({ failDetails: false });
+    t.after(() => f.dom.window.close());
+    const widget = mount(f);
+    await f.hooks.loadStats(CHANNEL);
+
+    assert.equal(f.hooks.channelStatsCache.get(CHANNEL).complete, true);
+    assert.deepEqual(widgetText(widget), {
+        state: "ready",
+        value: "1시간 8분/일",
+        meta: "총 34시간 · 2개 다시보기",
+    });
+});
+
+test("monthly recent total keeps the month summary for an exactly empty window", async (t) => {
+    // Contrast: no replays at all is complete, so the existing empty month summary stays.
+    const f = fixture({ options: { monthlyBroadcastTimeCalendarEnabled: false } });
+    t.after(() => f.dom.window.close());
+    const widget = mount(f);
+    await f.hooks.loadStats(CHANNEL);
+
+    assert.equal(f.hooks.channelStatsCache.get(CHANNEL).complete, true);
+    assert.equal(widgetText(widget).state, "empty");
+    assert.equal(widgetText(widget).meta, "다시보기 없음");
+});

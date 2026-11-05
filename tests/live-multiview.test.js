@@ -3603,6 +3603,143 @@ test("free page drops reject reused sidebar links, remounted players and duplica
     assert.equal(f.d.querySelectorAll(".bcmv-cell").length, 1);
 });
 
+test("free page drops leave following folder targets, the chat multiview panel and handled drops to their owners", async (t) => {
+    // R2-147: the viewport-wide add drop listens on window capture; it must not take drops that another extension
+    // feature receives, and its stopPropagation must not keep them from reaching that feature.
+    const h = setup(t);
+    await h.start();
+    h.click("controls");
+    const f = freeWindowControls(h, { left: 240, top: 60, viewportWidth: 1600, viewportHeight: 1000 });
+    f.toggle();
+    const sidebar = f.d.getElementById("sidebar");
+    const folderList = f.d.createElement("ul");
+    folderList.setAttribute("data-bcff-list", "1");
+    const row = f.d.createElement("li");
+    const rowLink = f.d.createElement("a");
+    rowLink.href = `https://chzzk.naver.com/live/${C}`;
+    row.append(rowLink);
+    const newZone = f.d.createElement("li");
+    newZone.setAttribute("data-bcff-new-zone", "");
+    folderList.append(row, newZone);
+    sidebar.append(folderList);
+    const chatPanel = f.d.createElement("section");
+    chatPanel.id = "cheese-spanner-chat-multiview-panel";
+    const chatCell = f.d.createElement("div");
+    chatPanel.append(chatCell);
+    f.d.body.append(chatPanel);
+    const received = [];
+    for (const type of ["dragenter", "dragover", "drop"])
+        chatPanel.addEventListener(type, (event) => received.push(event.type));
+    const before = f.saved(),
+        requests = h.requests.length;
+    for (const target of [rowLink, newZone, chatCell]) {
+        const transfer = linkTransfer(h, rowLink.href);
+        transfer.send("dragstart", rowLink);
+        for (const type of ["dragenter", "dragover"])
+            assert.equal(transfer.send(type, target, null, { x: 800, y: 500 }).defaultPrevented, false);
+        assert.equal(f.d.querySelector(".bcmv-add-drop"), null, "no add hint over another feature's drop target");
+        assert.equal(transfer.send("drop", target, null, { x: 800, y: 500 }).defaultPrevented, false);
+        transfer.send("dragend", rowLink);
+    }
+    await tick();
+    assert.deepEqual(received, ["dragenter", "dragover", "drop"], "the chat multiview panel receives its own drop");
+    // A drop that an earlier capture listener (such as a following folder) already accepted is not added again.
+    const handled = linkTransfer(h, rowLink.href);
+    const event = new h.w.MouseEvent("drop", { bubbles: true, cancelable: true, clientX: 800, clientY: 500 });
+    Object.defineProperty(event, "dataTransfer", { value: handled.data });
+    handled.data.readable = true;
+    event.preventDefault();
+    f.d.body.dispatchEvent(event);
+    await tick();
+    assert.equal(h.requests.length, requests, "no stream was added");
+    assert.equal(f.d.querySelector(`[data-bcmv-channel="${C}"]`), null);
+    assert.deepEqual(f.saved(), before);
+    // Contrast: the same link dropped on the page outside those targets is still added.
+    const page = linkTransfer(h, rowLink.href);
+    page.send("dragstart", rowLink);
+    assert.equal(page.send("dragover", f.d.body, null, { x: 800, y: 500 }).defaultPrevented, true);
+    assert.equal(page.send("drop", f.d.body, null, { x: 800, y: 500 }).defaultPrevented, true);
+    await tick();
+    assert.ok(f.d.querySelector(`[data-bcmv-channel="${C}"]`));
+    assert.equal(h.requests.length, requests + 1);
+});
+
+test("moving to an unlisted channel in free layout gives it the main window and keeps the old main visible", async (t) => {
+    // R2-148: the new main takes over the previous main's free window; the previous main falls back to a secondary slot.
+    const D = "d".repeat(32);
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    const f = freeWindowControls(h);
+    f.toggle();
+    const main = f.rect(A),
+        secondary = f.rect(B);
+    h.navigate(D);
+    await tick();
+    const saved = f.saved();
+    assert.deepEqual(
+        saved.channels.map((entry) => entry.id),
+        [D, A, B]
+    );
+    const windowOf = (id) => saved.freeWindows.find((entry) => entry.id === id)?.rect;
+    const close = (actual, expected) => actual.every((value, axis) => Math.abs(value - expected[axis]) < 1e-8);
+    assert.ok(windowOf(D) && close(windowOf(D), main), "the new main takes the main window");
+    assert.ok(windowOf(A), "the previous main keeps a free window");
+    assert.ok(!close(windowOf(A), windowOf(D)), "the previous main is not hidden under the new main");
+    assert.ok(!close(f.rect(A), f.rect(D)));
+    assert.ok(close(windowOf(B), secondary), "other free windows stay where they were");
+});
+
+test("moving to an unlisted channel in free layout leaves every window visible and keeps deliberate overlaps", async (t) => {
+    // R2-148 round 2: the old main must take a slot no kept free window covers, not the first secondary slot.
+    const D = "d".repeat(32);
+    const overlap = (a, b) =>
+        Math.min(a[0] + a[2], b[0] + b[2]) - Math.max(a[0], b[0]) > 1e-6 &&
+        Math.min(a[1] + a[3], b[1] + b[3]) - Math.max(a[1], b[1]) > 1e-6;
+    const close = (actual, expected) => actual.every((value, axis) => Math.abs(value - expected[axis]) < 1e-8);
+    const windows = (f) => new Map(f.saved().freeWindows.map((entry) => [entry.id, entry.rect]));
+    const assertApart = (map, ids, label) => {
+        for (const [index, a] of ids.entries())
+            for (const b of ids.slice(index + 1))
+                assert.ok(!overlap(map.get(a), map.get(b)), `${label}: ${a[0]} and ${b[0]} do not cover each other`);
+    };
+    // The default two-stream free layout grows to three without any window covering another.
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    const f = freeWindowControls(h);
+    f.toggle();
+    const main = f.rect(A),
+        secondary = f.rect(B);
+    h.navigate(D);
+    await tick();
+    const grown = windows(f);
+    assert.deepEqual([...grown.keys()].sort(), [A, B, D].sort());
+    assert.ok(close(grown.get(D), main), "the new main takes the main window");
+    assert.ok(close(grown.get(B), secondary), "the kept secondary stays where it was");
+    assertApart(grown, [D, A, B], "default 2 to 3");
+    for (const [index, a] of [D, A, B].entries())
+        for (const b of [D, A, B].slice(index + 1)) assert.ok(!overlap(f.rect(a), f.rect(b)), "rendered windows apart");
+    // A window the user deliberately stacked on another stays stacked; only the old main looks for a free slot.
+    const u = setup(t);
+    await u.start();
+    await u.add(B);
+    await u.add(C);
+    const g = freeWindowControls(u);
+    g.toggle();
+    g.pointer(g.video(C), "pointerdown", 750, 250);
+    g.pointer(u.w, "pointermove", 750, 150);
+    g.pointer(u.w, "pointerup", 750, 150);
+    const stacked = windows(g);
+    assert.ok(overlap(stacked.get(B), stacked.get(C)), "the user stacked C on B");
+    u.navigate(D);
+    await tick();
+    const after = windows(g);
+    assert.ok(close(after.get(B), stacked.get(B)) && close(after.get(C), stacked.get(C)), "deliberate stack is kept");
+    assert.ok(close(after.get(D), stacked.get(A)), "the new main takes the main window");
+    for (const other of [D, B, C]) assert.ok(!overlap(after.get(A), after.get(other)), `old main clear of ${other[0]}`);
+});
+
 test("dropping a live URL into multiview uses the normal add flow and never navigates the page", async (t) => {
     const h = setup(t, { local: { [key(B)]: { version: 2, basis: "live-edge-clock", delaySeconds: 5 } } });
     await h.start();
@@ -3754,6 +3891,724 @@ test("refresh and new broadcast restore channel delays and tab composition; rese
     await tick();
     assert.equal(third.storage[key(B)].delaySeconds, 0);
     assert.equal(third.w.document.querySelector("[data-bcmv-video]").currentTime, 117);
+});
+
+test("a main without a saved delay keeps its native position when multiview opens and its source is replaced", async (t) => {
+    // R1-37: the native main has no hls live position, so a zero target used to jump to the raw seekable end.
+    const h = setup(t);
+    const main = h.w.document.querySelector(".webplayer-internal-video");
+    h.media(main).time = 80;
+    await h.start();
+    await h.add(B);
+    assert.equal(main.currentTime, 80, "opening multiview leaves a time-shifted main where the user put it");
+    main.currentTime = 60;
+    await tick();
+    for (const type of ["emptied", "progress", "canplay", "timeupdate"]) main.dispatchEvent(new h.w.Event(type));
+    await tick();
+    assert.equal(main.currentTime, 60, "a native source replacement does not pull the main to the end");
+    assert.equal(h.writes.length, 0);
+    // Contrast: a saved positive delay for the main channel is still restored.
+    h.emitStorage(A, { version: 1, delaySeconds: 4 });
+    await tick();
+    assert.equal(main.currentTime, 116);
+});
+
+// R1-38: a Chrome-like page clock for delay seek judgement. While armed, window timers (the extension's seek watch) are
+// held and run only as page time passes: on time while the page is responsive, late after a page stall. The element
+// reports `seeking` while the seek waits. Chrome keeps answering the seek target from currentTime until the page learns
+// that the seek finished, even when playback already resumed during a page stall (r3 m1, 10-pre-completion-task-stall).
+function seekClock(h, video) {
+    const realNow = h.w.performance.now.bind(h.w.performance);
+    let clock = 0,
+        seeking = false,
+        armed = false,
+        held = [],
+        serial = 0;
+    Object.defineProperty(h.w.performance, "now", { configurable: true, value: () => realNow() + clock });
+    Object.defineProperty(video, "seeking", { configurable: true, get: () => seeking });
+    const realSetTimeout = h.w.setTimeout,
+        realClearTimeout = h.w.clearTimeout;
+    h.w.setTimeout = function (fn, ms, ...args) {
+        if (!armed) return realSetTimeout.call(this, fn, ms, ...args);
+        const id = `held-${++serial}`;
+        held.push({ id, due: h.w.performance.now() + Math.max(0, Number(ms) || 0), run: () => fn(...args) });
+        return id;
+    };
+    h.w.clearTimeout = function (id) {
+        const index = held.findIndex((timer) => timer.id === id);
+        if (index >= 0) held.splice(index, 1);
+        else realClearTimeout.call(this, id);
+    };
+    const next = (limit) => {
+        held.sort((x, y) => x.due - y.due);
+        return held.length && held[0].due <= limit ? held.shift() : null;
+    };
+    return {
+        arm() {
+            armed = true;
+        },
+        set seeking(value) {
+            seeking = value;
+        },
+        // The page stays responsive: held timers run when they come due.
+        wait(seconds) {
+            const end = h.w.performance.now() + seconds * 1000;
+            for (let timer = next(end); timer; timer = next(end)) {
+                clock += Math.max(0, timer.due - h.w.performance.now());
+                timer.run();
+            }
+            clock += Math.max(0, end - h.w.performance.now());
+        },
+        // The page is stalled: nothing runs meanwhile. With `late`, timers that came due run right after the stall.
+        stall(seconds, late = true) {
+            clock += seconds * 1000;
+            if (!late) return;
+            for (let timer = next(h.w.performance.now()); timer; timer = next(h.w.performance.now())) timer.run();
+        },
+        // Ends a case and reports how many timers were scheduled again after the judged seek's held timers ran.
+        finish() {
+            const left = held;
+            held = [];
+            for (const timer of left) timer.run();
+            const again = held.length;
+            armed = false;
+            for (const timer of held.splice(0)) realSetTimeout.call(h.w, timer.run, 0);
+            return again;
+        },
+    };
+}
+
+// Completes delay seeks like Chrome: the observed seek wait, a page stall while still seeking (`hidden`), the landing at
+// target + drift, a page stall after playback resumed but before the completion is created (`pre`), the completion
+// event with its creation time, and a stall while it is delivered (`stall`).
+// Round 5: `steps` stalls the delivery with player actions instead: each step lets `run` seconds pass in the current state,
+// then pauses, plays, changes the rate or seeks. Chrome notifies such actions after the completion, stamped with the time
+// of the action (r4 m1, 14-pause-resume-in-completion and 15-rate-change-in-completion). `pausePre` pauses at the end of
+// `pre`, before the completion is created. `delivered` is called right after the completion events, `later` adds a
+// notification created after them.
+// Round 6: playback advances at the element's playbackRate, so a playing element at rate 0 stays where it landed (r5 m1,
+// 19-zero-rate-completion). `speed` overrides that progress for an element that reports no usable rate.
+function chromeSeeks(h, video, clock) {
+    let scenario = null;
+    const speed = () => scenario.speed ?? video.playbackRate;
+    const completion = (type) => {
+        const event = new h.w.Event(type);
+        Object.defineProperty(event, "timeStamp", { value: h.w.performance.now() });
+        return event;
+    };
+    video.addEventListener("seeking", () => {
+        if (scenario && !scenario.done) clock.seeking = true;
+    });
+    // The harness completes every seek with an untimed seeked; replace it with a Chrome-like completion.
+    h.w.addEventListener(
+        "seeked",
+        (event) => {
+            if (event.target !== video || !scenario || scenario.done) return;
+            scenario.done = true;
+            event.stopPropagation();
+            const media = h.media(video),
+                rate = speed(),
+                playing = !media.paused;
+            clock.wait(scenario.wait || 0);
+            clock.stall(scenario.hidden || 0);
+            let position = media.time + (scenario.drift || 0);
+            if (scenario.pre) {
+                clock.stall(scenario.pre);
+                if (playing) position += scenario.pre * rate;
+            }
+            if (scenario.pausePre) {
+                // The stalled task pauses before the completion is created, so the pause is notified first, while the
+                // page still sees the seek in progress.
+                media.paused = true;
+                video.dispatchEvent(completion("timeupdate"));
+                video.dispatchEvent(completion("pause"));
+            }
+            clock.seeking = false;
+            media.time = position;
+            const first = completion(scenario.via || "timeupdate"),
+                seeked = scenario.via === "seeked" ? first : completion("seeked");
+            if (scenario.stall) {
+                clock.stall(scenario.stall, false);
+                if (playing) media.time += scenario.stall * rate;
+            }
+            const notices = [];
+            for (const step of scenario.steps || []) {
+                clock.stall(step.run || 0, false);
+                if (!media.paused) media.time += (step.run || 0) * speed();
+                if (step.act === "pause") {
+                    media.paused = true;
+                    notices.push(completion("timeupdate"), completion("pause"));
+                } else if (step.act === "play") {
+                    media.paused = false;
+                    notices.push(completion("play"), completion("playing"));
+                } else if (step.act === "seek") {
+                    media.time = step.to;
+                    notices.push(completion("seeking"));
+                } else if (step.rate !== undefined) {
+                    video.playbackRate = step.rate;
+                    notices.push(completion("ratechange"));
+                }
+            }
+            video.dispatchEvent(first);
+            if (seeked !== first) video.dispatchEvent(seeked);
+            scenario.delivered?.();
+            for (const notice of notices) video.dispatchEvent(notice);
+            if (scenario.later) {
+                clock.stall(0.001, false);
+                if (!media.paused) media.time += 0.001 * speed();
+                if (scenario.later === "pause") media.paused = true;
+                video.dispatchEvent(completion(scenario.later));
+            }
+        },
+        true
+    );
+    return (item) => {
+        scenario = { ...item, done: false };
+        return scenario;
+    };
+}
+
+const DELAY_STATUS = {
+    applied: /적용 완료/,
+    unsupported: /적용 불가/,
+    uncertain: /적용 확인 불가/,
+    changed: /재생 위치 변경/,
+    seeking: /딜레이 적용 중/,
+};
+
+test("a delay seek that takes longer than the arrival window still reports success when it lands on target", async (t) => {
+    // R1-38: playback does not advance while seeking, so the seek wait must not count as drift.
+    const h = setup(t, { local: { [key(B)]: { version: 1, delaySeconds: 8 } } });
+    await h.start();
+    await h.add(B);
+    const sub = h.w.document.querySelector("[data-bcmv-video]");
+    assert.equal(sub.currentTime, 112);
+    h.click("controls");
+    const status = () => h.w.document.querySelector(`.bcmv-stream[data-channel="${B}"] [data-bcmv-status]`).textContent;
+    assert.match(status(), /적용 완료/);
+    // Round 4: the wait is watched while the page stays responsive; an unwatched wait is covered separately.
+    const clock = seekClock(h, sub);
+    let landing = null,
+        timeupdateFirst = false;
+    sub.addEventListener("seeking", () => {
+        // The segment fetch takes a second before the seek completes.
+        clock.seeking = true;
+        clock.wait(1);
+        clock.seeking = false;
+        if (landing !== null) h.media(sub).time = landing;
+        if (timeupdateFirst) sub.dispatchEvent(new h.w.Event("timeupdate"));
+    });
+    for (const [delaySeconds, expectTimeupdate] of [
+        [10, false],
+        [11, true],
+    ]) {
+        timeupdateFirst = expectTimeupdate;
+        clock.arm();
+        h.emitStorage(B, { version: 1, delaySeconds });
+        await tick();
+        assert.equal(clock.finish(), 0);
+        assert.equal(sub.currentTime, 120 - delaySeconds);
+        assert.match(status(), /적용 완료/, `a slow seek to ${delaySeconds}s is applied`);
+    }
+    // Contrast: a seek that lands somewhere else is still reported as not applied.
+    timeupdateFirst = false;
+    landing = 100;
+    clock.arm();
+    h.emitStorage(B, { version: 1, delaySeconds: 12 });
+    await tick();
+    assert.equal(clock.finish(), 0);
+    assert.equal(sub.currentTime, 100);
+    assert.match(status(), /적용 불가/);
+});
+
+test("a delay seek is judged by where it lands when the seek completes, whatever the wait, pause or rate", async (t) => {
+    // R1-38 round 2: the seek wait is not playback, so it must neither count as drift nor widen the accepted landing.
+    const h = setup(t, { local: { [key(B)]: { version: 1, delaySeconds: 8 } } });
+    await h.start();
+    await h.add(B);
+    const sub = h.w.document.querySelector("[data-bcmv-video]");
+    h.click("controls");
+    const status = () => h.w.document.querySelector(`.bcmv-stream[data-channel="${B}"] [data-bcmv-status]`).textContent;
+    assert.match(status(), /적용 완료/);
+    // Round 4: the wait is watched while the page stays responsive; an unwatched wait is covered separately.
+    const clock = seekClock(h, sub);
+    let scenario = null;
+    sub.addEventListener("seeking", () => {
+        // The segment fetch keeps the seek waiting, then the seek completes at target + drift.
+        clock.seeking = true;
+        clock.wait(scenario.wait);
+        clock.seeking = false;
+        h.media(sub).time += scenario.drift;
+        if (scenario.timeupdateFirst) sub.dispatchEvent(new h.w.Event("timeupdate"));
+    });
+    const cases = [
+        { delay: 8.5, wait: 10, drift: 0, applied: true, label: "a ten second wait that lands on target" },
+        { delay: 9, wait: 10, drift: 3, applied: false, label: "a ten second wait that lands three seconds ahead" },
+        { delay: 9.5, wait: 10, drift: 3, timeupdateFirst: true, applied: false, label: "the same through timeupdate" },
+        {
+            delay: 10,
+            wait: 10,
+            drift: 0,
+            timeupdateFirst: true,
+            applied: true,
+            label: "an exact landing through timeupdate",
+        },
+        { delay: 10.5, wait: 10, drift: -3, applied: false, label: "a landing three seconds behind" },
+        { delay: 11, wait: 2, drift: 0, rate: 2, applied: true, label: "a double-speed wait that lands on target" },
+        { delay: 11.5, wait: 2, drift: 3.5, rate: 2, applied: false, label: "a double-speed wait that lands ahead" },
+        { delay: 12, wait: 5, drift: 0.5, paused: true, applied: true, label: "a paused landing within tolerance" },
+        { delay: 12.5, wait: 5, drift: 1, paused: true, applied: false, label: "a paused landing one second ahead" },
+    ];
+    for (const item of cases) {
+        scenario = { timeupdateFirst: false, ...item };
+        sub.playbackRate = item.rate ?? 1;
+        h.media(sub).paused = Boolean(item.paused);
+        clock.arm();
+        h.emitStorage(B, { version: 1, delaySeconds: item.delay });
+        await tick();
+        assert.equal(clock.finish(), 0, item.label);
+        assert.equal(sub.currentTime, 120 - item.delay + item.drift, item.label);
+        assert.match(status(), item.applied ? /적용 완료/ : /적용 불가/, item.label);
+    }
+});
+
+test("a delay seek that lands on target and keeps playing while its completion event is delayed is still applied", async (t) => {
+    // R1-38 round 3: Chrome measured an exact 8 s landing whose completion handling was held for 1.2 s; by then
+    // playback had moved on to 9.15 s. Progress after the completion event was created is not a misarrival, but the seek
+    // wait before it still is not tolerance.
+    const h = setup(t, { local: { [key(B)]: { version: 1, delaySeconds: 8 } } });
+    await h.start();
+    await h.add(B);
+    const sub = h.w.document.querySelector("[data-bcmv-video]");
+    h.click("controls");
+    const status = () => h.w.document.querySelector(`.bcmv-stream[data-channel="${B}"] [data-bcmv-status]`).textContent;
+    assert.match(status(), /적용 완료/);
+    // Round 4: long waits are watched while the page stays responsive; unwatched ones are covered separately.
+    const clock = seekClock(h, sub),
+        start = chromeSeeks(h, sub, clock);
+    const cases = [
+        {
+            delay: 8.5,
+            wait: 0,
+            stall: 1.2,
+            drift: 0,
+            via: "timeupdate",
+            applied: true,
+            label: "the measured 1.2 s stall",
+        },
+        { delay: 9, wait: 0, stall: 1.2, drift: 0, via: "seeked", applied: true, label: "the same through seeked" },
+        { delay: 9.5, wait: 10, stall: 1.2, drift: 0, via: "seeked", applied: true, label: "a long wait then a stall" },
+        {
+            delay: 10,
+            wait: 0,
+            stall: 2,
+            drift: 0,
+            rate: 2,
+            via: "timeupdate",
+            applied: true,
+            label: "a double-speed stall",
+        },
+        { delay: 10.5, wait: 0, stall: 1.2, drift: 3, via: "timeupdate", applied: false, label: "a stall after +3 s" },
+        { delay: 11, wait: 10, stall: 1.2, drift: 3, via: "seeked", applied: false, label: "a long wait, +3 s, stall" },
+        { delay: 11.5, wait: 0, stall: 0, drift: 3, via: "timeupdate", applied: false, label: "+3 s without a stall" },
+        { delay: 12, wait: 0, stall: 1.2, drift: -3, via: "seeked", applied: false, label: "a stall after -3 s" },
+        {
+            delay: 12.5,
+            wait: 0,
+            stall: 1.2,
+            drift: 1.15,
+            paused: true,
+            via: "seeked",
+            applied: false,
+            label: "a paused landing cannot be explained by a stall",
+        },
+    ];
+    for (const item of cases) {
+        sub.playbackRate = item.rate ?? 1;
+        h.media(sub).paused = Boolean(item.paused);
+        const scenario = start(item);
+        clock.arm();
+        h.emitStorage(B, { version: 1, delaySeconds: item.delay });
+        await tick();
+        assert.equal(scenario.done, true, item.label);
+        assert.equal(clock.finish(), 0, item.label);
+        assert.match(status(), item.applied ? /적용 완료/ : /적용 불가/, item.label);
+    }
+});
+
+test("a delay seek is judged from where it could have landed and is left unconfirmed when a page stall hides that", async (t) => {
+    // R1-38 round 4 (Codex r3 m1, real secondary HLS in Chrome): a 37.10 s landing for a 40.1 s target played on to 41.05 s
+    // during a 4 s delivery stall and was reported as applied; an exact 37.02 s request reached 38.17 s during a 1.2 s
+    // task stall that ended before the completion event was created and was reported as not applied.
+    const h = setup(t, { local: { [key(B)]: { version: 1, delaySeconds: 8 } } });
+    await h.start();
+    await h.add(B);
+    const sub = h.w.document.querySelector("[data-bcmv-video]");
+    h.click("controls");
+    const status = () => h.w.document.querySelector(`.bcmv-stream[data-channel="${B}"] [data-bcmv-status]`).textContent;
+    assert.match(status(), /적용 완료/);
+    const clock = seekClock(h, sub),
+        start = chromeSeeks(h, sub, clock);
+    const cases = [
+        { delay: 8.5, drift: -3, stall: 4, expect: "unsupported", label: "the measured -3 s landing then a 4 s stall" },
+        { delay: 9, drift: 0, stall: 4, expect: "applied", label: "an exact landing then the same 4 s stall" },
+        { delay: 9.5, drift: -3, stall: 4, via: "seeked", expect: "unsupported", label: "the same through seeked" },
+        { delay: 10, pre: 1.2, expect: "uncertain", label: "the measured stall before the completion event" },
+        { delay: 10.5, hidden: 1.2, expect: "uncertain", label: "a stall while the seek still waits" },
+        { delay: 10.75, wait: 1, pre: 1.2, expect: "uncertain", label: "a watched wait, then a stall after resuming" },
+        { delay: 11, pre: 1.2, rate: 2, expect: "uncertain", label: "a double-speed stall before the completion" },
+        { delay: 11.5, pre: 1.2, drift: 3, expect: "unsupported", label: "+3 s then a stall before the completion" },
+        { delay: 12, pre: 1.2, drift: -3, expect: "unsupported", label: "-3 s then a stall before the completion" },
+        { delay: 12.5, hidden: 10, drift: -3, expect: "unsupported", label: "-3 s after an unwatched 10 s wait" },
+        { delay: 13, hidden: 10, expect: "uncertain", label: "an exact landing after an unwatched 10 s wait" },
+        { delay: 13.5, wait: 10, expect: "applied", label: "an exact landing after a watched 10 s wait" },
+        { delay: 14, wait: 10, drift: 3, expect: "unsupported", label: "+3 s after a watched 10 s wait" },
+        { delay: 14.5, wait: 10, drift: -3, stall: 4, expect: "unsupported", label: "a watched wait, -3 s, 4 s stall" },
+        { delay: 15, wait: 10, stall: 4, expect: "applied", label: "a watched wait, exact, 4 s stall" },
+        { delay: 15.5, pre: 1.2, paused: true, expect: "applied", label: "a paused exact landing behind a stall" },
+        { delay: 16, hidden: 1.2, drift: 1.15, paused: true, expect: "unsupported", label: "a paused +1.15 s landing" },
+    ];
+    for (const item of cases) {
+        sub.playbackRate = item.rate ?? 1;
+        h.media(sub).paused = Boolean(item.paused);
+        const scenario = start(item);
+        clock.arm();
+        h.emitStorage(B, { version: 1, delaySeconds: item.delay });
+        await tick();
+        assert.equal(scenario.done, true, item.label);
+        assert.equal(clock.finish(), 0, `${item.label}: the seek watch stops once the seek is judged`);
+        assert.match(status(), DELAY_STATUS[item.expect], item.label);
+    }
+    // An unconfirmed result is final for this seek and does not trigger another automatic seek.
+    sub.playbackRate = 1;
+    h.media(sub).paused = false;
+    start({ pre: 1.2 });
+    clock.arm();
+    h.emitStorage(B, { version: 1, delaySeconds: 16.5 });
+    await tick();
+    assert.equal(clock.finish(), 0);
+    assert.match(status(), /적용 확인 불가 · 다시 적용 가능/);
+    const writes = h.writes.length,
+        position = sub.currentTime;
+    sub.dispatchEvent(new h.w.Event("timeupdate"));
+    sub.dispatchEvent(new h.w.Event("progress"));
+    await tick();
+    assert.equal(sub.currentTime, position);
+    assert.equal(h.writes.length, writes);
+    // A user seek afterwards is reported as a changed position, as after any judged seek.
+    h.media(sub).time = position - 5;
+    sub.dispatchEvent(new h.w.Event("seeking"));
+    assert.match(status(), /재생 위치 변경/);
+});
+
+test("a delay seek is not judged from a pause, resume or rate change made while its completion waited", async (t) => {
+    // R1-38 round 5 (Codex r4 m1, real secondary HLS in Chrome): an exact landing paused for 1.2 s and resumed, and an exact
+    // landing that played 1.2 s at 1x and was switched to 2x, were both reported as not applied, because the state at
+    // judgement was applied to the whole time since the completion event was created. The pause, play and ratechange
+    // notifications arrived only after that judgement, stamped with the time of the action.
+    const h = setup(t, { local: { [key(B)]: { version: 1, delaySeconds: 8 } } });
+    await h.start();
+    await h.add(B);
+    const sub = h.w.document.querySelector("[data-bcmv-video]");
+    h.click("controls");
+    const status = () => h.w.document.querySelector(`.bcmv-stream[data-channel="${B}"] [data-bcmv-status]`).textContent;
+    assert.match(status(), /적용 완료/);
+    // Chrome notifies rate changes asynchronously; the fixture queues ratechange itself.
+    let rate = 1;
+    Object.defineProperty(sub, "playbackRate", {
+        configurable: true,
+        get: () => rate,
+        set: (value) => {
+            rate = value;
+        },
+    });
+    const clock = seekClock(h, sub),
+        start = chromeSeeks(h, sub, clock);
+    let rateInWait = 0;
+    sub.addEventListener("seeking", () => {
+        // While the page stays responsive, a rate change during the seek wait is notified before the completion.
+        if (!rateInWait) return;
+        rate = rateInWait;
+        rateInWait = 0;
+        const notice = new h.w.Event("ratechange");
+        Object.defineProperty(notice, "timeStamp", { value: h.w.performance.now() });
+        sub.dispatchEvent(notice);
+    });
+    const pauseResume = [{ act: "pause" }, { run: 1.2, act: "play" }];
+    const cases = [
+        {
+            delay: 8.5,
+            steps: pauseResume,
+            expect: "uncertain",
+            label: "the measured exact landing, pause, 1.2 s, play",
+        },
+        { delay: 9, steps: [{ run: 1.2, rate: 2 }], expect: "uncertain", label: "the measured 1.2 s at 1x, then 2x" },
+        {
+            delay: 9.5,
+            steps: [{ run: 1.2, act: "pause" }],
+            expect: "uncertain",
+            label: "1.2 s of playback, then a pause",
+        },
+        {
+            delay: 9.75,
+            steps: [{ run: 1.2, rate: 2 }, { run: 1.2 }],
+            expect: "uncertain",
+            label: "1.2 s at 1x, then 1.2 s at 2x",
+        },
+        {
+            delay: 9.8,
+            steps: [{ rate: 2 }, { run: 1.2, rate: 1 }],
+            expect: "uncertain",
+            label: "1.2 s at 2x, then back to 1x",
+        },
+        {
+            // Once the rate changed during the wait it is only bounded there, so an exact landing is left unconfirmed:
+            // neither judged as if the wait ran at 1x nor with that bound for the unchanged 2x delivery stall.
+            delay: 9.85,
+            wait: 1,
+            rateInWait: 2,
+            stall: 1.2,
+            expect: "uncertain",
+            early: "uncertain",
+            label: "a rate change while the seek waits, an exact landing, then a 1.2 s stall at 2x",
+        },
+        {
+            delay: 10,
+            drift: -3,
+            steps: pauseResume,
+            expect: "unsupported",
+            early: "unsupported",
+            label: "-3 s, pause, 1.2 s, play",
+        },
+        {
+            delay: 10.5,
+            drift: -3,
+            steps: [{ run: 1.2, rate: 2 }],
+            expect: "unsupported",
+            early: "unsupported",
+            label: "-3 s, 1x, then 2x",
+        },
+        {
+            delay: 11,
+            drift: 3,
+            steps: [{ act: "pause" }, { run: 1.2 }],
+            expect: "unsupported",
+            label: "+3 s, then paused",
+        },
+        {
+            delay: 11.5,
+            stall: 4,
+            later: "timeupdate",
+            expect: "applied",
+            settled: true,
+            label: "an exact landing, 4 s stall, then a newer notification",
+        },
+        {
+            delay: 12,
+            drift: -3,
+            stall: 4,
+            later: "timeupdate",
+            expect: "unsupported",
+            settled: true,
+            label: "-3 s, 4 s stall, then a newer notification",
+        },
+        { delay: 12.5, stall: 4, expect: "applied", label: "an exact landing, 4 s stall and no newer notification" },
+        {
+            delay: 13,
+            stall: 1.2,
+            later: "pause",
+            expect: "applied",
+            settled: true,
+            label: "an exact landing, 1.2 s stall, then a pause made after the judgement",
+        },
+        {
+            delay: 13.25,
+            pre: 1.2,
+            pausePre: true,
+            expect: "uncertain",
+            early: "uncertain",
+            label: "1.2 s of playback, then a pause before the completion is created",
+        },
+        {
+            delay: 13.4,
+            steps: [{ run: 1.2 }, { act: "seek", to: 120 - 13.4 + 1.2 }],
+            expect: "changed",
+            label: "another seek after 1.2 s of playback while the completion waits",
+        },
+        {
+            delay: 13.5,
+            steps: [{ run: 0.5, act: "seek", to: 90 }],
+            expect: "changed",
+            early: "unsupported",
+            label: "another seek while the completion waits",
+        },
+    ];
+    for (const item of cases) {
+        rate = 1;
+        rateInWait = item.rateInWait || 0;
+        h.media(sub).paused = false;
+        let atDelivery = "";
+        const scenario = start({ ...item, delivered: () => (atDelivery = status()) });
+        clock.arm();
+        h.emitStorage(B, { version: 1, delaySeconds: item.delay });
+        await tick();
+        assert.equal(scenario.done, true, item.label);
+        // The actions are only known once their notifications arrive, so the completion alone decides only a landing that
+        // is behind whatever happened afterwards.
+        assert.match(atDelivery, DELAY_STATUS[item.early || "seeking"], `${item.label}: decision at the completion`);
+        if (item.settled)
+            assert.match(status(), DELAY_STATUS[item.expect], `${item.label}: a newer notification settles`);
+        assert.equal(clock.finish(), 0, `${item.label}: nothing is scheduled again once the seek is judged`);
+        assert.match(status(), DELAY_STATUS[item.expect], item.label);
+    }
+    // A judged seek stays judged: later progress neither seeks again nor writes settings.
+    const writes = h.writes.length,
+        position = h.media(sub).time;
+    sub.dispatchEvent(new h.w.Event("timeupdate"));
+    sub.dispatchEvent(new h.w.Event("ratechange"));
+    await tick();
+    assert.equal(h.media(sub).time, position);
+    assert.equal(h.writes.length, writes);
+    assert.match(status(), DELAY_STATUS.changed);
+});
+
+test("a delay seek at playback rate 0 is judged without progress it never made, and an unusable rate is not trusted", async (t) => {
+    // R1-38 round 6 (Codex r5 m1, real secondary HLS in Chrome): Chrome accepts playbackRate 0 and a playing (paused=false)
+    // element then stays still. An exact 71.115999 s landing whose completion was delivered 1.2 s late was reported as not
+    // applied, because rate 0 was read as 1x and 1.2 s of progress that never happened was subtracted from the landing.
+    const h = setup(t, { local: { [key(B)]: { version: 1, delaySeconds: 8 } } });
+    await h.start();
+    await h.add(B);
+    const sub = h.w.document.querySelector("[data-bcmv-video]");
+    h.click("controls");
+    const status = () => h.w.document.querySelector(`.bcmv-stream[data-channel="${B}"] [data-bcmv-status]`).textContent;
+    assert.match(status(), /적용 완료/);
+    // The element may report rates Chrome itself would refuse, so the fixture holds the rate.
+    let rate = 1;
+    Object.defineProperty(sub, "playbackRate", {
+        configurable: true,
+        get: () => rate,
+        set: (value) => {
+            rate = value;
+        },
+    });
+    const clock = seekClock(h, sub),
+        start = chromeSeeks(h, sub, clock);
+    const cases = [
+        { delay: 8.5, rate: 0, stall: 1.2, expect: "applied", label: "the measured exact landing at 0x, 1.2 s stall" },
+        { delay: 9, rate: 0, stall: 4, via: "seeked", expect: "applied", label: "an exact landing at 0x, 4 s stall" },
+        {
+            delay: 9.5,
+            rate: 0,
+            stall: 1.2,
+            later: "timeupdate",
+            expect: "applied",
+            settled: true,
+            label: "an exact landing at 0x, 1.2 s stall, then a newer notification",
+        },
+        { delay: 9.75, rate: 0, expect: "applied", early: "applied", label: "an exact landing at 0x without a stall" },
+        {
+            delay: 9.8,
+            rate: 0,
+            pre: 1.2,
+            expect: "applied",
+            early: "applied",
+            label: "an exact landing at 0x behind a stall before the completion",
+        },
+        {
+            delay: 10,
+            rate: 0,
+            stall: 1.2,
+            drift: 1.15,
+            expect: "unsupported",
+            label: "+1.15 s at 0x cannot be explained by a stall",
+        },
+        { delay: 10.5, rate: 0, stall: 1.2, drift: 3, expect: "unsupported", label: "+3 s at 0x, 1.2 s stall" },
+        {
+            delay: 11,
+            rate: 0,
+            stall: 1.2,
+            drift: -3,
+            expect: "unsupported",
+            early: "unsupported",
+            label: "-3 s at 0x, 1.2 s stall",
+        },
+        {
+            delay: 11.5,
+            rate: 0,
+            steps: [{ run: 1.2, rate: 1 }],
+            expect: "uncertain",
+            label: "an exact landing held 1.2 s at 0x, then 1x",
+        },
+        {
+            delay: 12,
+            rate: 1,
+            steps: [{ run: 1.2, rate: 0 }, { run: 1.2 }],
+            expect: "uncertain",
+            label: "an exact landing played 1.2 s at 1x, then held at 0x",
+        },
+        // An element that reports no usable rate is bounded like an unknown rate instead of being read as 1x.
+        {
+            delay: 12.5,
+            rate: NaN,
+            speed: 2,
+            stall: 1.2,
+            expect: "uncertain",
+            early: "uncertain",
+            label: "an exact landing at an unreported (NaN) rate, 1.2 s stall",
+        },
+        {
+            delay: 13,
+            rate: -1,
+            speed: 2,
+            stall: 1.2,
+            expect: "uncertain",
+            early: "uncertain",
+            label: "an exact landing at a negative reported rate, 1.2 s stall",
+        },
+        {
+            delay: 13.5,
+            rate: Infinity,
+            speed: 2,
+            stall: 1.2,
+            expect: "uncertain",
+            early: "uncertain",
+            label: "an exact landing at an infinite reported rate, 1.2 s stall",
+        },
+        {
+            delay: 14,
+            rate: NaN,
+            speed: 2,
+            drift: -3,
+            expect: "unsupported",
+            early: "unsupported",
+            label: "-3 s at an unreported rate without a stall",
+        },
+    ];
+    for (const item of cases) {
+        rate = item.rate;
+        h.media(sub).paused = false;
+        let atDelivery = "";
+        const scenario = start({ ...item, delivered: () => (atDelivery = status()) });
+        clock.arm();
+        h.emitStorage(B, { version: 1, delaySeconds: item.delay });
+        await tick();
+        assert.equal(scenario.done, true, item.label);
+        assert.match(atDelivery, DELAY_STATUS[item.early || "seeking"], `${item.label}: decision at the completion`);
+        if (item.settled)
+            assert.match(status(), DELAY_STATUS[item.expect], `${item.label}: a newer notification settles`);
+        assert.equal(clock.finish(), 0, `${item.label}: nothing is scheduled again once the seek is judged`);
+        assert.match(status(), DELAY_STATUS[item.expect], item.label);
+    }
+    // The 0x position is kept as it is: the judged seek neither seeks again nor writes settings.
+    rate = 0;
+    const writes = h.writes.length,
+        position = h.media(sub).time;
+    sub.dispatchEvent(new h.w.Event("timeupdate"));
+    sub.dispatchEvent(new h.w.Event("ratechange"));
+    await tick();
+    assert.equal(h.media(sub).time, position);
+    assert.equal(h.writes.length, writes);
 });
 
 test("insufficient ranges wait without truncating saved delay; readiness restores it, ads wait", async (t) => {
@@ -4544,6 +5399,35 @@ test("multiview requests the shared theme only after it is enabled and keeps the
     await tick();
     assert.equal(d.querySelectorAll("#cheese-spanner-ui-theme").length, 1, "the theme is shared, never duplicated");
     assert.equal(d.querySelectorAll("#cheese-spanner-multiview-style").length, 1);
+});
+
+test("an idle multiview host does not isolate the native floating mini player under the chat", async (t) => {
+    // 2026-11-04 bundle: .miniplayer (fixed, z-index 1000) and the ad minis live inside the host; an isolated idle
+    // host is painted below the later chat aside, hiding them. Only the active split layout may isolate.
+    const h = setup(t, { withTheme: true });
+    const d = h.w.document;
+    await tick();
+    const css = d.getElementById("cheese-spanner-multiview-style").textContent;
+    const isolating = [...css.matchAll(/(?:^|\n)([^@{}\n][^{}\n]*)\{([^}]*)\}/g)]
+        .filter(([, , body]) => /isolation:isolate/.test(body))
+        .map(([, selector]) => selector);
+    assert.ok(isolating.length > 0);
+    const idle = d.querySelector("[data-bcmv-host]");
+    assert.equal(idle.getAttribute("data-bcmv-host"), "idle");
+    for (const selector of isolating) assert.equal(idle.matches(selector), false, `${selector} isolates the idle host`);
+    assert.match(
+        cssRule(css, "[data-bcmv-host],#cheese-spanner-multiview-panel"),
+        /--bcmv-surface:var\(--bct-surface\)/,
+        "the shared variables stay on every host"
+    );
+    await h.start();
+    await h.add(B);
+    const active = d.querySelector('[data-bcmv-host="active"]');
+    assert.ok(active);
+    assert.ok(
+        isolating.some((selector) => active.matches(selector)),
+        "the active split layout stays isolated"
+    );
 });
 
 test("multiview styles take theme colors, radii, shadow and states from the shared theme", (t) => {

@@ -640,6 +640,60 @@
                         </div>
                     </details>
 
+                    <details
+                        class="option-group"
+                        data-option-group="player-recorder"
+                        data-search-terms="녹화 저장 다운로드 폴더 경로 동영상 영상 저장 레코드"
+                    >
+                        <summary>
+                            <span class="option-group-title"
+                                ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-video" /></svg
+                                ><span>영상 녹화</span></span
+                            >
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>녹화 버튼</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="videoRecorderEnabled"
+                                    aria-describedby="videoRecorderHelp"
+                                />
+                            </label>
+                            <p class="setting-note" id="videoRecorderHelp">
+                                라이브·다시보기 플레이어 오른쪽 아래의 녹화 버튼을 누르면 녹화를 시작하고, 다시 누르면
+                                멈춘 뒤 파일로 저장해요. Chrome이 지원하면 MP4, 아니면 WebM으로 저장해요. 녹화 중인
+                                영상은 저장할 때까지 이 탭의 메모리에 쌓이므로 아주 긴 녹화는 탭을 무겁게 할 수 있어요.
+                                다른 방송으로 이동하거나 영상이 바뀌면 그때까지 녹화한 내용을 저장해요.
+                            </p>
+                            <div class="recorder-folder" data-depends-on="videoRecorderEnabled">
+                                <label for="videoRecorderFolder">녹화 저장 폴더</label>
+                                <div class="recorder-folder-field">
+                                    <input
+                                        id="videoRecorderFolder"
+                                        type="text"
+                                        data-option="videoRecorderFolder"
+                                        data-allow-empty
+                                        placeholder="비워 두면 다운로드 폴더"
+                                        autocomplete="off"
+                                        spellcheck="false"
+                                        maxlength="120"
+                                        aria-describedby="videoRecorderFolderHelp videoRecorderPermissionStatus"
+                                    />
+                                    <button id="videoRecorderPermission" type="button" class="secondary-button" hidden>
+                                        다운로드 권한 허용
+                                    </button>
+                                </div>
+                                <p class="setting-note" id="videoRecorderFolderHelp">
+                                    Chrome 다운로드 폴더 안에 만들 폴더 이름이에요. /로 하위 폴더를 나눌 수 있어요.
+                                    폴더에 저장하려면 처음 한 번 Chrome의 ‘다운로드 관리’ 권한을 허용해야 해요. 플레이어
+                                    톱니바퀴 메뉴의 ‘녹화 저장 폴더’에서도 바꿀 수 있어요.
+                                </p>
+                                <p class="setting-note" id="videoRecorderPermissionStatus" role="status"></p>
+                            </div>
+                        </div>
+                    </details>
+
                     <details class="option-group" data-option-group="player-seek">
                         <summary>
                             <span class="option-group-title">
@@ -1420,7 +1474,7 @@
                                         type="number"
                                         min="1"
                                         max="300"
-                                        step="10"
+                                        step="1"
                                         data-option="monthlyBroadcastTimeMaxCalendarPages"
                                     /><em>쪽</em></label
                                 >
@@ -1518,7 +1572,7 @@
                                         type="number"
                                         min="1"
                                         max="200"
-                                        step="10"
+                                        step="1"
                                         data-option="videoSearchCommentMaxVideos"
                                     /><em>개</em></label
                                 >

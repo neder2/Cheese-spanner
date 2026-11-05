@@ -103,9 +103,13 @@
     let watchHistoryEntries = [];
     let watchHistoryLoaded = false;
     let watchHistoryLoading = false;
+    // A refresh requested while a read is running; that read may predate the change behind the request.
+    let watchHistoryRefreshPending = null;
     let watchHistoryRerenderTimer = 0;
     let watchHistoryNormalizeTimer = 0;
     let pendingWatchHistoryRaw = null;
+    // Counts storage-change notifications, so a read can tell whether one arrived after it started.
+    let watchHistoryNotifySeq = 0;
     let watchHistoryVersion = 0;
     let nextHostRetryAt = 0;
     let hostRetryDelayMs = HOST_RETRY_INITIAL_MS;
@@ -160,8 +164,12 @@
         return isFeatureEnabled() && featureOptions.monthlyBroadcastTimeCalendarEnabled;
     }
 
-    function isWatchDisplayEnabled() {
-        return isCalendarEnabled() && featureOptions.monthlyBroadcastTimeWatchEnabled;
+    function isWatchDisplayEnabled(options = featureOptions) {
+        return Boolean(
+            options.monthlyBroadcastTimeEnabled &&
+            options.monthlyBroadcastTimeCalendarEnabled &&
+            options.monthlyBroadcastTimeWatchEnabled
+        );
     }
 
     function getWindowDays() {
@@ -1072,11 +1080,29 @@ ${CALENDAR_LEVELS.map(
 
     function refreshWatchHistory({ rerender = true, deferWhenVisible = false } = {}) {
         if (!isWatchDisplayEnabled()) return;
-        if (!storage || watchHistoryLoading) return;
+        if (!storage) return;
+        if (watchHistoryLoading) {
+            // Keep the request instead of dropping it: read again, and render if asked, once this read ends.
+            const pending = watchHistoryRefreshPending;
+            watchHistoryRefreshPending = {
+                rerender: Boolean(pending?.rerender || rerender),
+                deferWhenVisible: pending ? pending.deferWhenVisible && deferWhenVisible : deferWhenVisible,
+            };
+            return;
+        }
 
         watchHistoryLoading = true;
+        // This read sees at least the state behind every notification received so far, so a notification still
+        // waiting for its debounce is older than the read: drop it, or it would roll the display back later.
+        // Notifications arriving after this point stay newer than the read and are kept.
+        const supersededNotification = takePendingWatchHistoryStorageChange();
+        const readNotifySeq = watchHistoryNotifySeq;
+        const readVersion = watchHistoryVersion;
         storageGet(storage, WATCH_HISTORY_STORAGE_KEY)
             .then((data) => {
+                // A queued re-read supersedes this result, and a storage change applied meanwhile is newer;
+                // either way this value must not restore an edited or deleted record.
+                if (watchHistoryRefreshPending || watchHistoryVersion !== readVersion) return;
                 watchHistoryEntries = normalizeWatchHistory(data?.[WATCH_HISTORY_STORAGE_KEY]);
                 watchHistoryVersion++;
                 watchHistoryLoaded = true;
@@ -1084,9 +1110,23 @@ ${CALENDAR_LEVELS.map(
             })
             .catch(() => {
                 // Preserve the previous behavior: storage read failures only skip watch-history enrichment.
+                // The notification dropped for this read is still the newest known state when nothing replaced it.
+                if (
+                    supersededNotification &&
+                    isWatchDisplayEnabled() &&
+                    !watchHistoryRefreshPending &&
+                    watchHistoryNotifySeq === readNotifySeq &&
+                    watchHistoryVersion === readVersion
+                ) {
+                    pendingWatchHistoryRaw = supersededNotification.raw;
+                    flushPendingWatchHistoryStorageChange({ deferWhenVisible: true });
+                }
             })
             .finally(() => {
                 watchHistoryLoading = false;
+                const pending = watchHistoryRefreshPending;
+                watchHistoryRefreshPending = null;
+                if (pending) refreshWatchHistory(pending);
             });
     }
 
@@ -1129,7 +1169,17 @@ ${CALENDAR_LEVELS.map(
         scheduleWatchHistoryRerender({ deferWhenVisible });
     }
 
+    function takePendingWatchHistoryStorageChange() {
+        if (!watchHistoryNormalizeTimer) return null;
+        window.clearTimeout(watchHistoryNormalizeTimer);
+        watchHistoryNormalizeTimer = 0;
+        const raw = pendingWatchHistoryRaw;
+        pendingWatchHistoryRaw = null;
+        return { raw };
+    }
+
     function scheduleWatchHistoryStorageChange(raw) {
+        watchHistoryNotifySeq++;
         pendingWatchHistoryRaw = raw;
         if (watchHistoryNormalizeTimer) window.clearTimeout(watchHistoryNormalizeTimer);
         watchHistoryNormalizeTimer = window.setTimeout(() => {
@@ -1307,7 +1357,10 @@ ${CALENDAR_LEVELS.map(
         cacheMonthInfo(channelId, stats.month, stats.fetchedAt);
 
         if (!isCalendarEnabled()) {
-            if (stats.replayCount <= 0 || stats.totalSeconds <= 0) {
+            // Only a complete empty window falls back to the month summary. A zero lower bound (replays left out
+            // because their details failed) keeps the recent window's label and its "+" mark instead of
+            // presenting the month, which has another denominator, as if it were the confirmed result.
+            if (stats.complete !== false && (stats.replayCount <= 0 || stats.totalSeconds <= 0)) {
                 updateWidgetMonthSummary(widget, stats.month, "empty");
                 return;
             }
@@ -1947,13 +2000,13 @@ ${CALENDAR_LEVELS.map(
         pendingWatchHistoryRaw = null;
     }
 
-    function installRuntime() {
+    function installRuntime({ rerenderWatchHistory = false } = {}) {
         if (runtimeInstalled) return;
         runtimeInstalled = true;
         installRouteListeners();
         installStorageListener();
         startObserver();
-        refreshWatchHistory({ rerender: false });
+        refreshWatchHistory({ rerender: rerenderWatchHistory });
         schedule();
     }
 
@@ -1971,6 +2024,9 @@ ${CALENDAR_LEVELS.map(
     function applyOptions(options) {
         const prev = featureOptions;
         featureOptions = options;
+        // Changes are ignored while the display is off, so a notification still waiting from before is no longer
+        // known to be the newest state; the read when the display turns back on replaces it.
+        if (isWatchDisplayEnabled(prev) && !isWatchDisplayEnabled()) takePendingWatchHistoryStorageChange();
         if (
             prev.monthlyBroadcastTimeWindowDays !== options.monthlyBroadcastTimeWindowDays ||
             prev.monthlyBroadcastTimeMaxPages !== options.monthlyBroadcastTimeMaxPages ||
@@ -1991,15 +2047,13 @@ ${CALENDAR_LEVELS.map(
             return;
         }
 
-        installRuntime();
-
         // 꺼져 있는 동안의 storage 변경은 무시되므로, 켜질 때 시청 기록을 새로 읽는다.
-        if (
-            prev.monthlyBroadcastTimeWatchEnabled !== options.monthlyBroadcastTimeWatchEnabled &&
-            isWatchDisplayEnabled()
-        ) {
-            refreshWatchHistory({ rerender: true });
-        }
+        // 기능·달력·내 시청 중 어느 옵션으로 꺼졌든 표시가 다시 켜지는 전환이면 같은 기준이에요.
+        // 위젯이 옛 값으로 먼저 그려질 수 있으므로 읽은 뒤 다시 그려요.
+        const watchDisplayTurnedOn = !isWatchDisplayEnabled(prev) && isWatchDisplayEnabled();
+        const wasInstalled = runtimeInstalled;
+        installRuntime({ rerenderWatchHistory: watchDisplayTurnedOn });
+        if (wasInstalled && watchDisplayTurnedOn) refreshWatchHistory({ rerender: true });
 
         if (!isChannelRoute()) {
             removeWidgetIfMounted();

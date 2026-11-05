@@ -498,6 +498,22 @@ test("legacy session startedAt, endedAt and lastWatchedAt are projected to canon
     }
 });
 
+test("a channel record that still carries a liveId exports without it instead of failing every record", () => {
+    const { api, store } = load();
+    const history = plain(storedHistory(store));
+    const live = history.entries["live:100"];
+    const channelId = "channel:channel-a:2026-09-28";
+    history.entries[channelId] = { ...live, id: channelId, liveId: "stale-live", activities: [], activityDaily: {} };
+    const exported = api.createBackup(history, { extensionVersion: "1.4.7", now: NOW, createdAt: NOW });
+    const row = exported.records.find((record) => record.id === channelId);
+    assert.equal(row.liveId, "");
+    assert.equal(exported.records.length, 2);
+    // Files still may not pair a channel record with a broadcast.
+    const forged = plain(exported);
+    forged.records.find((record) => record.id === channelId).liveId = "stale-live";
+    rejects(api, forged);
+});
+
 test("session daily totals reject large contradictions while respecting the collector floor and per-day round bound", () => {
     const { api, backup } = backupFixture();
     backup.records[0].watch.dailySeconds[DAY] = 120;

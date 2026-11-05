@@ -119,6 +119,8 @@
     const MAX_WRITE_ATTEMPTS = 3;
     const MENU_WIDTH = 208;
     const PICKER_WIDTH = 300;
+    // 메뉴·채널 선택 창·안내의 기본 층이에요. 머리글(10000)·사이드바(9999) 위, 치지직 모달·페이지 PiP(20000) 아래예요.
+    const FLOATING_Z_INDEX = 10020;
     const DEFAULT_FOLDER_NAME = "새 폴더";
     const REFRESH_BUTTON_SELECTOR = 'button[aria-label], [role="button"][aria-label]';
     const REFRESH_LABEL_RE = /새로고침|refresh/i;
@@ -313,7 +315,7 @@ ${ORDER_RULES}
 #sidebar [${STATUS_ATTR}] button{min-height:28px;margin:0;padding:0 12px;border:0;border-radius:${RADIUS_SM};background:${FIELD};color:${TEXT};font:inherit;font-weight:600;cursor:pointer}
 #sidebar [${STATUS_ATTR}] button:focus-visible{outline:2px solid ${FOCUS};outline-offset:2px}
 #sidebar [${STATUS_ATTR}] button[data-armed]{color:${DANGER};background-color:transparent;box-shadow:inset 0 0 0 1px ${DANGER}}
-#${LAYER_ID},#${TOAST_ID}{position:fixed;z-index:10020;box-sizing:border-box;border-radius:${RADIUS_LG};background-color:${SURFACE};box-shadow:${SHADOW},0 0 0 1px ${LINE};color:${TEXT};font-family:var(--bct-font);font-size:13px;line-height:1.5;text-align:start}
+#${LAYER_ID},#${TOAST_ID}{position:fixed;z-index:${FLOATING_Z_INDEX};box-sizing:border-box;border-radius:${RADIUS_LG};background-color:${SURFACE};box-shadow:${SHADOW},0 0 0 1px ${LINE};color:${TEXT};font-family:var(--bct-font);font-size:13px;line-height:1.5;text-align:start}
 #${LAYER_ID} *,#${TOAST_ID} *{box-sizing:border-box}
 #${LAYER_ID} :is(h2,h3,p,ul,ol){margin:0;padding:0}
 #${LAYER_ID} button{display:flex;align-items:center;gap:10px;margin:0;border:0;background:transparent;color:inherit;font:inherit;text-align:start;cursor:pointer}
@@ -402,7 +404,15 @@ ${ORDER_RULES}
     let viewState = cloneState(EMPTY_STATE);
     // 마지막으로 확인한 저장 원본값이다. 쓰기의 기대값으로 그대로 보내므로 수정하지 않는다.
     let lastRawValue;
+    // 읽기 응답이 storage.onChanged보다 오래됐는지 가르는 번호예요. 모든 변경 알림에서 올려요.
     let changeEpoch = 0;
+    // 저장 응답 뒤 확인한 값이 바뀌었는지 가르는 번호예요. 확인한 값과 같아 반영하지 않은 알림에서는 올리지 않아요.
+    let appliedChangeEpoch = 0;
+    // 읽기를 보낸 뒤 확인한 값을 바꿀 수 있는 일이 있었는지 가르는 번호예요. 변경 알림, 내 저장의 성공·conflict 응답,
+    // 확인한 값의 반영마다 올려요. 그 사이 값이 앞서 나갔을 수 있으므로 번호가 바뀐 읽기 결과는 쓰지 않고 다시 읽어요.
+    let confirmSeq = 0;
+    // 가장 최근에 보낸 확인 읽기 번호예요. 더 늦게 보낸 확인 읽기가 있으면 앞선 읽기의 결과는 쓰지 않아요.
+    let verifyToken = 0;
     let folderOfChannel = new Map();
     let folderPosition = new Map();
     let viewFolderOf = new Map();
@@ -710,6 +720,7 @@ ${ORDER_RULES}
     }
 
     function applyStoredValue(rawValue) {
+        confirmSeq += 1;
         lastRawValue = rawValue;
         const parsed = parseStoredValue(rawValue);
         if (parsed.ok) setFolderState(parsed.state, "ready");
@@ -722,6 +733,7 @@ ${ORDER_RULES}
     function loadFolderState() {
         const generation = foldersGeneration;
         const epoch = changeEpoch;
+        const seq = confirmSeq;
         if (stateStatus !== "ready" && stateStatus !== "corrupt") {
             stateStatus = "loading";
             renderLayer();
@@ -730,6 +742,11 @@ ${ORDER_RULES}
             (rawValue) => {
                 // storage.onChanged가 먼저 도착했다면 그 값이 더 최신이다.
                 if (!foldersActive || generation !== foldersGeneration || epoch !== changeEpoch) return;
+                // 그사이 내 저장 응답이 확인한 값을 앞당겼으면 이 결과가 그보다 오래됐을 수 있어 다시 읽어요.
+                if (seq !== confirmSeq) {
+                    loadFolderState();
+                    return;
+                }
                 applyStoredValue(rawValue);
             },
             (error) => {
@@ -744,16 +761,62 @@ ${ORDER_RULES}
         );
     }
 
-    function handleStoredChange(newValue) {
-        if (!foldersActive) return;
-        changeEpoch += 1;
+    function applyChangedValue(rawValue, parsed) {
+        appliedChangeEpoch += 1;
         // Chrome은 내 저장의 storage.onChanged를 저장 응답보다 먼저 줄 수 있어요. 지금 쓰는 값과 같으면 확인한 값에
         // 그 명령이 이미 들어 있으므로, 응답을 기다리지 않고 빼야 순서 이동 같은 명령을 두 번 얹지 않아요.
-        const parsed = parseStoredValue(newValue);
         const landed =
             parsed.ok && optimistic.find((entry) => entry.writing && statesEqual(entry.writing, parsed.state));
         if (landed) removeOptimistic(landed);
-        applyStoredValue(newValue);
+        applyStoredValue(rawValue);
+    }
+
+    // 지금 저장값을 읽어 확인한 값과 다르면 반영해요. 읽기를 보낸 뒤 알림·저장 응답·반영으로 확인한 값이 바뀔 수 있었다면
+    // 이 결과는 그보다 오래됐을 수 있어 쓰지 않고 다시 읽어요. 더 늦게 보낸 확인 읽기가 있으면 그 결과만 써요.
+    // 같으면 그대로 둬서 저장 중인 명령을 흔들지 않아요. 읽기에 실패하면 마지막 상태를 유지해요.
+    function verifyStoredValue() {
+        const generation = foldersGeneration;
+        const token = (verifyToken += 1);
+        const seq = confirmSeq;
+        const isLatest = () => isCurrentGeneration(generation) && token === verifyToken;
+        folderStore.read().then(
+            (rawValue) => {
+                if (!isLatest()) return;
+                if (seq !== confirmSeq) {
+                    verifyStoredValue();
+                    return;
+                }
+                const parsed = parseStoredValue(rawValue);
+                if (parsed.ok && stateStatus === "ready" && statesEqual(confirmedState, parsed.state)) return;
+                applyChangedValue(rawValue, parsed);
+            },
+            (error) => {
+                if (!isLatest()) return;
+                if (seq !== confirmSeq) {
+                    verifyStoredValue();
+                    return;
+                }
+                console.warn("[Cheese Spanner] 팔로잉 폴더 정보 확인 읽기 실패", error);
+            }
+        );
+    }
+
+    // 알림은 저장값이 바뀌었다는 신호로만 써요. 같은 값은 여러 저장에서 나올 수 있고 내 저장의 응답과 알림은 따로 와서,
+    // 알림의 값만으로는 그것이 지금 값인지, 이미 확인한 값보다 앞선 지난 전이인지 알 수 없어요. 그래서 확인한 값이 있으면
+    // 알림 값이 그와 같을 때는 그대로 두고, 다르면 지금 저장값을 다시 읽어 그 값을 반영해요. 내 저장의 늦은 알림이나
+    // 다른 곳의 지난 알림은 이 읽기에서 확인한 값과 같아 화면·기대값·되돌리기를 바꾸지 않아요.
+    // 읽는 중·읽기 실패·손상 상태에는 지킬 확인 값과 되돌리기가 없어 알림 값을 바로 반영해요.
+    function handleStoredChange(newValue) {
+        if (!foldersActive) return;
+        changeEpoch += 1;
+        confirmSeq += 1;
+        const parsed = parseStoredValue(newValue);
+        if (stateStatus !== "ready") {
+            applyChangedValue(newValue, parsed);
+            return;
+        }
+        if (parsed.ok && statesEqual(confirmedState, parsed.state)) return;
+        verifyStoredValue();
     }
 
     function releaseBusy() {
@@ -793,7 +856,7 @@ ${ORDER_RULES}
         let rawValue = lastRawValue;
         for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
             if (!isCurrentGeneration(generation)) return { ok: false, error: "stopped" };
-            const epoch = changeEpoch;
+            const epoch = appliedChangeEpoch;
             const result = applyCommand(rawValue, command);
             if (!result.ok || !result.changed) return result;
             // 응답보다 먼저 온 storage.onChanged가 이 저장인지 알아볼 수 있게 쓰는 값을 표시해 둔다.
@@ -804,19 +867,23 @@ ${ORDER_RULES}
                 if (entry) entry.writing = null;
                 if (!isCurrentGeneration(generation)) return { ok: false, error: "stopped" };
                 if (error?.code !== "conflict") return { ok: false, error: error?.code || "write-failed" };
+                // conflict 응답은 비교 때의 저장값을 알려 줘요. 그 전에 보낸 읽기의 결과는 이보다 오래됐을 수 있어요.
+                confirmSeq += 1;
                 const latest = fromExpected(error.current?.[STORAGE_KEY]);
                 if (!latest.ok) return { ok: false, error: "write-conflict", reload: true };
                 rawValue = latest.rawValue;
                 // 그사이 storage.onChanged가 왔다면 그 값이 더 최신이므로 화면은 그 값을 유지한다.
-                if (epoch === changeEpoch) applyStoredValue(rawValue);
+                if (epoch === appliedChangeEpoch) applyStoredValue(rawValue);
                 if (command.type === "restore") return { ok: false, error: "undo-conflict" };
                 continue;
             }
             if (entry) entry.writing = null;
             if (!isCurrentGeneration(generation)) return { ok: false, error: "stopped" };
+            // 저장이 끝났으니 그 전에 보낸 읽기의 결과는 이 값보다 오래됐을 수 있어요.
+            confirmSeq += 1;
             // 확인된 값에는 이 명령이 이미 들어 있으므로 먼저 빼야 같은 명령을 두 번 얹지 않는다.
             const removed = removeOptimistic(entry);
-            if (epoch === changeEpoch) applyStoredValue(cloneState(result.state));
+            if (epoch === appliedChangeEpoch) applyStoredValue(cloneState(result.state));
             // 그사이 storage.onChanged가 화면에 둔 최신 값은 유지하되, 뺀 명령이 판단·화면에 남지 않게 다시 만든다.
             else if (removed) rebuildStates({ animate: true });
             return { ...result, previous: rawValue };
@@ -1543,7 +1610,15 @@ ${ORDER_RULES}
         if (!folder || !presentationActive) return;
         closeLayer(false);
         clearClickTimer();
-        renaming = { folderId, draft: folder.name, error: "", pending: false, select, focus: true };
+        renaming = {
+            folderId,
+            draft: folder.name,
+            original: folder.name,
+            error: "",
+            pending: false,
+            select,
+            focus: true,
+        };
         syncPresentation();
     }
 
@@ -1559,11 +1634,18 @@ ${ORDER_RULES}
         renaming.select = false;
     }
 
+    // 저장 응답을 기다리는 동안 사용자가 다른 곳(채팅 입력칸 등)으로 옮긴 초점은 빼앗지 않아요.
+    function focusStillOnRename(input) {
+        const active = document.activeElement;
+        return !active || active === document.body || (input instanceof Element && input.contains(active));
+    }
+
     function finishRename(focusName) {
         const folderId = renaming?.folderId;
+        const canFocus = focusName && focusStillOnRename(currentRenameInput());
         renaming = null;
         syncPresentation();
-        if (!focusName || !folderId) return;
+        if (!canFocus || !folderId) return;
         currentList
             ?.querySelector(`[${HEADER_ATTR}][data-bcff-folder-id="${folderId}"] > .bcff-name`)
             ?.focus({ preventScroll: true });
@@ -1587,7 +1669,7 @@ ${ORDER_RULES}
         const input = currentRenameInput();
         const hint = input?.nextElementSibling;
         if (input && hint) syncRenameHint(input, hint);
-        input?.focus({ preventScroll: true });
+        if (focusStillOnRename(input)) input?.focus({ preventScroll: true });
     }
 
     function submitRename({ fromBlur = false } = {}) {
@@ -1598,7 +1680,8 @@ ${ORDER_RULES}
             return;
         }
         const name = normalizeFolderName(renaming.draft);
-        if (!name || name === folder.name) {
+        // 입력칸을 연 뒤 다른 탭·기기에서 이름이 바뀌었어도 사용자가 고치지 않은 이름은 그 변경을 되돌리지 않아요.
+        if (!name || name === folder.name || name === renaming.original) {
             // 초점이 떠나며 생긴 잘못된 이름은 조용히 원래 이름을 유지하고, Enter에는 바로 알린다.
             if (!name && !fromBlur) return showRenameError(ERROR_MESSAGES["invalid-name"]);
             cancelRename(!fromBlur);
@@ -1620,7 +1703,8 @@ ${ORDER_RULES}
                 onFailure: (result) => {
                     if (renaming?.folderId !== folderId) return false;
                     renaming.pending = false;
-                    if (fromBlur) {
+                    // 기다리는 동안 초점을 다른 곳으로 옮겼으면 초점이 떠난 경우처럼 원래 이름으로 닫고 안내로 알려요.
+                    if (fromBlur || !focusStillOnRename(currentRenameInput())) {
                         cancelRename(false);
                         return false;
                     }
@@ -1801,6 +1885,7 @@ ${ORDER_RULES}
     function clearDrag({ redraw = true } = {}) {
         const hadPreview = Boolean(preview || springFolderId);
         if (activeDrag?.row) removeAttr(activeDrag.row, SOURCE_ATTR);
+        if (activeDrag) unwatchDragSource(activeDrag.source);
         activeDrag = null;
         folderDrag = null;
         dragMotion = null;
@@ -1887,6 +1972,35 @@ ${ORDER_RULES}
 
     function handleDragEnd() {
         clearDrag();
+        // 끄는 동안 멈춘 자동 펼침을 이어 가요. 그사이 새로고침으로 잘린 목록은 행 변화가 없으면 다시 펼쳐지지 않아요.
+        scheduleSync();
+    }
+
+    // 끄는 도중 목록 새로고침으로 원본이 문서에서 빠지면 dragend가 window까지 오지 않아요(Chrome은 아예 보내지
+    // 않기도 해요). 분리된 원본에서도 받도록 원본에 직접 듣고, 오지 않으면 끌기가 끝난 뒤에만 생기는 포인터
+    // 입력(끄는 동안에는 포인터 이벤트가 오지 않아요)과 놓기에서 원본이 빠진 끌기를 정리해요.
+    function watchDragSource(source) {
+        source.addEventListener("dragend", handleSourceDragEnd);
+        window.addEventListener("pointermove", handleDetachedDragPointer, true);
+        window.addEventListener("pointerdown", handleDetachedDragPointer, true);
+    }
+
+    function unwatchDragSource(source) {
+        source?.removeEventListener("dragend", handleSourceDragEnd);
+        window.removeEventListener("pointermove", handleDetachedDragPointer, true);
+        window.removeEventListener("pointerdown", handleDetachedDragPointer, true);
+    }
+
+    function handleSourceDragEnd(event) {
+        if (activeDrag && activeDrag.source === event.currentTarget) handleDragEnd();
+    }
+
+    function dragSourceDetached() {
+        return Boolean(activeDrag && !activeDrag.source.isConnected);
+    }
+
+    function handleDetachedDragPointer() {
+        if (dragSourceDetached()) handleDragEnd();
     }
 
     function handleDragStart(event) {
@@ -1903,7 +2017,9 @@ ${ORDER_RULES}
         const name = row && info ? getRowName(row, info) : meta.channelId.slice(0, 8);
         // 링크 데이터와 effectAllowed는 바꾸지 않는다. 사이드바 밖에서는 기존 링크 드래그 그대로다.
         // 맨 아래 행을 끌기 시작하면 새 폴더 자리가 바로 커서 밑에 생겨요. 다른 곳을 지난 뒤에만 받아요.
+        const source = event.target;
         activeDrag = {
+            source,
             link,
             href,
             row,
@@ -1912,6 +2028,7 @@ ${ORDER_RULES}
             zoneReady: false,
             newFolder: { folderId: createFolderId(), name: uniqueFolderName() },
         };
+        watchDragSource(source);
         if (row) setAttr(row, SOURCE_ATTR, "1");
         setAttr(currentList, DRAGGING_ATTR, "1");
         const folderId = folderOfChannel.get(meta.channelId);
@@ -2065,9 +2182,17 @@ ${ORDER_RULES}
             return;
         }
         const drag = activeDrag;
-        if (!drag || !isInsideList(event.target)) return;
+        if (!drag) return;
+        // 원본이 빠진 끌기는 이 놓기 뒤 dragend가 오지 않을 수 있어 받지 않는 놓기에서도 정리해요.
+        if (!isInsideList(event.target)) {
+            if (dragSourceDetached()) handleDragEnd();
+            return;
+        }
         const key = resolveDropKey(channelCandidate(event), event);
-        if (!key || (key === NEW_DROP && !drag.zoneReady)) return;
+        if (!key || (key === NEW_DROP && !drag.zoneReady)) {
+            if (dragSourceDetached()) handleDragEnd();
+            return;
+        }
         if (!event.isTrusted) return;
         event.preventDefault();
         event.stopPropagation();
@@ -2140,7 +2265,43 @@ ${ORDER_RULES}
     }
 
     // ── 떠 있는 메뉴·채널 선택·상태 안내 ───────────────────────────────────────────────
-    function placeFloating(node, width, preferredHeight, anchorRect) {
+    // 2026-11-04 공개 CSS index-BBGwzDvs.css: 1199px 이하에서 펼친 사이드바(._is_expanded_*)는 z-index:20000
+    // 오버레이가 되고 :before가 화면 전체를 70% 검은 딤으로 덮어요. 기본 층(10020)이면 메뉴·안내가 딤 아래에
+    // 깔리므로, 사이드바가 그보다 위에 쌓인 동안에만 사이드바 바로 위 한 칸으로 올리고 평소에는 기본 층으로 둬요.
+    function stackAboveSidebar(node) {
+        const sidebar = getSidebar();
+        const sidebarZ = sidebar ? Number.parseInt(getComputedStyle(sidebar).zIndex, 10) : Number.NaN;
+        node.style.zIndex = Number.isFinite(sidebarZ) && sidebarZ >= FLOATING_Z_INDEX ? String(sidebarZ + 1) : "";
+    }
+
+    // 2026-11-04 공개 번들 index-BcgE118t.js·common-vendor: 딤이 켜진 사이드바는 document의 mousedown·touchstart로
+    // 사이드바 안쪽 밖을 누르면 닫혀요. body에 붙은 메뉴·안내는 사이드바가 연 부분이라 그 바깥 누름으로 넘기지 않아요.
+    function keepSidebarOpenOnPress(node) {
+        const stop = (event) => event.stopPropagation();
+        node.addEventListener("mousedown", stop);
+        node.addEventListener("touchstart", stop, { passive: true });
+    }
+
+    // 2026-11-04 공개 CSS index-BBGwzDvs.css: 페이지 안 PiP는 해시 클래스 ._container_*._type_pip_*로 fixed
+    // bottom:100px·right:100px·400x225(+위 46px)·z-index:20000이에요. 해시를 복제하지 않고 두 접두어로 찾아요.
+    function nativePipRect() {
+        for (const node of document.querySelectorAll('[class*="_container_"][class*="_type_pip_"]')) {
+            const rect = node.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) return rect;
+        }
+        return null;
+    }
+
+    function boxesOverlap(a, b, gap) {
+        return a.left < b.right + gap && a.right > b.left - gap && a.top < b.bottom + gap && a.bottom > b.top - gap;
+    }
+
+    // 2026-11-05: 앰비언트(2026-11-04 사용자 결정)와 같은 방향으로 떠 있는 네이티브 PiP를 덮지 않아요. 기본 층(10020)은 PiP
+    // 아래라 덮지 않으므로, 사이드바 위로 올린 층(PiP 20000보다 위)일 때만 PiP 위쪽이나 왼쪽으로 비켜요.
+    // 비킬 자리가 없으면 기본 층(PiP 아래)으로 돌아가요.
+    // shrinkTo가 있으면(채널 선택 창) 목록이 스크롤되므로 그 높이까지 줄여 PiP 위에 둘 수 있어요.
+    function placeFloating(node, width, preferredHeight, anchorRect, shrinkTo = 0) {
+        stackAboveSidebar(node);
         const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
         const viewportHeight = window.innerHeight;
         const sidebarRect = getSidebar()?.getBoundingClientRect() || anchorRect;
@@ -2152,18 +2313,32 @@ ${ORDER_RULES}
         }
         left = Math.max(8, Math.min(left, viewportWidth - boxWidth - 8));
         const height = Math.min(preferredHeight, Math.max(0, viewportHeight - 16));
-        const top = Math.max(8, Math.min((anchorRect?.top || 8) - 6, viewportHeight - 8 - height));
+        let top = Math.max(8, Math.min((anchorRect?.top || 8) - 6, viewportHeight - 8 - height));
+        let maxHeight = Math.max(0, viewportHeight - top - 8);
+        const pip = node.style.zIndex ? nativePipRect() : null;
+        const extent = shrinkTo ? maxHeight : height;
+        if (pip && boxesOverlap({ left, right: left + boxWidth, top, bottom: top + extent }, pip, 8)) {
+            const limit = pip.top - 8;
+            const aboveTop = Math.max(8, Math.min(top, limit - height));
+            const besideLeft = pip.left - 8 - boxWidth;
+            if (limit - aboveTop >= (shrinkTo ? Math.min(shrinkTo, height) : height)) {
+                top = aboveTop;
+                maxHeight = limit - aboveTop;
+            } else if (besideLeft >= 8) left = besideLeft;
+            else node.style.zIndex = "";
+        }
         node.style.width = `${boxWidth}px`;
         node.style.left = `${Math.round(left)}px`;
         node.style.top = `${Math.round(top)}px`;
-        node.style.maxHeight = `${Math.max(0, viewportHeight - top - 8)}px`;
+        node.style.maxHeight = `${Math.max(0, maxHeight)}px`;
     }
 
     function positionLayer() {
         if (!layer?.anchor?.isConnected) return;
         const rect = layer.anchor.getBoundingClientRect();
         const width = layer.kind === "picker" ? PICKER_WIDTH : MENU_WIDTH;
-        placeFloating(layer.node, width, layer.kind === "picker" ? 480 : layer.node.offsetHeight || 240, rect);
+        const picker = layer.kind === "picker";
+        placeFloating(layer.node, width, picker ? 480 : layer.node.offsetHeight || 240, rect, picker ? 240 : 0);
         positionToast();
     }
 
@@ -2172,6 +2347,7 @@ ${ORDER_RULES}
 
     function positionToast() {
         if (!toast) return;
+        stackAboveSidebar(toast);
         const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
         const sidebarRect = getSidebar()?.getBoundingClientRect();
         const width = Math.min(toast.offsetWidth || 280, viewportWidth - 16);
@@ -2194,7 +2370,25 @@ ${ORDER_RULES}
                 layerRect.right > left - TOAST_GAP;
             if (overlaps) left = sidebarOnRight ? layerRect.left - TOAST_GAP - width : layerRect.right + TOAST_GAP;
         }
-        toast.style.left = `${Math.round(Math.max(8, Math.min(left, viewportWidth - width - 8)))}px`;
+        left = Math.max(8, Math.min(left, viewportWidth - width - 8));
+        // 2026-11-05: 사이드바 위로 올린 안내도 페이지 PiP를 덮지 않아요. PiP 왼쪽으로 비키되 자리가 없거나
+        // 열린 메뉴와 겹치면 기본 층(PiP 아래)으로 돌아가요.
+        const pip = toast.style.zIndex ? nativePipRect() : null;
+        const toastBox = (x) => ({
+            left: x,
+            right: x + width,
+            top: window.innerHeight - TOAST_BOTTOM - height,
+            bottom: window.innerHeight - TOAST_BOTTOM,
+        });
+        if (pip && boxesOverlap(toastBox(left), pip, TOAST_GAP)) {
+            const besideLeft = pip.left - TOAST_GAP - width;
+            const layerRect = layer?.node.isConnected ? layer.node.getBoundingClientRect() : null;
+            const hitsLayer =
+                layerRect && layerRect.width > 0 && boxesOverlap(toastBox(besideLeft), layerRect, TOAST_GAP);
+            if (besideLeft >= 8 && !hitsLayer) left = besideLeft;
+            else toast.style.zIndex = "";
+        }
+        toast.style.left = `${Math.round(left)}px`;
         toast.style.bottom = `${TOAST_BOTTOM}px`;
     }
 
@@ -2245,6 +2439,7 @@ ${ORDER_RULES}
         node.addEventListener("keyup", (event) => {
             if (event.target instanceof HTMLInputElement) event.stopPropagation();
         });
+        keepSidebarOpenOnPress(node);
         document.body.append(node);
         window.addEventListener("resize", positionLayer);
         window.addEventListener("scroll", positionLayer, true);
@@ -2660,6 +2855,7 @@ ${ORDER_RULES}
         const bar = el("span", "bcff-toast-bar");
         bar.setAttribute("aria-hidden", "true");
         toast.append(bar);
+        keepSidebarOpenOnPress(toast);
         document.body.append(toast);
         positionToast();
         window.addEventListener("resize", positionToast);

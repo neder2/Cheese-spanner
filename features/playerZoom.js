@@ -28,6 +28,7 @@
     const VIDEO_STYLES = ["transform", "transform-origin", "clip-path", "transition", "will-change"];
     const MODIFIERS = ["ctrlKey", "metaKey", "altKey", "shiftKey"];
     const SHORTCUT_KEYS = { alt: "altKey", ctrl: "ctrlKey", shift: "shiftKey", meta: "metaKey" };
+    const SOURCE_EVENTS = ["emptied", "loadstart", "loadedmetadata"];
     let enabled = false;
     let mode = "manual";
     let shortcutKey = "alt";
@@ -37,8 +38,10 @@
     let removeRoute = null;
     let dragging = null;
     let suppressClick = false;
+    let carried = null;
 
     const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+    const routeKey = () => location.pathname.replace(/\/+$/, "");
     const active = () => state && (mode !== "manual" || state.manual);
     const current = () =>
         enabled && !suspended && isPlaybackRoute() && state?.video.isConnected && state.player.contains(state.video);
@@ -421,13 +424,30 @@
         resetZoom();
     }
 
+    function forgetCarried() {
+        if (!carried) return;
+        for (const name of SOURCE_EVENTS) carried.video.removeEventListener(name, forgetCarried);
+        carried = null;
+    }
+
+    // Chrome 155, 2026-11-05: in-page PiP keeps the same <video> (and player root) playing while the page leaves
+    // the playback route, and coming back remounts everything here. Keep the view for that round trip only: the
+    // same element, the same route, and no new source on the element in between.
+    function carryZoom() {
+        // Off the playback route nothing is mounted, and the view carried out of it waits for the return.
+        if (!state) return;
+        forgetCarried();
+        if (state.scale === 1 || !state.video.isConnected) return;
+        const { video, key, scale, x, y, width, height, manual } = state;
+        carried = { video, key, scale, x, y, width, height, manual };
+        for (const name of SOURCE_EVENTS) video.addEventListener(name, forgetCarried);
+    }
+
     function unmount() {
         if (!state) return;
         resetZoom();
         state.resize?.disconnect();
-        state.video.removeEventListener("emptied", onSourceChange);
-        state.video.removeEventListener("loadstart", onSourceChange);
-        state.video.removeEventListener("loadedmetadata", onSourceChange);
+        for (const name of SOURCE_EVENTS) state.video.removeEventListener(name, onSourceChange);
         state.toggle?.removeEventListener("click", onToggle);
         state.toggle?.remove();
         removePanel();
@@ -440,11 +460,16 @@
         const video = getMainVideoElement();
         const player = video && getPlayerRoot(video);
         if (!(video instanceof HTMLVideoElement) || !video.isConnected || !player?.contains(video)) return unmount();
+        let restored = null;
         if (state?.video !== video || state.player !== player) {
             unmount();
+            const key = routeKey();
+            if (carried?.video === video && carried.key === key) restored = carried;
+            forgetCarried();
             state = {
                 video,
                 player,
+                key,
                 manual: false,
                 scale: 1,
                 scrollBlockedUntil: 0,
@@ -454,15 +479,21 @@
                 height: 0,
                 saved: null,
             };
-            video.addEventListener("emptied", onSourceChange);
-            video.addEventListener("loadstart", onSourceChange);
-            video.addEventListener("loadedmetadata", onSourceChange);
+            if (restored) {
+                const { scale, x, y, width, height, manual } = restored;
+                Object.assign(state, { scale, x, y, width, height, manual: manual && mode === "manual" });
+            }
+            for (const name of SOURCE_EVENTS) video.addEventListener(name, onSourceChange);
             if (typeof ResizeObserver === "function") {
                 state.resize = new ResizeObserver(onResize);
                 state.resize.observe(video);
             }
         }
         mountControls();
+        if (restored) {
+            bounds();
+            render();
+        }
     }
 
     function stopPlayback() {
@@ -480,9 +511,20 @@
     }
 
     function routeChanged() {
+        carryZoom();
         stopPlayback();
         if (!enabled || suspended || !isPlaybackRoute()) return;
         // The panel follows the shared CHZZK theme; the toggle stays a native control-bar button over the video.
+        // Native hidden_ui hides every .pzp-pc overlay with `.hidden_ui .pzp-pc>:not(...)` (0,4,0), which the
+        // panel's ID rule beats, and the scroll mini player (.miniplayer, 353x198) also hides the right buttons
+        // that hold the toggle. While the player floats (hidden_ui, miniplayer, in-page .pip_mode) the panel
+        // steps aside in CSS and returns with the player. The zoom itself stays: it only transforms and clips
+        // the video inside its own box, and the resize observer rescales the pan for the smaller player, so
+        // the chosen view survives a scroll or mid-ad mini round trip. Basis: public CHZZK CSS/bundle, 2026-11-04.
+        // Chrome 155, 2026-11-05: the native controls leave by dropping .pzp-pc--controls from the player root, and
+        // the gear menu (.pzp-pc__settings, z-index 2) opens with .pzp-pc--setting under the z-index 50 panel. The
+        // panel leaves with the controls (unless it holds keyboard focus or a pressed pointer, like the toggle) and
+        // while the menu is open. A mouse press also focuses the range and reset button, so :focus-within would linger.
         CheeseSpanner.utils.ensureUiTheme?.();
         injectStyleOnce(
             `${ID}-style`,
@@ -502,6 +544,8 @@
 #${ID}-range::-webkit-slider-thumb { appearance:none; -webkit-appearance:none; width:10px; height:10px; margin-top:-4px; border:0; border-radius:50%; background:var(--bcz-fill); }
 #${ID}-toggle:focus-visible, #${ID}-reset:focus-visible, #${ID}-range:focus-visible { outline:2px solid var(--bct-focus-ring); outline-offset:2px; }
 #${ID}-toggle[hidden], #${ID}-panel[hidden] { display:none; }
+.chzzk_player:is(.hidden_ui, .miniplayer, .pip_mode) #${ID}-panel { display:none; }
+.pzp-pc:not(.pzp-pc--controls) > #${ID}-panel:not(:has(:focus-visible), :active), .pzp-pc.pzp-pc--setting > #${ID}-panel { display:none; }
 @media(prefers-reduced-motion:reduce) { #${ID}-reset { transition:none; } #${ID}-reset:active:not(:disabled) { scale:1; } }
 [data-bcz-pannable], [data-bcz-pannable] .pzp-pc__video, video[data-bcz-zoomed] { cursor:grab; }
 [data-bcz-dragging], [data-bcz-dragging] .pzp-pc__video, [data-bcz-dragging] video { cursor:grabbing; user-select:none; }
@@ -535,6 +579,7 @@
 
     function pageHide() {
         suspended = true;
+        forgetCarried();
         stopPlayback();
     }
 
@@ -550,6 +595,7 @@
             ? options.playerZoomShortcutKey
             : "alt";
         if (mode !== nextMode) {
+            forgetCarried();
             resetZoom();
             if (state) state.manual = false;
             mode = nextMode;
@@ -563,6 +609,7 @@
             window.addEventListener("pageshow", pageShow);
             routeChanged();
         } else {
+            forgetCarried();
             stopPlayback();
             suspended = false;
             removeRoute?.();

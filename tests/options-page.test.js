@@ -1191,6 +1191,33 @@ test("ad options save independently and wait for registration before reporting r
     assert.match(document.getElementById("adVideoStatus").textContent, /저장됐지만 적용 준비에 실패/);
 });
 
+test("an option changed elsewhere while the ad registration syncs survives the save", async (t) => {
+    const chrome = createFakeChrome({ sync: { adVideoEnabled: false, skipSeconds: 10 } });
+    let reply;
+    chrome.runtime.sendMessage = (_message, callback) => {
+        reply = callback;
+    };
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document } = dom.window;
+    const input = queryOption(document, "adVideoEnabled");
+    input.checked = true;
+    dispatch(dom, input, "change");
+    document.getElementById("save").click();
+    await waitForAsyncCallbacks();
+    assert.equal(typeof reply, "function");
+    // A Chzzk tab saves another option before the worker answers.
+    chrome.testState.sync.skipSeconds = 30;
+    for (const listener of chrome.testState.storageChangeListeners)
+        listener({ skipSeconds: { oldValue: 10, newValue: 30 } }, "sync");
+    reply({ ok: true, enabled: true });
+    assert.equal(queryOption(document, "skipSeconds").value, "30", "the form keeps the newer stored value");
+    assert.equal(document.getElementById("notice").dataset.state, "saved");
+});
+
 test("options reverts the preview toggle when the permission request is denied", async (t) => {
     const chrome = createFakeChrome({
         sync: { followingPreviewTooltipEnabled: false },
@@ -1215,6 +1242,38 @@ test("options reverts the preview toggle when the permission request is denied",
     assert.equal(previewToggle.checked, false, "거부되면 토글이 꺼진 상태로 돌아간다");
     assert.equal(chrome.testState.sync.followingPreviewTooltipEnabled, false);
     assert.equal(document.getElementById("message").dataset.type, "error");
+});
+
+test("denying only the video host permission keeps desktop notifications that are already allowed and saved", async (t) => {
+    const chrome = createFakeChrome({
+        sync: { followingPreviewTooltipEnabled: false, liveStartNotificationsEnabled: true },
+        permissionGranted: false,
+    });
+    // Notifications were granted earlier; the host permission is not.
+    chrome.permissions.contains = (spec, callback) =>
+        setTimeout(() => callback(Boolean(spec.permissions?.includes("notifications"))), 0);
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+
+    const { document } = dom.window;
+    const previewToggle = queryOption(document, "followingPreviewTooltipEnabled");
+    const notificationToggle = queryOption(document, "liveStartNotificationsEnabled");
+    assert.equal(notificationToggle.checked, true);
+    previewToggle.checked = true;
+    dispatch(dom, previewToggle, "change");
+    document.getElementById("save").click();
+    await waitForAsyncCallbacks();
+
+    assert.deepEqual([...chrome.testState.permissionRequests.at(-1).permissions], ["notifications"]);
+    assert.equal(previewToggle.checked, false, "the denied feature is turned off");
+    assert.equal(notificationToggle.checked, true, "the allowed, saved notifications stay on");
+    assert.equal(chrome.testState.sync.liveStartNotificationsEnabled, true);
+    assert.equal(document.getElementById("message").dataset.type, "error");
+    assert.doesNotMatch(document.getElementById("message").textContent, /데스크톱 알림을 끈/);
 });
 
 test("options page shows initial storage read failures without overwriting existing sync options", async (t) => {
@@ -1362,4 +1421,72 @@ test("experimental status is a badge with unchanged text that stays inside the s
         dispatch(dom, search, "input");
         assert.equal(input.closest(".search-miss"), null, query);
     }
+});
+
+test("the recording folder may be cleared, asks for downloads only when a new folder is saved, and offers the permission", async (t) => {
+    const chrome = createFakeChrome({ sync: { videoRecorderFolder: "" }, permissionGranted: false });
+    let held = false;
+    chrome.permissions.contains = (spec, callback) =>
+        setTimeout(() => callback(Boolean(spec.permissions?.includes("downloads")) && held), 0);
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+
+    const { document } = dom.window;
+    const folder = queryOption(document, "videoRecorderFolder");
+    const permissionButton = document.getElementById("videoRecorderPermission");
+    const status = document.getElementById("videoRecorderPermissionStatus");
+    const save = document.getElementById("save");
+    assert.equal(folder.value, "");
+    assert.equal(permissionButton.hidden, true);
+    assert.equal(status.textContent, "");
+
+    // A denied permission saves nothing and keeps the typed folder so it can be cleared or retried.
+    folder.value = " ../치지직 녹화 ";
+    dispatch(dom, folder, "input");
+    dispatch(dom, folder, "change");
+    assert.equal(folder.value, "치지직 녹화");
+    save.click();
+    await waitForAsyncCallbacks();
+    assert.deepEqual([...chrome.testState.permissionRequests.at(-1).permissions], ["downloads"]);
+    assert.equal(chrome.testState.sync.videoRecorderFolder, "");
+    assert.equal(folder.value, "치지직 녹화");
+    assert.match(document.getElementById("message").textContent, /다운로드 권한이 거부되어 저장하지 않았어요/);
+    await waitForCondition(() => !permissionButton.hidden);
+    assert.equal(status.textContent, "다운로드 권한이 없어 지금은 녹화 파일을 다운로드 폴더에 바로 저장해요.");
+
+    // The permission button grants it without saving anything else.
+    chrome.permissions.request = (spec, callback) => {
+        chrome.testState.permissionRequests.push(spec);
+        held = true;
+        callback(true);
+    };
+    permissionButton.click();
+    await waitForCondition(() => permissionButton.hidden);
+    assert.deepEqual([...chrome.testState.permissionRequests.at(-1).permissions], ["downloads"]);
+    assert.equal(status.textContent, "다운로드 폴더 안의 ‘치지직 녹화’ 폴더에 저장해요.");
+
+    const requests = chrome.testState.permissionRequests.length;
+    save.click();
+    await waitForCondition(() => chrome.testState.sync.videoRecorderFolder === "치지직 녹화");
+    assert.equal(chrome.testState.permissionRequests.length, requests + 1);
+
+    // Clearing the folder is a real value, not a blank field that falls back to the saved one.
+    folder.value = "";
+    dispatch(dom, folder, "input");
+    dispatch(dom, folder, "change");
+    save.click();
+    await waitForCondition(() => chrome.testState.sync.videoRecorderFolder === "");
+    assert.equal(chrome.testState.permissionRequests.length, requests + 1, "clearing asks for nothing");
+    assert.equal(status.textContent, "");
+    assert.equal(permissionButton.hidden, true);
+
+    // Turning the button off disables the folder controls.
+    const toggle = queryOption(document, "videoRecorderEnabled");
+    assert.equal(toggle.checked, true);
+    toggle.checked = false;
+    dispatch(dom, toggle, "change");
+    assert.equal(folder.disabled, true);
 });

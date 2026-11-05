@@ -1,5 +1,98 @@
 # 치즈 스패너 현재 상태
 
+## 2026-11-05 1.4.7 영상 녹화 (미커밋, 실제 Chrome 미확인)
+
+- 요청: 플레이어 오른쪽 아래 버튼 줄에 녹화 기능을 넣고, 저장 경로를 플레이어 톱니바퀴 메뉴와 옵션 페이지 양쪽에서 정하게 해 달라는 요청이에요. 사용자 결정: 경로는 Chrome 다운로드 폴더 안의 하위 폴더(선택 권한 `downloads`), 길이 제한 없음, MP4 우선·안 되면 WebM, 녹화 버튼 기본 켜짐.
+- 구현:
+    - `features/videoRecorder.js`(isolated): 버튼 줄 맨 앞 녹화 버튼(신뢰된 클릭만), `captureStream()`+`MediaRecorder`(1초 단위 조각, 해상도별 2.5~12Mbps), 경과 시간 배지, 멈출 때 blob 다운로드. 경로 변경·영상 교체·`emptied`/`loadstart`·트랙 종료·옵션 OFF·pagehide에서 그때까지의 녹화를 저장하고, 녹화 중 페이지를 떠나면 beforeunload 확인을 띄워요. 톱니바퀴 메뉴에 ‘녹화 저장 폴더’ 줄(입력·저장, 설정 저장 큐 경유).
+    - `shared/recordingDownloads.js`(워커): 콘텐츠가 알린 blob 주소 하나에만 `onDeterminingFilename`으로 `<폴더>/<파일>`을 제안해요. 폴더는 sync 옵션에서 다시 정규화해 읽어요.
+    - 설정: `videoRecorderEnabled`(기본 켜짐), `videoRecorderFolder`(kind `downloadFolder`, 기본 빈 값). `videoRecorderFolder`를 콘텐츠 쓰기 허용 키에 추가했어요. manifest `optional_permissions`에 `downloads`, 콘텐츠 스크립트에 `features/videoRecorder.js`를 넣었어요.
+    - 옵션: 플레이어 탭 ‘영상 녹화’ 묶음(토글·폴더 입력·권한 상태·**다운로드 권한 허용** 버튼). 새 폴더를 저장할 때 같은 클릭에서 `downloads`를 요청하고, 거부되면 아무것도 저장하지 않아요. 빈 폴더 값은 저장값으로 되돌리지 않고 그대로 저장해요(`data-allow-empty`).
+- 검증: `tests/video-recorder.test.js`(11건, 신규), `tests/options-page.test.js`의 녹화 폴더 1건, settings·settings-store·extension-pages·release-safety·options 계열·ambient·menu-navigation·player-buttons·stream-info·shortcut 계열 통과. 변경 파일 eslint·prettier 통과. `tests/player-zoom.test.js`의 “the panel leaves with the native controls…” 1건은 이 작업이 건드리지 않은 `playerZoom.js` 진행 중 변경에서 실패해요(이 테스트는 녹화 파일을 읽지 않아요). 전체 test:all은 아직 돌리지 않았어요.
+- 미확인: 실제 Chrome에서 치지직 라이브·다시보기의 `captureStream` 허용 여부(MSE·DRM·교차 출처), MP4 녹화 지원 버전, 콘텐츠 스크립트가 만든 blob 주소의 출처, 실제 다운로드·하위 폴더 저장·저장 창, 화질 변경 시 `loadstart` 발생 여부, 음소거·컴프레서 사용 중 녹음 여부. [남은 확인 사항](findings.md#2026-11-05-영상-녹화-실제-chrome-미확인)에 적었어요.
+
+## 2026-11-05 1.4.7 실제 Chrome 점검 실패 3건 수정 (미커밋)
+
+- 요청: [남은 확인 사항](findings.md#2026-11-05-떠-있는-플레이어-실제-chrome-점검-147-작업-트리)의 실제 Chrome 실패 3건을 모두 고쳐 달라는 요청("셋 다 고쳐줘")이에요.
+- 원인 실측: Chrome for Testing 155 임시 프로필(로그아웃)에 작업본을 올리고 실제 라이브·다시보기 16007949에서 쟀어요.
+    - 미니 플레이어: 미니·닫기 버튼·광고 미니의 `position:fixed; right:0` 기준은 화면이 아니라 라이브 화면 section(`._container_wj4te_1`)이에요. 치지직 드래그 훅이 PiP가 아닐 때도 이 section에 `transform: translate(0px, 0px)`를 넣어요. 오른쪽 사이드바에서는 section이 이미 사이드바 시작점에서 끝나는데, 이전 수정이 사이드바 폭만큼 더 옮겨 같은 폭의 빈틈이 생겼어요.
+    - 확대 패널: 조작부가 사라지면 플레이어 루트에서 `pzp-pc--controls`만 빠지고, 톱니바퀴 메뉴(`.pzp-pc__settings`, z-index 2)는 `pzp-pc--setting`으로 열려요. 확대 패널(z-index 50)은 두 상태를 보지 않았어요.
+    - PiP 복귀: 홈으로 가도 같은 video·플레이어 루트가 페이지 안 PiP에서 계속 재생되고, 돌아오면 같은 경로예요. 경로가 바뀔 때 확대를 초기화해서 100%가 됐어요.
+- 구현:
+    - `features/panelResize.js`: 떠 있는 미니 플레이어·닫기 버튼·광고 미니는 인라인 transform이 있는 조상 밖에 있을 때만 사이드바 예약 폭만큼 옮겨요. 일반 라이브 화면에서는 치지직 기본 위치를 그대로 써요. 간편 라이브 경로(`/live/{id}/simple`)의 section에는 transform이 없어 화면 끝이 기준이므로, 리뷰 지적에 따라 이 경우의 옮김을 남겼어요. 가로 화면의 `.is_large` 미니는 사이드바가 없는 상태에서만 나와 옮기지 않아요.
+    - `features/playerZoom.js`: 조작부가 사라지면(패널 안 키보드 초점·누르고 있는 포인터는 예외) 그리고 톱니바퀴 메뉴가 열린 동안 확대 패널을 숨겨요. 마우스로 슬라이더를 눌러도 초점이 남으므로 예외는 확대 버튼처럼 `:focus-visible`로만 둬요(리뷰 지적). 경로가 바뀔 때 확대 상태를 기억했다가, 같은 video 요소가 같은 경로로 돌아오면 배율·위치·확대 버튼 상태를 되살려요. 다른 경로로 마운트되거나 그 video에 새 소스(`emptied`·`loadstart`·`loadedmetadata`)가 들어오거나, 모드 변경·기능 끄기·페이지 숨김이 있으면 지워요.
+- 수정 후 실측(같은 환경): 오른쪽 사이드바 1450px(펼침 240)과 1090px(접힘 82)에서 미니 오른쪽 끝이 사이드바 시작점과 같았고(1210·1008) 실제 X 클릭으로 닫혔어요. 1090px에서 ☰로 펼쳤다 닫아도 위치가 같았어요. 라이브·다시보기 모두 조작부가 사라지거나 톱니바퀴 메뉴가 열리면 패널이 숨었다가 돌아왔어요. 마우스로 슬라이더를 끈 뒤에도 조작부와 함께 숨었고, 키보드로 슬라이더를 조작 중일 때는 남았어요. 간편 경로에서는 section에 transform이 없음을 확인했고, 미니 클래스를 직접 붙인 합성 확인에서 미니 오른쪽 끝이 사이드바 시작점(1210)에 맞았어요. 홈 PiP에서 뒤로 돌아오면 같은 video에 299% 확대가 그대로 다시 적용됐어요.
+- 치지직 기본 동작으로 둔 부분: 850px 창에서 미니 X가 화면 밖에 있는 것은 확장을 끈 치지직에서도 같았어요(본문 최소 너비 950px, 미니 오른쪽 끝 x950). 1199px 이하에서 ☰로 펼친 사이드바가 미니를 덮는 것은 왼쪽 사이드바의 기본 화면에서도 같은 위치가 `#sidebar` 층에 덮였어요.
+- 방법: 원인·수정 후 실측은 Claude가 Playwright로 Chrome for Testing을 직접 조작했어요. 수정 diff는 Claude 워크플로의 리뷰어 3명과 반박 검증(모두 Opus 5.5 high)을 거쳤고, 확인된 지적 2건(마우스 초점, 간편 경로)을 반영했어요. 원자료는 내부 기록 `2026-11-04-floating-player/data/nov5-fix/`에 있어요.
+- 검증: 새·수정 테스트 3개가 각각 이전 코드에서 실패하는 걸 확인했어요(미니 배치는 첫 수정 전·리뷰 전 두 버전 모두에서 실패). 전체 `node --test` 2,279개(동시 실행 2개), `lint`, 변경 파일 prettier가 통과했어요. 앞선 한 번의 전체 실행에서는 같은 작업 트리에서 동시에 진행되던 녹화 기능 작업의 설정 키 추가로 설정 테스트 4개가 실패했고, 이번 실행에서는 통과했어요.
+- 미확인: 입장·중간 광고 미니의 수정 후 위치(측정 중 광고가 먼저 끝났어요), 간편 경로의 실제 중간 광고 미니, 전체 화면 복귀 뒤 위치, 사용자 Chrome 화면은 다시 보지 못했어요.
+
+## 2026-11-05 1.4.7 광고 영상을 본영상으로 조작하던 문제 (미커밋)
+
+- 요청: 같은 유형 탐색에서 확인한 광고 문제를 고쳐 달라는 요청("광고 문제 고쳐줘")이에요. 광고 영상 차단을 끄거나 차단이 놓친 광고가 재생되는 경우예요.
+- 근거: 2026-11-05 공개 웹 번들 정적 분석이에요(실행하지 않음). 계약은 [연동 계약](../contracts.md#광고-판단소스일정-계약)에 적었어요. 네이티브 키 훅은 라이브 광고 중 Space/K를 광고 일시정지·재개로, M을 광고 음소거로 보내고, 광고 중 미디어 키 시크를 막아요.
+- 문제: 중간 광고 중 ←/→와 일시정지 상태의 `,` `.`가 광고 쪽 video를 시크했고, 재개 가드가 광고 video로 옮겨 가며 본방송의 일시정지 스냅샷·time-shift 상태를 지웠어요(`features/skipControl.js` 자체 선택). 입장 광고 중에는 Space 홀드·배속 키가 광고용 contentVideo에 걸려 네이티브 광고 일시정지를 막았어요(`content.js` 공용 선택).
+- 구현:
+    - `content.js`: 광고 영상 제외 목록을 `NATIVE_AD_MEDIA_SELECTOR`로 모으고 `#preAdPlayerWrapper`를 더했어요. 라이브 광고 구간 신호 `isNativeAdBreakActive`를 추가했어요.
+    - `features/skipControl.js`: 자체 본영상 선택을 지우고 공용 선택을 써요. 라이브 광고 구간과 VOD `pzp-pc--adbreak` 동안 ←/→·`,` `.`를 소비하지 않고 네이티브로 넘겨요. 광고 중 Space/K는 본방송 일시정지 의도로, 플레이어 밖 화살표는 시크 의도로 기록하지 않아요.
+    - `features/holdSpeed.js`·`features/screenShortcuts.js`: 라이브 광고 구간에 새 Space 누름·배속 키·M을 넘겨요. F/T는 기존대로예요.
+    - `features/streamInfo.js`: 공용 목록을 쓰고 프리롤 wrapper를 광고 구간으로 봐요. `features/autoQualityPage.js`(MAIN): 같은 목록 사본을 쓰고 광고 구간 Space/K를 사용자 재생 의도로 기록하지 않아요.
+- 방법: Claude 워크플로로 네이티브·저장소 조사 2개, 설계와 반박 검토(수정 1회), 구현, 리뷰 2명과 수정 1회를 돌렸어요(모두 Opus 5.5 high). 스트림 정보 테스트의 대역이 옛 선택 기준을 써서 실제와 다르게 통과하던 점은 직접 고쳤어요.
+- 검증: 새·보강 테스트 12개가 수정 전 코드에서 실패하는 걸 확인했어요. 관련 9개 파일 318개, 전체 `tests/*.test.js` 2,229개(동시 실행 2개), 변경 파일 lint·prettier가 통과했어요.
+- 결정: 광고 중 ←/→·배속 키를 확장이 처리하지 않고 치지직에 넘기는 동작을 사용자가 Claude 추천대로 유지하기로 했어요("너 추천으로"). [업무 규칙](../business-rules.md#재생과-화질)에 반영했어요.
+- 후속(사용자: "광고 중에도 적용하면 부담이 있나? 너 맘대로해"): 광고 중 적용은 화면에 보이는 광고 대신 숨은 본영상을 바꾸거나 네이티브 광고 조작을 막아서 넘기는 쪽으로 정했어요.
+    - `content.js`: `isLiveAdBreakActive`(라이브 wrapper)를 나누고 `isNativeAdBreakActive`에 다시보기 `pzp-pc--adbreak`를 더했어요. `features/skipControl.js`의 지역 VOD 판정은 공용 판정으로 합쳤어요. `features/autoQualityPage.js` MAIN 사본도 같게 맞췄어요.
+    - `features/screenShortcuts.js`: 광고 구간 Space·M과 라이브 광고 구간 F/T를 넘겨요. 다시보기 광고의 F/T는 광고를 포함한 플레이어에 그대로 적용해요.
+    - `shared/volumeControls.js`·`shared/volumeControlsPage.js`: 본영상 후보에서 광고 영상을 빼고 광고 구간 판정을 내보내요. `features/volumeWheelPage.js`는 볼륨 컨트롤 위에서 휠을 소비하려는 순간 광고 구간이면 넘겨요(리뷰 지적으로 판정을 스크롤마다 하지 않게 옮김).
+    - 검증: 새·수정 테스트 5개가 수정 전 코드에서 실패하는 걸 확인했어요. 리뷰어 2명(Opus 5.5 high)의 지적 2건(휠 판정 비용, MAIN 사본 다시보기 분기 테스트 누락)을 반영했어요. 전체 `tests/*.test.js` 2,232개(동시 실행 2개)와 변경 파일 lint·prettier가 통과했어요.
+- 남은 확인: 실제 Chrome의 라이브·다시보기 광고 화면에서 키·휠 동작은 확인하지 못했어요.
+
+## 2026-11-05 1.4.7 떠 있는 플레이어·딤 주변 가림 8건 (미커밋)
+
+- 요청: 앰비언트와 같은 유형의 버그를 찾아 달라는 요청에 이어, 화면이 가려지는 문제부터 고쳐 달라는 요청("가리는 문제부터")이에요. 앰비언트에서 정한 방향(떠 있는 미니 플레이어·PiP를 확장 화면이 덮지 않음)을 같은 유형에 적용했어요. 앰비언트 밖의 동작은 사용자가 따로 확정하지 않았어요.
+- 근거: 2026-11-04 공개 웹 번들 `index-BcgE118t.js`·`index-BBGwzDvs.css` 정적 분석이에요(실행하지 않음). 스크롤·중간 광고 미니 플레이어 `.chzzk_player.miniplayer`(fixed top:44px right:0 353×198, z-index 1000), 닫기 버튼(1002), 광고 미니 `.pre_ad_mini`·`.mid_ad_mini`(1001), 페이지 내 PiP `._container_*._type_pip_*`(20000), 1199px 이하 펼친 사이드바(20000, 70% 딤), 헤더(10000), 사이드바(9999)예요.
+- 구현:
+    - `features/liveMultiview/runtime.js`: `isolation:isolate`를 멀티뷰가 켜진 host(`[data-bcmv-host="active"]`)와 설정 패널에만 걸어요. 멀티뷰 옵션만 켠 대기 상태에서 미니 플레이어가 채팅에 가려지던 문제예요.
+    - `features/panelResize.js`: 사이드바가 오른쪽일 때 떠 있는 미니 플레이어·닫기 버튼(라이브 레이아웃 앞 형제, 입장 광고 미니 안)·광고 미니만 사이드바 예약 폭만큼 왼쪽으로 옮겨요. z-index는 그대로예요. (같은 날 실제 Chrome에서 일반 라이브 화면에 빈틈을 만든 것으로 확인되어, 위 3건 수정에서 transform 조상이 없는 경우로 좁혔어요.)
+    - `features/followingFolders.js`: 펼친 오버레이 사이드바가 메뉴 층보다 위면 메뉴·채널 선택 창·안내를 사이드바 바로 위 층으로 올리고, 이 층에서는 페이지 내 PiP를 위나 왼쪽으로 피해요. 자리가 없으면 기본 층(10020)으로 돌아가요. 메뉴를 눌러도 사이드바가 닫히지 않게 했어요.
+    - `features/liveStartRegistration.js`: 방송 알림 패널을 다른 확장 대화 상자와 같은 최상위 층(2147483646)으로 올려 PiP 아래에 깔리지 않아요.
+    - `features/followingTitleHistory.js`·`features/vodBroadcastClock.js`: 이전 방제 패널을 z-index 999로 내려 미니 플레이어·헤더·PiP 아래에 두고, 헤더 아래·사이드바 오른쪽 안에서만 배치해요. 버튼이 헤더 밑이나 화면 밖으로 나가면 패널을 닫아요.
+    - `features/updateGuide.js`: 플레이어가 미니 플레이어·PiP로 떠 있으면 새 기능 안내를 띄우지 않고(소비하지 않음), 표시 중이면 남은 시간을 멈춘 채 숨겼다가 돌아오면 다시 보여요. 플레이어 class 변경과 떠 있는 플레이어의 제거를 감시해요.
+    - `features/playerZoom.js`: `hidden_ui`·미니 플레이어·PiP 동안 확대 패널만 숨기고 확대 상태는 유지해요.
+- 방법: Claude 워크플로로 단위별 구현 에이전트 7개와 단위마다 리뷰어 2명(정확성·네이티브/의도)을 돌렸고, 지적이 있으면 한 번 고친 뒤 다시 리뷰했어요(모두 Opus 5.5 high). 남은 테스트 단언 1건과 주석 표현은 직접 고쳤어요.
+- 검증: 새 회귀 8개는 각 기능 파일을 이번 수정 전으로 되돌리면 실패하는 걸 확인했어요. 관련 10개 파일 365개 테스트, 변경 파일 lint·prettier가 통과했어요. 전체 `tests/*.test.js` 2,219개도 동시 실행 2개로 통과했어요.
+- 후속 수정(2026-11-05 실제 Chrome 확인 목록 검토 중 발견): 이전 방제 패널의 보이는 영역 계산이 `#sidebar`를 항상 왼쪽으로 가정해, 사이드바를 오른쪽에 두면 패널이 열리자마자 닫혔어요. 두 파일 모두 사이드바가 있는 쪽의 안쪽 가장자리까지를 보이는 영역으로 쓰도록 고쳤고, 회귀 2개가 수정 전 코드에서 실패하는 걸 확인했어요.
+- 남은 일: 실제 Chrome에서 위 화면을 보지 못했어요. 폴더 메뉴가 좁은 창에서 오른쪽 위 미니 플레이어를 피하는지, 멀티뷰가 켜진 채 중간 광고가 나올 때의 미니 플레이어, 미니 플레이어 위 휠 확대, 새 기능 안내 다시보기 창의 같은 처리는 이번에 바꾸지 않았어요.
+
+## 2026-11-04 1.4.7 스크롤 미니 플레이어 위 앰비언트 겹침 (미커밋)
+
+- 요청: 라이브에서 스크롤을 내리면 뜨는 미니 플레이어(PiP) 주변을 앰비언트가 덮어 이상하게 보인다는 보고예요("확인해봐").
+- 근거: 2026-11-04 공개 웹 번들 `index-BcgE118t.js`·`index-BBGwzDvs.css`를 정적 분석했어요(실행하지 않음). 스크롤을 내리면 `#live_player_layout.chzzk_player`에 `miniplayer`·`scroll_pip` 클래스가 붙고, `.miniplayer:not(.is_large)`(가로 화면은 `.is_large` 포함)는 `position:fixed; top:44px; right:0; 353×198; z-index:1000`이에요. 앰비언트 레이어는 `z-index:10000`이라 미니 플레이어를 따라가 채팅·헤더 오른쪽 위를 미니 플레이어보다 위 층에서 덮었어요. 페이지 내 PiP는 `.pip_mode`(컨테이너 `z-index:20000`)예요.
+- 구현: `features/ambientGlow.js`의 `updateLayout`이 플레이어가 `.chzzk_player:is(.miniplayer, .pip_mode)` 안에 있으면 멀티뷰처럼 레이어를 숨기고 샘플링을 멈춰요. 미니 플레이어로 들어가고 나올 때 플레이어 크기가 바뀌므로 기존 ResizeObserver·스크롤 감지로 전환을 알아채요. 클래스 변경 감시는 늘리지 않았어요.
+- 검증: `tests/ambient-glow.test.js`에 회귀 1개를 추가했고, 런타임 변경을 빼면 이 회귀만 실패하는 걸 확인했어요. ambient-glow 17개, player-settings-menu-navigation 2개가 통과했고 변경 파일의 lint·prettier도 통과했어요. 설정·저장·권한·로딩 경계를 바꾸지 않아 전체 검증은 하지 않았어요.
+- 미확인: 실제 Chrome에서 미니 플레이어 진입·복귀 때 번짐이 사라지고 다시 나타나는지, 세로 창의 `.is_large` 미니 플레이어 모양은 보지 못했어요.
+- 결정: 사용자가 미니 플레이어·PiP에서는 번짐을 숨기는 방식을 유지하기로 했어요("숨김으로 유지"). [업무 규칙](../business-rules.md#앰비언트-효과)에 반영했어요.
+
+## 2026-11-04 1.4.7 좁힌 채팅의 사용자 프로필 팝업 닫기 버튼 (미커밋)
+
+- 요청: 채팅 너비를 줄이면 사용자를 눌렀을 때 뜨는 팝업의 X 버튼이 보이지 않아 닫을 수 없다는 보고예요. 사용자가 제안한 방안의 구현을 승인했어요("네, 구현해 줘").
+- 근거: 2026-11-01 공개 웹 번들 `index-BcgE118t.js`·`index-BBGwzDvs.css`를 정적 분석했어요(실행하지 않음). 프로필 팝업(`role="alertdialog"` 레이어)은 채팅 안에 그려지고 기본 채팅 353px에 맞춘 `width:333px`이에요. 아래쪽 메시지에서는 `left:10px`, 그 밖에는 `position:fixed; right:10px`예요. 닫기 버튼은 팝업 오른쪽 위(`top:6px; right:6px`)에 있어요. 그래서 오른쪽 채팅을 좁힌 뒤 아래쪽 메시지를 누르면 팝업 오른쪽이 화면 밖으로 나가요. 계산상 채팅 너비가 337px 미만이면 버튼 일부가, 313px 이하이면 전부가 가려져요. 모달은 `body`로 포털되고, 치지직 팝업 채팅은 이 팝업을 `width:auto`로 줄여요.
+- 구현: `features/panelResize.js`의 너비 조절 스타일에 `aside[data-bcpr-width="chat"] [role="alertdialog"] { max-width: calc(var(--bcpr-width) - 20px) }`를 더했어요. 너비를 직접 바꾼 채팅(라이브·VOD)에서만 적용되고, 기본·넓힌 너비에서는 333px 그대로예요. 원본 노드·인라인 스타일은 바꾸지 않아요.
+- 검증: `tests/panel-resize.test.js`에 회귀 1개를 추가했어요. 240px로 좁히면 채팅 안 레이어에만 규칙이 적용되고 `body`의 모달과 기본 너비에는 적용되지 않으며, 되돌리면 규칙이 풀리는지 확인해요. panel-resize 50개, panel-resize-model·extension-pages 179개가 통과했고 변경 파일의 lint·prettier도 통과했어요. 설정·저장·권한·로딩 경계를 바꾸지 않아 전체 검증은 하지 않았어요.
+- 미확인: 실제 Chrome에서 좁힌 채팅(최소 240px, 팝업 220px)의 팝업 표시·메뉴·탭 줄바꿈과 X 버튼 동작은 보지 못했어요. 왼쪽 채팅에서 위쪽 메시지를 누르면 팝업이 CSS상 창 오른쪽 끝(`right:10px`)에 뜨는 별개 동작은 이번에 바꾸지 않았어요. 이때 X 버튼은 보여요.
+
+## 2026-10-30 1.4.7 라이브 블라인드 원문 복구 재구현 (미커밋)
+
+- 요청: 1.4.6에서 소스가 없어 빠진 블라인드 원문 복구를 고쳐 달라는 요청("고쳐줘")이에요. branch `1.4.7`의 기존 미커밋 변경은 건드리지 않았어요.
+- 근거: 2026-10-30 공개 웹 번들 `index-BcgE118t.js`를 정적 분석했어요(실행하지 않음). 채팅 메시지 객체에는 `status`(`NORMAL`·`BLIND`·`CBOTBLIND`·`HIDDEN` 등), 서버 원문 `originalContent`, 표시용 HTML `content`가 있어요. 사후 블라인드(`notiBlindListener`)는 `{...message, status}`로 바꿔 원문을 유지해요. 클린봇 감지 메시지는 사용자의 클린봇 설정이 켜져 있을 때만 안내 문구로 그려요. 화면 문구는 `메시지가 블라인드 처리되었습니다.`·`클린봇이 부적절한 표현을 감지했습니다.`예요.
+- 구현:
+    - `features/chatTimestampPage.js`(MAIN): `cheese-spanner:chat-blind-source-request`를 받으면, 라이브·VOD 채팅 log 안의 message container에서 가장 가까운 `chatMessage` 한 개를 찾아요. 그 `status`가 NORMAL이 아니면 문자열 `originalContent`(앞뒤 공백 제거, 최대 2,000자)를 `data-bcct-source-original`에 넣고, 아니면 지워요.
+    - `features/chatTools/parser.js`: `readPageOriginalText`가 안내 문구 요소의 container에서 요청 전후로 속성을 지우고 값을 읽어요. 이 응답 속성은 DOM 원문 후보에서 빼요.
+    - `features/chatTools.js`: 안내 문구 요소를 확인한 뒤 페이지 원문 → DOM 원문 → 정체성이 일치하는 캐시 순서로 써요. MAIN ready 이벤트가 오면 전체를 다시 파싱해요.
+    - manifest·권한·저장·옵션 변화는 없어요. 이모티콘은 원문의 `{:코드:}` 그대로 보여요.
+- 검증: 새 `tests/chat-blind-source.test.js` 10개를 추가했고, 런타임 변경을 빼면 이 중 6개가 실패하는 걸 확인했어요. chat-tools·chat-tools-modules·chat-timestamp·vod-own-chat·watch-activity·release-safety·extension-pages를 함께 돌려 290개가 통과했고, 변경 파일의 lint·prettier도 통과했어요.
+- 미확인: 실제 Chrome에서 클린봇 즉시 차단·사후 블라인드·관리자 숨김 이벤트를 보지 못했어요. 서버가 원문을 비워 보내는 경우(예: 입장 전 이미 블라인드된 최근 채팅)는 복구되지 않을 수 있어요. 커밋·업데이트 내역·안내 자료는 요청받지 않아 바꾸지 않았어요.
+
 ## 2026-10-28 1.4.6 공개 (커밋·태그·GitHub Release)
 
 - 요청: 사용자가 1.4.6 공개를 승인했어요("공개 진행"). 범위는 Claude가 제안한 커밋·push·태그 `v1.4.6`·GitHub Release(최종 ZIP 첨부)예요.

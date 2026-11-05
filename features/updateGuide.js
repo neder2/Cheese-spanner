@@ -18,6 +18,13 @@
     if (!runtime || !settings || !ns.utils?.startPageChangeDetection) return;
     const guide = catalog.getGuide(runtime.getManifest().version);
     const DISPLAY_DURATION_MS = 20000;
+    // Scrolling a live page down (and a mid ad) turns the player into the native scroll mini player
+    // (.chzzk_player.miniplayer: fixed 353x198 at the top right, z-index 1000), and in-page PiP floats it as
+    // .pip_mode. The notice uses the same top right corner above that layer, so it waits before consuming and a
+    // shown notice is parked with its remaining time held until the player returns. Basis: public CHZZK
+    // CSS/bundle, 2026-11-04. The switch only changes the player's class (no resize or new loadedmetadata),
+    // so that attribute is watched while a notice is pending or shown.
+    const FLOATING_PLAYER_SELECTOR = ".chzzk_player:is(.miniplayer, .pip_mode)";
     const clientId = globalThis.crypto.randomUUID();
     let stopped = false,
         suspended = false,
@@ -37,7 +44,10 @@
         started = 0,
         hovered = false;
     let tutorial = null,
-        waitForLayout = false;
+        waitForLayout = false,
+        parked = false,
+        playerObserver = null,
+        floatingSeen = false;
 
     function send(action, extra = {}) {
         return new Promise((resolve) => {
@@ -172,6 +182,50 @@
         toast?.remove();
         toastStyle?.remove();
         toast = toastStyle = null;
+        parked = false;
+        if (finished) playerObserver?.disconnect();
+    }
+    function playerFloating() {
+        return !!document.querySelector(FLOATING_PLAYER_SELECTOR);
+    }
+    function playerClassChanged() {
+        if (playerFloating() !== floatingSeen) layoutChanged();
+    }
+    function watchPlayers() {
+        playerObserver?.disconnect();
+        floatingSeen = playerFloating();
+        if (stopped || (finished && !toast) || typeof MutationObserver !== "function") return;
+        playerObserver ??= new MutationObserver(playerClassChanged);
+        const watched = new Map();
+        for (const player of document.querySelectorAll(".chzzk_player")) {
+            watched.set(player, { ...watched.get(player), attributes: true, attributeFilter: ["class"] });
+            // 2026-11-04 bundle: closing the in-page PiP unmounts its section instead of clearing the class,
+            // so only a floating player's ancestors are watched for its removal.
+            if (player.matches(FLOATING_PLAYER_SELECTOR))
+                for (let node = player.parentNode; node; node = node.parentNode)
+                    watched.set(node, { ...watched.get(node), childList: true });
+        }
+        // Repeated observe() calls on one node replace its options, so each node is observed once with merged options.
+        for (const [node, options] of watched) playerObserver.observe(node, options);
+    }
+    function setToastHidden(hidden) {
+        if (hidden) {
+            toast.style.visibility = "hidden";
+            toast.setAttribute("aria-hidden", "true");
+            toast.setAttribute("inert", "");
+        } else {
+            toast.style.removeProperty("visibility");
+            toast.removeAttribute("aria-hidden");
+            toast.removeAttribute("inert");
+        }
+    }
+    function parkToast() {
+        // Only a shown notice is parked; a staged one is still hidden and its attempt releases or parks it.
+        if (timedNotice !== toast || parked) return;
+        parked = true;
+        pauseTimer();
+        hovered = false;
+        setToastHidden(true);
     }
     function clearDelay() {
         if (delay) window.clearTimeout(delay);
@@ -216,14 +270,15 @@
         return true;
     }
     function showToast() {
-        if (!toast || !placeToast()) {
+        const floating = playerFloating();
+        if (!toast || (!floating && !placeToast())) {
             removeToast();
             return;
         }
-        toast.style.removeProperty("visibility");
-        toast.removeAttribute("aria-hidden");
-        toast.removeAttribute("inert");
+        // Committed while the player floats: the inert notice keeps its full time until the player returns.
+        if (!floating) setToastHidden(false);
         startCountdown(toast, removeToast);
+        parked = floating;
     }
     function prepareToast() {
         ns.utils.ensureUiTheme?.();
@@ -256,7 +311,7 @@
         return true;
     }
     function placeToast() {
-        if (!toast) return false;
+        if (!toast || playerFloating()) return false;
         const width = Math.min(views.WIDTH, window.innerWidth - 24);
         toast.style.width = `${width}px`;
         const measured = toast.getBoundingClientRect();
@@ -311,6 +366,7 @@
     async function attempt() {
         delay = 0;
         if (finished || inFlight || !eligible()) return;
+        watchPlayers();
         if (!prepareToast()) {
             waitForLayout = true;
             return;
@@ -364,7 +420,7 @@
     }
     function blurred() {
         cancelPending();
-        if (toast?.hasAttribute("inert")) removeToast();
+        if (toast?.hasAttribute("inert") && !parked) removeToast();
         else pauseTimer();
     }
     function focused() {
@@ -385,11 +441,18 @@
     }
     function layoutChanged() {
         waitForLayout = false;
-        if (toast && !placeToast()) {
+        if (toast && playerFloating()) parkToast();
+        else if (toast && !placeToast()) {
             waitForLayout = true;
             cancelPending();
             removeToast();
+        } else if (parked) {
+            parked = false;
+            setToastHidden(false);
+            hovered = toast.matches(":hover");
+            resumeTimer();
         }
+        watchPlayers();
         schedule();
     }
     function applyOptions(options) {
@@ -452,6 +515,7 @@
         stopped = true;
         cancelPending();
         removeToast();
+        playerObserver?.disconnect();
         removeTutorial();
         removeOptions();
         removeRoute();

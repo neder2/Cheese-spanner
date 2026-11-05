@@ -136,6 +136,36 @@
     margin-top: 6px;
 }
 
+.recorder-folder {
+    min-width: 0;
+    padding: 12px 0 8px;
+}
+
+.recorder-folder > label {
+    font-size: var(--options-text-body);
+    font-weight: 600;
+}
+
+.recorder-folder-field {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.recorder-folder-field .secondary-button {
+    width: auto;
+    min-height: 36px;
+    height: auto;
+    padding: 6px 14px;
+    flex-shrink: 0;
+    line-height: 1.4;
+}
+
+.recorder-folder-field [hidden] {
+    display: none;
+}
+
+.recorder-folder-field input,
 .live-start-add input {
     width: 0;
     min-width: 0;
@@ -150,6 +180,7 @@
 }
 
 .live-start-add input:focus-visible,
+.recorder-folder-field input:focus-visible,
 .live-start-list input:focus-visible {
     outline: 2px solid var(--focus-ring);
     outline-offset: 2px;

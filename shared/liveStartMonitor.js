@@ -129,6 +129,9 @@
                 if (active) {
                     await chrome.tabs.update(existing.id, { active: true });
                     await chrome.windows.update(existing.windowId, { focused: true });
+                } else if (existing.discarded) {
+                    // A discarded waiting tab shows nothing until it loads again; load it instead of a duplicate.
+                    await chrome.tabs.reload(existing.id);
                 }
                 return;
             }
@@ -139,6 +142,9 @@
     }
 
     async function checkChannels(config, token, baseline) {
+        // The 1 minute alarm is measured from when a check starts; storing the finish time would make a check that
+        // took over 5 s look recent to the next alarm and skip it.
+        const startedAt = Date.now();
         controller = new AbortController();
         const signal = controller.signal;
         const isCurrent = () => token === generation && !signal.aborted;
@@ -220,12 +226,11 @@
         try {
             await Promise.all([worker(), worker()]);
             if (!isCurrent()) return;
-            const checkedAt = Date.now();
-            await saveStatesOrReport(token, config, checkedAt);
+            await saveStatesOrReport(token, config, startedAt);
             if (!isCurrent()) return;
             await storageSet(chrome.storage.local, {
                 [STATUS_KEY]: {
-                    checkedAt,
+                    checkedAt: Date.now(),
                     error: failed
                         ? "일부 채널의 방송 확인·알림·탭 열기에 실패했어요. 네트워크와 알림 권한을 확인해 주세요."
                         : config.permissionMissing

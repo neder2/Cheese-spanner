@@ -660,7 +660,9 @@
 
         // 기본값이 이미 true여도 observer를 반드시 설치한다. startObserver는 멱등이다.
         startObserver();
-        startApiCollection();
+        // Unrelated sync options re-run this with the feature still on; the poll timer and route changes
+        // already schedule checks, so only an off→on transition triggers an immediate log-power check.
+        if (!apiPollTimer) startApiCollection();
     }
 
     bindFeatureOptions(applyOptions);

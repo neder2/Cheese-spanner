@@ -351,3 +351,26 @@ test("chat multiview embeds only the native chat popup route and never falls bac
     for (const invalid of ["A".repeat(32), "a".repeat(31), `${id}/../x`, "", null, `https://evil.example/${id}`])
         assert.equal(model.frameUrl(invalid), "", String(invalid));
 });
+
+test("native ad media selector copies stay identical across worlds", () => {
+    // content.js (isolated) and autoQualityPage.js (MAIN) each keep one literal; 2026-11-05 public bundle wrappers.
+    const readSource = (file) => fs.readFileSync(path.join(repoRoot, file), "utf8");
+    const extract = (file) => readSource(file).match(/const NATIVE_AD_MEDIA_SELECTOR =\s*(['"`])(.+?)\1;/s)?.[2];
+    const isolated = extract("content.js");
+    const main = extract(path.join("features", "autoQualityPage.js"));
+    assert.ok(isolated, "content.js defines the shared ad media selector");
+    assert.ok(main, "autoQualityPage.js defines its MAIN world copy");
+    assert.equal(main, isolated);
+    // The volume provider is loaded on its own in both worlds and keeps the same literal.
+    for (const file of [path.join("shared", "volumeControls.js"), path.join("shared", "volumeControlsPage.js")])
+        assert.equal(extract(file), isolated, `${file} keeps the same ad media selector`);
+    for (const selector of [
+        '[data-role="imaAdContainerEl"]',
+        '[data-role="gvAdContainerEl"]',
+        "#preAdPlayerWrapper",
+        "#midAdPlayerWrapper",
+    ])
+        assert.ok(isolated.includes(selector), selector);
+    for (const file of [path.join("features", "streamInfo.js"), path.join("features", "skipControl.js")])
+        assert.equal(readSource(file).includes("#midAdPlayerWrapper"), false, `${file} uses the shared selector`);
+});

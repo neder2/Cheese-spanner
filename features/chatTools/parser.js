@@ -2,6 +2,8 @@
  * isolated world. 의존: utils.normSpace, 현재 DOM과 computed style.
  * parseChatRow의 파싱 캐시는 호출 내에서만 사용하며 행 ID·수집 여부는 messageStore가 결정한다.
  * runtime·store·panel이 함께 쓰는 DOM 마커와 읽기 전용 DOM 판별 함수도 여기에서 공개한다.
+ * readPageOriginalText는 MAIN 브리지(features/chatTimestampPage.js)에 현재 메시지의 원문을 동기 요청하고
+ * 응답 속성을 바로 지운다. 이벤트: cheese-spanner:chat-blind-source-request, 속성: data-bcct-source-original.
  */
 (() => {
     "use strict";
@@ -28,6 +30,9 @@
     const CHAT_TIMESTAMP_VALUE_RE = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
     const PLACEHOLDER_TEXT = "[블라인드 메시지: 원문 없음]";
+    const PAGE_ORIGINAL_REQUEST_EVENT = "cheese-spanner:chat-blind-source-request";
+    const PAGE_ORIGINAL_ATTR = "data-bcct-source-original";
+    const MESSAGE_CONTAINER_SELECTOR = "[class*='chatting_message'], [class*='chat-message']";
 
     const ROLE_SCORE_THRESHOLD = 80;
 
@@ -91,11 +96,25 @@
 
     const CLIENT_TEXT_ATTR_RE = /message|content|text|body|comment|original/i;
 
+    // 본문 이모티콘 img는 텍스트 노드가 없어 텍스트만 모으면 사라진다(2026-10-30 실측: 본문 span > button > img,
+    // alt="" · title 없음, src는 ssl.pstatic.net/static/nng/glive/icon/<파일>.png). 종류·순서·개수를 남기도록
+    // 이름(alt/title) 또는 검증한 pstatic src의 파일 이름으로 토큰을 만든다. 파일 이름은 원문 코드({:이름:})가 아니다.
+    // 표시 토큰은 이름을 줄이므로 같은 파일 이름·같은 alt의 다른 이미지가 겹칠 수 있다. 정체성 비교에는 표시와 별개로
+    // alt·title·src 원래 값을 순서대로 담은 textKey를 쓴다(표시·저장에는 쓰지 않는다).
+    const BODY_IMAGE_TOKEN_PREFIX = "이모티콘";
+    const BODY_IMAGE_LABEL_MAX_LENGTH = 40;
+    const BODY_IMAGE_FILE_STEM_RE = /^[\w-]{1,64}$/;
+
     const HIDDEN_NON_MESSAGE_UI_RE =
         /profile|popover|tooltip|menu|toolbar|control|action|button|dialog|nickname|author|avatar|프로필|메뉴|도구|버튼/i;
 
     const HIDDEN_NON_MESSAGE_UI_SELECTOR =
         "button,a,input,textarea,select,option,[role='button'],[role='menu'],[role='menuitem'],[role='dialog'],[aria-haspopup]";
+
+    // MAIN 브리지 응답 속성은 요청 직후 지우지만, 남아 있더라도 DOM 원문 후보로 쓰지 않는다.
+    function isClientTextAttrName(name) {
+        return name !== PAGE_ORIGINAL_ATTR && CLIENT_TEXT_ATTR_RE.test(name);
+    }
 
     function isOwnUi(node) {
         const el = node instanceof Element ? node : node?.parentElement;
@@ -169,6 +188,7 @@
             hiddenCache: new WeakMap(),
             visibleTextCache: new WeakMap(),
             rawTextCache: new WeakMap(),
+            messageTextCache: new WeakMap(),
             treeAttrText: "",
             attributeTextCandidates: null,
             hiddenElements: null,
@@ -202,7 +222,7 @@
             if (!roleDecoration && !hiddenNonMessageUi) {
                 for (const attr of Array.from(el.attributes)) {
                     const name = attr.name.toLowerCase();
-                    if (!CLIENT_TEXT_ATTR_RE.test(name) && name !== "aria-label" && name !== "title") continue;
+                    if (!isClientTextAttrName(name) && name !== "aria-label" && name !== "title") continue;
                     if ((name === "aria-label" || name === "title") && !hidden && !BLIND_SIGNAL_RE.test(attr.value)) {
                         continue;
                     }
@@ -287,9 +307,47 @@
         return false;
     }
 
-    function collectText(node, out, { includeHidden = false, boundary = null, context = null } = {}) {
+    function getBodyImageSrcStem(src) {
+        let url;
+        try {
+            url = new URL(src);
+        } catch (_) {
+            return "";
+        }
+        if (url.protocol !== "https:") return "";
+        if (url.hostname !== "pstatic.net" && !url.hostname.endsWith(".pstatic.net")) return "";
+        const segment = url.pathname.split("/").pop() || "";
+        const stem = segment.replace(/\.[a-z0-9]{1,5}$/i, "");
+        return BODY_IMAGE_FILE_STEM_RE.test(stem) ? stem : "";
+    }
+
+    // 본문 요소 안 이미지 하나를 토큰으로 바꾼다. 역할 배지로 보이는 이미지는 본문으로 쓰지 않는다.
+    // key는 표시 토큰에 원래 alt·title·src를 붙인 정체성 값이고, pending은 이름도 src도 아직 없는 이미지다.
+    function getBodyImageToken(img) {
+        const alt = getAttr(img, "alt");
+        const title = getAttr(img, "title");
+        const src = getAttr(img, "src");
+        const name = normSpace(alt) || normSpace(title);
+        if (name && ROLE_ATTR_RE.test(name)) return null;
+        const label = (
+            name.replace(/[[\]]/g, "").slice(0, BODY_IMAGE_LABEL_MAX_LENGTH) || getBodyImageSrcStem(src)
+        ).trim();
+        const text = label ? `[${BODY_IMAGE_TOKEN_PREFIX}:${label}]` : `[${BODY_IMAGE_TOKEN_PREFIX}]`;
+        return {
+            text,
+            key: `${text.slice(0, -1)}\u001f${JSON.stringify([alt, title, src])}]`,
+            pending: !name && !normSpace(src),
+        };
+    }
+
+    function collectText(
+        node,
+        out,
+        { includeHidden = false, boundary = null, context = null, images = false, imageSink = null } = {}
+    ) {
         if (node.nodeType === Node.TEXT_NODE) {
             out.push(node.nodeValue || "");
+            imageSink?.keys.push(node.nodeValue || "");
             return;
         }
         if (node.nodeType !== Node.ELEMENT_NODE) return;
@@ -297,8 +355,38 @@
         const el = /** @type {Element} */ (node);
         if (isOwnUi(el) || el.matches(EXCLUDED_TEXT_SELECTOR)) return;
         if (!includeHidden && boundary && isHiddenWithin(el, boundary, context)) return;
+        if (images && el.tagName === "IMG") {
+            const token = getBodyImageToken(el);
+            if (token) {
+                out.push(` ${token.text} `);
+                if (imageSink) {
+                    imageSink.keys.push(` ${token.key} `);
+                    if (token.pending) imageSink.pending = true;
+                }
+            }
+            return;
+        }
 
-        for (const child of el.childNodes) collectText(child, out, { includeHidden, boundary, context });
+        for (const child of el.childNodes)
+            collectText(child, out, { includeHidden, boundary, context, images, imageSink });
+    }
+
+    // 본문 후보 전용: 보이는 텍스트와 본문 이미지 토큰을 DOM 순서대로 합친다.
+    // 닉네임·역할·숨은 원문 판정은 이미지가 섞이지 않는 getVisibleText를 계속 쓴다.
+    // 이미지가 없으면 key는 text와 같다.
+    function getMessageText(el, context = null) {
+        if (!(el instanceof Element)) return { text: "", key: "", pendingImage: false };
+        if (context?.messageTextCache?.has(el)) return context.messageTextCache.get(el);
+        const chunks = [];
+        const imageSink = { keys: [], pending: false };
+        collectText(el, chunks, { boundary: el, context, images: true, imageSink });
+        const result = {
+            text: normSpace(chunks.join(" ")),
+            key: normSpace(imageSink.keys.join(" ")),
+            pendingImage: imageSink.pending,
+        };
+        context?.messageTextCache?.set(el, result);
+        return result;
     }
 
     function getVisibleText(el, context = null) {
@@ -339,17 +427,17 @@
             return !isHiddenWithin(el, row, context);
         });
         let bestEl = null;
-        let bestText = "";
+        let best = { text: "", key: "", pendingImage: false };
 
         for (const el of candidates) {
-            const text = getVisibleText(el, context);
-            if (text.length > bestText.length) {
+            const message = getMessageText(el, context);
+            if (message.text.length > best.text.length) {
                 bestEl = el;
-                bestText = text;
+                best = message;
             }
         }
 
-        return { el: bestEl, text: bestText };
+        return { el: bestEl, text: best.text, textKey: best.key, pendingImage: best.pendingImage };
     }
 
     function pickAuthorTarget(row, context = null) {
@@ -474,7 +562,7 @@
             }
             for (const attr of Array.from(el.attributes)) {
                 const name = attr.name.toLowerCase();
-                if (!CLIENT_TEXT_ATTR_RE.test(name) && name !== "aria-label" && name !== "title") continue;
+                if (!isClientTextAttrName(name) && name !== "aria-label" && name !== "title") continue;
                 if (
                     (name === "aria-label" || name === "title") &&
                     !isHiddenWithin(el, row, context) &&
@@ -646,6 +734,18 @@
         return best;
     }
 
+    function readPageOriginalText(row, textEl) {
+        if (!(row instanceof Element) || !(textEl instanceof Element) || !row.contains(textEl)) return "";
+        const container = textEl.closest(MESSAGE_CONTAINER_SELECTOR);
+        if (!container || !row.contains(container)) return "";
+        // 재사용된 노드에 남은 이전 응답을 쓰지 않도록 요청 전후로 지운다.
+        container.removeAttribute(PAGE_ORIGINAL_ATTR);
+        container.dispatchEvent(new Event(PAGE_ORIGINAL_REQUEST_EVENT, { bubbles: true }));
+        const text = normSpace(container.getAttribute(PAGE_ORIGINAL_ATTR) || "");
+        container.removeAttribute(PAGE_ORIGINAL_ATTR);
+        return isBlindNoticeText(text) ? "" : text;
+    }
+
     function hasBlindSignal(row, messageText, hiddenText, context = null) {
         if (isBlindNoticeText(messageText)) return true;
         const attrText = getTreeAttrText(row, 120, context);
@@ -761,6 +861,8 @@
         const textTarget = pickMessageTextTarget(row, context);
         let text = textTarget.text || getVisibleText(row, context);
         if (!textTarget.text && author && text === author) text = "";
+        // 정체성 비교 전용 본문 값이에요. 본문 이미지가 없으면 text와 같아요.
+        const textKey = textTarget.text ? textTarget.textKey : text;
         const hiddenText = pickHiddenOriginalText(row, text, author, context);
         const isBlind = hasBlindSignal(row, text, hiddenText, context);
         const role = detectRole(row, context);
@@ -775,6 +877,8 @@
             author,
             role,
             text,
+            textKey,
+            hasPendingBodyImage: Boolean(textTarget.text && textTarget.pendingImage),
             isBlind,
             hiddenText,
             badges,
@@ -805,6 +909,7 @@
         getElementAttrText,
         getVisibleText,
         isBlindNoticeText,
+        readPageOriginalText,
         getCacheMessageIdentity,
         getCacheRowReuseSignal,
         roleLabel,

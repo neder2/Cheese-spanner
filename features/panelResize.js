@@ -79,6 +79,10 @@
 aside[${WIDTH}="chat"] { flex-basis:var(${VARIABLE})!important; }
 #layout-body[${SPACE}] { padding-left:var(${VARIABLE})!important; }
 aside[${WIDTH}="chat"] .bcct-moderator-box { max-width:calc(100% - 16px); }
+/* 2026-11-01 public CSS index-BBGwzDvs.css: the in-chat profile layer is width:333px with 10px insets (fits the
+   native 353px chat) and, for messages near the bottom, left:10px, so a narrower right chat pushed its close button
+   off screen. Native modals portal to body; the native popup chat already lets this layer shrink with the window. */
+aside[${WIDTH}="chat"] [role="alertdialog"] { max-width:calc(var(${VARIABLE}) - 20px); }
 [${HANDLE}] {
   position:absolute;top:0;bottom:0;width:8px;padding:0;margin:0;border:0;
   z-index:3;cursor:col-resize;touch-action:none;user-select:none;
@@ -117,6 +121,8 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
   order:-1!important;width:var(${COMPANION_WIDTH_VARIABLE},353px)!important;
 }
 [class*="content_right"][${SIDE}="left"]::before { left:auto!important;right:-1px!important; }
+/* A widened right (native side) VOD chat overhangs the same column, so only its width follows the chat. */
+[class*="content_right"][${SIDE}="right"] { width:var(${COMPANION_WIDTH_VARIABLE},353px)!important; }
 [class*="_banner_"][${SIDE}="left"] { left:0!important;right:auto!important; }
 #cheese-spanner-vod-comment-aside[${SIDE}="left"] {
   border-left:0!important;border-right:1px solid var(--bcvc-border)!important;
@@ -130,6 +136,19 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
   left:auto!important;right:100%!important;padding-left:0!important;padding-right:17px!important;
 }
 #layout-body[${BODY_SIDE}="right"] { padding-left:0!important;padding-right:var(${SIDE_SPACE_VARIABLE})!important; }
+/* The floating mini player, its close button and the ad minis are position:fixed;right:0. On /live/<id> they sit in
+   the live section (._container_wj4te_1), which CHZZK's draggable hook always gives an inline transform
+   (translate(0px, 0px) outside PiP), so it is their containing block and already ends where the right sidebar's
+   reserved space starts (Chrome 155, 2026-11-05: an extra offset left a gap as wide as the sidebar). The simple
+   route's section (/live/<id>/simple, public bundle 2026-11-04) has no transform, so right:0 meets the viewport there
+   and a mid-ad mini would slide under the z-index 9999 sidebar: only layers without an inline-transformed ancestor
+   step left. The landscape .is_large mini needs a state that removes the sidebar, so it keeps its native place. */
+#layout-body[${BODY_SIDE}="right"] .chzzk_player.miniplayer:not(.is_large):not([style*="transform"] *),
+#layout-body[${BODY_SIDE}="right"] :is(.pre_ad_mini, .mid_ad_mini):not([style*="transform"] *),
+#layout-body[${BODY_SIDE}="right"] div:has(> button):has(+ #live_player_layout.miniplayer):not([style*="transform"] *),
+#layout-body[${BODY_SIDE}="right"] .pre_ad_mini > div:not(#preAdVideoContainer):has(> button):not([style*="transform"] *) {
+  right:var(${SIDE_SPACE_VARIABLE},0px)!important;
+}
 [${HANDLE}="sidebar"][${EDGE}="left"] { right:auto;left:0; }
 [${HANDLE}="sidebar"][${EDGE}="left"]::after { right:auto;left:0; }
 [${HANDLE}="chat"][${EDGE}="right"] { left:auto;right:0; }
@@ -425,11 +444,13 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
         const down = (event) => {
                 // Touch and pen can also emit compatibility dblclick events. Remember their
                 // source even when the drag rejects them, so an earlier mouse cannot permit reset.
-                mouseResetAllowed = event.pointerType === "mouse" && event.button === 0 && event.isPrimary !== false;
-                onDown(event);
+                // Both gestures save sizes, so page-dispatched pointer events neither drag nor arm reset.
+                mouseResetAllowed =
+                    event.isTrusted && event.pointerType === "mouse" && event.button === 0 && event.isPrimary !== false;
+                if (event.isTrusted) onDown(event);
             },
             dbl = (event) => {
-                if (mouseResetAllowed) onReset(event);
+                if (mouseResetAllowed && event.isTrusted) onReset(event);
                 mouseResetAllowed = false;
             };
         const lost = () => {
@@ -603,8 +624,10 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
     function pointerPosition(current, event) {
         return current.kind === "height" ? event.clientY : event.clientX;
     }
+    // A page can dispatch window pointer events with the user's pointerId mid-drag; only the user's own
+    // moves and release may change the size or save it. Cancel paths stay open: they only restore the saved size.
     function move(event) {
-        if (!gesture || event.pointerId !== gesture.pointerId) return;
+        if (!gesture || !event.isTrusted || event.pointerId !== gesture.pointerId) return;
         swallow(event);
         gesture.pos = pointerPosition(gesture, event);
         if (gesture.pos !== gesture.start) gesture.moved = true;
@@ -665,7 +688,7 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
         window.addEventListener("pointerdown", cleanup, true);
     }
     function finish(event) {
-        if (!gesture || event.pointerId !== gesture.pointerId) return;
+        if (!gesture || !event.isTrusted || event.pointerId !== gesture.pointerId) return;
         swallow(event);
         gesture.pos = pointerPosition(gesture, event);
         if (previewFrame) cancelAnimationFrame(previewFrame);
@@ -713,10 +736,19 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
         return companions;
     }
     function syncCompanionWidth(entry) {
-        const width = Math.round(entry?.node.getBoundingClientRect().width || 0);
-        for (const node of entry?.companions || []) {
-            if (node.matches('[class*="content_right"]') && width > 0)
-                setVariable(node, COMPANION_WIDTH_VARIABLE, `${width}px`);
+        if (!entry) return;
+        const width = Math.round(entry.node.getBoundingClientRect().width || 0);
+        // A right chat at its native width leaves the native column alone.
+        const right = !entry.node.hasAttribute(SIDE);
+        const follow = !right || entry.node.hasAttribute(WIDTH);
+        for (const node of entry.companions || []) {
+            if (!node.matches('[class*="content_right"]')) continue;
+            if (!follow) {
+                clearVariable(node, COMPANION_WIDTH_VARIABLE, SIDE);
+                continue;
+            }
+            if (right) setAttribute(node, SIDE, "right");
+            if (width > 0) setVariable(node, COMPANION_WIDTH_VARIABLE, `${width}px`);
         }
     }
     function release(entry) {
@@ -767,7 +799,7 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
         const wanted =
             active &&
             !inFullscreen() &&
-            placementWanted("chat") &&
+            (placementWanted("chat") || /^\/video\//.test(location.pathname)) &&
             entry.node.isConnected &&
             entry.node.parentElement === entry.parent &&
             chatArrangement(entry.node) !== null;
@@ -775,12 +807,16 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
             clearPlacement(entry);
             return;
         }
-        setAttribute(entry.node, SIDE, "left");
-        const next = vodCompanions(entry);
+        const left = placementWanted("chat");
+        if (left) setAttribute(entry.node, SIDE, "left");
+        else if (entry.node.hasAttribute(SIDE)) entry.node.removeAttribute(SIDE);
+        // On the native right side the banner already sits over the chat; only the info column is tracked,
+        // and syncCompanionWidth marks it once the chat has an extension width.
+        const next = vodCompanions(entry).filter((node) => left || node.matches('[class*="content_right"]'));
         for (const node of entry.companions || []) {
             if (!next.includes(node)) clearVariable(node, COMPANION_WIDTH_VARIABLE, SIDE);
         }
-        for (const node of next) setAttribute(node, SIDE, "left");
+        if (left) for (const node of next) setAttribute(node, SIDE, "left");
         entry.companions = next;
     }
     function reconcileTargets() {
@@ -925,9 +961,12 @@ ${CHAT_ASIDES}[${SIDE}="left"] { order:-1!important; }
         schedule();
     }
     function relevantMutations(rows) {
-        // A left VOD chat also carries its info column and banner; React can replace them at the same size, which
-        // no ResizeObserver reports, so their own additions/removals are discovered too (only while that is wanted).
-        const companions = placementWanted("chat") && /^\/video\//.test(location.pathname);
+        // A left VOD chat also carries its info column and banner, and a widened right chat its info column; React
+        // can replace them at the same size, which no ResizeObserver reports, so their own additions/removals are
+        // discovered too (only while that is wanted).
+        const companions =
+            /^\/video\//.test(location.pathname) &&
+            (placementWanted("chat") || !!entries.chat?.node.hasAttribute(WIDTH));
         return rows.some((row) => {
             // Message and following-row churn never triggers full target discovery.
             const owner =

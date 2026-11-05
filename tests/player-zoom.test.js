@@ -651,6 +651,59 @@ test("mode changes, sources, SPA navigation, disable and page suspension clean u
     assert.equal(f.counts().resizers, 0);
 });
 
+test("an in-page PiP trip back to the same route keeps the zoom; other routes and sources clear it", (t) => {
+    const f = fixture(t, {});
+    // Chrome 155, 2026-11-05: leaving a live or VOD page for home keeps the same <video> playing in the in-page
+    // PiP, and the PiP's back/expand returns to the same path, where the view used to restart at 100%.
+    f.apply({ playerZoomEnabled: true, playerZoomMode: "manual" });
+    const zoomIn = () => {
+        f.wheel();
+        f.wheel();
+        return transform(f.video());
+    };
+    f.toggle().click();
+    const zoomed = zoomIn();
+    closeTo(zoomed.scale, 1.44);
+    f.route("/");
+    assert.equal(transform(f.video()).scale, 1, "the PiP shows the native view");
+    assert.equal(f.toggle(), null);
+    f.route("/live/test");
+    assert.deepEqual(transform(f.video()), zoomed, "the same video on the same route gets its view back");
+    assert.equal(f.toggle().getAttribute("aria-pressed"), "true");
+    assert.equal(f.value().textContent, "144%");
+    assert.equal(f.panel().hidden, false);
+    f.route("/");
+    f.route("/live/another");
+    assert.equal(transform(f.video()).scale, 1, "another broadcast starts fresh");
+    f.route("/live/test");
+    assert.equal(transform(f.video()).scale, 1, "a trip elsewhere forgets the earlier view");
+    for (const name of ["emptied", "loadstart", "loadedmetadata"]) {
+        f.toggle().click();
+        if (f.toggle().getAttribute("aria-pressed") !== "true") f.toggle().click();
+        zoomIn();
+        f.route("/");
+        f.video().dispatchEvent(new f.w.Event(name));
+        f.route("/live/test");
+        assert.equal(transform(f.video()).scale, 1, `${name} on the PiP video means a new source`);
+    }
+    if (f.toggle().getAttribute("aria-pressed") !== "true") f.toggle().click();
+    zoomIn();
+    f.route("/");
+    f.apply({ playerZoomEnabled: false });
+    f.apply({ playerZoomEnabled: true, playerZoomMode: "manual" });
+    f.route("/live/test");
+    assert.equal(transform(f.video()).scale, 1, "turning the feature off forgets the view");
+    f.toggle().click();
+    const again = zoomIn();
+    f.route("/");
+    f.resize({ width: 400, height: 225 });
+    f.route("/live/test");
+    const resized = transform(f.video());
+    closeTo(resized.scale, again.scale);
+    closeTo(resized.x, again.x / 2);
+    closeTo(resized.y, again.y / 2);
+});
+
 test("native control and video remounts keep one control set; detached controls become inert", async (t) => {
     const f = fixture(t);
     f.wheel();
@@ -755,6 +808,77 @@ test("manual mode exposes the slider at 100% and adjusts by one percent around t
     assert.equal(f.panel().hidden, false, "manual mode stays available for the next slider adjustment");
     f.toggle().click();
     assert.equal(f.panel().hidden, true);
+});
+
+test("the panel steps aside while the native player floats and keeps the zoom for its return", (t) => {
+    const f = fixture(t, {});
+    // Native live layout: #live_player_layout.chzzk_player wraps .pzp-pc and toggles the floating classes.
+    const layout = f.doc.createElement("div");
+    layout.id = "live_player_layout";
+    layout.className = "chzzk_player type_live";
+    f.player().before(layout);
+    layout.append(f.player());
+    f.apply({ playerZoomEnabled: true, playerZoomMode: "manual" });
+    f.toggle().click();
+    f.wheel();
+    const zoomed = transform(f.video());
+    closeTo(zoomed.scale, 1.2);
+    const display = () => f.w.getComputedStyle(f.panel()).display;
+    assert.equal(f.panel().hidden, false);
+    assert.equal(display(), "flex");
+    layout.classList.add("is_large");
+    assert.equal(display(), "flex", "a large docked player is not floating");
+    layout.classList.remove("is_large");
+    for (const floating of [["hidden_ui", "miniplayer", "scroll_pip"], ["miniplayer"], ["pip_mode"], ["hidden_ui"]]) {
+        layout.classList.add(...floating);
+        assert.equal(display(), "none", `${floating.join(".")} hides the panel over the floating video`);
+        assert.equal(f.panel().parentElement, f.player(), "the panel stays mounted for the return");
+        assert.deepEqual(transform(f.video()), zoomed, "the zoom itself survives the floating player");
+        assert.equal(f.toggle().getAttribute("aria-pressed"), "true");
+        layout.classList.remove(...floating);
+        assert.equal(display(), "flex", `${floating.join(".")} ending brings the panel back`);
+        assert.equal(f.value().textContent, "120%");
+    }
+});
+
+test("the panel leaves with the native controls and the open gear menu and keeps the zoom", (t) => {
+    const f = fixture(t, {});
+    // Chrome 155, 2026-11-05: the controls leave by dropping .pzp-pc--controls from the player root, and the gear
+    // menu (.pzp-pc__settings, z-index 2) opens with .pzp-pc--setting under the z-index 50 panel.
+    f.apply({ playerZoomEnabled: true, playerZoomMode: "manual" });
+    f.toggle().click();
+    f.wheel();
+    const zoomed = transform(f.video());
+    closeTo(zoomed.scale, 1.2);
+    const display = () => {
+        // jsdom keeps computed styles until a DOM mutation, and a focus change is not one.
+        f.doc.body.toggleAttribute("data-restyle");
+        return f.w.getComputedStyle(f.panel()).display;
+    };
+    assert.equal(display(), "flex");
+    f.player().classList.remove("pzp-pc--controls");
+    assert.equal(display(), "none", "the panel leaves with the native controls");
+    assert.equal(f.panel().hidden, false, "only the presentation hides; the panel state stays");
+    f.player().classList.add("pzp-pc--controls");
+    // A mouse press focuses the range and reset button without :focus-visible (jsdom never reports it either).
+    f.range().focus();
+    f.player().classList.remove("pzp-pc--controls");
+    assert.equal(display(), "none", "focus left by a mouse drag does not keep the panel over the video");
+    const leave = [...f.doc.getElementById(`${ID}-style`).sheet.cssRules].find((rule) =>
+        rule.selectorText?.includes(":not(.pzp-pc--controls) > #cheese-spanner-player-zoom-panel")
+    );
+    assert.match(leave.selectorText, /:has\(:focus-visible\)/, "keyboard focus keeps the slider reachable");
+    assert.doesNotMatch(leave.selectorText, /:focus-within/);
+    f.doc.querySelector("aside input").focus();
+    assert.equal(display(), "none");
+    f.player().classList.add("pzp-pc--controls");
+    assert.equal(display(), "flex", "the panel returns with the controls");
+    f.player().classList.add("pzp-pc--setting", "pzp-pc--setting-home");
+    assert.equal(display(), "none", "the open gear menu is not covered");
+    f.player().classList.remove("pzp-pc--setting", "pzp-pc--setting-home");
+    assert.equal(display(), "flex");
+    assert.deepEqual(transform(f.video()), zoomed, "the zoom itself stays through both");
+    assert.equal(f.value().textContent, "120%");
 });
 
 test("slider interaction keeps the 100% panel usable and preserves native keyboard actions", async (t) => {

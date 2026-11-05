@@ -51,6 +51,7 @@ function monitor(options = {}) {
     const notifications = [];
     const opened = [];
     const focused = [];
+    const reloaded = [];
     const requests = [];
     const alarms = new Map();
     let clock = 1000000;
@@ -127,6 +128,7 @@ function monitor(options = {}) {
                 tabs.push({ id: opened.length, windowId: 1, ...info });
             },
             update: async (id, info) => focused.push({ id, ...info }),
+            reload: async (id) => reloaded.push(id),
         },
         windows: { update: async () => {} },
     };
@@ -179,7 +181,11 @@ function monitor(options = {}) {
         notifications,
         opened,
         focused,
+        reloaded,
         requests,
+        advance: (ms) => {
+            clock += ms;
+        },
         model: context.CheeseSpannerLiveStart,
         enableNotificationsApi: () => {
             chrome.notifications = notificationApi;
@@ -290,6 +296,36 @@ test("offline to online detection, title changes and existing waiting tabs", asy
     m.chrome.notifications.onClicked.emit("unrelated");
     await flush();
     assert.equal(m.focused.length, 1);
+});
+
+test("a discarded waiting tab is loaded again for a new broadcast instead of consuming it silently", async () => {
+    const m = monitor({
+        tabs: [{ id: 7, windowId: 1, url: `https://chzzk.naver.com/live/${CHANNEL}`, discarded: true }],
+    });
+    await flush();
+    m.setResponse(snapshot(11, true));
+    await m.tick();
+    assert.equal(m.opened.length, 0, "no duplicate tab");
+    assert.deepEqual(m.reloaded, [7]);
+    assert.equal(m.focused.length, 0, "background auto-entry does not take focus");
+});
+
+test("a check that takes longer than five seconds does not make the next one-minute alarm skip", async () => {
+    const m = monitor();
+    m.setResponse(snapshot(10, false));
+    await flush();
+    m.setFetch(async () => {
+        m.advance(6000);
+        return snapshot(10, false);
+    });
+    const before = m.requests.length;
+    await m.tick();
+    assert.equal(m.requests.length, before + 1);
+    // The periodic alarm fires 60 s after the previous alarm, i.e. 54 s after this 6 s check finished.
+    m.advance(54000);
+    m.chrome.alarms.onAlarm.emit({ name: ALARM });
+    await flush();
+    assert.equal(m.requests.length, before + 2, "the alarm after a slow check still checks");
 });
 
 test("failed or mismatched API replies never establish offline or a new broadcast", async () => {
@@ -973,6 +1009,51 @@ for (const granted of [true, false]) {
         assert.equal(toggle.checked, granted);
     });
 }
+
+test("a channel lookup that finishes after the user moved focus elsewhere leaves that focus alone", async (t) => {
+    const m = monitor({ local: {}, sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false } });
+    await flush();
+    m.chrome.runtime.sendMessage = (message, callback) => {
+        void m.send(message.kind, message.channel).then(callback);
+    };
+    const dom = createDom("options.html", "options.html", m.chrome);
+    t.after(() => dom.window.close());
+    for (const file of [
+        ["shared", "settings.js"],
+        ["options.js"],
+        ["shared", "data.js"],
+        ["shared", "liveStart.js"],
+        ["optionsLiveStart.js"],
+    ])
+        evalRepoScript(dom, ...file);
+    const doc = dom.window.document;
+    const input = doc.getElementById("liveStartChannelInput");
+    await waitForCondition(() => !input.disabled);
+    let answer;
+    dom.window.fetch = () =>
+        new Promise((resolve) => {
+            answer = () =>
+                resolve({
+                    ok: true,
+                    json: async () => ({ code: 200, content: { channelId: CHANNEL, channelName: "채널" } }),
+                });
+        });
+    input.value = `https://chzzk.naver.com/live/${CHANNEL}`;
+    doc.getElementById("liveStartChannelAdd").click();
+    await waitForCondition(() => typeof answer === "function");
+    // While the lookup runs the user starts typing in the settings search outside this section.
+    const elsewhere = doc.createElement("input");
+    doc.body.prepend(elsewhere);
+    elsewhere.focus();
+    answer();
+    await waitForCondition(() => doc.querySelector('[data-action="autoOpen"]') && !input.disabled);
+    assert.equal(doc.activeElement, elsewhere);
+    // Focus that stayed in the section (or fell to the page) still returns to the input.
+    input.value = "https://evil.example/channel";
+    input.focus();
+    doc.getElementById("liveStartChannelAdd").click();
+    assert.equal(doc.activeElement, input);
+});
 
 test("channel editor validates, adds, toggles, deletes and reports failed saves without corrupting UI", async (t) => {
     const m = monitor({ local: {}, sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false } });

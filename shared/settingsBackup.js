@@ -38,7 +38,12 @@
     // Same identity rule as CheeseSpanner.utils.normalizeChzzkChannelId used by the pin feature.
     const PIN_CHANNEL = /^[A-Za-z0-9_-]{1,100}$/;
     // Options a chzzk page can change through its own controls; everything else is written by options pages.
-    const CONTENT_SYNC_OPTION_KEYS = Object.freeze(["skipSeconds", "ambientIntensity", "followingPreviewSoundEnabled"]);
+    const CONTENT_SYNC_OPTION_KEYS = Object.freeze([
+        "skipSeconds",
+        "ambientIntensity",
+        "followingPreviewSoundEnabled",
+        "videoRecorderFolder",
+    ]);
     // Turning these on can produce actions that cannot be undone (notifications, tabs, claims, reloads, records).
     const EFFECT_OPTION_KEYS = Object.freeze([
         "liveStartNotificationsEnabled",

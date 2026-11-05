@@ -93,9 +93,20 @@
         return uniqueCommentTexts(texts);
     }
 
-    function filterVideosByNormalizedQuery(videos, normalizedQuery) {
+    function filterVideosByNormalizedQuery(videos, normalizedQuery, { includeComments = true } = {}) {
         if (!normalizedQuery) return videos;
-        return videos.filter((v) => v.titleNorm.includes(normalizedQuery) || hasCommentMatchNorm(v, normalizedQuery));
+        return videos.filter(
+            (v) => v.titleNorm.includes(normalizedQuery) || (includeComments && hasCommentMatchNorm(v, normalizedQuery))
+        );
+    }
+
+    // Each comment is normalized on its own and joined by a newline, which normalize() never leaves in a comment
+    // or a query, so a match cannot span two different comments.
+    function buildCommentNorm(texts) {
+        return (Array.isArray(texts) ? texts : [])
+            .map((text) => normalize(text))
+            .filter(Boolean)
+            .join("\n");
     }
 
     function hasCommentMatchNorm(video, normalizedQuery) {
@@ -158,7 +169,15 @@
             return null;
         };
 
-        if (typeof watchTimeline !== "object") return ratioFromNumber(watchTimeline);
+        // Assumption, not verified for this list API: a bare numeric watchTimeline is a resume position in seconds,
+        // as the video detail API's watchTimeline is (docs/contracts.md). The list API's type and unit with a
+        // signed-in session were not measured (signed-out list samples were null). Either way it is never read as a
+        // ratio or a percentage, and without an observed duration no progress is drawn.
+        if (typeof watchTimeline !== "object") {
+            const seconds = getNumber(watchTimeline);
+            if (seconds === null || seconds <= 0 || !durationNumber || durationNumber <= 0) return null;
+            return Math.min(seconds / durationNumber, 1);
+        }
 
         const ratio = getObjectNumberByKeys(watchTimeline, [
             "progress",
@@ -205,6 +224,7 @@
         uniqueCommentTexts,
         extractCommentTexts,
         filterVideosByNormalizedQuery,
+        buildCommentNorm,
         hasCommentMatchNorm,
         getCommentMatchText,
         shouldFetchCommentsForQuery,

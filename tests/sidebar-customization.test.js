@@ -1832,3 +1832,95 @@ test("pin mode does not intercept the native following refresh control", async (
         "true"
     );
 });
+
+function createCollapsedPinDom(t, chrome) {
+    const dom = createSidebarDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    const list = document.getElementById("followingList");
+    list.innerHTML = ["a", "b", "c", "d", "e"]
+        .map((id) => `<li><a href="/live/channel-${id}"><span class="name_text">${id}</span></a></li>`)
+        .join("");
+    dom.window.fetch = async (url) => ({
+        ok: true,
+        status: 200,
+        async json() {
+            return {
+                content: {
+                    followingList: (String(url).includes("/followings/live")
+                        ? ["a", "b", "c", "d", "e"]
+                        : ["offline"]
+                    ).map((id) => ({ channel: { channelId: `channel-${id}`, channelName: id } })),
+                },
+            };
+        },
+    });
+    return { dom, document, list, nativeRows: Array.from(list.children) };
+}
+
+test("supplemental rows leave out the template's hover highlight and pin-mode link role", async (t) => {
+    const chrome = createFakeChrome({ [STORAGE_KEY]: ["channel-offline"], followingPinOfflineToTopEnabled: true });
+    const { dom, document, list, nativeRows } = createCollapsedPinDom(t, chrome);
+    // The following preview marks the hovered row while a supplemental row is cloned from it.
+    for (const row of nativeRows) {
+        row.setAttribute("data-bcfp-active", "1");
+        row.querySelector("a").setAttribute("data-bcfp-active", "1");
+    }
+    evalSidebarScripts(dom);
+    await waitForCondition(() => list.querySelector("[data-bcsf-source-row]"));
+    const source = () => list.querySelector("[data-bcsf-source-row]");
+    assert.equal(source().hasAttribute("data-bcfp-active"), false, "the clone has no hover highlight");
+    assert.equal(source().querySelector("[data-bcfp-active]"), null);
+    assert.equal(nativeRows[0].getAttribute("data-bcfp-active"), "1", "the native row keeps its own mark");
+    for (const row of nativeRows) {
+        row.removeAttribute("data-bcfp-active");
+        row.querySelector("a").removeAttribute("data-bcfp-active");
+    }
+
+    // Clone while pin mode turns the template links into toggle buttons.
+    const modeButton = document.getElementById("cheese-spanner-following-pin-mode");
+    dispatchClick(dom, modeButton);
+    await waitForCondition(() => list.getAttribute("data-bcsf-pin-mode") === "1");
+    assert.equal(nativeRows[0].querySelector("a").getAttribute("role"), "button");
+    chrome.testState.emitSync({ [STORAGE_KEY]: { newValue: [] } });
+    await waitForCondition(() => !source());
+    chrome.testState.emitSync({ [STORAGE_KEY]: { newValue: ["channel-offline"] } });
+    await waitForCondition(() => source());
+    assert.equal(source().querySelector("a").getAttribute("role"), "button", "pin mode applies to the clone too");
+
+    dispatchClick(dom, modeButton);
+    await waitForCondition(() => !list.hasAttribute("data-bcsf-pin-mode"));
+    assert.ok(source(), "the supplemental row stays after pin mode");
+    assert.equal(source().querySelector("a").hasAttribute("role"), false, "the clone's link is a link again");
+    assert.equal(source().querySelector("a").hasAttribute("aria-pressed"), false);
+    assert.equal(nativeRows[0].querySelector("a").hasAttribute("role"), false);
+});
+
+test("a following link drag whose row a list refresh removed still lets row tooltips come back", async (t) => {
+    for (const ending of ["detached-dragend", "pointer", "drop"]) {
+        const dom = createSidebarDom(createFakeChrome({ followingPinEnabled: false }));
+        t.after(() => dom.window.close());
+        const d = dom.window.document;
+        evalSidebarScripts(dom);
+        await waitForSync();
+        const link = d.querySelector("#liveA a");
+        link.draggable = false;
+        link.dispatchEvent(new dom.window.MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+        const event = new dom.window.Event("dragstart", { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "dataTransfer", { value: { setData() {}, effectAllowed: "all" } });
+        link.dispatchEvent(event);
+        const sidebar = d.getElementById("sidebar");
+        assert.equal(sidebar.getAttribute("data-bcsf-link-dragging"), "1");
+        // The site's refresh replaces the row while the link is being dragged.
+        d.getElementById("liveA").replaceWith(
+            Object.assign(d.createElement("li"), { innerHTML: '<a href="/live/channel-a">알파</a>' })
+        );
+        assert.equal(link.isConnected, false);
+        if (ending === "detached-dragend") link.dispatchEvent(new dom.window.Event("dragend", { bubbles: true }));
+        else if (ending === "pointer")
+            d.body.dispatchEvent(new dom.window.MouseEvent("pointermove", { bubbles: true }));
+        else d.getElementById("mainLive").dispatchEvent(new dom.window.Event("drop", { bubbles: true }));
+        assert.equal(sidebar.hasAttribute("data-bcsf-link-dragging"), false, `${ending} brings the tooltips back`);
+        assert.equal(link.draggable, false, `${ending} restores the link's drag attributes`);
+    }
+});

@@ -245,7 +245,8 @@
     }
 
     function saveActiveScroll() {
-        if (selectedTab !== "comments" || !commentView.getPanel()) return;
+        // 문서에서 빠진 패널의 scrollTop은 0이라, 저장하면 onScroll이 기록한 실제 위치를 덮어써요.
+        if (selectedTab !== "comments" || !commentView.getPanel()?.isConnected) return;
         commentRepository.setScrollTop(commentView.getScrollTop(), {
             order: activeOrder,
             videoNo: currentVideoNo,

@@ -102,7 +102,9 @@
         busy = value;
         exportButton.disabled = value;
         importButton.disabled = value;
-        for (const button of panel.querySelectorAll("button")) button.disabled = value;
+        // A button that has nothing to do (apply with no changes) stays off after the busy state ends.
+        for (const button of panel.querySelectorAll("button"))
+            button.disabled = value || button.dataset.unavailable === "1";
     }
     function el(tag, className, text) {
         const node = document.createElement(tag);
@@ -240,13 +242,40 @@
         status.setAttribute("aria-live", "polite");
         const actions = el("div", "settings-backup-actions");
         const apply = button("불러오기 적용", "primary-button", () => void applyImport());
-        apply.disabled = preview.changes === 0;
+        if (preview.changes === 0) apply.dataset.unavailable = "1";
+        apply.disabled = busy || preview.changes === 0;
         const cancel = button("취소", "secondary-button", () => closePanel({ restoreFocus: true }));
         actions.append(apply, cancel);
         panel.append(heading, meta, list, notes, status, actions);
         if (preview.changes === 0) setStatus("현재 설정과 같아서 바꿀 내용이 없어요.");
         panel.hidden = false;
         heading.focus({ preventScroll: false });
+    }
+
+    // The request bundles every needed permission and fails as a whole; a permission already held is not denied.
+    function unheldPermissionKeys(keys) {
+        const permissions = globalThis.chrome?.permissions;
+        if (typeof permissions?.contains !== "function") return Promise.resolve(keys);
+        return Promise.all(
+            permissionNeeds(keys).map(
+                (name) =>
+                    new Promise((resolve) => {
+                        const groupKeys = catalog.PERMISSION_OPTION_KEYS[name];
+                        try {
+                            permissions.contains(PERMISSION_SPECS[name], (held) => {
+                                const error = globalThis.chrome?.runtime?.lastError;
+                                resolve(held && !error ? [] : groupKeys);
+                            });
+                        } catch (_) {
+                            resolve(groupKeys);
+                        }
+                    })
+            )
+        ).then((groups) => {
+            const unheld = new Set(groups.flat());
+            const denied = keys.filter((key) => unheld.has(key));
+            return denied.length ? denied : keys;
+        });
     }
 
     function requestPermissions(needs) {
@@ -287,16 +316,18 @@
         setStatus("설정을 불러오는 중이에요…");
         try {
             if (!(await granted)) {
+                const deniedKeys = await unheldPermissionKeys(keys);
+                if (current !== flow) return;
                 setBusy(false);
                 setStatus("권한이 거부되어 아무것도 바꾸지 않았어요.", "error");
                 const fallback = button(
-                    `${featureList(keys)} 기능은 켜지 않고 불러오기`,
+                    `${featureList(deniedKeys)} 기능은 켜지 않고 불러오기`,
                     "secondary-button settings-backup-fallback",
                     () => {
                         // The choice belongs to this confirmation flow and survives a re-confirmation. It keeps off
                         // only the features this file would turn on; the worker leaves other current choices alone.
                         if (current !== flow) return;
-                        flow.disabledOptionKeys = [...new Set([...flow.disabledOptionKeys, ...keys])];
+                        flow.disabledOptionKeys = [...new Set([...flow.disabledOptionKeys, ...deniedKeys])];
                         void applyImport();
                     }
                 );

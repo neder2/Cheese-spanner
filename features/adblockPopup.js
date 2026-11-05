@@ -1,5 +1,7 @@
 /**
  * 광고 차단 안내를 잠시 숨긴 뒤 실제 닫기 버튼으로 네이티브 모달 상태도 정리한다.
+ * 닫기 경로는 팝업 자체의 측정된 안내 정체성(로그 영역 또는 보이는 단일 제목)만 인정하고, 닉네임·본문·버튼의
+ * 광고·차단 단어나 숨은·다른 팝업의 근거로는 누르지 않는다. 미확인 변형은 화면에 남긴다.
  * isolated world. 다음 프레임까지 남은 안내는 다시 표시하고 스크롤 잠금은 건드리지 않는다.
  * 옵션·라우트·DOM 수명주기에 맞춰 중복 클릭을 막는다.
  * 닫기 버튼 없이 확인 버튼만 있는 실측 안내(ad_blocking_info_layer)는 클릭하지 않고, MAIN의
@@ -29,6 +31,7 @@
         "이용",
     ];
     const NOTICE_HEADINGS = "strong, h1, h2, h3, h4, h5, h6, [role=heading]";
+    const TITLE_WRAPPERS = new Set(["DIV", "HEADER", "SECTION"]);
     const NOTICE_CONFIRM = "확인";
     const NOTICE_HELP_URL = "https://help.naver.com/alias/navergame/chzzkars49.naver";
     const NOTICE_ROUTE = /^\/(?:live\/[^/]+|video\/\d+)\/?$/;
@@ -37,6 +40,7 @@
     const NOTICE_RESULT_ATTR = "data-cheese-spanner-adblock-notice-result";
     // 2026-10-11 Edge 실측에서 호출 뒤 React 제거까지 2.5~3.9ms였다. 페이지 로딩 중 긴 작업을 감안한 상한이다.
     const NOTICE_REMOVAL_WAIT_MS = 1000;
+    const REVEAL_EVENTS = ["transitionend", "animationend"];
     const {
         bindFeatureOptions,
         createMutationObserverSync,
@@ -56,6 +60,7 @@
     let noticeGeneration = 0;
     let noticeWait = null;
     let removePageHideListener = null;
+    let removeRevealListener = null;
     const noticeResults = { removed: 0, timedOut: 0, refused: 0 };
     const attempts = new Map();
     const concealed = new Map();
@@ -140,14 +145,89 @@
         window.dispatchEvent(new Event("cheese-spanner:adblock-popup:ready"));
     }
 
-    function isAdblockPopupLike(popup) {
+    // The close path only trusts the measured notice's own identity: its log area on the popup itself, or its
+    // single visible top-level title. Words such as 광고·차단·adblock in nicknames, bodies or buttons are not
+    // evidence, and neither are hidden nodes or another popup's content. Unknown variants stay visible.
+    function hasMeasuredNoticeIdentity(popup) {
         if (!(popup instanceof HTMLElement)) return false;
-        const text = normalizeCompact(popup.textContent || "");
-        return (
-            text.includes("adblock") ||
-            (text.includes("광고") && text.includes("차단")) ||
-            (text.includes("확장") && text.includes("기능") && text.includes("종료") && text.includes("광고"))
+        if (popup.getAttribute("data-nlog-area") === NOTICE_AREA) return true;
+        const titles = Array.from(popup.querySelectorAll(NOTICE_HEADINGS)).filter(
+            (node) => node.closest(POPUP) === popup && !node.parentElement.closest(NOTICE_HEADINGS)
         );
+        const title = titles[0];
+        return (
+            titles.length === 1 &&
+            isTitlePlacement(popup, title) &&
+            isShown(title) &&
+            NOTICE_TITLE.test(normalizeCompact(shownText(title)))
+        );
+    }
+
+    // 2026-10-11 notice: popup > div > div > strong. A heading inside body copy, a button, a link or another
+    // role is quoted or control text, not the popup's title, so only plain layout containers may wrap it.
+    function isTitlePlacement(popup, title) {
+        for (let node = title.parentElement; node !== popup; node = node.parentElement) {
+            if (!node || !TITLE_WRAPPERS.has(node.tagName) || node.hasAttribute("role")) return false;
+        }
+        return true;
+    }
+
+    // Only text the user can see counts: hidden, aria-hidden, display:none or invisible descendants, text under a
+    // fully transparent title, descendant or ancestor, zero-size text and text outside the viewport are not
+    // evidence (Codex r3-m1 Chrome: such normal modals were closed). The title's own rect is not enough, since a
+    // positive-size title can hold 0x0 text.
+    function shownText(root) {
+        if (!isOpaqueChain(root)) return "";
+        let text = "";
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (isShownWithin(node.parentElement, root) && isTextVisible(node)) text += node.data;
+        }
+        return text;
+    }
+
+    function isTransparent(style) {
+        return parseFloat(style.opacity) <= 0;
+    }
+
+    function isOpaqueChain(element) {
+        for (let node = element; node instanceof Element; node = node.parentElement) {
+            if (isTransparent(getComputedStyle(node))) return false;
+        }
+        return true;
+    }
+
+    function isTextVisible(textNode) {
+        if (!textNode.data.trim()) return true;
+        if (parseFloat(getComputedStyle(textNode.parentElement).fontSize) <= 0) return false;
+        const range = document.createRange();
+        // Engines without layout (jsdom) have no text geometry; the style checks above still apply there.
+        if (typeof range.getClientRects !== "function") return true;
+        range.selectNodeContents(textNode);
+        const width = window.innerWidth || document.documentElement.clientWidth;
+        const height = window.innerHeight || document.documentElement.clientHeight;
+        return Array.from(range.getClientRects()).some(
+            (rect) =>
+                rect.width > 0 &&
+                rect.height > 0 &&
+                Math.min(rect.right, width) > Math.max(rect.left, 0) &&
+                Math.min(rect.bottom, height) > Math.max(rect.top, 0)
+        );
+    }
+
+    function isShownWithin(element, root) {
+        for (let node = element; node && node !== root; node = node.parentElement) {
+            if (node.hidden || node.getAttribute("aria-hidden") === "true") return false;
+            const style = getComputedStyle(node);
+            if (
+                style.display === "none" ||
+                style.visibility === "hidden" ||
+                style.visibility === "collapse" ||
+                isTransparent(style)
+            )
+                return false;
+        }
+        return true;
     }
 
     function hasClassFamily(element, prefix) {
@@ -343,7 +423,7 @@
             const rect = popup.getBoundingClientRect();
             if (
                 popup.querySelector(POPUP) ||
-                !isAdblockPopupLike(popup) ||
+                !hasMeasuredNoticeIdentity(popup) ||
                 isRequiredPopup(popup) ||
                 !isShown(popup) ||
                 rect.width <= 0 ||
@@ -426,6 +506,14 @@
         if (hasNativeHideMutation(mutations, wait.popup)) finishNoticeWait("hidden");
     }
 
+    // A CSS fade or slide-in changes opacity or position without a DOM mutation, so a title that was transparent
+    // or off-screen at insertion is checked again when its transition or animation ends.
+    function handlePopupReveal(event) {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        if (target.closest(POPUP) || target.querySelector(POPUP)) closeAdsPopups();
+    }
+
     function mutationCouldAffectPopup(mutation) {
         if (mutation.target instanceof Element && mutation.target.closest(POPUP)) return true;
         if (mutation.target.parentElement?.closest(POPUP)) return true;
@@ -445,6 +533,8 @@
             removeRouteListener = null;
             removePageHideListener?.();
             removePageHideListener = null;
+            removeRevealListener?.();
+            removeRevealListener = null;
             attempts.clear();
             publishReady();
             return;
@@ -455,6 +545,12 @@
         if (!removePageHideListener) {
             window.addEventListener("pagehide", handlePageHide, true);
             removePageHideListener = () => window.removeEventListener("pagehide", handlePageHide, true);
+        }
+        if (!removeRevealListener) {
+            for (const type of REVEAL_EVENTS) document.addEventListener(type, handlePopupReveal, true);
+            removeRevealListener = () => {
+                for (const type of REVEAL_EVENTS) document.removeEventListener(type, handlePopupReveal, true);
+            };
         }
         if (!observer) {
             observer = createMutationObserverSync({

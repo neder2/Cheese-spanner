@@ -32,12 +32,15 @@
         getElementAttrText,
         getVisibleText,
         isBlindNoticeText,
+        readPageOriginalText,
         resolveMutationElement,
         getTopLevelMutationElements,
     } = namespace.parser;
     const WELCOME_MESSAGE_STYLE_ID = "cheese-spanner-chat-welcome-message-style";
 
     const BLIND_PROCESSED_ATTR = "data-bcct-blind-processed";
+
+    const PAGE_READY_EVENT = "cheese-spanner:chat-timestamp-page-ready";
 
     const MODERATOR_CACHE_STORAGE_KEY = "betterChzzkChatToolsModeratorCache";
 
@@ -72,6 +75,7 @@
         "title",
         "aria-hidden",
         "alt",
+        "src",
         "aria-expanded",
         "data-message-original",
         CHAT_TIMESTAMP_ATTR,
@@ -188,17 +192,19 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             return;
         }
 
-        const original = parsed.hiddenText || lookupCachedOriginalText(row, parsed);
-        if (!original) {
-            // 원문을 모르면 치지직의 블라인드 문구를 그대로 둔다.
-            removeBlindReveal(row);
-            return;
-        }
-
         // 프로필 카드 같은 다른 UI 를 본문으로 오인해 가리지 않도록,
         // 실제 블라인드 안내 문구가 표시된 요소일 때만 원문으로 교체한다.
         const target = parsed.textEl instanceof Element && parsed.textEl !== row ? parsed.textEl : null;
         if (!target || !isBlindNoticeText(getVisibleText(target))) {
+            removeBlindReveal(row);
+            return;
+        }
+
+        // 현재 행의 페이지 메시지 원문을 먼저 쓰고, 없으면 DOM 원문·정체성이 일치하는 캐시로 넘어간다.
+        const original =
+            readPageOriginalText(row, target) || parsed.hiddenText || lookupCachedOriginalText(row, parsed);
+        if (!original) {
+            // 원문을 모르면 치지직의 블라인드 문구를 그대로 둔다.
             removeBlindReveal(row);
             return;
         }
@@ -419,6 +425,9 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         // 방송자/채팅 운영자 판정이다. 재파싱은 idempotent 라 (백필은 값이 실제로
         // 바뀔 때만 다시 그림) 루프를 만들지 않는다.
         if (isModeratorBoxEnabled() && getCollectedModeratorRow(row)) return true;
+        // 본문 이모티콘 토큰과 정체성은 img src에 의존한다. 직전 파싱이 역할 행이었으면 src만 바뀌어도
+        // 그 행을 다시 처리한다(아직 binding이 없는 안정화 대기 행 포함).
+        if (attrName === "src" && isModeratorBoxEnabled() && parsedChatRows.get(row)) return true;
 
         const signalText = getMutationSignalText(row, mutation.target);
         if (isBlindRevealEnabled() && BLIND_SIGNAL_RE.test(signalText)) return true;
@@ -804,6 +813,12 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     }
 
     bindFeatureOptions(applyOptions);
+    // MAIN 브리지가 isolated보다 늦게 준비되면 이미 처리한 블라인드 행의 페이지 원문을 다시 요청한다.
+    window.addEventListener(PAGE_READY_EVENT, () => {
+        if (!observer || !isBlindRevealEnabled()) return;
+        requestFullChatScan({ reparse: true });
+        scheduleSync();
+    });
     onReady(() => {
         if (isFeatureEnabled()) installRuntime();
     });

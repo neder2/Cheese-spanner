@@ -11,8 +11,13 @@
         onCommentProgress,
     }) {
         const { isLastPage, sleep, normalizeCompact: normalize } = root.utils;
-        const { extractVideos, extractCommentTexts, uniqueCommentTexts, shouldFetchCommentsForQuery } =
-            root.videoSearchModel;
+        const {
+            extractVideos,
+            extractCommentTexts,
+            uniqueCommentTexts,
+            buildCommentNorm,
+            shouldFetchCommentsForQuery,
+        } = root.videoSearchModel;
         let featureOptions = {};
         let currentChannelId = null;
         let currentQuery = "";
@@ -22,12 +27,15 @@
         const COMMENT_FETCH_CONCURRENCY = 3;
         const INDEX_CACHE_TTL_MS = 5 * 60 * 1000;
         const MAX_INDEX_CACHE_CHANNELS = 8;
+        // fetchJson aborts its own request on timeout with the same AbortError a caller's signal produces.
+        const REQUEST_TIMEOUT_MESSAGE = "조회 시간이 초과됐어요";
         const channelIndex = new Map();
         let activeFetchToken = 0;
         let commentSearchTimer = 0;
         let commentSearchToken = 0;
         let commentSearchRunning = false;
-        let commentSearchPending = false;
+        // Generation whose delay timer fired while an older run was still busy; 0 when none is waiting.
+        let commentSearchPendingToken = 0;
         let activeIndexAbortController = null;
         let activeCommentAbortController = null;
         function isFeatureEnabled() {
@@ -128,14 +136,19 @@
                     if (!Array.isArray(rows) || rows.length < COMMENT_PAGE_SIZE) break;
                 }
                 video.commentTexts = uniqueCommentTexts(texts);
-                video.commentNorm = normalize(video.commentTexts.join(" "));
+                video.commentNorm = buildCommentNorm(video.commentTexts);
                 video.commentError = null;
+                video.commentErrorToken = 0;
             } catch (e) {
-                if (token !== commentSearchToken || signal?.aborted || e?.name === "AbortError") {
+                // Only the caller's cancellation is silent; an internal timeout is a failure like any other.
+                if (token !== commentSearchToken || signal?.aborted) {
                     shouldMarkFetched = false;
                     return;
                 }
-                video.commentError = e.message || String(e);
+                video.commentError = e?.name === "AbortError" ? REQUEST_TIMEOUT_MESSAGE : e?.message || String(e);
+                // Stays fetched for this generation so one run does not loop on a failing video; the next
+                // search generation retries it.
+                video.commentErrorToken = token;
             } finally {
                 if (shouldMarkFetched) video.commentFetched = true;
                 video.commentLoading = false;
@@ -163,6 +176,7 @@
                           complete: false,
                           completedAt: 0,
                           error: null,
+                          limitReached: false,
                           loading: false,
                           loadingToken: 0,
                       };
@@ -171,6 +185,7 @@
             entry.complete = false;
             entry.completedAt = 0;
             entry.error = null;
+            entry.limitReached = false;
             entry.failedAt = 0;
             entry.loading = true;
             entry.loadingToken = token;
@@ -185,13 +200,13 @@
                     try {
                         json = await fetchPage(channelId, page, signal);
                     } catch (e) {
-                        if (signal.aborted || e?.name === "AbortError") return entry;
-                        entry.error = e.message || String(e);
+                        if (signal.aborted || token !== activeFetchToken) return entry;
+                        entry.error = e?.name === "AbortError" ? REQUEST_TIMEOUT_MESSAGE : e?.message || String(e);
                         entry.failedAt = Date.now();
                         failed = true;
                         break;
                     }
-                    if (token !== activeFetchToken || !currentQuery) return entry;
+                    if (token !== activeFetchToken || !normalize(currentQuery)) return entry;
                     const videos = extractVideos(json);
                     if (!videos.length && page === 0) {
                         entry.error = "no-data";
@@ -208,7 +223,11 @@
                         reachedBoundary = true;
                         break;
                     }
-                    if (page === getMaxPages() - 1) reachedBoundary = true;
+                    if (page === getMaxPages() - 1) {
+                        // Cached as complete for the TTL, but marked so the view does not present it as the whole channel.
+                        reachedBoundary = true;
+                        entry.limitReached = true;
+                    }
                 }
                 entry.complete = !failed && reachedBoundary;
                 entry.completedAt = entry.complete ? Date.now() : 0;
@@ -232,6 +251,12 @@
             activeFetchToken++;
             abortController(activeIndexAbortController);
             activeIndexAbortController = null;
+            // The stopped build settles later without callbacks; do not leave its entry reading as still loading.
+            for (const entry of channelIndex.values()) {
+                if (!entry.loading) continue;
+                entry.loading = false;
+                entry.loadingToken = 0;
+            }
             setLoading(false, "index");
             cancelCommentSearch();
         }
@@ -242,7 +267,7 @@
 
         function cancelCommentSearch() {
             commentSearchToken++;
-            commentSearchPending = false;
+            commentSearchPendingToken = 0;
             if (commentSearchTimer) {
                 clearTimeout(commentSearchTimer);
                 commentSearchTimer = 0;
@@ -266,6 +291,8 @@
 
             if (commentSearchTimer) clearTimeout(commentSearchTimer);
             const token = ++commentSearchToken;
+            // A start queued by an older generation is superseded; the new one starts from its own timer.
+            commentSearchPendingToken = 0;
             abortController(activeCommentAbortController);
             activeCommentAbortController = null;
             commentSearchTimer = setTimeout(() => {
@@ -276,7 +303,7 @@
 
         function startCommentSearch(token) {
             if (commentSearchRunning) {
-                commentSearchPending = true;
+                commentSearchPendingToken = token;
                 return;
             }
             runCommentSearch(token).catch(() => {});
@@ -303,6 +330,11 @@
                     const entry = getEntry();
                     if (!entry) break;
 
+                    for (const video of entry.videos) {
+                        if (video.commentError && video.commentErrorToken !== token && !video.commentLoading) {
+                            video.commentFetched = false;
+                        }
+                    }
                     const remaining = getCommentMaxVideos() - fetchedCount;
                     const targets = entry.videos
                         .filter((video) => shouldFetchCommentsForQuery(video, query))
@@ -334,13 +366,17 @@
                 if (activeCommentAbortController?.signal === signal) activeCommentAbortController = null;
                 commentSearchRunning = false;
                 setLoading(false, "comments");
+                // Restart only the current generation, and only when its own delay timer already fired while this
+                // run was busy. A newer generation that is still waiting for its delay starts from that timer.
+                const pendingToken = commentSearchPendingToken;
+                commentSearchPendingToken = 0;
                 if (
-                    (commentSearchPending || token !== commentSearchToken) &&
+                    pendingToken &&
+                    pendingToken === commentSearchToken &&
                     isCommentSearchEnabled() &&
                     normalize(currentQuery)
                 ) {
-                    commentSearchPending = false;
-                    startCommentSearch(commentSearchToken);
+                    startCommentSearch(pendingToken);
                 }
             }
         }
@@ -361,6 +397,7 @@
                     video.commentFetched = video.commentActive === false;
                     video.commentLoading = false;
                     video.commentError = null;
+                    video.commentErrorToken = 0;
                 }
             }
         }

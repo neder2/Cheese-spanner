@@ -202,6 +202,64 @@ test("different tab sessions merge without overwriting each other", () => {
     assert.equal(entry.watchedSeconds, 140);
 });
 
+test("API titles that mention 치지직 or CHZZK mid-title keep every title change in history", () => {
+    const now = Date.parse("2026-07-10T12:00:00+09:00");
+    const { context, store } = loadStore();
+    const utils = context.CheeseSpanner.utils;
+    const final = "롤 내전 - 치지직 스트리머 대회 결승";
+    const semi = "롤 내전 - 치지직 스트리머 대회 4강";
+    const suffixLike = "토크 | CHZZK";
+    // live-detail API titles carry no site suffix, so text that looks like one is part of the broadcast title.
+    for (const title of [final, semi, suffixLike, "테스트 채널 | 롤 내전 | 치지직 대회"]) {
+        assert.equal(utils.cleanEntryTitle(title, "다른 채널"), title);
+    }
+    assert.equal(
+        utils.cleanEntryTitle(`테스트 채널 - ${final}`, "테스트 채널"),
+        final,
+        "channel prefix is still removed"
+    );
+    // Page titles (document.title, og:title) drop only the trailing site name, once.
+    assert.equal(utils.cleanEntryTitle(`${final} - CHZZK`, "", { suffix: "page" }), final);
+    assert.equal(utils.cleanEntryTitle(`${final} - 치지직`, "", { suffix: "page" }), final);
+    assert.equal(utils.cleanEntryTitle(final, "", { suffix: "page" }), "롤 내전 - 치지직 스트리머 대회 결승");
+    assert.equal(utils.cleanTitle(`${final} - CHZZK`), final);
+    // The site name is removed once: the rest of a document.title and the channel name keep their own '- CHZZK'.
+    assert.equal(utils.cleanEntryTitle("채널 - 토크 - CHZZK - CHZZK", "채널", { suffix: "page" }), "토크 - CHZZK");
+    assert.equal(utils.cleanEntryTitle("채널 - 토크 - CHZZK", "채널", { suffix: "page" }), "토크");
+    assert.equal(
+        utils.cleanEntryTitle("라디오 - CHZZK - 토크 - CHZZK", "라디오 - CHZZK", { suffix: "page" }),
+        "토크",
+        "a channel name ending in - CHZZK is matched as is"
+    );
+    assert.equal(utils.cleanEntryTitle("라디오 - CHZZK - 토크 - CHZZK", "라디오 - CHZZK"), "토크 - CHZZK");
+    // Only 1.4.3 following data keeps its lossy form, so old rows can still be recognised.
+    assert.equal(utils.cleanEntryTitle("채널 | 롤 내전 | 치지직 대회", "채널", { suffix: "legacy" }), "롤 내전");
+    assert.equal(utils.cleanEntryTitle("라디오 - CHZZK - 토크", "라디오 - CHZZK", { suffix: "legacy" }), "라디오");
+    assert.equal(utils.cleanEntryTitle(`${final} - CHZZK`, "", { suffix: "legacy" }), "롤 내전");
+    assert.equal(utils.cleanEntryTitle("방송 제목 | 치지직", "", { suffix: "legacy" }), "방송 제목");
+
+    const target = { channelName: "테스트 채널" };
+    utils.addTitleHistory(target, final, now - 60000);
+    utils.addTitleHistory(target, semi, now);
+    utils.addTitleHistory(target, suffixLike, now + 1);
+    assert.deepEqual([...target.titleHistory.map((row) => row.title)], [final, semi, suffixLike]);
+
+    let outcome = store.applyMutation(undefined, createSnapshot(now), now);
+    const snapshot = createSnapshot(now + 1, { watchedSeconds: 70 });
+    snapshot.entry.title = semi;
+    snapshot.entry.titleHistory = target.titleHistory;
+    outcome = store.applyMutation(outcome.history, snapshot, now + 1);
+    const entry = outcome.history.entries["live:100"];
+    assert.equal(entry.title, semi);
+    assert.deepEqual([...entry.titleHistory.map((row) => row.title)], ["테스트 방송", final, semi, suffixLike]);
+    // A stored row is read back as stored; nothing is rewritten or dropped on later normalizations.
+    const stored = store.normalizeStoredHistory(outcome.history);
+    assert.deepEqual(
+        [...stored.entries["live:100"].titleHistory.map((row) => row.title)],
+        ["테스트 방송", final, semi, suffixLike]
+    );
+});
+
 test("unique watch totals deduplicate overlapping tabs while preserving range and retired residuals", () => {
     const { context } = loadStore();
     const startAt = Date.parse("2026-07-10T12:00:00+09:00");
@@ -325,7 +383,10 @@ test("a deleted provisional record propagates its barrier through migration", ()
 
     assert.equal(outcome.history.entries[sourceRecordId], undefined);
     assert.equal(outcome.history.entries[targetRecordId], undefined);
-    assert.equal(outcome.history.tombstones[targetRecordId], now);
+    // The deletion stays scoped to the provisional session: the source keeps its barrier, and the live ID gets no
+    // record-wide barrier that would also refuse other viewers' sessions of the same broadcast.
+    assert.equal(outcome.history.tombstones[sourceRecordId], now);
+    assert.equal(outcome.history.tombstones[targetRecordId], undefined);
 
     outcome = store.applyMutation(
         outcome.history,
@@ -346,6 +407,270 @@ test("a deleted provisional record propagates its barrier through migration", ()
     );
     assert.equal(outcome.result.status, "applied");
     assert.equal(outcome.history.entries[targetRecordId].sessionDetails[0].id, "after-delete");
+});
+
+test("a repeated migration of a deleted provisional record never deletes the live record's sessions", () => {
+    const now = Date.parse("2026-07-10T12:00:00+09:00");
+    const sourceRecordId = "channel:channel-a:provisional:tab-b";
+    const targetRecordId = "live:shared-live";
+    const migration = { kind: "migrateRecordId", sourceRecordId, targetRecordId };
+    const { store } = loadStore();
+    let history = store.applyMutation(
+        undefined,
+        createSnapshot(now, { recordId: targetRecordId, sessionId: "tab-a", enteredAt: now - 300000 }),
+        now
+    ).history;
+    history = store.applyMutation(
+        history,
+        createSnapshot(now, { recordId: sourceRecordId, sessionId: "tab-b", enteredAt: now - 200000 }),
+        now
+    ).history;
+    history = store.applyMutation(
+        history,
+        { kind: "deleteEntries", entryIds: [sourceRecordId], cutoffAt: now },
+        now
+    ).history;
+    const ids = () => Array.from(history.entries[targetRecordId]?.sessionDetails || [], (row) => row.id).sort();
+    // The page's response is lost, so it sends the same migration again, after the history was stored and read back.
+    for (const at of [now + 10, now + 20, now + 30]) {
+        history = JSON.parse(JSON.stringify(store.applyMutation(history, migration, at).history));
+        assert.deepEqual(ids(), ["tab-a"], `migration at +${at - now} ms`);
+    }
+    for (const recordId of [targetRecordId, sourceRecordId]) {
+        const late = store.applyMutation(
+            history,
+            createSnapshot(now + 40, { recordId, sessionId: "tab-b", enteredAt: now - 200000, watchedSeconds: 90 }),
+            now + 40
+        );
+        assert.deepEqual([late.result.status, late.result.reason], ["ignored", "deleted"], recordId);
+    }
+    // A later deletion of the merged record still applies once to the whole record.
+    history = store.applyMutation(
+        history,
+        { kind: "deleteEntries", entryIds: [sourceRecordId], cutoffAt: now + 50 },
+        now + 50
+    ).history;
+    assert.deepEqual(ids(), []);
+});
+
+test("deleting a provisional record never refuses another session of the same broadcast", () => {
+    const now = Date.parse("2026-07-10T12:00:00+09:00");
+    const sourceRecordId = "channel:channel-a:provisional:tab-b";
+    const targetRecordId = "live:shared-live";
+    const { store } = loadStore();
+    const chatAt = now - 50000;
+    const chat = { id: `viewer:${chatAt}:1`, at: chatAt, kind: "chat", text: "채팅", amount: 0 };
+    for (const withTarget of [true, false]) {
+        let history = withTarget
+            ? store.applyMutation(
+                  undefined,
+                  createSnapshot(now, { recordId: targetRecordId, sessionId: "tab-a", enteredAt: now - 300000 }),
+                  now
+              ).history
+            : undefined;
+        history = store.applyMutation(
+            history,
+            createSnapshot(now, { recordId: sourceRecordId, sessionId: "tab-b", enteredAt: now - 200000 }),
+            now
+        ).history;
+        history = store.applyMutation(
+            history,
+            { kind: "deleteEntries", entryIds: [sourceRecordId], cutoffAt: now },
+            now
+        ).history;
+        history = store.applyMutation(
+            history,
+            { kind: "migrateRecordId", sourceRecordId, targetRecordId },
+            now + 10
+        ).history;
+        // Tab C started before the deletion and saves for the first time only now; tab D has chat only.
+        const first = store.applyMutation(
+            history,
+            createSnapshot(now + 20, { recordId: targetRecordId, sessionId: "tab-c", enteredAt: now - 100000 }),
+            now + 20
+        );
+        assert.equal(first.result.status, "applied", `first save, target present: ${withTarget}`);
+        const chatOnly = store.applyMutation(
+            first.history,
+            {
+                ...createSnapshot(now + 30, {
+                    recordId: targetRecordId,
+                    sessionId: "tab-d",
+                    enteredAt: now - 80000,
+                    watchedSeconds: 0,
+                }),
+                kind: "appendActivities",
+                activities: [chat],
+            },
+            now + 30
+        );
+        assert.equal(chatOnly.result.status, "applied", `chat only, target present: ${withTarget}`);
+        assert.deepEqual(
+            Array.from(chatOnly.history.entries[targetRecordId].activities, (row) => row.id),
+            [chat.id]
+        );
+    }
+});
+
+test("migrating a deleted provisional record keeps the live record's own sessions and still blocks the deleted one", () => {
+    const now = Date.parse("2026-07-10T12:00:00+09:00");
+    const sourceRecordId = "channel:channel-a:provisional:tab-b";
+    const targetRecordId = "live:shared-live";
+    const { store } = loadStore();
+    // Tab A has already recorded the same broadcast under its live ID.
+    let outcome = store.applyMutation(
+        undefined,
+        createSnapshot(now, { recordId: targetRecordId, sessionId: "tab-a", enteredAt: now - 300000 }),
+        now
+    );
+    outcome = store.applyMutation(
+        outcome.history,
+        createSnapshot(now, { recordId: sourceRecordId, sessionId: "tab-b", enteredAt: now - 200000 }),
+        now
+    );
+    outcome = store.applyMutation(
+        outcome.history,
+        { kind: "deleteEntries", entryIds: [sourceRecordId], cutoffAt: now },
+        now
+    );
+    for (const [step, history] of [
+        ["without later source sessions", outcome.history],
+        [
+            "with a source session after the deletion",
+            store.applyMutation(
+                outcome.history,
+                createSnapshot(now + 5, { recordId: sourceRecordId, sessionId: "tab-b-new", enteredAt: now + 1 }),
+                now + 5
+            ).history,
+        ],
+    ]) {
+        let migrated = store.applyMutation(
+            history,
+            { kind: "migrateRecordId", sourceRecordId, targetRecordId },
+            now + 10
+        );
+        const ids = () => migrated.history.entries[targetRecordId].sessionDetails.map((session) => session.id).sort();
+        assert.ok(ids().includes("tab-a"), `${step}: the undeleted live session stays`);
+        assert.equal(migrated.history.entries[targetRecordId].watchedSeconds >= 60, true);
+        // The deleted session cannot come back through the live ID or the old provisional ID.
+        for (const recordId of [targetRecordId, sourceRecordId]) {
+            const late = store.applyMutation(
+                migrated.history,
+                createSnapshot(now + 20, { recordId, sessionId: "tab-b", enteredAt: now - 200000, watchedSeconds: 90 }),
+                now + 20
+            );
+            assert.equal(late.result.status, "ignored", `${step}: ${recordId}`);
+        }
+        // Tab A keeps updating its session.
+        migrated = store.applyMutation(
+            migrated.history,
+            createSnapshot(now + 30, {
+                recordId: targetRecordId,
+                sessionId: "tab-a",
+                enteredAt: now - 300000,
+                watchedSeconds: 120,
+            }),
+            now + 30
+        );
+        assert.equal(migrated.result.status, "applied");
+        assert.ok(ids().includes("tab-a"));
+        assert.equal(ids().includes("tab-b"), false);
+    }
+});
+
+test("a device clock that goes back keeps stored chats and ranges and still accepts the running session", () => {
+    const enteredAt = Date.parse("2026-07-10T12:00:00+09:00");
+    const rewound = enteredAt - 60 * 60 * 1000;
+    // The writer's own clock is an hour behind every stored timestamp.
+    class RewoundDate extends Date {
+        static now() {
+            return rewound;
+        }
+    }
+    const { store } = loadStore({ Date: RewoundDate });
+    const chats = [0, 1, 2].map((index) => {
+        const at = enteredAt + 10000 + index * 1000;
+        return { id: `author-a:${at}:1`, at, kind: "chat", text: `채팅 ${index}`, amount: 0 };
+    });
+    let outcome = store.applyMutation(
+        undefined,
+        { ...createSnapshot(enteredAt + 60000, { enteredAt, sessionId: "running" }), activities: chats },
+        enteredAt + 60000
+    );
+    assert.equal(outcome.history.entries["live:100"].activities.length, 3);
+    // The running session continues after the clock went back: its first timestamps are now "in the future", and
+    // the page's own clock went back too, so its latest leftAt and range are an hour earlier.
+    const running = createSnapshot(rewound + 60000, { enteredAt, sessionId: "running", watchedSeconds: 120 });
+    running.session.leftAt = rewound + 60000;
+    running.session.watchedRanges = [
+        { startAt: enteredAt, endAt: enteredAt + 60000 },
+        { startAt: rewound, endAt: rewound + 60000 },
+    ];
+    outcome = store.applyMutation(outcome.history, running, rewound + 60000);
+    assert.equal(outcome.result.status, "applied");
+    const entry = outcome.history.entries["live:100"];
+    assert.equal(entry.sessionDetails[0].watchedSeconds, 120);
+    // Measured times and day totals stay as observed; nothing is moved forward or trimmed to fit the clock.
+    assert.equal(entry.sessionDetails[0].leftAt, enteredAt + 60000, "the stored leftAt, unchanged");
+    assert.equal(entry.sessionDetails[0].dailySeconds["2026-07-10"], 120);
+    assert.deepEqual(
+        [...entry.activities.map((row) => row.id)],
+        chats.map((row) => row.id),
+        "stored chats are not cut by the earlier clock"
+    );
+    assert.ok(entry.sessionDetails[0].watchedRanges.length > 0, "stored ranges are not cut by the earlier clock");
+    assert.ok(entry.sessionDetails[0].watchedRanges[0].endAt > rewound + 5 * 60 * 1000);
+    // A session the writer never accepted is still judged by the current clock.
+    assert.throws(() =>
+        store.applyMutation(
+            outcome.history,
+            createSnapshot(rewound + 60000, { enteredAt, sessionId: "unknown" }),
+            rewound + 60000
+        )
+    );
+});
+
+test("the pre-queue envelope check leaves session timestamps to the writer queue and checks the rest", () => {
+    const now = Date.parse("2026-07-10T12:00:00+09:00");
+    const { store } = loadStore();
+    const ahead = createSnapshot(now + 60 * 60 * 1000, { sessionId: "ahead" });
+    // Shape, ids, and kind are still checked before the queue; the clock is judged against stored history later.
+    assert.equal(store.normalizeMutationEnvelope(ahead, now).session.id, "ahead");
+    assert.throws(() => store.applyMutation(undefined, ahead, now), /in the future/);
+    assert.throws(() => store.normalizeMutationEnvelope({ ...ahead, recordId: "bad" }, now), /record id/);
+    assert.throws(
+        () =>
+            store.normalizeMutationEnvelope(
+                { kind: "deleteEntries", entryIds: ["live:100"], cutoffAt: now + 3600000 },
+                now
+            ),
+        /in the future/
+    );
+});
+
+test("an accepted session cannot walk its allowed future forward with repeated snapshots", () => {
+    const now = Date.parse("2026-07-10T12:00:00+09:00");
+    const { store } = loadStore();
+    const snapshot = (leftAt) => {
+        const operation = createSnapshot(now, { enteredAt: now - 60000, sessionId: "running" });
+        operation.session.leftAt = leftAt;
+        return operation;
+    };
+    // Within the skew of the writer's own clock is accepted.
+    let outcome = store.applyMutation(undefined, snapshot(now + 5 * 60 * 1000 - 1000), now);
+    assert.equal(outcome.history.entries["live:100"].sessionDetails[0].leftAt, now + 5 * 60 * 1000 - 1000);
+    // With the clock unchanged, the stored end does not grant another skew on top of itself, step after step.
+    for (const steps of [2, 3]) {
+        assert.throws(
+            () => store.applyMutation(outcome.history, snapshot(now + steps * (5 * 60 * 1000 - 1000)), now),
+            /in the future/
+        );
+    }
+    // The stored end itself, and a later one once the clock really moved, are still accepted.
+    outcome = store.applyMutation(outcome.history, snapshot(now + 5 * 60 * 1000 - 1000), now);
+    assert.equal(outcome.history.entries["live:100"].sessionDetails[0].leftAt, now + 5 * 60 * 1000 - 1000);
+    outcome = store.applyMutation(outcome.history, snapshot(now + 9 * 60 * 1000), now + 5 * 60 * 1000);
+    assert.equal(outcome.history.entries["live:100"].sessionDetails[0].leftAt, now + 9 * 60 * 1000);
 });
 
 test("session aggregates keep growing after retained details reach their cap", () => {
@@ -594,7 +919,7 @@ test("stored and incoming live URLs are canonicalized from trusted channel data"
     assert.equal(outcome.history.entries["live:100"].liveUrl, "https://chzzk.naver.com/live/channel-a");
 });
 
-function createBackgroundHarness() {
+function createBackgroundHarness({ Date: ClockDate } = {}) {
     const local = {};
     let failNextSet = false;
     let onMessageListener = null;
@@ -641,7 +966,7 @@ function createBackgroundHarness() {
             onChanged: { addListener() {} },
         },
     };
-    const context = createContext({ chrome });
+    const context = createContext({ chrome, ...(ClockDate ? { Date: ClockDate } : {}) });
     context.importScripts = (...files) => {
         for (const file of files) {
             const source =
@@ -680,6 +1005,64 @@ function createBackgroundHarness() {
 function mutationMessage(store, operation) {
     return { type: store.MESSAGE_TYPE, version: store.MESSAGE_VERSION, operation };
 }
+
+test("the background receiver queues a running session after the clock goes back and stores nothing it refuses", async () => {
+    const enteredAt = Date.parse("2026-07-10T12:00:00+09:00");
+    const rewound = enteredAt - 60 * 60 * 1000;
+    const clock = { now: enteredAt + 60000 };
+    class ClockDate extends Date {
+        static now() {
+            return clock.now;
+        }
+    }
+    const harness = createBackgroundHarness({ Date: ClockDate });
+    const sender = { id: "extension-id", tab: { id: 1 }, frameId: 0, url: "https://chzzk.naver.com/live/channel-a" };
+    const send = (operation, from = sender) => harness.send(mutationMessage(harness.store, operation), from);
+    const stored = () => harness.local[harness.store.STORAGE_KEY].entries["live:100"].sessionDetails[0];
+    const first = await send(createSnapshot(enteredAt + 60000, { enteredAt, sessionId: "running" }));
+    assert.equal(first.ok, true);
+    // The device clock goes back an hour; the page's clock too, so its newest leftAt and range are an hour earlier.
+    clock.now = rewound + 60000;
+    const running = (watchedSeconds, { leftAt = rewound + 60000, closed = false } = {}) => {
+        const operation = createSnapshot(rewound + 60000, { enteredAt, sessionId: "running", watchedSeconds, closed });
+        operation.session.leftAt = leftAt;
+        operation.session.watchedRanges = [
+            { startAt: enteredAt, endAt: enteredAt + 60000 },
+            { startAt: rewound, endAt: rewound + (watchedSeconds - 60) * 1000 },
+        ];
+        return operation;
+    };
+    const grown = await send(running(120));
+    assert.deepEqual([grown.ok, grown.result?.status], [true, "applied"]);
+    assert.deepEqual([stored().watchedSeconds, stored().leftAt], [120, enteredAt + 60000]);
+    const ended = await send(running(130, { closed: true }));
+    assert.deepEqual([ended.ok, ended.result?.status], [true, "applied"]);
+    assert.deepEqual([stored().watchedSeconds, stored().closed], [130, true]);
+    // Refused writes leave the stored history as it was.
+    const before = JSON.stringify(harness.local);
+    const refused = [
+        // A session this writer never accepted is still judged by the current clock.
+        createSnapshot(rewound + 60000, { enteredAt, sessionId: "unknown" }),
+        // The accepted session cannot go beyond both its stored end and the current clock's skew.
+        running(140, { leftAt: enteredAt + 60000 + 10 * 60 * 1000 }),
+    ];
+    for (const operation of refused) {
+        const response = await send(operation);
+        assert.equal(response.ok, false);
+        assert.match(response.error, /in the future/);
+        assert.equal(JSON.stringify(harness.local), before);
+    }
+    // Sender and incognito checks still come before the queue.
+    const untrusted = await send(running(150), { ...sender, id: "other-extension" });
+    assert.equal(untrusted.ok, false);
+    const incognito = await send(running(150), { ...sender, tab: { id: 2, incognito: true } });
+    assert.deepEqual([incognito.ok, incognito.result?.reason], [true, "incognito"]);
+    // A failed storage write reports the failure and keeps the earlier value.
+    harness.failNextSet();
+    const failed = await send(running(150));
+    assert.equal(failed.ok, false);
+    assert.equal(JSON.stringify(harness.local), before);
+});
 
 test("background validates sender and schema before mutating history", async () => {
     const harness = createBackgroundHarness();

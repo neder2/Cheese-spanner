@@ -279,6 +279,7 @@ function restoreFixture(
         autoplay = false,
         time = 300,
         switchPausesAndResets = false,
+        onSwitch = null,
     } = {}
 ) {
     const dom = new JSDOM('<!doctype html><body><div class="pzp-pc"><video></video></div></body>', {
@@ -300,7 +301,7 @@ function restoreFixture(
     Object.defineProperty(w.performance, "now", { value: () => now });
     let host = w.document.querySelector(".pzp-pc");
     let video = w.document.querySelector("video");
-    const media = { paused, position: time, playCalls: 0, switches: 0 };
+    const media = { paused, position: time, playCalls: 0, switches: 0, source: "" };
     const rect = () => ({ width: 640, height: 360, left: 0, top: 0, right: 640, bottom: 360 });
     function defineMedia(target) {
         target.autoplay = autoplay;
@@ -310,6 +311,7 @@ function restoreFixture(
             duration: { get: () => 3600 },
             played: { get: () => ({ length: played }) },
             seeking: { get: () => false },
+            currentSrc: { get: () => media.source },
             currentTime: {
                 get: () => media.position,
                 set: (value) => {
@@ -338,6 +340,7 @@ function restoreFixture(
             trackIndex = value;
             media.switches += 1;
             markSelected();
+            onSwitch?.(video, media);
             if (!switchPausesAndResets) return;
             media.paused = true;
             media.position = 0;
@@ -453,6 +456,51 @@ test("the switch's own pause and position reset are still restored without a use
     assert.equal(f.media.playCalls, 1);
 });
 
+test("a Space that pauses a live mid-roll ad does not cancel the quality-switch restore", async (t) => {
+    // The live switch pauses the main video; the restore resumes it unless the user paused it afterwards.
+    const f = restoreFixture(t, {
+        url: "https://chzzk.naver.com/live/fallback",
+        onSwitch: (_video, media) => {
+            media.paused = true;
+        },
+    });
+    // 2026-11-05 public bundle: a shown #midAdPlayerWrapper is the live mid-roll; native sends Space to the ad.
+    const wrapper = f.w.document.createElement("div");
+    wrapper.id = "midAdPlayerWrapper";
+    wrapper.style.display = "block";
+    wrapper.innerHTML = '<video id="midPlayer"></video><div id="midAdVideoContainer"></div>';
+    f.w.document.body.append(wrapper);
+    assert.equal(f.request("first").status, "selected");
+    assert.equal(f.media.paused, true, "the switch itself paused the main video");
+    await f.advance(50);
+    f.w.dispatchEvent(new f.w.KeyboardEvent("keydown", { key: " ", bubbles: true }));
+    await f.advance(250);
+    assert.equal(f.media.playCalls, 1, "the ad's Space is not the user's pause of the main video");
+    assert.equal(f.media.paused, false);
+    await f.advance(5000);
+    assert.equal(f.media.playCalls, 1);
+});
+
+test("a Space that pauses a VOD ad break does not cancel the quality-switch restore", async (t) => {
+    const f = restoreFixture(t, {
+        onSwitch: (_video, media) => {
+            media.paused = true;
+        },
+    });
+    // 2026-11-05 public bundle: a VOD IMA/GV ad marks the main pzp root pzp-pc--adbreak; native sends Space to the ad.
+    const root = f.w.document.querySelector(".pzp-pc");
+    root.classList.add("pzp-pc--adbreak");
+    assert.equal(f.request("first").status, "selected");
+    assert.equal(f.media.paused, true, "the switch itself paused the main video");
+    await f.advance(50);
+    f.w.dispatchEvent(new f.w.KeyboardEvent("keydown", { key: " ", bubbles: true }));
+    f.w.dispatchEvent(new f.w.KeyboardEvent("keydown", { key: "k", bubbles: true }));
+    await f.advance(250);
+    assert.equal(f.media.playCalls, 1, "the ad's Space/K is not the user's pause of the main video");
+    assert.equal(f.media.paused, false);
+    root.classList.remove("pzp-pc--adbreak");
+});
+
 test("startup autoplay recovery still resumes a video that has not played yet", async (t) => {
     const f = restoreFixture(t, { played: 0, paused: true });
     assert.equal(f.request("first").status, "selected");
@@ -561,6 +609,12 @@ test("a saved preference, a replaced video or player and a route change still ap
     await expectManualChoiceKept("720p");
 
     f.navigate("/video/456");
+    const early = f.request(undefined, "720p");
+    assert.equal(early.status, "pending", "the previous video's stream left in the element is not switched");
+    assert.equal(early.reason, "route-media-pending");
+    assert.equal(f.media.switches, 4);
+    // The next VOD loads into the same element.
+    f.video.dispatchEvent(new f.w.Event("loadedmetadata"));
     assert.equal(f.request(undefined, "720p").status, "selected", "a new route is a new entry");
     assert.equal(f.selectedHeight(), 720);
     assert.equal(f.media.switches, 5);
@@ -621,3 +675,153 @@ for (const [suffix, position] of [
         assert.equal(f.media.position, position, "an explicit link time is still honored");
     });
 }
+
+test("a comment timecode retry stays on the VOD it was clicked on after a browser back navigation", async (t) => {
+    const f = fixture(t, { url: "https://chzzk.naver.com/video/111", time: 900 });
+    f.w.document.body.insertAdjacentHTML("beforeend", '<button id="timecode">1:23:45</button>');
+    f.loadQuality();
+    f.w.document.getElementById("timecode").click();
+    f.media("seeked", 5025);
+    await f.advance(300);
+    // Toolbar back/forward, swipe or Cmd+[ change the route without any in-page pointer or seek key.
+    f.navigate("/video/000");
+    f.media("emptied", 0);
+    f.media("loadedmetadata", 0);
+    f.media("timeupdate", 2);
+    await f.advance(5000);
+    assert.equal(f.writes.includes(5025), false, "the earlier VOD's timecode is not written onto the next VOD");
+    assert.ok(f.video.currentTime < 10);
+});
+
+test("a comment timecode retry still corrects a seek the player did not apply on the same VOD", async (t) => {
+    const f = fixture(t, { url: "https://chzzk.naver.com/video/111", time: 900 });
+    f.w.document.body.insertAdjacentHTML("beforeend", '<button id="timecode">1:23:45</button>');
+    f.loadQuality();
+    f.w.document.getElementById("timecode").click();
+    f.w.history.replaceState({}, "", "/video/111?tab=comments");
+    await f.advance(5000);
+    assert.equal(f.writes.includes(5025), true, "the clicked VOD still receives its timecode");
+});
+
+for (const entry of ["old-stream-progress", "isolated-request"]) {
+    test(`the previous VOD's position is not restored onto the next VOD after an SPA move: ${entry}`, async (t) => {
+        const f = restoreFixture(t);
+        await f.advance(2000);
+        assert.equal(f.selectedHeight(), 1080);
+        // The user lowers the quality on VOD 123 and watches on to 501 s.
+        f.chooseManually(720);
+        f.media.position = 501;
+        f.navigate("/video/456");
+        // The same element still plays VOD 123's stream right after the URL change.
+        if (entry === "old-stream-progress") {
+            f.video.dispatchEvent(new f.w.Event("timeupdate"));
+            await f.advance(10);
+        } else {
+            f.request("route-change");
+        }
+        // VOD 456 then loads into the same element at its start.
+        f.media.position = 0;
+        f.video.dispatchEvent(new f.w.Event("emptied"));
+        f.video.dispatchEvent(new f.w.Event("loadstart"));
+        await f.advance(3000);
+        assert.ok(f.media.position < 5, `VOD 456 stays at its own start, not 501 s (got ${f.media.position})`);
+
+        // VOD 456 still receives its own entry apply once its media progresses.
+        f.chooseManually(480);
+        f.media.position = 2;
+        f.video.dispatchEvent(new f.w.Event("timeupdate"));
+        await f.advance(5000);
+        assert.equal(f.selectedHeight(), 1080);
+        assert.ok(f.media.position < 5);
+    });
+}
+
+test("the next VOD's startup wait restarts when its media loads after a request answered by the old stream", async (t) => {
+    const f = restoreFixture(t);
+    await f.advance(2000);
+    f.media.position = 501;
+    f.navigate("/video/456");
+    assert.equal(f.request("route-change").status, "already", "the old stream still shows 1080p");
+    f.media.position = 0;
+    f.video.dispatchEvent(new f.w.Event("emptied"));
+    f.video.dispatchEvent(new f.w.Event("loadstart"));
+    // VOD 456 offers the native resume control while it settles at its start position.
+    const resume = f.w.document.createElement("button");
+    resume.textContent = "이어서 보기";
+    resume.getBoundingClientRect = () => ({ width: 120, height: 32, left: 0, top: 0, right: 120, bottom: 32 });
+    f.w.document.body.append(resume);
+    f.chooseManually(480);
+    const waiting = f.request("after-load");
+    assert.equal(waiting.status, "pending");
+    assert.equal(waiting.reason, "vod-resume-wait", "the old stream's position no longer ends the new wait");
+    assert.equal(f.selectedHeight(), 480);
+    resume.remove();
+    f.media.position = 2;
+    f.video.dispatchEvent(new f.w.Event("timeupdate"));
+    await f.advance(5000);
+    assert.equal(f.selectedHeight(), 1080, "the entry apply runs once the new VOD is ready");
+});
+
+// A native track switch may itself replace the stream source or start a load. That must not count as the next VOD's
+// media, so the previous VOD's stream left in the element is not switched, restored or recorded as the next entry.
+for (const effect of ["source-change", "loadstart", "replaced-video"]) {
+    test(`a selection that reloads the previous VOD's stream does not leak into the next VOD: ${effect}`, async (t) => {
+        let switchCount = 0;
+        const f = restoreFixture(t, {
+            onSwitch(video, media) {
+                switchCount += 1;
+                if (effect === "loadstart") video.dispatchEvent(new video.ownerDocument.defaultView.Event("loadstart"));
+                else media.source = `blob:quality-${switchCount}`;
+            },
+        });
+        await f.advance(2000);
+        assert.equal(f.selectedHeight(), 1080);
+        f.chooseManually(720);
+        f.media.position = 501;
+        f.navigate("/video/456");
+        // The isolated world asks right after the URL change while VOD 123 still plays in the element.
+        f.request("route-change");
+        await f.advance(10);
+        // VOD 456 then loads at its start, at the platform default.
+        f.media.position = 0;
+        if (effect === "replaced-video") {
+            f.replaceVideo();
+        } else {
+            f.media.source = "blob:vod-456";
+            f.video.dispatchEvent(new f.w.Event("emptied"));
+            f.video.dispatchEvent(new f.w.Event("loadstart"));
+        }
+        f.chooseManually(480);
+        await f.advance(3000);
+        assert.ok(f.media.position < 5, `VOD 456 stays at its own start, not 501 s (got ${f.media.position})`);
+
+        f.media.position = 2;
+        f.video.dispatchEvent(new f.w.Event("timeupdate"));
+        await f.advance(10);
+        f.request("after-load");
+        await f.advance(5000);
+        assert.equal(f.selectedHeight(), 1080, "VOD 456 still receives its own entry apply");
+        assert.ok(f.media.position < 5, `VOD 456 is not moved to 501 s (got ${f.media.position})`);
+    });
+}
+
+test("a live route change waits for the next broadcast's stream and then applies its entry without a new request", async (t) => {
+    const f = restoreFixture(t, { url: "https://chzzk.naver.com/live/fallback" });
+    await f.advance(2000);
+    assert.equal(f.selectedHeight(), 1080);
+    f.chooseManually(720);
+    f.navigate("/live/other");
+    const early = f.request("route-change");
+    assert.equal(early.status, "pending", "the previous broadcast's stream left in the element is not switched");
+    assert.equal(early.reason, "route-media-pending");
+    assert.equal(f.media.switches, 1);
+    // Let the request's own retry window run out before the next broadcast's stream arrives.
+    await f.advance(30000);
+    assert.equal(f.selectedHeight(), 720);
+    f.chooseManually(480);
+    f.media.source = "blob:live-other";
+    f.video.dispatchEvent(new f.w.Event("loadstart"));
+    await f.advance(5000);
+    assert.equal(f.selectedHeight(), 1080, "the next broadcast receives its entry apply once its stream loads");
+    assert.equal(f.media.switches, 2);
+});

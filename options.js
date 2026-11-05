@@ -15,6 +15,7 @@
  * 통신: chrome.storage.sync에 각 data-option 키를 읽고 쓴다(다른 파일들이 같은 키를 구독해 기능을
  * 켜고 끔). followingPreviewTooltipEnabled를 켤 때만 optional_host_permissions로 선언된
  * PREVIEW_HOST_PERMISSION(https://*.pstatic.net/*)을 chrome.permissions.request로 요청한다.
+ * 녹화 저장 폴더(videoRecorderFolder)를 새로 정해 저장할 때와 녹화 묶음의 권한 버튼에서만 선택 권한 downloads를 요청한다.
  * 마지막으로 본 탭 인덱스는 window.localStorage 키 "betterChzzkOptionsLastTab"에 저장한다.
  * 옵션 묶음의 펼침/접힘 선택은 chrome.storage.local에 묶음 ID별로 자동 저장한다.
  */
@@ -62,6 +63,10 @@ const NOTICE_STATE_LABELS = {
 // 기능을 켜는 순간에만 요청한다. 이미 허용된 상태의 request는 팝업 없이 승인된다.
 const PREVIEW_HOST_PERMISSION = { origins: ["https://*.pstatic.net/*"] };
 const PREVIEW_PERMISSION_DENIED_MESSAGE = "권한이 거부되어 팔로잉 미리보기를 켜지 않았어요.";
+// 녹화 파일을 다운로드 폴더 안의 하위 폴더로 보낼 때만 쓰는 선택 권한(shared/recordingDownloads.js).
+const DOWNLOADS_PERMISSION = { permissions: ["downloads"] };
+const RECORDER_FOLDER_DENIED_MESSAGE =
+    "다운로드 권한이 거부되어 저장하지 않았어요. 녹화 저장 폴더를 비우면 다른 옵션을 저장할 수 있어요.";
 const SHORTCUT_KEY_UNAVAILABLE_MESSAGE = "이 키는 기존 재생 조작과 겹쳐 지정할 수 없어요.";
 const SHORTCUT_KEY_DUPLICATE_MESSAGE = "배속 감소·증가·초기화는 서로 다른 키로 지정해 주세요.";
 
@@ -130,8 +135,13 @@ function readOptionsFromForm() {
 
     for (const input of optionInputs) {
         const key = input.dataset.option;
-        // 입력 중 잠깐 비워진 숫자 칸은 기본값 대신 마지막 저장값을 유지한다.
-        if (input.type !== "checkbox" && String(input.value).trim() === "" && savedOptions) {
+        // 입력 중 잠깐 비워진 숫자 칸은 기본값 대신 마지막 저장값을 유지한다. 빈 값이 뜻을 갖는 칸(녹화 폴더)은 예외다.
+        if (
+            input.type !== "checkbox" &&
+            !input.hasAttribute("data-allow-empty") &&
+            String(input.value).trim() === "" &&
+            savedOptions
+        ) {
             raw[key] = savedOptions[key];
             continue;
         }
@@ -211,6 +221,7 @@ function renderPageState(options, state = "saved") {
     applyDependencies(options);
     applyControlStates(options);
     renderNotice(state, countChangedOptions(options));
+    renderRecorderFolderStatus(options);
 }
 
 function renderOptions(options, { state = "saved" } = {}) {
@@ -399,7 +410,13 @@ function startSave(normalized, message, save = createSaveSnapshot(normalized)) {
                                                   : "동영상 광고 차단을 껐어요. 이미 반영된 상태는 새로고침하면 복원돼요."
                                               : "설정은 저장됐지만 적용 준비에 실패했어요. 확장을 다시 로드한 뒤 설정을 확인해 주세요.";
                                 }
-                                finishSave(save, stored, message);
+                                // Changes saved elsewhere while the worker synced the ad registration are part of the
+                                // stored result; the snapshot taken at the write callback would roll them back.
+                                finishSave(
+                                    save,
+                                    normalizeOptions({ ...latestRaw, ...values, ...save.changesAfterRead }),
+                                    message
+                                );
                             }
                             if (!globalThis.chrome?.runtime?.sendMessage) {
                                 finishAdVideoSave({ ok: false });
@@ -500,6 +517,35 @@ function requestOptionalPermissions(spec, callback) {
     });
 }
 
+// A bundled permissions.request is all-or-nothing. After a denial, keep the features whose own permission is
+// already held and report only the rest as denied.
+function filterUnheldPermissionKeys(keys, callback) {
+    const permissions = globalThis.chrome?.permissions;
+    if (typeof permissions?.contains !== "function") {
+        callback(keys);
+        return;
+    }
+    const remaining = [];
+    let pending = keys.length;
+    if (!pending) {
+        callback(remaining);
+        return;
+    }
+    for (const key of keys) {
+        const spec =
+            key === "liveStartNotificationsEnabled"
+                ? { permissions: ["notifications"] }
+                : key === "videoRecorderFolder"
+                  ? DOWNLOADS_PERMISSION
+                  : PREVIEW_HOST_PERMISSION;
+        permissions.contains(spec, (held) => {
+            void globalThis.chrome?.runtime?.lastError;
+            if (!held) remaining.push(key);
+            if (--pending === 0) callback(keys.filter((item) => remaining.includes(item)));
+        });
+    }
+}
+
 function getOptionInput(target) {
     const input = target instanceof Element ? target.closest("[data-option]") : null;
     return input && optionInputs.includes(input) ? input : null;
@@ -524,10 +570,17 @@ function saveCurrentOptions() {
         (key) => normalized[key] && !savedOptions?.[key]
     );
     const needsNotifications = normalized.liveStartNotificationsEnabled;
-    if (newlyEnabledMedia.length || needsNotifications) {
+    // A newly chosen recording folder asks for the downloads permission in this same click.
+    const needsDownloads =
+        normalized.videoRecorderFolder !== "" && normalized.videoRecorderFolder !== savedOptions?.videoRecorderFolder;
+    if (newlyEnabledMedia.length || needsNotifications || needsDownloads) {
+        const permissionNames = [
+            ...(needsNotifications ? ["notifications"] : []),
+            ...(needsDownloads ? ["downloads"] : []),
+        ];
         const permissionSpec = {
             ...(newlyEnabledMedia.length ? PREVIEW_HOST_PERMISSION : {}),
-            ...(needsNotifications ? { permissions: ["notifications"] } : {}),
+            ...(permissionNames.length ? { permissions: permissionNames } : {}),
         };
         const save = createSaveSnapshot(normalized);
         saveInFlight = true;
@@ -535,24 +588,32 @@ function saveCurrentOptions() {
         renderPageState(normalized, "saving");
         requestOptionalPermissions(permissionSpec, (granted) => {
             if (!granted) {
-                saveInFlight = false;
-                releaseSaveSnapshot(save);
-                for (const key of [
+                const requestedKeys = [
                     ...newlyEnabledMedia,
                     ...(needsNotifications ? ["liveStartNotificationsEnabled"] : []),
-                ]) {
-                    const toggle = optionInputs.find((input) => input.dataset.option === key);
-                    if (toggle) toggle.checked = false;
-                }
-                renderFormChanges();
-                showMessage(
-                    needsNotifications
-                        ? "권한이 거부되어 저장하지 않았어요. 데스크톱 알림을 끈 상태로 다른 옵션을 저장할 수 있어요."
-                        : newlyEnabledMedia.includes("liveMultiviewEnabled")
-                          ? "영상 호스트 권한이 거부되어 멀티뷰를 켜지 않았어요."
-                          : PREVIEW_PERMISSION_DENIED_MESSAGE,
-                    "error"
-                );
+                    ...(needsDownloads ? ["videoRecorderFolder"] : []),
+                ];
+                filterUnheldPermissionKeys(requestedKeys, (deniedKeys) => {
+                    saveInFlight = false;
+                    releaseSaveSnapshot(save);
+                    for (const key of deniedKeys) {
+                        // The folder keeps the typed name so the user can clear it or retry the permission.
+                        if (key === "videoRecorderFolder") continue;
+                        const toggle = optionInputs.find((input) => input.dataset.option === key);
+                        if (toggle) toggle.checked = false;
+                    }
+                    renderFormChanges();
+                    showMessage(
+                        deniedKeys.includes("liveStartNotificationsEnabled")
+                            ? "권한이 거부되어 저장하지 않았어요. 데스크톱 알림을 끈 상태로 다른 옵션을 저장할 수 있어요."
+                            : deniedKeys.includes("videoRecorderFolder")
+                              ? RECORDER_FOLDER_DENIED_MESSAGE
+                              : deniedKeys.includes("liveMultiviewEnabled")
+                                ? "영상 호스트 권한이 거부되어 멀티뷰를 켜지 않았어요."
+                                : PREVIEW_PERMISSION_DENIED_MESSAGE,
+                        "error"
+                    );
+                });
                 return;
             }
             startSave(normalized, "옵션을 저장했어요.", save);
@@ -678,6 +739,57 @@ resetButton.addEventListener("click", () => {
     markOptionsTouched(OPTION_KEYS);
     commitSave("기본값으로 복원했어요.");
 });
+
+// Recording folder: say where the next file goes and offer the downloads permission when a folder needs it.
+const recorderPermissionButton = document.getElementById("videoRecorderPermission");
+const recorderPermissionStatus = document.getElementById("videoRecorderPermissionStatus");
+let recorderStatusRevision = 0;
+let recorderStatusOptions = null;
+
+function renderRecorderFolderStatus(options) {
+    if (!recorderPermissionButton || !recorderPermissionStatus) return;
+    recorderStatusOptions = options;
+    const revision = ++recorderStatusRevision;
+    const folder = options.videoRecorderFolder;
+    const show = (text, needsPermission) => {
+        if (revision !== recorderStatusRevision) return;
+        if (recorderPermissionStatus.textContent !== text) recorderPermissionStatus.textContent = text;
+        recorderPermissionButton.hidden = !needsPermission;
+        recorderPermissionButton.disabled =
+            optionsLoadState !== "ready" || externalBusy || isDisabledByDependency(recorderPermissionButton, options);
+    };
+    if (!folder) {
+        show("", false);
+        return;
+    }
+    const permissions = globalThis.chrome?.permissions;
+    if (typeof permissions?.contains !== "function") {
+        show(`다운로드 폴더 안의 ‘${folder}’ 폴더에 저장해요.`, false);
+        return;
+    }
+    permissions.contains(DOWNLOADS_PERMISSION, (held) => {
+        const granted = !globalThis.chrome?.runtime?.lastError && held === true;
+        show(
+            granted
+                ? `다운로드 폴더 안의 ‘${folder}’ 폴더에 저장해요.`
+                : "다운로드 권한이 없어 지금은 녹화 파일을 다운로드 폴더에 바로 저장해요.",
+            !granted
+        );
+    });
+}
+
+recorderPermissionButton?.addEventListener("click", () => {
+    if (recorderPermissionButton.disabled) return;
+    requestOptionalPermissions(DOWNLOADS_PERMISSION, (granted) => {
+        if (!granted) showMessage("다운로드 권한이 거부되어 녹화 파일은 다운로드 폴더에 바로 저장돼요.", "error");
+        if (recorderStatusOptions) renderRecorderFolderStatus(recorderStatusOptions);
+    });
+});
+for (const event of [globalThis.chrome?.permissions?.onAdded, globalThis.chrome?.permissions?.onRemoved]) {
+    event?.addListener?.(() => {
+        if (recorderStatusOptions) renderRecorderFolderStatus(recorderStatusOptions);
+    });
+}
 
 if (storage) {
     renderNotice("loading");

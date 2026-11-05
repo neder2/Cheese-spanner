@@ -7,7 +7,7 @@
  * 하는 일:
  *   - 치지직 API 응답 파싱: pickArray, pickChzzkVideoNo, pickVideoStartDateText/pickVideoEndDateText,
  *     isLastPage(페이지네이션 종료 판정), parseChzzkDate(KST 가정 날짜 파싱).
- *   - 제목 정리·매칭: cleanTitle/cleanEntryTitle(채널명 접두 제거), normalizeForMatch.
+ *   - 제목 정리·매칭: cleanTitle(페이지 제목 끝 사이트 이름 제거)/cleanEntryTitle(채널명 접두 제거), normalizeForMatch.
  *   - KST 날짜 계산: getKstParts, getKstDateKey, getKstDateScopeBounds, formatKstDateTime 등.
  *   - 시청 구간 집계: mergeWatchRanges, getWatchSessionRanges(watchedRanges 없으면 dailySeconds로 폴백),
  *     collectWatchSessionRanges, addWatchRangeToRangesByDate, sumWatchRangesByDate.
@@ -218,7 +218,15 @@
         );
     }
 
+    // document.title 끝의 사이트 이름 ' - CHZZK'·' - 치지직'을 한 번만 떼요. 그 앞의 같은 글자는 방제예요(og:title에는 붙지 않아요).
     function cleanTitle(value) {
+        return compactSpaces(value)
+            .replace(/\s+-\s+(?:CHZZK|\uCE58\uC9C0\uC9C1)$/, "")
+            .trim();
+    }
+
+    // 1.4.3까지의 접미사 제거예요. 제목 중간의 '- 치지직'·'| CHZZK' 뒤까지 잘랐으므로 그때 저장한 팔로잉 제목을 알아볼 때만 써요.
+    function cleanLegacyTitle(value) {
         return compactSpaces(value)
             .replace(/\s*[-|]\s*CHZZK.*$/i, "")
             .replace(/\s*[-|]\s*\uCE58\uC9C0\uC9C1.*$/i, "")
@@ -229,13 +237,21 @@
         return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
 
-    function cleanEntryTitle(value, channelName = "") {
-        const title = cleanTitle(value);
-        const channel = cleanTitle(channelName);
+    function stripChannelPrefix(title, channel, clean) {
         if (!title || !channel) return title;
 
         const match = title.match(new RegExp(`^${escapeRegExp(channel)}\\s*[-|:\u00B7]\\s*(.+)$`, "i"));
-        return match ? cleanTitle(match[1]) || title : title;
+        return match ? clean(match[1]) || title : title;
+    }
+
+    // API·저장 제목 안의 '- 치지직'·'| CHZZK'도 방제의 일부라 공백과 채널명 접두사만 정리해요.
+    // suffix "page"는 document.title에만 써요. 사이트 이름은 끝에 한 번 붙으므로 처음 한 번만 떼고 채널명·접두사 뒤 방제에는 다시 적용하지 않아요.
+    // suffix "legacy"는 1.4.3 팔로잉 저장 제목 해석 전용이라 그때처럼 제목·채널명·접두사 뒤 방제를 모두 손실 정규식으로 정리해요.
+    function cleanEntryTitle(value, channelName = "", { suffix = "" } = {}) {
+        if (suffix === "legacy")
+            return stripChannelPrefix(cleanLegacyTitle(value), cleanLegacyTitle(channelName), cleanLegacyTitle);
+        const title = suffix === "page" ? cleanTitle(value) : compactSpaces(value);
+        return stripChannelPrefix(title, compactSpaces(channelName), compactSpaces);
     }
 
     function normalizeForMatch(value) {
@@ -254,6 +270,8 @@
 
         const raw = String(value).trim();
         if (!raw) return null;
+        // pickString returns an epoch such as publishDateAt as digits; it is a timestamp, not a KST date text.
+        if (/^\d{10,13}$/.test(raw)) return parseChzzkDate(Number(raw));
 
         const isoLike = raw.includes("T") ? raw : raw.replace(" ", "T");
         const withZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(isoLike) ? isoLike : `${isoLike}+09:00`;

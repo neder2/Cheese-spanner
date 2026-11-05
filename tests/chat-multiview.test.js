@@ -491,6 +491,13 @@ test("channel input accepts ids and CHZZK channel addresses, searches names, and
         ["ftp://chzzk.naver.com/live/" + A, { kind: "invalid" }],
         ["chzzk.naver.com/video/123", { kind: "invalid" }],
         ["chzzk.naver.com/live/" + A + "/chat/extra", { kind: "invalid" }],
+        ["https:chzzk.naver.com/live/" + A, id(A)],
+        ["//chzzk.naver.com/live/" + A, { kind: "invalid" }],
+        ["javascript://chzzk.naver.com/live/" + A, { kind: "invalid" }],
+        // A colon after letters is part of a channel name, not an address scheme.
+        ["Re:Zero", { kind: "keyword", keyword: "Re:Zero" }],
+        ["  re:zero 팬방송 ", { kind: "keyword", keyword: "re:zero 팬방송" }],
+        ["LoL:Worlds", { kind: "keyword", keyword: "LoL:Worlds" }],
     ])
         assert.deepEqual(chatModel.parseChannelInput(input), expected, input);
 });
@@ -721,6 +728,37 @@ test("a verified chat frame that moves to another address is hidden until it ret
     assert.equal(frameC.isConnected, false);
 });
 
+test("a first load that cannot be read is a failed load, while a verified chat that becomes unreadable has left", async (t) => {
+    // R1-17: Chrome commits an opaque error page (network error, blocked framing) and fires load; that is not a cell
+    // that moved away from its chat.
+    const f = fixture(t, { stored: layout([A, B]) });
+    await f.open();
+    const a = f.attachFrame(A);
+    const frameA = f.frame(A);
+    a.leaveOrigin();
+    assert.equal(f.cell(A).dataset.state, "failed");
+    assert.equal(f.overlayText(A), "채팅을 불러오지 못했어요.");
+    assert.equal(f.action(A, "reload").textContent, "다시 시도");
+    assert.ok(frameA.hasAttribute("inert"));
+    assert.equal(frameA.isConnected, false, "the error page does not stay loaded behind the overlay");
+    assert.equal(f.heldCount(FRAME_LOAD_DELAY), 1, "only B still waits for its first load");
+    // Retrying loads the same frame at its chat address again, and an error page on that attempt fails again.
+    f.trusted(f.action(A, "reload"));
+    assert.equal(f.cell(A).dataset.state, "loading");
+    assert.equal(f.frame(A), frameA);
+    assert.equal(frameA.getAttribute("src"), chatModel.frameUrl(A));
+    frameA.dispatchEvent(new f.w.Event("load"));
+    assert.equal(f.cell(A).dataset.state, "failed");
+
+    // Contrast: once this attempt showed the verified chat, a later unreadable document has left it.
+    const b = f.attachFrame(B);
+    b.load();
+    assert.equal(f.cell(B).dataset.state, "ready");
+    b.leaveOrigin();
+    assert.equal(f.cell(B).dataset.state, "left");
+    assert.equal(f.action(B, "reload").textContent, "채팅으로 돌아가기");
+});
+
 test("a cell that leaves for a live page unloads that hidden page and returns only to its own chat address", async (t) => {
     const f = fixture(t, { stored: layout([A, B]) });
     await f.open();
@@ -890,6 +928,41 @@ test("nickname search shows at most five validated channels, drops late response
     assert.deepEqual(f.stored(), layout([A, B]));
     assert.equal(f.panel().querySelector(".bccmv-results").hidden, true);
     assert.equal(f.requests.length, 2);
+});
+
+test("clicking a result row twice before the save answers adds once and keeps the added notice", async (t) => {
+    // R2-120: the result row and layout change only after the save; a second click on the same row must not queue a
+    // duplicate add whose rejection replaces the success notice.
+    const f = fixture(t, { stored: layout([A]) });
+    await f.open();
+    f.openAdd();
+    f.setFetch(async () => searchResponse([B, C]));
+    f.typeText("치즈");
+    f.enter();
+    await waitForCondition(() => f.result(B));
+    const send = f.chrome.runtime.sendMessage;
+    const heldSaves = [];
+    f.chrome.runtime.sendMessage = (message, callback) => {
+        if (message?.type === STORE_TYPE) heldSaves.push(() => send.call(f.chrome.runtime, message, callback));
+        else send.call(f.chrome.runtime, message, callback);
+    };
+    f.trusted(f.result(B));
+    f.trusted(f.result(B));
+    await waitForCondition(() => heldSaves.length === 1);
+    f.chrome.runtime.sendMessage = send;
+    heldSaves.shift()();
+    await waitForCondition(() => f.cell(B));
+    await settle();
+    assert.equal(f.storeMessages.length, 1, "one save");
+    assert.deepEqual(f.stored(), layout([A, B]));
+    assert.equal(f.message(), nameOf(B) + " 채팅을 추가했어요.");
+
+    // Contrast: adding the same channel again after its save still explains that it is already added.
+    f.typeText(B);
+    f.enter();
+    assert.equal(f.message(), "이미 추가한 채널이에요.");
+    await settle();
+    assert.equal(f.storeMessages.length, 1);
 });
 
 test("the add button reads 검색 for names and 추가 for addresses, and results show live status from the search", async (t) => {
@@ -1420,6 +1493,68 @@ test("dragging a chat's name bar moves the whole panel and docks it to the neare
     f.trusted(f.cornerButton("bottom-right"));
     await waitForCondition(() => f.stored()?.corner === "bottom-right");
     assert.deepEqual(f.stored(), layout([A, B]));
+});
+
+test("a resize dragged to the window edge keeps its columns after release at every rounding of the cell width", async (t) => {
+    // R1-16: the dragged cell width is divided from the panel width; rounding x.5 up made the saved cells one pixel too
+    // wide for the window, so the panel fell back to fewer columns after the save.
+    for (const { innerWidth, ids } of [
+        { innerWidth: 1401, ids: [A, B] },
+        { innerWidth: 1400, ids: [A, B] },
+        { innerWidth: 1436, ids: [A, B, C] },
+    ]) {
+        const name = `${ids.length} chats in a ${innerWidth}px window`;
+        const f = fixture(t, { stored: layout(ids) });
+        Object.defineProperty(f.w, "innerWidth", { configurable: true, value: innerWidth });
+        await f.open();
+        const panel = f.panel();
+        const grid = panel.querySelector(".bccmv-grid");
+        const size = () => [parseInt(panel.style.width, 10), parseInt(panel.style.height, 10)];
+        const handle = panel.querySelector(".bccmv-resize");
+        assert.equal(grid.dataset.columns, String(ids.length), name);
+        // Docked bottom-right, the handle is on the top-left: dragging far left grows the chats to the window width.
+        f.trusted(handle, "pointerdown", { clientX: 400, clientY: 400 });
+        f.trusted(handle, "pointermove", { clientX: -3000, clientY: 400 });
+        const dragged = size();
+        assert.ok(dragged[0] <= innerWidth - 32, name + ": the dragged panel fits the window");
+        assert.equal(grid.dataset.columns, String(ids.length), name);
+        const before = f.storeMessages.length;
+        f.trusted(handle, "pointerup", { clientX: -3000, clientY: 400 });
+        await waitForCondition(() => f.storeMessages.length === before + 1 && f.stored().chatWidth !== 340);
+        await settle();
+        assert.equal(grid.dataset.columns, String(ids.length), name + ": the released size keeps the dragged columns");
+        assert.equal(grid.dataset.rows, "1", name);
+        assert.deepEqual(size(), dragged, name + ": the panel keeps the dragged size after saving");
+    }
+});
+
+test("a chat whose name bar is being dragged can be removed by another tab without leaving the drag behind", async (t) => {
+    // R1-18: the removed name bar never receives pointerup or lostpointercapture, so the drag has to end with it.
+    const f = fixture(t, { stored: layout([A, B]) });
+    await f.open();
+    const panel = f.panel();
+    const box = () => [panel.style.left, panel.style.top];
+    const headB = f.cell(B).querySelector(".bccmv-cell-head");
+    f.trusted(headB, "pointerdown", { clientX: 600, clientY: 150 });
+    f.trusted(headB, "pointermove", { clientX: 500, clientY: 150 });
+    assert.ok(panel.hasAttribute("data-bccmv-moving"));
+    f.changeLocal(layout([A]));
+    assert.equal(f.cell(B), null);
+    assert.equal(panel.hasAttribute("data-bccmv-moving"), false, "the remaining chat frames take the pointer again");
+    const headA = f.cell(A).querySelector(".bccmv-cell-head");
+    const settled = box();
+    // A plain mouse move over the remaining name bar no longer moves the panel with the old drag.
+    f.trusted(headA, "pointermove", { clientX: 100, clientY: 100 });
+    assert.deepEqual(box(), settled);
+    f.trusted(headA, "pointerup", { clientX: 100, clientY: 100 });
+    await settle();
+    assert.equal(f.storeMessages.length, 0, "the interrupted drag saves no position");
+    assert.deepEqual(f.stored(), layout([A]));
+    // A new drag on the remaining chat starts normally.
+    f.trusted(headA, "pointerdown", { clientX: 600, clientY: 150 });
+    assert.ok(panel.hasAttribute("data-bccmv-moving"));
+    f.trusted(headA, "pointerup", { clientX: 600, clientY: 150 });
+    assert.equal(panel.hasAttribute("data-bccmv-moving"), false);
 });
 
 test("a failed save keeps this document's layout; a conflict shows the other tab's layout without overwriting it", async (t) => {

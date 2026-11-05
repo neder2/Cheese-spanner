@@ -877,3 +877,105 @@ test("automatic and replayed notices request the shared CHZZK theme before inser
     assert.equal(f.doc.querySelector("[data-bcug-view]"), null);
     assert.equal(guideStyles(), 0);
 });
+
+test("a floating mini player or PiP parks the notice without consuming it or counting its time", async (t) => {
+    // Scrolling down or a mid ad only adds .miniplayer to the player (fixed 353x198 at the top right).
+    const player = (f, className = "") => {
+        const node = f.doc.createElement("div");
+        node.className = `chzzk_player type_live ${className}`.trim();
+        f.doc.body.append(node);
+        return node;
+    };
+    const f = fixture(t);
+    const live = player(f);
+    await f.advance(2000);
+    const toast = f.toast();
+    const animation = f.animations[0];
+    assert.equal(toast.style.visibility, "");
+    await f.advance(5000);
+    live.classList.add("miniplayer");
+    await f.flush();
+    assert.equal(f.toast(), toast);
+    assert.equal(toast.style.visibility, "hidden");
+    assert.ok(toast.hasAttribute("inert"));
+    assert.equal(toast.getAttribute("aria-hidden"), "true");
+    await f.advance(60000);
+    f.focus(false);
+    f.focus(true);
+    await f.advance(60000);
+    assert.equal(f.toast(), toast, "the parked notice survives window switches");
+    assert.equal(animation.currentTime, 5000);
+    assert.equal(animation.playState, "paused");
+    assert.equal(f.timers.size, 0);
+    live.classList.remove("miniplayer");
+    await f.flush();
+    assert.equal(toast.style.visibility, "");
+    assert.equal(toast.hasAttribute("inert"), false);
+    await f.advance(14999);
+    assert.equal(f.toast(), toast);
+    await f.advance(1);
+    assert.equal(f.toast(), null);
+    assert.deepEqual(
+        f.messages.map((message) => message.action),
+        ["claim", "commit"]
+    );
+
+    const waiting = fixture(t);
+    const pip = player(waiting, "pip_mode");
+    await waiting.advance(30000);
+    assert.equal(waiting.toast(), null);
+    assert.equal(waiting.messages.length, 0, "a floating player delays the claim before consumption");
+    pip.classList.remove("pip_mode");
+    await waiting.flush();
+    await waiting.advance(2000);
+    assert.equal(waiting.toast().style.visibility, "");
+    assert.deepEqual(
+        waiting.messages.map((message) => message.action),
+        ["claim", "commit"]
+    );
+
+    // Closing the in-page PiP unmounts its section (2026-11-04 bundle) instead of clearing the class.
+    const closing = fixture(t);
+    const host = closing.doc.createElement("div");
+    const section = closing.doc.createElement("section");
+    const docked = closing.doc.createElement("div");
+    docked.className = "chzzk_player type_live pip_mode";
+    section.append(docked);
+    host.append(section);
+    closing.doc.body.append(host);
+    await closing.advance(30000);
+    assert.equal(closing.messages.length, 0);
+    host.remove();
+    await closing.flush();
+    await closing.advance(2000);
+    assert.equal(closing.toast().style.visibility, "", "removing the floating player retries the notice");
+    assert.deepEqual(
+        closing.messages.map((message) => message.action),
+        ["claim", "commit"]
+    );
+
+    const committing = fixture(t, { deferred: true });
+    const mini = player(committing);
+    await committing.advance(2000);
+    const claim = committing.pending.shift();
+    claim.callback(claim.response);
+    await committing.flush();
+    const commit = committing.pending.shift();
+    assert.equal(commit.message.action, "commit");
+    mini.classList.add("miniplayer");
+    await committing.flush();
+    commit.callback(commit.response);
+    await committing.flush();
+    const staged = committing.toast();
+    assert.ok(staged, "an approved notice is kept for the player's return");
+    assert.equal(staged.style.visibility, "hidden");
+    await committing.advance(60000);
+    assert.equal(committing.toast(), staged);
+    mini.classList.remove("miniplayer");
+    await committing.flush();
+    assert.equal(staged.style.visibility, "");
+    await committing.advance(19999);
+    assert.equal(committing.toast(), staged);
+    await committing.advance(1);
+    assert.equal(committing.toast(), null);
+});

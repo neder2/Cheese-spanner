@@ -38,7 +38,10 @@
     const NICKNAME_BUTTON_SELECTOR = "button[aria-haspopup='true']";
     const MESSAGE_CONTAINER_SELECTOR = "[class*='chatting_message'], [class*='chat-message']";
     const EARLIEST_MESSAGE_TIME_MS = Date.UTC(2020, 0, 1);
-    const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
+    // 서버 시각은 기기 시계와 무관하게 맞는 값이에요. 기기 시계가 늦은 PC(동기화 꺼짐, 듀얼 부팅의 시간대만큼
+    // 어긋난 시계 등)에서도 방금 온 채팅을 버리지 않도록 기기 시각보다 12시간 넘게 앞선 값만 잘못된 값으로 봐요.
+    // MAIN 브리지(features/chatTimestampPage.js)의 같은 상한과 맞춰요.
+    const MAX_FUTURE_SKEW_MS = 12 * 60 * 60 * 1000;
     const OBSERVED_ATTRIBUTES = [
         "data-chat-id",
         "data-message-id",

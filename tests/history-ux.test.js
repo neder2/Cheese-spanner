@@ -560,6 +560,78 @@ test("an empty history explains how records appear and offers one refresh action
     assert.equal(document.querySelectorAll("#refresh, #calendarRefresh").length, 1);
 });
 
+const REPLAY_CHANNEL = "0123456789abcdef0123456789abcdef";
+
+// A record without a stored replay; its title link starts the replay lookup.
+async function openReplayLookup(t, fetchImpl) {
+    const f = await openHistory(t, (history) => {
+        history.entries["live:alpha"] = {
+            ...history.entries["live:alpha"],
+            channelId: REPLAY_CHANNEL,
+            liveId: "777",
+            liveOpenDate: "2026-09-10 10:00:00",
+        };
+    });
+    const opened = [];
+    f.dom.window.open = () => {
+        const pending = { closed: false, opener: {}, location: { href: "" }, document: { title: "", body: {} } };
+        pending.close = () => (pending.closed = true);
+        opened.push(pending);
+        return pending;
+    };
+    const requests = [];
+    f.dom.window.fetch = async (url, options) => {
+        requests.push(String(url));
+        return fetchImpl(String(url), options);
+    };
+    const link = () => f.row("live:alpha").querySelector(".history-item-title-link");
+    return { ...f, opened, requests, link };
+}
+
+test("replay lookup keeps paging when the first video page holds only uploads", async (t) => {
+    const uploads = Array.from({ length: 30 }, (_, index) => ({
+        videoNo: 5000 + index,
+        videoType: "UPLOAD",
+        videoTitle: `업로드 ${index}`,
+        publishDate: "2026-09-13 10:00:00",
+    }));
+    const f = await openReplayLookup(t, (url) => {
+        if (url.includes("/videos?") && url.includes("page=0"))
+            return { ok: true, json: async () => ({ code: 200, content: { data: uploads } }) };
+        if (url.includes("/videos?")) return { ok: true, json: async () => ({ code: 200, content: { data: [] } }) };
+        throw new Error("unexpected request");
+    });
+    f.link().click();
+    await waitForCondition(() => f.requests.some((url) => url.includes("page=1")));
+});
+
+test("Enter on a title that is still looking up its replay opens no second waiting tab", async (t) => {
+    const f = await openReplayLookup(t, () => new Promise(() => {}));
+    const link = f.link();
+    link.click();
+    await waitForCondition(() => f.requests.length === 1);
+    // Focus stays on the re-rendered link; Enter fires another click on it.
+    f.link().click();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(f.opened.length, 1);
+    assert.equal(f.requests.length, 1);
+});
+
+test("a replay title opened in a new tab goes to the channel's videos instead of history.html#", async (t) => {
+    const f = await openReplayLookup(t, () => new Promise(() => {}));
+    assert.equal(f.link().getAttribute("href"), `https://chzzk.naver.com/${REPLAY_CHANNEL}/videos`);
+});
+
+test("the all-period list shows each record's own dates instead of the calendar month", async (t) => {
+    const { dom, document, row } = await openHistory(t);
+    const scope = document.getElementById("historyScope");
+    scope.value = "all";
+    dispatch(dom, scope, "change");
+    await waitForCondition(() => row("live:august"));
+    assert.equal(row("live:august").querySelector(".history-item-date").textContent, "2026.08.10");
+    assert.equal(row("live:alpha").querySelector(".history-item-date").textContent, "2026.09.10");
+});
+
 test("history page copy uses the polite 해요체 tone", () => {
     for (const file of ["history.html", "history.js"]) {
         assert.doesNotMatch(readRepoFile(file), /(습니다|입니다|합니다|됩니다)/, file);

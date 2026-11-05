@@ -323,6 +323,7 @@
         queue = queue.then(task, task).catch(() => {
             /* 한 변경의 예외가 다음 변경을 막지 않게 해요. */
         });
+        return queue;
     }
     function onStorageChange(changes, area) {
         if (area !== "local" || !Object.hasOwn(changes, KEY)) return;
@@ -518,10 +519,14 @@
             notify(blocked);
             return;
         }
+        // 구성과 결과 행은 저장이 끝난 뒤에야 바뀌어요. 그 전에 같은 채널을 다시 누르면(더블클릭 등) 첫 추가의
+        // 안내를 '이미 추가한 채널이에요.'로 덮지 않도록 이미 대기 중인 같은 추가는 다시 넣지 않아요.
+        if (target.pendingAdds.has(channel.channelId)) return;
         // 비어 있어 펼쳐 둔 추가 시트는 첫 채널을 추가한 뒤에도 이어서 추가할 수 있게 열어 둬요.
         if (sheetOf(target) === "add") target.sheetName = "add";
         const name = model.normalizeChannelName(channel.channelName) || channel.channelId;
-        commit((base) => model.addChannel(base, channel), {
+        target.pendingAdds.add(channel.channelId);
+        const done = commit((base) => model.addChannel(base, channel), {
             success: name + " 채팅을 추가했어요.",
             after(outcome) {
                 if (panel !== target || (outcome !== "saved" && outcome !== "failed")) return;
@@ -531,6 +536,7 @@
                 if (sheetOf(target) === "add") target.input.focus();
             },
         });
+        void Promise.resolve(done).finally(() => target.pendingAdds.delete(channel.channelId));
     }
     async function lookupChannel(target, channelId) {
         const request = beginRequest(target);
@@ -801,11 +807,19 @@
         const location = frameLocation(cell.frame);
         if (location?.href === "about:blank") return;
         stopWatching(cell);
+        // 이번 시도에서 한 번도 채팅을 확인하지 못했는데 위치를 읽을 수 없으면(네트워크 오류·차단으로 커밋된 오류
+        // 페이지 등) 벗어난 것이 아니라 불러오지 못한 거예요. 가린 문서는 벗어난 칸처럼 떼어 두고 다시 시도에서 붙여요.
+        if (!location && cell.verifiedAttempt !== cell.attempt) {
+            cell.frame.remove();
+            setCellState(cell, "failed");
+            return;
+        }
         if (!isChatLocation(location, cell)) {
             leaveCell(cell);
             return;
         }
         cell.verified = true;
+        cell.verifiedAttempt = cell.attempt;
         watchNavigation(target, cell);
         if (hasNativeChat(cell)) {
             setCellState(cell, "ready");
@@ -923,6 +937,7 @@
             state: "loading",
             verified: false,
             attempt: 0,
+            verifiedAttempt: 0,
             timer: 0,
             observer: null,
             unwatch: null,
@@ -948,6 +963,9 @@
         return cell;
     }
     function removeCell(target, cell) {
+        // 끌던 칸 머리가 떨어지면 포인터 놓기·캡처 해제가 그 머리에 오지 않아요. 저장하지 않고 끌기를 끝내
+        // 프레임이 포인터를 다시 받게 해요.
+        if (target.drag?.handle instanceof Node && cell.node.contains(target.drag.handle)) endDrag(target, null, false);
         stopWatching(cell);
         target.cells.delete(cell.channelId);
         cell.node.remove();
@@ -1318,9 +1336,11 @@
                 span(drag.rows, min.height),
                 Math.min(space.height, span(drag.rows, model.MAX_CHAT_HEIGHT))
             );
+            // 내림해야 칸 수만큼 놓은 크기가 끈 패널(화면 폭 이하) 안에 들어가요. 반올림으로 1px 커지면 놓은 뒤
+            // 저장값으로 다시 계산할 때 한 줄에 들어가는 칸 수가 줄어 배치가 바뀌어요. 최소값은 정수라 내림해도 지켜요.
             target.displaySize = {
-                width: Math.round((panelWidth - span(drag.columns, 0)) / drag.columns),
-                height: Math.round((panelHeight - span(drag.rows, 0)) / drag.rows),
+                width: Math.floor((panelWidth - span(drag.columns, 0)) / drag.columns),
+                height: Math.floor((panelHeight - span(drag.rows, 0)) / drag.rows),
             };
         }
         applyGeometry(target);
@@ -1548,6 +1568,7 @@
             cornerButtons: [],
             cells: new Map(),
             resultRows: new Map(),
+            pendingAdds: new Set(),
             controller: null,
             busy: false,
             drag: null,

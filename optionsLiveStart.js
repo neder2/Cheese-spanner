@@ -26,6 +26,13 @@
         message.dataset.error = String(error);
     }
 
+    // Disabling the busy controls drops their focus to the page; give it back only then or when it stayed in this
+    // section, never after the user moved on (the settings search, another section) during the lookup.
+    function restoreFocus(target) {
+        const active = document.activeElement;
+        if (!active || active === document.body || root.contains(active)) target.focus();
+    }
+
     function controls() {
         for (const control of root.querySelectorAll("input, button")) control.disabled = !ready || busy;
         add.disabled = !ready || busy || channels.length >= MAX_CHANNELS;
@@ -163,9 +170,9 @@
             if (!disposed) {
                 render();
                 const action = kind === "remove" ? "remove" : Object.hasOwn(channel, "notify") ? "notify" : "autoOpen";
-                (
+                restoreFocus(
                     list.querySelector(`[data-channel-id="${channel.channelId}"] [data-action="${action}"]`) || input
-                ).focus();
+                );
             }
         }
     }
@@ -227,7 +234,7 @@
             controller = null;
             if (!disposed) {
                 render();
-                input.focus();
+                restoreFocus(input);
             }
         }
     }

@@ -207,13 +207,29 @@
                 return false;
             const legacy = state.freeWindowSpace !== "viewport";
             const stored = new Set(state.freeWindows.map((cell) => cell.id));
-            const windows = model.freeLayout(state).cells.map(({ id, rect }) => ({
-                id,
-                rect:
-                    !legacy && stored.has(id)
-                        ? rect
-                        : model.toViewportWindow(boxRect(id, rect, source), source, viewportBounds()),
-            }));
+            const viewport = viewportBounds();
+            const place = (id, rect) => model.toViewportWindow(boxRect(id, rect, source), source, viewport);
+            const overlaps = (a, b) =>
+                Math.min(a[0] + a[2], b[0] + b[2]) - Math.max(a[0], b[0]) > 1e-6 &&
+                Math.min(a[1] + a[3], b[1] + b[3]) - Math.max(a[1], b[1]) > 1e-6;
+            // 저장한 자유 창(앞쪽)은 겹침까지 그대로 두고, 자유 창이 없는 방송만 배치 칸에서 자리를 받아요. 자기 칸이
+            // 이미 다른 자유 창에 덮여 있으면(예: 목록에 없는 방송으로 이동해 메인 자리를 내준 이전 메인) 빈 칸이나
+            // 자유 창이 옮겨 가 비어 있는 칸을 순서대로 찾고, 모두 덮여 있을 때만 자기 칸에 둬요.
+            const spare = model
+                .treeLayout(state.dockTree)
+                .cells.filter((leaf) => !leaf.id || stored.has(leaf.id))
+                .map((leaf) => leaf.rect);
+            const windows = [];
+            for (const { id, rect } of model.freeLayout(state).cells) {
+                if (stored.has(id)) {
+                    windows.push({ id, rect: legacy ? place(id, rect) : rect });
+                    continue;
+                }
+                const free = [rect, ...spare]
+                    .map((candidate) => place(id, candidate))
+                    .find((candidate) => !windows.some((cell) => overlaps(cell.rect, candidate)));
+                windows.push({ id, rect: free || place(id, rect) });
+            }
             const changed = legacy || !model.sameWindows(state.freeWindows, windows);
             if (!model.sameWindows(state.freeWindows, windows)) state.freeWindows = windows;
             state.freeWindowSpace = "viewport";
