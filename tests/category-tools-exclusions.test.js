@@ -176,7 +176,7 @@ test("search composition, empty input and close cancel only search work without 
     ui.input("게임", "compositionend");
     ui.runDelay();
     const pending = ui.searches[0];
-    assert.match(menu.querySelector("[data-category-search-status]").textContent, /검색하고/);
+    assert.match(menu.querySelector("[data-category-search-status]").textContent, /카테고리 검색 중/);
     ui.input("");
     assert.equal(pending.signal.aborted, true);
     assert.equal(ui.searches.length, 1);
@@ -198,7 +198,7 @@ test("category search distinguishes empty results, malformed response and timeou
     const ui = await createCategoryUI(t, { worker: withState(1, [category()]) });
     const menu = ui.open();
     await search(ui, "없는 게임", []);
-    assert.match(menu.querySelector("[data-category-search-status]").textContent, /검색 결과가 없/);
+    assert.match(menu.querySelector("[data-category-search-status]").textContent, /검색 결과 없음/);
     ui.input("다른 게임");
     ui.runDelay();
     ui.searches.at(-1).resolve({ code: 200, content: { results: "private upstream body" } });
@@ -258,7 +258,7 @@ test("the initial read completes before exclusion, and newer revisions beat late
         if (!released) gate.release();
     });
     ui.open();
-    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /불러오고/);
+    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /제외 목록 불러오는 중/);
     assert.equal(hidden(ui, "a"), false);
     ui.emit(state(5, [category("SPORTS", "A", "같은 이름")]));
     gate.release();
@@ -304,7 +304,10 @@ test("read, write and corrupt-state failures preserve known selections and revea
     worker.storage.failNext("get");
     const ui = await createCategoryUI(t, { worker });
     const menu = ui.open();
-    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /불러오지 못/);
+    assert.match(
+        ui.window.document.querySelector("[data-category-store-status]").textContent,
+        /제외 목록 저장·불러오기 실패/
+    );
     assert.equal(worker.storage.categoryWrites.length, 0);
     ui.window.document.querySelector("[data-category-store-retry]").click();
     await settle();
@@ -316,7 +319,7 @@ test("read, write and corrupt-state failures preserve known selections and revea
     await settle();
     assert.equal(worker.storage.local[CATEGORY_KEY].categories.length, 1);
     assert.equal(remove.disabled, false);
-    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /못했/);
+    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /실패/);
     assert.equal(menu.textContent.includes("private response body"), false);
     worker.storage.local[CATEGORY_KEY] = { version: 99, revision: 5, categories: [] };
     ui.emit(worker.storage.local[CATEGORY_KEY]);
@@ -914,7 +917,7 @@ test("a fresh restore read failure preserves the last good state and a retry can
     ui.open();
     assert.equal(hidden(ui, "a"), true, "a real read failure preserves the last known good category");
     assert.equal(hidden(ui, "b"), false);
-    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /못했/);
+    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /실패/);
     assert.equal(worker.storage.categoryWrites.length, 1);
     ui.window.document.querySelector("[data-category-store-retry]").click();
     await settle();
@@ -1029,7 +1032,7 @@ test("the newest corrupt storage notice survives older get success or failure an
             await writeCategoryState(worker, unsupported);
             const latestError = ui.window.document.querySelector("[data-category-store-status]").textContent;
             const retryEnabledDuringOldRead = !ui.window.document.querySelector("[data-category-store-retry]").disabled;
-            assert.match(latestError, /저장한 제외 목록을 확인하지 못/);
+            assert.match(latestError, /제외 목록 확인 실패/);
             assert.equal(ui.window.document.querySelector("[data-category-store-retry]").hidden, false);
             const writesAfterNotice = worker.storage.categoryWrites.length;
             delayed.release();
@@ -1103,7 +1106,7 @@ test("the newest corrupt storage notice survives older mutation success or failu
             await writeCategoryState(worker, malformed);
             const latestError = ui.window.document.querySelector("[data-category-store-status]").textContent;
             const pendingReleasedAtNotice = !sameItemButton.disabled;
-            assert.match(latestError, /저장한 제외 목록을 확인하지 못/);
+            assert.match(latestError, /제외 목록 확인 실패/);
             const writesAfterNotice = worker.storage.categoryWrites.length;
             delayed.release();
             released = true;
@@ -1467,7 +1470,7 @@ test("Enter adds a typed streamer tag without category results and hides only ex
     const event = ui.trustedKey(input, "Enter");
     assert.equal(event.defaultPrevented, true);
     await gate.started;
-    assert.equal(status.textContent, "태그 제외를 저장하고 있어요…");
+    assert.equal(status.textContent, "태그 제외 저장 중…");
     gate.release();
     await settle();
     assert.equal(adds(), 1);
@@ -1475,7 +1478,7 @@ test("Enter adds a typed streamer tag without category results and hides only ex
         { categoryType: "CHEESE_SPANNER_TAG", categoryId: "롤토체스", categoryValue: "롤토체스" },
     ]);
     assert.equal(input.value, "");
-    assert.equal(status.textContent, "‘롤토체스’ 태그를 제외했어요.");
+    assert.equal(status.textContent, "‘롤토체스’ 태그 제외됨.");
     const chip = document.querySelector("#cheese-spanner-category-exclusions .bcgt-category-row");
     assert.equal(chip.textContent, "#롤토체스×");
     assert.equal(chip.title, "롤토체스 · 태그");
@@ -1486,7 +1489,7 @@ test("Enter adds a typed streamer tag without category results and hides only ex
     ui.trustedKey(input, "Enter");
     await settle();
     assert.equal(adds(), 1);
-    assert.equal(status.textContent, "이미 제외한 태그예요.");
+    assert.equal(status.textContent, "이미 제외한 태그.");
     tagLink.setAttribute("href", `/videos?tags=${encodeURIComponent("롤토체스대회")}`);
     await ui.hooks.apply();
     assert.equal(hidden(ui, "b"), false, "a longer tag containing the word is not excluded");

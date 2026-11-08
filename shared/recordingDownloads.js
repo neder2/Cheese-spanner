@@ -56,7 +56,7 @@
         }
     }
 
-    function createController({ chrome, now = () => Date.now() }) {
+    function createController({ chrome, now = () => Date.now(), directory = globalThis.CheeseSpannerRecordingDirectory }) {
         const pending = new Map();
         const sessions = new Map();
         let installed = false;
@@ -64,9 +64,27 @@
         function dispose(session, error) {
             if (!sessions.delete(session.id)) return;
             session.closed = true;
+            if (session.writer && error) void session.writer.abort().catch(() => {});
             if (error) session.controller?.error(new Error(error));
             else session.controller?.close();
             session.wake?.();
+        }
+
+        async function fileOperation(session, operation) {
+            let timer;
+            try {
+                return await Promise.race([
+                    operation,
+                    new Promise((_, reject) => {
+                        timer = setTimeout(() => reject(new Error("directory-timeout")), STREAM_TIMEOUT_MS);
+                    }),
+                ]);
+            } catch (error) {
+                dispose(session, "directory-write-failed");
+                throw error;
+            } finally {
+                clearTimeout(timer);
+            }
         }
 
         function waitFor(session, predicate) {
@@ -113,6 +131,26 @@
                 writing: false,
             };
             sessions.set(id, session);
+            try {
+                const selected = await fileOperation(session, directory?.get() ?? Promise.resolve(null));
+                if (selected) {
+                    const opening = directory.openFile(selected, message.fileName).then((file) => {
+                        if (session.closed) {
+                            void file.writer.abort().catch(() => {});
+                            throw new Error("directory-timeout");
+                        }
+                        session.writer = file.writer;
+                        return file;
+                    });
+                    const file = await fileOperation(session, opening);
+                    session.opened = true;
+                    session.folder = "";
+                    return { ok: true, id, destination: "directory", folder: selected.name, fileName: file.fileName };
+                }
+            } catch (error) {
+                dispose(session, "directory-unavailable");
+                return { ok: false, error: error.message === "directory-permission" ? "directory-permission" : "directory-unavailable" };
+            }
             return { ok: true, id, url, folder: session.folder, routed: Boolean(session.folder) };
         }
 
@@ -130,6 +168,15 @@
             if (message.op === "finish") {
                 if (!session.opened || message.sequence !== session.next)
                     return { ok: false, error: "invalid-sequence" };
+                if (session.writer) {
+                    session.writing = true;
+                    try {
+                        await fileOperation(session, session.writer.close());
+                        if (session.closed) return { ok: false, error: "download-closed" };
+                    } catch (_) {
+                        return { ok: false, error: "directory-write-failed" };
+                    }
+                }
                 dispose(session);
                 return { ok: true };
             }
@@ -150,6 +197,15 @@
             }
             session.writing = true;
             try {
+                if (session.writer) {
+                    if (bytes) {
+                        await fileOperation(session, session.writer.write(bytes));
+                        if (session.closed) return { ok: false, error: "download-closed" };
+                        session.next += 1;
+                    }
+                    session.updatedAt = now();
+                    return { ok: true };
+                }
                 await waitFor(session, () => session.opened && (!bytes || session.controller.desiredSize > 0));
                 if (bytes) {
                     session.controller.enqueue(bytes);
@@ -295,7 +351,20 @@
             if (message?.version !== MESSAGE_VERSION) return { ok: false, error: "unsupported-version" };
             if (message.op === "status") {
                 const [folder, held] = await Promise.all([readFolder(), hasDownloadsPermission()]);
-                return { ok: true, folder, downloads: held };
+                try {
+                    const selected = await directory?.get();
+                    return { ok: true, folder, downloads: held, ...(selected ? { directory: selected.name, directoryGranted: await selected.queryPermission({ mode: "readwrite" }) === "granted" } : {}) };
+                } catch (_) {
+                    return { ok: false, error: "directory-unavailable" };
+                }
+            }
+            if (message.op === "folder-settings") {
+                try {
+                    await chrome.tabs.create({ url: chrome.runtime.getURL("options.html#recording-folder") });
+                    return { ok: true };
+                } catch (_) {
+                    return { ok: false, error: "settings-unavailable" };
+                }
             }
             if (message.op === "prepare") return prepare(message);
             if (message.op === "start") return startStream(message, sender);

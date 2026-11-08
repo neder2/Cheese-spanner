@@ -133,6 +133,7 @@
         // 로그인 계정의 작성자 해시로만 비교해요. 계정 해시는 저장하지 않아요(features/vodOwnChat.js).
         vodOwnChatHighlightEnabled: { kind: "bool", default: true, feature: true },
         chatWeeklyRankingHidden: { kind: "bool", default: false, feature: true },
+        chatDonationMessagesHidden: { kind: "bool", default: false, feature: true },
         chatWelcomeMessageRemovalEnabled: { kind: "bool", default: false, feature: true },
         chatKeywordFilterEnabled: { kind: "bool", default: true, feature: true },
         chatKeywordFilterWords: { kind: "chatKeywords", default: "" },
@@ -631,6 +632,7 @@
                     "#update-guide-history",
                     "#update-guide-stream",
                     "#update-guide-categories",
+                    "#recording-folder",
                 ].includes(actual.hash)
             );
         } catch (_) {

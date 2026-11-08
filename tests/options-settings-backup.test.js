@@ -151,7 +151,7 @@ test("export downloads the worker's file and import shows a preview before any w
     assert.match(text, /파일 5개 중 2개 바뀜/);
     assert.match(text, /방송 알림 대상1개 채널 · 바뀜/);
     assert.match(text, /이 버전에 없는 옵션 1개는 무시해요/);
-    assert.match(text, /알림·자동 입장 없이 기준으로만/);
+    assert.match(text, /진행 중인 방송은 건너뛰고 다음 새 방송부터 알림·자동 열기를 실행해요/);
     assert.equal(h.chrome.testState.sync.chatPosition, undefined, "previewing writes nothing");
     const locked = queryOption(h.document, "chatTimestampEnabled");
     assert.equal(locked.disabled, true, "option editing is locked while the restore owns the stored options");
@@ -475,7 +475,8 @@ test("saved size reset clears only the three profile-local size choices", async 
     });
     const button = h.document.getElementById("resetPanelSizes");
     assert.equal(button.type, "button");
-    assert.ok(h.document.getElementById(button.getAttribute("aria-describedby")));
+    assert.equal(button.hasAttribute("aria-describedby"), false);
+    assert.equal(button.textContent.trim(), "저장한 채팅·사이드바 크기 초기화");
     button.click();
     await waitForCondition(() => /크기를 초기화했어요/.test(h.message()));
     for (const key of PANEL_KEYS) assert.equal(h.chrome.testState.local[key], null);

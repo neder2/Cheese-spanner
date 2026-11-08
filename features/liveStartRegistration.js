@@ -106,17 +106,17 @@
             if (!active || cycle !== lifecycle) return;
             pending.delete(id);
             if (error || !response?.ok || !Array.isArray(response.channels)) {
-                showMessage(target, response?.error || "채널 설정을 저장하지 못했어요. 다시 시도해 주세요.");
+                showMessage(target, response?.error || "채널 설정 저장 실패. 다시 시도 필요.");
             } else {
                 if (version === loadVersion) channels = normalizeChannels(response.channels);
                 const saved = channels.some((item) => item.channelId === id && (removing || item[action.key]));
                 showMessage(
                     target,
                     saved !== enabled
-                        ? "현재 저장된 채널 설정을 반영했어요."
+                        ? "현재 저장된 채널 설정 반영됨."
                         : removing
-                          ? "채널 등록을 해제했어요."
-                          : action.label + (enabled ? " 대상으로 등록했어요." : " 선택을 해제했어요.")
+                          ? "채널 등록 해제됨."
+                          : action.label + (enabled ? " 대상 등록됨." : " 선택 해제됨.")
                 );
             }
             render();
@@ -253,20 +253,19 @@
         target.heading.textContent = keyword ? "검색 결과" : "등록 채널";
         const disabled = ACTIONS.filter((action) => !options[action.option]).map((action) => action.label);
         target.hint.textContent = disabled.length
-            ? "전체 " + disabled.join("·") + " 기능이 꺼져 있어요. 설정의 ‘방송 알림’ 탭에서 켜고 저장해 주세요."
-            : "데스크톱 알림과 자동 입장을 각각 선택해 주세요. 채널별 선택은 바로 저장돼요.";
+            ? "전체 " + disabled.join("·") + " 기능 꺼짐. 설정 ‘방송 알림’ 탭에서 켜고 저장 필요."
+            : "데스크톱 알림·자동 입장 개별 선택(즉시 저장).";
         target.submit.disabled = target.searching || !keyword;
         target.list.setAttribute("aria-busy", String(target.searching));
         target.empty.textContent =
             loadError ||
             (!ready
-                ? "등록 채널을 불러오는 중이에요."
+                ? "등록 채널 불러오는 중…"
                 : target.searching
-                  ? "검색 중이에요…"
+                  ? "검색 중…"
                   : keyword
-                    ? target.searchError ||
-                      (target.searched ? "검색 결과가 없어요." : "채널명을 입력하고 검색을 눌러 주세요.")
-                    : "등록한 채널이 없어요. 채널명을 검색해 추가해 주세요.");
+                    ? target.searchError || (target.searched ? "검색 결과 없음." : "채널명 입력 후 검색 클릭.")
+                    : "등록 채널 없음. 채널명을 검색해 추가.");
         target.empty.hidden = data.length > 0 && !loadError;
         const ids = new Set(data.map((item) => item.channelId));
         for (const [id, row] of target.rows) {
@@ -356,7 +355,7 @@
                 cacheProfile(channel.channelId, normalizeChzzkImageUrl(channel.channelImageUrl));
         } catch (_) {
             if (!current()) return;
-            target.searchError = "채널을 검색하지 못했어요. 잠시 후 다시 시도해 주세요.";
+            target.searchError = "채널 검색 실패. 잠시 후 재시도 필요.";
         } finally {
             if (current()) {
                 target.controller = null;
@@ -388,7 +387,7 @@
         input.id = PANEL_ID + "-input";
         label.htmlFor = input.id;
         input.type = "search";
-        input.placeholder = "채널명을 입력해 주세요";
+        input.placeholder = "채널명 입력";
         input.autocomplete = "off";
         input.maxLength = 100;
         const submit = button("검색");
@@ -521,7 +520,7 @@
             ready = true;
         } catch (_) {
             if (!active || version !== loadVersion) return;
-            loadError = "채널 설정을 불러오지 못했어요. 페이지를 새로고침해 주세요.";
+            loadError = "채널 설정 불러오기 실패. 페이지 새로고침 필요.";
         }
         render();
     }

@@ -206,24 +206,23 @@
         ),
     });
     const ERROR_MESSAGES = {
-        "invalid-name": `폴더 이름은 앞뒤 공백을 뺀 1~${MAX_NAME_LENGTH}자로 입력해 주세요.`,
-        "duplicate-name": "같은 이름의 폴더가 이미 있어요.",
-        "folder-limit": `폴더는 최대 ${MAX_FOLDERS}개까지 만들 수 있어요.`,
-        "assignment-limit": `폴더에 넣을 수 있는 채널은 모두 합쳐 ${MAX_ASSIGNMENTS}개까지예요.`,
-        "folder-not-found": "다른 곳에서 폴더가 바뀌어 적용하지 않았어요. 최신 폴더를 표시했어요.",
-        conflict: "다른 곳에서 폴더가 바뀌어 적용하지 않았어요. 최신 폴더를 표시했어요.",
-        "invalid-channel-id": "이 채널은 폴더에 넣을 수 없어요.",
-        "too-large": "저장 공간 한도를 넘어 저장하지 않았어요.",
-        "corrupt-state": "저장된 폴더 정보를 읽을 수 없어 변경하지 않았어요.",
-        "not-corrupt": "폴더 정보가 이미 정상이라 초기화하지 않았어요.",
-        "write-conflict":
-            "다른 탭이나 설정 불러오기에서 폴더가 계속 바뀌어 저장하지 않았어요. 최신 폴더를 확인한 뒤 다시 시도해 주세요.",
-        "undo-conflict": "그사이 다른 곳에서 폴더가 바뀌어 되돌리지 않았어요.",
-        unavailable: "확장 프로그램과 연결되지 않아 저장하지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.",
-        "not-ready": "폴더 정보를 아직 확인하지 못해 변경하지 않았어요.",
+        "invalid-name": `폴더 이름은 앞뒤 공백 제외 1~${MAX_NAME_LENGTH}자 필요.`,
+        "duplicate-name": "같은 이름의 폴더가 이미 있음.",
+        "folder-limit": `폴더는 최대 ${MAX_FOLDERS}개까지 생성 가능.`,
+        "assignment-limit": `폴더 지정 채널은 총 ${MAX_ASSIGNMENTS}개까지 가능.`,
+        "folder-not-found": "다른 곳에서 폴더가 변경되어 최신 상태 표시.",
+        conflict: "다른 곳에서 폴더가 변경되어 최신 상태 표시.",
+        "invalid-channel-id": "폴더에 넣을 수 없는 채널.",
+        "too-large": "저장 공간 한도 초과로 미저장.",
+        "corrupt-state": "저장된 폴더 정보 손상으로 변경 불가.",
+        "not-corrupt": "폴더 정보가 정상이라 초기화하지 않음.",
+        "write-conflict": "다른 곳에서 폴더가 계속 바뀌어 미저장. 최신 상태 확인 후 재시도 필요.",
+        "undo-conflict": "다른 곳에서 폴더가 바뀌어 되돌리기 취소.",
+        unavailable: "확장 연결 끊김으로 저장 실패. 새로고침 후 재시도 필요.",
+        "not-ready": "폴더 정보 확인 전이라 변경 불가.",
     };
     const RENAME_ERRORS = new Set(["invalid-name", "duplicate-name"]);
-    const SAVE_FAILED_MESSAGE = "폴더 변경을 저장하지 못했어요. 이전 상태를 그대로 유지했어요.";
+    const SAVE_FAILED_MESSAGE = "폴더 변경 저장 실패(이전 상태 유지).";
     const ORDER_RULES = Array.from(
         { length: MAX_ORDER + 1 },
         (_, order) => `#sidebar [${LIST_ATTR}="1"]>[${ORDER_ATTR}="${order}"]{order:${order}!important}`
@@ -1133,11 +1132,7 @@ ${ORDER_RULES}
         live.hidden = lives === 0;
         setAttr(live, "data-bcff-live", unchecked ? `${lives}+` : String(lives));
         if (unchecked)
-            setAttr(
-                live,
-                "title",
-                `방송 중 ${lives}개 확인 · 목록에 아직 없는 채널 ${unchecked}개는 방송 여부를 확인하지 못했어요`
-            );
+            setAttr(live, "title", `방송 중 ${lives}개 확인 · 목록 외 채널 ${unchecked}개는 방송 여부 미확인`);
         else removeAttr(live, "title");
         setAttr(more, "aria-label", `${folder.name} 폴더 메뉴`);
         setAttr(more, KEY_ATTR, `folder:${folder.id}:more`);
@@ -1312,7 +1307,7 @@ ${ORDER_RULES}
                 "click",
                 trusted(() => loadFolderState())
             );
-            statusRow.replaceChildren(el("p", "", "폴더 정보를 읽지 못했어요. 저장된 폴더는 그대로예요."), button);
+            statusRow.replaceChildren(el("p", "", "폴더 정보 읽기 실패(저장된 폴더 유지)."), button);
         } else {
             button.textContent = statusArmed ? "한 번 더 눌러 초기화" : "폴더 정보 초기화";
             button.setAttribute("aria-label", statusArmed ? "폴더 정보 초기화 확인" : "폴더 정보 초기화");
@@ -1334,15 +1329,11 @@ ${ORDER_RULES}
                     if (statusArmTimer) clearTimeout(statusArmTimer);
                     statusArmTimer = 0;
                     statusArmed = false;
-                    sendCommand({ type: "resetCorrupt" }, { success: "폴더 정보를 초기화했어요." });
+                    sendCommand({ type: "resetCorrupt" }, { success: "폴더 정보 초기화됨." });
                 })
             );
             statusRow.replaceChildren(
-                el(
-                    "p",
-                    "",
-                    "저장된 폴더 정보가 올바르지 않아 폴더를 표시하지 않았어요. 초기화하면 모든 폴더와 지정이 지워지고 팔로우는 그대로예요."
-                ),
+                el("p", "", "저장된 폴더 정보 손상으로 미표시. 초기화 시 폴더·지정만 삭제(팔로우 유지)."),
                 button
             );
         }
@@ -1695,7 +1686,7 @@ ${ORDER_RULES}
         sendCommand(
             { type: "rename", folderId, name },
             {
-                success: `‘${previousName}’ 폴더 이름을 ‘${name}’(으)로 바꿨어요.`,
+                success: `‘${previousName}’ 폴더 이름을 ‘${name}’(으)로 변경함.`,
                 undoable: true,
                 onSuccess: () => {
                     if (renaming?.folderId === folderId) finishRename(!fromBlur);
@@ -1743,7 +1734,7 @@ ${ORDER_RULES}
             ? { type: "createWith", folderId, name, channelId: channel.channelId }
             : { type: "create", folderId, name };
         sendCommand(command, {
-            success: channel ? `${channel.name} 채널로 ‘${name}’ 폴더를 만들었어요.` : "",
+            success: channel ? `${channel.name} 채널로 ‘${name}’ 폴더 생성됨.` : "",
             undoable: Boolean(channel),
         });
         // 화면에 먼저 생긴 폴더의 이름을 바로 바꿀 수 있어요. 저장이 실패하면 폴더와 함께 입력칸도 사라져요.
@@ -2205,7 +2196,7 @@ ${ORDER_RULES}
         const current = drag.link.isConnected ? parseChannelHref(drag.link.getAttribute("href") || "") : null;
         if (!current || current.channelId !== drag.channelId || !currentList?.contains(drag.link)) {
             clearDrag();
-            notify("끄는 동안 팔로잉 목록이 바뀌어 폴더에 넣지 않았어요.", "error");
+            notify("끄는 동안 팔로잉 목록이 바뀌어 폴더 지정 취소.", "error");
             return;
         }
         // 미리보기를 그대로 확정하므로 놓는 순간 화면이 튀지 않는다. 저장은 뒤에서 이어진다.
@@ -2221,7 +2212,7 @@ ${ORDER_RULES}
             if (folder)
                 sendCommand(
                     { type: "unassign", folderId: folder.id, channelId: drag.channelId },
-                    { success: `${channelName} 채널을 ‘${folder.name}’ 폴더에서 뺐어요.`, undoable: true }
+                    { success: `${channelName} 채널을 ‘${folder.name}’ 폴더에서 제외함.`, undoable: true }
                 );
             else rebuildStates({ animate: true });
             return;
@@ -2238,7 +2229,7 @@ ${ORDER_RULES}
         }
         sendCommand(
             { type: "assign", folderId: folder.id, channelId: drag.channelId },
-            { success: `${channelName} 채널을 ‘${folder.name}’ 폴더에 넣었어요.`, undoable: true }
+            { success: `${channelName} 채널을 ‘${folder.name}’ 폴더에 추가함.`, undoable: true }
         );
     }
 
@@ -2261,7 +2252,7 @@ ${ORDER_RULES}
             rebuildStates({ animate: true });
             return;
         }
-        sendCommand(command, { success: `‘${folder.name}’ 폴더 순서를 바꿨어요.`, undoable: true });
+        sendCommand(command, { success: `‘${folder.name}’ 폴더 순서 변경됨.`, undoable: true });
     }
 
     // ── 떠 있는 메뉴·채널 선택·상태 안내 ───────────────────────────────────────────────
@@ -2547,7 +2538,7 @@ ${ORDER_RULES}
             "trash",
             armed ? "한 번 더 눌러 삭제" : "폴더 삭제",
             armed
-                ? `‘${folder.name}’ 폴더 삭제 확인. 한 번 더 누르면 지정만 지우고 팔로우는 그대로예요`
+                ? `‘${folder.name}’ 폴더 삭제 확인(한 번 더 누르면 지정만 삭제, 팔로우 유지)`
                 : `‘${folder.name}’ 폴더 삭제`,
             `folder:${folder.id}:delete`,
             () => {
@@ -2568,7 +2559,7 @@ ${ORDER_RULES}
                 const neighbor = folderState.folders[at + 1] || folderState.folders[at - 1] || null;
                 sendCommand(
                     { type: "delete", folderId: folder.id },
-                    { success: `‘${folder.name}’ 폴더를 지웠어요. 팔로우는 그대로예요.`, undoable: true }
+                    { success: `‘${folder.name}’ 폴더 삭제됨(팔로우 유지).`, undoable: true }
                 );
                 // 지운 폴더의 머리 행은 사라지므로 초점은 옆 폴더 이름으로, 마지막 폴더였으면 팔로잉 새로고침으로 옮긴다.
                 const next = neighbor
@@ -2643,7 +2634,7 @@ ${ORDER_RULES}
         sendCommand(
             { type: "move", folderId, offset },
             {
-                success: `‘${folder.name}’ 폴더를 ${offset < 0 ? "위로" : "아래로"} 옮겼어요.`,
+                success: `‘${folder.name}’ 폴더를 ${offset < 0 ? "위로" : "아래로"} 이동함.`,
                 undoable: true,
                 onSuccess: () => {
                     if (!keepMenu || layer?.kind !== "menu" || layer.folderId !== folderId) return;
@@ -2691,7 +2682,7 @@ ${ORDER_RULES}
         const foot = el(
             "p",
             "bcff-picker-foot",
-            "체크하면 이 폴더로 옮겨요. 다른 폴더에 있던 채널은 그 폴더에서 빠져요. 지금 목록에 보이는 채널만 보여요."
+            "체크 시 이 폴더로 이동(다른 폴더에서는 해제). 현재 목록에 보이는 채널만 표시."
         );
         node.append(top, search, list, foot);
         layer.title = title;
@@ -2749,7 +2740,7 @@ ${ORDER_RULES}
             .filter((channel) => !term || channel.name.toLowerCase().includes(term))
             .map((channel) => buildPick(folder, channel));
         if (!items.length)
-            items.push(el("li", "bcff-picker-empty", term ? "찾는 채널이 없어요." : "목록에 채널이 없어요."));
+            items.push(el("li", "bcff-picker-empty", term ? "일치하는 채널 없음." : "목록에 채널 없음."));
         layer.list.replaceChildren(...items);
         if (focusKey && focusKey !== "picker-filter") focusLayerKey(focusKey);
     }
@@ -2768,12 +2759,12 @@ ${ORDER_RULES}
             if (latest.channelIds.includes(channel.channelId))
                 sendCommand(
                     { type: "unassign", folderId: latest.id, channelId: channel.channelId },
-                    { success: `${channel.name} 채널을 ‘${latest.name}’ 폴더에서 뺐어요.`, undoable: true }
+                    { success: `${channel.name} 채널을 ‘${latest.name}’ 폴더에서 제외함.`, undoable: true }
                 );
             else
                 sendCommand(
                     { type: "assign", folderId: latest.id, channelId: channel.channelId },
-                    { success: `${channel.name} 채널을 ‘${latest.name}’ 폴더에 넣었어요.`, undoable: true }
+                    { success: `${channel.name} 채널을 ‘${latest.name}’ 폴더에 추가함.`, undoable: true }
                 );
         });
         button.setAttribute("aria-pressed", String(inFolder));
@@ -2878,7 +2869,7 @@ ${ORDER_RULES}
         }
         const previous = parseStoredValue(record.previous);
         if (!previous.ok) return;
-        sendCommand({ type: "restore", state: previous.state }, { success: "되돌리기 완료" });
+        sendCommand({ type: "restore", state: previous.state }, { success: "되돌리기 완료." });
     }
 
     function isEnterSubmit(event) {

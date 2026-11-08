@@ -658,11 +658,14 @@
 [${NATIVE_DATE_HIDDEN_ATTR}]{
   display:none !important;
 }
-#${BROADCAST_RANGE_ID}[data-bcbc-separator]{
+#${BROADCAST_RANGE_ID}[data-bcbc-separator],
+#${BROADCAST_RANGE_ID}[data-bcbc-placement="native-date"] + [class*="_count_"]{
   position:relative;
   padding-left:8px;
 }
-#${BROADCAST_RANGE_ID}[data-bcbc-separator]::before{
+/* The native "._count_ + ._count_" dot no longer reaches a badge that follows the range. */
+#${BROADCAST_RANGE_ID}[data-bcbc-separator]::before,
+#${BROADCAST_RANGE_ID}[data-bcbc-placement="native-date"] + [class*="_count_"]::before{
   content:"";
   position:absolute;
   top:7px;
@@ -1296,8 +1299,8 @@
         }
 
         // The native date (absolute "10.25" or relative "17시간 전", by publish time) is hidden and the
-        // dated range takes its place, keeping the native dot separator.
-        // The group's hover label uses a descendant selector, so the range goes last, after that label.
+        // dated range takes its place right after it, keeping the native dot separator. Items that follow
+        // the date, such as the 19+ badge, keep their order; the group's hover label uses a descendant selector.
         const nativeDateEl = findNativeDateElement(statusRow);
         if (nativeDateEl) {
             hideNativeDate(nativeDateEl);
@@ -1305,8 +1308,7 @@
             if (nativeDateEl.previousElementSibling?.matches("[class*='_count_']")) {
                 setAttributeIfChanged(range, "data-bcbc-separator", "");
             } else if (range.hasAttribute("data-bcbc-separator")) range.removeAttribute("data-bcbc-separator");
-            const host = nativeDateEl.parentElement;
-            if (range.parentElement !== host || range.nextElementSibling) host.appendChild(range);
+            if (range.previousElementSibling !== nativeDateEl) nativeDateEl.insertAdjacentElement("afterend", range);
             return;
         }
         restoreNativeDate();
@@ -1342,10 +1344,14 @@
         return `${pad2(parts.hours)}:${pad2(parts.minutes)}`;
     }
 
-    // The observed group is "조회수 N회" then the date; a lone count is the view count, never a date.
+    // The observed group is "조회수 N회", the date, then optional badges such as the 19+ icon (an svg with a
+    // hidden "19" text). The date is the first text-only count after the view count; a lone view count or a
+    // badge is never treated as the date.
     function findNativeDateElement(statusRow) {
-        const counts = statusRow?.querySelectorAll("[class*='_data_'] [class*='_count_']") || [];
-        return counts.length > 1 ? counts[counts.length - 1] : null;
+        const counts = statusRow?.querySelectorAll("[class*='_data_'] > [class*='_count_']") || [];
+        return Array.from(counts)
+            .slice(1)
+            .find((el) => !el.firstElementChild && el.textContent.trim());
     }
 
     function removeTitleHistoryExpander() {
@@ -1541,8 +1547,7 @@
             }
             if (clockTextEl && clockTextEl.textContent !== text) clockTextEl.textContent = text;
 
-            const stateText =
-                metadataState === "loading" ? "방송 시작 시간을 가져오는 중이에요." : "방송 시작 시간을 찾지 못했어요.";
+            const stateText = metadataState === "loading" ? "방송 시작 시간 확인 중…" : "방송 시작 시간 확인 불가.";
             applyClockTitle(clock, [stateText]);
             setAttributeIfChanged(clock, "aria-label", `현재 방송 시각 ${text}`);
             return true;

@@ -1335,7 +1335,9 @@ const searchUnits = tabSections.flatMap((section) => {
                 subheadingText: normalizeSearchText(
                     `${subheading?.textContent || ""} ${subheading?.dataset.searchTerms || ""}`
                 ),
-                text: normalizeSearchText(`${element.textContent} ${optionKeys.join(" ")}`),
+                text: normalizeSearchText(
+                    `${element.textContent} ${element.dataset.searchTerms || ""} ${optionKeys.join(" ")}`
+                ),
             };
         });
 });
@@ -1375,6 +1377,14 @@ function includeSearchContext(directMatches) {
             if (!masterUnit || visibleUnits.has(masterUnit)) continue;
             visibleUnits.add(masterUnit);
             pending.push(masterUnit);
+        }
+    }
+
+    // 여러 수치 묶음이 공유하는 안내는 해당 그룹의 검색 결과와 함께 남긴다.
+    const visibleGroups = new Set(Array.from(visibleUnits, (unit) => unit.group));
+    for (const unit of searchUnits) {
+        if (unit.group && visibleGroups.has(unit.group) && unit.element.hasAttribute("data-search-shared")) {
+            visibleUnits.add(unit);
         }
     }
 

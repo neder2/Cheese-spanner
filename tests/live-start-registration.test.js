@@ -208,7 +208,7 @@ test("registration removal deletes both channel actions and stays synchronized w
     });
     assert.equal(f.action(), null);
     assert.deepEqual(f.chrome.testState.local[KEY], [other]);
-    assert.match(f.message().textContent, /등록을 해제/);
+    assert.match(f.message().textContent, /등록 해제됨/);
     await f.search();
     assert.equal(f.action(CHANNEL, "remove").hidden, true);
     assert.equal(f.action().getAttribute("aria-pressed"), "false");
@@ -314,7 +314,7 @@ test("registered channels synchronize with settings and keep global options and 
     const saved = { ...channel(), notify: true, autoOpen: true };
     const f = fixture(t, { enabled: false, channels: [saved] });
     await f.open();
-    assert.match(f.panel().textContent, /전체 데스크톱 알림·자동 입장 기능이 꺼져/);
+    assert.match(f.panel().textContent, /전체 데스크톱 알림·자동 입장 기능 꺼짐/);
     f.trustedClick(f.action());
     assert.equal(f.action().getAttribute("aria-pressed"), "false");
     assert.equal(f.action(CHANNEL, "autoOpen").getAttribute("aria-pressed"), "true");
@@ -397,17 +397,17 @@ test("search handles empty, invalid and failed responses without inventing resul
     f.setFetch(async () => searchResponse());
     f.type("없음");
     f.submit();
-    await waitForCondition(() => f.panel().textContent.includes("검색 결과가 없어요"));
+    await waitForCondition(() => f.panel().textContent.includes("검색 결과 없음"));
     f.setFetch(async () => {
         throw new Error("network");
     });
     f.type("실패");
     f.submit();
-    await waitForCondition(() => f.panel().textContent.includes("검색하지 못했어요"));
+    await waitForCondition(() => f.panel().textContent.includes("채널 검색 실패"));
     f.setFetch(async () => ({ code: 200, content: {} }));
     f.type("형식");
     f.submit();
-    await waitForCondition(() => f.panel().textContent.includes("검색하지 못했어요"));
+    await waitForCondition(() => f.panel().textContent.includes("채널 검색 실패"));
     f.setFetch(async () =>
         searchResponse(
             channel(),
@@ -488,7 +488,7 @@ test("failed saves and runtime errors remain unregistered and unrelated DOM chan
     const f = fixture(t);
     await f.open();
     await f.search();
-    f.setSend((_message, callback) => callback({ ok: false, error: "채널은 최대 32개까지 등록할 수 있어요." }));
+    f.setSend((_message, callback) => callback({ ok: false, error: "최대 32개 채널까지 등록 가능." }));
     f.trustedClick(f.action());
     assert.equal(f.action().getAttribute("aria-pressed"), "false");
     assert.match(f.message().textContent, /32개/);
@@ -499,7 +499,7 @@ test("failed saves and runtime errors remain unregistered and unrelated DOM chan
     });
     f.trustedClick(f.action());
     assert.equal(f.action().disabled, false);
-    assert.match(f.message().textContent, /저장하지 못했어요/);
+    assert.match(f.message().textContent, /채널 설정 저장 실패/);
     const doc = f.w.document,
         get = doc.getElementById.bind(doc);
     let scans = 0;

@@ -161,7 +161,7 @@
                 .catch(() => {
                     if (player.qualityRevision === revision) {
                         player.qualitySaving = false;
-                        player.qualityError = "화질 저장 실패 · 이번 재생에만 적용돼요. 다시 선택해 주세요.";
+                        player.qualityError = "화질 저장 실패 · 이번 재생에만 적용(재선택 필요).";
                     }
                 })
                 .finally(() => {
@@ -399,7 +399,7 @@
             saveQueue = saveQueue
                 .catch(() => {})
                 .then(async () => {
-                    if (!chrome.storage?.local) throw new Error("저장소를 사용할 수 없어요.");
+                    if (!chrome.storage?.local) throw new Error("저장소 사용 불가.");
                     await settingsStoreSet("local", {
                         [model.delayKey(player.id)]:
                             basis === "legacy"
@@ -417,8 +417,7 @@
                 .catch(() => {
                     if (player.revision !== revision) return;
                     player.saving = false;
-                    player.saveError =
-                        "딜레이 저장 실패 · 조절 값은 이번 재생에만 적용돼요. 다시 저장을 눌러 저장할 수 있어요.";
+                    player.saveError = "딜레이 저장 실패 · 이번 재생에만 적용(다시 저장 가능).";
                     if (current(player)) updatePlayerUi(player);
                 });
         }
@@ -473,7 +472,7 @@
                 }
             } catch {
                 if (current(player)) {
-                    player.error = "재생 버튼을 눌러 시작해 주세요.";
+                    player.error = "재생 버튼 클릭 필요.";
                     updatePlayerUi(player);
                 }
             }
@@ -491,7 +490,7 @@
                 player.qualityLoaded = true;
             } catch {
                 if (!current(player)) return;
-                player.saveError = "저장된 딜레이를 읽지 못했어요. 재생 재시도로 다시 불러올 수 있어요.";
+                player.saveError = "저장된 딜레이 읽기 실패(재생 재시도로 다시 불러오기 가능).";
             }
             if (!current(player)) return;
             updatePlayerUi(player);
@@ -502,17 +501,15 @@
                 );
                 if (!current(player)) return;
                 const content = response?.content;
-                if (content?.channel?.channelId !== player.id)
-                    throw new Error("요청한 방송의 정보를 확인하지 못했어요.");
+                if (content?.channel?.channelId !== player.id) throw new Error("요청 방송 정보 확인 불가.");
                 player.name = content.channel.channelName;
                 if (player.main) {
                     player.metaReady = content.status === "OPEN";
-                    if (!player.metaReady) throw new Error("방송이 종료되었거나 시청할 수 없어요.");
+                    if (!player.metaReady) throw new Error("방송 종료 또는 시청 불가.");
                     syncNative();
                 } else {
                     const source = model.source(content, normalizeChzzkMediaUrl);
-                    if (!window.Hls?.isSupported?.())
-                        throw new Error("이 환경에서는 보조 방송 재생을 지원하지 않아요.");
+                    if (!window.Hls?.isSupported?.()) throw new Error("이 환경에서는 보조 방송 재생 미지원.");
                     const hls = new window.Hls({
                         enableWorker: false,
                         lowLatencyMode: source.lowLatency,
@@ -540,7 +537,7 @@
                     });
                     hls.on(events.ERROR, (_event, data) => {
                         if (!data?.fatal || !current(player)) return;
-                        player.error = "방송 재생에 실패했어요. 재생 재시도를 눌러 주세요.";
+                        player.error = "방송 재생 실패. 재생 재시도 클릭 필요.";
                         player.status = "unsupported";
                         player.pending = null;
                         player.applied = true;
@@ -553,7 +550,7 @@
                 updatePlayerUi(player);
             } catch (error) {
                 if (!current(player)) return;
-                player.error = error?.message || "방송 정보를 불러오지 못했어요.";
+                player.error = error?.message || "방송 정보 불러오기 실패.";
                 player.status = "unsupported";
                 updatePlayerUi(player);
             }

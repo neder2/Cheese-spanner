@@ -216,9 +216,9 @@
         for (const [term, value] of summaryRows(preview.summary)) list.append(el("dt", "", term), el("dd", "", value));
         const notes = el("ul", "settings-backup-notes");
         notes.append(
-            el("li", "", "파일에 없는 구역은 지금 설정을 그대로 둬요. 멀티뷰 값은 파일에 있는 채널만 바꿔요."),
+            el("li", "", "파일에 없는 구역은 현재 설정을 유지해요. 멀티뷰는 파일에 있는 채널만 바꿔요."),
             el("li", "", "시청 기록·카테고리 제외·로그인 정보는 바뀌지 않아요."),
-            el("li", "", "지금 진행 중인 방송은 알림·자동 입장 없이 기준으로만 기억해요.")
+            el("li", "", "진행 중인 방송은 건너뛰고 다음 새 방송부터 알림·자동 열기를 실행해요.")
         );
         if (preview.ignoredOptionKeys?.length)
             notes.append(el("li", "", `이 버전에 없는 옵션 ${preview.ignoredOptionKeys.length}개는 무시해요.`));
