@@ -90,6 +90,7 @@
         editNote = null,
         expanded = false,
         permission = null,
+        selectedDirectory = null,
         permissionRevision = 0,
         folderOverride = null,
         saveRevision = 0;
@@ -242,9 +243,10 @@
         renderRecording();
         try {
             const fileName = `${fileStem(session.startedAt, session.path)}.${session.format.extension}`;
-            session.route = await sendRecorderMessage({ op: "start", fileName });
-            if (!session.route) throw new Error("download-unavailable");
+            session.route = await sendRecorderMessage({ op: "start", fileName }, true);
+            if (!session.route?.ok) throw new Error(session.route?.error || "download-unavailable");
             if (!session.stopping && recording === session) {
+                if (session.route.destination !== "directory") {
                 const link = document.createElement("a");
                 link.href = session.route.url;
                 // An attachment navigation streams through our worker; a download attribute bypasses it.
@@ -252,6 +254,7 @@
                 (document.body || document.documentElement).append(link);
                 link.click();
                 link.remove();
+                }
                 const opened = await sendRecorderMessage({ op: "ready", id: session.route.id });
                 if (!opened) throw new Error("download-unavailable");
             }
@@ -277,11 +280,13 @@
             }, 1000);
             hideStatus();
             renderRecording();
-        } catch (_) {
+        } catch (error) {
             session.writeFailed = true;
-            if (session.route) void sendRecorderMessage({ op: "abort", id: session.route.id });
+            if (session.route?.id) void sendRecorderMessage({ op: "abort", id: session.route.id });
             stopRecording(session);
-            showStatus("녹화를 시작하지 못했어요.");
+            showStatus(error.message.startsWith("directory-")
+                ? "저장 폴더에 접근하지 못했어요. 확장 설정의 ‘폴더 선택’에서 다시 지정해 주세요."
+                : "녹화를 시작하지 못했어요.");
         } finally {
             if (session.preparing) {
                 for (const name of SOURCE_EVENTS) session.video.removeEventListener(name, onSourceChange);
@@ -335,12 +340,14 @@
                   });
             if (!result) {
                 void sendRecorderMessage({ op: "abort", id: session.route.id });
-                showStatus("다운로드가 중단되어 녹화 파일을 완성하지 못했어요.");
+                showStatus("저장이 중단되어 녹화 파일을 완성하지 못했어요.");
                 return;
             }
-            const where = session.route.routed ? `다운로드 폴더의 ${session.route.folder}` : "다운로드 폴더";
+            const where = session.route.destination === "directory" ? `‘${session.route.folder}’ 폴더` : session.route.routed ? `다운로드 폴더의 ${session.route.folder}` : "다운로드 폴더";
             showStatus(
-                session.failed
+                session.route.destination === "directory"
+                    ? `${session.failed ? "녹화가 중단되어 그때까지의 파일을" : "녹화 파일을"} ${where}에 저장했어요.`
+                    : session.failed
                     ? `녹화가 중단되어 그때까지의 파일 다운로드를 ${where}에서 마무리해요.`
                     : `녹화 파일 다운로드를 ${where}에서 마무리해요.`
             );
@@ -351,7 +358,7 @@
         }
     }
 
-    function sendRecorderMessage(message) {
+    function sendRecorderMessage(message, includeError = false) {
         return new Promise((resolve) => {
             const runtime = globalThis.chrome?.runtime;
             if (typeof runtime?.sendMessage !== "function") {
@@ -363,7 +370,7 @@
                 runtime.sendMessage({ type: MESSAGE_TYPE, version: 1, ...message }, (response) => {
                     void runtime.lastError;
                     window.clearTimeout(timer);
-                    resolve(response?.ok ? response : null);
+                    resolve(response?.ok || includeError ? response : null);
                 });
             } catch (_) {
                 window.clearTimeout(timer);
@@ -501,12 +508,16 @@
     function renderMenu() {
         if (!menuRow) return;
         const folder = currentFolder();
-        menuValue.textContent = folderLabel(folder);
+        menuValue.textContent = selectedDirectory?.directory || folderLabel(folder);
+        editInput.hidden = editSave.hidden = Boolean(selectedDirectory?.directory);
         menuButton.setAttribute("aria-expanded", String(expanded));
         editRow.hidden = !expanded;
         if (!expanded) return;
         let note;
-        if (!folder) note = "비워 두면 Chrome 다운로드 폴더에 바로 저장해요.";
+        if (selectedDirectory?.directory) note = selectedDirectory.directoryGranted
+            ? `‘${selectedDirectory.directory}’ 폴더에 저장해요. ‘폴더 선택’에서 바꿀 수 있어요.`
+            : "폴더 접근 권한이 필요해요. ‘폴더 선택’에서 다시 지정해 주세요.";
+        else if (!folder) note = "비워 두면 Chrome 다운로드 폴더에 바로 저장해요.";
         else if (permission === false)
             note = `하위 폴더에 저장하려면 확장 옵션에서 다운로드 권한을 허용해 주세요. 지금은 다운로드 폴더에 저장해요.`;
         else note = `다운로드 폴더 안의 ${folder} 폴더에 저장해요.`;
@@ -518,6 +529,7 @@
         void sendRecorderMessage({ op: "status" }).then((response) => {
             if (revision !== permissionRevision) return;
             permission = response ? response.downloads === true : null;
+            selectedDirectory = response;
             renderMenu();
         });
     }
@@ -686,6 +698,20 @@
         editSave.type = "button";
         editSave.textContent = "저장";
         field.append(editInput, editSave);
+        const chooseDirectory = document.createElement("button");
+        chooseDirectory.type = "button";
+        chooseDirectory.textContent = "폴더 선택…";
+        chooseDirectory.title = "확장 설정에서 탐색기로 폴더 선택";
+        chooseDirectory.addEventListener("click", (event) => {
+            event.stopPropagation();
+            if (!event.isTrusted || !validMenuRow() || editRow.hidden) return;
+            const revision = saveRevision;
+            void sendRecorderMessage({ op: "folder-settings" }).then((result) => {
+                if (!result && revision === saveRevision && validMenuRow())
+                    editNote.textContent = "확장 설정을 열지 못했어요. 확장 아이콘에서 설정을 열어 주세요.";
+            });
+        });
+        field.append(chooseDirectory);
         editNote = document.createElement("p");
         editNote.className = `${ID}-note`;
         editNote.id = `${EDIT_ID}-note`;

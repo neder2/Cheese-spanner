@@ -86,6 +86,7 @@
                 "features/chatTimestamp.js",
                 "features/vodOwnChat.js",
                 "features/chatWeeklyRanking.js",
+                "features/chatDonationMessages.js",
                 "features/videoSearch/model.js",
                 "features/videoSearch/repository.js",
                 "features/videoSearch.js",

@@ -10,8 +10,8 @@
     function fail(code = "INVALID_FILE") {
         const error = new Error(
             code === "LIMIT_EXCEEDED"
-                ? "합친 기록이 보관 개수나 저장 용량 한도를 넘어요. 기존 기록은 변경하지 않았어요."
-                : "현재 기록과 백업 파일을 안전하게 합칠 수 없어요. 기록은 변경하지 않았어요."
+                ? "병합 결과가 보관 개수·용량 한도 초과(기존 기록 미변경)."
+                : "현재 기록과 백업 파일 병합 불가(기존 기록 미변경)."
         );
         error.code = code;
         throw error;

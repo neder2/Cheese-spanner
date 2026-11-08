@@ -547,7 +547,7 @@ test("the VOD option defaults off and toggles immediately while live timestamps 
     assert.equal(input.hasAttribute("data-depends-on"), false);
     assert.match(
         optionsDom.window.document.getElementById(input.getAttribute("aria-describedby")).textContent,
-        /작성된 시각/
+        /작성 시각/
     );
 });
 

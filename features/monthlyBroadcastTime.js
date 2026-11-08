@@ -686,10 +686,10 @@ ${CALENDAR_LEVELS.map(
     </span>
     <button type="button" class="bcmb-nav" data-bcmb-nav="1" aria-label="다음 달">›</button>
   </span>
-  <span class="bcmb-calendar-limit" hidden>조회 상한에 도달해 일부만 표시해요.</span>
+  <span class="bcmb-calendar-limit" hidden>조회 상한 도달로 일부만 표시.</span>
   <span class="bcmb-weekdays" aria-hidden="true"></span>
   <span class="bcmb-days"></span>
-  <span class="bcmb-calendar-legend" role="img" aria-label="방송 시간에 따라 3시간 단위로 9단계로 표시하며, 가장 진한 색은 24시간 이상이에요.">
+  <span class="bcmb-calendar-legend" role="img" aria-label="방송 시간을 3시간 단위 9단계로 표시(가장 진한 색은 24시간 이상).">
     <span aria-hidden="true">3시간 단위</span>
     <span class="bcmb-calendar-legend-scale" aria-hidden="true">${CALENDAR_LEVELS.map(
         (_, index) => `<span class="bcmb-calendar-legend-step" data-level="${index + 1}"></span>`

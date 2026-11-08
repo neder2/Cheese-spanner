@@ -994,7 +994,7 @@ test("the channel picker is the keyboard path to put channels in, move them betw
     typeText(dom, filter, "베타");
     await waitForCondition(() => layer(document).querySelectorAll(".bcff-pick").length === 1);
     typeText(dom, filter, "없는 이름");
-    await waitForCondition(() => /찾는 채널이 없어요/.test(layer(document).textContent));
+    await waitForCondition(() => /일치하는 채널 없음/.test(layer(document).textContent));
     typeText(dom, filter, "");
 
     press(dom, byLabel(layer(document), "알파 채널을 ‘토크’ 폴더에서 빼기"));
@@ -1141,7 +1141,7 @@ test("a collapsed folder marks its live count partial while the native list has 
     const live = () => header(document, "게임").querySelector(".bcff-live");
     assert.equal(live().hidden, false);
     assert.equal(live().getAttribute("data-bcff-live"), "1+", "E is live but its row is not built yet");
-    assert.match(live().getAttribute("title"), /방송 중 1개 확인.*채널 1개는 방송 여부를 확인하지 못했어요/);
+    assert.match(live().getAttribute("title"), /방송 중 1개 확인.*채널 1개는 방송 여부 미확인/);
 
     const picker = await openPicker(dom, document, "게임");
     const pick = (channelId) => picker.querySelector(`[data-bcff-key="pick:games:${channelId}"]`);
@@ -1274,7 +1274,7 @@ test("save failures keep the previous folders and tell the user what happened", 
     await waitForCondition(() => document.getElementById("cheese-spanner-following-folders-toast"));
     const toast = document.getElementById("cheese-spanner-following-folders-toast");
     assert.equal(toast.getAttribute("role"), "status");
-    assert.match(toast.textContent, /저장하지 못했어요.*이전 상태/);
+    assert.match(toast.textContent, /폴더 변경 저장 실패.*이전 상태 유지/);
     assert.deepEqual(storedState(chrome), saved);
     assert.equal(headerButton(document, "게임").getAttribute("aria-expanded"), "true");
     assert.notEqual(dom.window.getComputedStyle(document.getElementById("rowC")).display, "none");
@@ -1282,7 +1282,7 @@ test("save failures keep the previous folders and tell the user what happened", 
     delete dom.window.CheeseSpanner.utils.settingsStoreSet;
     trustedClick(dom, headerButton(document, "게임"));
     await waitForCondition(() =>
-        /확장 프로그램과 연결되지 않아/.test(
+        /확장 연결 끊김으로 저장 실패/.test(
             document.getElementById("cheese-spanner-following-folders-toast")?.textContent || ""
         )
     );
@@ -1527,7 +1527,7 @@ test("other-tab changes win over late initial reads and corrupt values need an e
     const status = () => document.querySelector("#followingList > [data-bcff-status]");
     await waitForCondition(() => status()?.querySelector('[data-bcff-key="reset"]'));
     assert.equal(document.getElementById("followingList").firstElementChild, status());
-    assert.match(status().textContent, /올바르지 않아/);
+    assert.match(status().textContent, /폴더 정보 손상/);
     assert.equal(document.querySelector("[data-bcff-header]"), null);
     untrustedClick(dom, status().querySelector('[data-bcff-key="reset"]'));
     await settle();
@@ -1553,7 +1553,7 @@ test("a failed first read offers a retry instead of treating storage as empty", 
     const status = () => document.querySelector("#followingList > [data-bcff-status]");
     await waitForCondition(() => status()?.querySelector('[data-bcff-key="retry"]'));
     assert.equal(document.querySelector("[data-bcff-header]"), null);
-    assert.match(status().textContent, /읽지 못했어요/);
+    assert.match(status().textContent, /폴더 정보 읽기 실패/);
     trustedClick(dom, status().querySelector('[data-bcff-key="retry"]'));
     await waitForCondition(() => headerButton(document, "게임"));
     await waitForCondition(() => !status(), { timeoutMs: 1000 });
@@ -1684,7 +1684,7 @@ test("dropping on a folder's rows or the new-folder spot moves channels; outside
     await waitForCondition(() => storedState(chrome).folders[0].channelIds.includes(A));
     assert.equal(list.querySelector("[data-bcff-new-zone]"), null);
     assert.equal(document.querySelector("[data-bcff-drop-target]"), null);
-    assert.match(toastText(document), /알파 채널을 ‘게임’ 폴더에 넣었어요/);
+    assert.match(toastText(document), /알파 채널을 ‘게임’ 폴더에 추가함/);
 
     dragEvent(dom, "dragstart", document.querySelector("#rowE a"));
     // The spot can appear right under the pointer when the last row is dragged; it waits until the pointer moves on.
@@ -1851,7 +1851,7 @@ test("a held channel previews its landing spot, drops show at once, failed saves
     dragEvent(dom, "dragover", header(document, "게임"));
     dragEvent(dom, "drop", header(document, "게임"));
     assert.ok(visualOrder(dom).indexOf("rowE") < visualOrder(dom).indexOf("[토크]"), "shown in the folder at once");
-    await waitForCondition(() => /저장하지 못했어요/.test(toastText(document)));
+    await waitForCondition(() => /폴더 변경 저장 실패/.test(toastText(document)));
     const after = visualOrder(dom);
     assert.ok(after.indexOf("rowE") > after.indexOf("[폴더 밖 채널]"), "a failed save puts the row back");
     assert.equal(storedState(chrome).folders[0].channelIds.includes(E), false);
@@ -1930,7 +1930,7 @@ test("undo restores the folders from before a change and refuses once something 
     await waitForCondition(() => storedState(chrome).folders[0].channelIds.includes(C));
     assert.deepEqual(storedState(chrome), saved);
     assert.deepEqual(store.calls.at(-1).expected, { [KEY]: { value: moved } });
-    await waitForCondition(() => /되돌리기 완료/.test(toastText(document)));
+    await waitForCondition(() => /되돌리기 완료./.test(toastText(document)));
     assert.equal(document.querySelector(`${TOAST_SELECTOR} [data-bcff-key="undo"]`), null, "undo is one step");
 
     dragEvent(dom, "dragstart", document.querySelector("#rowC a"));
@@ -1946,7 +1946,7 @@ test("undo restores the folders from before a change and refuses once something 
     const undoButton = document.querySelector(`${TOAST_SELECTOR} [data-bcff-key="undo"]`);
     assert.ok(undoButton, "the earlier undo offer is still on screen");
     trustedClick(dom, undoButton);
-    await waitForCondition(() => /되돌리지 않았어요/.test(toastText(document)));
+    await waitForCondition(() => /되돌리기 취소/.test(toastText(document)));
     await settle();
     assert.equal(store.calls.length, callsBeforeOtherTab, "another tab's change is never overwritten by undo");
     assert.deepEqual(storedState(chrome).folders[1].channelIds, [C, A]);
@@ -2336,8 +2336,8 @@ test("late notices around a save that retried over another tab's change keep my 
     }
     assert.ok(undoButton(), "the undo offer is still on screen");
     trustedClick(dom, undoButton());
-    await waitForCondition(() => /되돌리기 완료|되돌리지 않았어요/.test(toastText(document)));
-    assert.match(toastText(document), /되돌리기 완료/, "undo goes back to the value my save started from");
+    await waitForCondition(() => /되돌리기 완료.|되돌리기 취소/.test(toastText(document)));
+    assert.match(toastText(document), /되돌리기 완료./, "undo goes back to the value my save started from");
     assert.deepEqual(storedState(chrome), other);
     assert.deepEqual(store.calls.at(-1).expected, { [KEY]: { value: retried } });
     assert.equal(store.conflicts, 1, "no later save had to retry");
@@ -2532,8 +2532,8 @@ async function assertLateNoticesKeepMoveAndUndo(context, lateNames) {
     }
     const conflicts = store.conflicts;
     trustedClick(context.dom, undoButton());
-    await waitForCondition(() => /되돌리기 완료|되돌리지 않았어요/.test(toastText(document)));
-    assert.match(toastText(document), /되돌리기 완료/, "undo still works after the late notices");
+    await waitForCondition(() => /되돌리기 완료.|되돌리기 취소/.test(toastText(document)));
+    assert.match(toastText(document), /되돌리기 완료./, "undo still works after the late notices");
     assert.deepEqual(storedState(chrome), X, "undo puts back the value my move was saved over");
     assert.deepEqual(store.calls.at(-1).expected, { [KEY]: { value: moved } });
     assert.equal(store.conflicts, conflicts, "undo did not conflict");
@@ -2618,8 +2618,8 @@ test("late notices of another tab's same change and its return keep my save and 
     }
 
     trustedClick(dom, undoButton());
-    await waitForCondition(() => /되돌리기 완료|되돌리지 않았어요/.test(toastText(document)));
-    assert.match(toastText(document), /되돌리기 완료/, "undo still works after the late notices");
+    await waitForCondition(() => /되돌리기 완료.|되돌리기 취소/.test(toastText(document)));
+    assert.match(toastText(document), /되돌리기 완료./, "undo still works after the late notices");
     assert.deepEqual(storedState(chrome), saved);
     assert.equal(store.calls.length, 2);
     assert.deepEqual(store.calls[1].expected, { [KEY]: { value: moved } });
@@ -2644,7 +2644,7 @@ test("a check read that answers after my next save keeps that save and its undo"
     const conflicts = store.conflicts;
     dropRowOnHeader(dom, document, "rowC", "라");
     await waitForCondition(() => store.calls.length === 4 && !list.hasAttribute("aria-busy"));
-    await waitForCondition(() => /‘라’ 폴더에 넣었어요/.test(toastText(document)));
+    await waitForCondition(() => /‘라’ 폴더에 추가함/.test(toastText(document)));
     const next = clone(moved);
     next.folders[1].channelIds = [];
     next.folders[2].channelIds = [C];
@@ -2667,8 +2667,8 @@ test("a check read that answers after my next save keeps that save and its undo"
     }
 
     trustedClick(dom, undoButton());
-    await waitForCondition(() => /되돌리기 완료|되돌리지 않았어요/.test(toastText(document)));
-    assert.match(toastText(document), /되돌리기 완료/, "undo still works after the late read");
+    await waitForCondition(() => /되돌리기 완료.|되돌리기 취소/.test(toastText(document)));
+    assert.match(toastText(document), /되돌리기 완료./, "undo still works after the late read");
     assert.deepEqual(storedState(chrome), moved, "undo puts back the value my next move was saved over");
     assert.deepEqual(store.calls.at(-1).expected, { [KEY]: { value: next } });
     assert.equal(store.conflicts, conflicts, "undo did not conflict");
@@ -2704,8 +2704,8 @@ test("a back-forward cache reread that answers after my save keeps that save and
     assert.equal(folderOfRowOnScreen(dom, "rowC"), "[토크]");
 
     trustedClick(dom, undoButton());
-    await waitForCondition(() => /되돌리기 완료|되돌리지 않았어요/.test(toastText(document)));
-    assert.match(toastText(document), /되돌리기 완료/, "undo still works after the late reread");
+    await waitForCondition(() => /되돌리기 완료.|되돌리기 취소/.test(toastText(document)));
+    assert.match(toastText(document), /되돌리기 완료./, "undo still works after the late reread");
     assert.deepEqual(storedState(chrome), saved);
     assert.deepEqual(store.calls.at(-1).expected, { [KEY]: { value: moved } });
     assert.equal(store.conflicts, 0, "undo did not conflict");

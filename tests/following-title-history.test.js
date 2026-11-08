@@ -1442,7 +1442,7 @@ test("the live page refreshes its check before it expires and drops titles once 
     assert.equal(panel.hidden, false);
     assert.equal(button.isConnected, true);
 
-    // 다음 재확인이 실패하고 2분이 지나면 화면 변경이 없어도 버튼·패널을 거둬요.
+    // 다음 재확인이 실패하고 2분이 지나면 화면 변경이 없어도 버튼·패널 위치를 거둬요.
     fail = true;
     offset = 91_000 + 91_000;
     runLongTimers(state);

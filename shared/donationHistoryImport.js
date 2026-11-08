@@ -62,14 +62,14 @@
                 if (message?.type !== "start" || used) return;
                 used = true;
                 if (active) {
-                    send({ type: "error", message: "다른 시청 기록 창에서 가져오는 중이에요." });
+                    send({ type: "error", message: "다른 시청 기록 창에서 가져오는 중." });
                     return;
                 }
                 job = { controller: new AbortController(), saving: false };
                 active = job;
                 void (async () => {
                     try {
-                        if (sender.tab?.incognito) throw new Error("일반 브라우저 창에서 후원 내역을 가져와 주세요.");
+                        if (sender.tab?.incognito) throw new Error("일반 브라우저 창에서 후원 내역 가져오기 필요.");
                         const tabs = await chrome.tabs.query({ url: "https://chzzk.naver.com/*" });
                         const tab = tabs
                             .filter((tab) => Number.isInteger(tab.id) && !tab.discarded && !tab.incognito)
@@ -77,14 +77,12 @@
                                 (a, b) =>
                                     Number(b.active) - Number(a.active) || (b.lastAccessed || 0) - (a.lastAccessed || 0)
                             )[0];
-                        if (!tab) throw new Error("치지직에 로그인된 탭을 열어 둔 뒤 다시 가져와 주세요.");
+                        if (!tab) throw new Error("치지직 로그인 탭을 열어 둔 뒤 다시 가져오기 필요.");
                         const previous = data.normalizeLedger((await readHistory())?.donationImport);
                         const identify = async () => {
                             const owner = await identifyInTab(tab.id);
                             if (previous.owner && owner && previous.owner !== owner)
-                                throw new Error(
-                                    "다른 계정의 후원 내역이 저장되어 있어요. 가져온 내역을 삭제한 뒤 다시 시도해 주세요."
-                                );
+                                throw new Error("다른 계정의 후원 내역 저장됨. 가져온 내역 삭제 후 다시 시도 필요.");
                             return owner;
                         };
                         const snapshot = await data.collect({
@@ -106,12 +104,11 @@
                                 );
                             },
                         });
-                        if (job.controller.signal.aborted) throw new Error("가져오기를 취소했어요.");
+                        if (job.controller.signal.aborted) throw new Error("가져오기 취소됨.");
                         job.saving = true;
                         send({ type: "saving" });
                         const result = await writeHistory({ kind: "replaceDonationMonths", snapshot });
-                        if (result.reason === "deleted")
-                            throw new Error("가져오는 동안 기록이 삭제되어 저장하지 않았어요.");
+                        if (result.reason === "deleted") throw new Error("가져오는 중 기록이 삭제되어 저장 안 됨.");
                         send({
                             type: "done",
                             count: Object.values(snapshot.months).reduce((sum, rows) => sum + rows.length, 0),
@@ -119,12 +116,12 @@
                         });
                     } catch (error) {
                         const message = job.controller.signal.aborted
-                            ? "가져오기를 취소했어요. 저장된 내역은 그대로예요."
+                            ? "가져오기 취소됨(저장 내역 유지)."
                             : /HTTP (401|403)/.test(error?.message || "")
-                              ? "치지직에 다시 로그인한 뒤 가져와 주세요."
+                              ? "치지직 재로그인 후 다시 가져오기 필요."
                               : error?.name === "AbortError"
-                                ? "조회 시간이 초과됐어요. 잠시 후 다시 가져와 주세요."
-                                : error?.message || "후원 내역을 가져오지 못했어요.";
+                                ? "조회 시간 초과. 잠시 후 다시 가져오기 필요."
+                                : error?.message || "후원 내역 가져오기 실패.";
                         send({ type: "error", message });
                     } finally {
                         if (active === job) active = null;

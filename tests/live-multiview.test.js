@@ -484,13 +484,11 @@ test("search errors remain retryable and optional viewer lookup failure preserve
         throw new Error("network unavailable");
     };
     submitMultiviewSearch(h, "이름");
-    await waitForChatUi(() =>
-        h.w.document.querySelector("[data-bcmv-notice]").textContent.includes("검색하지 못했어요")
-    );
+    await waitForChatUi(() => h.w.document.querySelector("[data-bcmv-notice]").textContent.includes("검색 실패"));
     assert.equal(h.w.document.querySelector('[data-action="submit-add"]').disabled, false);
     h.w.CheeseSpanner.utils.fetchJson = async () => channelSearchResponse([]);
     submitMultiviewSearch(h, "없는 이름");
-    await waitForChatUi(() => h.w.document.querySelector("[data-bcmv-notice]").textContent === "검색 결과가 없어요.");
+    await waitForChatUi(() => h.w.document.querySelector("[data-bcmv-notice]").textContent === "검색 결과 없음.");
     h.w.CheeseSpanner.utils.fetchJson = async (url) => {
         if (url.includes("/search/"))
             return channelSearchResponse([{ channelId: B, channelName: "방송인", openLive: true }]);
@@ -1101,7 +1099,7 @@ test("edge drops exchange destination sound and a rejected main switch leaves so
         pointer(b, "pointerdown", point(B, 0.5, 0.5));
         pointer(h.w, "pointermove", toMain);
         pointer(h.w, "pointerup", toMain);
-        assert.match(d.querySelector(".bcmv-banner").textContent, /페이지 내부 이동을 사용할 수 없어요/);
+        assert.match(d.querySelector(".bcmv-banner").textContent, /페이지 내부 이동 불가/);
         assert.deepEqual([main.volume, main.muted, b.volume, b.muted], before);
     }
 });
@@ -1164,7 +1162,7 @@ test("settings popup overlays chat with layout actions and independent secondary
     assert.equal(h.storage[key(B)].delaySeconds, 4);
     while (panel.querySelector('[data-action="remove"]')) panel.querySelector('[data-action="remove"]').click();
     assert.equal(panel.hidden, false);
-    assert.match(panel.textContent, /추가한 서브 방송이 없어요/);
+    assert.match(panel.textContent, /추가한 서브 방송 없음/);
     assert.equal(panel.querySelector('[data-action="equalize-layout"]').disabled, true);
     assert.equal(d.querySelectorAll("video").length, 1);
     assert.equal(d.activeElement.getAttribute("aria-label"), "닫기");
@@ -1437,7 +1435,7 @@ test("settings list promotes a secondary through the native router, restores its
     assert.equal(g.row(A).dataset.drop, "swap");
     g.pointer("pointerup", A);
     assert.deepEqual(g.order(), [A, B, C]);
-    assert.match(g.panel.textContent, /페이지 내부 이동을 사용할 수 없어요/);
+    assert.match(g.panel.textContent, /페이지 내부 이동 불가/);
     assert.equal(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"), before);
     assert.deepEqual([main.volume, main.muted, sub.volume, sub.muted], [0.8, false, 0.15, true]);
     const navigations = [];
@@ -3183,7 +3181,7 @@ test("a failed page layer leaves playback intact and reports that free layout co
         assert.equal(f.host.hasAttribute("data-bcmv-viewport"), false);
         assert.equal(f.video(B), video);
         assert.equal(h.requests.length, requests);
-        assert.match(f.d.querySelector(".bcmv-panel").textContent, /자유 배치를.*(못했|없어요)/);
+        assert.match(f.d.querySelector(".bcmv-panel").textContent, /자유 배치 (열기 실패|사용 불가)/);
     }
 });
 
@@ -3824,7 +3822,7 @@ test("multiview URL drops reject invalid data and stale source identities and cl
     source.href = `https://chzzk.naver.com/live/${C}`;
     valid.send("drop", host);
     assert.equal(h.requests.length, 1);
-    assert.match(d.querySelector("[data-bcmv-notice]").textContent, /다시 끌어/);
+    assert.match(d.querySelector("[data-bcmv-notice]").textContent, /다시 드래그 필요/);
     source.href = `https://chzzk.naver.com/live/${B}`;
     source.dispatchEvent(new h.w.Event("dragstart", { bubbles: true }));
     h.navigate(C);
@@ -4661,7 +4659,7 @@ test("a sub-screen retries unread saved delays without restarting other broadcas
     const error = () => cell(B).querySelector(".bcmv-error");
     const retry = () => error().querySelector('[data-action="retry"]');
     const readCount = (id) => reads.filter((keys) => keys.includes(key(id))).length;
-    await waitForCondition(() => error().textContent.includes("저장된 딜레이를 읽지 못했어요"));
+    await waitForCondition(() => error().textContent.includes("저장된 딜레이 읽기 실패"));
     assert.equal(error().hidden, false);
     assert.equal(retry().hidden, false);
     assert.equal(retry().disabled, false);
@@ -4702,7 +4700,7 @@ test("read and write failures are visible and never claim saved success", async 
     await read.start();
     await read.add(B);
     read.click("controls");
-    assert.match(read.w.document.querySelector("[data-bcmv-status]").textContent, /읽지 못/);
+    assert.match(read.w.document.querySelector("[data-bcmv-status]").textContent, /딜레이 읽기 실패/);
     assert.equal(read.w.document.querySelector("[data-bcmv-delay]").textContent, "저장값 확인 불가");
     assert.equal(read.w.document.querySelector("[data-delta]").disabled, true);
     assert.ok([...read.w.document.querySelectorAll(".bcmv-panel [data-delta]")].every((button) => button.disabled));
@@ -4957,7 +4955,7 @@ test("external channel updates stay isolated and a fatal playback failure stops 
     assert.equal(h.storage[key(C)], undefined);
     h.instances[0].events.error(null, { fatal: true });
     assert.equal(h.instances[0].stopped, true);
-    assert.match(h.w.document.querySelector(".bcmv-error").textContent, /재생에 실패/);
+    assert.match(h.w.document.querySelector(".bcmv-error").textContent, /방송 재생 실패/);
     h.click("controls");
     assert.equal(h.w.document.querySelector('.bcmv-panel [data-action="retry"]'), null);
     const retry = h.w.document.querySelector('.bcmv-error [data-action="retry"]');

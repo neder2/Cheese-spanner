@@ -154,6 +154,44 @@ test("the native menu remains reachable when moderator actions wrap its trigger"
     assert.equal(menu.querySelectorAll(ENTRY).length, 1);
 });
 
+test("multiview wrappers keep the native phrase menu reachable with or without moderator actions", async (t) => {
+    for (const moderatorEnabled of [false, true]) {
+        await t.test(moderatorEnabled ? "multiview and collection" : "multiview only", async (t) => {
+            const f = fixture(t, { raw: { [ENABLED]: false, [WORDS]: "" } });
+            const host = f.trigger.parentElement;
+            const multiview = f.document.createElement("span");
+            multiview.setAttribute("data-bcmv-chat-actions", "1");
+            host.insertBefore(multiview, f.trigger);
+            multiview.append(f.trigger);
+            const moderator = f.document.createElement("span");
+            if (moderatorEnabled) {
+                moderator.setAttribute("data-bcct-moderator-actions", "1");
+                multiview.insertBefore(moderator, f.trigger);
+                moderator.append(f.trigger);
+            }
+            // runtime.syncChatButton wraps only the trigger; React's menu remains in the native host.
+            const menu = f.openMenu(host);
+            await waitForCondition(() => menu.querySelector(ENTRY));
+            await f.openPanel();
+            const panel = await f.loaded();
+            assert.equal(panel.getAttribute("aria-label"), "문구 숨김");
+            assert.equal(panel.querySelector("input").checked, false);
+            assert.equal(panel.querySelector("textarea").value, "");
+            assert.equal(f.writes.length, 0, "opening the menu never changes saved options");
+
+            // Disabling either feature unwraps its own controls while the native menu stays open.
+            multiview.replaceWith(...multiview.childNodes);
+            if (moderatorEnabled) moderator.replaceWith(...moderator.childNodes);
+            await new Promise((resolve) => f.dom.window.setTimeout(resolve, 100));
+            assert.equal(menu.querySelectorAll(ENTRY).length, 1);
+            assert.equal(menu.querySelector(PANEL), panel);
+            f.trigger.setAttribute("aria-expanded", "false");
+            menu.remove();
+            await waitForCondition(() => !f.document.querySelector(`${ENTRY}, ${PANEL}`));
+        });
+    }
+});
+
 test("only the real header menu gains one entry even when filtering is OFF or empty", async (t) => {
     const f = fixture(t, { raw: { [ENABLED]: false, [WORDS]: "" } });
     const fixed = f.document.createElement("div");

@@ -1080,7 +1080,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         let rawValue = persistedRawValue;
         for (let attempt = 0; attempt < MAX_PIN_WRITE_ATTEMPTS; attempt += 1) {
             const result = applyPinOperation(normalizePinnedIds(rawValue), operation);
-            if (result.full) throw new Error(`팔로잉 채널은 최대 ${MAX_PINNED_CHANNELS}개까지 고정할 수 있습니다.`);
+            if (result.full) throw new Error(`팔로잉 채널은 최대 ${MAX_PINNED_CHANNELS}개까지 고정 가능.`);
             if (!result.changed) return;
             const epoch = pinChangeEpoch;
             const expected = rawValue === undefined ? { absent: true } : { value: rawValue };

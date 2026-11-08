@@ -382,7 +382,7 @@ test("category tools show the polite empty result message", async (t) => {
     input.dispatchEvent(new page.window.Event("input", { bubbles: true }));
     const empty = await waitFor(() => {
         const node = page.document.querySelector('[data-bcgt-empty="1"]');
-        return node?.textContent === "조건에 맞는 결과가 없어요." ? node : null;
+        return node?.textContent === "조건에 맞는 결과 없음." ? node : null;
     });
     assert.ok(empty);
 });
@@ -435,7 +435,7 @@ test("monthly calendar requests the shared theme and keeps its specified font st
     );
     assert.equal(
         widget.querySelector(".bcmb-calendar-legend").getAttribute("aria-label"),
-        "방송 시간에 따라 3시간 단위로 9단계로 표시하며, 가장 진한 색은 24시간 이상이에요."
+        "방송 시간을 3시간 단위 9단계로 표시(가장 진한 색은 24시간 이상)."
     );
     assert.equal(widget.querySelectorAll(".bcmb-calendar-legend-step").length, 9);
 });

@@ -43,7 +43,7 @@
             if (!bounds.width || !bounds.height || !window.innerWidth || !window.innerHeight) return false;
             if (typeof host.togglePopover !== "function" || host.hasAttribute("popover")) {
                 state.freeLayoutEnabled = false;
-                onError("현재 브라우저나 플레이어에서는 페이지 전체 자유 배치를 사용할 수 없어요.");
+                onError("현재 브라우저·플레이어에서 자유 배치 사용 불가.");
                 return false;
             }
             dockBounds = bounds;
@@ -62,7 +62,7 @@
                 state.freeLayoutEnabled = false;
                 state.freeWindows = previous.windows;
                 state.freeWindowSpace = previous.space;
-                onError("자유 배치를 열지 못했어요. 현재 방송은 그대로 유지해요.");
+                onError("자유 배치 열기 실패(현재 방송 유지).");
                 return false;
             }
         }
