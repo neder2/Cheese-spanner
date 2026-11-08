@@ -155,7 +155,7 @@
                 searchNotice(
                     channels.length
                         ? response.content.page?.next
-                            ? "팔로워순 상위 5개 결과예요. 닉네임을 더 자세히 입력하면 찾기 쉬워요."
+                            ? "팔로워순 상위 5개예요. 닉네임을 더 자세히 입력해 보세요."
                             : "추가할 방송을 선택해 주세요."
                         : "검색 결과가 없어요."
                 );
@@ -628,11 +628,7 @@
             } else {
                 const option = el("div", "bcmv-layout-option");
                 const description = el("div");
-                const help = el(
-                    "p",
-                    "",
-                    "창을 사이드바·채팅 위까지 옮기고 크기를 조절해요. 끄면 분할 배치로 돌아가요."
-                );
+                const help = el("p", "", "창 위치·크기를 자유롭게 조절해요. 끄면 분할 배치로 돌아가요.");
                 help.id = PANEL_ID + "-free-help";
                 description.append(el("strong", "", "자유 배치"), help);
                 const toggle = button(state.freeLayoutEnabled ? "켜짐" : "꺼짐", "free-layout");

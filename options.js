@@ -27,6 +27,7 @@ const resetPanelSizesButton = document.getElementById("resetPanelSizes");
 const shortcutResetButton = document.getElementById("resetPlaybackSpeedShortcuts");
 const playbackSpeedShortcutInputs = optionInputs.filter(isShortcutCodeInput);
 const playbackSpeedShortcutKeys = playbackSpeedShortcutInputs.map((input) => input.dataset.option);
+const chatKeywordRuleKeys = ["chatKeywordFilterWords", "chatKeywordFilterExactWords"];
 const saveButton = document.getElementById("save");
 const discardButton = document.getElementById("discardChanges");
 const headerMenu = document.getElementById("headerMenu");
@@ -123,7 +124,13 @@ function setOptionValue(key, value) {
 }
 
 function markOptionsTouched(keys) {
-    for (const key of keys) touchedOptionKeys.add(key);
+    for (const key of keys) {
+        touchedOptionKeys.add(key);
+        // The phrase list and its per-phrase conditions are one edit during cross-window saves.
+        if (chatKeywordRuleKeys.includes(key)) {
+            for (const related of chatKeywordRuleKeys) touchedOptionKeys.add(related);
+        }
+    }
 }
 
 function isUserOwnedOption(key, draft) {
@@ -182,16 +189,79 @@ function isDisabledByDependency(control, options) {
     return dependencyGroups.some((group) => group.contains(control) && !dependenciesMet(group, options));
 }
 
+function hasInvalidChatKeywords() {
+    const input = document.getElementById("chatKeywordFilterWords");
+    return !!input && CheeseSpannerSettings.normalizeChatKeywordFilterWords(input.value) === null;
+}
+
+function renderChatKeywordRules(options, disabled) {
+    const individual = options.chatKeywordFilterApplyMode === "individual";
+    document.getElementById("chatKeywordGlobalMatch").hidden = individual;
+    document.querySelector('[data-option="chatKeywordFilterMatchMode"]').disabled = disabled || individual;
+    document.getElementById("chatKeywordIndividual").hidden = !individual;
+    const list = document.getElementById("chatKeywordRules");
+    // Keep the last valid list while an oversized phrase is being corrected.
+    const rules = CheeseSpannerSettings.getChatKeywordFilterRules({
+        ...options,
+        chatKeywordFilterApplyMode: "individual",
+    });
+    const signature = JSON.stringify(rules.map((rule) => rule.phrase));
+    if (!hasInvalidChatKeywords() && list.dataset.words !== signature) {
+        list.dataset.words = signature;
+        list.replaceChildren();
+        for (const { phrase } of rules) {
+            const label = document.createElement("label");
+            const text = document.createElement("span");
+            text.textContent = phrase;
+            const select = document.createElement("select");
+            select.className = "quality-select";
+            select.dataset.keywordPhrase = phrase;
+            select.setAttribute("aria-label", `${phrase} 일치 조건`);
+            select.setAttribute("aria-describedby", "chat-keyword-match-help");
+            select.innerHTML = '<option value="contains">포함</option><option value="exact">완전 일치</option>';
+            label.append(text, select);
+            list.append(label);
+        }
+        if (!rules.length) list.textContent = "숨길 문구를 입력하면 문구별 조건이 나타나요.";
+    }
+    for (const select of list.querySelectorAll("select")) {
+        const rule = rules.find((item) => item.phrase === select.dataset.keywordPhrase);
+        if (rule) select.value = rule.matchMode;
+        select.disabled = disabled || !individual || hasInvalidChatKeywords();
+    }
+}
+
+function updateChatKeywordExactWords() {
+    const rules = CheeseSpannerSettings.getChatKeywordFilterRules({
+        ...readOptionsFromForm(),
+        chatKeywordFilterApplyMode: "individual",
+    });
+    const exactWords = rules
+        .filter((rule) => rule.matchMode === "exact")
+        .map((rule) => rule.phrase)
+        .join("\n");
+    const input = document.querySelector('[data-option="chatKeywordFilterExactWords"]');
+    if (input.value === exactWords) return;
+    input.value = exactWords;
+    markOptionsTouched([input.dataset.option]);
+}
+
 function applyControlStates(options) {
     const optionsUnavailable = optionsLoadState !== "ready" || externalBusy;
     for (const control of optionInputs) {
         control.disabled = optionsUnavailable || isDisabledByDependency(control, options);
     }
+    renderChatKeywordRules(options, optionsUnavailable || !options.chatKeywordFilterEnabled);
     resetButton.disabled = optionsUnavailable || saveInFlight;
     shortcutResetButton.disabled =
         optionsUnavailable || saveInFlight || isDisabledByDependency(shortcutResetButton, options);
-    saveButton.disabled = optionsUnavailable || saveInFlight || !savedOptions || areOptionsEqual(options, savedOptions);
-    discardButton.disabled = optionsUnavailable || saveInFlight || countChangedOptions(options) === 0;
+    saveButton.disabled =
+        optionsUnavailable ||
+        saveInFlight ||
+        !savedOptions ||
+        (areOptionsEqual(options, savedOptions) && !hasInvalidChatKeywords());
+    discardButton.disabled =
+        optionsUnavailable || saveInFlight || (countChangedOptions(options) === 0 && !hasInvalidChatKeywords());
 }
 
 function renderNotice(state, changedCount = 0) {
@@ -220,7 +290,7 @@ function renderPageState(options, state = "saved") {
     document.getElementById("optionsThemeIcon").setAttribute("d", theme.icon);
     applyDependencies(options);
     applyControlStates(options);
-    renderNotice(state, countChangedOptions(options));
+    renderNotice(state, Math.max(countChangedOptions(options), hasInvalidChatKeywords() ? 1 : 0));
     renderRecorderFolderStatus(options);
 }
 
@@ -331,18 +401,22 @@ function finishSave(save, stored, message, error) {
     // The speed keys follow it together unless the user picked one of them during the write.
     const current = readOptionsFromForm();
     const keepShortcuts = playbackSpeedShortcutKeys.some((key) => touchedOptionKeys.has(key));
+    const keepKeywordRules = chatKeywordRuleKeys.some((key) => touchedOptionKeys.has(key));
     for (const key of OPTION_KEYS) {
         if (save.owned.has(key)) staleOwnedKeys.delete(key);
         const keep = playbackSpeedShortcutKeys.includes(key)
             ? keepShortcuts
-            : touchedOptionKeys.has(key) || !Object.is(current[key], save.draft[key]);
+            : chatKeywordRuleKeys.includes(key)
+              ? keepKeywordRules ||
+                chatKeywordRuleKeys.some((related) => !Object.is(current[related], save.draft[related]))
+              : touchedOptionKeys.has(key) || !Object.is(current[key], save.draft[key]);
         if (!keep) setOptionValue(key, stored[key]);
     }
     savedOptions = stored;
     hideMessage();
     const conflictText = save.conflicts.length ? optionsSaveConflictMessage(save.conflicts.length) : "";
     const next = readOptionsFromForm();
-    if (!areOptionsEqual(next, stored)) {
+    if (!areOptionsEqual(next, stored) || hasInvalidChatKeywords()) {
         renderPageState(next, "dirty");
         if (conflictText) showMessage(conflictText);
         return;
@@ -457,11 +531,14 @@ function applyStoredOptionChanges(changes, areaName) {
     // The three speed keys must stay distinct, so a change from elsewhere replaces all of them or none:
     // mixing it into keys the user set here could duplicate a key and reset all three on save.
     const shortcutsOwned = !externalBusy && playbackSpeedShortcutKeys.some((key) => isUserOwnedOption(key, draft));
+    const keywordRulesOwned = !externalBusy && chatKeywordRuleKeys.some((key) => isUserOwnedOption(key, draft));
     for (const key of OPTION_KEYS) {
         if (Object.is(next[key], savedOptions[key])) continue;
         const owned = playbackSpeedShortcutKeys.includes(key)
             ? shortcutsOwned
-            : !externalBusy && isUserOwnedOption(key, draft);
+            : chatKeywordRuleKeys.includes(key)
+              ? keywordRulesOwned
+              : !externalBusy && isUserOwnedOption(key, draft);
         if (!owned) setOptionValue(key, next[key]);
         else if (!Object.is(next[key], draft[key])) staleOwnedKeys.add(key);
     }
@@ -471,7 +548,7 @@ function applyStoredOptionChanges(changes, areaName) {
         ? "saving"
         : noticeEl.dataset.state === "error"
           ? "error"
-          : areOptionsEqual(current, next)
+          : areOptionsEqual(current, next) && !hasInvalidChatKeywords()
             ? "saved"
             : "dirty";
     renderPageState(current, state);
@@ -553,11 +630,19 @@ function getOptionInput(target) {
 
 function renderFormChanges() {
     const normalized = readOptionsFromForm();
-    renderPageState(normalized, areOptionsEqual(normalized, savedOptions) ? "saved" : "dirty");
+    renderPageState(
+        normalized,
+        areOptionsEqual(normalized, savedOptions) && !hasInvalidChatKeywords() ? "saved" : "dirty"
+    );
 }
 
 function saveCurrentOptions() {
     if (optionsLoadState !== "ready" || saveInFlight || externalBusy) return;
+    if (hasInvalidChatKeywords()) {
+        showMessage("숨길 문구는 최대 50개, 한 문구 100자, 전체 2,000자까지 입력해 주세요.", "error");
+        document.getElementById("chatKeywordFilterWords").focus();
+        return;
+    }
     // normalizeOptions would silently replace duplicate speed keys with the defaults; keep the edit pending instead.
     const shortcutCodes = playbackSpeedShortcutInputs.map(getInputValue);
     if (new Set(shortcutCodes).size < shortcutCodes.length) {
@@ -668,20 +753,34 @@ form.addEventListener("input", (event) => {
     // 체크박스는 change에서 한 번만 처리한다.
     if (!input || input.type === "checkbox") return;
     markOptionsTouched([input.dataset.option]);
+    if (input.dataset.option === "chatKeywordFilterWords" && !hasInvalidChatKeywords()) updateChatKeywordExactWords();
     syncRangeLabel(input);
     renderFormChanges();
 });
 
 form.addEventListener("change", (event) => {
     if (optionsLoadState !== "ready" || externalBusy) return;
+    const rule = event.target.closest?.("#chatKeywordRules select");
+    if (rule) {
+        if (rule.disabled) return;
+        const exactWords = [...document.querySelectorAll("#chatKeywordRules select")]
+            .filter((select) => select.value === "exact")
+            .map((select) => select.dataset.keywordPhrase)
+            .join("\n");
+        setOptionValue("chatKeywordFilterExactWords", exactWords);
+        markOptionsTouched(["chatKeywordFilterExactWords"]);
+        renderFormChanges();
+        return;
+    }
     const input = getOptionInput(event.target);
     if (!input) return;
     markOptionsTouched([input.dataset.option]);
-    if (input.type !== "checkbox") {
+    if (input.type !== "checkbox" && !(input.dataset.option === "chatKeywordFilterWords" && hasInvalidChatKeywords())) {
         // 범위를 벗어난 값은 입력을 마친 시점에 보정값을 되돌려 보여준다.
         const normalized = readOptionsFromForm();
         setInputValue(input, normalized[input.dataset.option]);
     }
+    if (input.dataset.option === "chatKeywordFilterWords" && !hasInvalidChatKeywords()) updateChatKeywordExactWords();
     renderFormChanges();
 });
 
@@ -900,7 +999,9 @@ function setExternalBusy(value) {
 globalThis.CheeseSpannerOptionsPage = Object.freeze({
     isReady: () => optionsLoadState === "ready" && !saveInFlight && !externalBusy,
     hasUnsavedChanges: () =>
-        optionsLoadState === "ready" && !!savedOptions && !areOptionsEqual(readOptionsFromForm(), savedOptions),
+        optionsLoadState === "ready" &&
+        !!savedOptions &&
+        (!areOptionsEqual(readOptionsFromForm(), savedOptions) || hasInvalidChatKeywords()),
     setExternalBusy,
     reloadSavedOptions,
     showMessage,

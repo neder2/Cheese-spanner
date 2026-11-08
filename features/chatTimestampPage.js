@@ -8,12 +8,13 @@
  *   React 객체나 콜백은 호출·수정하지 않으며, 서버 시각이 없거나 잘못되면 기존 source marker를 지운다.
  *   다시보기 본인 채팅 강조(features/vodOwnChat.js)가 요청하면 같은 범위에서 chatMessage.user(작성 계정 해시)를
  *   찾아 data-bcoc-source-user에 기록한다(2026-10-21 실측: 다시보기 행의 user가 profile.userIdHash와 같음).
- *   채팅 도구의 블라인드 원문 표시(features/chatTools.js)가 요청하면 가장 가까운 chatMessage의 status가
- *   NORMAL이 아닐 때만 originalContent를 data-bcct-source-original에 기록한다. 치지직은 사후 블라인드
+ *   채팅 도구가 요청하면 가장 가까운 chatMessage의 key·user·time·profile을 검증해 제한된 식별값을
+ *   data-bcct-source-message에, 지원되는 블라인드 상태의 originalContent를 data-bcct-source-original에 기록한다.
+ *   불완전한 메시지는 null로 답하고 NORMAL의 원문은 보내지 않는다. 치지직은 사후 블라인드
  *   ({...message, status})와 클린봇 감지 메시지에서도 서버 원문 originalContent를 유지한다(2026-10-30 웹 번들).
  * 통신: cheese-spanner:chat-timestamp-source-request·cheese-spanner:chat-user-source-request·
  *   cheese-spanner:chat-blind-source-request 이벤트의 target,
- *   data-bcmt-source-time·data-bcoc-source-user·data-bcct-source-original DOM 속성,
+ *   data-bcmt-source-time·data-bcoc-source-user·data-bcct-source-message·data-bcct-source-original DOM 속성,
  *   isolated-first 로드를 복구하는 cheese-spanner:chat-timestamp-page-ready 이벤트.
  * 참고: cheese-knife의 chatMessage.time 활용 방식(MIT). 고지는 THIRD_PARTY_NOTICES.md를 따른다.
  */
@@ -26,6 +27,7 @@
     const USER_HASH_RE = /^[A-Za-z0-9_-]{1,128}$/;
     const BLIND_REQUEST_EVENT = "cheese-spanner:chat-blind-source-request";
     const SOURCE_ORIGINAL_ATTR = "data-bcct-source-original";
+    const SOURCE_MESSAGE_ATTR = "data-bcct-source-message";
     const NORMAL_MESSAGE_STATUS = "NORMAL";
     const MAX_ORIGINAL_LENGTH = 2000;
     const PAGE_READY_EVENT = "cheese-spanner:chat-timestamp-page-ready";
@@ -63,6 +65,40 @@
         if (typeof message.originalContent !== "string") return null;
         const text = message.originalContent.trim();
         return text ? text.slice(0, MAX_ORIGINAL_LENGTH) : null;
+    }
+
+    function ownValue(object, key) {
+        return object && typeof object === "object" ? Object.getOwnPropertyDescriptor(object, key)?.value : undefined;
+    }
+
+    function readBlindMessage(message) {
+        const key = ownValue(message, "key");
+        const user = normalizeUserHash(ownValue(message, "user"));
+        const time = normalizeMessageTime(ownValue(message, "time"));
+        const status = ownValue(message, "status");
+        const profile = ownValue(message, "profile");
+        const nickname = ownValue(profile, "nickname");
+        if (
+            typeof key !== "string" ||
+            !key ||
+            key.length > 256 ||
+            !user ||
+            time === null ||
+            !["NORMAL", "BLIND", "CBOTBLIND", "HIDDEN"].includes(status) ||
+            ownValue(profile, "userIdHash") !== user ||
+            typeof nickname !== "string" ||
+            !nickname.trim() ||
+            nickname.length > 200
+        )
+            return null;
+        return {
+            key,
+            user,
+            time,
+            status,
+            nickname,
+            original: normalizeBlindOriginal({ status, originalContent: ownValue(message, "originalContent") }),
+        };
     }
 
     function getReactMessageValue(element, read) {
@@ -143,11 +179,27 @@
         const messageContainer = event.target;
         const chatLog = getRequestChatLog(messageContainer);
         if (!chatLog) return;
-        writeSource(
-            messageContainer,
-            SOURCE_ORIGINAL_ATTR,
-            normalizeBlindOriginal(findNearestMessage(messageContainer, chatLog))
-        );
+        const path = location.pathname;
+        const message = findNearestMessage(messageContainer, chatLog);
+        let snapshot = readBlindMessage(message);
+        if (
+            !messageContainer.isConnected ||
+            getRequestChatLog(messageContainer) !== chatLog ||
+            location.pathname !== path ||
+            findNearestMessage(messageContainer, chatLog) !== message ||
+            JSON.stringify(readBlindMessage(message)) !== JSON.stringify(snapshot)
+        )
+            snapshot = null;
+        writeSource(messageContainer, SOURCE_ORIGINAL_ATTR, snapshot?.original ?? null);
+        const identity = snapshot && {
+            key: snapshot.key,
+            user: snapshot.user,
+            time: snapshot.time,
+            status: snapshot.status,
+            nickname: snapshot.nickname,
+        };
+        // Even an invalid page message answers explicitly, preventing fallback to unrelated DOM text.
+        writeSource(messageContainer, SOURCE_MESSAGE_ATTR, JSON.stringify(identity));
     }
 
     function handleSourceRequest(event) {

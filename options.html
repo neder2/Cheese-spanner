@@ -462,7 +462,13 @@
                     </div>
                     <details class="option-group" data-option-group="player-auto" open>
                         <summary>
-                            <span class="option-group-title"><span>재생·자동 처리</span></span>
+                            <span class="option-group-title">
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                    <path d="M20 8a8.5 8.5 0 1 0 .5 7M20 3v5h-5" />
+                                    <path d="m10 8 6 4-6 4z" fill="currentColor" stroke="none" />
+                                </svg>
+                                <span>재생·자동 처리</span>
+                            </span>
                         </summary>
                         <div class="option-group-body">
                             <h3 class="option-subheading">화질</h3>
@@ -517,8 +523,8 @@
                                 <input type="checkbox" data-option="adVideoEnabled" aria-describedby="adVideoNote" />
                             </label>
                             <p id="adVideoNote" class="setting-note">
-                                확인된 프리롤·미드롤 광고 표시 응답을 처리해요. 켜고 저장한 뒤 치지직 탭을 새로고침해
-                                주세요. 끄면 이후 응답 처리를 멈추며, 이미 반영된 상태는 새로고침해야 복원돼요.
+                                지원되는 입장·중간 영상 광고를 차단해요. 켜거나 끄고 저장한 뒤 치지직 탭을 새로고침해
+                                주세요.
                             </p>
                             <p id="adVideoStatus" class="setting-note" role="status" hidden></p>
                             <label class="toggle-row">
@@ -551,24 +557,22 @@
                                 <input type="checkbox" data-option="liveStartTimeEnabled" />
                             </label>
                             <p class="setting-note">
-                                스트리밍 중 오른쪽에 한국 시간 기준 시작 시각을 표시하며, 오늘 시작한 방송이 아니면
-                                날짜도 표시해요.
+                                라이브 시작 시각을 한국 시간으로 표시해요. 오늘 시작한 방송이 아니면 날짜도 보여요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>스트림 정보</strong></span>
                                 <input type="checkbox" data-option="streamInfoEnabled" />
                             </label>
                             <p class="setting-note">
-                                영상의 톱니바퀴 설정 메뉴에서 스트림 정보 열기를 선택해 해상도, 비트레이트, 버퍼와 FPS를
-                                확인해요.
+                                플레이어 톱니바퀴의 ‘스트림 정보’에서 해상도·비트레이트·버퍼·FPS를 확인해요.
                             </p>
                             <label class="toggle-row"
                                 ><span><strong>라이브 멀티뷰</strong></span
                                 ><input type="checkbox" data-option="liveMultiviewEnabled"
                             /></label>
                             <p class="setting-note">
-                                최대 6개 방송의 소리를 따로 조절하고, 채널별 딜레이를 저장해 다시 불러와요. 켠 뒤
-                                플레이어 하단의 격자 모양 멀티뷰 버튼을 누르세요.
+                                플레이어 하단의 격자 버튼으로 최대 6개 방송을 함께 봐요. 소리는 따로 조절하고 채널별
+                                딜레이는 저장해요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>휠로 화면 확대</strong></span>
@@ -592,10 +596,10 @@
                                 </select>
                             </label>
                             <p class="setting-note">
-                                휠은 커서 중심으로 확대하고, 슬라이더는 1% 단위로 조절해요. 최대 5배까지 확대하며,
-                                드래그 이동과 원래 크기 복원을 지원해요. 단축키 방식은 확대 버튼 없이 지정한 키를 누른
-                                채 영상 위에서 휠을 돌릴 때만 확대·축소하고, 키 없이 돌린 휠은 페이지 스크롤에 그대로
-                                넘겨요. Ctrl을 지정하면 영상 위에서는 브라우저 확대 대신 화면 확대가 동작해요.
+                                휠은 커서 중심으로, 슬라이더는 1%씩 최대 5배까지 확대해요. 드래그로 옮기고 원래 크기로
+                                복원할 수 있어요. 멀티뷰 영상도 각각 조절해요. 단축키 방식은 버튼 없이 지정 키와 휠로
+                                조절하며, 키를 놓으면 페이지를 스크롤해요. Ctrl 지정 시 영상 위에서는 브라우저 대신
+                                영상을 확대해요.
                             </p>
                         </div>
                     </details>
@@ -633,9 +637,8 @@
                                 ></span>
                             </label>
                             <p class="setting-note" id="ambientHelp">
-                                라이브·다시보기 영상의 색이 플레이어 바깥으로 은은하게 번져 상단·채팅창·사이드바
-                                가장자리까지 이어져요. 켜 두면 플레이어 톱니바퀴 메뉴에서도 바로 끄고 켜거나 세기를
-                                조절할 수 있어요. 전체 화면과 멀티뷰에서는 표시하지 않아요.
+                                영상의 색을 상단·채팅창·사이드바 가장자리로 번지게 해요. 플레이어 톱니바퀴에서
+                                켜기·끄기와 세기를 조절해요. 전체 화면·멀티뷰에서는 숨겨요.
                             </p>
                         </div>
                     </details>
@@ -661,10 +664,10 @@
                                 />
                             </label>
                             <p class="setting-note" id="videoRecorderHelp">
-                                라이브·다시보기 플레이어 오른쪽 아래의 녹화 버튼을 누르면 녹화를 시작하고, 다시 누르면
-                                멈춘 뒤 파일로 저장해요. Chrome이 지원하면 MP4, 아니면 WebM으로 저장해요. 녹화 중인
-                                영상은 저장할 때까지 이 탭의 메모리에 쌓이므로 아주 긴 녹화는 탭을 무겁게 할 수 있어요.
-                                다른 방송으로 이동하거나 영상이 바뀌면 그때까지 녹화한 내용을 저장해요.
+                                기본값은 꺼짐이에요. 켠 뒤 플레이어 오른쪽 아래 녹화 버튼을 누르면 다운로드 폴더에 계속
+                                저장하고, 다시 누르면 마무리해요. MP4를 우선하고 지원되지 않으면 WebM으로 저장해요.
+                                방송·영상이 바뀌면 녹화를 마무리해요. 탭을 닫거나 새로고침하기 전에는 녹화를 먼저 멈춰
+                                주세요.
                             </p>
                             <div class="recorder-folder" data-depends-on="videoRecorderEnabled">
                                 <label for="videoRecorderFolder">녹화 저장 폴더</label>
@@ -685,9 +688,8 @@
                                     </button>
                                 </div>
                                 <p class="setting-note" id="videoRecorderFolderHelp">
-                                    Chrome 다운로드 폴더 안에 만들 폴더 이름이에요. /로 하위 폴더를 나눌 수 있어요.
-                                    폴더에 저장하려면 처음 한 번 Chrome의 ‘다운로드 관리’ 권한을 허용해야 해요. 플레이어
-                                    톱니바퀴 메뉴의 ‘녹화 저장 폴더’에서도 바꿀 수 있어요.
+                                    Chrome 다운로드 폴더 안의 하위 폴더예요. /로 나누며, 처음 한 번 ‘다운로드 관리’
+                                    권한이 필요해요. 플레이어 톱니바퀴의 ‘녹화 저장 폴더’에서도 바꿔요.
                                 </p>
                                 <p class="setting-note" id="videoRecorderPermissionStatus" role="status"></p>
                             </div>
@@ -1026,7 +1028,13 @@
                         </div>
                     </details>
 
-                    <details class="option-group" data-option-group="history-management" data-search-together open>
+                    <details
+                        class="option-group"
+                        data-option-group="history-management"
+                        data-search-together
+                        data-search-terms="백업·불러오기"
+                        open
+                    >
                         <summary>
                             <span class="option-group-title">
                                 <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-history" /></svg>
@@ -1035,8 +1043,8 @@
                         </summary>
                         <div class="option-group-body">
                             <p id="historyBackupGuide" class="setting-note">
-                                시청 기록과 내 채팅의 백업·불러오기는 시청 기록 페이지에서 할 수 있어요. 후원 기록은
-                                백업에 포함되지 않아요. 아래 시청 기록 보기를 눌러 이용해 주세요.
+                                ‘시청 기록 보기’에서 시청 기록·내 채팅을 백업하고 불러와요. 후원 기록은 백업에서
+                                제외해요.
                             </p>
                             <div class="inline-action-row">
                                 <a
@@ -1093,6 +1101,95 @@
                         </svg>
                         <h2>채팅</h2>
                     </div>
+                    <details
+                        class="option-group"
+                        data-option-group="chat-keyword-filter"
+                        data-search-terms="채팅 문구 단어 필터 숨김 차단 금칙어"
+                        open
+                    >
+                        <summary>
+                            <span class="option-group-title"
+                                ><svg viewBox="0 0 24 24" aria-hidden="true">
+                                    <use href="#icon-chat" />
+                                    <path d="M2 12h20" /></svg
+                                ><span>문구 숨김</span></span
+                            >
+                        </summary>
+                        <div class="option-group-body">
+                            <label class="toggle-row">
+                                <span><strong>지정한 문구와 일치하는 채팅 숨기기</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="chatKeywordFilterEnabled"
+                                    aria-describedby="chat-keyword-help"
+                                />
+                            </label>
+                            <p class="setting-note" id="chat-keyword-help">
+                                기본값은 켜짐이에요. 채팅창 오른쪽 위 ⋯ 메뉴에서도 문구를 추가해요. 라이브·다시보기
+                                채팅과 채팅 모아보기 본문이 아래 조건 중 하나와 일치하면 숨겨요. 닉네임은 검사하지 않고
+                                영문 대소문자는 구분하지 않아요.
+                            </p>
+                            <div data-depends-on="chatKeywordFilterEnabled">
+                                <label class="toggle-row">
+                                    <span><strong>조건 적용 방식</strong></span>
+                                    <select
+                                        class="quality-select"
+                                        data-option="chatKeywordFilterApplyMode"
+                                        aria-describedby="chat-keyword-mode-help"
+                                    >
+                                        <option value="all">전체 적용</option>
+                                        <option value="individual">부분 적용</option>
+                                    </select>
+                                </label>
+                                <p class="setting-note" id="chat-keyword-mode-help">
+                                    전체 적용은 모든 문구에 같은 조건을, 부분 적용은 문구마다 다른 조건을 설정해요.
+                                </p>
+                                <label class="toggle-row" id="chatKeywordGlobalMatch">
+                                    <span><strong>모든 문구의 일치 조건</strong></span>
+                                    <select
+                                        class="quality-select"
+                                        data-option="chatKeywordFilterMatchMode"
+                                        aria-describedby="chat-keyword-match-help"
+                                    >
+                                        <option value="contains">포함</option>
+                                        <option value="exact">완전 일치</option>
+                                    </select>
+                                </label>
+                                <p class="setting-note" id="chat-keyword-match-help">
+                                    완전 일치는 본문 전체가 문구와 같을 때, 포함은 본문 안에 문구가 들어 있을 때 숨겨요.
+                                </p>
+                            </div>
+                            <div class="chat-keyword-field" data-depends-on="chatKeywordFilterEnabled">
+                                <label for="chatKeywordFilterWords">숨길 문구</label>
+                                <textarea
+                                    id="chatKeywordFilterWords"
+                                    data-option="chatKeywordFilterWords"
+                                    data-allow-empty
+                                    rows="5"
+                                    maxlength="2000"
+                                    placeholder="한 줄에 문구 하나씩 입력"
+                                    aria-describedby="chat-keyword-limit"
+                                    spellcheck="false"
+                                ></textarea>
+                                <p class="setting-note" id="chat-keyword-limit">
+                                    최대 50개, 한 문구 100자, 전체 2,000자예요. 문구를 지우거나 기능을 끄면 다시
+                                    표시해요.
+                                </p>
+                                <input type="hidden" data-option="chatKeywordFilterExactWords" data-allow-empty />
+                                <div id="chatKeywordIndividual" hidden>
+                                    <p class="setting-note">
+                                        문구별 일치 조건을 선택해요. 새 문구의 기본 조건은 포함이에요.
+                                    </p>
+                                    <div
+                                        id="chatKeywordRules"
+                                        class="chat-keyword-rules"
+                                        role="group"
+                                        aria-label="문구별 일치 조건"
+                                    ></div>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
                     <details class="option-group" data-option-group="chat-display" open>
                         <summary>
                             <span class="option-group-title">
@@ -1110,8 +1207,8 @@
                                 />
                             </label>
                             <p class="setting-note" id="chat-resize-help">
-                                채팅·댓글의 영상 쪽 가장자리로 너비를, 아래 가장자리로 높이를 마우스로 끌어 조절해요.
-                                더블클릭하면 기본 크기로 돌아가요.
+                                영상 쪽 가장자리를 끌면 너비, 아래쪽을 끌면 높이를 조절해요. 더블클릭하면 기본 크기로
+                                돌아가요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>채팅창 위치</strong></span>
@@ -1125,8 +1222,7 @@
                                 </select>
                             </label>
                             <p class="setting-note" id="chat-position-help">
-                                일반 라이브·다시보기에서 채팅·댓글을 영상의 어느 쪽에 둘지 정해요. 화면이 좁아 세로로
-                                쌓이는 배치는 그대로 둬요.
+                                라이브·다시보기의 채팅·댓글 위치를 정해요. 좁은 화면의 세로 배치는 유지해요.
                             </p>
                             <button
                                 id="resetPanelSizes"
@@ -1149,8 +1245,8 @@
                                 />
                             </label>
                             <p class="setting-note" id="chat-multiview-help">
-                                치지직 상단의 채팅 멀티뷰 버튼으로 다른 채널의 채팅을 최대 4개까지 함께 봐요. 칸에는
-                                채널 이름과 채팅만 보이고, 채팅 입력창은 멀티뷰 설정에서 켤 수 있어요.
+                                상단 ‘채팅 멀티뷰’에서 최대 4개 채널의 채팅을 함께 봐요. 입력창은 멀티뷰 설정에서 켤 수
+                                있어요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>라이브 채팅 타임스탬프 표시</strong></span>
@@ -1234,7 +1330,7 @@
                                 >
                             </div>
                             <p class="setting-note">
-                                기억한 원문만 취소선으로 표시하며, 모아보기는 채팅창 우측 상단에서 열어요.
+                                확인한 원문만 취소선으로 표시해요. 모아보기는 채팅창 우측 상단에서 열어요.
                             </p>
                         </div>
                     </details>
@@ -1304,8 +1400,8 @@
                                 </select>
                             </label>
                             <p class="setting-note" id="sidebar-position-help">
-                                사이드바를 화면 오른쪽 끝에 둘 수 있어요. 채팅도 같은 쪽이면 사이드바가 바깥쪽이에요.
-                                창이 너무 좁아 가로로 넘치면 잠시 원래 위치로 돌아가요.
+                                사이드바를 오른쪽으로 옮겨요. 채팅과 같은 쪽이면 바깥에 놓고, 창이 너무 좁으면 원래
+                                위치로 돌아가요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>사이드바 치즈팜 숨김</strong></span>
@@ -1649,9 +1745,8 @@
                                 />
                             </label>
                             <p class="setting-note" id="following-folders-help">
-                                팔로잉 채널을 끌어 사이드바 아래 ‘+ 새 폴더로’에 놓으면 폴더가 생기고, 폴더 이름을
-                                더블클릭해 바꿔요. 폴더의 ⋯ 메뉴로도 만들고 정리해요. 폴더를 지워도 팔로우는 바뀌지
-                                않아요.
+                                채널을 ‘+ 새 폴더로’에 끌어 놓으면 폴더가 생겨요. 이름은 더블클릭, 관리는 ⋯ 메뉴를
+                                사용해요. 폴더를 지워도 팔로우는 유지돼요.
                             </p>
                             <div class="number-grid">
                                 <label
@@ -1667,8 +1762,7 @@
                                 >
                             </div>
                             <p class="setting-note" id="following-max-rows-help">
-                                0이면 제한하지 않아요. 정한 줄 수보다 긴 목록은 목록 안에서 스크롤하며 아래 구역과
-                                더보기 버튼은 그대로 쓸 수 있어요.
+                                0은 제한 없음이에요. 긴 목록은 안에서 스크롤하며 아래 구역·더보기는 유지돼요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>팔로잉 라이브 제목 이력</strong></span>
@@ -2121,8 +2215,8 @@
                                 />
                             </label>
                             <p class="setting-note" id="liveStartButtonHelp">
-                                치지직 우측 상단에서 채널명을 검색해 데스크톱 알림·자동 입장을 각각 선택해요. 버튼을
-                                숨겨도 등록한 채널의 알림과 자동 열기는 유지돼요.
+                                상단에서 채널명을 검색해 알림·자동 입장을 각각 선택해요. 버튼을 숨겨도 등록한 동작은
+                                유지돼요.
                             </p>
                             <div id="liveStartChannels" class="live-start-channels">
                                 <label for="liveStartChannelInput">대상 채널 추가</label>
@@ -2141,8 +2235,8 @@
                                     </button>
                                 </div>
                                 <p class="setting-note" id="liveStartChannelHelp">
-                                    최대 32개까지 등록할 수 있어요. 채널별 선택과 삭제는 이 기기에 즉시 저장돼요. 치지직
-                                    우측 상단의 ‘방송 알림’ 버튼에서 채널명을 검색해 추가할 수도 있어요.
+                                    최대 32개 채널을 등록하며 선택·삭제는 이 기기에 즉시 저장돼요. 상단 ‘방송 알림’에서
+                                    채널명으로도 추가해요.
                                 </p>
                                 <p
                                     id="liveStartChannelMessage"

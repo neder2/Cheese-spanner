@@ -43,6 +43,11 @@
         "ambientIntensity",
         "followingPreviewSoundEnabled",
         "videoRecorderFolder",
+        "chatKeywordFilterEnabled",
+        "chatKeywordFilterWords",
+        "chatKeywordFilterApplyMode",
+        "chatKeywordFilterMatchMode",
+        "chatKeywordFilterExactWords",
     ]);
     // Turning these on can produce actions that cannot be undone (notifications, tabs, claims, reloads, records).
     const EFFECT_OPTION_KEYS = Object.freeze([

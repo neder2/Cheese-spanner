@@ -62,6 +62,7 @@ function fixture(t, sync = { ambientEnabled: true }, path = "/live/test-channel"
         disconnect() {
             resizers.delete(this);
         }
+        unobserve() {}
     };
     const draws = [];
     const pixelReads = [];
@@ -250,6 +251,42 @@ test("enabled glow surrounds the player, spills over chat and sidebar, and never
 
     assert.deepEqual(f.pixelReads, []);
     assert.deepEqual(f.panels(), f.nativePanels, "native chat and sidebar nodes are never restyled");
+});
+
+test("chat menus and overlapping dialogs cut out glow without changing native surfaces", async (t) => {
+    const f = fixture(t);
+    await waitForCondition(() => f.layer() && !f.layer().hidden);
+    const clip = f.layer().style.clipPath;
+    const host = f.doc.getElementById("aside-chatting");
+    const menu = f.doc.createElement("div");
+    menu.className = "_container_11w2f_1";
+    menu.getBoundingClientRect = () => rect({ left: 1660, top: 94, width: 284, height: 156 });
+    host.append(menu);
+    const mask = () => decodeURIComponent(f.layer().style.maskImage);
+    await waitForCondition(() => mask().includes('x="1708" y="322" width="284" height="156"'));
+    const dialog = f.doc.createElement("section");
+    dialog.setAttribute("role", "alertdialog");
+    let box = { left: 1600, top: 120, width: 340, height: 450 };
+    dialog.getBoundingClientRect = () => rect(box);
+    // A portal can live outside the chat host and overlap both menu and player.
+    f.doc.body.append(dialog);
+    await waitForCondition(() => mask().includes('x="1648" y="348" width="340" height="450"'));
+    assert.equal((mask().match(/fill="black"/g) || []).length, 2);
+    assert.equal(f.layer().style.clipPath, clip, "overlap never reopens the player cutout");
+    assert.equal(f.layer().hidden, false, "ordinary chat/header glow remains enabled");
+    assert.equal(menu.getAttribute("style"), null);
+    assert.equal(dialog.getAttribute("style"), null);
+    box = { ...box, top: 150, height: 300 };
+    f.resizers.forEach((observer) => observer.fn([]));
+    await waitForCondition(() => mask().includes('x="1648" y="378" width="340" height="300"'));
+    dialog.hidden = true;
+    await waitForCondition(() => (mask().match(/fill="black"/g) || []).length === 1);
+    menu.remove();
+    await waitForCondition(() => f.layer().style.maskImage === "none");
+    dialog.remove();
+    f.w.CheeseSpanner.ambientGlow.stop();
+    assert.equal(f.layer(), null);
+    assert.equal(f.resizers.size, 0);
 });
 
 test("glow reaches the header and keeps the whole player cut out when the page scrolls", async (t) => {

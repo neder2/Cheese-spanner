@@ -1298,7 +1298,7 @@ test("VOD comment initial errors expose retry and distinguish empty or disabled 
 
     clickCommentTab(document);
     await waitForCondition(() => document.querySelector("[data-bcvc-action='retry-initial']"));
-    assert.match(document.getElementById("cheese-spanner-vod-comment-panel").textContent, /댓글을 불러오지 못했어요\./);
+    assert.match(document.getElementById("cheese-spanner-vod-comment-panel").textContent, /댓글 불러오기 실패/);
 
     document.querySelector("[data-bcvc-action='retry-initial']").click();
     await waitForCondition(() =>
@@ -1595,12 +1595,12 @@ test("VOD comments show an upload video's comments-less success response as an e
 
     clickCommentTab(document);
     await waitForCondition(() => /아직 등록된 댓글이 없어요\./.test(panelText()));
-    assert.doesNotMatch(panelText(), /댓글을 불러오지 못했어요\./);
+    assert.doesNotMatch(panelText(), /댓글 불러오기 실패/);
     assert.equal(document.querySelector("[data-bcvc-action='retry-initial']"), null);
 
     document.querySelector("[data-bcvc-action='refresh']").click();
     await waitForCondition(() => /이 영상은 댓글을 사용할 수 없어요\./.test(panelText()));
-    assert.doesNotMatch(panelText(), /댓글을 불러오지 못했어요\./);
+    assert.doesNotMatch(panelText(), /댓글 불러오기 실패/);
 });
 
 test("VOD comment rows capped by the per-order reply budget still show the reply limit notice", async (t) => {

@@ -82,7 +82,7 @@
         playerClipHidden: { kind: "bool", default: false, feature: true },
         playerPipHidden: { kind: "bool", default: false, feature: true },
         // 플레이어 오른쪽 아래 녹화 버튼(features/videoRecorder.js). 녹화는 버튼을 누를 때만 시작해요.
-        videoRecorderEnabled: { kind: "bool", default: true, feature: true },
+        videoRecorderEnabled: { kind: "bool", default: false, feature: true },
         // Chrome 다운로드 폴더 아래 하위 폴더. 빈 값은 다운로드 폴더 자체예요. 하위 폴더 저장에는 선택 권한 downloads가 필요해요.
         videoRecorderFolder: { kind: "downloadFolder", default: "" },
         liveStartTimeEnabled: { kind: "bool", default: false, feature: true },
@@ -134,6 +134,12 @@
         vodOwnChatHighlightEnabled: { kind: "bool", default: true, feature: true },
         chatWeeklyRankingHidden: { kind: "bool", default: false, feature: true },
         chatWelcomeMessageRemovalEnabled: { kind: "bool", default: false, feature: true },
+        chatKeywordFilterEnabled: { kind: "bool", default: true, feature: true },
+        chatKeywordFilterWords: { kind: "chatKeywords", default: "" },
+        chatKeywordFilterApplyMode: { kind: "choice", values: ["all", "individual"], default: "all" },
+        chatKeywordFilterMatchMode: { kind: "choice", values: ["contains", "exact"], default: "contains" },
+        // 문구별 조건은 완전 일치를 선택한 문구만 보관하고 나머지는 포함으로 처리해요.
+        chatKeywordFilterExactWords: { kind: "chatKeywords", default: "" },
         chatToolsShowBlindEnabled: { kind: "bool", default: false, feature: true },
         chatToolsModeratorBoxEnabled: { kind: "bool", default: false, feature: true },
         chatToolsMaxModeratorMessages: {
@@ -378,6 +384,27 @@
         return code;
     }
 
+    // Reject oversized lists instead of shortening a phrase into an unintended broader match.
+    function normalizeChatKeywordFilterWords(value) {
+        if (typeof value !== "string" || value.length > 2000) return null;
+        // eslint-disable-next-line no-control-regex -- reject non-text controls and lone surrogates before sync storage.
+        if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\ud800-\udfff]/u.test(value)) return null;
+        const words = [];
+        const seen = new Set();
+        for (const line of value.split(/\r\n?|\n/)) {
+            const word = line.trim().normalize("NFC");
+            if (!word) continue;
+            if (word.length > 100) return null;
+            const key = word.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            words.push(word);
+            if (words.length > 50) return null;
+        }
+        const normalized = words.join("\n");
+        return normalized.length <= 2000 ? normalized : null;
+    }
+
     function normalizeOptionValue(key, value) {
         const spec = OPTION_SCHEMA[key];
         const fallback = DEFAULT_OPTIONS[key];
@@ -392,7 +419,25 @@
         if (spec.kind === "skipSeconds") return normalizeSkipSeconds(value);
         if (spec.kind === "shortcutCode") return normalizeShortcutCode(value, fallback);
         if (spec.kind === "downloadFolder") return normalizeDownloadFolder(value, fallback);
+        if (spec.kind === "chatKeywords") return normalizeChatKeywordFilterWords(value) ?? fallback;
         return fallback;
+    }
+
+    function getChatKeywordFilterRules(options = {}) {
+        const words = normalizeChatKeywordFilterWords(options.chatKeywordFilterWords) || "";
+        const exactWords = new Set(
+            (normalizeChatKeywordFilterWords(options.chatKeywordFilterExactWords) || "").toLowerCase().split("\n")
+        );
+        const individual =
+            normalizeOptionValue("chatKeywordFilterApplyMode", options.chatKeywordFilterApplyMode) === "individual";
+        const matchMode = normalizeOptionValue("chatKeywordFilterMatchMode", options.chatKeywordFilterMatchMode);
+        return words
+            .split("\n")
+            .filter(Boolean)
+            .map((phrase) => ({
+                phrase,
+                matchMode: individual ? (exactWords.has(phrase.toLowerCase()) ? "exact" : "contains") : matchMode,
+            }));
     }
 
     function normalizeOptions(value = {}) {
@@ -619,6 +664,8 @@
         DOWNLOAD_FOLDER_MAX_LENGTH,
         normalizeSkipSeconds,
         normalizeDownloadFolder,
+        normalizeChatKeywordFilterWords,
+        getChatKeywordFilterRules,
         isPlaybackSpeedShortcutCode,
         getPlaybackSpeedShortcutLabel,
         normalizeOptions,

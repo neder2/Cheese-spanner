@@ -51,6 +51,8 @@
         // Same-root remounts may reuse an explicit message ID. Keep only text and identity,
         // never detached DOM nodes, and discard this bounded cache with the root/session.
         const originalMessages = new Map();
+        const pageMessageIds = new Set();
+        let retiredPageMessageIds = new Set();
         // 채널 이동 직전 목록에 있던 행과 그때의 메시지 정체성이다. 치지직은 이전 채널 목록을
         // 연결 정리 때 늦게 비우므로, 같은 메시지로 남은 동안에는 새 채널 기록으로 수집하지 않는다.
         // 이전 목록 상태가 새 노드로 다시 그려질 수 있어 확인된 명시적 ID도 다음 채널 이동까지만 남긴다.
@@ -119,7 +121,38 @@
             return rowIds.get(row)?.id || `${parsed.role}:${parsed.author}:${parsed.text}`;
         }
 
-        function cacheOriginalMessageText(row, parsed) {
+        function pageMessageIdentity(source) {
+            const message = source?.message;
+            return message ? JSON.stringify([message.key, message.user, message.time]) : "";
+        }
+
+        function clearPageMessages() {
+            clearOriginalMessages();
+            pageMessageIds.clear();
+            retiredPageMessageIds.clear();
+        }
+
+        function retirePageMessages() {
+            retiredPageMessageIds = new Set(pageMessageIds);
+            pageMessageIds.clear();
+            clearOriginalMessages();
+        }
+
+        function cacheOriginalMessageText(row, parsed, source = null) {
+            if (source) {
+                // Native props and rendered text can update in separate mutations. Never bind old DOM text
+                // to a newly observed native identity; native messages use only their own validated original.
+                rowOriginalTexts.delete(row);
+                const identity = getCacheMessageIdentity(row, parsed.textEl);
+                if (identity) originalMessages.delete(identity);
+                const pageIdentity = pageMessageIdentity(source);
+                if (!pageIdentity || retiredPageMessageIds.has(pageIdentity)) return;
+                pageMessageIds.delete(pageIdentity);
+                pageMessageIds.add(pageIdentity);
+                if (pageMessageIds.size > MAX_ORIGINAL_MESSAGES)
+                    pageMessageIds.delete(pageMessageIds.values().next().value);
+                return;
+            }
             if (parsed.isBlind || !parsed.text || isBlindNoticeText(parsed.text)) return;
             const rowReuseSignal = getCacheRowReuseSignal(row);
             const cached = rowOriginalTexts.get(row);
@@ -155,7 +188,13 @@
             });
         }
 
-        function lookupCachedOriginalText(row, parsed) {
+        function lookupCachedOriginalText(row, parsed, source = null) {
+            const pageIdentity = pageMessageIdentity(source);
+            if (source) {
+                if (!pageIdentity || source.message.status === "NORMAL" || retiredPageMessageIds.has(pageIdentity))
+                    return "";
+                return source.original || "";
+            }
             const cached = rowOriginalTexts.get(row);
             const identity = getCacheMessageIdentity(row, parsed.textEl);
             if (!cached) {
@@ -1073,6 +1112,8 @@
             collect: collectModeratorMessage,
             cacheOriginal: cacheOriginalMessageText,
             clearOriginals: clearOriginalMessages,
+            clearPageMessages,
+            retirePageMessages,
             originalText: lookupCachedOriginalText,
             removeHighlight: removeModeratorHighlight,
             collectedRow: getCollectedModeratorRow,

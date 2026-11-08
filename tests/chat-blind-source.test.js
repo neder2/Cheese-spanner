@@ -174,6 +174,7 @@ function message(overrides = {}) {
         status: "NORMAL",
         originalContent: "원래 하려던 말",
         content: "원래 하려던 말",
+        profile: { userIdHash: overrides.user || "user-1", nickname: "viewer" },
         ...overrides,
     };
 }
@@ -195,6 +196,104 @@ test("a cleanbot message blinded on arrival shows the page original on the first
     assert.equal(revealOf(dom, "cleanbot").textContent, "클린봇이 가린 원문");
     assert.equal(notice.getAttribute("data-bcct-blind-masked"), "1");
     assert.equal(revealOf(dom, "cleanbot").previousElementSibling, notice);
+    assert.equal(dom.window.document.querySelector("[data-bcct-source-original]"), null);
+});
+
+test("a reused row with the same nickname cannot borrow another account's cached original", async (t) => {
+    const { dom, chrome } = createPageDom(chatRow({ id: "reuse", text: "이전 계정의 말" }));
+    t.after(() => closeDom(dom, chrome));
+    const props = attachMessage(dom, "reuse", message({ originalContent: "이전 계정의 말" }));
+    loadPageBridge(dom);
+    loadChatTools(dom);
+    await settle();
+    props.chatMessage = message({
+        key: "another-message",
+        user: "user-2",
+        status: "BLIND",
+        originalContent: undefined,
+    });
+    rowOf(dom, "reuse").querySelector("._text_1vemp_1").textContent = BLIND_NOTICE;
+    await settle();
+    assert.equal(revealOf(dom, "reuse"), null);
+    assert.equal(rowOf(dom, "reuse").querySelector("[data-bcct-blind-masked]"), null);
+});
+
+test("a page message must match the visible author and contain complete identity fields", async (t) => {
+    const { dom, chrome } = createPageDom(chatRow({ id: "mixed", nickname: "새 작성자", text: BLIND_NOTICE }));
+    t.after(() => closeDom(dom, chrome));
+    const props = attachMessage(dom, "mixed", message({ status: "BLIND" }));
+    loadPageBridge(dom);
+    loadChatTools(dom);
+    await settle();
+    assert.equal(revealOf(dom, "mixed"), null, "old props cannot supply the new author's original");
+    props.chatMessage = message({
+        key: null,
+        status: "BLIND",
+        profile: { userIdHash: "user-1", nickname: "새 작성자" },
+    });
+    rowOf(dom, "mixed").querySelector("._text_1vemp_1").textContent = CLEANBOT_NOTICE;
+    await settle();
+    assert.equal(revealOf(dom, "mixed"), null, "incomplete identity is not an original source");
+    props.chatMessage = message({ status: "BLIND", profile: { userIdHash: "user-1", nickname: "새 작성자" } });
+    rowOf(dom, "mixed").querySelector("._text_1vemp_1").textContent = BLIND_NOTICE;
+    await waitForCondition(() => revealOf(dom, "mixed"));
+    assert.equal(revealOf(dom, "mixed").textContent, "원래 하려던 말");
+});
+
+test("normal page messages cannot fall back to an earlier DOM original", async (t) => {
+    const { dom, chrome } = createPageDom(chatRow({ id: "normal-cache", text: "이전 말" }));
+    t.after(() => closeDom(dom, chrome));
+    const props = attachMessage(dom, "normal-cache", message());
+    loadPageBridge(dom);
+    loadChatTools(dom);
+    await settle();
+    props.chatMessage = message({ key: "next-message", originalContent: BLIND_NOTICE, content: BLIND_NOTICE });
+    rowOf(dom, "normal-cache").querySelector("._text_1vemp_1").textContent = BLIND_NOTICE;
+    await settle();
+    assert.equal(revealOf(dom, "normal-cache"), null);
+});
+
+test("a channel change removes old originals and rejects the same backlog remounted in the next channel", async (t) => {
+    const { dom, chrome } = createPageDom(chatRow({ id: "old-channel", text: BLIND_NOTICE }));
+    t.after(() => closeDom(dom, chrome));
+    evalRepoScript(dom, "features", "routeBridgePage.js");
+    const oldMessage = message({ status: "BLIND" });
+    attachMessage(dom, "old-channel", oldMessage);
+    loadPageBridge(dom);
+    loadChatTools(dom);
+    await waitForCondition(() => revealOf(dom, "old-channel"));
+    dom.window.history.pushState({}, "", "/live/next-channel");
+    await settle();
+    assert.equal(revealOf(dom, "old-channel"), null);
+    dom.window.document.querySelector('[role="log"]').innerHTML = chatRow({ id: "remounted", text: BLIND_NOTICE });
+    attachMessage(dom, "remounted", { ...oldMessage });
+    await settle();
+    assert.equal(revealOf(dom, "remounted"), null);
+    attachMessage(
+        dom,
+        "remounted",
+        message({ key: "new-channel-message", status: "CBOTBLIND", originalContent: "새 방송 원문" })
+    );
+    rowOf(dom, "remounted").querySelector("._text_1vemp_1").textContent = CLEANBOT_NOTICE;
+    await waitForCondition(() => revealOf(dom, "remounted"));
+    assert.equal(revealOf(dom, "remounted").textContent, "새 방송 원문");
+});
+
+test("a row changed during the page response is left as a native notice", async (t) => {
+    const { dom, chrome } = createPageDom(chatRow({ id: "changing", text: BLIND_NOTICE }));
+    t.after(() => closeDom(dom, chrome));
+    attachMessage(dom, "changing", message({ status: "BLIND" }));
+    loadPageBridge(dom);
+    dom.window.document.addEventListener(
+        "cheese-spanner:chat-blind-source-request",
+        () => {
+            rowOf(dom, "changing").querySelector("._nickname_o04z9_57").textContent = "다른 작성자";
+        },
+        { once: true }
+    );
+    loadChatTools(dom);
+    await settle();
+    assert.equal(revealOf(dom, "changing"), null);
     assert.equal(dom.window.document.querySelector("[data-bcct-source-original]"), null);
 });
 
@@ -248,6 +347,62 @@ test("a normal message that only looks like a notice is never replaced", async (
 
     assert.equal(revealOf(dom, "typed"), null);
     assert.equal(rowOf(dom, "typed").querySelector("[data-bcct-blind-masked]"), null);
+});
+
+test("unverified native originals never fall back to cached or hidden DOM text", async (t) => {
+    const { dom, chrome } = createPageDom(chatRow({ id: "missing-source", text: "과거 화면 본문" }));
+    t.after(() => closeDom(dom, chrome));
+    const props = attachMessage(dom, "missing-source", message());
+    loadPageBridge(dom);
+    loadChatTools(dom);
+    await settle();
+    props.chatMessage = { ...props.chatMessage, status: "BLIND", originalContent: undefined };
+    rowOf(dom, "missing-source").querySelector("._text_1vemp_1").textContent = BLIND_NOTICE;
+    rowOf(dom, "missing-source").setAttribute("data-message-original", "다른 DOM 원문");
+    await settle();
+    assert.equal(revealOf(dom, "missing-source"), null);
+});
+
+test("malformed identity and unknown statuses cannot disclose a page original", async (t) => {
+    const invalid = [
+        { key: "" },
+        { user: "" },
+        { time: NaN },
+        { time: Date.now() + 24 * 60 * 60 * 1000 },
+        { status: "UNKNOWN" },
+        { profile: { nickname: "viewer", userIdHash: "different-account" } },
+    ];
+    const { dom, chrome } = createPageDom(
+        invalid.map((_, i) => chatRow({ id: `invalid-${i}`, text: BLIND_NOTICE })).join("")
+    );
+    t.after(() => closeDom(dom, chrome));
+    invalid.forEach((value, i) => attachMessage(dom, `invalid-${i}`, message({ status: "BLIND", ...value })));
+    loadPageBridge(dom);
+    loadChatTools(dom);
+    await settle();
+    assert.equal(dom.window.document.querySelector(".bcct-blind-reveal"), null);
+    assert.equal(dom.window.document.querySelector("[data-bcct-source-message], [data-bcct-source-original]"), null);
+});
+
+test("pagehide clears originals and pending work, and pageshow resumes only an enabled feature", async (t) => {
+    const { dom, chrome } = createPageDom(chatRow({ id: "lifecycle", text: BLIND_NOTICE }));
+    t.after(() => closeDom(dom, chrome));
+    attachMessage(dom, "lifecycle", message({ status: "BLIND" }));
+    loadPageBridge(dom);
+    loadChatTools(dom);
+    await waitForCondition(() => revealOf(dom, "lifecycle"));
+    dom.window.dispatchEvent(new dom.window.Event("pagehide"));
+    setOption(chrome, "chatToolsShowBlindEnabled", true, false);
+    setOption(chrome, "chatToolsShowBlindEnabled", false, true);
+    await settle();
+    assert.equal(revealOf(dom, "lifecycle"), null);
+    dom.window.dispatchEvent(new dom.window.Event("pageshow"));
+    await waitForCondition(() => revealOf(dom, "lifecycle"));
+    dom.window.dispatchEvent(new dom.window.Event("pagehide"));
+    setOption(chrome, "chatToolsShowBlindEnabled", true, false);
+    dom.window.dispatchEvent(new dom.window.Event("pageshow"));
+    await settle();
+    assert.equal(revealOf(dom, "lifecycle"), null);
 });
 
 test("the nearest normal message stops the search before an ancestor blind message", async (t) => {

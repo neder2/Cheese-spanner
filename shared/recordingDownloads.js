@@ -1,16 +1,17 @@
 /**
- * shared/recordingDownloads.js — 플레이어 녹화 파일을 저장 폴더로 보내는 워커 쪽 경계 (globalThis.CheeseSpannerRecordingDownloads)
+ * shared/recordingDownloads.js — 녹화 조각을 Chrome 다운로드로 흘려보내는 워커 경계 (globalThis.CheeseSpannerRecordingDownloads)
  *
  * 실행 컨텍스트: 서비스 워커(background.js의 importScripts). DOM을 쓰지 않아요.
- * 하는 일: 치지직 탭의 녹화 기능(features/videoRecorder.js)이 파일을 내려받기 직전에 보낸 blob 주소 하나를
- *   잠깐 기억했다가, 그 주소의 다운로드가 시작되면 chrome.downloads.onDeterminingFilename에서
- *   "<저장 폴더>/<파일 이름>"을 제안해요. 다른 다운로드에는 아무것도 제안하지 않아 Chrome이 원래대로 처리해요.
+ * 하는 일: 시작한 탭·문서에 묶인 일회용 attachment URL을 열고, 순서가 맞는 64KiB 이하 조각을
+ *   ReadableStream에 전달해요. 다운로드가 느리면 다음 쓰기를 기다리며, 중지 때 마지막 조각 뒤에 닫아요.
+ *   선택 권한이 있으면 onDeterminingFilename에서 그 다운로드에만 "<저장 폴더>/<파일 이름>"을 제안해요.
  *   - 저장 폴더는 메시지가 아니라 sync 옵션 videoRecorderFolder에서 읽고 normalizeDownloadFolder로 다시 검증해요.
- *   - 선택 권한 downloads가 없거나 폴더가 비어 있으면 기억하지 않아요. 그 파일은 Chrome 다운로드 폴더에 저장돼요.
- *   - 기억한 주소는 60초·최대 8개까지만 메모리에 두고, 워커가 다시 시작되면 사라져요(그때도 기본 폴더에 저장돼요).
+ *   - downloads 권한이 없거나 폴더가 비어 있으면 기본 다운로드 폴더에 저장돼요. 영상은 저장소·외부로 보내지 않아요.
+ *   - 세션은 최대 8개이며 취소·실패·마무리 때 정리해요. 재시작 뒤 미완성 다운로드를 이어받지 않아요.
+ *   - 이전에 열린 콘텐츠의 prepare/blob 경로도 60초·8개 한도로 호환해요.
  * 발신자: 같은 확장 ID, 탭의 최상위 프레임, 정확한 https://chzzk.naver.com 출처만 받아요.
  * 공개 API: MESSAGE_TYPE, MESSAGE_VERSION, DOWNLOADS_PERMISSION, isRecordingBlobUrl, isRecordingFileName,
- *   createController({ chrome, now }) → { handleMessage(message, sender), install(), onDeterminingFilename }.
+ *   createController({ chrome, now }) → { handleMessage(message, sender), handleFetch(event), install(), onDeterminingFilename }.
  */
 (() => {
     "use strict";
@@ -22,6 +23,9 @@
     const DOWNLOADS_PERMISSION = Object.freeze({ permissions: Object.freeze(["downloads"]) });
     const PENDING_TTL_MS = 60 * 1000;
     const MAX_PENDING = 8;
+    const STREAM_PATH = "recording-download.txt";
+    const STREAM_TIMEOUT_MS = 10_000;
+    const MAX_CHUNK_BYTES = 64 * 1024;
     const BLOB_URL = /^blob:https:\/\/chzzk\.naver\.com\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
     // The page builds the name; the worker only accepts a plain file name with the two recorder containers.
     // eslint-disable-next-line no-control-regex -- control characters are exactly what a file name must not hold.
@@ -54,6 +58,158 @@
 
     function createController({ chrome, now = () => Date.now() }) {
         const pending = new Map();
+        const sessions = new Map();
+        let installed = false;
+
+        function dispose(session, error) {
+            if (!sessions.delete(session.id)) return;
+            session.closed = true;
+            if (error) session.controller?.error(new Error(error));
+            else session.controller?.close();
+            session.wake?.();
+        }
+
+        function waitFor(session, predicate) {
+            if (predicate()) return Promise.resolve();
+            return new Promise((resolve, reject) => {
+                const timer = setTimeout(() => {
+                    session.wake = null;
+                    dispose(session, "download-timeout");
+                    reject(new Error("download-timeout"));
+                }, STREAM_TIMEOUT_MS);
+                session.wake = () => {
+                    if (!session.closed && !predicate()) return;
+                    clearTimeout(timer);
+                    session.wake = null;
+                    if (session.closed) reject(new Error("download-closed"));
+                    else resolve();
+                };
+            });
+        }
+
+        async function startStream(message, sender) {
+            if (!isRecordingFileName(message.fileName)) return { ok: false, error: "invalid-request" };
+            for (const session of sessions.values()) {
+                if (now() - session.updatedAt > STREAM_TIMEOUT_MS * 3) dispose(session, "recording-expired");
+            }
+            if (sessions.size >= MAX_PENDING) return { ok: false, error: "too-many-recordings" };
+            const [folder, held] = await Promise.all([readFolder(), hasDownloadsPermission()]);
+            // Recheck after async reads; simultaneous starts cannot exceed the bound.
+            if (sessions.size >= MAX_PENDING) return { ok: false, error: "too-many-recordings" };
+            syncListener();
+            const id = crypto.randomUUID();
+            const url = `${chrome.runtime.getURL(STREAM_PATH)}?id=${id}`;
+            const session = {
+                id,
+                url,
+                tabId: sender.tab.id,
+                documentId: sender.documentId,
+                fileName: message.fileName,
+                folder: held && listeningEvent ? folder : "",
+                updatedAt: now(),
+                next: 0,
+                opened: false,
+                closed: false,
+                writing: false,
+            };
+            sessions.set(id, session);
+            return { ok: true, id, url, folder: session.folder, routed: Boolean(session.folder) };
+        }
+
+        async function streamMessage(message, sender) {
+            const session = sessions.get(message.id);
+            if (!session || session.tabId !== sender.tab.id || session.documentId !== sender.documentId)
+                return { ok: false, error: "unknown-recording" };
+            session.updatedAt = now();
+            if (message.op === "pulse") return { ok: true };
+            if (message.op === "abort") {
+                dispose(session, "recording-cancelled");
+                return { ok: true };
+            }
+            if (session.writing) return { ok: false, error: "write-pending" };
+            if (message.op === "finish") {
+                if (!session.opened || message.sequence !== session.next)
+                    return { ok: false, error: "invalid-sequence" };
+                dispose(session);
+                return { ok: true };
+            }
+            if (message.op !== "ready" && message.op !== "write") return { ok: false, error: "unknown-operation" };
+            let bytes;
+            if (message.op === "write") {
+                if (
+                    message.sequence !== session.next ||
+                    !Number.isSafeInteger(message.sequence) ||
+                    typeof message.data !== "string" ||
+                    !message.data.length ||
+                    message.data.length > 87384 ||
+                    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(message.data)
+                )
+                    return { ok: false, error: "invalid-chunk" };
+                bytes = Uint8Array.from(atob(message.data), (char) => char.charCodeAt(0));
+                if (bytes.length > MAX_CHUNK_BYTES) return { ok: false, error: "invalid-chunk" };
+            }
+            session.writing = true;
+            try {
+                await waitFor(session, () => session.opened && (!bytes || session.controller.desiredSize > 0));
+                if (bytes) {
+                    session.controller.enqueue(bytes);
+                    session.next += 1;
+                }
+                session.updatedAt = now();
+                return { ok: true };
+            } catch (_) {
+                return { ok: false, error: "download-closed" };
+            } finally {
+                session.writing = false;
+            }
+        }
+
+        function handleFetch(event) {
+            const request = event.request;
+            const url = new URL(request.url);
+            const endpoint = new URL(chrome.runtime.getURL(STREAM_PATH));
+            if (url.protocol !== endpoint.protocol || url.host !== endpoint.host || url.pathname !== endpoint.pathname)
+                return;
+            const session = sessions.get(url.searchParams.get("id"));
+            // Only an explicit navigation consumes the one-use download. Page fetches cannot read recordings.
+            if (
+                !session ||
+                session.opened ||
+                request.method !== "GET" ||
+                request.mode !== "navigate" ||
+                request.destination !== "document" ||
+                request.url !== session.url
+            ) {
+                event.respondWith(new Response(null, { status: 204 }));
+                return;
+            }
+            const stream = new ReadableStream({
+                start(controller) {
+                    session.controller = controller;
+                },
+                pull() {
+                    session.wake?.();
+                },
+                cancel() {
+                    sessions.delete(session.id);
+                    session.closed = true;
+                    session.wake?.();
+                },
+            });
+            session.opened = true;
+            session.updatedAt = now();
+            event.respondWith(
+                new Response(stream, {
+                    headers: {
+                        "Content-Type": session.fileName.endsWith(".mp4") ? "video/mp4" : "video/webm",
+                        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(session.fileName)}`,
+                        "Cache-Control": "no-store",
+                        "X-Content-Type-Options": "nosniff",
+                    },
+                })
+            );
+            session.wake?.();
+        }
         let listeningEvent = null;
 
         function prune() {
@@ -62,6 +218,13 @@
         }
 
         function onDeterminingFilename(item, suggest) {
+            for (const session of sessions.values()) {
+                if (session.folder && !session.named && (item?.url === session.url || item?.finalUrl === session.url)) {
+                    session.named = true;
+                    suggest({ filename: `${session.folder}/${session.fileName}`, conflictAction: "uniquify" });
+                    return;
+                }
+            }
             prune();
             const url = pending.has(item?.url) ? item.url : pending.has(item?.finalUrl) ? item.finalUrl : "";
             // Not ours: return without suggesting, so Chrome (or another extension) keeps deciding.
@@ -135,16 +298,22 @@
                 return { ok: true, folder, downloads: held };
             }
             if (message.op === "prepare") return prepare(message);
+            if (message.op === "start") return startStream(message, sender);
+            if (["ready", "write", "finish", "abort", "pulse"].includes(message.op))
+                return streamMessage(message, sender);
             return { ok: false, error: "unknown-operation" };
         }
 
         function install() {
+            if (installed) return;
+            installed = true;
+            globalThis.addEventListener?.("fetch", handleFetch);
             // Registered at startup when the optional permission is already held, otherwise once it is granted.
             syncListener();
             chrome.permissions?.onAdded?.addListener(syncListener);
         }
 
-        return { handleMessage, install, onDeterminingFilename };
+        return { handleMessage, handleFetch, install, onDeterminingFilename };
     }
 
     globalThis.CheeseSpannerRecordingDownloads = Object.freeze({
@@ -153,6 +322,8 @@
         DOWNLOADS_PERMISSION,
         PENDING_TTL_MS,
         MAX_PENDING,
+        STREAM_PATH,
+        MAX_CHUNK_BYTES,
         isRecordingBlobUrl,
         isRecordingFileName,
         createController,

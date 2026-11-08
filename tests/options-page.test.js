@@ -141,6 +141,9 @@ test("options page renders defaults and dependency-disabled controls without ext
     assert.equal(queryOption(document, "skipSeconds").value, String(CheeseSpannerSettings.DEFAULT_OPTIONS.skipSeconds));
     assert.equal(queryOption(document, "vodBroadcastClockEnabled").checked, true);
     assert.equal(queryOption(document, "adVideoEnabled").checked, true);
+    assert.equal(queryOption(document, "chatKeywordFilterEnabled").checked, true);
+    assert.equal(queryOption(document, "chatKeywordFilterWords").value, "");
+    assert.equal(queryOption(document, "chatKeywordFilterWords").disabled, false);
     assert.equal(document.getElementById("save").disabled, true, "변경 전에는 저장 버튼이 비활성화된다");
     assert.equal(notice.dataset.state, "saved");
     assert.equal(notice.textContent, "저장됨");
@@ -173,7 +176,7 @@ test("panel resize settings explain their boundaries and remain independently us
         [
             chat,
             "chat-display",
-            "채팅·댓글의 영상 쪽 가장자리로 너비를, 아래 가장자리로 높이를 마우스로 끌어 조절해요. 더블클릭하면 기본 크기로 돌아가요.",
+            "영상 쪽 가장자리를 끌면 너비, 아래쪽을 끌면 높이를 조절해요. 더블클릭하면 기본 크기로 돌아가요.",
         ],
         [
             sidebar,
@@ -1436,6 +1439,12 @@ test("the recording folder may be cleared, asks for downloads only when a new fo
 
     const { document } = dom.window;
     const folder = queryOption(document, "videoRecorderFolder");
+    const toggle = queryOption(document, "videoRecorderEnabled");
+    assert.equal(toggle.checked, false);
+    assert.equal(folder.disabled, true);
+    toggle.checked = true;
+    dispatch(dom, toggle, "change");
+    assert.equal(folder.disabled, false);
     const permissionButton = document.getElementById("videoRecorderPermission");
     const status = document.getElementById("videoRecorderPermissionStatus");
     const save = document.getElementById("save");
@@ -1484,9 +1493,111 @@ test("the recording folder may be cleared, asks for downloads only when a new fo
     assert.equal(permissionButton.hidden, true);
 
     // Turning the button off disables the folder controls.
-    const toggle = queryOption(document, "videoRecorderEnabled");
     assert.equal(toggle.checked, true);
     toggle.checked = false;
     dispatch(dom, toggle, "change");
     assert.equal(folder.disabled, true);
+});
+
+test("chat phrase settings support global and per-phrase conditions with save, reload, discard and OFF", async (t) => {
+    const chrome = createFakeChrome({ sync: { chatKeywordFilterWords: "금지\nABC" } });
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document } = dom.window;
+    const choose = (key, value) => {
+        const control = queryOption(document, key);
+        control.value = value;
+        dispatch(dom, control, "change");
+    };
+    const rule = (phrase) =>
+        [...document.querySelectorAll("#chatKeywordRules select")].find(
+            (select) => select.dataset.keywordPhrase === phrase
+        );
+    const save = async () => {
+        document.getElementById("save").click();
+        await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
+    };
+    assert.equal(queryOption(document, "chatKeywordFilterApplyMode").value, "all");
+    choose("chatKeywordFilterMatchMode", "exact");
+    await save();
+    assert.equal(chrome.testState.sync.chatKeywordFilterMatchMode, "exact");
+    choose("chatKeywordFilterApplyMode", "individual");
+    assert.equal(document.getElementById("chatKeywordGlobalMatch").hidden, true);
+    assert.equal(document.getElementById("chatKeywordIndividual").hidden, false);
+    rule("금지").value = "exact";
+    rule("금지").focus();
+    dispatch(dom, rule("금지"), "change");
+    assert.equal(document.activeElement, rule("금지"));
+    assert.equal(rule("ABC").value, "contains");
+    choose("chatKeywordFilterApplyMode", "all");
+    choose("chatKeywordFilterApplyMode", "individual");
+    assert.equal(rule("금지").value, "exact");
+    await save();
+    assert.equal(chrome.testState.sync.chatKeywordFilterApplyMode, "individual");
+    assert.equal(chrome.testState.sync.chatKeywordFilterExactWords, "금지");
+    rule("ABC").value = "exact";
+    dispatch(dom, rule("ABC"), "change");
+    document.getElementById("discardChanges").click();
+    assert.equal(rule("ABC").value, "contains");
+    const words = queryOption(document, "chatKeywordFilterWords");
+    words.value = "ABC\n<img src=x onerror=alert(1)>";
+    dispatch(dom, words, "input");
+    assert.equal(document.querySelector("#chatKeywordRules img"), null);
+    await save();
+    assert.equal(chrome.testState.sync.chatKeywordFilterExactWords, "");
+    const toggle = queryOption(document, "chatKeywordFilterEnabled");
+    toggle.checked = false;
+    dispatch(dom, toggle, "change");
+    assert.equal(queryOption(document, "chatKeywordFilterApplyMode").disabled, true);
+    assert.equal(rule("ABC").disabled, true);
+});
+
+test("chat phrase settings save multiline text, reject oversized phrases, clear, and restore", async (t) => {
+    const chrome = createFakeChrome({ sync: { chatKeywordFilterEnabled: false, chatKeywordFilterWords: "이전 문구" } });
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document } = dom.window;
+    const words = queryOption(document, "chatKeywordFilterWords");
+    const toggle = queryOption(document, "chatKeywordFilterEnabled");
+    const save = document.getElementById("save");
+    assert.equal(words.value, "이전 문구");
+    assert.equal(words.disabled, true);
+    toggle.checked = true;
+    dispatch(dom, toggle, "change");
+    assert.equal(words.disabled, false);
+    words.value = " 스포 \nSPOILER\nspoiler\n[공지].*";
+    dispatch(dom, words, "input");
+    dispatch(dom, words, "change");
+    save.click();
+    await waitForCondition(() => chrome.testState.sync.chatKeywordFilterWords === "스포\nSPOILER\n[공지].*");
+    await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
+    assert.equal(chrome.testState.sync.chatKeywordFilterEnabled, true);
+    words.value = "가".repeat(101);
+    dispatch(dom, words, "input");
+    dispatch(dom, words, "change");
+    save.click();
+    assert.equal(words.value, "가".repeat(101));
+    assert.match(document.getElementById("message").textContent, /한 문구 100자/);
+    assert.equal(chrome.testState.sync.chatKeywordFilterWords, "스포\nSPOILER\n[공지].*");
+    words.value = "";
+    dispatch(dom, words, "input");
+    dispatch(dom, words, "change");
+    save.click();
+    await waitForCondition(() => chrome.testState.sync.chatKeywordFilterWords === "");
+    await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
+    assert.equal(words.value, "");
+    words.value = "임시 문구";
+    dispatch(dom, words, "input");
+    document.getElementById("discardChanges").click();
+    assert.equal(words.value, "");
+    toggle.checked = false;
+    dispatch(dom, toggle, "change");
+    assert.equal(words.disabled, true);
+    assert.equal(chrome.testState.permissionRequests.length, 0);
 });

@@ -973,7 +973,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
                 return view;
             }
             if (state.error && !state.loaded) {
-                view.appendChild(createStateBlock("댓글을 불러오지 못했어요.", "다시 시도", "retry-initial"));
+                view.appendChild(createStateBlock("댓글 불러오기 실패", "다시 시도", "retry-initial"));
                 return view;
             }
             if (!state.commentActive) {

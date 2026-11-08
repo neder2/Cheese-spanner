@@ -92,17 +92,18 @@ function fixture(t, options = { playerZoomEnabled: true, playerZoomMode: "always
         },
     };
     let base = { left: 100, top: 60, width: 800, height: 450 };
-    function setVideoBox(video) {
+    function setVideoBox(video, box = null) {
         Object.defineProperties(video, {
             videoWidth: { configurable: true, value: 1920 },
             videoHeight: { configurable: true, value: 1080 },
         });
         video.getBoundingClientRect = () => {
+            const rect = box || base;
             const { x, y, scale } = transform(video);
-            const left = base.left + x,
-                top = base.top + y;
-            const width = base.width * scale,
-                height = base.height * scale;
+            const left = rect.left + x,
+                top = rect.top + y;
+            const width = rect.width * scale,
+                height = rect.height * scale;
             return { left, top, width, height, right: left + width, bottom: top + height };
         };
     }
@@ -1087,4 +1088,228 @@ test("settings expose and persist the three activation modes and shortcut key wi
     const entry = manifest.content_scripts.find((item) => item.js.includes("features/playerZoom.js"));
     assert.notEqual(entry.world, "MAIN");
     assert.ok(entry.js.indexOf("content.js") < entry.js.indexOf("features/playerZoom.js"));
+});
+
+// Owned auxiliary DOM follows liveMultiview/runtime.js; a marker on a preview alone never qualifies.
+async function addAuxiliary(f, channel, box = { left: 950, top: 60, width: 400, height: 225 }) {
+    let overlay = f.doc.getElementById("cheese-spanner-multiview");
+    if (!overlay) {
+        overlay = f.doc.createElement("div");
+        overlay.id = "cheese-spanner-multiview";
+        f.doc.body.append(overlay);
+    }
+    const cell = f.doc.createElement("section");
+    cell.className = "bcmv-cell";
+    cell.dataset.bcmvChannel = channel;
+    cell.innerHTML = `<div class="bcmv-head"><span class="bcmv-name">방송</span><button>제거</button></div>
+        <div class="bcmv-controls" role="group"><button data-action="toggle-play">재생</button><input type="range" aria-label="볼륨"></div>
+        <video data-bcmv-video="1" style="object-fit:contain"></video>
+        <button class="bcmv-corner" aria-label="크기 조절"></button><div class="bcmv-error" hidden>재시도</div>`;
+    const video = cell.querySelector("video");
+    video.dataset.channel = channel;
+    f.setVideoBox(video, box);
+    overlay.append(cell);
+    await waitForCondition(() => cell.querySelector(`.${ID}-toggle`));
+    const center = { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 };
+    return {
+        cell,
+        video,
+        box,
+        toggle: () => cell.querySelector(`.${ID}-toggle`),
+        panel: () => cell.querySelector(`.${ID}-panel`),
+        range: () => cell.querySelector(`.${ID}-range`),
+        reset: () => cell.querySelector(`.${ID}-reset`),
+        wheel: (delta = -100, init = {}, target = video) => f.wheel(delta, { ...center, ...init }, target),
+        pointer: (type, init = {}, target = video) => f.pointer(type, { ...center, ...init }, target),
+        setPercent(percent) {
+            const range = cell.querySelector(`.${ID}-range`);
+            range.value = String(percent);
+            range.dispatchEvent(new f.w.Event("input", { bubbles: true }));
+        },
+    };
+}
+
+test("multiview main and auxiliary videos zoom independently without becoming the shared main video", async (t) => {
+    const f = fixture(t);
+    const a = await addAuxiliary(f, "channel-a");
+    const b = await addAuxiliary(f, "channel-b", { left: 950, top: 320, width: 400, height: 225 });
+    assert.equal(a.toggle().hidden, true);
+    assert.equal(b.toggle().hidden, true);
+    assert.equal(
+        new Set([...f.doc.querySelectorAll('[id*="player-zoom"]')].map((node) => node.id)).size,
+        f.doc.querySelectorAll('[id*="player-zoom"]').length,
+        "each control has a unique id"
+    );
+    assert.equal(a.wheel().defaultPrevented, true);
+    closeTo(transform(a.video).scale, 1.2);
+    closeTo(transform(b.video).scale, 1);
+    closeTo(transform(f.video()).scale, 1);
+    b.wheel(-200);
+    f.wheel();
+    closeTo(transform(b.video).scale, 1.44);
+    closeTo(transform(f.video()).scale, 1.2);
+    assert.equal(f.w.CheeseSpanner.utils.getMainVideoElement(), f.video());
+    assert.equal(f.w.CheeseSpanner.utils.getVideoViewportRect(a.video).width, a.box.width);
+    assert.equal(a.range().getAttribute("aria-valuetext"), "120%");
+    const before = f.counts().mainLookups;
+    a.wheel();
+    b.wheel();
+    assert.equal(f.counts().mainLookups, before, "wheel input never rescans the player list");
+    a.reset().click();
+    closeTo(transform(a.video).scale, 1);
+    closeTo(transform(b.video).scale, 1.728);
+    closeTo(transform(f.video()).scale, 1.2);
+});
+
+test("each auxiliary manual toggle and slider affects only its own view, including keyboard controls", async (t) => {
+    const f = fixture(t, { playerZoomEnabled: true, playerZoomMode: "manual" });
+    const a = await addAuxiliary(f, "channel-a");
+    const b = await addAuxiliary(f, "channel-b");
+    assert.equal(a.wheel().defaultPrevented, false);
+    a.toggle().click();
+    assert.equal(a.toggle().getAttribute("aria-pressed"), "true");
+    assert.equal(a.panel().hidden, false);
+    assert.equal(b.panel().hidden, true);
+    assert.equal(f.panel().hidden, true);
+    a.setPercent(250);
+    closeTo(transform(a.video).scale, 2.5);
+    closeTo(transform(b.video).scale, 1);
+    const key = new f.w.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true });
+    a.range().dispatchEvent(key);
+    assert.equal(key.defaultPrevented, false, "native range keyboard handling stays available");
+    b.toggle().click();
+    b.setPercent(150);
+    a.toggle().click();
+    assert.equal(a.panel().hidden, true);
+    closeTo(transform(a.video).scale, 1);
+    closeTo(transform(b.video).scale, 1.5);
+    assert.equal(f.toggle().getAttribute("aria-pressed"), "false");
+});
+
+test("auxiliary panning takes the zoomed surface while Alt drag, controls and previews remain available", async (t) => {
+    const f = fixture(t);
+    const a = await addAuxiliary(f, "channel-a");
+    a.setPercent(200);
+    const before = transform(a.video);
+    let layoutPresses = 0;
+    a.cell.addEventListener("pointerdown", () => layoutPresses++, true);
+    a.pointer("pointerdown");
+    a.pointer("pointermove", { clientX: 1190, clientY: 190 });
+    a.pointer("pointerup", { buttons: 0 });
+    assert.equal(layoutPresses, 0, "zoom pan wins before the multiview ancestor drag handler");
+    assert.notEqual(transform(a.video).x, before.x);
+    closeTo(transform(f.video()).scale, 1);
+    const click = new f.w.MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 });
+    a.video.dispatchEvent(click);
+    assert.equal(click.defaultPrevented, true, "a completed pan does not click the video");
+    const zoomed = transform(a.video);
+    a.pointer("pointerdown", { altKey: true });
+    a.pointer("pointermove", { altKey: true, clientX: 1200 });
+    a.pointer("pointerup", { altKey: true, buttons: 0 });
+    assert.equal(layoutPresses, 1);
+    assert.deepEqual(transform(a.video), zoomed);
+    for (const selector of [".bcmv-head", ".bcmv-controls", "input", ".bcmv-corner", ".bcmv-error", `.${ID}-range`]) {
+        assert.equal(a.wheel(-100, {}, a.cell.querySelector(selector)).defaultPrevented, false, selector);
+    }
+    assert.equal(f.wheel(-100, {}, f.doc.querySelector("aside video")).defaultPrevented, false);
+    a.reset().click();
+    a.pointer("pointerdown");
+    assert.equal(layoutPresses, 2, "at 100% the ordinary layout drag still works");
+});
+
+test("same-channel cell rebuilding preserves auxiliary zoom, replacement and removal clear old controls and styles", async (t) => {
+    const f = fixture(t);
+    const a = await addAuxiliary(f, "channel-a");
+    const b = await addAuxiliary(f, "channel-b");
+    a.setPercent(220);
+    b.setPercent(180);
+    const before = transform(a.video);
+    const oldToggle = a.toggle();
+    const oldPanel = a.panel();
+    const nextCell = a.cell.cloneNode(true);
+    nextCell.querySelector("video").remove();
+    nextCell.querySelector(`.${ID}-toggle`).remove();
+    nextCell.querySelector(`.${ID}-panel`).remove();
+    nextCell.append(a.video);
+    a.cell.replaceWith(nextCell);
+    await waitForCondition(() => nextCell.querySelector(`.${ID}-panel`));
+    assert.deepEqual(transform(a.video), before);
+    assert.equal(a.cell.hasAttribute("data-bcz-pannable"), false);
+    assert.equal(oldPanel.isConnected, false);
+    oldToggle.click();
+    assert.deepEqual(transform(a.video), before);
+    assert.equal(f.counts().wheels, 3);
+    a.video.dispatchEvent(new f.w.Event("loadedmetadata"));
+    closeTo(transform(a.video).scale, 1);
+    closeTo(transform(b.video).scale, 1.8);
+    const nextVideo = a.video.cloneNode();
+    f.setVideoBox(nextVideo, a.box);
+    a.video.replaceWith(nextVideo);
+    await waitForCondition(() => nextCell.querySelector(`.${ID}-range`).value === "100" && f.counts().resizers === 3);
+    assert.equal(a.video.style.transform, "");
+    assert.equal(f.wheel(-100, { clientX: 1100, clientY: 150 }, nextVideo).defaultPrevented, true);
+    closeTo(transform(nextVideo).scale, 1.2);
+    nextCell.remove();
+    await waitForCondition(() => f.counts().wheels === 2);
+    assert.equal(nextVideo.style.transform, "");
+    closeTo(transform(b.video).scale, 1.8);
+    f.apply({ playerZoomEnabled: false });
+    assert.equal(f.counts().wheels, 0);
+    assert.equal(f.counts().resizers, 0);
+    assert.equal(b.video.style.transform, "");
+    assert.equal(b.toggle(), null);
+});
+
+test("auxiliary channel identity, activation mode and route changes discard stale zoom", async (t) => {
+    const f = fixture(t);
+    const a = await addAuxiliary(f, "channel-a");
+    const b = await addAuxiliary(f, "channel-b");
+    a.setPercent(200);
+    b.setPercent(300);
+    const oldPanel = a.panel();
+    a.cell.dataset.bcmvChannel = "channel-c";
+    assert.equal(a.wheel().defaultPrevented, false, "old identity is rejected even before the observer runs");
+    await waitForCondition(() => a.panel() === null);
+    assert.equal(a.video.style.transform, "");
+    a.video.dataset.channel = "channel-c";
+    await waitForCondition(() => a.panel() && a.panel() !== oldPanel);
+    assert.equal(a.range().value, "100");
+    closeTo(transform(b.video).scale, 3);
+    f.apply({ playerZoomEnabled: true, playerZoomMode: "shortcut", playerZoomShortcutKey: "alt" });
+    assert.equal(b.video.style.transform, "");
+    assert.equal(a.wheel().defaultPrevented, false);
+    assert.equal(a.wheel(-100, { altKey: true }).defaultPrevented, true);
+    closeTo(transform(a.video).scale, 1.2);
+    closeTo(transform(b.video).scale, 1);
+    f.route("/live/another");
+    assert.equal(a.video.style.transform, "");
+    assert.equal(f.counts().wheels, 3);
+    f.w.dispatchEvent(new f.w.Event("pagehide"));
+    assert.equal(f.counts().wheels, 0);
+    assert.equal(a.panel(), null);
+    f.w.dispatchEvent(new f.w.Event("pageshow"));
+    assert.equal(f.counts().wheels, 3);
+    assert.equal(a.range().value, "100");
+});
+
+test("auxiliary resize keeps its chosen view and minimum scroll delay belongs to that video only", async (t) => {
+    const f = fixture(t);
+    const a = await addAuxiliary(f, "channel-a");
+    const b = await addAuxiliary(f, "channel-b");
+    a.setPercent(200);
+    const before = transform(a.video);
+    a.box.width /= 2;
+    a.box.height /= 2;
+    f.w.dispatchEvent(new f.w.Event("resize"));
+    closeTo(transform(a.video).scale, 2);
+    closeTo(transform(a.video).x, before.x / 2);
+    closeTo(transform(a.video).y, before.y / 2);
+    const center = { clientX: a.box.left + 50, clientY: a.box.top + 50 };
+    for (let i = 0; i < 4; i++) a.wheel(240, center);
+    closeTo(transform(a.video).scale, 1);
+    assert.equal(a.wheel(100, center).defaultPrevented, true);
+    assert.equal(b.wheel(100).defaultPrevented, false);
+    assert.equal(f.wheel(100).defaultPrevented, false);
+    f.advanceTime(1000);
+    assert.equal(a.wheel(100, center).defaultPrevented, false);
 });

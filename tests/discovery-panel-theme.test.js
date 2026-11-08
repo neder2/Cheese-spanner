@@ -331,9 +331,28 @@ test("category tools request the shared theme and keep only the media badge colo
     assert.equal(declaration(rules, ".bcgt-category-summary .bcgt-category-row", "background"), "var(--bcgt-chip-bg)");
     assert.match(css, /--bcgt-chip-bg:var\(--bct-brand\);--bcgt-chip-text:var\(--bct-on-brand\)/);
 
-    // Native font classification (features/AGENTS.md): the bar copies the host font and the follower badge keeps its stack.
-    assert.doesNotMatch(css, /--bct-font/);
+    // Only the category exclusion selection and add panel use the bundled font (features/AGENTS.md).
+    const bundledFontSelectors = [".bcgt-category-summary", "#cheese-spanner-category-add-panel"];
+    assert.deepEqual(
+        rules
+            .filter((rule) => rule.declarations.some(({ value }) => /--bct-font\b/.test(value)))
+            .map((rule) => rule.selector)
+            .sort(),
+        [...bundledFontSelectors].sort(),
+        "the bundled font stays within the category exclusion UI"
+    );
+    for (const selector of bundledFontSelectors)
+        assert.equal(declaration(rules, selector, "font-family"), "var(--bct-font)", selector);
+    for (const selector of [
+        ".bcgt-category-summary .bcgt-category-button",
+        "#cheese-spanner-category-add-panel [data-category-search]",
+        "#cheese-spanner-category-add-panel .bcgt-category-button",
+    ])
+        assert.equal(declaration(rules, selector, "font"), "inherit", selector);
+
+    // The search bar and numeric filter still follow the host font; the follower badge keeps its stack.
     assert.equal(declaration(rules, "#cheese-spanner-category-tools", "font-family"), "var(--bcgt-font-family)");
+    assert.equal(declaration(rules, menuSelector, "font-family"), "inherit");
     assert.match(declaration(rules, '[data-bcgt-follower-badge="1"]', "font-family"), /^"Sandoll Nemony2",/);
 });
 

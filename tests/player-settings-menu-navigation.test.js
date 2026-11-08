@@ -20,14 +20,15 @@ function rect(width, height) {
 const FEATURE_ROWS = {
     stream: "cheese-spanner-stream-info-settings-item",
     ambient: "cheese-spanner-ambient-row",
+    recorder: "cheese-spanner-video-recorder-folder-row",
 };
-// Each feature's capture keydown handler on the gear menu, by its function name.
-const MENU_NAVIGATION = { onSettingsNavigation: "stream", onMenuNavigation: "ambient" };
 
 // Both features inject a row into the same gear menu. The second feature is only loaded after the first one's
 // row is installed, so the given order is the real injection and menu keydown listener order (asserted below).
 async function fixture(t, order) {
-    const chrome = createFakeChrome({ sync: { ambientEnabled: true, streamInfoEnabled: true } });
+    const chrome = createFakeChrome({
+        sync: { ambientEnabled: true, streamInfoEnabled: true, videoRecorderEnabled: true },
+    });
     const dom = new JSDOM(
         `<!doctype html><html><body><div id="layout-body"><main><div class="pzp-pc"><div class="pzp-pc__video"><video></video></div>
 <div class="pzp-pc__bottom-buttons-right"><button class="pzp-setting-button" aria-label="설정" aria-expanded="false"></button></div>
@@ -39,6 +40,8 @@ ${MENU}</div></main></div></body></html>`,
     w.HTMLCanvasElement.prototype.getContext = () => null;
     // Currently registered capture keydown listeners on the gear menu, in registration (= dispatch) order.
     const menuListeners = [];
+    const listenerOwners = new Map();
+    let installing = null;
     const isMenuCapture = (target, type, options) =>
         type === "keydown" &&
         target instanceof w.Element &&
@@ -47,7 +50,10 @@ ${MENU}</div></main></div></body></html>`,
     const nativeAdd = w.EventTarget.prototype.addEventListener;
     const nativeRemove = w.EventTarget.prototype.removeEventListener;
     w.EventTarget.prototype.addEventListener = function (type, listener, options) {
-        if (isMenuCapture(this, type, options) && !menuListeners.includes(listener)) menuListeners.push(listener);
+        if (isMenuCapture(this, type, options) && !menuListeners.includes(listener)) {
+            menuListeners.push(listener);
+            listenerOwners.set(listener, installing);
+        }
         return nativeAdd.call(this, type, listener, options);
     };
     w.EventTarget.prototype.removeEventListener = function (type, listener, options) {
@@ -75,15 +81,22 @@ ${MENU}</div></main></div></body></html>`,
     const features = {
         stream: ["features/streamInfoModel.js", "features/streamInfo.js"],
         ambient: ["features/ambientGlow.js"],
+        recorder: ["features/videoRecorder.js"],
     };
     t.after(() => {
-        const off = { streamInfoEnabled: { newValue: false }, ambientEnabled: { newValue: false } };
+        const off = {
+            streamInfoEnabled: { newValue: false },
+            ambientEnabled: { newValue: false },
+            videoRecorderEnabled: { newValue: false },
+        };
         for (const listener of [...chrome.testState.storageChangeListeners]) listener(off, "sync");
         w.CheeseSpanner.ambientGlow?.stop?.();
+        w.CheeseSpanner.videoRecorder?.stop?.();
         w.close();
     });
     const doc = w.document;
     for (const [index, name] of order.entries()) {
+        installing = name;
         for (const file of features[name]) w.eval(readRepoFile(file));
         if (index === 0) doc.dispatchEvent(new w.Event("DOMContentLoaded"));
         await waitForCondition(() => doc.getElementById(FEATURE_ROWS[name]));
@@ -91,7 +104,7 @@ ${MENU}</div></main></div></body></html>`,
     return {
         w,
         doc,
-        menuListenerOrder: () => menuListeners.map((listener) => MENU_NAVIGATION[listener.name] || listener.name),
+        menuListenerOrder: () => menuListeners.map((listener) => listenerOwners.get(listener)),
         menu: () => doc.querySelector(".pzp-pc__settings"),
         stream: () => doc.getElementById("cheese-spanner-stream-info-settings-item"),
         ambient: () => doc.getElementById("cheese-spanner-ambient-expand"),
@@ -110,13 +123,19 @@ ${MENU}</div></main></div></body></html>`,
 for (const order of [
     ["stream", "ambient"],
     ["ambient", "stream"],
+    ["stream", "ambient", "recorder"],
+    ["stream", "recorder", "ambient"],
+    ["ambient", "stream", "recorder"],
+    ["ambient", "recorder", "stream"],
+    ["recorder", "stream", "ambient"],
+    ["recorder", "ambient", "stream"],
 ]) {
-    test(`arrow keys reach both injected gear rows when ${order.join(" then ")} install in that order`, async (t) => {
+    test(`arrow keys reach every injected gear row when ${order.join(" then ")} install in that order`, async (t) => {
         const f = await fixture(t, order);
         assert.ok(f.stream() && f.ambient());
         // Menu order: [해상도, 선명한 화면, ...injected rows in install order].
         const rows = [...f.menu().children].filter((row) => row.getAttribute("role") !== "group");
-        assert.equal(rows.length, 4);
+        assert.equal(rows.length, order.length + 2);
         const injected = rows.slice(2);
         assert.deepEqual(
             injected.map((row) => row.id),
@@ -125,30 +144,28 @@ for (const order of [
         );
         // The menu capture handlers run in install order too; each must yield to the other's rows either way.
         assert.deepEqual(f.menuListenerOrder(), order, "menu keydown listeners are registered in install order");
-        const entry = (row) => (row.id === "cheese-spanner-ambient-row" ? f.ambient() : row);
-        const [a, b] = injected.map(entry);
-        for (const [from, key, to] of [
-            [f.last(), "ArrowDown", a],
-            [a, "ArrowDown", b],
-            [b, "ArrowDown", f.first()],
-            [f.first(), "ArrowUp", b],
-            [b, "ArrowUp", a],
-            [a, "ArrowUp", f.last()],
-            [f.first(), "End", b],
-            [b, "Home", f.first()],
-        ]) {
+        const entry = (row) => (row.matches('[role="menuitem"]') ? row : row.querySelector('[role="menuitem"]'));
+        const entries = [f.first(), f.last(), ...injected.map(entry)];
+        const moves = [];
+        for (let i = 2; i < entries.length; i++) {
+            moves.push([entries[i - 1], "ArrowDown", entries[i]]);
+            moves.push([entries[i], "ArrowUp", entries[i - 1]]);
+            moves.push([entries[i], "Home", f.first()]);
+            moves.push([entries[i], "End", entries.at(-1)]);
+        }
+        moves.push(
+            [entries.at(-1), "ArrowDown", f.first()],
+            [f.first(), "ArrowUp", entries.at(-1)],
+            [f.first(), "End", entries.at(-1)]
+        );
+        for (const [from, key, to] of moves) {
             const event = f.press(from, key);
             assert.equal(event.defaultPrevented, true, `${from.id} ${key}`);
             assert.equal(f.doc.activeElement, to, `${from.id} ${key} -> ${to.id}`);
         }
         // The ambient switch belongs to the same row and leaves it like the label does.
-        if (b === f.ambient()) {
-            f.press(f.toggle(), "ArrowDown");
-            assert.equal(f.doc.activeElement, f.first());
-        } else {
-            f.press(f.toggle(), "ArrowDown");
-            assert.equal(f.doc.activeElement, b);
-        }
+        f.press(f.toggle(), "ArrowDown");
+        assert.equal(f.doc.activeElement, entries[(entries.indexOf(f.ambient()) + 1) % entries.length]);
         // Native-to-native moves stay with the player.
         assert.equal(f.press(f.first(), "ArrowDown").defaultPrevented, false);
         assert.equal(f.press(f.last(), "ArrowUp").defaultPrevented, false);
