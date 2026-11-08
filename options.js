@@ -248,6 +248,12 @@ function updateChatKeywordExactWords() {
 
 function applyControlStates(options) {
     const optionsUnavailable = optionsLoadState !== "ready" || externalBusy;
+    for (const id of ["videoRecorderChooseDirectory", "videoRecorderClearDirectory"]) {
+        const control = document.getElementById(id);
+        if (control)
+            control.disabled =
+                optionsUnavailable || isDisabledByDependency(control, options) || control.dataset.pickerBusy === "true";
+    }
     for (const control of optionInputs) {
         control.disabled = optionsUnavailable || isDisabledByDependency(control, options);
     }
@@ -1470,6 +1476,7 @@ function showGuideTarget(target) {
         history: 'a[href="history.html"]',
         stream: '[data-option="streamInfoEnabled"]',
         categories: '[data-option="categoryToolsExclusionsEnabled"]',
+        recording: "#videoRecorderChooseDirectory",
     };
     if (!Object.hasOwn(selectors, target)) return false;
     const node = form.querySelector(selectors[target]);

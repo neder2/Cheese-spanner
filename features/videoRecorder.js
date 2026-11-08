@@ -1,7 +1,7 @@
 /** Main-player recording (isolated world).
  * A record button sits at the start of the player's bottom-right buttons. Pressing it records the main
  * <video> through captureStream() + MediaRecorder (MP4 when Chrome can encode it, otherwise WebM) until the
- * button is pressed again. Chrome starts downloading immediately; each chunk is streamed through our worker.
+ * button is pressed again. Each chunk is streamed through our worker to a chosen directory or Chrome download.
  * - There is no duration limit. Only pending chunks stay in memory; stalled delivery stops further capture.
  * - It stops and saves when the page route changes, the main video element or its source is replaced, the
  *   recorder fails, the option is turned off, or the page is hidden for good. Leaving the page while
@@ -21,6 +21,8 @@
         createMutationObserverSync,
         createThrottledDomSync,
         ensureUiTheme,
+        fetchJson,
+        getKstDateKey,
         getLiveChannelIdFromPath,
         getMainVideoElement,
         getPlayerRoot,
@@ -95,6 +97,10 @@
         folderOverride = null,
         saveRevision = 0;
     let recording = null;
+    // A player-selected handle stays in this isolated world; never store it in the site's IndexedDB or DOM.
+    let tabDirectory = null;
+    let choosingDirectory = false;
+    let directoryRevision = 0;
     const finishing = new Set();
     let discovery = null,
         routeCleanup = null,
@@ -134,21 +140,51 @@
         return hours ? `${hours}:${rest}` : rest;
     }
 
-    function fileStem(startedAt, path) {
-        const date = new Date(startedAt);
-        const stamp =
-            `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
-            `${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}`;
-        const clean = (value) =>
-            String(value || "")
-                .replace(/[^A-Za-z0-9_-]/g, "")
-                .slice(0, 40);
-        if (isLiveRoute(path)) {
-            const id = clean(getLiveChannelIdFromPath(path));
-            return `치지직 라이브${id ? ` ${id}` : ""} ${stamp}`;
+    function filePart(value, maxLength, maxBytes, fallback) {
+        const clean = String(value || "")
+            // eslint-disable-next-line no-control-regex -- strip characters disallowed in local file names.
+            .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, "_")
+            .replace(/\s+/g, " ")
+            .trim();
+        let result = "";
+        let bytes = 0;
+        for (const char of clean) {
+            const code = char.codePointAt(0);
+            const size = code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+            if (result.length + char.length > maxLength || bytes + size > maxBytes) break;
+            result += char;
+            bytes += size;
         }
-        const videoNo = clean(getVodVideoNoFromPath?.(path));
-        return `치지직 다시보기${videoNo ? ` ${videoNo}` : ""} ${stamp}`;
+        return result.replace(/[. ]+$/, "") || fallback;
+    }
+
+    async function recordingFileName(session) {
+        const live = isLiveRoute(session.path);
+        const id = live ? getLiveChannelIdFromPath(session.path) : getVodVideoNoFromPath(session.path);
+        let title = `${live ? "라이브" : "다시보기"} ${id}`;
+        let channelName = "스트리머 정보 없음";
+        try {
+            const endpoint = live
+                ? `service/v3/channels/${encodeURIComponent(id)}/live-detail`
+                : `service/v2/videos/${encodeURIComponent(id)}`;
+            const json = await fetchJson(`https://api.chzzk.naver.com/${endpoint}`, {
+                signal: session.metadataAbort.signal,
+                timeoutMs: 3500,
+            });
+            const detail = json?.content;
+            const verified =
+                json?.code === 200 &&
+                (live
+                    ? detail?.channel?.channelId === id && detail.status === "OPEN"
+                    : String(detail?.videoNo) === String(id));
+            if (verified) {
+                title = filePart(live ? detail.liveTitle : detail.videoTitle, 90, 150, title);
+                channelName = filePart(detail.channel?.channelName, 40, 60, channelName);
+            }
+        } catch (_) {
+            // Unverified DOM titles can belong to the previous SPA route; retain the current ID instead.
+        }
+        return `${getKstDateKey(session.startedAt)} ${title} - ${channelName}.${session.format.extension}`;
     }
 
     async function startRecording() {
@@ -194,6 +230,11 @@
             failed: false,
             stopping: false,
             timer: 0,
+            metadataAbort: new AbortController(),
+            directoryHandle: tabDirectory,
+            fileWriter: null,
+            fileFailed: false,
+            fileClosed: false,
         };
         recorder.addEventListener("dataavailable", (event) => {
             if (!event.data?.size || session.writeFailed) return;
@@ -209,7 +250,7 @@
                         const bytes = new Uint8Array(
                             await event.data.slice(offset, offset + CHUNK_BYTES).arrayBuffer()
                         );
-                        const result = await sendRecorderMessage({
+                        const result = await recordingCommand(session, {
                             op: "write",
                             id: session.route.id,
                             sequence: session.sequence,
@@ -242,24 +283,55 @@
         recording = session;
         renderRecording();
         try {
-            const fileName = `${fileStem(session.startedAt, session.path)}.${session.format.extension}`;
-            session.route = await sendRecorderMessage({ op: "start", fileName }, true);
+            const fileName = await recordingFileName(session);
+            if (
+                session.stopping ||
+                recording !== session ||
+                !active ||
+                session.path !== location.pathname ||
+                !session.video.isConnected
+            ) {
+                stopRecording(session);
+                return;
+            }
+            if (session.directoryHandle) {
+                const opening = globalThis.CheeseSpannerRecordingDirectory.openFile(
+                    session.directoryHandle,
+                    fileName
+                ).then(async (file) => {
+                    if (session.stopping || session.fileFailed) {
+                        await file.writer.abort().catch(() => {});
+                        throw new Error("directory-cancelled");
+                    }
+                    session.fileWriter = file.writer;
+                    return file;
+                });
+                const file = await fileOperation(session, opening);
+                session.route = {
+                    ok: true,
+                    destination: "directory",
+                    folder: session.directoryHandle.name,
+                    fileName: file.fileName,
+                };
+            } else {
+                session.route = await sendRecorderMessage({ op: "start", fileName }, true);
+            }
             if (!session.route?.ok) throw new Error(session.route?.error || "download-unavailable");
             if (!session.stopping && recording === session) {
                 if (session.route.destination !== "directory") {
-                const link = document.createElement("a");
-                link.href = session.route.url;
-                // An attachment navigation streams through our worker; a download attribute bypasses it.
-                link.hidden = true;
-                (document.body || document.documentElement).append(link);
-                link.click();
-                link.remove();
+                    const link = document.createElement("a");
+                    link.href = session.route.url;
+                    // An attachment navigation streams through our worker; a download attribute bypasses it.
+                    link.hidden = true;
+                    (document.body || document.documentElement).append(link);
+                    link.click();
+                    link.remove();
                 }
-                const opened = await sendRecorderMessage({ op: "ready", id: session.route.id });
+                const opened = await recordingCommand(session, { op: "ready", id: session.route.id });
                 if (!opened) throw new Error("download-unavailable");
             }
             if (session.stopping || recording !== session || !active || !session.video.isConnected) {
-                await sendRecorderMessage({ op: "abort", id: session.route.id });
+                await recordingCommand(session, { op: "abort", id: session.route.id });
                 return;
             }
             recorder.start(TIMESLICE_MS);
@@ -271,7 +343,7 @@
                 renderRecording();
                 if (Date.now() - session.lastPulse < 10_000) return;
                 session.lastPulse = Date.now();
-                void sendRecorderMessage({ op: "pulse", id: session.route.id }).then((result) => {
+                void recordingCommand(session, { op: "pulse", id: session.route.id }).then((result) => {
                     if (!result && recording === session) {
                         session.writeFailed = true;
                         stopRecording(session);
@@ -282,11 +354,14 @@
             renderRecording();
         } catch (error) {
             session.writeFailed = true;
-            if (session.route?.id) void sendRecorderMessage({ op: "abort", id: session.route.id });
+            if (session.route || session.fileWriter)
+                void recordingCommand(session, { op: "abort", id: session.route?.id });
             stopRecording(session);
-            showStatus(error.message.startsWith("directory-")
-                ? "저장 폴더에 접근하지 못했어요. 확장 설정의 ‘폴더 선택’에서 다시 지정해 주세요."
-                : "녹화를 시작하지 못했어요.");
+            showStatus(
+                error.message.startsWith("directory-")
+                    ? "저장 폴더에 접근하지 못했어요. ‘녹화 저장 폴더’를 눌러 다시 지정해 주세요."
+                    : "녹화를 시작하지 못했어요."
+            );
         } finally {
             if (session.preparing) {
                 for (const name of SOURCE_EVENTS) session.video.removeEventListener(name, onSourceChange);
@@ -298,6 +373,7 @@
     function stopRecording(session = recording) {
         if (!session || session.stopping) return;
         session.stopping = true;
+        session.metadataAbort.abort();
         window.clearInterval(session.timer);
         for (const name of SOURCE_EVENTS) session.video.removeEventListener(name, onSourceChange);
         if (recording === session) {
@@ -333,28 +409,73 @@
             await session.pending;
             const result = session.writeFailed
                 ? null
-                : await sendRecorderMessage({
+                : await recordingCommand(session, {
                       op: "finish",
                       id: session.route.id,
                       sequence: session.sequence,
                   });
             if (!result) {
-                void sendRecorderMessage({ op: "abort", id: session.route.id });
+                void recordingCommand(session, { op: "abort", id: session.route.id });
                 showStatus("저장이 중단되어 녹화 파일을 완성하지 못했어요.");
                 return;
             }
-            const where = session.route.destination === "directory" ? `‘${session.route.folder}’ 폴더` : session.route.routed ? `다운로드 폴더의 ${session.route.folder}` : "다운로드 폴더";
+            const where =
+                session.route.destination === "directory"
+                    ? `‘${session.route.folder}’ 폴더`
+                    : session.route.routed
+                      ? `다운로드 폴더의 ${session.route.folder}`
+                      : "다운로드 폴더";
             showStatus(
                 session.route.destination === "directory"
                     ? `${session.failed ? "녹화가 중단되어 그때까지의 파일을" : "녹화 파일을"} ${where}에 저장했어요.`
                     : session.failed
-                    ? `녹화가 중단되어 그때까지의 파일 다운로드를 ${where}에서 마무리해요.`
-                    : `녹화 파일 다운로드를 ${where}에서 마무리해요.`
+                      ? `녹화가 중단되어 그때까지의 파일 다운로드를 ${where}에서 마무리해요.`
+                      : `녹화 파일 다운로드를 ${where}에서 마무리해요.`
             );
         } finally {
             finishing.delete(session);
             if (!recording && !finishing.size) window.removeEventListener("beforeunload", onBeforeUnload);
             renderRecording();
+        }
+    }
+
+    async function fileOperation(session, operation) {
+        let timer;
+        try {
+            return await Promise.race([
+                operation,
+                new Promise((_, reject) => {
+                    timer = window.setTimeout(() => reject(new Error("directory-timeout")), 10_000);
+                }),
+            ]);
+        } catch (error) {
+            session.fileFailed = true;
+            if (session.fileWriter && !session.fileClosed) void session.fileWriter.abort().catch(() => {});
+            throw error;
+        } finally {
+            window.clearTimeout(timer);
+        }
+    }
+
+    async function recordingCommand(session, message) {
+        if (!session.directoryHandle) return sendRecorderMessage(message);
+        if (message.op === "abort") {
+            session.fileFailed = true;
+            if (session.fileWriter && !session.fileClosed) void session.fileWriter.abort().catch(() => {});
+            return { ok: true };
+        }
+        if (!session.fileWriter || session.fileFailed || session.fileClosed) return null;
+        try {
+            if (message.op === "write") {
+                const bytes = Uint8Array.from(atob(message.data), (char) => char.charCodeAt(0));
+                await fileOperation(session, session.fileWriter.write(bytes));
+            } else if (message.op === "finish") {
+                await fileOperation(session, session.fileWriter.close());
+                session.fileClosed = true;
+            }
+            return { ok: true };
+        } catch (_) {
+            return null;
         }
     }
 
@@ -416,6 +537,7 @@
 .chzzk_player:is(.miniplayer, .pip_mode) #${STATUS_ID} { display:none; }
 #${EDIT_ID} { display:block; }
 #${EDIT_ID}[hidden] { display:none; }
+#${ROW_ID} { cursor:pointer; }
 #${EDIT_ID} .${ID}-field { display:flex; gap:6px; align-items:center; }
 #${EDIT_ID} input { flex:1 1 auto; min-width:0; box-sizing:border-box; height:28px; padding:0 8px; border:1px solid rgba(255,255,255,.25); border-radius:4px; background:rgba(255,255,255,.08); color:inherit; font:inherit; font-size:12px; }
 #${EDIT_ID} input:focus-visible, #${EDIT_ID} button:focus-visible { outline:2px solid var(--bct-focus-ring); outline-offset:1px; }
@@ -508,15 +630,17 @@
     function renderMenu() {
         if (!menuRow) return;
         const folder = currentFolder();
-        menuValue.textContent = selectedDirectory?.directory || folderLabel(folder);
+        menuValue.textContent = choosingDirectory
+            ? "폴더 선택 중…"
+            : tabDirectory?.name || selectedDirectory?.directory || folderLabel(folder);
         editInput.hidden = editSave.hidden = Boolean(selectedDirectory?.directory);
-        menuButton.setAttribute("aria-expanded", String(expanded));
         editRow.hidden = !expanded;
         if (!expanded) return;
         let note;
-        if (selectedDirectory?.directory) note = selectedDirectory.directoryGranted
-            ? `‘${selectedDirectory.directory}’ 폴더에 저장해요. ‘폴더 선택’에서 바꿀 수 있어요.`
-            : "폴더 접근 권한이 필요해요. ‘폴더 선택’에서 다시 지정해 주세요.";
+        if (selectedDirectory?.directory)
+            note = selectedDirectory.directoryGranted
+                ? `‘${selectedDirectory.directory}’ 폴더에 저장해요. ‘폴더 선택’에서 바꿀 수 있어요.`
+                : "폴더 접근 권한이 필요해요. ‘폴더 선택’에서 다시 지정해 주세요.";
         else if (!folder) note = "비워 두면 Chrome 다운로드 폴더에 바로 저장해요.";
         else if (permission === false)
             note = `하위 폴더에 저장하려면 확장 옵션에서 다운로드 권한을 허용해 주세요. 지금은 다운로드 폴더에 저장해요.`;
@@ -538,21 +662,14 @@
         return active && menuRow?.isConnected && player?.isConnected && menuRow.parentElement === menu;
     }
 
-    function setExpanded(next) {
-        if (next === expanded) return;
-        expanded = next;
-        if (expanded) {
-            editInput.value = currentFolder();
-            refreshPermission();
-        }
-        renderMenu();
-        if (expanded) editInput.focus({ preventScroll: true });
+    function refreshFolderOnFocus() {
+        if (validMenuRow()) refreshPermission();
     }
 
     function onMenuRowClick(event) {
         event.stopPropagation();
-        if (!validMenuRow() || !menuButton.contains(event.target)) return;
-        setExpanded(!expanded);
+        if (!event.isTrusted || !validMenuRow()) return;
+        void choosePlayerDirectory();
     }
 
     function onMenuButtonKeyDown(event) {
@@ -560,7 +677,41 @@
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
         event.stopPropagation();
-        if (!event.repeat && validMenuRow()) setExpanded(!expanded);
+        if (event.isTrusted && !event.repeat && validMenuRow()) void choosePlayerDirectory();
+    }
+
+    async function choosePlayerDirectory() {
+        if (choosingDirectory || !validMenuRow()) return;
+        if (typeof window.showDirectoryPicker !== "function") {
+            showStatus("이 브라우저는 탐색기 폴더 선택을 지원하지 않아요. 확장 설정에서 저장 위치를 지정해 주세요.");
+            return;
+        }
+        const revision = ++directoryRevision;
+        choosingDirectory = true;
+        renderMenu();
+        try {
+            // Keep the picker in this actual click, before any asynchronous work consumes user activation.
+            const handle = await window.showDirectoryPicker({
+                id: "cheese-spanner-recording",
+                mode: "readwrite",
+                startIn: tabDirectory || "downloads",
+            });
+            if (revision !== directoryRevision || !active || hidden || disposed) return;
+            if ((await handle.queryPermission({ mode: "readwrite" })) !== "granted")
+                throw new Error("directory-permission");
+            if (revision !== directoryRevision || !active || hidden || disposed) return;
+            tabDirectory = handle;
+            renderMenu();
+            showStatus(`이 탭의 다음 녹화부터 ‘${handle.name}’ 폴더에 저장해요.`);
+        } catch (error) {
+            if (revision === directoryRevision && error.name !== "AbortError")
+                showStatus("폴더를 선택하지 못했어요. 폴더 접근을 허용한 뒤 다시 눌러 주세요.");
+        } finally {
+            if (revision === directoryRevision) {
+                choosingDirectory = false;
+                renderMenu();
+            }
+        }
     }
 
     function saveFolder(event) {
@@ -669,7 +820,7 @@
         menuButton.type = "button";
         menuButton.id = `${ROW_ID}-button`;
         menuButton.setAttribute("role", "menuitem");
-        menuButton.setAttribute("aria-controls", EDIT_ID);
+        menuButton.setAttribute("aria-haspopup", "dialog");
         const label = document.createElement("span");
         label.className = "pzp-ui-setting-home-item__label";
         label.textContent = "녹화 저장 폴더";
@@ -701,15 +852,11 @@
         const chooseDirectory = document.createElement("button");
         chooseDirectory.type = "button";
         chooseDirectory.textContent = "폴더 선택…";
-        chooseDirectory.title = "확장 설정에서 탐색기로 폴더 선택";
+        chooseDirectory.title = "탐색기에서 이 탭의 저장 폴더 선택";
         chooseDirectory.addEventListener("click", (event) => {
             event.stopPropagation();
             if (!event.isTrusted || !validMenuRow() || editRow.hidden) return;
-            const revision = saveRevision;
-            void sendRecorderMessage({ op: "folder-settings" }).then((result) => {
-                if (!result && revision === saveRevision && validMenuRow())
-                    editNote.textContent = "확장 설정을 열지 못했어요. 확장 아이콘에서 설정을 열어 주세요.";
-            });
+            void choosePlayerDirectory();
         });
         field.append(chooseDirectory);
         editNote = document.createElement("p");
@@ -730,9 +877,12 @@
         menu.addEventListener("keydown", onMenuNavigation, true);
         container.append(menuRow, editRow);
         renderMenu();
+        refreshPermission();
     }
 
     function removeMenu() {
+        directoryRevision++;
+        choosingDirectory = false;
         menu?.removeEventListener("keydown", onMenuNavigation, true);
         menuRow?.remove();
         editRow?.remove();
@@ -818,6 +968,7 @@
             schedule,
         });
         routeCleanup = startPageChangeDetection(onRouteChange);
+        window.addEventListener("focus", refreshFolderOnFocus);
         sync();
     }
 
@@ -825,6 +976,9 @@
         if (!active) return;
         if (recording) stopRecording();
         active = false;
+        directoryRevision++;
+        choosingDirectory = false;
+        window.removeEventListener("focus", refreshFolderOnFocus);
         schedule.cancel();
         discovery?.disconnectAll();
         discovery = null;

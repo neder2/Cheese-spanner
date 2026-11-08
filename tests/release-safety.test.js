@@ -12,6 +12,7 @@ const runtimeFiles = [
     "history.js",
     "historyBackup.js",
     "options.js",
+    "optionsRecordingDirectory.js",
     "optionsLiveStart.js",
     "optionsSettingsBackup.js",
 ];

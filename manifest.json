@@ -20,6 +20,7 @@
             "matches": ["https://chzzk.naver.com/*"],
             "js": [
                 "features/routeBridgePage.js",
+                "features/liveListRefreshPage.js",
                 "features/livePreviewFastHoverPage.js",
                 "features/chatTimestampPage.js",
                 "features/watchActivityPage.js",
@@ -115,6 +116,7 @@
                 "features/screenShortcuts.js",
                 "features/playerZoom.js",
                 "features/ambientGlow.js",
+                "shared/recordingDirectory.js",
                 "features/videoRecorder.js",
                 "features/chatMultiview.js",
                 "features/updateGuide.js"
