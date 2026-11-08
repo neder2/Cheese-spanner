@@ -176,7 +176,7 @@ function message(overrides = {}) {
     };
 }
 
-async function collectorFixture(t, { deferred = false } = {}) {
+async function collectorFixture(t, { deferred = false, identity = null, lateBridge = false } = {}) {
     const dom = new JSDOM(
         '<aside id="aside-chatting"><div role="log"><div class="_wrapper_8lqsk_25"></div></div></aside>',
         { url: "https://chzzk.naver.com/live/channel-a", runScripts: "outside-only", pretendToBeVisual: true }
@@ -185,19 +185,33 @@ async function collectorFixture(t, { deferred = false } = {}) {
     dom.window.Date.now = () => NOW;
     let resolveIdentity;
     const requests = [];
+    // Account re-check retries are run by the test instead of waiting for real seconds.
+    const retries = [];
+    if (identity) {
+        const realSetTimeout = dom.window.setTimeout.bind(dom.window);
+        dom.window.setTimeout = (fn, ms, ...args) => {
+            if (ms < 2000 || ms === 8000) return realSetTimeout(fn, ms, ...args);
+            retries.push({ fn, ms });
+            return 900000 + retries.length;
+        };
+        dom.window.clearTimeout = () => {};
+    }
     dom.window.fetch = async (url, options) => {
         requests.push({ url, options });
         if (deferred)
             await new Promise((resolve) => {
                 resolveIdentity = resolve;
             });
-        return { ok: true, json: async () => ({ code: 200, content: { loggedIn: true, userIdHash: "viewer" } }) };
+        const userIdHash = identity ? identity(requests.length) : "viewer";
+        if (userIdHash instanceof Error) throw userIdHash;
+        return { ok: true, json: async () => ({ code: 200, content: { loggedIn: true, userIdHash } }) };
     };
+    // A late bridge models the MAIN-world reader starting after the collector; loadBridge() starts it.
     for (const file of [
         "shared/settings.js",
         "shared/data.js",
         "content.js",
-        "features/watchActivityPage.js",
+        ...(lateBridge ? [] : ["features/watchActivityPage.js"]),
         "features/watchActivity.js",
     ])
         evalRepoScript(dom, file);
@@ -221,7 +235,17 @@ async function collectorFixture(t, { deferred = false } = {}) {
     collector.configure(config);
     await waitForCondition(() => requests.length === 1);
     if (!deferred) await new Promise((resolve) => setImmediate(resolve));
-    return { dom, captured, collector, config, append, requests, resolveIdentity: () => resolveIdentity?.() };
+    return {
+        dom,
+        captured,
+        collector,
+        config,
+        append,
+        requests,
+        retries,
+        resolveIdentity: () => resolveIdentity?.(),
+        loadBridge: () => evalRepoScript(dom, "features/watchActivityPage.js"),
+    };
 }
 
 test("collector reads acknowledged own messages and only identified CHAT donations from React data", async (t) => {
@@ -310,6 +334,525 @@ test("collector handles row reuse, chat remount, option changes, and SPA exit wi
     f.append(message({ time: NOW + 700 }));
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(f.captured.length, 2);
+});
+
+test("a failed account re-check pauses collection, retries, and never trusts the earlier account", async (t) => {
+    const answers = ["viewer", new TypeError("Failed to fetch"), new TypeError("Failed to fetch"), "viewer", "viewer"];
+    const f = await collectorFixture(t, { identity: (count) => answers[count - 1] });
+    f.append();
+    await waitForCondition(() => f.captured.length === 1);
+    // Returning to the tab re-checks the account; the check fails twice.
+    f.dom.window.document.dispatchEvent(new f.dom.window.Event("visibilitychange"));
+    await waitForCondition(() => f.retries.length === 1);
+    f.append(message({ time: NOW + 200, originalContent: "확인 중 채팅" }));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 1, "nothing is collected while the account is unconfirmed");
+    f.retries[0].fn();
+    await waitForCondition(() => f.retries.length === 2);
+    assert.equal(f.captured.length, 1);
+    assert.ok(f.retries[1].ms > f.retries[0].ms, "retries back off");
+    // The retry confirms the account again and the waiting row is collected.
+    f.retries[1].fn();
+    // A confirmed account rescans the log; the owner deduplicates rows it already stored.
+    await waitForCondition(() => f.captured.some((row) => row.value.text === "확인 중 채팅"));
+    assert.equal(f.requests.length, 4);
+    // A stopped collector never runs a pending retry.
+    f.dom.window.document.dispatchEvent(new f.dom.window.Event("visibilitychange"));
+    await new Promise((resolve) => setImmediate(resolve));
+    f.collector.stop();
+    for (const retry of f.retries) retry.fn();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.requests.length, 5);
+});
+
+test("a re-check that returns another account never collects the earlier account's chat", async (t) => {
+    const answers = ["viewer", new TypeError("Failed to fetch"), "other-viewer"];
+    const f = await collectorFixture(t, { identity: (count) => answers[count - 1] });
+    f.dom.window.document.dispatchEvent(new f.dom.window.Event("visibilitychange"));
+    await waitForCondition(() => f.retries.length === 1);
+    f.append(message({ time: NOW + 200 }));
+    f.retries[0].fn();
+    await waitForCondition(() => f.requests.length === 3);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 0);
+});
+
+test("own chat left in the log by the previous channel is not collected for the next channel even when redrawn", async (t) => {
+    const f = await collectorFixture(t);
+    const oldRow = f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    await waitForCondition(() => f.captured.length === 1);
+    assert.equal(f.captured[0].channel, "channel-a");
+    // SPA move: the server clock is ahead, so the old message time is after the new channel's local start time.
+    f.dom.window.history.pushState({}, "", "/live/channel-b");
+    f.collector.configure({ ...f.config, channelId: "channel-b", since: NOW + 50 });
+    await waitForCondition(() => f.requests.length === 2);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 1, "the row already in the log stays with the previous channel");
+    // The same message redrawn as a new row is still the previous channel's.
+    oldRow.remove();
+    f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 1);
+    f.append(message({ time: NOW + 400, originalContent: "새 채널 채팅" }));
+    await waitForCondition(() => f.captured.length === 2);
+    assert.deepEqual(
+        { channel: f.captured[1].channel, text: f.captured[1].value.text },
+        { channel: "channel-b", text: "새 채널 채팅" }
+    );
+});
+
+test("a row React reuses for the next channel's new message is collected while the old message stays retired", async (t) => {
+    const f = await collectorFixture(t);
+    const row = f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    await waitForCondition(() => f.captured.length === 1);
+    f.dom.window.history.pushState({}, "", "/live/channel-b");
+    f.collector.configure({ ...f.config, channelId: "channel-b", since: NOW + 50 });
+    await waitForCondition(() => f.requests.length === 2);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 1);
+    // The same DOM row now shows a new message written in the next channel.
+    row.__reactProps$fixture.children.props.chatMessage = message({ time: NOW + 300, originalContent: "새 채널 채팅" });
+    row.textContent = "새 채널 채팅";
+    await waitForCondition(() => f.captured.length === 2);
+    assert.deepEqual(
+        { channel: f.captured[1].channel, text: f.captured[1].value.text },
+        { channel: "channel-b", text: "새 채널 채팅" }
+    );
+    // The previous channel's message redrawn as a new node is still not taken.
+    f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 2);
+    // A reused row's message never moves the boundary, so a later new row is still collected.
+    f.append(message({ time: NOW + 200, originalContent: "다음 새 채널 채팅" }));
+    await waitForCondition(() => f.captured.length === 3);
+    assert.equal(f.captured[2].value.text, "다음 새 채널 채팅");
+});
+
+// The owner ends a session with stop() and starts the next channel with configure(), so the earlier account must
+// survive stop() to recognize the previous channel's rows; it never collects for the next channel by itself.
+test("after the owner's stop, the previous channel's row stays apart through same-message DOM changes", async (t) => {
+    const f = await collectorFixture(t);
+    const oldRow = f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    const otherRow = f.append(message({ user: "someone-else", time: NOW + 120, originalContent: "남의 채팅" }));
+    await waitForCondition(() => f.captured.length === 1);
+    f.dom.window.history.pushState({}, "", "/live/channel-b");
+    f.collector.stop();
+    f.collector.configure({ ...f.config, channelId: "channel-b", since: NOW + 50 });
+    // Before the account check answers, the same message is redrawn in place: text edit and an added child.
+    oldRow.firstChild.data = "이전 채널 채팅 (표시 변경)";
+    const decoration = f.dom.window.document.createElement("span");
+    decoration.textContent = "12:00";
+    oldRow.appendChild(decoration);
+    await waitForCondition(() => f.requests.length === 2);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 1, "the previous channel's message is not collected for the next channel");
+    // The same message redrawn as a new node stays out too.
+    f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 1);
+    // Another viewer's row reused for the user's new message on the next channel is collected.
+    otherRow.__reactProps$fixture.children.props.chatMessage = message({
+        time: NOW + 300,
+        originalContent: "새 채널 채팅",
+    });
+    otherRow.textContent = "새 채널 채팅";
+    await waitForCondition(() => f.captured.length === 2);
+    assert.deepEqual(
+        { channel: f.captured[1].channel, text: f.captured[1].value.text },
+        { channel: "channel-b", text: "새 채널 채팅" }
+    );
+});
+
+// The page reader tells another author's row apart from a row it cannot read, and reports nothing of its content.
+test("the page reader marks another author's row without its content and leaves unreadable rows empty", async (t) => {
+    const f = await collectorFixture(t);
+    const read = (row) => {
+        row.setAttribute("data-bcwa-user", "viewer");
+        row.dispatchEvent(new f.dom.window.Event("cheese-spanner:watch-activity-source", { bubbles: true }));
+        const source = row.getAttribute("data-bcwa-source");
+        row.removeAttribute("data-bcwa-source");
+        row.removeAttribute("data-bcwa-user");
+        return source;
+    };
+    const other = f.append(message({ user: "someone-else", originalContent: "남의 비밀 채팅" }));
+    // Only the message identity in activity-ID form is reported: no content, time field, kind, or amount.
+    assert.deepEqual(JSON.parse(read(other)), { otherAuthor: true, id: `someone-else:${NOW + 100}:1` });
+    // A message without a valid identity could never be an account's activity, so only the mark is reported.
+    for (const overrides of [{ time: "later" }, { type: undefined }, { user: "다른 사람" }]) {
+        const row = f.append(message({ user: "someone-else", originalContent: "남의 비밀 채팅", ...overrides }));
+        assert.equal(read(row), '{"otherAuthor":true}');
+    }
+    const unreadable = f.append(message());
+    delete unreadable.__reactProps$fixture.children.props.chatMessage;
+    assert.equal(read(unreadable), null);
+    const ownBlind = f.append(message({ status: "BLIND" }));
+    assert.equal(read(ownBlind), null, "the user's own message in another state is not another author's");
+    const own = f.append(message({ time: NOW + 200 }));
+    assert.equal(JSON.parse(read(own)).id, `viewer:${NOW + 200}:1`);
+});
+
+// "Another author" is judged against the account known at the move. When the next channel confirms a different
+// account, the previous channel's rows of that account must not be collected as the next channel's chat.
+test("a different account confirmed after the move does not collect its previous channel rows released as another's", async (t) => {
+    const answers = ["viewer", "viewer-b"];
+    const f = await collectorFixture(t, { identity: (count) => answers[count - 1] });
+    f.append(message({ time: NOW + 100, originalContent: "이전 채널 A 채팅" }));
+    const accountBRow = f.append(message({ user: "viewer-b", time: NOW + 120, originalContent: "이전 채널 B 채팅" }));
+    const thirdRow = f.append(message({ user: "someone-else", time: NOW + 130, originalContent: "남의 채팅" }));
+    await waitForCondition(() => f.captured.length === 1);
+    f.dom.window.history.pushState({}, "", "/live/channel-b");
+    f.collector.stop();
+    f.collector.configure({ ...f.config, channelId: "channel-b", since: NOW + 50 });
+    await waitForCondition(() => f.requests.length === 2);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 1, "account B's row from the previous channel is not collected");
+    // Its in-place redraw and its redraw as a new node stay out as well.
+    accountBRow.firstChild.data = "이전 채널 B 채팅 (표시 변경)";
+    f.append(message({ user: "viewer-b", time: NOW + 120, originalContent: "이전 채널 B 채팅" }));
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 1);
+    // A row that is another author's for account B too stays free: its reuse for B's new message is collected.
+    thirdRow.__reactProps$fixture.children.props.chatMessage = message({
+        user: "viewer-b",
+        time: NOW + 300,
+        originalContent: "새 채널 B 채팅",
+    });
+    thirdRow.textContent = "새 채널 B 채팅";
+    await waitForCondition(() => f.captured.length === 2);
+    assert.deepEqual(
+        f.captured.map((row) => [row.channel, row.value.text]),
+        [
+            ["channel-a", "이전 채널 A 채팅"],
+            ["channel-b", "새 채널 B 채팅"],
+        ]
+    );
+});
+
+// The rows read at the move are kept apart by message identity, not by DOM node: while account B's check is still
+// pending, React may drop B's previous-channel row and draw the same message as a new node.
+test("account B's previous channel message redrawn as a new node before B's check answers stays out", async (t) => {
+    const answers = ["viewer", "viewer-b", "viewer-b"];
+    const f = await collectorFixture(t, { deferred: true, identity: (count) => answers[count - 1] });
+    f.resolveIdentity();
+    f.append(message({ time: NOW + 100, originalContent: "이전 채널 A 채팅" }));
+    const accountBRow = f.append(message({ user: "viewer-b", time: NOW + 120, originalContent: "이전 채널 B 채팅" }));
+    await waitForCondition(() => f.captured.length === 1);
+    f.dom.window.history.pushState({}, "", "/live/channel-b");
+    f.collector.stop();
+    f.collector.configure({ ...f.config, channelId: "channel-b", since: NOW + 50 });
+    await waitForCondition(() => f.requests.length === 2);
+    accountBRow.remove();
+    f.append(message({ user: "viewer-b", time: NOW + 120, originalContent: "이전 채널 B 채팅" }));
+    f.append(message({ user: "viewer-b", time: NOW + 300, originalContent: "새 채널 B 채팅" }));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 1, "nothing is collected while the account is unconfirmed");
+    f.resolveIdentity();
+    await waitForCondition(() => f.captured.length >= 2);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(
+        f.captured.map((row) => [row.channel, row.value.text]),
+        [
+            ["channel-a", "이전 채널 A 채팅"],
+            ["channel-b", "새 채널 B 채팅"],
+        ]
+    );
+    f.append(message({ user: "viewer-b", time: NOW + 400, originalContent: "다음 새 채널 B 채팅" }));
+    await waitForCondition(() => f.captured.length === 3);
+    // A stopped collector cancels its pending re-check and collects nothing after it.
+    f.dom.window.document.dispatchEvent(new f.dom.window.Event("visibilitychange"));
+    await waitForCondition(() => f.requests.length === 3);
+    f.collector.stop();
+    assert.equal(f.requests[2].options.signal.aborted, true);
+    f.resolveIdentity();
+    f.append(message({ user: "viewer-b", time: NOW + 500, originalContent: "정지 뒤 채팅" }));
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 3);
+});
+
+// Without any confirmed account at the move the rows are still read for their message identity, so the previous
+// channel's own message redrawn as a new node before the check answers stays out; a new message is collected.
+test("rows left before any account was confirmed stay out when redrawn as new nodes before the check answers", async (t) => {
+    const f = await collectorFixture(t, { deferred: true });
+    const oldRow = f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    const otherRow = f.append(message({ user: "someone-else", time: NOW + 110, originalContent: "남의 채팅" }));
+    f.dom.window.history.pushState({}, "", "/live/channel-b");
+    f.collector.stop();
+    f.collector.configure({ ...f.config, channelId: "channel-b", since: NOW + 50 });
+    await waitForCondition(() => f.requests.length === 2);
+    oldRow.remove();
+    otherRow.remove();
+    f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    f.append(message({ time: NOW + 300, originalContent: "새 채널 채팅" }));
+    await new Promise((resolve) => setImmediate(resolve));
+    f.resolveIdentity();
+    await waitForCondition(() => f.captured.length >= 1);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(
+        f.captured.map((row) => [row.channel, row.value.text]),
+        [["channel-b", "새 채널 채팅"]]
+    );
+});
+
+test("the account kept across the owner's stop never collects on the next channel by itself", async (t) => {
+    const answers = ["viewer", new TypeError("Failed to fetch")];
+    const f = await collectorFixture(t, { identity: (count) => answers[count - 1] });
+    f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    await waitForCondition(() => f.captured.length === 1);
+    f.dom.window.history.pushState({}, "", "/live/channel-b");
+    f.collector.stop();
+    f.collector.configure({ ...f.config, channelId: "channel-b", since: NOW + 50 });
+    // The next channel's account check fails, so the kept account only marks old rows.
+    await waitForCondition(() => f.retries.length === 1);
+    f.append(message({ time: NOW + 400, originalContent: "새 채널 채팅" }));
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 1, "nothing is collected until the account is confirmed again");
+});
+
+test("rows left at the move stay apart until the page reader that starts late can read them", async (t) => {
+    const f = await collectorFixture(t, { lateBridge: true });
+    const oldRow = f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    f.dom.window.history.pushState({}, "", "/live/channel-b");
+    f.collector.stop();
+    f.collector.configure({ ...f.config, channelId: "channel-b", since: NOW + 50 });
+    await waitForCondition(() => f.requests.length === 2);
+    // The account is confirmed while the reader is not listening yet, so every read comes back empty.
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    oldRow.firstChild.data = "이전 채널 채팅 (표시 변경)";
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 0);
+    // The reader starts and announces itself; the row's first readable message is the previous channel's.
+    f.loadBridge();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 0, "an empty read before the reader started does not release the row");
+    f.append(message({ time: NOW + 400, originalContent: "새 채널 채팅" }));
+    await waitForCondition(() => f.captured.length === 1);
+    assert.equal(f.captured[0].value.text, "새 채널 채팅");
+});
+
+// The account and the reader are both ready, yet one own row reads as nothing at the move (its React data is briefly
+// missing). Only a row the reader confirms as another viewer's is free to collect later; this one is held.
+test("an own row the ready reader cannot read at the move stays apart when its message reads again", async (t) => {
+    const f = await collectorFixture(t);
+    const oldRow = f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    await waitForCondition(() => f.captured.length === 1);
+    const oldMessage = oldRow.__reactProps$fixture.children.props.chatMessage;
+    delete oldRow.__reactProps$fixture.children.props.chatMessage;
+    assert.ok(f.dom.window.document.documentElement.hasAttribute("data-cheese-spanner-watch-activity-page-ready"));
+    f.dom.window.history.pushState({}, "", "/live/channel-b");
+    f.collector.stop();
+    f.collector.configure({ ...f.config, channelId: "channel-b", since: NOW + 50 });
+    await waitForCondition(() => f.requests.length === 2);
+    await new Promise((resolve) => setImmediate(resolve));
+    // The same message reads again and its row is redrawn in place on the next channel.
+    oldRow.__reactProps$fixture.children.props.chatMessage = oldMessage;
+    oldRow.firstChild.data = "이전 채널 채팅 (표시 변경)";
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 1, "the previous channel's message is not collected for the next channel");
+    // Its later redraw as a new node stays out, and a new message on the next channel is collected.
+    f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    f.append(message({ time: NOW + 400, originalContent: "새 채널 채팅" }));
+    await waitForCondition(() => f.captured.length === 2);
+    assert.deepEqual(
+        f.captured.map((row) => [row.channel, row.value.text]),
+        [
+            ["channel-a", "이전 채널 채팅"],
+            ["channel-b", "새 채널 채팅"],
+        ]
+    );
+});
+
+async function settle(times = 3) {
+    for (let index = 0; index < times; index += 1) await new Promise((resolve) => setImmediate(resolve));
+}
+
+// The collector already read this message on the previous channel, so the baseline does not depend on the row being
+// readable at the move: the original node is unreadable, React drops it, and the same message comes back as a new
+// node before the next account check answers.
+test("own chat collected on the previous channel stays out when its unreadable row is redrawn as a new node", async (t) => {
+    const f = await collectorFixture(t, { deferred: true });
+    f.resolveIdentity();
+    const oldRow = f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    await waitForCondition(() => f.captured.length === 1);
+    delete oldRow.__reactProps$fixture.children.props.chatMessage;
+    f.dom.window.history.pushState({}, "", "/live/channel-b");
+    f.collector.stop();
+    f.collector.configure({ ...f.config, channelId: "channel-b", since: NOW + 50 });
+    await waitForCondition(() => f.requests.length === 2);
+    oldRow.remove();
+    f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    await settle(1);
+    f.resolveIdentity();
+    await settle();
+    assert.equal(f.captured.length, 1, "the previous channel's message is not collected for the next channel");
+    // A genuinely new message on the next channel is collected.
+    f.append(message({ time: NOW + 300, originalContent: "새 채널 채팅" }));
+    await waitForCondition(() => f.captured.length === 2);
+    assert.deepEqual(
+        f.captured.map((row) => [row.channel, row.value.text]),
+        [
+            ["channel-a", "이전 채널 채팅"],
+            ["channel-b", "새 채널 채팅"],
+        ]
+    );
+    // A stopped collector cancels its pending re-check and collects nothing after it.
+    f.dom.window.document.dispatchEvent(new f.dom.window.Event("visibilitychange"));
+    await waitForCondition(() => f.requests.length === 3);
+    f.collector.stop();
+    assert.equal(f.requests[2].options.signal.aborted, true);
+    f.resolveIdentity();
+    f.append(message({ time: NOW + 500, originalContent: "정지 뒤 채팅" }));
+    await settle();
+    assert.equal(f.captured.length, 2);
+});
+
+// The held original row never reads again; the same message is drawn as a new node first. A message read before
+// the move is kept out by its carried identity, and an older message never read is kept out by the carried
+// own-message time.
+test("unreadable rows at the move whose messages first read again in new nodes stay out by carried identity and time", async (t) => {
+    const f = await collectorFixture(t);
+    const neverRead = f.append(message({ time: NOW + 100, originalContent: "읽지 못한 이전 채팅" }));
+    const neverReadMessage = neverRead.__reactProps$fixture.children.props.chatMessage;
+    delete neverRead.__reactProps$fixture.children.props.chatMessage;
+    const collected = f.append(message({ time: NOW + 150, originalContent: "이전 채널 채팅" }));
+    await waitForCondition(() => f.captured.length === 1);
+    delete collected.__reactProps$fixture.children.props.chatMessage;
+    f.dom.window.history.pushState({}, "", "/live/channel-b");
+    f.collector.stop();
+    f.collector.configure({ ...f.config, channelId: "channel-b", since: NOW + 50 });
+    await waitForCondition(() => f.requests.length === 2);
+    await settle();
+    // New nodes come first; the original rows stay in the log, unreadable, and keep changing.
+    f.append(message({ time: NOW + 150, originalContent: "이전 채널 채팅" }));
+    f.append({ ...neverReadMessage });
+    collected.firstChild.data = "이전 채널 채팅 (표시 변경)";
+    neverRead.firstChild.data = "읽지 못한 이전 채팅 (표시 변경)";
+    await settle();
+    assert.equal(f.captured.length, 1, "neither previous channel message is collected for the next channel");
+    f.append(message({ time: NOW + 300, originalContent: "새 채널 채팅" }));
+    await waitForCondition(() => f.captured.length === 2);
+    assert.deepEqual(
+        f.captured.map((row) => [row.channel, row.value.text]),
+        [
+            ["channel-a", "이전 채널 채팅"],
+            ["channel-b", "새 채널 채팅"],
+        ]
+    );
+});
+
+// Another author's message read on the previous channel is carried by identity too, so it stays out when that
+// author's account is confirmed next and its row, unreadable at the move, is redrawn as a new node.
+test("another author's message read before the move stays out for that account after an unreadable redraw", async (t) => {
+    const answers = ["viewer", "viewer-b"];
+    const f = await collectorFixture(t, { identity: (count) => answers[count - 1] });
+    f.append(message({ time: NOW + 100, originalContent: "이전 채널 A 채팅" }));
+    const accountBRow = f.append(message({ user: "viewer-b", time: NOW + 120, originalContent: "이전 채널 B 채팅" }));
+    await waitForCondition(() => f.captured.length === 1);
+    await settle();
+    delete accountBRow.__reactProps$fixture.children.props.chatMessage;
+    f.dom.window.history.pushState({}, "", "/live/channel-b");
+    f.collector.stop();
+    f.collector.configure({ ...f.config, channelId: "channel-b", since: NOW + 50 });
+    accountBRow.remove();
+    f.append(message({ user: "viewer-b", time: NOW + 120, originalContent: "이전 채널 B 채팅" }));
+    await waitForCondition(() => f.requests.length === 2);
+    await settle();
+    assert.equal(f.captured.length, 1, "account B's previous channel message is not collected");
+    f.append(message({ user: "viewer-b", time: NOW + 300, originalContent: "새 채널 B 채팅" }));
+    await waitForCondition(() => f.captured.length === 2);
+    assert.deepEqual(
+        f.captured.map((row) => [row.channel, row.value.text]),
+        [
+            ["channel-a", "이전 채널 A 채팅"],
+            ["channel-b", "새 채널 B 채팅"],
+        ]
+    );
+});
+
+// "Another author" without an identity is only a statement about the fields read at the move. If they fill in later
+// and the account confirmed next is that author, the row is still held: its first own readable message is retired.
+test("another author's row without an identity at the move stays apart when its fields fill in for that account", async (t) => {
+    const answers = ["viewer", "viewer-b"];
+    const f = await collectorFixture(t, { deferred: true, identity: (count) => answers[count - 1] });
+    f.resolveIdentity();
+    f.append(message({ time: NOW + 100, originalContent: "이전 채널 A 채팅" }));
+    const partial = f.append(message({ user: "viewer-b", time: undefined, originalContent: "이전 채널 B 채팅" }));
+    await waitForCondition(() => f.captured.length === 1);
+    f.dom.window.history.pushState({}, "", "/live/channel-b");
+    f.collector.stop();
+    f.collector.configure({ ...f.config, channelId: "channel-b", since: NOW + 50 });
+    await waitForCondition(() => f.requests.length === 2);
+    partial.__reactProps$fixture.children.props.chatMessage = message({
+        user: "viewer-b",
+        time: NOW + 120,
+        originalContent: "이전 채널 B 채팅",
+    });
+    partial.firstChild.data = "이전 채널 B 채팅 (표시 변경)";
+    await settle(1);
+    f.resolveIdentity();
+    await settle();
+    assert.equal(f.captured.length, 1, "the row's message from before the move is not collected");
+    // Its redraw as a new node stays out because the held row retired it; a new message is collected.
+    f.append(message({ user: "viewer-b", time: NOW + 120, originalContent: "이전 채널 B 채팅" }));
+    f.append(message({ user: "viewer-b", time: NOW + 300, originalContent: "새 채널 B 채팅" }));
+    await waitForCondition(() => f.captured.length === 2);
+    assert.deepEqual(
+        f.captured.map((row) => [row.channel, row.value.text]),
+        [
+            ["channel-a", "이전 채널 A 채팅"],
+            ["channel-b", "새 채널 B 채팅"],
+        ]
+    );
+});
+
+// Without a confirmed account the row's message identity is unknown, so a content change (same message decorated or
+// a reused row) cannot tell old from new; such rows stay apart until their first readable message, which is retired.
+// With a confirmed account the reused row is collected (see the React reuse tests above and below).
+test("rows left by the previous channel before the account is confirmed stay apart even when their content changes", async (t) => {
+    const f = await collectorFixture(t, { deferred: true });
+    const sameMessage = f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    const reused = f.append(message({ time: NOW + 110, originalContent: "이전 채널 다른 채팅" }));
+    f.dom.window.history.pushState({}, "", "/live/channel-b");
+    f.collector.stop();
+    f.collector.configure({ ...f.config, channelId: "channel-b", since: NOW + 50 });
+    await waitForCondition(() => f.requests.length === 2);
+    // While the account check is pending, both rows change: one keeps its message and gains a decoration, the other
+    // is reused for a new message. Neither change says which message the row held at the move.
+    const decoration = f.dom.window.document.createElement("span");
+    decoration.textContent = "12:00";
+    reused.appendChild(decoration);
+    sameMessage.firstChild.data = "이전 채널 채팅 (표시 변경)";
+    reused.__reactProps$fixture.children.props.chatMessage = message({
+        time: NOW + 300,
+        originalContent: "새 채널 채팅",
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    f.resolveIdentity();
+    await waitForCondition(() => f.requests.length === 2);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(f.captured, [], "a row from before the move is never collected");
+    // The kept message was read first as the previous channel's, so its redraw stays out.
+    sameMessage.remove();
+    f.append(message({ time: NOW + 100, originalContent: "이전 채널 채팅" }));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.captured.length, 0);
+    // A new row after the move is collected.
+    f.append(message({ time: NOW + 400, originalContent: "다음 새 채널 채팅" }));
+    await waitForCondition(() => f.captured.length === 1);
+    assert.deepEqual(
+        f.captured.map((row) => [row.channel, row.value.text]),
+        [["channel-b", "다음 새 채널 채팅"]]
+    );
 });
 
 test("a late identity response cannot restart a disabled collector", async (t) => {
@@ -483,7 +1026,7 @@ function liveDetail(content = {}) {
     };
 }
 
-async function liveHistoryFixture(t, { detail, pausedVideo = false }) {
+async function liveHistoryFixture(t, { detail, pausedVideo = false, failDetail = false }) {
     const chrome = createFakeChrome({
         sync: {
             liveWatchHistoryEnabled: true,
@@ -497,7 +1040,7 @@ async function liveHistoryFixture(t, { detail, pausedVideo = false }) {
         { url: `https://chzzk.naver.com/live/${LIVE_CHANNEL}`, runScripts: "outside-only", pretendToBeVisual: true }
     );
     dom.window.chrome = chrome;
-    const f = { chrome, dom, detail, elapsed: 0, identityRequests: 0, paused: true };
+    const f = { chrome, dom, detail, elapsed: 0, identityRequests: 0, paused: true, failDetail };
     dom.window.Date.now = () => NOW + f.elapsed;
     Object.defineProperty(dom.window.performance, "now", { value: () => f.elapsed });
     const intervals = new Map();
@@ -623,6 +1166,65 @@ test("live history keeps chat unattached when live-detail omits the status and t
     assert.deepEqual(f.activityTexts("live:100"), ["방송 확인 후 채팅"]);
 });
 
+test("an SPA move keeps the previous channel's own chat out of the next channel's record", async (t) => {
+    const f = await liveHistoryFixture(t, { detail: liveDetail() });
+    f.appendChat("이전 채널 채팅");
+    await f.settle();
+    await waitForCondition(() => f.activityTexts("live:100").length === 1);
+    const oldRow = f.dom.window.document.querySelector("[class*='_item_']");
+    f.detail = liveDetail({ liveId: "200", channel: { channelId: OTHER_CHANNEL, channelName: "B채널" } });
+    // The route change ends the session (collector stop) and starts the next channel's one (configure).
+    f.dom.window.history.pushState({}, "", `/live/${OTHER_CHANNEL}`);
+    f.dom.window.dispatchEvent(
+        new f.dom.window.CustomEvent("cheese-spanner:routechange", {
+            detail: { href: f.dom.window.location.href, source: "test" },
+        })
+    );
+    // The old row is still in the log and its same message is redrawn in place before the account is confirmed.
+    oldRow.firstChild.data = "이전 채널 채팅 (표시 변경)";
+    await waitForCondition(() => f.identityRequests === 2);
+    await f.settle();
+    await f.settle();
+    f.elapsed += 1000;
+    f.appendChat("새 채널 채팅");
+    await f.settle();
+    await waitForCondition(() => f.activityTexts("live:200").includes("새 채널 채팅"));
+    assert.deepEqual(f.activityTexts("live:200"), ["새 채널 채팅"]);
+    assert.deepEqual(f.activityTexts("live:100"), ["이전 채널 채팅"]);
+});
+
+test("an SPA move keeps the previous channel's own chat out even when its row briefly reads as nothing", async (t) => {
+    const f = await liveHistoryFixture(t, { detail: liveDetail() });
+    f.appendChat("이전 채널 채팅");
+    await f.settle();
+    await waitForCondition(() => f.activityTexts("live:100").length === 1);
+    const oldRow = f.dom.window.document.querySelector("[class*='_item_']");
+    const props = oldRow.__reactProps$fixture.children.props;
+    const oldMessage = props.chatMessage;
+    // The reader is listening and the account was confirmed, but this row's React data is missing at the move.
+    delete props.chatMessage;
+    f.detail = liveDetail({ liveId: "200", channel: { channelId: OTHER_CHANNEL, channelName: "B채널" } });
+    f.dom.window.history.pushState({}, "", `/live/${OTHER_CHANNEL}`);
+    f.dom.window.dispatchEvent(
+        new f.dom.window.CustomEvent("cheese-spanner:routechange", {
+            detail: { href: f.dom.window.location.href, source: "test" },
+        })
+    );
+    await waitForCondition(() => f.identityRequests === 2);
+    await f.settle();
+    // The same message reads again and is redrawn in place.
+    props.chatMessage = oldMessage;
+    oldRow.firstChild.data = "이전 채널 채팅 (표시 변경)";
+    await f.settle();
+    await f.settle();
+    f.elapsed += 1000;
+    f.appendChat("새 채널 채팅");
+    await f.settle();
+    await waitForCondition(() => f.activityTexts("live:200").includes("새 채널 채팅"));
+    assert.deepEqual(f.activityTexts("live:200"), ["새 채널 채팅"]);
+    assert.deepEqual(f.activityTexts("live:100"), ["이전 채널 채팅"]);
+});
+
 test("live history neither attaches nor discards chat on another channel's live-detail", async (t) => {
     const f = await liveHistoryFixture(t, {
         detail: liveDetail({ liveId: "200", channel: { channelId: OTHER_CHANNEL, channelName: "B채널" } }),
@@ -742,6 +1344,28 @@ test("live history stops attaching chat once live-detail keeps failing after the
     await waitForCondition(() => f.activityTexts("live:101").length === 1);
     assert.deepEqual(f.activityTexts("live:100"), ["확인된 방송 채팅", "한 번 실패 뒤 채팅"]);
     assert.deepEqual(f.activityTexts("live:101"), ["새 방송 채팅"]);
+});
+
+test("chat from a provisional session whose lookups keep failing never moves to the first broadcast confirmed later", async (t) => {
+    const f = await liveHistoryFixture(t, { detail: liveDetail(), pausedVideo: true, failDetail: true });
+    f.appendChat("오프라인 채팅");
+    await f.settle();
+    for (let failures = 0; failures < 2; failures += 1) {
+        f.elapsed += METADATA_REFRESH_MS;
+        await f.refresh();
+    }
+    f.appendChat("계속 실패 중 채팅");
+    await f.settle();
+    assert.deepEqual(f.entries(), {});
+
+    // The channel starts a broadcast and the lookup finally answers.
+    f.failDetail = false;
+    f.elapsed += METADATA_REFRESH_MS;
+    await f.refresh();
+    f.appendChat("방송 채팅");
+    await waitForCondition(() => f.activityTexts("live:100").length === 1);
+    await f.settle();
+    assert.deepEqual(f.activityTexts("live:100"), ["방송 채팅"]);
 });
 
 test("live history resumes chat when the same broadcast is confirmed again after repeated failures", async (t) => {

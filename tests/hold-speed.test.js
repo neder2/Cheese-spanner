@@ -167,6 +167,7 @@ function createFixture({
                 document.head.appendChild(style);
             },
             isLiveRoute: () => /^\/live(?:\/|$)/.test(window.location.pathname),
+            isNativeAdBreakActive: () => false,
             isPlaybackRoute: () => /^\/(?:live|video)(?:\/|$)/.test(window.location.pathname),
             isVodRoute: () => /^\/video(?:\/|$)/.test(window.location.pathname),
             startPageChangeDetection(callback) {

@@ -19,6 +19,8 @@
 
 MAIN world와 isolated world는 JavaScript 전역을 공유하지 않아요. 공유 DOM의 속성과 이벤트만 경계를 건너며, 옵션 객체나 React 객체를 직접 넘기지 않아요. 페이지 측에서 읽을 수 있는 DOM 속성을 확장 전용 비밀 저장소로 취급하지 않아요.
 
+블라인드 원문은 기존 `chatTimestampPage.js`가 현재 행에서 가장 가까운 메시지의 식별값·작성자·시각·상태와 원문만 동기 응답해요. `chatTools/parser.js`는 현재 DOM과 응답을 다시 검증하고 즉시 응답 속성을 지워요. `messageStore.js`는 방송 이동 전 메시지의 재표시를 막는 제한된 식별값 집합을 관리하며, 네이티브 원문이 없거나 검증에 실패하면 DOM 캐시로 대신하지 않아요. 이 경로는 확장 저장소·background·외부 요청으로 연결되지 않아요.
+
 현재 정적 MAIN 파일은 `routeBridgePage`, `livePreviewFastHoverPage`, `chatTimestampPage`, `watchActivityPage`, `autoQualityPage`, `volumeControlsPage`, `volumeWheelPage`, `adblockPopupPage`예요. `adblockPopupPage`는 isolated `adblockPopup`의 동기 요청을 받았을 때만 확인형 안내의 확인 동작을 확인·실행하고 옵션·관찰은 소유하지 않아요. `adVideoPage.js`는 여기에 포함되지 않고 저장된 광고 옵션에 맞춰 별도로 동적 등록돼요. 실제 파일 목록과 순서는 manifest·등록 코드를 다시 확인해요.
 
 ## 의존 방향
@@ -77,3 +79,7 @@ shared/updateGuide.js는 패키지에 포함된 버전별 제목·설명·목적
 상위 버전 설치 이벤트 → 현재 버전 자료와 옵션 확인 → 대기 상태 저장 → 보이는 콘텐츠 문서의 예약 → 소비 저장과 승인 응답 → 작은 알림 표시 순서예요. 소비 저장보다 먼저 UI를 공개하지 않아요. 오래된 공지 정리는 별도의 퇴역 키만 대상으로 유지해요.
 
 shared/updateGuideView.js는 치지직과 옵션의 비모달 카드를 공용으로 렌더링해요. optionsUpdateGuide.js는 사용자가 누른 다시보기를 현재 팝업의 치지직 탭 또는 자신의 문서에 연결해요. options.js의 제한된 목적지 탐색은 기존 탭·그룹·검색 기능을 사용해 설정을 보여주며 저장 로직을 실행하지 않아요.
+
+## 채팅 메뉴의 문구 설정
+
+채팅 메뉴의 문구 편집은 `features/chatTools/keywordSettings.js`가 소유해요. 네이티브 상단 더보기 메뉴에 확장 항목과 관리 패널만 붙이고 기존 채팅 DOM·필터 수집 로직은 바꾸지 않아요. `shared/uiTheme.js` 뒤, 플레이어 단축키보다 먼저 로드해 패널 입력의 키보드 동작을 보호하며 설정 저장 큐로 두 옵션만 요청해요. 실제 숨김은 기존 `chatTools.js`가 설정 변경을 받아 수행해요.

@@ -7,6 +7,7 @@ module.exports = [
             ".dryforge/**",
             "node_modules/**",
             "backups/**",
+            "output/**",
             "coverage/**",
             "dist/**",
             "vendor/**",

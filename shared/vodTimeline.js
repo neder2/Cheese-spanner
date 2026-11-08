@@ -4,7 +4,9 @@
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트. content.js가 구성한 CheeseSpanner.utils를 사용하며
  *   네트워크 요청, DOM 조작, storage 접근 없이 순수 계산과 연결 세그먼트 순회만 담당한다.
  * 공개 API: CheeseSpanner.vodTimeline.normalizeVideoDetail, resolveSegmentStartInfo,
- *   mergeBroadcastSegment.
+ *   mergeBroadcastSegment. resolveSegmentStartInfo는 시작 보정과 함께 같은 방송으로 확인한 이전 구간
+ *   번호(linkedVideoNos)와 연결 조회가 확인 없이 끊겼는지(linkedChainIncomplete: 실패·읽을 수 없는 상세·
+ *   연결 상한 도달)를 돌려준다.
  */
 (() => {
     "use strict";
@@ -84,6 +86,8 @@
                 originalStartMs: NaN,
                 segmentOffsetMs: 0,
                 segmentStartMs: NaN,
+                linkedVideoNos: [],
+                linkedChainIncomplete: false,
             };
         }
 
@@ -91,6 +95,11 @@
         const seen = new Set(current.videoNo ? [current.videoNo] : []);
         let cursor = current;
         let linkedSegmentCount = 0;
+        // Older segments confirmed to share this broadcast's start, newest first.
+        const linkedVideoNos = [];
+        // A failed or unreadable linked detail, or the link cap, leaves the chain unconfirmed; only a confirmed
+        // end is exact.
+        let linkedChainIncomplete = false;
 
         while (linkedSegmentCount < VOD_SPLIT_MAX_LINKS) {
             throwIfAborted(signal);
@@ -114,12 +123,16 @@
 
                 // The detail request can also abort itself on timeout. Only the caller's
                 // signal represents cancellation of the whole timeline resolution.
+                linkedChainIncomplete = true;
                 break;
             }
 
             const olderDetail = normalizeVideoDetail(olderRawDetail);
+            if (!Number.isFinite(olderDetail.startMs) || !Number.isFinite(olderDetail.durationSeconds)) {
+                linkedChainIncomplete = true;
+                break;
+            }
             if (
-                !Number.isFinite(olderDetail.startMs) ||
                 Math.abs(olderDetail.startMs - current.startMs) > VOD_SPLIT_START_TOLERANCE_MS ||
                 !hasFullSplitDuration(olderDetail.durationSeconds)
             ) {
@@ -127,15 +140,35 @@
             }
 
             linkedSegmentCount += 1;
+            linkedVideoNos.push(olderVideoNo);
             cursor = olderDetail;
         }
 
+        // Stopping at the link cap with a further full-length link left is not a confirmed end of the chain:
+        // the linked segments are then only a lower bound, like a failed link.
+        if (
+            linkedSegmentCount >= VOD_SPLIT_MAX_LINKS &&
+            cursor.olderVideoNo &&
+            !seen.has(cursor.olderVideoNo) &&
+            hasFullSplitDuration(cursor.olderDurationSeconds)
+        ) {
+            linkedChainIncomplete = true;
+        }
+
         const linkedOffsetMs = linkedSegmentCount * VOD_SPLIT_SEGMENT_MS;
-        const segmentOffsetMs = linkedOffsetMs > 0 ? linkedOffsetMs : inferredOffsetMs;
+        // Linked segments confirmed before a failure or the cap are only a lower bound, so a larger inference from the
+        // current detail stays valid instead of shifting the timeline by the unconfirmed segments.
+        const segmentOffsetMs = linkedChainIncomplete
+            ? Math.max(linkedOffsetMs, inferredOffsetMs)
+            : linkedOffsetMs > 0
+              ? linkedOffsetMs
+              : inferredOffsetMs;
         return {
             originalStartMs: current.startMs,
             segmentOffsetMs,
             segmentStartMs: current.startMs + segmentOffsetMs,
+            linkedVideoNos,
+            linkedChainIncomplete,
         };
     }
 

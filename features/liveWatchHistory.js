@@ -130,14 +130,31 @@
         return Number.isFinite(value) ? value : null;
     }
 
-    function shouldCountWatchTime(video, current, deltaSeconds) {
+    // Returns the seconds to count. A pause or end event arrives after the video stopped, so its final interval
+    // counts only as far as the media actually advanced since the last tick, and only when that interval began
+    // playing on the same video. Every pause takes a sample, so a seek made while paused is never counted.
+    // Likewise the play event that starts playback ends an interval that began stopped on the same video (a pause, or
+    // a paused tick, also one after a source reload), so that interval counts nothing even though the media time
+    // moved (a seek or a new source while stopped). A tick that finds the video playing keeps counting as before.
+    function getCountableWatchSeconds(video, current, deltaSeconds, { finalTick = false, playbackStart = false } = {}) {
         const mediaTime = getVideoMediaTime(video);
         const previousMediaTime = current.lastMediaTime;
+        const playedSinceSample = current.lastSampleActive === true && current.lastSampleVideo === video;
+        const stoppedSinceSample = current.lastSampleActive === false && current.lastSampleVideo === video;
         if (mediaTime !== null) current.lastMediaTime = mediaTime;
+        markMediaSample(current, video);
 
-        if (!isVideoActive(video) || deltaSeconds <= 0) return false;
-        if (mediaTime === null || previousMediaTime === null) return false;
-        return mediaTime > previousMediaTime + 0.05;
+        if (deltaSeconds <= 0 || mediaTime === null || previousMediaTime === null) return 0;
+        if (!(mediaTime > previousMediaTime + 0.05)) return 0;
+        if (isVideoActive(video)) return playbackStart && stoppedSinceSample ? 0 : deltaSeconds;
+        const rate = Number(video?.playbackRate);
+        if (!finalTick || !playedSinceSample || !(video instanceof HTMLVideoElement) || !(rate > 0)) return 0;
+        return Math.min(deltaSeconds, (mediaTime - previousMediaTime) / rate);
+    }
+
+    function markMediaSample(current, video) {
+        current.lastSampleActive = isVideoActive(video);
+        current.lastSampleVideo = video || null;
     }
 
     function addPendingRange(current, startAt, endAt) {
@@ -177,9 +194,15 @@
     }
 
     function inferMetadataFromPage(channelId) {
-        const ogTitle = document.querySelector('meta[property="og:title"], meta[name="twitter:title"]')?.content;
+        const ogTitle = pickString(
+            document.querySelector('meta[property="og:title"], meta[name="twitter:title"]')?.content
+        );
         const channelName = inferChannelNameFromDom(channelId);
-        const title = cleanEntryTitle(pickString(ogTitle, document.title), channelName);
+        // 2026-10-30 Chrome 실측: og:title은 방제 원문이고 document.title에만 ' - CHZZK'가 붙어요.
+        // 메타 제목은 원문 그대로 두고, 사이트 이름은 document.title을 쓸 때만 떼요.
+        const title = ogTitle
+            ? cleanEntryTitle(ogTitle, channelName)
+            : cleanEntryTitle(document.title, channelName, { suffix: "page" });
         const thumbnailUrl = pickString(
             document.querySelector('meta[property="og:image"], meta[name="twitter:image"]')?.content
         );
@@ -322,8 +345,9 @@
             if (isCurrentMetadataRequest(current, requestId, channelId)) {
                 mergeMetadata(current, pageMetadata);
                 // 조회가 실패하는 동안 같은 채널이 새 방송을 켰을 수 있어요. 다시 확인될 때까지 새 활동을 붙이지 않아요.
-                if (getPinnedLiveId(current) && Date.now() - current.liveConfirmedAt > LIVE_CONFIRMATION_STALE_MS)
-                    current.liveUnconfirmed = true;
+                // 방송 ID가 아직 없는 임시 세션은 시작 시각부터 같은 기준을 써요. 그래야 오프라인 채팅이 나중에 처음 확인된
+                // 방송으로 옮겨지지 않고, 확인되면 새 세션으로 시작해요.
+                if (Date.now() - current.liveConfirmedAt > LIVE_CONFIRMATION_STALE_MS) current.liveUnconfirmed = true;
             }
         } finally {
             if (session === current) scheduleMetadataRefresh();
@@ -507,6 +531,7 @@
         current.closed = false;
         current.lastTickAt = performance.now();
         current.lastMediaTime = getVideoMediaTime(attachedVideo);
+        markMediaSample(current, attachedVideo);
         current.titleHistory = [];
         current.pendingRecordMigrationSource = "";
         current.pendingRecordMigrationTarget = "";
@@ -568,7 +593,9 @@
 
         const totalWatched = Math.floor(current.watchedSeconds);
         const hasActivities = current.activities.length > 0 && getRecordId(current).startsWith("live:");
-        const activityOnly = totalWatched < getMinSessionSeconds();
+        // Once this session is stored, keep updating it even if the minimum is raised later; otherwise its new
+        // seconds, leftAt and closed state would stop being saved.
+        const activityOnly = totalWatched < getMinSessionSeconds() && !current.storageSessionRecorded;
         if (activityOnly && !hasActivities) {
             if (force && current.closed === true) finalizeClosedSession(current);
             return;
@@ -645,15 +672,19 @@
         }
     }
 
-    function accrueWatchTime() {
+    function accrueWatchTime({ finalTick = false, playbackStart = false } = {}) {
         const current = session;
         if (!current || current.closed === true) return;
 
         const now = performance.now();
-        const deltaSeconds = Math.min(Math.max(0, (now - current.lastTickAt) / 1000), MAX_TICK_SECONDS);
+        const elapsedSeconds = Math.min(Math.max(0, (now - current.lastTickAt) / 1000), MAX_TICK_SECONDS);
         current.lastTickAt = now;
 
-        if (!shouldCountWatchTime(attachedVideo, current, deltaSeconds)) return;
+        const deltaSeconds = getCountableWatchSeconds(attachedVideo, current, elapsedSeconds, {
+            finalTick,
+            playbackStart,
+        });
+        if (deltaSeconds <= 0) return;
 
         const watchedAt = Date.now();
         const rangeStartAt = Math.max(0, Math.round(watchedAt - deltaSeconds * 1000));
@@ -695,6 +726,7 @@
             lastMediaTime: getVideoMediaTime(attachedVideo),
             titleHistory: [],
         };
+        markMediaSample(session, attachedVideo);
         if (pageMetadata) mergeMetadata(session, pageMetadata);
         if (initialMetadata) {
             mergeMetadata(session, initialMetadata, { persistThumbnail: true, persistTitle: true });
@@ -709,7 +741,7 @@
     function endSession() {
         if (!session) return;
         const current = session;
-        accrueWatchTime();
+        accrueWatchTime({ finalTick: true });
         current.closed = true;
         current.lastSeenAt = Date.now();
         session = null;
@@ -745,16 +777,30 @@
     function onVideoPlay() {
         if (!isEnabledForCurrentPage()) return;
         if (!session) startSession();
-        accrueWatchTime();
+        // play/playing start playback, so the interval they end did not play unless the last sample was playing.
+        accrueWatchTime({ playbackStart: true });
     }
 
     function onVideoPause() {
-        accrueWatchTime();
+        accrueWatchTime({ finalTick: true });
         void flushSession({ force: true });
     }
 
     function onVideoEnded() {
         endSession();
+    }
+
+    // Reloading the source (a new src or load()) resets the media time and stops playback without pause or waiting
+    // (2026-10-30 Chrome measurement on a local media file: only emptied/loadstart fired). Nothing before it can be
+    // measured against the new source, so the old playing sample is dropped and the first sample of the new source
+    // only sets the media baseline; a final tick before that counts nothing.
+    function onVideoEmptied() {
+        const current = session;
+        if (!current || current.closed === true) return;
+        current.lastTickAt = performance.now();
+        current.lastMediaTime = null;
+        current.lastSampleActive = false;
+        current.lastSampleVideo = attachedVideo;
     }
 
     function detachVideo() {
@@ -764,6 +810,7 @@
         attachedVideo.removeEventListener("pause", onVideoPause, true);
         attachedVideo.removeEventListener("ended", onVideoEnded, true);
         attachedVideo.removeEventListener("waiting", onVideoPause, true);
+        attachedVideo.removeEventListener("emptied", onVideoEmptied, true);
         attachedVideo = null;
     }
 
@@ -778,6 +825,7 @@
         attachedVideo.addEventListener("pause", onVideoPause, true);
         attachedVideo.addEventListener("ended", onVideoEnded, true);
         attachedVideo.addEventListener("waiting", onVideoPause, true);
+        attachedVideo.addEventListener("emptied", onVideoEmptied, true);
 
         if (session) scheduleMetadataRefresh(0);
         if (isVideoActive(video)) startSession();

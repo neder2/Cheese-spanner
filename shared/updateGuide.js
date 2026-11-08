@@ -73,6 +73,13 @@
             summary: "다시보기 조회수 옆 날짜 자리에 방송 시작·종료 시각 표시, 각종 버그 수정",
             cards: Object.freeze([]),
         }),
+        "1.4.7": Object.freeze({
+            version: "1.4.7",
+            title: "새 기능",
+            summary:
+                "영상 녹화 기능 추가 (기본 꺼짐), 채팅 문구 숨기기(기본 켜짐) · 채팅창 우측 상단 ⋮ 에서 설정, 후원 메시지 숨기기(기본 꺼짐) · 설정 → 채팅, 각종 버그 수정",
+            cards: Object.freeze([]),
+        }),
     });
     globalThis.CheeseSpannerUpdateGuide = Object.freeze({
         MESSAGE_TYPE: "cheese-spanner:update-guide",

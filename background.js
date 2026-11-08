@@ -11,10 +11,11 @@
  *   과거 후원 가져오기는 history 페이지의 요청으로 조회하고, 같은 시청 기록 writer 큐에 월별 스냅샷을 저장한다.
  *   백업 대상 설정의 콘텐츠 쓰기와 설정 파일 내보내기·미리보기·적용은 shared/settingsStore.js의 설정 저장 큐가
  *   옵션 페이지와 공유하는 설정 저장 잠금 안에서 처리한다.
+ *   플레이어 녹화 조각은 shared/recordingDownloads.js가 다운로드로 전달하고 downloads 권한이 있으면 하위 폴더를 지정한다.
  * 의존: shared/settings.js, shared/data.js, shared/watchHistoryStore.js,
  *   shared/adVideoRegistration.js, shared/liveStart.js, shared/liveStartMonitor.js,
  *   shared/followingTitleHistory.js, shared/followingTitleCollector.js,
- *   shared/donationHistory.js, shared/donationHistoryImport.js(importScripts).
+ *   shared/donationHistory.js, shared/donationHistoryImport.js, shared/recordingDownloads.js(importScripts).
  */
 importScripts(
     "shared/settings.js",
@@ -34,6 +35,7 @@ importScripts("shared/followingTitleHistory.js", "shared/followingTitleCollector
 importScripts("shared/followingFolders.js", "shared/chatMultiview.js");
 importScripts("shared/settingsBackup.js", "shared/settingsStore.js");
 importScripts("shared/donationHistoryImport.js");
+importScripts("shared/recordingDirectory.js", "shared/recordingDownloads.js");
 
 const { OPTION_KEYS, getStorageLastError, normalizeOptions, withOptionsStorageLock } = CheeseSpannerSettings;
 const {
@@ -41,7 +43,7 @@ const {
     MESSAGE_VERSION: WATCH_HISTORY_MESSAGE_VERSION,
     STORAGE_KEY: WATCH_HISTORY_STORAGE_KEY,
     applyMutation: applyWatchHistoryMutation,
-    normalizeMutation: normalizeWatchHistoryMutation,
+    normalizeMutationEnvelope: normalizeWatchHistoryMutationEnvelope,
 } = globalThis.CheeseSpannerWatchHistoryStore;
 let watchHistoryMutationQueue = Promise.resolve();
 const COMPRESSOR_STATE_MESSAGE = "cheese-spanner:audio-compressor-state";
@@ -62,6 +64,9 @@ const updateGuide = globalThis.CheeseSpannerUpdateGuideController.createControll
 });
 const categoryExclusions = globalThis.CheeseSpanner.categoryExclusions.createController({ chrome });
 const settingsStore = globalThis.CheeseSpannerSettingsStore.createController({ chrome });
+const recordingDownloads = globalThis.CheeseSpannerRecordingDownloads.createController({ chrome });
+// onDeterminingFilename must be registered in the first turn so the event can wake this worker.
+recordingDownloads.install();
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) =>
     settingsStore.handleMessage(message, sender, sendResponse)
 );
@@ -398,6 +403,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         watchHistoryBackup.handle(message, sender).then(sendResponse);
         return true;
     }
+    if (message?.type === globalThis.CheeseSpannerRecordingDownloads.MESSAGE_TYPE) {
+        recordingDownloads.handleMessage(message, sender).then(sendResponse, () => sendResponse({ ok: false }));
+        return true;
+    }
     if (message?.type === RETIRED_QUALITY_NOTICE_KEY) {
         // 새로고침하지 않은 이전 탭의 공지 요청도 표시·재예약하지 않는다.
         sendResponse({ show: false });
@@ -433,7 +442,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     let operation;
     try {
-        operation = normalizeWatchHistoryMutation(message.operation);
+        // Session timestamps are judged in the writer queue against the stored session (a clock that went back);
+        // shape, ids, and every other kind are checked here, before the sender checks.
+        operation = normalizeWatchHistoryMutationEnvelope(message.operation);
         if (!isTrustedWatchHistorySender(operation, sender)) throw new Error("Untrusted watch history sender");
     } catch (error) {
         sendResponse({ ok: false, error: error?.message || "Invalid watch history mutation" });

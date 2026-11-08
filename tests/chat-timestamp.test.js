@@ -339,7 +339,7 @@ test("missing, string, seconds, and implausible future source times never fall b
         { chatId: "string", text: "문자열", messageTime: String(milliseconds) },
         { chatId: "seconds", text: "초 단위", messageTime: Math.floor(milliseconds / 1000) },
         { chatId: "nan", text: "NaN", messageTime: NaN },
-        { chatId: "future", text: "미래", messageTime: serverTime(20, 10) },
+        { chatId: "future", text: "미래", messageTime: new Date(2026, 6, 11, 9, 0).getTime() },
     ]);
     installMutableClock(dom);
     loadChatTimestamp(dom);
@@ -547,7 +547,7 @@ test("the VOD option defaults off and toggles immediately while live timestamps 
     assert.equal(input.hasAttribute("data-depends-on"), false);
     assert.match(
         optionsDom.window.document.getElementById(input.getAttribute("aria-describedby")).textContent,
-        /작성된 시각/
+        /작성 시각/
     );
 });
 
@@ -738,4 +738,48 @@ test("virtual moderator row reuse keeps each collected message server timestamp"
         Array.from(dom.window.document.querySelectorAll(".bcct-moderator-row__time"), (node) => node.textContent),
         ["18:07", "18:09"]
     );
+});
+
+test("the isolated side keeps a server time ahead of a slow device clock and rejects only values over 12 hours ahead", () => {
+    const deviceNow = new Date(2026, 6, 10, 20, 0, 0);
+    const accepted = [
+        { chatId: "six-minutes", messageTime: serverTime(20, 6) },
+        { chatId: "nine-hours", messageTime: new Date(2026, 6, 11, 5, 0).getTime() },
+    ];
+    const rejected = { chatId: "thirteen-hours", messageTime: new Date(2026, 6, 11, 9, 0).getTime() };
+    const dom = createPageDom([...accepted, rejected].map(({ chatId }) => ({ chatId })));
+    installMutableClock(dom, deviceNow);
+    // MAIN 브리지 없이 isolated 쪽의 범위 검사만 확인해요. 브리지가 남긴 속성을 미리 둬요.
+    for (const { chatId, messageTime } of [...accepted, rejected]) {
+        const message = dom.window.document.querySelector(`[data-chat-id="${chatId}"] ._chatting_message_1vemp_21`);
+        message.setAttribute("data-bcmt-source-time", String(messageTime));
+    }
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "content.js");
+    evalRepoScript(dom, "features", "chatTimestamp.js");
+
+    const shown = (chatId) =>
+        dom.window.document.querySelector(`[data-chat-id="${chatId}"] [data-bcmt-time]`)?.dataset.bcmtTime || "";
+    assert.equal(shown("six-minutes"), "20:06");
+    assert.equal(shown("nine-hours"), "05:00");
+    assert.equal(shown("thirteen-hours"), "");
+    closePageDom(dom);
+});
+
+test("a device clock behind the server still shows live server times through the MAIN bridge", () => {
+    const dom = createPageDom([
+        { chatId: "six-minutes", text: "6분 앞", messageTime: serverTime(20, 6) },
+        { chatId: "nine-hours", text: "9시간 앞", messageTime: new Date(2026, 6, 11, 5, 0).getTime() },
+        { chatId: "thirteen-hours", text: "13시간 앞", messageTime: new Date(2026, 6, 11, 9, 0).getTime() },
+    ]);
+    // 기기 시계가 서버보다 늦은 PC예요. 서버 작성 시각은 기기 시각보다 앞서 보여요.
+    installMutableClock(dom, new Date(2026, 6, 10, 20, 0, 0));
+    loadChatTimestamp(dom);
+
+    const shown = (chatId) =>
+        dom.window.document.querySelector(`[data-chat-id="${chatId}"] [data-bcmt-time]`)?.dataset.bcmtTime || "";
+    assert.equal(shown("six-minutes"), "20:06");
+    assert.equal(shown("nine-hours"), "05:00");
+    assert.equal(shown("thirteen-hours"), "", "values more than 12 hours ahead stay rejected");
+    closePageDom(dom);
 });

@@ -435,15 +435,12 @@ test("category follower lookup failures are distinguished from an empty search r
         },
     });
     await applying;
-    assert.match(dom.window.document.querySelector('[data-bcgt-empty="1"]').textContent, /확인하고/);
+    assert.match(dom.window.document.querySelector('[data-bcgt-empty="1"]').textContent, /조건에 맞는 방송 확인 중/);
     requests[1].resolve({ content: {} });
     requests[2].resolve({ content: {} });
     for (let i = 0; i < 40; i++) await Promise.resolve();
     await hooks.apply();
-    assert.equal(
-        dom.window.document.querySelector('[data-bcgt-empty="1"]').textContent,
-        "팔로워 정보를 확인하지 못했어요."
-    );
+    assert.equal(dom.window.document.querySelector('[data-bcgt-empty="1"]').textContent, "팔로워 정보 확인 실패.");
     assert.equal(requests.length, 3, "failed lookups retain the existing retry cooldown");
     hooks.disable();
 });
@@ -498,7 +495,7 @@ test("global count label displays the viewer total with its threshold and counti
     for (let i = 0; i < 20; i++) await Promise.resolve();
     const label = dom.window.document.querySelector(".bcgt-live-count");
     assert.equal(label.textContent, "시청자 10명 이상 · 방송 2개 · 시청자 합계 12,355명");
-    assert.match(label.title, /중복 시청자를 제거한 인원 수는 아니에요/);
+    assert.match(label.title, /중복 시청자 포함/);
     assert.equal(requests.length, 1);
     hooks.disable();
 });

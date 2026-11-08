@@ -68,7 +68,7 @@
             const list = panel.querySelector(".bcmv-search-results");
             list.replaceChildren();
             if (!keyword) {
-                searchNotice("방송인 닉네임이나 라이브 URL을 입력해 주세요.");
+                searchNotice("방송인 닉네임 또는 라이브 URL 입력 필요.");
                 return;
             }
             if (model.channelFromUrl(keyword) || /^(?:https?:\/\/|chzzk\.naver\.com\/)/i.test(keyword)) {
@@ -79,7 +79,7 @@
             searchController = controller;
             const submit = panel.querySelector('[data-action="submit-add"]');
             submit.disabled = true;
-            searchNotice("검색 중이에요…");
+            searchNotice("검색 중…");
             const current = () => searchController === controller && !controller.signal.aborted;
             try {
                 const params = new URLSearchParams({
@@ -155,9 +155,9 @@
                 searchNotice(
                     channels.length
                         ? response.content.page?.next
-                            ? "팔로워순 상위 5개 결과예요. 닉네임을 더 자세히 입력하면 찾기 쉬워요."
-                            : "추가할 방송을 선택해 주세요."
-                        : "검색 결과가 없어요."
+                            ? "팔로워순 상위 5개 표시(자세한 닉네임 입력 권장)."
+                            : "추가할 방송 선택."
+                        : "검색 결과 없음."
                 );
                 // Search exposes openLive but no viewer count. Only live matches need a detail request.
                 await Promise.allSettled(
@@ -194,7 +194,7 @@
                         })
                 );
             } catch {
-                if (current()) searchNotice("검색하지 못했어요. 잠시 후 다시 검색해 주세요.");
+                if (current()) searchNotice("검색 실패. 잠시 후 다시 검색 필요.");
             } finally {
                 if (current()) {
                     searchController = null;
@@ -207,11 +207,11 @@
             const { row, detail, live, viewers, id, loading } = result;
             const problem =
                 live !== true
-                    ? "방송 중인 채널만 추가할 수 있어요."
+                    ? "방송 중인 채널만 추가 가능."
                     : state.channels.some((entry) => entry.id === id)
-                      ? "이미 추가된 방송이에요."
+                      ? "이미 추가된 방송."
                       : state.channels.length >= 6
-                        ? "방송은 최대 6개까지 추가할 수 있어요."
+                        ? "최대 6개 방송까지 추가 가능."
                         : "";
             row.disabled = Boolean(problem);
             row.title = problem || "방송 추가";
@@ -628,11 +628,7 @@
             } else {
                 const option = el("div", "bcmv-layout-option");
                 const description = el("div");
-                const help = el(
-                    "p",
-                    "",
-                    "창을 사이드바·채팅 위까지 옮기고 크기를 조절해요. 끄면 분할 배치로 돌아가요."
-                );
+                const help = el("p", "", "창 위치·크기 자유 조절(해제 시 분할 배치 복귀).");
                 help.id = PANEL_ID + "-free-help";
                 description.append(el("strong", "", "자유 배치"), help);
                 const toggle = button(state.freeLayoutEnabled ? "켜짐" : "꺼짐", "free-layout");
@@ -648,10 +644,10 @@
                 equalize.prepend(panelIcon("align"));
                 equalize.disabled = !equalLayout();
                 equalize.title = state.freeLayoutEnabled
-                    ? "자유 배치를 끄면 분할 영역별로 정렬할 수 있어요."
+                    ? "자유 배치 해제 시 분할 영역별 정렬 가능"
                     : equalize.disabled
-                      ? "같은 영역에 보조 방송이 2개 이상 있을 때 사용할 수 있어요."
-                      : "메인 영역을 유지하고 모든 보조 영역의 방송들을 영역별로 같은 크기로 정렬해요.";
+                      ? "같은 영역에 보조 방송 2개 이상일 때 사용 가능"
+                      : "메인 영역 유지, 보조 영역 방송들을 동일 크기로 정렬";
                 const reset = button("기본 배치", "reset-layout");
                 reset.prepend(panelIcon("layout"));
                 actions.append(reset, equalize);
@@ -677,7 +673,7 @@
                     row.append(move);
                     list.append(row);
                     if (entry.id === routeId) {
-                        row.append(el("p", "bcmv-quality-main", "화질은 메인 플레이어에서 조절해요."));
+                        row.append(el("p", "bcmv-quality-main", "화질은 메인 플레이어에서 조절."));
                         continue;
                     }
                     const qualityLabel = el("label", "bcmv-quality"),
@@ -698,7 +694,7 @@
                     const timing = el("span", "bcmv-stream-timing"),
                         latency = el("span");
                     latency.setAttribute("data-bcmv-latency", "");
-                    latency.title = "플레이어의 라이브 기준으로 측정한 현재 추정 지연이에요.";
+                    latency.title = "플레이어 라이브 기준 현재 추정 지연";
                     const delay = el("span");
                     delay.setAttribute("data-bcmv-delay", "");
                     timing.append(latency, delay);
@@ -716,7 +712,7 @@
                 }
                 panel.append(list);
                 syncPanelOrder();
-                if (state.channels.length === 1) panel.append(el("p", "bcmv-notice", "추가한 서브 방송이 없어요."));
+                if (state.channels.length === 1) panel.append(el("p", "bcmv-notice", "추가한 서브 방송 없음."));
                 const moveStatus = el("p", "bcmv-move-status");
                 moveStatus.setAttribute("data-bcmv-move-status", "");
                 moveStatus.setAttribute("role", "status");

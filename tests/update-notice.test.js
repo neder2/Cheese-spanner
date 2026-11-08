@@ -401,10 +401,16 @@ test("saved notice template preserves copy, confirmation and focus restoration",
     w.eval(read("features/updateNotice.js"));
     const dialog = w.document.querySelector("dialog");
     assert.ok(dialog.open);
-    assert.equal(dialog.querySelector("p").textContent, "팝업같은 거 띄워서 죄송합니다. 꼭 읽어주세요.");
-    assert.match(dialog.textContent, /확장 프로그램 이름을 변경했습니다/);
-    assert.match(dialog.textContent, /화질 고정 기능을 강화하고, 시청에 방해되는 팝업을 제거/);
-    assert.match(dialog.textContent, /시청 방해 팝업 제거/);
+    assert.deepEqual(
+        Array.from(dialog.querySelectorAll("p"), (paragraph) => paragraph.textContent),
+        [
+            "팝업같은 거 띄워서 죄송합니다. 꼭 읽어주세요.",
+            "확장 프로그램 이름을 변경했습니다.",
+            "화질 고정 기능을 강화하고, 시청에 방해되는 팝업을 제거하도록 개선했습니다.",
+            "팝업 제거는 설정의 ‘시청 방해 팝업 제거’에서 조절할 수 있습니다.",
+            "열려 있던 치지직 탭은 새로고침하면 새 방식이 적용됩니다.",
+        ]
+    );
     assert.equal(w.document.getElementById(dialog.getAttribute("aria-labelledby")).textContent, "중요!!! 공지");
     assert.ok(w.document.getElementById(dialog.getAttribute("aria-describedby")));
     dialog.querySelector("button").click();

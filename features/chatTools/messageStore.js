@@ -23,6 +23,9 @@
     const DEFAULT_MAX_MODERATOR_MESSAGES = 100;
     const MAX_ORIGINAL_MESSAGES = 500;
     const MAX_RETIRED_MESSAGE_IDS = 500;
+    // 보관 개수로 목록에서 밀려난 메시지의 정체성 상한이에요. DOM에 남은 백로그가 다시 그려질 때 새 기록으로
+    // 되살아나지 않게 해요. 재마운트 후보도 보관 개수 + 이 상한까지 둬요.
+    const MAX_EVICTED_MODERATOR_MESSAGES = 500;
 
     const MODERATOR_REUSE_STABILITY_CHECK_MS = 100;
 
@@ -35,6 +38,9 @@
         let moderatorEnabled = true;
         let maxModeratorMessages = DEFAULT_MAX_MODERATOR_MESSAGES;
         let moderatorMessages = [];
+        // 보관 개수로 목록에서만 빠진 메시지(오래된 순)예요. 패널·읽음·알림에는 나오지 않고, 원본 행이
+        // 새 노드나 새 root로 다시 그려질 때 같은 메시지로 다시 붙이는 데만 써요. 채널 정리 때 함께 비워요.
+        let evictedModeratorMessages = [];
         let moderatorRowBindings = new WeakMap();
         let pendingModeratorRemounts = [];
         const moderatorRowTransitions = new Map();
@@ -45,6 +51,8 @@
         // Same-root remounts may reuse an explicit message ID. Keep only text and identity,
         // never detached DOM nodes, and discard this bounded cache with the root/session.
         const originalMessages = new Map();
+        const pageMessageIds = new Set();
+        let retiredPageMessageIds = new Set();
         // 채널 이동 직전 목록에 있던 행과 그때의 메시지 정체성이다. 치지직은 이전 채널 목록을
         // 연결 정리 때 늦게 비우므로, 같은 메시지로 남은 동안에는 새 채널 기록으로 수집하지 않는다.
         // 이전 목록 상태가 새 노드로 다시 그려질 수 있어 확인된 명시적 ID도 다음 채널 이동까지만 남긴다.
@@ -57,10 +65,17 @@
         }
         let nextRowId = 1;
         let nextModeratorTransitionId = 1;
+        let nextModeratorRemountSequence = 1;
         let nextRecordId = 1;
 
+        // 정체성 비교용 본문이에요. 이미지 토큰은 표시 이름이 겹칠 수 있어 parser의 textKey(원래 alt·title·src
+        // 포함)로 비교하고, 표시·기록에는 text만 써요. textKey가 없는 입력은 text와 같게 다뤄요.
+        function getTextKey(parsed) {
+            return typeof parsed?.textKey === "string" ? parsed.textKey : parsed?.text || "";
+        }
+
         function getMessageFingerprint(parsed) {
-            return `${parsed.role}:${parsed.author}:${parsed.text}`;
+            return `${parsed.role}:${parsed.author}:${getTextKey(parsed)}`;
         }
 
         function getExplicitMessageId(row) {
@@ -106,7 +121,38 @@
             return rowIds.get(row)?.id || `${parsed.role}:${parsed.author}:${parsed.text}`;
         }
 
-        function cacheOriginalMessageText(row, parsed) {
+        function pageMessageIdentity(source) {
+            const message = source?.message;
+            return message ? JSON.stringify([message.key, message.user, message.time]) : "";
+        }
+
+        function clearPageMessages() {
+            clearOriginalMessages();
+            pageMessageIds.clear();
+            retiredPageMessageIds.clear();
+        }
+
+        function retirePageMessages() {
+            retiredPageMessageIds = new Set(pageMessageIds);
+            pageMessageIds.clear();
+            clearOriginalMessages();
+        }
+
+        function cacheOriginalMessageText(row, parsed, source = null) {
+            if (source) {
+                // Native props and rendered text can update in separate mutations. Never bind old DOM text
+                // to a newly observed native identity; native messages use only their own validated original.
+                rowOriginalTexts.delete(row);
+                const identity = getCacheMessageIdentity(row, parsed.textEl);
+                if (identity) originalMessages.delete(identity);
+                const pageIdentity = pageMessageIdentity(source);
+                if (!pageIdentity || retiredPageMessageIds.has(pageIdentity)) return;
+                pageMessageIds.delete(pageIdentity);
+                pageMessageIds.add(pageIdentity);
+                if (pageMessageIds.size > MAX_ORIGINAL_MESSAGES)
+                    pageMessageIds.delete(pageMessageIds.values().next().value);
+                return;
+            }
             if (parsed.isBlind || !parsed.text || isBlindNoticeText(parsed.text)) return;
             const rowReuseSignal = getCacheRowReuseSignal(row);
             const cached = rowOriginalTexts.get(row);
@@ -116,7 +162,7 @@
                 (cached.rowReuseSignal !== rowReuseSignal || cached.identity !== identity) &&
                 cached.author === parsed.author &&
                 cached.sourceTextEl === parsed.textEl &&
-                cached.text === parsed.text
+                cached.textKey === getTextKey(parsed)
             ) {
                 // 재사용 표식만 먼저 바뀐 행을 기존 메시지 상태로 다시 파싱해도
                 // 낡은 원문을 새 행 소유 캐시로 덮어쓰지 않는다.
@@ -138,10 +184,17 @@
                 root: chatRoot,
                 sourceTextEl: parsed.textEl instanceof Element ? parsed.textEl : null,
                 text: parsed.text,
+                textKey: getTextKey(parsed),
             });
         }
 
-        function lookupCachedOriginalText(row, parsed) {
+        function lookupCachedOriginalText(row, parsed, source = null) {
+            const pageIdentity = pageMessageIdentity(source);
+            if (source) {
+                if (!pageIdentity || source.message.status === "NORMAL" || retiredPageMessageIds.has(pageIdentity))
+                    return "";
+                return source.original || "";
+            }
             const cached = rowOriginalTexts.get(row);
             const identity = getCacheMessageIdentity(row, parsed.textEl);
             if (!cached) {
@@ -177,7 +230,7 @@
 
         function buildModeratorSnapshot(parsed) {
             const rowReuseSignal = getCacheRowReuseSignal(parsed.node);
-            const identityKey = [parsed.id, rowReuseSignal, parsed.author, parsed.role, parsed.text]
+            const identityKey = [parsed.id, rowReuseSignal, parsed.author, parsed.role, getTextKey(parsed)]
                 .map((value) => String(value || ""))
                 .join("\u001f");
             return {
@@ -186,6 +239,7 @@
                 author: parsed.author,
                 role: parsed.role,
                 text: parsed.text,
+                textKey: getTextKey(parsed),
                 rowReuseSignal,
                 root: chatRoot,
             };
@@ -291,6 +345,7 @@
                 author: snapshot.author,
                 role: snapshot.role,
                 text: snapshot.text,
+                textKey: snapshot.textKey,
                 root: chatRoot,
                 retractable: true,
             };
@@ -323,7 +378,9 @@
             if (!parsed.role || !parsed.text) return "retract";
 
             const matchesOwnedIdentity =
-                ownership.author === parsed.author && ownership.role === parsed.role && ownership.text === parsed.text;
+                ownership.author === parsed.author &&
+                ownership.role === parsed.role &&
+                ownership.textKey === getTextKey(parsed);
             if (matchesOwnedIdentity) return "keep";
 
             // 명시적인 재사용 신호가 같은데 역할·작성자·본문 조합이 달라졌다면
@@ -364,7 +421,21 @@
             for (const [row, ownership] of moderatorTransitionOwnerships) {
                 if (ownership.message === message) finalizeModeratorTransitionOwnership(row, ownership);
             }
+            evictedModeratorMessages.push(message);
+            if (evictedModeratorMessages.length > MAX_EVICTED_MODERATOR_MESSAGES) {
+                evictedModeratorMessages.splice(0, evictedModeratorMessages.length - MAX_EVICTED_MODERATOR_MESSAGES);
+            }
             return true;
+        }
+
+        // 같은 ID는 같은 메시지예요. 보관 중인 기록을 먼저 찾고, 밀려난 기록이면 목록에 다시 넣지 않고 행만 잇게 해요.
+        function findKnownModeratorMessage(messageId) {
+            if (!messageId) return null;
+            return (
+                moderatorMessages.find((item) => item.id === messageId) ||
+                evictedModeratorMessages.find((item) => item.id === messageId) ||
+                null
+            );
         }
 
         function trimModeratorMessages() {
@@ -383,7 +454,7 @@
         function isSameBoundModeratorMessage(binding, parsed) {
             if (!binding || binding.messageId !== parsed.id) return false;
             if (binding.author !== parsed.author || binding.role !== parsed.role) return false;
-            return binding.text === parsed.text || parsed.isBlind === true;
+            return binding.textKey === getTextKey(parsed) || parsed.isBlind === true;
         }
 
         function backfillModeratorMessage(existing, parsed, { deferNotify = false } = {}) {
@@ -415,7 +486,11 @@
         function isMatchingModeratorRemount(binding, parsed) {
             if (!binding?.message || !String(binding.message.id || "").startsWith("row:")) return false;
             if (!String(parsed.id || "").startsWith("row:") || binding.root !== chatRoot) return false;
-            if (binding.author !== parsed.author || binding.role !== parsed.role || binding.text !== parsed.text)
+            if (
+                binding.author !== parsed.author ||
+                binding.role !== parsed.role ||
+                binding.textKey !== getTextKey(parsed)
+            )
                 return false;
             // 원본 메시지 시각(분 단위)이 양쪽에 있고 다르면 같은 문구의 다른 메시지예요. 시각이 같거나 한쪽에
             // 없을 때는 같은 메시지라는 근거가 아니므로 기존 판단을 따라요.
@@ -426,24 +501,84 @@
             return !(binding.rowReuseSignal && nextRowReuseSignal && binding.rowReuseSignal !== nextRowReuseSignal);
         }
 
-        function takeModeratorRemount(parsed) {
-            const matchingIndex = pendingModeratorRemounts.findIndex(
-                (candidate) =>
-                    candidate.addedRoots.some((root) => root === parsed.node || root.contains(parsed.node)) &&
-                    isMatchingModeratorRemount(candidate, parsed)
-            );
-            if (matchingIndex < 0) return null;
+        function isRemountCandidateForRow(candidate, row) {
+            return candidate.addedRoots.some((root) => root === row || root.contains(row));
+        }
 
+        function findModeratorRemount(parsed) {
+            return (
+                pendingModeratorRemounts.find(
+                    (candidate) =>
+                        isRemountCandidateForRow(candidate, parsed.node) &&
+                        isMatchingModeratorRemount(candidate, parsed)
+                ) || null
+            );
+        }
+
+        // 안정화 대기 행이 scan 시점에 맡아 둔 후보예요. scan이 끝나 공용 후보가 비워진 뒤 최종 확인에서만 써요.
+        // 다른 행이 이미 가져갔거나, 기록이 지워졌거나, 다른 원본 행에 다시 붙은 후보는 쓰지 않아요.
+        function findReservedModeratorRemount(parsed, candidates) {
+            if (!Array.isArray(candidates) || !candidates.length) return null;
+            return (
+                candidates.find((candidate) => {
+                    if (candidate.claimed || !isRemountCandidateForRow(candidate, parsed.node)) return false;
+                    const message = candidate.message;
+                    if (!moderatorMessages.includes(message) && !evictedModeratorMessages.includes(message))
+                        return false;
+                    if (message.node instanceof Element && moderatorRowBindings.get(message.node)?.message === message)
+                        return false;
+                    return isMatchingModeratorRemount(candidate, parsed);
+                }) || null
+            );
+        }
+
+        function findAnyModeratorRemount(parsed, transition = null) {
+            return findModeratorRemount(parsed) || findReservedModeratorRemount(parsed, transition?.remountCandidates);
+        }
+
+        // 다시 그려진 백로그는 이전 목록과 같은 상대 순서예요. 같은 재마운트(후보 묶음)의 후보를 아직 맡고 있는
+        // 앞쪽 안정화 대기 행이 있으면, 그 행이 확정될 때까지 뒤 행은 후보를 가져가지 않아요. 그래야 동기 확정·
+        // 타이머 완료 순서와 관계없이 행 순서대로 후보가 소비되고, 앞 행의 후보가 뒤 행 확정만으로 폐기되지 않아요.
+        function hasEarlierPendingRemountRow(row, group) {
+            if (!(row instanceof Element) || !group) return false;
+            for (const [otherRow, transition] of moderatorRowTransitions) {
+                if (otherRow === row || !transition.remountCandidates.length) continue;
+                if (!otherRow.isConnected || transition.root !== chatRoot || !chatRoot?.contains(otherRow)) continue;
+                if (otherRow.contains(row) || row.contains(otherRow)) continue;
+                if (!(otherRow.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+                if (transition.remountCandidates.some((candidate) => !candidate.claimed && candidate.group === group))
+                    return true;
+            }
+            return false;
+        }
+
+        function isWaitingForEarlierRemountRow(parsed, transition = null) {
+            if (!isModeratorBoxEnabled() || !parsed.role || !parsed.text) return false;
+            if (findKnownModeratorMessage(parsed.id)) return false;
+            const candidate = findAnyModeratorRemount(parsed, transition);
+            return Boolean(candidate && hasEarlierPendingRemountRow(parsed.node, candidate.group));
+        }
+
+        function claimModeratorRemount(binding, parsed) {
             // 같은 내용의 행이 여러 개 함께 재마운트돼도 제거·추가 순서대로 한 번씩만
             // 넘겨준다. 후보는 같은 childList 교체의 추가 subtree 안에서만 쓸 수 있다.
-            const [binding] = pendingModeratorRemounts.splice(matchingIndex, 1);
+            binding.claimed = true;
             if (binding.ordered) {
                 // 비운 목록에 다시 받은 백로그는 이전 목록의 뒷부분이다. 이번 후보보다 앞선
                 // 후보는 백로그에 없으므로 뒤에 오는 같은 문구의 새 메시지와 잇지 않는다.
-                pendingModeratorRemounts = pendingModeratorRemounts.filter(
-                    (candidate, index) => !candidate.ordered || index >= matchingIndex
-                );
+                // 안정화 대기 행이 맡아 둔 후보도 같은 순서 규칙을 따라요.
+                // 같은 재마운트 묶음 안에서만 적용하고, 앞쪽 대기 행이 맡은 후보가 남아 있으면 이 행은
+                // 그 행이 확정될 때까지 기다리므로(hasEarlierPendingRemountRow) 여기서 앞 행 후보를 버리지 않아요.
+                const dropEarlier = (candidate) => {
+                    if (candidate.ordered && candidate.group === binding.group && candidate.sequence < binding.sequence)
+                        candidate.claimed = true;
+                };
+                pendingModeratorRemounts.forEach(dropEarlier);
+                for (const transition of moderatorRowTransitions.values()) {
+                    transition.remountCandidates.forEach(dropEarlier);
+                }
             }
+            pendingModeratorRemounts = pendingModeratorRemounts.filter((candidate) => !candidate.claimed);
             const message = binding.message;
             const rowReuseSignal = getCacheRowReuseSignal(parsed.node);
             parsed.id = message.id;
@@ -460,8 +595,11 @@
         function commitModeratorMessage(parsed, { deferNotify = false, transition = null } = {}) {
             if (!isModeratorBoxEnabled() || !parsed.role || !parsed.text) return false;
 
-            let message = moderatorMessages.find((item) => item.id === parsed.id);
-            if (!message) message = takeModeratorRemount(parsed);
+            let message = findKnownModeratorMessage(parsed.id);
+            if (!message) {
+                const candidate = findAnyModeratorRemount(parsed, transition);
+                if (candidate) message = claimModeratorRemount(candidate, parsed);
+            }
             const added = !message;
             if (message) {
                 backfillModeratorMessage(message, parsed, { deferNotify });
@@ -502,7 +640,7 @@
             );
         }
 
-        function stageReusedModeratorCandidate(parsed, sourceBinding = null) {
+        function stageReusedModeratorCandidate(parsed, sourceBinding = null, { reserveRemounts = false } = {}) {
             const row = parsed.node;
             if (!(row instanceof HTMLElement) || !parsed.role || !parsed.text) {
                 cancelModeratorTransition(row);
@@ -532,6 +670,7 @@
                     mutationRevision: revision,
                     stablePasses: 0,
                     timerId: null,
+                    remountCandidates: [],
                 };
                 nextModeratorTransitionId += 1;
                 moderatorRowTransitions.set(row, transition);
@@ -541,6 +680,15 @@
                 transition.snapshotKey = snapshot.identityKey;
                 transition.mutationRevision = revision;
                 transition.stablePasses = 0;
+            }
+            if (reserveRemounts) {
+                // 이 scan의 재마운트 후보는 scan이 끝나면 비워져요. 안정화를 기다리는 행은 최종 확인이 그 뒤에
+                // 오므로, 이 행을 덮는 후보를 행·세대(transition)에 맡겨 둬요. transition이 취소되면 함께 사라져요.
+                const reserved = new Set(transition.remountCandidates);
+                for (const candidate of pendingModeratorRemounts) {
+                    if (candidate.claimed || reserved.has(candidate)) continue;
+                    if (isRemountCandidateForRow(candidate, row)) transition.remountCandidates.push(candidate);
+                }
             }
             scheduleModeratorTransitionCheck(row, transition);
             return false;
@@ -581,6 +729,11 @@
                 scheduleModeratorTransitionCheck(row, transition);
                 return;
             }
+            // 먼저 안정화됐어도 앞쪽 대기 행이 같은 재마운트 후보를 맡고 있으면 그 행의 확정을 기다려요.
+            if (isWaitingForEarlierRemountRow(parsed, transition)) {
+                scheduleModeratorTransitionCheck(row, transition);
+                return;
+            }
 
             moderatorRowTransitions.delete(row);
             commitModeratorMessage(parsed, { transition });
@@ -611,6 +764,7 @@
                     rowReuseSignal: getCacheRowReuseSignal(row),
                     author: parsed.author,
                     text: parsed.isBlind ? "" : parsed.text,
+                    textKey: parsed.isBlind ? "" : getTextKey(parsed),
                 });
                 if (explicitId) retireMessageId(explicitId);
             }
@@ -623,7 +777,7 @@
             if (retired.rowReuseSignal !== getCacheRowReuseSignal(row)) return false;
             // 늦게 붙는 배지·색·빈 본문 채우기·블라인드 전환은 같은 이전 메시지의 갱신이다.
             if (retired.author && parsed.author && retired.author !== parsed.author) return false;
-            return !retired.text || !parsed.text || parsed.isBlind === true || retired.text === parsed.text;
+            return !retired.text || !parsed.text || parsed.isBlind === true || retired.textKey === getTextKey(parsed);
         }
 
         function collectModeratorMessage(parsed, { deferNotify = false } = {}) {
@@ -682,6 +836,15 @@
                 row.removeAttribute(MODERATOR_COLLECTED_ATTR);
                 removeModeratorHighlight(row);
             }
+            // 이름도 src도 아직 없는 본문 이미지는 늦게 채워질 수 있어요. 바로 기록하면 채워진 뒤 다른 메시지로
+            // 한 번 더 기록되므로, 재사용 후보와 같은 안정화 확인을 거친 마지막 상태로 한 번만 기록해요.
+            if (parsed.hasPendingBodyImage && isModeratorBoxEnabled() && parsed.role && !parsed.isBlind) {
+                return stageReusedModeratorCandidate(parsed, null, { reserveRemounts: true });
+            }
+            // 같은 재마운트의 앞쪽 행이 아직 안정화를 기다리면 이 행도 후보를 맡긴 채 기다렸다가 행 순서대로 확정해요.
+            if (isWaitingForEarlierRemountRow(parsed)) {
+                return stageReusedModeratorCandidate(parsed, null, { reserveRemounts: true });
+            }
             return commitModeratorMessage(parsed, { deferNotify });
         }
 
@@ -712,6 +875,7 @@
                 row.removeAttribute(MODERATOR_COLLECTED_ATTR);
             }
             moderatorMessages = [];
+            evictedModeratorMessages = [];
             moderatorRowBindings = new WeakMap();
             pendingModeratorRemounts = [];
             rowMutationRevisions = new WeakMap();
@@ -745,6 +909,20 @@
             const addedRoots = Array.from(addedNodes || []);
             if (!addedRoots.length) return;
 
+            // 한 번의 재마운트(제거·추가 또는 root 교체)에서 나온 후보 묶음이에요. 행 순서 대기와 앞선 후보 정리는
+            // 같은 묶음 안에서만 비교해요. 비운 목록은 행을 하나씩 지워 제거 레코드가 여러 개(호출도 여러 번)로
+            // 올 수 있어요. 같은 root에서 다음 첫 hydration 전까지 남은 순서 후보가 있으면 같은 비움으로 보고 그
+            // 묶음을 이어 써요. 첫 hydration의 finishScan이 공용 후보를 비우면 다음 비움은 새 묶음이에요.
+            const group =
+                (ordered &&
+                    pendingModeratorRemounts.find(
+                        (candidate) =>
+                            candidate.ordered &&
+                            !candidate.claimed &&
+                            candidate.root === root &&
+                            candidate.preserveAcrossEmptyScan === preserveAcrossEmptyScan
+                    )?.group) ||
+                {};
             for (const binding of bindings) {
                 if (!binding?.message || !String(binding.message.id || "").startsWith("row:")) continue;
                 if (pendingModeratorRemounts.some((candidate) => candidate.message === binding.message)) continue;
@@ -754,9 +932,13 @@
                     addedRoots,
                     preserveAcrossEmptyScan,
                     ordered,
+                    group,
+                    sequence: nextModeratorRemountSequence++,
+                    claimed: false,
                 });
             }
-            const maxCandidates = getMaxModeratorMessages();
+            // 후보는 원본 행 binding에서만 나오므로 보관 개수로 자르면 밀려난 오래된 행이 새 기록으로 돌아와요.
+            const maxCandidates = getMaxModeratorMessages() + MAX_EVICTED_MODERATOR_MESSAGES;
             if (pendingModeratorRemounts.length > maxCandidates) {
                 pendingModeratorRemounts.splice(0, pendingModeratorRemounts.length - maxCandidates);
             }
@@ -794,9 +976,10 @@
                 pendingModeratorRemounts = [];
             }
             const detachedBindings = [];
-            for (const message of moderatorMessages) {
+            // 밀려난 기록도 원본 행 binding을 유지하므로 오래된 순서대로 함께 후보로 넘겨요.
+            for (const message of [...evictedModeratorMessages, ...moderatorMessages]) {
                 const row = message.node;
-                if (!(row instanceof Element)) continue;
+                if (!(row instanceof Element) || moderatorRowBindings.get(row)?.message !== message) continue;
                 if (!node.contains(row)) {
                     const binding = detachModeratorRowBinding(row);
                     if (binding) detachedBindings.push(binding);
@@ -811,9 +994,11 @@
             // 채팅 접기/펼치기나 플레이어 모드 전환은 목록 root를 통째로
             // 교체하면서 같은 id-less 백로그 행을 새 DOM으로 다시 만든다. 새 root의
             // 첫 full scan 안에서만 기존 binding을 후보로 넘겨 같은 메시지가 다시
-            // 수집되지 않게 한다. 후보는 sync 종료 시 폐기되므로 이후 실제로 도착한
+            // 수집되지 않게 한다. 공용 후보는 sync 종료 시 폐기되므로 이후 실제로 도착한
             // 동일 문구 메시지는 별도 메시지로 계속 수집된다. 단, 새 root가 빈 채로
             // 먼저 sync되면 실제 채팅 행을 처리할 첫 hydration까지 후보를 유지한다.
+            // 첫 hydration에서 안정화를 기다리는 행(과 그 뒤에서 순서를 기다리는 행)이 맡은
+            // 후보만 그 행의 transition과 함께 최종 확인까지 남고, 취소 때 함께 사라진다.
             if (rootChanged && detachedBindings.length) {
                 queueModeratorRemounts(detachedBindings, [node], node, {
                     preserveAcrossEmptyScan: true,
@@ -833,6 +1018,7 @@
             // 같은 방송의 채팅 재연결은 목록을 먼저 비우고(close) 다음 배치에 최근 채팅을 다시
             // 붙인다. 목록이 완전히 빈 경우에만 id 없는 기록을 다음 hydration 한 번 동안 순서대로
             // 후보로 남긴다. 그 뒤 실제로 도착한 같은 문구 메시지는 새 메시지로 수집된다.
+            // 행별 제거 레코드마다 호출돼도 같은 비움의 후보는 한 묶음으로 이어져 순서 규칙이 목록 전체에 적용된다.
             if (detachedBindings.length && chatRoot?.isConnected && isListCleared?.()) {
                 queueModeratorRemounts(detachedBindings, [chatRoot], chatRoot, {
                     preserveAcrossEmptyScan: true,
@@ -926,6 +1112,8 @@
             collect: collectModeratorMessage,
             cacheOriginal: cacheOriginalMessageText,
             clearOriginals: clearOriginalMessages,
+            clearPageMessages,
+            retirePageMessages,
             originalText: lookupCachedOriginalText,
             removeHighlight: removeModeratorHighlight,
             collectedRow: getCollectedModeratorRow,
@@ -943,6 +1131,7 @@
             hasBinding: (row) => moderatorRowBindings.has(row),
             clearRemounts: () => {
                 pendingModeratorRemounts = [];
+                for (const transition of moderatorRowTransitions.values()) transition.remountCandidates = [];
             },
         };
     };

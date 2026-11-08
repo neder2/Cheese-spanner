@@ -287,19 +287,44 @@
             return icon;
         }
 
+        function getMirroredTimecodeButtons(mirroredRow) {
+            const message = Array.from(mirroredRow?.children || []).find((child) =>
+                child.classList.contains("bcvc-message")
+            );
+            return Array.from(message?.querySelectorAll("[data-bcvc-action='time']") || []);
+        }
+
+        // 원본은 확장보다 넓은 규칙으로 타임코드를 링크하고(예: `12:34부터`) 버튼이 잠시 빠졌다 돌아올 수도 있어서,
+        // 개수·순번은 같은 토큰임을 보장하지 않아요. 확장이 본문에서 읽은 초(`data-bcvc-seconds`, 동기화가 바꾸지 않아요)와
+        // 같은 초의 원본 버튼만 순서대로 대응하고, 찾지 못하면 null로 두어 확장이 원래 초로 직접 이동하게 해요.
+        function mapNativeTimecodeButtons(mirrored, native) {
+            const nativeSeconds = native.map((button) =>
+                model.parseTimecodeSeconds(model.compactText(button.textContent))
+            );
+            let cursor = 0;
+            return mirrored.map((button) => {
+                const raw = button.getAttribute("data-bcvc-seconds");
+                const seconds = raw ? Number(raw) : NaN;
+                if (!Number.isFinite(seconds)) return null;
+                for (let index = cursor; index < native.length; index += 1) {
+                    if (nativeSeconds[index] !== seconds) continue;
+                    cursor = index + 1;
+                    return native[index];
+                }
+                return null;
+            });
+        }
+
         function syncMirroredTimecodes(mirroredRow, nativeRow) {
-            const message = Array.from(mirroredRow.children).find((child) => child.classList.contains("bcvc-message"));
-            const mirrored = Array.from(message?.querySelectorAll("[data-bcvc-action='time']") || []);
+            const mirrored = getMirroredTimecodeButtons(mirroredRow);
             if (!mirrored.length) return;
-            const native = getNativeTimecodeButtons(nativeRow);
+            const native = mapNativeTimecodeButtons(mirrored, getNativeTimecodeButtons(nativeRow));
             mirrored.forEach((button, index) => {
                 const nativeButton = native[index];
                 if (!(nativeButton instanceof HTMLButtonElement)) return;
+                // 같은 초로 확인한 원본 표기만 표시에 써요. 대응에 쓰는 초는 덮어쓰지 않아요.
                 const label = model.compactText(nativeButton.textContent);
-                const seconds = model.parseTimecodeSeconds(label);
-                if (!Number.isFinite(seconds)) return;
                 button.textContent = label;
-                button.setAttribute("data-bcvc-seconds", String(seconds));
                 button.setAttribute("aria-label", `${label}로 이동`);
             });
         }
@@ -369,7 +394,7 @@
                         mirroredAvatar,
                         profileControls.avatar,
                         label,
-                        "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요."
+                        "하단 원본 댓글이 표시될 때 프로필 보기 가능."
                     );
                     syncMirroredAvatarVisual(mirroredAvatar, nativeRow, profileControls.avatar);
                 }
@@ -382,7 +407,7 @@
                         mirroredAuthor,
                         profileControls.author,
                         label,
-                        "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요."
+                        "하단 원본 댓글이 표시될 때 프로필 보기 가능."
                     );
                 }
 
@@ -396,7 +421,7 @@
                         mirroredBuff,
                         nativeBuffButton,
                         label,
-                        "하단 원본 댓글이 표시되면 버프할 수 있어요."
+                        "하단 원본 댓글이 표시될 때 버프 가능."
                     );
                     mirroredBuff.setAttribute(
                         "aria-pressed",
@@ -579,11 +604,11 @@
         function forwardTimecode(control) {
             const row = control?.closest?.("[data-bcvc-comment-id]");
             if (!(row instanceof HTMLElement)) return false;
-            const message = Array.from(row.children).find((child) => child.classList.contains("bcvc-message"));
-            const mirrored = Array.from(message?.querySelectorAll("[data-bcvc-action='time']") || []);
+            const mirrored = getMirroredTimecodeButtons(row);
             const index = mirrored.indexOf(control);
-            const native = getNativeTimecodeButtons(
-                getNativeCommentElementById(row.getAttribute("data-bcvc-comment-id") || "")
+            const native = mapNativeTimecodeButtons(
+                mirrored,
+                getNativeTimecodeButtons(getNativeCommentElementById(row.getAttribute("data-bcvc-comment-id") || ""))
             );
             const nativeControl = index >= 0 ? native[index] : null;
             if (!isNativeControlAvailable(nativeControl)) return false;

@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "치즈 스패너",
-    "version": "1.4.6",
+    "version": "1.4.7",
     "description": "치지직 화질 고정, 재생·채팅 도구, 팔로잉 고정·미리보기, 다시보기 검색·댓글, 방송 목록 필터·통계와 시청 기록을 제공합니다.",
     "icons": {
         "16": "icons/cheese-spanner16.png",
@@ -9,7 +9,7 @@
         "128": "icons/cheese-spanner128.png"
     },
     "permissions": ["storage", "scripting", "alarms"],
-    "optional_permissions": ["notifications"],
+    "optional_permissions": ["notifications", "downloads"],
     "host_permissions": ["https://api.chzzk.naver.com/*", "https://apis.naver.com/*", "https://chzzk.naver.com/*"],
     "optional_host_permissions": ["https://*.pstatic.net/*"],
     "background": {
@@ -20,6 +20,7 @@
             "matches": ["https://chzzk.naver.com/*"],
             "js": [
                 "features/routeBridgePage.js",
+                "features/liveListRefreshPage.js",
                 "features/livePreviewFastHoverPage.js",
                 "features/chatTimestampPage.js",
                 "features/watchActivityPage.js",
@@ -40,6 +41,7 @@
                 "shared/selectors.js",
                 "content.js",
                 "shared/uiTheme.js",
+                "features/chatTools/keywordSettings.js",
                 "shared/updateGuide.js",
                 "shared/updateGuideView.js",
                 "shared/liveStart.js",
@@ -85,6 +87,7 @@
                 "features/chatTimestamp.js",
                 "features/vodOwnChat.js",
                 "features/chatWeeklyRanking.js",
+                "features/chatDonationMessages.js",
                 "features/videoSearch/model.js",
                 "features/videoSearch/repository.js",
                 "features/videoSearch.js",
@@ -113,6 +116,8 @@
                 "features/screenShortcuts.js",
                 "features/playerZoom.js",
                 "features/ambientGlow.js",
+                "shared/recordingDirectory.js",
+                "features/videoRecorder.js",
                 "features/chatMultiview.js",
                 "features/updateGuide.js"
             ],
@@ -122,6 +127,10 @@
     "web_accessible_resources": [
         {
             "resources": ["vendor/fonts/PretendardVariable.woff2"],
+            "matches": ["https://chzzk.naver.com/*"]
+        },
+        {
+            "resources": ["recording-download.txt"],
             "matches": ["https://chzzk.naver.com/*"]
         }
     ],

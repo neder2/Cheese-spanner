@@ -331,9 +331,28 @@ test("category tools request the shared theme and keep only the media badge colo
     assert.equal(declaration(rules, ".bcgt-category-summary .bcgt-category-row", "background"), "var(--bcgt-chip-bg)");
     assert.match(css, /--bcgt-chip-bg:var\(--bct-brand\);--bcgt-chip-text:var\(--bct-on-brand\)/);
 
-    // Native font classification (features/AGENTS.md): the bar copies the host font and the follower badge keeps its stack.
-    assert.doesNotMatch(css, /--bct-font/);
+    // Only the category exclusion selection and add panel use the bundled font (features/AGENTS.md).
+    const bundledFontSelectors = [".bcgt-category-summary", "#cheese-spanner-category-add-panel"];
+    assert.deepEqual(
+        rules
+            .filter((rule) => rule.declarations.some(({ value }) => /--bct-font\b/.test(value)))
+            .map((rule) => rule.selector)
+            .sort(),
+        [...bundledFontSelectors].sort(),
+        "the bundled font stays within the category exclusion UI"
+    );
+    for (const selector of bundledFontSelectors)
+        assert.equal(declaration(rules, selector, "font-family"), "var(--bct-font)", selector);
+    for (const selector of [
+        ".bcgt-category-summary .bcgt-category-button",
+        "#cheese-spanner-category-add-panel [data-category-search]",
+        "#cheese-spanner-category-add-panel .bcgt-category-button",
+    ])
+        assert.equal(declaration(rules, selector, "font"), "inherit", selector);
+
+    // The search bar and numeric filter still follow the host font; the follower badge keeps its stack.
     assert.equal(declaration(rules, "#cheese-spanner-category-tools", "font-family"), "var(--bcgt-font-family)");
+    assert.equal(declaration(rules, menuSelector, "font-family"), "inherit");
     assert.match(declaration(rules, '[data-bcgt-follower-badge="1"]', "font-family"), /^"Sandoll Nemony2",/);
 });
 
@@ -363,7 +382,7 @@ test("category tools show the polite empty result message", async (t) => {
     input.dispatchEvent(new page.window.Event("input", { bubbles: true }));
     const empty = await waitFor(() => {
         const node = page.document.querySelector('[data-bcgt-empty="1"]');
-        return node?.textContent === "조건에 맞는 결과가 없어요." ? node : null;
+        return node?.textContent === "조건에 맞는 결과 없음." ? node : null;
     });
     assert.ok(empty);
 });
@@ -416,7 +435,7 @@ test("monthly calendar requests the shared theme and keeps its specified font st
     );
     assert.equal(
         widget.querySelector(".bcmb-calendar-legend").getAttribute("aria-label"),
-        "방송 시간에 따라 3시간 단위로 9단계로 표시하며, 가장 진한 색은 24시간 이상이에요."
+        "방송 시간을 3시간 단위 9단계로 표시(가장 진한 색은 24시간 이상)."
     );
     assert.equal(widget.querySelectorAll(".bcmb-calendar-legend-step").length, 9);
 });

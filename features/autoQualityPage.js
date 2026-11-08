@@ -113,6 +113,10 @@
     const PLAYER_MUTATION_SELECTOR = `video, ${PLAYER_DISCOVERY_SELECTORS.join(", ")}`;
     const EXTENSION_PREVIEW_VIDEO_SELECTOR =
         "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip], [data-bcmv-video]";
+    // MAIN world라 content.js를 쓸 수 없어 같은 이름·같은 문자열 사본을 둔다(release-safety 테스트가 일치 확인).
+    // 2026-11-05 공개 번들 기준 라이브 프리롤·미드롤 wrapper 아래 광고 영상과 광고용 contentVideo 더미를 뺀다.
+    const NATIVE_AD_MEDIA_SELECTOR =
+        '[data-role="imaAdContainerEl"], [data-role="gvAdContainerEl"], #preAdPlayerWrapper, #midAdPlayerWrapper';
     const ROUTE_MEDIA_LOAD_EVENTS = ["emptied", "loadstart", "loadedmetadata"];
 
     let cachedPlayer = null;
@@ -136,6 +140,7 @@
     let commentTimelineSeekSeq = 0;
     let activeCommentTimelineSeek = null;
     let lastCommentTimelineSeekAt = 0;
+    let lastCommentTimelineSeekRoute = "";
     let lastUserMediaIntentAt = 0;
     let vodGuardVideo = null;
     let vodStartupHref = "";
@@ -169,6 +174,9 @@
     let playbackRestoreSeq = 0;
     let playbackRestoreTimer = 0;
     let routeMediaGate = null;
+    // video → { source, route }: 지금 요소에 남은 매체가 어느 재생 경로의 것인지. 홈·목록을 거친 라이브 PiP처럼
+    // 같은 매체를 그대로 이어 보는 원래 경로로 돌아오면 이전 경로의 스트림으로 보지 않는다.
+    const routeMediaOwners = new WeakMap();
 
     const nativeDefineProperty = Object.defineProperty;
     const nativeDefineProperties = Object.defineProperties;
@@ -206,23 +214,46 @@
 
     // URL이 먼저 바뀌면 같은 video에 이전 방송·영상이 남아 있다. 새 매체가 실제로 로드되기 전(소스 변경이나
     // emptied·loadstart·loadedmetadata 전)의 트랙을 새 경로의 입장 적용 완료로 기록하지 않는다.
-    function armRouteMediaGate() {
+    function rememberRouteMediaOwner(video, route = location.pathname) {
+        if (!(video instanceof HTMLVideoElement) || !PLAYBACK_ROUTE_RE.test(route)) return;
+        routeMediaOwners.set(video, { source: readLooseProp(video, "currentSrc"), route });
+    }
+
+    function armRouteMediaGate(previousRouteKey, nextRouteKey) {
+        const previousGate = routeMediaGate;
         clearRouteMediaGate();
         const video = getMainVideo();
         if (!(video instanceof HTMLVideoElement)) return;
-        const gate = { video, source: readLooseProp(video, "currentSrc"), onLoad: null };
+        const source = readLooseProp(video, "currentSrc");
+        // 아직 이전 경로의 스트림으로 막혀 있던 매체는 그 경로의 것으로 남기고, 아니면 떠나는 경로의 매체로 기억한다.
+        const stillGated = previousGate?.video === video && previousGate.source === source;
+        if (!stillGated) rememberRouteMediaOwner(video, previousRouteKey);
+        const owner = routeMediaOwners.get(video);
+        if (owner?.source === source && owner.route === nextRouteKey) return;
+        const gate = { video, source, onLoad: null, withheldSelection: false };
         gate.onLoad = () => {
-            if (routeMediaGate === gate) clearRouteMediaGate();
+            if (routeMediaGate !== gate) return;
+            releaseRouteMediaGate(gate);
+            // VOD는 releaseRouteMediaGate가 다시 시작한 시작 대기가 적용한다. 라이브는 보류한 선택을 새 매체에서 다시 판정한다.
+            if (gate.withheldSelection && autoQualityEnabled && isPlaybackRoute() && !isVodRoute())
+                startPageAutoApply(TRACK_RECOVERY_WINDOW_MS);
         };
         for (const type of ROUTE_MEDIA_LOAD_EVENTS) video.addEventListener(type, gate.onLoad, true);
         routeMediaGate = gate;
+    }
+
+    // 새 매체가 로드되면 gate를 풀고, 이전 스트림의 위치·요청으로 끝났을 수 있는 VOD 시작 대기를 다시 시작한다.
+    function releaseRouteMediaGate(gate) {
+        if (routeMediaGate !== gate) return;
+        clearRouteMediaGate();
+        if (vodGuardVideo === gate.video) restartVodStartupWait(gate.video);
     }
 
     function isStaleRouteMedia(video) {
         const gate = routeMediaGate;
         if (!gate || gate.video !== video) return false;
         if (readLooseProp(video, "currentSrc") === gate.source) return true;
-        clearRouteMediaGate();
+        releaseRouteMediaGate(gate);
         return false;
     }
 
@@ -230,13 +261,15 @@
         const nextRouteKey = location.pathname;
         if (qualityTargetRouteKey === nextRouteKey) return false;
 
+        const previousRouteKey = qualityTargetRouteKey;
         qualityTargetRouteKey = nextRouteKey;
         awaitingRouteApplyRequest = true;
+        if (activeCommentTimelineSeek) finishCommentTimelineSeek(activeCommentTimelineSeek.seq);
         clearPageAutoApply();
         detachVodPlaybackGuard();
         cancelPlaybackRestore();
         clearQualityTargetRouteState();
-        armRouteMediaGate();
+        armRouteMediaGate(previousRouteKey, nextRouteKey);
         return true;
     }
 
@@ -317,10 +350,12 @@
         return currentTime <= targetSeconds + expectedProgress + COMMENT_TIMELINE_SEEK_EPSILON_SECONDS;
     }
 
+    // 댓글 타임코드 클릭은 누른 VOD 경로의 의도다. 뒤로/앞으로 등으로 다른 VOD로 옮긴 뒤에는 의도로 보지 않는다.
     function hasRecentCommentTimelineSeekIntent(now = performance.now()) {
         return (
             isVodRoute() &&
             lastCommentTimelineSeekAt > 0 &&
+            lastCommentTimelineSeekRoute === location.pathname &&
             now - lastCommentTimelineSeekAt <= COMMENT_TIMELINE_SEEK_INTENT_WINDOW_MS
         );
     }
@@ -436,6 +471,11 @@
     function enforceCommentTimelineSeek(targetSeconds, seq, clickedAt) {
         const state = activeCommentTimelineSeek;
         if (!state || state.seq !== seq || seq !== commentTimelineSeekSeq || !isVodRoute()) return;
+        // 페이지 안 클릭·키 외의 이동(브라우저 뒤로/앞으로, 스와이프, Enter 링크 이동)도 다른 VOD를 옮기지 않는다.
+        if (location.pathname !== state.route) {
+            finishCommentTimelineSeek(seq);
+            return;
+        }
 
         const video = getMainVideo();
         if (!(video instanceof HTMLVideoElement)) return;
@@ -463,7 +503,8 @@
         const seq = ++commentTimelineSeekSeq;
         const clickedAt = performance.now();
         lastCommentTimelineSeekAt = clickedAt;
-        activeCommentTimelineSeek = { seq, targetSeconds, clickedAt, satisfiedAt: 0 };
+        lastCommentTimelineSeekRoute = location.pathname;
+        activeCommentTimelineSeek = { seq, targetSeconds, clickedAt, satisfiedAt: 0, route: location.pathname };
         for (const delay of COMMENT_TIMELINE_SEEK_RETRIES) {
             setTimeout(() => enforceCommentTimelineSeek(targetSeconds, seq, clickedAt), delay);
         }
@@ -539,6 +580,9 @@
             ) {
                 return;
             }
+            // 광고 구간의 Space/K는 네이티브가 광고 일시정지·재개에 쓰므로 본영상 의도가 아니다.
+            // 화살표·J/L·Home/End는 네이티브 시크 가능성이 있어 기존대로 기록한다(결과는 복원 취소 방향).
+            if ((event.key === " " || event.key === "k" || event.key === "K") && isNativeAdBreakActive()) return;
         }
 
         const now = performance.now();
@@ -969,11 +1013,19 @@
         return video instanceof HTMLVideoElement && Boolean(video.closest?.(EXTENSION_PREVIEW_VIDEO_SELECTOR));
     }
 
+    // content.js isNativeAdBreakActive의 MAIN world 사본: 라이브 프리롤 wrapper 마운트, 미드롤 wrapper 표시,
+    // 다시보기 본영상 pzp 루트의 pzp-pc--adbreak 중.
+    function isNativeAdBreakActive() {
+        if (document.getElementById("preAdPlayerWrapper")) return true;
+        const mid = document.getElementById("midAdPlayerWrapper");
+        if (mid instanceof HTMLElement && getComputedStyle(mid).display !== "none") return true;
+        const root = getMainVideo()?.closest(".pzp-pc");
+        return Boolean(root && (root.matches(".pzp-pc--adbreak") || root.querySelector(".pzp-pc--adbreak")));
+    }
+
     function getMainVideo() {
         const videos = Array.from(document.querySelectorAll("video")).filter(
-            (video) =>
-                !isExtensionPreviewVideo(video) &&
-                !video.closest('[data-role="imaAdContainerEl"], [data-role="gvAdContainerEl"], #midAdPlayerWrapper')
+            (video) => !isExtensionPreviewVideo(video) && !video.closest(NATIVE_AD_MEDIA_SELECTOR)
         );
         if (!videos.length) return null;
         videos.sort((a, b) => visibleArea(b) - visibleArea(a));
@@ -1150,7 +1202,7 @@
         return cachedPlayer;
     }
 
-    function isCurrentLivePlayerOwnership(binding, allowSourceChange = false) {
+    function isCurrentLivePlayerOwnership(binding, allowSourceChange = false, allowProviderChange = false) {
         if (!binding) return false;
         try {
             return (
@@ -1165,7 +1217,7 @@
                 binding.player.shadowRoot === binding.shadowRoot &&
                 binding.player.shadowRoot.contains(binding.video) &&
                 binding.player.querySelector("pzp-setting-quality-pane") === binding.pane &&
-                readLooseProp(binding.player, "srcObject") === binding.provider &&
+                (allowProviderChange || readLooseProp(binding.player, "srcObject") === binding.provider) &&
                 (allowSourceChange || binding.video.currentSrc === binding.source) &&
                 // Native getters above can replace ownership while a diagnostic read is in progress.
                 binding.host[binding.fiberKey] === binding.fiber &&
@@ -1180,11 +1232,17 @@
     }
 
     function isCurrentLiveQualityBinding(binding) {
+        // 첫 재생 전에는 네이티브가 같은 플레이어에 스트림 소스·provider를 붙일 수 있다. 첫 playing에서 새 값으로 고정한다.
+        const beforeStart = Boolean(binding) && !binding.started;
         return (
             autoQualityEnabled &&
             isPlaybackRoute() &&
             !isVodRoute() &&
-            isCurrentLivePlayerOwnership(binding, Boolean(binding?.pending || binding?.applying))
+            isCurrentLivePlayerOwnership(
+                binding,
+                Boolean(binding?.pending || binding?.applying || beforeStart),
+                beforeStart
+            )
         );
     }
 
@@ -1287,7 +1345,16 @@
             onPlaying: null,
         };
         binding.onPlaying = () => {
-            if (liveQualityBinding !== binding || !isCurrentLiveQualityBinding(binding)) return;
+            if (liveQualityBinding !== binding) return;
+            if (!isCurrentLiveQualityBinding(binding)) {
+                // 1회 대기를 조용히 버리면 입장 적용을 이어 줄 계기가 사라진다. 소유가 바뀌었으면 새 binding으로 다시 판정한다.
+                detachLiveQualityBinding();
+                if (autoQualityEnabled && isPlaybackRoute() && !isVodRoute())
+                    startPageAutoApply(TRACK_RECOVERY_WINDOW_MS);
+                return;
+            }
+            binding.source = video.currentSrc;
+            binding.provider = readLooseProp(player, "srcObject");
             binding.started = true;
             if (autoQualityEnabled) startPageAutoApply(TRACK_RECOVERY_WINDOW_MS);
         };
@@ -1493,9 +1560,17 @@
         nativeSelectionLocks.set(binding.pane, pending);
         const settle = (failed) => {
             if (nativeSelectionLocks.get(binding.pane) === pending) nativeSelectionLocks.delete(binding.pane);
-            if (liveQualityBinding !== binding || binding.pending !== pending || !isCurrentLiveQualityBinding(binding))
-                return;
+            if (liveQualityBinding !== binding || binding.pending !== pending) return;
+            // 소유는 pending인 채로 판정해 선택 자체가 바꾼 같은 플레이어의 소스 변화를 허용한다. 그다음 끝난 선택을
+            // 반드시 정리한다. pending으로 남기면 소유 검사가 소스 변화를 계속 허용하고 완료된 Promise에 즉시 재시도가 걸린다.
+            const owned = isCurrentLiveQualityBinding(binding);
             binding.pending = null;
+            if (!owned) {
+                detachLiveQualityBinding();
+                if (autoQualityEnabled && isPlaybackRoute() && !isVodRoute())
+                    startPageAutoApply(TRACK_RECOVERY_WINDOW_MS);
+                return;
+            }
             binding.source = binding.video.currentSrc;
             const list = getTrackListFromTarget(binding.player);
             const selected = getSelectedTrack(toTrackArray(list), list);
@@ -1782,6 +1857,11 @@
         vodStartupSettled = !isVodRoute() || !(video instanceof HTMLVideoElement);
     }
 
+    function restartVodStartupWait(video) {
+        resetVodStartupState(video);
+        video.addEventListener("timeupdate", onVodStartupProgress, true);
+    }
+
     function ensureVodStartupState(video) {
         if (vodGuardVideo !== video || vodStartupHref !== location.href || !vodStartupFirstSeenAt) {
             resetVodStartupState(video);
@@ -1865,6 +1945,8 @@
     function onVodStartupProgress(event) {
         const video = event.currentTarget;
         if (!(video instanceof HTMLVideoElement) || video !== vodGuardVideo) return;
+        // 경로가 바뀐 뒤 같은 요소에 남은 이전 VOD의 진행 이벤트로 새 경로의 시작 준비·적용을 판정하지 않는다.
+        if (isStaleRouteMedia(video)) return;
 
         if (event.type === "seeking" || event.type === "seeked") {
             vodStartupLastSeekAt = performance.now();
@@ -2104,10 +2186,15 @@
                 trackCount: tracks.length,
             };
         }
-        const selected = selectTrack(trackList, tracks, targetTrack);
-        if (selected) {
-            restorePlaybackAfterQualityChange(video, isVodRoute() ? currentTime : NaN, shouldResume);
+        // 경로가 바뀐 뒤 요소에 남은 이전 경로의 매체에는 선택하지 않는다. 선택 자체가 소스·로드 이벤트를 바꾸면
+        // 새 매체 준비로 오인해 이전 위치를 다음 영상에 되돌려 쓰고 그 트랙을 새 경로의 입장 완료로 기록한다.
+        // 새 매체가 로드되면 gate가 풀리고 VOD 시작 대기 또는 적용 창이 새 매체 기준으로 다시 적용한다.
+        if (isStaleRouteMedia(video)) {
+            routeMediaGate.withheldSelection = true;
+            return { status: "pending", reason: "route-media-pending" };
         }
+        const selected = selectTrack(trackList, tracks, targetTrack);
+        if (selected) restorePlaybackAfterQualityChange(video, isVodRoute() ? currentTime : NaN, shouldResume);
 
         return {
             status: selected ? "selected" : "pending",
@@ -2252,6 +2339,7 @@
     // VOD 입장 적용도 같은 경로·선호 화질·플레이어·영상에서 한 번 끝난다. 경로·설정·플레이어·영상 교체만 다시 적용한다.
     function rememberStableVodPlayerApply(player, video, verifyWindow = 0) {
         if (isStaleRouteMedia(video)) return;
+        rememberRouteMediaOwner(video);
         stableVodApplyKey = getStableVodApplyKey();
         stableVodApplyVideo = video;
         stableVodApplyPlayer = player;
@@ -2275,6 +2363,7 @@
     function rememberStableLiveApply(player, video, reason, verifyWindow = 0) {
         const key = getStableLiveApplyKey();
         if (!key || !player || !(video instanceof HTMLVideoElement) || isStaleRouteMedia(video)) return;
+        rememberRouteMediaOwner(video);
         stableLiveApplyKey = key;
         stableLiveApplyPlayer = player;
         stableLiveApplyVideo = video;

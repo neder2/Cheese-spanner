@@ -93,20 +93,32 @@
         return `reply:${parentKey}:${getCommentKey(row, fallbackIndex)}`;
     }
 
+    // 원본 VOD 댓글은 `comments` 키 없이 `commentActive`만 담은 성공 응답을 빈 목록으로 다뤄요.
+    // 키가 아예 없을 때만 빈 목록으로 보고, 키가 있는데 형식이 다르면 오류로 남겨요.
+    function isCommentListOmitted(content) {
+        return !Object.hasOwn(content, "comments") && typeof content.commentActive === "boolean";
+    }
+
     function validateCommentResponse(content) {
-        if (!content || typeof content !== "object") throw new Error("댓글 응답 형식을 확인할 수 없어요.");
+        if (!content || typeof content !== "object") throw new Error("댓글 응답 형식 확인 불가.");
+        if (isCommentListOmitted(content)) {
+            if (content.bestComments != null && !Array.isArray(content.bestComments)) {
+                throw new Error("인기 댓글 응답 형식 확인 불가.");
+            }
+            return content;
+        }
         if (!content.comments || typeof content.comments !== "object" || !Array.isArray(content.comments.data)) {
-            throw new Error("댓글 목록 응답 형식을 확인할 수 없어요.");
+            throw new Error("댓글 목록 응답 형식 확인 불가.");
         }
         if (content.bestComments != null && !Array.isArray(content.bestComments)) {
-            throw new Error("인기 댓글 응답 형식을 확인할 수 없어요.");
+            throw new Error("인기 댓글 응답 형식 확인 불가.");
         }
         return content;
     }
 
     function parseCommentPage(content, { offset = 0, pageSize = COMMENT_PAGE_SIZE } = {}) {
         validateCommentResponse(content);
-        const comments = content.comments;
+        const comments = isCommentListOmitted(content) ? { data: [] } : content.comments;
         const rows = [...comments.data];
         const normalizedOffset = normalizeLimit(offset, 0);
         const bestRows = normalizedOffset === 0 && Array.isArray(content.bestComments) ? [...content.bestComments] : [];
@@ -400,6 +412,13 @@
             .slice(0, limit);
     }
 
+    function isSurrogatePairBoundary(text, index) {
+        if (index <= 0 || index >= text.length) return false;
+        const high = text.charCodeAt(index - 1);
+        const low = text.charCodeAt(index);
+        return high >= 0xd800 && high <= 0xdbff && low >= 0xdc00 && low <= 0xdfff;
+    }
+
     function getCollapsedCommentText(
         text,
         { maxChars = COLLAPSED_COMMENT_MAX_CHARS, maxLines = COLLAPSED_COMMENT_MAX_LINES } = {}
@@ -412,9 +431,12 @@
         if (lines.length > lineLimit) cutoff = lines.slice(0, lineLimit).join("\n").length;
         cutoff = Math.min(cutoff, charLimit);
         if (cutoff >= content.length) return "";
+        const cutAtCharLimit = cutoff === charLimit;
+        // UTF-16 서로게이트 쌍(이모지 등) 가운데에서 자르면 깨진 문자가 남으므로 쌍 앞에서 잘라요.
+        if (isSurrogatePairBoundary(content, cutoff)) cutoff -= 1;
 
         let collapsed = content.slice(0, cutoff).trimEnd();
-        if (cutoff === charLimit) {
+        if (cutAtCharLimit) {
             const lastBreak = collapsed.lastIndexOf("\n");
             if (lastBreak >= charLimit * 0.65) collapsed = collapsed.slice(0, lastBreak).trimEnd();
         }

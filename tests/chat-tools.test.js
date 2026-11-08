@@ -951,7 +951,7 @@ test("chat tools panel uses the shared CHZZK theme, Pretendard and 해요체 not
     await waitForCondition(
         () => document.querySelector(".bcct-blind-reveal") && document.querySelector(".bcct-moderator-box__empty")
     );
-    assert.equal(document.querySelector(".bcct-blind-reveal").title, "블라인드된 메시지의 원문이에요.");
+    assert.equal(document.querySelector(".bcct-blind-reveal").title, "블라인드 메시지 원문");
     assert.equal(document.querySelector(".bcct-moderator-box__empty").textContent, "아직 수집된 메시지가 없어요.");
 
     const themeStyle = document.getElementById("cheese-spanner-ui-theme");
@@ -2212,4 +2212,231 @@ test("changing only a message ID cannot seed the next identity with the old orig
         store.originalText(replacement, { ...parsed, isBlind: true, textEl: replacement.firstElementChild }),
         ""
     );
+});
+
+// 2026-10-30 실측: 이모티콘만 보낸 본문은 span > button > img(alt="", title 없음)뿐이에요.
+test("an emoticon-only moderator chat reaches the panel with its emoticon tokens", async (t) => {
+    const emoticon = (file) =>
+        `<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24" src="https://ssl.pstatic.net/static/nng/glive/icon/${file}.png"></button>`;
+    const { dom } = createPageDom(
+        [
+            activityChat("emo-1", "안내 담당", emoticon("c_57").repeat(2)),
+            activityChat("emo-2", "안내 담당", `반가워요 ${emoticon("f_32")}`),
+        ].join("")
+    );
+    t.after(() => closeChatToolsDom(dom));
+
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(dom.window.document).length === 2);
+
+    openModeratorPanel(dom.window.document);
+    assert.deepEqual(
+        moderatorRows(dom.window.document).map((row) => [
+            row.querySelector(".bcct-moderator-row__author").textContent,
+            row.querySelector(".bcct-moderator-row__text").textContent,
+        ]),
+        [
+            ["안내 담당", "[이모티콘:c_57] [이모티콘:c_57]"],
+            ["안내 담당", "반가워요 [이모티콘:f_32]"],
+        ]
+    );
+});
+
+// 이름도 src도 없던 본문 이미지에 src가 늦게 붙으면, 첫 파싱의 빈 토큰과 채워진 토큰을 두 메시지로 기록하지 않아요.
+// src 속성은 현재 observer 감시 대상이 아니므로 안정화 확인의 재파싱이 마지막 상태를 읽어야 해요.
+test("a moderator emoticon whose src arrives late reaches the panel once with its final token", async (t) => {
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            nickname: "안내 담당",
+            text: '<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24"></button>',
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            nicknameColor: "",
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+    let filled = false;
+    loadChatTools(dom, {
+        onParse(row) {
+            if (filled) return;
+            filled = true;
+            dom.window.setTimeout(() => {
+                row.querySelector("._text_1vemp_1 img").setAttribute(
+                    "src",
+                    "https://ssl.pstatic.net/static/nng/glive/icon/c_57.png"
+                );
+            }, 0);
+        },
+    });
+    await waitForCondition(() => moderatorRows(dom.window.document).length > 0);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    openModeratorPanel(dom.window.document);
+    assert.deepEqual(
+        moderatorRows(dom.window.document).map((row) => row.querySelector(".bcct-moderator-row__text").textContent),
+        ["[이모티콘:c_57]"]
+    );
+});
+
+// 행·img 노드를 그대로 두고 본문 이모티콘 src만 바꾸는 재사용도 실제 observer가 그 행을 다시 처리해야 해요.
+// 닉네임 영역 배지 src 변경은 본문 정체성을 바꾸지 않으므로 같은 기록으로 남아요(대조).
+test("a src-only body emoticon change is reparsed through the chat observer, unlike a nickname badge change", async (t) => {
+    const icon = "https://ssl.pstatic.net/static/nng/glive";
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            nickname: "안내 담당",
+            text: `<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24" src="${icon}/icon/c_57.png"></button>`,
+            badgeImg: [
+                '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+                `<img src="${icon}/badge/cheatkey_24m.png" alt="">`,
+            ].join(""),
+            nicknameColor: "",
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+    loadChatTools(dom);
+    const document = dom.window.document;
+    const panelTexts = () =>
+        moderatorRows(document).map((row) => row.querySelector(".bcct-moderator-row__text").textContent);
+    await waitForCondition(() => moderatorRows(document).length === 1);
+    const row = document.querySelector("._item_sg7hy_7");
+    const bodyImg = row.querySelector("._text_1vemp_1 img");
+
+    row.querySelector("img[src*='cheatkey']").setAttribute("src", `${icon}/badge/cheatkey_36m.png`);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.deepEqual(panelTexts(), ["[이모티콘:c_57]"], "a nickname badge src change is the same message");
+
+    // 같은 파일 이름의 다른 경로: 표시는 같아도 다른 이미지예요.
+    bodyImg.setAttribute("src", `${icon}/other/c_57.png`);
+    await waitForCondition(() => moderatorRows(document).length === 2, { timeoutMs: 1500 });
+    bodyImg.setAttribute("src", `${icon}/icon/f_32.png`);
+    await waitForCondition(() => moderatorRows(document).length === 3, { timeoutMs: 1500 });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    openModeratorPanel(document);
+    assert.deepEqual(panelTexts(), ["[이모티콘:c_57]", "[이모티콘:c_57]", "[이모티콘:f_32]"]);
+});
+
+// 목록 root가 통째로 다시 그려질 때 ID 없는 운영자 메시지의 본문 이미지가 이름·src 없이 먼저 붙으면 안정화를
+// 기다려요. 그 사이 실제 scan이 끝나도 같은 메시지의 기록·읽음이 이어지고, 그 뒤 도착한 같은 내용은 새 기록이에요.
+test("a redrawn id-less moderator row with a loading body image keeps its read record through the observer", async (t) => {
+    const icon = "https://ssl.pstatic.net/static/nng/glive";
+    const loadingRow = () =>
+        realChzzkChatRow({
+            nickname: "안내 담당",
+            text: '<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24"></button>',
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+        });
+    const { dom } = createPageDom(
+        realChzzkChatRow({
+            nickname: "안내 담당",
+            text: `<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24" src="${icon}/icon/c_57.png"></button>`,
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+        })
+    );
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 1);
+    installModeratorViewport(dom);
+    openModeratorPanel(document);
+    await waitForCondition(() => unreadCount(document) === 0);
+    openModeratorPanel(document);
+
+    const oldList = document.querySelector(".chat-list");
+    const nextList = oldList.cloneNode(false);
+    nextList.innerHTML = loadingRow();
+    oldList.replaceWith(nextList);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    nextList.querySelector("._text_1vemp_1 img").setAttribute("src", `${icon}/icon/c_57.png`);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    assert.equal(moderatorRows(document).length, 1, "the redrawn row is the existing record");
+    assert.equal(unreadCount(document), 0, "read state is kept");
+
+    // 대조: 첫 hydration 뒤 실제로 도착한 같은 내용의 메시지는 새 미확인 기록이에요.
+    nextList.insertAdjacentHTML("beforeend", loadingRow());
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    nextList.lastElementChild.querySelector("._text_1vemp_1 img").setAttribute("src", `${icon}/icon/c_57.png`);
+    await waitForCondition(() => moderatorRows(document).length === 2 && unreadCount(document) === 1);
+});
+
+test("redrawn identical id-less moderator rows keep their own originals when the first image loads late", async (t) => {
+    const icon = "https://ssl.pstatic.net/static/nng/glive";
+    const imageRow = (src) =>
+        realChzzkChatRow({
+            nickname: "안내 담당",
+            text: `<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24"${src ? ` src="${src}"` : ""}></button>`,
+            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+        });
+    const { dom } = createPageDom(imageRow(`${icon}/icon/c_57.png`) + imageRow(`${icon}/icon/c_57.png`));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 2);
+    installModeratorViewport(dom);
+
+    // 같은 백로그를 새 root로 다시 그리면서 첫 행만 본문 이미지가 아직 로딩 중이에요.
+    const oldList = document.querySelector(".chat-list");
+    const nextList = oldList.cloneNode(false);
+    nextList.innerHTML = imageRow("") + imageRow(`${icon}/icon/c_57.png`);
+    oldList.replaceWith(nextList);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    const [first, second] = nextList.children;
+    first.querySelector("._text_1vemp_1 img").setAttribute("src", `${icon}/icon/c_57.png`);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    assert.equal(moderatorRows(document).length, 2, "the redrawn rows are the existing records");
+
+    const scrolled = [];
+    first.scrollIntoView = () => scrolled.push("first");
+    second.scrollIntoView = () => scrolled.push("second");
+    openModeratorPanel(document);
+    for (const item of moderatorRows(document)) item.click();
+    assert.deepEqual(scrolled, ["first", "second"], "each record moves to its own redrawn row");
+});
+
+test("an id-less list emptied row by row in one observer batch does not merge a repeated notice", async (t) => {
+    // 행을 하나씩 지우면 한 observer 배치에 제거 레코드가 여러 개 와요. 다시 받은 백로그가 "나"부터 시작하면
+    // 그 뒤의 "가"는 빠진 앞 기록이 아니라 같은 문구의 새 공지예요.
+    const notice = (text) => managerChat("같은 관리자", text);
+    const { dom } = createPageDom(notice("공지 가") + notice("공지 나"));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 2);
+    installModeratorViewport(dom);
+    const list = document.querySelector(".chat-list");
+
+    for (const row of Array.from(list.children)) row.remove();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    list.innerHTML = notice("공지 나") + notice("공지 가");
+    await waitForCondition(() => moderatorRows(document).length === 3);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.deepEqual(collectedTexts(document), ["공지 가", "공지 나", "공지 가"]);
+    assert.equal(unreadCount(document), 3);
+
+    const [redrawn, repeated] = list.children;
+    const scrolled = [];
+    redrawn.scrollIntoView = () => scrolled.push("redrawn");
+    repeated.scrollIntoView = () => scrolled.push("repeated");
+    openModeratorPanel(document);
+    for (const item of moderatorRows(document)) item.click();
+    assert.deepEqual(scrolled, ["redrawn", "repeated"], "the missing record has no row; the others keep their own");
+});
+
+test("an id-less list emptied row by row keeps one record per message when refilled in the same order", async (t) => {
+    // 대조: 같은 순서로 다시 받은 백로그는 제거 레코드가 여러 개여도 기존 기록으로 이어요.
+    const notice = (text) => managerChat("같은 관리자", text);
+    const backlog = notice("공지 가") + notice("공지 나") + notice("공지 가");
+    const { dom } = createPageDom(backlog);
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 3);
+    const list = document.querySelector(".chat-list");
+
+    for (const row of Array.from(list.children)) row.remove();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    list.innerHTML = backlog;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.deepEqual(collectedTexts(document), ["공지 가", "공지 나", "공지 가"]);
+    assert.equal(unreadCount(document), 3);
 });

@@ -151,7 +151,7 @@ test("export downloads the worker's file and import shows a preview before any w
     assert.match(text, /파일 5개 중 2개 바뀜/);
     assert.match(text, /방송 알림 대상1개 채널 · 바뀜/);
     assert.match(text, /이 버전에 없는 옵션 1개는 무시해요/);
-    assert.match(text, /알림·자동 입장 없이 기준으로만/);
+    assert.match(text, /진행 중인 방송은 건너뛰고 다음 새 방송부터 알림·자동 열기를 실행해요/);
     assert.equal(h.chrome.testState.sync.chatPosition, undefined, "previewing writes nothing");
     const locked = queryOption(h.document, "chatTimestampEnabled");
     assert.equal(locked.disabled, true, "option editing is locked while the restore owns the stored options");
@@ -303,6 +303,59 @@ test("permissions follow only the features the file turns on, and denial keeps j
     assert.equal(h.backupMessages.at(-1).disabledOptionKeys, undefined);
 });
 
+test("a denied bundled request keeps off only the feature whose permission is not already held", async (t) => {
+    const h = await setup(t, { permissionGranted: false });
+    // Desktop notifications were allowed earlier; the video host permission was not. Chrome grants a request for
+    // only held permissions without a prompt and refuses one that includes the host.
+    h.chrome.permissions.contains = (spec, callback) =>
+        setTimeout(() => callback(Boolean(spec.permissions?.includes("notifications"))), 0);
+    h.chrome.permissions.request = (spec, callback) => {
+        h.chrome.testState.permissionRequests.push(spec);
+        callback(!spec.origins);
+    };
+    h.document.getElementById("importSettingsFile").click();
+    h.replies.push({
+        ok: true,
+        fingerprint: "fp-1",
+        summary: summary({
+            permissions: { notifications: true, previewHosts: true },
+            permissionOptionKeys: ["liveStartNotificationsEnabled", "liveMultiviewEnabled"],
+        }),
+        ignoredOptionKeys: [],
+        changes: 3,
+    });
+    await h.chooseFile(fileValue);
+    await waitForCondition(() => !h.panel.hidden);
+    h.panel.querySelector(".primary-button").click();
+    await waitForCondition(() => /권한이 거부되어/.test(h.panel.textContent));
+    const fallback = [...h.panel.querySelectorAll("button")].find((button) =>
+        button.textContent.includes("켜지 않고 불러오기")
+    );
+    assert.equal(fallback.textContent, "라이브 멀티뷰 기능은 켜지 않고 불러오기");
+    h.replies.push({
+        ok: true,
+        result: { status: "applied", summary: summary({ keptOffOptionKeys: ["liveMultiviewEnabled"] }), conflicts: [] },
+    });
+    fallback.click();
+    await waitForCondition(() => h.panel.hidden);
+    assert.deepEqual(plain(h.backupMessages.at(-1).disabledOptionKeys), ["liveMultiviewEnabled"]);
+});
+
+test("exporting while a preview with nothing to change is open leaves its apply button off", async (t) => {
+    const h = await setup(t);
+    h.document.getElementById("importSettingsFile").click();
+    h.replies.push({ ok: true, fingerprint: "fp-1", summary: summary(), ignoredOptionKeys: [], changes: 0 });
+    await h.chooseFile(fileValue);
+    await waitForCondition(() => !h.panel.hidden);
+    const apply = h.panel.querySelector(".primary-button");
+    assert.equal(apply.disabled, true);
+    h.replies.push({ ok: true, backup: { ...fileValue, createdAt: Date.UTC(2026, 9, 8, 3, 4) }, omitted: [] });
+    h.document.getElementById("exportSettingsFile").click();
+    await waitForCondition(() => h.downloads[0]?.name);
+    assert.equal(h.panel.querySelector(".primary-button").disabled, true, "still nothing to apply");
+    assert.equal(h.panel.querySelector(".secondary-button").disabled, false, "cancel works again");
+});
+
 test("choosing to import without permissions survives a re-confirmation in the same flow", async (t) => {
     const h = await setup(t, { permissionGranted: false });
     h.document.getElementById("importSettingsFile").click();
@@ -422,7 +475,8 @@ test("saved size reset clears only the three profile-local size choices", async 
     });
     const button = h.document.getElementById("resetPanelSizes");
     assert.equal(button.type, "button");
-    assert.ok(h.document.getElementById(button.getAttribute("aria-describedby")));
+    assert.equal(button.hasAttribute("aria-describedby"), false);
+    assert.equal(button.textContent.trim(), "저장한 채팅·사이드바 크기 초기화");
     button.click();
     await waitForCondition(() => /크기를 초기화했어요/.test(h.message()));
     for (const key of PANEL_KEYS) assert.equal(h.chrome.testState.local[key], null);

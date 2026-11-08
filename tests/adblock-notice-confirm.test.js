@@ -789,7 +789,8 @@ test("the generic close path's frame restore never reveals a notice awaiting rem
     const f = fixture(t);
     const closable = f.w.document.createElement("div");
     closable.setAttribute("role", "alertdialog");
-    closable.innerHTML = '<strong>광고 차단 안내</strong><button type="button" aria-label="닫기">닫기</button>';
+    closable.innerHTML =
+        '<strong>광고 차단 프로그램을 사용 중이신가요?</strong><button type="button" aria-label="닫기">닫기</button>';
     closable.getBoundingClientRect = () => ({ width: 300, height: 200 });
     let closeClicks = 0;
     closable.querySelector("button").addEventListener("click", () => closeClicks++);
@@ -824,7 +825,8 @@ test("chat focus, other dialogs and the existing close path are preserved", asyn
     f.w.document.body.append(other);
     const closable = f.w.document.createElement("div");
     closable.setAttribute("role", "alertdialog");
-    closable.innerHTML = '<strong>광고 차단 안내</strong><button type="button" aria-label="닫기">닫기</button>';
+    closable.innerHTML =
+        '<strong>광고 차단 프로그램을 사용 중이신가요?</strong><button type="button" aria-label="닫기">닫기</button>';
     closable.getBoundingClientRect = () => ({ width: 300, height: 200 });
     let closeClicks = 0;
     closable.querySelector("button").addEventListener("click", () => {

@@ -246,3 +246,35 @@ test("the option is on by default and turning it off removes every marker", asyn
     assert.ok(isolated.indexOf("features/vodOwnChat.js") > isolated.indexOf("content.js"));
     assert.ok(isolated.indexOf("features/vodOwnChat.js") > isolated.indexOf("shared/uiTheme.js"));
 });
+
+test("appending replay rows re-checks only the added rows, while a reuse signal still re-checks its row", async () => {
+    const rows = Array.from({ length: 100 }, (_, index) => ({ user: OTHER, text: `다른 사람 ${index}` }));
+    const { dom, document } = createVodDom({ rows });
+    let requests = 0;
+    document.addEventListener("cheese-spanner:chat-user-source-request", () => (requests += 1), true);
+    load(dom);
+    await waitFor(() => requests >= 100 && document.querySelectorAll("[data-bcoc-source-user]").length === 100);
+    // 로그인 확인 뒤 전체 동기화가 끝날 때까지 기다린 다음 새 행만 세요.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const list = document.querySelector("._list_61avy_67");
+    requests = 0;
+    for (let index = 0; index < 5; index += 1) {
+        const template = document.createElement("template");
+        template.innerHTML = vodRow({ text: `새 채팅 ${index}` });
+        const added = template.content.firstElementChild;
+        setMessage(added, index === 4 ? ME : OTHER);
+        list.appendChild(added);
+        await waitFor(() => added.querySelector("[data-bcoc-source-user]"), `appended row ${index} was not checked`);
+    }
+    assert.equal(requests, 5, "each appended row is checked once without re-requesting the existing rows");
+    assert.deepEqual(ownTexts(document), ["새 채팅 4"]);
+
+    // 가상 목록이 재사용 신호만 바꾼 행은 그 행 안의 메시지를 다시 확인해요.
+    requests = 0;
+    const reused = list.firstElementChild;
+    setMessage(reused, ME);
+    reused.setAttribute("data-virtual-index", "500");
+    await waitFor(() => ownTexts(document).includes("다른 사람 0"), "a reuse signal did not re-check its row");
+    assert.equal(requests, 1);
+});

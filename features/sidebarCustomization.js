@@ -428,11 +428,27 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         return true;
     }
 
+    // 템플릿 행에 다른 기능이 잠깐 붙인 표식(미리보기 호버 강조·폴더 끌기 원본)은 그 행의 것이라 복제본에 남기지 않아요.
+    const TRANSIENT_ROW_ATTRS = ["data-bcfp-active", "data-bcff-drag-source"];
+
     function createSourceRow(entry, templateMeta) {
         if (!(templateMeta?.row instanceof HTMLElement)) return null;
         const row = templateMeta.row.cloneNode(true);
         if (!(row instanceof HTMLElement)) return null;
 
+        // 고정 모드 중 복제한 링크는 고정 대상 role·aria-pressed까지 복사해요. 복제본은 원래 값 기록이 없으므로
+        // 템플릿 링크에 기록한 원래 값으로 먼저 되돌려 둬야 고정 모드를 꺼도 토글 버튼으로 남지 않아요.
+        const templateLinks = templateMeta.row.querySelectorAll("a");
+        row.querySelectorAll("a").forEach((link, index) => {
+            const original = originalLinkStates.get(templateLinks[index]);
+            if (!original) return;
+            restoreOriginalAttribute(link, "role", original.role);
+            restoreOriginalAttribute(link, "aria-pressed", original.ariaPressed);
+        });
+        for (const name of TRANSIENT_ROW_ATTRS) {
+            row.removeAttribute(name);
+            row.querySelectorAll(`[${name}]`).forEach((node) => node.removeAttribute(name));
+        }
         cleanupRow(row);
         row.removeAttribute("id");
         row.removeAttribute(SOURCE_HIDDEN_ATTR);
@@ -1064,7 +1080,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         let rawValue = persistedRawValue;
         for (let attempt = 0; attempt < MAX_PIN_WRITE_ATTEMPTS; attempt += 1) {
             const result = applyPinOperation(normalizePinnedIds(rawValue), operation);
-            if (result.full) throw new Error(`팔로잉 채널은 최대 ${MAX_PINNED_CHANNELS}개까지 고정할 수 있습니다.`);
+            if (result.full) throw new Error(`팔로잉 채널은 최대 ${MAX_PINNED_CHANNELS}개까지 고정 가능.`);
             if (!result.changed) return;
             const epoch = pinChangeEpoch;
             const expected = rawValue === undefined ? { absent: true } : { value: rawValue };
@@ -1162,9 +1178,40 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         } else document.querySelectorAll(`[${DRAGGING_ATTR}]`).forEach((node) => node.removeAttribute(DRAGGING_ATTR));
     }
 
+    // 끄는 도중 목록 갱신으로 원본이 문서에서 빠지면 dragend가 window까지 오지 않아요(Chrome은 아예 보내지
+    // 않기도 해요). 분리된 원본에서도 받도록 원본에 직접 듣고, 오지 않으면 끌기가 끝난 뒤에만 오는 포인터 이동
+    // (끄는 동안에는 포인터 이벤트가 오지 않아요)이나 놓기에서 원본이 빠진 끌기를 정리해요.
+    let dragSource = null;
+
+    function watchDragSource(source) {
+        unwatchDragSource();
+        if (!(source instanceof Element)) return;
+        dragSource = source;
+        source.addEventListener("dragend", handleSourceDragEnd);
+        window.addEventListener("pointermove", handleDetachedDragInput, true);
+        window.addEventListener("drop", handleDetachedDragInput, true);
+    }
+
+    function unwatchDragSource() {
+        if (!dragSource) return;
+        dragSource.removeEventListener("dragend", handleSourceDragEnd);
+        window.removeEventListener("pointermove", handleDetachedDragInput, true);
+        window.removeEventListener("drop", handleDetachedDragInput, true);
+        dragSource = null;
+    }
+
+    function handleSourceDragEnd(event) {
+        if (event.currentTarget === dragSource) restoreFollowingDrag();
+    }
+
+    function handleDetachedDragInput() {
+        if (dragSource && !dragSource.isConnected) restoreFollowingDrag();
+    }
+
     function restoreFollowingDrag() {
         const active = followingDrag;
         followingDrag = null;
+        unwatchDragSource();
         setLinkDragging(false);
         if (!active) return;
         if (active.link.getAttribute("draggable") === "true")
@@ -1206,6 +1253,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
             return;
         }
         if (followingDrag) followingDrag.started = true;
+        watchDragSource(event.target);
         setLinkDragging(true);
         event.dataTransfer.setData("text/uri-list", link.href);
         event.dataTransfer.setData("text/plain", link.href);

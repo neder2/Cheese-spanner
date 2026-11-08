@@ -550,7 +550,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
             avatar.setAttribute("data-bcvc-profile-target", "avatar");
             avatar.setAttribute("aria-label", `${authorName} 프로필 보기`);
             avatar.disabled = true;
-            avatar.title = "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요.";
+            avatar.title = "하단 원본 댓글이 표시될 때 프로필 보기 가능.";
             avatar.setAttribute("aria-describedby", NATIVE_ACTION_HINT_ID);
 
             const apiUrl = model.normalizeImageUrl(item?.row?.user?.profileImageUrl, location.href);
@@ -607,7 +607,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
             buff.setAttribute("aria-pressed", "false");
             buff.setAttribute("aria-describedby", NATIVE_ACTION_HINT_ID);
             buff.disabled = true;
-            buff.title = "하단 원본 댓글이 표시되면 버프할 수 있어요.";
+            buff.title = "하단 원본 댓글이 표시될 때 버프 가능.";
             const label = document.createElement("span");
             label.className = "bcvc-buff-label";
             label.setAttribute("aria-hidden", "true");
@@ -716,7 +716,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
                 author.setAttribute("data-bcvc-profile-target", "author");
                 author.setAttribute("aria-label", `${authorName} 프로필 보기`);
                 author.disabled = true;
-                author.title = "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요.";
+                author.title = "하단 원본 댓글이 표시될 때 프로필 보기 가능.";
                 author.setAttribute("aria-describedby", NATIVE_ACTION_HINT_ID);
                 meta.appendChild(author);
                 if (user.writer === true) {
@@ -803,11 +803,14 @@ body[theme="dark"] .bcvc-avatar-fallback,
                     if (truncated || visibleReplies.length < replies.length) {
                         replyLimit = document.createElement("div");
                         replyLimit.className = "bcvc-reply-limit";
-                        replyLimit.hidden = true;
+                        // 펼칠 답글이 없으면 토글도 없으므로 한도 안내를 바로 보여 답글 없는 댓글처럼 보이지 않게 해요.
+                        replyLimit.hidden = visibleReplies.length > 0;
                         replyLimit.textContent =
-                            replyBudget?.remaining === 0 || visibleReplies.length < replies.length
-                                ? `이 정렬에서는 답글을 ${MAX_REPLIES_PER_ORDER}개까지만 표시해요.`
-                                : `한 댓글의 답글은 ${MAX_REPLIES_PER_COMMENT}개까지만 표시해요.`;
+                            replyBudget?.remaining === 0 ||
+                            visibleReplies.length < replies.length ||
+                            !visibleReplies.length
+                                ? `이 정렬은 답글 최대 ${MAX_REPLIES_PER_ORDER}개 표시.`
+                                : `댓글당 답글 최대 ${MAX_REPLIES_PER_COMMENT}개 표시.`;
                     }
                 }
             }
@@ -910,14 +913,14 @@ body[theme="dark"] .bcvc-avatar-fallback,
             if (state.loadingMore) {
                 const status = document.createElement("p");
                 status.className = "bcvc-footer-status";
-                status.textContent = "댓글을 더 불러오는 중이에요…";
+                status.textContent = "댓글 더 불러오는 중…";
                 footer.appendChild(status);
                 return footer;
             }
             if (state.moreError) {
                 const status = document.createElement("p");
                 status.className = "bcvc-footer-status";
-                status.textContent = "댓글을 더 불러오지 못했어요.";
+                status.textContent = "댓글 추가 불러오기 실패.";
                 footer.appendChild(status);
                 const retry = document.createElement("button");
                 retry.type = "button";
@@ -944,7 +947,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
             if (state.capped) {
                 const status = document.createElement("p");
                 status.className = "bcvc-footer-status";
-                status.textContent = `댓글은 ${MAX_COMMENTS_PER_ORDER.toLocaleString()}개까지 표시해요.`;
+                status.textContent = `댓글 최대 ${MAX_COMMENTS_PER_ORDER.toLocaleString()}개 표시.`;
                 footer.appendChild(status);
             }
             return footer;
@@ -960,8 +963,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
             const nativeActionHint = document.createElement("p");
             nativeActionHint.id = NATIVE_ACTION_HINT_ID;
             nativeActionHint.className = "bcvc-sr-only";
-            nativeActionHint.textContent =
-                "프로필과 버프는 같은 댓글이 하단 원본 댓글 영역에 표시되어 있을 때 사용할 수 있어요.";
+            nativeActionHint.textContent = "하단 원본 댓글에 같은 댓글이 표시될 때 프로필·버프 사용 가능.";
             view.appendChild(nativeActionHint);
             view.appendChild(createToolbar(state));
 
@@ -970,15 +972,15 @@ body[theme="dark"] .bcvc-avatar-fallback,
                 return view;
             }
             if (state.error && !state.loaded) {
-                view.appendChild(createStateBlock("댓글을 불러오지 못했어요.", "다시 시도", "retry-initial"));
+                view.appendChild(createStateBlock("댓글 불러오기 실패.", "다시 시도", "retry-initial"));
                 return view;
             }
             if (!state.commentActive) {
-                view.appendChild(createStateBlock("이 영상은 댓글을 사용할 수 없어요."));
+                view.appendChild(createStateBlock("댓글을 사용할 수 없는 영상."));
                 return view;
             }
             if (!state.items.length) {
-                view.appendChild(createStateBlock("아직 등록된 댓글이 없어요."));
+                view.appendChild(createStateBlock("등록된 댓글 없음."));
                 return view;
             }
 
@@ -1057,15 +1059,18 @@ body[theme="dark"] .bcvc-avatar-fallback,
         function appendRows(state, added) {
             if (!commentPanel || selectedTab !== "comments") return;
             const list = commentPanel.querySelector("[data-bcvc-list='1']");
-            if (!(list instanceof HTMLElement) || !added.length) {
+            if (!(list instanceof HTMLElement) || !state.commentActive) {
                 renderState(state);
                 return;
             }
-            const fragment = document.createDocumentFragment();
-            const renderedReplies = list.querySelectorAll("[data-bcvc-reply='1']").length;
-            const replyBudget = { remaining: Math.max(0, MAX_REPLIES_PER_ORDER - renderedReplies) };
-            added.forEach((item) => fragment.appendChild(createCommentRow(item, { replyBudget })));
-            list.appendChild(fragment);
+            // 새 행이 없는 추가 페이지(이미 받은 댓글뿐)는 기존 행을 다시 그리지 않아 펼친 답글·본문을 보존해요.
+            if (added.length) {
+                const fragment = document.createDocumentFragment();
+                const renderedReplies = list.querySelectorAll("[data-bcvc-reply='1']").length;
+                const replyBudget = { remaining: Math.max(0, MAX_REPLIES_PER_ORDER - renderedReplies) };
+                added.forEach((item) => fragment.appendChild(createCommentRow(item, { replyBudget })));
+                list.appendChild(fragment);
+            }
             const count = commentPanel.querySelector("[data-bcvc-count='1']");
             if (count)
                 count.textContent = Number.isFinite(state.totalCount)
@@ -1165,8 +1170,11 @@ body[theme="dark"] .bcvc-avatar-fallback,
             }
         }
 
-        function onCommentPanelScroll() {
-            onScroll(commentPanel?.scrollTop || 0);
+        function onCommentPanelScroll(event) {
+            // Chrome은 문서에서 빠지거나 숨겨진 패널에도 지연된 scroll을 보내고 그때 scrollTop은 0이에요. 저장된 위치를 덮어쓰지 않아요.
+            if (!(commentPanel instanceof HTMLElement) || event?.currentTarget !== commentPanel) return;
+            if (!commentPanel.isConnected || commentPanel.hidden || selectedTab !== "comments") return;
+            onScroll(commentPanel.scrollTop || 0);
         }
 
         function updateTabState({ focus = false } = {}) {

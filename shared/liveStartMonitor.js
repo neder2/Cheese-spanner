@@ -10,12 +10,12 @@
     const NOTIFICATION_PREFIX = "betterchzzk:live-start:";
     const PERIOD_MINUTES = 1;
     const MAX_SEEN = 16;
-    const STATE_SAVE_ERROR = "방송 확인 상태를 저장하지 못해 알림·탭 열기를 멈췄어요. 저장 공간을 확인해 주세요.";
+    const STATE_SAVE_ERROR = "방송 확인 상태 저장 실패로 알림·탭 열기 중지. 저장 공간 확인 필요.";
     const API_ACCESS_STATUS =
-        "확장의 사이트 액세스에서 api.chzzk.naver.com 접근이 꺼져 있어 방송을 확인하지 못해요. 아래 ‘치지직 API 접근 허용’을 눌러 주세요.";
+        "확장 사이트 액세스에서 api.chzzk.naver.com 접근이 꺼져 방송 확인 불가. 아래 ‘치지직 API 접근 허용’ 클릭.";
     const API_ACCESS_ERROR =
-        "확장의 사이트 액세스에서 api.chzzk.naver.com 접근이 꺼져 있어 채널을 확인하지 못했어요. 설정의 ‘방송 알림’ 탭에서 ‘치지직 API 접근 허용’을 눌러 주세요.";
-    const LOOKUP_ERROR = "채널 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.";
+        "확장 사이트 액세스에서 api.chzzk.naver.com 접근이 꺼져 채널 확인 불가. 설정 ‘방송 알림’ 탭에서 ‘치지직 API 접근 허용’ 클릭.";
+    const LOOKUP_ERROR = "채널 정보 확인 실패. 잠시 후 다시 시도 필요.";
     let queue = Promise.resolve();
     let tabQueue = Promise.resolve();
     let generation = 0;
@@ -129,6 +129,9 @@
                 if (active) {
                     await chrome.tabs.update(existing.id, { active: true });
                     await chrome.windows.update(existing.windowId, { focused: true });
+                } else if (existing.discarded) {
+                    // A discarded waiting tab shows nothing until it loads again; load it instead of a duplicate.
+                    await chrome.tabs.reload(existing.id);
                 }
                 return;
             }
@@ -139,6 +142,9 @@
     }
 
     async function checkChannels(config, token, baseline) {
+        // The 1 minute alarm is measured from when a check starts; storing the finish time would make a check that
+        // took over 5 s look recent to the next alarm and skip it.
+        const startedAt = Date.now();
         controller = new AbortController();
         const signal = controller.signal;
         const isCurrent = () => token === generation && !signal.aborted;
@@ -186,7 +192,7 @@
                                         type: "basic",
                                         iconUrl: chrome.runtime.getURL("icons/cheese-spanner128.png"),
                                         title: `${snapshot.channelName || channel.channelName || channel.channelId} 방송 시작`,
-                                        message: snapshot.title || "라이브 방송이 시작됐어요.",
+                                        message: snapshot.title || "라이브 방송 시작됨.",
                                     }
                                 );
                             } else {
@@ -220,16 +226,15 @@
         try {
             await Promise.all([worker(), worker()]);
             if (!isCurrent()) return;
-            const checkedAt = Date.now();
-            await saveStatesOrReport(token, config, checkedAt);
+            await saveStatesOrReport(token, config, startedAt);
             if (!isCurrent()) return;
             await storageSet(chrome.storage.local, {
                 [STATUS_KEY]: {
-                    checkedAt,
+                    checkedAt: Date.now(),
                     error: failed
-                        ? "일부 채널의 방송 확인·알림·탭 열기에 실패했어요. 네트워크와 알림 권한을 확인해 주세요."
+                        ? "일부 채널 방송 확인·알림·탭 열기 실패. 네트워크·알림 권한 확인 필요."
                         : config.permissionMissing
-                          ? "알림 권한이 없어 데스크톱 알림이 중지됐어요. 알림 권한 허용을 눌러 주세요."
+                          ? "알림 권한 없음으로 데스크톱 알림 중지. 알림 권한 허용 클릭 필요."
                           : "",
                     activeChannels: config.channels.length,
                 },
@@ -263,7 +268,7 @@
                     error: config.apiAccessMissing
                         ? API_ACCESS_STATUS
                         : config.permissionMissing
-                          ? "알림 권한이 없어 데스크톱 알림이 중지됐어요. 알림 권한 허용을 눌러 주세요."
+                          ? "알림 권한 없음으로 데스크톱 알림 중지. 알림 권한 허용 클릭 필요."
                           : "",
                 },
             });
@@ -365,7 +370,7 @@
         if (message?.type !== "cheese-spanner:live-start:channels") return undefined;
         const fromOptions = CheeseSpannerSettings.isOptionsPageSender(sender);
         if (sender?.id !== chrome.runtime.id || (!fromOptions && !isChannelRegistration(message, sender))) {
-            sendResponse({ ok: false, error: "알림 설정 요청의 출처를 확인하지 못했어요." });
+            sendResponse({ ok: false, error: "알림 설정 요청 출처 확인 불가." });
             return false;
         }
         // Stop outstanding reads as soon as the user edits a channel rule. Effects of live IDs that are
@@ -383,7 +388,7 @@
                 (!key && !["add", "update", "remove"].includes(message.kind)) ||
                 (key && typeof message.channel[key] !== "boolean")
             )
-                throw userError("올바른 채널 설정이 아니에요.");
+                throw userError("유효하지 않은 채널 설정.");
             const max = globalThis.CheeseSpannerLiveStart.MAX_CHANNELS;
             let profile = null;
             if (key && message.channel[key]) {
@@ -391,7 +396,7 @@
                 const data = await storageGet(chrome.storage.local, CHANNELS_KEY);
                 const known = normalizeChannels(data[CHANNELS_KEY]);
                 if (!known.some((channel) => channel.channelId === id)) {
-                    if (known.length >= max) throw userError("채널은 최대 32개까지 등록할 수 있어요.");
+                    if (known.length >= max) throw userError("최대 32개 채널까지 등록 가능.");
                     if (!(await chrome.permissions.contains(API_HOST_PERMISSION))) throw userError(API_ACCESS_ERROR);
                     const json = await fetchJson(`https://api.chzzk.naver.com/service/v1/channels/${id}`, {
                         timeoutMs: 8000,
@@ -416,8 +421,8 @@
                 if (key) {
                     if (existing) existing[key] = message.channel[key];
                     else if (message.channel[key]) {
-                        if (channels.length >= max) throw userError("채널은 최대 32개까지 등록할 수 있어요.");
-                        if (!profile) throw userError("채널 목록이 바뀌었어요. 다시 시도해 주세요.");
+                        if (channels.length >= max) throw userError("최대 32개 채널까지 등록 가능.");
+                        if (!profile) throw userError("채널 목록 변경됨. 다시 시도 필요.");
                         channels.push(
                             normalizeChannels([
                                 {
@@ -434,13 +439,13 @@
                 } else if (message.kind === "remove") {
                     channels = channels.filter((channel) => channel.channelId !== id);
                 } else if (message.kind === "add") {
-                    if (existing) throw userError("이미 등록한 채널이에요.");
-                    if (channels.length >= max) throw userError("채널은 최대 32개까지 등록할 수 있어요.");
+                    if (existing) throw userError("이미 등록된 채널.");
+                    if (channels.length >= max) throw userError("최대 32개 채널까지 등록 가능.");
                     const channel = normalizeChannels([message.channel])[0];
-                    if (!channel.channelName) throw userError("채널 이름을 확인하지 못했어요.");
+                    if (!channel.channelName) throw userError("채널 이름 확인 불가.");
                     channels.push(channel);
                 } else {
-                    if (!existing) throw userError("삭제된 채널이에요. 목록을 다시 확인해 주세요.");
+                    if (!existing) throw userError("삭제된 채널. 목록 재확인 필요.");
                     for (const key of ["notify", "autoOpen"]) {
                         if (typeof message.channel[key] === "boolean") existing[key] = message.channel[key];
                     }
@@ -459,7 +464,7 @@
                 (error) =>
                     sendResponse({
                         ok: false,
-                        error: error?.userFacing ? error.message : "채널 설정을 저장하지 못했어요.",
+                        error: error?.userFacing ? error.message : "채널 설정 저장 실패.",
                     })
             );
         return true;

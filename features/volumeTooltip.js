@@ -259,13 +259,21 @@
         if (hoverControl) hideTooltip();
     }
 
+    function handleScroll(event) {
+        // Only scrolling that can move the control matters; chat or sidebar lists scroll on their own.
+        const target = event.target;
+        if (!hoverControl) return;
+        if (target === window || target === document || (target instanceof Node && target.contains(hoverControl)))
+            hideTooltip();
+    }
+
     function installHandlers() {
         if (handlersInstalled) return;
         handlersInstalled = true;
         window.addEventListener("mouseover", handleMouseOver, true);
         window.addEventListener("mousemove", handleMouseOver, true);
         window.addEventListener("mouseout", handleMouseOut, true);
-        window.addEventListener("scroll", handleViewportChange, true);
+        window.addEventListener("scroll", handleScroll, true);
         window.addEventListener("resize", handleViewportChange, true);
         window.addEventListener("pagehide", hideTooltip, true);
         document.addEventListener("fullscreenchange", handleViewportChange, true);
@@ -278,7 +286,7 @@
         window.removeEventListener("mouseover", handleMouseOver, true);
         window.removeEventListener("mousemove", handleMouseOver, true);
         window.removeEventListener("mouseout", handleMouseOut, true);
-        window.removeEventListener("scroll", handleViewportChange, true);
+        window.removeEventListener("scroll", handleScroll, true);
         window.removeEventListener("resize", handleViewportChange, true);
         window.removeEventListener("pagehide", hideTooltip, true);
         document.removeEventListener("fullscreenchange", handleViewportChange, true);
@@ -791,7 +799,9 @@
         control.addEventListener(
             "wheel",
             (event) => {
+                // Ctrl+wheel and trackpad pinch stay with the browser zoom, as on the native volume.
                 if (
+                    event.ctrlKey ||
                     !featureOptions.volumeWheelEnabled ||
                     slider.disabled ||
                     !Number.isFinite(event.deltaY) ||

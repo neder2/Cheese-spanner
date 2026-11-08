@@ -60,6 +60,10 @@
     ].join(", ");
     const LIVE_TITLE_EXCLUDE_SELECTOR = `aside, nav, a[href], [class*='pzp'], #${PANEL_ID}, #${LIVE_WRAP_ID}`;
     const LIVE_SEARCH_THROTTLE_MS = 300;
+    // 2026-11-04 bundle: the live scroll/mid-ad mini player (.chzzk_player.miniplayer) is fixed at z-index 1000,
+    // the ad mini layers at 1001, the sidebar at 9999, #header at 10000 and the in-page PiP and modals at 20000.
+    // The previous-title panel stays below all of them so it never covers the floating player or the header.
+    const PANEL_Z_INDEX = 999;
 
     const storage = globalThis.chrome?.storage?.local;
     let featureOptions = CheeseSpannerSettings.normalizeOptions();
@@ -209,22 +213,63 @@
         if (panel) panel.hidden = true;
     }
 
+    // 2026-11-04 bundle: #header is CHZZK's fixed top bar (60px, z-index 10000). The visible area starts below it.
+    function getVisibleTop() {
+        const rect = document.getElementById("header")?.getBoundingClientRect();
+        return rect && rect.height > 0 ? Math.max(0, rect.bottom) : 0;
+    }
+
+    // 2026-11-04 bundle: aside#sidebar is fixed, z-index 9999, 82px wide (240px expanded), at left:0 or, with the
+    // extension's right placement (panelResize.js), at right:0. The panel sits below it, so the visible area ends at
+    // the sidebar's inner edge on whichever side it is. The narrow-window overlay sidebar (z-index 20000 with a dim)
+    // covers the whole page and needs no avoidance.
+    function getVisibleSpan(viewportWidth) {
+        const rect = document.getElementById("sidebar")?.getBoundingClientRect();
+        if (!rect || !(rect.width > 0) || rect.right <= 0 || rect.left >= viewportWidth)
+            return { left: 0, right: viewportWidth };
+        return rect.left + rect.width / 2 < viewportWidth / 2
+            ? { left: Math.max(0, rect.right), right: viewportWidth }
+            : { left: 0, right: Math.min(viewportWidth, rect.left) };
+    }
+
+    // An unmeasured (0x0) button keeps the earlier placement; a measured one under the header or outside the
+    // viewport means the panel has lost its anchor (2026-11-04: it stayed pinned at top:12px over the header).
+    function isAnchorOutOfView(rect, viewportHeight, visibleTop, span) {
+        if (!(rect.width > 0 || rect.height > 0)) return false;
+        return (
+            rect.bottom <= visibleTop ||
+            rect.top >= viewportHeight ||
+            rect.right <= span.left ||
+            rect.left >= span.right
+        );
+    }
+
     function positionPanel(button, panel) {
         if (!(button instanceof HTMLElement) || !(panel instanceof HTMLElement) || panel.hidden) return;
         const buttonRect = button.getBoundingClientRect();
         const viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
         const viewportHeight = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+        const visibleTop = getVisibleTop();
+        const span = getVisibleSpan(viewportWidth);
+        // Same rule as the replay previous-title panel: once its button scrolls away, the panel closes instead of
+        // floating detached over the header or the live scroll mini player.
+        if (isAnchorOutOfView(buttonRect, viewportHeight, visibleTop, span)) {
+            closePanel();
+            return;
+        }
         const margin = 12;
+        const minLeft = Math.max(margin, span.left + 6);
+        const maxRight = Math.min(viewportWidth - margin, span.right - 6);
+        const maxWidth = Math.max(220, Math.min(760, maxRight - minLeft));
+        if (panel.style.maxWidth !== `${maxWidth}px`) panel.style.maxWidth = `${maxWidth}px`;
         const panelRect = panel.getBoundingClientRect();
-        const width = Math.min(panelRect.width || 560, Math.max(220, viewportWidth - margin * 2));
+        const width = Math.min(panelRect.width || 560, maxWidth);
         const height = Math.min(panelRect.height || 160, Math.max(120, viewportHeight - margin * 2));
-        const left = Math.min(
-            Math.max(margin, buttonRect.right - width),
-            Math.max(margin, viewportWidth - margin - width)
-        );
+        const left = Math.min(Math.max(minLeft, buttonRect.right - width), Math.max(minLeft, maxRight - width));
+        const minTop = Math.max(margin, visibleTop + 6);
         const top = Math.min(
-            Math.max(margin, buttonRect.bottom + 6),
-            Math.max(margin, viewportHeight - margin - height)
+            Math.max(minTop, buttonRect.bottom + 6),
+            Math.max(minTop, viewportHeight - margin - height)
         );
         panel.style.setProperty("--bcfth-left", `${Math.round(left)}px`);
         panel.style.setProperty("--bcfth-top", `${Math.round(top)}px`);
@@ -702,7 +747,7 @@
 [${BUTTON_ATTR}="1"][aria-expanded="true"]{color:var(--bct-brand-text);background-color:var(--bct-brand-weak);border-color:color-mix(in srgb,var(--bct-brand-text) 40%,transparent)}
 [${BUTTON_ATTR}="1"] .bcfth-chevron{display:block;width:7px;height:7px;margin-top:-3px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(45deg);transition:transform 120ms ease,margin-top 120ms ease}
 [${BUTTON_ATTR}="1"][aria-expanded="true"] .bcfth-chevron{margin-top:3px;transform:rotate(225deg)}
-#${PANEL_ID}{position:fixed;left:var(--bcfth-left,12px);top:var(--bcfth-top,12px);z-index:2147483646;display:grid;width:max-content;max-width:min(760px,calc(100vw - 24px));max-height:min(360px,calc(100vh - 24px));overflow:auto;margin:0;padding:6px 8px;border:1px solid var(--bct-border);border-radius:var(--bct-radius-lg);color:var(--bct-text);background:var(--bct-surface);box-shadow:var(--bct-shadow);font-family:var(--bct-font);box-sizing:border-box}
+#${PANEL_ID}{position:fixed;left:var(--bcfth-left,12px);top:var(--bcfth-top,12px);z-index:${PANEL_Z_INDEX};display:grid;width:max-content;max-width:min(760px,calc(100vw - 24px));max-height:min(360px,calc(100vh - 24px));overflow:auto;margin:0;padding:6px 8px;border:1px solid var(--bct-border);border-radius:var(--bct-radius-lg);color:var(--bct-text);background:var(--bct-surface);box-shadow:var(--bct-shadow);font-family:var(--bct-font);box-sizing:border-box}
 #${PANEL_ID}[hidden]{display:none!important}
 #${PANEL_ID} .bcfth-row{display:grid;grid-template-columns:max-content max-content;gap:12px;align-items:center;min-width:0;padding:5px 0;border-top:1px solid var(--bct-border-weaker)}
 #${PANEL_ID} .bcfth-row:first-child{border-top:0;padding-top:0}

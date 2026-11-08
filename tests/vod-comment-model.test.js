@@ -159,6 +159,44 @@ test("malformed comment pages are rejected instead of being treated as empty", (
     );
 });
 
+test("comment pages without a comments key parse as an empty or disabled list like the native VOD page", (t) => {
+    const fixture = createModelFixture();
+    t.after(() => fixture.dom.window.close());
+
+    // 업로드 영상 STREAMING_VIDEO 요청의 code 200 응답 형식이에요. 원본은 comments?.data와 commentActive ?? true로 읽어요.
+    const active = fixture.model.parseCommentPage({ commentActive: true });
+    assert.deepEqual(Array.from(active.rows), []);
+    assert.equal(active.commentActive, true);
+    assert.equal(active.hasMore, false);
+    assert.equal(active.totalCount, null);
+    const disabled = fixture.model.applyCommentPage([], { commentActive: false }, { offset: 0 });
+    assert.equal(disabled.commentActive, false);
+    assert.equal(disabled.items.length, 0);
+    assert.equal(disabled.hasMore, false);
+
+    assert.throws(() => fixture.model.validateCommentResponse({}), /목록 응답/);
+    assert.throws(() => fixture.model.validateCommentResponse({ commentActive: "true" }), /목록 응답/);
+    assert.throws(() => fixture.model.validateCommentResponse({ commentActive: true, comments: null }), /목록 응답/);
+    assert.throws(
+        () => fixture.model.validateCommentResponse({ commentActive: true, comments: { data: {} } }),
+        /목록 응답/
+    );
+    assert.throws(() => fixture.model.validateCommentResponse({ bestComments: {}, commentActive: true }), /인기 댓글/);
+});
+
+test("long comment collapsing never splits a UTF-16 surrogate pair", (t) => {
+    const fixture = createModelFixture();
+    t.after(() => fixture.dom.window.close());
+    const { getCollapsedCommentText } = fixture.model;
+
+    const collapsed = getCollapsedCommentText(`${"a".repeat(419)}${"😀".repeat(5)}`);
+    assert.equal(collapsed, `${"a".repeat(419)}…`);
+    assert.equal(collapsed.isWellFormed(), true);
+    const aligned = getCollapsedCommentText(`${"a".repeat(418)}${"😀".repeat(5)}`);
+    assert.equal(aligned, `${"a".repeat(418)}😀…`);
+    assert.equal(aligned.isWellFormed(), true);
+});
+
 test("reply sources normalize, deduplicate by commentId, and report the cap", (t) => {
     const fixture = createModelFixture();
     t.after(() => fixture.dom.window.close());

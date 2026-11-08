@@ -102,7 +102,9 @@
         busy = value;
         exportButton.disabled = value;
         importButton.disabled = value;
-        for (const button of panel.querySelectorAll("button")) button.disabled = value;
+        // A button that has nothing to do (apply with no changes) stays off after the busy state ends.
+        for (const button of panel.querySelectorAll("button"))
+            button.disabled = value || button.dataset.unavailable === "1";
     }
     function el(tag, className, text) {
         const node = document.createElement(tag);
@@ -214,9 +216,9 @@
         for (const [term, value] of summaryRows(preview.summary)) list.append(el("dt", "", term), el("dd", "", value));
         const notes = el("ul", "settings-backup-notes");
         notes.append(
-            el("li", "", "파일에 없는 구역은 지금 설정을 그대로 둬요. 멀티뷰 값은 파일에 있는 채널만 바꿔요."),
+            el("li", "", "파일에 없는 구역은 현재 설정을 유지해요. 멀티뷰는 파일에 있는 채널만 바꿔요."),
             el("li", "", "시청 기록·카테고리 제외·로그인 정보는 바뀌지 않아요."),
-            el("li", "", "지금 진행 중인 방송은 알림·자동 입장 없이 기준으로만 기억해요.")
+            el("li", "", "진행 중인 방송은 건너뛰고 다음 새 방송부터 알림·자동 열기를 실행해요.")
         );
         if (preview.ignoredOptionKeys?.length)
             notes.append(el("li", "", `이 버전에 없는 옵션 ${preview.ignoredOptionKeys.length}개는 무시해요.`));
@@ -240,13 +242,40 @@
         status.setAttribute("aria-live", "polite");
         const actions = el("div", "settings-backup-actions");
         const apply = button("불러오기 적용", "primary-button", () => void applyImport());
-        apply.disabled = preview.changes === 0;
+        if (preview.changes === 0) apply.dataset.unavailable = "1";
+        apply.disabled = busy || preview.changes === 0;
         const cancel = button("취소", "secondary-button", () => closePanel({ restoreFocus: true }));
         actions.append(apply, cancel);
         panel.append(heading, meta, list, notes, status, actions);
         if (preview.changes === 0) setStatus("현재 설정과 같아서 바꿀 내용이 없어요.");
         panel.hidden = false;
         heading.focus({ preventScroll: false });
+    }
+
+    // The request bundles every needed permission and fails as a whole; a permission already held is not denied.
+    function unheldPermissionKeys(keys) {
+        const permissions = globalThis.chrome?.permissions;
+        if (typeof permissions?.contains !== "function") return Promise.resolve(keys);
+        return Promise.all(
+            permissionNeeds(keys).map(
+                (name) =>
+                    new Promise((resolve) => {
+                        const groupKeys = catalog.PERMISSION_OPTION_KEYS[name];
+                        try {
+                            permissions.contains(PERMISSION_SPECS[name], (held) => {
+                                const error = globalThis.chrome?.runtime?.lastError;
+                                resolve(held && !error ? [] : groupKeys);
+                            });
+                        } catch (_) {
+                            resolve(groupKeys);
+                        }
+                    })
+            )
+        ).then((groups) => {
+            const unheld = new Set(groups.flat());
+            const denied = keys.filter((key) => unheld.has(key));
+            return denied.length ? denied : keys;
+        });
     }
 
     function requestPermissions(needs) {
@@ -287,16 +316,18 @@
         setStatus("설정을 불러오는 중이에요…");
         try {
             if (!(await granted)) {
+                const deniedKeys = await unheldPermissionKeys(keys);
+                if (current !== flow) return;
                 setBusy(false);
                 setStatus("권한이 거부되어 아무것도 바꾸지 않았어요.", "error");
                 const fallback = button(
-                    `${featureList(keys)} 기능은 켜지 않고 불러오기`,
+                    `${featureList(deniedKeys)} 기능은 켜지 않고 불러오기`,
                     "secondary-button settings-backup-fallback",
                     () => {
                         // The choice belongs to this confirmation flow and survives a re-confirmation. It keeps off
                         // only the features this file would turn on; the worker leaves other current choices alone.
                         if (current !== flow) return;
-                        flow.disabledOptionKeys = [...new Set([...flow.disabledOptionKeys, ...keys])];
+                        flow.disabledOptionKeys = [...new Set([...flow.disabledOptionKeys, ...deniedKeys])];
                         void applyImport();
                     }
                 );

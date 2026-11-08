@@ -23,6 +23,7 @@ const SCRIPTS = [
     "content.js",
     "shared/chatMultiview.js",
     "features/chatWeeklyRanking.js",
+    "features/chatDonationMessages.js",
     "features/chatMultiview.js",
 ];
 // The runtime waits this long for the native chat log after a verified load, and for any load at all.
@@ -491,6 +492,13 @@ test("channel input accepts ids and CHZZK channel addresses, searches names, and
         ["ftp://chzzk.naver.com/live/" + A, { kind: "invalid" }],
         ["chzzk.naver.com/video/123", { kind: "invalid" }],
         ["chzzk.naver.com/live/" + A + "/chat/extra", { kind: "invalid" }],
+        ["https:chzzk.naver.com/live/" + A, id(A)],
+        ["//chzzk.naver.com/live/" + A, { kind: "invalid" }],
+        ["javascript://chzzk.naver.com/live/" + A, { kind: "invalid" }],
+        // A colon after letters is part of a channel name, not an address scheme.
+        ["Re:Zero", { kind: "keyword", keyword: "Re:Zero" }],
+        ["  re:zero 팬방송 ", { kind: "keyword", keyword: "re:zero 팬방송" }],
+        ["LoL:Worlds", { kind: "keyword", keyword: "LoL:Worlds" }],
     ])
         assert.deepEqual(chatModel.parseChannelInput(input), expected, input);
 });
@@ -636,6 +644,24 @@ test("opens only from a trusted header click and shows saved channels as native 
     assert.equal(f.held.size, 0, "closing clears frame timers");
 });
 
+test("donation hiding follows the global option in verified chat frames without reloading them", async (t) => {
+    const f = fixture(t, { stored: layout([A]) });
+    await f.open();
+    const native = f.attachFrame(A);
+    native.load();
+    await waitForCondition(() => f.cell(A).dataset.state === "ready");
+    const frame = f.frame(A);
+    const style = () => native.doc.getElementById("cheese-spanner-chat-multiview-frame-style");
+    const css = f.w.CheeseSpanner.chatDonationMessages.STYLE_TEXT;
+    assert.equal(style().textContent.includes(css), false);
+    f.changeSync({ chatDonationMessagesHidden: true });
+    assert.equal(style().textContent.includes(css), true);
+    f.changeSync({ chatDonationMessagesHidden: false });
+    assert.equal(style().textContent.includes(css), false);
+    assert.equal(f.frame(A), frame, "changing display does not replace the native chat frame");
+    assert.equal(f.storeMessages.length, 0, "display changes never write chat layout or messages");
+});
+
 test("a frame load alone is not success: the verified chat path and the native chat log are both required", async (t) => {
     const f = fixture(t, { stored: layout([A, B, C]) });
     await f.open();
@@ -655,12 +681,12 @@ test("a frame load alone is not success: the verified chat path and the native c
     f.fire(CHAT_READY_DELAY);
     assert.equal(f.cell(B).dataset.state, "unverified");
     assert.equal(f.targetText(B), "입력 대상: " + nameOf(B));
-    assert.match(f.cell(B).textContent, /채팅 목록을 확인하지 못했어요/);
+    assert.match(f.cell(B).textContent, /채팅 목록 확인 실패/);
     assert.equal(f.action(B, "retry").hidden, false);
 
     f.fire(FRAME_LOAD_DELAY);
     assert.equal(f.cell(C).dataset.state, "failed");
-    assert.equal(f.overlayText(C), "채팅을 불러오지 못했어요.");
+    assert.equal(f.overlayText(C), "채팅 불러오기 실패.");
     assert.ok(f.frame(C).hasAttribute("inert"));
     assert.equal(f.cell(A).dataset.state, "ready", "each cell keeps its own state");
     assert.equal(f.cell(B).dataset.state, "unverified");
@@ -689,7 +715,7 @@ test("a verified chat frame that moves to another address is hidden until it ret
     assert.equal(f.cell(A).dataset.state, "left");
     assert.ok(frameA.hasAttribute("inert"));
     assert.equal(frameA.isConnected, false, "the hidden document that left its chat is unloaded");
-    assert.equal(f.targetText(A), "입력할 수 없어요");
+    assert.equal(f.targetText(A), "입력 불가");
     assert.match(f.overlayText(A), /벗어나/);
     assert.equal(f.action(A, "reload").textContent, "채팅으로 돌아가기");
     f.trusted(f.action(A, "reload"));
@@ -719,6 +745,37 @@ test("a verified chat frame that moves to another address is hidden until it ret
     assert.equal(f.cell(C).dataset.state, "left");
     assert.ok(frameC.hasAttribute("inert"));
     assert.equal(frameC.isConnected, false);
+});
+
+test("a first load that cannot be read is a failed load, while a verified chat that becomes unreadable has left", async (t) => {
+    // R1-17: Chrome commits an opaque error page (network error, blocked framing) and fires load; that is not a cell
+    // that moved away from its chat.
+    const f = fixture(t, { stored: layout([A, B]) });
+    await f.open();
+    const a = f.attachFrame(A);
+    const frameA = f.frame(A);
+    a.leaveOrigin();
+    assert.equal(f.cell(A).dataset.state, "failed");
+    assert.equal(f.overlayText(A), "채팅 불러오기 실패.");
+    assert.equal(f.action(A, "reload").textContent, "다시 시도");
+    assert.ok(frameA.hasAttribute("inert"));
+    assert.equal(frameA.isConnected, false, "the error page does not stay loaded behind the overlay");
+    assert.equal(f.heldCount(FRAME_LOAD_DELAY), 1, "only B still waits for its first load");
+    // Retrying loads the same frame at its chat address again, and an error page on that attempt fails again.
+    f.trusted(f.action(A, "reload"));
+    assert.equal(f.cell(A).dataset.state, "loading");
+    assert.equal(f.frame(A), frameA);
+    assert.equal(frameA.getAttribute("src"), chatModel.frameUrl(A));
+    frameA.dispatchEvent(new f.w.Event("load"));
+    assert.equal(f.cell(A).dataset.state, "failed");
+
+    // Contrast: once this attempt showed the verified chat, a later unreadable document has left it.
+    const b = f.attachFrame(B);
+    b.load();
+    assert.equal(f.cell(B).dataset.state, "ready");
+    b.leaveOrigin();
+    assert.equal(f.cell(B).dataset.state, "left");
+    assert.equal(f.action(B, "reload").textContent, "채팅으로 돌아가기");
 });
 
 test("a cell that leaves for a live page unloads that hidden page and returns only to its own chat address", async (t) => {
@@ -771,7 +828,7 @@ test("a cell that leaves for a live page unloads that hidden page and returns on
 test("adds a channel from its address only after a matching lookup and saves with the previous value as expected", async (t) => {
     const f = fixture(t);
     await f.open();
-    assert.match(f.panel().textContent, /채널을 추가하면/);
+    assert.match(f.panel().textContent, /채널 추가 시/);
     f.setFetch(async ({ url }) => {
         const id = url.pathname.split("/").pop();
         return id === A
@@ -799,14 +856,14 @@ test("adds a channel from its address only after a matching lookup and saves wit
     assert.equal(f.input().value, "");
     assert.ok(f.sheetShown("add"), "the add sheet opened for an empty panel stays open for the next channel");
     assert.equal(f.w.document.activeElement, f.input());
-    assert.equal(f.message(), nameOf(A) + " 채팅을 추가했어요.");
+    assert.equal(f.message(), nameOf(A) + " 채팅 추가됨.");
 
-    const invalid = "치지직 채널 주소나 32자리 채널 ID를 확인해 주세요.";
+    const invalid = "치지직 채널 주소 또는 32자리 채널 ID 확인 필요.";
     for (const [text, message] of [
         ["https://example.com/live/" + B, invalid],
         ["chzzk.naver.com/video/123", invalid],
-        [A.toUpperCase(), "이미 추가한 채널이에요."],
-        ["   ", "채널 URL·채널 ID 또는 채널명을 입력해 주세요."],
+        [A.toUpperCase(), "이미 추가한 채널."],
+        ["   ", "채널 URL·채널 ID 또는 채널명 입력 필요."],
     ]) {
         f.typeText(text);
         f.enter();
@@ -816,7 +873,7 @@ test("adds a channel from its address only after a matching lookup and saves wit
 
     f.typeText(B);
     f.enter();
-    await waitForCondition(() => /확인하지 못했어요/.test(f.message()));
+    await waitForCondition(() => /채널 확인 실패/.test(f.message()));
     assert.equal(f.storeMessages.length, 1, "a failed lookup is not saved");
     assert.equal(f.cell(B), null);
 
@@ -875,7 +932,7 @@ test("nickname search shows at most five validated channels, drops late response
     assert.deepEqual(ids, [A, B], "only the first five rows are read and invalid rows are dropped");
     // Like the video multiview search, the whole row is the add control and shows its state on the right.
     assert.equal(f.result(A).querySelector(".bccmv-result-state").textContent, "추가됨");
-    assert.equal(f.result(A).getAttribute("aria-label"), nameOf(A) + " 채팅, 이미 추가했어요");
+    assert.equal(f.result(A).getAttribute("aria-label"), nameOf(A) + " 채팅, 이미 추가함");
     assert.equal(f.result(A).disabled, true);
     assert.equal(f.result(B).querySelector(".bccmv-result-state").textContent, "추가");
     assert.equal(f.result(B).getAttribute("aria-label"), nameOf(B) + " 채팅 추가");
@@ -890,6 +947,41 @@ test("nickname search shows at most five validated channels, drops late response
     assert.deepEqual(f.stored(), layout([A, B]));
     assert.equal(f.panel().querySelector(".bccmv-results").hidden, true);
     assert.equal(f.requests.length, 2);
+});
+
+test("clicking a result row twice before the save answers adds once and keeps the added notice", async (t) => {
+    // R2-120: the result row and layout change only after the save; a second click on the same row must not queue a
+    // duplicate add whose rejection replaces the success notice.
+    const f = fixture(t, { stored: layout([A]) });
+    await f.open();
+    f.openAdd();
+    f.setFetch(async () => searchResponse([B, C]));
+    f.typeText("치즈");
+    f.enter();
+    await waitForCondition(() => f.result(B));
+    const send = f.chrome.runtime.sendMessage;
+    const heldSaves = [];
+    f.chrome.runtime.sendMessage = (message, callback) => {
+        if (message?.type === STORE_TYPE) heldSaves.push(() => send.call(f.chrome.runtime, message, callback));
+        else send.call(f.chrome.runtime, message, callback);
+    };
+    f.trusted(f.result(B));
+    f.trusted(f.result(B));
+    await waitForCondition(() => heldSaves.length === 1);
+    f.chrome.runtime.sendMessage = send;
+    heldSaves.shift()();
+    await waitForCondition(() => f.cell(B));
+    await settle();
+    assert.equal(f.storeMessages.length, 1, "one save");
+    assert.deepEqual(f.stored(), layout([A, B]));
+    assert.equal(f.message(), nameOf(B) + " 채팅 추가됨.");
+
+    // Contrast: adding the same channel again after its save still explains that it is already added.
+    f.typeText(B);
+    f.enter();
+    assert.equal(f.message(), "이미 추가한 채널.");
+    await settle();
+    assert.equal(f.storeMessages.length, 1);
 });
 
 test("the add button reads 검색 for names and 추가 for addresses, and results show live status from the search", async (t) => {
@@ -917,7 +1009,7 @@ test("the add button reads 검색 for names and 추가 for addresses, and result
     assert.equal(f.result(B).querySelector(".bccmv-result-detail").textContent, "방송 중 · 팔로워 100명");
     assert.equal(f.result(B).querySelector(".bccmv-result-detail").dataset.live, "1");
     assert.equal(f.result(C).querySelector(".bccmv-result-detail").textContent, "오프라인 · 팔로워 12,345명");
-    assert.match(f.panel().querySelector(".bccmv-results").textContent, /끌어 놓아도 추가돼요/);
+    assert.match(f.panel().querySelector(".bccmv-results").textContent, /끌어 놓아도 추가 가능/);
 });
 
 test("a following channel link dropped on the panel is looked up and added; other drops and synthetic drops are not", async (t) => {
@@ -1025,7 +1117,7 @@ test("keeps the four-chat limit and removes one chat without recreating the othe
     for (const text of [E, "다른 채널"]) {
         f.typeText(text);
         f.enter();
-        assert.equal(f.message(), "채팅은 최대 4개까지 추가할 수 있어요.", text);
+        assert.equal(f.message(), "채팅은 최대 4개까지 추가 가능.", text);
     }
     assert.equal(f.requests.length, 0);
     f.action(B, "remove").click();
@@ -1216,18 +1308,18 @@ test("when chats overflow the panel, a visible bar names every chat and moves be
         chips().map((chip) => chip.getAttribute("aria-current")),
         ["true", "true", null, null]
     );
-    assert.equal(status(), "4개 중 1–2번째가 보여요");
+    assert.equal(status(), "4개 중 1–2번째 표시 중");
     assert.equal(prev.disabled, true);
     assert.equal(next.disabled, false);
     assert.ok(chips().every((chip) => chip.type === "button"));
     next.click();
-    await waitForCondition(() => status() === "4개 중 3–4번째가 보여요");
+    await waitForCondition(() => status() === "4개 중 3–4번째 표시 중");
     assert.equal(scrollLeft, 688);
     assert.equal(prev.disabled, false);
     assert.equal(next.disabled, true);
-    assert.equal(chips()[2].getAttribute("aria-label"), "채널3 채팅, 지금 보여요");
+    assert.equal(chips()[2].getAttribute("aria-label"), "채널3 채팅, 표시 중");
     chips()[0].click();
-    await waitForCondition(() => status() === "4개 중 1–2번째가 보여요");
+    await waitForCondition(() => status() === "4개 중 1–2번째 표시 중");
     assert.equal(scrollLeft, 0);
     assert.deepEqual(
         [A, B, C, D].map((id) => f.frame(id)),
@@ -1258,7 +1350,7 @@ test("the chat size presets, corner buttons, and resize handle save only from tr
     assert.equal(f.settingsToggle().getAttribute("aria-expanded"), "true");
     assert.equal(f.sizeButton("medium").getAttribute("aria-label"), "채팅 칸 크기 보통");
     assert.equal(f.sizeButton("medium").getAttribute("aria-pressed"), "true");
-    assert.match(f.panel().querySelector(".bccmv-settings").textContent, /채널 이름 줄을 끌어/);
+    assert.match(f.panel().querySelector(".bccmv-settings").textContent, /채널 이름 줄 드래그/);
     f.sizeButton("large").click();
     await settle();
     assert.equal(f.storeMessages.length, 0);
@@ -1288,7 +1380,7 @@ test("the chat size presets, corner buttons, and resize handle save only from tr
     await waitForCondition(() => f.stored()?.chatWidth === 390);
     assert.equal(f.storeMessages.length, before + 1);
     assert.equal(f.stored().chatHeight, 640);
-    assert.equal(f.message(), "채팅 칸 크기를 저장했어요.");
+    assert.equal(f.message(), "채팅 칸 크기 저장됨.");
     assert.deepEqual(box(), ["16px", "104px", "398px", "648px"]);
     assert.equal(f.sizeButton("medium").getAttribute("aria-pressed"), "false");
 
@@ -1422,13 +1514,75 @@ test("dragging a chat's name bar moves the whole panel and docks it to the neare
     assert.deepEqual(f.stored(), layout([A, B]));
 });
 
+test("a resize dragged to the window edge keeps its columns after release at every rounding of the cell width", async (t) => {
+    // R1-16: the dragged cell width is divided from the panel width; rounding x.5 up made the saved cells one pixel too
+    // wide for the window, so the panel fell back to fewer columns after the save.
+    for (const { innerWidth, ids } of [
+        { innerWidth: 1401, ids: [A, B] },
+        { innerWidth: 1400, ids: [A, B] },
+        { innerWidth: 1436, ids: [A, B, C] },
+    ]) {
+        const name = `${ids.length} chats in a ${innerWidth}px window`;
+        const f = fixture(t, { stored: layout(ids) });
+        Object.defineProperty(f.w, "innerWidth", { configurable: true, value: innerWidth });
+        await f.open();
+        const panel = f.panel();
+        const grid = panel.querySelector(".bccmv-grid");
+        const size = () => [parseInt(panel.style.width, 10), parseInt(panel.style.height, 10)];
+        const handle = panel.querySelector(".bccmv-resize");
+        assert.equal(grid.dataset.columns, String(ids.length), name);
+        // Docked bottom-right, the handle is on the top-left: dragging far left grows the chats to the window width.
+        f.trusted(handle, "pointerdown", { clientX: 400, clientY: 400 });
+        f.trusted(handle, "pointermove", { clientX: -3000, clientY: 400 });
+        const dragged = size();
+        assert.ok(dragged[0] <= innerWidth - 32, name + ": the dragged panel fits the window");
+        assert.equal(grid.dataset.columns, String(ids.length), name);
+        const before = f.storeMessages.length;
+        f.trusted(handle, "pointerup", { clientX: -3000, clientY: 400 });
+        await waitForCondition(() => f.storeMessages.length === before + 1 && f.stored().chatWidth !== 340);
+        await settle();
+        assert.equal(grid.dataset.columns, String(ids.length), name + ": the released size keeps the dragged columns");
+        assert.equal(grid.dataset.rows, "1", name);
+        assert.deepEqual(size(), dragged, name + ": the panel keeps the dragged size after saving");
+    }
+});
+
+test("a chat whose name bar is being dragged can be removed by another tab without leaving the drag behind", async (t) => {
+    // R1-18: the removed name bar never receives pointerup or lostpointercapture, so the drag has to end with it.
+    const f = fixture(t, { stored: layout([A, B]) });
+    await f.open();
+    const panel = f.panel();
+    const box = () => [panel.style.left, panel.style.top];
+    const headB = f.cell(B).querySelector(".bccmv-cell-head");
+    f.trusted(headB, "pointerdown", { clientX: 600, clientY: 150 });
+    f.trusted(headB, "pointermove", { clientX: 500, clientY: 150 });
+    assert.ok(panel.hasAttribute("data-bccmv-moving"));
+    f.changeLocal(layout([A]));
+    assert.equal(f.cell(B), null);
+    assert.equal(panel.hasAttribute("data-bccmv-moving"), false, "the remaining chat frames take the pointer again");
+    const headA = f.cell(A).querySelector(".bccmv-cell-head");
+    const settled = box();
+    // A plain mouse move over the remaining name bar no longer moves the panel with the old drag.
+    f.trusted(headA, "pointermove", { clientX: 100, clientY: 100 });
+    assert.deepEqual(box(), settled);
+    f.trusted(headA, "pointerup", { clientX: 100, clientY: 100 });
+    await settle();
+    assert.equal(f.storeMessages.length, 0, "the interrupted drag saves no position");
+    assert.deepEqual(f.stored(), layout([A]));
+    // A new drag on the remaining chat starts normally.
+    f.trusted(headA, "pointerdown", { clientX: 600, clientY: 150 });
+    assert.ok(panel.hasAttribute("data-bccmv-moving"));
+    f.trusted(headA, "pointerup", { clientX: 600, clientY: 150 });
+    assert.equal(panel.hasAttribute("data-bccmv-moving"), false);
+});
+
 test("a failed save keeps this document's layout; a conflict shows the other tab's layout without overwriting it", async (t) => {
     const f = fixture(t, { stored: layout([A, B]) });
     await f.open();
     f.setStoreMode("fail");
     f.trusted(f.action(A, "remove"));
-    await waitForCondition(() => /저장하지 못했어요/.test(f.message()));
-    assert.equal(f.message(), "구성을 저장하지 못했어요. 이 탭에서만 바뀐 구성으로 표시해요.");
+    await waitForCondition(() => /구성 저장 실패/.test(f.message()));
+    assert.equal(f.message(), "구성 저장 실패(이 탭에만 반영).");
     assert.equal(f.cell(A), null, "the current document keeps the user's change");
     assert.deepEqual(f.stored(), layout([A, B]));
 
@@ -1461,7 +1615,7 @@ test("another tab's saved layout updates open chats without reloading kept frame
     await waitForCondition(() => f.cell(C) === null);
     f.changeLocal(layout([B, C, D]));
     assert.deepEqual(f.cellIds(), [B, C, D]);
-    assert.equal(f.message(), "다른 탭에서 저장한 구성을 반영했어요. 이 탭에서 저장하지 못한 변경은 사라졌어요.");
+    assert.equal(f.message(), "다른 탭 구성 반영됨(미저장 변경 해제).");
     assert.equal(f.frame(B), frameB);
     assert.equal(f.storeMessages.length, 1);
 });
@@ -1471,7 +1625,7 @@ test("waits for the saved layout and lets a change that arrived during the first
     await waitForCondition(() => f.entry());
     f.trusted(f.entry());
     assert.ok(f.panel());
-    assert.match(f.panel().textContent, /구성을 불러오는 중이에요/);
+    assert.match(f.panel().textContent, /채팅 멀티뷰 구성 불러오는 중/);
     assert.equal(f.w.document.querySelector("iframe"), null);
     assert.equal(f.submit().disabled, true);
     assert.equal(f.sizeButton("large").disabled, true);
@@ -1493,7 +1647,7 @@ test("an invalid saved layout reads as the default layout and reading never rewr
     await f.open();
     assert.equal(f.w.document.querySelector("iframe"), null);
     assert.equal(f.panel().querySelector(".bccmv-count").textContent, "0/4");
-    assert.match(f.panel().textContent, /채널을 추가하면/);
+    assert.match(f.panel().textContent, /채널 추가 시/);
     await settle();
     assert.deepEqual(f.stored(), invalid);
     assert.equal(f.storeMessages.length, 0);
@@ -1760,7 +1914,7 @@ test("the chat input is a multiview setting: off by default, saved from a truste
     assert.equal(grid.style.getPropertyValue("--bccmv-cell-width"), "240px");
     f.openSettings();
     assert.equal(f.inputSwitch().getAttribute("aria-checked"), "false");
-    assert.match(f.panel().querySelector(".bccmv-settings").textContent, /후원 버튼은 계속 숨겨요/);
+    assert.match(f.panel().querySelector(".bccmv-settings").textContent, /후원 버튼은 숨김/);
     f.inputSwitch().click();
     await settle();
     assert.equal(f.storeMessages.length, 0);
@@ -1768,11 +1922,11 @@ test("the chat input is a multiview setting: off by default, saved from a truste
     await waitForCondition(() => f.inputSwitch().getAttribute("aria-checked") === "true");
     assert.deepEqual(f.storeMessages[0].expected, { [KEY]: { value: layout([A]) } });
     assert.deepEqual(f.stored(), layout([A], { input: true }));
-    assert.equal(f.message(), "칸에서 채팅을 입력할 수 있어요.");
+    assert.equal(f.message(), "채팅 입력창 표시됨.");
     assert.equal(grid.style.getPropertyValue("--bccmv-cell-width"), "340px");
     f.trusted(f.inputSwitch());
     await waitForCondition(() => f.stored()?.input === false);
-    assert.equal(f.message(), "채팅 입력창을 숨겼어요.");
+    assert.equal(f.message(), "채팅 입력창 숨김.");
 });
 
 test("a layout saved in the earlier panel-sized format keeps its chats and writes the per-chat format on the next save", async (t) => {
