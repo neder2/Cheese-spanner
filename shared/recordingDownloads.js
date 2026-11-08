@@ -8,6 +8,7 @@
  *   - 저장 폴더는 메시지가 아니라 sync 옵션 videoRecorderFolder에서 읽고 normalizeDownloadFolder로 다시 검증해요.
  *   - downloads 권한이 없거나 폴더가 비어 있으면 기본 다운로드 폴더에 저장돼요. 영상은 저장소·외부로 보내지 않아요.
  *   - 세션은 최대 8개이며 취소·실패·마무리 때 정리해요. 재시작 뒤 미완성 다운로드를 이어받지 않아요.
+ *   - 탐색기에서 고른 로컬 폴더가 있으면 recordingDirectory의 핸들로 직접 쓰고 닫아요. 권한 실패는 우회하지 않아요.
  *   - 이전에 열린 콘텐츠의 prepare/blob 경로도 60초·8개 한도로 호환해요.
  * 발신자: 같은 확장 ID, 탭의 최상위 프레임, 정확한 https://chzzk.naver.com 출처만 받아요.
  * 공개 API: MESSAGE_TYPE, MESSAGE_VERSION, DOWNLOADS_PERMISSION, isRecordingBlobUrl, isRecordingFileName,
@@ -56,7 +57,11 @@
         }
     }
 
-    function createController({ chrome, now = () => Date.now(), directory = globalThis.CheeseSpannerRecordingDirectory }) {
+    function createController({
+        chrome,
+        now = () => Date.now(),
+        directory = globalThis.CheeseSpannerRecordingDirectory,
+    }) {
         const pending = new Map();
         const sessions = new Map();
         let installed = false;
@@ -149,7 +154,10 @@
                 }
             } catch (error) {
                 dispose(session, "directory-unavailable");
-                return { ok: false, error: error.message === "directory-permission" ? "directory-permission" : "directory-unavailable" };
+                return {
+                    ok: false,
+                    error: error.message === "directory-permission" ? "directory-permission" : "directory-unavailable",
+                };
             }
             return { ok: true, id, url, folder: session.folder, routed: Boolean(session.folder) };
         }
@@ -353,7 +361,18 @@
                 const [folder, held] = await Promise.all([readFolder(), hasDownloadsPermission()]);
                 try {
                     const selected = await directory?.get();
-                    return { ok: true, folder, downloads: held, ...(selected ? { directory: selected.name, directoryGranted: await selected.queryPermission({ mode: "readwrite" }) === "granted" } : {}) };
+                    return {
+                        ok: true,
+                        folder,
+                        downloads: held,
+                        ...(selected
+                            ? {
+                                  directory: selected.name,
+                                  directoryGranted:
+                                      (await selected.queryPermission({ mode: "readwrite" })) === "granted",
+                              }
+                            : {}),
+                    };
                 } catch (_) {
                     return { ok: false, error: "directory-unavailable" };
                 }

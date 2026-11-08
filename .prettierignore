@@ -3,3 +3,5 @@ vendor/
 backups/
 package-lock.json
 *.zip
+
+output/
