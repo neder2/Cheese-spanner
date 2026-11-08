@@ -204,3 +204,52 @@ test("watchparty sticky title follows the actual header when a hidden skin leave
     await waitForCondition(() => !body.hasAttribute("data-bchbl-sticky"));
     assert.equal(doc.getElementById("cheese-spanner-header-banner-sticky-style"), null);
 });
+
+test("a bannerless sidebar recovers its native transform and height only while external styles conflict", async (t) => {
+    const markup = `<div id="layout"><header id="header" style="transform:translateY(0px)"></header>
+<aside id="sidebar" style="top:60px;transform:translateY(0px);height:calc(100vh - 60px)"></aside>
+<div id="layout-body" style="padding-top:0px"></div></div>`;
+    const f = await fixture(t, markup);
+    const sidebar = f.document.getElementById("sidebar");
+    assert.equal(sidebar.hasAttribute("data-bchbl-offset-transform"), false);
+    // JSDOM cannot resolve viewport calc() or !important over inline style; emulate only that CSS boundary.
+    const nativeStyle = f.dom.window.getComputedStyle.bind(f.dom.window);
+    let conflict = true;
+    f.dom.window.getComputedStyle = (node) => {
+        const style = nativeStyle(node);
+        if (node !== sidebar) return style;
+        return new Proxy(style, {
+            get(target, key) {
+                if (key === "transform") return conflict ? "matrix(1, 0, 0, 1, 0, 60)" : "matrix(1, 0, 0, 1, 0, 0)";
+                if (key === "height") return `${f.dom.window.innerHeight - (conflict ? 0 : 60)}px`;
+                return Reflect.get(target, key);
+            },
+        });
+    };
+    f.resize(0);
+    await waitForCondition(() => sidebar.hasAttribute("data-bchbl-offset-height"));
+    assert.equal(sidebar.style.getPropertyValue("--bchbl-transform"), "translateY(0px)");
+    assert.equal(sidebar.style.getPropertyValue("--bchbl-height"), sidebar.style.height);
+    assert.equal(f.document.getElementById("header").hasAttribute("data-bchbl-offset-transform"), false);
+    assert.equal(f.document.getElementById("layout-body").hasAttribute("data-bchbl-offset-padding-top"), false);
+    assert.equal(sidebar.style.transform, "translateY(0px)");
+    sidebar.style.height = "calc(100vh - 72px)";
+    await waitForCondition(() => sidebar.style.getPropertyValue("--bchbl-height") === sidebar.style.height);
+    sidebar.style.height = "calc(100vh - 60px)";
+    conflict = false;
+    f.resize(0);
+    await waitForCondition(() => !sidebar.hasAttribute("data-bchbl-offset-transform"));
+    assert.equal(sidebar.style.getPropertyValue("--bchbl-height"), "");
+    assert.equal(f.document.getElementById("cheese-spanner-header-banner-layout-style"), null);
+});
+
+test("a bannerless correction ignores a sidebar outside the header layout", async (t) => {
+    const f = await fixture(
+        t,
+        `<div><header id="header" style="transform:translateY(0px)"></header></div>
+<aside id="sidebar" style="transform:translateY(0px);height:calc(100vh - 60px)"></aside>`
+    );
+    f.resize(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.document.getElementById("sidebar").hasAttribute("data-bchbl-offset-transform"), false);
+});

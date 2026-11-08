@@ -11,7 +11,7 @@
  *   과거 후원 가져오기는 history 페이지의 요청으로 조회하고, 같은 시청 기록 writer 큐에 월별 스냅샷을 저장한다.
  *   백업 대상 설정의 콘텐츠 쓰기와 설정 파일 내보내기·미리보기·적용은 shared/settingsStore.js의 설정 저장 큐가
  *   옵션 페이지와 공유하는 설정 저장 잠금 안에서 처리한다.
- *   플레이어 녹화 파일은 shared/recordingDownloads.js가 선택 권한 downloads가 있을 때만 저장 폴더로 보낸다.
+ *   플레이어 녹화 조각은 shared/recordingDownloads.js가 다운로드로 전달하고 downloads 권한이 있으면 하위 폴더를 지정한다.
  * 의존: shared/settings.js, shared/data.js, shared/watchHistoryStore.js,
  *   shared/adVideoRegistration.js, shared/liveStart.js, shared/liveStartMonitor.js,
  *   shared/followingTitleHistory.js, shared/followingTitleCollector.js,

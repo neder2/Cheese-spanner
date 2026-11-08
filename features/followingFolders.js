@@ -2878,7 +2878,7 @@ ${ORDER_RULES}
         }
         const previous = parseStoredValue(record.previous);
         if (!previous.ok) return;
-        sendCommand({ type: "restore", state: previous.state }, { success: "되돌렸어요." });
+        sendCommand({ type: "restore", state: previous.state }, { success: "되돌리기 완료" });
     }
 
     function isEnterSubmit(event) {

@@ -1930,7 +1930,7 @@ test("undo restores the folders from before a change and refuses once something 
     await waitForCondition(() => storedState(chrome).folders[0].channelIds.includes(C));
     assert.deepEqual(storedState(chrome), saved);
     assert.deepEqual(store.calls.at(-1).expected, { [KEY]: { value: moved } });
-    await waitForCondition(() => /되돌렸어요/.test(toastText(document)));
+    await waitForCondition(() => /되돌리기 완료/.test(toastText(document)));
     assert.equal(document.querySelector(`${TOAST_SELECTOR} [data-bcff-key="undo"]`), null, "undo is one step");
 
     dragEvent(dom, "dragstart", document.querySelector("#rowC a"));
@@ -2336,8 +2336,8 @@ test("late notices around a save that retried over another tab's change keep my 
     }
     assert.ok(undoButton(), "the undo offer is still on screen");
     trustedClick(dom, undoButton());
-    await waitForCondition(() => /되돌렸어요|되돌리지 않았어요/.test(toastText(document)));
-    assert.match(toastText(document), /되돌렸어요/, "undo goes back to the value my save started from");
+    await waitForCondition(() => /되돌리기 완료|되돌리지 않았어요/.test(toastText(document)));
+    assert.match(toastText(document), /되돌리기 완료/, "undo goes back to the value my save started from");
     assert.deepEqual(storedState(chrome), other);
     assert.deepEqual(store.calls.at(-1).expected, { [KEY]: { value: retried } });
     assert.equal(store.conflicts, 1, "no later save had to retry");
@@ -2532,8 +2532,8 @@ async function assertLateNoticesKeepMoveAndUndo(context, lateNames) {
     }
     const conflicts = store.conflicts;
     trustedClick(context.dom, undoButton());
-    await waitForCondition(() => /되돌렸어요|되돌리지 않았어요/.test(toastText(document)));
-    assert.match(toastText(document), /되돌렸어요/, "undo still works after the late notices");
+    await waitForCondition(() => /되돌리기 완료|되돌리지 않았어요/.test(toastText(document)));
+    assert.match(toastText(document), /되돌리기 완료/, "undo still works after the late notices");
     assert.deepEqual(storedState(chrome), X, "undo puts back the value my move was saved over");
     assert.deepEqual(store.calls.at(-1).expected, { [KEY]: { value: moved } });
     assert.equal(store.conflicts, conflicts, "undo did not conflict");
@@ -2618,8 +2618,8 @@ test("late notices of another tab's same change and its return keep my save and 
     }
 
     trustedClick(dom, undoButton());
-    await waitForCondition(() => /되돌렸어요|되돌리지 않았어요/.test(toastText(document)));
-    assert.match(toastText(document), /되돌렸어요/, "undo still works after the late notices");
+    await waitForCondition(() => /되돌리기 완료|되돌리지 않았어요/.test(toastText(document)));
+    assert.match(toastText(document), /되돌리기 완료/, "undo still works after the late notices");
     assert.deepEqual(storedState(chrome), saved);
     assert.equal(store.calls.length, 2);
     assert.deepEqual(store.calls[1].expected, { [KEY]: { value: moved } });
@@ -2667,8 +2667,8 @@ test("a check read that answers after my next save keeps that save and its undo"
     }
 
     trustedClick(dom, undoButton());
-    await waitForCondition(() => /되돌렸어요|되돌리지 않았어요/.test(toastText(document)));
-    assert.match(toastText(document), /되돌렸어요/, "undo still works after the late read");
+    await waitForCondition(() => /되돌리기 완료|되돌리지 않았어요/.test(toastText(document)));
+    assert.match(toastText(document), /되돌리기 완료/, "undo still works after the late read");
     assert.deepEqual(storedState(chrome), moved, "undo puts back the value my next move was saved over");
     assert.deepEqual(store.calls.at(-1).expected, { [KEY]: { value: next } });
     assert.equal(store.conflicts, conflicts, "undo did not conflict");
@@ -2704,8 +2704,8 @@ test("a back-forward cache reread that answers after my save keeps that save and
     assert.equal(folderOfRowOnScreen(dom, "rowC"), "[토크]");
 
     trustedClick(dom, undoButton());
-    await waitForCondition(() => /되돌렸어요|되돌리지 않았어요/.test(toastText(document)));
-    assert.match(toastText(document), /되돌렸어요/, "undo still works after the late reread");
+    await waitForCondition(() => /되돌리기 완료|되돌리지 않았어요/.test(toastText(document)));
+    assert.match(toastText(document), /되돌리기 완료/, "undo still works after the late reread");
     assert.deepEqual(storedState(chrome), saved);
     assert.deepEqual(store.calls.at(-1).expected, { [KEY]: { value: moved } });
     assert.equal(store.conflicts, 0, "undo did not conflict");

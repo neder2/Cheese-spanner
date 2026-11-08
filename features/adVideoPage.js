@@ -400,7 +400,7 @@
 
     function getScheduleOwner(container) {
         const route = location.pathname;
-        const routeChannelId = /^\/live\/([^/]+)\/?$/.exec(route)?.[1];
+        const routeChannelId = /^\/live\/([^/]+)(?:\/simple)?\/?$/.exec(route)?.[1];
         const host = getHostFiber(container);
         if (
             (!routeChannelId && route.startsWith("/live/")) ||

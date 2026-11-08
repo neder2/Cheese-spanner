@@ -1,4 +1,4 @@
-// Cursor-centred zoom for the main player. Native video and controls keep their DOM parents.
+// Cursor-centred zoom for each main/multiview video. Videos and playback controls keep their DOM parents.
 (() => {
     "use strict";
     if (CheeseSpanner.playerZoom) return;
@@ -20,11 +20,13 @@
     const ID = "cheese-spanner-player-zoom";
     const MIN_SCALE_SCROLL_DELAY_MS = 1000;
     const CONTROLS = ".pzp-pc__bottom-buttons-right";
+    const AUX_CELL = '#cheese-spanner-multiview .bcmv-cell[data-bcmv-channel]:not([data-main="1"])';
+    const AUX_VIDEO = `${AUX_CELL} > video[data-bcmv-video]`;
     const EXCLUDED =
         "button, a, input, textarea, select, summary, [contenteditable]:not([contenteditable='false']), " +
         "[role='button'], [role='slider'], [role='menu'], [role='dialog'], [role='separator'], " +
         ".pzp-pc__bottom, .pzp-pc__top, .pzp-pc__settings, [class*='bottom-buttons'], " +
-        "[data-bcmv-video], [data-bcmv-channel], [data-bcfp-tooltip], #cheese-spanner-stream-info";
+        ".bcmv-head, .bcmv-controls, .bcmv-corner, .bcmv-error, [data-bcfp-tooltip], #cheese-spanner-stream-info";
     const VIDEO_STYLES = ["transform", "transform-origin", "clip-path", "transition", "will-change"];
     const MODIFIERS = ["ctrlKey", "metaKey", "altKey", "shiftKey"];
     const SHORTCUT_KEYS = { alt: "altKey", ctrl: "ctrlKey", shift: "shiftKey", meta: "metaKey" };
@@ -33,18 +35,15 @@
     let mode = "manual";
     let shortcutKey = "alt";
     let suspended = false;
-    let state = null;
     let observer = null;
     let removeRoute = null;
-    let dragging = null;
-    let suppressClick = false;
     let carried = null;
+    let mainView = null;
+    let nextAuxId = 0;
+    const views = new Map();
 
     const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
     const routeKey = () => location.pathname.replace(/\/+$/, "");
-    const active = () => state && (mode !== "manual" || state.manual);
-    const current = () =>
-        enabled && !suspended && isPlaybackRoute() && state?.video.isConnected && state.player.contains(state.video);
 
     function saveStyles(node, names) {
         return names.map((name) => [name, node.style.getPropertyValue(name), node.style.getPropertyPriority(name)]);
@@ -61,367 +60,481 @@
         if (node.style.getPropertyValue(name) !== value) node.style.setProperty(name, value, "important");
     }
 
-    function updateControls() {
-        if (!state) return;
-        const { toggle, panel, reset, range, value } = state;
-        if (toggle) {
-            if (toggle.hidden !== (mode !== "manual")) toggle.hidden = mode !== "manual";
-            const label = state.manual ? "확대 모드 끄기" : "확대 모드 켜기";
-            if (toggle.getAttribute("aria-label") !== label) toggle.setAttribute("aria-label", label);
-            if (toggle.getAttribute("aria-pressed") !== String(state.manual))
-                toggle.setAttribute("aria-pressed", String(state.manual));
-            syncPlayerButtonTooltip(toggle, label);
-        }
-        if (panel) {
-            const interacting = state.panelPointer != null || panel.contains(document.activeElement);
-            const visible = active() && (state.scale > 1 || state.manual || (!panel.hidden && interacting));
-            const hidden = !visible;
-            if (panel.hidden !== hidden) panel.hidden = hidden;
-            const percent = Math.round(state.scale * 100);
-            const text = `${percent}%`;
-            if (value.textContent !== text) value.textContent = text;
-            if (range.value !== String(percent)) range.value = String(percent);
-            if (range.getAttribute("aria-valuetext") !== text) range.setAttribute("aria-valuetext", text);
-            const progress = `${(percent - 100) / 4}%`;
-            if (range.style.getPropertyValue("--bcz-progress") !== progress)
-                range.style.setProperty("--bcz-progress", progress);
-            if (reset.disabled !== (state.scale === 1)) reset.disabled = state.scale === 1;
-        }
-    }
-
-    function resetZoom() {
-        endDrag();
-        if (!state) return;
-        if (state.saved) restoreStyles(state.video, state.saved);
-        setVideoViewportTransform(state.video, null);
-        state.saved = null;
-        state.scale = 1;
-        state.scrollBlockedUntil = 0;
-        state.x = 0;
-        state.y = 0;
-        state.width = 0;
-        state.height = 0;
-        state.video.removeAttribute("data-bcz-zoomed");
-        state.player.removeAttribute("data-bcz-pannable");
-        updateControls();
-    }
-
-    // Share the visible viewport with control placement, including scrolling and player resizing.
-    function bounds() {
-        const { left, top, width, height } = getVideoViewportRect(state.video);
-        if (!(width > 0 && height > 0)) return null;
-        if (state.width && (width !== state.width || height !== state.height)) {
-            state.x *= width / state.width;
-            state.y *= height / state.height;
-        }
-        state.width = width;
-        state.height = height;
-        return { left, top, width, height };
-    }
-
-    function limitPan() {
-        const { video, width, height, scale } = state;
-        let contentWidth = width;
-        let contentHeight = height;
-        if (video.videoWidth > 0 && video.videoHeight > 0 && getComputedStyle(video).objectFit === "contain") {
-            const fit = Math.min(width / video.videoWidth, height / video.videoHeight);
-            contentWidth = video.videoWidth * fit;
-            contentHeight = video.videoHeight * fit;
-        }
-        const limit = (offset, size, content) => {
-            const margin = (size - content) / 2;
-            return content * scale <= size
-                ? (size - size * scale) / 2
-                : clamp(offset, size - (margin + content) * scale, -margin * scale);
+    function createView(video, player, channel, restored) {
+        const controlId = channel ? `${ID}-aux-${++nextAuxId}` : ID;
+        let dragging = null;
+        let suppressClick = false;
+        let state = {
+            video,
+            player,
+            key: routeKey(),
+            manual: false,
+            scale: 1,
+            scrollBlockedUntil: 0,
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+            saved: null,
         };
-        state.x = limit(state.x, width, contentWidth);
-        state.y = limit(state.y, height, contentHeight);
-    }
-
-    function render() {
-        if (!current()) return unmount();
-        if (state.scale === 1) return resetZoom();
-        limitPan();
-        const { video, x, y, width, height, scale } = state;
-        if (!state.saved) state.saved = saveStyles(video, VIDEO_STYLES);
-        setStyle(video, "transform-origin", "0px 0px");
-        setStyle(video, "transform", `translate(${x}px, ${y}px) scale(${scale})`);
-        // Clip the transformed video itself, so native menus and control overlays stay untouched.
-        const top = Math.max(0, -y / scale);
-        const left = Math.max(0, -x / scale);
-        const bottom = Math.max(0, height - (height - y) / scale);
-        const right = Math.max(0, width - (width - x) / scale);
-        setStyle(video, "clip-path", `inset(${top}px ${right}px ${bottom}px ${left}px)`);
-        setStyle(video, "transition", "none");
-        setStyle(video, "will-change", "transform");
-        setVideoViewportTransform(video, { scale, x, y });
-        if (!video.hasAttribute("data-bcz-zoomed")) video.setAttribute("data-bcz-zoomed", "");
-        if (!state.player.hasAttribute("data-bcz-pannable")) state.player.setAttribute("data-bcz-pannable", "");
-        updateControls();
-    }
-
-    // `modifier` is the only modifier that may be held; without it every modifier must be released.
-    function surface(event, modifier = null) {
-        if (!current() || !active() || event.defaultPrevented) return null;
-        if (MODIFIERS.some((name) => Boolean(event[name]) !== (name === modifier))) return null;
-        const target = event.composedPath()[0] || event.target;
-        if (!(target instanceof Element) || !state.player.contains(target) || target.closest(EXCLUDED)) return null;
-        // Native wrappers can receive the pointer instead of the video they contain.
-        if (target !== state.video && !target.contains(state.video)) return null;
-        const box = bounds();
-        if (
-            !box ||
-            event.clientX < box.left ||
-            event.clientX > box.left + box.width ||
-            event.clientY < box.top ||
-            event.clientY > box.top + box.height
-        )
-            return null;
-        return box;
-    }
-
-    function onWheel(event) {
-        const shortcut = mode === "shortcut";
-        let { deltaX, deltaY } = event;
-        // Chromium turns Shift+wheel into a horizontal delta.
-        if (shortcut && shortcutKey === "shift" && !deltaY) [deltaX, deltaY] = [0, deltaX];
-        if (!Number.isFinite(deltaY) || !deltaY || Math.abs(deltaX) > Math.abs(deltaY)) return;
-        const box = surface(event, shortcut ? SHORTCUT_KEYS[shortcutKey] : null);
-        if (!box) return;
-        if (mode === "always" && state.scale === 1 && deltaY > 0) {
-            const now = performance.now();
-            if (now >= state.scrollBlockedUntil) return;
-            // Keep the rest of a zoom-out gesture from spilling into page scrolling.
-            state.scrollBlockedUntil = now + MIN_SCALE_SCROLL_DELAY_MS;
+        if (restored) {
+            const { scale, x, y, width, height, manual } = restored;
+            Object.assign(state, { scale, x, y, width, height, manual: manual && mode === "manual" });
         }
-        const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? box.height : 1;
-        const delta = clamp(deltaY * unit, -240, 240);
-        const next = clamp(state.scale * Math.exp((-delta * Math.log(1.2)) / 100), 1, 5);
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        if (next === 1 && state.scale === 1) return;
-        zoomAt(next, event.clientX - box.left, event.clientY - box.top);
-        if (mode === "always" && delta > 0 && state?.scale === 1) {
-            state.scrollBlockedUntil = performance.now() + MIN_SCALE_SCROLL_DELAY_MS;
+        const active = () => state && (mode !== "manual" || state.manual);
+        const current = () =>
+            enabled &&
+            !suspended &&
+            isPlaybackRoute() &&
+            state?.video.isConnected &&
+            state.player.contains(video) &&
+            (!channel ||
+                (state.player.matches(AUX_CELL) &&
+                    state.player.dataset.bcmvChannel === channel &&
+                    video.dataset.channel === channel &&
+                    video.hasAttribute("data-bcmv-video")));
+
+        function updateControls() {
+            if (!state) return;
+            const { toggle, panel, reset, range, value } = state;
+            if (toggle) {
+                if (toggle.hidden !== (mode !== "manual")) toggle.hidden = mode !== "manual";
+                const label = state.manual ? "확대 모드 끄기" : "확대 모드 켜기";
+                if (toggle.getAttribute("aria-label") !== label) toggle.setAttribute("aria-label", label);
+                if (toggle.getAttribute("aria-pressed") !== String(state.manual))
+                    toggle.setAttribute("aria-pressed", String(state.manual));
+                if (!channel) syncPlayerButtonTooltip(toggle, label);
+            }
+            if (panel) {
+                const interacting = state.panelPointer != null || panel.contains(document.activeElement);
+                const visible = active() && (state.scale > 1 || state.manual || (!panel.hidden && interacting));
+                const hidden = !visible;
+                if (panel.hidden !== hidden) panel.hidden = hidden;
+                const percent = Math.round(state.scale * 100);
+                const text = `${percent}%`;
+                if (value.textContent !== text) value.textContent = text;
+                if (range.value !== String(percent)) range.value = String(percent);
+                if (range.getAttribute("aria-valuetext") !== text) range.setAttribute("aria-valuetext", text);
+                const progress = `${(percent - 100) / 4}%`;
+                if (range.style.getPropertyValue("--bcz-progress") !== progress)
+                    range.style.setProperty("--bcz-progress", progress);
+                if (reset.disabled !== (state.scale === 1)) reset.disabled = state.scale === 1;
+            }
         }
-    }
 
-    function zoomAt(next, x, y) {
-        endDrag();
-        const ratio = next / state.scale;
-        state.x = x - (x - state.x) * ratio;
-        state.y = y - (y - state.y) * ratio;
-        state.scale = next < 1.000001 ? 1 : next;
-        render();
-    }
-
-    function onPointerDown(event) {
-        suppressClick = false;
-        if (event.button !== 0 || event.isPrimary === false || state?.scale === 1 || !surface(event)) return;
-        // Reserve an enlarged main video for panning before multiview's ancestor handler sees it.
-        event.stopImmediatePropagation();
-        dragging = {
-            id: event.pointerId,
-            x: event.clientX,
-            y: event.clientY,
-            startX: state.x,
-            startY: state.y,
-            moved: false,
-        };
-        window.addEventListener("pointermove", onPointerMove, true);
-        window.addEventListener("pointerup", onPointerUp, true);
-        window.addEventListener("pointercancel", endDrag, true);
-        state.player.addEventListener("lostpointercapture", endDrag);
-    }
-
-    function onPointerMove(event) {
-        if (!dragging || event.pointerId !== dragging.id) return;
-        if (!current() || !event.buttons) return endDrag();
-        const dx = event.clientX - dragging.x;
-        const dy = event.clientY - dragging.y;
-        if (!dragging.moved && Math.hypot(dx, dy) < 4) return;
-        if (!dragging.moved) {
-            dragging.moved = true;
-            state.player.setPointerCapture?.(dragging.id);
-            state.player.setAttribute("data-bcz-dragging", "");
+        function resetZoom() {
+            endDrag();
+            if (!state) return;
+            if (state.saved) restoreStyles(state.video, state.saved);
+            setVideoViewportTransform(state.video, null);
+            state.saved = null;
+            state.scale = 1;
+            state.scrollBlockedUntil = 0;
+            state.x = 0;
+            state.y = 0;
+            state.width = 0;
+            state.height = 0;
+            state.video.removeAttribute("data-bcz-zoomed");
+            state.player.removeAttribute("data-bcz-pannable");
+            updateControls();
         }
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        state.x = dragging.startX + dx;
-        state.y = dragging.startY + dy;
-        render();
-    }
 
-    function onPointerUp(event) {
-        if (!dragging || event.pointerId !== dragging.id) return;
-        if (dragging.moved) {
+        // Share the visible viewport with control placement, including scrolling and player resizing.
+        function bounds() {
+            const { left, top, width, height } = getVideoViewportRect(state.video);
+            if (!(width > 0 && height > 0)) return null;
+            if (state.width && (width !== state.width || height !== state.height)) {
+                state.x *= width / state.width;
+                state.y *= height / state.height;
+            }
+            state.width = width;
+            state.height = height;
+            return { left, top, width, height };
+        }
+
+        function limitPan() {
+            const { video, width, height, scale } = state;
+            let contentWidth = width;
+            let contentHeight = height;
+            if (video.videoWidth > 0 && video.videoHeight > 0 && getComputedStyle(video).objectFit === "contain") {
+                const fit = Math.min(width / video.videoWidth, height / video.videoHeight);
+                contentWidth = video.videoWidth * fit;
+                contentHeight = video.videoHeight * fit;
+            }
+            const limit = (offset, size, content) => {
+                const margin = (size - content) / 2;
+                return content * scale <= size
+                    ? (size - size * scale) / 2
+                    : clamp(offset, size - (margin + content) * scale, -margin * scale);
+            };
+            state.x = limit(state.x, width, contentWidth);
+            state.y = limit(state.y, height, contentHeight);
+        }
+
+        function render() {
+            if (!current()) return unmount();
+            if (state.scale === 1) return resetZoom();
+            limitPan();
+            const { video, x, y, width, height, scale } = state;
+            if (!state.saved) state.saved = saveStyles(video, VIDEO_STYLES);
+            setStyle(video, "transform-origin", "0px 0px");
+            setStyle(video, "transform", `translate(${x}px, ${y}px) scale(${scale})`);
+            // Clip the transformed video itself, so native menus and control overlays stay untouched.
+            const top = Math.max(0, -y / scale);
+            const left = Math.max(0, -x / scale);
+            const bottom = Math.max(0, height - (height - y) / scale);
+            const right = Math.max(0, width - (width - x) / scale);
+            setStyle(video, "clip-path", `inset(${top}px ${right}px ${bottom}px ${left}px)`);
+            setStyle(video, "transition", "none");
+            setStyle(video, "will-change", "transform");
+            setVideoViewportTransform(video, { scale, x, y });
+            if (!video.hasAttribute("data-bcz-zoomed")) video.setAttribute("data-bcz-zoomed", "");
+            if (!state.player.hasAttribute("data-bcz-pannable")) state.player.setAttribute("data-bcz-pannable", "");
+            updateControls();
+        }
+
+        // `modifier` is the only modifier that may be held; without it every modifier must be released.
+        function surface(event, modifier = null) {
+            if (!current() || !active() || event.defaultPrevented) return null;
+            if (MODIFIERS.some((name) => Boolean(event[name]) !== (name === modifier))) return null;
+            const target = event.composedPath()[0] || event.target;
+            if (!(target instanceof Element) || !state.player.contains(target) || target.closest(EXCLUDED)) return null;
+            if (!channel && target.closest("[data-bcmv-video], [data-bcmv-channel]")) return null;
+            // Native wrappers can receive the pointer instead of the video they contain.
+            if (target !== state.video && !target.contains(state.video)) return null;
+            const box = bounds();
+            if (
+                !box ||
+                event.clientX < box.left ||
+                event.clientX > box.left + box.width ||
+                event.clientY < box.top ||
+                event.clientY > box.top + box.height
+            )
+                return null;
+            return box;
+        }
+
+        function onWheel(event) {
+            const shortcut = mode === "shortcut";
+            let { deltaX, deltaY } = event;
+            // Chromium turns Shift+wheel into a horizontal delta.
+            if (shortcut && shortcutKey === "shift" && !deltaY) [deltaX, deltaY] = [0, deltaX];
+            if (!Number.isFinite(deltaY) || !deltaY || Math.abs(deltaX) > Math.abs(deltaY)) return;
+            const box = surface(event, shortcut ? SHORTCUT_KEYS[shortcutKey] : null);
+            if (!box) return;
+            if (mode === "always" && state.scale === 1 && deltaY > 0) {
+                const now = performance.now();
+                if (now >= state.scrollBlockedUntil) return;
+                // Keep the rest of a zoom-out gesture from spilling into page scrolling.
+                state.scrollBlockedUntil = now + MIN_SCALE_SCROLL_DELAY_MS;
+            }
+            const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? box.height : 1;
+            const delta = clamp(deltaY * unit, -240, 240);
+            const next = clamp(state.scale * Math.exp((-delta * Math.log(1.2)) / 100), 1, 5);
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            if (next === 1 && state.scale === 1) return;
+            zoomAt(next, event.clientX - box.left, event.clientY - box.top);
+            if (mode === "always" && delta > 0 && state?.scale === 1) {
+                state.scrollBlockedUntil = performance.now() + MIN_SCALE_SCROLL_DELAY_MS;
+            }
+        }
+
+        function zoomAt(next, x, y) {
+            endDrag();
+            const ratio = next / state.scale;
+            state.x = x - (x - state.x) * ratio;
+            state.y = y - (y - state.y) * ratio;
+            state.scale = next < 1.000001 ? 1 : next;
+            render();
+        }
+
+        function onPointerDown(event) {
+            suppressClick = false;
+            if (event.button !== 0 || event.isPrimary === false || state?.scale === 1 || !surface(event)) return;
+            // Reserve an enlarged video for panning before multiview's ancestor handler sees it.
+            event.stopImmediatePropagation();
+            dragging = {
+                id: event.pointerId,
+                x: event.clientX,
+                y: event.clientY,
+                startX: state.x,
+                startY: state.y,
+                moved: false,
+            };
+            window.addEventListener("pointermove", onPointerMove, true);
+            window.addEventListener("pointerup", onPointerUp, true);
+            window.addEventListener("pointercancel", endDrag, true);
+            state.player.addEventListener("lostpointercapture", endDrag);
+        }
+
+        function onPointerMove(event) {
+            if (!dragging || event.pointerId !== dragging.id) return;
+            if (!current() || !event.buttons) return endDrag();
+            const dx = event.clientX - dragging.x;
+            const dy = event.clientY - dragging.y;
+            if (!dragging.moved && Math.hypot(dx, dy) < 4) return;
+            if (!dragging.moved) {
+                dragging.moved = true;
+                state.player.setPointerCapture?.(dragging.id);
+                state.player.setAttribute("data-bcz-dragging", "");
+            }
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            state.x = dragging.startX + dx;
+            state.y = dragging.startY + dy;
+            render();
+        }
+
+        function onPointerUp(event) {
+            if (!dragging || event.pointerId !== dragging.id) return;
+            if (dragging.moved) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+            }
+            endDrag();
+        }
+
+        function endDrag() {
+            const previous = dragging;
+            dragging = null;
+            if (previous?.moved) suppressClick = true;
+            window.removeEventListener("pointermove", onPointerMove, true);
+            window.removeEventListener("pointerup", onPointerUp, true);
+            window.removeEventListener("pointercancel", endDrag, true);
+            state?.player.removeEventListener("lostpointercapture", endDrag);
+            state?.player.removeAttribute("data-bcz-dragging");
+            if (previous && state?.player.hasPointerCapture?.(previous.id))
+                state.player.releasePointerCapture(previous.id);
+        }
+
+        function onClick(event) {
+            if (!suppressClick || event.detail === 0 || !state?.player.contains(event.target)) return;
+            suppressClick = false;
             event.preventDefault();
             event.stopImmediatePropagation();
         }
-        endDrag();
-    }
 
-    function endDrag() {
-        const previous = dragging;
-        dragging = null;
-        if (previous?.moved) suppressClick = true;
-        window.removeEventListener("pointermove", onPointerMove, true);
-        window.removeEventListener("pointerup", onPointerUp, true);
-        window.removeEventListener("pointercancel", endDrag, true);
-        state?.player.removeEventListener("lostpointercapture", endDrag);
-        state?.player.removeAttribute("data-bcz-dragging");
-        if (previous && state?.player.hasPointerCapture?.(previous.id)) state.player.releasePointerCapture(previous.id);
-    }
-
-    function onClick(event) {
-        if (!suppressClick || event.detail === 0 || !state?.player.contains(event.target)) return;
-        suppressClick = false;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-    }
-
-    function onToggle(event) {
-        event.stopPropagation();
-        if (!current() || mode !== "manual" || event.currentTarget !== state.toggle) return;
-        state.manual = !state.manual;
-        if (!state.manual) resetZoom();
-        updateControls();
-    }
-
-    function onReset(event) {
-        event.stopPropagation();
-        if (current() && event.currentTarget === state.reset) resetZoom();
-    }
-
-    function onRangeInput(event) {
-        event.stopPropagation();
-        if (!current() || !active() || event.currentTarget !== state.range) return;
-        const percent = state.range.valueAsNumber;
-        if (!Number.isFinite(percent)) return;
-        const box = bounds();
-        if (box) zoomAt(clamp(Math.round(percent), 100, 500) / 100, box.width / 2, box.height / 2);
-    }
-
-    function stopPanelEvent(event) {
-        event.stopPropagation();
-    }
-
-    function endPanelPointer(event) {
-        if (event && event.pointerId !== state?.panelPointer) return;
-        window.removeEventListener("pointerup", endPanelPointer, true);
-        window.removeEventListener("pointercancel", endPanelPointer, true);
-        if (!state) return;
-        state.panelPointer = null;
-        updateControls();
-    }
-
-    function onPanelPointerDown(event) {
-        event.stopPropagation();
-        if (!current() || event.button !== 0 || event.isPrimary === false) return;
-        state.panelPointer = event.pointerId;
-        // Keep the panel visible at 100% until the native range drag is released.
-        window.addEventListener("pointerup", endPanelPointer, true);
-        window.addEventListener("pointercancel", endPanelPointer, true);
-    }
-
-    function onPanelFocusOut() {
-        const panel = state?.panel;
-        queueMicrotask(() => {
-            if (panel !== state?.panel || !panel || panel.contains(document.activeElement)) return;
+        function onToggle(event) {
+            event.stopPropagation();
+            if (!current() || mode !== "manual" || event.currentTarget !== state.toggle) return;
+            state.manual = !state.manual;
+            if (!state.manual) resetZoom();
             updateControls();
-        });
-    }
-
-    function endInteractions() {
-        endDrag();
-        endPanelPointer();
-    }
-
-    function removePanel() {
-        if (!state) return;
-        endPanelPointer();
-        state.range?.removeEventListener("input", onRangeInput);
-        state.reset?.removeEventListener("click", onReset);
-        for (const name of ["click", "dblclick", "keydown"]) state.panel?.removeEventListener(name, stopPanelEvent);
-        state.panel?.removeEventListener("pointerdown", onPanelPointerDown);
-        state.panel?.removeEventListener("focusout", onPanelFocusOut);
-        state.panel?.remove();
-        state.panel = state.range = state.value = state.reset = null;
-    }
-
-    function panelIsMounted() {
-        return (
-            state.panel?.parentElement === state.player &&
-            [state.range, state.reset, state.value].every((node) => node && state.panel.contains(node))
-        );
-    }
-
-    function mountControls() {
-        const container = state.player.querySelector(CONTROLS);
-        if (!container && state.toggle) {
-            state.toggle.removeEventListener("click", onToggle);
-            state.toggle.remove();
-            state.toggle = null;
         }
-        if (container && state.toggle?.parentElement !== container) {
+
+        function onReset(event) {
+            event.stopPropagation();
+            if (current() && event.currentTarget === state.reset) resetZoom();
+        }
+
+        function onRangeInput(event) {
+            event.stopPropagation();
+            if (!current() || !active() || event.currentTarget !== state.range) return;
+            const percent = state.range.valueAsNumber;
+            if (!Number.isFinite(percent)) return;
+            const box = bounds();
+            if (box) zoomAt(clamp(Math.round(percent), 100, 500) / 100, box.width / 2, box.height / 2);
+        }
+
+        function stopPanelEvent(event) {
+            event.stopPropagation();
+        }
+
+        function endPanelPointer(event) {
+            if (event && event.pointerId !== state?.panelPointer) return;
+            window.removeEventListener("pointerup", endPanelPointer, true);
+            window.removeEventListener("pointercancel", endPanelPointer, true);
+            if (!state) return;
+            state.panelPointer = null;
+            updateControls();
+        }
+
+        function onPanelPointerDown(event) {
+            event.stopPropagation();
+            if (!current() || event.button !== 0 || event.isPrimary === false) return;
+            state.panelPointer = event.pointerId;
+            // Keep the panel visible at 100% until the native range drag is released.
+            window.addEventListener("pointerup", endPanelPointer, true);
+            window.addEventListener("pointercancel", endPanelPointer, true);
+        }
+
+        function onPanelFocusOut() {
+            const panel = state?.panel;
+            queueMicrotask(() => {
+                if (panel !== state?.panel || !panel || panel.contains(document.activeElement)) return;
+                updateControls();
+            });
+        }
+
+        function endInteractions() {
+            endDrag();
+            endPanelPointer();
+        }
+
+        function removePanel() {
+            if (!state) return;
+            endPanelPointer();
+            state.range?.removeEventListener("input", onRangeInput);
+            state.reset?.removeEventListener("click", onReset);
+            for (const name of ["click", "dblclick", "keydown"]) state.panel?.removeEventListener(name, stopPanelEvent);
+            state.panel?.removeEventListener("pointerdown", onPanelPointerDown);
+            state.panel?.removeEventListener("focusout", onPanelFocusOut);
+            state.panel?.remove();
+            state.panel = state.range = state.value = state.reset = null;
+        }
+
+        function panelIsMounted() {
+            return (
+                state.panel?.parentElement === state.player &&
+                [state.range, state.reset, state.value].every((node) => node && state.panel.contains(node))
+            );
+        }
+
+        function mountControls() {
+            const container = state.player.querySelector(channel ? ".bcmv-controls" : CONTROLS);
+            if (!container && state.toggle) {
+                state.toggle.removeEventListener("click", onToggle);
+                state.toggle.remove();
+                state.toggle = null;
+            }
+            if (container && state.toggle?.parentElement !== container) {
+                state.toggle?.removeEventListener("click", onToggle);
+                state.toggle?.remove();
+                const button = document.createElement("button");
+                button.id = `${controlId}-toggle`;
+                button.type = "button";
+                button.className = channel ? `${ID}-toggle` : "pzp-button pzp-pc__zoom-button";
+                button.innerHTML =
+                    '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5M7 10.5h7M10.5 7v7"/></svg>';
+                button.addEventListener("click", onToggle);
+                if (channel) container.append(button);
+                else container.prepend(button);
+                state.toggle = button;
+            }
+            if (!panelIsMounted()) {
+                removePanel();
+                const panel = document.createElement("div");
+                panel.id = `${controlId}-panel`;
+                if (channel) panel.className = `${ID}-panel`;
+                panel.hidden = true;
+                panel.setAttribute("role", "group");
+                panel.setAttribute("aria-label", "화면 확대");
+                const value = document.createElement("span");
+                value.id = `${controlId}-value`;
+                if (channel) value.className = `${ID}-value`;
+                value.setAttribute("aria-hidden", "true");
+                const button = document.createElement("button");
+                button.id = `${controlId}-reset`;
+                if (channel) button.className = `${ID}-reset`;
+                button.type = "button";
+                button.innerHTML =
+                    '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 5v5h5"/><path d="M3.5 10a6.5 6.5 0 1 1 1.9 4.6"/></svg>';
+                button.title = "되돌리기";
+                button.setAttribute("aria-label", "확대한 화면을 원래 크기로 되돌리기");
+                button.addEventListener("click", onReset);
+                const range = document.createElement("input");
+                range.id = `${controlId}-range`;
+                if (channel) range.className = `${ID}-range`;
+                range.type = "range";
+                range.min = "100";
+                range.max = "500";
+                range.step = "1";
+                range.setAttribute("aria-label", "화면 확대 배율");
+                range.addEventListener("input", onRangeInput);
+                for (const name of ["click", "dblclick", "keydown"]) panel.addEventListener(name, stopPanelEvent);
+                panel.addEventListener("pointerdown", onPanelPointerDown);
+                panel.addEventListener("focusout", onPanelFocusOut);
+                panel.append(value, range, button);
+                state.panel = panel;
+                state.range = range;
+                state.value = value;
+                state.reset = button;
+                state.player.append(panel);
+            }
+            updateControls();
+        }
+
+        function onResize() {
+            endDrag();
+            if (current() && state.scale > 1 && bounds()) render();
+        }
+
+        function onSourceChange() {
+            resetZoom();
+        }
+
+        function sync(player) {
+            // Multiview rebuilds its cells when adding/removing a channel, retaining the same video.
+            // Move only our controls and preserve this video's view across that same-channel remount.
+            if (state.player !== player) {
+                endInteractions();
+                state.player.removeAttribute("data-bcz-pannable");
+                removePanel();
+                state.toggle?.removeEventListener("click", onToggle);
+                state.toggle?.remove();
+                state.toggle = null;
+                state.player = player;
+            }
+            mountControls();
+            if (state.scale > 1 && bounds()) render();
+        }
+
+        function resetMode() {
+            resetZoom();
+            state.manual = false;
+            updateControls();
+        }
+
+        function snapshot() {
+            if (!state || state.scale === 1 || !video.isConnected) return null;
+            const { key, scale, x, y, width, height, manual } = state;
+            return { video, key, scale, x, y, width, height, manual };
+        }
+
+        function unmount() {
+            if (!state) return;
+            resetZoom();
+            state.resize?.disconnect();
+            for (const name of SOURCE_EVENTS) video.removeEventListener(name, onSourceChange);
+            window.removeEventListener("wheel", onWheel, true);
+            window.removeEventListener("pointerdown", onPointerDown, true);
+            window.removeEventListener("click", onClick, true);
+            window.removeEventListener("blur", endInteractions);
+            window.removeEventListener("resize", onResize);
+            document.removeEventListener("fullscreenchange", onResize);
+            document.removeEventListener("visibilitychange", endInteractions);
             state.toggle?.removeEventListener("click", onToggle);
             state.toggle?.remove();
-            const button = document.createElement("button");
-            button.id = `${ID}-toggle`;
-            button.type = "button";
-            button.className = "pzp-button pzp-pc__zoom-button";
-            button.innerHTML =
-                '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5M7 10.5h7M10.5 7v7"/></svg>';
-            button.addEventListener("click", onToggle);
-            container.prepend(button);
-            state.toggle = button;
-        }
-        if (!panelIsMounted()) {
             removePanel();
-            const panel = document.createElement("div");
-            panel.id = `${ID}-panel`;
-            panel.hidden = true;
-            panel.setAttribute("role", "group");
-            panel.setAttribute("aria-label", "화면 확대");
-            const value = document.createElement("span");
-            value.id = `${ID}-value`;
-            value.setAttribute("aria-hidden", "true");
-            const button = document.createElement("button");
-            button.id = `${ID}-reset`;
-            button.type = "button";
-            button.innerHTML =
-                '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 5v5h5"/><path d="M3.5 10a6.5 6.5 0 1 1 1.9 4.6"/></svg>';
-            button.title = "되돌리기";
-            button.setAttribute("aria-label", "확대한 화면을 원래 크기로 되돌리기");
-            button.addEventListener("click", onReset);
-            const range = document.createElement("input");
-            range.id = `${ID}-range`;
-            range.type = "range";
-            range.min = "100";
-            range.max = "500";
-            range.step = "1";
-            range.setAttribute("aria-label", "화면 확대 배율");
-            range.addEventListener("input", onRangeInput);
-            for (const name of ["click", "dblclick", "keydown"]) panel.addEventListener(name, stopPanelEvent);
-            panel.addEventListener("pointerdown", onPanelPointerDown);
-            panel.addEventListener("focusout", onPanelFocusOut);
-            panel.append(value, range, button);
-            state.panel = panel;
-            state.range = range;
-            state.value = value;
-            state.reset = button;
-            state.player.append(panel);
+            state = null;
+            suppressClick = false;
         }
-        updateControls();
-    }
 
-    function onResize() {
-        endDrag();
-        if (current() && state.scale > 1 && bounds()) render();
-    }
-
-    function onSourceChange() {
-        resetZoom();
+        for (const name of SOURCE_EVENTS) video.addEventListener(name, onSourceChange);
+        window.addEventListener("wheel", onWheel, { capture: true, passive: false });
+        window.addEventListener("pointerdown", onPointerDown, true);
+        window.addEventListener("click", onClick, true);
+        window.addEventListener("blur", endInteractions);
+        window.addEventListener("resize", onResize);
+        document.addEventListener("fullscreenchange", onResize);
+        document.addEventListener("visibilitychange", endInteractions);
+        if (typeof ResizeObserver === "function") {
+            state.resize = new ResizeObserver(onResize);
+            state.resize.observe(video);
+        }
+        sync(player);
+        return {
+            channel,
+            get player() {
+                return state?.player;
+            },
+            mounted: () => current() && (!state.toggle || state.toggle.isConnected) && panelIsMounted(),
+            sync,
+            resetMode,
+            snapshot,
+            unmount,
+        };
     }
 
     function forgetCarried() {
@@ -434,79 +547,53 @@
     // the playback route, and coming back remounts everything here. Keep the view for that round trip only: the
     // same element, the same route, and no new source on the element in between.
     function carryZoom() {
-        // Off the playback route nothing is mounted, and the view carried out of it waits for the return.
-        if (!state) return;
+        // Off the playback route nothing is mounted, and the carried main view waits for the return.
+        if (!mainView) return;
         forgetCarried();
-        if (state.scale === 1 || !state.video.isConnected) return;
-        const { video, key, scale, x, y, width, height, manual } = state;
-        carried = { video, key, scale, x, y, width, height, manual };
-        for (const name of SOURCE_EVENTS) video.addEventListener(name, forgetCarried);
-    }
-
-    function unmount() {
-        if (!state) return;
-        resetZoom();
-        state.resize?.disconnect();
-        for (const name of SOURCE_EVENTS) state.video.removeEventListener(name, onSourceChange);
-        state.toggle?.removeEventListener("click", onToggle);
-        state.toggle?.remove();
-        removePanel();
-        state = null;
-        suppressClick = false;
+        carried = mainView.snapshot();
+        if (carried) for (const name of SOURCE_EVENTS) carried.video.addEventListener(name, forgetCarried);
     }
 
     function sync() {
-        if (!enabled || suspended || !isPlaybackRoute()) return unmount();
+        if (!enabled || suspended || !isPlaybackRoute()) return;
+        const targets = new Map();
         const video = getMainVideoElement();
         const player = video && getPlayerRoot(video);
-        if (!(video instanceof HTMLVideoElement) || !video.isConnected || !player?.contains(video)) return unmount();
-        let restored = null;
-        if (state?.video !== video || state.player !== player) {
-            unmount();
-            const key = routeKey();
-            if (carried?.video === video && carried.key === key) restored = carried;
-            forgetCarried();
-            state = {
-                video,
-                player,
-                key,
-                manual: false,
-                scale: 1,
-                scrollBlockedUntil: 0,
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 0,
-                saved: null,
-            };
-            if (restored) {
-                const { scale, x, y, width, height, manual } = restored;
-                Object.assign(state, { scale, x, y, width, height, manual: manual && mode === "manual" });
-            }
-            for (const name of SOURCE_EVENTS) video.addEventListener(name, onSourceChange);
-            if (typeof ResizeObserver === "function") {
-                state.resize = new ResizeObserver(onResize);
-                state.resize.observe(video);
+        if (video instanceof HTMLVideoElement && video.isConnected && player?.contains(video)) {
+            targets.set(video, { player, channel: null });
+        }
+        // Only owned auxiliary cells qualify; previews and other main-video consumers stay unchanged.
+        for (const video of document.querySelectorAll(AUX_VIDEO)) {
+            const player = video.parentElement;
+            const channel = player.dataset.bcmvChannel;
+            if (channel && video.dataset.channel === channel) targets.set(video, { player, channel });
+        }
+        for (const [video, view] of views) {
+            const target = targets.get(video);
+            if (!target || target.channel !== view.channel || (!target.channel && target.player !== view.player)) {
+                view.unmount();
+                views.delete(video);
             }
         }
-        mountControls();
-        if (restored) {
-            bounds();
-            render();
+        mainView = null;
+        for (const [video, { player, channel }] of targets) {
+            let view = views.get(video);
+            if (!view) {
+                const restored = !channel && carried?.video === video && carried.key === routeKey() ? carried : null;
+                if (!channel) forgetCarried();
+                view = createView(video, player, channel, restored);
+                views.set(video, view);
+            } else view.sync(player);
+            if (!channel) mainView = view;
         }
     }
 
     function stopPlayback() {
         observer?.disconnectAll();
         observer = null;
-        window.removeEventListener("wheel", onWheel, true);
-        window.removeEventListener("pointerdown", onPointerDown, true);
-        window.removeEventListener("click", onClick, true);
-        window.removeEventListener("blur", endInteractions);
-        window.removeEventListener("resize", onResize);
-        document.removeEventListener("fullscreenchange", onResize);
-        document.removeEventListener("visibilitychange", endInteractions);
-        unmount();
+        for (const view of views.values()) view.unmount();
+        views.clear();
+        mainView = null;
         document.getElementById(`${ID}-style`)?.remove();
     }
 
@@ -529,47 +616,57 @@
         injectStyleOnce(
             `${ID}-style`,
             `
-#${ID}-toggle { position:relative; display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; padding:6px; border:0; background:transparent; color:inherit; cursor:pointer; flex-shrink:0; }
-#${ID}-toggle[aria-pressed="true"] { color:var(--Content-brand-strong,#00ffa3); }
+:is(#${ID}-toggle, .${ID}-toggle) { position:relative; display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; padding:6px; border:0; background:transparent; color:inherit; cursor:pointer; flex-shrink:0; }
+:is(#${ID}-toggle, .${ID}-toggle)[aria-pressed="true"] { color:var(--Content-brand-strong,#00ffa3); }
 .pzp-pc:not(.pzp-pc--controls) #${ID}-toggle:not(:focus-visible) { opacity:0; pointer-events:none; }
-#${ID}-panel { --bcz-fill:var(--bct-text-body); --bcz-track:var(--bct-border-strong); position:absolute; right:16px; bottom:64px; z-index:50; display:flex; align-items:center; gap:6px; box-sizing:border-box; width:180px; max-width:calc(100% - 32px); padding:4px 6px; border:1px solid var(--bct-border); border-radius:var(--bct-radius-md); background:var(--bct-surface); color:var(--bct-text); box-shadow:var(--bct-shadow); font-family:var(--bct-font); font-size:12px; font-weight:500; line-height:1.5; cursor:default; user-select:none; transform:none; transition:none; }
-#${ID}-value { flex:0 0 4.5ch; text-align:right; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
-#${ID}-reset { display:flex; align-items:center; justify-content:center; flex:0 0 24px; box-sizing:border-box; width:24px; height:24px; padding:4px; border:0; border-radius:var(--bct-radius-sm); background:transparent; color:inherit; font:inherit; cursor:pointer; transition:scale 120ms ease-out; }
-#${ID}-reset svg { display:block; flex:none; }
-#${ID}-reset:hover:not(:disabled) { background:var(--bct-hover); }
-#${ID}-reset:active:not(:disabled) { scale:0.96; }
-#${ID}-reset:disabled { opacity:.4; cursor:default; }
-#${ID}-range { appearance:none; -webkit-appearance:none; display:block; flex:1 1 0%; box-sizing:border-box; width:0; min-width:0; height:24px; margin:0; padding:0; border:0; border-radius:var(--bct-radius-sm); background:transparent; color:inherit; cursor:pointer; }
-#${ID}-range::-webkit-slider-runnable-track { height:2px; border-radius:1px; background:linear-gradient(to right,var(--bcz-fill) var(--bcz-progress,0%),var(--bcz-track) var(--bcz-progress,0%)); }
-#${ID}-range::-webkit-slider-thumb { appearance:none; -webkit-appearance:none; width:10px; height:10px; margin-top:-4px; border:0; border-radius:50%; background:var(--bcz-fill); }
-#${ID}-toggle:focus-visible, #${ID}-reset:focus-visible, #${ID}-range:focus-visible { outline:2px solid var(--bct-focus-ring); outline-offset:2px; }
-#${ID}-toggle[hidden], #${ID}-panel[hidden] { display:none; }
+:is(#${ID}-panel, .${ID}-panel) { --bcz-fill:var(--bct-text-body); --bcz-track:var(--bct-border-strong); position:absolute; right:16px; bottom:64px; z-index:50; display:flex; align-items:center; gap:6px; box-sizing:border-box; width:180px; max-width:calc(100% - 32px); padding:4px 6px; border:1px solid var(--bct-border); border-radius:var(--bct-radius-md); background:var(--bct-surface); color:var(--bct-text); box-shadow:var(--bct-shadow); font-family:var(--bct-font); font-size:12px; font-weight:500; line-height:1.5; cursor:default; user-select:none; transform:none; transition:none; }
+:is(#${ID}-value, .${ID}-value) { flex:0 0 4.5ch; text-align:right; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
+:is(#${ID}-reset, .${ID}-reset) { display:flex; align-items:center; justify-content:center; flex:0 0 24px; box-sizing:border-box; width:24px; height:24px; padding:4px; border:0; border-radius:var(--bct-radius-sm); background:transparent; color:inherit; font:inherit; cursor:pointer; transition:scale 120ms ease-out; }
+:is(#${ID}-reset, .${ID}-reset) svg { display:block; flex:none; }
+:is(#${ID}-reset, .${ID}-reset):hover:not(:disabled) { background:var(--bct-hover); }
+:is(#${ID}-reset, .${ID}-reset):active:not(:disabled) { scale:0.96; }
+:is(#${ID}-reset, .${ID}-reset):disabled { opacity:.4; cursor:default; }
+:is(#${ID}-range, .${ID}-range) { appearance:none; -webkit-appearance:none; display:block; flex:1 1 0%; box-sizing:border-box; width:0; min-width:0; height:24px; margin:0; padding:0; border:0; border-radius:var(--bct-radius-sm); background:transparent; color:inherit; cursor:pointer; }
+:is(#${ID}-range, .${ID}-range)::-webkit-slider-runnable-track { height:2px; border-radius:1px; background:linear-gradient(to right,var(--bcz-fill) var(--bcz-progress,0%),var(--bcz-track) var(--bcz-progress,0%)); }
+:is(#${ID}-range, .${ID}-range)::-webkit-slider-thumb { appearance:none; -webkit-appearance:none; width:10px; height:10px; margin-top:-4px; border:0; border-radius:50%; background:var(--bcz-fill); }
+:is(#${ID}-toggle, .${ID}-toggle):focus-visible, :is(#${ID}-reset, .${ID}-reset):focus-visible, :is(#${ID}-range, .${ID}-range):focus-visible { outline:2px solid var(--bct-focus-ring); outline-offset:2px; }
+:is(#${ID}-toggle, .${ID}-toggle)[hidden], :is(#${ID}-panel, .${ID}-panel)[hidden] { display:none; }
 .chzzk_player:is(.hidden_ui, .miniplayer, .pip_mode) #${ID}-panel { display:none; }
 .pzp-pc:not(.pzp-pc--controls) > #${ID}-panel:not(:has(:focus-visible), :active), .pzp-pc.pzp-pc--setting > #${ID}-panel { display:none; }
-@media(prefers-reduced-motion:reduce) { #${ID}-reset { transition:none; } #${ID}-reset:active:not(:disabled) { scale:1; } }
+@media(prefers-reduced-motion:reduce) { :is(#${ID}-reset, .${ID}-reset) { transition:none; } :is(#${ID}-reset, .${ID}-reset):active:not(:disabled) { scale:1; } }
 [data-bcz-pannable], [data-bcz-pannable] .pzp-pc__video, video[data-bcz-zoomed] { cursor:grab; }
 [data-bcz-dragging], [data-bcz-dragging] .pzp-pc__video, [data-bcz-dragging] video { cursor:grabbing; user-select:none; }
+#cheese-spanner-multiview .${ID}-toggle svg { width:24px; height:24px; }
+#cheese-spanner-multiview .${ID}-toggle[aria-pressed="true"] { color:var(--bct-brand); }
+#cheese-spanner-multiview .${ID}-toggle[hidden] { display:none; }
+#cheese-spanner-multiview .${ID}-toggle::after { left:auto; right:0; }
+#cheese-spanner-multiview .bcmv-cell > .${ID}-panel { right:8px; bottom:min(52px, calc(100% - 40px)); max-width:calc(100% - 16px); z-index:3; }
+.bcmv-cell:not(:hover, :focus-within) > .${ID}-panel { opacity:0; pointer-events:none; }
+@container(max-width:220px) {
+    #cheese-spanner-multiview .bcmv-controls:has(.${ID}-toggle:not([hidden])) input[type="range"] { display:none; }
+}
+@container(max-width:202px) {
+    #cheese-spanner-multiview .bcmv-controls:has(.${ID}-toggle:not([hidden])) { flex-wrap:wrap; justify-content:center; }
+    #cheese-spanner-multiview .bcmv-controls:has(.${ID}-toggle:not([hidden])) [data-delta="-0.1"] { margin-left:0; }
+    #cheese-spanner-multiview .bcmv-cell > .${ID}-panel { bottom:min(80px, calc(100% - 40px)); }
+}
 `
         );
-        window.addEventListener("wheel", onWheel, { capture: true, passive: false });
-        window.addEventListener("pointerdown", onPointerDown, true);
-        window.addEventListener("click", onClick, true);
-        window.addEventListener("blur", endInteractions);
-        window.addEventListener("resize", onResize);
-        document.addEventListener("fullscreenchange", onResize);
-        document.addEventListener("visibilitychange", endInteractions);
         observer = createMutationObserverSync({
+            options: {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ["data-bcmv-channel", "data-channel", "data-bcmv-video", "data-main"],
+            },
             onBodyReady: sync,
             onMutations(mutations) {
                 if (
-                    state &&
-                    (!state.video.isConnected ||
-                        !state.player.isConnected ||
-                        (state.toggle && !state.toggle.isConnected) ||
-                        !panelIsMounted())
+                    [...views.values()].some((view) => !view.mounted()) ||
+                    mutations.some((mutation) =>
+                        mutationMatchesSelector(mutation, `video, ${CONTROLS}, .bcmv-controls`)
+                    )
                 ) {
-                    sync();
-                } else if (mutations.some((mutation) => mutationMatchesSelector(mutation, `video, ${CONTROLS}`))) {
                     sync();
                 }
             },
@@ -596,10 +693,8 @@
             : "alt";
         if (mode !== nextMode) {
             forgetCarried();
-            resetZoom();
-            if (state) state.manual = false;
             mode = nextMode;
-            updateControls();
+            for (const view of views.values()) view.resetMode();
         }
         if (enabled === nextEnabled) return;
         enabled = nextEnabled;

@@ -56,6 +56,10 @@
     const SPREAD_PX = BLUR_PX * 3;
     const CANVAS_INSET_PX = BLUR_PX / 2;
     const PANEL_SELECTOR = "#sidebar, #aside-chatting, #vod-aside, #cheese-spanner-vod-comment-aside";
+    // Chrome 2026-11-08: native chat menu, user/profile dialogs and extension chat panels.
+    // Dialog roles also cover portalled panels outside the chat aside.
+    const POPUP_SELECTOR =
+        '[role="dialog"], [role="alertdialog"], :is(#aside-chatting, #vod-aside) :is([role="menu"], [class*="_container_11w2f_"], .bcct-moderator-box)';
     const TARGET_SELECTOR = "video, [class*='pzp']";
     const PLAYER_TARGET_SELECTOR = "video, .pzp-pc__settings";
     const MULTIVIEW_ATTR = "data-bcmv-host";
@@ -114,7 +118,9 @@
         layoutKey = "";
     let discovery = null,
         resizeObserver = null,
+        popupResizeObserver = null,
         routeCleanup = null;
+    let popupNodes = new Set();
     const schedule = createThrottledDomSync(sync, 160);
 
     function enabled() {
@@ -315,6 +321,40 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
         if (layer && !layer.hidden) layer.hidden = true;
     }
 
+    function popupHoles(box) {
+        const nodes = new Set(document.querySelectorAll(POPUP_SELECTOR));
+        for (const node of popupNodes) if (!nodes.has(node)) popupResizeObserver?.unobserve(node);
+        const holes = [];
+        for (const node of nodes) {
+            if (!popupNodes.has(node)) popupResizeObserver?.observe(node);
+            const rect = node.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0 || node.hidden) continue;
+            const style = getComputedStyle(node);
+            if (style.visibility === "hidden" || style.display === "none") continue;
+            const left = Math.max(0, Math.floor(rect.left - box.left));
+            const top = Math.max(0, Math.floor(rect.top - box.top));
+            const right = Math.min(box.width, Math.ceil(rect.right - box.left));
+            const bottom = Math.min(box.height, Math.ceil(rect.bottom - box.top));
+            if (right > left && bottom > top) holes.push({ left, top, width: right - left, height: bottom - top });
+        }
+        popupNodes = nodes;
+        return holes;
+    }
+
+    function popupMask(box, holes) {
+        if (!holes.length) return "none";
+        // Black rectangles in a luminance mask form a union: overlapping dialogs must not
+        // cancel one another's exclusion, or reveal glow inside the existing player cutout.
+        const cuts = holes
+            .map(
+                ({ left, top, width, height }) =>
+                    `<rect x="${left}" y="${top}" width="${width}" height="${height}" fill="black"/>`
+            )
+            .join("");
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${box.width}" height="${box.height}"><mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="${box.width}" height="${box.height}"><rect width="100%" height="100%" fill="white"/>${cuts}</mask><rect width="100%" height="100%" fill="white" mask="url(#cut)"/></svg>`;
+        return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+    }
+
     function updateLayout() {
         if (!glowWanted() || !layer || !video || !player) return hideLayer();
         const rect = player.getBoundingClientRect();
@@ -347,7 +387,8 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
             right: Math.round(rect.right) - box.left,
             bottom: Math.round(rect.bottom) - box.top,
         };
-        const key = JSON.stringify([box, hole]);
+        const holes = popupHoles(box);
+        const key = JSON.stringify([box, hole, holes]);
         if (key !== layoutKey) {
             layoutKey = key;
             const { style } = layer;
@@ -355,6 +396,7 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
             style.top = `${box.top}px`;
             style.width = `${box.width}px`;
             style.height = `${box.height}px`;
+            style.maskImage = popupMask(box, holes);
             style.clipPath =
                 `polygon(evenodd, 0px 0px, ${box.width}px 0px, ${box.width}px ${box.height}px, ` +
                 `0px ${box.height}px, 0px 0px, ${hole.left}px ${hole.top}px, ${hole.right}px ${hole.top}px, ` +
@@ -696,7 +738,7 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
 
     function onScroll(event) {
         // Chat and sidebar lists scroll constantly without moving the player.
-        if (event.target instanceof Element && event.target.closest(PANEL_SELECTOR)) return;
+        if (event.target instanceof Element && event.target.closest(PANEL_SELECTOR) && !popupNodes.size) return;
         scheduleLayout();
     }
 
@@ -709,7 +751,18 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
 
     function relevantMutations(rows) {
         return rows.some((row) => {
-            if (row.type === "attributes") return row.attributeName === MULTIVIEW_ATTR;
+            const hasPopup = (node) =>
+                node instanceof Element &&
+                (node.matches(POPUP_SELECTOR) ||
+                    !!node.querySelector(POPUP_SELECTOR) ||
+                    [...popupNodes].some((popup) => node.contains(popup)));
+            if (row.type === "attributes")
+                return (
+                    row.attributeName === MULTIVIEW_ATTR ||
+                    row.target.matches(POPUP_SELECTOR) ||
+                    [...popupNodes].some((node) => row.target.contains(node))
+                );
+            if ([...row.addedNodes, ...row.removedNodes].some(hasPopup)) return true;
             if (row.target instanceof Element && row.target.closest(PANEL_SELECTOR)) return false;
             // Control churn inside the current player matters only for video or settings menu swaps.
             const selector = player?.contains(row.target) ? PLAYER_TARGET_SELECTOR : TARGET_SELECTOR;
@@ -728,9 +781,15 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
         active = true;
         styles();
         resizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(scheduleLayout) : null;
+        popupResizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(scheduleLayout) : null;
         discovery = createMutationObserverSync({
             target: () => document.body,
-            options: { childList: true, subtree: true, attributes: true, attributeFilter: [MULTIVIEW_ATTR] },
+            options: {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: [MULTIVIEW_ATTR, "class", "style", "hidden", "role"],
+            },
             shouldSchedule: relevantMutations,
             schedule,
         });
@@ -767,6 +826,9 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
         bindVideo(null);
         bindPlayer(null);
         resizeObserver = null;
+        popupResizeObserver?.disconnect();
+        popupResizeObserver = null;
+        popupNodes.clear();
         layoutKey = "";
         layer?.remove();
         layer = null;

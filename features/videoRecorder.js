@@ -1,8 +1,8 @@
 /** Main-player recording (isolated world).
  * A record button sits at the start of the player's bottom-right buttons. Pressing it records the main
  * <video> through captureStream() + MediaRecorder (MP4 when Chrome can encode it, otherwise WebM) until the
- * button is pressed again; the file is then handed to Chrome as a normal download. Nothing starts on its own.
- * - The recording lives in this tab's memory until it stops, with no length limit (user decision 2026-11-05).
+ * button is pressed again. Chrome starts downloading immediately; each chunk is streamed through our worker.
+ * - There is no duration limit. Only pending chunks stay in memory; stalled delivery stops further capture.
  * - It stops and saves when the page route changes, the main video element or its source is replaced, the
  *   recorder fails, the option is turned off, or the page is hidden for good. Leaving the page while
  *   recording asks the browser's leave-page confirmation first.
@@ -10,7 +10,7 @@
  *   worker's settings store, like the ambient slider does for ambientIntensity. The worker
  *   (shared/recordingDownloads.js) puts the file into that folder under Chrome's download folder only while
  *   the optional downloads permission is held; otherwise the file lands in the download folder itself.
- * - Captured frames never leave the tab except as the user's own download. No pixels are read here.
+ * - Encoded chunks pass to the extension worker and the user's own download, never to a remote server.
  */
 (() => {
     "use strict";
@@ -59,9 +59,9 @@
     ];
     const HAVE_CURRENT_DATA = 2;
     const TIMESLICE_MS = 1000;
-    const PREPARE_TIMEOUT_MS = 3000;
-    // The download reads the blob after the save dialog (if any); keep it a while, then free the memory.
-    const REVOKE_DELAY_MS = 2 * 60 * 1000;
+    const PREPARE_TIMEOUT_MS = 12_000;
+    const CHUNK_BYTES = 64 * 1024;
+    const MAX_QUEUED_BYTES = 16 * 1024 * 1024;
     const STATUS_MS = 5000;
     const SOURCE_EVENTS = ["emptied", "loadstart"];
     const RECORD_ICON =
@@ -94,12 +94,13 @@
         folderOverride = null,
         saveRevision = 0;
     let recording = null;
+    const finishing = new Set();
     let discovery = null,
         routeCleanup = null,
         routeKey = "";
     const schedule = createThrottledDomSync(sync, 160);
 
-    const enabled = () => options.videoRecorderEnabled !== false;
+    const enabled = () => options.videoRecorderEnabled === true;
     const currentFolder = () => folderOverride ?? settings.normalizeDownloadFolder(options.videoRecorderFolder, "");
     const pathKey = () => location.pathname.replace(/\/+$/, "");
 
@@ -149,8 +150,8 @@
         return `치지직 다시보기${videoNo ? ` ${videoNo}` : ""} ${stamp}`;
     }
 
-    function startRecording() {
-        if (recording || !active || !video?.isConnected || !player?.contains(video)) return;
+    async function startRecording() {
+        if (recording || finishing.size || !active || !video?.isConnected || !player?.contains(video)) return;
         const format = pickMimeType();
         if (!format || typeof video.captureStream !== "function") {
             showStatus("이 브라우저에서는 영상을 녹화할 수 없어요.");
@@ -180,7 +181,13 @@
             stream,
             recorder,
             format,
-            chunks: [],
+            pending: Promise.resolve(),
+            queuedBytes: 0,
+            largeChunk: null,
+            sequence: 0,
+            preparing: true,
+            route: null,
+            writeFailed: false,
             startedAt: Date.now(),
             path: location.pathname,
             failed: false,
@@ -188,7 +195,42 @@
             timer: 0,
         };
         recorder.addEventListener("dataavailable", (event) => {
-            if (event.data?.size) session.chunks.push(event.data);
+            if (!event.data?.size || session.writeFailed) return;
+            // Chrome may flush one large Blob after paused/hidden capture. Keep it as a Blob and
+            // read only 64KiB at a time; the rest of the queue still has the ordinary backlog bound.
+            const largeChunk = event.data.size > MAX_QUEUED_BYTES && !session.largeChunk;
+            if (largeChunk) session.largeChunk = event.data;
+            else session.queuedBytes += event.data.size;
+            session.pending = session.pending
+                .then(async () => {
+                    if (session.writeFailed) return;
+                    for (let offset = 0; offset < event.data.size; offset += CHUNK_BYTES) {
+                        const bytes = new Uint8Array(
+                            await event.data.slice(offset, offset + CHUNK_BYTES).arrayBuffer()
+                        );
+                        const result = await sendRecorderMessage({
+                            op: "write",
+                            id: session.route.id,
+                            sequence: session.sequence,
+                            data: btoa(String.fromCharCode(...bytes)),
+                        });
+                        if (!result) throw new Error("download-interrupted");
+                        session.sequence += 1;
+                    }
+                })
+                .catch(() => {
+                    session.writeFailed = true;
+                    stopRecording(session);
+                })
+                .finally(() => {
+                    if (largeChunk) session.largeChunk = null;
+                    else session.queuedBytes -= event.data.size;
+                });
+            // Stop collecting if disk delivery stalls; drain what we already have instead of growing forever.
+            if (session.queuedBytes > MAX_QUEUED_BYTES) {
+                session.failed = true;
+                stopRecording(session);
+            }
         });
         recorder.addEventListener("error", () => {
             session.failed = true;
@@ -196,19 +238,56 @@
         recorder.addEventListener("stop", () => finishRecording(session), { once: true });
         for (const track of stream.getTracks()) track.addEventListener("ended", () => stopRecording(session));
         for (const name of SOURCE_EVENTS) video.addEventListener(name, onSourceChange);
-        try {
-            recorder.start(TIMESLICE_MS);
-        } catch (_) {
-            for (const name of SOURCE_EVENTS) video.removeEventListener(name, onSourceChange);
-            for (const track of stream.getTracks()) track.stop();
-            showStatus("녹화를 시작하지 못했어요.");
-            return;
-        }
         recording = session;
-        session.timer = window.setInterval(renderRecording, 1000);
-        window.addEventListener("beforeunload", onBeforeUnload);
-        hideStatus();
         renderRecording();
+        try {
+            const fileName = `${fileStem(session.startedAt, session.path)}.${session.format.extension}`;
+            session.route = await sendRecorderMessage({ op: "start", fileName });
+            if (!session.route) throw new Error("download-unavailable");
+            if (!session.stopping && recording === session) {
+                const link = document.createElement("a");
+                link.href = session.route.url;
+                // An attachment navigation streams through our worker; a download attribute bypasses it.
+                link.hidden = true;
+                (document.body || document.documentElement).append(link);
+                link.click();
+                link.remove();
+                const opened = await sendRecorderMessage({ op: "ready", id: session.route.id });
+                if (!opened) throw new Error("download-unavailable");
+            }
+            if (session.stopping || recording !== session || !active || !session.video.isConnected) {
+                await sendRecorderMessage({ op: "abort", id: session.route.id });
+                return;
+            }
+            recorder.start(TIMESLICE_MS);
+            session.preparing = false;
+            session.startedAt = Date.now();
+            window.addEventListener("beforeunload", onBeforeUnload);
+            session.lastPulse = Date.now();
+            session.timer = window.setInterval(() => {
+                renderRecording();
+                if (Date.now() - session.lastPulse < 10_000) return;
+                session.lastPulse = Date.now();
+                void sendRecorderMessage({ op: "pulse", id: session.route.id }).then((result) => {
+                    if (!result && recording === session) {
+                        session.writeFailed = true;
+                        stopRecording(session);
+                    }
+                });
+            }, 1000);
+            hideStatus();
+            renderRecording();
+        } catch (_) {
+            session.writeFailed = true;
+            if (session.route) void sendRecorderMessage({ op: "abort", id: session.route.id });
+            stopRecording(session);
+            showStatus("녹화를 시작하지 못했어요.");
+        } finally {
+            if (session.preparing) {
+                for (const name of SOURCE_EVENTS) session.video.removeEventListener(name, onSourceChange);
+                for (const track of stream.getTracks()) track.stop();
+            }
+        }
     }
 
     function stopRecording(session = recording) {
@@ -218,8 +297,14 @@
         for (const name of SOURCE_EVENTS) session.video.removeEventListener(name, onSourceChange);
         if (recording === session) {
             recording = null;
-            window.removeEventListener("beforeunload", onBeforeUnload);
+            if (session.preparing && !finishing.size) window.removeEventListener("beforeunload", onBeforeUnload);
         }
+        if (session.preparing) {
+            for (const track of session.stream.getTracks()) track.stop();
+            renderRecording();
+            return;
+        }
+        finishing.add(session);
         try {
             if (session.recorder.state !== "inactive") session.recorder.stop();
             else finishRecording(session);
@@ -229,27 +314,41 @@
         renderRecording();
     }
 
-    function finishRecording(session) {
+    async function finishRecording(session) {
         if (session.finished) return;
         session.finished = true;
         session.stopping = true;
-        if (recording === session) {
-            recording = null;
-            window.clearInterval(session.timer);
-            window.removeEventListener("beforeunload", onBeforeUnload);
+        finishing.add(session);
+        if (recording === session) recording = null;
+        window.clearInterval(session.timer);
+        for (const name of SOURCE_EVENTS) session.video.removeEventListener(name, onSourceChange);
+        for (const track of session.stream.getTracks()) track.stop();
+        renderRecording();
+        try {
+            await session.pending;
+            const result = session.writeFailed
+                ? null
+                : await sendRecorderMessage({
+                      op: "finish",
+                      id: session.route.id,
+                      sequence: session.sequence,
+                  });
+            if (!result) {
+                void sendRecorderMessage({ op: "abort", id: session.route.id });
+                showStatus("다운로드가 중단되어 녹화 파일을 완성하지 못했어요.");
+                return;
+            }
+            const where = session.route.routed ? `다운로드 폴더의 ${session.route.folder}` : "다운로드 폴더";
+            showStatus(
+                session.failed
+                    ? `녹화가 중단되어 그때까지의 파일 다운로드를 ${where}에서 마무리해요.`
+                    : `녹화 파일 다운로드를 ${where}에서 마무리해요.`
+            );
+        } finally {
+            finishing.delete(session);
+            if (!recording && !finishing.size) window.removeEventListener("beforeunload", onBeforeUnload);
             renderRecording();
         }
-        // The capture tracks belong to this recording only; ending them never pauses the player.
-        for (const track of session.stream.getTracks()) track.stop();
-        const chunks = session.chunks;
-        session.chunks = [];
-        const type = session.format.mimeType.split(";")[0];
-        const blob = new Blob(chunks, { type });
-        if (!blob.size) {
-            showStatus(session.failed ? "녹화 중 오류가 생겨 저장할 내용이 없어요." : "녹화된 영상이 없어요.");
-            return;
-        }
-        void saveRecording(blob, `${fileStem(session.startedAt, session.path)}.${session.format.extension}`, session);
     }
 
     function sendRecorderMessage(message) {
@@ -273,33 +372,13 @@
         });
     }
 
-    async function saveRecording(blob, fileName, session) {
-        const url = URL.createObjectURL(blob);
-        // The worker remembers this exact blob address so only this download goes into the chosen folder.
-        const route = await sendRecorderMessage({ op: "prepare", url, fileName });
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = fileName;
-        link.hidden = true;
-        (document.body || document.documentElement).append(link);
-        link.click();
-        link.remove();
-        window.setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS);
-        const where = route?.routed ? `다운로드 폴더의 ${route.folder}` : "다운로드 폴더";
-        showStatus(
-            session.failed
-                ? `녹화 중 오류가 생겨 그때까지 녹화한 파일을 ${where}에 저장해요.`
-                : `녹화 파일을 ${where}에 저장해요.`
-        );
-    }
-
     function onSourceChange(event) {
         // A new source on the element ends what this recording was capturing.
         if (recording && event.currentTarget === recording.video) stopRecording();
     }
 
     function onBeforeUnload(event) {
-        if (!recording) return;
+        if (!recording && !finishing.size) return;
         event.preventDefault();
         event.returnValue = "";
     }
@@ -309,7 +388,7 @@
         // Only a real press may start capturing; a page script could otherwise start a recording.
         if (!event.isTrusted || event.currentTarget !== button) return;
         if (recording) stopRecording();
-        else startRecording();
+        else void startRecording();
     }
 
     // ── Player UI ──
@@ -367,7 +446,8 @@
         const on = Boolean(recording);
         const elapsed = on ? formatElapsed(Date.now() - recording.startedAt) : "";
         if (button) {
-            const label = on ? `녹화 중지 (${elapsed})` : "녹화 시작";
+            button.disabled = !on && finishing.size > 0;
+            const label = on ? (recording.preparing ? "녹화 시작 취소" : `녹화 중지 (${elapsed})`) : "녹화 시작";
             if (button.getAttribute("aria-pressed") !== String(on)) {
                 button.setAttribute("aria-pressed", String(on));
                 button.innerHTML = on ? STOP_ICON : RECORD_ICON;
@@ -388,7 +468,7 @@
             badge.setAttribute("aria-hidden", "true");
             host.append(badge);
         }
-        const text = `녹화 ${elapsed}`;
+        const text = recording.preparing ? "녹화 준비 중" : `녹화 ${elapsed}`;
         if (badge.textContent !== text) badge.textContent = text;
     }
 
@@ -633,6 +713,9 @@
         menu = menuRow = menuButton = menuValue = editRow = editInput = editSave = editNote = null;
         expanded = false;
         permissionRevision++;
+        // The storage write can finish, but its response no longer owns this menu.
+        saveRevision++;
+        folderOverride = null;
     }
 
     function syncMenu() {

@@ -951,7 +951,7 @@ test("chat tools panel uses the shared CHZZK theme, Pretendard and 해요체 not
     await waitForCondition(
         () => document.querySelector(".bcct-blind-reveal") && document.querySelector(".bcct-moderator-box__empty")
     );
-    assert.equal(document.querySelector(".bcct-blind-reveal").title, "블라인드된 메시지의 원문이에요.");
+    assert.equal(document.querySelector(".bcct-blind-reveal").title, "블라인드 메시지 원문");
     assert.equal(document.querySelector(".bcct-moderator-box__empty").textContent, "아직 수집된 메시지가 없어요.");
 
     const themeStyle = document.getElementById("cheese-spanner-ui-theme");

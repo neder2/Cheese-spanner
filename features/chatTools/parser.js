@@ -2,8 +2,9 @@
  * isolated world. 의존: utils.normSpace, 현재 DOM과 computed style.
  * parseChatRow의 파싱 캐시는 호출 내에서만 사용하며 행 ID·수집 여부는 messageStore가 결정한다.
  * runtime·store·panel이 함께 쓰는 DOM 마커와 읽기 전용 DOM 판별 함수도 여기에서 공개한다.
- * readPageOriginalText는 MAIN 브리지(features/chatTimestampPage.js)에 현재 메시지의 원문을 동기 요청하고
- * 응답 속성을 바로 지운다. 이벤트: cheese-spanner:chat-blind-source-request, 속성: data-bcct-source-original.
+ * readPageMessage는 MAIN 브리지(features/chatTimestampPage.js)에 현재 메시지의 정체성과 원문을 동기 요청하고
+ * 행·본문·작성자를 다시 확인한다. 이벤트: cheese-spanner:chat-blind-source-request.
+ * data-bcct-source-message·data-bcct-source-original 응답 속성은 요청 전후에 지운다.
  */
 (() => {
     "use strict";
@@ -32,6 +33,7 @@
     const PLACEHOLDER_TEXT = "[블라인드 메시지: 원문 없음]";
     const PAGE_ORIGINAL_REQUEST_EVENT = "cheese-spanner:chat-blind-source-request";
     const PAGE_ORIGINAL_ATTR = "data-bcct-source-original";
+    const PAGE_MESSAGE_ATTR = "data-bcct-source-message";
     const MESSAGE_CONTAINER_SELECTOR = "[class*='chatting_message'], [class*='chat-message']";
 
     const ROLE_SCORE_THRESHOLD = 80;
@@ -85,6 +87,8 @@
 
     const ROLE_SIGNAL_ELEMENT_RE = /badge|role|manager|moderator|owner|streamer|broadcaster/i;
 
+    const KEYWORD_FILTERED_ATTR = "data-bcct-keyword-filtered";
+
     const BLIND_SIGNAL_RE =
         /블라인드|숨김|삭제|차단|가림|클린봇이\s*부적절한\s*표현을\s*감지|blind|hidden|deleted|blocked|moderated/i;
 
@@ -113,7 +117,7 @@
 
     // MAIN 브리지 응답 속성은 요청 직후 지우지만, 남아 있더라도 DOM 원문 후보로 쓰지 않는다.
     function isClientTextAttrName(name) {
-        return name !== PAGE_ORIGINAL_ATTR && CLIENT_TEXT_ATTR_RE.test(name);
+        return name !== PAGE_ORIGINAL_ATTR && name !== PAGE_MESSAGE_ATTR && CLIENT_TEXT_ATTR_RE.test(name);
     }
 
     function isOwnUi(node) {
@@ -286,13 +290,21 @@
             context?.hiddenCache?.set(el, true);
             return true;
         }
-        const style = getComputedStyle(el);
-        const opacity = style.opacity;
-        const hidden =
-            style.display === "none" ||
-            style.visibility === "hidden" ||
-            style.visibility === "collapse" ||
-            (opacity !== "" && Number(opacity) === 0);
+        // Read native visibility without our reversible row filter, so a recycled hidden row can be reparsed.
+        const filtered = el.getAttribute(KEYWORD_FILTERED_ATTR);
+        if (filtered !== null) el.removeAttribute(KEYWORD_FILTERED_ATTR);
+        let hidden;
+        try {
+            const style = getComputedStyle(el);
+            const opacity = style.opacity;
+            hidden =
+                style.display === "none" ||
+                style.visibility === "hidden" ||
+                style.visibility === "collapse" ||
+                (opacity !== "" && Number(opacity) === 0);
+        } finally {
+            if (filtered !== null) el.setAttribute(KEYWORD_FILTERED_ATTR, filtered);
+        }
         context?.hiddenCache?.set(el, hidden);
         return hidden;
     }
@@ -734,16 +746,73 @@
         return best;
     }
 
-    function readPageOriginalText(row, textEl) {
-        if (!(row instanceof Element) || !(textEl instanceof Element) || !row.contains(textEl)) return "";
+    function readPageMessage(row, parsed) {
+        const textEl = parsed?.textEl;
+        if (!(row instanceof Element) || !(textEl instanceof Element) || !row.contains(textEl)) return null;
         const container = textEl.closest(MESSAGE_CONTAINER_SELECTOR);
-        if (!container || !row.contains(container)) return "";
+        if (!container || !row.contains(container)) return null;
+        const chatLog = container.closest("[role='log']");
+        const path = location.pathname;
+        const identity = getCacheMessageIdentity(row, textEl);
+        const reuseSignal = getCacheRowReuseSignal(row);
+        const visibleText = getVisibleText(textEl);
         // 재사용된 노드에 남은 이전 응답을 쓰지 않도록 요청 전후로 지운다.
         container.removeAttribute(PAGE_ORIGINAL_ATTR);
-        container.dispatchEvent(new Event(PAGE_ORIGINAL_REQUEST_EVENT, { bubbles: true }));
-        const text = normSpace(container.getAttribute(PAGE_ORIGINAL_ATTR) || "");
-        container.removeAttribute(PAGE_ORIGINAL_ATTR);
-        return isBlindNoticeText(text) ? "" : text;
+        container.removeAttribute(PAGE_MESSAGE_ATTR);
+        try {
+            container.dispatchEvent(new Event(PAGE_ORIGINAL_REQUEST_EVENT, { bubbles: true }));
+            const raw = container.getAttribute(PAGE_MESSAGE_ATTR);
+            if (raw === null)
+                return document.documentElement.hasAttribute("data-cheese-spanner-chat-timestamp-page-ready")
+                    ? { message: null }
+                    : null;
+            if (raw.length > 2048) return { message: null };
+            const message = JSON.parse(raw);
+            if (
+                !message ||
+                typeof message.key !== "string" ||
+                !message.key ||
+                message.key.length > 256 ||
+                typeof message.user !== "string" ||
+                !/^[A-Za-z0-9_-]{1,128}$/.test(message.user) ||
+                !Number.isSafeInteger(message.time) ||
+                message.time < Date.UTC(2020, 0, 1) ||
+                message.time > Date.now() + 12 * 60 * 60 * 1000 ||
+                !["NORMAL", "BLIND", "CBOTBLIND", "HIDDEN"].includes(message.status) ||
+                typeof message.nickname !== "string" ||
+                message.nickname.length > 200 ||
+                !parsed.author ||
+                normSpace(message.nickname) !== parsed.author
+            )
+                return { message: null };
+            const current = parseChatRow(row);
+            if (
+                !row.isConnected ||
+                !row.contains(container) ||
+                !container.contains(textEl) ||
+                container.closest("[role='log']") !== chatLog ||
+                location.pathname !== path ||
+                current.textEl !== textEl ||
+                current.author !== parsed.author ||
+                getCacheMessageIdentity(row, textEl) !== identity ||
+                getCacheRowReuseSignal(row) !== reuseSignal ||
+                getVisibleText(textEl) !== visibleText
+            )
+                return { message: null };
+            const original = normSpace((container.getAttribute(PAGE_ORIGINAL_ATTR) || "").slice(0, 2000));
+            return { message, original: isBlindNoticeText(original) ? "" : original };
+        } catch (_) {
+            return { message: null };
+        } finally {
+            container.removeAttribute(PAGE_ORIGINAL_ATTR);
+            container.removeAttribute(PAGE_MESSAGE_ATTR);
+        }
+    }
+
+    function readPageOriginalText(row, textEl) {
+        const parsed = parseChatRow(row);
+        if (parsed.textEl !== textEl) return "";
+        return readPageMessage(row, parsed)?.original || "";
     }
 
     function hasBlindSignal(row, messageText, hiddenText, context = null) {
@@ -892,6 +961,7 @@
 
     namespace.parser = Object.freeze({
         BLIND_MASKED_ATTR,
+        KEYWORD_FILTERED_ATTR,
         MODERATOR_COLLECTED_ATTR,
         MODERATOR_HIGHLIGHT_ATTR,
         MODERATOR_HIGHLIGHT_COLOR,
@@ -910,6 +980,7 @@
         getVisibleText,
         isBlindNoticeText,
         readPageOriginalText,
+        readPageMessage,
         getCacheMessageIdentity,
         getCacheRowReuseSignal,
         roleLabel,

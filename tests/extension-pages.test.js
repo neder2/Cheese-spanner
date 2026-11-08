@@ -992,6 +992,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     // MAIN scripts load from the manifest; exposing one to pages only lets sites probe the install.
     assert.deepEqual(manifest.web_accessible_resources, [
         { resources: ["vendor/fonts/PretendardVariable.woff2"], matches: ["https://chzzk.naver.com/*"] },
+        { resources: ["recording-download.txt"], matches: ["https://chzzk.naver.com/*"] },
     ]);
     assert.equal(mainScript.js.includes("features/gridBypassPage.js"), false);
     assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
@@ -1051,6 +1052,19 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
             isolatedScript.js.indexOf("features/followingPreviewTooltip.js")
     );
     assert.ok(isolatedScript.js.includes("features/chatTools.js"));
+    assert.equal(isolatedScript.js.filter((name) => name === "features/chatTools/keywordSettings.js").length, 1);
+    assert.equal(mainScript.js.includes("features/chatTools/keywordSettings.js"), false);
+    assert.ok(
+        isolatedScript.js.indexOf("features/chatTools/keywordSettings.js") > isolatedScript.js.indexOf("content.js")
+    );
+    assert.ok(
+        isolatedScript.js.indexOf("features/chatTools/keywordSettings.js") >
+            isolatedScript.js.indexOf("shared/uiTheme.js")
+    );
+    assert.ok(
+        isolatedScript.js.indexOf("features/chatTools/keywordSettings.js") <
+            isolatedScript.js.indexOf("features/skipControl.js")
+    );
     assert.ok(
         isolatedScript.js.indexOf("features/chatTools.js") > isolatedScript.js.indexOf("features/rewardAutoCollect.js")
     );

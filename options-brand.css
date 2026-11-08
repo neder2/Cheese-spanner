@@ -141,6 +141,70 @@
     padding: 12px 0 8px;
 }
 
+.chat-keyword-field {
+    min-width: 0;
+    padding: 12px 0 8px;
+}
+
+.chat-keyword-field > label {
+    font-size: var(--options-text-body);
+    font-weight: 600;
+}
+
+.chat-keyword-field textarea {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    margin-top: 6px;
+    padding: 8px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    resize: vertical;
+}
+
+.chat-keyword-field textarea:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+}
+
+.chat-keyword-field textarea:disabled {
+    opacity: 0.55;
+}
+
+.chat-keyword-rules {
+    display: grid;
+    gap: 8px;
+    max-height: 240px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 4px;
+    font-size: var(--options-text-body);
+}
+
+.chat-keyword-rules > label {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+}
+
+.chat-keyword-rules > label > span {
+    overflow-wrap: anywhere;
+}
+
+.chat-keyword-rules select {
+    max-width: 100%;
+    min-width: 0;
+}
+
+[data-option-group="chat-keyword-filter"] [hidden] {
+    display: none !important;
+}
+
 .recorder-folder > label {
     font-size: var(--options-text-body);
     font-weight: 600;

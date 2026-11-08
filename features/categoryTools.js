@@ -1172,7 +1172,7 @@
 }
 #${GLOBAL_FALLBACK_ID} #${BAR_ID}{margin-left:0;}
 #${BAR_ID}, .bcgt-category-summary{
-  /* 공통 테마(shared/uiTheme.js)의 --bct-* 변수만 가리킨다. 글꼴은 syncFontWithHostUi가 원본 탭에서 복사한다. */
+  /* 공통 테마(shared/uiTheme.js)의 --bct-* 변수만 가리킨다. 검색 바 글꼴만 원본 탭에서 복사한다. */
   --bcgt-accent:var(--bct-brand-text);
   --bcgt-bg:var(--bct-surface-weak);
   --bcgt-border:var(--bct-surface-weak);
@@ -1216,7 +1216,7 @@
   margin-left:auto;
 }
 #${BAR_ID}:has(.bcgt-live-count:not([hidden])){flex-wrap:wrap;}
-.bcgt-category-summary{flex:0 0 100%;width:100%;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:6px 0;box-sizing:border-box;font-family:inherit;font-size:12px;line-height:18px;font-weight:400;--bcgt-chip-bg:var(--bct-brand);--bcgt-chip-text:var(--bct-on-brand);}
+.bcgt-category-summary{flex:0 0 100%;width:100%;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:6px 0;box-sizing:border-box;font-family:var(--bct-font);font-size:12px;line-height:18px;font-weight:400;--bcgt-chip-bg:var(--bct-brand);--bcgt-chip-text:var(--bct-on-brand);}
 .bcgt-category-summary[hidden]{display:none;}
 .bcgt-category-summary[data-placement="sort-line"]{flex:0 1 auto;width:auto;max-width:100%;margin-left:auto;justify-content:flex-end;padding:0;}
 .bcgt-category-summary[data-placement="sort-line"] .bcgt-category-chips{justify-content:flex-end;}
@@ -1425,7 +1425,8 @@
   z-index:2147483644;
 }
 #${MENU_ID}[data-open="1"], #${CATEGORY_ADD_ID}[data-open="1"]{display:block;}
-#${CATEGORY_ADD_ID}{width:400px;box-sizing:border-box;}
+/* 카테고리 제외의 추가 메뉴와 선택 목록은 패키지에 포함한 공통 글꼴을 쓴다. */
+#${CATEGORY_ADD_ID}{width:400px;box-sizing:border-box;font-family:var(--bct-font);}
 #${MENU_ID} .bcgt-filter-groups{
   display:flex;
   flex-direction:column;
