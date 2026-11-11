@@ -21,7 +21,7 @@
 - **작은 새 기능 안내:** 크기 조절과 시청기록 백업 두 기능을 치지직 화면의 한 창에 보여줘요. 자동 안내와 다시보기 모두 상단의 얇은 게이지로 닫힐 때까지 남은 20초를 보여줘요. 페이지 넘김 없이 닫기 버튼 하나로 정리했고 옵션 팝업을 닫거나 다른 창·탭으로 옮겨도 안내가 유지돼요.
 - 설정 탭을 정리하고 전체 방송 집계를 검색·필터와 분리했어요. 컴프레서의 마지막 선택을 새 탭에 이어받고 확대 스크롤·팔로잉 고정·같이보기 배너·광고 처리를 보완했어요.
 
-자세한 변경 내용은 [1.4.1 업데이트 내역](docs/update-history.md#141-2026-09-30)에서 확인할 수 있어요. 자동 검사·사용자 Chrome 확인·배포 파일 대조 결과는 [검증 기록](docs/release-1.4.1-verification.md)에 있어요.
+자세한 변경 내용은 [1.4.1 업데이트 내역](docs/update-history.md#141-2026-09-30)에서 확인할 수 있어요. 자동 검사·사용자 Chrome 확인·배포 파일 대조 결과는 [검증 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/release-1.4.1-verification.md)에 있어요.
 
 ---
 
@@ -853,7 +853,6 @@ git diff --check
 │  └─ manifest의 isolated 목록                                     ← 공용 파일 뒤에 기능별 순서로 실행; 모든 파일이 자동 주입되지는 않음
 ├─ vendor/                  hls.js light 빌드 (팔로잉 미리보기 재생용)
 ├─ icons/                   확장 프로그램 아이콘
-├─ store-assets/            스토어 등록용 이미지·최신 설명 문구
 ├─ docs/                    개발 문서 (업데이트 내역, 리팩토링 가이드 등)
 └─ tests/                   node:test + jsdom 회귀 테스트
 ```
