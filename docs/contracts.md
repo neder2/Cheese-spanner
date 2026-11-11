@@ -81,7 +81,7 @@ HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 �
 
 등록은 관측한 원래 WeakMap의 현재 값이 같은 manager인 경우에만 유효해요. 다른 map의 같은 컨테이너 키 쓰기는 영향을 주지 않고, 원래 등록의 삭제·교체는 독립·공유 일정 모두 원본 통과로 처리해요. 동일한 광고 컴포넌트를 가리키는 React owner/alternate의 소유·채널·방송·서비스가 불일치하거나 읽을 수 없으면 과거의 유효한 후보만 골라 승인하지 않아요. 적용 직전에도 제한된 후보와 연결 관계를 다시 확인해요.
 
-2026-10-17 소변경 보강에서 기존 첫 두 ref 경로는 긴 후속 hook에 의존하지 않아요. 이동한 쌍은 비인접·중복·순환·접근자·상한 초과를 거절하고 관측한 hook 연결과 ref를 적용 직전에 다시 확인해요. 기존 최대 8단계 조상·alternate 목록에 새 충돌 후보가 생겼는지도 다시 확인하며 무관한 일반 상태 변경은 제외해요. 안내의 네 문구/선택 조합·단일 false 호출·중립 래퍼 상한과 공개 코드 근거는 [보강 기록](measurements/ad-popup-resilience-2026-10-17.md)에 있어요.
+2026-10-17 소변경 보강에서 기존 첫 두 ref 경로는 긴 후속 hook에 의존하지 않아요. 이동한 쌍은 비인접·중복·순환·접근자·상한 초과를 거절하고 관측한 hook 연결과 ref를 적용 직전에 다시 확인해요. 기존 최대 8단계 조상·alternate 목록에 새 충돌 후보가 생겼는지도 다시 확인하며 무관한 일반 상태 변경은 제외해요. 안내의 네 문구/선택 조합·단일 false 호출·중립 래퍼 상한과 공개 코드 근거는 [보강 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/ad-popup-resilience-2026-10-17.md)에 있어요.
 
 원래 receiver·인자·반환값·동일 Promise·예외와 뒤에 설치된 wrapper를 보존해요. 옵션 미확정·OFF에서 늦게 호출돼도 원본을 통과시키며 OFF 뒤 같은 문서에서 재활성화하려면 새 문서가 필요해요. 지원 API·등록·소유 경계에 도달하지 않는 파서/전달 경로는 현재 미지원이에요. 네트워크·암호화·바이트·스타일 API나 계정 응답을 바꾸는 경로는 현재 구현에 없어요.
 
@@ -251,4 +251,4 @@ open-settings의 target은 panels, history, stream, categories뿐이고 확장 o
 
 ### 채널 영상 검색의 원본 페이지 묶음
 
-2026-10-03 실제 `#videos-PANEL`에서 영상 grid와 형제인 컨테이너 안의 `ol > li > button` 숫자 페이지 묶음을 확인했어요. 클래스는 `_container_1ihlx_1`, `_list_1ihlx_35`, `_button_1ihlx_8` 형태였고 pagination 이름·다음/이전 버튼이 없었어요. 구현은 해시 대신 현재 grid 형제·숫자 목록 구조를 확인해 검색 결과 표시 중에만 원본 묶음을 숨겨요. [실측·복원 검증](measurements/vod-search-pagination-2026-10-03.md)을 참고해요.
+2026-10-03 실제 `#videos-PANEL`에서 영상 grid와 형제인 컨테이너 안의 `ol > li > button` 숫자 페이지 묶음을 확인했어요. 클래스는 `_container_1ihlx_1`, `_list_1ihlx_35`, `_button_1ihlx_8` 형태였고 pagination 이름·다음/이전 버튼이 없었어요. 구현은 해시 대신 현재 grid 형제·숫자 목록 구조를 확인해 검색 결과 표시 중에만 원본 묶음을 숨겨요. [실측·복원 검증](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/vod-search-pagination-2026-10-03.md)을 참고해요.

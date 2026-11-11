@@ -2,7 +2,7 @@
 
 ## 2026-10-21 1.4.5 공개 (커밋·태그·GitHub Release)
 
-- 요청: 사용자가 남은 필수 점검 항목을 실제 Chrome에서 직접 확인했다고 알리고("남은 항목 직접 확인했어") 커밋·push·태그 `v1.4.5`·Release(zip 첨부)와 ZIP 재생성(기존 파일 덮어쓰기)을 요청했어요. 확인 범위와 최종 ZIP은 [검증 기록](../release-1.4.5-verification.md)에 있어요.
+- 요청: 사용자가 남은 필수 점검 항목을 실제 Chrome에서 직접 확인했다고 알리고("남은 항목 직접 확인했어") 커밋·push·태그 `v1.4.5`·Release(zip 첨부)와 ZIP 재생성(기존 파일 덮어쓰기)을 요청했어요. 확인 범위와 최종 ZIP은 [검증 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/release-1.4.5-verification.md)에 있어요.
 - 공개 날짜 2026-10-21로 업데이트 내역 제목·README 링크를 맞췄어요. 스토어 제출·main 병합은 하지 않았어요.
 - 남은 일: [남은 확인 사항](findings.md) 2026-10-21 항목(라이트 테마·테마 전환, 오래된 탭 채널 식별 의심, 댓글 정상 목록)은 이번 확인 범위 밖이라 그대로예요.
 
@@ -13,14 +13,14 @@
 - 구현: `features/chatTimestampPage.js`(MAIN)가 `betterchzzk:chat-user-source-request`를 받으면 그 행의 `chatMessage.user`를 형식 검증 뒤 `data-bcoc-source-user`에 넘겨요. 새 isolated `features/vodOwnChat.js`가 `/video/*`에서 `getUserStatus`로 현재 계정 해시를 메모리에만 받아 같은 행에 `data-bcoc-own`을 붙여요(공통 테마의 `--bct-brand-weak` 배경과 3px 왼쪽 선). 미로그인·실패·잘못된 해시면 표식이 없고, 계정 변경 신호(`userStatus.idhash`)·탭 복귀·이동·OFF 때 다시 확인하거나 정리해요. 옵션 `vodOwnChatHighlightEnabled`(기본 true, **채팅 도구 → 채팅 표시**), manifest isolated 목록에서 `chatTimestamp.js` 뒤. 새 권한·호스트·저장 없음.
 - 테스트: `tests/vod-own-chat.test.js` 5개(닉네임과 무관한 해시 일치·저장 없음·테마 색만 사용, 새 행·재사용 행, 미로그인·실패·잘못된 값·라이브 경로, 계정 전환, 기본값·OFF 정리·manifest 순서)와 `settings` 기본값·기능 키. 5개 모두 기능 파일을 비운 사본에서 실패하고 구현본에서 통과했어요.
 - 문서: README(1.4.5 변경 사항·기능 표·8절·설정 표), 업데이트 내역 1.4.5 그 밖의 변경, PRIVACY getUserStatus 용도, security, contracts(React 메시지·브리지 표), features/AGENTS. 이후 사용자 요청("문구에 짧게 넣어줘")으로 1.4.5 안내 요약 끝에 `, 다시보기에서 내 채팅 강조`를 더하고 `update-guide-catalog` 고정값, README 안내 설명, 스토어 설명(`로그인하면 다시보기 채팅에서 내가 쓴 채팅을 강조합니다.`)을 맞췄어요.
-- 남은 일: 강조 모양은 시안 비교 없이 정했어요. 로그인한 실제 Chrome에서 본인 채팅 강조·다른 사람 미강조·라이트/다크·스크롤 재사용을 확인하지 않았어요. 1.4.5 [검증 기록](../release-1.4.5-verification.md)의 임시 ZIP·1.4.4 대비 차이는 이 기능 전 기준이라 다시 만들어야 해요.
+- 남은 일: 강조 모양은 시안 비교 없이 정했어요. 로그인한 실제 Chrome에서 본인 채팅 강조·다른 사람 미강조·라이트/다크·스크롤 재사용을 확인하지 않았어요. 1.4.5 [검증 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/release-1.4.5-verification.md)의 임시 ZIP·1.4.4 대비 차이는 이 기능 전 기준이라 다시 만들어야 해요.
 
 ## 2026-10-21 1.4.5 버전 올림·안내 문구·업데이트 내역 (미커밋, 릴리스 전 필수 점검 미완료)
 
 - 요청: 사용자가 버전을 먼저 올리고 안내 문구를 추천받기로 했어요. 추천 3안 중 A를 마침표 없이 반점으로 구분해 확정했어요: `방송 목록 필터 개선(이상·이하·범위, 보고 와도 유지), 방송 화면 제목 옆에서 이전 방제 확인`(카드 없음).
 - 변경: manifest·package·lockfile 루트 버전 1.4.5, `tests/extension-pages`의 버전 고정, `shared/updateGuide.js` 1.4.5 자료와 `update-guide-catalog` 고정 검사, `docs/update-history.md` 1.4.5 절(날짜는 릴리스 때 정해요), README 버전·`1.4.5 변경 사항`·지난 구간 버튼 설명, 스토어 설명 2줄·개인정보 관행 문서 버전. 안내에서는 화면 확대 단축키(기본값이 기존 방식)와 볼륨 % 기본값(새 설치만)을 빼고 업데이트 내역에만 적었어요.
 - 검증: 전체 `test:all -- --test-concurrency=2` 1,874개 통과, `lint` 통과, `format:check`는 범위 밖 `.claude/settings.local.json`만 실패, `git diff --check` 통과. 스토어 문구 수정 뒤 관련 3개 파일을 다시 통과했어요.
-- 같은 날 사용자 요청("자체적으로 테스트해")으로 Chrome for Testing 새 프로필에서 1.4.4 배포 ZIP→1.4.5 임시 ZIP 실제 업데이트를 CDP로 점검하고 [검증 기록](../release-1.4.5-verification.md)을 만들었어요. 업데이트·한 탭 최초 1회·20초·호버 일시정지·초점 없을 때 보류·동작 줄이기·좁은 폭·Escape·라이트/다크·임시 ZIP 대조는 확인했고, 확장 아이콘 팝업 다시보기(자동화에서 팝업이 열리지 않음)·재시작·복원·전체화면·입력 중 보류는 미확인이에요.
+- 같은 날 사용자 요청("자체적으로 테스트해")으로 Chrome for Testing 새 프로필에서 1.4.4 배포 ZIP→1.4.5 임시 ZIP 실제 업데이트를 CDP로 점검하고 [검증 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/release-1.4.5-verification.md)을 만들었어요. 업데이트·한 탭 최초 1회·20초·호버 일시정지·초점 없을 때 보류·동작 줄이기·좁은 폭·Escape·라이트/다크·임시 ZIP 대조는 확인했고, 확장 아이콘 팝업 다시보기(자동화에서 팝업이 열리지 않음)·재시작·복원·전체화면·입력 중 보류는 미확인이에요.
 - 남은 일: 위 미확인 필수 점검 항목, 디자인 통일의 라이트 테마 등 실제 Chrome 확인, [남은 확인 사항](findings.md) 2026-10-21의 오래된 탭 채널 식별 의심 확인이 남았어요. 릴리스 준비 완료가 아니에요.
 
 ## 2026-10-20 방송 화면 제목 옆 이전 방제 버튼 (1.4.5 branch, 미커밋)
@@ -62,7 +62,7 @@
 
 ## 2026-10-17 방송 목록 필터 1단계 구현 (1.4.5 branch, 미커밋)
 
-- 요청: 시안 A와 [설계](../list-filter-stage1-design-2026-10-17.md)대로 1단계를 구현. 남은 결정 3개는 사용자가 추천안으로 확정했어요(칩 줄 라벨로 복원 안내, T6 반영 뒤 구현, 결과 수를 칩 줄로). 기준은 `1.4.5` branch, HEAD `58eaf27`(T6 포함)이에요. 커밋·버전·배포는 범위 밖이에요.
+- 요청: 시안 A와 [설계](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/list-filter-stage1-design-2026-10-17.md)대로 1단계를 구현. 남은 결정 3개는 사용자가 추천안으로 확정했어요(칩 줄 라벨로 복원 안내, T6 반영 뒤 구현, 결과 수를 칩 줄로). 기준은 `1.4.5` branch, HEAD `58eaf27`(T6 포함)이에요. 커밋·버전·배포는 범위 밖이에요.
 - 구현: `features/categoryTools/filterModel.js`에 모드·실제 조건·조건 문구·검색 단어(AND·`-단어`·칸 단위 일치)·탭 기록 검증을 넣고 구간 버튼·끌기 계산을 뺐어요. `features/categoryTools.js`는 종류별 상태 객체, 전체·이상·이하·범위 메뉴(빠른 값·직접 입력·범위 입력, 입력 원문 유지), 적용 조건 줄(칩·모두 해제·`확인한 N개 중 M개`·`이어서 적용 중`), 검색 도움말과 100자 제한, 탭 sessionStorage `betterChzzkListFilterSession`의 목록 주소별 저장·복원(자동 초기화는 기록 유지)을 갖췄어요. `필터 초기화` 뒤 초점을 첫 조건 버튼으로 옮겨 Escape 문제도 고쳤어요.
 - 계약 변경: 구간 버튼·끌어서 범위 고르기와 검색창 옆 결과 수(`N / M`)를 없앴어요. 기존 검사 중 구간·끌기 모델 3개를 새 모델 검사로 바꾸고, `extension-pages`의 메뉴·결과 수 문구, 제외 검사의 결과 수 위치, 두 테스트 하네스의 값 설정 훅을 새 계약에 맞췄어요. 옵션 키는 그대로이고 `팔로워 버튼 N` 라벨을 `팔로워 N`으로, 기준값 안내 문구를 바꿨어요.
 - 테스트: 모델 검사 5개(빠른 값·모드·문구·검색 단어·탭 기록)와 새 `tests/category-tools-list-filters.test.js` 6개(검색과 칩·떠났다 돌아오기, 새로고침·주소별 분리, 자동 초기화·모두 해제와 제외 유지, 손상·차단 저장소, 메뉴 모드·초기화 초점, 칩 줄과 제외 줄 자리 안정)를 더했어요. 페이지 fixture는 `tests/helpers/category-tools-page.js`로 옮겨 `apply-cost`와 함께 써요.
@@ -87,8 +87,8 @@
     - 기록 페이지는 시안 A 모양에 채널 사진(공개 채널 정보 조회, `credentials: "omit"`, 저장 없음)을 더했어요. `replay-pending.html`도 같은 토큰을 써요.
     - 치지직 안 화면은 멀티뷰·탐색·다시보기·채팅·팔로잉·작은 표시·새 버전 안내 묶음의 기능별 팔레트와 개별 @font-face를 공통 변수로 바꿨어요. 배치·동작은 그대로예요.
     - 문서는 README 디자인·채널 사진·문구 인용, PRIVACY와 `docs/security.md`의 채널 사진 조회, `shared/AGENTS.md`·`features/AGENTS.md`의 공통 테마 규칙과 글꼴 두 분류를 반영했어요.
-- 실측: [치지직 디자인 토큰](../measurements/chzzk-design-tokens-2026-10-17.md)(공개 HTML·CSS를 `curl`로 받아 정적 확인).
-- 검증: [검증 기록](../measurements/ui-redesign-1.4.5-verification.md)
+- 실측: [치지직 디자인 토큰](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/chzzk-design-tokens-2026-10-17.md)(공개 HTML·CSS를 `curl`로 받아 정적 확인).
+- 검증: [검증 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/ui-redesign-1.4.5-verification.md)
     - 화면별 작업을 합친 뒤 `test:all -- --test-concurrency=2` 1,850개 통과, `lint` 통과했어요. `format:check`는 저장소 밖 `.claude/settings.local.json`만 걸렸고, 바뀐 70개 파일 prettier는 통과했어요.
     - 최종 코드 커밋 `c4a2709` 기준 `test:all -- --test-concurrency=2` 1,850개 통과(exit 0), `lint` exit 0이고, 이번에 바뀐 파일 전체의 prettier 검사도 통과했어요. 전체 `format:check`는 저장소 밖 `.claude/settings.local.json`만 걸려요.
     - 설정 320~1280px·기록 1280/375px 임시 화면에서 다크·라이트 가로 넘침은 0이었어요. 치지직 안 14개 표면은 정적 캡처로 다크·라이트를 측정했어요.
@@ -108,7 +108,7 @@
 
 - 요청: 사용자가 방송 목록 필터가 부실하다고 해 개선 방향을 3단계로 나눴고, 1단계(조건 유지·적용 조건 표시·이상/이하 선택·검색 개선)의 시안 3개를 화면으로 비교한 뒤 **A(적용 조건 줄)**를 골랐어요. 기준은 `1.4.5` branch, HEAD `e73d03c`이며 다른 세션의 미커밋 변경은 건드리지 않았어요.
 - 사용자 결정: 조건은 **탭 동안 유지**(사이트 sessionStorage), 검색어도 탭 안에서만 함께 유지, 목록 주소마다 따로 기억해요.
-- 설계: [설계 문서](../list-filter-stage1-design-2026-10-17.md)에 조건 모델(전체·이상·이하·범위), 메뉴, 적용 조건 줄, 검색 문법(띄어쓰기 AND·`-단어` 제외·칸 단위 일치), 저장 형식 `betterChzzkListFilterSession`, 함께 고칠 문서·테스트·검증 계획과 결정 항목 3개(돌아온 직후 안내 방식, UI 통일 T6과의 구현 순서, 결과 수 위치)를 적었어요.
+- 설계: [설계 문서](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/list-filter-stage1-design-2026-10-17.md)에 조건 모델(전체·이상·이하·범위), 메뉴, 적용 조건 줄, 검색 문법(띄어쓰기 AND·`-단어` 제외·칸 단위 일치), 저장 형식 `betterChzzkListFilterSession`, 함께 고칠 문서·테스트·검증 계획과 결정 항목 3개(돌아온 직후 안내 방식, UI 통일 T6과의 구현 순서, 결과 수 위치)를 적었어요.
 - 한계: 내장 브라우저가 치지직을 막아 실제 Chrome·치지직 화면은 확인하지 않았어요. 시안 배치는 코드의 장착 규칙에 따른 근사예요. 런타임·테스트는 바꾸지 않았고 새 문서만 `prettier --check`로 확인했어요.
 
 ## 2026-10-17 필요한 프로필·신고 팝업 예외 추가 (1.4.5 branch, 미커밋)
@@ -116,7 +116,7 @@
 - 요청: 정상 팝업 오탐 검토 뒤 사용자가 필요한 팝업만 예외 처리하도록 요청했어요. 기준 HEAD는 `3f852d3`, 기존 변경을 보존했고 버전·커밋·배포는 하지 않았어요.
 - 구현: `adblockPopup.js`의 일반 닫기 경로에서 내 프로필·다른 사용자 프로필의 전용 모듈과 내부 요소, 방송·영상·클립/스트리머샵 신고의 제목과 신고 사유 입력 구조를 함께 확인해 보존해요. 닉네임·제목에 광고 관련 단어가 있어도 숨김·클릭을 하지 않아요. 숫자 클래스 접미사·얕은 래퍼·프로필 문구 변화는 허용하며, 다른 팝업의 근거는 빌리지 않고 DOM 재사용 때 현재 구조를 다시 판단해요. 전용 광고 확인 안내는 예외보다 먼저 기존 경로로 처리해요.
 - 검증: 수정 전 관련 40개 중 17개 실패를 확인한 뒤, 팝업 닫기·확인형 광고 안내·그리드 안내 관련 108개가 통과했어요. 변경 JS lint와 변경 파일 포맷을 확인했어요. 기능 내부의 예외 판별만 바꾸고 MAIN 재생·설정·권한·로딩 경계를 바꾸지 않아 전체 검사는 반복하지 않았어요.
-- 실제 Chrome: AdGuard OFF를 재확인하고 활성 압축해제 확장을 다시 로드한 다음 테스트 방송을 새로고침했어요. 내 프로필·닉네임 팝업·방송 신고 창 유지와 직접 닫기, 본영상 진행을 확인했어요. 광고 단어가 든 이름·제목 및 스트리머샵 신고는 합성 검사이며, 이번 짧은 재확인에서 실제 광고 확인 안내·중간 광고·그리드 안내가 새로 발생했다고 주장하지 않아요. 앞선 30분 관찰과 구분하며 상세는 [후속 기록](../measurements/ad-popup-browser-review-2026-10-17.md)에 있어요.
+- 실제 Chrome: AdGuard OFF를 재확인하고 활성 압축해제 확장을 다시 로드한 다음 테스트 방송을 새로고침했어요. 내 프로필·닉네임 팝업·방송 신고 창 유지와 직접 닫기, 본영상 진행을 확인했어요. 광고 단어가 든 이름·제목 및 스트리머샵 신고는 합성 검사이며, 이번 짧은 재확인에서 실제 광고 확인 안내·중간 광고·그리드 안내가 새로 발생했다고 주장하지 않아요. 앞선 30분 관찰과 구분하며 상세는 [후속 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/ad-popup-browser-review-2026-10-17.md)에 있어요.
 
 ## 2026-10-17 광고·팝업 실제 Chrome 관찰과 오탐 검토 (1.4.5 branch, 런타임 추가 수정 없음)
 
@@ -124,7 +124,7 @@
 - 실제 화면: 광고 차단 확인 안내가 팝업 제거 OFF에서 보였고 ON 저장 뒤 네이티브 확인 호출 1회와 안내 소멸을 확인했어요. 공유·프로필 팝업과 설정 메뉴는 유지됐어요. 두 라이브의 1080p 재생, 화질 메뉴와 두 번째 라이브의 일시정지·재개도 확인했어요. 실제 그리드 설치 안내는 나타나지 않았어요.
 - 시청 중 광고: 첫 방송의 일정 처리 1→2·입장 일정 1→1을 확인했고, 종료 시 1080p·60.0 FPS로 재생 중이었어요. 보조 방송도 종료 확인에서는 2/1이었어요. 중간 광고 일정으로 판단되는 추가 처리 각 1회이며, 진단이 광고 ID·소재 배정·완료 이벤트를 기록하지 않아 광고 소재나 모든 중간 광고 성공까지 확정하지 않아요. 보조 방송은 대부분 백그라운드였어요.
 - 검토 결과: 합성 비교에서 일반 닫기 별칭이 기존 넓은 키워드 오탐을 확대한 조건, 숨은 SVG 안내문을 의미 근거로 쓰는 신규 조건, 문구 전이 후 같은 버튼을 재클릭하는 기존 조건을 재현했어요. 본영상의 잘못된 소스·시간 조작은 재현하지 못했고 기존 host 소유 재검증 공백은 방어 강화 후보로 남겼어요.
-- 종료: 동영상 광고 차단·팝업 제거 ON 저장 상태를 확인하고 테스트용 탭만 정리했어요. 이번 검토에서는 문서만 추가·수정했으며, 전체 런타임 검사·lint는 반복하지 않았어요. 조건·재현·실측 한계는 [후속 기록](../measurements/ad-popup-browser-review-2026-10-17.md), 미수정 항목은 [남은 확인 사항](findings.md)에 있어요.
+- 종료: 동영상 광고 차단·팝업 제거 ON 저장 상태를 확인하고 테스트용 탭만 정리했어요. 이번 검토에서는 문서만 추가·수정했으며, 전체 런타임 검사·lint는 반복하지 않았어요. 조건·재현·실측 한계는 [후속 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/ad-popup-browser-review-2026-10-17.md), 미수정 항목은 [남은 확인 사항](findings.md)에 있어요.
 
 ## 2026-10-17 광고·그리드 안내 소변경 대응 보강 (1.4.5 branch, 미커밋)
 
@@ -132,7 +132,7 @@
 - 근거: 09-11~10-11 실측 기록과 현재 공개 페이지·SDK·한국어 번역을 비교했어요. 현재 코드에서 추가로 확인한 더 높은 화질/기본 화질 안내를 포함하고, 미래 문구·래퍼·hook 위치 변형은 합성 회귀로 구분했어요.
 - 구현: `adVideoPage.js`는 기존 첫 두 ref와 별도로 같은 컴포넌트의 제한된 유일 인접쌍을 검증하고, 적용 직전 새 충돌 후보까지 다시 확인해요. `qualityInstallGuide.js`는 네 안내 조합·제한된 표현·중립 래퍼를 지원하되 숨은 근거·추가 동작·다른 모달을 거절해요. `adblockPopup.js`·`adblockPopupPage.js`는 닫기 별칭, 확인형 문구·중립 래퍼·동등한 단일 false 호출을 지원해요.
 - 보존: 본영상 소스·시간·재생 상태 제어, 권한·설정·manifest 변경은 없어요. 모호한 소유는 원본 통과하고, 확인형 실패 복원·중복 방지·경로당 한도는 유지해요.
-- 검증: 수정 전 실패 → 관련 검사 292개 통과 → 교차 검토의 안전 조건 두 건 보완 → 관련 160개 통과 → 최종 전체 1,781개·lint 통과를 확인했어요. 최종 확장을 켠 별도 Chrome for Testing에서 라이브·VOD 광고 처리 뒤 1080p 본영상 진행과 라이브 일시정지·재개를 확인했어요. 실제 안내·중간 광고·PiP·SPA·다른 차단기 조합은 미검증이에요. 포맷 결과와 수치는 [보강 기록](../measurements/ad-popup-resilience-2026-10-17.md)에 있어요.
+- 검증: 수정 전 실패 → 관련 검사 292개 통과 → 교차 검토의 안전 조건 두 건 보완 → 관련 160개 통과 → 최종 전체 1,781개·lint 통과를 확인했어요. 최종 확장을 켠 별도 Chrome for Testing에서 라이브·VOD 광고 처리 뒤 1080p 본영상 진행과 라이브 일시정지·재개를 확인했어요. 실제 안내·중간 광고·PiP·SPA·다른 차단기 조합은 미검증이에요. 포맷 결과와 수치는 [보강 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/ad-popup-resilience-2026-10-17.md)에 있어요.
 
 ## 2026-10-17 화면 확대 단축키 방식 추가 (1.4.5 branch, 미커밋)
 
@@ -143,7 +143,7 @@
 
 ## 2026-10-17 추가 버그 탐색 5건 수정 (1.4.5 branch, 미커밋)
 
-- 요청: 다른 세션(Codex)이 자동 재현만 하고 고치지 않은 5건([보고서](../bug-report-1.4.5-2026-10-17.md), [남은 확인 사항](findings.md)의 같은 날 `5건 자동 재현` 항목)을 1.4.5 작업 트리(HEAD `acbc587`, 같은 날 미커밋 수정 위)에서 수정·검증. 커밋·브랜치·버전·배포는 범위 밖이에요.
+- 요청: 다른 세션(Codex)이 자동 재현만 하고 고치지 않은 5건([보고서](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/bug-report-1.4.5-2026-10-17.md), [남은 확인 사항](findings.md)의 같은 날 `5건 자동 재현` 항목)을 1.4.5 작업 트리(HEAD `acbc587`, 같은 날 미커밋 수정 위)에서 수정·검증. 커밋·브랜치·버전·배포는 범위 밖이에요.
 - 구현:
     - 팔로잉 고정(`features/sidebarCustomization.js`): 고정 모드 버튼, 고정 모드의 채널 클릭·Space가 `isTrusted` 입력에서만 동작해요. 저장 직전에는 대상 행이 현재 팔로잉 목록의 직접 행인지 다시 확인해 페이지가 복사한 표시 속성으로 저장하지 않아요. 고정 모드가 아닐 때의 채널 이동(보충 행의 라우터 이동 포함)은 그대로예요.
     - 설정 파일 부분 가져오기(`shared/settingsBackup.js`): 옵션 계획에서 쓸 값을 현재 저장값에 합쳐 다시 정규화하고, 파일에 없는 키를 포함한 어떤 옵션의 실제 사용값이라도 미리보기 기대값과 다르면 `option-combination`으로 거절해요. 배속 단축키 세 개가 한 조합으로 검사되고, 저장 컨트롤러는 기존처럼 `invalid-file`로 응답하며 아무것도 쓰지 않아요. 적용은 잠금 안에서 최신 저장값으로 다시 계획하므로 미리보기 뒤 다른 탭이 만든 충돌도 쓰기 전에 거절돼요.
@@ -157,7 +157,7 @@
 ## 2026-10-17 멀티뷰 조합 저장·채팅 키워드 강조 설계 (계획, 미구현)
 
 - 요청: 사용자가 라이브 멀티뷰 조합 저장·불러오기와 채팅 키워드·언급 강조 두 기능의 설계를 요청했고, 구현 전에 범위와 저장 형식을 먼저 정리하기로 했어요. 기준은 `1.4.5` branch, HEAD `acbc587`이며 같은 날의 미커밋 수정 위에서 문서만 작성했어요. 런타임·테스트·manifest는 바꾸지 않았어요.
-- 설계: [설계 문서](../planned-features-design-2026-10-17.md)에 범위·저장 형식·UI·경계·파일 소유권·검증 계획과 결정이 필요한 항목 6개를 적었어요. 멀티뷰 조합은 확장 local 단일 키 `betterchzzk:multiview-presets:v1`(조합 10개·이름 20자·채널 2~6개·배치 포함)에 두고 설정 저장 큐·설정 파일에 새 구역으로 넣는 안이에요. 채팅 키워드는 sync 옵션 2개(`chatToolsKeywordHighlightEnabled`, 새 종류 `textList`의 `chatToolsHighlightKeywords`)와 모아보기 저장소의 조건 주입(두 번째 인스턴스)으로 기존 상자에 `언급` 필터를 더하는 안이에요.
+- 설계: [설계 문서](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/planned-features-design-2026-10-17.md)에 범위·저장 형식·UI·경계·파일 소유권·검증 계획과 결정이 필요한 항목 6개를 적었어요. 멀티뷰 조합은 확장 local 단일 키 `betterchzzk:multiview-presets:v1`(조합 10개·이름 20자·채널 2~6개·배치 포함)에 두고 설정 저장 큐·설정 파일에 새 구역으로 넣는 안이에요. 채팅 키워드는 sync 옵션 2개(`chatToolsKeywordHighlightEnabled`, 새 종류 `textList`의 `chatToolsHighlightKeywords`)와 모아보기 저장소의 조건 주입(두 번째 인스턴스)으로 기존 상자에 `언급` 필터를 더하는 안이에요.
 - 한계: 실제 Chrome·치지직 화면은 확인하지 않았어요. 로그인 닉네임 자동 감지는 `getUserStatus` 닉네임 필드가 실측되지 않아 v1에서 제외하고 직접 입력으로 두었어요.
 - 다음: 사용자가 결정 항목을 확정하면 구현을 시작해요. 두 기능은 `shared/settingsBackup.js`·`optionsSettingsBackup.js`만 겹치므로 순서를 정해 병행할 수 있어요.
 
@@ -192,7 +192,7 @@
 
 - 사용자 요청: 푸시·main 병합·패키지 생성·릴리스 노트 작성. 태그·GitHub Release·스토어 제출은 요청 범위 밖이라 하지 않았어요.
 - 새 기능 안내 문구·스토어 설명·권한 사유를 같은 날 확정·정리했고, 업데이트 내역 날짜를 `1.4.4 (2026-10-13)`로 맞췄어요. 팔로잉 폴더는 기본 꺼짐이에요.
-- `Cheese Spanner 1.4.4` 커밋을 원격 `1.4.4`에 push하고 원격 main을 빨리 감기로 같은 커밋에 맞췄어요. `web-ext-artifacts/cheese_spanner-1.4.4.zip`(121개 파일)이 작업 트리와 일치해요. 상세는 [1.4.4 검증 기록](../release-1.4.4-verification.md)이에요.
+- `Cheese Spanner 1.4.4` 커밋을 원격 `1.4.4`에 push하고 원격 main을 빨리 감기로 같은 커밋에 맞췄어요. `web-ext-artifacts/cheese_spanner-1.4.4.zip`(121개 파일)이 작업 트리와 일치해요. 상세는 [1.4.4 검증 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/release-1.4.4-verification.md)이에요.
 - 후속 문서 커밋: 업데이트 내역 첫 요약과 `고친 문제` 절(1.4.3에도 있던 문제만)을 보완해 같은 방식으로 `1.4.4`·main에 올렸어요. 패키지 내용은 같아요.
 - 릴리스 날짜: **2026-10-13**(사용자 결정). 이날 21:23~21:34 KST에 `Cheese Spanner 1.4.4` 커밋·push·main 병합·패키지 생성과 GitHub Release 초안 작성(12:28:54Z)을 마쳤어요. 업데이트 내역의 `1.4.4 (2026-10-13)`과 같아요.
 - 2026-10-17 사용자 요청: 10-13에 만들어 둔 GitHub Release 초안 「치즈 스패너 1.4.4」를 본문(업데이트 내역 1.4.4와 동일)·첨부 ZIP(로컬 패키지와 SHA-256 동일) 그대로 공개했어요. `v1.4.4` 태그는 `e6b9d81`에 만들어졌고 Latest로 표시돼요. GitHub는 게시 시각을 바꿀 수 없어 Release 화면의 게시일은 2026-10-17로 보여서, 같은 날 사용자 요청으로 Release 본문 맨 위에 `**2026-10-13**`을 적었어요.
@@ -268,7 +268,7 @@
 
 - 사용자 요청: 폴더·채팅 멀티뷰 추가 UI를 기존 기능과 통일하고 치지직에 어울리게 다듬기. 시안(세션 임시 페이지)을 본 뒤 결정: 관리 패널 제거, 사이드바에서 바로 조작, 폴더 이름 더블클릭으로 이름 변경, 채널 기본 드래그·사이드바 밖은 기존 링크 드래그, 접기는 (가) 이름 클릭 0.25초 대기·화살표 즉시. 폴더 순서 끌기·되돌리기는 시안대로 넣었어요.
 - 구현: `features/followingFolders.js`를 사이드바 직접 조작으로 다시 썼어요(새 폴더 버튼, 끌어 놓기 대상 넓힘·끄는 동안만 보이는 `+ 새 폴더로`·커서 밑 즉시 놓기 방지, 그 자리 이름 변경, 폴더 이름 끌어 순서 변경, ⋯ 메뉴, 키보드용 채널 선택 창, 5초 되돌리기, 손상·읽기 실패 상태 안내). `shared/followingFolders.js`에 `createWith`·`moveTo`·`restore` 명령을 더했고, 되돌리기는 conflict에서 다시 적용하지 않아요. `features/chatMultiview.js`는 결과 행 클릭·방송 상태 표시·팔로잉 링크 끌어 놓기(채널 ID만 읽어 기존 조회)·SVG 아이콘(HTML 문자열 없음)·치지직 토큰 기반 스타일로 바꿨어요.
-- 검증: 폴더 29개·채팅 멀티뷰 30개 → 전체 `test:all` 1,618개·lint 통과, format:check는 범위 밖 `.claude/settings.local.json`만 실패, 변경 파일 포맷·diff 검사 통과. 임시 ZIP 119개 파일 일치. 로컬 확인 화면에서 실제 기능 코드의 드래그·되돌리기·메뉴·채널 선택·이름 변경·채팅 멀티뷰 다크/라이트를 확인했어요. **실제 Chrome·실제 치지직 화면은 확인하지 않았어요.** 상세는 [1.4.4 검증 기록](../release-1.4.4-verification.md)에 있어요.
+- 검증: 폴더 29개·채팅 멀티뷰 30개 → 전체 `test:all` 1,618개·lint 통과, format:check는 범위 밖 `.claude/settings.local.json`만 실패, 변경 파일 포맷·diff 검사 통과. 임시 ZIP 119개 파일 일치. 로컬 확인 화면에서 실제 기능 코드의 드래그·되돌리기·메뉴·채널 선택·이름 변경·채팅 멀티뷰 다크/라이트를 확인했어요. **실제 Chrome·실제 치지직 화면은 확인하지 않았어요.** 상세는 [1.4.4 검증 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/release-1.4.4-verification.md)에 있어요.
 
 ## 2026-10-11 1.4.4 릴리스 준비 — 진행 중, 준비 완료 아님
 
@@ -276,21 +276,21 @@
 - 사용자 요청으로 `1.4.4` branch를 `23efdcb`에서 만들고 이 Mac의 미커밋 변경을 충돌 없이 옮겼어요. 로컬 `1.4.3` branch는 그대로예요.
 - manifest·package·lockfile을 1.4.4로 올리고 업데이트 내역 `1.4.4 (2026-10-11)`, README(상단·설정 경로 정정·옵션 표·`개발 작업본` 표시 제거), 스토어 설명, 1.4.4 새 기능 안내(카드 없는 요약 한 줄, Claude 초안)를 준비했어요.
 - 전체 `test:all` 1,610개·lint 통과, format:check는 범위 밖 `.claude/settings.local.json`만 실패(보존), 변경 파일 포맷·diff 검사 통과. 임시 ZIP 119개 파일이 작업 트리와 일치해요.
-- 남은 일: 안내 문구 사용자 확정, 최종 ZIP, 분리 Chrome 프로필의 1.4.3 → 1.4.4 실제 업데이트 점검(사용자 수동). 커밋·push·태그·Release·스토어 제출은 하지 않았어요. 상세는 [1.4.4 검증 기록](../release-1.4.4-verification.md)에 있어요.
+- 남은 일: 안내 문구 사용자 확정, 최종 ZIP, 분리 Chrome 프로필의 1.4.3 → 1.4.4 실제 업데이트 점검(사용자 수동). 커밋·push·태그·Release·스토어 제출은 하지 않았어요. 상세는 [1.4.4 검증 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/release-1.4.4-verification.md)에 있어요.
 
 ## 2026-10-11 1.4.3 릴리스 — main 병합·태그·GitHub Release
 
 - 사용자 요청으로 manifest·package·lockfile을 1.4.3으로 올리고 업데이트 내역 `1.4.3 (2026-10-11)`, README 상단, PRIVACY(앰비언트 로컬 저장), 스토어 설명, 1.4.3 새 기능 안내(카드 없는 요약 한 줄, 문구는 사용자 확정)를 준비했어요.
 - 전체 `test:all` 1,522개·lint·format:check·diff 검사 통과. `web-ext-artifacts/cheese_spanner-1.4.3.zip`(SHA-256 `81bc2c3d…`) 113개 파일이 작업 트리와 일치해요.
-- Edge 임시 프로필에서 v1.4.2 → 1.4.3 실제 업데이트 뒤 안내가 한 탭에만 한 번 표시되고 20초+호버 일시정지·재표시 방지를 확인했어요. 남은 실제 Chrome 점검은 사용자가 확인하고 "정상"으로 보고했어요(사용자 확인 결과). 상세는 [1.4.3 검증 기록](../release-1.4.3-verification.md)에 있어요.
-- 사용자 요청으로 `1.4.3` branch 이력을 정리(Claude 공동 저자 줄 제거, 문서 정리 전·후 커밋 통합, 최종 트리 동일)해 `--force-with-lease`로 push하고, 배포본 v1.4.2에서 갈라진 이력을 main에 병합했어요. 배포본이 공개하지 않은 1.4.2 검증 기록은 main에 넣지 않았어요. 병합 커밋에 `v1.4.3` 태그와 GitHub Release를 게시해요. 스토어 제출은 하지 않았어요. 상세는 [1.4.3 검증 기록](../release-1.4.3-verification.md)에 있어요.
+- Edge 임시 프로필에서 v1.4.2 → 1.4.3 실제 업데이트 뒤 안내가 한 탭에만 한 번 표시되고 20초+호버 일시정지·재표시 방지를 확인했어요. 남은 실제 Chrome 점검은 사용자가 확인하고 "정상"으로 보고했어요(사용자 확인 결과). 상세는 [1.4.3 검증 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/release-1.4.3-verification.md)에 있어요.
+- 사용자 요청으로 `1.4.3` branch 이력을 정리(Claude 공동 저자 줄 제거, 문서 정리 전·후 커밋 통합, 최종 트리 동일)해 `--force-with-lease`로 push하고, 배포본 v1.4.2에서 갈라진 이력을 main에 병합했어요. 배포본이 공개하지 않은 1.4.2 검증 기록은 main에 넣지 않았어요. 병합 커밋에 `v1.4.3` 태그와 GitHub Release를 게시해요. 스토어 제출은 하지 않았어요. 상세는 [1.4.3 검증 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/release-1.4.3-verification.md)에 있어요.
 
 ## 2026-10-11 확인형 안내 입장 깜빡임 — 원인 실측·보완
 
 - 사용자 확인: 실제 환경에서 자동 닫기와 단축키가 정상이에요. 남은 보고는 입장 시 약 0.1초 노출(체감값)이었어요.
 - 원인(Edge 155 임시 프로필, 실제 안내를 띄운 3회 측정): 숨김은 첫 프레임 전에 적용됐지만 실행 뒤 단일 rAF 복원이 안내 제거(실행 후 2.5~3.9ms)보다 먼저 와서 한 프레임씩 다시 그려졌어요. 설정 읽기 전 표시나 재표시는 아니었어요.
 - 보완: 정확한 안내는 표시·크기가 아니라 연결·정체성·현재 확인 동작으로 판단하고, 실제 제거까지 숨김을 유지해요(최대 1초, 실패·거절은 숨김만 해제). OFF·라우트 변경·`pagehide`는 대기를 정리해요. manifest·권한·로딩 경계는 바꾸지 않았어요.
-- 확인: 수정 후 같은 조건 3회에서 보이는 프레임 0개, 결과 `removed`(대기 3~5ms). 사용자 실제 환경 결과도 `removed`(대기 2ms)였어요. 기록은 [확인형 안내 자동 닫기](../measurements/adblock-notice-options-2026-10-11.md)에 있어요.
+- 확인: 수정 후 같은 조건 3회에서 보이는 프레임 0개, 결과 `removed`(대기 3~5ms). 사용자 실제 환경 결과도 `removed`(대기 2ms)였어요. 기록은 [확인형 안내 자동 닫기](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/adblock-notice-options-2026-10-11.md)에 있어요.
 - 검사: `adblock-notice-confirm` 28개·`adblock-popup-close` 20개·`release-safety`·`quality-install-guide`, 변경 JS lint, 변경 파일 포맷 통과.
 
 ## 2026-10-11 확인형 안내 자동 닫기 구현
@@ -299,11 +299,11 @@
 - 구현: `features/adblockPopup.js`(isolated)가 옵션·관찰·표시 주기·경로당 2회 한도를 소유하고, 새 MAIN `features/adblockPopupPage.js`(manifest 정적 MAIN 목록 끝)가 대상과 현재 React props를 다시 확인한 뒤 확인 버튼에 연결된 확인 동작을 한 번 실행해요. 재생·화질 상태와 body 스크롤은 바꾸지 않아요. 기존 `닫기` 경로와 고화질 설치 안내는 그대로예요.
 - 문서: README, [업무 규칙](../business-rules.md#광고팝업보상), [아키텍처](../architecture.md), [보안](../security.md), [계약](../contracts.md), `features/AGENTS.md`를 맞췄어요.
 - 검사: 새 `tests/adblock-notice-confirm.test.js`(수정 전 13개 실패, 가드 변이 각각 실패 확인), 관련 테스트, 전체 `test:all`·lint·format:check 통과.
-- 화면 확인은 [확인형 안내 자동 닫기](../measurements/adblock-notice-options-2026-10-11.md)에 있어요.
+- 화면 확인은 [확인형 안내 자동 닫기](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/adblock-notice-options-2026-10-11.md)에 있어요.
 
 ## 2026-10-11 고화질 설치 안내의 브라우저 확장 프로그램 변형 자동 닫기
 
-- 2026-10-10 스토어 리뷰(Elma)와 사용자 Edge 재현에서 `시청 방해 팝업 제거`를 켜도 설치 권유 안내가 남았어요. 이 PC의 Edge 155 임시 프로필에 작업 트리 확장을 로드해 실측하니 안내 문단이 `크롬, 엣지 브라우저에서 고화질 시청을 위해 브라우저 확장 프로그램을 먼저 설치합니다.`, 설치 버튼이 `확장 프로그램 설치`로 2026-09-14 커넥터 안내와 달라 정확 일치 조건이 실패했어요(`attempts: 0`). 확장 없는 Chrome 155 임시 프로필에서도 같은 변형이 떠서 Edge 전용 문구가 아니에요. 실측은 [Edge 설치 안내 기록](../measurements/edge-install-guide-2026-10-11.md)에 있어요.
+- 2026-10-10 스토어 리뷰(Elma)와 사용자 Edge 재현에서 `시청 방해 팝업 제거`를 켜도 설치 권유 안내가 남았어요. 이 PC의 Edge 155 임시 프로필에 작업 트리 확장을 로드해 실측하니 안내 문단이 `크롬, 엣지 브라우저에서 고화질 시청을 위해 브라우저 확장 프로그램을 먼저 설치합니다.`, 설치 버튼이 `확장 프로그램 설치`로 2026-09-14 커넥터 안내와 달라 정확 일치 조건이 실패했어요(`attempts: 0`). 확장 없는 Chrome 155 임시 프로필에서도 같은 변형이 떠서 Edge 전용 문구가 아니에요. 실측은 [Edge 설치 안내 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/edge-install-guide-2026-10-11.md)에 있어요.
 - `features/qualityInstallGuide.js`에 실측 변형 두 가지(커넥터 안내, 브라우저 확장 프로그램 안내)를 문단·설치 버튼 짝으로 확인하는 `GUIDES`를 두었어요. 버튼 2개·일반 화질 버튼 1개·`_player_ > _dimmed_ > _layer_` 구조·저장 옵션 대기·표시 상태 조건은 그대로이고, 짝이 섞인 안내는 남겨요. README 16절과 [업무 규칙](../business-rules.md#광고팝업보상)의 문구를 맞췄어요.
 - 실브라우저: 새 Edge 임시 프로필에서 수정본이 안내를 두 번 닫고(초기 안내, 1080p 선택 때 재표시) 1920×1080 재생까지 이어졌어요. 같은 임시 프로필 재실행은 Edge가 명령줄 로드 확장을 비활성화해 새 프로필이 필요했어요. 사용자의 실제 Edge 프로필(다른 확장 포함)과 확장을 로드한 Chrome(155는 `--load-extension` 무시)은 미확인이에요. 확인 버튼만 있는 안내는 당시 계약대로 남았어요([남은 확인](findings.md)).
 - 릴리스 전 남은 일에 추가: 1.4.3 업데이트 내역의 시청 방해 팝업 항목(크롬·엣지 브라우저 확장 프로그램 설치 안내도 자동으로 닫음)을 작성해요.
@@ -323,10 +323,10 @@
 
 **현재 상태 요약(2026-10-09):** 5개 기능은 모두 구현됐고 마지막 코드 변경 뒤 전체 자동 검증(1,577개 통과·lint 통과)을 마쳤어요. Codex의 사용자 Chrome 실측으로 다섯 기능의 핵심 흐름을 확인했고, 실측에서 나온 결함 6건(높이 경계 가림, 채팅 멀티뷰 칸 잘림, 폴더 이름 배지 텍스트, VOD 제목 겹침, 전체화면 위치·높이 유지, 넘친 칸의 접근 표시 부족)은 고쳤어요. 6건 모두 재로드 뒤 Codex 실측으로 통과가 확인됐어요. 최종 검수 뒤 사용자 설정은 원본 백업으로 다시 복구됐고(재내보내기 파일의 sync·local 전체 일치), 검수용 폴더·채팅·배치·테마도 원래대로 돌아갔어요. 기능별 확인 범위와 남은 범위는 아래 `계획된 기능` 표에 있어요. 커밋·버전·1.4.3 새 기능 안내는 하지 않았어요. 아래 항목은 시간순 기록이에요.
 
-- 사용자가 미구현 계획 전부의 구현·디자인·세부 설계를 Claude에게 위임했고 Codex가 감독·검수를 맡았어요. 기준은 `1.4.3` branch, HEAD `d358a42`이며 커밋·버전·릴리스는 하지 않았어요. 설계·수용 기준·파일 소유권·위임 계약은 [설계 기록](../planned-features-design-2026-10-08.md)에 있어요. 폴더(`shared/followingFolders.js`, `features/followingFolders.js`)와 채팅 멀티뷰(`shared/chatMultiview.js`, `features/chatMultiview.js`)는 Codex가 맡긴 별도 Claude 세션이 작성했고, 총괄 세션은 공용 통합·패널·설정 저장 경계·설정 파일·문서·최종 검사를 맡았어요.
+- 사용자가 미구현 계획 전부의 구현·디자인·세부 설계를 Claude에게 위임했고 Codex가 감독·검수를 맡았어요. 기준은 `1.4.3` branch, HEAD `d358a42`이며 커밋·버전·릴리스는 하지 않았어요. 설계·수용 기준·파일 소유권·위임 계약은 [설계 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/planned-features-design-2026-10-08.md)에 있어요. 폴더(`shared/followingFolders.js`, `features/followingFolders.js`)와 채팅 멀티뷰(`shared/chatMultiview.js`, `features/chatMultiview.js`)는 Codex가 맡긴 별도 Claude 세션이 작성했고, 총괄 세션은 공용 통합·패널·설정 저장 경계·설정 파일·문서·최종 검사를 맡았어요.
 - **채팅 위치·높이:** `chatPosition`(오른쪽 기본·왼쪽)과 채팅·댓글 하단 경계 높이 조절(240px~원래 높이, 더블클릭 복원, local `betterchzzk:panel-resize:chat-height:v1`), 모아보기 최대 높이 `chatToolsModeratorBoxHeight`(기본 420px)를 구현했어요.
 - **사이드바 위치·높이:** `sidebarPosition`(왼쪽 기본·오른쪽), 원래 본문 여백의 오른쪽 이전, 1199px 이하 오버레이 딤·접힌 사이드바 항목 툴팁 미러링, 가로 넘침 시 원래 위치 복귀, 팔로잉 목록 최대 줄 수 `followingListMaxRows`를 구현했어요.
-- **팔로잉 폴더·채팅 멀티뷰:** 위임 세션 산출물을 manifest·워커·옵션·문서에 통합했어요. 채팅 멀티뷰는 같은 출처 네이티브 채팅 팝업 경로만 프레임으로 표시하며 근거는 [프레임 정책 측정](../measurements/chat-multiview-frame-policy-2026-10-08.md)이에요.
+- **팔로잉 폴더·채팅 멀티뷰:** 위임 세션 산출물을 manifest·워커·옵션·문서에 통합했어요. 채팅 멀티뷰는 같은 출처 네이티브 채팅 팝업 경로만 프레임으로 표시하며 근거는 [프레임 정책 측정](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/chat-multiview-frame-policy-2026-10-08.md)이에요.
 - **설정 저장 경계:** 감독 지적에 따라 백업 대상 키의 모든 writer가 확장 출처 Web Lock을 공유하도록 바꿨어요. 콘텐츠의 고정·패널 크기·멀티뷰 딜레이/화질·`skipSeconds`·`ambientIntensity`·`followingPreviewSoundEnabled` 쓰기를 워커의 설정 저장 큐(`shared/settingsStore.js`)로 옮겼고, 예전 채팅 도구 옵션 이전과 방송 대상 쓰기도 같은 잠금 안에서 해요. 기대값(`expected`) 충돌 거절을 제공해요.
 - **설정 파일 저장·불러오기:** 옵션 헤더 더보기에서 내보내기·미리보기·확인 후 적용을 제공해요. 워커가 잠금을 잡은 채 최신 값·지문을 비교해 효과 끄기→sync→local→방송 대상→효과 켜기 순서로 쓰고, 실패 시 되돌리며 되돌리기 실패와 외부 변경을 나눠 알려요.
 - **자동 검증(총괄 단독 실행):** 기능별 관련 검사를 `--test-concurrency=2`로 순차 실행했어요. 통합 1차에서 위임 파일의 lint(`tests/chat-multiview.test.js`의 `model` 재선언)·포맷 문제를 확인했고, Codex가 위임 6개 파일의 수정 권한을 총괄로 넘긴 뒤 고쳤어요. Codex 실측 결함(높이 경계 가림, 채팅 멀티뷰 칸 잘림, 폴더 이름 배지 텍스트, VOD 제목 겹침, 전체화면 위치·높이 유지, 넘친 칸의 접근 표시)을 고친 뒤 마지막으로 `npm run test:all -- --test-concurrency=2`(1,577개 모두 통과, 종료 코드 0) → `npm run lint`(종료 코드 0) → `npm run format:check`(범위 밖 기존 `.claude/settings.local.json`만 실패, 보존) → `git diff --check`(통과)를 순서대로 실행했어요.
@@ -342,7 +342,7 @@
 
 ## 2026-10-08 앰비언트 스크린샷 검토·멀티뷰 제외
 
-- Claude가 Codex 스크린샷 원본의 영역 밝기를 측정했어요. 사이드바 위 겹침, 좁은 화면 오버레이 아래 숨김, 헤더 보존을 화면상 확인했어요. 번짐 폭은 사이드바 약 70~90px, 채팅 약 60px이고 라이트 테마의 어두운 장면은 회색 그림자로 보여요. 수치는 [실측 결과](../measurements/ambient-glow-2026-10-08.md#스크린샷-수치-검토--2026-10-08-claude)에 있어요.
+- Claude가 Codex 스크린샷 원본의 영역 밝기를 측정했어요. 사이드바 위 겹침, 좁은 화면 오버레이 아래 숨김, 헤더 보존을 화면상 확인했어요. 번짐 폭은 사이드바 약 70~90px, 채팅 약 60px이고 라이트 테마의 어두운 장면은 회색 그림자로 보여요. 수치는 [실측 결과](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/ambient-glow-2026-10-08.md#스크린샷-수치-검토--2026-10-08-claude)에 있어요.
 - 멀티뷰에서 번짐 구멍이 메인 타일로 줄어 멀티뷰 영역과 보조 영상 쪽으로 번지는 문제를 확인했어요. 사용자 결정에 따라 `[data-bcmv-host="active"]` 동안 효과를 끄고 갱신을 멈추도록 바꿨어요. host 속성만 바뀌어도 반영되게 관찰 대상에 해당 속성을 추가했어요.
 - 검증: 멀티뷰 회귀를 포함한 `tests/ambient-glow.test.js` 10개 통과. 새 회귀는 수정 전 실패·수정 후 통과를 확인했어요. 실제 Chrome의 멀티뷰 켜기·끄기는 다시 확인하지 않았어요. 라이트 테마 표현과 번짐 폭은 아래 항목에서 정했어요.
 - 사용자 요청으로 번짐 폭을 두 배로 넓혔어요. `BLUR_PX`를 48→96으로 올리고 레이어 여백(3배, 144→288px)과 캔버스 바깥 확장(절반, 24→48px)도 같은 비율로 키워 밝기 분포를 거리 방향으로 두 배 늘렸어요. 경계 밝기는 같고 100% 기준 사이드바 약 140~180px, 채팅 약 120px까지 보일 것으로 계산돼요. 실제 Chrome에서는 다시 확인하지 않았어요. 라이트 테마의 회색 그림자 표현은 사용자 확인 후 그대로 두기로 했어요.
@@ -350,12 +350,12 @@
 - 사용자 보고로 메뉴 스위치가 오른쪽으로 늘어진 문제를 고쳤어요. 확장 스위치가 `button` 안에 있어 기본 `text-align:center`가 적용됐고, `left`가 없는 네이티브 트랙(`.pzp-ui-toggle__handle:before`)만 가운데로 밀렸어요. 버튼 정렬을 `start`로 두고 트랙에 `left:0`을 지정했어요. 2026-10-08 공개 `index-B5SHICxp.css`·`player-vendor-BDJ3c8a1.css`와 실제 확장 메뉴 마크업을 임시 headless Chrome으로 렌더링해 수정 전 약 15px 밀림과 수정 후 네이티브 스위치와의 일치를 확인했어요. 실제 치지직 페이지 재확인은 사용자 몫으로 남아요.
 - 사용자 요청으로 톱니바퀴 메뉴의 세기 슬라이더를 기본으로 접었어요. `앰비언트` 줄은 왼쪽 글자 버튼(`menuitem`, `aria-expanded`, 화살표 표시)과 오른쪽 스위치(`menuitemcheckbox`)로 나뉘어요. 글자나 줄의 빈 곳을 누르면 바로 아래 슬라이더가 펼쳐지고 접히며, 스위치는 켜기·끄기만 바꿔요. 위아래 방향키는 줄로 들어오고 나가며, 좌우 방향키는 글자와 스위치 사이를 오가요. 펼침 상태는 저장하지 않아요. `tests/ambient-glow.test.js` 14개가 통과했고 실제 Chrome 외관은 미확인이에요.
 - 사용자 요청으로 설정이 켜진 동안 플레이어 톱니바퀴 기본 메뉴에 `앰비언트` 스위치(`menuitemcheckbox`, 네이티브 `pzp-ui-toggle` 모양)와 `세기` 슬라이더를 넣었어요. 플레이어에서 끈 선택은 local `betterChzzkAmbientPlayerOff`에 기억하고 다른 탭의 변경도 따라가요. 읽기 전에는 효과를 시작하지 않아 꺼 둔 사용자에게 잠깐 번쩍이지 않아요. 세기는 sync `ambientIntensity`를 250ms 뒤 저장하며 OFF·페이지 이탈 중에도 대기 중인 값을 저장해요. 메뉴 클릭·휠·슬라이더 키는 플레이어로 전달하지 않고 방향키 이동은 스트림 정보처럼 스위치 출입만 연결해요. 클래스 근거는 2026-10-08 공개 `player-vendor-BDJ3c8a1.css`예요. `tests/ambient-glow.test.js` 14개가 통과했고 실제 Chrome 메뉴 외관은 미확인이에요.
-- 헤더 번짐 허용 뒤에도 실제 화면의 헤더에 효과가 없었어요. 공개 CSS에서 헤더 컨테이너가 `z-index:10000`임을 확인하고 레이어를 9999→10000으로 올렸어요. 근거는 [실측 결과](../measurements/ambient-glow-2026-10-08.md#헤더-겹침-근거--2026-10-08-claude)에 있고 실제 Chrome 재확인이 남아요.
+- 헤더 번짐 허용 뒤에도 실제 화면의 헤더에 효과가 없었어요. 공개 CSS에서 헤더 컨테이너가 `z-index:10000`임을 확인하고 레이어를 9999→10000으로 올렸어요. 근거는 [실측 결과](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/ambient-glow-2026-10-08.md#헤더-겹침-근거--2026-10-08-claude)에 있고 실제 Chrome 재확인이 남아요.
 - 사용자 요청으로 옵션 위치를 `시청 화면·멀티뷰`에서 분리해 플레이어 탭의 독립 묶음 `앰비언트 효과`(`data-option-group="player-ambient"`, 기본 접힘)로 옮겼어요. 설정 키·기본값·의존성은 그대로이고 새 묶음이라 예전 접힘 상태를 이어받지 않아요. 측정 문서의 준비 절차에 적힌 옛 경로는 당시 기록이에요.
 
 ## 2026-10-08 앰비언트 실제 Chrome 후속 검증
 
-- 약 20:48~21:00 KST, 작업 트리 확장을 실제 Chrome에서 다시 로드해 라이브·VOD, 두 테마, 강도, 입력, 화면 배치, 멀티뷰를 컴퓨터 사용으로 확인했어요. 요청된 스크린샷 13장과 추가 증거를 [실측 결과](../measurements/ambient-glow-2026-10-08.md)에 기록했어요.
+- 약 20:48~21:00 KST, 작업 트리 확장을 실제 Chrome에서 다시 로드해 라이브·VOD, 두 테마, 강도, 입력, 화면 배치, 멀티뷰를 컴퓨터 사용으로 확인했어요. 요청된 스크린샷 13장과 추가 증거를 [실측 결과](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/ambient-glow-2026-10-08.md)에 기록했어요.
 - DOM JSON은 콘솔 보안 경고로 미수집, 전체 화면 진입·정량 GPU 부하·0.3초 전환은 미확인이에요. 라이트의 어두운 장면에 회색 음영이 보여 시각 검토가 남아요. 전체 검증 완료나 릴리스 준비 완료로 판정하지 않아요.
 - 앰비언트 OFF/60%, 멀티뷰 OFF와 원래 다크 테마·창 크기를 복원했어요. 코드·테스트·버전은 변경하지 않았어요. 아래 구현·인계 절의 미검증 설명은 당시 기록이며 후속 결과는 이 절과 실측 결과를 기준으로 봐요.
 
@@ -363,7 +363,7 @@
 
 - `1.4.3` 브랜치(`v1.4.2` 커밋 `af08cf4`에서 분기)에서 `features/ambientGlow.js`를 추가했어요. 옵션은 `ambientEnabled`(기본 꺼짐)·`ambientIntensity`(10~100, 기본 60)이고 `플레이어 → 시청 화면·멀티뷰`에 토글과 강도 슬라이더를 두었어요. 결정 사항은 [업무 규칙](../business-rules.md#앰비언트-효과)에 있어요.
 - 메인 영상을 48×27 캔버스에 초당 최대 10번 그리고 이전 프레임과 섞어 장면 전환을 부드럽게 해요. 플레이어 사각형을 잘라 낸 고정 레이어(z-index 9999, 입력 통과)를 흐리게 펼쳐 채팅·사이드바 가장자리까지 겹치고 헤더 아래에서 잘라요. 다크는 screen, 라이트는 multiply 합성이에요. 픽셀을 읽는 API는 쓰지 않아요. 전체 화면·숨긴 탭·화면 밖 플레이어·비재생 경로에서는 멈추고, 라우트·`emptied`에서 이전 색을 지워요.
-- 검증: 새 `tests/ambient-glow.test.js` 9개, 전체 test:all 1,486개, lint 통과. 포맷 검사는 범위 밖 `.claude/settings.local.json`만 실패해 보존했어요. 내장 브라우저가 `chzzk.naver.com`을 안전 제한으로 열지 못해 실제 화면 확인은 하지 않았어요. 실제 Chrome 확인 절차는 [앰비언트 실측 요청](../measurements/ambient-glow-2026-10-08.md)에 있어요.
+- 검증: 새 `tests/ambient-glow.test.js` 9개, 전체 test:all 1,486개, lint 통과. 포맷 검사는 범위 밖 `.claude/settings.local.json`만 실패해 보존했어요. 내장 브라우저가 `chzzk.naver.com`을 안전 제한으로 열지 못해 실제 화면 확인은 하지 않았어요. 실제 Chrome 확인 절차는 [앰비언트 실측 요청](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/ambient-glow-2026-10-08.md)에 있어요.
 - 남은 확인: 사이드바(z-index 9999)·팝업과의 겹침 순서, 두 테마의 채팅 가독성, 기본 강도·번짐 폭의 시각 조정, 실제 GPU 부하. 1.4.3 새 기능 안내·업데이트 내역·버전 변경은 아직 하지 않았어요.
 
 ### 새 세션 인계 — 2026-10-08
@@ -374,7 +374,7 @@
 - **변경 파일:** 새 파일 `features/ambientGlow.js`, `tests/ambient-glow.test.js`, `docs/measurements/ambient-glow-2026-10-08.md`. 수정 파일 `manifest.json`, `shared/settings.js`, `options.html`, `options.js`, `styles.css`, `tests/settings.test.js`, `README.md`, `docs/business-rules.md`, `docs/contracts.md`, `docs/tracking/status.md`, `features/AGENTS.md`.
 - **확정 결정:** 기본 꺼짐, 강도 슬라이더, 라이트·다크 모두 적용, 라이브·다시보기 메인 영상 대상. 채팅·사이드바 가장자리까지 약간 번지는 경계 없는 효과예요. 세부 기준은 [업무 규칙](../business-rules.md#앰비언트-효과)에 있어요.
 - **완료한 검증:** 위 자동 검사만 했어요. 실제 Chrome 주입·화면·부하는 미검증이에요. 작성 세션의 내장 브라우저는 `chzzk.naver.com`을 안전 제한으로 열지 못했고 Claude in Chrome은 사용하지 않았어요.
-- **검증 대상:** [앰비언트 실측 요청](../measurements/ambient-glow-2026-10-08.md)의 DOM 측정 코드, 스크린샷 13장, 동작 확인 표가 기준이에요. 결과는 같은 문서의 '결과' 절과 `docs/measurements/ambient-glow-2026-10-08/`에 남겨요. 위험도 순으로 확인할 항목은 다음과 같아요.
+- **검증 대상:** [앰비언트 실측 요청](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/ambient-glow-2026-10-08.md)의 DOM 측정 코드, 스크린샷 13장, 동작 확인 표가 기준이에요. 결과는 같은 문서의 '결과' 절과 `docs/measurements/ambient-glow-2026-10-08/`에 남겨요. 위험도 순으로 확인할 항목은 다음과 같아요.
     1. 레이어가 펼친 사이드바 위에 실제로 그려지는지(같은 z-index, 나중 순서 가정)
     2. 라이트 테마에서 어두운 장면의 회색 테두리
     3. 강도 60%·번짐 폭의 시각 적정성
@@ -438,18 +438,18 @@
 
 ## VOD 전체화면 댓글 탭·본문 글꼴 — 2026-10-03
 
-전체화면에서 댓글 탭을 무조건 제거하던 경로를 해당 전체화면 내부 네이티브 패널에 mount하도록 수정했어요. 원본 댓글이 없을 때 본문에 제목 글꼴을 적용하던 대체값도 body 글꼴로 수정했어요. 실제 Mac Chrome에서 재현·수정 후 두 탭 전환·패널 닫기/재열기·일반/극장/전체화면 전환·다음 VOD 이동과 첫 댓글 표시 글꼴을 확인했어요. 관련 76개·최종 전체 1,450개와 lint·포맷·diff 검사가 통과했어요. [검증 범위와 제한](../measurements/vod-fullscreen-tabs-mac-2026-10-03.md)에 상세히 남겼어요. 기존 미커밋 변경을 보존했고 버전·Git 이력·배포는 변경하지 않았어요.
+전체화면에서 댓글 탭을 무조건 제거하던 경로를 해당 전체화면 내부 네이티브 패널에 mount하도록 수정했어요. 원본 댓글이 없을 때 본문에 제목 글꼴을 적용하던 대체값도 body 글꼴로 수정했어요. 실제 Mac Chrome에서 재현·수정 후 두 탭 전환·패널 닫기/재열기·일반/극장/전체화면 전환·다음 VOD 이동과 첫 댓글 표시 글꼴을 확인했어요. 관련 76개·최종 전체 1,450개와 lint·포맷·diff 검사가 통과했어요. [검증 범위와 제한](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/vod-fullscreen-tabs-mac-2026-10-03.md)에 상세히 남겼어요. 기존 미커밋 변경을 보존했고 버전·Git 이력·배포는 변경하지 않았어요.
 
 ## 다시보기 채팅 자동 복구 제거 — 2026-10-03
 
-사용자 요청으로 `vodReplayChatFix.js`와 manifest 등록, 복구 전용 새로고침·sessionStorage 위치 전달을 제거했어요. 네이티브 이어보기·명시적 타임코드·자동 화질·댓글 탭은 유지해요. 과거 임시 값은 현재 런타임에서 소비하지 않으며 별도 정리 코드는 추가하지 않아요. 아래 인계·2026-10-01 복구 보완 설명은 당시 상태예요. 관련 검사 184개·전체 검사 1,441개와 lint·format:check·git diff --check가 모두 통과했어요. 실제 Chrome에 제거본을 재로드하고 새 탭에서 채널→VOD 이동·채팅 닫기/열기·댓글 탭·댓글 시간 이동·다음 영상의 채팅 갱신을 확인했어요. 자세한 범위와 한계는 [실측 기록](../measurements/vod-chat-ab-2026-10-03.md)에 있어요. 버전은 변경하지 않았어요.
+사용자 요청으로 `vodReplayChatFix.js`와 manifest 등록, 복구 전용 새로고침·sessionStorage 위치 전달을 제거했어요. 네이티브 이어보기·명시적 타임코드·자동 화질·댓글 탭은 유지해요. 과거 임시 값은 현재 런타임에서 소비하지 않으며 별도 정리 코드는 추가하지 않아요. 아래 인계·2026-10-01 복구 보완 설명은 당시 상태예요. 관련 검사 184개·전체 검사 1,441개와 lint·format:check·git diff --check가 모두 통과했어요. 실제 Chrome에 제거본을 재로드하고 새 탭에서 채널→VOD 이동·채팅 닫기/열기·댓글 탭·댓글 시간 이동·다음 영상의 채팅 갱신을 확인했어요. 자세한 범위와 한계는 [실측 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/vod-chat-ab-2026-10-03.md)에 있어요. 버전은 변경하지 않았어요.
 
 ## 맥북 작업 인계 — 2026-10-03
 
 사용자 요청으로 현재 `1.4.2` branch의 카테고리 제외·VOD 이어보기 수정과 관련 테스트·문서를 함께 커밋하고 GitHub `neder2/Cheese-spanner`의 같은 branch로 옮기는 작업 스냅샷이에요. 수정 시작 기준은 `01e9358e7b81b695dbd779af2b2745daea901b99`이고, manifest/package 버전은 계속 1.4.1이에요. 아래 2026-10-01 기록의 미커밋 상태와 작업 당시 branch는 당시 상태를 설명해요.
 
-- 카테고리 제외: 구현·자동 검사까지 마쳤고 실제 Chrome 확인이 남아 있어요. [검증 기록과 수동 절차](../category-exclusions-verification.md)를 따라 검색·카드 제외·두 탭 저장·SPA 진입·키보드·테마·브라우저 재시작을 확인해요.
-- VOD 이어보기: 닫힌 채팅의 불필요한 복구와 같은 URL 시간의 재적용을 보완했어요. 일반 URL 새로고침·탭 재열기의 실제 관측과 미검증 조건은 [실측 기록](../measurements/vod-resume-2026-10-01.md)에 있어요. 신고 당시 조건·서버 위치와 첫 이벤트 순서·화질/광고 OFF 비교는 남아 있어요.
+- 카테고리 제외: 구현·자동 검사까지 마쳤고 실제 Chrome 확인이 남아 있어요. [검증 기록과 수동 절차](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/category-exclusions-verification.md)를 따라 검색·카드 제외·두 탭 저장·SPA 진입·키보드·테마·브라우저 재시작을 확인해요.
+- VOD 이어보기: 닫힌 채팅의 불필요한 복구와 같은 URL 시간의 재적용을 보완했어요. 일반 URL 새로고침·탭 재열기의 실제 관측과 미검증 조건은 [실측 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/vod-resume-2026-10-01.md)에 있어요. 신고 당시 조건·서버 위치와 첫 이벤트 순서·화질/광고 OFF 비교는 남아 있어요.
 - 다음 작업은 [남은 확인 사항](findings.md)에서 이어가요. 이번 인계는 개발 중인 소스 전달이며 새 기능 안내·포장·릴리스 검증 완료를 뜻하지 않아요.
 - 2026-10-01 전체 1,459개 테스트·lint·format:check 통과는 이전 작업의 기록이에요. 이번 인계에서는 런타임을 수정하지 않고 인계 문서·파일 누락·Git 변경 내용을 확인해요. 실제 Chrome 검증은 새로 수행하지 않아요. `.dryforge/`의 로컬 로그와 `node_modules/`, Chrome 프로필의 설정·기록은 Git 전송에 포함되지 않아요.
 
@@ -582,7 +582,7 @@ Codex에서 이어갈 때는 저장소 폴더를 열고 “AGENTS.md와 docs/tra
 
 ## 계획된 기능
 
-2026-10-08~09에 아래 5개를 구현했어요. 세부 결정은 사용자 위임에 따라 Claude가 정했고 [설계 기록](../planned-features-design-2026-10-08.md)에 있어요. 실제 Chrome 결과는 Codex가 사용자 Chrome에서 확인해 전달한 보고예요.
+2026-10-08~09에 아래 5개를 구현했어요. 세부 결정은 사용자 위임에 따라 Claude가 정했고 [설계 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/planned-features-design-2026-10-08.md)에 있어요. 실제 Chrome 결과는 Codex가 사용자 Chrome에서 확인해 전달한 보고예요.
 
 | 계획                    | 결정한 범위                                                                                     | 상태(2026-10-09)                                                                                                                                                                                                                                                         |
 | ----------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -604,7 +604,7 @@ Codex에서 이어갈 때는 저장소 폴더를 열고 “AGENTS.md와 docs/tra
 
 ## 2026-10-03 카테고리 제외 후속 확인
 
-필터 최상단 배치와 시청자 내림차순·확인된 0명 후보 제외·오른쪽 한 줄 표시를 보완했어요. 최종 전체 1,444개, lint·포맷 검사가 통과했고 실제 Mac Chrome에서 검색·추가·중복 방지·해제·새로고침 복원·숫자 필터 조합·두 테마를 확인했어요. 테스트 설정은 원복했어요. [상세 결과와 실제 UI 미실행 범위](../measurements/category-exclusions-mac-2026-10-03.md)를 구분해요. 커밋·push·릴리스는 하지 않았어요.
+필터 최상단 배치와 시청자 내림차순·확인된 0명 후보 제외·오른쪽 한 줄 표시를 보완했어요. 최종 전체 1,444개, lint·포맷 검사가 통과했고 실제 Mac Chrome에서 검색·추가·중복 방지·해제·새로고침 복원·숫자 필터 조합·두 테마를 확인했어요. 테스트 설정은 원복했어요. [상세 결과와 실제 UI 미실행 범위](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/category-exclusions-mac-2026-10-03.md)를 구분해요. 커밋·push·릴리스는 하지 않았어요.
 
 ### 전체 방송 검색 적용 후속
 
@@ -612,4 +612,4 @@ Codex에서 이어갈 때는 저장소 폴더를 열고 “AGENTS.md와 docs/tra
 
 ### VOD 검색 원본 쪽수 버튼
 
-2026-10-03 실제 Chrome에서 검색 결과 0개와 원본 1·2 페이지 버튼이 함께 표시되는 현상을 재현했어요. 숫자만 있는 현재 페이지 DOM을 식별하고 검색 종료·DOM 교체 때 복원하도록 보완했어요. 검색·원본 페이지 이동·뒤로/앞으로·Escape의 실제 결과와 자동 회귀는 [VOD 검색 페이지 버튼 기록](../measurements/vod-search-pagination-2026-10-03.md)에 구분했어요.
+2026-10-03 실제 Chrome에서 검색 결과 0개와 원본 1·2 페이지 버튼이 함께 표시되는 현상을 재현했어요. 숫자만 있는 현재 페이지 DOM을 식별하고 검색 종료·DOM 교체 때 복원하도록 보완했어요. 검색·원본 페이지 이동·뒤로/앞으로·Escape의 실제 결과와 자동 회귀는 [VOD 검색 페이지 버튼 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/vod-search-pagination-2026-10-03.md)에 구분했어요.
