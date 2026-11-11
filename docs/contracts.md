@@ -204,4 +204,4 @@ open-settings의 target은 panels, history, stream, categories뿐이고 확장 o
 
 ### 채널 영상 검색의 원본 페이지 묶음
 
-2026-10-03 실제 `#videos-PANEL`에서 영상 grid와 형제인 컨테이너 안의 `ol > li > button` 숫자 페이지 묶음을 확인했어요. 클래스는 `_container_1ihlx_1`, `_list_1ihlx_35`, `_button_1ihlx_8` 형태였고 pagination 이름·다음/이전 버튼이 없었어요. 구현은 해시 대신 현재 grid 형제·숫자 목록 구조를 확인해 검색 결과 표시 중에만 원본 묶음을 숨겨요. [실측·복원 검증](measurements/vod-search-pagination-2026-10-03.md)을 참고해요.
+2026-10-03 실제 `#videos-PANEL`에서 영상 grid와 형제인 컨테이너 안의 `ol > li > button` 숫자 페이지 묶음을 확인했어요. 클래스는 `_container_1ihlx_1`, `_list_1ihlx_35`, `_button_1ihlx_8` 형태였고 pagination 이름·다음/이전 버튼이 없었어요. 구현은 해시 대신 현재 grid 형제·숫자 목록 구조를 확인해 검색 결과 표시 중에만 원본 묶음을 숨겨요. [실측·복원 검증](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/vod-search-pagination-2026-10-03.md)을 참고해요.
