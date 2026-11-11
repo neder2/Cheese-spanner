@@ -157,7 +157,7 @@ test("choosing a backup only previews; confirmation writes once and reloads the 
     h.element("historyBackupApply").click();
     h.element("historyBackupApply").click();
     await h.idle();
-    assert.match(h.element("historyBackupStatus").textContent, /합쳤어요/);
+    assert.match(h.element("historyBackupStatus").textContent, /기록 합치기 완료/);
     assert.equal(h.state.writes, 1);
     assert.deepEqual(
         h.state.requests.map((request) => request.action),
@@ -209,7 +209,7 @@ test("a late file read cannot replace a newer file or reopen a cancelled preview
             }),
     });
     await waitForCondition(() => Boolean(completeFirst));
-    assert.match(h.element("historyBackupStatus").textContent, /읽고 있어요/);
+    assert.match(h.element("historyBackupStatus").textContent, /읽는 중/);
     assert.equal(h.element("historyBackupExport").disabled, true);
     assert.equal(h.element("historyBackupImport").disabled, true);
     h.element("historyBackupCancel").click();
@@ -304,7 +304,7 @@ test("oversized files are refused before reading; malformed and unreadable files
         },
     });
     await h.idle();
-    assert.match(h.element("historyBackupStatus").textContent, /파일을 읽지 못했어요/);
+    assert.match(h.element("historyBackupStatus").textContent, /파일 읽기 실패/);
     assert.equal(h.state.requests.length, 0);
     assert.equal(h.state.writes, 0);
 });
@@ -320,7 +320,7 @@ test("empty and already identical backups explain no change and cannot be applie
     await h.preview();
     assert.equal(h.element("historyBackupApply").disabled, true);
     assert.match(h.element("historyBackupSummary").textContent, /동일 1개/);
-    assert.match(h.element("historyBackupStatus").textContent, /모든 기록이 현재 기록과 같아요/);
+    assert.match(h.element("historyBackupStatus").textContent, /백업과 현재 기록이 같아 변경 없음/);
     assert.equal(h.state.writes, 0);
 });
 
@@ -346,12 +346,12 @@ test("ambiguous and identity-conflicting records show the escaped title, channel
     assert.match(h.element("historyBackupSkippedList").textContent, /상세 정보가 부족/);
     assert.equal(h.element("historyBackupSkippedList").querySelector("img"), null);
     assert.equal(h.element("historyBackupApply").disabled, true);
-    assert.match(h.element("historyBackupStatus").textContent, /현재 기록은 변경하지 않아요/);
+    assert.match(h.element("historyBackupStatus").textContent, /현재 기록 유지/);
     h.element("historyBackupCancel").click();
     h.chrome.testState.local[KEY] = plain(h.source);
     incoming.records[0].chat.messages[0].text = "다른 본문";
     await h.preview(incoming);
-    assert.match(h.element("historyBackupSkippedList").textContent, /식별 정보가 충돌/);
+    assert.match(h.element("historyBackupSkippedList").textContent, /식별 정보 충돌/);
     assert.equal(h.state.writes, 0);
 });
 
@@ -361,8 +361,8 @@ test("deleted records are explicitly previewed for restoration before any write"
         h.store.applyMutation(h.source, { kind: "clearHistory", cutoffAt: NOW }, NOW).history
     );
     await h.preview();
-    assert.match(h.element("historyBackupRestore").textContent, /삭제했던 기록이 있는 방송 1개/);
-    assert.match(h.element("historyBackupRestore").textContent, /복원해요/);
+    assert.match(h.element("historyBackupRestore").textContent, /삭제한 기록이 있는 방송 1개/);
+    assert.match(h.element("historyBackupRestore").textContent, /복원 예정/);
     assert.equal(h.state.writes, 0);
     h.element("historyBackupApply").click();
     await h.idle();
@@ -406,7 +406,7 @@ test("saving preserves current donations and disables cancellation until the res
     h.element("historyBackupPreviewTitle").dispatchEvent(
         new h.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })
     );
-    assert.match(h.element("historyBackupStatus").textContent, /합치고/);
+    assert.match(h.element("historyBackupStatus").textContent, /합치는 중/);
     h.state.heldResponses.shift()();
     await h.idle();
     const saved = h.chrome.testState.local[KEY].entries["live:100"];
@@ -425,8 +425,8 @@ test("a lost save response reports uncertainty and reselecting the file does not
     h.element("historyBackupApply").click();
     await h.idle();
     assert.equal(h.state.writes, 1);
-    assert.match(h.element("historyBackupStatus").textContent, /결과를 확인하지 못했어요/);
-    assert.doesNotMatch(h.element("historyBackupStatus").textContent, /저장하지 못|합쳤어요/);
+    assert.match(h.element("historyBackupStatus").textContent, /결과 확인 실패/);
+    assert.doesNotMatch(h.element("historyBackupStatus").textContent, /저장 실패|기록 합치기 완료/);
     h.state.loseResponse = false;
     await h.preview();
     assert.equal(h.element("historyBackupApply").disabled, true);
@@ -445,10 +445,10 @@ test("a missing response times out without assuming save failure, and ignores th
     await waitForCondition(() => h.state.heldResponses.length === 1);
     expire();
     await h.idle();
-    assert.match(h.element("historyBackupStatus").textContent, /결과를 확인하지 못했어요/);
+    assert.match(h.element("historyBackupStatus").textContent, /결과 확인 실패/);
     h.state.heldResponses.shift()();
     await new Promise((resolve) => setImmediate(resolve));
-    assert.match(h.element("historyBackupStatus").textContent, /결과를 확인하지 못했어요/);
+    assert.match(h.element("historyBackupStatus").textContent, /결과 확인 실패/);
     assert.equal(h.state.writes, 1);
 });
 
@@ -461,7 +461,7 @@ test("storage failure preserves current data; a successful save with a failed re
     await h.idle();
     assert.equal(h.state.writes, 0);
     assert.deepEqual(h.chrome.testState.local[KEY], initial);
-    assert.match(h.element("historyBackupStatus").textContent, /저장하지 못했어요/);
+    assert.match(h.element("historyBackupStatus").textContent, /시청 기록 저장 실패/);
     h.state.failWrite = false;
     await h.preview();
     h.chrome.storage.local.get = (_keys, callback) => {
@@ -472,8 +472,8 @@ test("storage failure preserves current data; a successful save with a failed re
     h.element("historyBackupApply").click();
     await h.idle();
     assert.equal(h.state.writes, 1);
-    assert.match(h.element("historyBackupStatus").textContent, /기록을 합쳤어요.*화면을 다시 읽지 못했어요/);
-    assert.doesNotMatch(h.element("historyBackupStatus").textContent, /저장하지 못/);
+    assert.match(h.element("historyBackupStatus").textContent, /기록 합치기 완료.*화면 갱신 실패/);
+    assert.doesNotMatch(h.element("historyBackupStatus").textContent, /시청 기록 저장 실패/);
 });
 
 test("export uses the latest worker snapshot, excludes donations, and releases its download URL", async (t) => {
@@ -498,8 +498,8 @@ test("export uses the latest worker snapshot, excludes donations, and releases i
     assert.equal(text, JSON.stringify(JSON.parse(text)), "compact output remains within the validator's byte limit");
     assert.deepEqual(plain(h.backup.parseBackup(text, { now: NOW })), plain(h.file));
     assert.doesNotMatch(text, /donation|donationImport/);
-    assert.match(h.element("historyBackupStatus").textContent, /다운로드를 시작했어요/);
-    assert.doesNotMatch(h.element("historyBackupStatus").textContent, /저장했어요/);
+    assert.match(h.element("historyBackupStatus").textContent, /다운로드 시작/);
+    assert.doesNotMatch(h.element("historyBackupStatus").textContent, /저장 완료/);
     await waitForCondition(() => h.revoked.length === 1, { timeoutMs: 2000 });
     assert.deepEqual(h.revoked, ["blob:backup-1"]);
 });
@@ -533,7 +533,7 @@ test("backup controls keep keyboard/status semantics, local script order and res
         assert.equal(h.element(`historyBackup${suffix}`).type, "button");
         assert.equal(h.element(`historyBackup${suffix}`).tabIndex, 0);
     }
-    assert.match(h.element("historyBackupScope").textContent, /전체 기간/);
+    assert.match(h.element("historyBackupScope").textContent, /화면 조건과 무관하게 전체 시청 기록·내 채팅/);
     assert.match(h.element("historyBackupScope").textContent, /수집을 꺼도/);
     assert.match(h.element("historyBackupPrivacy").textContent, /암호화 없이/);
     assert.match(document.querySelector(".history-storage-guide").textContent, /Local Extension Settings/);

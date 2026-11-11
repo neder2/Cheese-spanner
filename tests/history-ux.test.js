@@ -267,11 +267,11 @@ test("broadcast chat empty states distinguish retained counts from no collected 
     row("live:alpha").querySelector(".history-entry-chats").click();
     const archived = row("live:alpha").querySelector(".history-entry-chat-panel");
     assert.match(archived.textContent, /내 채팅 7개.*내용 보관 0개/);
-    assert.match(archived.textContent, /누적 개수는 유지/);
+    assert.match(archived.textContent, /누적 개수 유지/);
     assert.equal(archived.querySelector("ol"), null);
     row("live:beta").querySelector(".history-entry-detail").click();
     row("live:beta").querySelector(".history-entry-chats").click();
-    assert.match(row("live:beta").querySelector(".history-entry-chat-panel").textContent, /저장된 내 채팅이 없어요/);
+    assert.match(row("live:beta").querySelector(".history-entry-chat-panel").textContent, /저장된 내 채팅 없음/);
 });
 
 test("history selection, details, and date filtering preserve keyboard focus on the same identity", async (t) => {
@@ -401,7 +401,9 @@ test("month overview preserves filters and selection and returns focus to the pr
     const { dom, document, row, chrome } = await openHistory(t);
     document.getElementById("historySelectionToggle").click();
     const overview = document.getElementById("clearDateFilter");
+    const dateHint = document.getElementById("calendarFoot");
     assert.equal(overview.disabled, true);
+    assert.equal(dateHint.textContent, "날짜 선택 시 그날 기록만 표시");
     row("live:beta").querySelector("input").click();
     const search = document.getElementById("historySearch");
     search.value = "같은 방송";
@@ -413,6 +415,7 @@ test("month overview preserves filters and selection and returns focus to the pr
     assert.equal(document.querySelector(".history-item").dataset.entryId, "live:alpha");
     document.querySelector('[data-date="2026-09-11"]').click();
     assert.equal(document.querySelectorAll(".history-item").length, 1);
+    assert.equal(dateHint.textContent, "9월 11일 기록만 표시");
     assert.equal(overview.disabled, false);
     assert.equal(overview.hidden, false);
     assert.equal(document.querySelector('[data-date="2026-09-11"]').getAttribute("aria-pressed"), "true");
@@ -425,6 +428,7 @@ test("month overview preserves filters and selection and returns focus to the pr
     assert.equal(sort.value, "longest");
     assert.equal(overview.disabled, true);
     assert.equal(overview.hidden, true);
+    assert.equal(dateHint.textContent, "날짜 선택 시 그날 기록만 표시");
     assert.equal(document.activeElement, document.querySelector('[data-date="2026-09-11"]'));
     assert.equal(document.querySelector('[data-date="2026-09-11"]').getAttribute("aria-pressed"), "false");
     assert.equal(chrome.testState.runtimeMessages.length, 0);
@@ -451,7 +455,7 @@ test("history load errors persist until dismissal or successful reload", async (
     const message = document.getElementById("message");
     refresh.click();
     await waitForCondition(() => message.dataset.type === "error");
-    assert.match(message.textContent, /새로고침 버튼/);
+    assert.match(message.textContent, /‘새로고침’으로 다시 시도/);
     assert.equal(
         [...scheduled.values()].some(({ delay }) => delay === 1800),
         false
@@ -553,7 +557,7 @@ test("calendar disables future days and the activity tab groups rows and shows d
 test("an empty history explains how records appear and offers one refresh action", async (t) => {
     const { document } = await openHistory(t, (history) => (history.entries = {}), 0);
     await waitForCondition(() => document.querySelector(".history-empty"));
-    assert.match(document.querySelector(".history-empty").textContent, /아직 저장된 시청 기록이 없어요/);
+    assert.match(document.querySelector(".history-empty").textContent, /저장된 시청 기록 없음/);
     assert.equal(document.querySelector(".history-empty a").getAttribute("href"), "options.html");
     assert.equal(document.getElementById("historySelectionToggle").disabled, true);
     assert.equal(document.getElementById("totalWatchTime").textContent, "0분");
@@ -632,8 +636,13 @@ test("the all-period list shows each record's own dates instead of the calendar 
     assert.equal(row("live:alpha").querySelector(".history-item-date").textContent, "2026.09.10");
 });
 
-test("history page copy uses the polite 해요체 tone", () => {
-    for (const file of ["history.html", "history.js"]) {
-        assert.doesNotMatch(readRepoFile(file), /(습니다|입니다|합니다|됩니다)/, file);
+test("history descriptions and status messages omit polite endings", () => {
+    for (const file of ["history.html", "history.js", "historyBackup.js"]) {
+        const copySource = readRepoFile(file).replace(/<!--[\s\S]*?-->|\/\*[\s\S]*?\*\/|^\s*\/\/[^\r\n]*/gm, "");
+        assert.doesNotMatch(
+            copySource,
+            /[가-힣](?<![필주개중수소강요])요(?=[.!?…"'\x60<])|(?:습|합|됩|입)니다|십시오/,
+            file
+        );
     }
 });

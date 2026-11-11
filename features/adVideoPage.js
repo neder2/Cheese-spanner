@@ -124,7 +124,8 @@
     }
 
     function getChzzkPlayerRoot(video) {
-        if (!(video instanceof HTMLVideoElement) || !video.isConnected) return null;
+        if (!(video instanceof HTMLVideoElement) || !video.isConnected || video.closest("[data-bcmv-video]"))
+            return null;
         let element = video;
         for (let depth = 0; element instanceof Element && depth < 16; depth++) {
             if (element.matches(".chzzk_player")) return element;

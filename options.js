@@ -46,12 +46,10 @@ const {
 } = CheeseSpannerSettings;
 
 const storage = globalThis.chrome?.storage?.sync;
-const OPTIONS_LOAD_ERROR_MESSAGE = "설정을 불러오지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.";
-const OPTIONS_LOAD_BLOCKED_SAVE_MESSAGE =
-    "설정을 불러오지 못해 저장하지 않았어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.";
-const OPTIONS_SAVE_ERROR_MESSAGE = "설정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.";
-const optionsSaveConflictMessage = (count) =>
-    `저장하기 전에 다른 곳에서도 바뀐 항목 ${count}개는 이 화면에서 고른 값으로 저장했어요.`;
+const OPTIONS_LOAD_ERROR_MESSAGE = "설정 불러오기 실패. 페이지를 새로고침한 뒤 다시 시도.";
+const OPTIONS_LOAD_BLOCKED_SAVE_MESSAGE = "설정 불러오기 실패로 저장 중단. 페이지를 새로고침한 뒤 다시 시도.";
+const OPTIONS_SAVE_ERROR_MESSAGE = "설정 저장 실패. 잠시 후 다시 시도.";
+const optionsSaveConflictMessage = (count) => `다른 화면에서도 바뀐 항목 ${count}개는 이 화면의 값으로 저장.`;
 const NOTICE_STATE_LABELS = {
     loading: "불러오는 중",
     dirty: "변경됨",
@@ -63,13 +61,12 @@ const NOTICE_STATE_LABELS = {
 // 팔로잉 미리보기 영상(HLS)은 pstatic.net에서 내려오므로 선택 권한으로 두고,
 // 기능을 켜는 순간에만 요청한다. 이미 허용된 상태의 request는 팝업 없이 승인된다.
 const PREVIEW_HOST_PERMISSION = { origins: ["https://*.pstatic.net/*"] };
-const PREVIEW_PERMISSION_DENIED_MESSAGE = "권한이 거부되어 팔로잉 미리보기를 켜지 않았어요.";
+const PREVIEW_PERMISSION_DENIED_MESSAGE = "권한 거부로 팔로잉 미리보기 켜기 실패";
 // 녹화 파일을 다운로드 폴더 안의 하위 폴더로 보낼 때만 쓰는 선택 권한(shared/recordingDownloads.js).
 const DOWNLOADS_PERMISSION = { permissions: ["downloads"] };
-const RECORDER_FOLDER_DENIED_MESSAGE =
-    "다운로드 권한이 거부되어 저장하지 않았어요. 녹화 저장 폴더를 비우면 다른 옵션을 저장할 수 있어요.";
-const SHORTCUT_KEY_UNAVAILABLE_MESSAGE = "이 키는 기존 재생 조작과 겹쳐 지정할 수 없어요.";
-const SHORTCUT_KEY_DUPLICATE_MESSAGE = "배속 감소·증가·초기화는 서로 다른 키로 지정해 주세요.";
+const RECORDER_FOLDER_DENIED_MESSAGE = "다운로드 권한 거부로 저장 중단. 녹화 저장 폴더를 비우면 다른 옵션 저장 가능.";
+const SHORTCUT_KEY_UNAVAILABLE_MESSAGE = "기존 재생 단축키와 겹치는 키";
+const SHORTCUT_KEY_DUPLICATE_MESSAGE = "배속 감소·증가·초기화는 서로 다른 키로 지정";
 
 let hideMessageTimer = 0;
 let savedOptions = null;
@@ -222,7 +219,7 @@ function renderChatKeywordRules(options, disabled) {
             label.append(text, select);
             list.append(label);
         }
-        if (!rules.length) list.textContent = "숨길 문구를 입력하면 문구별 조건이 나타나요.";
+        if (!rules.length) list.textContent = "숨길 문구 입력 후 문구별 조건 표시";
     }
     for (const select of list.querySelectorAll("select")) {
         const rule = rules.find((item) => item.phrase === select.dataset.keywordPhrase);
@@ -483,12 +480,12 @@ function startSave(normalized, message, save = createSaveSnapshot(normalized)) {
                                     status.hidden = false;
                                     status.textContent =
                                         result?.ok && result.enabled !== values.adVideoEnabled
-                                            ? "다른 곳에서 광고 설정이 변경됐어요. 설정을 다시 열어 현재 값을 확인해 주세요."
+                                            ? "다른 화면에서 광고 설정 변경. 설정을 다시 열어 현재 값 확인."
                                             : result?.ok
                                               ? values.adVideoEnabled
-                                                  ? "적용 준비가 끝났어요. 치지직 탭을 새로고침해 주세요."
-                                                  : "동영상 광고 차단을 껐어요. 이미 반영된 상태는 새로고침하면 복원돼요."
-                                              : "설정은 저장됐지만 적용 준비에 실패했어요. 확장을 다시 로드한 뒤 설정을 확인해 주세요.";
+                                                  ? "적용 준비 완료. 치지직 탭 새로고침."
+                                                  : "동영상 광고 차단 꺼짐. 이미 적용된 차단은 치지직 탭 새로고침 후 해제."
+                                              : "설정 저장 완료, 적용 준비 실패. 확장을 다시 로드한 뒤 설정 확인.";
                                 }
                                 // Changes saved elsewhere while the worker synced the ad registration are part of the
                                 // stored result; the snapshot taken at the write callback would roll them back.
@@ -645,7 +642,7 @@ function renderFormChanges() {
 function saveCurrentOptions() {
     if (optionsLoadState !== "ready" || saveInFlight || externalBusy) return;
     if (hasInvalidChatKeywords()) {
-        showMessage("숨길 문구는 최대 50개, 한 문구 100자, 전체 2,000자까지 입력해 주세요.", "error");
+        showMessage("숨길 문구는 최대 50개, 한 문구 100자, 전체 2,000자", "error");
         document.getElementById("chatKeywordFilterWords").focus();
         return;
     }
@@ -696,23 +693,23 @@ function saveCurrentOptions() {
                     renderFormChanges();
                     showMessage(
                         deniedKeys.includes("liveStartNotificationsEnabled")
-                            ? "권한이 거부되어 저장하지 않았어요. 데스크톱 알림을 끈 상태로 다른 옵션을 저장할 수 있어요."
+                            ? "알림 권한 거부로 저장 중단. 데스크톱 알림을 끄면 다른 옵션 저장 가능."
                             : deniedKeys.includes("videoRecorderFolder")
                               ? RECORDER_FOLDER_DENIED_MESSAGE
                               : deniedKeys.includes("liveMultiviewEnabled")
-                                ? "영상 호스트 권한이 거부되어 멀티뷰를 켜지 않았어요."
+                                ? "영상 호스트 접근 권한 거부로 멀티뷰 켜기 실패"
                                 : PREVIEW_PERMISSION_DENIED_MESSAGE,
                         "error"
                     );
                 });
                 return;
             }
-            startSave(normalized, "옵션을 저장했어요.", save);
+            startSave(normalized, "옵션 저장 완료.", save);
         });
         return;
     }
 
-    commitSave("옵션을 저장했어요.");
+    commitSave("옵션 저장 완료.");
 }
 
 // 검색창이나 숫자 입력에서 Enter를 눌러도 페이지가 다시 로드되지 않게 한다.
@@ -836,13 +833,13 @@ document.addEventListener("click", (event) => {
 
 resetButton.addEventListener("click", () => {
     if (optionsLoadState !== "ready" || saveInFlight || externalBusy) return;
-    if (!window.confirm("모든 설정을 기본값으로 되돌릴까요? 직접 바꾼 키와 수치도 함께 초기화돼요.")) return;
+    if (!window.confirm("모든 설정을 기본값으로 복원? 직접 지정한 키와 수치도 초기화.")) return;
     headerMenu.open = false;
     headerMenu.querySelector("summary").focus();
     renderOptions(DEFAULT_OPTIONS);
     // Restoring defaults is an explicit choice for every option, including ones changed elsewhere meanwhile.
     markOptionsTouched(OPTION_KEYS);
-    commitSave("기본값으로 복원했어요.");
+    commitSave("기본값 복원 완료");
 });
 
 // Recording folder: say where the next file goes and offer the downloads permission when a folder needs it.
@@ -869,15 +866,13 @@ function renderRecorderFolderStatus(options) {
     }
     const permissions = globalThis.chrome?.permissions;
     if (typeof permissions?.contains !== "function") {
-        show(`다운로드 폴더 안의 ‘${folder}’ 폴더에 저장해요.`, false);
+        show(`다운로드 폴더 안의 ‘${folder}’ 폴더에 저장`, false);
         return;
     }
     permissions.contains(DOWNLOADS_PERMISSION, (held) => {
         const granted = !globalThis.chrome?.runtime?.lastError && held === true;
         show(
-            granted
-                ? `다운로드 폴더 안의 ‘${folder}’ 폴더에 저장해요.`
-                : "다운로드 권한이 없어 지금은 녹화 파일을 다운로드 폴더에 바로 저장해요.",
+            granted ? `다운로드 폴더 안의 ‘${folder}’ 폴더에 저장` : "다운로드 권한이 없어 기본 다운로드 폴더에 저장",
             !granted
         );
     });
@@ -886,7 +881,7 @@ function renderRecorderFolderStatus(options) {
 recorderPermissionButton?.addEventListener("click", () => {
     if (recorderPermissionButton.disabled) return;
     requestOptionalPermissions(DOWNLOADS_PERMISSION, (granted) => {
-        if (!granted) showMessage("다운로드 권한이 거부되어 녹화 파일은 다운로드 폴더에 바로 저장돼요.", "error");
+        if (!granted) showMessage("다운로드 권한 거부. 녹화 파일은 기본 다운로드 폴더에 저장.", "error");
         if (recorderStatusOptions) renderRecorderFolderStatus(recorderStatusOptions);
     });
 });
@@ -930,7 +925,7 @@ resetPanelSizesButton?.addEventListener("click", () => {
     const local = globalThis.chrome?.storage?.local;
     const keys = Object.values(globalThis.CheeseSpannerSettingsBackup?.PANEL_KEYS || {});
     if (typeof local?.set !== "function" || !keys.length) {
-        showMessage("저장한 크기를 초기화하지 못했어요. 잠시 후 다시 시도해 주세요.", "error");
+        showMessage("저장한 크기 초기화 실패. 잠시 후 다시 시도.", "error");
         return;
     }
     resetPanelSizesButton.disabled = true;
@@ -941,13 +936,13 @@ resetPanelSizesButton?.addEventListener("click", () => {
                     const error = globalThis.chrome?.runtime?.lastError;
                     resolve();
                     resetPanelSizesButton.disabled = false;
-                    if (error) showMessage("저장한 크기를 초기화하지 못했어요. 잠시 후 다시 시도해 주세요.", "error");
-                    else showMessage("저장한 크기를 초기화했어요. 새로 여는 치지직 화면부터 기본 크기로 보여요.");
+                    if (error) showMessage("저장한 크기 초기화 실패. 잠시 후 다시 시도.", "error");
+                    else showMessage("크기 초기화 완료. 새로 여는 치지직 화면부터 기본 크기 적용.");
                 })
             )
     ).catch(() => {
         resetPanelSizesButton.disabled = false;
-        showMessage("저장한 크기를 초기화하지 못했어요. 잠시 후 다시 시도해 주세요.", "error");
+        showMessage("저장한 크기 초기화 실패. 잠시 후 다시 시도.", "error");
     });
 });
 
@@ -1447,7 +1442,7 @@ function applySearch(query) {
     }
 
     if (searchEmptyEl) {
-        searchEmptyEl.textContent = `‘${query.trim()}’에 해당하는 설정이 없어요.`;
+        searchEmptyEl.textContent = `‘${query.trim()}’에 해당하는 설정 없음`;
         searchEmptyEl.classList.toggle("hidden", directMatches.length > 0);
     }
     if (searchStatusEl) {

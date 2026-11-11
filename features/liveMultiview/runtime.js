@@ -569,7 +569,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
     function addProblem(id) {
         if (!id) return "올바른 치지직 라이브 URL 입력 필요.";
         if (state.channels.some((entry) => entry.id === id)) return "이미 추가된 방송.";
-        if (state.channels.length >= 6) return "최대 6개 방송까지 추가 가능.";
+        if (state.channels.length >= model.MAX_VIEWS) return `최대 ${model.MAX_VIEWS}개 방송까지 추가 가능.`;
         return "";
     }
     function addStreamFromUrl(value, freeRect = null) {
@@ -660,7 +660,9 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         event.preventDefault();
         event.stopPropagation();
         // The URL itself is protected until drop for drags from another tab/app.
-        const problem = incomingDragProblem() || (state.channels.length >= 6 ? "최대 6개 방송까지 추가 가능." : "");
+        const problem =
+            incomingDragProblem() ||
+            (state.channels.length >= model.MAX_VIEWS ? `최대 ${model.MAX_VIEWS}개 방송까지 추가 가능.` : "");
         event.dataTransfer.dropEffect = problem
             ? "none"
             : ["link", "linkMove"].includes(event.dataTransfer.effectAllowed)
@@ -825,7 +827,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
                 state.freeWindows = state.freeWindows
                     .filter((cell) => cell.id !== routeId)
                     .map((cell) => (cell.id === previous.id ? { ...cell, id: routeId } : cell));
-            state.channels = state.channels.slice(0, 6);
+            state.channels = state.channels.slice(0, model.MAX_VIEWS);
             state.dockTree = model.defaultTree(state.channels);
             state.customLayout = false;
         }

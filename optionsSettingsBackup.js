@@ -23,14 +23,14 @@
         previewHosts: { origins: ["https://*.pstatic.net/*"] },
     };
     const ERROR_TEXT = {
-        "invalid-file": "치즈 스패너 설정 파일이 아니거나 내용이 올바르지 않아요.",
-        "invalid-json": "JSON 형식의 설정 파일이 아니에요.",
-        "too-large": "설정 파일이 너무 커요. 1MB 이하 파일만 불러올 수 있어요.",
-        "unsupported-version": "이 버전에서 읽을 수 없는 설정 파일이에요. 확장을 업데이트한 뒤 다시 시도해 주세요.",
-        "storage-read-failed": "현재 설정을 읽지 못했어요. 잠시 후 다시 시도해 주세요.",
-        "storage-write-failed": "설정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.",
-        "untrusted-sender": "이 화면에서는 설정 파일을 처리할 수 없어요.",
-        unavailable: "확장 백그라운드와 연결하지 못했어요. 확장을 다시 로드한 뒤 시도해 주세요.",
+        "invalid-file": "치즈 스패너 설정 파일이 아니거나 내용에 오류가 있음",
+        "invalid-json": "JSON 형식의 설정 파일 필요",
+        "too-large": "설정 파일은 1MB 이하만 불러올 수 있음",
+        "unsupported-version": "이 버전에서 지원하지 않는 설정 파일. 확장 업데이트 후 다시 시도.",
+        "storage-read-failed": "현재 설정 읽기 실패. 잠시 후 다시 시도.",
+        "storage-write-failed": "설정 저장 실패. 잠시 후 다시 시도.",
+        "untrusted-sender": "이 화면에서 설정 파일 처리 불가",
+        unavailable: "확장 연결 실패. 확장을 다시 로드한 뒤 다시 시도.",
     };
     const SECTION_TEXT = {
         options: "옵션",
@@ -216,25 +216,24 @@
         for (const [term, value] of summaryRows(preview.summary)) list.append(el("dt", "", term), el("dd", "", value));
         const notes = el("ul", "settings-backup-notes");
         notes.append(
-            el("li", "", "파일에 없는 구역은 현재 설정을 유지해요. 멀티뷰는 파일에 있는 채널만 바꿔요."),
-            el("li", "", "시청 기록·카테고리 제외·로그인 정보는 바뀌지 않아요."),
-            el("li", "", "진행 중인 방송은 건너뛰고 다음 새 방송부터 알림·자동 열기를 실행해요.")
+            el("li", "", "파일에 없는 구역은 현재 설정 유지. 멀티뷰는 파일에 있는 채널만 변경."),
+            el("li", "", "시청 기록·카테고리 제외·로그인 정보 유지"),
+            el("li", "", "진행 중인 방송은 건너뛰고 다음 새 방송부터 알림·자동 열기 적용")
         );
         if (preview.ignoredOptionKeys?.length)
-            notes.append(el("li", "", `이 버전에 없는 옵션 ${preview.ignoredOptionKeys.length}개는 무시해요.`));
+            notes.append(el("li", "", `이 버전에서 지원하지 않는 옵션 ${preview.ignoredOptionKeys.length}개 제외`));
         // After a re-confirmation the worker reports exactly which features the user's choice keeps off.
         const keptOff = preview.summary?.keptOffOptionKeys || [];
-        if (keptOff.length)
-            notes.append(el("li", "", `권한을 받지 못한 ${featureList(keptOff)} 기능은 켜지 않고 불러와요.`));
+        if (keptOff.length) notes.append(el("li", "", `권한이 없는 ${featureList(keptOff)} 기능은 끈 상태로 불러오기`));
         const needs = permissionNeeds(permissionKeys(current));
         if (needs.length)
             notes.append(
                 el(
                     "li",
                     "",
-                    `적용할 때 ${needs
+                    `적용 시 ${needs
                         .map((name) => (name === "notifications" ? "데스크톱 알림" : "미리보기·멀티뷰 영상"))
-                        .join("·")} 권한을 요청할 수 있어요.`
+                        .join("·")} 권한 요청 가능`
                 )
             );
         const status = el("p", "settings-backup-status");
@@ -247,7 +246,7 @@
         const cancel = button("취소", "secondary-button", () => closePanel({ restoreFocus: true }));
         actions.append(apply, cancel);
         panel.append(heading, meta, list, notes, status, actions);
-        if (preview.changes === 0) setStatus("현재 설정과 같아서 바꿀 내용이 없어요.");
+        if (preview.changes === 0) setStatus("현재 설정과 같아 변경 사항 없음");
         panel.hidden = false;
         heading.focus({ preventScroll: false });
     }
@@ -305,7 +304,7 @@
     async function applyImport() {
         if (!current || busy) return;
         if (page.hasUnsavedChanges()) {
-            setStatus("저장하지 않은 옵션 변경이 있어 적용하지 않았어요. 취소한 뒤 저장하거나 되돌려 주세요.", "error");
+            setStatus("저장하지 않은 변경으로 적용 중단. 취소 후 변경 사항을 저장하거나 되돌리기.", "error");
             return;
         }
         const flow = current;
@@ -313,13 +312,13 @@
         const keys = permissionKeys(flow);
         const granted = requestPermissions(permissionNeeds(keys));
         setBusy(true);
-        setStatus("설정을 불러오는 중이에요…");
+        setStatus("설정 불러오는 중");
         try {
             if (!(await granted)) {
                 const deniedKeys = await unheldPermissionKeys(keys);
                 if (current !== flow) return;
                 setBusy(false);
-                setStatus("권한이 거부되어 아무것도 바꾸지 않았어요.", "error");
+                setStatus("권한 거부. 현재 설정 유지.", "error");
                 const fallback = button(
                     `${featureList(deniedKeys)} 기능은 켜지 않고 불러오기`,
                     "secondary-button settings-backup-fallback",
@@ -363,21 +362,21 @@
             setBusy(false);
             render();
             if (current.preview.changes === 0)
-                setStatus("미리보기 뒤에 설정이 바뀌어 이제 현재 설정과 같아요. 바꿀 내용이 없어요.");
-            else setStatus("미리보기 뒤에 설정이 바뀌었어요. 바뀐 내용을 다시 확인한 뒤 적용해 주세요.", "error");
+                setStatus("미리보기 이후 설정이 바뀌어 현재 설정과 같음. 변경 사항 없음.");
+            else setStatus("미리보기 이후 설정 변경. 바뀐 내용을 다시 확인한 뒤 적용.", "error");
             return;
         }
         if (result?.status === "failed") {
             await page.reloadSavedOptions();
             setBusy(false);
             const stage = STAGE_TEXT[result.stage] || "일부 구역";
-            const parts = [`${stage}을 저장하지 못했어요.`];
-            if (result.rolledBack) parts.push("앞서 바꾼 값을 모두 되돌려 설정은 불러오기 전과 같아요.");
+            const parts = [`${stage} 저장 실패.`];
+            if (result.rolledBack) parts.push("앞서 바꾼 값을 되돌려 불러오기 전 설정으로 복원.");
             if (result.failed?.length)
                 parts.push(`되돌리기도 실패해 불러온 값이 남은 구역: ${sectionList(result.failed)}.`);
             if (result.conflicted?.length)
                 parts.push(`다른 곳에서 바뀌어 되돌리지 않은 구역: ${sectionList(result.conflicted)}.`);
-            if (!result.rolledBack) parts.push("해당 구역의 설정을 확인해 주세요.");
+            if (!result.rolledBack) parts.push("해당 구역의 설정 확인.");
             setStatus(parts.join(" "), "error");
             return;
         }
@@ -385,30 +384,30 @@
         setBusy(false);
         closePanel({ restoreFocus: true });
         const conflicts = result?.conflicts?.length
-            ? ` 적용 중 다른 곳에서 바뀐 값이 감지된 구역(${sectionList(result.conflicts)})은 확인해 주세요.`
+            ? ` 적용 중 다른 화면에서 변경된 구역 확인: ${sectionList(result.conflicts)}.`
             : "";
         // The worker's plan for this write names the features that really stayed off.
         const keptOff = result?.summary?.keptOffOptionKeys || [];
-        const disabled = keptOff.length ? ` 권한을 받지 못한 ${featureList(keptOff)} 기능은 켜지 않았어요.` : "";
+        const disabled = keptOff.length ? ` 권한이 없는 ${featureList(keptOff)} 기능은 꺼짐.` : "";
         page.showMessage(
             result?.status === "unchanged"
-                ? `바뀐 설정이 없어요.${disabled}`
-                : `설정 파일을 불러왔어요. 열린 치지직 화면은 새로고침하면 모두 반영돼요.${disabled}${conflicts}`
+                ? `변경된 설정 없음.${disabled}`
+                : `설정 파일 불러오기 완료. 열린 치지직 화면은 새로고침 후 반영.${disabled}${conflicts}`
         );
     }
 
     function exportMessage(omitted) {
-        if (!omitted.length) return "설정 파일을 만들었어요. 시청 기록·로그인 정보는 들어 있지 않아요.";
+        if (!omitted.length) return "설정 파일 생성 완료. 시청 기록·로그인 정보 제외.";
         const names = (list) => list.map((name) => OMITTED_TEXT[name] || "기타").join("·");
         const tooMany = omitted.filter((name) => name === "multiviewDelays" || name === "multiviewQualities");
         const unreadable = omitted.filter((name) => !tooMany.includes(name));
-        const parts = ["설정 파일을 만들었어요."];
-        if (unreadable.length) parts.push(`저장값을 읽지 못한 ${names(unreadable)} 구역은 빠졌어요.`);
+        const parts = ["설정 파일 생성 완료."];
+        if (unreadable.length) parts.push(`저장값을 읽지 못한 구역 제외: ${names(unreadable)}.`);
         if (tooMany.length)
             parts.push(
-                `${names(tooMany)} 구역은 저장한 채널이 ${catalog.MAX_MULTIVIEW_CHANNELS.toLocaleString(
+                `${names(tooMany)} 구역 제외: 저장 채널 ${catalog.MAX_MULTIVIEW_CHANNELS.toLocaleString(
                     "ko-KR"
-                )}개를 넘어 파일에 넣지 않았어요.`
+                )}개 한도 초과.`
             );
         return parts.join(" ");
     }
@@ -443,7 +442,7 @@
         // Keeps focus visible when the import stops here, the picker is cancelled or the file is rejected.
         restoreFocusTo(importButton);
         if (!page.isReady() || page.hasUnsavedChanges()) {
-            page.showMessage("저장하지 않은 변경이 있어요. 저장하거나 되돌린 뒤 불러와 주세요.", "error");
+            page.showMessage("저장하지 않은 변경 사항을 저장하거나 되돌린 뒤 불러오기", "error");
             return;
         }
         fileInput.value = "";
@@ -456,7 +455,7 @@
         // The form stays editable while the picker is open; check again before taking it over.
         if (!page.isReady() || page.hasUnsavedChanges()) {
             fileInput.value = "";
-            page.showMessage("저장하지 않은 변경이 있어요. 저장하거나 되돌린 뒤 불러와 주세요.", "error");
+            page.showMessage("저장하지 않은 변경 사항을 저장하거나 되돌린 뒤 불러오기", "error");
             return;
         }
         page.setExternalBusy(true);

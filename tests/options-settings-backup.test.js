@@ -123,7 +123,7 @@ test("export downloads the worker's file and import shows a preview before any w
     assert.deepEqual(plain(h.backupMessages[0]), { type: BACKUP, version: 1, action: "export" });
     assert.match(h.downloads[0].name, /^cheese-spanner-settings-\d{8}-\d{4}\.json$/);
     assert.equal(JSON.parse(await h.downloads[0].blob.text()).kind, "cheese-spanner.settings-backup");
-    assert.match(h.message(), /시청 기록·로그인 정보는 들어 있지 않아요/);
+    assert.match(h.message(), /시청 기록·로그인 정보 제외/);
 
     const toggle = queryOption(h.document, "chatTimestampEnabled");
     toggle.checked = !toggle.checked;
@@ -150,8 +150,8 @@ test("export downloads the worker's file and import shows a preview before any w
     assert.match(text, /settings\.json/);
     assert.match(text, /파일 5개 중 2개 바뀜/);
     assert.match(text, /방송 알림 대상1개 채널 · 바뀜/);
-    assert.match(text, /이 버전에 없는 옵션 1개는 무시해요/);
-    assert.match(text, /진행 중인 방송은 건너뛰고 다음 새 방송부터 알림·자동 열기를 실행해요/);
+    assert.match(text, /이 버전에서 지원하지 않는 옵션 1개 제외/);
+    assert.match(text, /진행 중인 방송은 건너뛰고 다음 새 방송부터 알림·자동 열기 적용/);
     assert.equal(h.chrome.testState.sync.chatPosition, undefined, "previewing writes nothing");
     const locked = queryOption(h.document, "chatTimestampEnabled");
     assert.equal(locked.disabled, true, "option editing is locked while the restore owns the stored options");
@@ -174,7 +174,7 @@ test("export downloads the worker's file and import shows a preview before any w
     });
     assert.equal(h.chrome.testState.permissionRequests.length, 0, "no permission is requested when none is needed");
     await waitForCondition(() => queryOption(h.document, "chatPosition").value === "left");
-    assert.match(h.message(), /설정 파일을 불러왔어요/);
+    assert.match(h.message(), /설정 파일 불러오기 완료/);
     assert.equal(h.document.activeElement, h.document.querySelector("#headerMenu > summary"));
     assertVisibleFocus(h.document, "after applying");
     assert.equal(queryOption(h.document, "chatTimestampEnabled").disabled, false, "editing resumes after closing");
@@ -224,7 +224,7 @@ test("denied permissions write nothing and offer importing with only those featu
     await waitForCondition(() => !h.panel.hidden);
     h.panel.querySelector(".primary-button").click();
     assert.deepEqual(plain(h.chrome.testState.permissionRequests), [{ permissions: ["notifications"] }]);
-    await waitForCondition(() => /권한이 거부되어/.test(h.panel.textContent));
+    await waitForCondition(() => /권한 거부\. 현재 설정 유지/.test(h.panel.textContent));
     assert.equal(h.backupMessages.filter((message) => message.action === "apply").length, 0);
     const fallback = [...h.panel.querySelectorAll("button")].find((button) =>
         button.textContent.includes("기능은 켜지 않고 불러오기")
@@ -243,7 +243,7 @@ test("denied permissions write nothing and offer importing with only those featu
     await waitForCondition(() => h.panel.hidden);
     assert.deepEqual(plain(h.backupMessages.at(-1).disabledOptionKeys), ["liveStartNotificationsEnabled"]);
     assert.equal(h.chrome.testState.permissionRequests.length, 1, "the fallback does not ask again");
-    assert.match(h.message(), /권한을 받지 못한 방송 시작 데스크톱 알림 기능은 켜지 않았어요/);
+    assert.match(h.message(), /권한이 없는 방송 시작 데스크톱 알림 기능은 꺼짐/);
 });
 
 test("permissions follow only the features the file turns on, and denial keeps just those off", async (t) => {
@@ -262,11 +262,11 @@ test("permissions follow only the features the file turns on, and denial keeps j
     });
     await h.chooseFile(fileValue);
     await waitForCondition(() => !h.panel.hidden);
-    assert.match(h.panel.textContent, /미리보기·멀티뷰 영상 권한을 요청할 수 있어요/);
+    assert.match(h.panel.textContent, /미리보기·멀티뷰 영상 권한 요청 가능/);
     assert.doesNotMatch(h.panel.textContent, /데스크톱 알림 권한/);
     h.panel.querySelector(".primary-button").click();
     assert.deepEqual(plain(h.chrome.testState.permissionRequests), [{ origins: ["https://*.pstatic.net/*"] }]);
-    await waitForCondition(() => /권한이 거부되어/.test(h.panel.textContent));
+    await waitForCondition(() => /권한 거부\. 현재 설정 유지/.test(h.panel.textContent));
     const fallback = [...h.panel.querySelectorAll("button")].find((button) =>
         button.textContent.includes("켜지 않고 불러오기")
     );
@@ -282,7 +282,7 @@ test("permissions follow only the features the file turns on, and denial keeps j
         ["liveMultiviewEnabled"],
         "a preview feature that is already on is not sent to be kept off"
     );
-    assert.match(h.message(), /권한을 받지 못한 라이브 멀티뷰 기능은 켜지 않았어요/);
+    assert.match(h.message(), /권한이 없는 라이브 멀티뷰 기능은 꺼짐/);
     assert.doesNotMatch(h.message(), /호버 미리보기/);
 
     h.document.getElementById("importSettingsFile").click();
@@ -295,7 +295,7 @@ test("permissions follow only the features the file turns on, and denial keeps j
     });
     await h.chooseFile(fileValue);
     await waitForCondition(() => !h.panel.hidden);
-    assert.doesNotMatch(h.panel.textContent, /권한을 요청할 수 있어요/);
+    assert.doesNotMatch(h.panel.textContent, /권한 요청 가능/);
     h.replies.push({ ok: true, result: { status: "applied", summary: summary(), conflicts: [] } });
     h.panel.querySelector(".primary-button").click();
     await waitForCondition(() => h.panel.hidden);
@@ -327,7 +327,7 @@ test("a denied bundled request keeps off only the feature whose permission is no
     await h.chooseFile(fileValue);
     await waitForCondition(() => !h.panel.hidden);
     h.panel.querySelector(".primary-button").click();
-    await waitForCondition(() => /권한이 거부되어/.test(h.panel.textContent));
+    await waitForCondition(() => /권한 거부\. 현재 설정 유지/.test(h.panel.textContent));
     const fallback = [...h.panel.querySelectorAll("button")].find((button) =>
         button.textContent.includes("켜지 않고 불러오기")
     );
@@ -369,12 +369,12 @@ test("choosing to import without permissions survives a re-confirmation in the s
     await h.chooseFile(fileValue);
     await waitForCondition(() => !h.panel.hidden);
     h.panel.querySelector(".primary-button").click();
-    await waitForCondition(() => /권한이 거부되어/.test(h.panel.textContent));
+    await waitForCondition(() => /권한 거부\. 현재 설정 유지/.test(h.panel.textContent));
     h.replies.push({ ok: true, result: { status: "reconfirm", fingerprint: "fp-2", summary: keptOff } });
     [...h.panel.querySelectorAll("button")].find((button) => button.textContent.includes("켜지 않고 불러오기")).click();
     await waitForCondition(() => /다시 확인/.test(h.panel.textContent));
-    assert.match(h.panel.textContent, /권한을 받지 못한 방송 시작 데스크톱 알림 기능은 켜지 않고 불러와요/);
-    assert.doesNotMatch(h.panel.textContent, /권한을 요청할 수 있어요/);
+    assert.match(h.panel.textContent, /권한이 없는 방송 시작 데스크톱 알림 기능은 끈 상태로 불러오기/);
+    assert.doesNotMatch(h.panel.textContent, /권한 요청 가능/);
     h.replies.push({ ok: true, result: { status: "applied", summary: keptOff, conflicts: [] } });
     h.panel.querySelector(".primary-button").click();
     await waitForCondition(() => h.panel.hidden);
@@ -404,11 +404,11 @@ test("failed and conflicted keys are reported as different outcomes by section",
         },
     });
     h.panel.querySelector(".primary-button").click();
-    await waitForCondition(() => /저장하지 못했어요/.test(h.panel.textContent));
+    await waitForCondition(() => /저장 실패/.test(h.panel.textContent));
     const text = h.panel.querySelector(".settings-backup-status").textContent;
     assert.match(text, /되돌리기도 실패해 불러온 값이 남은 구역: 옵션\./);
     assert.match(text, /다른 곳에서 바뀌어 되돌리지 않은 구역: 팔로잉 고정·채팅·사이드바 크기\./);
-    assert.doesNotMatch(text, /모두 되돌려/);
+    assert.doesNotMatch(text, /불러오기 전 설정으로 복원/);
     h.panel.dispatchEvent(new h.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     h.document.getElementById("importSettingsFile").click();
     h.replies.push({ ok: true, fingerprint: "fp-2", summary: summary(), ignoredOptionKeys: [], changes: 2 });
@@ -420,8 +420,8 @@ test("failed and conflicted keys are reported as different outcomes by section",
     });
     h.panel.querySelector(".primary-button").click();
     await waitForCondition(() => h.panel.hidden);
-    assert.match(h.message(), /감지된 구역\(채팅·사이드바 크기\)은 확인해 주세요/);
-    assert.doesNotMatch(h.message(), /유지했어요/);
+    assert.match(h.message(), /다른 화면에서 변경된 구역 확인: 채팅·사이드바 크기/);
+    assert.doesNotMatch(h.message(), /불러오기 전 설정으로 복원/);
 });
 
 test("re-confirmation, failures and invalid files keep current settings and explain the state", async (t) => {
@@ -450,7 +450,7 @@ test("re-confirmation, failures and invalid files keep current settings and expl
         result: { status: "failed", stage: "local", rolledBack: true, residual: [], summary: summary() },
     });
     h.panel.querySelector(".primary-button").click();
-    await waitForCondition(() => /모두 되돌려/.test(h.panel.textContent));
+    await waitForCondition(() => /불러오기 전 설정으로 복원/.test(h.panel.textContent));
     assert.equal(h.backupMessages.at(-1).fingerprint, "fp-2");
     assert.equal(h.panel.hidden, false);
     h.panel.dispatchEvent(new h.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -461,7 +461,7 @@ test("re-confirmation, failures and invalid files keep current settings and expl
     await h.chooseFile(fileValue);
     await waitForCondition(() => !h.panel.hidden);
     assert.equal(h.panel.querySelector(".primary-button").disabled, true);
-    assert.match(h.panel.textContent, /바꿀 내용이 없어요/);
+    assert.match(h.panel.textContent, /변경 사항 없음/);
 });
 
 test("saved size reset clears only the three profile-local size choices", async (t) => {
@@ -478,7 +478,7 @@ test("saved size reset clears only the three profile-local size choices", async 
     assert.equal(button.hasAttribute("aria-describedby"), false);
     assert.equal(button.textContent.trim(), "저장한 채팅·사이드바 크기 초기화");
     button.click();
-    await waitForCondition(() => /크기를 초기화했어요/.test(h.message()));
+    await waitForCondition(() => /크기 초기화 완료/.test(h.message()));
     for (const key of PANEL_KEYS) assert.equal(h.chrome.testState.local[key], null);
     assert.deepEqual(h.chrome.testState.local.betterChzzkLiveWatchHistory, { keep: true });
 });
@@ -584,9 +584,9 @@ test("an export that leaves out a section names it and the reason", async (t) =>
     });
     h.document.getElementById("exportSettingsFile").click();
     await waitForCondition(() => h.downloads[0]?.name);
-    assert.match(h.message(), /저장값을 읽지 못한 팔로잉 고정 구역은 빠졌어요/);
+    assert.match(h.message(), /저장값을 읽지 못한 구역 제외: 팔로잉 고정/);
     const max = h.dom.window.CheeseSpannerSettingsBackup.MAX_MULTIVIEW_CHANNELS.toLocaleString("ko-KR");
-    assert.ok(h.message().includes(`멀티뷰 화질 구역은 저장한 채널이 ${max}개를 넘어 파일에 넣지 않았어요`));
+    assert.ok(h.message().includes(`멀티뷰 화질 구역 제외: 저장 채널 ${max}개 한도 초과`));
     assert.doesNotMatch(h.message(), /멀티뷰 딜레이/);
 });
 
@@ -647,7 +647,7 @@ test("a re-confirmation that leaves nothing to change disables applying and says
     h.panel.querySelector(".primary-button").click();
     await waitForCondition(() => /파일 5개 중 0개 바뀜/.test(h.panel.textContent));
     assert.equal(h.panel.querySelector(".primary-button").disabled, true, "nothing is left to apply");
-    assert.match(h.panel.querySelector(".settings-backup-status").textContent, /바꿀 내용이 없어요/);
+    assert.match(h.panel.querySelector(".settings-backup-status").textContent, /변경 사항 없음/);
     assert.equal(h.document.activeElement.id, "settingsBackupTitle");
     h.panel.querySelector(".primary-button").click();
     await waitForAsyncCallbacks();

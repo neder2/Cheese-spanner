@@ -136,12 +136,13 @@
         return rectsOverlap(controlRect, videoRect, 12);
     }
 
-    function getVolumeControlCandidates(event) {
+    function getVolumeControlCandidates(event, auxiliaryRoot) {
         if (elementOrHostMatches(event?.target, NON_VOLUME_CONTROL_SELECTOR)) return [];
         if (
+            !auxiliaryRoot?.contains(event?.target) &&
             elementOrHostMatches(
                 event?.target,
-                "[data-bcfp-player-mount], [data-bcfp-tooltip], .bcfp-player, .bcmv-cell"
+                "[data-bcfp-player-mount], [data-bcfp-tooltip], .bcfp-player, .bcmv-cell, [data-bcmv-video]"
             )
         )
             return [];

@@ -14,7 +14,7 @@
     }
     if (!guide) {
         button.disabled = true;
-        status.textContent = "이 버전에는 준비된 새 기능 안내가 없어요. 릴리즈 노트에서 변경 내용을 확인할 수 있어요.";
+        status.textContent = "이 버전의 새 기능 안내 없음. 변경 내용은 릴리즈 노트에서 확인.";
         return;
     }
     let busy = false;
@@ -43,24 +43,24 @@
         if (busy || closed) return;
         busy = true;
         button.disabled = true;
-        showStatus("치지직 화면에 안내를 여는 중이에요.");
+        showStatus("치지직 화면에서 안내 여는 중");
         try {
             // Only an action popup has no owning tab. A normal options tab never selects another tab.
             if (!globalThis.chrome?.tabs?.getCurrent || !chrome.tabs.query || !chrome.tabs.sendMessage) {
-                showStatus("치지직 화면에서 확장 아이콘을 열어 다시 눌러 주세요.");
+                showStatus("치지직 탭에서 확장 아이콘을 열고 다시 시도");
                 return;
             }
             const ownTab = await call((done) => chrome.tabs.getCurrent(done));
             if (closed) return;
             if (ownTab) {
-                showStatus("치지직 화면에서 확장 아이콘을 열어 다시 눌러 주세요.");
+                showStatus("치지직 탭에서 확장 아이콘을 열고 다시 시도");
                 return;
             }
             const tabs = await call((done) => chrome.tabs.query({ active: true, currentWindow: true }, done));
             if (closed) return;
             const tab = Array.isArray(tabs) && tabs.length === 1 ? tabs[0] : null;
             if (!chzzkTab(tab)) {
-                showStatus("치지직 화면을 연 뒤 다시 눌러 주세요.");
+                showStatus("치지직 화면을 연 뒤 다시 시도");
                 return;
             }
             const reply = await call((done) =>
@@ -78,15 +78,13 @@
             );
             if (closed) return;
             if (reply?.ok !== true) {
-                showStatus(
-                    "치지직 화면에 안내를 열지 못했어요. 전체화면을 종료하고 페이지를 새로고침한 뒤 다시 눌러 주세요."
-                );
+                showStatus("안내 열기 실패. 전체 화면을 종료하고 치지직 화면 새로고침 후 다시 시도.");
                 return;
             }
-            showStatus("치지직 화면에 안내를 열었어요. 설정창을 닫아도 안내는 유지돼요.");
+            showStatus("치지직 화면에 안내 표시. 설정창을 닫아도 유지.");
             if (document.getElementById("notice")?.dataset.state === "saved") window.close();
         } catch (_) {
-            showStatus("치지직 화면에 연결하지 못했어요. 페이지를 새로고침한 뒤 다시 눌러 주세요.");
+            showStatus("치지직 화면 연결 실패. 페이지 새로고침 후 다시 시도.");
         } finally {
             busy = false;
             if (!closed) button.disabled = false;

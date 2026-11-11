@@ -11,6 +11,7 @@
         isNativeAdBreakActive,
         isPlaybackRoute,
         isEditableTarget,
+        isVodMultiviewInput,
     } = CheeseSpanner.utils;
     let enabled = false;
     let holdSpeedEnabled = true;
@@ -23,6 +24,7 @@
 
     function onKeyDown(event) {
         if (!isPlaybackRoute() || event.defaultPrevented || event.isComposing) return;
+        if (isVodMultiviewInput(event)) return;
         if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
         // holdSpeed owns both the short Space tap and the long press while enabled.
         if (event.code === "Space" && holdSpeedEnabled) return;

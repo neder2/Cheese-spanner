@@ -160,6 +160,10 @@
         return video instanceof HTMLVideoElement && elementOrHostMatches(video, EXTENSION_PREVIEW_VIDEO_SELECTOR);
     }
 
+    function isVodMultiviewInput(event) {
+        return elementOrHostMatches(event.composedPath?.()[0] || event.target, "[data-bcvm]");
+    }
+
     // 2026-11-05 공개 번들 기준: 라이브 프리롤은 #preAdPlayerWrapper 안에 IMA contentVideo(#preAdContentPlayer)와
     // 광고 컨테이너를 두고, 미드롤은 #live_player_layout 바깥 형제인 #midAdPlayerWrapper에 #midPlayer를 둔다.
     // 광고 영상과 광고용 contentVideo 더미는 본영상 후보가 아니다. autoQualityPage.js(MAIN)에 같은 리터럴 사본이 있다.
@@ -564,6 +568,7 @@
         getVideoViewportRect,
         setVideoViewportTransform,
         isExtensionPreviewVideo,
+        isVodMultiviewInput,
         isEditableTarget,
         getPlayerRoot,
         elementMatchesOrContains,

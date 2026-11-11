@@ -934,7 +934,7 @@ test("welcome message removal restores a remounted welcome row when disabled", a
     assert.notEqual(dom.window.getComputedStyle(welcome).display, "none");
 });
 
-test("chat tools panel uses the shared CHZZK theme, Pretendard and 해요체 notices", async (t) => {
+test("chat tools panel uses the shared CHZZK theme, Pretendard and short notices", async (t) => {
     const { dom } = createPageDom(
         [
             '<div class="chat-row" data-chat-id="blind-theme">',
@@ -952,7 +952,7 @@ test("chat tools panel uses the shared CHZZK theme, Pretendard and 해요체 not
         () => document.querySelector(".bcct-blind-reveal") && document.querySelector(".bcct-moderator-box__empty")
     );
     assert.equal(document.querySelector(".bcct-blind-reveal").title, "블라인드 메시지 원문");
-    assert.equal(document.querySelector(".bcct-moderator-box__empty").textContent, "아직 수집된 메시지가 없어요.");
+    assert.equal(document.querySelector(".bcct-moderator-box__empty").textContent, "수집된 메시지 없음");
 
     const themeStyle = document.getElementById("cheese-spanner-ui-theme");
     const panelStyle = document.getElementById("cheese-spanner-chat-tools-style");
@@ -977,10 +977,12 @@ test("chat tools panel uses the shared CHZZK theme, Pretendard and 해요체 not
     assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b|rgba?\(/i, "no static color fallback");
 
     for (const file of ["features/chatTools.js", "features/chatTools/panel.js"]) {
-        const formal = [...readRepoFile(file).matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g)]
+        const polite = [...readRepoFile(file).matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g)]
             .map((match) => match[2])
-            .filter((text) => /[가-힣]/.test(text) && /(?:습|합|됩|입)니다/.test(text));
-        assert.deepEqual(formal, [], `${file} notices use 해요체`);
+            .filter((text) =>
+                /(?:[가-힣](?<![필주개중수소강요])요|(?:습|합|됩|입)니다|십시오)(?=[.?!…\s]|$)/.test(text)
+            );
+        assert.deepEqual(polite, [], `${file} notices omit polite endings`);
     }
 });
 

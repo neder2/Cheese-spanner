@@ -210,8 +210,8 @@
                     ? "방송 중인 채널만 추가 가능."
                     : state.channels.some((entry) => entry.id === id)
                       ? "이미 추가된 방송."
-                      : state.channels.length >= 6
-                        ? "최대 6개 방송까지 추가 가능."
+                      : state.channels.length >= model.MAX_VIEWS
+                        ? `최대 ${model.MAX_VIEWS}개 방송까지 추가 가능.`
                         : "";
             row.disabled = Boolean(problem);
             row.title = problem || "방송 추가";

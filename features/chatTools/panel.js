@@ -700,7 +700,7 @@
             if (!moderatorMessages.length && !empty) {
                 empty = document.createElement("div");
                 empty.className = "bcct-moderator-box__empty";
-                empty.textContent = "아직 수집된 메시지가 없어요.";
+                empty.textContent = "수집된 메시지 없음";
                 moderatorList.appendChild(empty);
             } else if (moderatorMessages.length) empty?.remove();
             renderModeratorActivity(actors);

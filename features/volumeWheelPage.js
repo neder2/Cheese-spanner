@@ -65,17 +65,12 @@
         setTimeout(apply, 0);
     }
 
-    function applyVolumeDelta(video, directionSteps) {
-        if (!(video instanceof HTMLVideoElement)) return false;
-
-        const current = video.muted ? 0 : Number.isFinite(video.volume) ? video.volume : 0;
+    function applyVolumeDelta(target, directionSteps) {
+        const current = target.muted ? 0 : Number.isFinite(target.volume) ? target.volume : 0;
         // Round away binary residue (0.5 - 10 * 0.05 is ~7e-17) so reaching 0% takes the mute branch.
         const next = clamp(Math.round((current + directionSteps * getStepRatio()) * 1000) / 1000, 0, 1);
-        const token = ++volumeApplyToken;
-
-        commitVideoVolume(video, next);
-        scheduleVolumeCommit(video, next, token);
-        return true;
+        commitVideoVolume(target, next);
+        if (target instanceof HTMLVideoElement) scheduleVolumeCommit(target, next, ++volumeApplyToken);
     }
 
     function handleWheel(event) {
@@ -84,24 +79,25 @@
         if (event.ctrlKey) return;
         if (!Number.isFinite(event.deltaY) || event.deltaY === 0) return;
 
-        const controls = getVolumeControlCandidates(event);
+        const auxiliary = globalThis.CheeseSpannerVodNative?.auxiliaryAt(event.target);
+        const controls = getVolumeControlCandidates(event, auxiliary?.root);
         if (!controls.length) return;
 
-        const video = getMainVideoElement();
+        const video = auxiliary?.media || getMainVideoElement();
         if (!(video instanceof HTMLVideoElement)) return;
 
         const control = getVolumeControlForVideo(controls, video);
         if (!control) return;
         // 2026-11-05: during an ad break the screen shows the ad, whose volume native keeps in step with the player, so
         // the wheel stays native instead of writing the hidden main video's volume. Checked only for wheels it would take.
-        if (isNativeAdBreakActive()) return;
+        if (auxiliary ? auxiliary.root.classList.contains("pzp-pc--adbreak") : isNativeAdBreakActive()) return;
 
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation?.();
 
         const direction = event.deltaY < 0 ? 1 : -1;
-        applyVolumeDelta(video, direction);
+        applyVolumeDelta(auxiliary?.player || video, direction);
     }
 
     function parseOptions(value) {

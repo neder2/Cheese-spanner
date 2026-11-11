@@ -60,8 +60,9 @@
         if (node.style.getPropertyValue(name) !== value) node.style.setProperty(name, value, "important");
     }
 
-    function createView(video, player, channel, restored) {
-        const controlId = channel ? `${ID}-aux-${++nextAuxId}` : ID;
+    function createView(video, player, channel, vodNo, restored) {
+        const auxiliary = Boolean(channel || vodNo);
+        const controlId = auxiliary ? `${ID}-aux-${++nextAuxId}` : ID;
         let dragging = null;
         let suppressClick = false;
         let state = {
@@ -88,6 +89,7 @@
             isPlaybackRoute() &&
             state?.video.isConnected &&
             state.player.contains(video) &&
+            (!vodNo || state.player.dataset.bcvmVideoNo === vodNo) &&
             (!channel ||
                 (state.player.matches(AUX_CELL) &&
                     state.player.dataset.bcmvChannel === channel &&
@@ -199,7 +201,7 @@
             if (MODIFIERS.some((name) => Boolean(event[name]) !== (name === modifier))) return null;
             const target = event.composedPath()[0] || event.target;
             if (!(target instanceof Element) || !state.player.contains(target) || target.closest(EXCLUDED)) return null;
-            if (!channel && target.closest("[data-bcmv-video], [data-bcmv-channel]")) return null;
+            if (!auxiliary && target.closest("[data-bcmv-video], [data-bcmv-channel]")) return null;
             // Native wrappers can receive the pointer instead of the video they contain.
             if (target !== state.video && !target.contains(state.video)) return null;
             const box = bounds();
@@ -404,7 +406,9 @@
                 const button = document.createElement("button");
                 button.id = `${controlId}-toggle`;
                 button.type = "button";
-                button.className = channel ? `${ID}-toggle` : "pzp-button pzp-pc__zoom-button";
+                button.className = channel
+                    ? `${ID}-toggle`
+                    : `pzp-button pzp-pc__zoom-button${vodNo ? ` ${ID}-toggle` : ""}`;
                 button.innerHTML =
                     '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5M7 10.5h7M10.5 7v7"/></svg>';
                 button.addEventListener("click", onToggle);
@@ -416,17 +420,17 @@
                 removePanel();
                 const panel = document.createElement("div");
                 panel.id = `${controlId}-panel`;
-                if (channel) panel.className = `${ID}-panel`;
+                if (auxiliary) panel.className = `${ID}-panel`;
                 panel.hidden = true;
                 panel.setAttribute("role", "group");
                 panel.setAttribute("aria-label", "화면 확대");
                 const value = document.createElement("span");
                 value.id = `${controlId}-value`;
-                if (channel) value.className = `${ID}-value`;
+                if (auxiliary) value.className = `${ID}-value`;
                 value.setAttribute("aria-hidden", "true");
                 const button = document.createElement("button");
                 button.id = `${controlId}-reset`;
-                if (channel) button.className = `${ID}-reset`;
+                if (auxiliary) button.className = `${ID}-reset`;
                 button.type = "button";
                 button.innerHTML =
                     '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 5v5h5"/><path d="M3.5 10a6.5 6.5 0 1 1 1.9 4.6"/></svg>';
@@ -435,7 +439,7 @@
                 button.addEventListener("click", onReset);
                 const range = document.createElement("input");
                 range.id = `${controlId}-range`;
-                if (channel) range.className = `${ID}-range`;
+                if (auxiliary) range.className = `${ID}-range`;
                 range.type = "range";
                 range.min = "100";
                 range.max = "500";
@@ -526,6 +530,7 @@
         sync(player);
         return {
             channel,
+            vodNo,
             get player() {
                 return state?.player;
             },
@@ -568,23 +573,32 @@
             const channel = player.dataset.bcmvChannel;
             if (channel && video.dataset.channel === channel) targets.set(video, { player, channel });
         }
+        for (const { video, player, media } of CheeseSpanner.vodMultiview?.getAuxiliaries() || []) {
+            targets.set(video, { player, vodNo: media.videoNo });
+        }
         for (const [video, view] of views) {
             const target = targets.get(video);
-            if (!target || target.channel !== view.channel || (!target.channel && target.player !== view.player)) {
+            if (
+                !target ||
+                target.channel !== view.channel ||
+                target.vodNo !== view.vodNo ||
+                (!target.channel && target.player !== view.player)
+            ) {
                 view.unmount();
                 views.delete(video);
             }
         }
         mainView = null;
-        for (const [video, { player, channel }] of targets) {
+        for (const [video, { player, channel, vodNo }] of targets) {
+            const isMain = !channel && !vodNo;
             let view = views.get(video);
             if (!view) {
-                const restored = !channel && carried?.video === video && carried.key === routeKey() ? carried : null;
-                if (!channel) forgetCarried();
-                view = createView(video, player, channel, restored);
+                const restored = isMain && carried?.video === video && carried.key === routeKey() ? carried : null;
+                if (isMain) forgetCarried();
+                view = createView(video, player, channel, vodNo, restored);
                 views.set(video, view);
             } else view.sync(player);
-            if (!channel) mainView = view;
+            if (isMain) mainView = view;
         }
     }
 
@@ -633,6 +647,7 @@
 :is(#${ID}-toggle, .${ID}-toggle)[hidden], :is(#${ID}-panel, .${ID}-panel)[hidden] { display:none; }
 .chzzk_player:is(.hidden_ui, .miniplayer, .pip_mode) #${ID}-panel { display:none; }
 .pzp-pc:not(.pzp-pc--controls) > #${ID}-panel:not(:has(:focus-visible), :active), .pzp-pc.pzp-pc--setting > #${ID}-panel { display:none; }
+.pzp-pc[data-bcvm-video-no]:not(.pzp-pc--controls) > .${ID}-panel:not(:has(:focus-visible), :active), .pzp-pc[data-bcvm-video-no].pzp-pc--setting > .${ID}-panel { display:none; }
 @media(prefers-reduced-motion:reduce) { :is(#${ID}-reset, .${ID}-reset) { transition:none; } :is(#${ID}-reset, .${ID}-reset):active:not(:disabled) { scale:1; } }
 [data-bcz-pannable], [data-bcz-pannable] .pzp-pc__video, video[data-bcz-zoomed] { cursor:grab; }
 [data-bcz-dragging], [data-bcz-dragging] .pzp-pc__video, [data-bcz-dragging] video { cursor:grabbing; user-select:none; }
@@ -657,7 +672,13 @@
                 childList: true,
                 subtree: true,
                 attributes: true,
-                attributeFilter: ["data-bcmv-channel", "data-channel", "data-bcmv-video", "data-main"],
+                attributeFilter: [
+                    "data-bcmv-channel",
+                    "data-channel",
+                    "data-bcmv-video",
+                    "data-bcvm-video-no",
+                    "data-main",
+                ],
             },
             onBodyReady: sync,
             onMutations(mutations) {

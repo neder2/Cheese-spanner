@@ -27,6 +27,7 @@ function fixture(t) {
             isLiveAdBreakActive: () => false,
             isPlaybackRoute: () => /^\/(live|video)\//.test(w.location.pathname),
             isEditableTarget: (el) => !!el.closest("input,textarea,select"),
+            isVodMultiviewInput: (event) => !!event.target?.closest?.("[data-bcvm]"),
         },
     };
     w.document.querySelector("main").addEventListener("click", () => clicks++);

@@ -28,7 +28,7 @@
         const INDEX_CACHE_TTL_MS = 5 * 60 * 1000;
         const MAX_INDEX_CACHE_CHANNELS = 8;
         // fetchJson aborts its own request on timeout with the same AbortError a caller's signal produces.
-        const REQUEST_TIMEOUT_MESSAGE = "조회 시간이 초과됐어요";
+        const REQUEST_TIMEOUT_MESSAGE = "조회 시간 초과";
         const channelIndex = new Map();
         let activeFetchToken = 0;
         let commentSearchTimer = 0;

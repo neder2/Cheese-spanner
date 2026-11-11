@@ -113,7 +113,9 @@ test("new guide option defaults on and manual replay remains usable with an unsa
     toggle.checked = false;
     dispatch(h.dom, toggle, "change");
     h.document.getElementById("updateGuideReplay").click();
-    await waitForCondition(() => h.document.getElementById("updateGuideStatus").textContent.includes("열었어요"));
+    await waitForCondition(() =>
+        h.document.getElementById("updateGuideStatus").textContent.includes("치지직 화면에 안내 표시")
+    );
     assert.equal(toggle.checked, false);
     assert.equal(h.document.getElementById("save").disabled, false);
     assert.equal(h.calls.writes.length, 0);
@@ -164,8 +166,8 @@ for (const config of [
         h.document.getElementById("updateGuideReplay").click();
         await waitForCondition(() => !h.document.getElementById("updateGuideReplay").disabled);
         assert.equal(h.document.querySelector("[data-bcug-view]"), null);
-        assert.doesNotMatch(h.document.getElementById("updateGuideStatus").textContent, /열었어요/);
-        assert.match(h.document.getElementById("updateGuideStatus").textContent, /다시 눌러/);
+        assert.doesNotMatch(h.document.getElementById("updateGuideStatus").textContent, /치지직 화면에 안내 표시/);
+        assert.match(h.document.getElementById("updateGuideStatus").textContent, /다시 시도/);
         if (config.tabUrl) assert.equal(h.calls.send.length, 0);
         assert.equal(h.calls.writes.length, 0);
         assert.equal(h.calls.close, 0);

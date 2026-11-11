@@ -209,7 +209,7 @@
     function findLeftButtonsContainer(video) {
         const candidates = [];
         for (const el of document.querySelectorAll(LEFT_BUTTONS_SELECTOR)) {
-            if (!(el instanceof HTMLElement) || getVisibleArea(el) <= 0) continue;
+            if (!(el instanceof HTMLElement) || el.closest("[data-bcvm]") || getVisibleArea(el) <= 0) continue;
             if (video instanceof HTMLVideoElement && !isInLikelyVideoControlArea(el, video)) continue;
 
             const rect = el.getBoundingClientRect();
@@ -224,7 +224,7 @@
     function findRightButtonsContainer(video) {
         const candidates = [];
         for (const el of document.querySelectorAll(RIGHT_BUTTONS_SELECTOR)) {
-            if (!(el instanceof HTMLElement) || getVisibleArea(el) <= 0) continue;
+            if (!(el instanceof HTMLElement) || el.closest("[data-bcvm]") || getVisibleArea(el) <= 0) continue;
             if (video instanceof HTMLVideoElement && !isInLikelyVideoControlArea(el, video)) continue;
 
             const rect = el.getBoundingClientRect();
@@ -577,7 +577,9 @@
     }
 
     function findVodTimeElement() {
-        return pickLargestVisible(document.querySelectorAll(VOD_TIME_SELECTOR));
+        return pickLargestVisible(
+            [...document.querySelectorAll(VOD_TIME_SELECTOR)].filter((el) => !el.closest("[data-bcvm]"))
+        );
     }
 
     function findClockAnchor(video) {

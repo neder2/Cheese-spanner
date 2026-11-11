@@ -4955,11 +4955,12 @@ test("external channel updates stay isolated and a fatal playback failure stops 
     assert.equal(h.storage[key(C)], undefined);
     h.instances[0].events.error(null, { fatal: true });
     assert.equal(h.instances[0].stopped, true);
-    assert.match(h.w.document.querySelector(".bcmv-error").textContent, /방송 재생 실패/);
+    assert.equal(h.w.document.querySelector(".bcmv-error p").textContent, "재생 실패. ‘재생 재시도’ 선택.");
     h.click("controls");
     assert.equal(h.w.document.querySelector('.bcmv-panel [data-action="retry"]'), null);
     const retry = h.w.document.querySelector('.bcmv-error [data-action="retry"]');
     assert.equal(retry.hidden, false);
+    assert.equal(retry.textContent, "재생 재시도");
     retry.click();
     await tick();
     assert.equal(h.instances[0].destroyed, true);

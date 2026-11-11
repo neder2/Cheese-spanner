@@ -2,6 +2,7 @@
 (() => {
     const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     const CHANNEL = /^[a-f0-9]{32}$/;
+    const MAX_VIEWS = 6;
     const DELAY_PREFIX = "betterChzzkMultiviewDelay:";
     const SESSION_KEY = "betterChzzkMultiviewSession";
     const DEFAULT_SPLITS = [1 / 3, 2 / 3];
@@ -53,7 +54,7 @@
                         return Number.isFinite(coordinate) && coordinate >= 0 && coordinate <= 1 ? coordinate : 0.5;
                     }),
                 });
-                if (channels.length === 6) break;
+                if (channels.length === MAX_VIEWS) break;
             }
         }
         const hasDockTree = value?.layoutVersion === 3 && validTree(value.dockTree, channels);
@@ -82,7 +83,7 @@
     function normalizeWindows(value, channels) {
         const windows = [];
         if (!Array.isArray(value)) return windows;
-        for (const item of value.slice(0, 6)) {
+        for (const item of value.slice(0, MAX_VIEWS)) {
             const rect = item?.rect;
             if (
                 !channels.some((entry) => entry.id === item?.id) ||
@@ -446,6 +447,7 @@
         };
     }
     root.multiviewModel = {
+        MAX_VIEWS,
         channelFromUrl,
         validDelay,
         splits,

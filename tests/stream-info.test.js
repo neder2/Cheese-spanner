@@ -1109,7 +1109,7 @@ test("layout exposes current values first, readable chart legends and a sticky c
     const formalCopy = [...source.matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g)]
         .map((match) => match[2])
         .filter((text) => /[가-힣]/.test(text) && /(?:습|합|됩|입)니다/.test(text));
-    assert.deepEqual(formalCopy, [], "stream info notices use 해요체");
+    assert.deepEqual(formalCopy, [], "stream info notices omit formal endings");
     assert.match(css, /stroke-dasharray:5 4/);
     assert.match(css, /font-variant-numeric:tabular-nums/);
     assert.equal(panel.querySelector("header button").getAttribute("aria-label"), "스트림 정보 닫기");

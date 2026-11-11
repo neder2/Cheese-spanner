@@ -319,7 +319,7 @@ test("R2-153: an internal fetch timeout is recorded as an index failure, unlike 
     });
     repository.setContext("a", "needle", repoOptions);
     const entry = await repository.buildIndex("a");
-    assert.equal(entry.error, "조회 시간이 초과됐어요");
+    assert.equal(entry.error, "조회 시간 초과");
     assert.ok(entry.failedAt > 0);
     assert.equal(entry.complete, false);
     assert.equal(entry.loading, false);
@@ -366,7 +366,7 @@ test("R1-24/R2-153: comment timeouts are reported per video and retried by the n
     await settled;
     const video = repository.getIndex("a").videos[0];
     assert.equal(commentCalls, 1);
-    assert.equal(video.commentError, "조회 시간이 초과됐어요");
+    assert.equal(video.commentError, "조회 시간 초과");
     assert.equal(video.commentFetched, true);
 
     fail = false;

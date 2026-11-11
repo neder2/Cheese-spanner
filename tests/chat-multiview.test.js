@@ -716,7 +716,7 @@ test("a verified chat frame that moves to another address is hidden until it ret
     assert.ok(frameA.hasAttribute("inert"));
     assert.equal(frameA.isConnected, false, "the hidden document that left its chat is unloaded");
     assert.equal(f.targetText(A), "입력 불가");
-    assert.match(f.overlayText(A), /벗어나/);
+    assert.equal(f.overlayText(A), "채팅 칸에 다른 화면이 열려 입력 차단.");
     assert.equal(f.action(A, "reload").textContent, "채팅으로 돌아가기");
     f.trusted(f.action(A, "reload"));
     assert.equal(f.cell(A).dataset.state, "loading");
@@ -856,7 +856,7 @@ test("adds a channel from its address only after a matching lookup and saves wit
     assert.equal(f.input().value, "");
     assert.ok(f.sheetShown("add"), "the add sheet opened for an empty panel stays open for the next channel");
     assert.equal(f.w.document.activeElement, f.input());
-    assert.equal(f.message(), nameOf(A) + " 채팅 추가됨.");
+    assert.equal(f.message(), nameOf(A) + " 채팅 추가 완료");
 
     const invalid = "치지직 채널 주소 또는 32자리 채널 ID 확인 필요.";
     for (const [text, message] of [
@@ -932,7 +932,7 @@ test("nickname search shows at most five validated channels, drops late response
     assert.deepEqual(ids, [A, B], "only the first five rows are read and invalid rows are dropped");
     // Like the video multiview search, the whole row is the add control and shows its state on the right.
     assert.equal(f.result(A).querySelector(".bccmv-result-state").textContent, "추가됨");
-    assert.equal(f.result(A).getAttribute("aria-label"), nameOf(A) + " 채팅, 이미 추가함");
+    assert.equal(f.result(A).getAttribute("aria-label"), nameOf(A) + " 채팅, 추가됨");
     assert.equal(f.result(A).disabled, true);
     assert.equal(f.result(B).querySelector(".bccmv-result-state").textContent, "추가");
     assert.equal(f.result(B).getAttribute("aria-label"), nameOf(B) + " 채팅 추가");
@@ -974,7 +974,7 @@ test("clicking a result row twice before the save answers adds once and keeps th
     await settle();
     assert.equal(f.storeMessages.length, 1, "one save");
     assert.deepEqual(f.stored(), layout([A, B]));
-    assert.equal(f.message(), nameOf(B) + " 채팅 추가됨.");
+    assert.equal(f.message(), nameOf(B) + " 채팅 추가 완료");
 
     // Contrast: adding the same channel again after its save still explains that it is already added.
     f.typeText(B);
@@ -1380,7 +1380,7 @@ test("the chat size presets, corner buttons, and resize handle save only from tr
     await waitForCondition(() => f.stored()?.chatWidth === 390);
     assert.equal(f.storeMessages.length, before + 1);
     assert.equal(f.stored().chatHeight, 640);
-    assert.equal(f.message(), "채팅 칸 크기 저장됨.");
+    assert.equal(f.message(), "채팅 칸 크기 저장 완료");
     assert.deepEqual(box(), ["16px", "104px", "398px", "648px"]);
     assert.equal(f.sizeButton("medium").getAttribute("aria-pressed"), "false");
 
