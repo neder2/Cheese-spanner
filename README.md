@@ -2,7 +2,7 @@
 
 > 치지직(CHZZK) 시청과 탐색을 더 편하게 만들어 주는 비공식 Chrome 확장 프로그램입니다.
 
-![Better Chzzk 홍보 이미지](store-assets/promo-marquee-1400x560.png)
+![Better Chzzk 홍보 이미지](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/store-assets/promo-marquee-1400x560.png)
 
 **Better Chzzk**는 자동 화질 복구, 단축키 복구, 다시보기 스킵/검색, 방송 목록 필터, 채널 방송 시간 통계, 라이브 시청 기록, 안내 팝업 정리 등의 기능을 한곳에 모은 확장 프로그램입니다. 대부분의 기능은 설정 화면에서 개별로 켜고 끌 수 있으며, 세부 수치까지 직접 조절할 수 있습니다.
 
@@ -65,7 +65,7 @@
 - **초기화:** **기본값 복원** 버튼을 누르면 모든 설정이 기본값으로 되돌아갑니다.
 - **적용 시점:** 저장한 설정은 열려 있는 치지직 탭에 새로고침 없이 곧바로 반영됩니다.
 
-![설정 화면](store-assets/screenshot-options-1280x800.png)
+![설정 화면](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.1.7/store-assets/screenshot-options-1280x800.png)
 
 ---
 
@@ -362,7 +362,6 @@ Better Chzzk/
 │  ├─ categoryTools.js
 │  └─ liveWatchHistory.js
 ├─ icons/                   확장 프로그램 아이콘
-├─ store-assets/            스토어 등록용 이미지
 ├─ docs/                    개발 문서
 └─ tests/                   회귀 테스트
 ```
