@@ -853,7 +853,6 @@ git diff --check
 │  └─ manifest의 isolated 목록                                     ← 공용 파일 뒤에 기능별 순서로 실행; 모든 파일이 자동 주입되지는 않음
 ├─ vendor/                  hls.js light 빌드 (팔로잉 미리보기 재생용)
 ├─ icons/                   확장 프로그램 아이콘
-├─ store-assets/            스토어 등록용 이미지·최신 설명 문구
 ├─ docs/                    개발 문서 (업데이트 내역, 리팩토링 가이드 등)
 └─ tests/                   node:test + jsdom 회귀 테스트
 ```

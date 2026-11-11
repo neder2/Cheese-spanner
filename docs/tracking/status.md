@@ -54,18 +54,18 @@
 
 ## VOD 전체화면 댓글 탭·본문 글꼴 — 2026-10-03
 
-전체화면에서 댓글 탭을 무조건 제거하던 경로를 해당 전체화면 내부 네이티브 패널에 mount하도록 수정했어요. 원본 댓글이 없을 때 본문에 제목 글꼴을 적용하던 대체값도 body 글꼴로 수정했어요. 실제 Mac Chrome에서 재현·수정 후 두 탭 전환·패널 닫기/재열기·일반/극장/전체화면 전환·다음 VOD 이동과 첫 댓글 표시 글꼴을 확인했어요. 관련 76개·최종 전체 1,450개와 lint·포맷·diff 검사가 통과했어요. [검증 범위와 제한](../measurements/vod-fullscreen-tabs-mac-2026-10-03.md)에 상세히 남겼어요. 기존 미커밋 변경을 보존했고 버전·Git 이력·배포는 변경하지 않았어요.
+전체화면에서 댓글 탭을 무조건 제거하던 경로를 해당 전체화면 내부 네이티브 패널에 mount하도록 수정했어요. 원본 댓글이 없을 때 본문에 제목 글꼴을 적용하던 대체값도 body 글꼴로 수정했어요. 실제 Mac Chrome에서 재현·수정 후 두 탭 전환·패널 닫기/재열기·일반/극장/전체화면 전환·다음 VOD 이동과 첫 댓글 표시 글꼴을 확인했어요. 관련 76개·최종 전체 1,450개와 lint·포맷·diff 검사가 통과했어요. [검증 범위와 제한](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/vod-fullscreen-tabs-mac-2026-10-03.md)에 상세히 남겼어요. 기존 미커밋 변경을 보존했고 버전·Git 이력·배포는 변경하지 않았어요.
 
 ## 다시보기 채팅 자동 복구 제거 — 2026-10-03
 
-사용자 요청으로 `vodReplayChatFix.js`와 manifest 등록, 복구 전용 새로고침·sessionStorage 위치 전달을 제거했어요. 네이티브 이어보기·명시적 타임코드·자동 화질·댓글 탭은 유지해요. 과거 임시 값은 현재 런타임에서 소비하지 않으며 별도 정리 코드는 추가하지 않아요. 아래 인계·2026-10-01 복구 보완 설명은 당시 상태예요. 관련 검사 184개·전체 검사 1,441개와 lint·format:check·git diff --check가 모두 통과했어요. 실제 Chrome에 제거본을 재로드하고 새 탭에서 채널→VOD 이동·채팅 닫기/열기·댓글 탭·댓글 시간 이동·다음 영상의 채팅 갱신을 확인했어요. 자세한 범위와 한계는 [실측 기록](../measurements/vod-chat-ab-2026-10-03.md)에 있어요. 버전은 변경하지 않았어요.
+사용자 요청으로 `vodReplayChatFix.js`와 manifest 등록, 복구 전용 새로고침·sessionStorage 위치 전달을 제거했어요. 네이티브 이어보기·명시적 타임코드·자동 화질·댓글 탭은 유지해요. 과거 임시 값은 현재 런타임에서 소비하지 않으며 별도 정리 코드는 추가하지 않아요. 아래 인계·2026-10-01 복구 보완 설명은 당시 상태예요. 관련 검사 184개·전체 검사 1,441개와 lint·format:check·git diff --check가 모두 통과했어요. 실제 Chrome에 제거본을 재로드하고 새 탭에서 채널→VOD 이동·채팅 닫기/열기·댓글 탭·댓글 시간 이동·다음 영상의 채팅 갱신을 확인했어요. 자세한 범위와 한계는 [실측 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/vod-chat-ab-2026-10-03.md)에 있어요. 버전은 변경하지 않았어요.
 
 ## 맥북 작업 인계 — 2026-10-03
 
 사용자 요청으로 현재 `1.4.2` branch의 카테고리 제외·VOD 이어보기 수정과 관련 테스트·문서를 함께 커밋하고 GitHub `neder2/Cheese-spanner`의 같은 branch로 옮기는 작업 스냅샷이에요. 수정 시작 기준은 `01e9358e7b81b695dbd779af2b2745daea901b99`이고, manifest/package 버전은 계속 1.4.1이에요. 아래 2026-10-01 기록의 미커밋 상태와 작업 당시 branch는 당시 상태를 설명해요.
 
-- 카테고리 제외: 구현·자동 검사까지 마쳤고 실제 Chrome 확인이 남아 있어요. [검증 기록과 수동 절차](../category-exclusions-verification.md)를 따라 검색·카드 제외·두 탭 저장·SPA 진입·키보드·테마·브라우저 재시작을 확인해요.
-- VOD 이어보기: 닫힌 채팅의 불필요한 복구와 같은 URL 시간의 재적용을 보완했어요. 일반 URL 새로고침·탭 재열기의 실제 관측과 미검증 조건은 [실측 기록](../measurements/vod-resume-2026-10-01.md)에 있어요. 신고 당시 조건·서버 위치와 첫 이벤트 순서·화질/광고 OFF 비교는 남아 있어요.
+- 카테고리 제외: 구현·자동 검사까지 마쳤고 실제 Chrome 확인이 남아 있어요. [검증 기록과 수동 절차](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/category-exclusions-verification.md)를 따라 검색·카드 제외·두 탭 저장·SPA 진입·키보드·테마·브라우저 재시작을 확인해요.
+- VOD 이어보기: 닫힌 채팅의 불필요한 복구와 같은 URL 시간의 재적용을 보완했어요. 일반 URL 새로고침·탭 재열기의 실제 관측과 미검증 조건은 [실측 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/vod-resume-2026-10-01.md)에 있어요. 신고 당시 조건·서버 위치와 첫 이벤트 순서·화질/광고 OFF 비교는 남아 있어요.
 - 다음 작업은 [남은 확인 사항](findings.md)에서 이어가요. 이번 인계는 개발 중인 소스 전달이며 새 기능 안내·포장·릴리스 검증 완료를 뜻하지 않아요.
 - 2026-10-01 전체 1,459개 테스트·lint·format:check 통과는 이전 작업의 기록이에요. 이번 인계에서는 런타임을 수정하지 않고 인계 문서·파일 누락·Git 변경 내용을 확인해요. 실제 Chrome 검증은 새로 수행하지 않아요. `.dryforge/`의 로컬 로그와 `node_modules/`, Chrome 프로필의 설정·기록은 Git 전송에 포함되지 않아요.
 
@@ -221,7 +221,7 @@ Codex에서 이어갈 때는 저장소 폴더를 열고 “AGENTS.md와 docs/tra
 
 ## 2026-10-03 카테고리 제외 후속 확인
 
-필터 최상단 배치와 시청자 내림차순·확인된 0명 후보 제외·오른쪽 한 줄 표시를 보완했어요. 최종 전체 1,444개, lint·포맷 검사가 통과했고 실제 Mac Chrome에서 검색·추가·중복 방지·해제·새로고침 복원·숫자 필터 조합·두 테마를 확인했어요. 테스트 설정은 원복했어요. [상세 결과와 실제 UI 미실행 범위](../measurements/category-exclusions-mac-2026-10-03.md)를 구분해요. 커밋·push·릴리스는 하지 않았어요.
+필터 최상단 배치와 시청자 내림차순·확인된 0명 후보 제외·오른쪽 한 줄 표시를 보완했어요. 최종 전체 1,444개, lint·포맷 검사가 통과했고 실제 Mac Chrome에서 검색·추가·중복 방지·해제·새로고침 복원·숫자 필터 조합·두 테마를 확인했어요. 테스트 설정은 원복했어요. [상세 결과와 실제 UI 미실행 범위](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/category-exclusions-mac-2026-10-03.md)를 구분해요. 커밋·push·릴리스는 하지 않았어요.
 
 ### 전체 방송 검색 적용 후속
 
@@ -229,4 +229,4 @@ Codex에서 이어갈 때는 저장소 폴더를 열고 “AGENTS.md와 docs/tra
 
 ### VOD 검색 원본 쪽수 버튼
 
-2026-10-03 실제 Chrome에서 검색 결과 0개와 원본 1·2 페이지 버튼이 함께 표시되는 현상을 재현했어요. 숫자만 있는 현재 페이지 DOM을 식별하고 검색 종료·DOM 교체 때 복원하도록 보완했어요. 검색·원본 페이지 이동·뒤로/앞으로·Escape의 실제 결과와 자동 회귀는 [VOD 검색 페이지 버튼 기록](../measurements/vod-search-pagination-2026-10-03.md)에 구분했어요.
+2026-10-03 실제 Chrome에서 검색 결과 0개와 원본 1·2 페이지 버튼이 함께 표시되는 현상을 재현했어요. 숫자만 있는 현재 페이지 DOM을 식별하고 검색 종료·DOM 교체 때 복원하도록 보완했어요. 검색·원본 페이지 이동·뒤로/앞으로·Escape의 실제 결과와 자동 회귀는 [VOD 검색 페이지 버튼 기록](https://github.com/neder2/cheese-spanner-internal/blob/main/archive/product-docs/2026-11-11/1.4.8/docs/measurements/vod-search-pagination-2026-10-03.md)에 구분했어요.
