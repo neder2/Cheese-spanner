@@ -751,7 +751,6 @@ npm test             # node:test + jsdom 회귀 테스트
 │  └─ 나머지 *.js                                                    ← 확장(isolated world)에서 실행
 ├─ vendor/                  hls.js light 빌드 (팔로잉 미리보기 재생용)
 ├─ icons/                   확장 프로그램 아이콘
-├─ store-assets/            스토어 등록용 이미지·최신 설명 문구
 ├─ docs/                    개발 문서 (업데이트 내역, 리팩토링 가이드 등)
 └─ tests/                   node:test + jsdom 회귀 테스트
 ```

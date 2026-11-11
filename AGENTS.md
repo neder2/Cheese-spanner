@@ -186,3 +186,7 @@ npm.cmd run format:check
 - `tests/extension-pages.test.js`와 기능별 테스트 — 현재 동작 계약
 - `tests/release-safety.test.js` — 스토어 정책·금지 경로·성능 hot path 가드
 - `PRIVACY.md`, `THIRD_PARTY_NOTICES.md` — 개인정보와 서드파티 고지
+
+## 내부 자료 보관 위치
+
+과거 조사·실측·릴리스 검증 기록과 스토어 제작 자료·등록 문구는 비공개 저장소 `neder2/cheese-spanner-internal`에서 관리해요. 기존 자료는 `archive/product-docs/2026-11-11/<브랜치>/`에 원래 경로로 보존돼 있어요. 새 릴리스 검증은 내부 저장소의 `releases/<버전>/verification.md`에 기록하고, 제품 실행 코드·테스트·현행 제품 규칙·에이전트 지침은 이 공개 저장소에 유지해요.
