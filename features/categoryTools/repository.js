@@ -377,10 +377,11 @@
             }, delayMs);
         }
 
-        function resetMetadata(key = "") {
+        function resetMetadata(key = "", { invalidateLiveCount = false } = {}) {
             resetSearchMetadata(key);
             cancelGlobalLiveCount();
             pageCache.clear();
+            if (invalidateLiveCount) liveCountCache = null;
         }
 
         function resetSearchMetadata(key = metadataKey) {

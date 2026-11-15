@@ -60,7 +60,10 @@ function createWorker(chrome, { held = false, now, directory } = {}) {
     };
 }
 
-function fixture(t, { sync = {}, path = `/live/${CHANNEL}`, supported = [MP4, WEBM], held = false, directory } = {}) {
+function fixture(
+    t,
+    { sync = {}, path = `/live/${CHANNEL}`, supported = [MP4, WEBM], held = false, directory, fetchMetadata } = {}
+) {
     const chrome = createFakeChrome({ sync: { videoRecorderEnabled: true, ...sync } });
     const dom = new JSDOM(`<!doctype html><html><body><main>${PLAYER}</main></body></html>`, {
         url: `https://chzzk.naver.com${path}`,
@@ -71,6 +74,25 @@ function fixture(t, { sync = {}, path = `/live/${CHANNEL}`, supported = [MP4, WE
     const doc = w.document;
     w.chrome = chrome;
     w.Blob = Blob;
+    w.fetch =
+        fetchMetadata ||
+        (async (url) => ({
+            ok: true,
+            async json() {
+                const channelId = url.match(/channels\/([^/]+)\/live-detail/)?.[1];
+                const videoNo = url.match(/videos\/(\d+)/)?.[1];
+                return {
+                    code: 200,
+                    content: {
+                        status: "OPEN",
+                        liveTitle: "오늘 방송",
+                        videoTitle: "다시보기 방송 제목",
+                        videoNo: Number(videoNo),
+                        channel: { channelId, channelName: "테스트 스트리머" },
+                    },
+                };
+            },
+        }));
     const worker = createWorker(chrome, { held, directory });
     const sendMessage = chrome.runtime.sendMessage;
     chrome.runtime.sendMessage = (message, callback) => {
@@ -224,6 +246,145 @@ async function ready(h) {
     await waitForCondition(() => h.button(), { message: "record button was not mounted" });
 }
 
+function chosenDirectory({ denied = false, failWrite = false, failClose = false } = {}) {
+    const writes = [];
+    const state = { closed: false, aborted: false };
+    return {
+        writes,
+        state,
+        async get() {
+            return { name: "내 녹화", queryPermission: async () => (denied ? "prompt" : "granted") };
+        },
+        async openFile() {
+            if (denied) throw new Error("directory-permission");
+            return {
+                fileName: "unique.mp4",
+                writer: {
+                    async write(bytes) {
+                        if (failWrite) throw new Error("disk-full");
+                        writes.push(Buffer.from(bytes));
+                    },
+                    async close() {
+                        if (failClose) throw new Error("disk-full");
+                        state.closed = true;
+                    },
+                    async abort() {
+                        state.aborted = true;
+                    },
+                },
+            };
+        },
+    };
+}
+
+test("a selected native directory receives recording bytes without a download and commits on stop", async (t) => {
+    const directory = chosenDirectory();
+    const h = fixture(t, { directory });
+    await ready(h);
+    await h.start();
+    h.recorders[0].emit("first");
+    await waitForCondition(() => directory.writes.length > 0);
+    assert.equal(h.downloads.length, 0);
+    assert.equal(directory.state.closed, false);
+    h.click();
+    await waitForCondition(() => directory.state.closed);
+    assert.match(Buffer.concat(directory.writes).toString(), /first/);
+    await waitForCondition(() => /내 녹화.*저장했어요/.test(h.status()?.textContent));
+});
+
+test("a revoked folder permission prevents recording instead of silently downloading elsewhere", async (t) => {
+    const h = fixture(t, { directory: chosenDirectory({ denied: true }) });
+    await ready(h);
+    h.click();
+    await waitForCondition(() => /폴더.*접근하지 못했어요/.test(h.status()?.textContent));
+    assert.equal(h.downloads.length, 0);
+    assert.equal(h.recorders[0].state, "inactive");
+    assert.ok(h.captures[0].every((track) => track.stopped));
+});
+
+test("directory writes preserve sender, size and sequence checks and fail closed on disk errors", async () => {
+    for (const fault of [{}, { failWrite: true }, { failClose: true }]) {
+        const directory = chosenDirectory(fault);
+        const h = streamFixture({ directory });
+        const route = await h.send({ op: "start", fileName: "test.mp4" });
+        assert.equal(route.destination, "directory");
+        const write = { op: "write", id: route.id, sequence: 0, data: "YWJj" };
+        assert.equal((await h.send(write, { ...h.sender, documentId: "another" })).error, "unknown-recording");
+        assert.equal((await h.send({ ...write, sequence: 1 })).error, "invalid-chunk");
+        assert.equal((await h.send({ ...write, data: Buffer.alloc(65537).toString("base64") })).error, "invalid-chunk");
+        const result = await h.send(write);
+        assert.equal(result.ok, !fault.failWrite);
+        if (!fault.failWrite) {
+            assert.equal((await h.send(write)).error, "invalid-chunk");
+            assert.equal((await h.send({ op: "finish", id: route.id, sequence: 1 })).ok, !fault.failClose);
+        }
+        assert.equal(directory.state.closed, !fault.failWrite && !fault.failClose);
+        assert.equal(directory.state.aborted, Boolean(fault.failWrite || fault.failClose));
+        assert.equal((await h.send({ op: "pulse", id: route.id })).error, "unknown-recording");
+    }
+});
+
+test("unreadable directory storage never falls back to a different destination", async () => {
+    const h = streamFixture({
+        directory: {
+            async get() {
+                throw new Error("storage-failed");
+            },
+        },
+    });
+    assert.equal((await h.send({ op: "start", fileName: "test.mp4" })).error, "directory-unavailable");
+});
+
+test("returning from folder settings refreshes the player's destination without starting recording", async (t) => {
+    const directory = chosenDirectory();
+    let selected = null;
+    directory.get = async () => selected;
+    const h = fixture(t, { directory });
+    await ready(h);
+    const value = h.doc.querySelector("#cheese-spanner-video-recorder-folder-row .pzp-ui-setting-home-item__value");
+    assert.equal(value.textContent, "다운로드 폴더");
+    selected = { name: "선택한 폴더", queryPermission: async () => "granted" };
+    h.w.dispatchEvent(new h.w.Event("focus"));
+    await waitForCondition(() => value.textContent === "선택한 폴더");
+    assert.equal(h.recorders.length, 0, "folder selection does not start recording");
+});
+
+test("directory backpressure allows one write and abort prevents a late write from reviving a session", async () => {
+    let finishWrite;
+    let aborted = false;
+    const h = streamFixture({
+        directory: {
+            async get() {
+                return { name: "recordings" };
+            },
+            async openFile() {
+                return {
+                    fileName: "test.mp4",
+                    writer: {
+                        write() {
+                            return new Promise((resolve) => {
+                                finishWrite = resolve;
+                            });
+                        },
+                        async abort() {
+                            aborted = true;
+                        },
+                    },
+                };
+            },
+        },
+    });
+    const route = await h.send({ op: "start", fileName: "test.mp4" });
+    const write = { op: "write", id: route.id, sequence: 0, data: "YWJj" };
+    const pending = h.send(write);
+    assert.equal((await h.send(write)).error, "write-pending");
+    assert.equal((await h.send({ op: "abort", id: route.id })).ok, true);
+    finishWrite();
+    assert.equal((await pending).ok, false);
+    assert.equal(aborted, true);
+    assert.equal((await h.send(write)).error, "unknown-recording");
+});
+
 test("download folder names stay relative, bounded and free of path tricks", () => {
     const normalize = Settings.normalizeDownloadFolder;
     assert.equal(normalize(""), "");
@@ -267,6 +428,101 @@ test("recording defaults off and enabling the button still waits for a user clic
     assert.equal(h.button(), null);
 });
 
+test("recording names use the KST start date, verified title and streamer with safe bounded characters", async (t) => {
+    const h = fixture(t, {
+        fetchMetadata: async () => ({
+            ok: true,
+            json: async () => ({
+                code: 200,
+                content: {
+                    status: "OPEN",
+                    liveTitle: '오늘: 방송/준비? "완료"',
+                    channel: { channelId: CHANNEL, channelName: "방송인*이름" },
+                },
+            }),
+        }),
+    });
+    h.w.Date.now = () => Date.parse("2026-11-07T15:30:00Z");
+    await ready(h);
+    await h.start();
+    assert.equal(h.downloads[0].download, "2026-11-08 오늘_ 방송_준비_ _완료_ - 방송인_이름.mp4");
+    h.click();
+    await waitForCondition(() => h.downloads[0].done);
+    h.w.fetch = async () => ({
+        ok: true,
+        json: async () => ({
+            code: 200,
+            content: {
+                status: "OPEN",
+                liveTitle: "😀가".repeat(200),
+                channel: { channelId: CHANNEL, channelName: "나".repeat(200) },
+            },
+        }),
+    });
+    await h.start();
+    const name = h.downloads[1].download;
+    assert.ok(name.length <= 154);
+    assert.ok(Buffer.byteLength(name) <= 240);
+    assert.equal(name.isWellFormed(), true);
+});
+
+test("metadata from a different channel or video cannot name the recording after the previous broadcast", async (t) => {
+    for (const path of [`/live/${CHANNEL}`, "/video/12345"]) {
+        const h = fixture(t, {
+            path,
+            fetchMetadata: async () => ({
+                ok: true,
+                json: async () => ({
+                    code: 200,
+                    content: {
+                        status: "OPEN",
+                        videoNo: 999,
+                        liveTitle: "이전 방송",
+                        videoTitle: "이전 영상",
+                        channel: { channelId: "other", channelName: "이전 스트리머" },
+                    },
+                }),
+            }),
+        });
+        h.doc.title = "이전 방송 - 이전 스트리머";
+        await ready(h);
+        await h.start();
+        assert.doesNotMatch(h.downloads[0].download, /이전/);
+        assert.match(h.downloads[0].download, /스트리머 정보 없음\.mp4$/);
+        assert.ok(h.downloads[0].download.includes(path.startsWith("/live/") ? CHANNEL : "12345"));
+    }
+});
+
+test("a late title response after route changes does not create a file or start capture", async (t) => {
+    let reply;
+    let signal;
+    const h = fixture(t, {
+        fetchMetadata: (_, options) => {
+            signal = options.signal;
+            return new Promise((resolve) => {
+                reply = resolve;
+            });
+        },
+    });
+    await ready(h);
+    h.click();
+    h.w.history.pushState({}, "", "/video/98765");
+    h.w.dispatchEvent(new h.w.Event("popstate"));
+    await waitForCondition(() => signal.aborted);
+    reply({
+        ok: true,
+        json: async () => ({
+            code: 200,
+            content: { status: "OPEN", liveTitle: "옛 방송", channel: { channelId: CHANNEL, channelName: "옛 이름" } },
+        }),
+    });
+    await waitForCondition(() => h.captures[0].every((track) => track.stopped));
+    assert.equal(signal.aborted, true);
+    assert.equal(h.downloads.length, 0);
+    assert.equal(h.recorders[0].state, "inactive");
+    assert.equal(h.recorderMessages().filter((message) => message.op === "start").length, 0);
+});
+
 test("the record button streams MP4 to the download folder during recording and closes it on stop", async (t) => {
     const h = fixture(t);
     await ready(h);
@@ -290,10 +546,7 @@ test("the record button streams MP4 to the download folder during recording and 
     const download = h.downloads[0];
     assert.equal(download.connected, true);
     assert.match(download.href, /recording-download\.txt\?id=/);
-    assert.match(
-        download.download,
-        new RegExp(`^치지직 라이브 ${CHANNEL} \\d{4}-\\d\\d-\\d\\d \\d\\d-\\d\\d-\\d\\d\\.mp4$`)
-    );
+    assert.match(download.download, new RegExp(`^\\d{4}-\\d\\d-\\d\\d 오늘 방송 - 테스트 스트리머\\.mp4$`));
     assert.equal(download.response.headers.get("Content-Type"), "video/mp4");
     assert.equal(h.doc.querySelector('a[href*="recording-download"]'), null);
     recorder.emit("part-1");
@@ -329,7 +582,7 @@ test("WebM is streamed when Chrome cannot encode MP4, and an unplayable video is
     h.recorders[0].emit("a");
     h.click();
     await waitForCondition(() => h.downloads[0].done);
-    assert.match(h.downloads[0].download, /^치지직 다시보기 12345 .+\.webm$/);
+    assert.match(h.downloads[0].download, /^\d{4}-\d{2}-\d{2} 다시보기 방송 제목 - 테스트 스트리머\.webm$/);
     assert.equal(h.downloads[0].response.headers.get("Content-Type"), "video/webm");
     assert.equal(h.text(0), "atail");
 });
@@ -370,7 +623,7 @@ test("route, source, video replacement and option off each drain and finish the 
     h.w.history.pushState(null, "", "/live/fedcba9876543210fedcba9876543210");
     h.w.dispatchEvent(new h.w.Event("popstate"));
     await waitForCondition(() => h.downloads[0].done);
-    assert.match(h.downloads[0].download, new RegExp(`^치지직 라이브 ${CHANNEL} `));
+    assert.match(h.downloads[0].download, /^\d{4}-\d{2}-\d{2} 오늘 방송 - 테스트 스트리머\.mp4$/);
     assert.equal(h.text(0), "routetail");
     await waitForCondition(() => h.button());
     await h.start();
@@ -601,103 +854,57 @@ test("one large native Blob does not remove the backlog bound or allow a second 
     }
 });
 
-test("the gear menu edits the synced save folder through the settings store on a real press only", async (t) => {
-    const h = fixture(t, { held: false });
-    await ready(h);
-    const row = await (async () => {
-        await waitForCondition(() => h.doc.getElementById("cheese-spanner-video-recorder-folder-row"));
-        return h.doc.getElementById("cheese-spanner-video-recorder-folder-row");
-    })();
-    const menu = h.doc.querySelector(".pzp-pc__settings");
-    assert.equal(row.parentElement, menu);
-    assert.ok(row.hasAttribute("data-cheese-spanner-menu-entry"));
-    const menuButton = row.querySelector('[role="menuitem"]');
-    assert.equal(row.querySelector(".pzp-ui-setting-home-item__value").textContent, "다운로드 폴더");
-    const edit = h.doc.getElementById("cheese-spanner-video-recorder-folder-edit");
-    assert.equal(edit.hidden, true);
-    assert.equal(menuButton.getAttribute("aria-expanded"), "false");
-
-    h.click(menuButton);
-    assert.equal(edit.hidden, false);
-    assert.equal(menuButton.getAttribute("aria-expanded"), "true");
-    const input = edit.querySelector("input");
-    const save = edit.querySelector("button");
-    assert.equal(h.doc.activeElement, input);
-    assert.equal(edit.querySelector("p").textContent, "비워 두면 Chrome 다운로드 폴더에 바로 저장해요.");
-
-    input.value = " ../치지직/녹화. ";
-    save.click();
-    await waitForAsyncCallbacks();
-    assert.equal(h.chrome.testState.runtimeMessages.filter((m) => m?.type === SETTINGS_STORE).length, 0);
-
-    // Typing keys stay inside the field.
-    let leaked = 0;
-    h.w.addEventListener("keydown", () => leaked++);
-    input.dispatchEvent(new h.w.KeyboardEvent("keydown", { key: "k", bubbles: true }));
-    assert.equal(leaked, 0);
-
-    dispatchTrusted(input, new h.w.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-    await waitForCondition(() => h.chrome.testState.sync.videoRecorderFolder === "치지직/녹화");
-    const [request] = h.chrome.testState.runtimeMessages.filter((m) => m?.type === SETTINGS_STORE);
-    assert.deepEqual({ ...request.values }, { videoRecorderFolder: "치지직/녹화" });
-    assert.equal(input.value, "치지직/녹화");
-    assert.equal(row.querySelector(".pzp-ui-setting-home-item__value").textContent, "치지직/녹화");
-    await waitForCondition(() => /다운로드 권한/.test(edit.querySelector("p").textContent));
-    assert.equal(
-        edit.querySelector("p").textContent,
-        "하위 폴더에 저장하려면 확장 옵션에서 다운로드 권한을 허용해 주세요. 지금은 다운로드 폴더에 저장해요."
-    );
-
-    h.worker.permissions.held = true;
-    h.click(menuButton);
-    h.click(menuButton);
-    await waitForCondition(
-        () => edit.querySelector("p").textContent === "다운로드 폴더 안의 치지직/녹화 폴더에 저장해요."
-    );
-
-    // A folder chosen in the options page appears in the open menu.
-    await h.setOptions({ videoRecorderFolder: "다른" });
-    assert.equal(row.querySelector(".pzp-ui-setting-home-item__value").textContent, "다른");
-});
-
-test("a folder save response cannot update a removed menu and the next menu reads the saved option", async (t) => {
+test("the gear menu opens a directory picker only on a trusted press and preserves synced settings", async (t) => {
     const h = fixture(t);
     await ready(h);
     await waitForCondition(() => h.doc.getElementById("cheese-spanner-video-recorder-folder-row"));
-    const sendMessage = h.chrome.runtime.sendMessage;
-    let finishSave;
-    h.chrome.runtime.sendMessage = (message, callback) => {
-        if (message?.type !== SETTINGS_STORE) return sendMessage(message, callback);
-        sendMessage(message, (response) => {
-            finishSave = () => callback(response);
-        });
+    const row = h.doc.getElementById("cheese-spanner-video-recorder-folder-row");
+    const button = row.querySelector('[role="menuitem"]');
+    assert.equal(button.getAttribute("aria-haspopup"), "dialog");
+    let calls = 0;
+    h.w.showDirectoryPicker = async (options) => {
+        calls++;
+        assert.equal(options.mode, "readwrite");
+        return { name: "선택 폴더", queryPermission: async () => "granted" };
     };
+    button.click();
+    await waitForAsyncCallbacks();
+    assert.equal(calls, 0);
+    h.click(button);
+    await waitForCondition(() => row.textContent.includes("선택 폴더"));
+    assert.equal(calls, 1);
+    assert.equal(h.recorders.length, 0);
+    assert.equal(h.chrome.testState.runtimeMessages.filter((m) => m?.type === SETTINGS_STORE).length, 0);
+    h.w.showDirectoryPicker = async () => {
+        throw new h.w.DOMException("Cancelled", "AbortError");
+    };
+    h.click(button);
+    await waitForCondition(() => !row.textContent.includes("선택 중"));
+    assert.ok(row.textContent.includes("선택 폴더"));
+});
+
+test("a late directory picker result cannot update a removed or replacement menu", async (t) => {
+    const h = fixture(t);
+    await ready(h);
+    await waitForCondition(() => h.doc.getElementById("cheese-spanner-video-recorder-folder-row"));
+    let finish;
+    h.w.showDirectoryPicker = () =>
+        new Promise((resolve) => {
+            finish = resolve;
+        });
     const row = h.doc.getElementById("cheese-spanner-video-recorder-folder-row");
     h.click(row.querySelector('[role="menuitem"]'));
-    const edit = h.doc.getElementById("cheese-spanner-video-recorder-folder-edit");
-    edit.querySelector("input").value = "저장한 폴더";
-    h.click(edit.querySelector("button"));
-    await waitForCondition(() => finishSave);
-    const menu = h.doc.querySelector(".pzp-pc__settings");
-    const removeListener = menu.removeEventListener.bind(menu);
-    let menuCleaned = false;
-    menu.removeEventListener = (...args) => {
-        if (args[0] === "keydown") menuCleaned = true;
-        return removeListener(...args);
-    };
-    menu.remove();
-    await waitForCondition(() => menuCleaned);
-    finishSave();
+    assert.equal(typeof finish, "function");
+    h.doc.querySelector(".pzp-pc__settings").remove();
+    await waitForCondition(() => !row.isConnected);
     await waitForAsyncCallbacks();
-    assert.equal(h.chrome.testState.sync.videoRecorderFolder, "저장한 폴더");
-    // The fixture's storage setter does not emit Chrome's onChanged event.
-    await h.setOptions({ videoRecorderFolder: "저장한 폴더" });
     h.doc.querySelector(".pzp-pc").insertAdjacentHTML("beforeend", MENU);
     await waitForCondition(() => h.doc.getElementById("cheese-spanner-video-recorder-folder-row"));
-    assert.equal(
-        h.doc.querySelector("#cheese-spanner-video-recorder-folder-row .pzp-ui-setting-home-item__value").textContent,
-        "저장한 폴더"
-    );
+    finish({ name: "늦은 폴더", queryPermission: async () => "granted" });
+    await waitForAsyncCallbacks();
+    const replacement = h.doc.getElementById("cheese-spanner-video-recorder-folder-row");
+    assert.equal(replacement.querySelector(".pzp-ui-setting-home-item__value").textContent, "다운로드 폴더");
+    assert.equal(h.recorders.length, 0);
 });
 
 test("the worker accepts recorder requests only from a top chzzk frame of this extension with valid names", async () => {

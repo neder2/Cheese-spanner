@@ -658,34 +658,50 @@
                             </p>
                             <div class="recorder-folder" data-depends-on="videoRecorderEnabled">
                                 <div class="recorder-directory-actions">
-                                    <button id="videoRecorderChooseDirectory" type="button" class="secondary-button">폴더 선택…</button>
-                                    <button id="videoRecorderClearDirectory" type="button" class="secondary-button" hidden>다운로드 폴더 사용</button>
-                                </div>
-                                <p class="setting-note" id="videoRecorderDirectoryStatus" role="status"></p>
-                                <p class="setting-note">탐색기에서 저장할 폴더를 선택해요. 선택하면 바로 적용되며, 다음 녹화부터 사용해요.</p>
-                                <div id="videoRecorderDownloadSettings">
-                                <label for="videoRecorderFolder">녹화 저장 폴더</label>
-                                <div class="recorder-folder-field">
-                                    <input
-                                        id="videoRecorderFolder"
-                                        type="text"
-                                        data-option="videoRecorderFolder"
-                                        data-allow-empty
-                                        placeholder="비워 두면 다운로드 폴더"
-                                        autocomplete="off"
-                                        spellcheck="false"
-                                        maxlength="120"
-                                        aria-describedby="videoRecorderFolderHelp videoRecorderPermissionStatus"
-                                    />
-                                    <button id="videoRecorderPermission" type="button" class="secondary-button" hidden>
-                                        다운로드 권한 허용
+                                    <button id="videoRecorderChooseDirectory" type="button" class="secondary-button">
+                                        폴더 선택…
+                                    </button>
+                                    <button
+                                        id="videoRecorderClearDirectory"
+                                        type="button"
+                                        class="secondary-button"
+                                        hidden
+                                    >
+                                        다운로드 폴더 사용
                                     </button>
                                 </div>
-                                <p class="setting-note" id="videoRecorderFolderHelp">
-                                    Chrome 다운로드 폴더 안의 하위 폴더예요. /로 나누며, 처음 한 번 ‘다운로드 관리’
-                                    권한이 필요해요. 플레이어 톱니바퀴의 ‘녹화 저장 폴더’에서도 바꿔요.
+                                <p class="setting-note" id="videoRecorderDirectoryStatus" role="status"></p>
+                                <p class="setting-note">
+                                    탐색기에서 저장할 폴더를 선택해요. 선택하면 바로 적용되며, 다음 녹화부터 사용해요.
                                 </p>
-                                <p class="setting-note" id="videoRecorderPermissionStatus" role="status"></p>
+                                <div id="videoRecorderDownloadSettings">
+                                    <label for="videoRecorderFolder">녹화 저장 폴더</label>
+                                    <div class="recorder-folder-field">
+                                        <input
+                                            id="videoRecorderFolder"
+                                            type="text"
+                                            data-option="videoRecorderFolder"
+                                            data-allow-empty
+                                            placeholder="비워 두면 다운로드 폴더"
+                                            autocomplete="off"
+                                            spellcheck="false"
+                                            maxlength="120"
+                                            aria-describedby="videoRecorderFolderHelp videoRecorderPermissionStatus"
+                                        />
+                                        <button
+                                            id="videoRecorderPermission"
+                                            type="button"
+                                            class="secondary-button"
+                                            hidden
+                                        >
+                                            다운로드 권한 허용
+                                        </button>
+                                    </div>
+                                    <p class="setting-note" id="videoRecorderFolderHelp">
+                                        Chrome 다운로드 폴더 안의 하위 폴더예요. /로 나누며, 처음 한 번 ‘다운로드 관리’
+                                        권한이 필요해요. 플레이어 톱니바퀴의 ‘녹화 저장 폴더’에서도 바꿔요.
+                                    </p>
+                                    <p class="setting-note" id="videoRecorderPermissionStatus" role="status"></p>
                                 </div>
                             </div>
                         </div>

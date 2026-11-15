@@ -224,8 +224,12 @@ Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 �
 
 ### 녹화 다운로드와 저장 폴더
 
+플레이어의 **녹화 저장 폴더** 행은 신뢰된 클릭·키보드 동작에서 즉시 `showDirectoryPicker`를 호출해요. 이 선택은 현재 문서의 isolated 메모리에만 남고 워커의 기본 폴더보다 우선해요. 녹화 시작 시 선택을 고정하며 같은 조각 크기·순서·10초 쓰기 제한을 적용해 직접 파일을 쓰고 닫아요. 워커 메시지는 이 직접 저장 경로에 사용하지 않아요. 새로고침 뒤에는 아래 확장 기본 저장 경로를 사용해요.
+
 - 요청: `{type:"cheese-spanner:video-recorder",version:1,op,...}`. 같은 확장 ID, `sender.tab`이 있는 최상위 프레임(frameId 0), 정확한 `https://chzzk.naver.com` 출처만 받아요. 그 밖은 `untrusted-sender`, 다른 version은 `unsupported-version`, 다른 op는 `unknown-operation`이에요.
 - `status` 응답: `{ok:true,folder,downloads}`. folder는 sync `videoRecorderFolder`를 `normalizeDownloadFolder`로 다시 정규화한 값, downloads는 선택 권한 보유 여부예요.
+- 탐색기로 선택한 폴더가 있으면 `start` 응답은 `{ok:true,id,destination:"directory",folder,fileName}`이에요. `folder`는 표시용 이름이며 절대 경로·핸들은 콘텐츠에 보내지 않아요. 파일 이름은 한국 시간의 녹화 시작일과 현재 방송 상세에서 확인한 제목·스트리머 이름이며, 같은 이름이 있으면 `(1)`부터 번호를 붙여요. 생성은 워커 안에서 직렬화해요. 이 경로는 attachment 탐색 없이 `ready`·`write`·`finish`로 직접 파일을 쓰고 닫아요. 선택을 읽거나 접근하지 못하면 `directory-unavailable`·`directory-permission`, 쓰기·닫기 실패는 실패 응답으로 끝내요. 아래 URL 응답은 다운로드 방식일 때만 사용해요.
+- `folder-settings`는 검증한 치지직 최상위 콘텐츠에서 확장 `options.html#recording-folder` 탭을 열어요. 폴더 선택 자체는 그 옵션 페이지의 사용자 클릭에서 수행해요. `status`는 직접 선택이 있으면 표시용 `directory`와 `directoryGranted`를 추가해요.
 - `start {fileName}`: 경로 구분자·제어 문자·`:*?"<>|` 없이 150자 이하 이름에 `.mp4`·`.webm`만 받아요. `{ok:true,id,url,folder,routed}`로 일회용 `recording-download.txt?id=<UUID>` 주소를 돌려줘요. 탭 ID·문서 ID에 묶고 최대 8개 세션만 유지해요. 새 시작 때 30초 넘게 연락 없는 세션을 정리하며 동시 시작도 상한을 다시 검사해요. 폴더는 저장소에서 읽고 선택 권한이 있을 때만 적용해요.
 - 콘텐츠가 `download` 속성 없는 링크로 그 주소를 탐색하면 워커의 fetch 처리기가 `Content-Disposition: attachment`와 MP4·WebM `ReadableStream`을 반환해요. 정확한 주소의 GET·`navigate`·`document` 요청 한 번만 허용하며, fetch·iframe·재사용·만료 주소에는 204를 반환해요. 패키지 텍스트 파일은 이 처리기가 동작하지 않을 때의 안내예요. 외부 요청·새 창·iframe은 없어요.
 - `ready {id}`는 다운로드 연결을, `write {id,sequence,data}`는 순서대로 전달할 base64 조각을 받아요. 시작 탭·문서가 다르면 `unknown-recording`이에요. 조각은 디코딩 후 최대 64KiB, sequence는 0부터 하나씩 증가하며 잘못된 입력은 `invalid-chunk`예요. 동시에 한 쓰기만 허용(`write-pending`)하고 스트림이 이전 조각을 받을 때까지 기다려요. 준비·쓰기가 10초 안에 진행되지 않으면 세션과 다운로드를 종료해요.
@@ -320,3 +324,7 @@ open-settings의 target은 panels, history, stream, categories뿐이고 확장 o
 ### 채널 영상 검색의 원본 페이지 묶음
 
 2026-10-03 실제 `#videos-PANEL`에서 영상 grid와 형제인 컨테이너 안의 `ol > li > button` 숫자 페이지 묶음을 확인했어요. 클래스는 `_container_1ihlx_1`, `_list_1ihlx_35`, `_button_1ihlx_8` 형태였고 pagination 이름·다음/이전 버튼이 없었어요. 구현은 해시 대신 현재 grid 형제·숫자 목록 구조를 확인해 검색 결과 표시 중에만 원본 묶음을 숨겨요. [실측·복원 검증](measurements/vod-search-pagination-2026-10-03.md)을 참고해요.
+
+## 전체 방송 목록 새로고침
+
+`features/liveListRefreshPage.js`는 MAIN에서 `/lives`의 `button#RECOMMEND[role=tab]` 바로 뒤에 버튼을 붙여요. 2026-11-08 공개 `index-BcgE118t.js`에서 확인한 QueryClientProvider의 `client`와 `["all-lives", routeKey, filters]` 중 활성 쿼리 하나만 exact refetch하며 정렬·페이지 주소를 바꾸지 않아요. 직접 네트워크·확장 권한은 사용하지 않아요. 클릭 후 1초 동안 비활성화·아이콘 회전을 적용해요. 성공 시 `cheese-spanner:live-list-refreshed`로 목록 도구의 오래된 메타데이터·집계·추가 카드를 무효화하고 검색·필터 조건은 보존해요. 이동·버튼 교체 후 늦은 완료는 무시해요. 공개 코드 확인과 실제 Chrome 화면 검증은 별개예요.

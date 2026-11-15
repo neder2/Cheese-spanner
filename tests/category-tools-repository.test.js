@@ -5,6 +5,15 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const liveRoute = { scope: "category", categoryType: "game", categoryId: "test", tab: "lives" };
+
+test("manual list refresh invalidates the cached live count", async () => {
+    let calls = 0;
+    const { repository } = fixture(async () => page([{ ...live("a"), liveId: 1, concurrentUserCount: ++calls * 10 }]));
+    assert.equal((await repository.countGlobalLives()).totalViewers, 10);
+    repository.resetMetadata("", { invalidateLiveCount: true });
+    assert.equal((await repository.countGlobalLives()).totalViewers, 20);
+    assert.equal(calls, 2);
+});
 const nextCursor = { concurrentUserCount: 10, liveId: 42 };
 
 function page(rows, next = null) {

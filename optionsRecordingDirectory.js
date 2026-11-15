@@ -10,17 +10,27 @@
     let revision = 0;
     let selected = null;
 
+    function releaseControls() {
+        busy = false;
+        delete choose.dataset.pickerBusy;
+        delete clear.dataset.pickerBusy;
+        const enabled = document.querySelector('[data-option="videoRecorderEnabled"]');
+        choose.disabled = clear.disabled = enabled.disabled || !enabled.checked;
+    }
+
     async function refresh() {
         const current = ++revision;
         try {
             const handle = await directory.get();
-            const granted = handle && await handle.queryPermission({ mode: "readwrite" }) === "granted";
+            const granted = handle && (await handle.queryPermission({ mode: "readwrite" })) === "granted";
             if (current !== revision) return;
             selected = handle;
             clear.hidden = !handle;
             downloads.hidden = Boolean(handle);
             status.textContent = handle
-                ? granted ? `선택한 폴더: ${handle.name} · 이 기기에서 기억해요.` : `‘${handle.name}’ 폴더에 접근하려면 ‘폴더 선택’을 눌러 다시 허용해 주세요.`
+                ? granted
+                    ? `선택한 폴더: ${handle.name} · 이 기기에서 기억해요.`
+                    : `‘${handle.name}’ 폴더에 접근하려면 ‘폴더 선택’을 눌러 다시 허용해 주세요.`
                 : "현재는 Chrome 다운로드 폴더 설정을 사용해요.";
         } catch (_) {
             if (current === revision) status.textContent = "저장 폴더를 불러오지 못했어요. 폴더를 다시 선택해 주세요.";
@@ -43,25 +53,32 @@
             return;
         }
         busy = true;
+        choose.dataset.pickerBusy = clear.dataset.pickerBusy = "true";
         revision++;
         choose.disabled = clear.disabled = true;
         try {
             // Call before any await so the native picker retains this click's user activation.
-            const handle = await window.showDirectoryPicker({ id: "cheese-spanner-recording", mode: "readwrite", startIn: selected || "downloads" });
-            if (await handle.queryPermission({ mode: "readwrite" }) !== "granted") throw new Error("permission-denied");
+            const handle = await window.showDirectoryPicker({
+                id: "cheese-spanner-recording",
+                mode: "readwrite",
+                startIn: selected || "downloads",
+            });
+            if ((await handle.queryPermission({ mode: "readwrite" })) !== "granted")
+                throw new Error("permission-denied");
             await directory.set(handle);
             await refresh();
         } catch (error) {
-            if (error.name !== "AbortError") status.textContent = "폴더를 선택하지 못했어요. 폴더 접근을 허용한 뒤 다시 시도해 주세요.";
+            if (error.name !== "AbortError")
+                status.textContent = "폴더를 선택하지 못했어요. 폴더 접근을 허용한 뒤 다시 시도해 주세요.";
         } finally {
-            busy = false;
-            choose.disabled = clear.disabled = false;
+            releaseControls();
         }
     });
 
     clear.addEventListener("click", async () => {
         if (busy || clear.disabled) return;
         busy = true;
+        choose.dataset.pickerBusy = clear.dataset.pickerBusy = "true";
         revision++;
         choose.disabled = clear.disabled = true;
         try {
@@ -70,21 +87,18 @@
         } catch (_) {
             status.textContent = "저장 폴더를 변경하지 못했어요. 다시 시도해 주세요.";
         } finally {
-            busy = false;
-            choose.disabled = clear.disabled = false;
+            releaseControls();
         }
     });
 
     function reveal() {
         if (location.hash !== "#recording-folder") return;
-        document.querySelector('.tab[data-tab="player"]')?.click();
-        const group = document.querySelector('[data-option-group="player-recorder"]');
-        group.open = true;
-        group.scrollIntoView?.({ block: "nearest" });
-        choose.focus();
+        globalThis.CheeseSpannerOptionsNavigation.showGuideTarget("recording");
     }
     window.addEventListener("hashchange", reveal);
-    window.addEventListener("focus", () => { if (!busy) void refresh(); });
+    window.addEventListener("focus", () => {
+        if (!busy) void refresh();
+    });
     void refresh();
     reveal();
 })();

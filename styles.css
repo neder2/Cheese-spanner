@@ -1161,6 +1161,16 @@ h1 {
     background: var(--surface-2);
 }
 
+.recorder-directory-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+#videoRecorderDirectoryStatus {
+    overflow-wrap: anywhere;
+}
+
 .secondary-button.danger-button {
     border-color: rgba(255, 107, 107, 0.38);
     color: var(--danger);

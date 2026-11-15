@@ -2537,11 +2537,11 @@
         dataRepository.cancelMetadataSearch();
     }
 
-    function resetMetadata(key = "") {
+    function resetMetadata(key = "", options) {
         resetGlobalLiveCount();
         clearSearchApplyTimer();
         resetSearchWork();
-        dataRepository.resetMetadata(key);
+        dataRepository.resetMetadata(key, options);
     }
 
     function ensureRenderedMetadata(route, entries) {
@@ -5348,9 +5348,18 @@
         if (event.isTrusted && !filterButton?.contains(event.target) && !menu?.contains(event.target)) closeMenu();
     }
 
+    function handleLiveListRefreshed() {
+        if (getRoute()?.scope !== "global-lives") return;
+        resetMetadata("", { invalidateLiveCount: true });
+        clearInjectedCards();
+        resetViewFilterSnapshot();
+        scheduleApply();
+    }
+
     function installGlobalListeners() {
         if (globalListenersInstalled) return;
         globalListenersInstalled = true;
+        window.addEventListener("cheese-spanner:live-list-refreshed", handleLiveListRefreshed);
         document.addEventListener("click", handleDocumentClick, true);
         document.addEventListener("visibilitychange", handleVisibilityChange, true);
         document.addEventListener("pointerover", handleLiveElapsedHostActivate, true);
@@ -5396,6 +5405,7 @@
     function uninstallGlobalListeners() {
         if (!globalListenersInstalled) return;
         globalListenersInstalled = false;
+        window.removeEventListener("cheese-spanner:live-list-refreshed", handleLiveListRefreshed);
         document.removeEventListener("click", handleDocumentClick, true);
         document.removeEventListener("visibilitychange", handleVisibilityChange, true);
         document.removeEventListener("pointerover", handleLiveElapsedHostActivate, true);
