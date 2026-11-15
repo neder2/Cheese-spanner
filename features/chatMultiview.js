@@ -112,43 +112,43 @@
         ],
     });
     const TEXT = {
-        conflict: "다른 탭에서 채팅 멀티뷰 구성이 바뀌어 최신 구성을 불러왔어요. 다시 시도해 주세요.",
-        saveFailed: "구성을 저장하지 못했어요. 이 탭에서만 바뀐 구성으로 표시해요.",
-        saveFailedExternal: "구성을 저장하지 못했어요. 다른 탭에서 저장한 구성을 표시해요.",
-        discarded: "다른 탭에서 저장한 구성을 반영했어요. 이 탭에서 저장하지 못한 변경은 사라졌어요.",
-        loadFailed: "채팅 멀티뷰 구성을 불러오지 못했어요.",
-        loading: "채팅 멀티뷰 구성을 불러오는 중이에요.",
-        notReady: "구성을 불러온 뒤 추가할 수 있어요.",
-        empty: "채널을 추가하면 채팅이 여기에 나란히 표시돼요. 최대 4개까지 볼 수 있어요.",
-        inputOn: "칸에서 채팅을 입력할 수 있어요.",
-        inputOff: "채팅 입력창을 숨겼어요.",
-        inputHelp: "켜면 각 칸 아래에 치지직 채팅 입력창이 보여요. 후원 버튼은 계속 숨겨요.",
-        emptyInput: "채널 URL·채널 ID 또는 채널명을 입력해 주세요.",
-        invalidInput: "치지직 채널 주소나 32자리 채널 ID를 확인해 주세요.",
-        lookup: "채널을 확인하는 중이에요…",
-        lookupFailed: "채널을 확인하지 못했어요. 주소나 채널 ID를 다시 확인해 주세요.",
-        searching: "검색 중이에요…",
-        searchFailed: "채널을 검색하지 못했어요. 잠시 후 다시 시도해 주세요.",
-        pick: "추가할 채널을 선택해 주세요.",
-        noResults: "검색 결과가 없어요.",
-        dropInvalid: "치지직 채널 링크만 놓을 수 있어요.",
-        dropHint: "팔로잉 채널을 패널에 끌어 놓아도 추가돼요.",
+        conflict: "다른 탭에서 구성이 바뀌어 최신 구성을 불러옴. 다시 시도 필요.",
+        saveFailed: "구성 저장 실패(이 탭에만 반영).",
+        saveFailedExternal: "구성 저장 실패(다른 탭 구성 표시).",
+        discarded: "다른 탭 구성 반영됨(미저장 변경 해제).",
+        loadFailed: "채팅 멀티뷰 구성 불러오기 실패.",
+        loading: "채팅 멀티뷰 구성 불러오는 중…",
+        notReady: "구성 불러오기 후 추가 가능.",
+        empty: "채널 추가 시 채팅을 최대 4개까지 나란히 표시.",
+        inputOn: "채팅 입력창 표시됨.",
+        inputOff: "채팅 입력창 숨김.",
+        inputHelp: "각 칸 아래에 채팅 입력창 표시(후원 버튼은 숨김).",
+        emptyInput: "채널 URL·채널 ID 또는 채널명 입력 필요.",
+        invalidInput: "치지직 채널 주소 또는 32자리 채널 ID 확인 필요.",
+        lookup: "채널 확인 중…",
+        lookupFailed: "채널 확인 실패. 주소나 채널 ID 재확인 필요.",
+        searching: "검색 중…",
+        searchFailed: "채널 검색 실패. 잠시 후 재시도 필요.",
+        pick: "추가할 채널 선택.",
+        noResults: "검색 결과 없음.",
+        dropInvalid: "치지직 채널 링크만 추가 가능.",
+        dropHint: "팔로잉 채널을 끌어 놓아도 추가 가능.",
     };
     // 칸 상태별 입력 대상 표시와 프레임을 가리는 안내예요. ready·unverified만 프레임을 보여 줘요.
     const CELL_TEXT = {
         loading: {
             target: "입력 대상 확인 중",
-            overlay: "채팅을 불러오는 중이에요…",
+            overlay: "채팅 불러오는 중…",
             action: "",
         },
         left: {
-            target: "입력할 수 없어요",
-            overlay: "이 칸이 채팅 화면을 벗어나 다른 곳에 입력되지 않도록 가렸어요.",
+            target: "입력 불가",
+            overlay: "채팅 화면을 벗어나 오입력 방지를 위해 가림.",
             action: "채팅으로 돌아가기",
         },
         failed: {
-            target: "입력할 수 없어요",
-            overlay: "채팅을 불러오지 못했어요.",
+            target: "입력 불가",
+            overlay: "채팅 불러오기 실패.",
             action: "다시 시도",
         },
     };
@@ -169,6 +169,7 @@
         active = false,
         ready = false,
         unsaved = false;
+    let donationMessagesHidden = false;
     let lifecycle = 0,
         loadVersion = 0,
         storageRevision = 0,
@@ -258,9 +259,9 @@
         return { known: false };
     }
     function errorText(error) {
-        if (error === "duplicate") return "이미 추가한 채널이에요.";
-        if (error === "limit") return "채팅은 최대 " + model.MAX_CHANNELS + "개까지 추가할 수 있어요.";
-        return "채팅 멀티뷰 구성을 바꾸지 못했어요.";
+        if (error === "duplicate") return "이미 추가한 채널.";
+        if (error === "limit") return "채팅은 최대 " + model.MAX_CHANNELS + "개까지 추가 가능.";
+        return "채팅 멀티뷰 구성 변경 실패.";
     }
     // 같은 문서의 변경은 순서대로 처리해요. 각 변경은 실행 시점의 문서 구성에서 계산하고
     // 마지막으로 확인한 저장 원본을 expected로 보내요.
@@ -527,7 +528,7 @@
         const name = model.normalizeChannelName(channel.channelName) || channel.channelId;
         target.pendingAdds.add(channel.channelId);
         const done = commit((base) => model.addChannel(base, channel), {
-            success: name + " 채팅을 추가했어요.",
+            success: name + " 채팅 추가됨.",
             after(outcome) {
                 if (panel !== target || (outcome !== "saved" && outcome !== "failed")) return;
                 target.input.value = "";
@@ -743,7 +744,9 @@
         const ranking = root.chatWeeklyRanking?.RANKING_BOX_SELECTORS;
         const rules = [...FRAME_HIDDEN, ...(Array.isArray(ranking) ? ranking : [])];
         if (!config.input) rules.push(FRAME_INPUT_AREA);
-        return FRAME_FIT + "\n" + rules.join(",\n") + "{display:none!important}";
+        const donations = donationMessagesHidden ? root.chatDonationMessages?.STYLE_TEXT || "" : "";
+        const base = FRAME_FIT + "\n" + rules.join(",\n") + "{display:none!important}";
+        return donations ? base + "\n" + donations : base;
     }
     function syncFrameStyle(cell) {
         if (!cell.verified || !isChatLocation(frameLocation(cell.frame), cell)) return;
@@ -874,7 +877,7 @@
         cell.frame.toggleAttribute("inert", !usable);
         // 입력 대상은 화면에서 칸 머리의 채널 이름으로 보이고, 화면 낭독기에는 프레임 설명으로 읽혀요.
         cell.target.textContent = usable ? "입력 대상: " + cell.name : text.target;
-        cell.note.textContent = state === "unverified" ? "채팅 목록을 확인하지 못했어요." : "";
+        cell.note.textContent = state === "unverified" ? "채팅 목록 확인 실패." : "";
         cell.note.title = cell.note.textContent;
         cell.note.hidden = state !== "unverified";
         cell.retry.hidden = state !== "unverified";
@@ -973,7 +976,7 @@
     function moveCell(target, cell, offset) {
         const source = offset < 0 ? cell.back : cell.forward;
         commit((base) => model.moveChannel(base, cell.channelId, offset), {
-            success: cell.name + " 채팅을 " + (offset < 0 ? "앞으로" : "뒤로") + " 옮겼어요.",
+            success: cell.name + " 채팅을 " + (offset < 0 ? "앞으로" : "뒤로") + " 이동함.",
             after() {
                 if (!isCurrent(target, cell) || !source.disabled) return;
                 const focused = document.activeElement;
@@ -985,7 +988,7 @@
     function removeChannel(target, cell) {
         const index = config.channels.findIndex((item) => item.channelId === cell.channelId);
         commit((base) => model.removeChannel(base, cell.channelId), {
-            success: cell.name + " 채팅을 제거했어요.",
+            success: cell.name + " 채팅 제거됨.",
             after() {
                 if (panel !== target || cell.node.isConnected) return;
                 const focused = document.activeElement;
@@ -1208,7 +1211,7 @@
             chip.title = cell.name;
             chip.setAttribute(
                 "aria-label",
-                visible[index] ? cell.name + " 채팅, 지금 보여요" : cell.name + " 채팅으로 이동"
+                visible[index] ? cell.name + " 채팅, 표시 중" : cell.name + " 채팅으로 이동"
             );
             if (visible[index]) chip.setAttribute("aria-current", "true");
             else chip.removeAttribute("aria-current");
@@ -1229,10 +1232,10 @@
         target.navNext.disabled = last < 0 || last >= cells.length - 1;
         target.navStatus.textContent =
             first < 0
-                ? cells.length + "개 중 보이는 채팅이 없어요"
+                ? cells.length + "개 중 표시 중인 채팅 없음"
                 : first === last
-                  ? cells.length + "개 중 " + (first + 1) + "번째가 보여요"
-                  : cells.length + "개 중 " + (first + 1) + "–" + (last + 1) + "번째가 보여요";
+                  ? cells.length + "개 중 " + (first + 1) + "번째 표시 중"
+                  : cells.length + "개 중 " + (first + 1) + "–" + (last + 1) + "번째 표시 중";
     }
     function scheduleNav(target) {
         if (!target || target.navFrame || panel !== target) return;
@@ -1368,7 +1371,7 @@
             } else if (drag.type === "resize" && target.displaySize) {
                 const size = target.displaySize;
                 commit((base) => model.withChatSize(base, size.width, size.height), {
-                    success: "채팅 칸 크기를 저장했어요.",
+                    success: "채팅 칸 크기 저장됨.",
                     after() {
                         if (target.displaySize === size) target.displaySize = null;
                         if (panel === target) applyGeometry(target);
@@ -1503,7 +1506,7 @@
         inputHelp.id = PANEL_ID + "-input-help";
         const sizeGroup = segmented("채팅 칸 크기"),
             cornerGroup = segmented("패널 위치");
-        const moveHelp = el("p", "bccmv-setting-help", "채널 이름 줄을 끌어 패널을 원하는 곳으로 옮길 수도 있어요.");
+        const moveHelp = el("p", "bccmv-setting-help", "채널 이름 줄 드래그로 패널 위치 이동 가능.");
         settings.append(
             settingRow("채팅 입력창", inputSwitch),
             inputHelp,
@@ -1529,7 +1532,7 @@
         dropCover.setAttribute("aria-hidden", "true");
         dropCover.append(
             el("span", "bccmv-drop-ready", "여기에 놓아 채팅 추가"),
-            el("span", "bccmv-drop-blocked", "채팅은 최대 " + model.MAX_CHANNELS + "개까지 볼 수 있어요")
+            el("span", "bccmv-drop-blocked", "채팅은 최대 " + model.MAX_CHANNELS + "개까지 표시")
         );
         node.append(title, bar, sheet, empty, reload, grid, message, handle, dropCover);
         const target = {
@@ -1584,7 +1587,7 @@
                 const size = model.SIZE_PRESETS[name];
                 target.displaySize = null;
                 commit((base) => model.withChatSize(base, size.chatWidth, size.chatHeight), {
-                    success: "채팅 칸 크기를 " + text + "로 바꿨어요.",
+                    success: "채팅 칸 크기를 " + text + "(으)로 변경함.",
                 });
             });
             sizeGroup.append(option);
@@ -1598,7 +1601,7 @@
                 if (!event.isTrusted) return;
                 target.displayPosition = null;
                 commit((base) => model.withPosition(base, corner, model.DEFAULT_OFFSET, model.DEFAULT_OFFSET), {
-                    success: "패널을 " + text + "에 두었어요.",
+                    success: "패널 위치를 " + text + "(으)로 변경함.",
                 });
             });
             cornerGroup.append(option);
@@ -1740,7 +1743,7 @@
             add.setAttribute(
                 "aria-label",
                 added
-                    ? channel.channelName + " 채팅, 이미 추가했어요"
+                    ? channel.channelName + " 채팅, 이미 추가함"
                     : blocked
                       ? channel.channelName + " 채팅, " + errorText("limit")
                       : channel.channelName + " 채팅 추가"
@@ -1807,8 +1810,10 @@
         injectStyleOnce(STYLE_ID, css());
         removeOptions = bindFeatureOptions((next) => {
             if (!running) return;
+            donationMessagesHidden = next?.chatDonationMessagesHidden === true;
             if (next?.chatMultiviewEnabled === true) activate();
             else deactivate();
+            for (const cell of panel?.cells.values() || []) syncFrameStyle(cell);
         });
     }
     function stop() {

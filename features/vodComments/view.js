@@ -550,7 +550,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
             avatar.setAttribute("data-bcvc-profile-target", "avatar");
             avatar.setAttribute("aria-label", `${authorName} 프로필 보기`);
             avatar.disabled = true;
-            avatar.title = "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요.";
+            avatar.title = "하단 원본 댓글이 표시될 때 프로필 보기 가능.";
             avatar.setAttribute("aria-describedby", NATIVE_ACTION_HINT_ID);
 
             const apiUrl = model.normalizeImageUrl(item?.row?.user?.profileImageUrl, location.href);
@@ -607,7 +607,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
             buff.setAttribute("aria-pressed", "false");
             buff.setAttribute("aria-describedby", NATIVE_ACTION_HINT_ID);
             buff.disabled = true;
-            buff.title = "하단 원본 댓글이 표시되면 버프할 수 있어요.";
+            buff.title = "하단 원본 댓글이 표시될 때 버프 가능.";
             const label = document.createElement("span");
             label.className = "bcvc-buff-label";
             label.setAttribute("aria-hidden", "true");
@@ -716,7 +716,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
                 author.setAttribute("data-bcvc-profile-target", "author");
                 author.setAttribute("aria-label", `${authorName} 프로필 보기`);
                 author.disabled = true;
-                author.title = "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요.";
+                author.title = "하단 원본 댓글이 표시될 때 프로필 보기 가능.";
                 author.setAttribute("aria-describedby", NATIVE_ACTION_HINT_ID);
                 meta.appendChild(author);
                 if (user.writer === true) {
@@ -809,8 +809,8 @@ body[theme="dark"] .bcvc-avatar-fallback,
                             replyBudget?.remaining === 0 ||
                             visibleReplies.length < replies.length ||
                             !visibleReplies.length
-                                ? `이 정렬에서는 답글을 ${MAX_REPLIES_PER_ORDER}개까지만 표시해요.`
-                                : `한 댓글의 답글은 ${MAX_REPLIES_PER_COMMENT}개까지만 표시해요.`;
+                                ? `이 정렬은 답글 최대 ${MAX_REPLIES_PER_ORDER}개 표시.`
+                                : `댓글당 답글 최대 ${MAX_REPLIES_PER_COMMENT}개 표시.`;
                     }
                 }
             }
@@ -913,14 +913,14 @@ body[theme="dark"] .bcvc-avatar-fallback,
             if (state.loadingMore) {
                 const status = document.createElement("p");
                 status.className = "bcvc-footer-status";
-                status.textContent = "댓글을 더 불러오는 중이에요…";
+                status.textContent = "댓글 더 불러오는 중…";
                 footer.appendChild(status);
                 return footer;
             }
             if (state.moreError) {
                 const status = document.createElement("p");
                 status.className = "bcvc-footer-status";
-                status.textContent = "댓글을 더 불러오지 못했어요.";
+                status.textContent = "댓글 추가 불러오기 실패.";
                 footer.appendChild(status);
                 const retry = document.createElement("button");
                 retry.type = "button";
@@ -947,7 +947,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
             if (state.capped) {
                 const status = document.createElement("p");
                 status.className = "bcvc-footer-status";
-                status.textContent = `댓글은 ${MAX_COMMENTS_PER_ORDER.toLocaleString()}개까지 표시해요.`;
+                status.textContent = `댓글 최대 ${MAX_COMMENTS_PER_ORDER.toLocaleString()}개 표시.`;
                 footer.appendChild(status);
             }
             return footer;
@@ -963,8 +963,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
             const nativeActionHint = document.createElement("p");
             nativeActionHint.id = NATIVE_ACTION_HINT_ID;
             nativeActionHint.className = "bcvc-sr-only";
-            nativeActionHint.textContent =
-                "프로필과 버프는 같은 댓글이 하단 원본 댓글 영역에 표시되어 있을 때 사용할 수 있어요.";
+            nativeActionHint.textContent = "하단 원본 댓글에 같은 댓글이 표시될 때 프로필·버프 사용 가능.";
             view.appendChild(nativeActionHint);
             view.appendChild(createToolbar(state));
 
@@ -973,15 +972,15 @@ body[theme="dark"] .bcvc-avatar-fallback,
                 return view;
             }
             if (state.error && !state.loaded) {
-                view.appendChild(createStateBlock("댓글 불러오기 실패", "다시 시도", "retry-initial"));
+                view.appendChild(createStateBlock("댓글 불러오기 실패.", "다시 시도", "retry-initial"));
                 return view;
             }
             if (!state.commentActive) {
-                view.appendChild(createStateBlock("이 영상은 댓글을 사용할 수 없어요."));
+                view.appendChild(createStateBlock("댓글을 사용할 수 없는 영상."));
                 return view;
             }
             if (!state.items.length) {
-                view.appendChild(createStateBlock("아직 등록된 댓글이 없어요."));
+                view.appendChild(createStateBlock("등록된 댓글 없음."));
                 return view;
             }
 

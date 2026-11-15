@@ -975,7 +975,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.4.6");
+    assert.equal(manifest.version, "1.4.7");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
@@ -1754,7 +1754,7 @@ test("category follower filtering continues candidates that do not yet have a DO
     minimum.value = "1";
     dispatch(dom, minimum, "input");
     await waitForCondition(() => counts.size === 2);
-    assert.match(document.querySelector('[data-bcgt-empty="1"]').textContent, /확인하고/);
+    assert.equal(document.querySelector('[data-bcgt-empty="1"]').textContent, "조건에 맞는 방송 확인 중…");
     counts.get("native-a")(0);
     counts.get("native-b")(0);
     await waitForCondition(() => counts.has("candidate-c"));
@@ -3214,10 +3214,8 @@ test("quality and unified popup preferences save independently", async (t) => {
     const select = queryOption(document, "autoQualityPreferred");
     const dismissGuide = queryOption(document, "adblockPopupEnabled");
     assert.equal(queryOption(document, "autoQualityDismissInstallGuide"), null);
-    assert.equal(
-        dismissGuide.closest(".toggle-row").nextElementSibling.textContent.trim(),
-        "시청에 방해되는 팝업을 제거해요."
-    );
+    assert.equal(dismissGuide.closest(".toggle-row").nextElementSibling, null);
+    assert.equal(dismissGuide.closest("label").textContent.trim(), "시청 방해 팝업 제거");
     assert.equal(dismissGuide.checked, true);
     assert.equal(dismissGuide.disabled, false);
     assert.equal(select.value, "1080p");
@@ -4677,6 +4675,7 @@ for (const [label, head, expected] of [
 async function createVodBroadcastClockFixture(
     detail,
     {
+        ageBadge = false,
         currentTime = 2,
         linkedDetails = {},
         nativeDate = "",
@@ -4708,9 +4707,12 @@ async function createVodBroadcastClockFixture(
                 ? [
                       '<div class="_row_17x81_8 _status_17x81_19" id="native-video-meta">',
                       '<div class="_data_17x81_70"><strong class="_count_17x81_83">조회수 100회</strong>',
-                      nativeDate
-                          ? `<span class="_count_17x81_83" id="native-date">${nativeDate}</span><span class="_label_17x81_79" id="native-date-label">등록일</span>`
+                      nativeDate ? `<span class="_count_17x81_83" id="native-date">${nativeDate}</span>` : "",
+                      // Observed 2026-10-28 on age-restricted replays: an svg badge with a hidden "19" follows the date.
+                      ageBadge
+                          ? '<span class="_count_17x81_83" id="native-age-badge"><svg></svg><span class="blind">19</span></span>'
                           : "",
+                      nativeDate ? '<span class="_label_17x81_79" id="native-date-label">등록일</span>' : "",
                       "</div></div>",
                   ].join("")
                 : "",
@@ -4923,12 +4925,53 @@ test("VOD broadcast range replaces any native date with its own dated range", as
         assert.equal(findRange().hasAttribute("data-bcbc-separator"), true, "the range keeps the native dot");
         assert.equal(dom.window.getComputedStyle(nativeDate).display, "none");
         assert.equal(nativeDate.textContent, text, "the native text itself is never rewritten");
-        assert.equal(findRange().parentElement, nativeDate.parentElement);
-        // The native hover label stays right after the date; the range follows it.
-        assert.equal(nativeDate.nextElementSibling.id, "native-date-label");
-        assert.equal(findRange().previousElementSibling.id, "native-date-label");
+        // The range sits right after the hidden date, before the native hover label.
+        assert.equal(findRange().previousElementSibling, nativeDate);
+        assert.equal(findRange().nextElementSibling.id, "native-date-label");
     }
     assert.equal(document.querySelectorAll("#cheese-spanner-vod-broadcast-range").length, 1);
+});
+
+test("VOD broadcast range replaces only the date of an age-restricted replay and keeps the 19+ badge after it", async () => {
+    const { dom } = await createVodBroadcastClockFixture(
+        { liveOpenDate: "2026-10-16 20:41:00", duration: 41580 },
+        { nativeDate: "10.17", ageBadge: true }
+    );
+    const { document } = dom.window;
+    const range = document.getElementById("cheese-spanner-vod-broadcast-range");
+    const nativeDate = document.getElementById("native-date");
+    const badge = document.getElementById("native-age-badge");
+    assert.match(range.textContent, new RegExp(`^${RANGE_YEAR_2026}10\\.16\\(금\\) 20:41 ~ 10\\.17\\(토\\) 08:14$`));
+    assert.equal(nativeDate.hasAttribute("data-cheese-spanner-vod-date-hidden"), true);
+    assert.equal(badge.hasAttribute("data-cheese-spanner-vod-date-hidden"), false, "the 19+ badge is not the date");
+    assert.notEqual(dom.window.getComputedStyle(badge).display, "none");
+    // Native order is views, date, badge; the range takes the date's place before the badge.
+    assert.deepEqual(
+        [...range.parentElement.children].map((el) => el.id || el.tagName.toLowerCase()),
+        ["strong", "native-date", "cheese-spanner-vod-broadcast-range", "native-age-badge", "native-date-label"]
+    );
+    // The badge's native "._count_ + ._count_" dot no longer applies after the range, so the range CSS draws it.
+    const rules = [...document.getElementById("cheese-spanner-vod-broadcast-clock-style").sheet.cssRules];
+    const badgeDot = rules.find((rule) =>
+        rule.selectorText?.includes(
+            '#cheese-spanner-vod-broadcast-range[data-bcbc-placement="native-date"] + [class*="_count_"]::before'
+        )
+    );
+    assert.ok(badgeDot, "badge separator rule");
+    assert.equal(badgeDot.style.getPropertyValue("width"), "2px");
+    assert.equal(dom.window.getComputedStyle(badge).paddingLeft, "8px");
+});
+
+test("VOD broadcast range never treats a 19+ badge as the date when the native date is missing", async () => {
+    const { dom } = await createVodBroadcastClockFixture(
+        { liveOpenDate: "2026-10-25 12:00:00", duration: 3600 },
+        { ageBadge: true }
+    );
+    const { document } = dom.window;
+    const range = document.getElementById("cheese-spanner-vod-broadcast-range");
+    assert.equal(range.dataset.bcbcPlacement, "status-row");
+    assert.equal(range.parentElement.id, "native-video-meta");
+    assert.equal(document.querySelector("[data-cheese-spanner-vod-date-hidden]"), null);
 });
 
 test("VOD broadcast range restores a replaced native date when it goes away", async (t) => {

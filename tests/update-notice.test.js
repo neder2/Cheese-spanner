@@ -402,14 +402,16 @@ test("saved notice template preserves copy, confirmation and focus restoration",
     w.eval(read("features/updateNotice.js"));
     const dialog = w.document.querySelector("dialog");
     assert.ok(dialog.open);
-    assert.equal(dialog.querySelector("p").textContent, "팝업같은 거 띄워서 죄송합니다. 꼭 읽어주세요.");
-    assert.match(dialog.textContent, /기존 그리드 우회 방식/);
-    assert.match(dialog.textContent, /수정·변형을 제한하는 네이버 이용약관에 저촉될 소지/);
-    assert.match(dialog.textContent, /배포와 지원을 계속하기 어렵다고 판단해 기존 방식의 지원을 종료/);
-    assert.match(dialog.textContent, /비슷한 이유로 확장 프로그램 이름도 변경했습니다/);
-    assert.match(dialog.textContent, /화질 고정 기능을 강화하고, 시청에 방해되는 팝업을 제거/);
-    assert.match(dialog.textContent, /시청 방해 팝업 제거/);
-    assert.match(dialog.textContent, /설치된 그리드 프로그램의 사용을 차단하지 않습니다/);
+    assert.deepEqual(
+        Array.from(dialog.querySelectorAll("p"), (paragraph) => paragraph.textContent),
+        [
+            "팝업같은 거 띄워서 죄송합니다. 꼭 읽어주세요.",
+            "확장 프로그램 이름을 변경했습니다.",
+            "화질 고정 기능을 강화하고, 시청에 방해되는 팝업을 제거하도록 개선했습니다.",
+            "팝업 제거는 설정의 ‘시청 방해 팝업 제거’에서 조절할 수 있습니다.",
+            "열려 있던 치지직 탭은 새로고침하면 새 방식이 적용됩니다.",
+        ]
+    );
     assert.equal(w.document.getElementById(dialog.getAttribute("aria-labelledby")).textContent, "중요!!! 공지");
     assert.ok(w.document.getElementById(dialog.getAttribute("aria-describedby")));
     dialog.querySelector("button").click();

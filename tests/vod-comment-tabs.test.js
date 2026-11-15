@@ -795,15 +795,15 @@ test("VOD comments load from the API without a lower comment DOM and render safe
     );
     assert.equal(
         document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-avatar").title,
-        "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요."
+        "하단 원본 댓글이 표시될 때 프로필 보기 가능."
     );
     assert.equal(
         document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-author").title,
-        "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요."
+        "하단 원본 댓글이 표시될 때 프로필 보기 가능."
     );
     assert.equal(
         document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-buff").title,
-        "하단 원본 댓글이 표시되면 버프할 수 있어요."
+        "하단 원본 댓글이 표시될 때 버프 가능."
     );
 
     const panel = document.getElementById("cheese-spanner-vod-comment-panel");
@@ -1129,7 +1129,7 @@ test("VOD comment rows render observed replies and tolerate nullable or deleted 
     );
     const cappedRow = document.querySelector("[data-bcvc-comment-key='id:8']");
     assert.equal(cappedRow.querySelectorAll("[data-bcvc-reply='1']").length, 50);
-    assert.match(cappedRow.querySelector(".bcvc-reply-limit").textContent, /50개까지만 표시해요\./);
+    assert.match(cappedRow.querySelector(".bcvc-reply-limit").textContent, /50개 표시\./);
     assert.match(document.querySelector("[data-bcvc-comment-key='id:3']").textContent, /알 수 없음/);
     assert.match(document.querySelector("[data-bcvc-comment-key*='fallback:']").textContent, /표시할 수 없는 댓글/);
     assert.equal(
@@ -1213,7 +1213,7 @@ test("VOD comment rendering caps total nested replies without hiding the limit",
     assert.equal(document.querySelectorAll("[data-bcvc-reply='1']").length, 300);
     assert.match(
         document.querySelector("[data-bcvc-comment-key='id:7'] .bcvc-reply-limit").textContent,
-        /300개까지만 표시해요\./
+        /300개 표시\./
     );
 });
 
@@ -1298,17 +1298,15 @@ test("VOD comment initial errors expose retry and distinguish empty or disabled 
 
     clickCommentTab(document);
     await waitForCondition(() => document.querySelector("[data-bcvc-action='retry-initial']"));
-    assert.match(document.getElementById("cheese-spanner-vod-comment-panel").textContent, /댓글 불러오기 실패/);
+    assert.match(document.getElementById("cheese-spanner-vod-comment-panel").textContent, /댓글 불러오기 실패./);
 
     document.querySelector("[data-bcvc-action='retry-initial']").click();
     await waitForCondition(() =>
-        /아직 등록된 댓글이 없어요\./.test(document.getElementById("cheese-spanner-vod-comment-panel").textContent)
+        /등록된 댓글 없음\./.test(document.getElementById("cheese-spanner-vod-comment-panel").textContent)
     );
     document.querySelector("[data-bcvc-action='refresh']").click();
     await waitForCondition(() =>
-        /이 영상은 댓글을 사용할 수 없어요\./.test(
-            document.getElementById("cheese-spanner-vod-comment-panel").textContent
-        )
+        /댓글을 사용할 수 없는 영상\./.test(document.getElementById("cheese-spanner-vod-comment-panel").textContent)
     );
     assert.equal(call, 3);
 });
@@ -1594,13 +1592,13 @@ test("VOD comments show an upload video's comments-less success response as an e
     const panelText = () => document.getElementById("cheese-spanner-vod-comment-panel")?.textContent || "";
 
     clickCommentTab(document);
-    await waitForCondition(() => /아직 등록된 댓글이 없어요\./.test(panelText()));
-    assert.doesNotMatch(panelText(), /댓글 불러오기 실패/);
+    await waitForCondition(() => /등록된 댓글 없음\./.test(panelText()));
+    assert.doesNotMatch(panelText(), /댓글 불러오기 실패./);
     assert.equal(document.querySelector("[data-bcvc-action='retry-initial']"), null);
 
     document.querySelector("[data-bcvc-action='refresh']").click();
-    await waitForCondition(() => /이 영상은 댓글을 사용할 수 없어요\./.test(panelText()));
-    assert.doesNotMatch(panelText(), /댓글 불러오기 실패/);
+    await waitForCondition(() => /댓글을 사용할 수 없는 영상\./.test(panelText()));
+    assert.doesNotMatch(panelText(), /댓글 불러오기 실패./);
 });
 
 test("VOD comment rows capped by the per-order reply budget still show the reply limit notice", async (t) => {
@@ -1631,12 +1629,12 @@ test("VOD comment rows capped by the per-order reply budget still show the reply
     const cappedRow = document.querySelector("[data-bcvc-comment-key='id:7']");
     const cappedLimit = cappedRow.querySelector(".bcvc-reply-limit");
     assert.equal(cappedRow.querySelector("[data-bcvc-action='reply-toggle']"), null);
-    assert.match(cappedLimit.textContent, /이 정렬에서는 답글을 300개까지만 표시해요\./);
+    assert.match(cappedLimit.textContent, /이 정렬은 답글 최대 300개 표시\./);
     assert.equal(cappedLimit.hidden, false, "a row without a reply toggle must not hide its only limit notice");
 
     const perCommentRow = document.querySelector("[data-bcvc-comment-key='id:1']");
     const perCommentLimit = perCommentRow.querySelector(".bcvc-reply-limit");
-    assert.match(perCommentLimit.textContent, /한 댓글의 답글은 50개까지만 표시해요\./);
+    assert.match(perCommentLimit.textContent, /댓글당 답글 최대 50개 표시\./);
     assert.equal(perCommentLimit.hidden, true, "a limit under a reply toggle stays collapsed with its replies");
     perCommentRow.querySelector("[data-bcvc-action='reply-toggle']").click();
     assert.equal(perCommentLimit.hidden, false);

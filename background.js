@@ -35,7 +35,7 @@ importScripts("shared/followingTitleHistory.js", "shared/followingTitleCollector
 importScripts("shared/followingFolders.js", "shared/chatMultiview.js");
 importScripts("shared/settingsBackup.js", "shared/settingsStore.js");
 importScripts("shared/donationHistoryImport.js");
-importScripts("shared/recordingDownloads.js");
+importScripts("shared/recordingDirectory.js", "shared/recordingDownloads.js");
 
 const { OPTION_KEYS, getStorageLastError, normalizeOptions, withOptionsStorageLock } = CheeseSpannerSettings;
 const {

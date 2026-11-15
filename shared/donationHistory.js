@@ -13,7 +13,7 @@
 
     function monthIndex(value) {
         if (typeof value !== "string" || !/^20\d{2}-(0[1-9]|1[0-2])$/.test(value))
-            throw new Error("가져올 연월을 선택해 주세요.");
+            throw new Error("가져올 연월 선택 필요.");
         const [year, month] = value.split("-").map(Number);
         return year * 12 + month - 1;
     }
@@ -23,8 +23,8 @@
         const last = monthIndex(end);
         const current = utils.getKstParts(now);
         if (first > last || last > current.year * 12 + current.month - 1)
-            throw new Error("시작 월부터 이번 달 사이의 기간을 선택해 주세요.");
-        if (last - first + 1 > MAX_MONTHS) throw new Error("후원 내역의 지원 조회 범위를 초과했어요.");
+            throw new Error("시작 월부터 이번 달 사이의 기간 선택 필요.");
+        if (last - first + 1 > MAX_MONTHS) throw new Error("후원 내역 지원 조회 범위 초과.");
         return Array.from({ length: last - first + 1 }, (_, index) => {
             const value = first + index;
             return `${Math.floor(value / 12)}-${String((value % 12) + 1).padStart(2, "0")}`;
@@ -32,7 +32,7 @@
     }
 
     function normalizeRow(row, month) {
-        if (!row || typeof row !== "object") throw new Error("후원 내역 형식을 확인하지 못했어요.");
+        if (!row || typeof row !== "object") throw new Error("후원 내역 형식 확인 불가.");
         const channelId = utils.normalizeChzzkChannelId(row.channelId);
         const at = row.at;
         if (
@@ -44,7 +44,7 @@
             typeof row.text !== "string" ||
             typeof row.channelName !== "string"
         )
-            throw new Error("후원 내역의 날짜·채널·치즈 수량을 확인하지 못했어요.");
+            throw new Error("후원 내역 날짜·채널·치즈 수량 확인 불가.");
         return {
             at,
             channelId,
@@ -55,11 +55,10 @@
     }
 
     function readApiRow(row, month, now = Date.now()) {
-        if (!row || typeof row.donationType !== "string") throw new Error("후원 내역 형식이 달라졌어요.");
+        if (!row || typeof row.donationType !== "string") throw new Error("후원 내역 형식 변경됨.");
         if (row.donationType !== "CHAT") return null;
         const at = utils.parseChzzkDate(row.purchaseDate)?.getTime();
-        if (!Number.isSafeInteger(at) || at > now + 5 * 60 * 1000)
-            throw new Error("후원 내역의 작성 시각을 확인하지 못했어요.");
+        if (!Number.isSafeInteger(at) || at > now + 5 * 60 * 1000) throw new Error("후원 내역 작성 시각 확인 불가.");
         return normalizeRow(
             {
                 at,
@@ -96,9 +95,9 @@
     }
 
     function normalizeSnapshot(value, now = Date.now()) {
-        if (!value || !OWNER_PATTERN.test(value.owner || "")) throw new Error("로그인 계정을 확인하지 못했어요.");
+        if (!value || !OWNER_PATTERN.test(value.owner || "")) throw new Error("로그인 계정 확인 불가.");
         if (!Number.isSafeInteger(value.startedAt) || value.startedAt <= 0 || value.startedAt > now)
-            throw new Error("가져오기 시작 시각이 올바르지 않아요.");
+            throw new Error("가져오기 시작 시각 오류.");
         const range = getMonths(value.startMonth, value.endMonth, now);
         const months = Object.keys(value.months || {}).sort();
         if (
@@ -107,13 +106,13 @@
             months.at(-1) !== range.at(-1) ||
             months.some((month) => !range.includes(month))
         )
-            throw new Error("갱신한 후원 내역의 월 범위를 확인하지 못했어요.");
+            throw new Error("갱신한 후원 내역 월 범위 확인 불가.");
         const normalized = Object.create(null);
         let count = 0;
         for (const month of months) {
             const rows = value.months?.[month];
             if (!Array.isArray(rows) || (count += rows.length) > MAX_ROWS)
-                throw new Error("후원 내역이 보관 한도 3,000건을 넘어 갱신하지 못했어요. 기존 기록은 유지돼요.");
+                throw new Error("보관 한도(3,000건) 초과로 갱신 실패(기존 기록 유지).");
             normalized[month] = rows.map((row) => normalizeRow(row, month));
         }
         if (
@@ -123,7 +122,7 @@
                     .reduce((sum, row) => sum + row.amount, 0)
             )
         )
-            throw new Error("후원 치즈 합계를 정확히 계산할 수 없어요.");
+            throw new Error("후원 치즈 합계 계산 불가.");
         return {
             owner: value.owner,
             startedAt: value.startedAt,
@@ -137,8 +136,8 @@
         const old = normalizeLedger(previous);
         const next = normalizeSnapshot(snapshot, now);
         if (old.owner && old.owner !== next.owner)
-            throw new Error("다른 계정의 후원 내역이 저장되어 있어요. 가져온 내역을 삭제한 뒤 다시 시도해 주세요.");
-        if (old.updatedAt > next.startedAt) throw new Error("다른 가져오기가 먼저 완료됐어요. 다시 시도해 주세요.");
+            throw new Error("다른 계정의 후원 내역 저장됨. 가져온 내역 삭제 후 다시 시도 필요.");
+        if (old.updatedAt > next.startedAt) throw new Error("다른 가져오기가 먼저 완료됨. 다시 시도 필요.");
         const months = Object.assign(Object.create(null), old.months, next.months);
         if (
             !Number.isSafeInteger(
@@ -147,12 +146,12 @@
                     .reduce((sum, row) => sum + row.amount, 0)
             )
         )
-            throw new Error("후원 치즈 합계를 정확히 계산할 수 없어요.");
+            throw new Error("후원 치즈 합계 계산 불가.");
         if (
             Object.keys(months).length > 120 ||
             Object.values(months).reduce((sum, rows) => sum + rows.length, 0) > MAX_ROWS
         )
-            throw new Error("후원 내역이 보관 한도 3,000건을 넘어 갱신하지 못했어요. 기존 기록은 유지돼요.");
+            throw new Error("보관 한도(3,000건) 초과로 갱신 실패(기존 기록 유지).");
         const monthStartedAt = Object.assign(Object.create(null), old.monthStartedAt);
         for (const month of Object.keys(next.months)) monthStartedAt[month] = next.startedAt;
         return { owner: next.owner, updatedAt: now, months, monthStartedAt };
@@ -187,27 +186,25 @@
         const startedAt = now();
         const months = getRefreshMonths(previous, startedAt);
         const owner = await identify();
-        if (!OWNER_PATTERN.test(owner || "")) throw new Error("치지직에 로그인한 뒤 다시 시도해 주세요.");
+        if (!OWNER_PATTERN.test(owner || "")) throw new Error("치지직 로그인 후 다시 시도 필요.");
         const old = normalizeLedger(previous);
         if (old.owner && old.owner !== owner)
-            throw new Error("다른 계정의 후원 내역이 저장되어 있어요. 가져온 내역을 삭제한 뒤 다시 시도해 주세요.");
+            throw new Error("다른 계정의 후원 내역 저장됨. 가져온 내역 삭제 후 다시 시도 필요.");
         const result = Object.create(null);
         let scanned = 0;
         let requests = 0;
         let count = 0;
         const ensureActive = () => {
-            if (signal?.aborted) throw new Error("가져오기를 취소했어요.");
-            if (now() - startedAt > 120000)
-                throw new Error("조회 시간이 초과되어 갱신하지 못했어요. 기존 기록은 유지돼요.");
+            if (signal?.aborted) throw new Error("가져오기 취소됨.");
+            if (now() - startedAt > 120000) throw new Error("조회 시간 초과로 갱신 실패(기존 기록 유지).");
         };
         const readPage = async (month, page) => {
             ensureActive();
-            if (++requests > 300)
-                throw new Error("후원 내역의 조회 한도를 넘어 갱신하지 못했어요. 기존 기록은 유지돼요.");
+            if (++requests > 300) throw new Error("후원 내역 조회 한도 초과로 갱신 실패(기존 기록 유지).");
             const response = await requestPage(month, page, PAGE_SIZE, signal);
             ensureActive();
             const content = response?.content;
-            if (response?.code === 401 || response?.code === 403) throw new Error("치지직에 다시 로그인해 주세요.");
+            if (response?.code === 401 || response?.code === 403) throw new Error("치지직 재로그인 필요.");
             if (
                 response?.code !== 200 ||
                 !Array.isArray(content?.data) ||
@@ -217,7 +214,7 @@
                 content.totalPages > 300 ||
                 (content.totalPages === 0 && content.data.length > 0)
             )
-                throw new Error("후원 내역 응답을 확인하지 못했어요. 저장된 내역은 유지돼요.");
+                throw new Error("후원 내역 응답 확인 불가(저장 내역 유지).");
             return content;
         };
         for (const [index, month] of months.entries()) {
@@ -229,9 +226,9 @@
                     current.totalPages !== first.totalPages ||
                     (page < first.totalPages - 1 && current.data.length !== PAGE_SIZE)
                 )
-                    throw new Error("가져오는 동안 사용 내역이 바뀌었어요. 다시 가져와 주세요.");
+                    throw new Error("가져오는 중 사용 내역 변경됨. 다시 가져오기 필요.");
                 if ((scanned += current.data.length) > MAX_ROWS)
-                    throw new Error("사용 내역이 조회 한도 3,000건을 넘어 갱신하지 못했어요. 기존 기록은 유지돼요.");
+                    throw new Error("사용 내역 조회 한도(3,000건) 초과로 갱신 실패(기존 기록 유지).");
                 for (const item of current.data) {
                     const row = readApiRow(item, month, now());
                     // Keep a fixed boundary so live records after the refresh starts can supplement this snapshot.
@@ -252,13 +249,13 @@
                     latest.totalPages !== first.totalPages ||
                     JSON.stringify(latest.data) !== JSON.stringify(first.data)
                 )
-                    throw new Error("가져오는 동안 사용 내역이 바뀌었어요. 다시 가져와 주세요.");
+                    throw new Error("가져오는 중 사용 내역 변경됨. 다시 가져오기 필요.");
             }
             result[month] = rows;
             count += rows.length;
         }
         ensureActive();
-        if ((await identify()) !== owner) throw new Error("로그인 계정이 바뀌었어요. 다시 가져와 주세요.");
+        if ((await identify()) !== owner) throw new Error("로그인 계정 변경됨. 다시 가져오기 필요.");
         ensureActive();
         return normalizeSnapshot(
             { owner, startedAt, startMonth: months[0], endMonth: months.at(-1), months: result },

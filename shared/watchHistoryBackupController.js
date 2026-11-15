@@ -7,12 +7,12 @@
     // Room left for the other local writers (live-start state, new watch sessions, settings) after a restore.
     const STORAGE_HEADROOM_BYTES = 1024 * 1024;
     const messages = {
-        UNTRUSTED_SENDER: "시청 기록 페이지에서 다시 시도해 주세요.",
-        INVALID_REQUEST: "백업 요청을 확인할 수 없어요. 시청 기록 페이지를 다시 열어 주세요.",
-        INVALID_FILE: "백업 파일의 형식이나 기록 내용이 올바르지 않아요.",
-        UNSUPPORTED_VERSION: "지원하지 않는 백업 파일 버전이에요.",
-        LIMIT_EXCEEDED: "합친 기록이 파일 크기나 보관 한도를 넘어요. 기존 기록은 변경하지 않았어요.",
-        STORAGE_READ_FAILED: "기존 시청 기록을 읽지 못했어요. 잠시 후 다시 시도해 주세요.",
+        UNTRUSTED_SENDER: "시청 기록 페이지에서 다시 시도 필요.",
+        INVALID_REQUEST: "백업 요청 확인 불가. 시청 기록 페이지 다시 열기 필요.",
+        INVALID_FILE: "백업 파일 형식·내용 오류.",
+        UNSUPPORTED_VERSION: "미지원 백업 파일 버전.",
+        LIMIT_EXCEEDED: "병합 결과가 크기·보관 한도 초과(기존 기록 미변경).",
+        STORAGE_READ_FAILED: "기존 시청 기록 읽기 실패. 잠시 후 다시 시도 필요.",
         STORAGE_WRITE_FAILED: "시청 기록을 저장하지 못했어요. 기존 기록은 유지돼요. 저장 공간을 확인해 주세요.",
     };
 

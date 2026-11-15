@@ -396,7 +396,7 @@
     }
     // Per-channel keys avoid lost updates when different tabs adjust different channels.
     function delayKey(id) {
-        if (!CHANNEL.test(id)) throw new Error("잘못된 채널입니다.");
+        if (!CHANNEL.test(id)) throw new Error("잘못된 채널 ID");
         return DELAY_PREFIX + id;
     }
     function ranges(video) {
@@ -426,17 +426,17 @@
         return { state: "ready", target, edge };
     }
     function source(content, normalizeUrl) {
-        if (content?.status !== "OPEN") throw new Error("방송이 종료되었거나 시청할 수 없어요.");
+        if (content?.status !== "OPEN") throw new Error("방송 종료 또는 시청 불가.");
         let playback;
         try {
             playback = JSON.parse(content.livePlaybackJson);
         } catch {
-            throw new Error("라이브 재생 정보를 확인할 수 없어요.");
+            throw new Error("라이브 재생 정보 확인 불가.");
         }
         const media = Array.isArray(playback?.media) ? playback.media : [];
         const selected = media.find((item) => item.mediaId === "LLHLS") || media.find((item) => item.mediaId === "HLS");
         const url = selected && normalizeUrl(selected.path);
-        if (!url) throw new Error("지원하는 라이브 재생 소스가 없어요.");
+        if (!url) throw new Error("지원하는 라이브 재생 소스 없음.");
         return {
             url,
             lowLatency: selected.mediaId === "LLHLS",

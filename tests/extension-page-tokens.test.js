@@ -291,13 +291,13 @@ test("replay pending page uses the shared tokens, Pretendard, and polite copy wi
             [...main.children].map((child) => child.tagName),
             ["H1", "P", "P"]
         );
-        assert.equal(main.querySelector("h1").textContent.trim(), "다시보기를 찾고 있어요");
+        assert.equal(main.querySelector("h1").textContent.trim(), "다시보기 찾는 중");
         const paragraphs = [...main.querySelectorAll("p")].map((paragraph) =>
             paragraph.textContent.replace(/\s+/g, " ").trim()
         );
         assert.deepEqual(paragraphs, [
-            "저장된 방송 정보로 다시보기를 조회해요.",
-            "찾으면 이 탭에서 열어요. 계속 기다리는 중이면 기록 목록에서 다시 시도해 주세요.",
+            "저장된 방송 정보로 다시보기 확인 중. 찾으면 이 탭에서 바로 이동.",
+            "잠시 후에도 이동하지 않으면 시청 기록에서 다시 시도.",
         ]);
         assert.equal(/(습니다|입니다|합니다|됩니다)/.test(main.textContent), false, "visible copy uses 해요체");
     } finally {

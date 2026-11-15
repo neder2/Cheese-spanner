@@ -2,7 +2,7 @@
 
 ## 실측과 원인
 
-- 작업 기준: `main`, HEAD `ea22dfc`, 버전 `1.4.0`. 기존 미추적 문서 `docs/feature-expansion-proposal.md`는 수정하지 않았다.
+- 작업 기준: `main`, HEAD `ea22dfc`, 버전 `1.4.0`. 당시 미추적 추가 기능 기획안은 수정하지 않았다. 현재 남은 요청은 [계획된 기능](../tracking/status.md#계획된-기능)에서 관리한다.
 - Chrome의 기존 `https://chzzk.naver.com/watchparty/535` 탭에서 스크롤된 상태를 읽기 전용으로 측정했다.
 - `#header` 바로 앞의 상단 홍보 영역(`data-nlog-area="home_top_skin"`)은 `position: fixed`, inline `display: none !important` 상태였다. 숨김을 적용한 프로그램은 확인하지 않았다.
 - 헤더 inline transform은 `translateY(51px)`이지만 computed transform은 `none`, 실제 아래쪽 좌표는 60px이었다.

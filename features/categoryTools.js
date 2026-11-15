@@ -237,13 +237,13 @@
     let liveCountGeneration = 0;
     let liveCountStarted = false;
     let liveCountLabel = "시청자 10명 이상 · 집계 중…";
-    let liveCountTitle = "전체 방송 목록 기준이며 검색·필터와 무관해요.";
+    let liveCountTitle = "전체 방송 목록 기준(검색·필터와 무관).";
 
     function resetGlobalLiveCount() {
         liveCountGeneration++;
         liveCountStarted = false;
         liveCountLabel = "시청자 10명 이상 · 집계 중…";
-        liveCountTitle = "전체 방송 목록 기준이며 검색·필터와 무관해요.";
+        liveCountTitle = "전체 방송 목록 기준(검색·필터와 무관).";
         dataRepository.cancelGlobalLiveCount();
     }
 
@@ -276,7 +276,7 @@
                 )
                     return;
                 liveCountLabel = `시청자 10명 이상 · 방송 ${count.toLocaleString("ko-KR")}개 · 시청자 합계 ${totalViewers.toLocaleString("ko-KR")}명`;
-                liveCountTitle = `전체 방송 목록 기준 · ${new Date(measuredAt).toLocaleTimeString("ko-KR")} 집계 · 검색·필터와 무관해요. 방송별 동시 시청자 수의 합계로, 중복 시청자를 제거한 인원 수는 아니에요.`;
+                liveCountTitle = `전체 방송 목록 기준 · ${new Date(measuredAt).toLocaleTimeString("ko-KR")} 집계 · 검색·필터와 무관. 방송별 동시 시청자 합계(중복 시청자 포함).`;
                 syncGlobalLiveCount(route);
             },
             () => {
@@ -287,7 +287,7 @@
                 )
                     return;
                 liveCountLabel = "방송 수 집계 실패";
-                liveCountTitle = "전체 방송 탭에 다시 진입하면 집계를 다시 시도해요.";
+                liveCountTitle = "전체 방송 탭 재진입 시 다시 집계.";
                 syncGlobalLiveCount(route);
             }
         );
@@ -331,11 +331,10 @@
     }
 
     function categoryErrorText(error) {
-        if (error === "limit-reached")
-            return "카테고리는 최대 100개까지 제외할 수 있어요. 기존 항목을 해제한 뒤 다시 선택해 주세요.";
+        if (error === "limit-reached") return "카테고리는 최대 100개까지 제외 가능. 기존 항목 해제 후 재선택.";
         if (error === "invalid-stored-state" || error === "unsupported-version")
-            return "저장한 제외 목록을 확인하지 못했어요. 기존 목록을 보존하고 다시 불러올 수 있어요.";
-        return "제외 목록을 저장하거나 불러오지 못했어요. 다시 불러오거나 항목을 다시 선택해 주세요.";
+            return "제외 목록 확인 실패(기존 목록 보존됨, 다시 불러오기 가능).";
+        return "제외 목록 저장·불러오기 실패. 다시 불러오거나 재선택 필요.";
     }
 
     function sendCategoryOperation(operation) {
@@ -825,7 +824,7 @@
         }
         setCategoryStatusText(
             view.root.querySelector(".bcgt-category-summary-status"),
-            categoryStoreError || (categoryStoreLoading ? "제외 목록을 불러오고 있어요…" : "")
+            categoryStoreError || (categoryStoreLoading ? "제외 목록 불러오는 중…" : "")
         );
         const retry = view.root.querySelector("[data-category-store-retry]");
         retry.hidden = !categoryStoreError;
@@ -838,16 +837,16 @@
         if (!isCurrentCategoryAdd(view)) return;
         const messages = {
             idle: "",
-            typing: "검색어 입력 중이에요…",
-            loading: "카테고리를 검색하고 있어요…",
-            empty: "검색 결과가 없어요. Enter를 누르면 입력한 단어를 태그로 제외해요.",
-            error: "카테고리 검색에 실패했어요. 다시 시도해 주세요.",
-            long: "검색어는 100자 이하로 입력해 주세요.",
-            success: view.results.length >= 50 ? "검색 결과는 최대 50개예요. 검색어를 구체화해 주세요." : "",
-            "tag-saving": "태그 제외를 저장하고 있어요…",
-            "tag-added": `‘${view.addedTag}’ 태그를 제외했어요.`,
-            "tag-duplicate": "이미 제외한 태그예요.",
-            "tag-invalid": "태그는 100자 이하로 입력해 주세요.",
+            typing: "검색어 입력 중…",
+            loading: "카테고리 검색 중…",
+            empty: "검색 결과 없음. Enter로 입력 단어를 태그 제외.",
+            error: "카테고리 검색 실패. 다시 시도 필요.",
+            long: "검색어는 100자 이하로 입력 필요.",
+            success: view.results.length >= 50 ? "검색 결과 최대 50개 표시. 검색어 구체화 필요." : "",
+            "tag-saving": "태그 제외 저장 중…",
+            "tag-added": `‘${view.addedTag}’ 태그 제외됨.`,
+            "tag-duplicate": "이미 제외한 태그.",
+            "tag-invalid": "태그는 100자 이하로 입력 필요.",
         };
         setCategoryStatusText(view.searchStatusElement, messages[view.searchStatus]);
         view.searchRetry.hidden = view.searchStatus !== "error";
@@ -866,7 +865,7 @@
         root.setAttribute("aria-label", "카테고리 제외");
         root.innerHTML = `<div class="bcgt-filter-title">카테고리 제외</div>
 <label class="bcgt-category-search-label">카테고리 검색 · 태그 추가<input type="search" data-category-search aria-label="제외할 카테고리 검색 또는 태그 입력" placeholder="카테고리 이름 또는 태그 입력 후 Enter" autocomplete="off" spellcheck="false" maxlength="100" /></label>
-<div class="bcgt-category-hint">카테고리는 결과의 제외로, 스트리머가 붙인 태그는 단어 입력 후 Enter로 제외해요.</div>
+<div class="bcgt-category-hint">카테고리는 검색 결과에서 선택, 태그는 단어 입력 후 Enter로 제외.</div>
 <div data-category-search-status role="status" aria-live="polite"></div><button type="button" class="bcgt-category-button" data-category-search-retry hidden>카테고리 검색 다시 시도</button>
 <div class="bcgt-category-list" data-category-results></div>`;
         menu.append(root);
@@ -4015,7 +4014,7 @@
 <div class="bcgt-filter-groups">${FILTER_KINDS.map(filterGroupHtml).join("")}
 </div>
 <div class="bcgt-reset-row">
-  <span class="bcgt-filter-note">방송을 보고 돌아와도 이 탭에서 유지돼요</span>
+  <span class="bcgt-filter-note">방송 시청 후 복귀해도 현재 탭에서 유지</span>
   <button type="button" class="bcgt-reset" data-filter-reset>필터 초기화</button>
 </div>
 `;
@@ -4293,8 +4292,8 @@
             // 전체 방송은 Enter로만 적용하고 카테고리 목록은 입력하면 바로 적용한다.
             const hintText =
                 route?.scope === "global-lives"
-                    ? "띄어쓰기로 여러 단어를 모두 찾고, -단어는 빼요. Enter로 적용해요."
-                    : "띄어쓰기로 여러 단어를 모두 찾고, -단어는 빼요.";
+                    ? "띄어쓰기: 모두 포함, -단어: 제외(Enter 적용)."
+                    : "띄어쓰기: 모두 포함, -단어: 제외.";
             if (hint.textContent !== hintText) hint.textContent = hintText;
         }
         const menu = document.getElementById(MENU_ID);
@@ -4551,7 +4550,7 @@
         return true;
     }
 
-    function ensureEmptyMessage(grid, message = "조건에 맞는 결과가 없어요.") {
+    function ensureEmptyMessage(grid, message = "조건에 맞는 결과 없음.") {
         let empty = grid.querySelector(`:scope > [${EMPTY_ATTR}="1"]`);
         if (!empty) {
             empty = document.createElement("div");
@@ -4660,7 +4659,7 @@
         if (root.__bcgtRenderKey !== renderKey) {
             const label = root.querySelector(".bcgt-applied-label");
             label.textContent = labelText;
-            if (restoredConditionsPending) label.title = "방송을 보고 돌아와도 이 탭에서는 조건이 유지돼요";
+            if (restoredConditionsPending) label.title = "방송 시청 후 복귀해도 현재 탭에서 조건 유지";
             else label.removeAttribute("title");
             root.querySelector(".bcgt-applied-chips").replaceChildren(...items.map(buildAppliedChip));
             root.__bcgtRenderKey = renderKey;
@@ -5071,10 +5070,10 @@
             ensureEmptyMessage(
                 grid,
                 followerHydrationPending || metadataPending
-                    ? "조건에 맞는 방송을 확인하고 있어요…"
+                    ? "조건에 맞는 방송 확인 중…"
                     : followerLookupFailed
-                      ? "팔로워 정보를 확인하지 못했어요."
-                      : "조건에 맞는 결과가 없어요."
+                      ? "팔로워 정보 확인 실패."
+                      : "조건에 맞는 결과 없음."
             );
         restoreScrollAnchor(scrollAnchor);
         updateStatus(visible.length, Math.max(rows.length, metadata.size));

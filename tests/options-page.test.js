@@ -176,12 +176,12 @@ test("panel resize settings explain their boundaries and remain independently us
         [
             chat,
             "chat-display",
-            "영상 쪽 가장자리를 끌면 너비, 아래쪽을 끌면 높이를 조절해요. 더블클릭하면 기본 크기로 돌아가요.",
+            "영상 쪽 경계로 너비, 아래 경계로 높이를 끌어 조절해요. 더블클릭하면 기본 크기로 돌아가요.",
         ],
         [
             sidebar,
             "appearance-page",
-            "펼친 사이드바의 본문 쪽 가장자리를 마우스로 잡아 끌어 조절해요. 더블클릭하면 기본 너비로 돌아가요.",
+            "펼친 사이드바의 본문 쪽 경계를 끌어 조절해요. 더블클릭하면 기본 너비로 돌아가요.",
         ],
     ]) {
         assert.ok(input);
@@ -482,7 +482,7 @@ test("options keeps following controls together and separates list filters from 
     const listState = queryOption(document, "followingListStateEnabled");
     assert.equal(listState.checked, false);
     assert.equal(listState.disabled, false);
-    assert.equal(listState.closest("label").textContent.trim(), "팔로잉 목록 상태 기억");
+    assert.equal(listState.closest("label").textContent.trim(), "팔로잉 목록 펼침·접힘 기억");
     assert.equal(listState.closest(".settings-card"), explorationSection);
     const offlineHidden = queryOption(document, "followingOfflineHidden");
     assert.equal(offlineHidden.checked, false);
@@ -509,8 +509,6 @@ test("options groups stay accessible and never disable their own master toggle",
 
     const { document } = dom.window;
     const groups = Array.from(document.querySelectorAll(".option-group"));
-    const playerAuto = document.querySelector('[data-option-group="player-auto"]');
-
     assert.ok(groups.length > 0, "settings must expose navigable groups");
 
     for (const group of groups) {
@@ -520,8 +518,7 @@ test("options groups stay accessible and never disable their own master toggle",
         assert.ok(summary.textContent.trim().length > 0);
         assert.equal(summary.querySelector("input, button, a[href]"), null);
         assert.equal(summary.querySelectorAll(".option-group-title").length, 1);
-        if (group === playerAuto) assert.equal(icon, null);
-        else assert.equal(icon?.getAttribute("aria-hidden"), "true");
+        assert.equal(icon?.getAttribute("aria-hidden"), "true");
         assert.equal(
             Array.from(group.children).filter((child) => child.classList.contains("option-group-body")).length,
             1
@@ -823,6 +820,9 @@ test("merged filter headings and former titles keep their inputs, context and pa
     dispatch(dom, parent, "change");
     const search = document.getElementById("settingsSearch");
     const presets = document.querySelector('[data-option-group="explore-presets"]');
+    const sharedHelp = document.getElementById("filterPresetHelp");
+    assert.ok(sharedHelp);
+    assert.equal(presets.querySelectorAll(".setting-note").length, 1);
     for (const [query, prefix, heading] of [
         ["팔로워 필터", "categoryToolsFollowerFilterPreset", "팔로워"],
         ["시청자·조회수", "categoryToolsViewFilterPreset", "시청자·조회수"],
@@ -836,11 +836,12 @@ test("merged filter headings and former titles keep their inputs, context and pa
             (node) => node.textContent.trim() === heading
         );
         assert.equal(title.closest(".search-miss"), null, `${query} retains its subsection heading`);
-        assert.equal(title.nextElementSibling.closest(".search-miss"), null, `${query} retains range guidance`);
+        assert.equal(sharedHelp.closest(".search-miss"), null, `${query} retains shared range guidance`);
         for (let index = 1; index <= 6; index += 1) {
             const input = queryOption(document, prefix + index);
             assert.equal(input.closest(".search-miss"), null, `${query}: input ${index}`);
             assert.equal(input.disabled, true);
+            assert.equal(input.getAttribute("aria-describedby"), sharedHelp.id);
         }
         assert.equal(parent.closest(".search-miss"), null);
         assert.equal(parent.disabled, false);
@@ -971,6 +972,17 @@ test("options search keeps dependency controls visible and restores previous gro
 
     for (const optionKey of ["skipControlEnabled", "skipPillEnabled", "skipLivePillEnabled"]) {
         assert.equal(queryOption(document, optionKey).closest(".toggle-row").classList.contains("search-miss"), false);
+    }
+
+    for (const [query, optionKey] of [
+        ["작성 시각", "liveWatchHistoryChatEnabled"],
+        ["후원 횟수", "liveWatchHistoryDonationEnabled"],
+        ["팔로잉 목록 상태 기억", "followingListStateEnabled"],
+        ["작은 화면", "playerPipHidden"],
+    ]) {
+        search.value = query;
+        dispatch(dom, search, "input");
+        assert.equal(queryOption(document, optionKey).closest(".search-miss"), null, `${query} retains its option`);
     }
 
     search.value = "";

@@ -154,7 +154,7 @@
         node.dataset.bcugTimed = "";
         node.setAttribute(
             "aria-description",
-            "20초 뒤 자동으로 닫혀요. 안내를 살펴보거나 화면을 떠난 동안에는 시간이 멈춰요."
+            "20초 뒤 닫혀요. 안내 위에 마우스를 두거나 안내 안에 초점이 있거나 화면을 떠나면 시간이 멈춰요."
         );
         const progress = document.createElement("div");
         progress.dataset.bcugProgress = "";

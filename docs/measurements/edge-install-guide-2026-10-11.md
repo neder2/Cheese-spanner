@@ -18,7 +18,7 @@
     - 문단 1(`_text_10lql_50`): `크롬, 엣지 브라우저에서 고화질 시청을 위해<br><strong>브라우저 확장 프로그램</strong>을 먼저 설치합니다.`
     - 문단 2(`_text_10lql_50`): `이미 확장 프로그램을 설치했다면<br><a href="https://help.naver.com/alias/navergame/chzzk6.naver" target="_blank" rel="noreferrer" class="_link_10lql_63">여기</a>를 참고해주세요.`
     - 버튼 2개(각 `_button_10lql_70 > button[type=button]`, 310×46, `aria-label` 없음, 활성): `확장 프로그램 설치`(`_highlight_hkeol_20`), `설치없이 일반 화질 시청`(`_gray_hkeol_121`).
-- 판정: 구조와 일반 화질 버튼은 [2026-09-14 실측 커넥터 안내](quality-choice-implementation-1.3.7-2026-09-14.md#커넥터-설치-안내-자동-닫기-추가)와 같고, 문단 문구와 설치 버튼 문구가 달라요. `features/qualityInstallGuide.js`는 문단·설치 버튼의 정확 일치를 요구했으므로 후보로 잡고도 클릭하지 않았어요(`attempts: 0`).
+- 판정: 구조와 일반 화질 버튼은 2026-09-14 실측 커넥터 안내와 같고, 문단 문구와 설치 버튼 문구가 달라요. `features/qualityInstallGuide.js`는 문단·설치 버튼의 정확 일치를 요구했으므로 후보로 잡고도 클릭하지 않았어요(`attempts: 0`).
 - 스크린샷: [수정 전 안내](edge-install-guide-2026-10-11/edge-before-fix-guide-open.jpg) — 플레이어 영역만 잘라 저장했어요.
 
 ## 2. Chrome 비교 — 확장 없음
@@ -38,7 +38,7 @@
 - 진입 25초 뒤 결과: 안내 없음(`popups: []`), `data-betterchzzk-auto-quality-guide`는 `{"enabled":true,"attempts":2}`, 자동 화질 결과 `already`·선택 트랙 `muxed.bw_8384000.avc1.size_1920x1080.fps_60.color_sdr.mp4a.lowlatency`(12개 중 1080p 저지연), `video` 1920×1080 `readyState 4` 재생 중.
 - 두 번 클릭은 2026-09-14 Chrome 관측과 같은 패턴이에요. 초기 안내를 닫으면 플레이어가 만들어지고, 1080p 선택 때 안내가 한 번 더 떠 다시 닫혔어요. 다른 안내나 숨겨진 요소에 대한 클릭은 없었어요.
 - 스크린샷: [수정 후 재생](edge-install-guide-2026-10-11/edge-after-fix-1080p.jpg).
-- 범위: 이 기록은 안내 자동 닫기와 이 방송의 1080p 트랙 선택·재생을 관측했다는 뜻이에요. 커넥터 없는 고화질 재생의 보장이나 약관 판단은 [그리드 조사](grid-terms-research-2026-09-14.md)의 범위를 바꾸지 않아요.
+- 범위: 이 기록은 안내 자동 닫기와 이 방송의 1080p 트랙 선택·재생을 관측했다는 뜻이에요.
 
 ## 남은 확인
 

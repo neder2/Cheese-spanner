@@ -28,7 +28,7 @@ const PLAYER = `<div class="pzp-pc pzp-pc--controls"><div class="pzp-pc__video">
 <div class="pzp-pc__bottom-buttons-right"><button class="custom__clip-button pzp-pc__setting-button pzp-button"></button><button class="pzp-setting-button pzp-pc__setting-button" aria-label="설정"></button></div>
 ${MENU}</div>`;
 
-function createWorker(chrome, { held = false, now } = {}) {
+function createWorker(chrome, { held = false, now, directory } = {}) {
     const listeners = [];
     const permissions = { held };
     const workerChrome = {
@@ -46,7 +46,7 @@ function createWorker(chrome, { held = false, now } = {}) {
                 : undefined;
         },
     };
-    const controller = Recording.createController({ chrome: workerChrome, now });
+    const controller = Recording.createController({ chrome: workerChrome, now, directory });
     controller.install();
     return {
         controller,
@@ -60,7 +60,7 @@ function createWorker(chrome, { held = false, now } = {}) {
     };
 }
 
-function fixture(t, { sync = {}, path = `/live/${CHANNEL}`, supported = [MP4, WEBM], held = false } = {}) {
+function fixture(t, { sync = {}, path = `/live/${CHANNEL}`, supported = [MP4, WEBM], held = false, directory } = {}) {
     const chrome = createFakeChrome({ sync: { videoRecorderEnabled: true, ...sync } });
     const dom = new JSDOM(`<!doctype html><html><body><main>${PLAYER}</main></body></html>`, {
         url: `https://chzzk.naver.com${path}`,
@@ -71,7 +71,7 @@ function fixture(t, { sync = {}, path = `/live/${CHANNEL}`, supported = [MP4, WE
     const doc = w.document;
     w.chrome = chrome;
     w.Blob = Blob;
-    const worker = createWorker(chrome, { held });
+    const worker = createWorker(chrome, { held, directory });
     const sendMessage = chrome.runtime.sendMessage;
     chrome.runtime.sendMessage = (message, callback) => {
         if (message?.type !== Recording.MESSAGE_TYPE) return sendMessage(message, callback);

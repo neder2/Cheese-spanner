@@ -484,10 +484,7 @@
                                     <option value="480p">480p</option>
                                 </select>
                             </label>
-                            <p class="setting-note">
-                                선택한 화질이 없으면 가능한 가장 높은 하위 화질을 적용해요. 지원되는 라이브에서는
-                                프로그램 미설치로 취소되던 1080p·720p 선택을 유지해요.
-                            </p>
+                            <p class="setting-note">선택한 화질이 없으면 가능한 가장 높은 하위 화질을 적용해요.</p>
                             <h3 class="option-subheading">자동 처리</h3>
                             <label class="toggle-row">
                                 <span><strong>통나무 보상 자동 받기</strong></span>
@@ -497,9 +494,6 @@
                                 <span><strong>방송 시작 시 자동 새로고침</strong></span>
                                 <input type="checkbox" data-option="offlineLiveReloadEnabled" />
                             </label>
-                            <p class="setting-note">
-                                방송 종료 화면에서 30초마다 확인하고, 방송이 시작되면 한 번 새로고침해요.
-                            </p>
                         </div>
                     </details>
 
@@ -527,23 +521,22 @@
                                 주세요.
                             </p>
                             <p id="adVideoStatus" class="setting-note" role="status" hidden></p>
-                            <label class="toggle-row">
+                            <label class="toggle-row" data-search-terms="홈 라이브 VOD 광고 배너">
                                 <span><strong>배너 광고 숨기기</strong></span>
                                 <input type="checkbox" data-option="adBannerEnabled" />
                             </label>
-                            <p class="setting-note">홈·라이브·VOD에서 확인된 광고 배너를 숨겨요.</p>
+
                             <label class="toggle-row">
                                 <span><strong>시청 방해 팝업 제거</strong></span>
                                 <input type="checkbox" data-option="adblockPopupEnabled" />
                             </label>
-                            <p class="setting-note">시청에 방해되는 팝업을 제거해요.</p>
                         </div>
                     </details>
 
                     <details
                         class="option-group"
                         data-option-group="player-view"
-                        data-search-terms="라이브 표시 화면 확대 단축키"
+                        data-search-terms="라이브 표시 화면 확대 단축키 커서 슬라이더 확대 복원"
                     >
                         <summary>
                             <span class="option-group-title"
@@ -552,28 +545,22 @@
                             >
                         </summary>
                         <div class="option-group-body">
-                            <label class="toggle-row">
+                            <label class="toggle-row" data-search-terms="스트리밍 중 시작 날짜 한국 시간">
                                 <span><strong>방송 시작 시각 표시</strong></span>
                                 <input type="checkbox" data-option="liveStartTimeEnabled" />
                             </label>
-                            <p class="setting-note">
-                                라이브 시작 시각을 한국 시간으로 표시해요. 오늘 시작한 방송이 아니면 날짜도 보여요.
-                            </p>
                             <label class="toggle-row">
                                 <span><strong>스트림 정보</strong></span>
                                 <input type="checkbox" data-option="streamInfoEnabled" />
                             </label>
                             <p class="setting-note">
-                                플레이어 톱니바퀴의 ‘스트림 정보’에서 해상도·비트레이트·버퍼·FPS를 확인해요.
+                                톱니바퀴 → 스트림 정보 열기에서 해상도·비트레이트·버퍼·FPS를 확인해요.
                             </p>
                             <label class="toggle-row"
                                 ><span><strong>라이브 멀티뷰</strong></span
                                 ><input type="checkbox" data-option="liveMultiviewEnabled"
                             /></label>
-                            <p class="setting-note">
-                                플레이어 하단의 격자 버튼으로 최대 6개 방송을 함께 봐요. 소리는 따로 조절하고 채널별
-                                딜레이는 저장해요.
-                            </p>
+                            <p class="setting-note">플레이어 하단 격자 버튼에서 최대 6개 방송을 함께 봐요.</p>
                             <label class="toggle-row">
                                 <span><strong>휠로 화면 확대</strong></span>
                                 <input type="checkbox" data-option="playerZoomEnabled" />
@@ -670,6 +657,13 @@
                                 주세요.
                             </p>
                             <div class="recorder-folder" data-depends-on="videoRecorderEnabled">
+                                <div class="recorder-directory-actions">
+                                    <button id="videoRecorderChooseDirectory" type="button" class="secondary-button">폴더 선택…</button>
+                                    <button id="videoRecorderClearDirectory" type="button" class="secondary-button" hidden>다운로드 폴더 사용</button>
+                                </div>
+                                <p class="setting-note" id="videoRecorderDirectoryStatus" role="status"></p>
+                                <p class="setting-note">탐색기에서 저장할 폴더를 선택해요. 선택하면 바로 적용되며, 다음 녹화부터 사용해요.</p>
+                                <div id="videoRecorderDownloadSettings">
                                 <label for="videoRecorderFolder">녹화 저장 폴더</label>
                                 <div class="recorder-folder-field">
                                     <input
@@ -692,11 +686,16 @@
                                     권한이 필요해요. 플레이어 톱니바퀴의 ‘녹화 저장 폴더’에서도 바꿔요.
                                 </p>
                                 <p class="setting-note" id="videoRecorderPermissionStatus" role="status"></p>
+                                </div>
                             </div>
                         </div>
                     </details>
 
-                    <details class="option-group" data-option-group="player-seek">
+                    <details
+                        class="option-group"
+                        data-option-group="player-seek"
+                        data-search-terms="왼쪽·오른쪽 방향키 이전 프레임 다음 프레임"
+                    >
                         <summary>
                             <span class="option-group-title">
                                 <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-clock" /></svg>
@@ -763,8 +762,7 @@
                                 >
                             </div>
                             <p class="setting-note">
-                                왼쪽·오른쪽 방향키로 스킵해요. 일시정지 중에는 쉼표(,)로 이전 프레임, 마침표(.)로 다음
-                                프레임을 봐요.
+                                왼쪽·오른쪽 방향키로 스킵해요. 일시정지 중 쉼표(,)·마침표(.)로 이전·다음 프레임을 봐요.
                             </p>
                         </div>
                     </details>
@@ -780,15 +778,12 @@
                             <label class="toggle-row">
                                 <span
                                     ><strong>기본 단축키 복구</strong
-                                    ><small>Space·M·F·T 키가 안 될 때만 켜주세요.</small></span
+                                    ><small>Space·M·F·T 키가 안 될 때만 켜 주세요.</small></span
                                 >
                                 <input type="checkbox" data-option="screenShortcutsEnabled" />
                             </label>
                             <label class="toggle-row">
-                                <span
-                                    ><strong>Space·좌클릭 홀드 2배속</strong
-                                    ><small>Space 또는 영상 화면 좌클릭을 길게 눌러주세요.</small></span
-                                >
+                                <span><strong>Space·좌클릭 홀드 2배속</strong></span>
                                 <input type="checkbox" data-option="holdSpeedEnabled" />
                             </label>
                             <label class="toggle-row">
@@ -851,7 +846,7 @@
                                 </button>
                             </div>
                             <p class="setting-note" id="playbackSpeedShortcutHelp">
-                                입력칸을 선택한 뒤 원하는 키를 눌러주세요. 배속은 0.25~4배 사이에서 0.25배씩 조절돼요.
+                                입력칸에서 원하는 키를 눌러요. 0.25~4배 범위에서 0.25배씩 조절해요.
                             </p>
                         </div>
                     </details>
@@ -1000,30 +995,24 @@
                                     /><em>분</em></label
                                 >
                             </div>
-                            <p class="setting-note">
-                                최소 저장 시간은 시청 시간 집계에만 적용해요. 기록은 이 브라우저에만 저장해요.
-                            </p>
+                            <p class="setting-note">최소 저장 시간은 시청 시간 집계에만 적용돼요.</p>
 
-                            <div data-depends-on="liveWatchHistoryEnabled">
+                            <div
+                                data-depends-on="liveWatchHistoryEnabled"
+                                data-search-terms="채팅 내용 작성 시각 채팅 수 후원 횟수 치즈"
+                            >
                                 <label class="toggle-row">
-                                    <span
-                                        ><strong>내 채팅 기록 저장</strong
-                                        ><small>채팅 내용과 작성 시각을 저장하고 채팅 수를 집계해요.</small></span
-                                    >
+                                    <span><strong>내 채팅 기록 저장</strong></span>
                                     <input type="checkbox" data-option="liveWatchHistoryChatEnabled" />
                                 </label>
                                 <label class="toggle-row">
-                                    <span
-                                        ><strong>내 일반 후원 기록 저장</strong
-                                        ><small>채팅에 표시된 본인 일반 후원의 횟수와 치즈를 집계해요.</small></span
-                                    >
+                                    <span><strong>내 일반 후원 기록 저장</strong></span>
                                     <input type="checkbox" data-option="liveWatchHistoryDonationEnabled" />
                                 </label>
                             </div>
                             <p class="setting-note">
-                                켜 둔 동안 로그인한 계정의 라이브 채팅에서 전송이 확인되면 바로 저장해요. 최소 시청
-                                시간이나 영상 재생 여부와 관계없이 기록하며, 과거 내역·익명 후원·미션·외부 후원은
-                                포함하지 않아요.
+                                로그인한 계정의 라이브 채팅·일반 후원을 전송 확인 후 저장해요. 최소 시청 시간·재생
+                                여부와 무관하며, 과거·익명·미션·외부 후원은 제외해요.
                             </p>
                         </div>
                     </details>
@@ -1032,8 +1021,8 @@
                         class="option-group"
                         data-option-group="history-management"
                         data-search-together
-                        data-search-terms="백업·불러오기"
                         open
+                        data-search-terms="백업·불러오기 시청 기록 내 채팅 후원 제외"
                     >
                         <summary>
                             <span class="option-group-title">
@@ -1043,8 +1032,7 @@
                         </summary>
                         <div class="option-group-body">
                             <p id="historyBackupGuide" class="setting-note">
-                                ‘시청 기록 보기’에서 시청 기록·내 채팅을 백업하고 불러와요. 후원 기록은 백업에서
-                                제외해요.
+                                아래 시청 기록 페이지에서 백업·불러오기를 이용해요. 후원은 백업에서 제외돼요.
                             </p>
                             <div class="inline-action-row">
                                 <a
@@ -1058,37 +1046,26 @@
                             </div>
 
                             <p class="history-storage-warning" role="note">
-                                <strong>시청 기록 삭제 주의</strong>
-                                시청 기록은 이 브라우저에만 저장되며 자동 백업되지 않아요. 확장 프로그램을 삭제하거나
-                                브라우저 프로필·확장 데이터를 지우면 기록도 함께 삭제돼요. 별도 백업이 없으면 재설치해도
-                                복구할 수 없어요.
+                                <strong>시청 기록 삭제 주의</strong>기록은 이 브라우저에만 저장되고 자동 백업되지
+                                않아요. 확장 삭제나 프로필·확장 데이터 삭제 시 사라지며, 백업 없이는 복구할 수 없어요.
                             </p>
 
                             <details class="history-storage-guide">
                                 <summary>시청 기록 저장 위치</summary>
-                                <p>기록은 현재 Chrome 프로필의 확장 저장소에 보관돼요.</p>
+                                <p>현재 Chrome 프로필의 확장 저장소에 보관돼요.</p>
                                 <ol>
+                                    <li><code>chrome://version</code>에서 <strong>프로필 경로</strong> 확인</li>
                                     <li>
-                                        주소창에 <code>chrome://version</code>을 입력하고 <strong>프로필 경로</strong>를
-                                        확인해 주세요.
+                                        <code>chrome://extensions</code>에서 <strong>개발자 모드</strong> 활성화 후 치즈
+                                        스패너 <strong>ID</strong> 확인
                                     </li>
-                                    <li>
-                                        <code>chrome://extensions</code>에서 <strong>개발자 모드</strong>를 켜고 치즈
-                                        스패너의 <strong>ID</strong>를 확인해 주세요.
-                                    </li>
-                                    <li>
-                                        프로필 폴더 안의 <code>Local Extension Settings</code> 폴더에서 해당 ID와 같은
-                                        이름의 폴더를 열면 돼요.
-                                    </li>
+                                    <li>프로필 폴더 내 <code>Local Extension Settings</code>에서 같은 ID 폴더 열기</li>
                                 </ol>
                                 <p>Windows에서 찾을 경로</p>
                                 <code class="history-storage-path"
                                     >&lt;프로필 경로&gt;\Local Extension Settings\&lt;치즈 스패너 ID&gt;</code
                                 >
-                                <p>
-                                    개인별 프로필과 설치 방식에 따라 경로가 달라요. 시청 기록은 별도 문서 파일이 아닌
-                                    브라우저 데이터로 저장돼요.
-                                </p>
+                                <p>프로필·설치 방식마다 경로가 달라요. 별도 문서가 아닌 브라우저 데이터예요.</p>
                             </details>
                         </div>
                     </details>
@@ -1207,35 +1184,19 @@
                                 />
                             </label>
                             <p class="setting-note" id="chat-resize-help">
-                                영상 쪽 가장자리를 끌면 너비, 아래쪽을 끌면 높이를 조절해요. 더블클릭하면 기본 크기로
+                                영상 쪽 경계로 너비, 아래 경계로 높이를 끌어 조절해요. 더블클릭하면 기본 크기로
                                 돌아가요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>채팅창 위치</strong></span>
-                                <select
-                                    class="quality-select"
-                                    data-option="chatPosition"
-                                    aria-describedby="chat-position-help"
-                                >
+                                <select class="quality-select" data-option="chatPosition">
                                     <option value="right">오른쪽(기본)</option>
                                     <option value="left">왼쪽</option>
                                 </select>
                             </label>
-                            <p class="setting-note" id="chat-position-help">
-                                라이브·다시보기의 채팅·댓글 위치를 정해요. 좁은 화면의 세로 배치는 유지해요.
-                            </p>
-                            <button
-                                id="resetPanelSizes"
-                                class="secondary-button panel-size-reset"
-                                type="button"
-                                aria-describedby="panel-size-reset-help"
-                            >
+                            <button id="resetPanelSizes" class="secondary-button panel-size-reset" type="button">
                                 저장한 채팅·사이드바 크기 초기화
                             </button>
-                            <p class="setting-note" id="panel-size-reset-help">
-                                마우스로 정한 채팅 너비·높이와 사이드바 너비를 기본 크기로 되돌려요. 새로 여는 치지직
-                                화면부터 적용돼요.
-                            </p>
                             <label class="toggle-row">
                                 <span><strong>채팅 멀티뷰</strong></span>
                                 <input
@@ -1245,8 +1206,7 @@
                                 />
                             </label>
                             <p class="setting-note" id="chat-multiview-help">
-                                상단 ‘채팅 멀티뷰’에서 최대 4개 채널의 채팅을 함께 봐요. 입력창은 멀티뷰 설정에서 켤 수
-                                있어요.
+                                상단 채팅 멀티뷰 버튼에서 최대 4개 채팅을 함께 봐요. 입력창은 멀티뷰 설정에서 켜요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>라이브 채팅 타임스탬프 표시</strong></span>
@@ -1260,21 +1220,11 @@
                                     aria-describedby="vod-chat-timestamp-help"
                                 />
                             </label>
-                            <p class="setting-note" id="vod-chat-timestamp-help">
-                                방송 당시 채팅이 작성된 시각을 표시해요.
-                            </p>
-                            <label class="toggle-row">
+                            <p class="setting-note" id="vod-chat-timestamp-help">방송 당시 채팅 작성 시각이에요.</p>
+                            <label class="toggle-row" data-search-terms="닉네임 변경 전 내 채팅">
                                 <span><strong>다시보기 내 채팅 강조</strong></span>
-                                <input
-                                    type="checkbox"
-                                    data-option="vodOwnChatHighlightEnabled"
-                                    aria-describedby="vod-own-chat-help"
-                                />
+                                <input type="checkbox" data-option="vodOwnChatHighlightEnabled" />
                             </label>
-                            <p class="setting-note" id="vod-own-chat-help">
-                                치지직에 로그인돼 있으면 다시보기 채팅에서 지금 계정이 쓴 채팅을 강조해요. 닉네임을
-                                바꾸기 전에 쓴 채팅도 찾아요.
-                            </p>
                             <label class="toggle-row">
                                 <span><strong>주간 후원 랭킹 숨기기</strong></span>
                                 <input
@@ -1284,6 +1234,18 @@
                                 />
                             </label>
                             <p class="setting-note" id="chat-ranking-help">통나무 파워 랭킹도 함께 숨겨요.</p>
+                            <label class="toggle-row">
+                                <span><strong>채팅창 후원 메시지 숨기기</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="chatDonationMessagesHidden"
+                                    aria-describedby="chat-donation-messages-help"
+                                />
+                            </label>
+                            <p class="setting-note" id="chat-donation-messages-help">
+                                라이브·다시보기 채팅의 일반·미션·파티 후원 메시지를 숨겨요. 후원 기록과 영상·음성은
+                                그대로예요.
+                            </p>
                             <label class="toggle-row">
                                 <span><strong>채팅방 환영 메시지 제거</strong></span>
                                 <input type="checkbox" data-option="chatWelcomeMessageRemovalEnabled" />
@@ -1374,7 +1336,7 @@
                                 <span><strong>알림 버튼 숨기기</strong></span>
                                 <input type="checkbox" data-option="headerNotificationHidden" />
                             </label>
-                            <p class="setting-note">치지직 상단의 버튼을 각각 숨겨요. 끄면 다시 표시돼요.</p>
+
                             <h3 class="option-subheading">사이드바</h3>
                             <label class="toggle-row">
                                 <span><strong>사이드바 너비 조절</strong></span>
@@ -1385,8 +1347,7 @@
                                 />
                             </label>
                             <p class="setting-note" id="sidebar-resize-help">
-                                펼친 사이드바의 본문 쪽 가장자리를 마우스로 잡아 끌어 조절해요. 더블클릭하면 기본 너비로
-                                돌아가요.
+                                펼친 사이드바의 본문 쪽 경계를 끌어 조절해요. 더블클릭하면 기본 너비로 돌아가요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>사이드바 위치</strong></span>
@@ -1400,8 +1361,7 @@
                                 </select>
                             </label>
                             <p class="setting-note" id="sidebar-position-help">
-                                사이드바를 오른쪽으로 옮겨요. 채팅과 같은 쪽이면 바깥에 놓고, 창이 너무 좁으면 원래
-                                위치로 돌아가요.
+                                채팅과 같은 쪽이면 사이드바가 바깥에 놓여요. 창이 좁으면 기본 위치로 돌아가요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>사이드바 치즈팜 숨김</strong></span>
@@ -1426,7 +1386,11 @@
                         </div>
                     </details>
 
-                    <details class="option-group" data-option-group="appearance-player" data-search-terms="라이브 표시">
+                    <details
+                        class="option-group"
+                        data-option-group="appearance-player"
+                        data-search-terms="라이브 표시 작은 화면 클립 만들기"
+                    >
                         <summary>
                             <span class="option-group-title"
                                 ><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-play" /></svg
@@ -1446,10 +1410,6 @@
                                 <span><strong>PIP 버튼 숨기기</strong></span>
                                 <input type="checkbox" data-option="playerPipHidden" />
                             </label>
-                            <p class="setting-note">
-                                라이브·다시보기 플레이어의 클립 만들기·PIP(작은 화면) 버튼을 각각 숨겨요. 끄면 다시
-                                표시돼요.
-                            </p>
                         </div>
                     </details>
 
@@ -1476,8 +1436,8 @@
                                 />
                             </label>
                             <p id="updateGuideHelp" class="setting-note">
-                                업데이트 후 치지직 화면에 한 번 알려드려요. 안내는 20초 뒤 닫히며, 마우스를 올리거나
-                                키보드로 살펴보는 동안에는 유지돼요.
+                                업데이트 후 한 번, 20초간 보여요. 안내 위에 마우스를 두거나 안내 안에 키보드 초점을 두면
+                                시간이 멈춰요.
                             </p>
                             <div class="inline-action-row">
                                 <button id="updateGuideReplay" type="button" class="secondary-button">
@@ -1485,7 +1445,7 @@
                                 </button>
                             </div>
                             <p id="updateGuideStatus" class="setting-note" role="status" aria-live="polite">
-                                치지직 화면에 안내를 열어요. 자동 안내를 꺼도 다시 볼 수 있어요.
+                                자동 안내를 꺼도 치지직 화면에서 다시 볼 수 있어요.
                             </p>
                         </div>
                     </details>
@@ -1537,7 +1497,7 @@
                                     /><em>쪽</em></label
                                 >
                             </div>
-                            <p class="setting-note">조회 상한을 낮추면 채널 페이지가 빨라져요.</p>
+                            <p class="setting-note">조회 상한이 낮으면 확인 범위도 줄어요.</p>
                         </div>
                     </details>
 
@@ -1599,9 +1559,8 @@
                                 <input type="checkbox" data-option="vodBroadcastClockEnabled" />
                             </label>
                             <p class="setting-note">
-                                장면의 당시 시각을 표시하고, 조회수 옆 날짜 자리에 방송 시작·종료 시각을 한국 시간으로
-                                표시해요. 종료 시각은 영상 길이로 계산하며, 분할 다시보기는 현재 영상 구간을 기준으로
-                                해요.
+                                조회수 옆 시작·종료 시각도 한국 시간으로 표시해요. 종료는 영상 길이로 계산하며, 분할
+                                영상은 현재 구간 기준이에요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>다시보기 채팅창 댓글 탭</strong></span>
@@ -1645,7 +1604,7 @@
                                     /><em>개</em></label
                                 >
                             </div>
-                            <p class="setting-note">조회 페이지와 표시 개수를 낮추면 목록 반응이 빨라져요.</p>
+                            <p class="setting-note">조회 페이지가 적으면 검색 범위도 줄어요.</p>
                             <h3 class="option-subheading">댓글 검색</h3>
                             <label class="toggle-row" data-depends-on="videoSearchEnabled">
                                 <span><strong>제목에 없으면 댓글까지 검색</strong></span>
@@ -1683,7 +1642,7 @@
                                     /><em>쪽</em></label
                                 >
                             </div>
-                            <p class="setting-note">값을 낮추면 페이지 반응이 빨라져요.</p>
+                            <p class="setting-note">댓글 조회 한도가 낮으면 일부 댓글만 검색해요.</p>
                         </div>
                     </details>
                 </section>
@@ -1713,20 +1672,18 @@
                                 <span><strong>채널 채팅 바로가기</strong></span>
                                 <input type="checkbox" data-option="channelChatLinkEnabled" />
                             </label>
-                            <p class="setting-note">
-                                정보 탭 옆에 방송이 꺼져 있어도 채팅을 볼 수 있는 라이브 화면 바로가기를 표시해요.
-                            </p>
+                            <p class="setting-note">방송이 꺼져 있어도 라이브 화면의 채팅을 볼 수 있어요.</p>
                             <h3 class="option-subheading">팔로잉 목록</h3>
-                            <label class="toggle-row">
-                                <span><strong>팔로잉 목록 상태 기억</strong></span>
+                            <label class="toggle-row" data-search-terms="팔로잉 목록 상태 기억">
+                                <span><strong>팔로잉 목록 펼침·접힘 기억</strong></span>
                                 <input type="checkbox" data-option="followingListStateEnabled" />
                             </label>
-                            <p class="setting-note">목록을 펼치거나 접은 마지막 상태를 유지해요.</p>
+
                             <label class="toggle-row">
                                 <span><strong>팔로잉 채널 고정</strong></span>
                                 <input type="checkbox" data-option="followingPinEnabled" />
                             </label>
-                            <p class="setting-note">팔로잉 새로고침 옆 핀으로 채널을 선택해 고정해요.</p>
+                            <p class="setting-note">팔로잉 새로고침 옆 핀 버튼에서 고정할 채널을 골라요.</p>
                             <label class="toggle-row" data-depends-on="followingPinEnabled">
                                 <span><strong>오프라인이어도 최상단 고정</strong></span>
                                 <input type="checkbox" data-option="followingPinOfflineToTopEnabled" />
@@ -1735,7 +1692,7 @@
                                 <span><strong>팔로잉 오프라인 채널 숨기기</strong></span>
                                 <input type="checkbox" data-option="followingOfflineHidden" />
                             </label>
-                            <p class="setting-note">사이드바에서 고정 여부와 관계없이 오프라인 채널을 숨겨요.</p>
+                            <p class="setting-note">고정한 채널도 숨겨요.</p>
                             <label class="toggle-row">
                                 <span><strong>팔로잉 폴더</strong></span>
                                 <input
@@ -1745,8 +1702,8 @@
                                 />
                             </label>
                             <p class="setting-note" id="following-folders-help">
-                                채널을 ‘+ 새 폴더로’에 끌어 놓으면 폴더가 생겨요. 이름은 더블클릭, 관리는 ⋯ 메뉴를
-                                사용해요. 폴더를 지워도 팔로우는 유지돼요.
+                                사이드바의 ‘+ 새 폴더로’에 채널을 끌어 놓아요. 이름은 더블클릭해 바꾸며, 폴더를 지워도
+                                팔로우는 유지돼요.
                             </p>
                             <div class="number-grid">
                                 <label
@@ -1762,16 +1719,15 @@
                                 >
                             </div>
                             <p class="setting-note" id="following-max-rows-help">
-                                0은 제한 없음이에요. 긴 목록은 안에서 스크롤하며 아래 구역·더보기는 유지돼요.
+                                0은 제한이 없고, 넘치는 목록은 안에서 스크롤해요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>팔로잉 라이브 제목 이력</strong></span>
                                 <input type="checkbox" data-option="followingTitleHistoryEnabled" />
                             </label>
                             <p class="setting-note">
-                                치지직에 로그인돼 있으면 팔로우한 라이브 채널의 방제를 약 1분마다 한 번에 확인해 이
-                                브라우저에만 저장해요. 방송 화면과 팔로잉 화면의 제목 오른쪽 버튼으로 이전 방제를 펼쳐
-                                봐요.
+                                로그인 중 약 1분마다 이 브라우저에 기록해요. 방송·팔로잉 화면의 제목 옆 버튼에서
+                                확인해요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>팔로잉 목록 자동 새로고침</strong></span>
@@ -1827,7 +1783,7 @@
                                 <span><strong>우클릭으로 미리보기 소리 전환</strong></span>
                                 <input type="checkbox" data-option="livePreviewRightClickSoundEnabled" />
                             </label>
-                            <p class="setting-note">처음 켤 때 미리보기 재생 권한(pstatic.net)을 요청해요.</p>
+                            <p class="setting-note">처음 켤 때 pstatic.net 접근 권한을 요청해요.</p>
                         </div>
                     </details>
                 </section>
@@ -1872,21 +1828,15 @@
                             <label class="toggle-row" data-depends-on="categoryToolsEnabled">
                                 <span>
                                     <strong>카테고리·태그 제외</strong>
-                                    <small>
-                                        전체 방송 정렬 줄 오른쪽에 제외 박스와 추가 버튼을 표시해요. 꺼도 저장한 제외
-                                        목록은 지우지 않아요.
-                                    </small>
+                                    <small>전체 방송의 ‘+ 제외 추가’에서 골라요. 꺼도 제외 목록은 유지돼요.</small>
                                 </span>
                                 <input type="checkbox" data-option="categoryToolsExclusionsEnabled" />
                             </label>
                             <h3 class="option-subheading">목록 표시</h3>
-                            <label class="toggle-row">
+                            <label class="toggle-row" data-search-terms="동시접속자 동시 시청자">
                                 <span>
                                     <strong>전체 방송 집계 표시</strong>
-                                    <small>
-                                        전체 방송에서 시청자 10명 이상인 방송 수와 동시 시청자 합계를 표시해요. 여러
-                                        방송을 함께 보는 사람의 중복을 제거한 동시접속자 수는 아니에요.
-                                    </small>
+                                    <small>시청자 10명 이상 방송 수·시청자 합계예요. 중복 시청자는 포함해요.</small>
                                 </span>
                                 <input type="checkbox" data-option="globalLiveCountEnabled" />
                             </label>
@@ -1905,10 +1855,11 @@
                             >
                         </summary>
                         <div class="option-group-body">
-                            <h3 class="option-subheading" data-search-terms="팔로워 필터 기준값">팔로워</h3>
-                            <p class="setting-note">
-                                필터 메뉴에서 이상·이하를 고를 때 빠른 값 버튼으로 작은 값부터 보여요.
+                            <p id="filterPresetHelp" class="setting-note" data-search-shared>
+                                필터의 이상·이하 빠른 선택값이에요. 작은 값부터 표시해요.
                             </p>
+                            <h3 class="option-subheading" data-search-terms="팔로워 필터 기준값">팔로워</h3>
+
                             <div class="number-grid" data-depends-on="categoryToolsEnabled">
                                 <label
                                     ><span>팔로워 1</span
@@ -1918,6 +1869,7 @@
                                         max="10000000"
                                         step="1"
                                         data-option="categoryToolsFollowerFilterPreset1"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>명</em></label
                                 >
                                 <label
@@ -1928,6 +1880,7 @@
                                         max="10000000"
                                         step="1"
                                         data-option="categoryToolsFollowerFilterPreset2"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>명</em></label
                                 >
                                 <label
@@ -1938,6 +1891,7 @@
                                         max="10000000"
                                         step="1"
                                         data-option="categoryToolsFollowerFilterPreset3"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>명</em></label
                                 >
                                 <label
@@ -1948,6 +1902,7 @@
                                         max="10000000"
                                         step="1"
                                         data-option="categoryToolsFollowerFilterPreset4"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>명</em></label
                                 >
                                 <label
@@ -1958,6 +1913,7 @@
                                         max="10000000"
                                         step="1"
                                         data-option="categoryToolsFollowerFilterPreset5"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>명</em></label
                                 >
                                 <label
@@ -1968,15 +1924,14 @@
                                         max="10000000"
                                         step="1"
                                         data-option="categoryToolsFollowerFilterPreset6"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>명</em></label
                                 >
                             </div>
                             <h3 class="option-subheading" data-search-terms="시청자·조회수 필터 기준값">
                                 시청자·조회수
                             </h3>
-                            <p class="setting-note">
-                                필터 메뉴에서 이상·이하를 고를 때 빠른 값 버튼으로 작은 값부터 보여요.
-                            </p>
+
                             <div class="number-grid" data-depends-on="categoryToolsEnabled">
                                 <label
                                     ><span>시청자/조회수 1</span
@@ -1986,6 +1941,7 @@
                                         max="10000000"
                                         step="1"
                                         data-option="categoryToolsViewFilterPreset1"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>명/회</em></label
                                 >
                                 <label
@@ -1996,6 +1952,7 @@
                                         max="10000000"
                                         step="1"
                                         data-option="categoryToolsViewFilterPreset2"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>명/회</em></label
                                 >
                                 <label
@@ -2006,6 +1963,7 @@
                                         max="10000000"
                                         step="1"
                                         data-option="categoryToolsViewFilterPreset3"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>명/회</em></label
                                 >
                                 <label
@@ -2016,6 +1974,7 @@
                                         max="10000000"
                                         step="1"
                                         data-option="categoryToolsViewFilterPreset4"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>명/회</em></label
                                 >
                                 <label
@@ -2026,6 +1985,7 @@
                                         max="10000000"
                                         step="1"
                                         data-option="categoryToolsViewFilterPreset5"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>명/회</em></label
                                 >
                                 <label
@@ -2036,13 +1996,12 @@
                                         max="10000000"
                                         step="1"
                                         data-option="categoryToolsViewFilterPreset6"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>명/회</em></label
                                 >
                             </div>
                             <h3 class="option-subheading" data-search-terms="진행 시간 필터 기준값">진행 시간</h3>
-                            <p class="setting-note">
-                                필터 메뉴에서 이상·이하를 고를 때 빠른 값 버튼으로 작은 값부터 보여요.
-                            </p>
+
                             <div class="number-grid" data-depends-on="categoryToolsEnabled">
                                 <label
                                     ><span>진행 시간 1</span
@@ -2052,6 +2011,7 @@
                                         max="168"
                                         step="1"
                                         data-option="categoryToolsDurationFilterPreset1"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>시간</em></label
                                 >
                                 <label
@@ -2062,6 +2022,7 @@
                                         max="168"
                                         step="1"
                                         data-option="categoryToolsDurationFilterPreset2"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>시간</em></label
                                 >
                                 <label
@@ -2072,6 +2033,7 @@
                                         max="168"
                                         step="1"
                                         data-option="categoryToolsDurationFilterPreset3"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>시간</em></label
                                 >
                                 <label
@@ -2082,6 +2044,7 @@
                                         max="168"
                                         step="1"
                                         data-option="categoryToolsDurationFilterPreset4"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>시간</em></label
                                 >
                                 <label
@@ -2092,6 +2055,7 @@
                                         max="168"
                                         step="1"
                                         data-option="categoryToolsDurationFilterPreset5"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>시간</em></label
                                 >
                                 <label
@@ -2102,6 +2066,7 @@
                                         max="168"
                                         step="1"
                                         data-option="categoryToolsDurationFilterPreset6"
+                                        aria-describedby="filterPresetHelp"
                                     /><em>시간</em></label
                                 >
                             </div>
@@ -2158,9 +2123,7 @@
                                     /><em>ms</em></label
                                 >
                             </div>
-                            <p class="setting-note">
-                                추가 조회 페이지를 늘리면 더 많은 방송을 확인하지만 느려질 수 있어요.
-                            </p>
+                            <p class="setting-note">조회 페이지가 많으면 더 넓게 찾지만 느려질 수 있어요.</p>
                         </div>
                     </details>
                 </section>
@@ -2177,7 +2140,13 @@
                         </svg>
                         <h2>방송 알림</h2>
                     </div>
-                    <details class="option-group" data-option-group="explore-live-start" data-search-together open>
+                    <details
+                        class="option-group"
+                        data-option-group="explore-live-start"
+                        data-search-terms="즉시 저장"
+                        data-search-together
+                        open
+                    >
                         <summary>
                             <span class="option-group-title">
                                 <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-activity" /></svg>
@@ -2202,9 +2171,8 @@
                                 />
                             </label>
                             <p class="setting-note" id="liveStartHelp">
-                                옵션을 저장하면 선택한 채널을 약 1분마다 확인해요. 새 방송은 배경 탭으로 열며, 이미 열린
-                                방송 탭은 유지해요. 처음 켜거나 브라우저를 시작할 때 진행 중인 방송은 건너뛰어요.
-                                브라우저가 종료된 동안에는 확인하지 않아요.
+                                브라우저가 켜진 동안 약 1분마다 확인해요. 처음 켜거나 브라우저를 시작할 때 진행 중인
+                                방송은 건너뛰어요. 자동 열기는 배경 탭으로 열며, 같은 방송 탭이 있으면 새로 열지 않아요.
                             </p>
                             <label class="toggle-row">
                                 <span><strong>상단 방송 알림 버튼 표시</strong></span>
@@ -2215,8 +2183,7 @@
                                 />
                             </label>
                             <p class="setting-note" id="liveStartButtonHelp">
-                                상단에서 채널명을 검색해 알림·자동 입장을 각각 선택해요. 버튼을 숨겨도 등록한 동작은
-                                유지돼요.
+                                버튼을 숨겨도 등록 채널의 알림·자동 열기는 계속 동작해요.
                             </p>
                             <div id="liveStartChannels" class="live-start-channels">
                                 <label for="liveStartChannelInput">대상 채널 추가</label>
@@ -2235,8 +2202,8 @@
                                     </button>
                                 </div>
                                 <p class="setting-note" id="liveStartChannelHelp">
-                                    최대 32개 채널을 등록하며 선택·삭제는 이 기기에 즉시 저장돼요. 상단 ‘방송 알림’에서
-                                    채널명으로도 추가해요.
+                                    최대 32개, 변경은 이 기기에 바로 저장돼요. 채널명 검색은 치지직 상단 ‘방송 알림’에서
+                                    해요.
                                 </p>
                                 <p
                                     id="liveStartChannelMessage"
@@ -2283,6 +2250,8 @@
 
         <script src="shared/settings.js"></script>
         <script src="options.js"></script>
+        <script src="shared/recordingDirectory.js"></script>
+        <script src="optionsRecordingDirectory.js"></script>
         <script src="shared/data.js"></script>
         <script src="shared/liveStart.js"></script>
         <script src="optionsLiveStart.js"></script>

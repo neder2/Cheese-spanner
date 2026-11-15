@@ -263,18 +263,14 @@ test("the search hint floats outside the clipped tool row and only while the sea
     assert.equal(hint.getAttribute("data-open"), "0");
     input.focus();
     assert.equal(hint.getAttribute("data-open"), "1");
-    assert.equal(hint.textContent, "띄어쓰기로 여러 단어를 모두 찾고, -단어는 빼요. Enter로 적용해요.");
+    assert.equal(hint.textContent, "띄어쓰기: 모두 포함, -단어: 제외(Enter 적용).");
     input.blur();
     assert.equal(hint.getAttribute("data-open"), "0");
 
     await fixture.navigate("https://chzzk.naver.com/category/GAME/League_of_Legends/lives");
     await fixture.apply();
     const categoryHint = fixture.document.getElementById("cheese-spanner-category-search-hint");
-    assert.equal(
-        categoryHint.textContent,
-        "띄어쓰기로 여러 단어를 모두 찾고, -단어는 빼요.",
-        "category lists apply as you type"
-    );
+    assert.equal(categoryHint.textContent, "띄어쓰기: 모두 포함, -단어: 제외.", "category lists apply as you type");
 });
 
 test("returning through the back-forward cache marks the remaining conditions as carried over", async (t) => {

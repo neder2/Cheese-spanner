@@ -471,7 +471,7 @@ test("a failed state save is shown in the status and later checks still notify o
     assert.equal(m.notifications.length, 0);
     assert.equal(m.opened.length, 0);
     assert.notDeepEqual(m.local[STATUS], before);
-    assert.match(m.local[STATUS].error, /저장하지 못해/);
+    assert.match(m.local[STATUS].error, /방송 확인 상태 저장 실패/);
     m.failStorage(false);
     await m.tick();
     assert.equal(m.notifications.length, 1);
@@ -500,7 +500,7 @@ test("a failed final state save after committed effects is reported without repe
     await m.tick();
     assert.equal(m.notifications.length, 1);
     assert.equal(m.opened.length, 1);
-    assert.match(m.local[STATUS].error, /저장하지 못해/);
+    assert.match(m.local[STATUS].error, /방송 확인 상태 저장 실패/);
     failFinal = false;
     await m.tick();
     assert.equal(m.local[STATUS].error, "");
@@ -859,7 +859,7 @@ test("page registration explains withheld API access and never returns raw looku
     });
     const offline = await m.send("set-notify", { channelId: CHANNEL, notify: true }, sender);
     assert.equal(offline.ok, false);
-    assert.equal(offline.error, "채널 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    assert.equal(offline.error, "채널 정보 확인 실패. 잠시 후 다시 시도 필요.");
     assert.equal(m.local[CHANNELS], undefined);
     m.setFetch(async () => ({ code: 200, content: { channelId: CHANNEL, channelName: "확인된 채널" } }));
     const save = m.chrome.storage.local.set;
@@ -873,7 +873,7 @@ test("page registration explains withheld API access and never returns raw looku
     };
     const unsaved = await m.send("set-notify", { channelId: CHANNEL, notify: true }, sender);
     assert.equal(unsaved.ok, false);
-    assert.equal(unsaved.error, "채널 설정을 저장하지 못했어요.");
+    assert.equal(unsaved.error, "채널 설정 저장 실패.");
     m.chrome.storage.local.set = save;
     assert.equal((await m.send("set-notify", { channelId: CHANNEL, notify: true }, sender)).ok, true);
 });
@@ -1093,14 +1093,13 @@ test("channel editor validates, adds, toggles, deletes and reports failed saves 
     dispatch(dom, toggle, "change");
     await waitForCondition(() => m.local[CHANNELS][0].autoOpen && !input.disabled);
     const sendMessage = m.chrome.runtime.sendMessage;
-    m.chrome.runtime.sendMessage = (_message, callback) =>
-        callback({ ok: false, error: "채널 설정을 저장하지 못했어요." });
+    m.chrome.runtime.sendMessage = (_message, callback) => callback({ ok: false, error: "채널 설정 저장 실패." });
     const savedToggle = doc.querySelector('[data-action="autoOpen"]');
     savedToggle.checked = false;
     dispatch(dom, savedToggle, "change");
     await waitForCondition(() => !input.disabled);
     assert.equal(doc.querySelector('[data-action="autoOpen"]').checked, true);
-    assert.match(doc.getElementById("liveStartChannelMessage").textContent, /저장하지 못했어요/);
+    assert.match(doc.getElementById("liveStartChannelMessage").textContent, /채널 설정 저장 실패/);
     m.chrome.runtime.sendMessage = sendMessage;
     const search = doc.getElementById("settingsSearch");
     search.value = "데스크톱";

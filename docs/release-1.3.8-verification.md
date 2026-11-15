@@ -38,7 +38,7 @@
 - 후속 변경 관련 검사: `node --test tests/live-multiview.test.js tests/following-preview-tooltip.test.js tests/extension-pages.test.js tests/release-safety.test.js` 252개 통과.
 - 원격 main 이력에 반영한 뒤 `npm.cmd run test:all` 784개 통과. 실패·취소·건너뜀은 0개다.
 - `npm.cmd run lint`, `npm.cmd run format:check`, `git diff --check` 통과.
-- 원격에 있던 문서 정리를 유지하고, 기존 로컬 main은 `codex/main-before-1.3.8`에 보존했다. 미공개 기획안 `docs/feature-expansion-proposal.md`는 커밋에서 제외했다.
+- 원격에 있던 문서 정리를 유지하고, 기존 로컬 main은 `codex/main-before-1.3.8`에 보존했다. 당시 미공개 추가 기능 기획안은 커밋에서 제외했다. 현재 남은 요청은 [계획된 기능](tracking/status.md#계획된-기능)에서 관리한다.
 - 생성 명령: `npx.cmd --no-install web-ext build --config web-ext-config.mjs --artifacts-dir web-ext-artifacts --filename cheese_spanner-1.3.8.zip`
 - 파일: `web-ext-artifacts/cheese_spanner-1.3.8.zip`
 - 크기: 2,659,203바이트. 파일 88개, 디렉터리 포함 100개 항목.

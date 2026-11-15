@@ -41,9 +41,9 @@
 
     function fail(code = "INVALID_FILE") {
         const messages = {
-            INVALID_FILE: "백업 파일의 형식이나 기록 내용이 올바르지 않아요. 원본 파일을 다시 확인해 주세요.",
-            UNSUPPORTED_VERSION: "지원하지 않는 백업 파일 버전이에요. 확장 프로그램 버전을 확인해 주세요.",
-            LIMIT_EXCEEDED: "백업 파일의 크기나 기록 수가 보관 한도를 넘어요. 기록은 변경하지 않았어요.",
+            INVALID_FILE: "백업 파일 형식·내용 오류. 원본 파일 확인 필요.",
+            UNSUPPORTED_VERSION: "미지원 백업 파일 버전. 확장 프로그램 버전 확인 필요.",
+            LIMIT_EXCEEDED: "백업 파일 크기·기록 수 한도 초과(기존 기록 미변경).",
         };
         const error = new Error(messages[code]);
         error.code = code;

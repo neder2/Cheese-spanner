@@ -68,9 +68,12 @@
             'button[aria-label="더보기 메뉴"][aria-haspopup="true"][aria-expanded="true"]'
         )) {
             if (trigger.closest('[role="log"]') || trigger.closest(`[${PANEL}]`)) continue;
-            const parent = trigger.parentElement;
-            // The moderator panel wraps the native trigger, while its menu stays beside that wrapper.
-            const menuHost = parent?.matches('[data-bcct-moderator-actions="1"]') ? parent.parentElement : parent;
+            // Collection and multiview can nest their action groups around the trigger.
+            // The native menu stays beside those groups; skip only these extension-owned wrappers.
+            let menuHost = trigger.parentElement;
+            while (menuHost?.matches('[data-bcct-moderator-actions="1"], [data-bcmv-chat-actions="1"]')) {
+                menuHost = menuHost.parentElement;
+            }
             for (const menu of menuHost?.children || []) {
                 if (!Array.from(menu.classList).some((name) => name.startsWith("_container_"))) continue;
                 const sample = Array.from(menu.querySelectorAll("button")).find(

@@ -280,7 +280,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
             if (state.freeLayoutEnabled) layout.rememberWindows();
             sessionStorage.setItem(model.SESSION_KEY, JSON.stringify(state));
         } catch {
-            notice("탭 구성을 저장하지 못했어요. 새로고침 후 구성이 복원되지 않을 수 있어요.");
+            notice("탭 구성 저장 실패(새로고침 시 복원 안 될 수 있음).");
         }
     }
     function updatePlayerUi(player) {
@@ -447,7 +447,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         const accepted = !link.dispatchEvent(
             new CustomEvent("cheese-spanner:multiview-navigate", { bubbles: true, cancelable: true })
         );
-        if (!accepted) notice("페이지 내부 이동을 사용할 수 없어요. 현재 방송은 유지돼요.");
+        if (!accepted) notice("페이지 내부 이동 불가(현재 방송 유지).");
         return accepted;
     }
     function equalLayout() {
@@ -567,9 +567,9 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         else if (action === "apply-delay" && player) players.setDelay(player, player.delay, player.delayBasis);
     }
     function addProblem(id) {
-        if (!id) return "올바른 치지직 라이브 URL을 입력해 주세요.";
-        if (state.channels.some((entry) => entry.id === id)) return "이미 추가된 방송이에요.";
-        if (state.channels.length >= 6) return "방송은 최대 6개까지 추가할 수 있어요.";
+        if (!id) return "올바른 치지직 라이브 URL 입력 필요.";
+        if (state.channels.some((entry) => entry.id === id)) return "이미 추가된 방송.";
+        if (state.channels.length >= 6) return "최대 6개 방송까지 추가 가능.";
         return "";
     }
     function addStreamFromUrl(value, freeRect = null) {
@@ -632,7 +632,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
             !incomingDrag.link.isConnected ||
             incomingDrag.link.href !== incomingDrag.href
         )
-            return "방송 구성이 바뀌었어요. 링크를 다시 끌어 주세요.";
+            return "방송 구성 변경됨. 링크 다시 드래그 필요.";
         return addProblem(model.channelFromUrl(incomingDrag.href));
     }
     function acceptsAddDrop(event) {
@@ -660,8 +660,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         event.preventDefault();
         event.stopPropagation();
         // The URL itself is protected until drop for drags from another tab/app.
-        const problem =
-            incomingDragProblem() || (state.channels.length >= 6 ? "방송은 최대 6개까지 추가할 수 있어요." : "");
+        const problem = incomingDragProblem() || (state.channels.length >= 6 ? "최대 6개 방송까지 추가 가능." : "");
         event.dataTransfer.dropEffect = problem
             ? "none"
             : ["link", "linkMove"].includes(event.dataTransfer.effectAllowed)
@@ -705,7 +704,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         const freeRect = layout.incomingWindowRect(event.clientX, event.clientY);
         clearIncomingDrag();
         if (problem || changed) {
-            notice(problem || "끌어온 방송 주소가 바뀌었어요. 다시 끌어 주세요.");
+            notice(problem || "드래그한 방송 주소 변경됨. 다시 드래그 필요.");
             return;
         }
         addStreamFromUrl(value, freeRect);
