@@ -5,7 +5,7 @@ const test = require("node:test");
 const { JSDOM } = require("jsdom");
 
 const source = fs.readFileSync(
-    path.join(__dirname, "../../docs/measurements/quality-choice-session-2026-09-14.js"),
+    path.join(__dirname, "../fixtures/quality-choice-session-probe.js"),
     "utf8"
 );
 
