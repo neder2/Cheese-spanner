@@ -147,6 +147,7 @@ let hideMessageTimer = 0;
 let storageChangeReloadScheduled = false;
 let historyLoadGeneration = 0;
 let activeHistoryView = "history";
+const dirtyHistoryViews = new Set();
 let selectionMode = false;
 let importedDonations = null;
 let donationImportPort = null;
@@ -185,6 +186,7 @@ function getPageRows(view, rows) {
 function setHistoryView(view, { focus = false } = {}) {
     if (!viewNames.includes(view)) return;
     activeHistoryView = view;
+    if (dirtyHistoryViews.has(view)) renderActiveHistoryView();
     for (const tab of viewTabs) {
         const selected = tab.dataset.historyView === view;
         tab.setAttribute("aria-selected", String(selected));
@@ -210,10 +212,24 @@ function matchesHistoryQuery(entry) {
 }
 
 function renderResults() {
-    const donations = getDonationView();
-    renderList();
-    renderRanking(donations);
-    renderActivity(donations);
+    for (const view of viewNames) dirtyHistoryViews.add(view);
+    syncHistoryManagementControls();
+    renderActiveHistoryView();
+}
+
+function renderActiveHistoryView() {
+    if (activeHistoryView === "history") renderList();
+    else if (activeHistoryView === "ranking") renderRanking();
+    else renderActivity();
+}
+
+function beginHistoryViewRender(view) {
+    if (view !== activeHistoryView) {
+        dirtyHistoryViews.add(view);
+        return false;
+    }
+    dirtyHistoryViews.delete(view);
+    return true;
 }
 
 async function sendWatchHistoryMutation(operation) {
@@ -970,17 +986,17 @@ function compareNumberByDirection(a, b) {
     return (a - b) * direction;
 }
 
-function compareVisibleRows(a, b) {
+function compareVisibleRows(a, b, actualWatchedAt = getRowActualWatchedAt) {
     if (getHistorySortMode() === "actualTime") {
         return (
-            compareNumberByDirection(getRowActualWatchedAt(a), getRowActualWatchedAt(b)) ||
+            compareNumberByDirection(actualWatchedAt(a), actualWatchedAt(b)) ||
             compareNumberByDirection(a.seconds, b.seconds) ||
             compareNumberByDirection(a.entry.lastWatchedAt, b.entry.lastWatchedAt)
         );
     }
     return (
         compareNumberByDirection(a.seconds, b.seconds) ||
-        compareNumberByDirection(getRowActualWatchedAt(a), getRowActualWatchedAt(b)) ||
+        compareNumberByDirection(actualWatchedAt(a), actualWatchedAt(b)) ||
         compareNumberByDirection(a.entry.lastWatchedAt, b.entry.lastWatchedAt)
     );
 }
@@ -1184,7 +1200,15 @@ function getVisibleRows() {
         })
         .filter((row) => row.seconds > 0 || hasActivityCounts(row.entry, scopeBounds));
 
-    return rows.filter((row) => matchesHistoryQuery(row.entry)).sort(compareVisibleRows);
+    // Keep keys local to this sort: scope changes build new rows, and duration ties alone need time keys.
+    const watchedAtKeys = new WeakMap();
+    const actualWatchedAt = (row) => {
+        if (!watchedAtKeys.has(row)) watchedAtKeys.set(row, getRowActualWatchedAt(row));
+        return watchedAtKeys.get(row);
+    };
+    return rows
+        .filter((row) => matchesHistoryQuery(row.entry))
+        .sort((a, b) => compareVisibleRows(a, b, actualWatchedAt));
 }
 
 function pruneSelectedEntryIds() {
@@ -1204,8 +1228,14 @@ function getVisibleEntryIds(rows = getPageRows("history", getVisibleRows())) {
     return rows.map((row) => row.entry.id).filter(Boolean);
 }
 
-function renderSelectionControls(rows = getPageRows("history", getVisibleRows())) {
+function syncHistoryManagementControls() {
     pruneSelectedEntryIds();
+    clearHistoryButton.disabled = entries.length === 0 && !importedDonations?.owner;
+    clearDonationImportButton.disabled = !importedDonations?.owner;
+}
+
+function renderSelectionControls(rows = getPageRows("history", getVisibleRows())) {
+    syncHistoryManagementControls();
 
     const visibleIds = getVisibleEntryIds(rows);
     const visibleSelectedCount = visibleIds.filter((id) => selectedEntryIds.has(id)).length;
@@ -1223,8 +1253,6 @@ function renderSelectionControls(rows = getPageRows("history", getVisibleRows())
     selectionStatusEl.textContent = `선택 ${selectedCount}개${hiddenCount > 0 ? ` · 현재 목록 밖 ${hiddenCount}개` : ""}`;
     deleteSelectedHistoryButton.disabled = selectedCount === 0;
     clearSelectionButton.disabled = selectedCount === 0;
-    clearHistoryButton.disabled = entries.length === 0 && !importedDonations?.owner;
-    clearDonationImportButton.disabled = !importedDonations?.owner;
 }
 
 function setEntrySelected(id, selected) {
@@ -1715,6 +1743,10 @@ function buildHistoryEmptyState() {
 }
 
 function renderList() {
+    if (!beginHistoryViewRender("history")) {
+        syncHistoryManagementControls();
+        return;
+    }
     // Capture focus when rendering, not when an earlier async request started.
     const active = document.activeElement;
     const hadListFocus = historyListEl.contains(active);
@@ -2009,7 +2041,9 @@ function getDonationView() {
     return { rows, groups, incomplete, ...totals };
 }
 
-function renderRanking(donations = getDonationView()) {
+function renderRanking(donations) {
+    if (!beginHistoryViewRender("ranking")) return;
+    donations ||= getDonationView();
     const bounds = getHistoryScopeBounds();
     const groups = new Map();
     for (const entry of entries) {
@@ -2117,10 +2151,12 @@ function syncDonationImportVisibility() {
     document.getElementById("donationImportDescription").hidden = !isDonation;
 }
 
-function renderActivity(donations = getDonationView()) {
+function renderActivity(donations) {
+    syncDonationImportVisibility();
+    if (!beginHistoryViewRender("activity")) return;
+    donations ||= getDonationView();
     const bounds = getHistoryScopeBounds();
     const isDonation = activityTypeEl.value === "donation";
-    syncDonationImportVisibility();
     if (isDonation) {
         document.getElementById("donationImportDescription").textContent = donations.incomplete
             ? "갱신 이후 정리된 후원 상세 기록은 합계에서 빠질 수 있음. ‘후원 내역 갱신’으로 확인."

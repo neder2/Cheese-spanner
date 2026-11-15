@@ -66,6 +66,8 @@ const expectedDefaults = {
     liveWatchHistoryDonationEnabled: false,
     liveWatchHistoryMinMinutes: 1,
     vodCommentTabsEnabled: true,
+    vodCommentLayout: "tabs",
+    vodCommentSplitTop: "chat",
     chatResizeEnabled: true,
     chatPosition: "right",
     chatTimestampEnabled: false,
@@ -73,6 +75,7 @@ const expectedDefaults = {
     vodOwnChatHighlightEnabled: true,
     chatWeeklyRankingHidden: false,
     chatDonationMessagesHidden: false,
+    chatNicknameHidden: false,
     chatWelcomeMessageRemovalEnabled: false,
     chatKeywordFilterEnabled: true,
     chatKeywordFilterWords: "",
@@ -147,11 +150,24 @@ const expectedDefaults = {
     livePreviewRightClickSoundEnabled: true,
     screenShortcutsEnabled: false,
     holdSpeedEnabled: true,
+    livePlaybackRateLockEnabled: true,
     playbackSpeedShortcutsEnabled: true,
     playbackSpeedHalfKeyCode: "BracketLeft",
     playbackSpeedDoubleKeyCode: "BracketRight",
     playbackSpeedResetKeyCode: "Backslash",
 };
+
+test("VOD comment layout keeps legacy tabs by default and validates independent split order", () => {
+    const defaults = settings.normalizeOptions({});
+    assert.equal(defaults.vodCommentLayout, "tabs");
+    assert.equal(defaults.vodCommentSplitTop, "chat");
+    const split = settings.normalizeOptions({ vodCommentLayout: "split", vodCommentSplitTop: "comments" });
+    assert.equal(split.vodCommentLayout, "split");
+    assert.equal(split.vodCommentSplitTop, "comments");
+    const invalid = settings.normalizeOptions({ vodCommentLayout: "overlay", vodCommentSplitTop: "other" });
+    assert.equal(invalid.vodCommentLayout, "tabs");
+    assert.equal(invalid.vodCommentSplitTop, "chat");
+});
 
 test("settings exports the expected option defaults and key order", () => {
     assert.deepEqual(settings.DEFAULT_OPTIONS, expectedDefaults);
@@ -220,6 +236,7 @@ test("feature count keys are derived from feature toggles only", () => {
         "vodOwnChatHighlightEnabled",
         "chatWeeklyRankingHidden",
         "chatDonationMessagesHidden",
+        "chatNicknameHidden",
         "chatWelcomeMessageRemovalEnabled",
         "chatKeywordFilterEnabled",
         "chatToolsShowBlindEnabled",
@@ -249,6 +266,7 @@ test("feature count keys are derived from feature toggles only", () => {
         "followingPreviewTooltipEnabled",
         "screenShortcutsEnabled",
         "holdSpeedEnabled",
+        "livePlaybackRateLockEnabled",
         "playbackSpeedShortcutsEnabled",
     ]);
 });

@@ -672,6 +672,43 @@ for (const tab of ["lives", "videos", "clips"]) {
     });
 }
 
+test("injected cards clear current renderer badges before assigning another channel", (t) => {
+    const f = createFixture(t);
+    const template = f.dom.window.document.createElement("article");
+    template.innerHTML = `<a class="channel" href="/${"a".repeat(32)}"><span class="name_text">Original</span><i class="_icon_1pcsq_17 _mark_1pcsq_81 _is_partner_1pcsq_81"><span class="blind">인증 마크</span></i></a>`;
+    const original = template.innerHTML;
+    for (const tab of ["lives", "videos", "clips"]) {
+        const meta = { id: tab === "lives" ? "b".repeat(32) : "456", channelId: "b".repeat(32), channelName: "Next" };
+        assert.equal(f.hooks.buildCard({ scope: "category", tab }, template, meta).querySelector("i"), null);
+        const card = f.hooks.buildCard({ scope: "category", tab }, template, {
+            ...meta,
+            verifiedMarkType: "CHALLENGER",
+        });
+        assert.ok(card.querySelector("._is_challenger_1pcsq_84"));
+        assert.equal(card.querySelector("._is_partner_1pcsq_81"), null);
+    }
+    assert.equal(template.innerHTML, original);
+});
+
+test("injected cards remove or replace another channel's native verification mark", (t) => {
+    const f = createFixture(t);
+    const template = f.dom.window.document.createElement("article");
+    template.innerHTML = `<a class="channel" href="/${"a".repeat(32)}"><span class="name_text">Original</span><i class="_icon_8bw0p_17 _mark_8bw0p_75 _is_partner_8bw0p_75"><span class="blind">인증 마크</span></i></a>`;
+    const original = template.innerHTML;
+    for (const tab of ["lives", "videos", "clips"]) {
+        const meta = { id: tab === "lives" ? "b".repeat(32) : "456", channelId: "b".repeat(32), channelName: "Next" };
+        const unknown = f.hooks.buildCard({ scope: "category", tab }, template, meta);
+        assert.equal(unknown.querySelector("i"), null, `${tab}: unknown channels never inherit the template mark`);
+        const challenger = f.hooks.buildCard({ scope: "category", tab }, template, {
+            ...meta,
+            verifiedMarkType: "CHALLENGER",
+        });
+        assert.ok(challenger.querySelector("._is_challenger_8bw0p_78"), tab);
+        assert.equal(challenger.querySelector("._is_partner_8bw0p_75"), null);
+    }
+    assert.equal(template.innerHTML, original);
+});
+
 for (const tab of ["lives", "videos", "clips"]) {
     test(`${tab} identity repair preserves unrelated label substrings and supports short names`, (t) => {
         const f = createFixture(t);

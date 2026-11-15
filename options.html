@@ -797,6 +797,16 @@
                         <div class="option-group-body">
                             <label class="toggle-row">
                                 <span
+                                    ><strong>라이브 자동 배속 방지</strong
+                                    ><small
+                                        >라이브 자동 따라잡기 가속 차단. 기본 1배속 유지, 홀드·배속 키는 그대로
+                                        사용.</small
+                                    ></span
+                                >
+                                <input type="checkbox" data-option="livePlaybackRateLockEnabled" />
+                            </label>
+                            <label class="toggle-row">
+                                <span
                                     ><strong>기본 단축키 복구</strong
                                     ><small>Space·M·F·T 키가 작동하지 않을 때 사용.</small></span
                                 >
@@ -1260,6 +1270,20 @@
                             <p class="setting-note" id="chat-donation-messages-help">
                                 라이브·다시보기 채팅의 일반·미션·파티 후원 메시지 숨김. 후원 기록과 영상·음성 유지.
                             </p>
+                            <label
+                                class="toggle-row"
+                                data-search-terms="닉네임 이름 숨김 방송자 운영자 파트너 챌린저 스트리머 배지 모아보기"
+                            >
+                                <span><strong>채팅창 닉네임 숨기기</strong></span>
+                                <input
+                                    type="checkbox"
+                                    data-option="chatNicknameHidden"
+                                    aria-describedby="chat-nickname-help"
+                                />
+                            </label>
+                            <p class="setting-note" id="chat-nickname-help">
+                                배지는 유지하고 닉네임만 숨김. 모아보기 대상(방송자·운영자·파트너·챌린저)의 이름은 표시.
+                            </p>
                             <label class="toggle-row">
                                 <span><strong>채팅방 환영 메시지 제거</strong></span>
                                 <input type="checkbox" data-option="chatWelcomeMessageRemovalEnabled" />
@@ -1280,7 +1304,7 @@
                                 <input type="checkbox" data-option="chatToolsShowBlindEnabled" />
                             </label>
                             <label class="toggle-row">
-                                <span><strong>방송자·운영자 채팅 모아보기</strong></span>
+                                <span><strong>방송자·운영자·파트너·챌린저 채팅 모아보기</strong></span>
                                 <input type="checkbox" data-option="chatToolsModeratorBoxEnabled" />
                             </label>
                             <div class="number-grid" data-depends-on="chatToolsModeratorBoxEnabled">
@@ -1579,6 +1603,21 @@
                                 <span><strong>다시보기 채팅창 댓글 탭</strong></span>
                                 <input type="checkbox" data-option="vodCommentTabsEnabled" />
                             </label>
+                            <label class="toggle-row" data-depends-on="vodCommentTabsEnabled">
+                                <span>표시 방식</span>
+                                <select class="quality-select vod-comment-select" data-option="vodCommentLayout">
+                                    <option value="tabs">탭 전환</option>
+                                    <option value="split">분할</option>
+                                </select>
+                            </label>
+                            <label class="toggle-row" data-depends-on="vodCommentTabsEnabled">
+                                <span>분할 상단</span>
+                                <select class="quality-select vod-comment-select" data-option="vodCommentSplitTop">
+                                    <option value="chat">채팅</option>
+                                    <option value="comments">댓글</option>
+                                </select>
+                            </label>
+                            <p class="setting-note">분할에서는 채팅과 댓글 사이 경계선을 끌어 크기 조절.</p>
                         </div>
                     </details>
 

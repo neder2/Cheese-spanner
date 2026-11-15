@@ -975,7 +975,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.4.7");
+    assert.equal(manifest.version, "1.4.8");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
@@ -1016,6 +1016,13 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
         mainScript.js.indexOf("features/routeBridgePage.js") < mainScript.js.indexOf("features/autoQualityPage.js")
     );
     assert.ok(mainScript.js.includes("features/volumeWheelPage.js"));
+    assert.ok(
+        mainScript.js.indexOf("features/livePlaybackRatePage.js") >
+            mainScript.js.indexOf("shared/volumeControlsPage.js")
+    );
+    assert.ok(isolatedScript.js.indexOf("features/livePlaybackRate.js") > isolatedScript.js.indexOf("content.js"));
+    assert.equal(mainScript.js.includes("features/livePlaybackRate.js"), false);
+    assert.equal(isolatedScript.js.includes("features/livePlaybackRatePage.js"), false);
     assert.ok(
         mainScript.js.indexOf("features/volumeWheelPage.js") > mainScript.js.indexOf("features/autoQualityPage.js")
     );

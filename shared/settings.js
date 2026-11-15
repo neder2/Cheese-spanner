@@ -125,6 +125,8 @@
             max: LIVE_WATCH_HISTORY_MIN_MINUTES_MAX,
         },
         vodCommentTabsEnabled: { kind: "bool", default: true, feature: true },
+        vodCommentLayout: { kind: "choice", values: ["tabs", "split"], default: "tabs" },
+        vodCommentSplitTop: { kind: "choice", values: ["chat", "comments"], default: "chat" },
         chatResizeEnabled: { kind: "bool", default: true, feature: true },
         // 일반 라이브·다시보기의 채팅 열 위치. 기본은 치지직 원래 배치(오른쪽)예요.
         chatPosition: { kind: "choice", values: ["right", "left"], default: "right" },
@@ -134,6 +136,7 @@
         vodOwnChatHighlightEnabled: { kind: "bool", default: true, feature: true },
         chatWeeklyRankingHidden: { kind: "bool", default: false, feature: true },
         chatDonationMessagesHidden: { kind: "bool", default: false, feature: true },
+        chatNicknameHidden: { kind: "bool", default: false, feature: true },
         chatWelcomeMessageRemovalEnabled: { kind: "bool", default: false, feature: true },
         chatKeywordFilterEnabled: { kind: "bool", default: true, feature: true },
         chatKeywordFilterWords: { kind: "chatKeywords", default: "" },
@@ -283,6 +286,7 @@
         livePreviewRightClickSoundEnabled: { kind: "bool", default: true },
         screenShortcutsEnabled: { kind: "bool", default: false, feature: true },
         holdSpeedEnabled: { kind: "bool", default: true, feature: true },
+        livePlaybackRateLockEnabled: { kind: "bool", default: true, feature: true },
         playbackSpeedShortcutsEnabled: { kind: "bool", default: true, feature: true },
         playbackSpeedHalfKeyCode: { kind: "shortcutCode", default: DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE },
         // 기존 사용자 지정 키를 유지하며 Half/Double을 감소/증가 키로 사용한다.

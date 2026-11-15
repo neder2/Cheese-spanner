@@ -7,6 +7,13 @@ const { JSDOM, VirtualConsole } = require("jsdom");
 const repo = path.join(__dirname, "..");
 const KEY = "betterchzzk:following-list-state";
 const wait = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
+function userClick(page, kind) {
+    const event = new page.dom.window.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+    // Only explicit user actions use this fixture; native restoration keeps its synthetic .click().
+    const impl = Object.getOwnPropertySymbols(event).find((symbol) => symbol.description === "impl");
+    event[impl].isTrusted = true;
+    page.button(kind)[impl]._dispatch(event[impl]);
+}
 async function until(check) {
     for (let i = 0; i < 80; i++) {
         if (check()) return;
@@ -21,7 +28,7 @@ function createChrome({ saved, enabled = true, deferRead = false } = {}) {
     const writes = [];
     const local = saved === undefined ? {} : { [KEY]: saved };
     const options = { followingListStateEnabled: enabled, followingPinEnabled: false };
-    const runtime = {};
+    const runtime = { id: "cheese-spanner-test" };
     const state = {
         local,
         writes,
@@ -182,23 +189,39 @@ test("following state never saves an untouched native default when enabled", asy
     assert.equal(page.model.list, false);
 });
 
+test("synthetic following clicks may change native UI but cannot persist that choice", async (t) => {
+    const chrome = createChrome();
+    const page = createPage(t, chrome);
+    await wait(60);
+    const nativeToggle = page.button("list");
+    nativeToggle.click();
+    assert.equal(page.model.list, true);
+    // The native mutation, the next animation frame and the asynchronous storage callback can all run.
+    await wait(120);
+    assert.equal(chrome.state.writes.length, 0);
+    assert.deepEqual(chrome.state.local, {});
+    userClick(page, "list");
+    await until(() => chrome.state.local[KEY]?.list === false);
+    assert.equal(chrome.state.writes.length, 1);
+});
+
 test("following section and full-list choices persist independently and restore through native controls", async (t) => {
     const chrome = createChrome();
     const page = createPage(t, chrome);
     await wait(60);
-    page.button("list").click();
+    userClick(page, "list");
     await until(() => chrome.state.local[KEY]?.list === true);
-    page.button("section").click();
+    userClick(page, "section");
     await until(() => chrome.state.local[KEY]?.section === false);
     assert.deepEqual(chrome.state.local[KEY], { list: true, section: false });
     const reloaded = createPage(t, chrome);
     await until(() => reloaded.model.section === false);
     assert.equal(reloaded.clicks.section, 1);
     assert.equal(reloaded.clicks.list, 0, "a closed section must not be opened just to reach its list button");
-    reloaded.button("section").click();
+    userClick(reloaded, "section");
     await until(() => reloaded.model.list && chrome.state.local[KEY].section === true);
     assert.equal(reloaded.clicks.list, 1);
-    reloaded.button("list").click();
+    userClick(reloaded, "list");
     await until(() => chrome.state.local[KEY].list === false);
     assert.equal(reloaded.model.section, true);
     assert.equal(page.model.section, false, "another already-open tab is not expanded by the stored preference");
@@ -228,14 +251,14 @@ test("following state records the native result of a click without fighting a ne
     const chrome = createChrome({ saved: { list: true } });
     const page = createPage(t, chrome);
     await until(() => page.model.list);
-    page.button("list").click();
+    userClick(page, "list");
     await until(() => chrome.state.local[KEY]?.list === false);
     page.document.querySelector('nav[aria-label="팔로우"] button[aria-label="새로고침"]').click();
     await wait(80);
     assert.equal(page.model.list, false);
     assert.equal(page.clicks.list, 2);
-    page.button("list").click();
-    page.button("list").click();
+    userClick(page, "list");
+    userClick(page, "list");
     await wait();
     assert.equal(page.model.list, false, "rapid clicks keep the final native result");
     assert.equal(chrome.state.local[KEY].list, false);
@@ -262,7 +285,7 @@ test("following state stops on disable and ignores a late initial storage respon
     await until(() => chrome.state.pendingReads.length === 1);
     chrome.state.enable(false);
     chrome.state.releaseReads();
-    page.button("list").click();
+    userClick(page, "list");
     await wait();
     assert.equal(chrome.state.writes.length, 0);
     page.model.list = false;
@@ -276,11 +299,36 @@ test("following state stops on disable and ignores a late initial storage respon
     assert.equal(page.clicks.list, 2);
 });
 
+test("an invalidated extension context leaves the native following section in control", async (t) => {
+    const chrome = createChrome({ saved: { section: true } });
+    const page = createPage(t, chrome, { section: false });
+    await until(() => page.model.section);
+
+    delete chrome.runtime.id;
+    let staleReads = 0;
+    chrome.storage.local.get = () => {
+        staleReads += 1;
+        throw new Error("Extension context invalidated.");
+    };
+
+    userClick(page, "section");
+    await wait();
+    assert.equal(page.model.section, false, "the native button can still close the section");
+
+    page.model.section = true;
+    page.mount();
+    await wait();
+    assert.equal(page.model.section, true, "the old script leaves the remounted section alone");
+    assert.equal(page.clicks.section, 2);
+    assert.equal(staleReads, 0);
+    assert.equal(chrome.state.writes.length, 0);
+});
+
 test("following state prioritizes a user's click over a stale initial preference", async (t) => {
     const chrome = createChrome({ saved: { list: false, section: true }, deferRead: true });
     const page = createPage(t, chrome);
     await until(() => chrome.state.pendingReads.length === 1);
-    page.button("list").click();
+    userClick(page, "list");
     await wait();
     chrome.state.releaseReads();
     // Saving reads the latest stored value first, and this fixture holds every read until released.
@@ -304,7 +352,7 @@ test("following state ignores malformed values and cannot operate on a recycled 
     assert.equal(page.clicks.list, 0);
     const nav = page.document.querySelector('nav[aria-label="팔로우"]');
     nav.setAttribute("aria-label", "인기 카테고리");
-    page.button("list").click();
+    userClick(page, "list");
     await wait();
     assert.equal(page.clicks.list, 0);
     assert.equal(chrome.state.writes.length, 0);
@@ -415,10 +463,10 @@ test("following state saves only the changed choice over what another tab saved 
     const first = createPage(t, chrome);
     const second = createPage(t, chrome);
     await until(() => first.model.list && second.model.list);
-    first.button("list").click();
+    userClick(first, "list");
     await until(() => chrome.state.local[KEY]?.list === false);
     assert.deepEqual(chrome.state.local[KEY], { section: true, list: false });
-    second.button("section").click();
+    userClick(second, "section");
     await until(() => chrome.state.local[KEY]?.section === false);
     await wait();
     assert.deepEqual(chrome.state.local[KEY], { section: false, list: false }, "the other tab's list choice is kept");
@@ -434,8 +482,8 @@ test("following state keeps both tabs' choices when their saves read the stored 
         chrome.state.releaseReads();
         return first.model.list && second.model.list;
     });
-    first.button("list").click();
-    second.button("section").click();
+    userClick(first, "list");
+    userClick(second, "section");
     await until(() => chrome.state.pendingReads.length > 0);
     await wait();
     // Release every read that is waiting now, as if both tabs read before either saved.
@@ -456,13 +504,13 @@ test("following state writes nothing when it cannot read the latest stored choic
     // Another tab folded the list meanwhile, and this tab cannot read that.
     chrome.state.local[KEY] = { section: true, list: false };
     chrome.state.failReads = 1;
-    page.button("section").click();
+    userClick(page, "section");
     await until(() => chrome.state.failReads === 0);
     await wait(80);
     assert.equal(chrome.state.writes.length, 0, "a failed read does not save this tab's older choices");
     assert.deepEqual(chrome.state.local[KEY], { section: true, list: false });
 
-    page.button("section").click();
+    userClick(page, "section");
     await until(() => chrome.state.writes.length === 1);
     assert.deepEqual(chrome.state.local[KEY], { section: true, list: false }, "the next save merges again");
 });

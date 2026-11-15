@@ -80,6 +80,13 @@
                 "영상 녹화 기능 추가 (기본 꺼짐), 채팅 문구 숨기기(기본 켜짐) · 채팅창 우측 상단 ⋮ 에서 설정, 후원 메시지 숨기기(기본 꺼짐) · 설정 → 채팅, 각종 버그 수정",
             cards: Object.freeze([]),
         }),
+        "1.4.8": Object.freeze({
+            version: "1.4.8",
+            title: "새 기능",
+            summary:
+                "다시보기 멀티뷰 추가(기본 꺼짐 · 설정 → 플레이어), 채팅·댓글 분할 보기(설정 → 다시보기), 채팅 닉네임 숨기기(기본 꺼짐 · 설정 → 채팅), 방송 목록 등급 필터 추가, 라이브 자동 배속 방지(기본 켜짐)",
+            cards: Object.freeze([]),
+        }),
     });
     globalThis.CheeseSpannerUpdateGuide = Object.freeze({
         MESSAGE_TYPE: "cheese-spanner:update-guide",

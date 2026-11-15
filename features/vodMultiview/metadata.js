@@ -12,6 +12,7 @@
     const channelIdPattern = /^[a-f0-9]{32}$/i;
     const pageSize = 30;
     const maxDetails = 30;
+    const maxFollowingChannels = 505;
 
     function videoNoFromUrl(value) {
         if (typeof value !== "string" || value.length > 2048) return "";
@@ -49,6 +50,30 @@
         return { startMs, endMs, duration };
     }
 
+    function readRewind(detail, duration) {
+        const value = detail.liveRewindPlaybackJson;
+        if (typeof value !== "string" || value.length > 65536) return null;
+        try {
+            const { meta, media } = JSON.parse(value);
+            if (
+                meta?.liveRewind !== true ||
+                meta.videoId !== detail.videoId ||
+                meta.paidLive !== false ||
+                meta.playbackAuthType !== "NONE" ||
+                !Number.isFinite(meta.duration) ||
+                meta.duration <= 0 ||
+                Math.abs(meta.duration - duration) > 2 ||
+                !Array.isArray(media) ||
+                media.length !== 1 ||
+                media[0]?.protocol !== "HLS"
+            )
+                return null;
+            return JSON.stringify({ meta, media });
+        } catch {
+            return null;
+        }
+    }
+
     function readVideo(response, videoNo, needsKey) {
         const detail = response?.content;
         if (response?.code === 401 || response?.code === 403) return { status: "restricted" };
@@ -61,27 +86,32 @@
             detail.dab
         )
             return { status: "restricted" };
+        const isRewind = detail.liveRewindPlaybackJson != null;
         if (
             detail.videoType !== "REPLAY" ||
-            detail.vodStatus !== "ABR_HLS" ||
-            detail.liveRewindPlaybackJson != null ||
+            (!isRewind && detail.vodStatus !== "ABR_HLS") ||
             typeof detail.videoId !== "string" ||
             !mediaIdPattern.test(detail.videoId) ||
             !channelIdPattern.test(detail.channel?.channelId || "") ||
-            (detail.encryptionType != null && detail.encryptionType !== "NONE" && detail.encryptionType !== "AES")
+            (detail.encryptionType != null &&
+                detail.encryptionType !== "NONE" &&
+                (isRewind || detail.encryptionType !== "AES"))
         )
             return { status: "unsupported" };
-        if (needsKey && (typeof detail.inKey !== "string" || !mediaKeyPattern.test(detail.inKey)))
+        if (needsKey && !isRewind && (typeof detail.inKey !== "string" || !mediaKeyPattern.test(detail.inKey)))
             return { status: "restricted" };
 
         const timeline = getTimeline(detail);
         if (!timeline) return { status: "unknown-time" };
+        const rewind = isRewind && readRewind(detail, timeline.duration);
+        if (isRewind && !rewind) return { status: "unsupported" };
         return {
             status: "ok",
-            media: { videoNo, id: detail.videoId, ...timeline },
-            ...(needsKey && { key: detail.inKey, aes: detail.encryptionType === "AES" }),
+            media: { videoNo, id: detail.videoId, ...timeline, ...(isRewind && { rewind: true }) },
+            ...(needsKey && (rewind ? { rewind } : { key: detail.inKey, aes: detail.encryptionType === "AES" })),
             channelId: detail.channel.channelId,
             channelName: typeof detail.channel.channelName === "string" ? detail.channel.channelName.slice(0, 100) : "",
+            channelImageUrl: normalizeChzzkImageUrl(detail.channel.channelImageUrl),
             title: typeof detail.videoTitle === "string" ? detail.videoTitle.trim().slice(0, 200) : "",
         };
     }
@@ -96,12 +126,9 @@
         }
     }
 
-    async function searchChannels(keyword, { signal }) {
-        const params = new URLSearchParams({ keyword, offset: "0", size: "5", withFirstChannelContent: "false" });
-        const response = await fetchJson(`${api}/v1/search/channels?${params}`, { signal });
-        if (response?.code !== 200 || !Array.isArray(response.content?.data)) throw new Error("Invalid channel search");
+    function readChannels(items) {
         const results = new Map();
-        for (const item of response.content.data.slice(0, 5)) {
+        for (const item of items) {
             const channel = item?.channel;
             if (!channelIdPattern.test(channel?.channelId || "") || typeof channel.channelName !== "string") continue;
             const name = channel.channelName.trim().slice(0, 100);
@@ -113,6 +140,30 @@
                 });
         }
         return [...results.values()];
+    }
+
+    async function searchChannels(keyword, { signal }) {
+        const params = new URLSearchParams({ keyword, offset: "0", size: "5", withFirstChannelContent: "false" });
+        const response = await fetchJson(`${api}/v1/search/channels?${params}`, { signal });
+        if (response?.code !== 200 || !Array.isArray(response.content?.data)) throw new Error("Invalid channel search");
+        return readChannels(response.content.data.slice(0, 5));
+    }
+
+    async function loadFollowing({ signal }) {
+        const params = new URLSearchParams({ page: "0", size: maxFollowingChannels, sortType: "FOLLOW" });
+        try {
+            const response = await fetchJson(`${api}/v1/channels/followings?${params}`, { signal });
+            if (response?.code === 401) return { status: "login-required" };
+            if (response?.code !== 200 || !Array.isArray(response.content?.followingList))
+                return { status: "lookup-error" };
+            return {
+                status: "ok",
+                channels: readChannels(response.content.followingList.slice(0, maxFollowingChannels)),
+            };
+        } catch (error) {
+            if (signal?.aborted) throw error;
+            return { status: error?.message === "HTTP 401" ? "login-required" : "lookup-error" };
+        }
     }
 
     function publishedAt(row) {
@@ -205,5 +256,11 @@
         return overlappingReplay || { status: incomplete ? "lookup-error" : "no-replay" };
     }
 
-    CheeseSpanner.vodMultiviewMetadata = Object.freeze({ loadVideo, videoNoFromUrl, searchChannels, findReplay });
+    CheeseSpanner.vodMultiviewMetadata = Object.freeze({
+        loadVideo,
+        videoNoFromUrl,
+        searchChannels,
+        loadFollowing,
+        findReplay,
+    });
 })();

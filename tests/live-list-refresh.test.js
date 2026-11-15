@@ -93,6 +93,26 @@ test("failed refresh keeps the button reusable without announcing success", asyn
     assert.equal(button.disabled, false);
 });
 
+test("a slow refresh stays locked after the spin finishes and unlocks only after its response", async (t) => {
+    let resolve;
+    const { button, calls, timers } = await fixture(
+        t,
+        () =>
+            new Promise((done) => {
+                resolve = done;
+            })
+    );
+    button.click();
+    [...timers.values()][0].fn();
+    assert.equal(button.disabled, true);
+    button.click();
+    assert.equal(calls.length, 1);
+    resolve();
+    await new Promise((done) => setImmediate(done));
+    assert.equal(button.disabled, false);
+    assert.equal(button.hasAttribute("data-refreshing"), false);
+});
+
 test("leaving the list removes the button and ignores a late response", async (t) => {
     let resolve;
     const { window, button, timers } = await fixture(

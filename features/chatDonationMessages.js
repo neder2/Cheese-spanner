@@ -5,13 +5,15 @@
     const root = window.CheeseSpanner;
     const { bindFeatureOptions, injectStyleOnce } = root.utils;
     const STYLE_ID = "cheese-spanner-chat-donation-messages-style";
-    // 2026-11-08 public CHZZK bundle: CHAT, MISSION, and MISSION_PARTICIPATION/PARTY.
-    // Match the measured component families, not message text, padding shared with purchases,
-    // or the fixed mission board. The numeric CSS line suffix may change independently.
+    // Component families from the 2026-11-08 and 2026-11-15 public CHZZK bundles.
+    // The mission message modifier distinguishes a chat row from the fixed mission board.
     const contents = [
         '[class*="_container_17em1_"]',
+        '[class*="_container_120bf_"]',
         '[class*="_container_2dqjk_"][class*="_is_message_2dqjk_"]',
+        '[class*="_container_1oei1_"][class*="_is_message_1oei1_"]',
         '[class*="_container_18byk_"]',
+        '[class*="_container_baf00_"]',
     ];
     const lists = [
         'aside#aside-chatting [role="log"] > [class*="_wrapper_"]',

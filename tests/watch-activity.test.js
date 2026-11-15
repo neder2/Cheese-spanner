@@ -966,6 +966,7 @@ test("live history immediately persists activity before minimum watch time, incl
     t.after(() => historyDom.window.close());
     evalRepoScript(historyDom, "shared/data.js");
     evalRepoScript(historyDom, "history.js");
+    historyDom.window.document.getElementById("activityViewTab").click();
     await waitForCondition(
         () => historyDom.window.document.querySelectorAll("#activityList li:not(.history-empty)").length === 1
     );
@@ -1409,13 +1410,16 @@ test("history ranks channels by unique time and shows safe transcripts, counts, 
     evalRepoScript(dom, "shared/data.js");
     evalRepoScript(dom, "history.js");
     const document = dom.window.document;
+    document.getElementById("rankingViewTab").click();
     await waitForCondition(() => document.querySelectorAll("#channelRanking li").length === 2);
     assert.equal(document.querySelector("#channelRanking li").dataset.channelId, "channel-b");
+    document.getElementById("activityViewTab").click();
     assert.match(document.getElementById("activitySummary").textContent, /내 채팅 1개.*1,000치즈 \(1회\)/);
     document.getElementById("activityType").value = "donation";
     dispatch(dom, document.getElementById("activityType"), "change");
     assert.match(document.getElementById("activityList").textContent, /<img src=x onerror=alert\(1\)>/);
     assert.equal(document.querySelector("#activityList img"), null);
+    document.getElementById("historyViewTab").click();
     document.getElementById("prevMonth").click();
     assert.equal(document.querySelectorAll(".history-item").length, 0);
     document.getElementById("historyScope").value = "all";
@@ -1424,6 +1428,7 @@ test("history ranks channels by unique time and shows safe transcripts, counts, 
     document.querySelector('[data-entry-id="live:100"] .history-entry-detail').click();
     document.querySelector('[data-entry-id="live:100"] .history-entry-delete').click();
     await waitForCondition(() => document.querySelectorAll(".history-item").length === 2);
+    document.getElementById("activityViewTab").click();
     assert.match(document.getElementById("activitySummary").textContent, /내 후원 0치즈/);
     document.getElementById("activityType").value = "chat";
     dispatch(dom, document.getElementById("activityType"), "change");
@@ -1438,6 +1443,7 @@ test("an open history page reflects activity immediately and ignores an older pe
     evalRepoScript(dom, "history.js");
     const document = dom.window.document;
     await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
+    document.getElementById("activityViewTab").click();
     const pending = [];
     chrome.storage.local.get = (_keys, callback) => pending.push(callback);
     const notify = () => {
@@ -1461,9 +1467,11 @@ test("an open history page reflects activity immediately and ignores an older pe
     assert.match(document.getElementById("activitySummary").textContent, /내 채팅 1개/);
     assert.equal(document.getElementById("totalLiveCount").textContent, "0개");
     assert.equal(document.getElementById("totalWatchTime").textContent, "0분");
+    document.getElementById("historyViewTab").click();
     assert.match(document.querySelector(".history-item-time").textContent, /활동만 기록/);
     document.querySelector(".history-entry-detail").click();
     document.querySelector(".history-entry-delete").click();
     await waitForCondition(() => document.querySelector(".history-item") === null);
+    document.getElementById("activityViewTab").click();
     assert.match(document.getElementById("activitySummary").textContent, /내 채팅 0개/);
 });

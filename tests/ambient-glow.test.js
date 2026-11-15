@@ -289,6 +289,52 @@ test("chat menus and overlapping dialogs cut out glow without changing native su
     assert.equal(f.resizers.size, 0);
 });
 
+for (const [theme, path] of [
+    ["theme_dark", "/live/test-channel"],
+    ["light", "/video/123"],
+]) {
+    test(`header inbox and profile menus exclude glow through their lifecycle (${theme})`, async (t) => {
+        const f = fixture(t, { ambientEnabled: true }, path);
+        f.doc.documentElement.className = theme;
+        await waitForCondition(() => f.layer() && !f.layer().hidden);
+        const header = f.doc.getElementById("header");
+        header.getBoundingClientRect = () => rect({ left: 0, top: 0, width: 2048, height: 60 });
+        const clip = f.layer().style.clipPath;
+        const mask = () => decodeURIComponent(f.layer().style.maskImage);
+        // Public CHZZK index-cg6y1ITV.js (2026-11-12): inbox (including its loading
+        // surface), profile menu and its joined-lounge submenu have no dialog/menu role.
+        for (const className of ["_layer_mzph5_159", "_container_1euvn_2", "_container_nx6cq_2"]) {
+            const item = f.doc.createElement("div");
+            item.className = "_item_mzph5_31";
+            const popup = f.doc.createElement("div");
+            popup.className = className;
+            let box = { left: 1600, top: 57, width: 300, height: 600 };
+            popup.getBoundingClientRect = () => rect(box);
+            item.append(popup);
+            header.append(item);
+            const nativeMarkup = header.outerHTML;
+            await waitForCondition(() => mask().includes('x="1648" y="285" width="300" height="600"'));
+            assert.equal((mask().match(/fill="black"/g) || []).length, 1, "only the popup is excluded");
+            assert.equal(f.layer().style.clipPath, clip, "the player and ordinary header keep their layout");
+            assert.equal(f.layer().hidden, false);
+            assert.equal(header.outerHTML, nativeMarkup, "native header and menu styles remain unchanged");
+
+            box = { ...box, left: 1650, height: 400 };
+            f.resizers.forEach((observer) => observer.fn([]));
+            await waitForCondition(() => mask().includes('x="1698" y="285" width="300" height="400"'));
+            popup.hidden = true;
+            await waitForCondition(() => f.layer().style.maskImage === "none");
+            popup.hidden = false;
+            await waitForCondition(() => mask().includes('x="1698" y="285" width="300" height="400"'));
+            item.remove();
+            await waitForCondition(() => f.layer().style.maskImage === "none");
+        }
+        f.w.CheeseSpanner.ambientGlow.stop();
+        assert.equal(f.layer(), null);
+        assert.equal(f.resizers.size, 0);
+    });
+}
+
 test("glow reaches the header and keeps the whole player cut out when the page scrolls", async (t) => {
     const f = fixture(t);
     await waitForCondition(() => f.layer() && !f.layer().hidden);

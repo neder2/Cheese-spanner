@@ -449,6 +449,59 @@ function evalSidebarScripts(dom) {
     evalRepoScript(dom, "features", "sidebarCustomization.js");
 }
 
+test("stable following metadata does not rewrite row or list attributes", async (t) => {
+    const chrome = createFakeChrome({ followingPinEnabled: true, [STORAGE_KEY]: [] });
+    const dom = createSidebarDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    const list = document.getElementById("followingList");
+    for (let index = 3; index < 100; index++) {
+        const li = document.createElement("li");
+        li.innerHTML = `<a href="/live/channel-${index}"><span class="name_text">채널 ${index}</span></a>`;
+        list.append(li);
+    }
+    evalSidebarScripts(dom);
+    await waitForCondition(() => list.querySelectorAll("[data-bcsf-row]").length === 100);
+    await waitForSync();
+    const records = [];
+    const observer = new dom.window.MutationObserver((mutations) => records.push(...mutations));
+    observer.observe(list, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: [
+            "data-bcsf-row",
+            "data-bcsf-channel-id",
+            "data-bcsf-order-group",
+            "data-bcsf-list",
+            "data-bcsf-pinned",
+            "data-bcsf-pin-mode",
+        ],
+    });
+    t.after(() => observer.disconnect());
+    let unrelatedHrefReads = 0;
+    for (const link of list.querySelectorAll("a[href]")) {
+        if (link.closest("#liveC")) continue;
+        const getAttribute = link.getAttribute.bind(link);
+        link.getAttribute = (name) => {
+            if (name === "href") unrelatedHrefReads++;
+            return getAttribute(name);
+        };
+    }
+    document.getElementById("liveCViewer").textContent = "322명";
+    await waitForSync();
+    assert.equal(records.length, 0, "stable values must not wake other sidebar observers");
+    assert.equal(unrelatedHrefReads, 0, "one expanded row change must not reread other channel links");
+    assert.equal(list.querySelectorAll("[data-bcsf-row]").length, 100);
+    document.querySelector("#liveC a").href = "/live/new-channel";
+    await waitForCondition(
+        () => document.getElementById("liveC").getAttribute("data-bcsf-channel-id") === "new-channel"
+    );
+    assert.ok(records.some((record) => record.attributeName === "data-bcsf-channel-id"));
+    chrome.testState.emitSync({ followingPinEnabled: { newValue: false } });
+    await waitForCondition(() => !list.hasAttribute("data-bcsf-list"));
+    assert.equal(list.querySelectorAll("[data-bcsf-row]").length, 0);
+});
+
 function waitForSync(delayMs = 60) {
     return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
@@ -1623,6 +1676,7 @@ test("a failed sync write rolls the optimistic pin state back", async (t) => {
     chrome.testState.syncArea.state.failNextSet = true;
     dispatchClick(dom, document.querySelector("#liveA a"));
     await waitForCondition(() => warnings.some((message) => message.includes("고정 저장 실패")));
+    await waitForCondition(() => document.querySelector("#liveA a").getAttribute("aria-pressed") === "false");
 
     assert.deepEqual(Array.from(chrome.testState.sync[STORAGE_KEY]), []);
     assert.equal(document.querySelector("#liveA a").getAttribute("aria-pressed"), "false");

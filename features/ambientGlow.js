@@ -58,8 +58,11 @@
     const PANEL_SELECTOR = "#sidebar, #aside-chatting, #vod-aside, #cheese-spanner-vod-comment-aside";
     // Chrome 2026-11-08: native chat menu, user/profile dialogs and extension chat panels.
     // Dialog roles also cover portalled panels outside the chat aside.
+    // Public CHZZK index-cg6y1ITV.js / index-BGguLQrK.css, 2026-11-12: the header's
+    // inbox (iframe and loading surface), profile menu and joined-lounge submenu have no roles.
     const POPUP_SELECTOR =
-        '[role="dialog"], [role="alertdialog"], :is(#aside-chatting, #vod-aside) :is([role="menu"], [class*="_container_11w2f_"], .bcct-moderator-box)';
+        '[role="dialog"], [role="alertdialog"], :is(#aside-chatting, #vod-aside) :is([role="menu"], [class*="_container_11w2f_"], .bcct-moderator-box), ' +
+        '#header :is([class*="_layer_mzph5_"], [class*="_container_1euvn_"], [class*="_container_nx6cq_"])';
     const TARGET_SELECTOR = "video, [class*='pzp']";
     const PLAYER_TARGET_SELECTOR = "video, .pzp-pc__settings";
     const MULTIVIEW_ATTR = "data-bcmv-host";

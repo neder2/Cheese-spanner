@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="ko" data-theme="theme_dark">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>빠른 채팅 숨김 재현</title>
+        <style>
+            * {
+                box-sizing: border-box;
+            }
+            body {
+                margin: 0;
+                background: #111216;
+                color: #e9eaf0;
+                font:
+                    15px/1.5 "Malgun Gothic",
+                    sans-serif;
+            }
+            main {
+                max-width: 1280px;
+                margin: auto;
+                padding: 28px 32px;
+            }
+            .eyebrow {
+                color: #00e5a8;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            h1 {
+                margin: 4px 0 8px;
+                font-size: 30px;
+                letter-spacing: -1px;
+            }
+            p {
+                margin: 0 0 20px;
+                color: #a5a8b6;
+            }
+            .controls {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: end;
+                gap: 12px;
+                margin-bottom: 20px;
+            }
+            .controls label {
+                display: grid;
+                gap: 5px;
+                color: #a5a8b6;
+                font-size: 13px;
+            }
+            .controls select,
+            .controls button {
+                min-height: 44px;
+                padding: 10px 16px;
+                border: 1px solid #454954;
+                border-radius: 8px;
+                background: #202229;
+                color: #e9eaf0;
+                font: inherit;
+            }
+            .controls button {
+                cursor: pointer;
+                font-weight: 700;
+            }
+            #start-chat {
+                background: #00e5a8;
+                border-color: #00e5a8;
+                color: #082a21;
+            }
+            .controls :disabled {
+                cursor: default;
+                opacity: 0.45;
+            }
+            .controls :focus-visible {
+                outline: 2px solid #79f9d7;
+                outline-offset: 3px;
+            }
+            .metrics {
+                display: grid;
+                grid-template-columns: repeat(5, 1fr);
+                gap: 12px;
+                margin-bottom: 24px;
+            }
+            .metric {
+                padding: 14px 18px;
+                background: #202229;
+                border-radius: 12px;
+            }
+            .metric small {
+                display: block;
+                color: #a5a8b6;
+            }
+            .metric strong {
+                font-size: 23px;
+            }
+            .columns {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 24px;
+            }
+            .surface {
+                border: 1px solid #353740;
+                border-radius: 14px;
+                background: #191a20;
+                overflow: hidden;
+            }
+            .surface-title {
+                padding: 16px 20px;
+                border-bottom: 1px solid #353740;
+                font-weight: 700;
+            }
+            #raw {
+                height: 620px;
+                display: flex;
+                flex-direction: column-reverse;
+                overflow: hidden;
+                padding: 0 12px;
+            }
+            .raw-line {
+                min-height: 31px;
+                color: #a4a8b5;
+                white-space: nowrap;
+            }
+            .raw-line--blocked {
+                color: #eaa4ad;
+            }
+            .raw-line--target {
+                color: #00e5a8;
+            }
+            .chat-header {
+                height: 56px;
+                padding: 12px 16px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .chat-header strong {
+                flex: 1;
+            }
+            button {
+                font: inherit;
+                border: 0;
+                color: inherit;
+                background: transparent;
+            }
+            .fixture-log {
+                height: 620px;
+            }
+            #native-list {
+                height: 620px;
+                display: flex;
+                flex-direction: column-reverse;
+                overflow: hidden;
+            }
+            ._item_1li40_7 {
+                padding: 3px 12px;
+                flex-shrink: 0;
+                min-height: 31px;
+            }
+            ._nickname_jbnq0_33 {
+                padding: 0;
+                color: #adb3bf;
+            }
+            ._text_jbnq0_1 {
+                margin-left: 8px;
+            }
+            ._mark_1pcsq_81 {
+                display: inline-block;
+                width: 12px;
+                height: 12px;
+                background: #00e5a8;
+                margin-left: 5px;
+                border-radius: 50%;
+            }
+            ._chatting_message_jbnq0_1 > img {
+                width: 14px;
+                height: 14px;
+                margin-left: 5px;
+            }
+            footer {
+                margin-top: 16px;
+                color: #9296a5;
+                font-size: 13px;
+            }
+            @media (max-height: 1000px) {
+                #raw,
+                #native-list,
+                .fixture-log {
+                    height: 400px;
+                }
+            }
+            @media (max-width: 900px) {
+                main {
+                    padding: 20px;
+                }
+                .columns {
+                    grid-template-columns: 1fr;
+                }
+                .metrics {
+                    grid-template-columns: repeat(2, 1fr);
+                }
+            }
+        </style>
+        <script src="/__cheese-spanner-stress-fixture.js" defer></script>
+    </head>
+    <body>
+        <main>
+            <div class="eyebrow">재현 테스트 · 실제 확장 실행</div>
+            <h1>빠른 채팅 속, 모아보기 대상 한 줄</h1>
+            <p id="description">
+                일반 채팅과 숨김 대상 채팅을 1:1로 섞고, 중간에 모아보기 대상 한 줄을 넣습니다. 일반 채팅은 그대로 남고
+                ‘숨김검증’이 포함된 채팅만 사라져야 합니다.
+            </p>
+            <div class="controls">
+                <label for="chat-speed"
+                    >채팅 속도
+                    <select id="chat-speed">
+                        <option value="100">100개/초 · 천천히 보기</option>
+                        <option value="500" selected>500개/초 · 빠르게</option>
+                        <option value="2000">2,000개/초 · 매우 빠르게</option>
+                        <option value="5000">5,000개/초 · 최대 부하</option>
+                    </select>
+                </label>
+                <label for="target-role"
+                    >중간에 넣을 대상
+                    <select id="target-role">
+                        <option value="manager" selected>운영자</option>
+                        <option value="broadcaster">방송자</option>
+                        <option value="partner">파트너</option>
+                        <option value="challenger">챌린저</option>
+                    </select>
+                </label>
+                <button type="button" id="start-chat" disabled>채팅 띄우기</button>
+                <button type="button" id="stop-chat" disabled>멈추기</button>
+            </div>
+            <div class="metrics">
+                <div class="metric"><small>입력 메시지</small><strong id="sent">준비 중</strong></div>
+                <div class="metric"><small>실제 입력 속도</small><strong id="speed">—</strong></div>
+                <div class="metric"><small>숨김 대상 노출 프레임</small><strong id="exposed">—</strong></div>
+                <div class="metric"><small>일반 채팅 잘못 숨김</small><strong id="wrongly-hidden">—</strong></div>
+                <div class="metric"><small>대상 수집</small><strong id="collected">—</strong></div>
+            </div>
+            <div class="columns">
+                <section class="surface">
+                    <div class="surface-title">들어오는 메시지 · 원본 미리보기</div>
+                    <div id="raw"></div>
+                </section>
+                <aside id="aside-chatting" class="surface live_chatting_area">
+                    <div class="chat-header">
+                        <strong>채팅</strong><button class="chat-more" type="button" aria-label="더보기">⋯</button>
+                    </div>
+                    <div class="fixture-log" role="log">
+                        <div id="native-list" class="_wrapper_1li40_25"><div class="_list_bottom_1li40_52"></div></div>
+                    </div>
+                </aside>
+            </div>
+            <footer id="status" role="status">
+                라이브 서버에 채팅을 보내지 않는 로컬 재현입니다. 목록 상태는 테스트용 모형이며 숨김과 모아보기는 실제
+                확장이 처리합니다.
+            </footer>
+        </main>
+    </body>
+</html>

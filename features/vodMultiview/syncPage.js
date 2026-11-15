@@ -63,13 +63,54 @@
         )
             return null;
         const { videoNo, id, startMs, duration, endMs } = value;
-        return { videoNo, id, startMs, duration, endMs };
+        return { videoNo, id, startMs, duration, endMs, rewind: value.rewind === true };
+    }
+
+    function readSource(command, info) {
+        if (info.rewind) return native.readRewindSource(command.rewind, info.id, info.duration);
+        const { key, aes } = command;
+        return typeof key === "string" && /^[A-Za-z0-9_-]{1,512}$/.test(key) && typeof aes === "boolean"
+            ? { key, aes }
+            : null;
+    }
+
+    function canToggleSync(session) {
+        const slot = session.slot;
+        return Boolean(
+            current(session) &&
+            !session.failed &&
+            boundMain(session) &&
+            slot &&
+            slot.root.parentElement === session.mount &&
+            !session.mounting &&
+            !session.play &&
+            !session.seek &&
+            !slot.media.seeking &&
+            !slot.media.error &&
+            !slot.player.error &&
+            slot.media.readyState >= 3 &&
+            durationMatches(session.subInfo, slot.media) &&
+            native.ownsMedia(slot.player, slot.media, session.subInfo.id)
+        );
     }
 
     function show(session, status) {
-        if (sessions.get(session.request) !== session || session.status === status) return;
+        if (sessions.get(session.request) !== session) return;
+        const canToggle = canToggleSync(session);
+        if (
+            session.status === status &&
+            session.reportedSync === session.syncEnabled &&
+            session.reportedCanToggle === canToggle
+        )
+            return;
         session.status = status;
-        session.panel.dispatchEvent(new CustomEvent(STATUS, { detail: { request: session.request, status } }));
+        session.reportedSync = session.syncEnabled;
+        session.reportedCanToggle = canToggle;
+        session.panel.dispatchEvent(
+            new CustomEvent(STATUS, {
+                detail: { request: session.request, status, syncEnabled: session.syncEnabled, canToggle },
+            })
+        );
     }
 
     function listen(target, events, handler, signal) {
@@ -236,6 +277,15 @@
 
     function togglePause(session) {
         if (!current(session) || session.failed) return;
+        if (!session.syncEnabled) {
+            tick(session);
+            if (session.failed || !session.slot || !boundMain(session) || session.host.classList.contains("pip_mode"))
+                return;
+            if (session.play || !session.slot.media.paused) pause(session);
+            else startPlay(session);
+            tick(session);
+            return;
+        }
         session.manualPause = !session.manualPause;
         resetAlignment(session);
         tick(session);
@@ -289,7 +339,10 @@
                     return;
                 }
                 // Let the native volume, menu and other focused widgets handle their own keys.
-                if (["ArrowLeft", "ArrowRight", "Home", "End", "BracketLeft", "BracketRight"].includes(event.code)) {
+                if (
+                    session.syncEnabled &&
+                    ["ArrowLeft", "ArrowRight", "Home", "End", "BracketLeft", "BracketRight"].includes(event.code)
+                ) {
                     event.preventDefault();
                     event.stopImmediatePropagation();
                 }
@@ -345,9 +398,9 @@
                 slot.root.dataset.bcvmVideoNo = session.subInfo.videoNo;
                 session.mount.appendChild(slot.root);
                 bindSub(session, slot);
-                const { key, aes } = session.source;
+                const source = session.source;
                 session.source = null;
-                native.assign(slot, session.subInfo.id, key, aes);
+                native.assign(slot, session.subInfo, source);
                 document.dispatchEvent(new Event(AUXILIARY));
                 tick(session);
             })
@@ -359,16 +412,25 @@
         const slot = session.slot;
         const request = { epoch: session.sourceEpoch, canceled: false, promise: null };
         session.play = request;
-        request.promise = Promise.resolve(slot.player.play());
+        try {
+            request.promise = Promise.resolve(slot.player.play());
+        } catch (error) {
+            request.promise = Promise.reject(error);
+        }
         function finish(error) {
             if (!current(session) || session.slot !== slot || session.play !== request) return;
             session.play = null;
-            const latest = reference(session);
-            if (latest.status || !latest.playing || session.manualPause) {
+            if (request.epoch !== session.sourceEpoch) return;
+            const latest = session.syncEnabled ? reference(session) : null;
+            if (
+                (latest && (latest.status || !latest.playing || session.manualPause)) ||
+                (!session.syncEnabled && request.canceled)
+            ) {
                 pause(session);
+                tick(session);
                 return;
             }
-            if (request.canceled || request.epoch !== session.sourceEpoch) return;
+            if (request.canceled) return;
             if (error) {
                 if (error.name === "AbortError" && (slot.media.seeking || slot.media.readyState < 3)) return;
                 fail(session, "load-error");
@@ -447,6 +509,27 @@
         if (session.failed) return;
         session.ticking = true;
         try {
+            if (!session.syncEnabled) {
+                const slot = session.slot;
+                if (
+                    !slot ||
+                    slot.root.parentElement !== session.mount ||
+                    slot.player.error ||
+                    slot.media.error ||
+                    !native.ownsMedia(slot.player, slot.media, session.subInfo.id)
+                )
+                    return fail(session, "load-error");
+                if (slot.media.readyState >= 1 && !durationMatches(session.subInfo, slot.media))
+                    return fail(session, "unknown-time");
+                const binding = findMain(session);
+                if (session.failed) return;
+                if (!binding || session.host.classList.contains("pip_mode")) {
+                    pause(session);
+                    if (!binding && performance.now() >= session.mainDeadline) return fail(session, "unsupported");
+                    return show(session, "waiting-main");
+                }
+                return show(session, "independent");
+            }
             const target = reference(session);
             if (session.failed) return;
             if (target.status || session.manualPause) {
@@ -477,11 +560,21 @@
         const panel = event.target;
         const command = event.detail;
         if (!(panel instanceof HTMLElement) || panel.id !== "cheese-spanner-vod-multiview") return;
-        if (command?.action === "stop" || command?.action === "resync") {
+        if (command?.action === "stop" || command?.action === "resync" || command?.action === "sync") {
             const session = sessions.get(command.request);
             if (session?.panel !== panel) return;
             if (command.action === "stop") stop(session);
             else {
+                if (!current(session)) return;
+                if (command.action === "sync") {
+                    if (
+                        typeof command.enabled !== "boolean" ||
+                        !canToggleSync(session) ||
+                        command.enabled === session.syncEnabled
+                    )
+                        return;
+                    session.syncEnabled = command.enabled;
+                } else if (!session.syncEnabled) return;
                 session.manualPause = false;
                 resetAlignment(session);
                 tick(session);
@@ -492,7 +585,7 @@
         if (!panel.isConnected || !host?.matches(HOST) || !host.contains(panel)) return;
         const mainInfo = readTimeline(command?.main);
         if (!mainInfo || mainInfo.videoNo !== videoNo()) return;
-        if (command.action === "reference") {
+        if (command.action === "reference" || command.action === "seek") {
             const root = host.querySelector(":scope > .pzp-pc");
             const video = root?.querySelector(MEDIA);
             if (
@@ -506,6 +599,24 @@
                 return;
             const player = native.find(host, video);
             if (!player || !native.ownsMedia(player, video, mainInfo.id)) return;
+            if (command.action === "seek") {
+                const at = command.at;
+                if (
+                    !Number.isFinite(at) ||
+                    at < mainInfo.startMs ||
+                    at >= mainInfo.endMs ||
+                    !native.canAllocate(player)
+                )
+                    return;
+                const time = (at - mainInfo.startMs) / 1000;
+                if (time >= video.duration) return;
+                try {
+                    player.currentTime = time;
+                } catch {
+                    // A replaced native source must not receive a retry or a playback toggle.
+                }
+                return;
+            }
             const time = video.currentTime;
             const at = mainInfo.startMs + time * 1000;
             if (Number.isFinite(time) && time >= 0 && at < mainInfo.endMs)
@@ -522,9 +633,6 @@
             !subInfo ||
             mainInfo.videoNo === subInfo.videoNo ||
             mainInfo.id === subInfo.id ||
-            typeof command.key !== "string" ||
-            !/^[A-Za-z0-9_-]{1,512}$/.test(command.key) ||
-            typeof command.aes !== "boolean" ||
             !Number.isSafeInteger(command.request) ||
             command.request <= 0 ||
             sessions.has(command.request)
@@ -539,6 +647,13 @@
             )
                 return;
         }
+        const source = readSource(command, subInfo);
+        if (!source) {
+            panel.dispatchEvent(
+                new CustomEvent(STATUS, { detail: { request: command.request, status: "unsupported" } })
+            );
+            return;
+        }
         const session = {
             panel,
             host,
@@ -547,8 +662,9 @@
             mainInfo,
             subInfo,
             request: command.request,
-            source: { key: command.key, aes: command.aes },
+            source,
             sourceEpoch: 0,
+            syncEnabled: true,
             seekFailures: 0,
             seekLead: 0,
             mainDeadline: performance.now() + PREPARATION_TIMEOUT,

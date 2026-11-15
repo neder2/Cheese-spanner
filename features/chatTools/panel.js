@@ -28,7 +28,7 @@
 
     const MODERATOR_PANEL_HOST_ATTR = "data-bcct-moderator-panel-host";
 
-    const MODERATOR_TITLE = "방송자/채팅 운영자 채팅";
+    const MODERATOR_TITLE = "채팅 모아보기";
     // Matches chatToolsModeratorBoxHeight's default and the box's original maximum height.
     const DEFAULT_MODERATOR_BOX_HEIGHT = 420;
 

@@ -281,16 +281,25 @@ function setup(
         w.document.getElementById("cheese-spanner-multiview-launcher")?.click();
         await tick();
     }
-    async function add(id) {
+    async function add(id, { keepPanelOpen = false } = {}) {
+        if (w.document.querySelector(".bcmv-panel")?.hidden) click("controls");
         if (!w.document.querySelector('input[name="liveUrl"]')) {
             if (!w.document.querySelector('[data-action="add"]')) click("controls");
             click("add");
         }
+        w.document.querySelector('[data-bcmv-add-tab="search"]').click();
         w.document.querySelector('input[name="liveUrl"]').value = `https://chzzk.naver.com/live/${id}`;
         w.document
             .querySelector(".bcmv-panel form")
             .dispatchEvent(new w.Event("submit", { bubbles: true, cancelable: true }));
         await tick();
+        // Existing playback fixtures continue with the settings dismissed; panel tests keep it open explicitly.
+        if (
+            !keepPanelOpen &&
+            !w.document.querySelector(".bcmv-panel").hidden &&
+            w.document.querySelector('[data-action="add"]').getAttribute("aria-expanded") === "false"
+        )
+            click("close-panel");
     }
     return {
         dom,
@@ -365,6 +374,9 @@ async function waitForChatUi(predicate) {
 }
 
 function submitMultiviewSearch(h, value) {
+    if (h.w.document.querySelector(".bcmv-panel")?.hidden) h.click("controls");
+    if (!h.w.document.querySelector('input[name="liveUrl"]')) h.click("add");
+    h.w.document.querySelector('[data-bcmv-add-tab="search"]').click();
     const input = h.w.document.querySelector('input[name="liveUrl"]');
     input.value = value;
     input.dispatchEvent(new h.w.Event("input", { bubbles: true }));
@@ -375,6 +387,186 @@ function submitMultiviewSearch(h, value) {
 function channelSearchResponse(channels, next = null) {
     return { code: 200, content: { data: channels.map((channel) => ({ channel })), page: { next } } };
 }
+
+test("unified live panel keeps the list and layout visible while addition expands and collapses", async (t) => {
+    const h = setup(t);
+    await h.start();
+    const d = h.w.document;
+    const panel = d.querySelector(".bcmv-panel");
+    const video = d.querySelector("video");
+    const before = { time: video.currentTime, paused: video.paused, volume: video.volume, muted: video.muted };
+    assert.equal(panel.hidden, false);
+    assert.equal(panel.querySelector('[data-action="add"]').getAttribute("aria-expanded"), "false");
+    assert.equal(panel.querySelector(".bcmv-add-section").hidden, true);
+    assert.equal(panel.querySelectorAll(".bcmv-stream").length, 1);
+    assert.ok(panel.querySelector('[data-action="free-layout"]'));
+    const requests = h.requests.length;
+    h.click("add");
+    assert.equal(panel.querySelector(".bcmv-add-section").hidden, false);
+    assert.equal(panel.querySelectorAll(".bcmv-stream").length, 1);
+    assert.ok(panel.querySelector('[data-action="reset-layout"]'));
+    assert.equal(d.activeElement, panel.querySelector('input[name="liveUrl"]'));
+    assert.equal(h.requests.length, requests);
+    panel.dispatchEvent(new h.w.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    assert.equal(panel.hidden, false, "the first Escape only closes addition");
+    assert.equal(panel.querySelector(".bcmv-add-section").hidden, true);
+    assert.equal(d.activeElement, panel.querySelector('[data-action="add"]'));
+    await h.add(B, { keepPanelOpen: true });
+    assert.equal(panel.hidden, false, "successful addition leaves settings available");
+    assert.equal(panel.querySelectorAll(".bcmv-stream").length, 2);
+    assert.equal(panel.querySelector(".bcmv-add-section").hidden, true);
+    assert.equal(d.activeElement, panel.querySelector('[data-action="add"]'));
+    assert.equal(d.querySelector(".chzzk_player video"), video);
+    assert.deepEqual(
+        { time: video.currentTime, paused: video.paused, volume: video.volume, muted: video.muted },
+        before
+    );
+});
+
+test("live following tab loads only on demand, filters locally and adds through the muted playback flow", async (t) => {
+    const h = setup(t);
+    await h.start();
+    const d = h.w.document;
+    const fetchJson = h.w.CheeseSpanner.utils.fetchJson;
+    const followingCalls = [];
+    const row = (id, name, liveId, image = "") => ({
+        channel: { channelId: id, channelName: name, channelImageUrl: image },
+        liveInfo: { liveId, concurrentUserCount: 123 },
+    });
+    h.w.CheeseSpanner.utils.fetchJson = async (url, options) => {
+        if (!url.includes("/following-lives")) return fetchJson(url, options);
+        followingCalls.push({ url, signal: options.signal });
+        return {
+            code: 200,
+            content: {
+                followingList: [
+                    row(A, "메인", 1),
+                    row(B, "Alpha 방송", 2, "javascript:alert(1)"),
+                    row(B, "중복", 2),
+                    row(C, "다른 채널", 3, "https://nng-phinf.pstatic.net/profile.png"),
+                    row("invalid", "잘못된 채널", 4),
+                    row("d".repeat(32), "방송 확인 안 됨", null),
+                    null,
+                ],
+            },
+        };
+    };
+    h.click("add");
+    assert.equal(followingCalls.length, 0);
+    const following = d.querySelector('[data-bcmv-add-tab="following"]');
+    const search = d.querySelector('[data-bcmv-add-tab="search"]');
+    search.dispatchEvent(new h.w.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+    await tick();
+    assert.equal(d.activeElement, following);
+    assert.equal(following.getAttribute("aria-selected"), "true");
+    following.click();
+    assert.equal(followingCalls.length, 1, "the selected tab does not reload itself");
+    assert.equal(d.querySelectorAll(".bcmv-following-results button").length, 3);
+    assert.equal(d.querySelector(`.bcmv-following-results button[data-channel="${A}"]`).disabled, true);
+    assert.equal(d.querySelector(`.bcmv-following-results button[data-channel="${B}"] img`), null);
+    const input = d.querySelector('[name="followingFilter"]');
+    input.value = "alpha";
+    input.dispatchEvent(new h.w.Event("input", { bubbles: true }));
+    assert.equal(d.querySelectorAll(".bcmv-following-results button").length, 1);
+    assert.equal(followingCalls.length, 1, "filtering makes no network request");
+    const main = d.querySelector("video");
+    const time = main.currentTime;
+    d.querySelector(".bcmv-following-results button").click();
+    await tick();
+    assert.equal(h.instances.length, 1);
+    assert.equal(h.instances[0].video.muted, true);
+    assert.equal(main.currentTime, time);
+    assert.equal(d.querySelector(".bcmv-panel").hidden, false);
+    assert.equal(d.querySelector(".bcmv-add-section").hidden, true);
+    assert.equal(d.querySelectorAll(".bcmv-stream").length, 2);
+    h.click("add");
+    await tick();
+    assert.equal(followingCalls.length, 2, "reopening reads the current account's following list");
+    assert.equal(d.querySelector(`.bcmv-following-results button[data-channel="${B}"]`).disabled, true);
+});
+
+test("live following tab distinguishes authentication, failure, empty and retry states", async (t) => {
+    const h = setup(t);
+    await h.start();
+    let response = { code: 401 };
+    h.w.CheeseSpanner.utils.fetchJson = async () => {
+        if (response instanceof Error) throw response;
+        return response;
+    };
+    h.click("add");
+    const d = h.w.document;
+    d.querySelector('[data-bcmv-add-tab="following"]').click();
+    await tick();
+    const status = d.querySelector(".bcmv-following-status");
+    const refresh = d.querySelector('[data-action="refresh-following"]');
+    assert.match(status.textContent, /로그인/);
+    assert.equal(refresh.disabled, false);
+    response = new Error("HTTP 403");
+    refresh.click();
+    await tick();
+    assert.match(status.textContent, /로그인/);
+    response = { code: 200, content: {} };
+    refresh.click();
+    await tick();
+    assert.match(status.textContent, /불러오지 못/);
+    response = { code: 200, content: { followingList: [] } };
+    refresh.click();
+    await tick();
+    assert.match(status.textContent, /방송 중인.*없습니다/);
+    assert.equal(refresh.disabled, false);
+    assert.equal(status.parentElement.hasAttribute("aria-busy"), false);
+});
+
+test("leaving live addition cancels following requests and rejects late account results", async (t) => {
+    for (const action of ["collapse", "search", "close", "disable", "route", "remount"]) {
+        await t.test(action, async (t) => {
+            const h = setup(t);
+            await h.start();
+            let finish, signal;
+            const fetchJson = h.w.CheeseSpanner.utils.fetchJson;
+            h.w.CheeseSpanner.utils.fetchJson = (url, options) => {
+                if (!url.includes("/following-lives")) return fetchJson(url, options);
+                signal = options.signal;
+                return new Promise((resolve) => {
+                    finish = resolve;
+                });
+            };
+            h.click("add");
+            const d = h.w.document;
+            d.querySelector('[data-bcmv-add-tab="following"]').click();
+            const requestSignal = signal;
+            const finishRequest = finish;
+            assert.equal(requestSignal.aborted, false);
+            if (action === "collapse") h.click("add");
+            if (action === "search") d.querySelector('[data-bcmv-add-tab="search"]').click();
+            if (action === "close") h.click("close-panel");
+            if (action === "disable") h.configure(false);
+            if (action === "route") h.navigate(C);
+            if (action === "remount") {
+                const native = d.querySelector(".chzzk_player");
+                native.replaceWith(native.cloneNode(true));
+            }
+            await tick();
+            assert.equal(requestSignal.aborted, true);
+            const instances = h.instances.length;
+            finishRequest({
+                code: 200,
+                content: {
+                    followingList: [
+                        {
+                            channel: { channelId: B, channelName: "늦은 팔로잉" },
+                            liveInfo: { liveId: 2 },
+                        },
+                    ],
+                },
+            });
+            await tick();
+            assert.equal(d.querySelector(".bcmv-following-results .bcmv-search-result"), null);
+            assert.equal(h.instances.length, instances, "late results cannot add another player");
+            assert.equal(d.querySelector(`[data-bcmv-channel="${B}"]`), null);
+        });
+    }
+});
 
 test("nickname search shows profile, live state and viewer counts, and selection uses normal muted addition", async (t) => {
     const h = setup(t);
@@ -417,7 +609,8 @@ test("nickname search shows profile, live state and viewer counts, and selection
     await tick();
     assert.equal(h.instances.length, 1);
     assert.equal(h.instances[0].video.muted, true);
-    assert.equal(h.w.document.querySelector(".bcmv-panel").hidden, true);
+    assert.equal(h.w.document.querySelector(".bcmv-panel").hidden, false);
+    assert.equal(h.w.document.querySelector('[data-action="add"]').getAttribute("aria-expanded"), "false");
 });
 
 test("nickname search caps and deduplicates results, rejects malformed identities and keeps names as text", async (t) => {
@@ -1124,9 +1317,9 @@ test("settings popup overlays chat with layout actions and independent secondary
     assert.deepEqual([...chat.childNodes], nativeChildren);
     assert.equal(panel.getAttribute("role"), "dialog");
     assert.equal(panel.dataset.placement, "chat");
-    assert.equal(panel.style.left, "736px");
+    assert.equal(panel.style.left, "708px");
     assert.equal(panel.style.top, "68px");
-    assert.equal(panel.style.width, "280px", "the compact popup does not expand to fill a wide chat");
+    assert.equal(panel.style.width, "308px", "the unified panel leaves an inset on both sides of chat");
     assert.ok(parseFloat(panel.style.maxHeight) < 660, "the popup leaves the lower chat visible");
     assert.deepEqual(
         [...panel.querySelectorAll(".bcmv-actions button")].map((b) => b.textContent),
@@ -1617,7 +1810,7 @@ test("chat popup follows resize and remounts, closes accessibly, and cleans its 
     chat.getBoundingClientRect = initialBounds;
     h.click("controls");
     let panel = d.querySelector(".bcmv-panel");
-    assert.equal(d.activeElement.getAttribute("aria-label"), "닫기");
+    assert.equal(d.activeElement.getAttribute("aria-label"), "방송 추가");
     assert.ok(observers.some((o) => o.targets.has(chat)));
     chat.getBoundingClientRect = () => ({ left: 760, right: 1024, top: 96, bottom: 720, width: 264, height: 624 });
     h.w.dispatchEvent(new h.w.Event("resize"));
@@ -1635,7 +1828,7 @@ test("chat popup follows resize and remounts, closes accessibly, and cleans its 
     chat.remove();
     await tick();
     assert.equal(panel.dataset.placement, "player");
-    assert.equal(panel.style.left, "412px");
+    assert.equal(panel.style.left, "332px");
     const native = d.querySelector(".chzzk_player"),
         video = d.querySelector("[data-bcmv-video]");
     native.replaceWith(native.cloneNode(true));
@@ -3345,7 +3538,8 @@ test("main keeps its four-cell size and user resizing survives stream additions 
     assert.equal(d.querySelector('.bcmv-cell[data-main="1"]').style.width, "100%");
     assert.equal(d.querySelectorAll(".bcmv-separator").length, 0);
     assert.equal(d.querySelector("#cheese-spanner-multiview-add"), null);
-    assert.ok(d.querySelector('.bcmv-panel input[name="liveUrl"]'));
+    assert.equal(d.querySelector('.bcmv-panel input[name="liveUrl"]'), null);
+    assert.equal(d.querySelector('[data-action="add"]').getAttribute("aria-expanded"), "false");
     await h.add(B);
     h.click("controls");
     assert.ok(d.querySelector('.bcmv-panel-header [data-action="add"]'));
@@ -3771,7 +3965,7 @@ test("dropping a live URL into multiview uses the normal add flow and never navi
     transfer.send("drop", sub);
     await tick();
     assert.equal(h.requests.length, count);
-    assert.match(d.querySelector(".bcmv-banner").textContent, /이미 추가/);
+    assert.match(d.querySelector(".bcmv-panel [data-bcmv-notice]").textContent, /이미 추가/);
     for (const id of [C, "d".repeat(32), "e".repeat(32), "f".repeat(32)]) {
         linkTransfer(h, `https://chzzk.naver.com/live/${id}`, { type: "text/plain" }).send("drop", main);
         await tick();
@@ -5003,7 +5197,7 @@ test("native multiview button toggles without triggering player clicks and survi
     assert.equal(toggle.getAttribute("aria-pressed"), "true");
     assert.equal(toggle.getAttribute("aria-label"), "멀티뷰 끄기");
     assert.equal(toggle.querySelector(".pzp-button__tooltip").textContent, "멀티뷰 끄기");
-    assert.equal(document.activeElement, document.querySelector('input[name="liveUrl"]'));
+    assert.equal(document.activeElement, document.querySelector('.bcmv-panel [data-action="add"]'));
     assert.equal(playerClicks, 0);
     await h.add(B);
     const sub = document.querySelector("[data-bcmv-video]");

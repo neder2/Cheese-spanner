@@ -33,22 +33,33 @@
         getClassText,
         getElementAttrText,
         getVisibleText,
+        getCacheMessageIdentity,
+        getCacheRowReuseSignal,
         isBlindNoticeText,
+        parseChatRow,
         readPageMessage,
+        clearPageOriginalCache,
         resolveMutationElement,
         getTopLevelMutationElements,
     } = namespace.parser;
     const WELCOME_MESSAGE_STYLE_ID = "cheese-spanner-chat-welcome-message-style";
 
     const KEYWORD_FILTER_STYLE_ID = "cheese-spanner-chat-keyword-filter-style";
+    const KEYWORD_LAYOUT_COUNT_ATTR = "data-bcct-hidden-count";
+    const KEYWORD_LAYOUT_REQUEST = "cheese-spanner:chat-list-layout-request";
+    const KEYWORD_LIST_SELECTOR =
+        'aside#aside-chatting [role="log"] > [class*="_wrapper_"], aside#vod-aside [role="log"] > [class*="_list_"]';
 
     const BLIND_PROCESSED_ATTR = "data-bcct-blind-processed";
+    const OPEN_PROFILE_SELECTOR = "[aria-haspopup='true'][aria-expanded='true']";
 
     const PAGE_READY_EVENT = "cheese-spanner:chat-timestamp-page-ready";
 
     const MODERATOR_CACHE_STORAGE_KEY = "betterChzzkChatToolsModeratorCache";
 
     const CHAT_SYNC_THROTTLE_MS = 120;
+    const BLIND_SOURCE_RECHECK_MS = 300;
+    const MAX_BLIND_SOURCE_RECHECKS = 4;
 
     const CHAT_ROOT_FIND_THROTTLE_MS = 600;
 
@@ -116,6 +127,8 @@
 
     // 큰 가상 목록 subtree는 전체 스캔 경로로 넘겨 wrapper를 메시지로 수집하지 않는다.
     const MAX_MUTATION_SUBTREE_ELEMENTS = 512;
+    const MAX_PENDING_MODERATOR_ROWS = 500;
+    const MAX_PENDING_BLIND_ROWS = 500;
 
     const WELCOME_MESSAGE_STYLE_TEXT = `
 aside#aside-chatting [class*="_item_"]:has(> [class*="_welcome_"]),
@@ -136,9 +149,16 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     let removePageChangeDetection = null;
     let legacyModeratorCachePurged = false;
     const dirtyChatRows = new Set();
+    const dirtyImmediateChatRows = new Set();
+    let pendingChatParses = new WeakMap();
+    const pendingModeratorRows = new Map();
+    const pendingBlindRows = new Set();
+    let blindNoticeStates = new WeakMap();
+    let blindSourceRecheckTimer = 0;
     let parsedChatRows = new WeakMap();
     let forceFullChatScan = true;
     let forceReparseChatRows = true;
+    let forceFullImmediateScan = true;
     let chatMutationBatchShouldSchedule = false;
     let lastChatRootFindAt = 0;
     let lastChatRootFindResult = null;
@@ -163,6 +183,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         parseChatMessage,
         collect: collectModeratorMessage,
         cacheOriginal: cacheOriginalMessageText,
+        pageMessageIdentity,
         originalText: lookupCachedOriginalText,
         removeHighlight: removeModeratorHighlight,
         collectedRow: getCollectedModeratorRow,
@@ -194,6 +215,10 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         return Boolean(featureOptions.chatKeywordFilterEnabled && keywordPhrases.length);
     }
 
+    function needsImmediateChatRead() {
+        return isKeywordFilterEnabled() || (isLiveRoute() && isModeratorBoxEnabled());
+    }
+
     function matchesKeyword(text) {
         if (!isKeywordFilterEnabled() || !text) return false;
         const normalized = String(text).normalize("NFC").toLowerCase();
@@ -203,7 +228,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     }
 
     function renderModeratorMessages() {
-        panel.render(moderatorSnapshot.filter((message) => !matchesKeyword(message.text)));
+        panel.render(moderatorSnapshot);
     }
 
     function clearKeywordFilters(container = document) {
@@ -211,15 +236,127 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         for (const row of container.querySelectorAll?.(`[${KEYWORD_FILTERED_ATTR}]`) || []) {
             row.removeAttribute(KEYWORD_FILTERED_ATTR);
         }
+        const lists = Array.from(container.querySelectorAll?.(`[${KEYWORD_LAYOUT_COUNT_ATTR}]`) || []);
+        if (container instanceof Element && container.hasAttribute(KEYWORD_LAYOUT_COUNT_ATTR)) lists.push(container);
+        for (const list of lists) {
+            list.removeAttribute(KEYWORD_LAYOUT_COUNT_ATTR);
+            list.dispatchEvent(new Event(KEYWORD_LAYOUT_REQUEST, { bubbles: true }));
+        }
+    }
+
+    function syncKeywordListLayout(rootEl) {
+        for (const list of rootEl.querySelectorAll(KEYWORD_LIST_SELECTOR)) {
+            if (!list.querySelector(':scope > [class*="_list_bottom_"]')) continue;
+            const hidden = Array.from(list.children).filter((row) => row.hasAttribute(KEYWORD_FILTERED_ATTR)).length;
+            if (!hidden && !list.hasAttribute(KEYWORD_LAYOUT_COUNT_ATTR)) continue;
+            if (hidden) {
+                if (list.getAttribute(KEYWORD_LAYOUT_COUNT_ATTR) !== String(hidden))
+                    list.setAttribute(KEYWORD_LAYOUT_COUNT_ATTR, String(hidden));
+            } else list.removeAttribute(KEYWORD_LAYOUT_COUNT_ATTR);
+            list.dispatchEvent(new Event(KEYWORD_LAYOUT_REQUEST, { bubbles: true }));
+        }
     }
 
     function syncKeywordFilter(row, parsed) {
         // A fallback row-wide text includes nicknames and controls; only a recognized body is filterable.
         const body = parsed.textEl instanceof Element && parsed.textEl !== row ? parsed.textEl : null;
         const revealed = isBlindRevealEnabled() ? row.querySelector(".bcct-blind-reveal")?.textContent : "";
-        const hidden = !!body && matchesKeyword(revealed || parsed.text);
-        if (hidden) row.setAttribute(KEYWORD_FILTERED_ATTR, "1");
-        else row.removeAttribute(KEYWORD_FILTERED_ATTR);
+        // Use the current collection role, not a stale collected marker or whether the panel is enabled.
+        const hidden = !parsed.role && !!body && matchesKeyword(revealed || parsed.text);
+        if (hidden) {
+            if (row.getAttribute(KEYWORD_FILTERED_ATTR) !== "1") row.setAttribute(KEYWORD_FILTERED_ATTR, "1");
+        } else row.removeAttribute(KEYWORD_FILTERED_ATTR);
+    }
+
+    function readChatRow(row) {
+        const live = isLiveRoute();
+        const keepOriginal = live && isBlindRevealEnabled();
+        const parsed = parseChatMessage(row, keepOriginal);
+        if (live) {
+            const source = keepOriginal
+                ? Object.hasOwn(parsed, "pageSource")
+                    ? parsed.pageSource
+                    : readPageMessage(row, parsed, true)
+                : null;
+            if (keepOriginal) cacheOriginalMessageText(row, parsed, source);
+            syncBlindReveal(row, parsed, source);
+        }
+        return parsed;
+    }
+
+    function syncImmediateChatRows(rootEl = chatRoot) {
+        if (!needsImmediateChatRead() || pageHidden || !rootEl?.isConnected) return;
+        if (!isLiveRoute() && !isVodRoute()) return;
+        // Hide before paint and retain complete candidates until the collection batch or their removal.
+        const rows = forceFullImmediateScan
+            ? findChatRows(rootEl)
+            : expandDirtyChatRows(dirtyImmediateChatRows, rootEl) || findChatRows(rootEl);
+        dirtyImmediateChatRows.clear();
+        forceFullImmediateScan = false;
+        for (const row of rows) {
+            if (row.querySelector(OPEN_PROFILE_SELECTOR)) {
+                pendingChatParses.delete(row);
+                pendingModeratorRows.delete(row);
+                row.removeAttribute(KEYWORD_FILTERED_ATTR);
+                continue;
+            }
+            const parsed = readChatRow(row);
+            pendingChatParses.set(row, parsed);
+            if (
+                isLiveRoute() &&
+                isModeratorBoxEnabled() &&
+                parsed.role &&
+                parsed.text &&
+                !parsed.hasPendingBodyImage &&
+                !store.hasBinding(row)
+            ) {
+                pendingModeratorRows.set(row, { parsed, root: rootEl, reuseSignal: getCacheRowReuseSignal(row) });
+                if (pendingModeratorRows.size > MAX_PENDING_MODERATOR_ROWS)
+                    pendingModeratorRows.delete(pendingModeratorRows.keys().next().value);
+            } else pendingModeratorRows.delete(row);
+            syncKeywordFilter(row, parsed);
+        }
+    }
+
+    function collectDetachedModeratorCandidates(removedRoots) {
+        if (!isModeratorBoxEnabled() || pageHidden || !isLiveRoute() || getLiveChannelIdFromPath() !== routeChannelId)
+            return;
+        for (const [row, candidate] of pendingModeratorRows) {
+            let removed = false;
+            for (let node = row; node; node = node.parentElement) {
+                if (removedRoots.has(node)) {
+                    removed = true;
+                    break;
+                }
+            }
+            if (!removed) continue;
+            if (row.isConnected) {
+                if (!chatRoot?.contains(row)) pendingModeratorRows.delete(row);
+                continue;
+            }
+            pendingModeratorRows.delete(row);
+            pendingChatParses.delete(row);
+            dirtyChatRows.delete(row);
+            dirtyImmediateChatRows.delete(row);
+            if (candidate.root !== chatRoot || store.hasBinding(row)) continue;
+            if (row.querySelector("[aria-haspopup='true'][aria-expanded='true']")) continue;
+            if (candidate.reuseSignal !== getCacheRowReuseSignal(row)) continue;
+            // A removal batch can also recycle or clear the detached row. Only the last observed identity
+            // and unchanged body/author/role are eligible; the store retains its reuse and remount guards.
+            const current = parseChatMessage(row);
+            const parsed = candidate.parsed;
+            if (
+                current.id !== parsed.id ||
+                current.author !== parsed.author ||
+                current.role !== parsed.role ||
+                current.textEl !== parsed.textEl ||
+                current.isBlind !== parsed.isBlind ||
+                current.hasPendingBodyImage ||
+                (current.textKey || current.text) !== (parsed.textKey || parsed.text)
+            )
+                continue;
+            if (collectModeratorMessage(parsed, { deferNotify: true })) chatMutationBatchShouldSchedule = true;
+        }
     }
 
     function removeBlindReveal(row) {
@@ -230,19 +367,46 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         row.removeAttribute(BLIND_PROCESSED_ATTR);
     }
 
-    function syncBlindReveal(row, parsed, source = readPageMessage(row, parsed)) {
+    function forgetBlindNotice(row) {
+        pendingBlindRows.delete(row);
+        blindNoticeStates.delete(row);
+    }
+
+    function syncBlindReveal(row, parsed, source = readPageMessage(row, parsed, isBlindRevealEnabled())) {
         if (!isBlindRevealEnabled() || !parsed.isBlind) {
+            forgetBlindNotice(row);
             removeBlindReveal(row);
-            return;
+            return false;
         }
 
         // 프로필 카드 같은 다른 UI 를 본문으로 오인해 가리지 않도록,
         // 실제 블라인드 안내 문구가 표시된 요소일 때만 원문으로 교체한다.
         const target = parsed.textEl instanceof Element && parsed.textEl !== row ? parsed.textEl : null;
         if (!target || !isBlindNoticeText(getVisibleText(target))) {
+            forgetBlindNotice(row);
             removeBlindReveal(row);
-            return;
+            return false;
         }
+
+        const pending = blindNoticeStates.get(row);
+        const identity = pageMessageIdentity(source);
+        const needsRecheck = Boolean(identity) && !source.original;
+        const noticeFingerprint =
+            pending || needsRecheck
+                ? JSON.stringify([
+                      parsed.author,
+                      parsed.text,
+                      getCacheMessageIdentity(row, target),
+                      getCacheRowReuseSignal(row),
+                  ])
+                : "";
+        // A full rescan can arrive while React has updated the next message's props but still shows the old notice.
+        const sameNotice = pending?.target === target && pending.noticeFingerprint === noticeFingerprint;
+        if (sameNotice && pending.identity !== identity) {
+            removeBlindReveal(row);
+            return false;
+        }
+        if (!sameNotice && pending) forgetBlindNotice(row);
 
         // A present page message must validate; it cannot borrow an unrelated DOM original.
         const original = source
@@ -251,8 +415,23 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         if (!original) {
             // 원문을 모르면 치지직의 블라인드 문구를 그대로 둔다.
             removeBlindReveal(row);
-            return;
+            if (needsRecheck) {
+                const state = sameNotice ? pending : { target, identity, noticeFingerprint, attempts: 0 };
+                blindNoticeStates.set(row, state);
+                // A rescan of the same notice must not reset its retry budget or identity check.
+                if (state.attempts < MAX_BLIND_SOURCE_RECHECKS) {
+                    pendingBlindRows.add(row);
+                    if (pendingBlindRows.size > MAX_PENDING_BLIND_ROWS) {
+                        pendingBlindRows.delete(pendingBlindRows.values().next().value);
+                    }
+                    scheduleBlindSourceRecheck();
+                }
+            } else {
+                pendingBlindRows.delete(row);
+            }
+            return false;
         }
+        forgetBlindNotice(row);
 
         let reveal = row.querySelector(".bcct-blind-reveal");
         if (!reveal) {
@@ -268,6 +447,66 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             target.after(reveal);
         }
         row.setAttribute(BLIND_PROCESSED_ATTR, "1");
+        return true;
+    }
+
+    function scheduleBlindSourceRecheck() {
+        if (!blindSourceRecheckTimer && pendingBlindRows.size) {
+            blindSourceRecheckTimer = window.setTimeout(recheckBlindSources, BLIND_SOURCE_RECHECK_MS);
+        }
+    }
+
+    function clearBlindSourceRechecks() {
+        window.clearTimeout(blindSourceRecheckTimer);
+        blindSourceRecheckTimer = 0;
+        pendingBlindRows.clear();
+        blindNoticeStates = new WeakMap();
+    }
+
+    function recheckBlindSources() {
+        blindSourceRecheckTimer = 0;
+        const rootEl = chatRoot;
+        if (
+            !rootEl?.isConnected ||
+            pageHidden ||
+            !isBlindRevealEnabled() ||
+            !isLiveRoute() ||
+            getLiveChannelIdFromPath() !== routeChannelId
+        ) {
+            pendingBlindRows.clear();
+            return;
+        }
+
+        let layoutChanged = false;
+        for (const row of pendingBlindRows) {
+            const pending = blindNoticeStates.get(row);
+            if (!pending || !rootEl.contains(row) || row.querySelector(OPEN_PROFILE_SELECTOR)) {
+                pendingBlindRows.delete(row);
+                continue;
+            }
+            pending.attempts += 1;
+            if (pending.attempts >= MAX_BLIND_SOURCE_RECHECKS) pendingBlindRows.delete(row);
+            const parsed = parseChatRow(row);
+            if (!parsed.isBlind) {
+                forgetBlindNotice(row);
+                continue;
+            }
+            const source = readPageMessage(row, parsed, true);
+            if (blindNoticeStates.get(row) !== pending) continue;
+            if (!source) {
+                pendingBlindRows.delete(row);
+                continue;
+            }
+
+            if (source.original && syncBlindReveal(row, parsed, source)) {
+                cacheOriginalMessageText(row, parsed, source);
+                const wasFiltered = row.hasAttribute(KEYWORD_FILTERED_ATTR);
+                syncKeywordFilter(row, parsed);
+                if (row.hasAttribute(KEYWORD_FILTERED_ATTR) !== wasFiltered) layoutChanged = true;
+            }
+        }
+        if (layoutChanged) syncKeywordListLayout(rootEl);
+        scheduleBlindSourceRecheck();
     }
 
     function purgeLegacyModeratorCache() {
@@ -369,17 +608,35 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     }
 
     function resetChatProcessingState({ reparse = true } = {}) {
+        clearBlindSourceRechecks();
         dirtyChatRows.clear();
+        dirtyImmediateChatRows.clear();
+        pendingChatParses = new WeakMap();
+        pendingModeratorRows.clear();
         parsedChatRows = new WeakMap();
         store.clearRemounts();
         forceFullChatScan = true;
         forceReparseChatRows = reparse;
+        forceFullImmediateScan = true;
         chatMutationBatchShouldSchedule = false;
     }
 
     function requestFullChatScan({ reparse = false } = {}) {
         forceFullChatScan = true;
-        if (reparse) forceReparseChatRows = true;
+        forceFullImmediateScan = true;
+        if (reparse) {
+            forceReparseChatRows = true;
+            pendingChatParses = new WeakMap();
+            pendingModeratorRows.clear();
+        }
+    }
+
+    function markChatRowDirty(row) {
+        bumpRowMutationRevision(row);
+        dirtyChatRows.add(row);
+        pendingChatParses.delete(row);
+        pendingModeratorRows.delete(row);
+        if (needsImmediateChatRead()) dirtyImmediateChatRows.add(row);
     }
 
     function findChatRowsInMutationSubtree(node, rootEl = chatRoot) {
@@ -439,10 +696,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         const rows = subtreeRows.rows.length > 0 ? subtreeRows.rows : fallbackRow ? [fallbackRow] : [];
         if (rows.length === 0) return false;
 
-        for (const row of rows) {
-            bumpRowMutationRevision(row);
-            dirtyChatRows.add(row);
-        }
+        for (const row of rows) markChatRowDirty(row);
         chatMutationBatchShouldSchedule = true;
         return true;
     }
@@ -471,7 +725,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         // 하위 요소에만 있어 signalText 로는 못 잡지만, 수집 표시 자체가 이미
         // 방송자/채팅 운영자 판정이다. 재파싱은 idempotent 라 (백필은 값이 실제로
         // 바뀔 때만 다시 그림) 루프를 만들지 않는다.
-        if (isModeratorBoxEnabled() && getCollectedModeratorRow(row)) return true;
+        if (isModeratorBoxEnabled() && (getCollectedModeratorRow(row) || pendingModeratorRows.has(row))) return true;
         // 본문 이모티콘 토큰과 정체성은 img src에 의존한다. 직전 파싱이 역할 행이었으면 src만 바뀌어도
         // 그 행을 다시 처리한다(아직 binding이 없는 안정화 대기 행 포함).
         if (attrName === "src" && isModeratorBoxEnabled() && parsedChatRows.get(row)) return true;
@@ -485,7 +739,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     function shouldTrackChatTextMutation(mutation, row) {
         if (isKeywordFilterEnabled() || row?.hasAttribute(BLIND_PROCESSED_ATTR)) return true;
         // 수집된 행을 계속 추적하는 이유는 shouldTrackChatAttributeMutation 참고.
-        if (isModeratorBoxEnabled() && getCollectedModeratorRow(row)) return true;
+        if (isModeratorBoxEnabled() && (getCollectedModeratorRow(row) || pendingModeratorRows.has(row))) return true;
         // 배지가 먼저 붙고 빈 본문 텍스트 노드가 나중에 채워지면 아직 수집 binding이 없다.
         // img alt는 textContent에 없으므로 직전 파싱의 역할도 변경 추적에 사용한다.
         if (isModeratorBoxEnabled() && parsedChatRows.get(row)) return true;
@@ -503,8 +757,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         // 수집 표시가 붙은 바깥 wrapper 가 있으면 그쪽을 dirty 에 넣는다.
         const collectedRow = getCollectedModeratorRow(row);
         const dirtyRow = collectedRow instanceof HTMLElement ? collectedRow : row;
-        bumpRowMutationRevision(dirtyRow);
-        dirtyChatRows.add(dirtyRow);
+        markChatRowDirty(dirtyRow);
         chatMutationBatchShouldSchedule = true;
         return true;
     }
@@ -528,8 +781,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     function markDirtyContainingChatRow(node, rootEl) {
         const row = getContainingChatRow(node, rootEl);
         if (!row) return false;
-        bumpRowMutationRevision(row);
-        dirtyChatRows.add(row);
+        markChatRowDirty(row);
         chatMutationBatchShouldSchedule = true;
         return true;
     }
@@ -544,6 +796,15 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         }
 
         const mutationList = Array.from(mutations || []);
+        collectDetachedModeratorCandidates(
+            new Set(
+                mutationList.flatMap((mutation) =>
+                    mutation.type === "childList"
+                        ? Array.from(mutation.removedNodes).filter((node) => node instanceof Element)
+                        : []
+                )
+            )
+        );
         const addedNodes = [];
         // 수집 기록이 떨어져 나간 제거 배치에서만, 목록이 완전히 비었는지 배치당 한 번 확인한다.
         let listCleared = null;
@@ -579,10 +840,13 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             if (removedNodes.length) {
                 store.removeSubtrees(removedNodes, getTopLevelMutationElements(mutationAddedNodes), { isListCleared });
                 markDirtyContainingChatRow(mutation.target, rootEl);
+                if (mutation.target instanceof Element && mutation.target.hasAttribute(KEYWORD_LAYOUT_COUNT_ATTR))
+                    chatMutationBatchShouldSchedule = true;
             }
         }
 
         for (const node of getTopLevelMutationElements(addedNodes)) markDirtyChatRow(node, rootEl);
+        syncImmediateChatRows(rootEl);
     }
 
     function findChatRows(rootEl = chatRoot) {
@@ -590,9 +854,11 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
 
         const rows = new Set();
         for (const child of Array.from(rootEl.children)) {
-            if (isOwnUi(child) || !getVisibleText(child)) continue;
+            if (isOwnUi(child)) continue;
             if (child.closest(NATIVE_FIXED_CHAT_SELECTOR)) continue;
             if (child.querySelector(CHAT_ROW_SELECTORS)) continue;
+            // A list wrapper is not a message; avoid walking all hidden descendants just to discard it.
+            if (!getVisibleText(child)) continue;
             rows.add(child);
         }
 
@@ -601,10 +867,10 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             rows.add(normalizeCandidateRow(el, rootEl));
         }
 
-        return filterNestedCandidateRows(rows, rootEl).filter((row) => {
-            const text = getVisibleText(row);
-            return Boolean(text || hasChatRowSignal(row));
-        });
+        // Recognized rows are parsed below. Only weak candidates need a preliminary visible-text check.
+        return filterNestedCandidateRows(rows, rootEl).filter(
+            (row) => hasChatRowSignal(row) || Boolean(getVisibleText(row))
+        );
     }
 
     function expandDirtyChatRows(rows, rootEl) {
@@ -717,7 +983,14 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             store.cancelPending();
             return;
         }
-        if (chatRoot !== rootEl) adoptObservedChatRoot(rootEl);
+        if (chatRoot !== rootEl) {
+            if (isKeywordFilterEnabled()) {
+                // A queued scan can beat reconnect delivery. Observe before hiding, then collect in its next batch.
+                startObserver();
+                return;
+            }
+            adoptObservedChatRoot(rootEl);
+        }
 
         panel.installStyles();
         ensureModeratorBox(rootEl);
@@ -729,23 +1002,23 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             for (const row of rows) {
                 // 닉네임 클릭 프로필 카드 등 팝업이 펼쳐진 행은 팝업 내용이 파싱을
                 // 오염시키므로 팝업이 닫힌 뒤(다음 mutation)에 처리한다.
-                if (row.querySelector("[aria-haspopup='true'][aria-expanded='true']")) {
+                if (row.querySelector(OPEN_PROFILE_SELECTOR)) {
+                    pendingChatParses.delete(row);
+                    pendingModeratorRows.delete(row);
                     removeModeratorHighlight(row);
                     row.removeAttribute(KEYWORD_FILTERED_ATTR);
                     continue;
                 }
-                const parsed = parseChatMessage(row);
-                if (isLiveRoute()) {
-                    const source = isBlindRevealEnabled() ? readPageMessage(row, parsed) : null;
-                    if (isBlindRevealEnabled()) cacheOriginalMessageText(row, parsed, source);
-                    syncBlindReveal(row, parsed, source);
-                    collectModeratorMessage(parsed, { deferNotify: true });
-                }
+                const parsed = pendingChatParses.get(row) || readChatRow(row);
+                pendingChatParses.delete(row);
+                pendingModeratorRows.delete(row);
+                if (isLiveRoute()) collectModeratorMessage(parsed, { deferNotify: true });
                 syncKeywordFilter(row, parsed);
                 parsedChatRows.set(row, parsed.role);
             }
         } finally {
             store.finishScan(processedChatRows);
+            syncKeywordListLayout(rootEl);
         }
     }
 
@@ -766,6 +1039,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             onObserved: (_observer, node) => {
                 adoptObservedChatRoot(node);
                 requestFullChatScan({ reparse: false });
+                syncImmediateChatRows(node);
                 scheduleSync();
             },
             onBodyReady: (_observer, node) => {
@@ -849,6 +1123,8 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             phrase: rule.phrase.toLowerCase(),
         }));
         if (!isKeywordFilterEnabled()) {
+            dirtyImmediateChatRows.clear();
+            pendingChatParses = new WeakMap();
             clearKeywordFilters();
             document.getElementById(KEYWORD_FILTER_STYLE_ID)?.remove();
         }
@@ -865,15 +1141,17 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             return;
         }
 
-        installRuntime();
         requestFullChatScan({ reparse: true });
+        installRuntime();
         if (!isModeratorBoxEnabled()) {
             removeModeratorBox();
         }
         if (!isBlindRevealEnabled()) {
+            clearBlindSourceRechecks();
             removeAllBlindReveals();
             store.clearPageMessages();
         }
+        syncImmediateChatRows();
         scheduleSync();
     }
 
@@ -883,7 +1161,16 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     }
 
     function adoptObservedChatRoot(node) {
-        if (chatRoot && chatRoot !== node) clearKeywordFilters(chatRoot);
+        if (chatRoot !== node) {
+            clearBlindSourceRechecks();
+            if (chatRoot) clearPageOriginalCache();
+            if (chatRoot) collectDetachedModeratorCandidates(new Set([chatRoot]));
+            if (chatRoot) clearKeywordFilters(chatRoot);
+            dirtyImmediateChatRows.clear();
+            pendingChatParses = new WeakMap();
+            pendingModeratorRows.clear();
+            forceFullImmediateScan = true;
+        }
         chatRoot = node;
         store.adoptRoot(node);
     }
@@ -894,11 +1181,15 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     }
 
     bindFeatureOptions(applyOptions);
-    // MAIN 브리지가 isolated보다 늦게 준비되면 이미 처리한 블라인드 행의 페이지 원문을 다시 요청한다.
+    // A late MAIN bridge also upgrades collected rows to their native message identity.
     window.addEventListener(PAGE_READY_EVENT, () => {
-        if (!observer || !isBlindRevealEnabled()) return;
+        if (!observer || (!isBlindRevealEnabled() && !isModeratorBoxEnabled())) return;
         requestFullChatScan({ reparse: true });
+        syncImmediateChatRows();
         scheduleSync();
+    });
+    window.addEventListener("cheese-spanner:chat-list-layout-page-ready", () => {
+        if (observer && isKeywordFilterEnabled()) scheduleSync();
     });
     onReady(() => {
         if (isFeatureEnabled()) installRuntime();
