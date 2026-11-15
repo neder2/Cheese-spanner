@@ -996,6 +996,21 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     ]);
     assert.equal(mainScript.js.includes("features/gridBypassPage.js"), false);
     assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
+    const vodAdapter = "features/vodMultiview/nativePlayer.js";
+    const vodSync = "features/vodMultiview/syncPage.js";
+    const vodMetadata = "features/vodMultiview/metadata.js";
+    const vodRuntime = "features/vodMultiview/runtime.js";
+    assert.ok(mainScript.js.includes(vodAdapter));
+    assert.ok(mainScript.js.indexOf(vodSync) > mainScript.js.indexOf(vodAdapter));
+    assert.ok(mainScript.js.indexOf("features/autoQualityPage.js") > mainScript.js.indexOf(vodAdapter));
+    assert.ok(isolatedScript.js.indexOf(vodMetadata) > isolatedScript.js.indexOf("content.js"));
+    assert.ok(isolatedScript.js.indexOf(vodRuntime) > isolatedScript.js.indexOf(vodMetadata));
+    for (const [scripts, foreignFiles] of [
+        [mainScript.js, [vodMetadata, vodRuntime]],
+        [isolatedScript.js, [vodAdapter, vodSync]],
+    ]) {
+        assert.ok(foreignFiles.every((file) => !scripts.includes(file)));
+    }
     assert.equal(mainScript.js.includes("features/followingPreviewPage.js"), false);
     assert.ok(
         mainScript.js.indexOf("features/routeBridgePage.js") < mainScript.js.indexOf("features/autoQualityPage.js")
@@ -5340,7 +5355,7 @@ test("VOD previous-title toggle and panel use the shared CHZZK theme while the c
         ]
             .map((match) => match[2])
             .filter((text) => /[가-힣]/.test(text) && /(?:습|합|됩|입)니다/.test(text));
-        assert.deepEqual(formalCopy, [], "VOD clock statuses use 해요체");
+        assert.deepEqual(formalCopy, [], "VOD clock statuses omit formal endings");
         assert.ok(document.getElementById("cheese-spanner-vod-broadcast-range"));
         for (const listener of chrome.testState.storageChangeListeners) {
             listener({ vodBroadcastClockEnabled: { oldValue: true, newValue: false } }, "sync");

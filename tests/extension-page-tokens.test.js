@@ -299,7 +299,10 @@ test("replay pending page uses the shared tokens, Pretendard, and polite copy wi
             "저장된 방송 정보로 다시보기 확인 중. 찾으면 이 탭에서 바로 이동.",
             "잠시 후에도 이동하지 않으면 시청 기록에서 다시 시도.",
         ]);
-        assert.equal(/(습니다|입니다|합니다|됩니다)/.test(main.textContent), false, "visible copy uses 해요체");
+        assert.doesNotMatch(
+            main.textContent,
+            /[가-힣](?<![필주개중수소강요])요(?=[.?!…\s]|$)|(?:습|합|됩|입)니다|십시오/
+        );
     } finally {
         dom.window.close();
     }

@@ -209,10 +209,9 @@
         if (tooltipEl?.isConnected) tooltipEl.remove();
     }
 
-    function getTooltipSlider(event, video) {
+    function getTooltipSlider(event, video, controls) {
         const target = event.target;
         if (!(target instanceof Element) || target.closest(EXCLUDED_HOVER_SELECTOR)) return null;
-        const controls = getVolumeControlCandidates(event);
         for (const control of controls) {
             const slider = control.matches(VOLUME_SLIDER_SELECTOR)
                 ? control
@@ -232,22 +231,24 @@
 
     function handleMouseOver(event) {
         if (!isEnabled() || !isPlaybackRoute()) return;
-        if (!getVolumeControlCandidates(event).length) {
+        const root = event.target instanceof Element && event.target.closest("[data-bcvm-video-no]");
+        const aux = root && CheeseSpanner.vodMultiview?.getAuxiliaries().find(({ player }) => player === root);
+        const controls = getVolumeControlCandidates(event, aux?.player);
+        if (!controls.length) {
             if (hoverControl) hideTooltip();
             return;
         }
-        const video = watchedVideo || getMainVideoElement();
-        const control = getTooltipSlider(event, video);
+        const video = aux?.video || getMainVideoElement();
+        const control = getTooltipSlider(event, video, controls);
         if (control) showTooltip(control, video);
         else if (hoverControl) hideTooltip();
     }
 
     function handleMouseOut(event) {
         if (!hoverControl) return;
-        const next = getTooltipSlider(
-            { target: event.relatedTarget, clientX: event.clientX, clientY: event.clientY },
-            watchedVideo
-        );
+        const pointer = { target: event.relatedTarget, clientX: event.clientX, clientY: event.clientY };
+        const controls = getVolumeControlCandidates(pointer, watchedVideo?.closest("[data-bcvm-video-no]"));
+        const next = getTooltipSlider(pointer, watchedVideo, controls);
         if (next) {
             showTooltip(next, watchedVideo);
             return;
@@ -313,11 +314,16 @@
  * MIT License — and was modified for Cheese Spanner.
  * Full license text: THIRD_PARTY_NOTICES.md
  */
-(() => {
-    const BUTTON_ID = "cheese-spanner-audio-compressor";
-    const CONTROL_ID = "cheese-spanner-audio-compressor-control";
-    const SLIDER_ID = "cheese-spanner-audio-compressor-volume";
-    const STYLE_ID = "cheese-spanner-audio-compressor-style";
+(function installCompressor(auxiliaryIndex) {
+    const auxiliary = Number.isInteger(auxiliaryIndex);
+    const prefix = auxiliary
+        ? `cheese-spanner-audio-compressor-aux-${auxiliaryIndex}`
+        : "cheese-spanner-audio-compressor";
+    const BUTTON_ID = prefix;
+    const CONTROL_ID = `${prefix}-control`;
+    const SLIDER_ID = `${prefix}-volume`;
+    const STYLE_ID = `${prefix}-style`;
+    const AUXILIARY = "cheese-spanner:vod-multiview:auxiliary";
     const STATE_MESSAGE = "cheese-spanner:audio-compressor-state";
     const RESUME_EVENTS = ["pointerdown", "keydown", "click"];
     const VOLUME_CONTROL_SELECTOR = [
@@ -353,7 +359,7 @@
     const graphs = new WeakMap();
     let featureOptions = normalizeOptions();
     let optionsReady = false;
-    let stateReady = false;
+    let stateReady = auxiliary;
     let stateRestorePending = false;
     let compressorActive = false;
     let compressorVolume = 1;
@@ -367,9 +373,12 @@
     let runtimeInstalled = false;
     let removePageChangeDetection = null;
     const scheduleSync = createThrottledDomSync(syncState, 240);
+    const auxiliaryTarget = () =>
+        CheeseSpanner.vodMultiview?.getAuxiliaries().find(({ index }) => index === auxiliaryIndex);
+    const targetVideo = () => (auxiliary ? auxiliaryTarget()?.video : getMainVideoElement?.());
 
     function featureEnabled() {
-        return Boolean(featureOptions.audioCompressorEnabled);
+        return Boolean(featureOptions.audioCompressorEnabled && (!auxiliary || featureOptions.vodMultiviewEnabled));
     }
 
     function compressorEnabled() {
@@ -377,6 +386,7 @@
     }
 
     function saveCompressorState() {
+        if (auxiliary) return;
         void runtimeSendMessage({
             type: STATE_MESSAGE,
             kind: "set",
@@ -622,7 +632,8 @@
         if (!activeVideo) return;
         // Losing the main-player role does not mean the native video is destroyed.
         // Preserve its source in the WeakMap so the same element can return safely.
-        bypassActiveGraph();
+        if (auxiliary) disconnectGraph(graphs.get(activeVideo));
+        else bypassActiveGraph();
         activeVideo = null;
     }
 
@@ -693,10 +704,13 @@
     }
 
     function findVolumeControl() {
-        const video = getMainVideoElement?.();
+        const video = targetVideo();
+        const scope = auxiliary ? auxiliaryTarget()?.player : document;
+        if (!scope) return null;
         const candidates = [];
-        for (const el of document.querySelectorAll(VOLUME_CONTROL_SELECTOR)) {
+        for (const el of scope.querySelectorAll(VOLUME_CONTROL_SELECTOR)) {
             if (el.id === CONTROL_ID || controlEl?.contains(el)) continue;
+            if (!auxiliary && el.closest("[data-bcvm-video-no]")) continue;
             if (!(el instanceof HTMLElement) || visibleArea(el) <= 0) continue;
             if (video instanceof HTMLVideoElement && !isControlNearVideo(el, video)) continue;
             const rect = el.getBoundingClientRect();
@@ -721,6 +735,7 @@
     }
 
     function findExternalCompressor() {
+        if (auxiliary) return null;
         for (const el of document.querySelectorAll(EXTERNAL_COMPRESSOR_SELECTOR)) {
             if (el instanceof HTMLElement && el.id !== BUTTON_ID && !el.contains(currentButton())) return el;
         }
@@ -751,7 +766,7 @@
 
     function syncButtonState(button = currentButton()) {
         if (!(button instanceof HTMLButtonElement)) return;
-        const video = getMainVideoElement?.();
+        const video = targetVideo();
         const active = compressorEnabled();
         const failed = active && video instanceof HTMLVideoElement && graphs.get(video)?.failed === true;
         button.disabled = !isPlaybackRoute() || !usableVideo(video);
@@ -920,6 +935,14 @@
 
     function syncState() {
         if (!optionsReady || audioRecoveryStopped) return;
+        const video = targetVideo();
+        if (activeVideo && activeVideo !== video) releaseActiveGraph();
+        if (auxiliary && !video) {
+            compressorActive = false;
+            compressorVolume = 1;
+            removeButton();
+            return;
+        }
         if (!stateReady) {
             // Reading also registers a tab snapshot; browse-only pages must wait for playback entry.
             if (featureEnabled() && isPlaybackRoute()) void restoreCompressorState();
@@ -939,8 +962,6 @@
             bypassActiveGraph();
             return;
         }
-        const video = getMainVideoElement?.();
-        if (activeVideo && activeVideo !== video) releaseActiveGraph();
         if (!usableVideo(video)) {
             syncButtonState();
             return;
@@ -990,9 +1011,15 @@
                 attributeFilter: ["class", "style", "hidden", "aria-hidden"],
             },
             onMutations(mutations) {
+                const auxiliaryPlayer = auxiliary ? auxiliaryTarget()?.player : null;
+                if (auxiliary && !auxiliaryPlayer) return;
                 if (
                     mutations.some(
                         (mutation) =>
+                            (!auxiliary || auxiliaryPlayer.contains(mutation.target)) &&
+                            (auxiliary ||
+                                !(mutation.target instanceof Element) ||
+                                !mutation.target.closest("[data-bcvm-video-no]")) &&
                             !isOwnButtonMutation(mutation) &&
                             (mutationMatchesSelector(mutation, "video") ||
                                 (mutation.target instanceof Element &&
@@ -1024,4 +1051,15 @@
         installRuntime();
         syncState();
     });
+    if (auxiliary) document.addEventListener(AUXILIARY, syncState);
+    else {
+        const installed = new Set();
+        document.addEventListener(AUXILIARY, () => {
+            for (const { index } of CheeseSpanner.vodMultiview?.getAuxiliaries() || []) {
+                if (installed.has(index)) continue;
+                installed.add(index);
+                installCompressor(index);
+            }
+        });
+    }
 })();

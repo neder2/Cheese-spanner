@@ -223,7 +223,7 @@ test("a real save normalizes phrases and uses raw absent expectations, while a s
     panel.querySelector('[data-action="save"]').click();
     assert.equal(f.writes.length, 0);
     clickAction(f, "save");
-    await waitForCondition(() => panel.querySelector('[role="status"]').textContent === "저장했어요.");
+    await waitForCondition(() => panel.querySelector('[role="status"]').textContent === "저장 완료");
     assert.deepEqual(f.writes, [
         {
             area: "sync",
@@ -294,7 +294,7 @@ test("oversized phrase and failed writes preserve the typed text", async (t) => 
     typeWords(f, "다시 시도할 문구");
     clickAction(f, "save");
     f.pending[0].reject(new Error("storage failed"));
-    await waitForCondition(() => panel.querySelector('[role="status"]').textContent.includes("저장하지 못했어요"));
+    await waitForCondition(() => panel.querySelector('[role="status"]').textContent.includes("저장 실패"));
     assert.equal(panel.querySelector("textarea").value, "다시 시도할 문구");
     assert.equal(panel.querySelector('[data-action="save"]').disabled, false);
 });
@@ -349,7 +349,7 @@ test("backend CAS conflict preserves input and never retries with a newer expect
     f.pending[0].reject(
         Object.assign(new Error("conflict"), { code: "conflict", current: { [WORDS]: { value: "외부 변경" } } })
     );
-    await waitForCondition(() => panel.querySelector('[role="status"]').textContent.includes("바뀌어 저장하지"));
+    await waitForCondition(() => panel.querySelector('[role="status"]').textContent.includes("바뀌어 저장 중단"));
     assert.equal(panel.querySelector("textarea").value, "내 변경");
     assert.equal(panel.querySelector('[data-action="save"]').disabled, true);
     assert.equal(f.writes.length, 1);

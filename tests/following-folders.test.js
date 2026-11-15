@@ -929,7 +929,7 @@ test("the folder menu renames, reorders, and deletes folders with trusted input 
     await waitForCondition(() => storedState(chrome).folders[1].name === "잡담");
     await waitForCondition(() => !renameInput(document) && nameButton(document, "잡담"));
     assert.equal(document.activeElement, nameButton(document, "잡담"));
-    assert.match(toastText(document), /‘토크’ 폴더 이름을 ‘잡담’/);
+    assert.match(toastText(document), /폴더 이름 변경 · ‘토크’ → ‘잡담’/);
 
     let upMenu = await openMenu(dom, document, "잡담");
     untrustedClick(dom, byLabel(upMenu, "‘잡담’ 폴더를 위로 이동"));
@@ -1148,7 +1148,8 @@ test("a collapsed folder marks its live count partial while the native list has 
     assert.equal(pick(A).dataset.live, "1");
     assert.equal(pick(A).querySelector(".bcff-pick-detail").textContent, "방송 중");
     assert.equal(pick(E).dataset.live, "unknown");
-    assert.equal(pick(E).querySelector(".bcff-pick-detail").textContent, "목록에 없어 방송 여부 모름");
+    assert.equal(pick(E).querySelector(".bcff-pick-detail").textContent, "방송 여부 미확인");
+    assert.match(picker.querySelector(".bcff-picker-foot").textContent, /현재 팔로잉 목록과 이 폴더의 채널 표시/);
     trustedKey(dom, picker.querySelector('[data-bcff-key="picker-filter"]'), "Escape");
     await waitForCondition(() => !layer(document));
 
@@ -1684,7 +1685,7 @@ test("dropping on a folder's rows or the new-folder spot moves channels; outside
     await waitForCondition(() => storedState(chrome).folders[0].channelIds.includes(A));
     assert.equal(list.querySelector("[data-bcff-new-zone]"), null);
     assert.equal(document.querySelector("[data-bcff-drop-target]"), null);
-    assert.match(toastText(document), /알파 채널을 ‘게임’ 폴더에 추가함/);
+    assert.match(toastText(document), /알파 채널을 ‘게임’ 폴더에 추가/);
 
     dragEvent(dom, "dragstart", document.querySelector("#rowE a"));
     // The spot can appear right under the pointer when the last row is dragged; it waits until the pointer moves on.
@@ -2644,7 +2645,7 @@ test("a check read that answers after my next save keeps that save and its undo"
     const conflicts = store.conflicts;
     dropRowOnHeader(dom, document, "rowC", "라");
     await waitForCondition(() => store.calls.length === 4 && !list.hasAttribute("aria-busy"));
-    await waitForCondition(() => /‘라’ 폴더에 추가함/.test(toastText(document)));
+    await waitForCondition(() => /‘라’ 폴더에 추가/.test(toastText(document)));
     const next = clone(moved);
     next.folders[1].channelIds = [];
     next.folders[2].channelIds = [C];

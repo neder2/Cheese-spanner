@@ -744,11 +744,11 @@ body[theme="dark"] .bcvc-avatar-fallback,
                 message.appendChild(best);
             }
             let messageText = deleted
-                ? "삭제된 댓글입니다."
+                ? "삭제된 댓글"
                 : !hasComment
-                  ? "내용을 표시할 수 없는 댓글입니다."
+                  ? "표시할 수 없는 댓글"
                   : cleanBotHidden
-                    ? "클린봇이 부적절한 표현을 감지한 댓글입니다."
+                    ? "클린봇 감지: 부적절한 표현"
                     : String(comment.content || "");
             if (reply && !deleted && !cleanBotHidden) {
                 const replyToName = model.compactText(item.replyToName);

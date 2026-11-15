@@ -433,7 +433,7 @@ test("the preview card and row highlight follow the shared theme while video ove
     }
 });
 
-test("a preview that cannot load shows a polite error title in the muted theme color", async () => {
+test("a preview that cannot load shows a short error title in the muted theme color", async () => {
     const { document, dom, link } = createFollowingPreviewDom();
     document.querySelector("#liveLink .live_title").remove();
     dom.window.fetch = async () => {
@@ -448,7 +448,7 @@ test("a preview that cannot load shows a polite error title in the muted theme c
         () => document.getElementById("cheese-spanner-following-preview")?.dataset.state === "error"
     );
     const title = document.querySelector("#cheese-spanner-following-preview .bcfp-title");
-    assert.equal(title.textContent, "\uBBF8\uB9AC\uBCF4\uAE30\uB97C \uBD88\uB7EC\uC62C \uC218 \uC5C6\uC5B4\uC694");
+    assert.equal(title.textContent, "미리보기 불러오기 실패");
     assert.equal(computedThemeValue(dom.window, title, "color"), "#9da5b6");
 });
 

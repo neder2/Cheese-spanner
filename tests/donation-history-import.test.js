@@ -222,7 +222,7 @@ test("one donation view uses refreshed coverage and later live rows without dupl
         NOW + 3000
     ).history;
     document.getElementById("refresh").click();
-    await waitForCondition(() => document.getElementById("message").textContent.includes("새로고침했어요"));
+    await waitForCondition(() => document.getElementById("message").textContent.includes("새로고침 완료"));
     assert.match(document.getElementById("activitySummary").textContent, /10,500치즈 \(7회\)/);
     assert.equal(document.querySelectorAll("#activityList li").length, 4);
     document.getElementById("historySearch").value = "없는 채널";
@@ -626,7 +626,7 @@ test("a running donation refresh keeps its progress and cancel button after swit
         ["start", "cancel"]
     );
     assert.equal(ui.controls.hidden, false);
-    assert.match(ui.status.textContent, /취소하고 있어요/);
+    assert.match(ui.status.textContent, /취소 중/);
 
     incoming.emit({ type: "error", message: "후원 내역 갱신을 취소했어요." });
     expectFailureInDonationList(/갱신을 취소했어요/, "an error message is not written into hidden tools");
@@ -639,14 +639,14 @@ test("a donation refresh whose port disconnects while chats are shown reports it
         await startRefreshThenShowChats(t);
     assert.equal(ui.controls.hidden, false);
     disconnect.emit();
-    expectFailureInDonationList(/가져오기가 중단됐어요/, "a plain disconnect");
+    expectFailureInDonationList(/후원 가져오기 중단/, "a plain disconnect");
 
     startFromChats();
     assert.equal(ui.status.dataset.error, "false", "a new refresh replaces the earlier error");
     chrome.runtime.lastError = { message: "Could not establish connection." };
     disconnect.emit();
     delete chrome.runtime.lastError;
-    expectFailureInDonationList(/가져오기 연결이 끊겼어요/, "a disconnect with runtime.lastError");
+    expectFailureInDonationList(/후원 가져오기 연결 끊김/, "a disconnect with runtime.lastError");
     showType("chat");
     assert.equal(ui.controls.hidden, true);
 });

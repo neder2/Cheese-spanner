@@ -275,6 +275,7 @@
         // 미리보기 HLS가 선택 권한(pstatic.net) 승인을 전제로 하므로, 사용자가
         // 옵션에서 직접 켜면서 권한을 허용하는 흐름이 되도록 기본값은 꺼짐이다.
         liveMultiviewEnabled: { kind: "bool", default: false, feature: true },
+        vodMultiviewEnabled: { kind: "bool", default: false, feature: true },
         chatMultiviewEnabled: { kind: "bool", default: false, feature: true },
         followingPreviewTooltipEnabled: { kind: "bool", default: false, feature: true },
         followingPreviewSoundEnabled: { kind: "bool", default: true },

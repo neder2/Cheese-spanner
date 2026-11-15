@@ -1166,8 +1166,8 @@ function renderCalendar() {
 
     const [, selectedDateMonth, selectedDateDay] = selectedDateKey.split("-").map(Number);
     calendarFootEl.textContent = selectedDateKey
-        ? `${selectedDateMonth}월 ${selectedDateDay}일 기록만 보고 있어요.`
-        : "날짜를 누르면 그날 본 기록만 보여 줘요.";
+        ? `${selectedDateMonth}월 ${selectedDateDay}일 기록만 표시`
+        : "날짜 선택 시 그날 기록만 표시";
 }
 
 function getVisibleRows() {
@@ -1292,9 +1292,7 @@ function buildEntryChatPanel(entry, counts, panelId) {
         const empty = document.createElement("p");
         empty.className = "history-entry-chat-empty";
         empty.textContent =
-            counts.chatCount > 0
-                ? "이 기간에 보관된 채팅 내용이 없어요. 누적 개수는 유지돼요."
-                : "이 기간에 저장된 내 채팅이 없어요.";
+            counts.chatCount > 0 ? "이 기간에 보관된 채팅 내용 없음. 누적 개수 유지." : "이 기간에 저장된 내 채팅 없음";
         panel.appendChild(empty);
         return panel;
     }
@@ -1388,7 +1386,7 @@ async function handleTitleClick(event, entry) {
             if (pendingWindow) {
                 pendingWindow.opener = null;
                 pendingWindow.document.title = "다시보기 찾는 중";
-                pendingWindow.document.body.textContent = "다시보기를 찾고 있어요...";
+                pendingWindow.document.body.textContent = "다시보기 찾는 중";
             }
         } catch (_) {
             pendingWindow = null;
@@ -1397,22 +1395,22 @@ async function handleTitleClick(event, entry) {
 
     resolvingReplayEntryIds.add(entry.id);
     renderList();
-    showMessage("해당 방송의 다시보기를 찾고 있어요.");
+    showMessage("해당 방송 다시보기 찾는 중");
 
     try {
         const videoNo = await resolveReplayVideoNo(entry);
         if (!videoNo) {
             if (pendingWindow && !pendingWindow.closed) pendingWindow.close();
-            showMessage("해당 방송의 다시보기를 찾지 못했어요.", "error");
+            showMessage("해당 방송의 다시보기를 찾지 못함", "error");
             return;
         }
 
         await persistReplayVideoNo(entry, videoNo);
         openUrlInNewTab(`https://chzzk.naver.com/video/${encodeURIComponent(videoNo)}`, pendingWindow);
-        showMessage("다시보기 링크를 찾았어요.");
+        showMessage("다시보기 링크 확인");
     } catch (_) {
         if (pendingWindow && !pendingWindow.closed) pendingWindow.close();
-        showMessage("다시보기를 찾지 못했어요.", "error");
+        showMessage("다시보기를 찾지 못함", "error");
     } finally {
         resolvingReplayEntryIds.delete(entry.id);
         renderList();
@@ -1701,16 +1699,16 @@ function buildHistoryEmptyState() {
     const empty = document.createElement("div");
     empty.className = "history-empty";
     const headline = document.createElement("p");
-    headline.textContent = entries.length ? "조건에 맞는 시청 기록이 없어요." : "아직 저장된 시청 기록이 없어요.";
+    headline.textContent = entries.length ? "조건에 맞는 시청 기록 없음" : "저장된 시청 기록 없음";
     const hint = document.createElement("p");
     hint.className = "history-empty-hint";
     if (entries.length) {
-        hint.textContent = "검색어나 기간을 바꾸거나 다른 날짜를 골라 보세요.";
+        hint.textContent = "다른 검색어·기간·날짜로 다시 확인";
     } else {
         const link = document.createElement("a");
         link.href = "options.html";
         link.textContent = "설정";
-        hint.append("라이브를 일정 시간 이상 보면 여기에 기록돼요. 기록 저장 여부는 ", link, "에서 바꿀 수 있어요.");
+        hint.append("라이브를 일정 시간 이상 시청하면 기록. 저장 여부는 ", link, "에서 변경 가능.");
     }
     empty.append(headline, hint);
     return empty;
@@ -1902,7 +1900,7 @@ function renderSummary() {
     monthWatchLabelEl.textContent = `${selectedMonth}월 시청`;
     document.getElementById("donationImportUpdated").textContent = importedDonations?.updatedAt
         ? `마지막 갱신: ${formatKstDateTime(importedDonations.updatedAt)}`
-        : "아직 갱신한 내역이 없어요.";
+        : "갱신한 내역 없음";
 
     if (storage) {
         noticeEl.dataset.state = "saved";
@@ -2072,7 +2070,7 @@ function renderRanking(donations = getDonationView()) {
     if (!ranked.length) {
         const empty = document.createElement("li");
         empty.className = "history-empty";
-        empty.textContent = "이 기간에 저장된 시청 기록이 없어요.";
+        empty.textContent = "이 기간에 저장된 시청 기록 없음";
         fragment.appendChild(empty);
     }
     channelRankingEl.replaceChildren(fragment);
@@ -2125,8 +2123,8 @@ function renderActivity(donations = getDonationView()) {
     syncDonationImportVisibility();
     if (isDonation) {
         document.getElementById("donationImportDescription").textContent = donations.incomplete
-            ? "갱신 이후 후원 일부의 상세 기록이 정리되어 합계에 빠질 수 있어요. 후원 내역을 갱신해 주세요."
-            : "갱신한 내역과 이후 새 후원을 함께 보여 줘요. 같은 기간을 중복해서 더하지 않으며, 후원은 채널명으로 검색해요.";
+            ? "갱신 이후 정리된 후원 상세 기록은 합계에서 빠질 수 있음. ‘후원 내역 갱신’으로 확인."
+            : "갱신한 내역과 이후 새 후원을 중복 없이 표시. 채널명으로 검색 가능.";
         activitySummaryEl.textContent = `내 후원 ${donations.amount.toLocaleString()}치즈 (${donations.count.toLocaleString()}회)`;
         const fragment = document.createDocumentFragment();
         appendActivityRows(
@@ -2143,7 +2141,7 @@ function renderActivity(donations = getDonationView()) {
         if (!donations.rows.length) {
             const empty = document.createElement("li");
             empty.className = "history-empty";
-            empty.textContent = "이 조건에 보관된 후원이 없어요. 후원 내역 갱신으로 확인할 수 있어요.";
+            empty.textContent = "이 조건에 보관된 후원 없음. ‘후원 내역 갱신’으로 확인.";
             fragment.appendChild(empty);
         }
         activityListEl.replaceChildren(fragment);
@@ -2181,7 +2179,7 @@ function renderActivity(donations = getDonationView()) {
     if (!rows.length) {
         const empty = document.createElement("li");
         empty.className = "history-empty";
-        empty.textContent = "이 조건에 보관된 내역이 없어요.";
+        empty.textContent = "이 조건에 보관된 내역 없음";
         fragment.appendChild(empty);
     }
     activityListEl.replaceChildren(fragment);
@@ -2261,7 +2259,7 @@ async function loadHistory({ resetToLatest = false, silent = false } = {}) {
         if (generation !== historyLoadGeneration) return false;
         noticeEl.dataset.state = "dirty";
         noticeEl.textContent = "불러오기 실패";
-        showMessage("시청 기록을 불러오지 못했어요. 새로고침 버튼을 눌러 다시 시도해 주세요.", "error", "load");
+        showMessage("시청 기록 불러오기 실패. ‘새로고침’으로 다시 시도.", "error", "load");
         return false;
     }
 }
@@ -2277,12 +2275,12 @@ function scheduleStorageChangeReload() {
 
 async function refreshHistory() {
     if (await loadHistory({ silent: false })) {
-        showMessage("시청 기록을 새로고침했어요.");
+        showMessage("시청 기록 새로고침 완료");
     }
 }
 
 async function clearHistory() {
-    if (!confirm("이 브라우저에 저장된 시청 기록을 모두 삭제할까요?")) return;
+    if (!confirm("이 브라우저의 시청 기록 전체 삭제?")) return;
 
     try {
         await sendWatchHistoryMutation({ kind: "clearHistory", cutoffAt: Date.now() });
@@ -2295,9 +2293,9 @@ async function clearHistory() {
         expandedChatLimits.clear();
         ensureSelectedMonth({ resetToLatest: true });
         renderAll();
-        showMessage("시청 기록을 삭제했어요.");
+        showMessage("시청 기록 삭제 완료");
     } catch (_) {
-        showMessage("시청 기록을 삭제하지 못했어요.", "error");
+        showMessage("시청 기록 삭제 실패", "error");
     }
 }
 
@@ -2319,10 +2317,10 @@ async function deleteEntriesByIds(ids, successMessage) {
         }
         pruneSelectedEntryIds();
         renderAll();
-        showMessage(successMessage || "선택한 시청 기록을 삭제했어요.");
+        showMessage(successMessage || "선택한 시청 기록 삭제 완료");
         return true;
     } catch (_) {
-        showMessage("시청 기록을 삭제하지 못했어요.", "error");
+        showMessage("시청 기록 삭제 실패", "error");
         return false;
     }
 }
@@ -2332,17 +2330,17 @@ async function deleteSelectedEntries() {
     if (count <= 0) return;
     const visibleIds = new Set(getVisibleEntryIds());
     const hiddenCount = Array.from(selectedEntryIds).filter((id) => !visibleIds.has(id)).length;
-    const hiddenNotice = hiddenCount > 0 ? ` 현재 목록 밖의 기록 ${hiddenCount}개도 함께 삭제돼요.` : "";
-    if (!confirm(`선택한 시청 기록 ${count}개를 삭제할까요?${hiddenNotice}`)) return;
+    const hiddenNotice = hiddenCount > 0 ? ` 현재 목록 밖의 기록 ${hiddenCount}개도 함께 삭제.` : "";
+    if (!confirm(`선택한 시청 기록 ${count}개 삭제?${hiddenNotice}`)) return;
 
-    await deleteEntriesByIds(selectedEntryIds, `선택한 시청 기록 ${count}개를 삭제했어요.`);
+    await deleteEntriesByIds(selectedEntryIds, `시청 기록 ${count}개 삭제 완료`);
 }
 
 async function deleteSingleEntry(entry) {
     if (!entry?.id) return;
-    if (!confirm(`"${entry.title}" 시청 기록을 삭제할까요?`)) return;
+    if (!confirm(`"${entry.title}" 시청 기록 삭제?`)) return;
 
-    await deleteEntriesByIds([entry.id], "시청 기록 1개를 삭제했어요.");
+    await deleteEntriesByIds([entry.id], "시청 기록 1개 삭제 완료");
 }
 
 prevMonthButton.addEventListener("click", () => shiftSelectedMonth(-1));
@@ -2459,7 +2457,7 @@ donationImportRefresh.addEventListener("click", () => {
         const port = chrome.runtime.connect({ name: donationHistory.PORT_NAME });
         donationImportPort = port;
         setDonationImportBusy(true);
-        showDonationImportStatus("로그인 상태와 후원 내역을 확인하고 있어요.");
+        showDonationImportStatus("로그인 상태와 후원 내역 확인 중");
         const finish = () => {
             if (donationImportPort !== port) return;
             donationImportPort = null;
@@ -2471,9 +2469,7 @@ donationImportRefresh.addEventListener("click", () => {
             if (donationImportPort !== port) return;
             donationImportPort = null;
             setDonationImportBusy(false);
-            showDonationImportFailure(
-                error ? "가져오기 연결이 끊겼어요. 다시 시도해 주세요." : "가져오기가 중단됐어요. 다시 시도해 주세요."
-            );
+            showDonationImportFailure(error ? "후원 가져오기 연결 끊김. 다시 시도." : "후원 가져오기 중단. 다시 시도.");
         });
         port.onMessage.addListener(async (message) => {
             if (donationImportPort !== port) return;
@@ -2483,7 +2479,7 @@ donationImportRefresh.addEventListener("click", () => {
                 );
             } else if (message.type === "saving") {
                 donationImportCancel.disabled = true;
-                showDonationImportStatus("확인한 후원 내역을 저장하고 있어요.");
+                showDonationImportStatus("확인한 후원 내역 저장 중");
             } else if (message.type === "error") {
                 finish();
                 showDonationImportFailure(message.message);
@@ -2495,7 +2491,7 @@ donationImportRefresh.addEventListener("click", () => {
                 resetViewPages();
                 await loadHistory({ silent: true });
                 if (generation !== donationImportGeneration) return;
-                showDonationImportStatus(`${message.monthCount}개월을 확인해 후원 내역을 갱신했어요.`);
+                showDonationImportStatus(`${message.monthCount}개월 후원 내역 갱신 완료`);
                 donationImportRefresh.focus({ preventScroll: true });
             }
         });
@@ -2504,25 +2500,25 @@ donationImportRefresh.addEventListener("click", () => {
         donationImportPort?.disconnect();
         donationImportPort = null;
         setDonationImportBusy(false);
-        showDonationImportFailure(error.message || "가져오기를 시작하지 못했어요.");
+        showDonationImportFailure(error.message || "후원 가져오기 시작 실패");
     }
 });
 
 donationImportCancel.addEventListener("click", () => {
     donationImportPort?.postMessage({ type: "cancel" });
     donationImportCancel.disabled = true;
-    showDonationImportStatus("가져오기를 취소하고 있어요.");
+    showDonationImportStatus("후원 가져오기 취소 중");
 });
 window.addEventListener("pagehide", () => donationImportPort?.disconnect());
 window.addEventListener("pagehide", cancelChannelIconLookups);
 clearDonationImportButton.addEventListener("click", async () => {
-    if (!confirm("갱신으로 받은 후원 내역과 조회 상태를 초기화할까요? 실시간으로 저장한 기록은 유지돼요.")) return;
+    if (!confirm("갱신한 후원 내역과 조회 상태를 초기화? 실시간 저장 기록 유지.")) return;
     try {
         await sendWatchHistoryMutation({ kind: "clearDonationImport", cutoffAt: Date.now() });
         await loadHistory({ silent: true });
-        showMessage("후원 갱신 기록을 초기화했어요. 다음 갱신은 전체 기간을 조회해요.");
+        showMessage("후원 갱신 기록 초기화 완료. 다음 갱신은 전체 기간 조회.");
     } catch (_) {
-        showMessage("후원 갱신 기록을 초기화하지 못했어요.", "error");
+        showMessage("후원 갱신 기록 초기화 실패", "error");
     }
 });
 

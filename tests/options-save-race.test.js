@@ -422,7 +422,7 @@ test("a long-open options page saves only its edits and keeps a value changed el
     assert.equal(stored.autoQualityEnabled, true);
     assert.equal(ui.option("skipSeconds").value, "10", "the form shows the value read inside the settings lock");
     assert.equal(ui.notice().dataset.state, "saved");
-    assert.equal(ui.message(), "옵션을 저장했어요.");
+    assert.equal(ui.message(), "옵션 저장 완료.");
 });
 
 test("storage changes refresh untouched fields, keep pending edits, and survive a write in flight", async (t) => {
@@ -478,10 +478,7 @@ for (const notified of [true, false]) {
         assert.equal(stored.skipSeconds, 20);
         assert.equal(ui.option("skipSeconds").value, "20");
         assert.equal(ui.notice().dataset.state, "saved");
-        assert.equal(
-            ui.message(),
-            "옵션을 저장했어요. 저장하기 전에 다른 곳에서도 바뀐 항목 1개는 이 화면에서 고른 값으로 저장했어요."
-        );
+        assert.equal(ui.message(), "옵션 저장 완료. 다른 화면에서도 바뀐 항목 1개는 이 화면의 값으로 저장.");
     });
 }
 
@@ -603,10 +600,7 @@ test("a speed key saved elsewhere never mixes into this page's unsaved speed key
     assert.deepEqual(speedTrio(stored), ["KeyA", "KeyE", "KeyD"], "the user's keys are saved, not the defaults");
     assert.deepEqual(ui.form(), ["KeyA", "KeyE", "KeyD"]);
     assert.equal(ui.notice().dataset.state, "saved");
-    assert.equal(
-        ui.message(),
-        "옵션을 저장했어요. 저장하기 전에 다른 곳에서도 바뀐 항목 1개는 이 화면에서 고른 값으로 저장했어요."
-    );
+    assert.equal(ui.message(), "옵션 저장 완료. 다른 화면에서도 바뀐 항목 1개는 이 화면의 값으로 저장.");
 });
 
 test("speed keys from elsewhere apply as one unit, and a touched key keeps this page's whole set", async (t) => {
@@ -625,10 +619,7 @@ test("speed keys from elsewhere apply as one unit, and a touched key keeps this 
     await waitForCallbacks();
     setCalls[0].complete();
     assert.deepEqual(speedTrio(stored), ["KeyB", "KeyA", "KeyD"]);
-    assert.equal(
-        ui.message(),
-        "옵션을 저장했어요. 저장하기 전에 다른 곳에서도 바뀐 항목 2개는 이 화면에서 고른 값으로 저장했어요."
-    );
+    assert.equal(ui.message(), "옵션 저장 완료. 다른 화면에서도 바뀐 항목 2개는 이 화면의 값으로 저장.");
 });
 
 test("a duplicated speed key in the form is never saved as the default keys", async (t) => {
@@ -642,7 +633,7 @@ test("a duplicated speed key in the form is never saved as the default keys", as
 
     assert.equal(setCalls.length, 0);
     assert.deepEqual(speedTrio(stored), ["KeyA", "KeyB", "KeyD"]);
-    assert.equal(ui.message(), "배속 감소·증가·초기화는 서로 다른 키로 지정해 주세요.");
+    assert.equal(ui.message(), "배속 감소·증가·초기화는 서로 다른 키로 지정");
     assert.equal(dom.window.CheeseSpannerOptionsPage.hasUnsavedChanges(), true, "the edit stays pending");
 });
 

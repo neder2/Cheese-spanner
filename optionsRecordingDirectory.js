@@ -29,11 +29,11 @@
             downloads.hidden = Boolean(handle);
             status.textContent = handle
                 ? granted
-                    ? `선택한 폴더: ${handle.name} · 이 기기에서 기억해요.`
-                    : `‘${handle.name}’ 폴더에 접근하려면 ‘폴더 선택’을 눌러 다시 허용해 주세요.`
-                : "현재는 Chrome 다운로드 폴더 설정을 사용해요.";
+                    ? `저장 폴더: ${handle.name} · 이 기기에서 기억`
+                    : `‘${handle.name}’ 폴더 접근 권한 필요. ‘폴더 선택’에서 다시 허용.`
+                : "현재 Chrome 다운로드 폴더 설정 사용 중";
         } catch (_) {
-            if (current === revision) status.textContent = "저장 폴더를 불러오지 못했어요. 폴더를 다시 선택해 주세요.";
+            if (current === revision) status.textContent = "저장 폴더 불러오기 실패. 폴더 다시 선택.";
         }
     }
 
@@ -44,12 +44,12 @@
             try {
                 await chrome.tabs.create({ url: chrome.runtime.getURL("options.html#recording-folder") });
             } catch (_) {
-                status.textContent = "확장 설정을 새 탭으로 열지 못했어요.";
+                status.textContent = "확장 설정을 새 탭으로 열지 못함";
             }
             return;
         }
         if (typeof window.showDirectoryPicker !== "function") {
-            status.textContent = "이 브라우저는 폴더 선택을 지원하지 않아요. 아래 다운로드 폴더 설정을 이용해 주세요.";
+            status.textContent = "이 브라우저에서 폴더 선택 불가. 아래 다운로드 폴더 설정 사용.";
             return;
         }
         busy = true;
@@ -68,8 +68,7 @@
             await directory.set(handle);
             await refresh();
         } catch (error) {
-            if (error.name !== "AbortError")
-                status.textContent = "폴더를 선택하지 못했어요. 폴더 접근을 허용한 뒤 다시 시도해 주세요.";
+            if (error.name !== "AbortError") status.textContent = "폴더 선택 실패. 폴더 접근을 허용한 뒤 다시 시도.";
         } finally {
             releaseControls();
         }
@@ -85,7 +84,7 @@
             await directory.set(null);
             await refresh();
         } catch (_) {
-            status.textContent = "저장 폴더를 변경하지 못했어요. 다시 시도해 주세요.";
+            status.textContent = "저장 폴더 변경 실패. 다시 시도.";
         } finally {
             releaseControls();
         }

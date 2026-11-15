@@ -1329,7 +1329,7 @@ ${ORDER_RULES}
                     if (statusArmTimer) clearTimeout(statusArmTimer);
                     statusArmTimer = 0;
                     statusArmed = false;
-                    sendCommand({ type: "resetCorrupt" }, { success: "폴더 정보 초기화됨." });
+                    sendCommand({ type: "resetCorrupt" }, { success: "폴더 정보 초기화 완료" });
                 })
             );
             statusRow.replaceChildren(
@@ -1686,7 +1686,7 @@ ${ORDER_RULES}
         sendCommand(
             { type: "rename", folderId, name },
             {
-                success: `‘${previousName}’ 폴더 이름을 ‘${name}’(으)로 변경함.`,
+                success: `폴더 이름 변경 · ‘${previousName}’ → ‘${name}’`,
                 undoable: true,
                 onSuccess: () => {
                     if (renaming?.folderId === folderId) finishRename(!fromBlur);
@@ -1734,7 +1734,7 @@ ${ORDER_RULES}
             ? { type: "createWith", folderId, name, channelId: channel.channelId }
             : { type: "create", folderId, name };
         sendCommand(command, {
-            success: channel ? `${channel.name} 채널로 ‘${name}’ 폴더 생성됨.` : "",
+            success: channel ? `${channel.name} 채널로 ‘${name}’ 폴더 생성` : "",
             undoable: Boolean(channel),
         });
         // 화면에 먼저 생긴 폴더의 이름을 바로 바꿀 수 있어요. 저장이 실패하면 폴더와 함께 입력칸도 사라져요.
@@ -2212,7 +2212,7 @@ ${ORDER_RULES}
             if (folder)
                 sendCommand(
                     { type: "unassign", folderId: folder.id, channelId: drag.channelId },
-                    { success: `${channelName} 채널을 ‘${folder.name}’ 폴더에서 제외함.`, undoable: true }
+                    { success: `${channelName} 채널을 ‘${folder.name}’ 폴더에서 제외`, undoable: true }
                 );
             else rebuildStates({ animate: true });
             return;
@@ -2229,7 +2229,7 @@ ${ORDER_RULES}
         }
         sendCommand(
             { type: "assign", folderId: folder.id, channelId: drag.channelId },
-            { success: `${channelName} 채널을 ‘${folder.name}’ 폴더에 추가함.`, undoable: true }
+            { success: `${channelName} 채널을 ‘${folder.name}’ 폴더에 추가`, undoable: true }
         );
     }
 
@@ -2252,7 +2252,7 @@ ${ORDER_RULES}
             rebuildStates({ animate: true });
             return;
         }
-        sendCommand(command, { success: `‘${folder.name}’ 폴더 순서 변경됨.`, undoable: true });
+        sendCommand(command, { success: `‘${folder.name}’ 폴더 순서 변경`, undoable: true });
     }
 
     // ── 떠 있는 메뉴·채널 선택·상태 안내 ───────────────────────────────────────────────
@@ -2559,7 +2559,7 @@ ${ORDER_RULES}
                 const neighbor = folderState.folders[at + 1] || folderState.folders[at - 1] || null;
                 sendCommand(
                     { type: "delete", folderId: folder.id },
-                    { success: `‘${folder.name}’ 폴더 삭제됨(팔로우 유지).`, undoable: true }
+                    { success: `‘${folder.name}’ 폴더 삭제(팔로우 유지)`, undoable: true }
                 );
                 // 지운 폴더의 머리 행은 사라지므로 초점은 옆 폴더 이름으로, 마지막 폴더였으면 팔로잉 새로고침으로 옮긴다.
                 const next = neighbor
@@ -2634,7 +2634,7 @@ ${ORDER_RULES}
         sendCommand(
             { type: "move", folderId, offset },
             {
-                success: `‘${folder.name}’ 폴더를 ${offset < 0 ? "위로" : "아래로"} 이동함.`,
+                success: `‘${folder.name}’ 폴더 ${offset < 0 ? "위로" : "아래로"} 이동`,
                 undoable: true,
                 onSuccess: () => {
                     if (!keepMenu || layer?.kind !== "menu" || layer.folderId !== folderId) return;
@@ -2682,7 +2682,7 @@ ${ORDER_RULES}
         const foot = el(
             "p",
             "bcff-picker-foot",
-            "체크 시 이 폴더로 이동(다른 폴더에서는 해제). 현재 목록에 보이는 채널만 표시."
+            "체크로 추가·이동, 해제로 제외. 현재 팔로잉 목록과 이 폴더의 채널 표시."
         );
         node.append(top, search, list, foot);
         layer.title = title;
@@ -2759,12 +2759,12 @@ ${ORDER_RULES}
             if (latest.channelIds.includes(channel.channelId))
                 sendCommand(
                     { type: "unassign", folderId: latest.id, channelId: channel.channelId },
-                    { success: `${channel.name} 채널을 ‘${latest.name}’ 폴더에서 제외함.`, undoable: true }
+                    { success: `${channel.name} 채널을 ‘${latest.name}’ 폴더에서 제외`, undoable: true }
                 );
             else
                 sendCommand(
                     { type: "assign", folderId: latest.id, channelId: channel.channelId },
-                    { success: `${channel.name} 채널을 ‘${latest.name}’ 폴더에 추가함.`, undoable: true }
+                    { success: `${channel.name} 채널을 ‘${latest.name}’ 폴더에 추가`, undoable: true }
                 );
         });
         button.setAttribute("aria-pressed", String(inFolder));
@@ -2788,7 +2788,7 @@ ${ORDER_RULES}
         const detail = el(
             "span",
             "bcff-pick-detail",
-            liveState === "1" ? "방송 중" : liveState === "0" ? "오프라인" : "목록에 없어 방송 여부 모름"
+            liveState === "1" ? "방송 중" : liveState === "0" ? "오프라인" : "방송 여부 미확인"
         );
         detail.dataset.live = liveState;
         if (other) detail.textContent += ` · ‘${other.name}’에 있음`;

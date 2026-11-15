@@ -1,8 +1,11 @@
 // Read-only playback diagnostics. Sampling and live metadata requests run only while open.
-(() => {
+(function install(auxiliaryIndex) {
     "use strict";
-    if (CheeseSpanner.streamInfo) return;
-    CheeseSpanner.streamInfo = {};
+    const auxiliary = Number.isInteger(auxiliaryIndex);
+    if (!auxiliary) {
+        if (CheeseSpanner.streamInfo) return;
+        CheeseSpanner.streamInfo = {};
+    }
     const {
         bindFeatureOptions,
         createMutationObserverSync,
@@ -15,7 +18,8 @@
         fetchJson,
         NATIVE_AD_MEDIA_SELECTOR,
     } = CheeseSpanner.utils;
-    const ID = "cheese-spanner-stream-info";
+    const ID = auxiliary ? `cheese-spanner-stream-info-aux-${auxiliaryIndex}` : "cheese-spanner-stream-info";
+    const AUXILIARY = "cheese-spanner:vod-multiview:auxiliary";
     const SETTINGS_MENU = ':scope > .pzp-pc__settings[role="menu"]';
     // Shared with ambientGlow.js: every injected gear-menu row is marked so each key bridge sees all of them.
     const MENU_ENTRY_ATTR = "data-cheese-spanner-menu-entry";
@@ -57,6 +61,7 @@
     let observer = null;
     let removeRoute = null;
     let video = null;
+    let videoNo = null;
     let player = null;
     let settingsMenu = null;
     let settingsItem = null;
@@ -648,7 +653,7 @@
         graph.replaceChildren(...nodes);
         setValue(
             "graph-description",
-            `가로축은 60초 전부터 현재까지, 세로축은 0~${top}초예요. 현재 실선은 라이브 지연(추정) ${values.get("delay").textContent}, 점선은 재생 버퍼 ${values.get("buffer").textContent}예요. ${view.observedSeconds.toFixed(1)}초를 관측했고 측정하지 않은 구간은 연결하지 않아요.`
+            `가로축: 최근 60초. 세로축: 0~${top}초. 실선: 추정 라이브 지연 ${values.get("delay").textContent}. 점선: 재생 버퍼 ${values.get("buffer").textContent}. 관측 ${view.observedSeconds.toFixed(1)}초. 미측정 구간은 비워 둠.`
         );
     }
 
@@ -667,7 +672,7 @@
         }
         panel = document.createElement("section");
         panelRoute = location.pathname;
-        livePanel = isLiveRoute();
+        livePanel = !auxiliary && isLiveRoute();
         model = livePanel
             ? CheeseSpanner.streamInfoModel.create({ sampleIntervalMs: 1000, stallThresholdMs: 500 })
             : null;
@@ -709,8 +714,7 @@
                 ],
                 "bcsi-current"
             );
-            values.get("delay").title =
-                "네이티브 라이브 끝 기준의 추정치이며, 촬영부터 화면까지의 전체 지연이 아니에요.";
+            values.get("delay").title = "플레이어의 라이브 끝 기준 추정값. 촬영부터 화면까지의 전체 지연 제외";
             const figure = document.createElement("figure");
             const legend = document.createElement("div");
             legend.className = "bcsi-legend";
@@ -762,7 +766,7 @@
             ["speed", "재생 속도"],
         ]);
         setValue("hardware", inspectGraphicsAcceleration());
-        values.get("hardware").title = "WebGL 렌더러 기준이며 현재 영상의 하드웨어 디코딩 여부와 다를 수 있어요.";
+        values.get("hardware").title = "WebGL 렌더러 기준. 현재 영상의 디코딩 방식과 다를 수 있음";
         player.append(panel);
         updateSettingsItem();
         startSampling();
@@ -791,8 +795,12 @@
             unmount();
             return;
         }
-        const nextVideo = getMainVideoElement();
-        const nextPlayer = getPlayerRoot(nextVideo);
+        const target = auxiliary
+            ? CheeseSpanner.vodMultiview?.getAuxiliaries().find(({ index }) => index === auxiliaryIndex)
+            : null;
+        const nextVideo = auxiliary ? target?.video : getMainVideoElement();
+        const nextPlayer = auxiliary ? target?.player : getPlayerRoot(nextVideo);
+        const nextNo = target?.media.videoNo ?? null;
         if (!nextVideo || !nextPlayer?.contains(nextVideo)) {
             if (panel && livePanel && panelRoute === location.pathname) {
                 if (video) {
@@ -808,7 +816,7 @@
             unmount();
             return;
         }
-        if (video !== nextVideo || player !== nextPlayer || (panel && !panel.isConnected)) {
+        if (video !== nextVideo || player !== nextPlayer || videoNo !== nextNo || (panel && !panel.isConnected)) {
             const changedVideo = video !== nextVideo;
             if (!(panel && livePanel && panelRoute === location.pathname)) unmount();
             else {
@@ -817,6 +825,7 @@
             }
             video = nextVideo;
             player = nextPlayer;
+            videoNo = nextNo;
             for (const type of MEDIA_EVENTS) video.addEventListener(type, onMediaEvent);
             if (panel) {
                 if (panel.parentElement !== player) player.append(panel);
@@ -903,7 +912,7 @@
     }
 
     bindFeatureOptions((options) => {
-        enabled = options.streamInfoEnabled !== false;
+        enabled = options.streamInfoEnabled !== false && (!auxiliary || options.vodMultiviewEnabled === true);
         window.removeEventListener("pagehide", pageHide);
         window.removeEventListener("pageshow", pageShow);
         if (enabled) {
@@ -912,4 +921,15 @@
             startRuntime();
         } else stopRuntime();
     });
+    if (auxiliary) document.addEventListener(AUXILIARY, sync);
+    else {
+        const installed = new Set();
+        document.addEventListener(AUXILIARY, () => {
+            for (const { index } of CheeseSpanner.vodMultiview?.getAuxiliaries() || []) {
+                if (installed.has(index)) continue;
+                installed.add(index);
+                install(index);
+            }
+        });
+    }
 })();

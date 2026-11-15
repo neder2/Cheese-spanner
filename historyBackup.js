@@ -79,9 +79,9 @@
                     if (error) reject(error);
                     else resolve(value);
                 };
-                const cancel = () => finish(new Error("요청 확인을 중단했어요."));
+                const cancel = () => finish(new Error("요청 확인 중단"));
                 pending.add(cancel);
-                const lost = () => finish(new Error("응답을 확인하지 못했어요. 다시 시도해 주세요."));
+                const lost = () => finish(new Error("응답 확인 실패. 다시 시도."));
                 const timer = setTimeout(lost, RESPONSE_TIMEOUT_MS);
                 try {
                     chrome.runtime.sendMessage({ type: MESSAGE_TYPE, version: 1, action, ...fields }, (response) => {
@@ -106,7 +106,7 @@
                 return Promise.resolve()
                     .then(() => file.text())
                     .catch(() => {
-                        throw new Error("파일을 읽지 못했어요. 원본 파일을 다시 선택해 주세요.");
+                        throw new Error("파일 읽기 실패. 원본 파일 다시 선택.");
                     });
             return new Promise((resolve, reject) => {
                 const fileReader = new FileReader();
@@ -120,11 +120,11 @@
                 };
                 fileReader.onerror = () => {
                     finish();
-                    reject(new Error("파일을 읽지 못했어요. 원본 파일을 다시 선택해 주세요."));
+                    reject(new Error("파일 읽기 실패. 원본 파일 다시 선택."));
                 };
                 fileReader.onabort = () => {
                     finish();
-                    reject(new Error("파일 읽기를 취소했어요."));
+                    reject(new Error("파일 읽기 취소"));
                 };
                 fileReader.readAsText(file, "UTF-8");
             });
@@ -175,8 +175,8 @@
             }
             element("Summary").replaceChildren(fragment);
             element("Restore").textContent = summary.restored
-                ? `삭제했던 기록이 있는 방송 ${summary.restored}개의 시청 기록·내 채팅을 복원해요. 이 내용을 확인한 뒤 기록 합치기를 눌러 주세요.`
-                : "삭제했던 기록의 복원 대상은 없어요.";
+                ? `삭제한 기록이 있는 방송 ${summary.restored}개의 시청 기록·내 채팅 복원 예정. 확인 후 ‘기록 합치기’ 선택.`
+                : "복원할 삭제 기록 없음";
             const skipped = outcome.items.filter((item) => item.disposition === "skipped");
             const list = element("SkippedList");
             list.replaceChildren();
@@ -184,29 +184,27 @@
                 const row = document.createElement("li");
                 const reason =
                     item.reason === "identity-conflict"
-                        ? "방송 식별 정보가 충돌해 정확히 합칠 수 없어요."
-                        : "기존 기록의 상세 정보가 부족해 중복을 확인할 수 없어요.";
+                        ? "방송 식별 정보 충돌로 병합 불가"
+                        : "기존 기록의 상세 정보가 부족해 중복 확인 불가";
                 row.textContent = `${item.title || "제목 없는 방송"} · ${item.channelName || "채널 이름 없음"} — ${reason}`;
                 list.append(row);
             }
             element("Skipped").hidden = skipped.length === 0;
-            element("SkippedTitle").textContent = `건너뛸 방송 ${skipped.length}개 · 현재 기록을 유지해요`;
+            element("SkippedTitle").textContent = `건너뛸 방송 ${skipped.length}개 · 현재 기록 유지`;
             preview.hidden = false;
             setPhase("preview");
             if (outcome.status === "reconfirm") {
-                showStatus("현재 기록이나 확인 유효 시간이 바뀌었어요. 새 미리보기를 확인한 뒤 다시 합쳐 주세요.");
+                showStatus("기록이 바뀌었거나 확인 시간이 만료됨. 새 미리보기 확인 후 다시 합치기.");
             } else if (summary.records === 0) {
-                showStatus("빈 백업 파일이에요. 적용할 기록이 없어요.");
+                showStatus("빈 백업 파일. 적용할 기록 없음.");
             } else if (summary.added + summary.updated === 0) {
                 showStatus(
                     summary.skipped
-                        ? "동일하거나 정확히 합칠 수 없는 기록만 있어요. 현재 기록은 변경하지 않아요."
-                        : "모든 기록이 현재 기록과 같아요. 변경할 내용이 없어요."
+                        ? "같은 기록 또는 정확히 합칠 수 없는 기록만 있음. 현재 기록 유지."
+                        : "백업과 현재 기록이 같아 변경 없음"
                 );
             } else {
-                showStatus(
-                    "파일 검사가 끝났어요. 복원·건너뜀 내용을 확인한 뒤 기록을 합쳐 주세요. 아직 저장하지 않았어요."
-                );
+                showStatus("파일 검사 완료. 복원·건너뜀 항목 확인 후 ‘기록 합치기’ 선택. 아직 저장 전.");
             }
             element("PreviewTitle").focus({ preventScroll: true });
         }
@@ -225,25 +223,24 @@
             const id = generation;
             filename = file.name;
             setPhase("reading");
-            showStatus("백업 파일을 읽고 있어요.");
+            showStatus("백업 파일 읽는 중");
             try {
                 if (file.size > api.LIMITS.maxBytes)
-                    throw new Error("16 MiB 이하의 백업 파일을 선택해 주세요. 기록은 변경하지 않았어요.");
+                    throw new Error("백업 파일은 16 MiB 이하만 선택 가능. 현재 기록 유지.");
                 const text = await readFile(file);
                 if (!current(id)) return;
                 setPhase("checking");
-                showStatus("파일 내용과 현재 기록에 합칠 결과를 확인하고 있어요.");
+                showStatus("파일 내용과 병합 미리보기 확인 중");
                 candidate = api.parseBackup(text);
                 const outcome = await request("preview", { backup: candidate });
                 if (!current(id)) return;
-                if (outcome.status !== "preview")
-                    throw new Error("미리보기 응답을 확인하지 못했어요. 파일을 다시 선택해 주세요.");
+                if (outcome.status !== "preview") throw new Error("미리보기 응답 확인 실패. 파일 다시 선택.");
                 showPreview(outcome);
             } catch (error) {
                 if (!current(id)) return;
                 clearPreview();
                 setPhase("idle");
-                showStatus(error.message || "백업 파일을 확인하지 못했어요. 다시 선택해 주세요.", true);
+                showStatus(error.message || "백업 파일 확인 실패. 파일 다시 선택.", true);
                 importButton.focus({ preventScroll: true });
             }
         });
@@ -252,7 +249,7 @@
             if (!["reading", "checking", "preview"].includes(phase)) return;
             abandon();
             setPhase("idle");
-            showStatus("불러오기를 취소했어요. 기록은 변경하지 않았어요.");
+            showStatus("불러오기 취소. 현재 기록 유지.");
             importButton.focus({ preventScroll: true });
         });
 
@@ -267,7 +264,7 @@
             if (phase !== "preview" || applyButton.disabled || !candidate) return;
             const id = generation;
             setPhase("importing");
-            showStatus("최신 기록을 확인하고 합치고 있어요.");
+            showStatus("최신 기록 확인 후 합치는 중");
             try {
                 const outcome = await request("import", {
                     backup: candidate,
@@ -278,13 +275,13 @@
                     showPreview(outcome);
                     return;
                 }
-                if (!["applied", "unchanged"].includes(outcome.status)) throw new Error("응답을 확인하지 못했어요.");
+                if (!["applied", "unchanged"].includes(outcome.status)) throw new Error("응답 확인 실패");
                 clearPreview();
                 setPhase("refreshing");
                 showStatus(
                     outcome.status === "applied"
-                        ? "기록을 합쳤어요. 화면을 새로 읽고 있어요."
-                        : "기록이 같아 변경하지 않았어요. 화면을 새로 읽고 있어요."
+                        ? "기록 합치기 완료. 화면 갱신 중."
+                        : "같은 기록이라 변경 없음. 화면 갱신 중."
                 );
                 let refreshed = false;
                 try {
@@ -294,11 +291,11 @@
                 }
                 if (!current(id)) return;
                 setPhase("idle");
-                const saved = outcome.status === "applied" ? "기록을 합쳤어요." : "기록이 같아 변경하지 않았어요.";
+                const saved = outcome.status === "applied" ? "기록 합치기 완료." : "같은 기록이라 변경 없음.";
                 showStatus(
                     refreshed
                         ? `${saved} 추가 ${outcome.summary.added}개 · 갱신 ${outcome.summary.updated}개 · 동일 ${outcome.summary.unchanged}개 · 건너뜀 ${outcome.summary.skipped}개.`
-                        : `${saved} 화면을 다시 읽지 못했어요. 새로고침 버튼으로 현재 기록을 확인해 주세요.`,
+                        : `${saved} 화면 갱신 실패. ‘새로고침’으로 현재 기록 확인.`,
                     !refreshed
                 );
                 importButton.focus({ preventScroll: true });
@@ -309,7 +306,7 @@
                 showStatus(
                     error.confirmedFailure
                         ? error.message
-                        : "합치기 결과를 확인하지 못했어요. 새로고침으로 현재 기록을 확인해 주세요. 같은 파일을 다시 불러와도 중복해서 합치지 않아요.",
+                        : "기록 합치기 결과 확인 실패. ‘새로고침’으로 현재 기록 확인. 같은 파일을 다시 불러와도 중복 없음.",
                     true
                 );
                 importButton.focus({ preventScroll: true });
@@ -327,11 +324,11 @@
             abandon();
             const id = generation;
             setPhase("exporting");
-            showStatus("전체 기간의 시청 기록과 내 채팅으로 백업 파일을 만들고 있어요.");
+            showStatus("전체 기간의 시청 기록·내 채팅 백업 중");
             try {
                 const outcome = await request("export");
                 if (!current(id)) return;
-                if (outcome.status !== "exported") throw new Error("백업 응답을 확인하지 못했어요.");
+                if (outcome.status !== "exported") throw new Error("백업 응답 확인 실패");
                 const file = api.validateBackup(outcome.backup);
                 const blob = new Blob([JSON.stringify(file)], { type: "application/json;charset=utf-8" });
                 const url = URL.createObjectURL(blob);
@@ -361,12 +358,12 @@
                     link.remove();
                 }
                 setPhase("idle");
-                showStatus("백업 파일 다운로드를 시작했어요. 브라우저의 다운로드 목록에서 저장 결과를 확인해 주세요.");
+                showStatus("백업 파일 다운로드 시작. 브라우저 다운로드 목록에서 저장 결과 확인.");
                 exportButton.focus({ preventScroll: true });
             } catch (error) {
                 if (!current(id)) return;
                 setPhase("idle");
-                showStatus(error.message || "백업 파일을 만들지 못했어요. 다시 시도해 주세요.", true);
+                showStatus(error.message || "백업 파일 만들기 실패. 다시 시도.", true);
             }
         });
 
@@ -379,7 +376,7 @@
             if (!event.persisted) return;
             active = true;
             setPhase("idle");
-            showStatus("현재 기록을 새로고침하고 백업 파일을 다시 선택해 주세요.");
+            showStatus("현재 기록을 새로고침한 뒤 백업 파일 다시 선택");
         });
         setPhase("idle");
     }

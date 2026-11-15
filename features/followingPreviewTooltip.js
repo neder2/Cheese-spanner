@@ -114,7 +114,7 @@
     const ELAPSED_REFRESH_MS = 1000;
     const UNKNOWN_TITLE = "\uC81C\uBAA9 \uC5C6\uB294 \uB77C\uC774\uBE0C";
     const LOADING_TITLE = "\uBBF8\uB9AC\uBCF4\uAE30 \uBD88\uB7EC\uC624\uB294 \uC911";
-    const ERROR_TITLE = "\uBBF8\uB9AC\uBCF4\uAE30\uB97C \uBD88\uB7EC\uC62C \uC218 \uC5C6\uC5B4\uC694";
+    const ERROR_TITLE = "미리보기 불러오기 실패";
     // Colors, radii, the popover shadow and the bundled Pretendard face come from shared/uiTheme.js (--bct-*).
     // Marks drawn over the video or thumbnail keep fixed colors because they sit on the picture, not the theme.
     const STYLE_TEXT = `

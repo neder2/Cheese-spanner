@@ -63,7 +63,8 @@
     const TARGET_SELECTOR = "video, [class*='pzp']";
     const PLAYER_TARGET_SELECTOR = "video, .pzp-pc__settings";
     const MULTIVIEW_ATTR = "data-bcmv-host";
-    const MULTIVIEW_SELECTOR = `[${MULTIVIEW_ATTR}="active"]`;
+    const VOD_MULTIVIEW_ATTR = "data-bcvm-split";
+    const MULTIVIEW_SELECTOR = `[${MULTIVIEW_ATTR}="active"], [${VOD_MULTIVIEW_ATTR}]`;
     // Scrolling a live page down shrinks the player into the native scroll mini player
     // (.chzzk_player.miniplayer: fixed 353x198 at the top right, z-index 1000), and in-page PiP
     // floats it as .pip_mode. A glow around a floating player would sit over the chat and header
@@ -759,6 +760,7 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
             if (row.type === "attributes")
                 return (
                     row.attributeName === MULTIVIEW_ATTR ||
+                    row.attributeName === VOD_MULTIVIEW_ATTR ||
                     row.target.matches(POPUP_SELECTOR) ||
                     [...popupNodes].some((node) => row.target.contains(node))
                 );
@@ -788,7 +790,7 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
                 childList: true,
                 subtree: true,
                 attributes: true,
-                attributeFilter: [MULTIVIEW_ATTR, "class", "style", "hidden", "role"],
+                attributeFilter: [MULTIVIEW_ATTR, VOD_MULTIVIEW_ATTR, "class", "style", "hidden", "role"],
             },
             shouldSchedule: relevantMutations,
             schedule,

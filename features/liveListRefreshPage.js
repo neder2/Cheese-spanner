@@ -58,10 +58,10 @@
             );
             if (token !== generation || location.pathname !== "/lives" || !current.isConnected) return;
             window.dispatchEvent(new CustomEvent("cheese-spanner:live-list-refreshed"));
-            current.title = "방송 목록을 새로 불러왔습니다";
+            current.title = "방송 목록 새로고침 완료";
         } catch (_) {
             if (token === generation && current.isConnected) {
-                current.title = "목록을 새로 불러오지 못했습니다. 다시 시도해 주세요";
+                current.title = "방송 목록 새로고침 실패. 다시 시도";
             }
         }
     }
@@ -105,7 +105,7 @@
             button.innerHTML =
                 '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.5 7a8 8 0 0 1 13 0L20 12M4 12l1.5 5a8 8 0 0 0 13 0"/></svg><span>새로고침</span>';
             button.setAttribute("aria-label", "방송 목록 새로고침");
-            button.title = "현재 정렬로 방송 목록과 시청자 수를 다시 불러옵니다";
+            button.title = "현재 정렬 기준으로 방송 목록과 시청자 수 새로고침";
             button.addEventListener("click", refresh);
         }
         // 원본 정렬 버튼의 스타일을 따르되 선택 상태와 tab 역할은 복제하지 않는다.

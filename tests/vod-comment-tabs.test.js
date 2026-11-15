@@ -11,17 +11,11 @@ function evalRepoScript(dom, ...parts) {
     dom.window.eval(fs.readFileSync(path.join(ROOT, ...parts), "utf8"));
 }
 
-// The three comment-body placeholders copy CHZZK's own wording; every other notice uses 해요체 (docs/business-rules.md, 화면 디자인).
-const NATIVE_COMMENT_BODY_COPY = [
-    "삭제된 댓글입니다.",
-    "내용을 표시할 수 없는 댓글입니다.",
-    "클린봇이 부적절한 표현을 감지한 댓글입니다.",
-];
-
-function formalCopyLiterals(source) {
+function politeCopyLiterals(source) {
     const literals = [];
     for (const match of source.matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g)) {
-        if (/[가-힣]/.test(match[2]) && /(?:습|합|됩|입)니다/.test(match[2])) literals.push(match[2]);
+        if (/(?:[가-힣](?<![필주개중수소강요])요|(?:습|합|됩|입)니다|십시오)(?=[.?!…\s]|$)/.test(match[2]))
+            literals.push(match[2]);
     }
     return literals;
 }
@@ -791,7 +785,7 @@ test("VOD comments load from the API without a lower comment DOM and render safe
     assert.match(document.querySelector("[data-bcvc-comment-key='id:2']").textContent, /클린봇/);
     assert.equal(
         document.querySelector("[data-bcvc-comment-key='id:2'] .bcvc-message").textContent,
-        "클린봇이 부적절한 표현을 감지한 댓글입니다."
+        "클린봇 감지: 부적절한 표현"
     );
     assert.equal(
         document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-avatar").title,
@@ -1134,12 +1128,9 @@ test("VOD comment rows render observed replies and tolerate nullable or deleted 
     assert.match(document.querySelector("[data-bcvc-comment-key*='fallback:']").textContent, /표시할 수 없는 댓글/);
     assert.equal(
         document.querySelector("[data-bcvc-comment-key*='fallback:'] .bcvc-message").textContent,
-        "내용을 표시할 수 없는 댓글입니다."
+        "표시할 수 없는 댓글"
     );
-    assert.equal(
-        document.querySelector("[data-bcvc-comment-key='id:5'] .bcvc-message").textContent,
-        "삭제된 댓글입니다."
-    );
+    assert.equal(document.querySelector("[data-bcvc-comment-key='id:5'] .bcvc-message").textContent, "삭제된 댓글");
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:5'] .bcvc-avatar"), null);
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:5'] .bcvc-buff"), null);
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:6'] .bcvc-date").textContent, "20260231010101");
@@ -1311,7 +1302,7 @@ test("VOD comment initial errors expose retry and distinguish empty or disabled 
     assert.equal(call, 3);
 });
 
-test("VOD comment notices use 해요체 and only the three native comment-body placeholders keep CHZZK wording", () => {
+test("VOD comment notices and replacement text use short phrases without polite endings", () => {
     const found = [];
     for (const parts of [
         ["features", "vodComments", "view.js"],
@@ -1321,13 +1312,9 @@ test("VOD comment notices use 해요체 and only the three native comment-body p
         ["shared", "data.js"],
     ]) {
         const source = fs.readFileSync(path.join(ROOT, ...parts), "utf8");
-        for (const literal of formalCopyLiterals(source)) found.push(`${parts.join("/")}: ${literal}`);
+        for (const literal of politeCopyLiterals(source)) found.push(`${parts.join("/")}: ${literal}`);
     }
-    assert.deepEqual(
-        found,
-        NATIVE_COMMENT_BODY_COPY.map((text) => `features/vodComments/view.js: ${text}`),
-        "only the native-mimic comment-body copy may keep 합니다체"
-    );
+    assert.deepEqual(found, []);
 });
 
 test("VOD comment pagination coalesces observer requests and appends without replacing existing rows", async (t) => {
