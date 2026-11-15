@@ -18,7 +18,7 @@
  * 의존: 전역 CheeseSpannerSettings.normalizeOptions/bindFeatureOptions, CheeseSpanner.categoryToolsFilterModel,
  *   CheeseSpanner.categoryToolsRepository/categoryToolsSearchController, 전역 CheeseSpanner.utils
  *   (createMutationObserverSync, createThrottledDomSync, fetchJson, normSpace, normalizeChzzkImageUrl,
- *   normalizeCompact, onReady, setLoadingReason, sleep, startPageChangeDetection, touchMapEntry, injectStyleOnce).
+ *   normalizeCompact, onReady, parseChzzkDate, setLoadingReason, sleep, startPageChangeDetection, touchMapEntry, injectStyleOnce).
  * 옵션 키: categoryToolsEnabled, globalLiveCountEnabled, categoryToolsMaxMetadataPages, categoryToolsHideGlobalTagSearch,
  *   categoryToolsFollowerBadgesEnabled, categoryToolsLiveElapsedEnabled, categoryToolsExclusionsEnabled,
  *   categoryToolsFollowerFilterPreset1~6, categoryToolsViewFilterPreset1~6, categoryToolsDurationFilterPreset1~6,
@@ -77,6 +77,8 @@
         추천: "추천",
         추천순: "추천",
     });
+    // 정렬 버튼은 페이지 머리 부분에만 있다. 확장이 위에 끼운 줄의 높이는 빼고 비교한다.
+    const GLOBAL_SORT_MAX_TOP_PX = 220;
     const DEFAULT_PROFILE_IMAGE_URL =
         "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2080%2080'%3E%3Crect%20width='80'%20height='80'%20rx='40'%20fill='%23E7EAEE'/%3E%3Ccircle%20cx='40'%20cy='31'%20r='14'%20fill='%239DA5B6'/%3E%3Cpath%20d='M18%2068c3-15%2015-24%2022-24s19%209%2022%2024'%20fill='%239DA5B6'/%3E%3C/svg%3E";
     const APPLIED_CONDITIONS_ID = "cheese-spanner-category-filter-chips";
@@ -102,6 +104,8 @@
     let menuPositionFrame = 0;
     let toolbarRescueFrame = 0;
     let toolbarRescueGeneration = 0;
+    // 툴바가 보이지 않아 대체 위치로 옮긴 정렬 줄. 같은 줄이면 다음 적용도 대체 위치를 써서 왕복하지 않는다.
+    let toolbarRescuedSortLine = null;
     let searchApplyTimer = 0;
     let liveElapsedTimer = 0;
     let durationFilterRefreshTimer = 0;
@@ -117,6 +121,10 @@
     let cachedGrid = null;
     let cachedGridKey = "";
     let globalSortControlCache = [];
+    // 마지막으로 확인한 전체 라이브 정렬. 정렬 버튼을 잠시 못 읽어도 인기순으로 단정하지 않게 쓴다.
+    // staleKey는 정렬을 누른 순간 버튼에 보이던 이전 선택이다. 사이트가 새 선택을 그리기 전 읽은
+    // 그 값은 지금 판정에만 쓰고 기억을 덮지 않는다.
+    let confirmedGlobalSort = { routeKey: "", key: "", staleKey: "" };
     const tabLineCache = new Map();
     // 카드 링크의 카테고리·태그 해석은 href 문자열에만 달려 있어 문자열마다 한 번만 한다.
     const HREF_PARSE_CACHE_LIMIT = 2000;
@@ -180,6 +188,7 @@
         normalizeChzzkImageUrl,
         normalizeCompact: normalize,
         onReady,
+        parseChzzkDate,
         setLoadingReason,
         sleep,
         startPageChangeDetection,
@@ -228,13 +237,13 @@
     let liveCountGeneration = 0;
     let liveCountStarted = false;
     let liveCountLabel = "시청자 10명 이상 · 집계 중…";
-    let liveCountTitle = "전체 방송 목록 기준이며 검색·필터와 무관해요.";
+    let liveCountTitle = "전체 방송 목록 기준(검색·필터와 무관).";
 
     function resetGlobalLiveCount() {
         liveCountGeneration++;
         liveCountStarted = false;
         liveCountLabel = "시청자 10명 이상 · 집계 중…";
-        liveCountTitle = "전체 방송 목록 기준이며 검색·필터와 무관해요.";
+        liveCountTitle = "전체 방송 목록 기준(검색·필터와 무관).";
         dataRepository.cancelGlobalLiveCount();
     }
 
@@ -267,7 +276,7 @@
                 )
                     return;
                 liveCountLabel = `시청자 10명 이상 · 방송 ${count.toLocaleString("ko-KR")}개 · 시청자 합계 ${totalViewers.toLocaleString("ko-KR")}명`;
-                liveCountTitle = `전체 방송 목록 기준 · ${new Date(measuredAt).toLocaleTimeString("ko-KR")} 집계 · 검색·필터와 무관해요. 방송별 동시 시청자 수의 합계로, 중복 시청자를 제거한 인원 수는 아니에요.`;
+                liveCountTitle = `전체 방송 목록 기준 · ${new Date(measuredAt).toLocaleTimeString("ko-KR")} 집계 · 검색·필터와 무관. 방송별 동시 시청자 합계(중복 시청자 포함).`;
                 syncGlobalLiveCount(route);
             },
             () => {
@@ -278,7 +287,7 @@
                 )
                     return;
                 liveCountLabel = "방송 수 집계 실패";
-                liveCountTitle = "전체 방송 탭에 다시 진입하면 집계를 다시 시도해요.";
+                liveCountTitle = "전체 방송 탭 재진입 시 다시 집계.";
                 syncGlobalLiveCount(route);
             }
         );
@@ -322,11 +331,10 @@
     }
 
     function categoryErrorText(error) {
-        if (error === "limit-reached")
-            return "카테고리는 최대 100개까지 제외할 수 있어요. 기존 항목을 해제한 뒤 다시 선택해 주세요.";
+        if (error === "limit-reached") return "카테고리는 최대 100개까지 제외 가능. 기존 항목 해제 후 재선택.";
         if (error === "invalid-stored-state" || error === "unsupported-version")
-            return "저장한 제외 목록을 확인하지 못했어요. 기존 목록을 보존하고 다시 불러올 수 있어요.";
-        return "제외 목록을 저장하거나 불러오지 못했어요. 다시 불러오거나 항목을 다시 선택해 주세요.";
+            return "제외 목록 확인 실패(기존 목록 보존됨, 다시 불러오기 가능).";
+        return "제외 목록 저장·불러오기 실패. 다시 불러오거나 재선택 필요.";
     }
 
     function sendCategoryOperation(operation) {
@@ -816,7 +824,7 @@
         }
         setCategoryStatusText(
             view.root.querySelector(".bcgt-category-summary-status"),
-            categoryStoreError || (categoryStoreLoading ? "제외 목록을 불러오고 있어요…" : "")
+            categoryStoreError || (categoryStoreLoading ? "제외 목록 불러오는 중…" : "")
         );
         const retry = view.root.querySelector("[data-category-store-retry]");
         retry.hidden = !categoryStoreError;
@@ -829,16 +837,16 @@
         if (!isCurrentCategoryAdd(view)) return;
         const messages = {
             idle: "",
-            typing: "검색어 입력 중이에요…",
-            loading: "카테고리를 검색하고 있어요…",
-            empty: "검색 결과가 없어요. Enter를 누르면 입력한 단어를 태그로 제외해요.",
-            error: "카테고리 검색에 실패했어요. 다시 시도해 주세요.",
-            long: "검색어는 100자 이하로 입력해 주세요.",
-            success: view.results.length >= 50 ? "검색 결과는 최대 50개예요. 검색어를 구체화해 주세요." : "",
-            "tag-saving": "태그 제외를 저장하고 있어요…",
-            "tag-added": `‘${view.addedTag}’ 태그를 제외했어요.`,
-            "tag-duplicate": "이미 제외한 태그예요.",
-            "tag-invalid": "태그는 100자 이하로 입력해 주세요.",
+            typing: "검색어 입력 중…",
+            loading: "카테고리 검색 중…",
+            empty: "검색 결과 없음. Enter로 입력 단어를 태그 제외.",
+            error: "카테고리 검색 실패. 다시 시도 필요.",
+            long: "검색어는 100자 이하로 입력 필요.",
+            success: view.results.length >= 50 ? "검색 결과 최대 50개 표시. 검색어 구체화 필요." : "",
+            "tag-saving": "태그 제외 저장 중…",
+            "tag-added": `‘${view.addedTag}’ 태그 제외됨.`,
+            "tag-duplicate": "이미 제외한 태그.",
+            "tag-invalid": "태그는 100자 이하로 입력 필요.",
         };
         setCategoryStatusText(view.searchStatusElement, messages[view.searchStatus]);
         view.searchRetry.hidden = view.searchStatus !== "error";
@@ -857,7 +865,7 @@
         root.setAttribute("aria-label", "카테고리 제외");
         root.innerHTML = `<div class="bcgt-filter-title">카테고리 제외</div>
 <label class="bcgt-category-search-label">카테고리 검색 · 태그 추가<input type="search" data-category-search aria-label="제외할 카테고리 검색 또는 태그 입력" placeholder="카테고리 이름 또는 태그 입력 후 Enter" autocomplete="off" spellcheck="false" maxlength="100" /></label>
-<div class="bcgt-category-hint">카테고리는 결과의 제외로, 스트리머가 붙인 태그는 단어 입력 후 Enter로 제외해요.</div>
+<div class="bcgt-category-hint">카테고리는 검색 결과에서 선택, 태그는 단어 입력 후 Enter로 제외.</div>
 <div data-category-search-status role="status" aria-live="polite"></div><button type="button" class="bcgt-category-button" data-category-search-retry hidden>카테고리 검색 다시 시도</button>
 <div class="bcgt-category-list" data-category-results></div>`;
         menu.append(root);
@@ -1163,7 +1171,7 @@
 }
 #${GLOBAL_FALLBACK_ID} #${BAR_ID}{margin-left:0;}
 #${BAR_ID}, .bcgt-category-summary{
-  /* 공통 테마(shared/uiTheme.js)의 --bct-* 변수만 가리킨다. 글꼴은 syncFontWithHostUi가 원본 탭에서 복사한다. */
+  /* 공통 테마(shared/uiTheme.js)의 --bct-* 변수만 가리킨다. 검색 바 글꼴만 원본 탭에서 복사한다. */
   --bcgt-accent:var(--bct-brand-text);
   --bcgt-bg:var(--bct-surface-weak);
   --bcgt-border:var(--bct-surface-weak);
@@ -1207,7 +1215,7 @@
   margin-left:auto;
 }
 #${BAR_ID}:has(.bcgt-live-count:not([hidden])){flex-wrap:wrap;}
-.bcgt-category-summary{flex:0 0 100%;width:100%;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:6px 0;box-sizing:border-box;font-family:inherit;font-size:12px;line-height:18px;font-weight:400;--bcgt-chip-bg:var(--bct-brand);--bcgt-chip-text:var(--bct-on-brand);}
+.bcgt-category-summary{flex:0 0 100%;width:100%;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:6px 0;box-sizing:border-box;font-family:var(--bct-font);font-size:12px;line-height:18px;font-weight:400;--bcgt-chip-bg:var(--bct-brand);--bcgt-chip-text:var(--bct-on-brand);}
 .bcgt-category-summary[hidden]{display:none;}
 .bcgt-category-summary[data-placement="sort-line"]{flex:0 1 auto;width:auto;max-width:100%;margin-left:auto;justify-content:flex-end;padding:0;}
 .bcgt-category-summary[data-placement="sort-line"] .bcgt-category-chips{justify-content:flex-end;}
@@ -1416,7 +1424,8 @@
   z-index:2147483644;
 }
 #${MENU_ID}[data-open="1"], #${CATEGORY_ADD_ID}[data-open="1"]{display:block;}
-#${CATEGORY_ADD_ID}{width:400px;box-sizing:border-box;}
+/* 카테고리 제외의 추가 메뉴와 선택 목록은 패키지에 포함한 공통 글꼴을 쓴다. */
+#${CATEGORY_ADD_ID}{width:400px;box-sizing:border-box;font-family:var(--bct-font);}
 #${MENU_ID} .bcgt-filter-groups{
   display:flex;
   flex-direction:column;
@@ -1795,8 +1804,30 @@
         if (el.closest(`#${BAR_ID}, #${MENU_ID}, #${CATEGORY_ADD_ID}, #${CATEGORY_SUMMARY_ID}, [${CARD_ATTR}="1"]`))
             return null;
         const rect = el.getBoundingClientRect();
-        if (rect.width <= 0 || rect.height <= 0 || rect.top >= 220) return null;
+        if (rect.width <= 0 || rect.height <= 0) return null;
+        if (rect.top >= GLOBAL_SORT_MAX_TOP_PX && rect.top - ownRowsHeightAbove(rect.top) >= GLOBAL_SORT_MAX_TOP_PX)
+            return null;
         return { el, text, area: rect.width * rect.height };
+    }
+
+    // 확장이 정렬 줄 위에 끼운 줄(적용 조건·카테고리 제외)만큼 사이트 정렬 버튼이 아래로 밀린다.
+    // 검색을 적용해 조건 줄이 보여도 같은 정렬 버튼을 찾도록 위치 기준에서 그 높이를 뺀다.
+    function ownRowsHeightAbove(top) {
+        let offset = 0;
+        for (const id of [APPLIED_CONDITIONS_ID, CATEGORY_SUMMARY_ID]) {
+            const row = document.getElementById(id);
+            if (!(row instanceof HTMLElement) || row.hidden) continue;
+            const rect = row.getBoundingClientRect();
+            if (rect.height <= 0 || rect.bottom > top) continue;
+            const style = getComputedStyle(row);
+            const parentStyle = row.parentElement ? getComputedStyle(row.parentElement) : null;
+            offset +=
+                rect.height +
+                (Number.parseFloat(style.marginTop) || 0) +
+                (Number.parseFloat(style.marginBottom) || 0) +
+                (Number.parseFloat(parentStyle?.rowGap) || 0);
+        }
+        return offset;
     }
 
     function getGlobalSortControls(context = null) {
@@ -1828,6 +1859,7 @@
 
     function clearPageControlCaches() {
         globalSortControlCache = [];
+        confirmedGlobalSort = { routeKey: "", key: "", staleKey: "" };
         tabLineCache.clear();
     }
 
@@ -1865,14 +1897,33 @@
         return score;
     }
 
-    function getGlobalSortKey(context = null) {
-        if (context?.globalSortKey) return context.globalSortKey;
-        const controls = getGlobalSortControls(context);
+    // 버튼에 보이는 선택을 읽기만 한다. 읽지 못하면 빈 문자열이다.
+    function readActiveGlobalSortKey(controls) {
         const active = controls
             .map((control) => ({ control, score: activeGlobalSortScore(control) }))
             .filter((entry) => entry.score > 0)
             .sort((a, b) => b.score - a.score)[0]?.control;
-        const key = GLOBAL_SORT_LABELS[normSpace((active || controls[0])?.textContent)] || "인기";
+        return active ? GLOBAL_SORT_LABELS[normSpace(active.textContent)] || "" : "";
+    }
+
+    function getGlobalSortKey(context = null) {
+        if (context?.globalSortKey) return context.globalSortKey;
+        const controls = getGlobalSortControls(context);
+        const route = context?.route || getRoute();
+        const currentRouteKey = route ? routeKey(route) : "";
+        let key = readActiveGlobalSortKey(controls);
+        const pendingStale =
+            confirmedGlobalSort.staleKey && confirmedGlobalSort.routeKey === currentRouteKey
+                ? confirmedGlobalSort.staleKey
+                : "";
+        // 보이는 선택이 지금 판정을 정한다. 다만 누른 직후 아직 이전 선택이 보이면 그 값으로 누른 정렬의
+        // 기억을 덮지 않는다. 사이트가 새 선택을 그리면서 정렬 줄을 숨겨도 누른 정렬을 유지하게 한다.
+        if (key) {
+            if (key !== pendingStale) confirmedGlobalSort = { routeKey: currentRouteKey, key, staleKey: "" };
+        } else if (confirmedGlobalSort.key && confirmedGlobalSort.routeKey === currentRouteKey) {
+            // 조건 줄·스크롤·사이트 재렌더로 정렬 버튼을 잠시 못 읽으면 같은 목록에서 확인한 정렬을 유지한다.
+            key = confirmedGlobalSort.key;
+        } else key = GLOBAL_SORT_LABELS[normSpace(controls[0]?.textContent)] || "인기";
         if (context) context.globalSortKey = key;
         return key;
     }
@@ -1889,25 +1940,40 @@
         return getGlobalSortKey(context) === "인기";
     }
 
-    function isGlobalSortClickTarget(target) {
-        if (getRoute()?.scope !== "global-lives") return false;
+    // 누른 정렬 버튼의 정렬 이름을 돌려준다. 정렬 버튼이 아니면 빈 문자열이다.
+    function getGlobalSortClickKey(target) {
+        if (getRoute()?.scope !== "global-lives") return "";
         let node = target instanceof HTMLElement ? target : target?.parentElement;
         let depth = 0;
         while (node instanceof HTMLElement && depth < 5) {
-            if (node.closest(`#${BAR_ID}, #${MENU_ID}, #${CATEGORY_ADD_ID}, #${CATEGORY_SUMMARY_ID}`)) return false;
-            if (Object.hasOwn(GLOBAL_SORT_LABELS, normSpace(node.textContent))) return true;
+            if (node.closest(`#${BAR_ID}, #${MENU_ID}, #${CATEGORY_ADD_ID}, #${CATEGORY_SUMMARY_ID}`)) return "";
+            const text = normSpace(node.textContent);
+            if (Object.hasOwn(GLOBAL_SORT_LABELS, text)) return GLOBAL_SORT_LABELS[text];
             node = node.parentElement;
             depth++;
         }
-        return false;
+        return "";
     }
 
     function handleGlobalSortClick(event) {
         if (!isFeatureEnabled()) return;
-        if (!isGlobalSortClickTarget(event.target)) return;
+        const clickedKey = getGlobalSortClickKey(event.target);
+        if (!clickedKey) return;
         const route = getRoute();
+        // 이 처리기는 capture 단계라 버튼에는 아직 누르기 전 선택이 보인다. 누른 곳이 찾은 정렬 버튼이면
+        // 그 이전 선택을 staleKey로 남겨, 사이트가 새 선택을 그리기 전 읽은 값이 누른 정렬을 덮지 않게 한다.
+        const controls = getGlobalSortControls();
+        const clickedControl =
+            event.target instanceof Node && controls.some((control) => control.contains(event.target));
+        const previousKey = clickedControl ? readActiveGlobalSortKey(controls) : "";
         // 정렬을 바꾸면 사이트가 정렬 줄을 다시 그릴 수 있어 찾아 둔 버튼을 버린다.
         clearPageControlCaches();
+        // 다시 그린 버튼을 읽기 전에는 누른 정렬을 현재 정렬로 본다. 새 선택을 읽으면 그 선택이 우선한다.
+        confirmedGlobalSort = {
+            routeKey: routeKey(route),
+            key: clickedKey,
+            staleKey: previousKey && previousKey !== clickedKey ? previousKey : "",
+        };
         const grid = findGrid(route);
         if (grid) clearInjectedCards(grid);
         resetSearchWork();
@@ -1964,6 +2030,7 @@
 
             const fallback = ensureGlobalFallbackHost(route);
             if (!fallback) return;
+            toolbarRescuedSortLine = host || null;
             fallback.appendChild(bar);
             cleanupUnusedGlobalFallback(fallback);
             syncFontWithHostUi(bar, fallback);
@@ -2225,14 +2292,19 @@
         const contentLeft = getContentLeft(route, context);
         const tabBottom = getTabBottom(route, context);
         const seen = new Set();
+        // 격자 안에서는 카드(격자의 자식)마다 링크 하나만 남긴다. 같은 열의 다른 행에 같은 방송 카드가 붙어도
+        // 각 카드가 수집되게 한다. 문서 전체에서 격자를 찾을 때는 카드 경계를 몰라 링크 주소와 열로 센다.
+        const scopedToGrid = root instanceof HTMLElement;
         const links = Array.from(root.querySelectorAll("a[href]")).filter((link) => {
             const href = link.getAttribute("href") || "";
             if (!pattern.test(href)) return false;
             const id = getItemId(route, href);
             if (!id) return false;
+            const card = scopedToGrid ? findGridChild(root, link) : null;
+            if (scopedToGrid && (!card || seen.has(card))) return false;
             const rect = link.getBoundingClientRect();
-            const seenKey = `${href}|${Math.round(rect.x)}`;
-            if (seen.has(seenKey)) return false;
+            const seenKey = card || `${href}|${Math.round(rect.x)}`;
+            if (!card && seen.has(seenKey)) return false;
             if (rect.width <= 0 || rect.height <= 0) return false;
             if (rect.left < contentLeft || rect.top < tabBottom) return false;
             if (!isCardLinkCandidate(route, link, rect)) return false;
@@ -2241,6 +2313,12 @@
         });
         context?.cardLinksByRoot?.set(root, links);
         return links;
+    }
+
+    function findGridChild(grid, node) {
+        let card = node;
+        while (card && card.parentElement && card.parentElement !== grid) card = card.parentElement;
+        return card instanceof HTMLElement && card.parentElement === grid ? card : null;
     }
 
     function findGrid(route, links = null, context = null) {
@@ -2346,50 +2424,67 @@
         }
     }
 
-    function getExistingCardEntries(route) {
-        const entries = [];
-        const byCard = new Set();
-        const byId = new Set();
+    function isInjectedCard(card) {
+        return card.getAttribute(INJECTED_ATTR) === "1";
+    }
+
+    // 같은 방송 id의 카드는 한 entry로 추적한다. 원본 카드가 추가 카드보다 우선하고,
+    // 원본끼리 겹치면 뒤 카드를 duplicates에 남겨 첫 카드의 표시 판정을 함께 받게 한다.
+    function addCardEntry(entries, byCard, indexById, card, id) {
+        if (byCard.has(card)) return;
+        const index = indexById.get(id);
+        if (index === undefined) {
+            prepareCardIdentity(card, id);
+            setAttributeIfChanged(card, CARD_ATTR, "1");
+            byCard.add(card);
+            indexById.set(id, entries.length);
+            entries.push(createCardEntry(card, id));
+            return;
+        }
+        const primary = entries[index];
+        if (isInjectedCard(card) && !isInjectedCard(primary.card)) {
+            card.remove();
+            return;
+        }
+        prepareCardIdentity(card, id);
+        setAttributeIfChanged(card, CARD_ATTR, "1");
+        byCard.add(card);
+        if (isInjectedCard(primary.card) && !isInjectedCard(card)) {
+            // 추가 카드로 보이던 방송의 원본 카드가 뒤 페이지로 붙으면 추가 카드를 지우고 원본을 판정한다.
+            primary.card.remove();
+            entries[index] = { ...createCardEntry(card, id), duplicates: primary.duplicates };
+            return;
+        }
+        (primary.duplicates ||= []).push(card);
+    }
+
+    function getExistingCardEntries(route, entries, byCard, indexById) {
         for (const card of Array.from(document.querySelectorAll(`[${CARD_ATTR}="1"]`))) {
             if (!(card instanceof HTMLElement) || !card.isConnected) continue;
             const href = readCardHrefs(card).find((item) => getItemId(route, item));
             if (!href) continue;
             const id = getItemId(route, href);
-            if (!id || byCard.has(card) || byId.has(id)) continue;
-            prepareCardIdentity(card, id);
-            byCard.add(card);
-            byId.add(id);
-            entries.push(createCardEntry(card, id));
+            if (!id) continue;
+            addCardEntry(entries, byCard, indexById, card, id);
         }
         return entries;
     }
 
     function getCardEntries(route, context = null) {
-        const existing = getExistingCardEntries(route);
+        const entries = [];
+        const byCard = new Set();
+        const indexById = new Map();
+        getExistingCardEntries(route, entries, byCard, indexById);
         const cached = getCachedGrid(route, context);
         const grid = cached || findGrid(route, undefined, context);
-        if (!grid && existing.length) return existing;
-        if (!grid) return [];
+        if (!grid) return entries;
 
-        const entries = [...existing];
-        const byCard = new Set(existing.map((entry) => entry.card));
-        const byId = new Set(existing.map((entry) => entry.id));
         for (const link of findCardLinks(route, grid, context)) {
             const id = getItemId(route, link.getAttribute("href"));
             if (!id) continue;
-
-            let card = link;
-            while (card && card.parentElement && card.parentElement !== grid) {
-                card = card.parentElement;
-            }
-            if (!card || card.parentElement !== grid || !(card instanceof HTMLElement)) continue;
-            if (byCard.has(card) || byId.has(id)) continue;
-            prepareCardIdentity(card, id);
-            byCard.add(card);
-            byId.add(id);
-
-            card.setAttribute(CARD_ATTR, "1");
-            entries.push(createCardEntry(card, id));
+            const card = findGridChild(grid, link);
+            if (!card) continue;
+            addCardEntry(entries, byCard, indexById, card, id);
         }
         return entries;
     }
@@ -2421,11 +2516,16 @@
         return video ? parseCount(video[1]) : 0;
     }
 
+    function clearSearchApplyTimer() {
+        if (searchApplyTimer) window.clearTimeout(searchApplyTimer);
+        searchApplyTimer = 0;
+    }
+
+    // 검색 입력의 지연 적용은 사용자의 입력이라 목록 상태 키 변경(첫 카드 렌더·정렬)에서는 남긴다.
+    // 경로 이동·도구 해제·런타임 종료에서만 resetMetadata·removeTools가 취소한다.
     function resetSearchWork() {
         if (menuPositionFrame) cancelAnimationFrame(menuPositionFrame);
         menuPositionFrame = 0;
-        if (searchApplyTimer) window.clearTimeout(searchApplyTimer);
-        searchApplyTimer = 0;
         if (autoLoadScrollTimer) window.clearTimeout(autoLoadScrollTimer);
         autoLoadScrollTimer = 0;
         lastAutoLoadScrollCheckAt = 0;
@@ -2437,10 +2537,11 @@
         dataRepository.cancelMetadataSearch();
     }
 
-    function resetMetadata(key = "") {
+    function resetMetadata(key = "", options) {
         resetGlobalLiveCount();
+        clearSearchApplyTimer();
         resetSearchWork();
-        dataRepository.resetMetadata(key);
+        dataRepository.resetMetadata(key, options);
     }
 
     function ensureRenderedMetadata(route, entries) {
@@ -2500,8 +2601,12 @@
 
     function syncFollowerVisibilityRows(rows) {
         if (!hasFollowerFilter()) return;
+        const terms = currentSearchTerms();
         for (const row of rows) {
-            setCardHidden(row.entry.card, !passesStickyFilters(row));
+            // 겹친 카드만 통과해 보이던 방송도 있어 대표 카드까지 카드마다 자기 글자·카테고리·태그로 판정한다.
+            setEntryHidden(row.entry, isCardRowHidden(row, terms), (card) =>
+                isCardRowHidden(cardRowFor(row, card), terms)
+            );
         }
     }
 
@@ -2514,15 +2619,62 @@
         if (card.hasAttribute(HIDE_ATTR)) card.removeAttribute(HIDE_ATTR);
     }
 
+    // 같은 방송의 겹친 원본 카드는 쓰기 직전에 카드마다 현재 정체성을 다시 확인한다. 다른 방송으로
+    // 재사용된 카드는 entry에서 빼고 옛 판정을 쓰지 않는다(다음 적용이 새 정체성으로 다시 수집한다).
+    // 판정을 넘기면 겹친 카드도 자기 카테고리·태그·글자로 따로 판정하고, 없으면 대표 카드 값을 쓴다.
+    function setEntryHidden(entry, hidden, isDuplicateHidden = null) {
+        setCardHidden(entry.card, hidden);
+        if (!entry.duplicates?.length) return;
+        const route = getRoute();
+        entry.duplicates = entry.duplicates.filter(
+            (card) =>
+                Boolean(route) && card !== entry.card && isCurrentFollowerRow(route, { entry: { id: entry.id, card } })
+        );
+        for (const card of entry.duplicates) setCardHidden(card, isDuplicateHidden ? isDuplicateHidden(card) : hidden);
+    }
+
+    // 겹친 원본 카드 하나를 대표 행의 메타데이터와 함께 판정할 행이다. 검색 글자·카테고리·태그는 그 카드에서 읽는다.
+    function cardRowFor(row, card) {
+        return card === row.entry.card ? row : { ...row, entry: { ...row.entry, card, duplicates: undefined } };
+    }
+
+    function isCardRowHidden(cardRow, terms) {
+        return !matchesSearchTerms(rowSearchFields(cardRow), terms) || !passesStickyFilters(cardRow);
+    }
+
+    // 대표 카드와 지금도 같은 방송을 가리키는 겹친 카드의 판정 행이다. 재사용된 겹친 카드는 entry에서 뺀다.
+    function currentCardRows(route, row) {
+        const { entry } = row;
+        if (!entry.duplicates?.length) return [row];
+        entry.duplicates = entry.duplicates.filter(
+            (card) => card !== entry.card && isCurrentFollowerRow(route, { entry: { id: entry.id, card } })
+        );
+        return [row, ...entry.duplicates.map((card) => cardRowFor(row, card))];
+    }
+
+    // 저장소는 남은 회차를 예약하면 로딩을 다음 호출에 맡긴다. 소비자가 조회할 채널이 없어
+    // 저장소를 부르지 않을 때 예약·진행 중 조회도 없으면 여기서 팔로워 로딩을 끈다.
+    function settleFollowerLoading() {
+        if (loadingReasons.has("followers") && !dataRepository.isFollowerHydrationPending())
+            setLoading(false, "followers");
+    }
+
     async function refreshFollowerHydrationRows() {
         const route = getRoute();
         const rememberedRows = getRememberedFollowerRefreshRows(route);
-        if (!route || !rememberedRows.length) return;
-        if (!hasFollowerFilter() && !areFollowerBadgesEnabled()) return;
+        if (!route || !rememberedRows.length || (!hasFollowerFilter() && !areFollowerBadgesEnabled())) {
+            settleFollowerLoading();
+            return;
+        }
         const rows = (hasFollowerFilter() ? rememberedRows : getRowsNearViewport(rememberedRows)).filter(
-            (row) => passesRowCategoryExclusions(row) && !readFollowerCache(row.meta.channelId).hit
+            (row) =>
+                currentCardRows(route, row).some(passesRowCategoryExclusions) &&
+                !readFollowerCache(row.meta.channelId).hit
         );
-        if (!rows.length) return;
+        if (!rows.length) {
+            settleFollowerLoading();
+            return;
+        }
         const generation = applyGeneration;
         const filterKey = getActiveFilterKey();
         const refreshed = await dataRepository.refreshFollowers(
@@ -2548,7 +2700,10 @@
         const ids = [...new Set(metas.map((meta) => meta?.channelId).filter(Boolean))].filter(
             (id) => !readFollowerCache(id).hit
         );
-        if (!ids.length) return false;
+        if (!ids.length) {
+            settleFollowerLoading();
+            return false;
+        }
         void dataRepository.refreshFollowers(ids, getFollowerHydrationOptions(true, false)).then((refreshed) => {
             // A cooldown can finish without fetching anything. Only new answers require another apply.
             if (
@@ -2835,10 +2990,9 @@
             : `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
     }
 
+    // 치지직 openDate는 시간대 표시 없는 KST 글자라 브라우저 시간대가 아니라 공용 KST 해석을 쓴다.
     function parseDateTime(value) {
-        const raw = String(value || "").trim();
-        if (!raw) return 0;
-        const time = new Date(raw.includes("T") ? raw : raw.replace(" ", "T")).getTime();
+        const time = parseChzzkDate(value)?.getTime();
         return Number.isFinite(time) ? time : 0;
     }
 
@@ -3860,7 +4014,7 @@
 <div class="bcgt-filter-groups">${FILTER_KINDS.map(filterGroupHtml).join("")}
 </div>
 <div class="bcgt-reset-row">
-  <span class="bcgt-filter-note">방송을 보고 돌아와도 이 탭에서 유지돼요</span>
+  <span class="bcgt-filter-note">방송 시청 후 복귀해도 현재 탭에서 유지</span>
   <button type="button" class="bcgt-reset" data-filter-reset>필터 초기화</button>
 </div>
 `;
@@ -4138,8 +4292,8 @@
             // 전체 방송은 Enter로만 적용하고 카테고리 목록은 입력하면 바로 적용한다.
             const hintText =
                 route?.scope === "global-lives"
-                    ? "띄어쓰기로 여러 단어를 모두 찾고, -단어는 빼요. Enter로 적용해요."
-                    : "띄어쓰기로 여러 단어를 모두 찾고, -단어는 빼요.";
+                    ? "띄어쓰기: 모두 포함, -단어: 제외(Enter 적용)."
+                    : "띄어쓰기: 모두 포함, -단어: 제외.";
             if (hint.textContent !== hintText) hint.textContent = hintText;
         }
         const menu = document.getElementById(MENU_ID);
@@ -4307,6 +4461,7 @@
                 bar.removeAttribute("data-tag-search-hidden");
                 clearToolbarPosition(bar);
                 if (bar.parentElement !== tabLine) tabLine.appendChild(bar);
+                toolbarRescuedSortLine = null;
                 cleanupUnusedGlobalFallback(null);
                 document
                     .querySelectorAll(`[${GLOBAL_SORT_ATTR}="1"]`)
@@ -4314,7 +4469,11 @@
                 syncFontWithHostUi(bar, tabLine);
             } else {
                 const sortLine = findGlobalSortLine(context);
-                const host = sortLine || ensureGlobalFallbackHost(route);
+                // 툴바를 구출한 같은 정렬 줄이면 대체 위치를 유지한다. 정렬 줄이 바뀌었을 때만 다시 붙여 본다.
+                if (toolbarRescuedSortLine && toolbarRescuedSortLine !== sortLine) toolbarRescuedSortLine = null;
+                const host =
+                    (sortLine && sortLine !== toolbarRescuedSortLine ? sortLine : null) ||
+                    ensureGlobalFallbackHost(route);
                 if (!host) return false;
                 document.querySelectorAll(`[${TABS_ATTR}="1"]`).forEach((el) => el.removeAttribute(TABS_ATTR));
                 document.querySelectorAll(`[${GLOBAL_SORT_ATTR}="1"]`).forEach((el) => {
@@ -4359,6 +4518,7 @@
 
         const key = routeKey(route);
         if (key !== lastRouteKey) {
+            confirmedGlobalSort = { routeKey: "", key: "", staleKey: "" };
             currentQuery = "";
             resetFilterState();
             clearFilterInputDrafts();
@@ -4390,7 +4550,7 @@
         return true;
     }
 
-    function ensureEmptyMessage(grid, message = "조건에 맞는 결과가 없어요.") {
+    function ensureEmptyMessage(grid, message = "조건에 맞는 결과 없음.") {
         let empty = grid.querySelector(`:scope > [${EMPTY_ATTR}="1"]`);
         if (!empty) {
             empty = document.createElement("div");
@@ -4499,7 +4659,7 @@
         if (root.__bcgtRenderKey !== renderKey) {
             const label = root.querySelector(".bcgt-applied-label");
             label.textContent = labelText;
-            if (restoredConditionsPending) label.title = "방송을 보고 돌아와도 이 탭에서는 조건이 유지돼요";
+            if (restoredConditionsPending) label.title = "방송 시청 후 복귀해도 현재 탭에서 조건 유지";
             else label.removeAttribute("title");
             root.querySelector(".bcgt-applied-chips").replaceChildren(...items.map(buildAppliedChip));
             root.__bcgtRenderKey = renderKey;
@@ -4623,6 +4783,8 @@
             return;
         }
         if (pendingInjectedRender || hasPendingScrollRoom()) return;
+        // 최신·추천 정렬은 메타데이터를 쓰지 않으므로 스크롤로도 인기 목록 페이지를 받지 않는다.
+        if (!canUseMetadataForCurrentList(route)) return;
         metadataSearchController.request(route, {
             maxPages: getMaxMetadataPages(),
             pageDelayMs: hasFollowerFilter() ? 600 : 80,
@@ -4769,7 +4931,7 @@
             }));
             rememberFollowerRefreshRows(route, visibleRows);
             syncCardBadges(route, visibleRows);
-            for (const entry of entries) setCardHidden(entry.card, false);
+            for (const entry of entries) setEntryHidden(entry, false);
             removeEmptyMessage(grid);
             updateStatus(entries.length, entries.length);
             void refreshFollowerHydrationRows();
@@ -4817,40 +4979,81 @@
                 meta: { ...meta, channelId: meta.channelId || inferChannelIdFromCard(route, entry), views },
             };
         });
+        // 같은 방송의 겹친 원본 카드는 카드마다 자기 글자·카테고리·태그로 판정한다. 어느 카드든 통과하면
+        // 그 방송을 한 번만 후보·결과 수·표시 이력·팔로워 조회 대상에 넣는다.
         const candidateRows = [];
+        const matchedCardRows = new Map();
         let checkedRows = 0;
+        let rowsBeforeLastYield = 0;
         for (const row of rows) {
-            if (
-                matchesSearchTerms(rowSearchFields(row), terms) &&
-                passesStickyViewFilter(row) &&
-                passesDurationFilter(row.meta)
-            ) {
+            const matched =
+                passesStickyViewFilter(row) && passesDurationFilter(row.meta)
+                    ? currentCardRows(route, row).filter((cardRow) =>
+                          matchesSearchTerms(rowSearchFields(cardRow), terms)
+                      )
+                    : [];
+            if (matched.length) {
                 candidateRows.push(row);
+                matchedCardRows.set(row, matched);
             }
             checkedRows++;
             if (checkedRows % UI_YIELD_EVERY_ITEMS === 0) {
                 await yieldToUi();
                 if (!isCurrent()) return;
+                rowsBeforeLastYield = checkedRows;
             }
         }
 
+        // 행 순회가 UI에 양보한 동안 모아 둔 카드가 빠지거나 다른 방송으로 재사용될 수 있다. 확정 직전에
+        // 마지막 양보 이전에 판정한 행은 연결·marker·현재 링크 정체성을, 그 뒤 행은 연결만 다시 확인한다
+        // (마지막 양보 뒤로는 같은 동기 구간이라 링크가 바뀔 수 없어 카드마다 링크를 다시 읽지 않는다).
+        // 남은 카드가 없는 방송은 이번 결과 수·표시 이력·팔로워 조회 후보에서 뺀다.
+        const isStillCurrentCard = (cardRow, rowIndex) =>
+            rowIndex < rowsBeforeLastYield
+                ? isCurrentFollowerRow(route, cardRow)
+                : Boolean(cardRow.entry.card?.isConnected);
+        rows.forEach((row, rowIndex) => {
+            const matched = matchedCardRows.get(row);
+            if (!matched) return;
+            const current = matched.filter((cardRow) => isStillCurrentCard(cardRow, rowIndex));
+            if (current.length) matchedCardRows.set(row, current);
+            else matchedCardRows.delete(row);
+        });
+        const currentCandidateRows = candidateRows.filter((row) => matchedCardRows.has(row));
+
         // 행 순회가 UI에 양보한 동안 카테고리 링크가 바뀔 수 있어 확정 직전에 다시 판정한다.
-        const visible = candidateRows
-            .filter((row) => passesStickyFilters(row))
+        const shownCards = new Set();
+        const visible = currentCandidateRows
+            .filter((row) => {
+                let shown = false;
+                for (const cardRow of matchedCardRows.get(row)) {
+                    if (!passesStickyFilters(cardRow)) continue;
+                    shownCards.add(cardRow.entry.card);
+                    shown = true;
+                }
+                return shown;
+            })
             .sort((a, b) => getStableVisibleOrder(a) - getStableVisibleOrder(b));
         rememberVisibleRows(visible);
         rememberFollowerRefreshRows(route, visible);
 
-        const visibleSet = new Set(visible.map((row) => row.entry.card));
         syncCardBadges(route, rows);
-        for (const row of rows) {
-            setCardHidden(row.entry.card, !visibleSet.has(row.entry.card) || !passesRowCategoryExclusions(row));
-        }
+        const isCardShown = (row, card) => shownCards.has(card) && passesRowCategoryExclusions(cardRowFor(row, card));
+        rows.forEach((row, rowIndex) => {
+            // 양보 동안 대표 카드가 다른 방송으로 재사용됐으면 옛 방송의 판정을 그 카드에 남기지 않는다.
+            // 정체성이 바뀐 카드의 숨김을 푸는 prepareCardIdentity와 같게 두고, 다음 적용이 새 정체성으로 판정한다.
+            const primaryHidden =
+                (rowIndex >= rowsBeforeLastYield || isCurrentFollowerRow(route, row)) &&
+                !isCardShown(row, row.entry.card);
+            setEntryHidden(row.entry, primaryHidden, (card) => !isCardShown(row, card));
+        });
 
         const followerCandidates = hasFollowerFilter()
             ? [
                   ...metadataCandidates.filter(passesCurrentMetadataCategory),
-                  ...candidateRows.filter(passesRowCategoryExclusions).map((row) => row.meta),
+                  ...currentCandidateRows
+                      .filter((row) => matchedCardRows.get(row).some(passesRowCategoryExclusions))
+                      .map((row) => row.meta),
               ]
             : [];
         const followerHydrationPending =
@@ -4867,10 +5070,10 @@
             ensureEmptyMessage(
                 grid,
                 followerHydrationPending || metadataPending
-                    ? "조건에 맞는 방송을 확인하고 있어요…"
+                    ? "조건에 맞는 방송 확인 중…"
                     : followerLookupFailed
-                      ? "팔로워 정보를 확인하지 못했어요."
-                      : "조건에 맞는 결과가 없어요."
+                      ? "팔로워 정보 확인 실패."
+                      : "조건에 맞는 결과 없음."
             );
         restoreScrollAnchor(scrollAnchor);
         updateStatus(visible.length, Math.max(rows.length, metadata.size));
@@ -4907,6 +5110,7 @@
         toolbarRescueGeneration++;
         if (toolbarRescueFrame) cancelAnimationFrame(toolbarRescueFrame);
         toolbarRescueFrame = 0;
+        toolbarRescuedSortLine = null;
         const bar = document.getElementById(BAR_ID);
         const menu = document.getElementById(MENU_ID);
         const fallback = document.getElementById(GLOBAL_FALLBACK_ID);
@@ -4940,6 +5144,7 @@
         cachedGrid = null;
         cachedGridKey = "";
         clearPageControlCaches();
+        clearSearchApplyTimer();
         if (preserveCount) resetSearchWork();
         else resetMetadata("");
         orderCounter = 0;
@@ -5143,9 +5348,18 @@
         if (event.isTrusted && !filterButton?.contains(event.target) && !menu?.contains(event.target)) closeMenu();
     }
 
+    function handleLiveListRefreshed() {
+        if (getRoute()?.scope !== "global-lives") return;
+        resetMetadata("", { invalidateLiveCount: true });
+        clearInjectedCards();
+        resetViewFilterSnapshot();
+        scheduleApply();
+    }
+
     function installGlobalListeners() {
         if (globalListenersInstalled) return;
         globalListenersInstalled = true;
+        window.addEventListener("cheese-spanner:live-list-refreshed", handleLiveListRefreshed);
         document.addEventListener("click", handleDocumentClick, true);
         document.addEventListener("visibilitychange", handleVisibilityChange, true);
         document.addEventListener("pointerover", handleLiveElapsedHostActivate, true);
@@ -5191,6 +5405,7 @@
     function uninstallGlobalListeners() {
         if (!globalListenersInstalled) return;
         globalListenersInstalled = false;
+        window.removeEventListener("cheese-spanner:live-list-refreshed", handleLiveListRefreshed);
         document.removeEventListener("click", handleDocumentClick, true);
         document.removeEventListener("visibilitychange", handleVisibilityChange, true);
         document.removeEventListener("pointerover", handleLiveElapsedHostActivate, true);

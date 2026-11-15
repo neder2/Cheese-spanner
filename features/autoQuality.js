@@ -174,8 +174,14 @@
         return featureOptions.adblockPopupEnabled && !adblockReady && !adblockGateTimedOut;
     }
 
+    // 콜백 인자(예: onBodyReady의 observer)가 창 길이로 들어와도 마감이 NaN이 되지 않게 기본 창으로 되돌린다.
+    function normalizeBurstWindowMs(windowMs) {
+        return Number.isFinite(windowMs) && windowMs > 0 ? windowMs : APPLY_BURST_WINDOW_MS;
+    }
+
     function requestQualityApplyBurst(windowMs = APPLY_BURST_WINDOW_MS) {
         if (!isEnabled()) return;
+        windowMs = normalizeBurstWindowMs(windowMs);
 
         if (!shouldWaitForAdblock()) {
             startQualityApplyBurst(windowMs);
@@ -257,6 +263,7 @@
 
     function startQualityApplyBurst(windowMs = APPLY_BURST_WINDOW_MS) {
         if (!isEnabled()) return;
+        windowMs = normalizeBurstWindowMs(windowMs);
 
         const now = performance.now();
         if (!applyBurstDeadline || now > applyBurstDeadline) applyBurstStartedAt = now;
@@ -331,7 +338,8 @@
                 if (!mutations.some(mutationCouldAffectQuality)) return;
                 scheduleDomApply();
             },
-            onBodyReady: requestQualityApplyBurst,
+            // onBodyReady(observer, target)의 인자를 창 길이로 넘기지 않는다.
+            onBodyReady: () => requestQualityApplyBurst(),
         });
     }
 

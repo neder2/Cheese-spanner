@@ -145,6 +145,14 @@ function dispatch(dom, element, type) {
     element.dispatchEvent(new dom.window.Event(type, { bubbles: true }));
 }
 
+// JSDOM marks dispatchEvent() and click() as untrusted; its internal dispatch keeps the flag like a real user event.
+function dispatchTrusted(target, event) {
+    const impl = Object.getOwnPropertySymbols(event).find((symbol) => symbol.description === "impl");
+    event[impl].isTrusted = true;
+    target[impl]._dispatch(event[impl]);
+    return event;
+}
+
 function queryOption(document, key) {
     return document.querySelector(`[data-option="${key}"]`);
 }
@@ -160,6 +168,7 @@ module.exports = {
     evalRepoScript,
     evalFeatureModules,
     dispatch,
+    dispatchTrusted,
     queryOption,
     waitForAsyncCallbacks,
     waitForCondition,

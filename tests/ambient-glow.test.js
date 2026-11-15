@@ -7,6 +7,7 @@ const {
     createDom,
     evalRepoScript,
     dispatch,
+    dispatchTrusted,
     queryOption,
     waitForAsyncCallbacks,
     waitForCondition,
@@ -20,6 +21,7 @@ const PLAYER = { left: 240, top: 60, width: 1455, height: 818 };
 // Native home menu shape from docs/measurements/stream-info-settings-2026-09-15.md.
 const MENU = `<div class="pzp-settings pzp-pc-settings pzp-pc__settings" role="menu"><button class="pzp-ui-setting-home-item" role="menuitem" id="native-quality"><span class="pzp-ui-setting-home-item__top"><span class="pzp-ui-setting-home-item__left"><span class="pzp-ui-setting-home-item__label">해상도</span></span></span></button></div>`;
 const STATE_KEY = "betterChzzkAmbientPlayerOff";
+const SETTINGS_STORE = "cheese-spanner:settings-store";
 const markup = `<header id="header"></header>
 <aside id="sidebar" class="sidebar_container"><a href="/live/a">팔로잉</a></aside>
 <div id="layout-body"><div class="wrapper"><main><div class="pzp-pc"><div class="pzp-pc__video"><video></video></div>
@@ -60,6 +62,7 @@ function fixture(t, sync = { ambientEnabled: true }, path = "/live/test-channel"
         disconnect() {
             resizers.delete(this);
         }
+        unobserve() {}
     };
     const draws = [];
     const pixelReads = [];
@@ -167,6 +170,12 @@ function fixture(t, sync = { ambientEnabled: true }, path = "/live/test-channel"
             }
             for (const listener of [...chrome.testState.storageChangeListeners]) listener(payload, "local");
         },
+        click: (element) =>
+            dispatchTrusted(
+                element,
+                new w.MouseEvent("click", { bubbles: true, cancelable: true, button: 0, detail: 1 })
+            ),
+        storeRequests: () => chrome.testState.runtimeMessages.filter((message) => message?.type === SETTINGS_STORE),
         row: () => doc.getElementById("cheese-spanner-ambient-row"),
         expand: () => doc.getElementById("cheese-spanner-ambient-expand"),
         toggle: () => doc.getElementById("cheese-spanner-ambient-toggle"),
@@ -244,6 +253,42 @@ test("enabled glow surrounds the player, spills over chat and sidebar, and never
     assert.deepEqual(f.panels(), f.nativePanels, "native chat and sidebar nodes are never restyled");
 });
 
+test("chat menus and overlapping dialogs cut out glow without changing native surfaces", async (t) => {
+    const f = fixture(t);
+    await waitForCondition(() => f.layer() && !f.layer().hidden);
+    const clip = f.layer().style.clipPath;
+    const host = f.doc.getElementById("aside-chatting");
+    const menu = f.doc.createElement("div");
+    menu.className = "_container_11w2f_1";
+    menu.getBoundingClientRect = () => rect({ left: 1660, top: 94, width: 284, height: 156 });
+    host.append(menu);
+    const mask = () => decodeURIComponent(f.layer().style.maskImage);
+    await waitForCondition(() => mask().includes('x="1708" y="322" width="284" height="156"'));
+    const dialog = f.doc.createElement("section");
+    dialog.setAttribute("role", "alertdialog");
+    let box = { left: 1600, top: 120, width: 340, height: 450 };
+    dialog.getBoundingClientRect = () => rect(box);
+    // A portal can live outside the chat host and overlap both menu and player.
+    f.doc.body.append(dialog);
+    await waitForCondition(() => mask().includes('x="1648" y="348" width="340" height="450"'));
+    assert.equal((mask().match(/fill="black"/g) || []).length, 2);
+    assert.equal(f.layer().style.clipPath, clip, "overlap never reopens the player cutout");
+    assert.equal(f.layer().hidden, false, "ordinary chat/header glow remains enabled");
+    assert.equal(menu.getAttribute("style"), null);
+    assert.equal(dialog.getAttribute("style"), null);
+    box = { ...box, top: 150, height: 300 };
+    f.resizers.forEach((observer) => observer.fn([]));
+    await waitForCondition(() => mask().includes('x="1648" y="378" width="340" height="300"'));
+    dialog.hidden = true;
+    await waitForCondition(() => (mask().match(/fill="black"/g) || []).length === 1);
+    menu.remove();
+    await waitForCondition(() => f.layer().style.maskImage === "none");
+    dialog.remove();
+    f.w.CheeseSpanner.ambientGlow.stop();
+    assert.equal(f.layer(), null);
+    assert.equal(f.resizers.size, 0);
+});
+
 test("glow reaches the header and keeps the whole player cut out when the page scrolls", async (t) => {
     const f = fixture(t);
     await waitForCondition(() => f.layer() && !f.layer().hidden);
@@ -266,6 +311,30 @@ test("glow reaches the header and keeps the whole player cut out when the page s
     assert.equal(f.frameCallbacks.size, 0, "an off-screen player is not sampled");
 });
 
+test("the scroll mini player and in-page PiP hide the glow until the player returns to the page", async (t) => {
+    const f = fixture(t);
+    await waitForCondition(() => f.layer() && !f.layer().hidden && f.frameCallbacks.size === 1);
+    const layout = f.doc.querySelector("main");
+    layout.id = "live_player_layout";
+    layout.className = "chzzk_player type_live has_shortcut";
+    const resize = () => f.resizers.forEach((observer) => observer.fn([]));
+    // Public CHZZK CSS (2026-11-04): scrolling down turns the layout into a fixed 353x198 mini
+    // player at the top right with z-index 1000, below the glow's 10000.
+    for (const floating of ["hidden_ui miniplayer scroll_pip", "pip_mode"]) {
+        layout.classList.add(...floating.split(" "));
+        f.setPlayerBox({ left: 1695, top: 44, width: 353, height: 198 });
+        resize();
+        await waitForCondition(() => f.layer().hidden);
+        assert.equal(f.frameCallbacks.size, 0, `${floating} is not sampled`);
+        layout.classList.remove(...floating.split(" "));
+        f.setPlayerBox(PLAYER);
+        f.doc.dispatchEvent(new f.w.Event("scroll"));
+        await waitForCondition(() => !f.layer().hidden && f.frameCallbacks.size === 1);
+        assert.equal(f.layer().style.left, `${PLAYER.left - 288}px`, "the glow returns around the page player");
+    }
+    assert.deepEqual(f.pixelReads, []);
+});
+
 test("hidden tabs and fullscreen stop sampling and resume afterwards", async (t) => {
     const f = fixture(t);
     await waitForCondition(() => f.layer() && !f.layer().hidden && f.frameCallbacks.size === 1);
@@ -280,6 +349,40 @@ test("hidden tabs and fullscreen stop sampling and resume afterwards", async (t)
     assert.equal(f.frameCallbacks.size, 0);
     f.setFullscreen(null);
     await waitForCondition(() => !f.layer().hidden && f.frameCallbacks.size === 1);
+});
+
+test("a glow shown again after fullscreen or a hidden tab replaces the old scene instead of blending it", async (t) => {
+    const f = fixture(t);
+    await waitForCondition(() => f.layer() && !f.layer().hidden && f.frameCallbacks.size === 1);
+    f.advance(200);
+    f.frame();
+    assert.equal(f.draws.at(-1).alpha, 0.35, "frames blend while the layer stays visible");
+
+    // A paused video gets no frame callbacks, so the first draw after showing again must stand alone.
+    f.setFullscreen(f.doc.querySelector(".pzp-pc"));
+    await waitForCondition(() => f.layer().hidden);
+    const beforeExit = f.draws.length;
+    f.setFullscreen(null);
+    await waitForCondition(() => !f.layer().hidden);
+    assert.equal(f.draws.length, beforeExit + 1);
+    assert.equal(f.draws.at(-1).alpha, 1, "the pre-fullscreen scene is not mixed into the current frame");
+    assert.equal(f.layer().getAttribute("data-bcam-ready"), "1", "the layer never flashes empty");
+
+    f.setHidden(true);
+    const beforeReturn = f.draws.length;
+    f.setHidden(false);
+    await waitForCondition(() => f.draws.length === beforeReturn + 1);
+    assert.equal(f.draws.at(-1).alpha, 1, "a returning tab redraws the current frame at once");
+    await waitForCondition(() => f.frameCallbacks.size === 1);
+    f.advance(200);
+    f.frame();
+    assert.equal(f.draws.at(-1).alpha, 0.35, "later frames blend again");
+    // Ordinary relayouts while visible do not add extra draws.
+    const steady = f.draws.length;
+    f.w.dispatchEvent(new f.w.Event("resize"));
+    await new Promise((resolve) => f.w.requestAnimationFrame(resolve));
+    await new Promise((resolve) => f.w.requestAnimationFrame(resolve));
+    assert.equal(f.draws.length, steady);
 });
 
 test("live multiview turns the glow off while its host is active and restores it afterwards", async (t) => {
@@ -338,7 +441,7 @@ test("the gear menu row keeps strength folded until its label is clicked and the
     expand.click();
 
     // The switch alone turns the glow off and on and keeps the fold state.
-    toggle.click();
+    f.click(toggle);
     assert.equal(toggle.getAttribute("aria-checked"), "false");
     assert.equal(f.strength().hidden, false, "the switch never folds the slider");
     assert.equal(f.layer()?.hidden ?? true, true);
@@ -346,7 +449,7 @@ test("the gear menu row keeps strength folded until its label is clicked and the
     await waitForCondition(() => f.chrome.testState.local[STATE_KEY] === true);
     assert.equal(f.chrome.testState.sync.ambientEnabled, true, "the switch never changes the option itself");
 
-    toggle.querySelector(".pzp-ui-toggle__handle").click();
+    f.click(toggle.querySelector(".pzp-ui-toggle__handle"));
     assert.equal(toggle.getAttribute("aria-checked"), "true");
     await waitForCondition(() => !f.layer().hidden && f.frameCallbacks.size === 1);
     await waitForCondition(() => f.chrome.testState.local[STATE_KEY] === false);
@@ -387,7 +490,7 @@ test("the gear menu slider changes strength at once and saves the synced option 
     f.doc.querySelector(".pzp-pc").addEventListener("keydown", () => playerKeys++);
 
     input.value = "85";
-    input.dispatchEvent(new f.w.Event("input", { bubbles: true }));
+    dispatchTrusted(input, new f.w.Event("input", { bubbles: true }));
     assert.equal(f.layer().style.getPropertyValue("--bcam-strength"), "0.85");
     assert.equal(value.textContent, "85%");
     assert.equal(f.chrome.testState.sync.ambientIntensity, undefined, "the save waits for the drag to settle");
@@ -409,7 +512,7 @@ test("the gear menu slider changes strength at once and saves the synced option 
 
     // Turning the option off mid-drag still keeps the chosen strength.
     input.value = "45";
-    input.dispatchEvent(new f.w.Event("input", { bubbles: true }));
+    dispatchTrusted(input, new f.w.Event("input", { bubbles: true }));
     f.change({ ambientEnabled: false });
     await waitForCondition(() => f.chrome.testState.sync.ambientIntensity === 45);
 });
@@ -427,7 +530,7 @@ test("a re-rendered gear menu gets one row again and the keyboard reaches label 
     assert.equal(f.row().nextElementSibling, f.strength());
 
     const key = (target, value) =>
-        target.dispatchEvent(new f.w.KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true }));
+        dispatchTrusted(target, new f.w.KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true }));
     const native = f.doc.getElementById("native-quality");
     native.focus();
     key(native, "ArrowUp");
@@ -438,10 +541,48 @@ test("a re-rendered gear menu gets one row again and the keyboard reaches label 
     assert.equal(f.doc.activeElement, f.toggle());
     key(f.toggle(), "Enter");
     assert.equal(f.toggle().getAttribute("aria-checked"), "false");
+    await waitForCondition(() => f.chrome.testState.local[STATE_KEY] === true);
     key(f.toggle(), "ArrowLeft");
     assert.equal(f.doc.activeElement, f.expand());
     key(f.toggle(), "ArrowDown");
     assert.equal(f.doc.activeElement, native, "arrows leave the row from either control");
+});
+
+test("page-dispatched slider, switch and key events never save the strength or the off choice", async (t) => {
+    const f = fixture(t);
+    await waitForCondition(() => f.strength() && f.layer() && !f.layer().hidden);
+    const input = f.strength().querySelector('input[type="range"]');
+    // A page script can reach the shared DOM even while the gear menu and the slider are folded.
+    assert.equal(f.strength().hidden, true);
+    for (const value of ["20", "90", "35"]) {
+        input.value = value;
+        input.dispatchEvent(new f.w.Event("input", { bubbles: true }));
+        input.dispatchEvent(new f.w.Event("change", { bubbles: true }));
+    }
+    f.toggle().click();
+    f.toggle().dispatchEvent(new f.w.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    f.toggle().dispatchEvent(new f.w.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 600)); // past the 250ms slider save delay
+    await waitForAsyncCallbacks();
+    assert.deepEqual(f.storeRequests(), [], "no settings store request");
+    assert.equal(f.chrome.testState.sync.ambientIntensity, undefined);
+    assert.equal(f.chrome.testState.local[STATE_KEY], undefined);
+    assert.equal(f.toggle().getAttribute("aria-checked"), "true");
+    assert.equal(f.layer().style.getPropertyValue("--bcam-strength"), "0.60", "synthetic input does not preview");
+
+    // A page click may still fold or unfold the slider; that saves nothing.
+    f.expand().click();
+    assert.equal(f.strength().hidden, false);
+
+    // The user's own drag still saves once, and a trusted Space still flips the switch.
+    input.value = "70";
+    dispatchTrusted(input, new f.w.Event("input", { bubbles: true }));
+    dispatchTrusted(input, new f.w.Event("change", { bubbles: true }));
+    await waitForCondition(() => f.chrome.testState.sync.ambientIntensity === 70);
+    dispatchTrusted(f.toggle(), new f.w.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+    assert.equal(f.toggle().getAttribute("aria-checked"), "false");
+    await waitForCondition(() => f.chrome.testState.local[STATE_KEY] === true);
+    assert.equal(f.storeRequests().length, 1);
 });
 
 test("routes clear the previous broadcast and non-playback pages drop the effect", async (t) => {

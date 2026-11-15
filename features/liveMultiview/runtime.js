@@ -11,6 +11,9 @@
     const { bindFeatureOptions, startPageChangeDetection, injectStyleOnce, mutationMatchesSelector } = root.utils;
     const ID = "cheese-spanner-multiview";
     const PANEL_ID = `${ID}-panel`;
+    // 다른 확장 기능이 직접 놓기를 받는 영역이에요. 자유 배치의 페이지 전체 놓기가 이 영역을 가로채지 않게 해요.
+    // 팔로잉 폴더의 사이드바 목록·새 폴더 자리(features/followingFolders.js의 data-bcff-* 표식)와 채팅 멀티뷰 패널이에요.
+    const OTHER_DROP_TARGETS = "[data-bcff-list], [data-bcff-new-zone], #cheese-spanner-chat-multiview-panel";
     const CHAT = "aside#aside-chatting";
     const CHAT_BUTTON_ID = `${ID}-chat-settings`;
     const CHAT_ACTIONS = "[data-bcmv-chat-actions]";
@@ -72,8 +75,12 @@
     // Theme colors, radii, shadow and focus come from shared/uiTheme.js (--bct-*, no feature fallbacks).
     // Fixed colors remain only on the video itself (native-like controls, guides, error screen); the panel and
     // guides keep CHZZK's own font family (README), not the bundled font.
+    // 2026-11-04 bundle: the scroll/ad mini player (.miniplayer, .pre_ad_mini/.mid_ad_mini, z-index 1000-1002) is
+    // position:fixed inside the host. Isolating an idle host traps it under the later-painted chat aside, so only the
+    // active split layout (which contains its own z-indexed cells) isolates; the variables stay on every host.
     const css = `
-[data-bcmv-host],#${PANEL_ID}{isolation:isolate;--bcmv-font:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic","맑은 고딕",sans-serif;--bcmv-surface:var(--bct-surface);--bcmv-content:var(--bct-text);--bcmv-border:var(--bct-border-strong);--bcmv-brand-hover:color-mix(in srgb,var(--bct-brand) 90%,var(--bct-on-brand))}
+[data-bcmv-host="active"],#${PANEL_ID}{isolation:isolate}
+[data-bcmv-host],#${PANEL_ID}{--bcmv-font:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic","맑은 고딕",sans-serif;--bcmv-surface:var(--bct-surface);--bcmv-content:var(--bct-text);--bcmv-border:var(--bct-border-strong);--bcmv-brand-hover:color-mix(in srgb,var(--bct-brand) 90%,var(--bct-on-brand))}
 [data-bcmv-host="active"] > [data-bcmv-native]{position:absolute!important;left:var(--bcmv-main-left,0)!important;top:var(--bcmv-main-top,0)!important;width:var(--bcmv-main-width)!important;height:calc(100% * var(--bcmv-main-height))!important;min-width:0!important;min-height:0!important}
 [data-bcmv-viewport][popover]{position:fixed!important;inset:0!important;margin:0!important;width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;padding:0!important;border:0!important;background:transparent!important;overflow:visible!important;pointer-events:none}
 [data-bcmv-viewport]::backdrop,.bcmv-panel[popover]::backdrop{background:transparent;pointer-events:none}
@@ -273,7 +280,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
             if (state.freeLayoutEnabled) layout.rememberWindows();
             sessionStorage.setItem(model.SESSION_KEY, JSON.stringify(state));
         } catch {
-            notice("탭 구성을 저장하지 못했어요. 새로고침 후 구성이 복원되지 않을 수 있어요.");
+            notice("탭 구성 저장 실패(새로고침 시 복원 안 될 수 있음).");
         }
     }
     function updatePlayerUi(player) {
@@ -440,7 +447,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         const accepted = !link.dispatchEvent(
             new CustomEvent("cheese-spanner:multiview-navigate", { bubbles: true, cancelable: true })
         );
-        if (!accepted) notice("페이지 내부 이동을 사용할 수 없어요. 현재 방송은 유지돼요.");
+        if (!accepted) notice("페이지 내부 이동 불가(현재 방송 유지).");
         return accepted;
     }
     function equalLayout() {
@@ -560,9 +567,9 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         else if (action === "apply-delay" && player) players.setDelay(player, player.delay, player.delayBasis);
     }
     function addProblem(id) {
-        if (!id) return "올바른 치지직 라이브 URL을 입력해 주세요.";
-        if (state.channels.some((entry) => entry.id === id)) return "이미 추가된 방송이에요.";
-        if (state.channels.length >= 6) return "방송은 최대 6개까지 추가할 수 있어요.";
+        if (!id) return "올바른 치지직 라이브 URL 입력 필요.";
+        if (state.channels.some((entry) => entry.id === id)) return "이미 추가된 방송.";
+        if (state.channels.length >= 6) return "최대 6개 방송까지 추가 가능.";
         return "";
     }
     function addStreamFromUrl(value, freeRect = null) {
@@ -625,15 +632,21 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
             !incomingDrag.link.isConnected ||
             incomingDrag.link.href !== incomingDrag.href
         )
-            return "방송 구성이 바뀌었어요. 링크를 다시 끌어 주세요.";
+            return "방송 구성 변경됨. 링크 다시 드래그 필요.";
         return addProblem(model.channelFromUrl(incomingDrag.href));
     }
     function acceptsAddDrop(event) {
         if (!enabled || !state.active || !overlay || layout.busy || !isLinkTransfer(event.dataTransfer)) return false;
+        // 같은 window capture 단계의 다른 기능(팔로잉 폴더 등)이 이미 받은 놓기는 다시 받지 않아요.
+        if (event.defaultPrevented) return false;
         const target = event.target;
         if (!(target instanceof Element) || !target.isConnected) return false;
         if (!layout.viewportActive) return host?.contains(target);
-        if (target.closest(`#${PANEL_ID}, input, textarea, [contenteditable]:not([contenteditable="false"])`))
+        if (
+            target.closest(
+                `#${PANEL_ID}, ${OTHER_DROP_TARGETS}, input, textarea, [contenteditable]:not([contenteditable="false"])`
+            )
+        )
             return false;
         // Ordinary page links keep their native drop behavior outside the player.
         if (incomingDrag?.href && !model.channelFromUrl(incomingDrag.href) && !host?.contains(target)) return false;
@@ -647,8 +660,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         event.preventDefault();
         event.stopPropagation();
         // The URL itself is protected until drop for drags from another tab/app.
-        const problem =
-            incomingDragProblem() || (state.channels.length >= 6 ? "방송은 최대 6개까지 추가할 수 있어요." : "");
+        const problem = incomingDragProblem() || (state.channels.length >= 6 ? "최대 6개 방송까지 추가 가능." : "");
         event.dataTransfer.dropEffect = problem
             ? "none"
             : ["link", "linkMove"].includes(event.dataTransfer.effectAllowed)
@@ -692,7 +704,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         const freeRect = layout.incomingWindowRect(event.clientX, event.clientY);
         clearIncomingDrag();
         if (problem || changed) {
-            notice(problem || "끌어온 방송 주소가 바뀌었어요. 다시 끌어 주세요.");
+            notice(problem || "드래그한 방송 주소 변경됨. 다시 드래그 필요.");
             return;
         }
         addStreamFromUrl(value, freeRect);
@@ -807,6 +819,12 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
                 muted: previous?.muted ?? video?.muted ?? true,
             });
             if (previous) Object.assign(previous, { volume: 0.3, muted: true });
+            // 새 메인이 이전 메인의 자유 창 자리를 이어받아요. 이전 메인은 자유 창에서 빠져 기본 배치의 보조 칸 위치로
+            // 다시 계산되므로 새 메인 창 밑에 같은 크기로 가려지지 않아요.
+            if (previous)
+                state.freeWindows = state.freeWindows
+                    .filter((cell) => cell.id !== routeId)
+                    .map((cell) => (cell.id === previous.id ? { ...cell, id: routeId } : cell));
             state.channels = state.channels.slice(0, 6);
             state.dockTree = model.defaultTree(state.channels);
             state.customLayout = false;

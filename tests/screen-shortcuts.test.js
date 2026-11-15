@@ -23,6 +23,8 @@ function fixture(t) {
             },
             getMainVideoElement: () => w.document.querySelector("video"),
             getPlayerRoot: (v) => v.closest("main"),
+            isNativeAdBreakActive: () => false,
+            isLiveAdBreakActive: () => false,
             isPlaybackRoute: () => /^\/(live|video)\//.test(w.location.pathname),
             isEditableTarget: (el) => !!el.closest("input,textarea,select"),
         },

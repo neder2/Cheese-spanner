@@ -16,11 +16,13 @@
         getLiveChannelIdFromPath,
         injectStyleOnce,
         isLiveRoute,
+        isVodRoute,
         onReady,
         startPageChangeDetection,
     } = root.utils;
     const {
         BLIND_MASKED_ATTR,
+        KEYWORD_FILTERED_ATTR,
         MODERATOR_COLLECTED_ATTR,
         MESSAGE_ID_ATTRS,
         ROLE_ATTR_RE,
@@ -32,12 +34,17 @@
         getElementAttrText,
         getVisibleText,
         isBlindNoticeText,
+        readPageMessage,
         resolveMutationElement,
         getTopLevelMutationElements,
     } = namespace.parser;
     const WELCOME_MESSAGE_STYLE_ID = "cheese-spanner-chat-welcome-message-style";
 
+    const KEYWORD_FILTER_STYLE_ID = "cheese-spanner-chat-keyword-filter-style";
+
     const BLIND_PROCESSED_ATTR = "data-bcct-blind-processed";
+
+    const PAGE_READY_EVENT = "cheese-spanner:chat-timestamp-page-ready";
 
     const MODERATOR_CACHE_STORAGE_KEY = "betterChzzkChatToolsModeratorCache";
 
@@ -72,6 +79,7 @@
         "title",
         "aria-hidden",
         "alt",
+        "src",
         "aria-expanded",
         "data-message-original",
         CHAT_TIMESTAMP_ATTR,
@@ -135,6 +143,9 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     let lastChatRootFindAt = 0;
     let lastChatRootFindResult = null;
     let routeChannelId = "";
+    let pageHidden = false;
+    let keywordPhrases = [];
+    let moderatorSnapshot = [];
 
     const scheduleSync = createThrottledDomSync(syncChatTools, CHAT_SYNC_THROTTLE_MS);
     const panel = namespace.createPanel({
@@ -142,7 +153,12 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         onRead: (ids) => store.markRead(ids),
         onRequestSync: scheduleSync,
     });
-    const store = namespace.createMessageStore({ onChange: (messages) => panel.render(messages) });
+    const store = namespace.createMessageStore({
+        onChange: (messages) => {
+            moderatorSnapshot = messages;
+            renderModeratorMessages();
+        },
+    });
     const {
         parseChatMessage,
         collect: collectModeratorMessage,
@@ -155,7 +171,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     const { remove: removeModeratorBox } = panel;
 
     function isFeatureEnabled() {
-        return Boolean(featureOptions.chatToolsShowBlindEnabled || featureOptions.chatToolsModeratorBoxEnabled);
+        return isBlindRevealEnabled() || isModeratorBoxEnabled() || isKeywordFilterEnabled();
     }
 
     function syncWelcomeMessageRemoval() {
@@ -174,6 +190,38 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         return Boolean(featureOptions.chatToolsModeratorBoxEnabled);
     }
 
+    function isKeywordFilterEnabled() {
+        return Boolean(featureOptions.chatKeywordFilterEnabled && keywordPhrases.length);
+    }
+
+    function matchesKeyword(text) {
+        if (!isKeywordFilterEnabled() || !text) return false;
+        const normalized = String(text).normalize("NFC").toLowerCase();
+        return keywordPhrases.some(({ phrase, matchMode }) =>
+            matchMode === "exact" ? normalized === phrase : normalized.includes(phrase)
+        );
+    }
+
+    function renderModeratorMessages() {
+        panel.render(moderatorSnapshot.filter((message) => !matchesKeyword(message.text)));
+    }
+
+    function clearKeywordFilters(container = document) {
+        if (container instanceof Element) container.removeAttribute(KEYWORD_FILTERED_ATTR);
+        for (const row of container.querySelectorAll?.(`[${KEYWORD_FILTERED_ATTR}]`) || []) {
+            row.removeAttribute(KEYWORD_FILTERED_ATTR);
+        }
+    }
+
+    function syncKeywordFilter(row, parsed) {
+        // A fallback row-wide text includes nicknames and controls; only a recognized body is filterable.
+        const body = parsed.textEl instanceof Element && parsed.textEl !== row ? parsed.textEl : null;
+        const revealed = isBlindRevealEnabled() ? row.querySelector(".bcct-blind-reveal")?.textContent : "";
+        const hidden = !!body && matchesKeyword(revealed || parsed.text);
+        if (hidden) row.setAttribute(KEYWORD_FILTERED_ATTR, "1");
+        else row.removeAttribute(KEYWORD_FILTERED_ATTR);
+    }
+
     function removeBlindReveal(row) {
         row.querySelector(".bcct-blind-reveal")?.remove();
         for (const el of Array.from(row.querySelectorAll(`[${BLIND_MASKED_ATTR}]`))) {
@@ -182,15 +230,8 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         row.removeAttribute(BLIND_PROCESSED_ATTR);
     }
 
-    function syncBlindReveal(row, parsed) {
+    function syncBlindReveal(row, parsed, source = readPageMessage(row, parsed)) {
         if (!isBlindRevealEnabled() || !parsed.isBlind) {
-            removeBlindReveal(row);
-            return;
-        }
-
-        const original = parsed.hiddenText || lookupCachedOriginalText(row, parsed);
-        if (!original) {
-            // 원문을 모르면 치지직의 블라인드 문구를 그대로 둔다.
             removeBlindReveal(row);
             return;
         }
@@ -203,11 +244,21 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             return;
         }
 
+        // A present page message must validate; it cannot borrow an unrelated DOM original.
+        const original = source
+            ? lookupCachedOriginalText(row, parsed, source)
+            : parsed.hiddenText || lookupCachedOriginalText(row, parsed);
+        if (!original) {
+            // 원문을 모르면 치지직의 블라인드 문구를 그대로 둔다.
+            removeBlindReveal(row);
+            return;
+        }
+
         let reveal = row.querySelector(".bcct-blind-reveal");
         if (!reveal) {
             reveal = document.createElement("span");
             reveal.className = "bcct-blind-reveal";
-            reveal.title = "블라인드된 메시지의 원문이에요.";
+            reveal.title = "블라인드 메시지 원문";
         }
         if (reveal.textContent !== original) reveal.textContent = original;
 
@@ -242,6 +293,8 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     function removeInjectedUi({ clearMessages = true } = {}) {
         store.cancelPending();
         removeAllBlindReveals();
+        clearKeywordFilters();
+        document.getElementById(KEYWORD_FILTER_STYLE_ID)?.remove();
         removeModeratorBox();
         if (clearMessages) clearModeratorState();
         panel.removeStyles();
@@ -410,7 +463,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         if (attrName === "aria-expanded" && getAttr(mutation.target, "aria-haspopup") === "true") return true;
         if (MESSAGE_ID_ATTRS.includes(attrName)) return true;
         if (ROW_REUSE_SIGNAL_ATTRIBUTES.includes(attrName)) return true;
-        if (row?.hasAttribute(BLIND_PROCESSED_ATTR)) return true;
+        if (isKeywordFilterEnabled() || row?.hasAttribute(BLIND_PROCESSED_ATTR)) return true;
 
         // 이미 수집된 행도 계속 추적한다. 치지직이 메시지 삽입 직후 닉네임 색
         // 인라인 style 을 한 박자 늦게 적용하는 경우가 있어, 그 mutation 이
@@ -419,6 +472,9 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         // 방송자/채팅 운영자 판정이다. 재파싱은 idempotent 라 (백필은 값이 실제로
         // 바뀔 때만 다시 그림) 루프를 만들지 않는다.
         if (isModeratorBoxEnabled() && getCollectedModeratorRow(row)) return true;
+        // 본문 이모티콘 토큰과 정체성은 img src에 의존한다. 직전 파싱이 역할 행이었으면 src만 바뀌어도
+        // 그 행을 다시 처리한다(아직 binding이 없는 안정화 대기 행 포함).
+        if (attrName === "src" && isModeratorBoxEnabled() && parsedChatRows.get(row)) return true;
 
         const signalText = getMutationSignalText(row, mutation.target);
         if (isBlindRevealEnabled() && BLIND_SIGNAL_RE.test(signalText)) return true;
@@ -427,7 +483,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     }
 
     function shouldTrackChatTextMutation(mutation, row) {
-        if (row?.hasAttribute(BLIND_PROCESSED_ATTR)) return true;
+        if (isKeywordFilterEnabled() || row?.hasAttribute(BLIND_PROCESSED_ATTR)) return true;
         // 수집된 행을 계속 추적하는 이유는 shouldTrackChatAttributeMutation 참고.
         if (isModeratorBoxEnabled() && getCollectedModeratorRow(row)) return true;
         // 배지가 먼저 붙고 빈 본문 텍스트 노드가 나중에 채워지면 아직 수집 binding이 없다.
@@ -518,6 +574,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             for (const node of mutation.removedNodes || []) {
                 if (isOwnUi(node)) continue;
                 removedNodes.push(node);
+                if (node instanceof Element) clearKeywordFilters(node);
             }
             if (removedNodes.length) {
                 store.removeSubtrees(removedNodes, getTopLevelMutationElements(mutationAddedNodes), { isListCleared });
@@ -565,9 +622,12 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     }
 
     function findChatRoot() {
-        if (typeof isLiveRoute === "function" && !isLiveRoute()) {
+        if (!isLiveRoute()) {
             lastChatRootFindResult = null;
-            return null;
+            // Reuse the measured VOD-chat boundary; comments elsewhere on the page are not chat.
+            return isKeywordFilterEnabled() && isVodRoute()
+                ? document.querySelector("aside#vod-aside [role='log']")
+                : null;
         }
         const now = performance.now();
         if (lastChatRootFindResult?.isConnected && now - lastChatRootFindAt < CHAT_ROOT_FIND_THROTTLE_MS) {
@@ -647,7 +707,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     }
 
     function syncChatTools() {
-        if (!isFeatureEnabled()) {
+        if (!isFeatureEnabled() || pageHidden) {
             store.cancelPending();
             return;
         }
@@ -671,12 +731,17 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
                 // 오염시키므로 팝업이 닫힌 뒤(다음 mutation)에 처리한다.
                 if (row.querySelector("[aria-haspopup='true'][aria-expanded='true']")) {
                     removeModeratorHighlight(row);
+                    row.removeAttribute(KEYWORD_FILTERED_ATTR);
                     continue;
                 }
                 const parsed = parseChatMessage(row);
-                if (isBlindRevealEnabled()) cacheOriginalMessageText(row, parsed);
-                syncBlindReveal(row, parsed);
-                collectModeratorMessage(parsed, { deferNotify: true });
+                if (isLiveRoute()) {
+                    const source = isBlindRevealEnabled() ? readPageMessage(row, parsed) : null;
+                    if (isBlindRevealEnabled()) cacheOriginalMessageText(row, parsed, source);
+                    syncBlindReveal(row, parsed, source);
+                    collectModeratorMessage(parsed, { deferNotify: true });
+                }
+                syncKeywordFilter(row, parsed);
                 parsedChatRows.set(row, parsed.role);
             }
         } finally {
@@ -687,7 +752,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     function startObserver() {
         if (observer) observer.disconnectAll?.();
         observer = createMutationObserverSync({
-            target: () => (typeof isLiveRoute !== "function" || isLiveRoute() ? findChatRoot() : null),
+            target: findChatRoot,
             options: {
                 childList: true,
                 subtree: true,
@@ -712,7 +777,12 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     }
 
     function restartRuntime({ clearMessages = false, retiredRows = null } = {}) {
-        if (!isFeatureEnabled()) return;
+        if (chatRoot) clearKeywordFilters(chatRoot);
+        clearKeywordFilters();
+        if (!isFeatureEnabled()) {
+            uninstallRuntime();
+            return;
+        }
         chatRoot = null;
         store.resetRoot();
         removeModeratorBox();
@@ -730,13 +800,20 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         // 채널이 바뀐 시점의 행은 이전 채널 것이므로 재파싱에서 다시 수집하지 않게 넘긴다.
         // 채널 이동마다 이전 세대를 바꾸므로 나중에 돌아온 채널의 메시지는 다시 수집된다.
         let retiredRows = null;
-        if (channelId !== routeChannelId) retiredRows = chatRoot?.isConnected ? findChatRows(chatRoot) : [];
+        if (channelId !== routeChannelId) {
+            retiredRows = chatRoot?.isConnected ? findChatRows(chatRoot) : [];
+            store.retirePageMessages();
+            removeAllBlindReveals();
+        }
         routeChannelId = channelId;
         restartRuntime({ clearMessages: true, retiredRows });
     }
 
     function installRuntime() {
+        if (pageHidden) return;
         panel.installStyles();
+        if (isKeywordFilterEnabled())
+            injectStyleOnce(KEYWORD_FILTER_STYLE_ID, `[${KEYWORD_FILTERED_ATTR}="1"]{display:none!important;}`);
         // 제거된 「방송 중 모아보기 유지」 옵션이 storage.local 에 남긴 캐시를 한 번 지운다.
         purgeLegacyModeratorCache();
         if (!observer) startObserver();
@@ -748,6 +825,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     }
 
     function uninstallRuntime() {
+        scheduleSync.cancel();
         if (observer) {
             observer.disconnectAll?.();
             observer = null;
@@ -756,14 +834,25 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             removePageChangeDetection();
             removePageChangeDetection = null;
         }
+        if (chatRoot) clearKeywordFilters(chatRoot);
         chatRoot = null;
         store.resetRoot();
+        store.clearPageMessages();
         resetChatProcessingState({ reparse: true });
         removeInjectedUi();
     }
 
     function applyOptions(options) {
         featureOptions = options;
+        keywordPhrases = globalThis.CheeseSpannerSettings.getChatKeywordFilterRules(options).map((rule) => ({
+            ...rule,
+            phrase: rule.phrase.toLowerCase(),
+        }));
+        if (!isKeywordFilterEnabled()) {
+            clearKeywordFilters();
+            document.getElementById(KEYWORD_FILTER_STYLE_ID)?.remove();
+        }
+        renderModeratorMessages();
         syncWelcomeMessageRemoval();
         store.configure({ enabled: isModeratorBoxEnabled(), maximum: Number(options.chatToolsMaxModeratorMessages) });
         panel.configure({
@@ -783,7 +872,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         }
         if (!isBlindRevealEnabled()) {
             removeAllBlindReveals();
-            store.clearOriginals();
+            store.clearPageMessages();
         }
         scheduleSync();
     }
@@ -794,17 +883,32 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     }
 
     function adoptObservedChatRoot(node) {
+        if (chatRoot && chatRoot !== node) clearKeywordFilters(chatRoot);
         chatRoot = node;
         store.adoptRoot(node);
     }
 
     function ensureModeratorBox(rootEl) {
-        if (!isModeratorBoxEnabled()) panel.remove();
+        if (!isLiveRoute() || !isModeratorBoxEnabled()) panel.remove();
         else panel.mount(rootEl);
     }
 
     bindFeatureOptions(applyOptions);
+    // MAIN 브리지가 isolated보다 늦게 준비되면 이미 처리한 블라인드 행의 페이지 원문을 다시 요청한다.
+    window.addEventListener(PAGE_READY_EVENT, () => {
+        if (!observer || !isBlindRevealEnabled()) return;
+        requestFullChatScan({ reparse: true });
+        scheduleSync();
+    });
     onReady(() => {
+        if (isFeatureEnabled()) installRuntime();
+    });
+    window.addEventListener("pagehide", () => {
+        pageHidden = true;
+        uninstallRuntime();
+    });
+    window.addEventListener("pageshow", () => {
+        pageHidden = false;
         if (isFeatureEnabled()) installRuntime();
     });
     Object.assign(namespace, { parseChatMessage, renderModeratorBox: ensureModeratorBox, syncBlindReveal });

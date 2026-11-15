@@ -261,7 +261,7 @@ test("donation import reads complete monthly pages, retains empty text, and pres
 
 test("donation import rejects incomplete pages, changing accounts, changed pagination, and invalid records", async () => {
     await assert.rejects(collect({ requestPage: async () => ({ code: 401 }) }), /로그인/);
-    await assert.rejects(collect({ requestPage: async () => response([apiRow()], 2) }), /바뀌었어요/);
+    await assert.rejects(collect({ requestPage: async () => response([apiRow()], 2) }), /사용 내역 변경됨/);
     await assert.rejects(
         collect({ requestPage: async () => response([apiRow(0, { purchaseDate: "not-a-date" })]) }),
         /시각/
@@ -271,7 +271,7 @@ test("donation import rejects incomplete pages, changing accounts, changed pagin
     let identities = 0;
     await assert.rejects(
         collect({ identify: async () => (++identities === 1 ? "viewer" : "other") }),
-        /계정이 바뀌었어요/
+        /로그인 계정 변경됨/
     );
     let requests = 0;
     await assert.rejects(
@@ -286,7 +286,7 @@ test("donation import rejects incomplete pages, changing accounts, changed pagin
                 );
             },
         }),
-        /바뀌었어요/
+        /사용 내역 변경됨/
     );
     const controller = new AbortController();
     requests = 0;

@@ -137,7 +137,7 @@ test("one popup option controls both the adblock notice and connector guide with
     const ad = f.w.document.createElement("div");
     ad.setAttribute("role", "alertdialog");
     ad.setAttribute("aria-modal", "true");
-    ad.innerHTML = '광고 차단 프로그램을 사용 중이신가요?<button aria-label="닫기">닫기</button>';
+    ad.innerHTML = '<strong>광고 차단 프로그램을 사용 중이신가요?</strong><button aria-label="닫기">닫기</button>';
     ad.querySelector("button").addEventListener("click", () => ad.remove());
     ad.getBoundingClientRect = () => ({ width: 400, height: 200 });
     f.w.document.body.append(ad);

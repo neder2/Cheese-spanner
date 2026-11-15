@@ -34,6 +34,8 @@ const expectedDefaults = {
     hideLiveBadgeEnabled: false,
     playerClipHidden: false,
     playerPipHidden: false,
+    videoRecorderEnabled: false,
+    videoRecorderFolder: "",
     liveStartTimeEnabled: false,
     offlineLiveReloadEnabled: true,
     audioCompressorEnabled: false,
@@ -70,7 +72,13 @@ const expectedDefaults = {
     vodChatTimestampEnabled: false,
     vodOwnChatHighlightEnabled: true,
     chatWeeklyRankingHidden: false,
+    chatDonationMessagesHidden: false,
     chatWelcomeMessageRemovalEnabled: false,
+    chatKeywordFilterEnabled: true,
+    chatKeywordFilterWords: "",
+    chatKeywordFilterApplyMode: "all",
+    chatKeywordFilterMatchMode: "contains",
+    chatKeywordFilterExactWords: "",
     chatToolsShowBlindEnabled: false,
     chatToolsModeratorBoxEnabled: false,
     chatToolsMaxModeratorMessages: 100,
@@ -186,6 +194,7 @@ test("feature count keys are derived from feature toggles only", () => {
         "hideLiveBadgeEnabled",
         "playerClipHidden",
         "playerPipHidden",
+        "videoRecorderEnabled",
         "liveStartTimeEnabled",
         "offlineLiveReloadEnabled",
         "audioCompressorEnabled",
@@ -209,7 +218,9 @@ test("feature count keys are derived from feature toggles only", () => {
         "vodChatTimestampEnabled",
         "vodOwnChatHighlightEnabled",
         "chatWeeklyRankingHidden",
+        "chatDonationMessagesHidden",
         "chatWelcomeMessageRemovalEnabled",
+        "chatKeywordFilterEnabled",
         "chatToolsShowBlindEnabled",
         "chatToolsModeratorBoxEnabled",
         "videoSearchEnabled",
@@ -488,6 +499,133 @@ test("worker update keeps the chat tool choices of the removed master toggle", a
     }
 });
 
+// A content-script document with one sync area whose reads finish only when the test says so.
+function createOptionsReader(stored) {
+    const reads = [];
+    const listeners = [];
+    let lastError;
+    const chrome = {
+        runtime: {
+            get lastError() {
+                return lastError;
+            },
+        },
+        storage: {
+            onChanged: { addListener: (listener) => listeners.push(listener) },
+            sync: {
+                get(keys, callback) {
+                    reads.push((error) => {
+                        const snapshot = Object.fromEntries(
+                            keys.filter((key) => key in stored).map((key) => [key, stored[key]])
+                        );
+                        lastError = error ? { message: error } : undefined;
+                        callback(error ? undefined : snapshot);
+                        lastError = undefined;
+                    });
+                },
+                set() {},
+                remove() {},
+            },
+        },
+    };
+    const context = vm.createContext({ chrome, console });
+    vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "shared", "settings.js"), "utf8"), context);
+    return {
+        settings: context.CheeseSpannerSettings,
+        reads,
+        change(values) {
+            const changes = {};
+            for (const [key, newValue] of Object.entries(values)) {
+                changes[key] = { oldValue: stored[key], newValue };
+                stored[key] = newValue;
+            }
+            for (const listener of listeners) listener(changes, "sync");
+        },
+    };
+}
+
+test("a feature that subscribes while the first read is pending still receives the stored choices", () => {
+    const reader = createOptionsReader({
+        categoryToolsEnabled: false,
+        rewardAutoCollectEnabled: false,
+        skipSeconds: 17,
+    });
+    const first = [];
+    reader.settings.getOptions((options) => first.push(options));
+    // Another option changes before the first read answers; it carries only its own key.
+    reader.change({ skipSeconds: 20 });
+    const late = [];
+    const lateChanges = [];
+    reader.settings.getOptions((options) => late.push(options));
+    reader.settings.addOptionsChangeListener((options) => lateChanges.push(options));
+    assert.equal(late.length, 0, "a late subscriber waits for the read instead of taking defaults");
+    assert.equal(lateChanges.length, 0, "a partial change is not announced as the stored choices");
+    assert.equal(reader.reads.length, 1);
+    reader.reads[0]();
+    for (const options of [first[0], late[0], lateChanges.at(-1)]) {
+        assert.equal(options.categoryToolsEnabled, false);
+        assert.equal(options.rewardAutoCollectEnabled, false);
+        assert.equal(options.skipSeconds, 20, "the change made during the read wins");
+    }
+    // Later changes keep the loaded choices.
+    reader.change({ skipSeconds: 25 });
+    assert.equal(lateChanges.at(-1).categoryToolsEnabled, false);
+    assert.equal(lateChanges.at(-1).skipSeconds, 25);
+});
+
+test("a feature bound during the first read is applied once, while a change-only listener still hears the change", () => {
+    const reader = createOptionsReader({ rewardAutoCollectEnabled: false, skipSeconds: 17 });
+    const applied = [];
+    const applyOptions = (options) => applied.push(options.skipSeconds);
+    // content.js bindFeatureOptions registers the same function for the first read and for changes.
+    reader.settings.getOptions(applyOptions);
+    reader.settings.addOptionsChangeListener(applyOptions);
+    const changeOnly = [];
+    reader.settings.addOptionsChangeListener((options) => changeOnly.push(options.skipSeconds));
+    const lateListener = [];
+    reader.settings.getOptions(() => {
+        // A consumer that subscribes inside its first callback already holds the loaded choices.
+        reader.settings.addOptionsChangeListener((options) => lateListener.push(options.skipSeconds));
+    });
+    reader.change({ skipSeconds: 20 });
+    reader.reads[0]();
+    assert.deepEqual(applied, [20], "the feature initializes once");
+    assert.deepEqual(changeOnly, [20], "a change-only listener receives the change once");
+    assert.deepEqual(lateListener, []);
+    reader.change({ skipSeconds: 25 });
+    assert.deepEqual(applied, [20, 25]);
+    assert.deepEqual(changeOnly, [20, 25]);
+    assert.deepEqual(lateListener, [25]);
+});
+
+test("a failed options read never hands defaults over the user's OFF choices and reads again", () => {
+    const reader = createOptionsReader({ categoryToolsEnabled: false, rewardAutoCollectEnabled: false });
+    const received = [];
+    const changes = [];
+    reader.settings.getOptions((options) => received.push(options));
+    reader.settings.addOptionsChangeListener((options) => changes.push(options));
+    reader.reads[0]("IO error");
+    assert.equal(received.length, 0, "the failed read gives no default options");
+    // Any later option change only triggers a fresh read; it is not a loaded snapshot.
+    reader.change({ skipSeconds: 12 });
+    assert.equal(changes.length, 0);
+    assert.equal(reader.reads.length, 2);
+    reader.reads[1]();
+    assert.equal(received.length, 1);
+    assert.equal(received[0].categoryToolsEnabled, false);
+    assert.equal(received[0].rewardAutoCollectEnabled, false);
+    assert.equal(received[0].skipSeconds, 12);
+    // A failure with no change waiting is retried by the next subscriber.
+    const other = createOptionsReader({ rewardAutoCollectEnabled: false });
+    const later = [];
+    other.settings.getOptions(() => {});
+    other.reads[0]("IO error");
+    other.settings.getOptions((options) => later.push(options));
+    assert.equal(other.reads.length, 2);
+    other.reads[1]();
+    assert.equal(later[0].rewardAutoCollectEnabled, false);
+});
+
 test("options.html data-option keys match the settings keys", () => {
     const html = fs.readFileSync(path.join(__dirname, "..", "options.html"), "utf8");
     const dataOptionKeys = Array.from(html.matchAll(/data-option="([^"]+)"/g), (match) => match[1]);
@@ -523,4 +661,67 @@ test("speed reset key is customizable and all key pairs reject collisions", () =
         keys.map((key) => legacyConflict[key]),
         ["BracketLeft", "BracketRight", "Backslash"]
     );
+});
+
+test("chat phrase conditions preserve legacy contains behavior and independent per-phrase choices", () => {
+    const options = {
+        chatKeywordFilterWords: "ABC\n가\n[공지].*",
+        chatKeywordFilterExactWords: "abc\n가\n삭제한 문구",
+    };
+    assert.deepEqual(settings.getChatKeywordFilterRules(options), [
+        { phrase: "ABC", matchMode: "contains" },
+        { phrase: "가", matchMode: "contains" },
+        { phrase: "[공지].*", matchMode: "contains" },
+    ]);
+    assert.ok(
+        settings
+            .getChatKeywordFilterRules({ ...options, chatKeywordFilterMatchMode: "exact" })
+            .every((rule) => rule.matchMode === "exact")
+    );
+    assert.deepEqual(
+        settings.getChatKeywordFilterRules({
+            ...options,
+            chatKeywordFilterApplyMode: "individual",
+            chatKeywordFilterMatchMode: "exact",
+        }),
+        [
+            { phrase: "ABC", matchMode: "exact" },
+            { phrase: "가", matchMode: "exact" },
+            { phrase: "[공지].*", matchMode: "contains" },
+        ]
+    );
+    const invalid = settings.normalizeOptions({
+        chatKeywordFilterApplyMode: "wrong",
+        chatKeywordFilterMatchMode: "regex",
+        chatKeywordFilterExactWords: "가".repeat(101),
+    });
+    assert.equal(invalid.chatKeywordFilterApplyMode, "all");
+    assert.equal(invalid.chatKeywordFilterMatchMode, "contains");
+    assert.equal(invalid.chatKeywordFilterExactWords, "");
+});
+
+test("chat phrases normalize literal lines without broadening oversized input", () => {
+    assert.equal(settings.normalizeOptions().chatKeywordFilterEnabled, true);
+    assert.equal(settings.normalizeOptions({ chatKeywordFilterEnabled: false }).chatKeywordFilterEnabled, false);
+    assert.equal(
+        settings.normalizeOptions({ chatKeywordFilterWords: "  스포  \r\nSPOILER\nspoiler\n\n[공지].*\n가\n가" })
+            .chatKeywordFilterWords,
+        "스포\nSPOILER\n[공지].*\n가"
+    );
+    for (const value of [
+        null,
+        ["스포"],
+        "\u0001".repeat(99),
+        "\ud800",
+        "가".repeat(101),
+        Array.from({ length: 51 }, (_, i) => `문구${i}`).join("\n"),
+        " ".repeat(2001),
+    ]) {
+        assert.equal(settings.normalizeChatKeywordFilterWords(value), null);
+        assert.equal(settings.normalizeOptions({ chatKeywordFilterWords: value }).chatKeywordFilterWords, "");
+    }
+    const largest = Array.from({ length: 19 }, (_, i) => `${i}${"가".repeat(98)}`).join("\n");
+    assert.equal(settings.normalizeOptions({ chatKeywordFilterWords: largest }).chatKeywordFilterWords, largest);
+    assert.ok(Buffer.byteLength(JSON.stringify({ chatKeywordFilterWords: largest }), "utf8") < 8192);
+    assert.equal(settings.normalizeOptions({ chatKeywordFilterWords: " \n\r\n" }).chatKeywordFilterWords, "");
 });

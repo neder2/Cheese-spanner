@@ -30,7 +30,7 @@
 - [스토어 설명](../store-assets/chrome-web-store-description.txt)에 현재 기능·데이터 처리를 반영했다.
 - [새 권한 요청 사유](../store-assets/chrome-web-store-permission-justifications.txt)를 준비했다. `alarms`는 사용자가 선택한 채널의 방송 시작 확인, 선택 권한 `notifications`는 데스크톱 알림에 사용한다.
 - 실제 Chrome 웹 스토어의 권한 사유·설명·개인정보처리방침 등록과 심사 제출은 이 작업에서 직접 조작하지 않았다.
-- 이전 버전 작업본을 대상으로 작성된 미공개 기획안 `docs/feature-expansion-proposal.md`는 기존 파일을 유지하되 릴리스 커밋에서 제외한다.
+- 이전 버전 작업본을 대상으로 작성된 당시 미공개 추가 기능 기획안은 릴리스 커밋에서 제외했다. 현재 남은 요청은 [계획된 기능](tracking/status.md#계획된-기능)에서 관리한다.
 
 ## 수정사항 반영 재게시 — 2026-09-19
 

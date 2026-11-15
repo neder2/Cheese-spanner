@@ -86,3 +86,29 @@ test("disabled live controls keep their text and show a separate label until the
     assert.equal(h.document.getElementById(LABEL_ID), null);
     assert.equal(h.button.textContent, "실시간");
 });
+
+test("a shown fallback label does not wake its own observer into a continuous resync loop", async (t) => {
+    const h = fixture(t, { buttonAttrs: 'aria-disabled="true"' });
+    await waitForCondition(() => h.document.getElementById(LABEL_ID)?.textContent === "-0:20");
+    const label = h.document.getElementById(LABEL_ID);
+    const records = [];
+    const watcher = new h.window.MutationObserver((rows) => records.push(...rows));
+    watcher.observe(label, { attributes: true });
+    t.after(() => watcher.disconnect());
+    // Each sync rescans the live controls; count those scans through the button lookup.
+    let scans = 0;
+    const query = h.document.querySelectorAll;
+    h.document.querySelectorAll = function (...args) {
+        scans++;
+        return query.apply(this, args);
+    };
+    t.after(() => {
+        h.document.querySelectorAll = query;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    assert.equal(records.length, 0, "an unchanged label is not rewritten");
+    // Without the loop only the 1s fallback interval may sync once in this window (about 20 syncs with it).
+    assert.ok(scans <= 12, `document scans in 600ms: ${scans}`);
+    assert.equal(label.textContent, "-0:20");
+    assert.equal(h.button.textContent, "실시간");
+});

@@ -653,3 +653,46 @@ test("reward auto collect revalidates reward structure before a delayed click", 
     await waitForCondition(() => control.clicks === 1);
     assert.equal(reward.clicks, 0);
 });
+
+test("reward auto collect leaves unrelated option changes to the poll timer instead of re-requesting log-power", async () => {
+    const requests = [];
+    const dom = createRewardDom(
+        {},
+        {
+            fetchImpl: async (url, options = {}) => {
+                const method = options.method || "GET";
+                requests.push({ method, url: String(url) });
+                if (method === "GET") {
+                    return createJsonResponse({
+                        content: { claims: [{ amount: 300, claimId: "pending-claim", claimType: "FOLLOW" }] },
+                    });
+                }
+                // The claim stays unrecorded, so any extra check would also repeat this PUT.
+                return createJsonResponse({}, { ok: false, status: 500 });
+            },
+        }
+    );
+
+    await waitForCondition(() => requests.some((request) => request.method === "PUT"));
+    await wait(50);
+    assert.deepEqual(
+        requests.map((request) => request.method),
+        ["GET", "PUT"]
+    );
+
+    for (const ambientIntensity of [20, 30, 40, 50, 70]) {
+        dom.window.chrome.testState.emitSyncChange({ ambientIntensity });
+        await wait(30);
+    }
+    assert.deepEqual(
+        requests.map((request) => request.method),
+        ["GET", "PUT"],
+        "unrelated options must not add log-power checks or claim retries before the 30 second poll"
+    );
+
+    // Contrast: an off→on transition still checks right away.
+    dom.window.chrome.testState.emitSyncChange({ rewardAutoCollectEnabled: false });
+    await wait(30);
+    dom.window.chrome.testState.emitSyncChange({ rewardAutoCollectEnabled: true });
+    await waitForCondition(() => requests.filter((request) => request.method === "GET").length === 2);
+});

@@ -20,10 +20,20 @@
         sumWatchRanges,
     } = root.utils;
     const WATCH_MATCH_START_TOLERANCE_MS = 60 * 60 * 1000;
+    // A start read from the replay detail is the broadcast's own open time; only list estimates
+    // (publishDate - duration) need the wider tolerance.
+    const WATCH_MATCH_EXACT_START_TOLERANCE_MS = 20 * 60 * 1000;
+    // Same rule shared/vodTimeline.js uses to confirm split segments of one broadcast. Only an exact replay
+    // start this close to the record's own live open time is the same broadcast; a restart can follow in minutes.
+    const WATCH_MATCH_SAME_BROADCAST_OPEN_MS = 60 * 1000;
+    // Only list estimates get a grace: their start can be off by the publish delay.
     const WATCH_MATCH_OVERLAP_GRACE_MS = 10 * 60 * 1000;
     const DAY_MS = 24 * 60 * 60 * 1000;
     const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
     const MINUTE_SECONDS = 60;
+    // Same split rule as shared/vodTimeline.js: every segment but the newest is a full 17 hours.
+    const SPLIT_SEGMENT_SECONDS = 17 * 60 * 60;
+    const SPLIT_DURATION_TOLERANCE_SECONDS = 2 * 60;
     function extractVideos(json) {
         const content = json?.content ?? json;
         const rows = pickArray(content);
@@ -130,6 +140,136 @@
         return Math.min(video.duration, Math.round(overlapMs / 1000));
     }
 
+    function getPublishedMs(video) {
+        const publishedMs = video?.endedAt?.getTime();
+        return Number.isFinite(publishedMs) ? publishedMs : NaN;
+    }
+
+    function compareSplitSegments(a, b) {
+        const aPublishedMs = getPublishedMs(a.video);
+        const bPublishedMs = getPublishedMs(b.video);
+        if (Number.isFinite(aPublishedMs) && Number.isFinite(bPublishedMs) && aPublishedMs !== bPublishedMs) {
+            return aPublishedMs - bPublishedMs;
+        }
+        // The channel list is newest first, so a later row is the earlier segment.
+        return b.order - a.order;
+    }
+
+    function isSplitSegmentRun(segments) {
+        return (
+            segments.length > 1 &&
+            segments
+                .slice(0, -1)
+                .every(
+                    ({ video }) =>
+                        Math.abs((Number(video.duration) || 0) - SPLIT_SEGMENT_SECONDS) <=
+                        SPLIT_DURATION_TOLERANCE_SECONDS
+                )
+        );
+    }
+
+    function getResolvedSegmentOffsetMs(video) {
+        const offsetMs = Number(video?.segmentOffsetMs);
+        return Number.isFinite(offsetMs) && offsetMs > 0 ? offsetMs : 0;
+    }
+
+    function getVideoSegmentEndMs(video) {
+        // The repository resolves a later split segment's offset from its confirmed segment links.
+        const offsetMs = getResolvedSegmentOffsetMs(video);
+        const startMs = getVideoStartMs(video);
+        const duration = Number(video?.duration);
+        if (offsetMs > 0 && startMs !== null && Number.isFinite(duration)) return startMs + offsetMs + duration * 1000;
+        return getVideoEndMs(video);
+    }
+
+    function isUnplacedEstimate(video) {
+        // A replay whose own detail could not be read has no proven start: its publish estimate
+        // (publishDate - duration) is only an upper bound on its position, since a replay ends no later than its
+        // publish time but the publish delay can be hours. Nothing bounds how much earlier it aired, so no part of
+        // the estimate is proven to fall inside a window. This holds for any length: a short last split segment
+        // or an ordinary replay published hours later can lie wholly before the window its estimate reaches.
+        return video?.startIsExact !== true && video?.startDetailUnresolved === true;
+    }
+
+    function shiftBeforeConfirmedIntervals(placement, confirmed) {
+        // A publish estimate is never earlier than the broadcast and a channel airs one broadcast at a time, so
+        // an estimate that overlaps a detail-placed interval aired before it: move it to end there. This only
+        // removes that double count; it does not prove the estimate's remaining position (see
+        // isUnplacedEstimate for the estimates that are left out instead).
+        for (let pass = 0; pass <= confirmed.length; pass++) {
+            const blocker = confirmed.find(
+                (interval) => placement.startMs < interval.endMs && placement.endMs > interval.startMs
+            );
+            if (!blocker) return;
+            const shiftMs = placement.endMs - blocker.startMs;
+            placement.startMs -= shiftMs;
+            placement.endMs -= shiftMs;
+        }
+    }
+
+    function summarizeWindowOverlap(videos, windowStart, windowEnd) {
+        // Split VODs all report the broadcast start. Place each segment at its resolved offset, or end to end
+        // after the earlier segments of the same start that were seen; measuring each from the broadcast start
+        // would push later segments out of a window boundary. The first seen segment need not be the first one.
+        const groups = new Map();
+        (videos || []).forEach((video, order) => {
+            const startMs = getVideoStartMs(video);
+            if (startMs === null) return;
+            const key = Math.floor(startMs / 60000);
+            const group = groups.get(key) || { startMs, segments: [] };
+            group.segments.push({ video, order });
+            groups.set(key, group);
+        });
+
+        const placements = [];
+        for (const group of groups.values()) {
+            const segments = group.segments.sort(compareSplitSegments);
+            const splitRun = isSplitSegmentRun(segments);
+            let sequentialOffsetMs = 0;
+            for (const { video } of segments) {
+                const duration = Math.max(0, Number(video.duration) || 0);
+                // Earlier seen segments are a lower bound; a resolved offset also counts unseen earlier ones.
+                const offsetMs = Math.max(getResolvedSegmentOffsetMs(video), splitRun ? sequentialOffsetMs : 0);
+                sequentialOffsetMs = offsetMs + duration * 1000;
+                const startMs = getVideoStartMs(video);
+                if (offsetMs <= 0) {
+                    const endMs = getVideoEndMs(video);
+                    if (startMs === null || endMs === null) continue;
+                    placements.push({ video, duration, startMs, endMs });
+                    continue;
+                }
+                const segmentStartMs = startMs + offsetMs;
+                placements.push({ video, duration, startMs: segmentStartMs, endMs: segmentStartMs + duration * 1000 });
+            }
+        }
+
+        // Only replays placed from their own detail (and its segment links) are evidence; a list row's start
+        // alone cannot place a later split segment.
+        const confirmed = placements.filter(
+            ({ video, startMs, endMs }) =>
+                video.startIsExact === true && typeof video.segmentOffsetMs === "number" && endMs > startMs
+        );
+        let totalSeconds = 0;
+        let replayCount = 0;
+        // Set when an estimate that may reach the window was left out, so the total is only a lower bound.
+        let incomplete = false;
+        for (const placement of placements) {
+            if (isUnplacedEstimate(placement.video)) {
+                // Its true end is no later than the estimate's end (the publish time): one before the window
+                // start proves no window time is lost.
+                if (placement.endMs > windowStart) incomplete = true;
+                continue;
+            }
+            if (placement.video.startIsExact !== true) shiftBeforeConfirmedIntervals(placement, confirmed);
+            const overlapMs = Math.min(placement.endMs, windowEnd) - Math.max(placement.startMs, windowStart);
+            const seconds = overlapMs > 0 ? Math.min(placement.duration, Math.round(overlapMs / 1000)) : 0;
+            if (seconds < MINUTE_SECONDS) continue;
+            totalSeconds += seconds;
+            replayCount++;
+        }
+        return { totalSeconds, replayCount, incomplete };
+    }
+
     function getKstMonthInfo(nowMs = Date.now(), targetYear = null, targetMonth = null) {
         const nowParts = getKstParts(nowMs);
         const year = targetYear || nowParts.year;
@@ -217,13 +357,13 @@
         return monthInfo;
     }
 
-    function pageIsOlderThan(videos, rows, startMs) {
+    function pageIsOlderThan(videos, rows, startMs, getEndMs = getVideoEndMs) {
         // Filtered-out rows cannot prove that the entire source page is older.
         return (
             videos.length > 0 &&
             videos.length === rows.length &&
             videos.every((video) => {
-                const endMs = getVideoEndMs(video);
+                const endMs = getEndMs(video);
                 return endMs !== null && endMs < startMs;
             })
         );
@@ -322,16 +462,37 @@
 
     function entryOverlapsStart(entry, start) {
         if (!entry?.firstWatchedAt || !entry?.lastWatchedAt || !start?.startMs) return false;
+        const broadcastEndMs = start.endMs || start.startMs + start.duration * 1000;
+        if (start.exact === true) {
+            // An exact start is the broadcast's own open time, and a record can only have watched it while it
+            // was live. Any grace would let a record that ended seconds before a quick restart count as watching
+            // it, so only a real overlap is evidence.
+            return entry.firstWatchedAt < broadcastEndMs && entry.lastWatchedAt > start.startMs;
+        }
+        // List estimates (publishDate - duration) can be off by the publish delay.
         const startMs = start.startMs - WATCH_MATCH_OVERLAP_GRACE_MS;
-        const endMs = (start.endMs || start.startMs + start.duration * 1000) + WATCH_MATCH_OVERLAP_GRACE_MS;
+        const endMs = broadcastEndMs + WATCH_MATCH_OVERLAP_GRACE_MS;
         return entry.firstWatchedAt <= endMs && entry.lastWatchedAt >= startMs;
+    }
+
+    function getLiveOpenToleranceMs(start) {
+        return start?.exact === true ? WATCH_MATCH_EXACT_START_TOLERANCE_MS : WATCH_MATCH_START_TOLERANCE_MS;
     }
 
     function entryHasSameLiveOpen(entry, start) {
         return Boolean(
             entry?.liveOpenMs &&
             start?.startMs &&
-            Math.abs(entry.liveOpenMs - start.startMs) <= WATCH_MATCH_START_TOLERANCE_MS
+            Math.abs(entry.liveOpenMs - start.startMs) <= getLiveOpenToleranceMs(start)
+        );
+    }
+
+    function entryOpensAtExactStart(entry, start) {
+        return Boolean(
+            start?.exact === true &&
+            entry?.liveOpenMs &&
+            start?.startMs &&
+            Math.abs(entry.liveOpenMs - start.startMs) <= WATCH_MATCH_SAME_BROADCAST_OPEN_MS
         );
     }
 
@@ -351,8 +512,17 @@
         if (!entry || !start) return 0;
         if (entry.replayVideoNo && start.videoNos?.includes(entry.replayVideoNo)) return 120;
 
+        // A record's own live open time or replay link that points at another broadcast outweighs the
+        // loose watch-time overlap, which also spans a restart within the overlap grace.
+        const sameLiveOpen = entryHasSameLiveOpen(entry, start);
+        if (entry.liveOpenMs && start.startMs && !sameLiveOpen) return 0;
+        // A link to a replay outside this start is kept only when the record opened at this exact start, as
+        // a split segment the list did not reach would. A nearby start is a restart, not the same broadcast.
+        if (entry.replayVideoNo && start.videoNos?.length && !entryOpensAtExactStart(entry, start)) return 0;
+
         let score = 0;
-        if (entryHasSameLiveOpen(entry, start)) score += 80;
+        // An exact start within the wider tolerance but not at the record's open time is no evidence alone.
+        if (start.exact === true ? entryOpensAtExactStart(entry, start) : sameLiveOpen) score += 80;
         if (entryOverlapsStart(entry, start)) score += 60;
         if (entryMatchesStartTitle(entry, start)) score += 30;
         if (entryMatchesStartDate(entry, start)) score += 15;
@@ -441,6 +611,7 @@
         getEntryDailySeconds,
         entryOverlapsStart,
         entryHasSameLiveOpen,
+        entryOpensAtExactStart,
         entryMatchesStartDate,
         entryMatchesStartTitle,
         getWatchMatchScore,
@@ -461,6 +632,8 @@
         getVideoEndMs,
         getVideoStartMs,
         estimateOverlapSeconds,
+        getVideoSegmentEndMs,
+        summarizeWindowOverlap,
         getKstMonthInfo,
         addMonthStart,
         finalizeMonthInfo,

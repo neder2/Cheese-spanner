@@ -3,8 +3,11 @@
  *
  * 실행 컨텍스트: MAIN world, document_start. React가 소유한 기본 카드·플레이어·API 흐름은 그대로 둔다.
  * 하는 일: 실제 방송 썸네일의 React onMouseEnter가 예약하는 현재 300ms/600ms 타이머를 식별하고,
- *   해당 mouseover 이벤트가 전파되는 짧은 구간에만 같은 지연을 0ms로 바꾼다. 다른 타이머와
- *   확장 소유 HLS 플레이어에는 관여하지 않으며, React handler 구조가 다르면 아무 작업도 하지 않는다.
+ *   썸네일로 들어오는 mouseover와, React가 onMouseEnter를 보내는 이전 요소의 mouseout이 전파되는
+ *   짧은 구간에만 같은 지연을 0ms로 바꾼다. 신뢰된 입력은 리스너마다 microtask를 비우므로 원복은
+ *   같은 이벤트의 window bubble 단계(전파 끝)에서 하고, 전파가 중간에 멈추면 다음 호버나 다음 프레임에
+ *   한다. 다른 타이머와 확장 소유 HLS 플레이어에는 관여하지 않으며, React handler 구조가 다르면 아무
+ *   작업도 하지 않는다.
  * 옵션 키: followingPreviewTooltipEnabled (followingPreviewTooltip.js가 DOM attribute로 전달).
  * 통신: CONFIG_ATTR(data-cheese-spanner-live-preview-fast-hover-options)를 읽고 CONFIG_EVENT를 수신한다.
  */
@@ -17,6 +20,7 @@
     const MIN_THUMBNAIL_HEIGHT = 90;
 
     let enabled = false;
+    let restoreActiveAcceleration = null;
     const handlerCache = new WeakMap();
 
     function isGlobalLiveListRoute() {
@@ -76,10 +80,10 @@
         return timers.length ? value : null;
     }
 
-    function resolveNativeThumbnail(event) {
-        if (!enabled || !isGlobalLiveListRoute() || !(event.target instanceof Element)) return null;
+    function resolveNativeThumbnail(entered, left) {
+        if (!enabled || !isGlobalLiveListRoute() || !(entered instanceof Element)) return null;
 
-        const anchor = event.target.closest(LIVE_LINK_SELECTOR);
+        const anchor = entered.closest(LIVE_LINK_SELECTOR);
         if (!(anchor instanceof HTMLAnchorElement) || !anchor.querySelector("img, video, canvas")) return null;
         try {
             const url = new URL(anchor.href, location.origin);
@@ -88,7 +92,7 @@
             return null;
         }
 
-        if (event.relatedTarget instanceof Node && anchor.contains(event.relatedTarget)) return null;
+        if (left instanceof Node && anchor.contains(left)) return null;
         const rect = anchor.getBoundingClientRect();
         if (rect.width < MIN_THUMBNAIL_WIDTH || rect.height < MIN_THUMBNAIL_HEIGHT) return null;
 
@@ -96,7 +100,8 @@
         return hover ? { anchor, timers: hover.timers } : null;
     }
 
-    function installEventTimerAcceleration(target) {
+    function installEventTimerAcceleration(target, eventType) {
+        restoreActiveAcceleration?.();
         if (window.setTimeout?.__cheeseSpannerFastHover === true) return;
 
         let restored = false;
@@ -105,6 +110,8 @@
         const restore = () => {
             if (restored) return;
             restored = true;
+            window.removeEventListener(eventType, restore);
+            if (restoreActiveAcceleration === restore) restoreActiveAcceleration = null;
             if (window.setTimeout === acceleratedSetTimeout) window.setTimeout = originalSetTimeout;
         };
         const acceleratedSetTimeout = function (callback, delay, ...args) {
@@ -120,16 +127,28 @@
         };
         Object.defineProperty(acceleratedSetTimeout, "__cheeseSpannerFastHover", { value: true });
         window.setTimeout = acceleratedSetTimeout;
-        queueMicrotask(restore);
+        restoreActiveAcceleration = restore;
+        // Trusted input runs a microtask checkpoint after every listener, so a microtask restore would undo
+        // the wrapper before React's root listener runs. The window bubble listener runs after that root.
+        window.addEventListener(eventType, restore, { once: true });
+        window.requestAnimationFrame?.(restore);
     }
 
     function handleMouseOver(event) {
-        const target = resolveNativeThumbnail(event);
+        const target = resolveNativeThumbnail(event.target, event.relatedTarget);
         if (!target) return;
-        installEventTimerAcceleration(target);
+        installEventTimerAcceleration(target, event.type);
+    }
+
+    // React 17+ sends onMouseEnter for the next element from the previous element's mouseout.
+    function handleMouseOut(event) {
+        const target = resolveNativeThumbnail(event.relatedTarget, event.target);
+        if (!target) return;
+        installEventTimerAcceleration(target, event.type);
     }
 
     window.addEventListener(CONFIG_EVENT, applyOptionsFromAttribute, true);
     window.addEventListener("mouseover", handleMouseOver, true);
+    window.addEventListener("mouseout", handleMouseOut, true);
     applyOptionsFromAttribute();
 })();

@@ -13,10 +13,15 @@
         mutationMatchesSelector,
         injectStyleOnce,
         fetchJson,
+        NATIVE_AD_MEDIA_SELECTOR,
     } = CheeseSpanner.utils;
     const ID = "cheese-spanner-stream-info";
     const SETTINGS_MENU = ':scope > .pzp-pc__settings[role="menu"]';
-    const AD_VIDEO = '[data-role="imaAdContainerEl"], [data-role="gvAdContainerEl"], #midAdPlayerWrapper';
+    // Shared with ambientGlow.js: every injected gear-menu row is marked so each key bridge sees all of them.
+    const MENU_ENTRY_ATTR = "data-cheese-spanner-menu-entry";
+    const MENU_ITEM = '[role="menuitem"], [role="menuitemcheckbox"]';
+    // content.js의 공용 광고 영상 기준(2026-11-05 공개 번들: 라이브 프리롤·미드롤 wrapper 포함)을 그대로 쓴다.
+    const AD_VIDEO = NATIVE_AD_MEDIA_SELECTOR;
     const PREVIEW_VIDEO = "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip], [data-bcmv-video]";
     const UNKNOWN = "측정 불가";
     const WAITING = "측정 대기";
@@ -172,16 +177,22 @@
     }
 
     function onSettingsNavigation(event) {
-        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        // Another feature's bridge may already have moved focus for this key.
+        if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
         if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
-        if (!settingsItem?.isConnected || event.target.parentElement !== settingsMenu) return;
+        if (!settingsItem?.isConnected || !(event.target instanceof Element)) return;
+        // Injected rows of every feature carry MENU_ENTRY_ATTR; a row may hold its menu items inside it.
+        const entry = event.target.closest(`[${MENU_ENTRY_ATTR}]`);
+        const current = entry?.parentElement === settingsMenu ? entry : event.target;
+        if (current.parentElement !== settingsMenu) return;
         const items = Array.from(settingsMenu.children).filter(
             (item) =>
-                item.getAttribute("role") === "menuitem" &&
+                (item.hasAttribute(MENU_ENTRY_ATTR) ||
+                    ["menuitem", "menuitemcheckbox"].includes(item.getAttribute("role"))) &&
                 item.getClientRects().length &&
                 getComputedStyle(item).visibility !== "hidden"
         );
-        const index = items.indexOf(event.target);
+        const index = items.indexOf(current);
         if (index < 0) return;
         const next =
             event.key === "Home"
@@ -189,11 +200,12 @@
                 : event.key === "End"
                   ? items[items.length - 1]
                   : items[(index + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length];
-        // The native keyboard list excludes injected rows; bridge only transitions involving our entry.
-        if (event.target !== settingsItem && next !== settingsItem) return;
+        // The native keyboard list excludes injected rows; bridge only transitions involving an injected entry.
+        if (!current.hasAttribute(MENU_ENTRY_ATTR) && !next.hasAttribute(MENU_ENTRY_ATTR)) return;
         event.preventDefault();
         event.stopPropagation();
-        next.focus();
+        const target = next.matches(MENU_ITEM) ? next : next.querySelector(MENU_ITEM) || next;
+        target.focus();
     }
 
     function removeSettingsItem() {
@@ -216,6 +228,7 @@
         settingsItem.className = "pzp-ui-setting-home-item";
         settingsItem.type = "button";
         settingsItem.setAttribute("role", "menuitem");
+        settingsItem.setAttribute(MENU_ENTRY_ATTR, "");
         settingsItem.setAttribute("aria-controls", ID);
         const top = document.createElement("span");
         top.className = "pzp-ui-setting-home-item__top";
@@ -234,10 +247,25 @@
     }
 
     function onKeyDown(event) {
-        if (event.key !== "Escape") return;
-        event.preventDefault();
+        // Keys pressed inside the panel are for the panel: CHZZK treats Space on a focused button as its
+        // play shortcut (findings 2026-10-20), so nothing bubbles on to the player or the page.
         event.stopPropagation();
-        closePanel(true);
+        if (event.key === "Escape") {
+            event.preventDefault();
+            closePanel(true);
+            return;
+        }
+        const close = event.target instanceof Element ? event.target.closest("button") : null;
+        if (!close || !panel?.contains(close) || (event.key !== "Enter" && event.key !== " ")) return;
+        if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        event.preventDefault();
+        if (!event.repeat) close.click();
+    }
+
+    function stopInsidePanel(event) {
+        // Selecting values, scrolling the panel and clicking it must not reach player controls (fullscreen
+        // double-click, wheel handlers). Default actions such as text selection and panel scrolling stay.
+        event.stopPropagation();
     }
 
     function readTracks(content) {
@@ -370,8 +398,11 @@
     }
 
     function isAdvertisement() {
+        // 2026-11-05 public bundle: the live pre-roll mounts #preAdPlayerWrapper before the main player exists, and the
+        // shared main-video selection skips its placeholder, so the wrapper itself marks the gap.
         return Boolean(
             video?.closest(AD_VIDEO) ||
+            document.getElementById("preAdPlayerWrapper") ||
             player?.matches(".pzp-pc--adbreak") ||
             Array.from(player?.querySelectorAll(".pzp-pc--adbreak") || []).some(
                 (node) => !node.closest(PREVIEW_VIDEO) && node.closest(".pzp-pc") === player
@@ -644,7 +675,8 @@
         panel.setAttribute("role", "region");
         panel.setAttribute("aria-label", "스트림 정보 (치즈 스패너)");
         panel.addEventListener("keydown", onKeyDown);
-        panel.addEventListener("click", (e) => e.stopPropagation());
+        for (const type of ["keyup", "click", "dblclick", "pointerdown", "mousedown", "wheel"])
+            panel.addEventListener(type, stopInsidePanel, { passive: true });
         const header = document.createElement("header");
         const title = document.createElement("strong");
         title.textContent = "스트림 정보";

@@ -22,6 +22,23 @@ function createChrome({ saved, enabled = true, deferRead = false } = {}) {
     const local = saved === undefined ? {} : { [KEY]: saved };
     const options = { followingListStateEnabled: enabled, followingPinEnabled: false };
     const runtime = {};
+    const state = {
+        local,
+        writes,
+        pendingReads,
+        failReads: 0,
+        releaseReads() {
+            for (const done of pendingReads.splice(0)) done();
+        },
+        enable(value) {
+            options.followingListStateEnabled = value;
+            for (const fn of listeners) fn({ followingListStateEnabled: { newValue: value } }, "sync");
+        },
+        externalPreference(value) {
+            local[KEY] = value;
+            for (const fn of listeners) fn({ [KEY]: { newValue: value } }, "local");
+        },
+    };
     return {
         runtime,
         storage: {
@@ -33,7 +50,17 @@ function createChrome({ saved, enabled = true, deferRead = false } = {}) {
             local: {
                 get(_keys, callback) {
                     const snapshot = structuredClone(local);
-                    const done = () => callback(snapshot);
+                    const failed = state.failReads > 0;
+                    if (failed) state.failReads -= 1;
+                    const done = () => {
+                        if (!failed) return callback(snapshot);
+                        runtime.lastError = { message: "read failed" };
+                        try {
+                            callback(undefined);
+                        } finally {
+                            delete runtime.lastError;
+                        }
+                    };
                     if (deferRead) pendingReads.push(done);
                     else setTimeout(done, 0);
                 },
@@ -53,21 +80,24 @@ function createChrome({ saved, enabled = true, deferRead = false } = {}) {
                 },
             },
         },
-        state: {
-            local,
-            writes,
-            pendingReads,
-            releaseReads() {
-                for (const done of pendingReads.splice(0)) done();
-            },
-            enable(value) {
-                options.followingListStateEnabled = value;
-                for (const fn of listeners) fn({ followingListStateEnabled: { newValue: value } }, "sync");
-            },
-            externalPreference(value) {
-                local[KEY] = value;
-                for (const fn of listeners) fn({ [KEY]: { newValue: value } }, "local");
-            },
+        state,
+    };
+}
+
+// Web Locks keeps one holder per name across same-origin tabs; this fake grants requests in order.
+function createLockManager() {
+    const tails = new Map();
+    return {
+        request(name, work) {
+            const run = (tails.get(name) || Promise.resolve()).then(() => work());
+            tails.set(
+                name,
+                run.then(
+                    () => {},
+                    () => {}
+                )
+            );
+            return run;
         },
     };
 }
@@ -75,7 +105,7 @@ function createChrome({ saved, enabled = true, deferRead = false } = {}) {
 function createPage(
     t,
     chrome,
-    { section = true, list = false, moreAvailable = true, ignoreList = false, delayed = false } = {}
+    { section = true, list = false, moreAvailable = true, ignoreList = false, delayed = false, locks = null } = {}
 ) {
     const dom = new JSDOM(
         '<body><aside id="sidebar"></aside><main><button aria-label="더보기" aria-expanded="false">본문 더보기</button></main></body>',
@@ -119,6 +149,7 @@ function createPage(
         render();
     });
     if (!delayed) mount();
+    if (locks) Object.defineProperty(dom.window.navigator, "locks", { value: locks, configurable: true });
     for (const file of ["shared/settings.js", "shared/data.js", "content.js", "features/followingListState.js"]) {
         dom.window.eval(fs.readFileSync(path.join(repo, file), "utf8"));
     }
@@ -252,7 +283,11 @@ test("following state prioritizes a user's click over a stale initial preference
     page.button("list").click();
     await wait();
     chrome.state.releaseReads();
-    await until(() => chrome.state.local[KEY]?.list === true);
+    // Saving reads the latest stored value first, and this fixture holds every read until released.
+    await until(() => {
+        chrome.state.releaseReads();
+        return chrome.state.local[KEY]?.list === true;
+    });
     assert.equal(page.model.list, true);
     assert.equal(page.clicks.list, 1);
     assert.deepEqual(chrome.state.local[KEY], { list: true, section: true });
@@ -273,4 +308,161 @@ test("following state ignores malformed values and cannot operate on a recycled 
     await wait();
     assert.equal(page.clicks.list, 0);
     assert.equal(chrome.state.writes.length, 0);
+});
+
+// Like the site (2026-10-13 public bundle, scaled down): the same 더보기 button stays, each click adds a step of rows,
+// and only a fully built list turns it into 접기. refresh() cuts the list back to its length after the first click.
+function createSteppedPage(t, chrome, { total = 11, step = 2, collapsed = 5, endless = false } = {}) {
+    const dom = new JSDOM(
+        '<body><aside id="sidebar"><nav aria-label="팔로우"><div><strong>팔로잉 채널</strong><button type="button" data-kind="section" aria-expanded="true" aria-label="펼쳐짐, 접기">구역</button></div><ul></ul><div><button type="button" data-kind="list" aria-expanded="false" aria-label="더보기">더보기</button></div></nav></aside></body>',
+        {
+            url: "https://chzzk.naver.com/lives",
+            runScripts: "outside-only",
+            pretendToBeVisual: true,
+            virtualConsole: new VirtualConsole(),
+        }
+    );
+    t.after(() => {
+        chrome.state.enable(false);
+        dom.window.close();
+    });
+    dom.window.chrome = chrome;
+    const document = dom.window.document;
+    const list = document.querySelector("ul");
+    const more = document.querySelector('[data-kind="list"]');
+    const page = { document, clicks: 0, rows: () => list.children.length, more };
+    let firstLength = null;
+    const render = (count) => {
+        while (list.children.length > count) list.lastElementChild.remove();
+        while (list.children.length < count) {
+            const row = document.createElement("li");
+            row.innerHTML = `<a href="/live/channel-${list.children.length}">채널</a>`;
+            list.append(row);
+        }
+        const all = !endless && count >= total;
+        if (more.getAttribute("aria-expanded") === String(all)) return;
+        more.setAttribute("aria-expanded", String(all));
+        more.setAttribute("aria-label", all ? "접기" : "더보기");
+    };
+    more.addEventListener("click", () => {
+        page.clicks += 1;
+        if (more.getAttribute("aria-expanded") === "true") {
+            firstLength = null;
+            render(collapsed);
+            return;
+        }
+        render(Math.min(endless ? Infinity : total, list.children.length + step));
+        firstLength ??= list.children.length;
+    });
+    page.refresh = () => render(firstLength ?? collapsed);
+    render(collapsed);
+    for (const file of ["shared/settings.js", "shared/data.js", "content.js", "features/followingListState.js"]) {
+        dom.window.eval(fs.readFileSync(path.join(repo, file), "utf8"));
+    }
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded"));
+    return page;
+}
+
+test("following state keeps pressing a kept 더보기 until the whole list is restored, also after a site refresh", async (t) => {
+    const chrome = createChrome({ saved: { section: true, list: true } });
+    const page = createSteppedPage(t, chrome);
+    await until(() => page.more.getAttribute("aria-expanded") === "true");
+    assert.equal(page.rows(), 11);
+    assert.equal(page.clicks, 3, "one click per step");
+    page.refresh();
+    assert.equal(page.rows(), 7, "the site's refresh cut the list back");
+    await until(() => page.more.getAttribute("aria-expanded") === "true");
+    assert.equal(page.rows(), 11);
+    assert.equal(page.clicks, 5);
+    await wait(80);
+    assert.equal(page.clicks, 5);
+    assert.equal(chrome.state.writes.length, 0, "restoring does not write new preferences");
+
+    const endless = createSteppedPage(t, createChrome({ saved: { list: true } }), { endless: true });
+    await until(() => endless.clicks >= 12);
+    await wait(120);
+    assert.equal(endless.clicks, 12, "a list that never finishes is pressed a bounded number of times");
+});
+
+test("following state resumes a long restore once the click limit runs out, without another list change", async (t) => {
+    // The site's shape (2026-10-13 public bundle): 5 rows, 50 more per click, at most 505.
+    const shape = { total: 505, step: 50, collapsed: 5 };
+    const chrome = createChrome({ saved: { section: true, list: true } });
+    const page = createSteppedPage(t, chrome, shape);
+    const offChrome = createChrome({ saved: { section: true, list: true } });
+    const off = createSteppedPage(t, offChrome, shape);
+    await until(() => page.rows() === 505 && off.rows() === 505);
+    assert.equal(page.clicks, 10);
+    // A refresh right after the restore cuts the list back while the earlier clicks still count.
+    page.refresh();
+    off.refresh();
+    await until(() => page.clicks === 12 && off.clicks === 12);
+    await wait(200);
+    assert.equal(page.rows(), 155, "the click limit holds the restore for now");
+    assert.equal(page.clicks, 12);
+    offChrome.state.enable(false);
+    await wait(5200);
+    await until(() => page.rows() === 505);
+    assert.equal(page.more.getAttribute("aria-expanded"), "true");
+    assert.equal(page.clicks, 19, "the restore goes on once the limit runs out");
+    assert.equal(off.clicks, 12, "turning the feature off cancels the pending restore");
+    assert.equal(off.rows(), 155);
+    assert.equal(chrome.state.writes.length, 0, "restoring does not write new preferences");
+});
+
+test("following state saves only the changed choice over what another tab saved meanwhile", async (t) => {
+    const chrome = createChrome({ saved: { section: true, list: true } });
+    const first = createPage(t, chrome);
+    const second = createPage(t, chrome);
+    await until(() => first.model.list && second.model.list);
+    first.button("list").click();
+    await until(() => chrome.state.local[KEY]?.list === false);
+    assert.deepEqual(chrome.state.local[KEY], { section: true, list: false });
+    second.button("section").click();
+    await until(() => chrome.state.local[KEY]?.section === false);
+    await wait();
+    assert.deepEqual(chrome.state.local[KEY], { section: false, list: false }, "the other tab's list choice is kept");
+    assert.equal(first.model.section, true, "an open tab is not changed by the other tab's choice");
+});
+
+test("following state keeps both tabs' choices when their saves read the stored value at the same time", async (t) => {
+    const chrome = createChrome({ saved: { section: true, list: true }, deferRead: true });
+    const locks = createLockManager();
+    const first = createPage(t, chrome, { locks });
+    const second = createPage(t, chrome, { locks });
+    await until(() => {
+        chrome.state.releaseReads();
+        return first.model.list && second.model.list;
+    });
+    first.button("list").click();
+    second.button("section").click();
+    await until(() => chrome.state.pendingReads.length > 0);
+    await wait();
+    // Release every read that is waiting now, as if both tabs read before either saved.
+    chrome.state.releaseReads();
+    await until(() => {
+        chrome.state.releaseReads();
+        return chrome.state.writes.length === 2;
+    });
+    await wait();
+    assert.deepEqual(chrome.state.local[KEY], { section: false, list: false }, "neither tab's choice is lost");
+    assert.equal(first.model.section, true, "an open tab is not changed by the other tab's choice");
+});
+
+test("following state writes nothing when it cannot read the latest stored choices", async (t) => {
+    const chrome = createChrome({ saved: { section: true, list: true } });
+    const page = createPage(t, chrome);
+    await until(() => page.model.list);
+    // Another tab folded the list meanwhile, and this tab cannot read that.
+    chrome.state.local[KEY] = { section: true, list: false };
+    chrome.state.failReads = 1;
+    page.button("section").click();
+    await until(() => chrome.state.failReads === 0);
+    await wait(80);
+    assert.equal(chrome.state.writes.length, 0, "a failed read does not save this tab's older choices");
+    assert.deepEqual(chrome.state.local[KEY], { section: true, list: false });
+
+    page.button("section").click();
+    await until(() => chrome.state.writes.length === 1);
+    assert.deepEqual(chrome.state.local[KEY], { section: true, list: false }, "the next save merges again");
 });

@@ -20,6 +20,10 @@
     const REFRESH_LABEL_RE = /새로고침|refresh/i;
     const FOLLOWING_SECTION_RE = /팔로(잉|우)|following|follow/i;
     const FOLLOWING_HREF_RE = /(^|\/)following(?:[/?#]|$)/i;
+    // 2026-09-11 실측한 팔로잉 구역이에요. 이 구역이 있으면 그 안의 버튼만 써요.
+    const FOLLOWING_SECTION_SELECTOR = '#sidebar nav[aria-label="팔로우"]';
+    // 대체 탐색에서 팔로잉 신호 없이 이 경계를 지나면 다른 구역의 버튼이에요.
+    const SECTION_BOUNDARY_SELECTOR = "nav, section, [role='region']";
 
     let featureOptions = normalizeOptions();
     let refreshTimer = null;
@@ -66,19 +70,29 @@
 
         const buttons = Array.from(document.querySelectorAll(REFRESH_BUTTON_SELECTOR)).filter(isRefreshButton);
 
+        // 팔로잉 구역을 접어 그 버튼이 없을 때 다른 구역 버튼으로 대신하지 않아요.
+        const section = document.querySelector(FOLLOWING_SECTION_SELECTOR);
+        if (section) {
+            cachedRefreshButton = buttons.find((button) => section.contains(button)) || null;
+            return cachedRefreshButton;
+        }
+
         for (const button of buttons) {
             let node = button.parentElement;
 
             for (let depth = 0; node && node !== document.body && depth < 7; depth += 1, node = node.parentElement) {
+                // 여러 구역을 함께 담은 조상의 팔로잉 글자는 이 버튼의 구역을 알려 주지 않으므로 먼저 멈춰요.
+                const refreshButtons = Array.from(node.querySelectorAll(REFRESH_BUTTON_SELECTOR)).filter(
+                    isRefreshButton
+                );
+                if (refreshButtons.length > 1) break;
+
                 if (hasFollowingSignal(node)) {
                     cachedRefreshButton = button;
                     return button;
                 }
 
-                const refreshButtons = Array.from(node.querySelectorAll(REFRESH_BUTTON_SELECTOR)).filter(
-                    isRefreshButton
-                );
-                if (refreshButtons.length > 1) break;
+                if (node.matches(SECTION_BOUNDARY_SELECTOR)) break;
             }
         }
 

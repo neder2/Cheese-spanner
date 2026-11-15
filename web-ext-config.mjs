@@ -12,6 +12,8 @@ export default {
         "dist/**",
         "web-ext-artifacts",
         "web-ext-artifacts/**",
+        "output",
+        "output/**",
         "backups",
         "backups/**",
         "*.md",

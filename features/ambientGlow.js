@@ -3,7 +3,8 @@
  * player box, so its light spills over the adjacent chat, sidebar and header edges. Pixels are never
  * read back, so cross-origin media cannot fail the effect, and native nodes are never restyled.
  * Live multiview shrinks the native player into a tile beside secondary videos, so the effect
- * stays off while its host is active instead of glowing over the other tiles.
+ * stays off while its host is active instead of glowing over the other tiles. The same holds while
+ * the native scroll mini player or in-page PiP floats the player over the page.
  * Layout basis: docs/measurements/panel-resize-2026-09-28.md (#sidebar, #aside-chatting,
  * #vod-aside and the header beside the player). Since 2026-10-08 the header is not clipped on
  * request. Stacking above the sidebar was seen in Chrome; above the header it follows the public
@@ -37,6 +38,9 @@
     const EXPAND_ID = "cheese-spanner-ambient-expand";
     const TOGGLE_ID = "cheese-spanner-ambient-toggle";
     const STRENGTH_ID = "cheese-spanner-ambient-strength";
+    // Shared with streamInfo.js: every injected gear-menu row is marked so each key bridge sees all of them.
+    const MENU_ENTRY_ATTR = "data-cheese-spanner-menu-entry";
+    const MENU_ITEM = '[role="menuitem"], [role="menuitemcheckbox"]';
     const READY = "data-bcam-ready";
     // Same native home menu that stream info extends (docs/measurements/stream-info-settings-2026-09-15.md).
     const SETTINGS_MENU = ':scope > .pzp-pc__settings[role="menu"]';
@@ -52,10 +56,21 @@
     const SPREAD_PX = BLUR_PX * 3;
     const CANVAS_INSET_PX = BLUR_PX / 2;
     const PANEL_SELECTOR = "#sidebar, #aside-chatting, #vod-aside, #cheese-spanner-vod-comment-aside";
+    // Chrome 2026-11-08: native chat menu, user/profile dialogs and extension chat panels.
+    // Dialog roles also cover portalled panels outside the chat aside.
+    const POPUP_SELECTOR =
+        '[role="dialog"], [role="alertdialog"], :is(#aside-chatting, #vod-aside) :is([role="menu"], [class*="_container_11w2f_"], .bcct-moderator-box)';
     const TARGET_SELECTOR = "video, [class*='pzp']";
     const PLAYER_TARGET_SELECTOR = "video, .pzp-pc__settings";
     const MULTIVIEW_ATTR = "data-bcmv-host";
     const MULTIVIEW_SELECTOR = `[${MULTIVIEW_ATTR}="active"]`;
+    // Scrolling a live page down shrinks the player into the native scroll mini player
+    // (.chzzk_player.miniplayer: fixed 353x198 at the top right, z-index 1000), and in-page PiP
+    // floats it as .pip_mode. A glow around a floating player would sit over the chat and header
+    // above the mini player's own layer, so the effect waits for the player to return to the page.
+    // Basis: public CHZZK CSS/bundle, 2026-11-04. Entering and leaving resize the player, so the
+    // resize observer and scroll listener notice the switch without watching class mutations.
+    const FLOATING_PLAYER_SELECTOR = ".chzzk_player:is(.miniplayer, .pip_mode)";
     const SLIDER_KEYS = new Set([
         "ArrowLeft",
         "ArrowRight",
@@ -93,6 +108,8 @@
         strengthInput = null,
         strengthValue = null;
     let hasFrame = false,
+        // Blend only into a frame drawn while the layer stayed visible; a hidden spell leaves an old scene.
+        blendable = false,
         drawnAt = -Infinity,
         frameRequest = 0,
         frameVideo = null,
@@ -101,7 +118,9 @@
         layoutKey = "";
     let discovery = null,
         resizeObserver = null,
+        popupResizeObserver = null,
         routeCleanup = null;
+    let popupNodes = new Set();
     const schedule = createThrottledDomSync(sync, 160);
 
     function enabled() {
@@ -115,7 +134,8 @@
     function styles() {
         // The header container is z-index:10000 and the sidebar 9999 (public CHZZK CSS, 2026-10-08).
         // Matching the header's value and being appended last paints the glow above both, while
-        // native dimmed layers, modals and the mini player (20000+) stay above the glow.
+        // native dimmed layers, modals and the PiP container (20000+) stay above the glow; the
+        // scroll mini player (1000) would not, so updateLayout hides the glow while it floats.
         injectStyleOnce(
             STYLE_ID,
             `
@@ -196,6 +216,7 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
 
     function clearFrame() {
         hasFrame = false;
+        blendable = false;
         drawnAt = -Infinity;
         context?.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
         layer?.removeAttribute(READY);
@@ -222,11 +243,12 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
     function draw() {
         if (!context || !shown() || video.readyState < HAVE_CURRENT_DATA) return;
         try {
-            context.globalAlpha = hasFrame ? FRAME_BLEND : 1;
+            context.globalAlpha = hasFrame && blendable ? FRAME_BLEND : 1;
             context.drawImage(video, 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
         } catch {
             return;
         }
+        blendable = !document.hidden;
         drawnAt = performance.now();
         if (!hasFrame) {
             hasFrame = true;
@@ -294,8 +316,43 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
 
     function hideLayer() {
         cancelDraw();
+        blendable = false;
         layoutKey = "";
         if (layer && !layer.hidden) layer.hidden = true;
+    }
+
+    function popupHoles(box) {
+        const nodes = new Set(document.querySelectorAll(POPUP_SELECTOR));
+        for (const node of popupNodes) if (!nodes.has(node)) popupResizeObserver?.unobserve(node);
+        const holes = [];
+        for (const node of nodes) {
+            if (!popupNodes.has(node)) popupResizeObserver?.observe(node);
+            const rect = node.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0 || node.hidden) continue;
+            const style = getComputedStyle(node);
+            if (style.visibility === "hidden" || style.display === "none") continue;
+            const left = Math.max(0, Math.floor(rect.left - box.left));
+            const top = Math.max(0, Math.floor(rect.top - box.top));
+            const right = Math.min(box.width, Math.ceil(rect.right - box.left));
+            const bottom = Math.min(box.height, Math.ceil(rect.bottom - box.top));
+            if (right > left && bottom > top) holes.push({ left, top, width: right - left, height: bottom - top });
+        }
+        popupNodes = nodes;
+        return holes;
+    }
+
+    function popupMask(box, holes) {
+        if (!holes.length) return "none";
+        // Black rectangles in a luminance mask form a union: overlapping dialogs must not
+        // cancel one another's exclusion, or reveal glow inside the existing player cutout.
+        const cuts = holes
+            .map(
+                ({ left, top, width, height }) =>
+                    `<rect x="${left}" y="${top}" width="${width}" height="${height}" fill="black"/>`
+            )
+            .join("");
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${box.width}" height="${box.height}"><mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="${box.width}" height="${box.height}"><rect width="100%" height="100%" fill="white"/>${cuts}</mask><rect width="100%" height="100%" fill="white" mask="url(#cut)"/></svg>`;
+        return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
     }
 
     function updateLayout() {
@@ -307,6 +364,7 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
             !context ||
             document.fullscreenElement ||
             player.closest(MULTIVIEW_SELECTOR) ||
+            player.closest(FLOATING_PLAYER_SELECTOR) ||
             rect.width <= 0 ||
             rect.height <= 0 ||
             rect.bottom + SPREAD_PX <= 0 ||
@@ -329,7 +387,8 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
             right: Math.round(rect.right) - box.left,
             bottom: Math.round(rect.bottom) - box.top,
         };
-        const key = JSON.stringify([box, hole]);
+        const holes = popupHoles(box);
+        const key = JSON.stringify([box, hole, holes]);
         if (key !== layoutKey) {
             layoutKey = key;
             const { style } = layer;
@@ -337,6 +396,7 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
             style.top = `${box.top}px`;
             style.width = `${box.width}px`;
             style.height = `${box.height}px`;
+            style.maskImage = popupMask(box, holes);
             style.clipPath =
                 `polygon(evenodd, 0px 0px, ${box.width}px 0px, ${box.width}px ${box.height}px, ` +
                 `0px ${box.height}px, 0px 0px, ${hole.left}px ${hole.top}px, ${hole.right}px ${hole.top}px, ` +
@@ -348,6 +408,9 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
         }
         if (layer.hidden) {
             layer.hidden = false;
+            draw();
+        } else if (hasFrame && !blendable) {
+            // A returning tab shows the scene it left; replace it at once, also while paused.
             draw();
         }
         scheduleDraw();
@@ -420,12 +483,19 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
         renderMenu();
     }
 
+    function activateRowControl(onSwitch, trusted) {
+        if (!validMenuRow(menuRow)) return;
+        // The switch saves the profile choice, so page-dispatched events may only fold the slider.
+        if (onSwitch) {
+            if (trusted) setUserOff(!userOff);
+        } else setExpanded(!expanded);
+    }
+
     function onRowClick(event) {
         event.stopPropagation();
-        if (event.currentTarget !== menuRow || !validMenuRow(menuRow)) return;
+        if (event.currentTarget !== menuRow) return;
         // The switch owns on/off; anywhere else on the row opens or closes the strength slider.
-        if (switchButton.contains(event.target)) setUserOff(!userOff);
-        else setExpanded(!expanded);
+        activateRowControl(switchButton.contains(event.target), event.isTrusted);
     }
 
     function onRowButtonKeyDown(event) {
@@ -433,7 +503,8 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
         if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             event.stopPropagation();
-            if (!event.repeat) event.currentTarget.click();
+            // A script click() would be untrusted; the trusted key acts on the control directly.
+            if (!event.repeat) activateRowControl(event.currentTarget === switchButton, event.isTrusted);
             return;
         }
         // Left and right move between the label and the switch of the same row.
@@ -451,7 +522,8 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
 
     function onStrengthInput(event) {
         event.stopPropagation();
-        if (event.currentTarget !== strengthInput || !validMenuRow(strengthRow)) return;
+        // Only a real drag or key may queue the synced option; page-dispatched input is ignored.
+        if (!event.isTrusted || event.currentTarget !== strengthInput || !validMenuRow(strengthRow)) return;
         intensityOverride = clampIntensity(strengthInput.value);
         renderStrength();
         if (persistTimer) window.clearTimeout(persistTimer);
@@ -460,7 +532,7 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
 
     function onStrengthChange(event) {
         event.stopPropagation();
-        persistIntensity();
+        if (event.isTrusted) persistIntensity();
     }
 
     function stopInside(event) {
@@ -474,13 +546,18 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
     }
 
     function onMenuNavigation(event) {
+        // Another feature's bridge may already have moved focus for this key.
         if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
         if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key) || !menuRow?.isConnected) return;
-        const current = menuRow.contains(event.target) && event.target !== menuRow ? menuRow : event.target;
+        if (!(event.target instanceof Element)) return;
+        // Injected rows of every feature carry MENU_ENTRY_ATTR; a row may hold its menu items inside it.
+        const entry = event.target.closest(`[${MENU_ENTRY_ATTR}]`);
+        const current = entry?.parentElement === menu ? entry : event.target;
         if (current.parentElement !== menu) return;
         const rows = Array.from(menu.children).filter(
             (row) =>
-                (row === menuRow || ["menuitem", "menuitemcheckbox"].includes(row.getAttribute("role"))) &&
+                (row.hasAttribute(MENU_ENTRY_ATTR) ||
+                    ["menuitem", "menuitemcheckbox"].includes(row.getAttribute("role"))) &&
                 row.getClientRects().length &&
                 getComputedStyle(row).visibility !== "hidden"
         );
@@ -492,11 +569,12 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
                 : event.key === "End"
                   ? rows[rows.length - 1]
                   : rows[(index + (event.key === "ArrowDown" ? 1 : rows.length - 1)) % rows.length];
-        // The native keyboard list excludes injected rows; bridge only moves into or out of ours.
-        if (current !== menuRow && next !== menuRow) return;
+        // The native keyboard list excludes injected rows; bridge only moves into or out of an injected entry.
+        if (!current.hasAttribute(MENU_ENTRY_ATTR) && !next.hasAttribute(MENU_ENTRY_ATTR)) return;
         event.preventDefault();
         event.stopPropagation();
-        (next === menuRow ? expandButton : next).focus();
+        const target = next.matches(MENU_ITEM) ? next : next.querySelector(MENU_ITEM) || next;
+        target.focus();
     }
 
     function createRowShell(element, id) {
@@ -518,6 +596,7 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
         menuRow = document.createElement("div");
         // The two buttons are the menu items; the row itself only lays them out.
         menuRow.setAttribute("role", "none");
+        menuRow.setAttribute(MENU_ENTRY_ATTR, "");
         const rowParts = createRowShell(menuRow, ROW_ID);
         expandButton = document.createElement("button");
         expandButton.id = EXPAND_ID;
@@ -659,18 +738,31 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
 
     function onScroll(event) {
         // Chat and sidebar lists scroll constantly without moving the player.
-        if (event.target instanceof Element && event.target.closest(PANEL_SELECTOR)) return;
+        if (event.target instanceof Element && event.target.closest(PANEL_SELECTOR) && !popupNodes.size) return;
         scheduleLayout();
     }
 
     function onVisibilityChange() {
-        if (document.hidden) cancelDraw();
-        else scheduleLayout();
+        if (document.hidden) {
+            cancelDraw();
+            blendable = false;
+        } else scheduleLayout();
     }
 
     function relevantMutations(rows) {
         return rows.some((row) => {
-            if (row.type === "attributes") return row.attributeName === MULTIVIEW_ATTR;
+            const hasPopup = (node) =>
+                node instanceof Element &&
+                (node.matches(POPUP_SELECTOR) ||
+                    !!node.querySelector(POPUP_SELECTOR) ||
+                    [...popupNodes].some((popup) => node.contains(popup)));
+            if (row.type === "attributes")
+                return (
+                    row.attributeName === MULTIVIEW_ATTR ||
+                    row.target.matches(POPUP_SELECTOR) ||
+                    [...popupNodes].some((node) => row.target.contains(node))
+                );
+            if ([...row.addedNodes, ...row.removedNodes].some(hasPopup)) return true;
             if (row.target instanceof Element && row.target.closest(PANEL_SELECTOR)) return false;
             // Control churn inside the current player matters only for video or settings menu swaps.
             const selector = player?.contains(row.target) ? PLAYER_TARGET_SELECTOR : TARGET_SELECTOR;
@@ -689,9 +781,15 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
         active = true;
         styles();
         resizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(scheduleLayout) : null;
+        popupResizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(scheduleLayout) : null;
         discovery = createMutationObserverSync({
             target: () => document.body,
-            options: { childList: true, subtree: true, attributes: true, attributeFilter: [MULTIVIEW_ATTR] },
+            options: {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: [MULTIVIEW_ATTR, "class", "style", "hidden", "role"],
+            },
             shouldSchedule: relevantMutations,
             schedule,
         });
@@ -728,6 +826,9 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
         bindVideo(null);
         bindPlayer(null);
         resizeObserver = null;
+        popupResizeObserver?.disconnect();
+        popupResizeObserver = null;
+        popupNodes.clear();
         layoutKey = "";
         layer?.remove();
         layer = null;

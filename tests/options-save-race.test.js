@@ -485,6 +485,45 @@ for (const notified of [true, false]) {
     });
 }
 
+test("phrase text and individual conditions stay together during external changes and a delayed save", async (t) => {
+    const { dom, setCalls, stored, externalWrite } = await createOptionsFixture(
+        t,
+        savedProfile({
+            chatKeywordFilterWords: "금지\nABC",
+            chatKeywordFilterApplyMode: "individual",
+            chatKeywordFilterExactWords: "금지",
+        })
+    );
+    const ui = optionControls(dom);
+    const rule = (phrase) =>
+        [...dom.window.document.querySelectorAll("#chatKeywordRules select")].find(
+            (select) => select.dataset.keywordPhrase === phrase
+        );
+    rule("ABC").value = "exact";
+    rule("ABC").dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    externalWrite({ chatKeywordFilterWords: "다른 창 문구", chatKeywordFilterExactWords: "다른 창 문구" });
+    assert.equal(ui.option("chatKeywordFilterWords").value, "금지\nABC");
+    assert.equal(rule("ABC").value, "exact");
+    ui.save();
+    await waitForCallbacks();
+    assert.equal(setCalls[0].values.chatKeywordFilterWords, "금지\nABC");
+    assert.equal(setCalls[0].values.chatKeywordFilterExactWords, "금지\nABC");
+    rule("금지").value = "contains";
+    rule("금지").dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    setCalls[0].complete();
+    assert.equal(stored.chatKeywordFilterExactWords, "금지\nABC");
+    assert.equal(rule("금지").value, "contains");
+    assert.equal(ui.notice().dataset.state, "dirty");
+    ui.save();
+    await waitForCallbacks();
+    setCalls[1].complete();
+    assert.equal(stored.chatKeywordFilterExactWords, "ABC");
+    assert.equal(ui.notice().dataset.state, "saved");
+    externalWrite({ chatKeywordFilterWords: "새 문구", chatKeywordFilterExactWords: "새 문구" });
+    assert.equal(ui.option("chatKeywordFilterWords").value, "새 문구");
+    assert.equal(rule("새 문구").value, "exact");
+});
+
 test("a failed save keeps values changed elsewhere and retries only the user's edit", async (t) => {
     const { dom, setCalls, stored, externalWrite } = await createOptionsFixture(
         t,
@@ -605,4 +644,51 @@ test("a duplicated speed key in the form is never saved as the default keys", as
     assert.deepEqual(speedTrio(stored), ["KeyA", "KeyB", "KeyD"]);
     assert.equal(ui.message(), "배속 감소·증가·초기화는 서로 다른 키로 지정해 주세요.");
     assert.equal(dom.window.CheeseSpannerOptionsPage.hasUnsavedChanges(), true, "the edit stays pending");
+});
+
+test("a late save preserves invalid chat phrases entered while the write is pending", async (t) => {
+    const { dom, setCalls, stored } = await createOptionsFixture(
+        t,
+        savedProfile({ chatKeywordFilterEnabled: true, chatKeywordFilterWords: "" })
+    );
+    const ui = optionControls(dom);
+    ui.setChecked("autoQualityEnabled", false);
+    ui.save();
+    await waitForCallbacks();
+    assert.equal(setCalls.length, 1);
+    const invalid = "가".repeat(101);
+    ui.setNumber("chatKeywordFilterWords", invalid);
+    setCalls[0].complete();
+
+    assert.equal(stored.autoQualityEnabled, false);
+    assert.equal(stored.chatKeywordFilterWords, "");
+    assert.equal(ui.option("chatKeywordFilterWords").value, invalid);
+    assert.equal(ui.notice().dataset.state, "dirty");
+    assert.equal(dom.window.CheeseSpannerOptionsPage.hasUnsavedChanges(), true);
+    ui.save();
+    assert.equal(setCalls.length, 1, "an invalid draft never becomes a second write");
+    assert.match(ui.message(), /한 문구 100자/);
+    assert.equal(ui.option("chatKeywordFilterWords").value, invalid);
+});
+
+test("external settings changes retain invalid chat phrases as unsaved edits", async (t) => {
+    const { dom, setCalls, stored, externalWrite } = await createOptionsFixture(
+        t,
+        savedProfile({ chatKeywordFilterEnabled: true, chatKeywordFilterWords: "" })
+    );
+    const ui = optionControls(dom);
+    const invalid = "가".repeat(101);
+    ui.setNumber("chatKeywordFilterWords", invalid);
+    assert.equal(dom.window.CheeseSpannerOptionsPage.hasUnsavedChanges(), true);
+    externalWrite({ skipSeconds: 10 });
+
+    assert.equal(ui.option("skipSeconds").value, "10");
+    assert.equal(ui.option("chatKeywordFilterWords").value, invalid);
+    assert.equal(ui.notice().dataset.state, "dirty");
+    assert.equal(dom.window.CheeseSpannerOptionsPage.hasUnsavedChanges(), true);
+    assert.equal(stored.chatKeywordFilterWords, "");
+    assert.equal(setCalls.length, 0);
+    dom.window.document.getElementById("discardChanges").click();
+    assert.equal(ui.option("chatKeywordFilterWords").value, "");
+    assert.equal(dom.window.CheeseSpannerOptionsPage.hasUnsavedChanges(), false);
 });

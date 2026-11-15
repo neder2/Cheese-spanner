@@ -3,6 +3,7 @@ const test = require("node:test");
 const { JSDOM } = require("jsdom");
 const {
     createFakeChrome,
+    dispatchTrusted,
     evalFeatureModules,
     evalRepoScript,
     waitForCondition,
@@ -229,14 +230,22 @@ async function fixture(
         assert.equal(frames.size, 0, "DOM scheduling must settle");
     }
     const handle = (panel) => doc.querySelector(`[data-bcpr-handle="${panel}"]`);
-    function pointer(target, type, x, extra = {}) {
+    // Pointer input models the user's mouse; trusted: false is the page-script equivalent.
+    function pointer(target, type, x, { trusted = true, ...extra } = {}) {
         const ev = new win.MouseEvent(type, { clientX: x, button: 0, bubbles: true, cancelable: true, ...extra });
         Object.defineProperties(ev, {
             pointerId: { value: extra.pointerId ?? 1 },
             isPrimary: { value: extra.isPrimary ?? true },
             pointerType: { value: extra.pointerType ?? "mouse" },
         });
-        target.dispatchEvent(ev);
+        if (trusted) dispatchTrusted(target, ev);
+        else target.dispatchEvent(ev);
+        return ev;
+    }
+    function dblclick(target, { trusted = true, button = 0 } = {}) {
+        const ev = new win.MouseEvent("dblclick", { button, detail: 2, bubbles: true, cancelable: true });
+        if (trusted) dispatchTrusted(target, ev);
+        else target.dispatchEvent(ev);
         return ev;
     }
     function key(panel, value, extra = {}) {
@@ -259,7 +268,7 @@ async function fixture(
                 new win.MouseEvent("click", { button: 0, detail, bubbles: true, cancelable: true })
             );
         }
-        handle(panel).dispatchEvent(new win.MouseEvent("dblclick", { button: 0, bubbles: true, cancelable: true }));
+        dblclick(handle(panel));
     }
     await flush();
     return {
@@ -289,6 +298,7 @@ async function fixture(
         bindRects,
         handle,
         pointer,
+        dblclick,
         key,
         drag,
         reset,
@@ -748,12 +758,101 @@ test("secondary input and stationary clicks leave even oversized native widths u
     }
     f.pointer(h, "pointerdown", 468);
     f.pointer(f.win, "pointerup", 468);
-    h.dispatchEvent(new f.win.MouseEvent("dblclick", { button: 2, bubbles: true, cancelable: true }));
+    f.dblclick(h, { button: 2 });
     await f.flush();
     assert.equal(chat.style.getPropertyValue("--bcpr-width"), "");
     assert.equal(f.writes.length, 0);
     assert.equal(h.getAttribute("aria-valuenow"), "800");
 });
+
+test("page-dispatched pointer drags and double clicks never resize or save a panel", async (t) => {
+    const f = await fixture(t),
+        sb = f.doc.getElementById("sidebar"),
+        chat = f.doc.getElementById("aside-chatting");
+    f.drag("chat", 30);
+    await f.flush();
+    assert.equal(f.width(chat), 383);
+    assert.equal(f.writes.length, 1);
+    const grip = f.doc.querySelector('[data-bcpr-handle="chat-height"]');
+    const synthetic = { trusted: false };
+    for (const [h, axis] of [
+        [f.handle("sidebar"), "clientX"],
+        [f.handle("chat"), "clientX"],
+        [grip, "clientY"],
+    ]) {
+        const down = f.pointer(h, "pointerdown", 600, { ...synthetic, clientY: 760 });
+        assert.equal(down.defaultPrevented, false, "no drag starts");
+        f.pointer(f.win, "pointermove", 500, { ...synthetic, [axis]: 500 });
+        f.pointer(f.win, "pointerup", 500, { ...synthetic, [axis]: 500 });
+        // A synthetic mouse press cannot arm the reset, and neither can a synthetic double click after a real press.
+        f.pointer(h, "pointerdown", 600, synthetic);
+        f.dblclick(h, synthetic);
+        f.dblclick(h);
+        f.pointer(h, "pointerdown", 600, { clientY: 760 });
+        f.pointer(f.win, "pointerup", 600, { clientY: 760 });
+        f.dblclick(h, synthetic);
+    }
+    await f.flush();
+    assert.equal(f.writes.length, 1, "no settings store write");
+    assert.equal(f.width(chat), 383, "the user's earlier choice stays");
+    assert.equal(sb.hasAttribute("data-bcpr-width"), false);
+    assert.equal(chat.hasAttribute("data-bcpr-height"), false);
+    // The user's own double click still resets.
+    f.reset("chat");
+    await f.flush();
+    assert.equal(f.writes.length, 2);
+    assert.equal(chat.hasAttribute("data-bcpr-width"), false);
+});
+
+for (const kind of ["width", "height"]) {
+    test(`page-dispatched moves, releases and double clicks inside the user's ${kind} drag never resize, save or end it`, async (t) => {
+        const f = await fixture(t),
+            chat = f.doc.getElementById("aside-chatting"),
+            h = kind === "width" ? f.handle("chat") : f.doc.querySelector('[data-bcpr-handle="chat-height"]');
+        const variable = `--bcpr-${kind}`,
+            key = kind === "width" ? STORAGE_KEYS.chat : HEIGHT_KEY,
+            synthetic = { trusted: false };
+        // Width moves along x from 915 to 860 (408px); height moves along y from 760 to 560 (500px).
+        const at = (value) => (kind === "width" ? [value, {}] : [600, { clientY: value }]);
+        const press = (target, type, value, extra = {}) => {
+            const [x, axis] = at(value);
+            return f.pointer(target, type, x, { ...axis, ...extra });
+        };
+        const [start, end, far] = kind === "width" ? [915, 860, 600] : [760, 560, 300];
+        // The page reuses the user's pointerId between the user's own press and release.
+        press(h, "pointerdown", start);
+        press(f.win, "pointermove", far, synthetic);
+        press(f.win, "pointerup", far, synthetic);
+        f.dblclick(h, synthetic);
+        await f.flush();
+        assert.equal(chat.style.getPropertyValue(variable), "", "a page move does not preview a size");
+        assert.equal(f.writes.length, 0, "a page release or double click does not save");
+        assert.equal(h.getAttribute("data-bcpr-dragging"), "1", "the user's drag continues");
+        press(f.win, "pointermove", end);
+        await f.flush();
+        const expected = kind === "width" ? 408 : 500;
+        assert.equal(chat.style.getPropertyValue(variable), `${expected}px`);
+        press(f.win, "pointerup", far, synthetic);
+        await f.flush();
+        assert.equal(f.writes.length, 0);
+        press(f.win, "pointerup", end);
+        await f.flush();
+        assert.deepEqual(f.writes, [{ [key]: expected }], "only the user's release saves its own position");
+        assert.equal(h.hasAttribute("data-bcpr-dragging"), false);
+
+        // A page cancel can only end the drag at the saved size; it never saves.
+        const nudge = kind === "width" ? 800 : 500;
+        press(h, "pointerdown", end);
+        press(f.win, "pointermove", nudge);
+        await f.flush();
+        assert.notEqual(chat.style.getPropertyValue(variable), `${expected}px`);
+        press(f.win, "pointercancel", nudge, synthetic);
+        press(f.win, "pointerup", nudge);
+        await f.flush();
+        assert.equal(f.writes.length, 1);
+        assert.equal(chat.style.getPropertyValue(variable), `${expected}px`);
+    });
+}
 
 test("right drag respects min/max, guards its release click and leaves subsequent user clicks alone", async (t) => {
     const f = await fixture(t),
@@ -777,6 +876,36 @@ test("right drag respects min/max, guards its release click and leaves subsequen
     await f.flush();
     assert.equal(f.width(f.doc.getElementById("aside-chatting")), 640);
     assert.equal(f.writes.length, 2);
+});
+
+test("a narrowed chat caps the native profile layer to its width so the close button stays inside", async (t) => {
+    const f = await fixture(t),
+        chat = f.doc.getElementById("aside-chatting");
+    // 2026-11-01 public bundle: the profile layer renders inside the chat list; modals portal to body.
+    const layer = f.doc.createElement("div");
+    layer.className = "_container_jao35_20 _show_layer_jao35_54 _container_y6scg_2 _is_bottom_y6scg_30";
+    layer.setAttribute("role", "alertdialog");
+    layer.style.cssText = "width:333px;position:absolute;left:10px;bottom:0";
+    layer.innerHTML = '<div class="_control_y6scg_300"><button type="button" aria-label="닫기"></button></div>';
+    f.doc.getElementById("messages").append(layer);
+    const modal = f.doc.createElement("div");
+    modal.setAttribute("role", "alertdialog");
+    f.doc.body.append(modal);
+    const rule = [...f.doc.getElementById("cheese-spanner-panel-resize-style").sheet.cssRules].find(
+        (item) => item.style?.getPropertyValue("max-width") === "calc(var(--bcpr-width) - 20px)"
+    );
+    assert.ok(rule, "the layer cap follows the chosen chat width minus the native 10px insets");
+    assert.equal(layer.matches(rule.selectorText), false, "the native default width is left alone");
+    f.drag("chat", -113);
+    await f.flush();
+    assert.equal(f.width(chat), 240);
+    assert.equal(chat.style.getPropertyValue("--bcpr-width"), "240px");
+    assert.equal(layer.matches(rule.selectorText), true);
+    assert.equal(modal.matches(rule.selectorText), false, "body modals are outside the chat");
+    assert.equal(layer.style.width, "333px", "native layer styles are not rewritten");
+    f.reset("chat");
+    await f.flush();
+    assert.equal(layer.matches(rule.selectorText), false);
 });
 
 test("overflowing narrow native rows and stacked layouts release widths; returning restores the selection", async (t) => {
@@ -1325,6 +1454,63 @@ test("sidebar right placement reuses the native reserved space, flips its bounda
     assert.deepEqual([sb.style.cssText, body.style.cssText], originals);
 });
 
+test("a right sidebar moves floating mini layers only where no transformed section already holds them", async (t) => {
+    const f = await fixture(t, { initialOptions: { sidebarPosition: "right" } });
+    const body = f.doc.getElementById("layout-body");
+    // Chrome 155, 2026-11-05: these layers are position:fixed;right:0. On /live/<id> CHZZK's draggable hook gives the
+    // live section an inline transform, which makes it their containing block; it already ends at the right sidebar,
+    // and an extra offset left a gap as wide as the sidebar. The /live/<id>/simple section (public bundle 2026-11-04)
+    // has no transform, so there right:0 is the viewport edge under the z-index 9999 sidebar.
+    const section = f.doc.createElement("section");
+    section.style.height = "100%";
+    f.doc.querySelector("main").append(section);
+    section.innerHTML =
+        '<div class="_container_odscd_1"><button type="button"><span class="blind">닫기</span></button></div>' +
+        '<div id="live_player_layout" class="chzzk_player type_live has_shortcut">' +
+        '<div id="preAdPlayerWrapper"><video></video><div id="preAdVideoContainer"><button type="button"></button></div>' +
+        '<div class="_container_odscd_1"><button type="button"></button></div></div>' +
+        '<div id="midAdPlayerWrapper"></div></div>';
+    await f.flush();
+    assert.equal(body.getAttribute("data-bcpr-sidebar-side"), "right");
+    assert.equal(body.style.getPropertyValue("--bcpr-sidebar-space"), "240px");
+    const player = f.doc.getElementById("live_player_layout"),
+        close = player.previousElementSibling,
+        preAd = f.doc.getElementById("preAdPlayerWrapper"),
+        adContainer = f.doc.getElementById("preAdVideoContainer"),
+        adClose = preAd.lastElementChild,
+        midAd = f.doc.getElementById("midAdPlayerWrapper");
+    const rules = [...f.doc.querySelectorAll('style[id^="cheese-spanner-panel"]')]
+        .flatMap((style) => [...style.sheet.cssRules])
+        .flatMap((rule) => (rule.media ? [...rule.cssRules] : [rule]))
+        .filter((rule) => rule.selectorText && rule.style.getPropertyValue("right"));
+    const shifted = (node) =>
+        rules.some(
+            (rule) =>
+                node.matches(rule.selectorText) &&
+                rule.style.getPropertyValue("right") === "var(--bcpr-sidebar-space,0px)"
+        );
+    const floating = [player, close, preAd, adClose, midAd];
+    for (const node of [...floating, adContainer]) assert.equal(shifted(node), false, "the docked player stays put");
+    player.classList.add("hidden_ui", "miniplayer", "scroll_pip");
+    assert.equal(shifted(adClose), false, "the pre-ad close follows only the floating pre-ad mini");
+    preAd.classList.add("pre_ad_mini");
+    midAd.classList.add("mid_ad_mini");
+    for (const node of floating) assert.equal(shifted(node), true, "a viewport-fixed layer steps out from under it");
+    assert.equal(shifted(adContainer), false, "the in-flow ad container moves with its mini");
+    section.style.transform = "translate(0px, 0px)";
+    for (const node of floating)
+        assert.equal(shifted(node), false, "the transformed section already ends at the right sidebar");
+    section.style.removeProperty("transform");
+    player.classList.add("is_large");
+    assert.equal(shifted(player), false, "a large mini only floats in states without the sidebar");
+    player.classList.remove("is_large");
+    for (const node of [...floating, adContainer]) assert.equal(node.style.cssText, "");
+    f.options({ sidebarPosition: "left" });
+    await f.flush();
+    assert.equal(body.hasAttribute("data-bcpr-sidebar-side"), false);
+    for (const node of floating) assert.equal(shifted(node), false, "a left sidebar leaves the right edge alone");
+});
+
 test("chat height drags the native chat only, keeps its input, resets on double click and stays mouse only", async (t) => {
     const f = await fixture(t, { sidebar: false });
     const chat = f.doc.getElementById("aside-chatting"),
@@ -1371,7 +1557,7 @@ test("chat height drags the native chat only, keeps its input, resets on double 
     }
     f.pointer(grip, "pointerdown", 600, { clientY: 300 });
     f.pointer(f.win, "pointerup", 600, { clientY: 300 });
-    grip.dispatchEvent(new f.win.MouseEvent("dblclick", { button: 0, bubbles: true, cancelable: true }));
+    f.dblclick(grip);
     await f.flush();
     assert.equal(chat.hasAttribute("data-bcpr-height"), false);
     assert.equal(f.writes.at(-1)[HEIGHT_KEY], null, "double click stores the native default");
@@ -1434,9 +1620,72 @@ test("a left VOD chat takes the reserved info column and banner along so its ove
     assert.equal(right.style.getPropertyValue("--bcpr-companion-width"), "373px", "the column follows the chat width");
     f.options({ chatPosition: "right" });
     await f.flush();
+    for (const node of [aside, banner]) assert.equal(node.hasAttribute("data-bcpr-side"), false);
+    assert.equal(left.hasAttribute("data-bcpr-side"), false);
+    // The 373px chat now overhangs the native right column, so that column keeps the chat width (R2-146).
+    assert.equal(f.width(aside), 373);
+    assert.equal(right.getAttribute("data-bcpr-side"), "right");
+    assert.equal(right.style.getPropertyValue("--bcpr-companion-width"), "373px");
+    f.options({ chatResizeEnabled: false });
+    await f.flush();
     for (const node of [aside, right, banner]) assert.equal(node.hasAttribute("data-bcpr-side"), false);
     assert.equal(right.style.getPropertyValue("--bcpr-companion-width"), "");
     assert.equal(right.style.cssText, nativeColumnStyle, "native inline styles are restored");
+});
+
+test("a widened right VOD chat keeps the reserved info column as wide as its overhang", async (t) => {
+    // 2026-10-09 Codex Chrome measured the VOD aside overhanging ._content_right by ~84px. On the native right side
+    // a chat wider than the 353px column covered the right edge of the title column.
+    const f = await fixture(t, { route: "/video/123", sidebar: false });
+    const body = f.doc.getElementById("layout-body");
+    body.insertAdjacentHTML(
+        "beforeend",
+        '<div class="_banner_t" style="position:absolute;top:43px;right:0"></div>' +
+            '<div class="_area_t"><div class="_content_t" style="display:flex">' +
+            '<div class="_content_left_t"><h3>제목</h3></div>' +
+            '<div class="_content_right_t" style="flex:none;width:353px"></div></div></div>'
+    );
+    const right = f.doc.querySelector("._content_right_t"),
+        left = f.doc.querySelector("._content_left_t"),
+        banner = f.doc.querySelector("._banner_t"),
+        aside = f.doc.getElementById("vod-aside");
+    const nativeColumnStyle = right.style.cssText;
+    f.resize(1280);
+    await f.flush();
+    assert.equal(aside.hasAttribute("data-bcpr-width"), false, "the chat starts at its native width");
+    for (const node of [aside, right, left, banner]) assert.equal(node.hasAttribute("data-bcpr-side"), false);
+    assert.equal(right.style.getPropertyValue("--bcpr-companion-width"), "", "a native-width chat changes nothing");
+
+    f.pointer(f.handle("chat"), "pointerdown", 600);
+    f.pointer(f.win, "pointermove", 560);
+    await f.flush();
+    assert.equal(right.getAttribute("data-bcpr-side"), "right", "the column follows during the drag");
+    assert.equal(right.style.getPropertyValue("--bcpr-companion-width"), "393px");
+    f.pointer(f.win, "pointerup", 560);
+    await f.flush();
+    assert.equal(f.width(aside), 393);
+    assert.equal(right.getAttribute("data-bcpr-side"), "right");
+    assert.equal(right.style.getPropertyValue("--bcpr-companion-width"), "393px");
+    for (const node of [aside, left, banner]) assert.equal(node.hasAttribute("data-bcpr-side"), false);
+    const rule = placementRules(f).find(
+        (item) => item.selectorText === '[class*="content_right"][data-bcpr-side="right"]'
+    );
+    assert.equal(rule.style.getPropertyValue("width"), "var(--bcpr-companion-width,353px)");
+    assert.equal(rule.style.getPropertyValue("order"), "", "the native right column keeps its order");
+
+    // A same-size React replacement of the column is found again without a resize.
+    right.insertAdjacentHTML("afterend", '<div class="_content_right_t" style="flex:none;width:353px"></div>');
+    right.remove();
+    await f.flush();
+    const replaced = f.doc.querySelector("._content_right_t");
+    assert.equal(replaced.getAttribute("data-bcpr-side"), "right");
+    assert.equal(replaced.style.getPropertyValue("--bcpr-companion-width"), "393px");
+
+    f.options({ chatResizeEnabled: false });
+    await f.flush();
+    assert.equal(replaced.hasAttribute("data-bcpr-side"), false);
+    assert.equal(replaced.style.cssText, nativeColumnStyle, "turning the width off restores the native column");
+    assert.equal(right.hasAttribute("data-bcpr-side"), false, "the removed column was released");
 });
 
 test("the chat height cap follows a native height that changes with the chat width", async (t) => {

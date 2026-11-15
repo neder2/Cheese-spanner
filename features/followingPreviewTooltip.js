@@ -14,7 +14,8 @@
  * 옵션 키: followingPreviewTooltipEnabled, followingPreviewSoundEnabled,
  *   followingPreviewVolumePercent, livePreviewRightClickSoundEnabled.
  * DOM 마커: #cheese-spanner-following-preview 툴팁, data-bcfp-tooltip/data-bcfp-active/
- *   data-bcfp-player-mount/data-bcfp-player-state/data-bcfp-sound-feedback/data-bcfp-list-hint 속성,
+ *   data-bcfp-player-mount/data-bcfp-player-state/data-bcfp-sound-feedback/data-bcfp-list-hint/
+ *   data-bcfp-list-hint-surface 속성,
  *   .bcfp-* 클래스.
  * 통신: 우클릭으로 바꾼 팔로잉 소리 선호도를 chrome.storage.sync에 저장한다.
  *   livePreviewFastHoverPage.js에는 DOM attribute와 CustomEvent로 활성 상태를 전달한다.
@@ -101,6 +102,7 @@
     const FORCE_MUTED_ATTR = "data-bcfp-force-muted";
     const LIST_EXPANDED_ATTR = "data-bcfp-list-expanded";
     const LIST_HINT_ATTR = "data-bcfp-list-hint";
+    const LIST_HINT_SURFACE_ATTR = "data-bcfp-list-hint-surface";
     const SOUND_FEEDBACK_ATTR = "data-bcfp-sound-feedback";
     const SOUND_FEEDBACK_DURATION_MS = 1000;
     const CATEGORY_CARD_ATTR = "data-bcgt-card";
@@ -314,7 +316,7 @@
   transform:translateY(3px);
   transition:opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
 }
-.bcfp-list-hint-host:hover > .bcfp-list-hint{
+[${LIST_HINT_SURFACE_ATTR}="1"]:hover > .bcfp-list-hint{
   opacity:1;
   visibility:visible;
   transform:translateY(0);
@@ -479,6 +481,7 @@
     let hoverBridge = null;
     let activeInfo = null;
     let anchorResizeObserver = null;
+    let previewSourceObserver = null;
     let pendingInfo = null;
     let openTimer = 0;
     let requestToken = 0;
@@ -981,7 +984,8 @@
             const normalizedPlayback = normalizeAutoPlayInfo(playback, meta);
             return getPlaybackSource(normalizedPlayback) ? normalizedPlayback : meta;
         } catch (error) {
-            if (isAbortError(error)) throw error;
+            // fetchJson's own timeout also rejects with AbortError; only the caller's cancellation is a stop.
+            if (signal?.aborted) throw error;
             return meta;
         }
     }
@@ -1383,7 +1387,8 @@
         if (HlsCtor?.isSupported?.()) {
             const hls = new HlsCtor({
                 backBufferLength: 0,
-                capLevelToPlayerSize: true,
+                // hls.js re-caps to the player size every second when this is on, which overrides the 480p limit.
+                capLevelToPlayerSize: false,
                 enableWorker: false,
                 lowLatencyMode: source.lowLatency,
                 maxBufferLength: 12,
@@ -1728,9 +1733,9 @@
                 if (token !== injectedRequestToken || activeInjectedInfo !== info) return;
                 renderInjectedPreview(info, meta);
             })
-            .catch((error) => {
+            .catch(() => {
                 if (injectedFetchController === controller) injectedFetchController = null;
-                if (!isAbortError(error) && token === injectedRequestToken && activeInjectedInfo === info) {
+                if (!controller.signal.aborted && token === injectedRequestToken && activeInjectedInfo === info) {
                     info.card.removeAttribute(ACTIVE_ATTR);
                 }
             });
@@ -1791,17 +1796,48 @@
         activeFetchController = null;
     }
 
-    function isAbortError(error) {
-        return error?.name === "AbortError";
-    }
-
     function setActiveItem(item) {
         if (activeInfo?.item && activeInfo.item !== item) activeInfo.item.removeAttribute(ACTIVE_ATTR);
         if (item) item.setAttribute(ACTIVE_ATTR, "1");
     }
 
+    // The row and link React rendered may be reused for another channel or removed while the card is open.
+    function isPreviewSourceCurrent(info) {
+        if (!info || activeInfo !== info) return false;
+        const { item, link } = info;
+        if (!item?.isConnected || !link?.isConnected || (item !== link && !item.contains(link))) return false;
+        return extractChannelIdFromHref(link.getAttribute("href") || "") === info.channelId;
+    }
+
+    function isPreviewRequestCurrent(info, token) {
+        if (token !== requestToken || activeInfo !== info) return false;
+        if (isPreviewSourceCurrent(info)) return true;
+        hidePreview();
+        return false;
+    }
+
+    function stopPreviewSourceObserver() {
+        previewSourceObserver?.disconnect();
+        previewSourceObserver = null;
+    }
+
+    function startPreviewSourceObserver(info) {
+        stopPreviewSourceObserver();
+        if (typeof MutationObserver !== "function" || !document.body) return;
+
+        previewSourceObserver = new MutationObserver(() => {
+            if (activeInfo === info && !isPreviewSourceCurrent(info)) hidePreview();
+        });
+        previewSourceObserver.observe(document.body, {
+            attributeFilter: ["href"],
+            attributes: true,
+            childList: true,
+            subtree: true,
+        });
+    }
+
     function startPreviewMetaRequest(info, token) {
-        if (token !== requestToken || activeInfo?.channelId !== info.channelId) return;
+        if (!isPreviewRequestCurrent(info, token)) return;
 
         const fetchController = new AbortController();
         activeFetchController = fetchController;
@@ -1809,13 +1845,14 @@
         getPreviewMeta(info.channelId, info.domMeta, { signal: fetchController.signal })
             .then((meta) => {
                 if (activeFetchController === fetchController) activeFetchController = null;
-                if (token !== requestToken || activeInfo?.channelId !== info.channelId) return;
+                if (!isPreviewRequestCurrent(info, token)) return;
                 renderPreview(meta, "ready");
             })
-            .catch((error) => {
+            .catch(() => {
                 if (activeFetchController === fetchController) activeFetchController = null;
-                if (isAbortError(error)) return;
-                if (token !== requestToken || activeInfo?.channelId !== info.channelId) return;
+                // A timeout inside fetchJson is an AbortError too, but only our own abort means "stop quietly".
+                if (fetchController.signal.aborted) return;
+                if (!isPreviewRequestCurrent(info, token)) return;
                 renderPreview({ ...info.domMeta, title: info.domMeta.title || ERROR_TITLE }, "error");
             });
     }
@@ -1829,6 +1866,7 @@
 
         setActiveItem(info.item);
         activeInfo = info;
+        startPreviewSourceObserver(info);
         renderPreview(info.domMeta, "loading");
         anchorResizeObserver?.disconnect();
         if (typeof ResizeObserver === "function") {
@@ -1853,6 +1891,7 @@
     function hidePreview() {
         anchorResizeObserver?.disconnect();
         anchorResizeObserver = null;
+        stopPreviewSourceObserver();
         clearOpenTimer();
         clearHoverBridge();
         clearPreviewFetchTimer();
@@ -2088,6 +2127,7 @@
     function clearListPreviewHint(container = null) {
         if (container && listHintEl && !container.contains(listHintEl)) return;
         listHintSurface?.classList.remove("bcfp-list-hint-host");
+        listHintSurface?.removeAttribute(LIST_HINT_SURFACE_ATTR);
         listHintEl?.remove();
         listHintEl = null;
         listHintSurface = null;
@@ -2111,10 +2151,12 @@
             hint.setAttribute(LIST_HINT_ATTR, "1");
             hint.setAttribute("aria-hidden", "true");
 
+            // Showing the hint must not depend on the static-position fix: injected hosts are already relative.
             const surfacePosition = window.getComputedStyle(surface).position;
             if (!surfacePosition || surfacePosition === "static") {
                 surface.classList.add("bcfp-list-hint-host");
             }
+            surface.setAttribute(LIST_HINT_SURFACE_ATTR, "1");
             surface.appendChild(hint);
             listHintEl = hint;
             listHintSurface = surface;
@@ -2234,7 +2276,8 @@
 
         const followingTip = event.target.closest(`#${TOOLTIP_ID}`);
         if (followingTip && followingTip === tooltip) {
-            if (!isRightClickSoundEnabled()) return;
+            // Toggling sound saves the synced choice, so only a real right click (or menu key) may do it.
+            if (!event.isTrusted || !isRightClickSoundEnabled()) return;
             const media = event.target.closest(".bcfp-media");
             const video = media?.querySelector("video.bcfp-player");
             if (!media || !followingTip.contains(media) || !isVisiblePreviewVideo(video)) return;
@@ -2279,6 +2322,15 @@
         clearListPreviewHint();
         hideInjectedPreview();
         hidePreview();
+    }
+
+    // A background tab gets no pointerout, so hidden or unloading pages end hover previews and their audio here.
+    function handleVisibilityChange() {
+        if (document.visibilityState === "hidden") handlePageChange();
+    }
+
+    function handlePageHide() {
+        handlePageChange();
     }
 
     function handlePointerOver(event) {
@@ -2367,6 +2419,8 @@
         document.addEventListener("playing", handlePreviewPlaying, true);
         window.addEventListener("scroll", handleViewportChange, true);
         window.addEventListener("resize", handleViewportChange);
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        window.addEventListener("pagehide", handlePageHide);
         document.addEventListener(MULTIVIEW_LAYER_EVENT, handleMultiviewLayerChange);
         removePageChangeDetection = startPageChangeDetection(handlePageChange);
     }
@@ -2384,6 +2438,8 @@
         document.removeEventListener("playing", handlePreviewPlaying, true);
         window.removeEventListener("scroll", handleViewportChange, true);
         window.removeEventListener("resize", handleViewportChange);
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+        window.removeEventListener("pagehide", handlePageHide);
         document.removeEventListener(MULTIVIEW_LAYER_EVENT, handleMultiviewLayerChange);
 
         if (removePageChangeDetection) {

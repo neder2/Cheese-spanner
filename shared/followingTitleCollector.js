@@ -148,7 +148,9 @@
             }
             return;
         }
-        const { store: next } = model.applyPoll(store, items, Date.now(), { legacyTitle: cleanEntryTitle });
+        const { store: next } = model.applyPoll(store, items, Date.now(), {
+            legacyTitle: (title, channelName) => cleanEntryTitle(title, channelName, { suffix: "legacy" }),
+        });
         if (token !== generation) return;
         // 라이브가 하나도 없고 지우거나 새로 둘 대기 시각도 없으면 쓰지 않아요. 라이브 중이면 마지막 확인 시각을 갱신해요.
         if (!items.length && !saved.retryAt && !saved.tabRetryAt && !pausedNow) return;

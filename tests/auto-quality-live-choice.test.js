@@ -667,3 +667,122 @@ test("the previous stream left in the same player is not recorded as the next ro
     assert.equal(selectedHeight(p), 720);
     assert.equal(p.selections.length, 2);
 });
+
+for (const attach of ["source", "provider"]) {
+    test(`a stream ${attach} attached before the first playing still leads to the entry apply`, async (t) => {
+        const f = fixture(t, { started: false, paused: true, readyState: 0 }),
+            p = f.initial;
+        await drain(f);
+        assert.equal(f.request().reason, "native-playback-start", "the pane exists before the stream is attached");
+        // The native player then attaches its stream to the same player before playback starts.
+        if (attach === "source") p.playback.src = "blob:measured-a";
+        else p.player.srcObject = {};
+        p.startPlayback();
+        await drain(f);
+        assert.deepEqual(p.selections, ["muxed-1080"], "the first playing is not dropped as a foreign stream");
+        assert.equal(selectedHeight(p), 1080);
+        assert.equal(f.request().status, "already");
+        chooseInNativeMenu(p, 480);
+        await addPlayerMenuNode(f, p);
+        await drain(f);
+        assert.deepEqual(p.selections, ["muxed-1080"], "the completed entry still protects later choices");
+    });
+}
+
+test("a selection that settles during a momentary ownership mismatch does not leave an endless retry", async (t) => {
+    const f = fixture(t),
+        p = f.initial;
+    // Another video (for example a collapsed layout element) is present but has no visible area.
+    const other = f.w.document.createElement("video");
+    let otherRect = { width: 0, height: 0, left: 0, top: 0, right: 0, bottom: 0 };
+    other.getBoundingClientRect = () => otherRect;
+    f.w.document.body.append(other);
+    let finish;
+    p.setSelect((id) => {
+        for (const track of p.tracks) track.selected = track.id === id;
+        return new Promise((resolve) => {
+            finish = resolve;
+        });
+    });
+    await drain(f);
+    assert.equal(p.selections.length, 1);
+    // At the moment the native promise settles, a layout change briefly makes the other video the largest.
+    otherRect = { width: 1920, height: 1080, left: 0, top: 0, right: 1920, bottom: 1080 };
+    finish();
+    await flush();
+    otherRect = { width: 0, height: 0, left: 0, top: 0, right: 0, bottom: 0 };
+    f.request();
+    await drain(f);
+    assert.equal(f.request().status, "already", "the finished selection is judged again instead of staying pending");
+    assert.equal(f.timers.size, 0);
+    assert.deepEqual(p.selections, ["muxed-1080"]);
+});
+
+async function navigateBothWorlds(f, pathname) {
+    f.w.history.pushState({}, "", pathname);
+    f.w.dispatchEvent(new f.w.Event("cheese-spanner:routechange"));
+    await drainBothWorlds(f);
+}
+
+test("returning from home to the live broadcast kept playing in PiP keeps a later manual choice", async (t) => {
+    const f = fixture(t),
+        p = f.initial;
+    p.playback.src = "blob:measured-a";
+    await f.loadIsolated();
+    await drainBothWorlds(f);
+    assert.deepEqual(p.selections, ["muxed-1080"]);
+    // In-page PiP keeps the same player, video and stream while the tab shows home, then returns to it.
+    await navigateBothWorlds(f, "/");
+    await navigateBothWorlds(f, "/live/measured-a");
+    assert.equal(f.request().status, "already", "the same broadcast still shows the preferred quality");
+    chooseInNativeMenu(p, 480);
+    await addPlayerMenuNode(f, p);
+    await drainBothWorlds(f);
+    assert.equal(selectedHeight(p), 480, "a menu choice after the return is not overwritten");
+    assert.deepEqual(p.selections, ["muxed-1080"]);
+});
+
+test("a different broadcast reached through home still waits for its own stream before recording the entry", async (t) => {
+    const f = fixture(t),
+        p = f.initial;
+    p.playback.src = "blob:measured-a";
+    await f.loadIsolated();
+    await drainBothWorlds(f);
+    await navigateBothWorlds(f, "/");
+    await navigateBothWorlds(f, "/live/measured-b");
+    assert.equal(f.request().status, "already", "the old stream still shows 1080p");
+    p.playback.src = "blob:measured-b";
+    p.playback.started = false;
+    chooseInNativeMenu(p, 480);
+    await addPlayerMenuNode(f, p);
+    await drainBothWorlds(f);
+    p.startPlayback();
+    await drainBothWorlds(f);
+    assert.deepEqual(p.selections, ["muxed-1080", "muxed-1080"], "channel B still receives its entry apply");
+});
+
+// The native switch may replace the stream source of the same player before its promise rejects. The rejection is
+// still recorded on that binding instead of being lost as an ownership change.
+for (const flags of ["changed-before-reject", "unchanged"]) {
+    test(`a selection that changes the same player's source and then rejects is recorded as failed: ${flags}`, async (t) => {
+        const f = fixture(t),
+            p = f.initial;
+        p.playback.src = "blob:stream-1";
+        let attempt = 0;
+        p.setSelect((id) => {
+            attempt += 1;
+            if (flags === "changed-before-reject") for (const track of p.tracks) track.selected = track.id === id;
+            p.playback.src = `blob:stream-switch-${attempt}`;
+            return Promise.reject(Error("native player rejected the switch"));
+        });
+        f.request();
+        await flush();
+        for (let count = 0; f.timers.size && count < 40; count++) await f.runNextTimer();
+        const result = f.request();
+        assert.equal(result.status, "blocked", "the rejection is not reported as an applied entry");
+        assert.equal(result.reason, "native-quality-unconfirmed");
+        assert.deepEqual(p.selections, ["muxed-1080"], "the rejected switch is not repeated");
+        await flush();
+        assert.equal(f.timers.size, 0, "no retry stays scheduled");
+    });
+}

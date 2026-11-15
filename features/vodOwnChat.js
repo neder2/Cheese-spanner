@@ -65,11 +65,15 @@
         else if (!own && container.hasAttribute(OWN_ATTR)) container.removeAttribute(OWN_ATTR);
     }
 
-    function collect(node, chatLog, containers) {
+    // 행 추가 mutation의 target은 목록 컨테이너예요. target 아래를 모두 훑으면 새 행 하나마다 목록 전체에
+    // 작성자 확인을 다시 요청하므로, target은 자신을 감싼 메시지만 보고 하위 탐색은 추가된 노드·재사용 신호가
+    // 바뀐 행에만 해요(chatTimestamp.js와 같은 범위).
+    function collect(node, chatLog, containers, { descendants = true } = {}) {
         const element = node instanceof Element ? node : node?.parentElement;
         if (!(element instanceof Element) || !chatLog.contains(element)) return;
         const closest = element.closest(MESSAGE_CONTAINER_SELECTOR);
         if (closest && chatLog.contains(closest)) containers.add(closest);
+        if (!descendants) return;
         for (const container of element.querySelectorAll(MESSAGE_CONTAINER_SELECTOR)) containers.add(container);
     }
 
@@ -83,7 +87,7 @@
         if (!(chatLog instanceof Element)) return;
         const containers = new Set();
         for (const mutation of mutations) {
-            collect(mutation.target, chatLog, containers);
+            collect(mutation.target, chatLog, containers, { descendants: mutation.type === "attributes" });
             if (mutation.type === "childList") {
                 for (const node of mutation.addedNodes) collect(node, chatLog, containers);
             }

@@ -652,6 +652,8 @@ test("VOD comment tabs mount after a delayed chat log and reuse cached comments 
     const oldPanel = document.getElementById("cheese-spanner-vod-comment-panel");
     const oldRow = document.querySelector("[data-bcvc-comment-key='id:1']");
     oldPanel.scrollTop = 137;
+    // 실제 브라우저처럼 사용자 스크롤은 scroll 이벤트로 저장돼요. 분리된 패널의 scrollTop은 다시 읽지 않아요.
+    oldPanel.dispatchEvent(new fixture.dom.window.Event("scroll"));
 
     const oldAside = document.getElementById("vod-aside");
     const host = document.createElement("div");
@@ -793,15 +795,15 @@ test("VOD comments load from the API without a lower comment DOM and render safe
     );
     assert.equal(
         document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-avatar").title,
-        "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요."
+        "하단 원본 댓글이 표시될 때 프로필 보기 가능."
     );
     assert.equal(
         document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-author").title,
-        "하단 원본 댓글이 표시되면 프로필을 볼 수 있어요."
+        "하단 원본 댓글이 표시될 때 프로필 보기 가능."
     );
     assert.equal(
         document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-buff").title,
-        "하단 원본 댓글이 표시되면 버프할 수 있어요."
+        "하단 원본 댓글이 표시될 때 버프 가능."
     );
 
     const panel = document.getElementById("cheese-spanner-vod-comment-panel");
@@ -1127,7 +1129,7 @@ test("VOD comment rows render observed replies and tolerate nullable or deleted 
     );
     const cappedRow = document.querySelector("[data-bcvc-comment-key='id:8']");
     assert.equal(cappedRow.querySelectorAll("[data-bcvc-reply='1']").length, 50);
-    assert.match(cappedRow.querySelector(".bcvc-reply-limit").textContent, /50개까지만 표시해요\./);
+    assert.match(cappedRow.querySelector(".bcvc-reply-limit").textContent, /50개 표시\./);
     assert.match(document.querySelector("[data-bcvc-comment-key='id:3']").textContent, /알 수 없음/);
     assert.match(document.querySelector("[data-bcvc-comment-key*='fallback:']").textContent, /표시할 수 없는 댓글/);
     assert.equal(
@@ -1211,11 +1213,43 @@ test("VOD comment rendering caps total nested replies without hiding the limit",
     assert.equal(document.querySelectorAll("[data-bcvc-reply='1']").length, 300);
     assert.match(
         document.querySelector("[data-bcvc-comment-key='id:7'] .bcvc-reply-limit").textContent,
-        /300개까지만 표시해요\./
+        /300개 표시\./
     );
 });
 
 test("VOD mirrored timecodes invoke the matching native comment control", async (t) => {
+    // 같은 초로 확인한 원본 버튼이면 표시 표기는 원본(`0:19:10`)을 따르고 이동은 원본 버튼에 맡겨요.
+    const fixture = createFixture({
+        fetchComments: async () => apiContent({ rows: [apiComment(1, "원본 이동 19:10")], totalCount: 1 }),
+        nativeCommentsHtml: [
+            '<div id="commentArea"><div id="commentBox-1">',
+            '<button id="native-time-1" class="_time_fixture_108" type="button">0:19:10</button>',
+            "</div></div>",
+        ].join(""),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document } = fixture;
+    let nativeClicks = 0;
+    document.getElementById("native-time-1").addEventListener("click", () => {
+        nativeClicks += 1;
+    });
+
+    clickCommentTab(document);
+    await waitForCondition(() => document.querySelector(".bcvc-timecode"));
+    const mirrored = document.querySelector(".bcvc-timecode");
+    await waitForCondition(() => mirrored.textContent === "0:19:10");
+    assert.equal(mirrored.getAttribute("data-bcvc-seconds"), String(19 * 60 + 10));
+    assert.equal(mirrored.getAttribute("aria-label"), "0:19:10로 이동");
+
+    mirrored.click();
+    assert.equal(nativeClicks, 1);
+    assert.equal(fixture.mediaState.currentTime, 100, "native control ownership must avoid a competing direct seek");
+});
+
+test("VOD mirrored timecodes never adopt a different native token just because the counts match", async (t) => {
     const fixture = createFixture({
         fetchComments: async () => apiContent({ rows: [apiComment(1, "원본 이동 19:10")], totalCount: 1 }),
         nativeCommentsHtml: [
@@ -1236,13 +1270,14 @@ test("VOD mirrored timecodes invoke the matching native comment control", async 
 
     clickCommentTab(document);
     await waitForCondition(() => document.querySelector(".bcvc-timecode"));
+    await delay(30);
     const mirrored = document.querySelector(".bcvc-timecode");
-    assert.equal(mirrored.textContent, "19:12");
-    assert.equal(mirrored.getAttribute("data-bcvc-seconds"), String(19 * 60 + 12));
+    assert.equal(mirrored.textContent, "19:10", "a native button for another time must not relabel the comment");
+    assert.equal(mirrored.getAttribute("data-bcvc-seconds"), String(19 * 60 + 10));
 
     mirrored.click();
-    assert.equal(nativeClicks, 1);
-    assert.equal(fixture.mediaState.currentTime, 100, "native control ownership must avoid a competing direct seek");
+    assert.equal(nativeClicks, 0, "the click must not be forwarded to a different native timecode");
+    assert.equal(fixture.mediaState.currentTime, 19 * 60 + 10, "the comment's own time is used for a direct seek");
 });
 
 test("VOD comment initial errors expose retry and distinguish empty or disabled comments", async (t) => {
@@ -1263,17 +1298,15 @@ test("VOD comment initial errors expose retry and distinguish empty or disabled 
 
     clickCommentTab(document);
     await waitForCondition(() => document.querySelector("[data-bcvc-action='retry-initial']"));
-    assert.match(document.getElementById("cheese-spanner-vod-comment-panel").textContent, /댓글을 불러오지 못했어요\./);
+    assert.match(document.getElementById("cheese-spanner-vod-comment-panel").textContent, /댓글 불러오기 실패./);
 
     document.querySelector("[data-bcvc-action='retry-initial']").click();
     await waitForCondition(() =>
-        /아직 등록된 댓글이 없어요\./.test(document.getElementById("cheese-spanner-vod-comment-panel").textContent)
+        /등록된 댓글 없음\./.test(document.getElementById("cheese-spanner-vod-comment-panel").textContent)
     );
     document.querySelector("[data-bcvc-action='refresh']").click();
     await waitForCondition(() =>
-        /이 영상은 댓글을 사용할 수 없어요\./.test(
-            document.getElementById("cheese-spanner-vod-comment-panel").textContent
-        )
+        /댓글을 사용할 수 없는 영상\./.test(document.getElementById("cheese-spanner-vod-comment-panel").textContent)
     );
     assert.equal(call, 3);
 });
@@ -1540,4 +1573,351 @@ test("VOD comment body keeps body typography before native comments arrive and a
         document.getElementById("cheese-spanner-vod-comment-tabs").style.getPropertyValue("--bcvc-heading-font-family"),
         "Arial, sans-serif"
     );
+});
+
+test("VOD comments show an upload video's comments-less success response as an empty list", async (t) => {
+    // 업로드 영상의 STREAMING_VIDEO 댓글 요청은 comments 키 없이 commentActive만 담은 code 200 응답을 받아요.
+    let call = 0;
+    const fixture = createFixture({
+        fetchComments: async () => {
+            call += 1;
+            return call === 1 ? { commentActive: true } : { commentActive: false };
+        },
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document } = fixture;
+    const panelText = () => document.getElementById("cheese-spanner-vod-comment-panel")?.textContent || "";
+
+    clickCommentTab(document);
+    await waitForCondition(() => /등록된 댓글 없음\./.test(panelText()));
+    assert.doesNotMatch(panelText(), /댓글 불러오기 실패./);
+    assert.equal(document.querySelector("[data-bcvc-action='retry-initial']"), null);
+
+    document.querySelector("[data-bcvc-action='refresh']").click();
+    await waitForCondition(() => /댓글을 사용할 수 없는 영상\./.test(panelText()));
+    assert.doesNotMatch(panelText(), /댓글 불러오기 실패./);
+});
+
+test("VOD comment rows capped by the per-order reply budget still show the reply limit notice", async (t) => {
+    const parents = Array.from({ length: 7 }, (_, parentIndex) => {
+        const parent = apiComment(parentIndex + 1, `부모 ${parentIndex + 1}`);
+        parent.replyComments = Array.from({ length: parentIndex === 0 ? 51 : 50 }, (_, replyIndex) => ({
+            commentId: 1000 + parentIndex * 100 + replyIndex,
+            commentType: "COMMENT",
+            content: `답글 ${parentIndex + 1}-${replyIndex + 1}`,
+            createdDate: "20260104225605",
+            deleted: false,
+            hideByCleanBot: false,
+            user: { userIdHash: `reply-${parentIndex}-${replyIndex}`, userNickname: "답글 작성자" },
+        }));
+        return parent;
+    });
+    const fixture = createFixture({
+        fetchComments: async () => apiContent({ rows: parents, totalCount: parents.length }),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document } = fixture;
+
+    clickCommentTab(document);
+    await waitForCondition(() => document.querySelectorAll("[data-bcvc-reply='1']").length === 300);
+    const cappedRow = document.querySelector("[data-bcvc-comment-key='id:7']");
+    const cappedLimit = cappedRow.querySelector(".bcvc-reply-limit");
+    assert.equal(cappedRow.querySelector("[data-bcvc-action='reply-toggle']"), null);
+    assert.match(cappedLimit.textContent, /이 정렬은 답글 최대 300개 표시\./);
+    assert.equal(cappedLimit.hidden, false, "a row without a reply toggle must not hide its only limit notice");
+
+    const perCommentRow = document.querySelector("[data-bcvc-comment-key='id:1']");
+    const perCommentLimit = perCommentRow.querySelector(".bcvc-reply-limit");
+    assert.match(perCommentLimit.textContent, /댓글당 답글 최대 50개 표시\./);
+    assert.equal(perCommentLimit.hidden, true, "a limit under a reply toggle stays collapsed with its replies");
+    perCommentRow.querySelector("[data-bcvc-action='reply-toggle']").click();
+    assert.equal(perCommentLimit.hidden, false);
+});
+
+test("VOD comment load-more pages without new rows keep expanded replies and bodies in place", async (t) => {
+    const longText = Array.from({ length: 30 }, (_, index) => `긴 본문 ${index + 1}줄`).join("\n");
+    const first = apiComment(1, longText);
+    first.replyComments = [
+        {
+            commentId: 501,
+            commentType: "COMMENT",
+            content: "펼친 답글",
+            createdDate: "20260104225605",
+            deleted: false,
+            hideByCleanBot: false,
+            user: { userIdHash: "reply-501", userNickname: "답글 작성자" },
+        },
+    ];
+    const firstRows = [first, ...Array.from({ length: 9 }, (_, index) => apiComment(index + 2, `댓글 ${index + 2}`))];
+    const fixture = createFixture({
+        fetchComments: ({ offset }) =>
+            offset === 0
+                ? apiContent({ next: 10, rows: firstRows, totalCount: 30 })
+                : apiContent({ next: 20, rows: [apiComment(9, "댓글 9"), apiComment(10, "댓글 10")], totalCount: 30 }),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document } = fixture;
+
+    clickCommentTab(document);
+    await waitForCondition(() => document.querySelector("[data-bcvc-comment-key='id:10']"));
+    const renderedKeys = document.querySelectorAll("[data-bcvc-comment-key]").length;
+    const firstRow = document.querySelector("[data-bcvc-comment-key='id:1']");
+    const replyToggle = firstRow.querySelector("[data-bcvc-action='reply-toggle']");
+    const messageToggle = firstRow.querySelector("[data-bcvc-action='message-toggle']");
+    replyToggle.click();
+    messageToggle.click();
+    assert.equal(replyToggle.getAttribute("aria-expanded"), "true");
+    assert.equal(messageToggle.getAttribute("aria-expanded"), "true");
+
+    document.querySelector("[data-bcvc-action='load-more']").click();
+    await waitForCondition(() => fixture.requests.some((request) => request.offset === 10));
+    await delay(30);
+
+    assert.equal(document.querySelectorAll("[data-bcvc-comment-key]").length, renderedKeys);
+    assert.equal(document.querySelector("[data-bcvc-comment-key='id:1']"), firstRow);
+    assert.equal(replyToggle.isConnected, true);
+    assert.equal(replyToggle.getAttribute("aria-expanded"), "true");
+    assert.equal(firstRow.querySelector(".bcvc-replies").hidden, false);
+    assert.equal(messageToggle.getAttribute("aria-expanded"), "true");
+    assert.match(firstRow.textContent, /긴 본문 30줄/);
+    assert.ok(document.querySelector("[data-bcvc-action='load-more']"), "the footer still offers the next offset");
+});
+
+test("VOD mirrored timecodes match native controls by seconds when the native row links more timecodes", async (t) => {
+    // 원본은 `(\d+:)?\d+:\d\d`를 경계 없이 링크해 `12:34부터`도 버튼이 되지만 확장은 경계가 있는 표기만 링크해요.
+    const fixture = createFixture({
+        fetchComments: async () =>
+            apiContent({ rows: [apiComment(1, "12:34부터 보세요 그리고 56:07")], totalCount: 1 }),
+        nativeCommentsHtml: [
+            '<div id="commentArea"><div id="commentBox-1">',
+            '<button id="native-time-a" class="_time_fixture_108" type="button">12:34</button>',
+            '<button id="native-time-b" class="_time_fixture_108" type="button">56:07</button>',
+            "</div></div>",
+        ].join(""),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document } = fixture;
+    const clicks = [];
+    for (const id of ["native-time-a", "native-time-b"]) {
+        document.getElementById(id).addEventListener("click", () => clicks.push(id));
+    }
+
+    clickCommentTab(document);
+    await waitForCondition(() => document.querySelector(".bcvc-timecode"));
+    await delay(30);
+    const mirrored = Array.from(document.querySelectorAll(".bcvc-timecode"));
+    assert.equal(mirrored.length, 1);
+    assert.equal(mirrored[0].textContent, "56:07");
+    assert.equal(mirrored[0].getAttribute("data-bcvc-seconds"), String(56 * 60 + 7));
+    assert.match(document.querySelector(".bcvc-message").textContent, /12:34부터 보세요 그리고 56:07/);
+
+    mirrored[0].click();
+    assert.deepEqual(clicks, ["native-time-b"]);
+    assert.equal(fixture.mediaState.currentTime, 100, "the matching native control owns the seek");
+});
+
+test("VOD mirrored timecodes recover their native control after a native button is removed and restored", async (t) => {
+    const fixture = createFixture({
+        fetchComments: async () =>
+            apiContent({ rows: [apiComment(1, "12:34부터 보세요 그리고 56:07")], totalCount: 1 }),
+        nativeCommentsHtml: [
+            '<div id="commentArea"><div id="commentBox-1">',
+            '<button id="native-time-a" class="_time_fixture_108" type="button">12:34</button>',
+            '<button id="native-time-b" class="_time_fixture_108" type="button">56:07</button>',
+            "</div></div>",
+        ].join(""),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document } = fixture;
+    const clicks = [];
+    for (const id of ["native-time-a", "native-time-b"]) {
+        document.getElementById(id).addEventListener("click", () => clicks.push(id));
+    }
+
+    clickCommentTab(document);
+    await waitForCondition(() => document.querySelector(".bcvc-timecode"));
+    await delay(30);
+    const mirrored = document.querySelector(".bcvc-timecode");
+    assert.equal(mirrored.textContent, "56:07");
+
+    // 원본 56:07 버튼만 빠지면 원본·확장 버튼 수가 1개로 같아지지만 남은 12:34는 다른 토큰이에요.
+    const nativeRow = document.getElementById("commentBox-1");
+    const removed = document.getElementById("native-time-b");
+    removed.remove();
+    await delay(40);
+    assert.equal(mirrored.textContent, "56:07", "an equal count must not relabel the comment with another token");
+    assert.equal(mirrored.getAttribute("data-bcvc-seconds"), String(56 * 60 + 7));
+    mirrored.click();
+    assert.deepEqual(clicks, [], "no native control is the same token while 56:07 is missing");
+    assert.equal(fixture.mediaState.currentTime, 56 * 60 + 7, "the original seconds are used for a direct seek");
+
+    fixture.mediaState.currentTime = 100;
+    nativeRow.appendChild(removed);
+    await delay(40);
+    assert.equal(mirrored.textContent, "56:07");
+    mirrored.click();
+    assert.deepEqual(clicks, ["native-time-b"], "the restored native control is matched again");
+    assert.equal(fixture.mediaState.currentTime, 100, "the restored native control owns the seek");
+});
+
+test("VOD comment shell replacement keeps the scroll position a detached panel can no longer report", async (t) => {
+    const fixture = createFixture({
+        fetchComments: async () => apiContent({ rows: [apiComment(1, "스크롤 유지")], totalCount: 1 }),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document } = fixture;
+    const { window } = fixture.dom;
+
+    clickCommentTab(document);
+    await waitForCondition(() => document.querySelector("[data-bcvc-comment-key='id:1']"));
+    const panel = document.getElementById("cheese-spanner-vod-comment-panel");
+    // CSSOM View: 상자가 없는(문서에서 빠진) 요소의 scrollTop은 0이고 다시 붙여도 위치가 돌아오지 않아요.
+    let layoutScrollTop = 0;
+    Object.defineProperty(panel, "scrollTop", {
+        configurable: true,
+        get() {
+            return this.isConnected ? layoutScrollTop : 0;
+        },
+        set(value) {
+            if (this.isConnected) layoutScrollTop = Number(value) || 0;
+        },
+    });
+    panel.scrollTop = 137;
+    panel.dispatchEvent(new window.Event("scroll"));
+
+    const oldAside = document.getElementById("vod-aside");
+    const host = document.createElement("div");
+    host.innerHTML = chatAsideHtml();
+    oldAside.replaceWith(host.firstElementChild);
+    layoutScrollTop = 0;
+    await waitForCondition(() => panel.isConnected && document.getElementById("vod-aside") !== oldAside);
+    await delay(30);
+
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-panel"), panel);
+    assert.equal(fixture.requests.length, 1);
+    assert.equal(panel.scrollTop, 137, "the last connected scroll position must survive the shell swap");
+});
+
+test("VOD comment scroll events delivered to a detached panel do not overwrite the saved position", async (t) => {
+    const fixture = createFixture({
+        fetchComments: async () => apiContent({ rows: [apiComment(1, "지연 scroll")], totalCount: 1 }),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document } = fixture;
+    const { window } = fixture.dom;
+
+    clickCommentTab(document);
+    await waitForCondition(() => document.querySelector("[data-bcvc-comment-key='id:1']"));
+    const panel = document.getElementById("cheese-spanner-vod-comment-panel");
+    let layoutScrollTop = 0;
+    Object.defineProperty(panel, "scrollTop", {
+        configurable: true,
+        get() {
+            return this.isConnected ? layoutScrollTop : 0;
+        },
+        set(value) {
+            if (this.isConnected) layoutScrollTop = Number(value) || 0;
+        },
+    });
+    panel.scrollTop = 173;
+    panel.dispatchEvent(new window.Event("scroll"));
+    panel.scrollTop = 214;
+    panel.dispatchEvent(new window.Event("scroll"));
+
+    const oldAside = document.getElementById("vod-aside");
+    const host = document.createElement("div");
+    host.innerHTML = chatAsideHtml();
+    oldAside.replaceWith(host.firstElementChild);
+    layoutScrollTop = 0;
+    // Chrome은 분리된 패널에도 지연된 scroll(scrollTop=0)을 보내요.
+    assert.equal(panel.isConnected, false);
+    panel.dispatchEvent(new window.Event("scroll"));
+    await waitForCondition(() => panel.isConnected && document.getElementById("vod-aside") !== oldAside);
+    await delay(30);
+
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-panel"), panel);
+    assert.equal(document.querySelector("[data-bcvc-comment-key='id:1']").textContent.includes("지연 scroll"), true);
+    assert.equal(fixture.requests.length, 1);
+    assert.equal(panel.scrollTop, 214, "a late scroll from the detached panel must not replace the last position");
+
+    // 다시 붙은 패널의 일반 scroll은 계속 저장돼요.
+    panel.scrollTop = 250;
+    panel.dispatchEvent(new window.Event("scroll"));
+    document.getElementById("cheese-spanner-vod-comment-chat-tab").click();
+    panel.scrollTop = 0;
+    document.getElementById("cheese-spanner-vod-comment-comment-tab").click();
+    assert.equal(panel.scrollTop, 250);
+});
+
+test("VOD comment scroll events delivered to a hidden panel do not overwrite the saved position", async (t) => {
+    const fixture = createFixture({
+        fetchComments: async () => apiContent({ rows: [apiComment(1, "숨김 scroll")], totalCount: 1 }),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.dom.window.close();
+    });
+    const { document } = fixture;
+    const { window } = fixture.dom;
+    const chatTab = () => document.getElementById("cheese-spanner-vod-comment-chat-tab");
+    const commentTab = () => document.getElementById("cheese-spanner-vod-comment-comment-tab");
+
+    clickCommentTab(document);
+    await waitForCondition(() => document.querySelector("[data-bcvc-comment-key='id:1']"));
+    const panel = document.getElementById("cheese-spanner-vod-comment-panel");
+    let layoutScrollTop = 0;
+    // display:none(hidden) 또는 문서에서 빠진 패널은 상자가 없어 scrollTop이 0이고 값을 받지 않아요.
+    Object.defineProperty(panel, "scrollTop", {
+        configurable: true,
+        get() {
+            return this.isConnected && !this.hidden ? layoutScrollTop : 0;
+        },
+        set(value) {
+            if (this.isConnected && !this.hidden) layoutScrollTop = Number(value) || 0;
+        },
+    });
+    panel.scrollTop = 214;
+    panel.dispatchEvent(new window.Event("scroll"));
+
+    chatTab().click();
+    assert.equal(panel.hidden, true);
+    assert.equal(panel.isConnected, true);
+    layoutScrollTop = 0;
+    // Chrome은 탭 전환으로 숨긴 패널에도 지연된 scroll(scrollTop=0)을 보내요.
+    panel.dispatchEvent(new window.Event("scroll"));
+
+    commentTab().click();
+    assert.equal(panel.hidden, false);
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-panel"), panel);
+    assert.equal(document.querySelector("[data-bcvc-comment-key='id:1']").textContent.includes("숨김 scroll"), true);
+    assert.equal(fixture.requests.length, 1);
+    assert.equal(panel.scrollTop, 214, "a late scroll from the hidden panel must not replace the last position");
+
+    // 보이는 패널에서 맨 위로 올린 0은 정상 위치로 저장돼요.
+    panel.scrollTop = 0;
+    panel.dispatchEvent(new window.Event("scroll"));
+    chatTab().click();
+    commentTab().click();
+    assert.equal(panel.scrollTop, 0, "a visible scroll to the top must still be saved");
 });

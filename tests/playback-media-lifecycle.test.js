@@ -1523,3 +1523,39 @@ test("audio compressor wheel follows the wheel option and clamps without togglin
     assert.equal(page.contexts.length, 0);
     assert.equal(page.video.volume, 0.4);
 });
+
+test("audio compressor wheel leaves Ctrl+wheel and trackpad pinch to the browser zoom", async (t) => {
+    const chrome = createFakeChrome({
+        sync: { audioCompressorEnabled: true, volumeWheelEnabled: true, volumeWheelStep: 5 },
+    });
+    const page = await createCompressorPage(t, chrome);
+    const slider = page.document.getElementById("cheese-spanner-audio-compressor-volume");
+    await waitForAsyncCallbacks();
+    await chrome.testState.compressorWorker?.idle();
+    const saved = JSON.stringify(chrome.storage.local.data);
+    const before = slider.value;
+    // Chrome delivers trackpad pinch as wheel events with ctrlKey=true.
+    for (const target of [slider, page.button()]) {
+        for (const deltaY of [100, -100, 100]) {
+            const event = new page.dom.window.WheelEvent("wheel", {
+                bubbles: true,
+                cancelable: true,
+                deltaY,
+                ctrlKey: true,
+            });
+            target.dispatchEvent(event);
+            assert.equal(event.defaultPrevented, false, "the browser keeps its zoom gesture");
+        }
+    }
+    await waitForAsyncCallbacks();
+    await chrome.testState.compressorWorker?.idle();
+    assert.equal(slider.value, before, "pinching over the control does not change the compressor output");
+    assert.equal(JSON.stringify(chrome.storage.local.data), saved, "no zoom gesture is saved as a choice");
+    assert.equal(page.video.volume, 1);
+
+    // A plain wheel over the same control still adjusts the output.
+    const plain = new page.dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 100 });
+    slider.dispatchEvent(plain);
+    assert.equal(plain.defaultPrevented, true);
+    assert.equal(slider.value, String(Number(before) - 5));
+});

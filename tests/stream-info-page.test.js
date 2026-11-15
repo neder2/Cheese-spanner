@@ -247,8 +247,15 @@ test("malformed requests and non-main, preview or advertisement videos receive n
         assert.equal(f.read(f.p.video, payload), null);
     const extra = f.mount();
     assert.equal(f.read(extra.video), null);
-    for (const marker of ["data-bcmv-video", "data-bcfp-player-mount", "data-role"]) {
-        extra.host.setAttribute(marker, marker === "data-role" ? "imaAdContainerEl" : "");
+    for (const [marker, value] of [
+        ["data-bcmv-video", ""],
+        ["data-bcfp-player-mount", ""],
+        ["data-role", "imaAdContainerEl"],
+        // Live pre-roll and mid-roll wrappers (2026-11-05 public bundle) hold ad media, not the main video.
+        ["id", "preAdPlayerWrapper"],
+        ["id", "midAdPlayerWrapper"],
+    ]) {
+        extra.host.setAttribute(marker, value);
         extra.video.getBoundingClientRect = () => ({ width: 3000, height: 2000 });
         assert.equal(f.read(extra.video), null);
         extra.host.removeAttribute(marker);

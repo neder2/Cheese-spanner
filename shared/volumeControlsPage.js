@@ -5,6 +5,10 @@
 (() => {
     const EXTENSION_PREVIEW_VIDEO_SELECTOR =
         "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip], [data-bcmv-video]";
+    // 2026-11-05 public bundle: same literal as content.js (release-safety checks it). Ad videos and the live pre/mid-roll
+    // content-video placeholders are never the main video whose volume the wheel or tooltip follows.
+    const NATIVE_AD_MEDIA_SELECTOR =
+        '[data-role="imaAdContainerEl"], [data-role="gvAdContainerEl"], #preAdPlayerWrapper, #midAdPlayerWrapper';
     // Skip controls copy native button classes for appearance, including volume classes.
     // Their identity takes precedence over those copied classes in both execution worlds.
     const NON_VOLUME_CONTROL_SELECTOR =
@@ -207,15 +211,26 @@
 
     function getMainVideoElement() {
         const videos = Array.from(document.querySelectorAll("video")).filter(
-            (video) => !isExtensionPreviewVideo(video)
+            (video) => !isExtensionPreviewVideo(video) && !elementOrHostMatches(video, NATIVE_AD_MEDIA_SELECTOR)
         );
         return pickLargestVisible(videos) || videos[0] || null;
+    }
+
+    // Copy of content.js isNativeAdBreakActive (2026-11-05 public bundle): the live pre-roll wrapper is mounted, the
+    // mid-roll wrapper is shown, or the main VOD pzp root carries pzp-pc--adbreak. The wheel then stays native.
+    function isNativeAdBreakActive() {
+        if (document.getElementById("preAdPlayerWrapper")) return true;
+        const mid = document.getElementById("midAdPlayerWrapper");
+        if (mid instanceof HTMLElement && getComputedStyle(mid).display !== "none") return true;
+        const root = getMainVideoElement()?.closest(".pzp-pc");
+        return Boolean(root && (root.matches(".pzp-pc--adbreak") || root.querySelector(".pzp-pc--adbreak")));
     }
 
     globalThis.CheeseSpannerVolumeControls = Object.freeze({
         getVolumeControlCandidates,
         getVolumeControlForVideo,
         getMainVideoElement,
+        isNativeAdBreakActive,
         isPlaybackRoute,
     });
 })();

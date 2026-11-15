@@ -32,6 +32,11 @@
     const CHAT_TOOLS_MAX_MODERATOR_BOX_HEIGHT = 720;
     const FOLLOWING_LIST_MAX_ROWS = 30;
     const LEGACY_CHAT_TOOLS_ENABLED_KEY = "chatToolsEnabled";
+    const DOWNLOAD_FOLDER_MAX_LENGTH = 120;
+    const DOWNLOAD_FOLDER_MAX_SEGMENTS = 5;
+    const DOWNLOAD_FOLDER_SEGMENT_MAX_LENGTH = 60;
+    // Windows reserves these device names in every folder; chrome.downloads rejects a path that uses one.
+    const RESERVED_DOWNLOAD_FOLDER_NAME = /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?$/i;
     const DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE = "BracketLeft";
     const DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE = "BracketRight";
     const DEFAULT_PLAYBACK_SPEED_RESET_KEY_CODE = "Backslash";
@@ -76,6 +81,10 @@
         hideLiveBadgeEnabled: { kind: "bool", default: false, feature: true },
         playerClipHidden: { kind: "bool", default: false, feature: true },
         playerPipHidden: { kind: "bool", default: false, feature: true },
+        // 플레이어 오른쪽 아래 녹화 버튼(features/videoRecorder.js). 녹화는 버튼을 누를 때만 시작해요.
+        videoRecorderEnabled: { kind: "bool", default: false, feature: true },
+        // Chrome 다운로드 폴더 아래 하위 폴더. 빈 값은 다운로드 폴더 자체예요. 하위 폴더 저장에는 선택 권한 downloads가 필요해요.
+        videoRecorderFolder: { kind: "downloadFolder", default: "" },
         liveStartTimeEnabled: { kind: "bool", default: false, feature: true },
         offlineLiveReloadEnabled: { kind: "bool", default: true, feature: true },
         audioCompressorEnabled: { kind: "bool", default: false, feature: true },
@@ -124,7 +133,14 @@
         // 로그인 계정의 작성자 해시로만 비교해요. 계정 해시는 저장하지 않아요(features/vodOwnChat.js).
         vodOwnChatHighlightEnabled: { kind: "bool", default: true, feature: true },
         chatWeeklyRankingHidden: { kind: "bool", default: false, feature: true },
+        chatDonationMessagesHidden: { kind: "bool", default: false, feature: true },
         chatWelcomeMessageRemovalEnabled: { kind: "bool", default: false, feature: true },
+        chatKeywordFilterEnabled: { kind: "bool", default: true, feature: true },
+        chatKeywordFilterWords: { kind: "chatKeywords", default: "" },
+        chatKeywordFilterApplyMode: { kind: "choice", values: ["all", "individual"], default: "all" },
+        chatKeywordFilterMatchMode: { kind: "choice", values: ["contains", "exact"], default: "contains" },
+        // 문구별 조건은 완전 일치를 선택한 문구만 보관하고 나머지는 포함으로 처리해요.
+        chatKeywordFilterExactWords: { kind: "chatKeywords", default: "" },
         chatToolsShowBlindEnabled: { kind: "bool", default: false, feature: true },
         chatToolsModeratorBoxEnabled: { kind: "bool", default: false, feature: true },
         chatToolsMaxModeratorMessages: {
@@ -320,6 +336,34 @@
         return Math.min(Math.max(Math.round(parsed), SKIP_MIN), SKIP_MAX);
     }
 
+    /**
+     * A relative folder under Chrome's download directory: "/" separates at most 5 folders, and characters that
+     * Windows, macOS or Chrome refuse in a path are dropped. "", ".", ".." and absolute paths never survive.
+     */
+    function normalizeDownloadFolder(value, fallback = "") {
+        if (typeof value !== "string") return fallback;
+        const segments = [];
+        for (const raw of value.replace(/\\/g, "/").split("/")) {
+            const segment = raw
+                // eslint-disable-next-line no-control-regex -- path segments must not carry control characters.
+                .replace(/[\u0000-\u001f\u007f<>:"|?*]/g, "")
+                .replace(/\s+/g, " ")
+                .trim()
+                .slice(0, DOWNLOAD_FOLDER_SEGMENT_MAX_LENGTH)
+                .replace(/[. ]+$/, "")
+                .replace(/^[. ]+/, "");
+            if (!segment) continue;
+            segments.push(RESERVED_DOWNLOAD_FOLDER_NAME.test(segment) ? `_${segment}` : segment);
+            if (segments.length === DOWNLOAD_FOLDER_MAX_SEGMENTS) break;
+        }
+        let folder = segments.join("/");
+        while (folder.length > DOWNLOAD_FOLDER_MAX_LENGTH && segments.length > 1) {
+            segments.pop();
+            folder = segments.join("/");
+        }
+        return folder.slice(0, DOWNLOAD_FOLDER_MAX_LENGTH).replace(/[. ]+$/, "");
+    }
+
     function isPlaybackSpeedShortcutCode(value) {
         return (
             typeof value === "string" &&
@@ -341,6 +385,27 @@
         return code;
     }
 
+    // Reject oversized lists instead of shortening a phrase into an unintended broader match.
+    function normalizeChatKeywordFilterWords(value) {
+        if (typeof value !== "string" || value.length > 2000) return null;
+        // eslint-disable-next-line no-control-regex -- reject non-text controls and lone surrogates before sync storage.
+        if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\ud800-\udfff]/u.test(value)) return null;
+        const words = [];
+        const seen = new Set();
+        for (const line of value.split(/\r\n?|\n/)) {
+            const word = line.trim().normalize("NFC");
+            if (!word) continue;
+            if (word.length > 100) return null;
+            const key = word.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            words.push(word);
+            if (words.length > 50) return null;
+        }
+        const normalized = words.join("\n");
+        return normalized.length <= 2000 ? normalized : null;
+    }
+
     function normalizeOptionValue(key, value) {
         const spec = OPTION_SCHEMA[key];
         const fallback = DEFAULT_OPTIONS[key];
@@ -354,7 +419,26 @@
         if (spec.kind === "number") return normalizeNumber(value, fallback, spec.min, spec.max, spec.step);
         if (spec.kind === "skipSeconds") return normalizeSkipSeconds(value);
         if (spec.kind === "shortcutCode") return normalizeShortcutCode(value, fallback);
+        if (spec.kind === "downloadFolder") return normalizeDownloadFolder(value, fallback);
+        if (spec.kind === "chatKeywords") return normalizeChatKeywordFilterWords(value) ?? fallback;
         return fallback;
+    }
+
+    function getChatKeywordFilterRules(options = {}) {
+        const words = normalizeChatKeywordFilterWords(options.chatKeywordFilterWords) || "";
+        const exactWords = new Set(
+            (normalizeChatKeywordFilterWords(options.chatKeywordFilterExactWords) || "").toLowerCase().split("\n")
+        );
+        const individual =
+            normalizeOptionValue("chatKeywordFilterApplyMode", options.chatKeywordFilterApplyMode) === "individual";
+        const matchMode = normalizeOptionValue("chatKeywordFilterMatchMode", options.chatKeywordFilterMatchMode);
+        return words
+            .split("\n")
+            .filter(Boolean)
+            .map((phrase) => ({
+                phrase,
+                matchMode: individual ? (exactWords.has(phrase.toLowerCase()) ? "exact" : "contains") : matchMode,
+            }));
     }
 
     function normalizeOptions(value = {}) {
@@ -458,13 +542,20 @@
             const changedKeys = OPTION_KEYS.filter((key) => Object.prototype.hasOwnProperty.call(changes, key));
             if (!changedKeys.length) return;
 
-            const nextRaw = { ...cachedOptions };
-            for (const key of changedKeys) {
-                nextRaw[key] = changes[key]?.newValue;
-                if (optionsLoadingChanges) optionsLoadingChanges[key] = nextRaw[key];
+            // 첫 읽기가 성공하기 전 변경은 일부 키뿐이라 나머지가 기본값이에요. 읽기 결과에 합쳐 전달하고,
+            // 실패한 읽기를 기다리는 구독이 있으면 다시 읽어요. 기본값을 저장값처럼 넘기거나 고정하지 않아요.
+            if (!optionsLoaded) {
+                if (optionsLoadingChanges) {
+                    for (const key of changedKeys) optionsLoadingChanges[key] = changes[key]?.newValue;
+                } else if (optionsCallbacks.length) {
+                    readOptions();
+                }
+                return;
             }
+
+            const nextRaw = { ...cachedOptions };
+            for (const key of changedKeys) nextRaw[key] = changes[key]?.newValue;
             cachedOptions = normalizeOptions(nextRaw);
-            optionsLoaded = true;
 
             for (const listener of Array.from(optionListeners)) listener(cachedOptions);
         });
@@ -484,6 +575,10 @@
         }
 
         optionsCallbacks.push(callback);
+        readOptions();
+    }
+
+    function readOptions() {
         if (optionsLoading) return;
         optionsLoading = true;
         optionsLoadingChanges = {};
@@ -492,14 +587,19 @@
             optionsLoading = false;
             const pendingChanges = optionsLoadingChanges;
             optionsLoadingChanges = null;
-            if (getStorageLastError()) {
-                flushOptionCallbacks(cachedOptions);
-                return;
-            }
+            // 읽기 실패의 기본값은 사용자의 OFF 선택을 대신할 수 있어요. 구독을 보류하고 다음 구독이나 설정 변경 때 다시 읽어요.
+            if (getStorageLastError()) return;
             // 최초 읽기가 진행되는 동안 도착한 변경은 이전 스냅샷보다 우선한다.
             cachedOptions = normalizeOptions({ ...data, ...pendingChanges });
             optionsLoaded = true;
+            // 읽기 중 변경을 미뤘다면 변경 구독에도 완성된 값을 한 번 알려요. bindFeatureOptions처럼 같은 함수를
+            // 읽기 콜백으로도 받은 구독과, 그 콜백 안에서 새로 등록한 구독에는 다시 보내지 않아요.
+            const changedListeners = Object.keys(pendingChanges).length ? Array.from(optionListeners) : [];
+            const delivered = new Set(optionsCallbacks);
             flushOptionCallbacks(cachedOptions);
+            for (const listener of changedListeners) {
+                if (!delivered.has(listener) && optionListeners.has(listener)) listener(cachedOptions);
+            }
             migrateLegacyChatToolsOption(data);
         });
     }
@@ -532,6 +632,7 @@
                     "#update-guide-history",
                     "#update-guide-stream",
                     "#update-guide-categories",
+                    "#recording-folder",
                 ].includes(actual.hash)
             );
         } catch (_) {
@@ -562,7 +663,11 @@
         OPTION_KEYS,
         STORAGE_OPTION_KEYS,
         FEATURE_KEYS,
+        DOWNLOAD_FOLDER_MAX_LENGTH,
         normalizeSkipSeconds,
+        normalizeDownloadFolder,
+        normalizeChatKeywordFilterWords,
+        getChatKeywordFilterRules,
         isPlaybackSpeedShortcutCode,
         getPlaybackSpeedShortcutLabel,
         normalizeOptions,

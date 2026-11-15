@@ -484,13 +484,14 @@
         const reference = findFallbackLabelReference(container);
         if (!(reference instanceof HTMLElement)) return;
 
-        label.className = reference.className || "";
+        // Write only changes: the live observer watches this label's class and style, so a same-value write
+        // would schedule another sync and keep the button scan running while the fallback is shown.
+        const className = reference.className || "";
+        if (label.className !== className) label.className = className;
         const style = getComputedStyle(reference);
-        label.style.fontFamily = style.fontFamily;
-        label.style.fontSize = style.fontSize;
-        label.style.opacity = style.opacity;
-        label.style.visibility = style.visibility;
-        label.style.transition = style.transition;
+        for (const property of ["fontFamily", "fontSize", "opacity", "visibility", "transition"]) {
+            if (label.style[property] !== style[property]) label.style[property] = style[property];
+        }
     }
 
     function mountFallbackLagLabel(labelText, video) {
@@ -648,6 +649,8 @@
     }
 
     function mutationCouldAffectText(mutation) {
+        // The fallback label's own attributes are written by this feature and never change the lag text.
+        if (mutation.type === "attributes" && mutation.target?.id === FALLBACK_LABEL_ID) return false;
         if (mutation.type === "characterData") {
             return Boolean(mutation.target?.parentElement?.closest?.(LIVE_EDGE_TARGET_SELECTOR));
         }

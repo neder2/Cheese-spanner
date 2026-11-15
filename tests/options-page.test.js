@@ -141,6 +141,9 @@ test("options page renders defaults and dependency-disabled controls without ext
     assert.equal(queryOption(document, "skipSeconds").value, String(CheeseSpannerSettings.DEFAULT_OPTIONS.skipSeconds));
     assert.equal(queryOption(document, "vodBroadcastClockEnabled").checked, true);
     assert.equal(queryOption(document, "adVideoEnabled").checked, true);
+    assert.equal(queryOption(document, "chatKeywordFilterEnabled").checked, true);
+    assert.equal(queryOption(document, "chatKeywordFilterWords").value, "");
+    assert.equal(queryOption(document, "chatKeywordFilterWords").disabled, false);
     assert.equal(document.getElementById("save").disabled, true, "변경 전에는 저장 버튼이 비활성화된다");
     assert.equal(notice.dataset.state, "saved");
     assert.equal(notice.textContent, "저장됨");
@@ -173,12 +176,12 @@ test("panel resize settings explain their boundaries and remain independently us
         [
             chat,
             "chat-display",
-            "채팅·댓글의 영상 쪽 가장자리로 너비를, 아래 가장자리로 높이를 마우스로 끌어 조절해요. 더블클릭하면 기본 크기로 돌아가요.",
+            "영상 쪽 경계로 너비, 아래 경계로 높이를 끌어 조절해요. 더블클릭하면 기본 크기로 돌아가요.",
         ],
         [
             sidebar,
             "appearance-page",
-            "펼친 사이드바의 본문 쪽 가장자리를 마우스로 잡아 끌어 조절해요. 더블클릭하면 기본 너비로 돌아가요.",
+            "펼친 사이드바의 본문 쪽 경계를 끌어 조절해요. 더블클릭하면 기본 너비로 돌아가요.",
         ],
     ]) {
         assert.ok(input);
@@ -479,7 +482,7 @@ test("options keeps following controls together and separates list filters from 
     const listState = queryOption(document, "followingListStateEnabled");
     assert.equal(listState.checked, false);
     assert.equal(listState.disabled, false);
-    assert.equal(listState.closest("label").textContent.trim(), "팔로잉 목록 상태 기억");
+    assert.equal(listState.closest("label").textContent.trim(), "팔로잉 목록 펼침·접힘 기억");
     assert.equal(listState.closest(".settings-card"), explorationSection);
     const offlineHidden = queryOption(document, "followingOfflineHidden");
     assert.equal(offlineHidden.checked, false);
@@ -506,8 +509,6 @@ test("options groups stay accessible and never disable their own master toggle",
 
     const { document } = dom.window;
     const groups = Array.from(document.querySelectorAll(".option-group"));
-    const playerAuto = document.querySelector('[data-option-group="player-auto"]');
-
     assert.ok(groups.length > 0, "settings must expose navigable groups");
 
     for (const group of groups) {
@@ -517,8 +518,7 @@ test("options groups stay accessible and never disable their own master toggle",
         assert.ok(summary.textContent.trim().length > 0);
         assert.equal(summary.querySelector("input, button, a[href]"), null);
         assert.equal(summary.querySelectorAll(".option-group-title").length, 1);
-        if (group === playerAuto) assert.equal(icon, null);
-        else assert.equal(icon?.getAttribute("aria-hidden"), "true");
+        assert.equal(icon?.getAttribute("aria-hidden"), "true");
         assert.equal(
             Array.from(group.children).filter((child) => child.classList.contains("option-group-body")).length,
             1
@@ -820,6 +820,9 @@ test("merged filter headings and former titles keep their inputs, context and pa
     dispatch(dom, parent, "change");
     const search = document.getElementById("settingsSearch");
     const presets = document.querySelector('[data-option-group="explore-presets"]');
+    const sharedHelp = document.getElementById("filterPresetHelp");
+    assert.ok(sharedHelp);
+    assert.equal(presets.querySelectorAll(".setting-note").length, 1);
     for (const [query, prefix, heading] of [
         ["팔로워 필터", "categoryToolsFollowerFilterPreset", "팔로워"],
         ["시청자·조회수", "categoryToolsViewFilterPreset", "시청자·조회수"],
@@ -833,11 +836,12 @@ test("merged filter headings and former titles keep their inputs, context and pa
             (node) => node.textContent.trim() === heading
         );
         assert.equal(title.closest(".search-miss"), null, `${query} retains its subsection heading`);
-        assert.equal(title.nextElementSibling.closest(".search-miss"), null, `${query} retains range guidance`);
+        assert.equal(sharedHelp.closest(".search-miss"), null, `${query} retains shared range guidance`);
         for (let index = 1; index <= 6; index += 1) {
             const input = queryOption(document, prefix + index);
             assert.equal(input.closest(".search-miss"), null, `${query}: input ${index}`);
             assert.equal(input.disabled, true);
+            assert.equal(input.getAttribute("aria-describedby"), sharedHelp.id);
         }
         assert.equal(parent.closest(".search-miss"), null);
         assert.equal(parent.disabled, false);
@@ -968,6 +972,17 @@ test("options search keeps dependency controls visible and restores previous gro
 
     for (const optionKey of ["skipControlEnabled", "skipPillEnabled", "skipLivePillEnabled"]) {
         assert.equal(queryOption(document, optionKey).closest(".toggle-row").classList.contains("search-miss"), false);
+    }
+
+    for (const [query, optionKey] of [
+        ["작성 시각", "liveWatchHistoryChatEnabled"],
+        ["후원 횟수", "liveWatchHistoryDonationEnabled"],
+        ["팔로잉 목록 상태 기억", "followingListStateEnabled"],
+        ["작은 화면", "playerPipHidden"],
+    ]) {
+        search.value = query;
+        dispatch(dom, search, "input");
+        assert.equal(queryOption(document, optionKey).closest(".search-miss"), null, `${query} retains its option`);
     }
 
     search.value = "";
@@ -1191,6 +1206,33 @@ test("ad options save independently and wait for registration before reporting r
     assert.match(document.getElementById("adVideoStatus").textContent, /저장됐지만 적용 준비에 실패/);
 });
 
+test("an option changed elsewhere while the ad registration syncs survives the save", async (t) => {
+    const chrome = createFakeChrome({ sync: { adVideoEnabled: false, skipSeconds: 10 } });
+    let reply;
+    chrome.runtime.sendMessage = (_message, callback) => {
+        reply = callback;
+    };
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document } = dom.window;
+    const input = queryOption(document, "adVideoEnabled");
+    input.checked = true;
+    dispatch(dom, input, "change");
+    document.getElementById("save").click();
+    await waitForAsyncCallbacks();
+    assert.equal(typeof reply, "function");
+    // A Chzzk tab saves another option before the worker answers.
+    chrome.testState.sync.skipSeconds = 30;
+    for (const listener of chrome.testState.storageChangeListeners)
+        listener({ skipSeconds: { oldValue: 10, newValue: 30 } }, "sync");
+    reply({ ok: true, enabled: true });
+    assert.equal(queryOption(document, "skipSeconds").value, "30", "the form keeps the newer stored value");
+    assert.equal(document.getElementById("notice").dataset.state, "saved");
+});
+
 test("options reverts the preview toggle when the permission request is denied", async (t) => {
     const chrome = createFakeChrome({
         sync: { followingPreviewTooltipEnabled: false },
@@ -1215,6 +1257,38 @@ test("options reverts the preview toggle when the permission request is denied",
     assert.equal(previewToggle.checked, false, "거부되면 토글이 꺼진 상태로 돌아간다");
     assert.equal(chrome.testState.sync.followingPreviewTooltipEnabled, false);
     assert.equal(document.getElementById("message").dataset.type, "error");
+});
+
+test("denying only the video host permission keeps desktop notifications that are already allowed and saved", async (t) => {
+    const chrome = createFakeChrome({
+        sync: { followingPreviewTooltipEnabled: false, liveStartNotificationsEnabled: true },
+        permissionGranted: false,
+    });
+    // Notifications were granted earlier; the host permission is not.
+    chrome.permissions.contains = (spec, callback) =>
+        setTimeout(() => callback(Boolean(spec.permissions?.includes("notifications"))), 0);
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+
+    const { document } = dom.window;
+    const previewToggle = queryOption(document, "followingPreviewTooltipEnabled");
+    const notificationToggle = queryOption(document, "liveStartNotificationsEnabled");
+    assert.equal(notificationToggle.checked, true);
+    previewToggle.checked = true;
+    dispatch(dom, previewToggle, "change");
+    document.getElementById("save").click();
+    await waitForAsyncCallbacks();
+
+    assert.deepEqual([...chrome.testState.permissionRequests.at(-1).permissions], ["notifications"]);
+    assert.equal(previewToggle.checked, false, "the denied feature is turned off");
+    assert.equal(notificationToggle.checked, true, "the allowed, saved notifications stay on");
+    assert.equal(chrome.testState.sync.liveStartNotificationsEnabled, true);
+    assert.equal(document.getElementById("message").dataset.type, "error");
+    assert.doesNotMatch(document.getElementById("message").textContent, /데스크톱 알림을 끈/);
 });
 
 test("options page shows initial storage read failures without overwriting existing sync options", async (t) => {
@@ -1362,4 +1436,180 @@ test("experimental status is a badge with unchanged text that stays inside the s
         dispatch(dom, search, "input");
         assert.equal(input.closest(".search-miss"), null, query);
     }
+});
+
+test("the recording folder may be cleared, asks for downloads only when a new folder is saved, and offers the permission", async (t) => {
+    const chrome = createFakeChrome({ sync: { videoRecorderFolder: "" }, permissionGranted: false });
+    let held = false;
+    chrome.permissions.contains = (spec, callback) =>
+        setTimeout(() => callback(Boolean(spec.permissions?.includes("downloads")) && held), 0);
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+
+    const { document } = dom.window;
+    const folder = queryOption(document, "videoRecorderFolder");
+    const toggle = queryOption(document, "videoRecorderEnabled");
+    assert.equal(toggle.checked, false);
+    assert.equal(folder.disabled, true);
+    toggle.checked = true;
+    dispatch(dom, toggle, "change");
+    assert.equal(folder.disabled, false);
+    const permissionButton = document.getElementById("videoRecorderPermission");
+    const status = document.getElementById("videoRecorderPermissionStatus");
+    const save = document.getElementById("save");
+    assert.equal(folder.value, "");
+    assert.equal(permissionButton.hidden, true);
+    assert.equal(status.textContent, "");
+
+    // A denied permission saves nothing and keeps the typed folder so it can be cleared or retried.
+    folder.value = " ../치지직 녹화 ";
+    dispatch(dom, folder, "input");
+    dispatch(dom, folder, "change");
+    assert.equal(folder.value, "치지직 녹화");
+    save.click();
+    await waitForAsyncCallbacks();
+    assert.deepEqual([...chrome.testState.permissionRequests.at(-1).permissions], ["downloads"]);
+    assert.equal(chrome.testState.sync.videoRecorderFolder, "");
+    assert.equal(folder.value, "치지직 녹화");
+    assert.match(document.getElementById("message").textContent, /다운로드 권한이 거부되어 저장하지 않았어요/);
+    await waitForCondition(() => !permissionButton.hidden);
+    assert.equal(status.textContent, "다운로드 권한이 없어 지금은 녹화 파일을 다운로드 폴더에 바로 저장해요.");
+
+    // The permission button grants it without saving anything else.
+    chrome.permissions.request = (spec, callback) => {
+        chrome.testState.permissionRequests.push(spec);
+        held = true;
+        callback(true);
+    };
+    permissionButton.click();
+    await waitForCondition(() => permissionButton.hidden);
+    assert.deepEqual([...chrome.testState.permissionRequests.at(-1).permissions], ["downloads"]);
+    assert.equal(status.textContent, "다운로드 폴더 안의 ‘치지직 녹화’ 폴더에 저장해요.");
+
+    const requests = chrome.testState.permissionRequests.length;
+    save.click();
+    await waitForCondition(() => chrome.testState.sync.videoRecorderFolder === "치지직 녹화");
+    assert.equal(chrome.testState.permissionRequests.length, requests + 1);
+
+    // Clearing the folder is a real value, not a blank field that falls back to the saved one.
+    folder.value = "";
+    dispatch(dom, folder, "input");
+    dispatch(dom, folder, "change");
+    save.click();
+    await waitForCondition(() => chrome.testState.sync.videoRecorderFolder === "");
+    assert.equal(chrome.testState.permissionRequests.length, requests + 1, "clearing asks for nothing");
+    assert.equal(status.textContent, "");
+    assert.equal(permissionButton.hidden, true);
+
+    // Turning the button off disables the folder controls.
+    assert.equal(toggle.checked, true);
+    toggle.checked = false;
+    dispatch(dom, toggle, "change");
+    assert.equal(folder.disabled, true);
+});
+
+test("chat phrase settings support global and per-phrase conditions with save, reload, discard and OFF", async (t) => {
+    const chrome = createFakeChrome({ sync: { chatKeywordFilterWords: "금지\nABC" } });
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document } = dom.window;
+    const choose = (key, value) => {
+        const control = queryOption(document, key);
+        control.value = value;
+        dispatch(dom, control, "change");
+    };
+    const rule = (phrase) =>
+        [...document.querySelectorAll("#chatKeywordRules select")].find(
+            (select) => select.dataset.keywordPhrase === phrase
+        );
+    const save = async () => {
+        document.getElementById("save").click();
+        await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
+    };
+    assert.equal(queryOption(document, "chatKeywordFilterApplyMode").value, "all");
+    choose("chatKeywordFilterMatchMode", "exact");
+    await save();
+    assert.equal(chrome.testState.sync.chatKeywordFilterMatchMode, "exact");
+    choose("chatKeywordFilterApplyMode", "individual");
+    assert.equal(document.getElementById("chatKeywordGlobalMatch").hidden, true);
+    assert.equal(document.getElementById("chatKeywordIndividual").hidden, false);
+    rule("금지").value = "exact";
+    rule("금지").focus();
+    dispatch(dom, rule("금지"), "change");
+    assert.equal(document.activeElement, rule("금지"));
+    assert.equal(rule("ABC").value, "contains");
+    choose("chatKeywordFilterApplyMode", "all");
+    choose("chatKeywordFilterApplyMode", "individual");
+    assert.equal(rule("금지").value, "exact");
+    await save();
+    assert.equal(chrome.testState.sync.chatKeywordFilterApplyMode, "individual");
+    assert.equal(chrome.testState.sync.chatKeywordFilterExactWords, "금지");
+    rule("ABC").value = "exact";
+    dispatch(dom, rule("ABC"), "change");
+    document.getElementById("discardChanges").click();
+    assert.equal(rule("ABC").value, "contains");
+    const words = queryOption(document, "chatKeywordFilterWords");
+    words.value = "ABC\n<img src=x onerror=alert(1)>";
+    dispatch(dom, words, "input");
+    assert.equal(document.querySelector("#chatKeywordRules img"), null);
+    await save();
+    assert.equal(chrome.testState.sync.chatKeywordFilterExactWords, "");
+    const toggle = queryOption(document, "chatKeywordFilterEnabled");
+    toggle.checked = false;
+    dispatch(dom, toggle, "change");
+    assert.equal(queryOption(document, "chatKeywordFilterApplyMode").disabled, true);
+    assert.equal(rule("ABC").disabled, true);
+});
+
+test("chat phrase settings save multiline text, reject oversized phrases, clear, and restore", async (t) => {
+    const chrome = createFakeChrome({ sync: { chatKeywordFilterEnabled: false, chatKeywordFilterWords: "이전 문구" } });
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document } = dom.window;
+    const words = queryOption(document, "chatKeywordFilterWords");
+    const toggle = queryOption(document, "chatKeywordFilterEnabled");
+    const save = document.getElementById("save");
+    assert.equal(words.value, "이전 문구");
+    assert.equal(words.disabled, true);
+    toggle.checked = true;
+    dispatch(dom, toggle, "change");
+    assert.equal(words.disabled, false);
+    words.value = " 스포 \nSPOILER\nspoiler\n[공지].*";
+    dispatch(dom, words, "input");
+    dispatch(dom, words, "change");
+    save.click();
+    await waitForCondition(() => chrome.testState.sync.chatKeywordFilterWords === "스포\nSPOILER\n[공지].*");
+    await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
+    assert.equal(chrome.testState.sync.chatKeywordFilterEnabled, true);
+    words.value = "가".repeat(101);
+    dispatch(dom, words, "input");
+    dispatch(dom, words, "change");
+    save.click();
+    assert.equal(words.value, "가".repeat(101));
+    assert.match(document.getElementById("message").textContent, /한 문구 100자/);
+    assert.equal(chrome.testState.sync.chatKeywordFilterWords, "스포\nSPOILER\n[공지].*");
+    words.value = "";
+    dispatch(dom, words, "input");
+    dispatch(dom, words, "change");
+    save.click();
+    await waitForCondition(() => chrome.testState.sync.chatKeywordFilterWords === "");
+    await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
+    assert.equal(words.value, "");
+    words.value = "임시 문구";
+    dispatch(dom, words, "input");
+    document.getElementById("discardChanges").click();
+    assert.equal(words.value, "");
+    toggle.checked = false;
+    dispatch(dom, toggle, "change");
+    assert.equal(words.disabled, true);
+    assert.equal(chrome.testState.permissionRequests.length, 0);
 });

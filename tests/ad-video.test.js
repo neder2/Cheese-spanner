@@ -599,6 +599,73 @@ test("live pre-roll and mid-roll use SDK ownership and known units independently
     assert.equal(status.blockedLivePreRollSchedules, 2);
 });
 
+test("normal and simple live routes complete pre-roll while preserving native playback and schedule input", (t) => {
+    for (const suffix of ["", "/", "/simple", "/simple/"]) {
+        const window = createPage(t, `/live/measured-channel${suffix}`);
+        window.eval(source);
+        const h = createScheduleHarness(window);
+        new window.WeakMap().set(h.container, h.manager);
+        h.video.currentTime = 47.25;
+        h.video.volume = 0.37;
+        h.video.muted = true;
+        const schedule = liveSchedule();
+        assert.equal(h.manager.loadWithAdSchedule(schedule, "native-argument"), "loaded");
+        const { schedule: result, rest, receiver } = h.calls.at(-1);
+        assert.equal(result.adBreaks[0].adSources.length, 0, `pre-roll should complete on ${suffix || "normal"}`);
+        assert.equal(h.manager.startAdSchedule(), "SCHEDULE_COMPLETE");
+        assert.equal(schedule.adBreaks[0].adSources.length, 1, "the caller-owned schedule stays unchanged");
+        assert.equal(result.requestId, schedule.requestId);
+        assert.deepEqual(rest, ["native-argument"]);
+        assert.equal(receiver, h.manager);
+        assert.equal(h.video.currentTime, 47.25);
+        assert.equal(h.video.volume, 0.37);
+        assert.equal(h.video.muted, true);
+        assert.equal(h.video.paused, true, "filtering an ad schedule must not start the video");
+    }
+});
+
+test("live chat and unrecognized simple subroutes keep the native schedule", (t) => {
+    for (const suffix of ["/chat", "/chat/", "/simple/chat", "/simple/extra", "/simple//", "/Simple", "/simplex"]) {
+        const window = createPage(t, `/live/measured-channel${suffix}`);
+        window.eval(source);
+        const h = createScheduleHarness(window);
+        new window.WeakMap().set(h.container, h.manager);
+        const schedule = liveSchedule();
+        h.manager.loadWithAdSchedule(schedule);
+        assert.equal(h.calls.at(-1).schedule, schedule, suffix);
+        assert.equal(h.manager.startAdSchedule(), "prepare", suffix);
+    }
+});
+
+test("simple live schedules recheck channel, component refs, registration and route before applying", (t) => {
+    const window = createPage(t, "/live/measured-channel/simple");
+    window.eval(source);
+    const h = createScheduleHarness(window);
+    const map = new window.WeakMap();
+    map.set(h.container, h.manager);
+    const schedule = liveSchedule();
+    const assertPass = () => {
+        h.manager.loadWithAdSchedule(schedule);
+        assert.equal(h.calls.at(-1).schedule, schedule);
+    };
+    h.manager.loadWithAdSchedule(schedule);
+    assert.equal(h.calls.at(-1).schedule.adBreaks[0].adSources.length, 0);
+    h.owner.memoizedProps.channelId = "other-channel";
+    assertPass();
+    h.owner.memoizedProps.channelId = "measured-channel";
+    h.videoRef.current = window.document.createElement("video");
+    assertPass();
+    h.videoRef.current = h.video;
+    map.delete(h.container);
+    assertPass();
+    map.set(h.container, h.manager);
+    h.manager.getAdDisplayContainerInfo = () => {
+        window.history.replaceState(null, "", "/live/other-channel/simple");
+        return h.info;
+    };
+    assertPass();
+});
+
 test("live schedule filtering rechecks routes, ownership, remounts and option lifetime", (t) => {
     const window = createPage(t, "/");
     window.eval(source);

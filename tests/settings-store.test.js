@@ -299,6 +299,126 @@ test("expected values compare inside the lock and reject a stale caller with the
     assert.deepEqual(again.current, { [catalog.CHAT_MULTIVIEW_KEY]: { value: { version: 1, channels: [] } } });
 });
 
+test("chat menu writes permit only the two chat options and retain strict value and sender validation", async () => {
+    const h = harness();
+    assert.deepEqual(catalog.CONTENT_SYNC_OPTION_KEYS, [
+        "skipSeconds",
+        "ambientIntensity",
+        "followingPreviewSoundEnabled",
+        "videoRecorderFolder",
+        "chatKeywordFilterEnabled",
+        "chatKeywordFilterWords",
+        "chatKeywordFilterApplyMode",
+        "chatKeywordFilterMatchMode",
+        "chatKeywordFilterExactWords",
+    ]);
+    const values = { chatKeywordFilterEnabled: false, chatKeywordFilterWords: "스포\nSPOILER" };
+    for (const sender of [
+        { ...contentSender, frameId: 1 },
+        { ...contentSender, id: "other" },
+        { ...contentSender, url: "https://example.com/" },
+    ]) {
+        assert.deepEqual(await h.send(storeMessage("sync", values), sender), {
+            ok: false,
+            error: "untrusted-sender",
+        });
+    }
+    assert.deepEqual(await h.send(storeMessage("sync", values), contentSender), { ok: true });
+    assert.equal(h.sync.chatKeywordFilterEnabled, false);
+    assert.equal(h.sync.chatKeywordFilterWords, "스포\nSPOILER");
+    for (const invalid of [
+        { chatKeywordFilterEnabled: "true" },
+        { chatKeywordFilterWords: " 스포 " },
+        { chatKeywordFilterWords: "스포\n스포" },
+        { chatKeywordFilterWords: "가".repeat(101) },
+        { chatKeywordFilterWords: ["스포"] },
+    ]) {
+        assert.deepEqual(await h.send(storeMessage("sync", invalid), contentSender), {
+            ok: false,
+            error: "invalid-value",
+        });
+    }
+    assert.deepEqual(await h.send(storeMessage("sync", { chatToolsShowBlindEnabled: true }), contentSender), {
+        ok: false,
+        error: "key-not-allowed",
+    });
+    assert.deepEqual(await h.send(storeMessage("local", { chatKeywordFilterWords: "스포" }), contentSender), {
+        ok: false,
+        error: "key-not-allowed",
+    });
+    assert.equal(h.sync.chatKeywordFilterEnabled, false);
+    assert.equal(h.sync.chatKeywordFilterWords, "스포\nSPOILER");
+    assert.deepEqual(await h.send(storeMessage("sync", { chatKeywordFilterWords: "" }), contentSender), {
+        ok: true,
+    });
+    assert.equal(h.sync.chatKeywordFilterWords, "");
+});
+
+test("chat conditions validate, participate in CAS, and round-trip through settings backup", async () => {
+    const h = harness();
+    const values = {
+        chatKeywordFilterWords: "ABC\n금지",
+        chatKeywordFilterApplyMode: "individual",
+        chatKeywordFilterMatchMode: "exact",
+        chatKeywordFilterExactWords: "ABC",
+    };
+    const absent = Object.fromEntries(Object.keys(values).map((key) => [key, { absent: true }]));
+    assert.deepEqual(await h.send(storeMessage("sync", values, absent), contentSender), { ok: true });
+    assert.deepEqual(h.sync, values);
+    assert.equal(
+        (await h.send(storeMessage("sync", { ...values, chatKeywordFilterExactWords: "금지" }, absent), contentSender))
+            .error,
+        "conflict"
+    );
+    for (const invalid of [
+        { chatKeywordFilterApplyMode: "some" },
+        { chatKeywordFilterMatchMode: "regex" },
+        { chatKeywordFilterExactWords: " 가 " },
+        { chatKeywordFilterExactWords: "가".repeat(101) },
+        { chatKeywordFilterExactWords: ["ABC"] },
+    ])
+        assert.equal((await h.send(storeMessage("sync", invalid), contentSender)).error, "invalid-value");
+    const exported = await h.send({ type: BACKUP, version: 1, action: "export" }, optionsSender);
+    assert.equal(exported.ok, true);
+    const parsed = catalog.parseBackup(JSON.stringify(exported.backup));
+    assert.equal(parsed.ok, true);
+    for (const [key, value] of Object.entries(values)) assert.equal(parsed.backup.sync.options[key], value);
+});
+
+test("chat menu expectations distinguish missing keys from their effective defaults", async () => {
+    const h = harness();
+    const values = { chatKeywordFilterEnabled: true, chatKeywordFilterWords: "스포" };
+    const effectiveDefaults = {
+        chatKeywordFilterEnabled: { value: true },
+        chatKeywordFilterWords: { value: "" },
+    };
+    const absent = {
+        chatKeywordFilterEnabled: { absent: true },
+        chatKeywordFilterWords: { absent: true },
+    };
+    assert.deepEqual(await h.send(storeMessage("sync", values, effectiveDefaults), contentSender), {
+        ok: false,
+        error: "conflict",
+        current: absent,
+    });
+    assert.equal(h.calls.filter(([, method]) => method === "set").length, 0);
+    assert.deepEqual(await h.send(storeMessage("sync", values, absent), contentSender), { ok: true });
+    assert.deepEqual(h.sync, values);
+    const latest = {
+        chatKeywordFilterEnabled: { value: true },
+        chatKeywordFilterWords: { value: "스포" },
+    };
+    const competing = await Promise.all([
+        h.send(storeMessage("sync", { chatKeywordFilterWords: "스포\n다른 문구" }, latest), contentSender),
+        h.send(storeMessage("sync", { chatKeywordFilterWords: "오래된 메뉴의 문구" }, latest), contentSender),
+    ]);
+    assert.deepEqual(competing[0], { ok: true });
+    assert.equal(competing[1].error, "conflict");
+    assert.equal(competing[1].current.chatKeywordFilterWords.value, "스포\n다른 문구");
+    assert.equal(h.sync.chatKeywordFilterWords, "스포\n다른 문구");
+    assert.equal(h.sync.chatKeywordFilterEnabled, true);
+});
+
 test("content writes keep arrival order and a failed write does not block the next one", async () => {
     const h = harness();
     h.failures.set = (_area, values) => values.skipSeconds === 8;
@@ -904,4 +1024,37 @@ test("a re-confirmation reports how many keys still change against the newer val
     const fresh = await h.send({ type: BACKUP, version: 1, action: "preview", backup }, optionsSender);
     assert.equal(fresh.changes, none.result.changes);
     assert.equal(h.calls.filter(([, method]) => method === "set").length, 0);
+});
+
+test("chat phrase options round trip through settings backup and reject invalid lists", async () => {
+    const h = harness({
+        sync: {
+            ...settings.DEFAULT_OPTIONS,
+            chatKeywordFilterEnabled: true,
+            chatKeywordFilterWords: "스포\nSPOILER\n[공지].*",
+        },
+    });
+    const exported = await h.send({ type: BACKUP, version: 1, action: "export" }, optionsSender);
+    assert.equal(exported.ok, true);
+    assert.equal(exported.backup.sync.options.chatKeywordFilterWords, "스포\nSPOILER\n[공지].*");
+    Object.assign(h.sync, { chatKeywordFilterEnabled: false, chatKeywordFilterWords: "" });
+    const preview = await h.send(
+        { type: BACKUP, version: 1, action: "preview", backup: exported.backup },
+        optionsSender
+    );
+    assert.equal(preview.ok, true);
+    const applied = await h.send(
+        { type: BACKUP, version: 1, action: "apply", backup: exported.backup, fingerprint: preview.fingerprint },
+        optionsSender
+    );
+    assert.equal(applied.ok, true);
+    assert.equal(h.sync.chatKeywordFilterEnabled, true);
+    assert.equal(h.sync.chatKeywordFilterWords, "스포\nSPOILER\n[공지].*");
+    const invalid = clone(exported.backup);
+    invalid.sync.options.chatKeywordFilterWords = "가".repeat(101);
+    assert.equal(
+        (await h.send({ type: BACKUP, version: 1, action: "preview", backup: invalid }, optionsSender)).ok,
+        false
+    );
+    assert.equal(h.sync.chatKeywordFilterWords, "스포\nSPOILER\n[공지].*");
 });

@@ -377,10 +377,11 @@
             }, delayMs);
         }
 
-        function resetMetadata(key = "") {
+        function resetMetadata(key = "", { invalidateLiveCount = false } = {}) {
             resetSearchMetadata(key);
             cancelGlobalLiveCount();
             pageCache.clear();
+            if (invalidateLiveCount) liveCountCache = null;
         }
 
         function resetSearchMetadata(key = metadataKey) {
@@ -426,6 +427,17 @@
             );
         }
 
+        // 페이지 자료와 그 자료를 받은 시각. 캐시 페이지는 저장할 때의 시각을 그대로 돌려준다.
+        function loadSharedPageEntry(route, cursor, consumer) {
+            const url = apiUrl(route, cursor);
+            const cached = pageCache.get(url);
+            if (cached && Date.now() - cached.measuredAt < LIVE_COUNT_CACHE_TTL_MS) return Promise.resolve(cached);
+            return loadSharedPage(route, cursor, consumer).then((json) => {
+                const stored = pageCache.get(url);
+                return stored?.json === json ? stored : { json, measuredAt: Date.now() };
+            });
+        }
+
         function loadSharedPage(route, cursor, consumer) {
             const url = apiUrl(route, cursor);
             const cached = pageCache.get(url);
@@ -462,12 +474,15 @@
                 const mapped = mapApiItem(route, item);
                 if (!mapped.id) continue;
                 delete mapped._bcgtSearchText;
+                delete mapped._bcgtSearchFields;
                 if (!metadataMap.has(mapped.id)) {
                     mapped.order = metadataMap.size;
                     metadataMap.set(mapped.id, mapped);
                 } else {
+                    // 화면이 meta 객체에 붙인 검색 글자·칸 캐시는 옛 제목·태그로 만든 것이라 병합 결과에서 버린다.
                     const merged = { ...metadataMap.get(mapped.id), ...mapped };
                     delete merged._bcgtSearchText;
+                    delete merged._bcgtSearchFields;
                     metadataMap.set(mapped.id, merged);
                 }
             }
@@ -520,10 +535,14 @@
                 const cursors = new Set();
                 const viewers = new Map();
                 let cursor = null;
+                // 집계 시각은 사용한 페이지 중 가장 오래된 자료 시각이다. 캐시 페이지에 완료 시각을 붙이지 않는다.
+                let oldestMeasuredAt = Number.POSITIVE_INFINITY;
                 for (let pages = 0; pages < 200; pages++) {
                     let json;
                     try {
-                        json = await loadSharedPage(route, cursor, "count");
+                        const entry = await loadSharedPageEntry(route, cursor, "count");
+                        json = entry.json;
+                        oldestMeasuredAt = Math.min(oldestMeasuredAt, entry.measuredAt);
                     } catch (_) {
                         if (generation !== liveCountGeneration) throw new Error("Live count cancelled");
                         throw new Error("Live count unavailable");
@@ -552,7 +571,7 @@
                         liveCountCache = {
                             count: viewers.size,
                             totalViewers: [...viewers.values()].reduce((sum, count) => sum + count, 0),
-                            measuredAt: Date.now(),
+                            measuredAt: Number.isFinite(oldestMeasuredAt) ? oldestMeasuredAt : Date.now(),
                         };
                         return liveCountCache;
                     }
@@ -723,6 +742,11 @@
             }
         }
 
+        // 예약 회차나 진행 중 조회가 없으면 로딩을 넘겨받을 다음 hydrateFollowers 호출도 없다.
+        function isFollowerHydrationPending() {
+            return Boolean(followerRefresh || followerHydrateTimer);
+        }
+
         function cancelFollowers() {
             followerGeneration++;
             clearFollowerHydrationTimer();
@@ -750,6 +774,7 @@
             getFollowerCount,
             hydrateFollowers,
             refreshFollowers,
+            isFollowerHydrationPending,
             clearFollowerHydrationTimer,
             cancelFollowers,
         });

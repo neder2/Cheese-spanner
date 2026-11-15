@@ -5,7 +5,10 @@
  * 하는 일: feature들이 공유하는 DOM·라우트·옵저버 유틸을 window.CheeseSpanner.utils에 등록한다.
  *   - 라우트 감지: routeBridgePage.js(MAIN world)가 쏘는 "cheese-spanner:routechange"와 popstate/click 등을 모아
  *     "cheese-spanner:routechange:detected"로 feature들에 재배포한다 (startPageChangeDetection).
- *   - getMainVideoElement: 확장이 만든 미리보기 video(data-bcfp-* 계열)를 제외하고 가장 큰 가시 video를 고른다.
+ *   - getMainVideoElement: 확장이 만든 미리보기 video(data-bcfp-* 계열)와 네이티브 광고 영상
+ *     (NATIVE_AD_MEDIA_SELECTOR)을 제외하고 가장 큰 가시 video를 고른다.
+ *   - isNativeAdBreakActive: 라이브 프리롤 wrapper 마운트·미드롤 wrapper 표시·다시보기 pzp-pc--adbreak 중이면 참
+ *     (재생 단축키와 볼륨 휠 통과 기준). isLiveAdBreakActive는 그중 라이브 wrapper 두 경우(화면 단축키 F/T 기준).
  *   - getVideoViewportRect/setVideoViewportTransform: 확장 확대 변환을 기록·해제하고 컨트롤용 표시 영역을 구한다.
  *   - createMutationObserverSync: 대상 노드 대기(startBodyWatch)와 분리 후 재연결 감시가 붙은 옵저버 팩토리.
  *   - bindFeatureOptions: 옵션 최초 로드 + 변경 구독을 한 번에 거는 헬퍼.
@@ -157,16 +160,34 @@
         return video instanceof HTMLVideoElement && elementOrHostMatches(video, EXTENSION_PREVIEW_VIDEO_SELECTOR);
     }
 
+    // 2026-11-05 공개 번들 기준: 라이브 프리롤은 #preAdPlayerWrapper 안에 IMA contentVideo(#preAdContentPlayer)와
+    // 광고 컨테이너를 두고, 미드롤은 #live_player_layout 바깥 형제인 #midAdPlayerWrapper에 #midPlayer를 둔다.
+    // 광고 영상과 광고용 contentVideo 더미는 본영상 후보가 아니다. autoQualityPage.js(MAIN)에 같은 리터럴 사본이 있다.
+    const NATIVE_AD_MEDIA_SELECTOR =
+        '[data-role="imaAdContainerEl"], [data-role="gvAdContainerEl"], #preAdPlayerWrapper, #midAdPlayerWrapper';
+
     function getMainVideoElement() {
         const videos = Array.from(document.querySelectorAll("video")).filter(
-            (video) =>
-                !isExtensionPreviewVideo(video) &&
-                !elementOrHostMatches(
-                    video,
-                    '[data-role="imaAdContainerEl"], [data-role="gvAdContainerEl"], #midAdPlayerWrapper'
-                )
+            (video) => !isExtensionPreviewVideo(video) && !elementOrHostMatches(video, NATIVE_AD_MEDIA_SELECTOR)
         );
         return pickLargestVisible(videos) || videos[0] || null;
+    }
+
+    // 광고 구간 신호(2026-11-05 공개 번들 기준): 라이브 프리롤 wrapper는 광고 동안만 마운트되고, 미드롤 wrapper는
+    // 남아 있으면서 표시 여부(display)로 광고 구간을 나타낸다. 다시보기는 IMA·GV 광고 동안 본영상 pzp 루트에
+    // pzp-pc--adbreak가 붙는다. 이 구간에는 화면의 영상이 광고라 재생·화면 단축키와 볼륨 휠을 소비하지 않고 넘긴다.
+    // 라이브 광고는 본영상 플레이어 바깥 wrapper에서 재생되고(미드롤 동안 본영상은 미니플레이어), 다시보기 광고는
+    // 플레이어 안에서 재생된다. 본영상 플레이어 버튼을 누르는 단축키는 라이브 광고 구간만 넘긴다.
+    function isLiveAdBreakActive() {
+        if (document.getElementById("preAdPlayerWrapper")) return true;
+        const mid = document.getElementById("midAdPlayerWrapper");
+        return mid instanceof HTMLElement && getComputedStyle(mid).display !== "none";
+    }
+
+    function isNativeAdBreakActive() {
+        if (isLiveAdBreakActive()) return true;
+        const root = getMainVideoElement()?.closest(".pzp-pc");
+        return Boolean(root && (root.matches(".pzp-pc--adbreak") || root.querySelector(".pzp-pc--adbreak")));
     }
 
     function isEditableTarget(target) {
@@ -537,6 +558,9 @@
         getVisibleArea,
         pickLargestVisible,
         getMainVideoElement,
+        NATIVE_AD_MEDIA_SELECTOR,
+        isNativeAdBreakActive,
+        isLiveAdBreakActive,
         getVideoViewportRect,
         setVideoViewportTransform,
         isExtensionPreviewVideo,

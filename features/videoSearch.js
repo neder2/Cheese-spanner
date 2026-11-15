@@ -115,6 +115,18 @@
         return featureOptions.videoSearchRenderBatchSize;
     }
 
+    // A query of only spaces is not a search: fetching already stops for it, so the original list must stay.
+    function hasActiveQuery() {
+        return Boolean(normalize(currentQuery));
+    }
+
+    // Cached comments only count while comment search is on, even if they were fetched earlier.
+    function findMatches(entry, normalizedQuery) {
+        return filterVideosByNormalizedQuery(entry.videos, normalizedQuery, {
+            includeComments: isCommentSearchEnabled(),
+        });
+    }
+
     function isVideosTab() {
         return /^\/[^/]+\/videos\/?($|\?)/.test(location.pathname);
     }
@@ -501,16 +513,21 @@
             status.textContent = `오류: ${entry.error}`;
             return;
         }
-        if (!currentQuery) {
+        if (!hasActiveQuery()) {
             status.textContent = entry.loading ? `${total}개 로딩중` : total ? `${total}개` : "";
             return;
         }
-        const matches = filterVideosByNormalizedQuery(entry.videos, normalize(currentQuery));
-        status.textContent = entry.complete
-            ? `${matches.length} / ${total}`
-            : entry.loading
-              ? `${matches.length} / ${total} (로딩중)`
-              : `${matches.length} / ${total}`;
+        const matches = findMatches(entry, normalize(currentQuery));
+        // A failed, cut-off or comment-failed lookup must not read like a complete "no more results" answer.
+        const notes = [];
+        if (entry.loading) notes.push("로딩중");
+        else if (!entry.complete && entry.error) notes.push("일부 조회 실패");
+        else if (entry.complete && entry.limitReached) notes.push("조회 상한까지");
+        if (isCommentSearchEnabled()) {
+            const commentFailures = entry.videos.filter((video) => video.commentError).length;
+            if (commentFailures) notes.push(`댓글 ${commentFailures}개 조회 실패`);
+        }
+        status.textContent = `${matches.length} / ${total}${notes.length ? ` (${notes.join(", ")})` : ""}`;
     }
 
     function computePath(root, target) {
@@ -1227,6 +1244,11 @@
         card.appendChild(icon);
     }
 
+    function setOwnTextOrHide(el, text) {
+        el.textContent = text || "";
+        el.style.visibility = text ? "" : "hidden";
+    }
+
     function buildInjectedCard(video) {
         const tpl = captureTemplate();
         if (!tpl) return null;
@@ -1242,35 +1264,34 @@
             if (a.hasAttribute("title")) a.setAttribute("title", video.title);
         }
 
+        // The clone carries the template video's thumbnail, duration and date; a missing value must clear them
+        // instead of showing another video's data.
         for (const img of card.querySelectorAll("img")) {
+            img.removeAttribute("srcset");
             if (video.thumb) {
                 img.setAttribute("src", video.thumb);
-                img.removeAttribute("srcset");
                 img.setAttribute("alt", video.title);
+                img.style.visibility = "";
+            } else {
+                img.removeAttribute("src");
+                img.setAttribute("alt", "");
+                img.style.visibility = "hidden";
             }
         }
 
-        if (video.thumb) {
-            for (const source of card.querySelectorAll("source")) {
-                source.removeAttribute("srcset");
-            }
+        for (const source of card.querySelectorAll("source")) {
+            source.removeAttribute("srcset");
         }
 
         const titleEl = applyPath(card, tpl.titlePath);
         if (titleEl) titleEl.textContent = video.title;
 
         const durEl = applyPath(card, tpl.durPath);
-        if (durEl && typeof video.duration === "number") {
-            const formatted = formatDuration(video.duration);
-            if (formatted) durEl.textContent = formatted;
-        }
+        if (durEl) setOwnTextOrHide(durEl, formatDuration(video.duration));
 
         const dateEl =
             applyPath(card, tpl.datePath) || findElementByPredicate(card, looksLikeDateText, { leafOnly: true });
-        if (dateEl && video.publishDate) {
-            const formatted = formatDate(video.publishDate);
-            if (formatted) dateEl.textContent = formatted;
-        }
+        if (dateEl) setOwnTextOrHide(dateEl, video.publishDate ? formatDate(video.publishDate) : "");
 
         const viewPaths = tpl.viewPaths?.length ? tpl.viewPaths : tpl.viewPath ? [tpl.viewPath] : [];
         for (const viewPath of viewPaths) {
@@ -1400,7 +1421,7 @@
 
         const entry = getEntry();
 
-        if (!entry || !currentQuery) {
+        if (!entry || !hasActiveQuery()) {
             clearInjectedCards();
             for (const child of currentGrid.children) {
                 if (child instanceof HTMLElement) child.removeAttribute(HIDE_ATTR);
@@ -1419,14 +1440,14 @@
             return;
         }
 
-        const matches = filterVideosByNormalizedQuery(entry.videos, normalizedQuery);
+        const matches = findMatches(entry, normalizedQuery);
         const renderedMatches = matches.slice(0, visibleMatchLimit);
         const remainingMatches = Math.max(0, matches.length - renderedMatches.length);
         const stateKey = !entry || entry.videos.length === 0 ? "loading" : entry.complete ? "done" : "partial";
         const expected = matches
             .map((v) => {
                 const commentCount = Array.isArray(v.commentTexts) ? v.commentTexts.length : 0;
-                const commentHit = hasCommentMatchNorm(v, normalizedQuery) ? "c" : "t";
+                const commentHit = isCommentSearchEnabled() && hasCommentMatchNorm(v, normalizedQuery) ? "c" : "t";
                 return `${v.videoNo}:${commentHit}:${v.commentFetched ? 1 : 0}:${commentCount}`;
             })
             .join(",");
@@ -1860,18 +1881,8 @@
         const previousOptions = featureOptions;
         featureOptions = options;
 
-        if (!isFeatureEnabled()) {
-            teardownRuntime();
-            return;
-        }
-
-        installRuntime();
-
-        if (!isVideosTab()) {
-            removeBarIfMounted();
-            return;
-        }
-
+        // The repository cache outlives tab changes and OFF, and previousOptions is consumed here, so data built
+        // under the old limits is invalidated before any early return below.
         if (previousOptions.videoSearchMaxPages !== options.videoSearchMaxPages) {
             repository.clearIndex();
             lastFilterKey = null;
@@ -1886,6 +1897,18 @@
             cancelCommentSearch();
             repository.resetComments();
             lastFilterKey = null;
+        }
+
+        if (!isFeatureEnabled()) {
+            teardownRuntime();
+            return;
+        }
+
+        installRuntime();
+
+        if (!isVideosTab()) {
+            removeBarIfMounted();
+            return;
         }
 
         if (!wasEnabled) {
@@ -1903,11 +1926,11 @@
             lastFilterKey = null;
         }
 
-        if ((!wasCommentEnabled || commentLimitsChanged) && isCommentSearchEnabled() && currentQuery) {
+        if ((!wasCommentEnabled || commentLimitsChanged) && isCommentSearchEnabled() && hasActiveQuery()) {
             scheduleCommentSearch();
         }
 
-        if (currentQuery && currentChannelId) {
+        if (hasActiveQuery() && currentChannelId) {
             const entry = getEntry();
             if (shouldStartIndexBuild(entry)) buildIndex(currentChannelId);
         }

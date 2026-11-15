@@ -1161,6 +1161,16 @@ h1 {
     background: var(--surface-2);
 }
 
+.recorder-directory-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+#videoRecorderDirectoryStatus {
+    overflow-wrap: anywhere;
+}
+
 .secondary-button.danger-button {
     border-color: rgba(255, 107, 107, 0.38);
     color: var(--danger);
@@ -3161,7 +3171,7 @@ h1 {
     width: 18px;
     height: 18px;
     background: #ffffff;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    box-shadow: none;
 }
 
 .options-body .toggle-row input[type="checkbox"]:checked {

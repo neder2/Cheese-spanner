@@ -25,6 +25,22 @@
                 if (!key.startsWith("__reactProps$")) continue;
                 try {
                     const message = row[key]?.children?.props?.chatMessage;
+                    // Another viewer's message is reported without its content so the isolated collector can tell it
+                    // from a row whose data could not be read. Its identity, in the activity-ID form below, lets the
+                    // collector keep the previous channel's messages apart by message rather than by DOM node, even
+                    // for an account confirmed later. A message read without a valid identity is not an activity as
+                    // read; its fields can still fill in, so the collector holds such a row at a move.
+                    if (typeof message?.user === "string" && message.user && message.user !== user) {
+                        const otherAuthor = { otherAuthor: true };
+                        if (
+                            /^[A-Za-z0-9_-]{1,128}$/.test(message.user) &&
+                            Number.isSafeInteger(message.time) &&
+                            Number.isSafeInteger(message.type)
+                        )
+                            otherAuthor.id = `${message.user}:${message.time}:${message.type}`;
+                        row.setAttribute(SOURCE_ATTR, JSON.stringify(otherAuthor));
+                        return;
+                    }
                     if (!message || message.user !== user || message.status !== "NORMAL") continue;
                     if (!Number.isSafeInteger(message.time) || message.time < Date.UTC(2020, 0, 1)) continue;
                     if (message.time > Date.now() + 5 * 60 * 1000) continue;

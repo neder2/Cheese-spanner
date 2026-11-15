@@ -110,11 +110,16 @@ function fixture(t, fetcher = async () => response()) {
                 videoReads++;
                 return (
                     Array.from(doc.querySelectorAll("video")).find(
-                        (v) => !v.closest('[data-bcmv-video], [data-bcfp-player-mount], [data-role="imaAdContainerEl"]')
+                        (v) =>
+                            !v.closest(
+                                '[data-bcmv-video], [data-bcfp-player-mount], [data-role="imaAdContainerEl"], #preAdPlayerWrapper'
+                            )
                     ) || null
                 );
             },
             getPlayerRoot: (v) => v?.closest(".pzp-pc"),
+            NATIVE_AD_MEDIA_SELECTOR:
+                '[data-role="imaAdContainerEl"], [data-role="gvAdContainerEl"], #preAdPlayerWrapper, #midAdPlayerWrapper',
             isPlaybackRoute: () => /^\/(live|video)\//.test(w.location.pathname),
             startPageChangeDetection(fn) {
                 route = fn;
@@ -494,6 +499,56 @@ test("settings activation handles Enter and Space once and leaves native Escape 
         assert.equal(event.defaultPrevented, false);
     }
     assert.equal(bubbled, 2);
+});
+
+test("panel keys, double-clicks and wheels stay inside the panel while the close button still works", (t) => {
+    const f = fixture(t);
+    const player = f.doc.querySelector(".pzp-pc");
+    const reached = [];
+    for (const type of ["keydown", "keyup", "dblclick", "wheel", "pointerdown", "mousedown", "click"]) {
+        player.addEventListener(type, (event) => reached.push(`${type}:${event.key ?? ""}`));
+        f.doc.addEventListener(type, (event) => reached.push(`document ${type}:${event.key ?? ""}`));
+    }
+    const key = (target, type, init) => {
+        const event = new f.w.KeyboardEvent(type, { bubbles: true, cancelable: true, ...init });
+        target.dispatchEvent(event);
+        return event;
+    };
+    f.open();
+    const close = f.doc.querySelector('#cheese-spanner-stream-info button[aria-label="스트림 정보 닫기"]');
+    assert.equal(f.doc.activeElement, close);
+    reached.length = 0;
+    // Arrow and Tab keep their default action (panel scroll, focus move) but never become player shortcuts.
+    for (const init of [{ key: "ArrowLeft" }, { key: "ArrowRight" }, { key: "Tab" }, { key: "k" }]) {
+        assert.equal(key(close, "keydown", init).defaultPrevented, false, init.key);
+        key(close, "keyup", init);
+    }
+    const value = f.doc.querySelector("#cheese-spanner-stream-info dd");
+    const pointer = (type) => new f.w.MouseEvent(type, { bubbles: true, cancelable: true, detail: 2 });
+    for (const type of ["pointerdown", "mousedown", "click", "dblclick"]) {
+        const event = pointer(type);
+        value.dispatchEvent(event);
+        assert.equal(event.defaultPrevented, false, `${type} keeps text selection`);
+    }
+    const wheel = new f.w.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 100 });
+    value.dispatchEvent(wheel);
+    assert.equal(wheel.defaultPrevented, false, "the panel still scrolls");
+    assert.deepEqual(reached, [], "nothing from inside the panel reaches the player or the page");
+    assert.match(f.text(), /1920 × 1080/);
+    // Space on the focused close button closes the panel once instead of reaching CHZZK's play shortcut.
+    const space = key(close, "keydown", { key: " " });
+    assert.equal(space.defaultPrevented, true);
+    assert.equal(f.text(), undefined);
+    assert.deepEqual(reached, []);
+    assert.equal(f.doc.activeElement, f.doc.querySelector(".pzp-setting-button"));
+    assert.deepEqual(f.controlCalls, []);
+    // Enter closes too, and a held key does not reopen or close twice.
+    f.open();
+    const reopened = f.doc.querySelector('#cheese-spanner-stream-info button[aria-label="스트림 정보 닫기"]');
+    assert.equal(key(reopened, "keydown", { key: "Enter", repeat: true }).defaultPrevented, true);
+    assert.match(f.text(), /1920 × 1080/);
+    key(reopened, "keydown", { key: "Enter" });
+    assert.equal(f.text(), undefined);
 });
 
 test("keyboard navigation bridges the native menu and stream entry while skipping hidden rows", (t) => {
@@ -938,6 +993,33 @@ test("an advertisement taking over the main node is a gap and never becomes the 
     host.append(f.video);
     wrapper.remove();
     host.classList.remove("pzp-pc--adbreak");
+    f.mutate([f.video], [wrapper]);
+    await new Promise(setImmediate);
+    f.tick();
+    assert.equal(f.requests.length, 2);
+    assert.equal(f.timers.size, 1);
+    assert.deepEqual(f.controlCalls, []);
+});
+
+test("a live pre-roll wrapper around the main node is a gap and never becomes the measured video", async (t) => {
+    // 2026-11-05 public bundle: the pre-roll mounts #preAdPlayerWrapper with its own content video placeholder.
+    const f = fixture(t);
+    f.open();
+    await new Promise(setImmediate);
+    f.tick();
+    const host = f.video.parentElement;
+    const wrapper = f.doc.createElement("div");
+    wrapper.id = "preAdPlayerWrapper";
+    host.append(wrapper);
+    wrapper.append(f.video);
+    f.mutate([wrapper], []);
+    f.tick();
+    assert.ok(f.doc.getElementById("cheese-spanner-stream-info"));
+    assert.equal(f.samples.at(-1).current.state, "ad");
+    assert.equal(f.samples.at(-1).current.buffer, null);
+    assert.equal(f.requests.length, 1);
+    host.append(f.video);
+    wrapper.remove();
     f.mutate([f.video], [wrapper]);
     await new Promise(setImmediate);
     f.tick();

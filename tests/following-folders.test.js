@@ -994,7 +994,7 @@ test("the channel picker is the keyboard path to put channels in, move them betw
     typeText(dom, filter, "베타");
     await waitForCondition(() => layer(document).querySelectorAll(".bcff-pick").length === 1);
     typeText(dom, filter, "없는 이름");
-    await waitForCondition(() => /찾는 채널이 없어요/.test(layer(document).textContent));
+    await waitForCondition(() => /일치하는 채널 없음/.test(layer(document).textContent));
     typeText(dom, filter, "");
 
     press(dom, byLabel(layer(document), "알파 채널을 ‘토크’ 폴더에서 빼기"));
@@ -1141,7 +1141,7 @@ test("a collapsed folder marks its live count partial while the native list has 
     const live = () => header(document, "게임").querySelector(".bcff-live");
     assert.equal(live().hidden, false);
     assert.equal(live().getAttribute("data-bcff-live"), "1+", "E is live but its row is not built yet");
-    assert.match(live().getAttribute("title"), /방송 중 1개 확인.*채널 1개는 방송 여부를 확인하지 못했어요/);
+    assert.match(live().getAttribute("title"), /방송 중 1개 확인.*채널 1개는 방송 여부 미확인/);
 
     const picker = await openPicker(dom, document, "게임");
     const pick = (channelId) => picker.querySelector(`[data-bcff-key="pick:games:${channelId}"]`);
@@ -1274,7 +1274,7 @@ test("save failures keep the previous folders and tell the user what happened", 
     await waitForCondition(() => document.getElementById("cheese-spanner-following-folders-toast"));
     const toast = document.getElementById("cheese-spanner-following-folders-toast");
     assert.equal(toast.getAttribute("role"), "status");
-    assert.match(toast.textContent, /저장하지 못했어요.*이전 상태/);
+    assert.match(toast.textContent, /폴더 변경 저장 실패.*이전 상태 유지/);
     assert.deepEqual(storedState(chrome), saved);
     assert.equal(headerButton(document, "게임").getAttribute("aria-expanded"), "true");
     assert.notEqual(dom.window.getComputedStyle(document.getElementById("rowC")).display, "none");
@@ -1282,7 +1282,7 @@ test("save failures keep the previous folders and tell the user what happened", 
     delete dom.window.CheeseSpanner.utils.settingsStoreSet;
     trustedClick(dom, headerButton(document, "게임"));
     await waitForCondition(() =>
-        /확장 프로그램과 연결되지 않아/.test(
+        /확장 연결 끊김으로 저장 실패/.test(
             document.getElementById("cheese-spanner-following-folders-toast")?.textContent || ""
         )
     );
@@ -1527,7 +1527,7 @@ test("other-tab changes win over late initial reads and corrupt values need an e
     const status = () => document.querySelector("#followingList > [data-bcff-status]");
     await waitForCondition(() => status()?.querySelector('[data-bcff-key="reset"]'));
     assert.equal(document.getElementById("followingList").firstElementChild, status());
-    assert.match(status().textContent, /올바르지 않아/);
+    assert.match(status().textContent, /폴더 정보 손상/);
     assert.equal(document.querySelector("[data-bcff-header]"), null);
     untrustedClick(dom, status().querySelector('[data-bcff-key="reset"]'));
     await settle();
@@ -1553,7 +1553,7 @@ test("a failed first read offers a retry instead of treating storage as empty", 
     const status = () => document.querySelector("#followingList > [data-bcff-status]");
     await waitForCondition(() => status()?.querySelector('[data-bcff-key="retry"]'));
     assert.equal(document.querySelector("[data-bcff-header]"), null);
-    assert.match(status().textContent, /읽지 못했어요/);
+    assert.match(status().textContent, /폴더 정보 읽기 실패/);
     trustedClick(dom, status().querySelector('[data-bcff-key="retry"]'));
     await waitForCondition(() => headerButton(document, "게임"));
     await waitForCondition(() => !status(), { timeoutMs: 1000 });
@@ -1684,7 +1684,7 @@ test("dropping on a folder's rows or the new-folder spot moves channels; outside
     await waitForCondition(() => storedState(chrome).folders[0].channelIds.includes(A));
     assert.equal(list.querySelector("[data-bcff-new-zone]"), null);
     assert.equal(document.querySelector("[data-bcff-drop-target]"), null);
-    assert.match(toastText(document), /알파 채널을 ‘게임’ 폴더에 넣었어요/);
+    assert.match(toastText(document), /알파 채널을 ‘게임’ 폴더에 추가함/);
 
     dragEvent(dom, "dragstart", document.querySelector("#rowE a"));
     // The spot can appear right under the pointer when the last row is dragged; it waits until the pointer moves on.
@@ -1851,7 +1851,7 @@ test("a held channel previews its landing spot, drops show at once, failed saves
     dragEvent(dom, "dragover", header(document, "게임"));
     dragEvent(dom, "drop", header(document, "게임"));
     assert.ok(visualOrder(dom).indexOf("rowE") < visualOrder(dom).indexOf("[토크]"), "shown in the folder at once");
-    await waitForCondition(() => /저장하지 못했어요/.test(toastText(document)));
+    await waitForCondition(() => /폴더 변경 저장 실패/.test(toastText(document)));
     const after = visualOrder(dom);
     assert.ok(after.indexOf("rowE") > after.indexOf("[폴더 밖 채널]"), "a failed save puts the row back");
     assert.equal(storedState(chrome).folders[0].channelIds.includes(E), false);
@@ -1930,7 +1930,7 @@ test("undo restores the folders from before a change and refuses once something 
     await waitForCondition(() => storedState(chrome).folders[0].channelIds.includes(C));
     assert.deepEqual(storedState(chrome), saved);
     assert.deepEqual(store.calls.at(-1).expected, { [KEY]: { value: moved } });
-    await waitForCondition(() => /되돌렸어요/.test(toastText(document)));
+    await waitForCondition(() => /되돌리기 완료./.test(toastText(document)));
     assert.equal(document.querySelector(`${TOAST_SELECTOR} [data-bcff-key="undo"]`), null, "undo is one step");
 
     dragEvent(dom, "dragstart", document.querySelector("#rowC a"));
@@ -1946,7 +1946,7 @@ test("undo restores the folders from before a change and refuses once something 
     const undoButton = document.querySelector(`${TOAST_SELECTOR} [data-bcff-key="undo"]`);
     assert.ok(undoButton, "the earlier undo offer is still on screen");
     trustedClick(dom, undoButton);
-    await waitForCondition(() => /되돌리지 않았어요/.test(toastText(document)));
+    await waitForCondition(() => /되돌리기 취소/.test(toastText(document)));
     await settle();
     assert.equal(store.calls.length, callsBeforeOtherTab, "another tab's change is never overwritten by undo");
     assert.deepEqual(storedState(chrome).folders[1].channelIds, [C, A]);
@@ -1986,6 +1986,142 @@ test("the undo notice moves aside only when an open menu actually overlaps it", 
     layer(document).getBoundingClientRect = () => rect(248, 560, 208, 220);
     win.dispatchEvent(new win.Event("resize"));
     assert.equal(toastNode().style.left, `${248 + 208 + 12}px`);
+});
+
+test("menus and notices sit above the narrow-window overlay sidebar and pressing them keeps it open", async (t) => {
+    const saved = stateOf(folder("games", "게임", [C]), folder("talk", "토크"));
+    const { chrome, dom, document } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    await waitForCondition(() => headerButton(document, "토크"));
+    const win = dom.window;
+    const sidebar = document.getElementById("sidebar");
+    // 2026-11-04 public bundle: at max-width:1199px the expanded sidebar is an overlay at z-index:20000 whose
+    // :before dims the page, and the site closes it on a document mousedown/touchstart outside the sidebar.
+    const outsidePresses = [];
+    for (const type of ["mousedown", "touchstart"]) {
+        document.addEventListener(type, (event) => {
+            if (!sidebar.contains(event.target)) outsidePresses.push(type);
+        });
+    }
+    const pressDown = (target, type) => target.dispatchEvent(new win.Event(type, { bubbles: true }));
+
+    // A wide window keeps the sidebar under the menu, so the menu stays on its own layer below native modals.
+    sidebar.style.zIndex = "9999";
+    let menu = await openMenu(dom, document, "토크");
+    assert.equal(menu.style.zIndex, "");
+    trustedKey(dom, document.activeElement, "Escape");
+    await waitForCondition(() => !layer(document));
+
+    sidebar.style.zIndex = "20000";
+    menu = await openMenu(dom, document, "토크");
+    assert.equal(menu.style.zIndex, "20001", "the menu sits right above the overlay sidebar and its dim");
+    const upItem = byLabel(menu, "‘토크’ 폴더를 위로 이동");
+    pressDown(upItem, "mousedown");
+    pressDown(upItem, "touchstart");
+    assert.deepEqual(outsidePresses, [], "a press on the menu is not a press outside the sidebar");
+    press(dom, upItem);
+    await waitForCondition(
+        () => document.querySelector(TOAST_SELECTOR) && storedState(chrome).folders[0].name === "토크"
+    );
+    const toastNode = document.querySelector(TOAST_SELECTOR);
+    assert.equal(toastNode.style.zIndex, "20001", "the notice is not hidden under the dim either");
+    pressDown(toastNode, "mousedown");
+    assert.deepEqual(outsidePresses, []);
+    pressDown(document.getElementById("mainLive"), "mousedown");
+    assert.deepEqual(outsidePresses, ["mousedown"], "presses elsewhere still reach the site's outside check");
+
+    // Once the sidebar is back under them, the notice returns to its own layer.
+    sidebar.style.zIndex = "9999";
+    win.dispatchEvent(new win.Event("resize"));
+    assert.equal(toastNode.style.zIndex, "");
+});
+
+test("menus and notices raised above the overlay sidebar step aside from the native in-page PiP", async (t) => {
+    const saved = stateOf(folder("games", "게임", [C]), folder("talk", "토크"));
+    const { chrome, dom, document } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    await waitForCondition(() => headerButton(document, "토크"));
+    const rect = (left, top, width, height) => ({
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+        bottom: top + height,
+    });
+    const win = dom.window;
+    const viewport = (width, height) => {
+        Object.defineProperty(win, "innerWidth", { configurable: true, value: width });
+        Object.defineProperty(win, "innerHeight", { configurable: true, value: height });
+    };
+    const sidebar = document.getElementById("sidebar");
+    sidebar.getBoundingClientRect = () => rect(0, 0, 240, 800);
+    // 2026-11-04 public CSS: the in-page PiP is ._container_*._type_pip_* fixed at bottom:100px right:100px,
+    // 400x225 plus 46px on top, z-index:20000.
+    const pip = document.createElement("div");
+    pip.className = "_container_wj4te_1 _type_pip_wj4te_20";
+    document.body.append(pip);
+    const placePip = () => {
+        pip.getBoundingClientRect = () => rect(win.innerWidth - 500, win.innerHeight - 371, 400, 271);
+    };
+    viewport(900, 800);
+    placePip();
+    const placeAnchor = () => {
+        moreButton(document, "토크").getBoundingClientRect = () => rect(200, 600, 28, 28);
+    };
+    placeAnchor();
+
+    // On its own layer the menu is drawn under the PiP anyway, so it stays next to its button.
+    sidebar.style.zIndex = "9999";
+    let menu = await openMenu(dom, document, "토크");
+    assert.equal(menu.style.zIndex, "");
+    assert.equal(menu.style.top, "552px");
+    trustedKey(dom, document.activeElement, "Escape");
+    await waitForCondition(() => !layer(document));
+
+    // Raised above the overlay sidebar it would cover the PiP, so it moves up to end above the PiP.
+    sidebar.style.zIndex = "20000";
+    placeAnchor();
+    menu = await openMenu(dom, document, "토크");
+    assert.equal(menu.style.zIndex, "20001");
+    assert.equal(menu.style.left, "248px");
+    assert.equal(menu.style.top, "181px");
+    assert.equal(menu.style.maxHeight, "240px");
+
+    // Without room above the PiP it moves to the PiP's left.
+    viewport(900, 500);
+    placePip();
+    win.dispatchEvent(new win.Event("resize"));
+    assert.equal(menu.style.zIndex, "20001");
+    assert.equal(menu.style.left, `${400 - 8 - 208}px`);
+    assert.equal(menu.style.top, "252px");
+
+    // Without room anywhere it drops back under the PiP instead of covering it.
+    viewport(700, 500);
+    placePip();
+    win.dispatchEvent(new win.Event("resize"));
+    assert.equal(menu.style.zIndex, "", "the PiP stays on top when the menu has nowhere to go");
+    assert.equal(menu.style.left, "248px");
+
+    viewport(900, 800);
+    placePip();
+    win.dispatchEvent(new win.Event("resize"));
+    assert.equal(menu.style.zIndex, "20001");
+    press(dom, byLabel(menu, "‘토크’ 폴더를 위로 이동"));
+    await waitForCondition(
+        () => document.querySelector(TOAST_SELECTOR) && storedState(chrome).folders[0].name === "토크"
+    );
+    const toastNode = document.querySelector(TOAST_SELECTOR);
+    // A tall notice next to the sidebar reaches the PiP's row, so it moves to the PiP's left.
+    Object.defineProperty(toastNode, "offsetWidth", { configurable: true, value: 300 });
+    Object.defineProperty(toastNode, "offsetHeight", { configurable: true, value: 90 });
+    win.dispatchEvent(new win.Event("resize"));
+    assert.equal(toastNode.style.zIndex, "20001");
+    assert.equal(toastNode.style.left, `${400 - 12 - 300}px`);
+
+    // Back on its own layer it is under the PiP again and returns next to the sidebar.
+    sidebar.style.zIndex = "9999";
+    win.dispatchEvent(new win.Event("resize"));
+    assert.equal(toastNode.style.zIndex, "");
+    assert.equal(toastNode.style.left, "252px");
 });
 
 test("turning folders off removes every marker, closes open layers, and stops following storage", async (t) => {
@@ -2051,4 +2187,607 @@ test("folders combine with pinning: pin ranks order rows inside folders and side
     await settle(150);
     observer.disconnect();
     assert.equal(mutations, 0, "pin and folder sync must not trigger each other repeatedly");
+});
+
+test("a channel drag whose row a site refresh removed still ends on a detached dragend, a later pointer, or an unaccepted drop", async (t) => {
+    const saved = stateOf(folder("games", "게임", [E]));
+    for (const ending of ["detached-dragend", "pointer", "outside-drop", "list-gap-drop"]) {
+        const { dom, document } = await setup(
+            t,
+            { followingFoldersEnabled: true, [KEY]: saved },
+            { collapsedList: true, longList: true }
+        );
+        const more = document.getElementById("moreButton");
+        await waitForCondition(() => document.getElementById("rowE"));
+        await settle();
+        const list = document.getElementById("followingList");
+        const link = document.querySelector("#rowE a");
+        dragEvent(dom, "dragstart", link);
+        assert.equal(list.getAttribute("data-bcff-dragging"), "1");
+        assert.ok(document.querySelector("[data-bcff-new-zone]"), "the new-folder spot shows while dragging");
+        const clicks = more.nativeClicks;
+        more.refreshList();
+        await settle();
+        assert.equal(link.isConnected, false, "the refresh dropped the dragged row");
+        assert.equal(more.nativeClicks, clicks, "the list is not built again while dragging");
+
+        // The detached source keeps the dragend from reaching window, or Chrome sends none at all.
+        if (ending === "detached-dragend") dragEvent(dom, "dragend", link);
+        else if (ending === "pointer")
+            dispatchTrusted(document.body, new dom.window.MouseEvent("pointermove", { bubbles: true }));
+        else if (ending === "outside-drop") dragEvent(dom, "drop", document.getElementById("mainLive"));
+        else dragEvent(dom, "drop", list);
+
+        assert.equal(list.hasAttribute("data-bcff-dragging"), false, `${ending} clears the drag mark`);
+        assert.equal(document.querySelector("[data-bcff-new-zone]"), null, `${ending} removes the new-folder spot`);
+        assert.equal(document.querySelector("[data-bcff-drag-source]"), null);
+        await waitForCondition(() => document.getElementById("rowE"));
+        assert.ok(more.nativeClicks > clicks, `${ending} lets the cut list be built again`);
+    }
+});
+
+// Save replies come by message and storage.onChanged comes separately, so a reply may overtake an earlier notice.
+function holdNotices(chrome) {
+    const held = [];
+    chrome.testState.write = (values) => {
+        const changes = {};
+        for (const [key, value] of Object.entries(values)) {
+            changes[key] = { oldValue: clone(chrome.testState.data[key]), newValue: clone(value) };
+            chrome.testState.data[key] = clone(value);
+        }
+        held.push(changes);
+    };
+    return {
+        get count() {
+            return held.length;
+        },
+        deliver() {
+            const changes = held.shift();
+            for (const listener of [...chrome.testState.listeners]) listener(clone(changes), "sync");
+        },
+    };
+}
+
+test("a late notice of my own earlier save neither rolls the folders back nor wastes a retry", async (t) => {
+    const saved = stateOf(folder("games", "가", [C]), folder("talk", "나", [D]));
+    const { chrome, dom, document, store } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    await waitForCondition(() => headerButton(document, "나"));
+    const list = document.getElementById("followingList");
+    const notices = holdNotices(chrome);
+    const idle = () => waitForCondition(() => !list.hasAttribute("aria-busy"));
+    const expandedOf = (name) => headerButton(document, name).getAttribute("aria-expanded");
+
+    // Both replies arrive before either notice.
+    trustedClick(dom, headerButton(document, "가"));
+    await idle();
+    trustedClick(dom, headerButton(document, "나"));
+    await idle();
+    assert.equal(notices.count, 2);
+    assert.deepEqual(
+        storedState(chrome).folders.map((item) => item.collapsed),
+        [true, true]
+    );
+    notices.deliver();
+    assert.equal(expandedOf("나"), "false", "the late notice of the first save keeps the second change on screen");
+    notices.deliver();
+    assert.equal(expandedOf("가"), "false");
+    assert.equal(expandedOf("나"), "false");
+
+    // The notice of the previous save lands while the next save is still on its way.
+    trustedClick(dom, headerButton(document, "가"));
+    await idle();
+    const release = holdStore(store);
+    trustedClick(dom, headerButton(document, "나"));
+    await settle();
+    notices.deliver();
+    assert.equal(expandedOf("나"), "true", "the pending change stays on screen");
+    release();
+    await idle();
+    assert.equal(expandedOf("나"), "true", "the confirmed reply is kept although the earlier notice came in between");
+    assert.equal(expandedOf("가"), "true");
+    notices.deliver();
+    assert.equal(store.conflicts, 0, "no save had to retry");
+
+    trustedClick(dom, headerButton(document, "가"));
+    await idle();
+    assert.equal(store.conflicts, 0, "the next save starts from the latest confirmed value");
+    assert.equal(storedState(chrome).folders[0].collapsed, true);
+    assert.equal(storedState(chrome).folders[1].collapsed, false);
+});
+
+test("late notices around a save that retried over another tab's change keep my result and its undo", async (t) => {
+    const saved = stateOf(folder("games", "가", [C]), folder("talk", "나", [D]), folder("etc", "다"));
+    const { chrome, dom, document, store } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    await waitForCondition(() => headerButton(document, "다"));
+    const list = document.getElementById("followingList");
+    const notices = holdNotices(chrome);
+    const idle = () => waitForCondition(() => !list.hasAttribute("aria-busy"));
+    const undoButton = () => document.querySelector(`${TOAST_SELECTOR} [data-bcff-key="undo"]`);
+    const folderOnScreen = (rowId) => {
+        const order = visualOrder(dom);
+        const at = order.indexOf(rowId);
+        return at < 0 ? null : order.slice(0, at).findLast((name) => name.startsWith("["));
+    };
+
+    // My first save is confirmed but its notice is late.
+    trustedClick(dom, headerButton(document, "가"));
+    await idle();
+    const first = storedState(chrome);
+    // Another tab saves on top of it, and that notice is late too.
+    const other = clone(first);
+    other.folders[2].name = "라";
+    chrome.testState.write({ [KEY]: other });
+    // My next save conflicts, learns the other tab's value from the reply and saves again on top of it.
+    dragEvent(dom, "dragstart", document.querySelector("#rowD a"));
+    dragEvent(dom, "dragover", header(document, "다"));
+    dragEvent(dom, "drop", header(document, "다"));
+    await idle();
+    await waitForCondition(() => undoButton());
+    assert.equal(store.conflicts, 1);
+    const retried = storedState(chrome);
+    assert.deepEqual(retried.folders[2], folder("etc", "라", [D]));
+    assert.equal(folderOnScreen("rowD"), "[라]");
+    assert.equal(notices.count, 3);
+
+    for (const name of ["first save's", "other tab's", "retried save's"]) {
+        notices.deliver();
+        await settle();
+        assert.equal(folderOnScreen("rowD"), "[라]", `the late ${name} notice keeps the retried result on screen`);
+    }
+    assert.ok(undoButton(), "the undo offer is still on screen");
+    trustedClick(dom, undoButton());
+    await waitForCondition(() => /되돌리기 완료.|되돌리기 취소/.test(toastText(document)));
+    assert.match(toastText(document), /되돌리기 완료./, "undo goes back to the value my save started from");
+    assert.deepEqual(storedState(chrome), other);
+    assert.deepEqual(store.calls.at(-1).expected, { [KEY]: { value: retried } });
+    assert.equal(store.conflicts, 1, "no later save had to retry");
+    notices.deliver();
+    await settle();
+    assert.equal(folderOnScreen("rowD"), "[나]");
+});
+
+// Holds only the first settings-store reply, like a reply message that arrives after the storage notices.
+// beforeCall(n) runs before the n-th request (1-based) reaches the fake worker.
+function holdFirstReply(dom, beforeCall = null) {
+    const utils = dom.window.CheeseSpanner.utils;
+    const workerSet = utils.settingsStoreSet;
+    const held = [];
+    let calls = 0;
+    utils.settingsStoreSet = (...args) => {
+        calls += 1;
+        beforeCall?.(calls);
+        const reply = workerSet(...args);
+        if (calls > 1) return reply;
+        return new Promise((resolve, reject) => {
+            reply.then(
+                (value) => held.push(() => resolve(value)),
+                (error) => held.push(() => reject(error))
+            );
+        });
+    };
+    return held;
+}
+
+test("late conflict replies for other tabs' changes already shown do not hide their next change", async (t) => {
+    const saved = stateOf(folder("games", "게임", [C]));
+    const renamed = stateOf(folder("games", "다른 이름", [C]));
+    const renamedFolded = stateOf(folder("games", "다른 이름", [C], true));
+    const { chrome, dom, document, store } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    await waitForCondition(() => headerButton(document, "게임"));
+    const list = document.getElementById("followingList");
+    const idle = () => waitForCondition(() => !list.hasAttribute("aria-busy"));
+    const expanded = () => headerButton(document, "다른 이름")?.getAttribute("aria-expanded");
+    const heldReplies = holdFirstReply(dom);
+    // Another tab renames the folder just before the worker compares my fold.
+    store.beforeCompare = () => {
+        store.beforeCompare = null;
+        chrome.testState.writeOtherTab({ [KEY]: renamed });
+    };
+
+    trustedClick(dom, headerButton(document, "게임"));
+    await waitForCondition(() => heldReplies.length === 1);
+    assert.equal(store.conflicts, 1);
+    // The other tab then folds it too. Both notices arrive before my conflict reply (current = renamed).
+    chrome.testState.writeOtherTab({ [KEY]: renamedFolded });
+    await waitForCondition(() => headerButton(document, "다른 이름"));
+    await settle();
+    heldReplies.shift()();
+    // The retry expects the renamed value, conflicts with the folded one, and then has nothing left to write.
+    await idle();
+    await settle();
+    assert.equal(store.conflicts, 2);
+    assert.equal(store.calls.length, 2);
+    assert.deepEqual(storedState(chrome), renamedFolded);
+    assert.equal(expanded(), "false");
+
+    // The other tab unfolds the folder again. That is a new change, not a late notice of an old one.
+    chrome.testState.writeOtherTab({ [KEY]: renamed });
+    await settle();
+    assert.equal(expanded(), "true", "the other tab's unfold shows on screen");
+    assert.notEqual(dom.window.getComputedStyle(document.getElementById("rowC")).display, "none");
+
+    // My next fold starts from the unfolded value without another conflict.
+    trustedClick(dom, headerButton(document, "다른 이름"));
+    await waitForCondition(() => store.calls.length === 3);
+    assert.deepEqual(store.calls[2].expected, { [KEY]: { value: renamed } });
+    await idle();
+    await settle();
+    assert.equal(store.conflicts, 2, "the next save did not have to retry");
+    assert.deepEqual(storedState(chrome), renamedFolded);
+    assert.equal(expanded(), "false");
+});
+
+test("a retry that fails after late conflict replies leaves no record that hides another tab's next change", async (t) => {
+    const saved = stateOf(folder("games", "게임", [C]));
+    const first = stateOf(folder("games", "이름1", [C]));
+    const second = stateOf(folder("games", "이름2", [C]));
+    const { chrome, dom, document, store } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    await waitForCondition(() => headerButton(document, "게임"));
+    const list = document.getElementById("followingList");
+    const idle = () => waitForCondition(() => !list.hasAttribute("aria-busy"));
+    // The third request (the second retry) fails for a reason other than a conflict.
+    const heldReplies = holdFirstReply(dom, (call) => {
+        if (call === 3) store.failNext = "write-failed";
+    });
+    store.beforeCompare = () => {
+        store.beforeCompare = null;
+        chrome.testState.writeOtherTab({ [KEY]: first });
+    };
+
+    trustedClick(dom, headerButton(document, "게임"));
+    await waitForCondition(() => heldReplies.length === 1);
+    chrome.testState.writeOtherTab({ [KEY]: second });
+    await waitForCondition(() => headerButton(document, "이름2"));
+    await settle();
+    heldReplies.shift()();
+    await idle();
+    await waitForCondition(() => toastText(document));
+    assert.equal(store.calls.length, 3);
+    assert.equal(store.conflicts, 2);
+    assert.deepEqual(storedState(chrome), second);
+    assert.equal(headerButton(document, "이름2")?.getAttribute("aria-expanded"), "true");
+
+    // Another tab puts the first name back. It is a new change and shows on screen.
+    chrome.testState.writeOtherTab({ [KEY]: first });
+    await settle();
+    assert.ok(headerButton(document, "이름1"), "the other tab's new name shows on screen");
+    trustedClick(dom, headerButton(document, "이름1"));
+    await waitForCondition(() => store.calls.length === 4);
+    assert.deepEqual(store.calls[3].expected, { [KEY]: { value: first } });
+    await idle();
+    await settle();
+    assert.equal(store.conflicts, 2, "the next save did not have to retry");
+    assert.deepEqual(storedState(chrome), stateOf(folder("games", "이름1", [C], true)));
+});
+
+// S → X → Y → X → B: another tab renames the third folder to 라, then 마, then 라 again while my move retries.
+// The notices of X and Y arrive first; the second X and my save B are late. Values alone cannot tell the two X apart.
+async function setupRepeatedValueRetry(t, { holdIntermediate = false } = {}) {
+    const saved = stateOf(folder("games", "게임", [C]), folder("talk", "토크"), folder("etc", "기타"));
+    const renamed = (name) => {
+        const state = clone(saved);
+        state.folders[2].name = name;
+        return state;
+    };
+    const X = renamed("라");
+    const Y = renamed("마");
+    const context = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    const { chrome, dom, document, store } = context;
+    await waitForCondition(() => headerButton(document, "토크"));
+    const list = document.getElementById("followingList");
+    const notices = holdNotices(chrome);
+    const heldReplies = holdFirstReply(dom, (call) => {
+        store.beforeCompare = null;
+        if (call === 1 && !holdIntermediate) {
+            // X and Y reach this page before my first conflict reply (current = Y).
+            store.beforeCompare = () => {
+                chrome.testState.writeOtherTab({ [KEY]: X });
+                chrome.testState.writeOtherTab({ [KEY]: Y });
+            };
+        } else if (call === 1) {
+            // Only the first X reaches this page; Y and the second X stay late. The reply says current = X.
+            store.beforeCompare = () => {
+                chrome.testState.writeOtherTab({ [KEY]: X });
+                chrome.testState.write({ [KEY]: Y });
+                chrome.testState.write({ [KEY]: X });
+            };
+        } else if (call === 2 && !holdIntermediate) {
+            // The other tab goes back to X just before my retry is compared. That notice is late.
+            store.beforeCompare = () => chrome.testState.write({ [KEY]: X });
+        }
+    });
+    const folderOnScreen = (rowId) => {
+        const order = visualOrder(dom);
+        const at = order.indexOf(rowId);
+        return at < 0 ? null : order.slice(0, at).findLast((name) => name.startsWith("["));
+    };
+    const undoButton = () => document.querySelector(`${TOAST_SELECTOR} [data-bcff-key="undo"]`);
+
+    dragEvent(dom, "dragstart", document.querySelector("#rowC a"));
+    dragEvent(dom, "dragover", header(document, "토크"));
+    dragEvent(dom, "drop", header(document, "토크"));
+    await waitForCondition(() => heldReplies.length === 1);
+    await settle();
+    assert.ok(header(document, holdIntermediate ? "라" : "마"), "the notices that came in time are on screen");
+    heldReplies.shift()();
+    await waitForCondition(() => !list.hasAttribute("aria-busy"));
+    await waitForCondition(() => undoButton());
+    const moved = clone(X);
+    moved.folders[0].channelIds = [];
+    moved.folders[1].channelIds = [C];
+    return { ...context, X, moved, notices, folderOnScreen, undoButton };
+}
+
+async function assertLateNoticesKeepMoveAndUndo(context, lateNames) {
+    const { chrome, document, store, X, moved, notices, folderOnScreen, undoButton } = context;
+    assert.deepEqual(storedState(chrome), moved);
+    assert.equal(folderOnScreen("rowC"), "[토크]");
+    assert.equal(notices.count, lateNames.length);
+    for (const name of lateNames) {
+        notices.deliver();
+        await settle();
+        assert.equal(folderOnScreen("rowC"), "[토크]", `the late ${name} notice keeps my move on screen`);
+        assert.ok(header(document, "라"), `the late ${name} notice keeps the other tab's latest name`);
+        assert.ok(undoButton(), `the late ${name} notice keeps the undo offer`);
+    }
+    const conflicts = store.conflicts;
+    trustedClick(context.dom, undoButton());
+    await waitForCondition(() => /되돌리기 완료.|되돌리기 취소/.test(toastText(document)));
+    assert.match(toastText(document), /되돌리기 완료./, "undo still works after the late notices");
+    assert.deepEqual(storedState(chrome), X, "undo puts back the value my move was saved over");
+    assert.deepEqual(store.calls.at(-1).expected, { [KEY]: { value: moved } });
+    assert.equal(store.conflicts, conflicts, "undo did not conflict");
+    notices.deliver();
+    await settle();
+    assert.equal(folderOnScreen("rowC"), "[게임]");
+}
+
+test("a late notice of another tab's return to an earlier value keeps my retried save and its undo", async (t) => {
+    const context = await setupRepeatedValueRetry(t);
+    assert.equal(context.store.calls.length, 3);
+    assert.equal(context.store.conflicts, 2);
+    await assertLateNoticesKeepMoveAndUndo(context, ["second 라", "my move's"]);
+});
+
+test("late notices of another tab's changes my conflict replies never named still keep my save and its undo", async (t) => {
+    const context = await setupRepeatedValueRetry(t, { holdIntermediate: true });
+    assert.equal(context.store.calls.length, 2);
+    assert.equal(context.store.conflicts, 1);
+    await assertLateNoticesKeepMoveAndUndo(context, ["마", "second 라", "my move's"]);
+});
+
+test("another tab's change still shows when the notice of my own save never comes", async (t) => {
+    const saved = stateOf(folder("games", "게임", [C]));
+    const { chrome, dom, document } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    await waitForCondition(() => headerButton(document, "게임"));
+    const list = document.getElementById("followingList");
+    const notices = holdNotices(chrome);
+    trustedClick(dom, headerButton(document, "게임"));
+    await waitForCondition(() => !list.hasAttribute("aria-busy"));
+    assert.equal(notices.count, 1);
+    assert.equal(headerButton(document, "게임").getAttribute("aria-expanded"), "false");
+
+    // My save's notice is lost. Another tab's later changes still reach the screen.
+    chrome.testState.writeOtherTab({ [KEY]: stateOf(folder("games", "새 이름", [C], true)) });
+    await waitForCondition(() => headerButton(document, "새 이름"));
+    chrome.testState.writeOtherTab({ [KEY]: stateOf(folder("games", "새 이름", [C])) });
+    await waitForCondition(() => headerButton(document, "새 이름")?.getAttribute("aria-expanded") === "true");
+    assert.notEqual(dom.window.getComputedStyle(document.getElementById("rowC")).display, "none");
+});
+
+function folderOfRowOnScreen(dom, rowId) {
+    const order = visualOrder(dom);
+    const at = order.indexOf(rowId);
+    return at < 0 ? null : order.slice(0, at).findLast((name) => name.startsWith("["));
+}
+
+function dropRowOnHeader(dom, document, rowId, name) {
+    dragEvent(dom, "dragstart", document.querySelector(`#${rowId} a`));
+    dragEvent(dom, "dragover", header(document, name));
+    dragEvent(dom, "drop", header(document, name));
+}
+
+// S → B → S: another tab makes the same move as mine and takes it back just before the worker compares my move, so
+// my move B saves without a conflict. Every notice is late, and the other tab's B has the same value as my result.
+test("late notices of another tab's same change and its return keep my save and its undo", async (t) => {
+    const saved = stateOf(folder("games", "게임", [C]), folder("talk", "토크"));
+    const moved = stateOf(folder("games", "게임"), folder("talk", "토크", [C]));
+    const { chrome, dom, document, store } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    await waitForCondition(() => headerButton(document, "토크"));
+    const list = document.getElementById("followingList");
+    const notices = holdNotices(chrome);
+    const undoButton = () => document.querySelector(`${TOAST_SELECTOR} [data-bcff-key="undo"]`);
+    store.beforeCompare = () => {
+        store.beforeCompare = null;
+        chrome.testState.write({ [KEY]: moved });
+        chrome.testState.write({ [KEY]: saved });
+    };
+
+    dropRowOnHeader(dom, document, "rowC", "토크");
+    await waitForCondition(() => !list.hasAttribute("aria-busy"));
+    await waitForCondition(() => undoButton());
+    assert.equal(store.calls.length, 1);
+    assert.equal(store.conflicts, 0);
+    assert.deepEqual(storedState(chrome), moved);
+    assert.equal(notices.count, 3);
+    for (const name of ["other tab's same move", "other tab's return", "my move's"]) {
+        notices.deliver();
+        await settle();
+        assert.equal(folderOfRowOnScreen(dom, "rowC"), "[토크]", `the late ${name} notice keeps my move on screen`);
+        assert.ok(undoButton(), `the late ${name} notice keeps the undo offer`);
+    }
+
+    trustedClick(dom, undoButton());
+    await waitForCondition(() => /되돌리기 완료.|되돌리기 취소/.test(toastText(document)));
+    assert.match(toastText(document), /되돌리기 완료./, "undo still works after the late notices");
+    assert.deepEqual(storedState(chrome), saved);
+    assert.equal(store.calls.length, 2);
+    assert.deepEqual(store.calls[1].expected, { [KEY]: { value: moved } });
+    assert.equal(store.conflicts, 0, "undo did not conflict");
+    notices.deliver();
+    await settle();
+    assert.equal(folderOfRowOnScreen(dom, "rowC"), "[게임]");
+});
+
+// A late notice makes the page read the stored value again. That read answers only after my next save is confirmed.
+test("a check read that answers after my next save keeps that save and its undo", async (t) => {
+    const context = await setupRepeatedValueRetry(t);
+    const { chrome, dom, document, store, moved, notices, undoButton } = context;
+    const list = document.getElementById("followingList");
+    assert.equal(notices.count, 2);
+    chrome.testState.holdKey = KEY;
+    notices.deliver();
+    await waitForCondition(() => chrome.testState.heldGets.length === 1);
+    assert.equal(folderOfRowOnScreen(dom, "rowC"), "[토크]");
+
+    // I move the channel on into 라, and that save is confirmed while every notice is still late.
+    const conflicts = store.conflicts;
+    dropRowOnHeader(dom, document, "rowC", "라");
+    await waitForCondition(() => store.calls.length === 4 && !list.hasAttribute("aria-busy"));
+    await waitForCondition(() => /‘라’ 폴더에 추가함/.test(toastText(document)));
+    const next = clone(moved);
+    next.folders[1].channelIds = [];
+    next.folders[2].channelIds = [C];
+    assert.deepEqual(storedState(chrome), next);
+    assert.deepEqual(store.calls[3].expected, { [KEY]: { value: moved } });
+    assert.equal(store.conflicts, conflicts);
+    assert.equal(folderOfRowOnScreen(dom, "rowC"), "[라]");
+
+    // The held read still holds the value from before my next save.
+    chrome.testState.heldGets.shift()();
+    await settle();
+    assert.equal(folderOfRowOnScreen(dom, "rowC"), "[라]", "the late read keeps my next move on screen");
+    assert.ok(undoButton(), "the late read keeps the undo offer");
+    assert.equal(notices.count, 2);
+    for (const name of ["my first move's", "my next move's"]) {
+        notices.deliver();
+        await settle();
+        assert.equal(folderOfRowOnScreen(dom, "rowC"), "[라]", `the late ${name} notice keeps my next move on screen`);
+        assert.ok(undoButton(), `the late ${name} notice keeps the undo offer`);
+    }
+
+    trustedClick(dom, undoButton());
+    await waitForCondition(() => /되돌리기 완료.|되돌리기 취소/.test(toastText(document)));
+    assert.match(toastText(document), /되돌리기 완료./, "undo still works after the late read");
+    assert.deepEqual(storedState(chrome), moved, "undo puts back the value my next move was saved over");
+    assert.deepEqual(store.calls.at(-1).expected, { [KEY]: { value: next } });
+    assert.equal(store.conflicts, conflicts, "undo did not conflict");
+    notices.deliver();
+    await settle();
+    assert.equal(folderOfRowOnScreen(dom, "rowC"), "[토크]");
+});
+
+// Coming back from the back-forward cache reads the stored value again. That read answers only after my save.
+test("a back-forward cache reread that answers after my save keeps that save and its undo", async (t) => {
+    const saved = stateOf(folder("games", "게임", [C]), folder("talk", "토크"));
+    const moved = stateOf(folder("games", "게임"), folder("talk", "토크", [C]));
+    const { chrome, dom, document, store } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    await waitForCondition(() => headerButton(document, "토크"));
+    const list = document.getElementById("followingList");
+    const notices = holdNotices(chrome);
+    const undoButton = () => document.querySelector(`${TOAST_SELECTOR} [data-bcff-key="undo"]`);
+    chrome.testState.holdKey = KEY;
+    dom.window.dispatchEvent(new dom.window.PageTransitionEvent("pageshow", { persisted: true }));
+    await waitForCondition(() => chrome.testState.heldGets.length === 1);
+
+    dropRowOnHeader(dom, document, "rowC", "토크");
+    await waitForCondition(() => !list.hasAttribute("aria-busy"));
+    await waitForCondition(() => undoButton());
+    assert.deepEqual(storedState(chrome), moved);
+    assert.equal(notices.count, 1);
+    chrome.testState.heldGets.shift()();
+    await settle();
+    assert.equal(folderOfRowOnScreen(dom, "rowC"), "[토크]", "the late reread keeps my move on screen");
+    assert.ok(undoButton(), "the late reread keeps the undo offer");
+    notices.deliver();
+    await settle();
+    assert.equal(folderOfRowOnScreen(dom, "rowC"), "[토크]");
+
+    trustedClick(dom, undoButton());
+    await waitForCondition(() => /되돌리기 완료.|되돌리기 취소/.test(toastText(document)));
+    assert.match(toastText(document), /되돌리기 완료./, "undo still works after the late reread");
+    assert.deepEqual(storedState(chrome), saved);
+    assert.deepEqual(store.calls.at(-1).expected, { [KEY]: { value: moved } });
+    assert.equal(store.conflicts, 0, "undo did not conflict");
+});
+
+test("an open name field the user did not edit leaves a name another tab changed meanwhile", async (t) => {
+    const saved = stateOf(folder("games", "게임", [C]));
+    const { chrome, dom, document, store } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    await waitForCondition(() => nameButton(document, "게임"));
+
+    trustedKey(dom, nameButton(document, "게임"), "F2");
+    await waitForCondition(() => renameInput(document));
+    chrome.testState.writeOtherTab({ [KEY]: stateOf(folder("games", "게임2", [C])) });
+    await settle();
+    assert.ok(renameInput(document), "the field stays open");
+    renameInput(document).blur();
+    await waitForCondition(() => !renameInput(document));
+    await settle();
+    assert.equal(storedState(chrome).folders[0].name, "게임2", "blur keeps the other tab's name");
+    assert.equal(store.calls.length, 0);
+
+    trustedKey(dom, nameButton(document, "게임2"), "F2");
+    await waitForCondition(() => renameInput(document));
+    chrome.testState.writeOtherTab({ [KEY]: stateOf(folder("games", "게임3", [C])) });
+    await settle();
+    trustedKey(dom, renameInput(document), "Enter");
+    await waitForCondition(() => !renameInput(document));
+    await settle();
+    assert.equal(
+        storedState(chrome).folders[0].name,
+        "게임3",
+        "Enter on an untouched field keeps the other tab's name"
+    );
+    assert.equal(store.calls.length, 0);
+
+    // A name the user actually typed is still saved.
+    trustedKey(dom, nameButton(document, "게임3"), "F2");
+    await waitForCondition(() => renameInput(document));
+    typeText(dom, renameInput(document), "잡담");
+    trustedKey(dom, renameInput(document), "Enter");
+    await waitForCondition(() => storedState(chrome).folders[0].name === "잡담");
+});
+
+test("a slow rename reply leaves the focus where the user moved it meanwhile", async (t) => {
+    const saved = stateOf(folder("games", "게임", [C]), folder("talk", "토크", [A]));
+    const { chrome, dom, document, store } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    await waitForCondition(() => nameButton(document, "게임"));
+    const chat = document.createElement("textarea");
+    document.body.append(chat);
+
+    trustedKey(dom, nameButton(document, "게임"), "F2");
+    await waitForCondition(() => renameInput(document));
+    typeText(dom, renameInput(document), "잡담");
+    let release = holdStore(store);
+    trustedKey(dom, renameInput(document), "Enter");
+    chat.focus();
+    await settle();
+    release();
+    await waitForCondition(() => storedState(chrome).folders[0].name === "잡담" && !renameInput(document));
+    await settle();
+    assert.equal(document.activeElement, chat, "a successful reply does not pull the focus back to the folder");
+
+    trustedKey(dom, nameButton(document, "토크"), "F2");
+    await waitForCondition(() => renameInput(document));
+    typeText(dom, renameInput(document), "수다");
+    store.failNext = "duplicate-name";
+    release = holdStore(store);
+    trustedKey(dom, renameInput(document), "Enter");
+    chat.focus();
+    await settle();
+    release();
+    await waitForCondition(() => /같은 이름/.test(toastText(document)));
+    await settle();
+    assert.equal(document.activeElement, chat, "a rejected reply does not pull the focus back to the field");
+    assert.equal(renameInput(document), null, "the field left behind closes like a blur");
+    assert.equal(storedState(chrome).folders[1].name, "토크");
+
+    // Without a focus move, Enter still returns the focus to the folder name.
+    trustedKey(dom, nameButton(document, "토크"), "F2");
+    await waitForCondition(() => renameInput(document));
+    typeText(dom, renameInput(document), "수다");
+    trustedKey(dom, renameInput(document), "Enter");
+    await waitForCondition(() => storedState(chrome).folders[1].name === "수다" && !renameInput(document));
+    assert.equal(document.activeElement, nameButton(document, "수다"));
 });

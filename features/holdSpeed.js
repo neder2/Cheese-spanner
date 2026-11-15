@@ -10,7 +10,8 @@
  *   홀드 상태와 안내 오버레이를 정리한다.
  * 의존: CheeseSpannerSettings, CheeseSpanner.skipControl(markPlaybackToggleIntent),
  *   CheeseSpanner.utils(getMainVideoElement, getPlayerRoot, getVideoViewportRect, injectStyleOnce, isLiveRoute, isPlaybackRoute,
- *   bindFeatureOptions, startPageChangeDetection).
+ *   isNativeAdBreakActive, bindFeatureOptions, startPageChangeDetection).
+ * 라이브 광고 구간(isNativeAdBreakActive)에는 새 Space 누름과 배속 단축키를 소비하지 않고 네이티브 광고에 넘긴다.
  * 옵션 키: holdSpeedEnabled, playbackSpeedShortcutsEnabled, playbackSpeedHalfKeyCode,
  *   playbackSpeedDoubleKeyCode, playbackSpeedResetKeyCode. 기존 Half/Double 저장 키는 감소/증가용으로 유지한다.
  */
@@ -42,6 +43,7 @@
         getVideoViewportRect,
         injectStyleOnce,
         isLiveRoute,
+        isNativeAdBreakActive,
         isPlaybackRoute,
         startPageChangeDetection,
     } = CheeseSpanner.utils;
@@ -406,7 +408,9 @@
             }
         }
 
-        if (event.repeat || getStartBlockReason(event)) return;
+        // 2026-11-05 공개 번들 기준 라이브 광고 구간의 Space는 네이티브가 광고 일시정지·재개에 쓴다.
+        // 광고 전에 시작한 누름·포인터 홀드는 위에서 기존대로 마무리하고, 새 키보드 누름만 넘긴다.
+        if (event.repeat || getStartBlockReason(event) || isNativeAdBreakActive()) return;
         const video = getMainVideoElement();
         if (!(video instanceof HTMLVideoElement)) return;
 
@@ -538,6 +542,8 @@
         if (!areSpeedShortcutsEnabled() || !isPlaybackRoute()) return null;
         if (event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return null;
         if (isSpaceConsumerTarget(event.target)) return null;
+        // 광고 구간에 숨은 음소거 메인의 배속만 바꾸면 광고 뒤 배속이 몰래 바뀌어 있으므로 넘긴다.
+        if (isNativeAdBreakActive()) return null;
 
         if (event.code === featureOptions.playbackSpeedHalfKeyCode) return "decrease";
         if (event.code === featureOptions.playbackSpeedDoubleKeyCode) return "increase";

@@ -278,11 +278,15 @@
         hideTooltip();
     }
 
-    function handleScroll() {
+    // Scrolling elsewhere (e.g. the chat list) must not cancel a pending open; only a scroller that moves the
+    // pending title does.
+    function handleScroll(event) {
+        if (pendingTitleEl && event?.target instanceof Node && event.target.contains(pendingTitleEl)) clearOpenTimer();
         scheduleTooltipPosition();
     }
 
     function handleResize() {
+        clearOpenTimer();
         scheduleTooltipPosition();
     }
 
@@ -293,7 +297,7 @@
             positionRaf = 0;
 
             if (activeTitleEl?.isConnected) positionTooltip(activeTitleEl);
-            else hideTooltip();
+            else if (activeTitleEl) hideTooltip();
         });
     }
 

@@ -172,6 +172,8 @@ test("incompatible ranges for the same absolute session snapshot skip the entire
     assert.deepEqual(plain(result.history), plain(current));
 });
 
+// The record is deleted after the provisional ID already points at it locally: the history page's deletion resolves
+// the alias, so the live record's own barrier applies and only what the file covers comes back.
 test("only file-scoped restored sessions and chats survive old alias deletion; unrelated watch and donations do not", () => {
     const { store, backup, merger } = load();
     const sourceId = "channel:channel-a:provisional:deleted";
@@ -185,7 +187,16 @@ test("only file-scoped restored sessions and chats survive old alias deletion; u
         snapshot({ sessionId: "new", enteredAt: NOW - 20000, seconds: 10 }),
         NOW
     ).history;
-    current.tombstones[sourceId] = NOW - 30000;
+    current = store.applyMutation(
+        current,
+        { kind: "migrateRecordId", sourceRecordId: sourceId, targetRecordId: "live:100" },
+        NOW - 40000
+    ).history;
+    current = store.applyMutation(
+        current,
+        { kind: "deleteEntries", entryIds: [sourceId], cutoffAt: NOW - 30000 },
+        NOW - 30000
+    ).history;
     const incoming = store.applyMutation(
         {},
         snapshot({ sessionId: "restored", seconds: 30, activities: [chat(2)] }),
@@ -210,6 +221,66 @@ test("only file-scoped restored sessions and chats survive old alias deletion; u
         entry.activities.some((row) => row.id === chat(2).id),
         true
     );
+});
+
+// The provisional record was deleted while it was still its own row, before any local alias. That deleted only its
+// session; a file that brings the first local alias must not turn it into a deletion of the whole live record.
+test("an independent provisional deletion stays scoped when a file brings the first local alias", () => {
+    const { store, backup, merger } = load();
+    const sourceId = "channel:channel-a:provisional:tab-b";
+    let current = store.applyMutation(
+        {},
+        snapshot({ sessionId: "tab-a", activities: [chat(1, "donation")] }),
+        NOW
+    ).history;
+    current = store.applyMutation(
+        current,
+        snapshot({ id: sourceId, sessionId: "tab-b", enteredAt: ENTERED + 10000, seconds: 30 }),
+        NOW
+    ).history;
+    current = store.applyMutation(
+        current,
+        { kind: "deleteEntries", entryIds: [sourceId], cutoffAt: NOW - 30000 },
+        NOW - 30000
+    ).history;
+    const incoming = store.applyMutation(
+        {},
+        snapshot({ sessionId: "restored", seconds: 30, activities: [chat(2)] }),
+        NOW
+    ).history;
+    incoming.recordAliases[sourceId] = { targetRecordId: "live:100", migratedAt: NOW };
+    let history = merger.mergeBackup(current, createFile(backup, incoming), { now: NOW + 100 }).history;
+    const ids = () => plain(history.entries["live:100"].sessionDetails.map((row) => row.id).sort());
+    assert.deepEqual(ids(), ["restored", "tab-a"]);
+    const migration = { kind: "migrateRecordId", sourceRecordId: sourceId, targetRecordId: "live:100" };
+    // The page may send its migration again; every repeat reads the stored history back.
+    for (const at of [NOW + 200, NOW + 300, NOW + 400]) {
+        history = plain(store.applyMutation(history, migration, at).history);
+        assert.deepEqual(ids(), ["restored", "tab-a"], `migration at +${at - NOW} ms`);
+    }
+    assert.equal(history.tombstones["live:100"], undefined);
+    assert.equal(history.tombstones[sourceId], NOW - 30000);
+    assert.equal(
+        history.entries["live:100"].activities.some((row) => row.kind === "donation"),
+        true
+    );
+    // The deleted tab B session still cannot come back through either ID.
+    for (const recordId of ["live:100", sourceId]) {
+        const late = store.applyMutation(
+            history,
+            snapshot({ id: recordId, sessionId: "tab-b", enteredAt: ENTERED + 10000, seconds: 60 }),
+            NOW + 500
+        );
+        assert.deepEqual([late.result.status, late.result.reason], ["ignored", "deleted"], recordId);
+    }
+    // Importing the same file again changes nothing, and a later deletion of the record still applies to all of it.
+    assert.equal(merger.mergeBackup(history, createFile(backup, incoming), { now: NOW + 600 }).changed, false);
+    history = store.applyMutation(
+        history,
+        { kind: "deleteEntries", entryIds: [sourceId], cutoffAt: NOW + 700 },
+        NOW + 700
+    ).history;
+    assert.equal(history.entries["live:100"], undefined);
 });
 
 test("a later same-day session is not reported as restored because its KST date began before deletion", () => {

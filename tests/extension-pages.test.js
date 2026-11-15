@@ -11,6 +11,7 @@ const {
     evalRepoScript,
     evalFeatureModules,
     dispatch,
+    dispatchTrusted,
     queryOption,
     waitForAsyncCallbacks,
     waitForCondition,
@@ -824,7 +825,7 @@ test("adblock popup waits for saved options then closes before DOMContentLoaded"
             "<body>",
             '<div class="_dimmed_10ysp_2" id="dimmed">',
             '<div class="_container_10ysp_20 _modal_10ysp_27" id="modal" role="alertdialog" aria-modal="true">',
-            ADBLOCK_POPUP_TITLE,
+            `<strong>${ADBLOCK_POPUP_TITLE}</strong>`,
             '<button type="button" aria-label="닫기">닫기</button>',
             "</div>",
             "</div>",
@@ -974,13 +975,14 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
 
     assert.ok(mainScript);
     assert.ok(isolatedScript);
-    assert.equal(manifest.version, "1.4.6");
+    assert.equal(manifest.version, "1.4.7");
     assert.equal(packageJson.version, manifest.version);
     assert.equal(packageLock.version, manifest.version);
     assert.equal(packageLock.packages[""].version, manifest.version);
     assert.equal(updateHistory.match(/^##\s+(\d+\.\d+\.\d+)/m)?.[1], manifest.version);
     assert.deepEqual(manifest.permissions, ["storage", "scripting", "alarms"]);
-    assert.deepEqual(manifest.optional_permissions, ["notifications"]);
+    // downloads only places recordings in the chosen folder; it is asked for when a folder is saved.
+    assert.deepEqual(manifest.optional_permissions, ["notifications", "downloads"]);
     assert.deepEqual(manifest.host_permissions, [
         "https://api.chzzk.naver.com/*",
         "https://apis.naver.com/*",
@@ -990,6 +992,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     // MAIN scripts load from the manifest; exposing one to pages only lets sites probe the install.
     assert.deepEqual(manifest.web_accessible_resources, [
         { resources: ["vendor/fonts/PretendardVariable.woff2"], matches: ["https://chzzk.naver.com/*"] },
+        { resources: ["recording-download.txt"], matches: ["https://chzzk.naver.com/*"] },
     ]);
     assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
     assert.equal(mainScript.js.includes("features/followingPreviewPage.js"), false);
@@ -1047,6 +1050,19 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
             isolatedScript.js.indexOf("features/followingPreviewTooltip.js")
     );
     assert.ok(isolatedScript.js.includes("features/chatTools.js"));
+    assert.equal(isolatedScript.js.filter((name) => name === "features/chatTools/keywordSettings.js").length, 1);
+    assert.equal(mainScript.js.includes("features/chatTools/keywordSettings.js"), false);
+    assert.ok(
+        isolatedScript.js.indexOf("features/chatTools/keywordSettings.js") > isolatedScript.js.indexOf("content.js")
+    );
+    assert.ok(
+        isolatedScript.js.indexOf("features/chatTools/keywordSettings.js") >
+            isolatedScript.js.indexOf("shared/uiTheme.js")
+    );
+    assert.ok(
+        isolatedScript.js.indexOf("features/chatTools/keywordSettings.js") <
+            isolatedScript.js.indexOf("features/skipControl.js")
+    );
     assert.ok(
         isolatedScript.js.indexOf("features/chatTools.js") > isolatedScript.js.indexOf("features/rewardAutoCollect.js")
     );
@@ -1736,7 +1752,7 @@ test("category follower filtering continues candidates that do not yet have a DO
     minimum.value = "1";
     dispatch(dom, minimum, "input");
     await waitForCondition(() => counts.size === 2);
-    assert.match(document.querySelector('[data-bcgt-empty="1"]').textContent, /확인하고/);
+    assert.equal(document.querySelector('[data-bcgt-empty="1"]').textContent, "조건에 맞는 방송 확인 중…");
     counts.get("native-a")(0);
     counts.get("native-b")(0);
     await waitForCondition(() => counts.has("candidate-c"));
@@ -2200,8 +2216,29 @@ test("video search skips generic comment and progress fallbacks", async () => {
     await loadVideoSearchPage(dom);
     await waitForCondition(() => getVideoSearchInput(dom));
 
+    const status = () => document.querySelector("#cheese-spanner-video-search-bar .bcvs-status")?.textContent || "";
+
+    // Two separate comments ("alpha", "beta") must not join into one cross-comment match.
     searchVideoSearchInput(dom, "alphabeta");
     await waitForCondition(() => requests.some((request) => request.init?.headers?.deviceId));
+    await waitForAsyncCallbacks();
+    await waitForAsyncCallbacks();
+    assert.equal(document.querySelector('[data-bcvs-injected="1"]'), null);
+    assert.equal(document.querySelector('[data-bcvs-comment-icon="1"]'), null);
+
+    // Positive control: a query inside one comment matches, so the comments above were really loaded.
+    searchVideoSearchInput(dom, "alpha");
+    await waitForCondition(() => document.querySelector('[data-bcvs-injected="1"] [data-bcvs-comment-icon="1"]'));
+    assert.equal(status(), "1 / 1");
+
+    // With the comments already cached, the cross-comment query still matches nothing.
+    searchVideoSearchInput(dom, "alphabeta");
+    await waitForCondition(() => status() === "0 / 1");
+    assert.equal(document.querySelector('[data-bcvs-injected="1"]'), null);
+    assert.equal(document.querySelector('[data-bcvs-comment-icon="1"]'), null);
+
+    // A title match keeps exercising the generic comment-icon and progress fallbacks.
+    searchVideoSearchInput(dom, "Existing");
     await waitForCondition(() => document.querySelector('[data-bcvs-injected="1"]'));
 
     const card = document.querySelector('[data-bcvs-injected="1"]');
@@ -2755,6 +2792,114 @@ test("volume wheel raises and lowers media volume over the volume control", asyn
     assert.equal(slider.value, "50");
 });
 
+test("volume wheel stays native during live and VOD ad breaks and never picks an ad video", async () => {
+    // 2026-11-05 public bundle: the live mid-roll shows #midAdPlayerWrapper (with a larger placeholder video) outside
+    // the main player, and a VOD ad marks the main pzp root pzp-pc--adbreak while it plays inside the player.
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<div class="pzp pzp-pc" id="root"><video id="video"></video>',
+            '<div class="pzp-pc__volume-control" id="vol">',
+            '<button class="pzp-pc__volume-button" type="button"></button>',
+            '<input id="slider" type="range" min="0" max="100" value="50">',
+            "</div></div>",
+            '<div id="midAdPlayerWrapper" style="display:none"><video id="midPlayer"></video></div>',
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const midPlayer = document.getElementById("midPlayer");
+    const vol = document.getElementById("vol");
+    video.volume = 0.5;
+    midPlayer.volume = 0.5;
+    video.getBoundingClientRect = () => ({ width: 640, height: 360, left: 0, top: 0, right: 640, bottom: 360 });
+    midPlayer.getBoundingClientRect = () => ({ width: 1920, height: 1080, left: 0, top: 0, right: 1920, bottom: 1080 });
+    vol.getBoundingClientRect = () => ({ width: 40, height: 40, left: 20, top: 320, right: 60, bottom: 360 });
+    evalVolumeWheelScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    const wheelUp = () => {
+        const event = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "deltaY", { value: -100 });
+        vol.dispatchEvent(event);
+        return event;
+    };
+
+    const mid = document.getElementById("midAdPlayerWrapper");
+    const hiddenWrapper = wheelUp();
+    assert.equal(hiddenWrapper.defaultPrevented, true, "a hidden mid-roll wrapper leaves the wheel to the main video");
+    assert.ok(Math.abs(video.volume - 0.55) < 1e-6);
+    assert.equal(midPlayer.volume, 0.5, "the larger ad placeholder is never the main video");
+
+    mid.style.display = "block";
+    const liveAd = wheelUp();
+    assert.equal(liveAd.defaultPrevented, false, "the live mid-roll keeps the native wheel");
+    assert.ok(Math.abs(video.volume - 0.55) < 1e-6, "the hidden main volume is unchanged");
+    assert.equal(midPlayer.volume, 0.5);
+    mid.style.display = "none";
+
+    const root = document.getElementById("root");
+    root.classList.add("pzp-pc--adbreak");
+    const vodAd = wheelUp();
+    assert.equal(vodAd.defaultPrevented, false, "a VOD ad break keeps the native wheel");
+    assert.ok(Math.abs(video.volume - 0.55) < 1e-6);
+    root.classList.remove("pzp-pc--adbreak");
+
+    const after = wheelUp();
+    assert.equal(after.defaultPrevented, true, "the wheel returns after the break");
+    assert.ok(Math.abs(video.volume - 0.6) < 1e-6);
+});
+
+test("volume wheel mutes when repeated steps reach 0% instead of leaving a tiny audible residue", async () => {
+    const chrome = createFakeChrome();
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            "<body>",
+            '<video id="video"></video>',
+            '<div class="pzp-pc__volume-control" id="vol">',
+            '<button class="pzp-pc__volume-button" type="button"></button>',
+            "</div>",
+            "</body>",
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const { document } = dom.window;
+    const video = document.getElementById("video");
+    const vol = document.getElementById("vol");
+    video.volume = 0.5;
+    video.muted = false;
+    video.getBoundingClientRect = () => ({ width: 640, height: 360, left: 0, top: 0, right: 640, bottom: 360 });
+    vol.getBoundingClientRect = () => ({ width: 40, height: 40, left: 20, top: 320, right: 60, bottom: 360 });
+    evalVolumeWheelScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+
+    const wheel = (deltaY) => {
+        const event = new dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY });
+        vol.dispatchEvent(event);
+        assert.equal(event.defaultPrevented, true);
+    };
+    // 0.5 - 0.05 * 10 leaves ~6.9e-17 in floating point; the tenth step must land on a real mute.
+    for (let step = 0; step < 9; step++) wheel(100);
+    assert.equal(video.muted, false);
+    assert.ok(Math.abs(video.volume - 0.05) < 1e-9);
+    wheel(100);
+    await waitForAsyncCallbacks();
+    assert.equal(video.volume, 0);
+    assert.equal(video.muted, true, "0% is the muted state the tooltip shows");
+    wheel(-100);
+    await waitForAsyncCallbacks();
+    assert.equal(video.muted, false);
+    assert.equal(video.volume, 0.05);
+});
+
 test("volume wheel ignores following preview videos when choosing media volume", async () => {
     const chrome = createFakeChrome();
     const dom = createPageDom(
@@ -3067,10 +3212,8 @@ test("quality and unified popup preferences save independently", async (t) => {
     const select = queryOption(document, "autoQualityPreferred");
     const dismissGuide = queryOption(document, "adblockPopupEnabled");
     assert.equal(queryOption(document, "autoQualityDismissInstallGuide"), null);
-    assert.equal(
-        dismissGuide.closest(".toggle-row").nextElementSibling.textContent.trim(),
-        "시청에 방해되는 팝업을 제거해요."
-    );
+    assert.equal(dismissGuide.closest(".toggle-row").nextElementSibling, null);
+    assert.equal(dismissGuide.closest("label").textContent.trim(), "시청 방해 팝업 제거");
     assert.equal(dismissGuide.checked, true);
     assert.equal(dismissGuide.disabled, false);
     assert.equal(select.value, "1080p");
@@ -4116,13 +4259,426 @@ test("live watch history splits same-channel broadcasts when live detail changes
     );
 });
 
+test("live watch history keeps API titles that mention 치지직 mid-title as separate title changes", async (t) => {
+    const chrome = createFakeChrome({
+        sync: {
+            liveWatchHistoryEnabled: true,
+        },
+    });
+    const final = "롤 내전 - 치지직 스트리머 대회 결승";
+    const semi = "롤 내전 - 치지직 스트리머 대회 4강";
+    const dom = createPageDom(
+        [
+            "<!doctype html>",
+            `<head><title>${final} - CHZZK</title></head>`,
+            '<body><main><video id="video"></video></main></body>',
+        ].join(""),
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const clock = useFakePerformanceNow(dom);
+    const video = dom.window.document.getElementById("video");
+    let nowMs = Date.parse("2026-07-10T12:00:00+09:00");
+    let mediaTime = 0;
+    let apiTitle = final;
+    let metadataRefreshCallback = null;
+    const originalSetTimeout = dom.window.setTimeout.bind(dom.window);
+    dom.window.setTimeout = (callback, delayMs, ...args) => {
+        if (delayMs === 60000) {
+            metadataRefreshCallback = () => callback(...args);
+            return 60000;
+        }
+        return originalSetTimeout(callback, delayMs, ...args);
+    };
+
+    t.after(async () => {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    });
+
+    dom.window.Date.now = () => nowMs;
+    dom.window.fetch = async () => ({
+        ok: true,
+        json: async () => ({ content: { channelName: "테스트 채널", liveId: "broadcast-a", liveTitle: apiTitle } }),
+    });
+    makeVisibleVideo(video);
+    Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+    Object.defineProperty(video, "ended", { configurable: true, get: () => false });
+    Object.defineProperty(video, "playbackRate", { configurable: true, get: () => 1 });
+    Object.defineProperty(video, "currentTime", { configurable: true, get: () => mediaTime });
+    Object.defineProperty(video, "readyState", {
+        configurable: true,
+        get: () => dom.window.HTMLMediaElement.HAVE_CURRENT_DATA,
+    });
+
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "liveWatchHistory.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForCondition(() => typeof metadataRefreshCallback === "function");
+
+    const tick = intervals.find((interval) => interval.ms === 5000)?.fn;
+    const flush = intervals.find((interval) => interval.ms === 15000)?.fn;
+    const watch = () => {
+        for (let index = 0; index < 6; index += 1) {
+            clock.advance(10000);
+            nowMs += 10000;
+            mediaTime += 10;
+            tick();
+        }
+        flush();
+    };
+    const entry = () => chrome.testState.local.betterChzzkLiveWatchHistory?.entries?.["live:broadcast-a"];
+    watch();
+    await waitForCondition(() => entry()?.watchedSeconds === 60);
+    assert.equal(entry().title, final, "the API title keeps the text after '- 치지직'");
+
+    apiTitle = semi;
+    metadataRefreshCallback();
+    await waitForAsyncCallbacks();
+    watch();
+    await waitForCondition(() => entry()?.watchedSeconds === 120);
+
+    assert.deepEqual(Object.keys(chrome.testState.local.betterChzzkLiveWatchHistory.entries), ["live:broadcast-a"]);
+    assert.equal(entry().title, semi);
+    assert.deepEqual(
+        entry().titleHistory.map((row) => row.title),
+        [final, semi]
+    );
+});
+
+// A live page whose video plays on a fake clock; tick() is the 5 s tracker and flush() the 15 s writer.
+async function createLiveWatchFixture(t, sync = {}) {
+    const chrome = createFakeChrome({ sync: { liveWatchHistoryEnabled: true, ...sync } });
+    const dom = createPageDom(
+        '<!doctype html><head><title>방송</title></head><body><main><video id="video"></video></main></body>',
+        "https://chzzk.naver.com/live/test-channel",
+        chrome
+    );
+    const intervals = captureIntervals(dom);
+    const clock = useFakePerformanceNow(dom);
+    const video = dom.window.document.getElementById("video");
+    const state = { nowMs: Date.parse("2026-07-10T12:00:00+09:00"), mediaTime: 0, paused: false, ended: false };
+    t.after(async () => {
+        for (const listener of chrome.testState.storageChangeListeners) {
+            listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+        }
+        await waitForAsyncCallbacks();
+        dom.window.close();
+    });
+    dom.window.Date.now = () => state.nowMs;
+    dom.window.fetch = async () => ({
+        ok: true,
+        json: async () => ({
+            content: { channelName: "테스트 채널", liveId: "broadcast-a", liveTitle: "방송", status: "OPEN" },
+        }),
+    });
+    makeVisibleVideo(video);
+    for (const [key, get] of [
+        ["paused", () => state.paused],
+        ["ended", () => state.ended],
+        ["playbackRate", () => 1],
+        ["currentTime", () => state.mediaTime],
+        ["readyState", () => dom.window.HTMLMediaElement.HAVE_CURRENT_DATA],
+    ])
+        Object.defineProperty(video, key, { configurable: true, get });
+    evalRepoScript(dom, "shared", "settings.js");
+    evalContentScripts(dom);
+    evalRepoScript(dom, "features", "liveWatchHistory.js");
+    dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForCondition(() => intervals.some((interval) => interval.ms === 5000));
+    const tick = intervals.find((interval) => interval.ms === 5000).fn;
+    const flush = intervals.find((interval) => interval.ms === 15000).fn;
+    const play = (seconds) => {
+        clock.advance(seconds * 1000);
+        state.nowMs += seconds * 1000;
+        state.mediaTime += seconds;
+    };
+    const watch = (seconds) => {
+        for (let left = seconds; left > 0; left -= 5) {
+            play(Math.min(5, left));
+            tick();
+        }
+    };
+    const entry = () => chrome.testState.local.betterChzzkLiveWatchHistory?.entries?.["live:broadcast-a"];
+    return { chrome, clock, dom, video, state, play, watch, tick, flush, entry };
+}
+
+for (const stop of ["pause", "ended"]) {
+    test(`live watch history counts the seconds played between the last tick and ${stop}`, async (t) => {
+        const f = await createLiveWatchFixture(t);
+        f.watch(60);
+        f.flush();
+        await waitForCondition(() => f.entry()?.watchedSeconds === 60);
+        // Three more seconds play, then the video stops before the next 5 s tick.
+        f.play(3);
+        f.state[stop === "pause" ? "paused" : "ended"] = true;
+        f.video.dispatchEvent(new f.dom.window.Event(stop));
+        await waitForCondition(() => f.entry()?.watchedSeconds === 63);
+        // A stopped video that does not advance adds nothing later.
+        f.state.nowMs += 5000;
+        f.tick();
+        f.flush();
+        await waitForAsyncCallbacks();
+        assert.equal(f.entry().watchedSeconds, 63);
+    });
+}
+
+for (const leave of ["off", "spa"]) {
+    test(`live watch history adds nothing for a paused seek before the session ends by ${leave}`, async (t) => {
+        const f = await createLiveWatchFixture(t);
+        f.watch(60);
+        f.flush();
+        await waitForCondition(() => f.entry()?.watchedSeconds === 60);
+        f.state.paused = true;
+        f.video.dispatchEvent(new f.dom.window.Event("pause"));
+        await waitForAsyncCallbacks();
+        // While paused, the user seeks 30 s ahead and leaves within the same tick interval.
+        f.state.nowMs += 3000;
+        f.clock.advance(3000);
+        f.state.mediaTime += 30;
+        if (leave === "off") {
+            for (const listener of f.chrome.testState.storageChangeListeners) {
+                listener({ liveWatchHistoryEnabled: { oldValue: true, newValue: false } }, "sync");
+            }
+        } else {
+            f.dom.window.history.pushState({}, "", "/live/other-channel");
+            f.dom.window.dispatchEvent(
+                new f.dom.window.CustomEvent("cheese-spanner:routechange", {
+                    detail: { href: f.dom.window.location.href, source: "test" },
+                })
+            );
+        }
+        await waitForAsyncCallbacks();
+        await waitForAsyncCallbacks();
+        assert.equal(f.entry().watchedSeconds, 60);
+    });
+}
+
+// 2026-10-30 Chrome measurement on a local media file: replacing the source of the same playing video (new src, load())
+// left it paused at media time 0 with only emptied/loadstart, no pause or waiting.
+for (const leave of ["off", "spa"]) {
+    test(`live watch history adds nothing for a paused seek after the same video reloads its source, ended by ${leave}`, async (t) => {
+        const f = await createLiveWatchFixture(t);
+        f.watch(60);
+        f.flush();
+        await waitForCondition(() => f.entry()?.watchedSeconds === 60);
+        f.state.mediaTime = 0;
+        f.state.paused = true;
+        f.video.dispatchEvent(new f.dom.window.Event("emptied"));
+        f.video.dispatchEvent(new f.dom.window.Event("loadstart"));
+        await waitForAsyncCallbacks();
+        // The reloaded video waits paused, the user seeks ahead of the old source's last sample, and leaves before
+        // the next tick.
+        f.state.nowMs += 1500;
+        f.clock.advance(1500);
+        f.video.dispatchEvent(new f.dom.window.Event("seeking"));
+        f.state.mediaTime = 70;
+        f.video.dispatchEvent(new f.dom.window.Event("seeked"));
+        if (leave === "off") {
+            for (const listener of f.chrome.testState.storageChangeListeners) {
+                listener({ liveWatchHistoryEnabled: { oldValue: true, newValue: false } }, "sync");
+            }
+        } else {
+            f.dom.window.history.pushState({}, "", "/live/other-channel");
+            f.dom.window.dispatchEvent(
+                new f.dom.window.CustomEvent("cheese-spanner:routechange", {
+                    detail: { href: f.dom.window.location.href, source: "test" },
+                })
+            );
+        }
+        await waitForAsyncCallbacks();
+        await waitForAsyncCallbacks();
+        assert.equal(f.entry().watchedSeconds, 60);
+    });
+}
+
+test("live watch history counts the reloaded source once it plays, from its first sample", async (t) => {
+    const f = await createLiveWatchFixture(t);
+    f.watch(60);
+    f.flush();
+    await waitForCondition(() => f.entry()?.watchedSeconds === 60);
+    f.state.mediaTime = 0;
+    f.state.paused = true;
+    f.video.dispatchEvent(new f.dom.window.Event("emptied"));
+    // The new source loads for 2 s and starts far ahead on the live timeline; loading time is not watching.
+    f.state.nowMs += 2000;
+    f.clock.advance(2000);
+    f.state.mediaTime = 5000;
+    f.state.paused = false;
+    f.video.dispatchEvent(new f.dom.window.Event("play"));
+    f.watch(10);
+    // The last 3 s before a pause still count as played on the new source.
+    f.play(3);
+    f.state.paused = true;
+    f.video.dispatchEvent(new f.dom.window.Event("pause"));
+    await waitForCondition(() => f.entry()?.watchedSeconds === 73);
+    f.flush();
+    await waitForAsyncCallbacks();
+    assert.equal(f.entry().watchedSeconds, 73);
+});
+
+// A paused tick after the reload samples the new source at 0; the video stays stopped until play, so the time
+// between that tick and play is loading, not watching, even though play starts far ahead of that sample.
+test("live watch history adds nothing for the stopped time between a reloaded source's paused tick and play", async (t) => {
+    const f = await createLiveWatchFixture(t);
+    f.watch(60);
+    f.flush();
+    await waitForCondition(() => f.entry()?.watchedSeconds === 60);
+    f.state.mediaTime = 0;
+    f.state.paused = true;
+    f.video.dispatchEvent(new f.dom.window.Event("emptied"));
+    f.state.nowMs += 5000;
+    f.clock.advance(5000);
+    f.tick();
+    f.state.nowMs += 2000;
+    f.clock.advance(2000);
+    f.state.mediaTime = 5000;
+    f.state.paused = false;
+    f.video.dispatchEvent(new f.dom.window.Event("play"));
+    f.watch(10);
+    f.play(3);
+    f.state.paused = true;
+    f.video.dispatchEvent(new f.dom.window.Event("pause"));
+    f.flush();
+    await waitForCondition(() => f.entry()?.watchedSeconds >= 73);
+    await waitForAsyncCallbacks();
+    assert.equal(f.entry().watchedSeconds, 73);
+});
+
+// The same holds without a reload: a seek made while paused and followed by play within one tick interval.
+test("live watch history adds nothing for a paused interval that ends with a seek and play", async (t) => {
+    const f = await createLiveWatchFixture(t);
+    f.watch(60);
+    f.flush();
+    await waitForCondition(() => f.entry()?.watchedSeconds === 60);
+    f.state.paused = true;
+    f.video.dispatchEvent(new f.dom.window.Event("pause"));
+    f.state.nowMs += 5000;
+    f.clock.advance(5000);
+    f.tick();
+    f.state.nowMs += 2000;
+    f.clock.advance(2000);
+    f.state.mediaTime += 30;
+    f.state.paused = false;
+    f.video.dispatchEvent(new f.dom.window.Event("play"));
+    f.watch(10);
+    f.flush();
+    await waitForCondition(() => f.entry()?.watchedSeconds >= 70);
+    await waitForAsyncCallbacks();
+    assert.equal(f.entry().watchedSeconds, 70);
+});
+
+test("live watch history adds nothing when a paused replacement video is ahead of the one that played", async (t) => {
+    const f = await createLiveWatchFixture(t);
+    f.watch(60);
+    f.flush();
+    await waitForCondition(() => f.entry()?.watchedSeconds === 60);
+    // The page swaps in another, paused video element whose media time is ahead, then the user turns the feature off.
+    const replacement = f.dom.window.document.createElement("video");
+    makeVisibleVideo(replacement);
+    for (const [key, value] of [
+        ["paused", true],
+        ["ended", false],
+        ["playbackRate", 1],
+        ["currentTime", f.state.mediaTime + 30],
+        ["readyState", f.dom.window.HTMLMediaElement.HAVE_CURRENT_DATA],
+    ])
+        Object.defineProperty(replacement, key, { configurable: true, get: () => value });
+    f.video.replaceWith(replacement);
+    f.clock.advance(3000);
+    f.state.nowMs += 3000;
+    await waitForCondition(() => f.dom.window.document.querySelector("video") === replacement);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    for (const listener of f.chrome.testState.storageChangeListeners) {
+        listener({ liveWatchHistoryEnabled: { oldValue: true, newValue: false } }, "sync");
+    }
+    await waitForAsyncCallbacks();
+    await waitForAsyncCallbacks();
+    assert.equal(f.entry().watchedSeconds, 60);
+});
+
+test("raising the minimum after a session is stored keeps updating that session", async (t) => {
+    const f = await createLiveWatchFixture(t);
+    f.watch(60);
+    f.flush();
+    await waitForCondition(() => f.entry()?.watchedSeconds === 60);
+    for (const listener of f.chrome.testState.storageChangeListeners) {
+        listener({ liveWatchHistoryMinMinutes: { oldValue: 1, newValue: 5 } }, "sync");
+    }
+    f.watch(30);
+    f.flush();
+    await waitForCondition(() => f.entry()?.watchedSeconds === 90);
+    f.state.paused = true;
+    f.video.dispatchEvent(new f.dom.window.Event("pause"));
+    await waitForAsyncCallbacks();
+    assert.equal(f.entry().watchedSeconds, 90);
+    assert.ok(f.entry().sessionDetails[0].leftAt >= f.entry().sessionDetails[0].enteredAt + 90000 - 1000);
+});
+
+// Chrome 2026-10-30: og:title is the broadcast title as is; only document.title ends with " - CHZZK".
+for (const [label, head, expected] of [
+    ["og:title", '<meta property="og:title" content="토크 - CHZZK"><title>페이지 - CHZZK</title>', "토크 - CHZZK"],
+    ["document.title", "<title>토크 - CHZZK - CHZZK</title>", "토크 - CHZZK"],
+]) {
+    test(`live watch history keeps the ${label} page title that itself ends with - CHZZK`, async (t) => {
+        const chrome = createFakeChrome({ sync: { liveWatchHistoryEnabled: true } });
+        const dom = createPageDom(
+            `<!doctype html><head>${head}</head><body><main><video id="video"></video></main></body>`,
+            "https://chzzk.naver.com/live/test-channel",
+            chrome
+        );
+        const video = dom.window.document.getElementById("video");
+        t.after(async () => {
+            for (const listener of chrome.testState.storageChangeListeners) {
+                listener({ liveWatchHistoryEnabled: { newValue: false } }, "sync");
+            }
+            await waitForAsyncCallbacks();
+            dom.window.close();
+        });
+        // live-detail stays pending, so every title seen comes from the page.
+        dom.window.fetch = () => new Promise(() => {});
+        makeVisibleVideo(video);
+        Object.defineProperty(video, "paused", { configurable: true, get: () => false });
+        Object.defineProperty(video, "ended", { configurable: true, get: () => false });
+        Object.defineProperty(video, "readyState", {
+            configurable: true,
+            get: () => dom.window.HTMLMediaElement.HAVE_CURRENT_DATA,
+        });
+
+        evalRepoScript(dom, "shared", "settings.js");
+        evalContentScripts(dom);
+        const utils = dom.window.CheeseSpanner.utils;
+        const original = utils.cleanEntryTitle;
+        const pageTitles = [];
+        utils.cleanEntryTitle = (...args) => {
+            const result = original(...args);
+            pageTitles.push(result);
+            return result;
+        };
+        evalRepoScript(dom, "features", "liveWatchHistory.js");
+        dom.window.document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+        await waitForCondition(() => pageTitles.length > 0);
+
+        assert.ok(pageTitles.includes(expected), `${label} keeps the broadcast title: ${pageTitles}`);
+        assert.equal(pageTitles.includes("토크"), false, "the title's own - CHZZK is never cut");
+        assert.equal(pageTitles.includes("페이지"), false, "og:title comes before document.title");
+    });
+}
+
 async function createVodBroadcastClockFixture(
     detail,
     {
+        ageBadge = false,
         currentTime = 2,
         linkedDetails = {},
         nativeDate = "",
         statusRow = true,
+        titleText = "Split VOD fixture",
         videoNo = "12345",
         watchHistory = [],
     } = {}
@@ -4144,14 +4700,17 @@ async function createVodBroadcastClockFixture(
             '<video id="video"></video>',
             '<div class="pzp-vod-time" id="time">0:00 / 1:00</div>',
             '<div class="_container_17x81_2" id="vod-info">',
-            '<div class="_row_17x81_8" id="vod-title-row"><h1 id="title">Split VOD fixture</h1></div>',
+            `<div class="_row_17x81_8" id="vod-title-row"><h1 id="title">${titleText}</h1></div>`,
             statusRow
                 ? [
                       '<div class="_row_17x81_8 _status_17x81_19" id="native-video-meta">',
                       '<div class="_data_17x81_70"><strong class="_count_17x81_83">조회수 100회</strong>',
-                      nativeDate
-                          ? `<span class="_count_17x81_83" id="native-date">${nativeDate}</span><span class="_label_17x81_79" id="native-date-label">등록일</span>`
+                      nativeDate ? `<span class="_count_17x81_83" id="native-date">${nativeDate}</span>` : "",
+                      // Observed 2026-10-28 on age-restricted replays: an svg badge with a hidden "19" follows the date.
+                      ageBadge
+                          ? '<span class="_count_17x81_83" id="native-age-badge"><svg></svg><span class="blind">19</span></span>'
                           : "",
+                      nativeDate ? '<span class="_label_17x81_79" id="native-date-label">등록일</span>' : "",
                       "</div></div>",
                   ].join("")
                 : "",
@@ -4275,6 +4834,37 @@ test("VOD broadcast range joins the native status row without watch history and 
     observer.disconnect();
 });
 
+test("VOD broadcast range matches a native title that keeps '- 치지직' mid-title", async () => {
+    const title = "롤 내전 - 치지직 스트리머 대회 결승";
+    const { dom } = await createVodBroadcastClockFixture(
+        {
+            videoType: "REPLAY",
+            videoTitle: title,
+            liveOpenDate: "2026-10-17 17:07:39",
+            duration: 34711,
+            publishDate: "2026-10-18 02:55:46",
+        },
+        { titleText: title }
+    );
+    const range = dom.window.document.getElementById("cheese-spanner-vod-broadcast-range");
+    assert.ok(range, "the full API title still finds its own heading");
+    assert.equal(range.parentElement.id, "native-video-meta");
+});
+
+test("VOD broadcast range never adopts a different heading that only matches after cutting '- 치지직'", async () => {
+    const { dom } = await createVodBroadcastClockFixture(
+        {
+            videoType: "REPLAY",
+            videoTitle: "롤 내전",
+            liveOpenDate: "2026-10-17 17:07:39",
+            duration: 34711,
+            publishDate: "2026-10-18 02:55:46",
+        },
+        { titleText: "롤 내전 - 치지직 스트리머 대회 결승" }
+    );
+    assert.equal(dom.window.document.getElementById("cheese-spanner-vod-broadcast-range"), null);
+});
+
 test("VOD broadcast range stays one unbroken group in the native count color", async () => {
     const { dom } = await createVodBroadcastClockFixture({
         liveOpenDate: "2026-10-25 19:00:00",
@@ -4333,12 +4923,53 @@ test("VOD broadcast range replaces any native date with its own dated range", as
         assert.equal(findRange().hasAttribute("data-bcbc-separator"), true, "the range keeps the native dot");
         assert.equal(dom.window.getComputedStyle(nativeDate).display, "none");
         assert.equal(nativeDate.textContent, text, "the native text itself is never rewritten");
-        assert.equal(findRange().parentElement, nativeDate.parentElement);
-        // The native hover label stays right after the date; the range follows it.
-        assert.equal(nativeDate.nextElementSibling.id, "native-date-label");
-        assert.equal(findRange().previousElementSibling.id, "native-date-label");
+        // The range sits right after the hidden date, before the native hover label.
+        assert.equal(findRange().previousElementSibling, nativeDate);
+        assert.equal(findRange().nextElementSibling.id, "native-date-label");
     }
     assert.equal(document.querySelectorAll("#cheese-spanner-vod-broadcast-range").length, 1);
+});
+
+test("VOD broadcast range replaces only the date of an age-restricted replay and keeps the 19+ badge after it", async () => {
+    const { dom } = await createVodBroadcastClockFixture(
+        { liveOpenDate: "2026-10-16 20:41:00", duration: 41580 },
+        { nativeDate: "10.17", ageBadge: true }
+    );
+    const { document } = dom.window;
+    const range = document.getElementById("cheese-spanner-vod-broadcast-range");
+    const nativeDate = document.getElementById("native-date");
+    const badge = document.getElementById("native-age-badge");
+    assert.match(range.textContent, new RegExp(`^${RANGE_YEAR_2026}10\\.16\\(금\\) 20:41 ~ 10\\.17\\(토\\) 08:14$`));
+    assert.equal(nativeDate.hasAttribute("data-cheese-spanner-vod-date-hidden"), true);
+    assert.equal(badge.hasAttribute("data-cheese-spanner-vod-date-hidden"), false, "the 19+ badge is not the date");
+    assert.notEqual(dom.window.getComputedStyle(badge).display, "none");
+    // Native order is views, date, badge; the range takes the date's place before the badge.
+    assert.deepEqual(
+        [...range.parentElement.children].map((el) => el.id || el.tagName.toLowerCase()),
+        ["strong", "native-date", "cheese-spanner-vod-broadcast-range", "native-age-badge", "native-date-label"]
+    );
+    // The badge's native "._count_ + ._count_" dot no longer applies after the range, so the range CSS draws it.
+    const rules = [...document.getElementById("cheese-spanner-vod-broadcast-clock-style").sheet.cssRules];
+    const badgeDot = rules.find((rule) =>
+        rule.selectorText?.includes(
+            '#cheese-spanner-vod-broadcast-range[data-bcbc-placement="native-date"] + [class*="_count_"]::before'
+        )
+    );
+    assert.ok(badgeDot, "badge separator rule");
+    assert.equal(badgeDot.style.getPropertyValue("width"), "2px");
+    assert.equal(dom.window.getComputedStyle(badge).paddingLeft, "8px");
+});
+
+test("VOD broadcast range never treats a 19+ badge as the date when the native date is missing", async () => {
+    const { dom } = await createVodBroadcastClockFixture(
+        { liveOpenDate: "2026-10-25 12:00:00", duration: 3600 },
+        { ageBadge: true }
+    );
+    const { document } = dom.window;
+    const range = document.getElementById("cheese-spanner-vod-broadcast-range");
+    assert.equal(range.dataset.bcbcPlacement, "status-row");
+    assert.equal(range.parentElement.id, "native-video-meta");
+    assert.equal(document.querySelector("[data-cheese-spanner-vod-date-hidden]"), null);
 });
 
 test("VOD broadcast range restores a replaced native date when it goes away", async (t) => {
@@ -4955,7 +5586,7 @@ test("skip pill wheel decrement keeps one second as the minimum step", async () 
 
         const wheel = new dom.window.Event("wheel", { bubbles: true, cancelable: true });
         Object.defineProperty(wheel, "deltaY", { value: 100 });
-        pill.dispatchEvent(wheel);
+        dispatchTrusted(pill, wheel);
 
         assert.equal(wheel.defaultPrevented, true);
         assert.equal(pill.querySelector(".bc-value").textContent, "1");
@@ -4970,6 +5601,47 @@ test("skip pill wheel decrement keeps one second as the minimum step", async () 
 
         assert.equal(key.defaultPrevented, true);
         assert.equal(state.currentTime, 33);
+    } finally {
+        await closeSkipControlPage(dom, chrome);
+    }
+});
+
+test("page-dispatched skip pill wheels and clicks never change or save the skip amount", async () => {
+    const chrome = createFakeChrome({ sync: { skipSeconds: 10 } });
+    const { document, dom } = createLiveTimeShiftGuardDom(chrome);
+    const storeRequests = () =>
+        chrome.testState.runtimeMessages.filter((message) => message?.type === "cheese-spanner:settings-store");
+
+    try {
+        await loadSkipControlPage(dom);
+        const pill = document.getElementById("cheese-spanner-skip-pill");
+        const value = pill.querySelector(".bc-value");
+        let playerWheels = 0;
+        document.getElementById("playerRoot").addEventListener("wheel", () => playerWheels++);
+
+        for (let i = 0; i < 3; i++) {
+            const wheel = new dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -1 });
+            value.dispatchEvent(wheel);
+            assert.equal(wheel.defaultPrevented, true, "the pill still owns its wheel");
+        }
+        pill.click();
+        pill.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+        await new Promise((resolve) => setTimeout(resolve, 300)); // past the 250ms save debounce
+        assert.equal(value.textContent, "10");
+        assert.equal(playerWheels, 0);
+        assert.deepEqual(storeRequests(), [], "no settings store request");
+        assert.equal(chrome.testState.sync.skipSeconds, 10);
+
+        // The user's wheel (and a keyboard or mouse click on the button) still changes and saves it.
+        dispatchTrusted(value, new dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -1 }));
+        assert.equal(value.textContent, "11");
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        assert.equal(chrome.testState.sync.skipSeconds, 11);
+        dispatchTrusted(pill, new dom.window.MouseEvent("click", { bubbles: true, cancelable: true, detail: 0 }));
+        assert.equal(value.textContent, "5");
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        assert.equal(chrome.testState.sync.skipSeconds, 5);
+        assert.equal(storeRequests().length, 2);
     } finally {
         await closeSkipControlPage(dom, chrome);
     }
@@ -5706,6 +6378,107 @@ test("native playback shortcuts pass through without synthetic control clicks", 
     assert.equal(state.paused, true);
 });
 
+test("Space, M and speed keys are left to the native ad during ad breaks, and F/T only during a live one", async (t) => {
+    const chrome = createFakeChrome({ sync: { screenShortcutsEnabled: true } });
+    const { dom, document, state, video } = setupPlaybackShortcutDom(chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "features", "screenShortcuts.js");
+    await waitForAsyncCallbacks();
+    const adMedia = (wrapper) => {
+        const placeholder = wrapper.querySelector("video");
+        const calls = [];
+        placeholder.getBoundingClientRect = () => ({
+            width: 1920,
+            height: 1080,
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        });
+        Object.defineProperty(placeholder, "paused", { configurable: true, get: () => false });
+        placeholder.play = () => {
+            calls.push("play");
+            return Promise.resolve();
+        };
+        placeholder.pause = () => calls.push("pause");
+        return { placeholder, calls };
+    };
+    const assertSpaceAndSpeedPass = async (label, ad) => {
+        const down = dispatchShortcutKey(dom, "Space", " ");
+        const up = dispatchShortcutKey(dom, "Space", " ", { type: "keyup" });
+        assert.equal(down.defaultPrevented, false, `${label}: Space keydown reaches the native ad`);
+        assert.equal(up.defaultPrevented, false, `${label}: Space keyup reaches the native ad`);
+        const speed = dispatchShortcutKey(dom, "BracketRight", "]");
+        assert.equal(speed.defaultPrevented, false, `${label}: the speed key is not consumed`);
+        await waitForShortcutEffects();
+        assert.equal(state.paused, true, `${label}: the main video is not toggled`);
+        assert.equal(video.playbackRate, 1, `${label}: the main rate is unchanged`);
+        assert.deepEqual(ad.calls, [], `${label}: the ad placeholder is not toggled`);
+        assert.equal(ad.placeholder.playbackRate, 1, `${label}: the ad rate is unchanged`);
+    };
+
+    // (a) Live mid-roll (2026-11-05 public bundle): a shown wrapper outside the main player with a larger video.
+    const mid = document.createElement("div");
+    mid.id = "midAdPlayerWrapper";
+    mid.style.display = "block";
+    mid.innerHTML = '<video id="midPlayer"></video><div id="midAdVideoContainer"></div>';
+    document.body.append(mid);
+    await assertSpaceAndSpeedPass("mid-roll", adMedia(mid));
+    const mute = dispatchShortcutKey(dom, "KeyM", "m");
+    assert.equal(mute.defaultPrevented, false, "M reaches the native ad mute");
+    // The live ad plays outside the main player, so T would only widen the hidden main player.
+    const theater = dispatchShortcutKey(dom, "KeyT", "t");
+    assert.equal(theater.defaultPrevented, false, "T is left to the native page during a live ad");
+    await waitForShortcutEffects();
+    assert.deepEqual(state.clicks, { play: 0, mute: 0, theater: 0 });
+
+    // (b) Live pre-roll: the mounted wrapper with a hidden, zero-sized main video.
+    mid.style.display = "none";
+    video.getBoundingClientRect = () => ({ width: 0, height: 0, left: 0, top: 0, right: 0, bottom: 0 });
+    const pre = document.createElement("div");
+    pre.id = "preAdPlayerWrapper";
+    pre.innerHTML = '<video id="preAdContentPlayer"></video><div id="preAdVideoContainer"></div>';
+    document.body.append(pre);
+    await assertSpaceAndSpeedPass("pre-roll", adMedia(pre));
+
+    // (c) After the break the extension keys apply to the main video again.
+    pre.remove();
+    makeVisibleVideo(video);
+    const down = dispatchShortcutKey(dom, "Space", " ");
+    assert.equal(down.defaultPrevented, true);
+    dispatchShortcutKey(dom, "Space", " ", { type: "keyup" });
+    await waitForShortcutEffects();
+    assert.equal(state.paused, false, "the short Space press toggles the main video");
+    const speed = dispatchShortcutKey(dom, "BracketRight", "]");
+    assert.equal(speed.defaultPrevented, true);
+    assert.equal(video.playbackRate, 1.25);
+    const afterMute = dispatchShortcutKey(dom, "KeyM", "m");
+    assert.equal(afterMute.defaultPrevented, true);
+    assert.equal(state.clicks.mute, 1);
+    const afterTheater = dispatchShortcutKey(dom, "KeyT", "t");
+    assert.equal(afterTheater.defaultPrevented, true);
+    assert.equal(state.clicks.theater, 1);
+
+    // (d) A VOD ad break (2026-11-05 public bundle: pzp-pc--adbreak on the main pzp root) plays inside the player:
+    // Space, M and the speed keys stay native, while T still applies to the player that shows the ad.
+    const playerRoot = document.getElementById("playerRoot");
+    playerRoot.classList.add("pzp-pc--adbreak");
+    const vodDown = dispatchShortcutKey(dom, "Space", " ");
+    dispatchShortcutKey(dom, "Space", " ", { type: "keyup" });
+    assert.equal(vodDown.defaultPrevented, false, "VOD ad: Space reaches the native ad");
+    const vodSpeed = dispatchShortcutKey(dom, "BracketRight", "]");
+    assert.equal(vodSpeed.defaultPrevented, false, "VOD ad: the speed key is not consumed");
+    const vodMute = dispatchShortcutKey(dom, "KeyM", "m");
+    assert.equal(vodMute.defaultPrevented, false, "VOD ad: M reaches the native ad mute");
+    const vodTheater = dispatchShortcutKey(dom, "KeyT", "t");
+    assert.equal(vodTheater.defaultPrevented, true, "VOD ad: T still applies to the player showing the ad");
+    await waitForShortcutEffects();
+    assert.equal(state.paused, false, "VOD ad: the main video is not toggled");
+    assert.equal(video.playbackRate, 1.25, "VOD ad: the main rate is unchanged");
+    assert.deepEqual(state.clicks, { play: 0, mute: 1, theater: 2 });
+    playerRoot.classList.remove("pzp-pc--adbreak");
+});
+
 test("history page renders only canonical CHZZK live links from stored rows", async () => {
     const startedAt = Date.now() - 60000;
     const dateKey = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -6379,6 +7152,34 @@ test("volume percentage stays fixed as the volume bar expands", async (t) => {
     }
 });
 
+test("volume percentage survives unrelated list scrolling and still hides when the page scrolls", async (t) => {
+    const { dom, document, hover, video, tooltip } = await createVolumeTooltipPage(t);
+    const list = document.createElement("div");
+    list.id = "chat-list";
+    document.body.append(list);
+    video.volume = 0.5;
+    hover("slider");
+    assert.equal(tooltip().textContent, "50%");
+    // A chat list auto-scroll or a sidebar scroll does not move the volume control.
+    list.dispatchEvent(new dom.window.Event("scroll"));
+    assert.ok(tooltip(), "an unrelated scroll keeps the percentage");
+    for (const volume of [0.55, 0.6]) {
+        video.volume = volume;
+        video.dispatchEvent(new dom.window.Event("volumechange"));
+        assert.equal(tooltip()?.textContent, `${Math.round(volume * 100)}%`, "volume changes keep updating it");
+    }
+    // A scroll of the player's own ancestors or of the page can move the control.
+    document.querySelector(".pzp-pc").dispatchEvent(new dom.window.Event("scroll"));
+    assert.equal(tooltip(), null);
+    hover("slider");
+    assert.equal(tooltip().textContent, "60%");
+    document.dispatchEvent(new dom.window.Event("scroll"));
+    assert.equal(tooltip(), null);
+    hover("slider");
+    dom.window.dispatchEvent(new dom.window.Event("scroll"));
+    assert.equal(tooltip(), null);
+});
+
 test("player tooltips share native typography and percentage follows the native tooltip height", async (t) => {
     const { dom, document, hover, video, tooltip } = await createVolumeTooltipPage(t);
     const speaker = document.getElementById("speaker");
@@ -6559,7 +7360,7 @@ test("skip amount wheel stays independent from volume when the pill copies volum
         [pill, 100, before],
     ]) {
         const event = new dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY });
-        target.dispatchEvent(event);
+        dispatchTrusted(target, event);
         await waitForAsyncCallbacks();
         assert.equal(event.defaultPrevented, true);
         assert.equal(Number(value.textContent), expected);

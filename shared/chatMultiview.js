@@ -205,7 +205,8 @@
         const text = typeof value === "string" ? value.trim() : "";
         if (!text) return { kind: "empty" };
         if (/^[a-f0-9]{32}$/i.test(text)) return { kind: "id", channelId: text.toLowerCase() };
-        const schemeLike = /^[a-z][a-z\d+.-]*:/i.test(text) || text.startsWith("//");
+        // 'Re:Zero'처럼 영문자 뒤 콜론이 있는 채널명은 이름이에요. '//'가 붙은 주소와 http(s): 주소만 주소로 봐요.
+        const schemeLike = /^(?:[a-z][a-z\d+.-]*:\/\/|https?:)/i.test(text) || text.startsWith("//");
         const hostLike = /^(?:[a-z\d-]+\.)*chzzk\.naver\.com(?:[/?#]|$)/i.test(text);
         if (!schemeLike && !hostLike) return { kind: "keyword", keyword: text };
         let url;

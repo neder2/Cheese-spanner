@@ -16,8 +16,13 @@
     const CONFIG_EVENT = "cheese-spanner:volume-wheel-options";
     const ROUTE_CHANGE_EVENT = "cheese-spanner:routechange";
     const CONFIG_ATTR = "data-cheese-spanner-volume-wheel-options";
-    const { getVolumeControlCandidates, getVolumeControlForVideo, getMainVideoElement, isPlaybackRoute } =
-        globalThis.CheeseSpannerVolumeControls;
+    const {
+        getVolumeControlCandidates,
+        getVolumeControlForVideo,
+        getMainVideoElement,
+        isNativeAdBreakActive,
+        isPlaybackRoute,
+    } = globalThis.CheeseSpannerVolumeControls;
 
     let options = {
         enabled: false,
@@ -64,7 +69,8 @@
         if (!(video instanceof HTMLVideoElement)) return false;
 
         const current = video.muted ? 0 : Number.isFinite(video.volume) ? video.volume : 0;
-        const next = clamp(current + directionSteps * getStepRatio(), 0, 1);
+        // Round away binary residue (0.5 - 10 * 0.05 is ~7e-17) so reaching 0% takes the mute branch.
+        const next = clamp(Math.round((current + directionSteps * getStepRatio()) * 1000) / 1000, 0, 1);
         const token = ++volumeApplyToken;
 
         commitVideoVolume(video, next);
@@ -86,6 +92,9 @@
 
         const control = getVolumeControlForVideo(controls, video);
         if (!control) return;
+        // 2026-11-05: during an ad break the screen shows the ad, whose volume native keeps in step with the player, so
+        // the wheel stays native instead of writing the hidden main video's volume. Checked only for wheels it would take.
+        if (isNativeAdBreakActive()) return;
 
         event.preventDefault();
         event.stopPropagation();

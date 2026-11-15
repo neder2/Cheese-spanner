@@ -153,3 +153,137 @@ test("native hover acceleration fails closed when the React handler shape change
     assert.deepEqual(scheduledDelays, [0, 450]);
     dom.window.close();
 });
+
+// Models CHZZK's React 17+ root delegation: one bubble listener on the root container dispatches
+// onMouseEnter from the previous element's mouseout, or from mouseover when entering from outside React.
+// Trusted input also runs a microtask checkpoint after every listener; the window capture flusher
+// registered after the script reproduces that checkpoint between the extension and React listeners.
+// The fixture registers its window cleanup with the test context, so a failed assertion still closes it.
+function createReactRootPreviewDom(t) {
+    const dom = new JSDOM(
+        [
+            '<!doctype html><html><body><div id="outside"></div><main id="root"><ul><li>',
+            '<span id="previousCard">prev</span>',
+            '<a id="thumbnail" href="/live/channel-123"><img id="thumbImage" src="https://example.com/live.jpg" alt=""></a>',
+            "</li></ul></main></body></html>",
+        ].join(""),
+        { pretendToBeVisual: true, runScripts: "outside-only", url: "https://chzzk.naver.com/lives" }
+    );
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    const root = document.getElementById("root");
+    const anchor = document.getElementById("thumbnail");
+    anchor.getBoundingClientRect = () => ({ bottom: 229, height: 189, left: 40, right: 376, top: 40, width: 336 });
+    document.documentElement.setAttribute(
+        "data-cheese-spanner-live-preview-fast-hover-options",
+        JSON.stringify({ enabled: true })
+    );
+
+    const scheduledDelays = [];
+    dom.window.setTimeout = (_callback, delay) => {
+        scheduledDelays.push(delay);
+        return scheduledDelays.length;
+    };
+    dom.window.clearTimeout = () => {};
+    const microtasks = [];
+    dom.window.queueMicrotask = (callback) => microtasks.push(callback);
+    const runCheckpoint = () => {
+        while (microtasks.length) microtasks.shift()();
+    };
+
+    const branch = 2;
+    const showFirst = () => {};
+    const showSecond = () => {};
+    const showThird = () => {};
+    const reactProps = {
+        onMouseEnter: () => {
+            if (branch === 0)
+                dom.window.setTimeout(async () => {
+                    showFirst(!0);
+                }, 300);
+            else if (branch === 1)
+                dom.window.setTimeout(async () => {
+                    showSecond(!0);
+                }, 300);
+            else
+                dom.window.setTimeout(async () => {
+                    showThird(!0);
+                }, 600);
+        },
+        onMouseLeave: () => {},
+    };
+    Object.defineProperty(anchor, "__reactProps$test", { configurable: true, value: reactProps });
+    const isReactNode = (node) => node instanceof dom.window.Node && root.contains(node);
+    root.addEventListener("mouseover", (event) => {
+        runCheckpoint();
+        if (isReactNode(event.relatedTarget)) return;
+        if (anchor.contains(event.target)) reactProps.onMouseEnter();
+    });
+    root.addEventListener("mouseout", (event) => {
+        runCheckpoint();
+        const to = event.relatedTarget;
+        if (anchor.contains(to) && !anchor.contains(event.target)) reactProps.onMouseEnter();
+    });
+
+    dom.window.eval(scriptSource);
+    dom.window.addEventListener("mouseover", runCheckpoint, true);
+    dom.window.addEventListener("mouseout", runCheckpoint, true);
+    return { anchor, document, dom, runCheckpoint, scheduledDelays };
+}
+
+test("native hover acceleration survives the per-listener microtask checkpoint of trusted input", (t) => {
+    const { document, dom, runCheckpoint, scheduledDelays } = createReactRootPreviewDom(t);
+    const image = document.getElementById("thumbImage");
+
+    image.dispatchEvent(
+        new dom.window.MouseEvent("mouseover", { bubbles: true, relatedTarget: document.getElementById("outside") })
+    );
+    runCheckpoint();
+    assert.deepEqual(scheduledDelays, [0]);
+
+    dom.window.setTimeout(async () => {}, 600);
+    assert.deepEqual(scheduledDelays, [0, 600], "the wrapper is gone after the event");
+});
+
+test("native hover acceleration covers React's onMouseEnter sent from the previous element's mouseout", (t) => {
+    const { anchor, document, dom, runCheckpoint, scheduledDelays } = createReactRootPreviewDom(t);
+    const previous = document.getElementById("previousCard");
+    const image = document.getElementById("thumbImage");
+
+    previous.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true, relatedTarget: image }));
+    runCheckpoint();
+    image.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true, relatedTarget: previous }));
+    runCheckpoint();
+    assert.deepEqual(scheduledDelays, [0], "React's enter from mouseout is accelerated and mouseover adds nothing");
+
+    image.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true, relatedTarget: anchor }));
+    image.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true, relatedTarget: previous }));
+    dom.window.setTimeout(async () => {}, 600);
+    assert.deepEqual(scheduledDelays, [0, 600], "leaving the thumbnail and later timers keep their native delay");
+});
+
+test("native hover acceleration is removed on the next frame when page code stops the event early", async (t) => {
+    const { document, dom, scheduledDelays } = createReactRootPreviewDom(t);
+    const image = document.getElementById("thumbImage");
+    image.addEventListener("mouseover", (event) => event.stopPropagation());
+
+    image.dispatchEvent(
+        new dom.window.MouseEvent("mouseover", { bubbles: true, relatedTarget: document.getElementById("outside") })
+    );
+    assert.equal(dom.window.setTimeout.__cheeseSpannerFastHover, true, "React never saw the stopped event");
+    await new Promise((resolve) => dom.window.requestAnimationFrame(() => resolve()));
+    assert.equal(dom.window.setTimeout.__cheeseSpannerFastHover, undefined);
+    dom.window.setTimeout(async () => {}, 600);
+    assert.deepEqual(scheduledDelays, [600]);
+});
+
+test("React root preview fixture closes its window through the test context even when an assertion fails", (t) => {
+    const cleanups = [];
+    const { dom } = createReactRootPreviewDom({ after: (cleanup) => cleanups.push(cleanup) });
+    t.after(() => dom.window.close());
+    assert.equal(cleanups.length, 1, "cleanup is registered before the test body can throw");
+    assert.ok(dom.window.document, "the fixture is open until the test ends");
+
+    for (const cleanup of cleanups) cleanup();
+    assert.equal(dom.window.document, undefined, "the registered cleanup closes the JSDOM window");
+});

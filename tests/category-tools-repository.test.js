@@ -5,6 +5,15 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const liveRoute = { scope: "category", categoryType: "game", categoryId: "test", tab: "lives" };
+
+test("manual list refresh invalidates the cached live count", async () => {
+    let calls = 0;
+    const { repository } = fixture(async () => page([{ ...live("a"), liveId: 1, concurrentUserCount: ++calls * 10 }]));
+    assert.equal((await repository.countGlobalLives()).totalViewers, 10);
+    repository.resetMetadata("", { invalidateLiveCount: true });
+    assert.equal((await repository.countGlobalLives()).totalViewers, 20);
+    assert.equal(calls, 2);
+});
 const nextCursor = { concurrentUserCount: 10, liveId: 42 };
 
 function page(rows, next = null) {
@@ -1147,4 +1156,52 @@ test("repeated metadata requests do not restart an identical running search", as
     assert.equal(controller.isRunning(), false);
     assert.deepEqual(loading, [true, false]);
     controller.reset();
+});
+
+test("metadata merge drops the cached search fields built from a broadcast's previous title and tags", async () => {
+    let calls = 0;
+    const { repository } = fixture(async () =>
+        ++calls === 1
+            ? page([{ ...live("a", "롤 랭크"), tags: ["롤"] }, live("b")], nextCursor)
+            : page([{ ...live("a", "발로란트 내전"), tags: ["발로란트"] }])
+    );
+    const route = { scope: "global-lives", tab: "lives" };
+    const metadata = await repository.ensureMetadata(route);
+    // categoryTools.buildMetaSearchFields caches the fields on the metadata object it judged.
+    metadata.get("a")._bcgtSearchFields = ["롤랭크", "a", "롤"];
+    metadata.get("a")._bcgtSearchText = "롤 랭크 a 롤";
+    await repository.loadNextMetadata(route);
+    const merged = metadata.get("a");
+    assert.equal(merged.title, "발로란트 내전");
+    assert.deepEqual(plain(merged.tags), ["발로란트"]);
+    assert.equal(Object.hasOwn(merged, "_bcgtSearchFields"), false, "search fields are rebuilt from the new title");
+    assert.equal(Object.hasOwn(merged, "_bcgtSearchText"), false);
+});
+
+test("global count keeps the measured time of the oldest shared page instead of its completion time", async () => {
+    const row = (id, viewers) => ({ ...live(String(id)), liveId: id, concurrentUserCount: viewers });
+    const requests = [];
+    const { repository, advance } = fixture((url) => {
+        const pending = deferred();
+        requests.push({ url, ...pending });
+        return pending.promise;
+    });
+    const route = { scope: "global-lives", tab: "lives" };
+    const search = repository.ensureMetadata(route);
+    requests[0].resolve(page([row(1, 500)], nextCursor));
+    await search;
+    advance(4 * 60 * 1000 + 50 * 1000);
+    const count = repository.countGlobalLives();
+    await flush();
+    assert.equal(requests.length, 2, "the cached first page is reused and only the next page is fetched");
+    requests[1].resolve(page([row(2, 10), row(3, 9)], { liveId: 3, concurrentUserCount: 9 }));
+    const result = await count;
+    assert.equal(result.totalViewers, 510);
+    assert.equal(result.measuredAt, 10000, "the aggregate is dated by its oldest page, not by completion");
+    advance(4 * 60 * 1000);
+    const refreshed = repository.countGlobalLives();
+    await flush();
+    assert.equal(requests.length, 3, "data older than the cache lifetime is fetched again instead of reused");
+    requests[2].resolve(page([row(1, 700)]));
+    assert.equal((await refreshed).totalViewers, 700);
 });

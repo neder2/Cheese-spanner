@@ -51,6 +51,7 @@ function monitor(options = {}) {
     const notifications = [];
     const opened = [];
     const focused = [];
+    const reloaded = [];
     const requests = [];
     const alarms = new Map();
     let clock = 1000000;
@@ -127,6 +128,7 @@ function monitor(options = {}) {
                 tabs.push({ id: opened.length, windowId: 1, ...info });
             },
             update: async (id, info) => focused.push({ id, ...info }),
+            reload: async (id) => reloaded.push(id),
         },
         windows: { update: async () => {} },
     };
@@ -179,7 +181,11 @@ function monitor(options = {}) {
         notifications,
         opened,
         focused,
+        reloaded,
         requests,
+        advance: (ms) => {
+            clock += ms;
+        },
         model: context.CheeseSpannerLiveStart,
         enableNotificationsApi: () => {
             chrome.notifications = notificationApi;
@@ -290,6 +296,36 @@ test("offline to online detection, title changes and existing waiting tabs", asy
     m.chrome.notifications.onClicked.emit("unrelated");
     await flush();
     assert.equal(m.focused.length, 1);
+});
+
+test("a discarded waiting tab is loaded again for a new broadcast instead of consuming it silently", async () => {
+    const m = monitor({
+        tabs: [{ id: 7, windowId: 1, url: `https://chzzk.naver.com/live/${CHANNEL}`, discarded: true }],
+    });
+    await flush();
+    m.setResponse(snapshot(11, true));
+    await m.tick();
+    assert.equal(m.opened.length, 0, "no duplicate tab");
+    assert.deepEqual(m.reloaded, [7]);
+    assert.equal(m.focused.length, 0, "background auto-entry does not take focus");
+});
+
+test("a check that takes longer than five seconds does not make the next one-minute alarm skip", async () => {
+    const m = monitor();
+    m.setResponse(snapshot(10, false));
+    await flush();
+    m.setFetch(async () => {
+        m.advance(6000);
+        return snapshot(10, false);
+    });
+    const before = m.requests.length;
+    await m.tick();
+    assert.equal(m.requests.length, before + 1);
+    // The periodic alarm fires 60 s after the previous alarm, i.e. 54 s after this 6 s check finished.
+    m.advance(54000);
+    m.chrome.alarms.onAlarm.emit({ name: ALARM });
+    await flush();
+    assert.equal(m.requests.length, before + 2, "the alarm after a slow check still checks");
 });
 
 test("failed or mismatched API replies never establish offline or a new broadcast", async () => {
@@ -435,7 +471,7 @@ test("a failed state save is shown in the status and later checks still notify o
     assert.equal(m.notifications.length, 0);
     assert.equal(m.opened.length, 0);
     assert.notDeepEqual(m.local[STATUS], before);
-    assert.match(m.local[STATUS].error, /저장하지 못해/);
+    assert.match(m.local[STATUS].error, /방송 확인 상태 저장 실패/);
     m.failStorage(false);
     await m.tick();
     assert.equal(m.notifications.length, 1);
@@ -464,7 +500,7 @@ test("a failed final state save after committed effects is reported without repe
     await m.tick();
     assert.equal(m.notifications.length, 1);
     assert.equal(m.opened.length, 1);
-    assert.match(m.local[STATUS].error, /저장하지 못해/);
+    assert.match(m.local[STATUS].error, /방송 확인 상태 저장 실패/);
     failFinal = false;
     await m.tick();
     assert.equal(m.local[STATUS].error, "");
@@ -823,7 +859,7 @@ test("page registration explains withheld API access and never returns raw looku
     });
     const offline = await m.send("set-notify", { channelId: CHANNEL, notify: true }, sender);
     assert.equal(offline.ok, false);
-    assert.equal(offline.error, "채널 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    assert.equal(offline.error, "채널 정보 확인 실패. 잠시 후 다시 시도 필요.");
     assert.equal(m.local[CHANNELS], undefined);
     m.setFetch(async () => ({ code: 200, content: { channelId: CHANNEL, channelName: "확인된 채널" } }));
     const save = m.chrome.storage.local.set;
@@ -837,7 +873,7 @@ test("page registration explains withheld API access and never returns raw looku
     };
     const unsaved = await m.send("set-notify", { channelId: CHANNEL, notify: true }, sender);
     assert.equal(unsaved.ok, false);
-    assert.equal(unsaved.error, "채널 설정을 저장하지 못했어요.");
+    assert.equal(unsaved.error, "채널 설정 저장 실패.");
     m.chrome.storage.local.set = save;
     assert.equal((await m.send("set-notify", { channelId: CHANNEL, notify: true }, sender)).ok, true);
 });
@@ -974,6 +1010,51 @@ for (const granted of [true, false]) {
     });
 }
 
+test("a channel lookup that finishes after the user moved focus elsewhere leaves that focus alone", async (t) => {
+    const m = monitor({ local: {}, sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false } });
+    await flush();
+    m.chrome.runtime.sendMessage = (message, callback) => {
+        void m.send(message.kind, message.channel).then(callback);
+    };
+    const dom = createDom("options.html", "options.html", m.chrome);
+    t.after(() => dom.window.close());
+    for (const file of [
+        ["shared", "settings.js"],
+        ["options.js"],
+        ["shared", "data.js"],
+        ["shared", "liveStart.js"],
+        ["optionsLiveStart.js"],
+    ])
+        evalRepoScript(dom, ...file);
+    const doc = dom.window.document;
+    const input = doc.getElementById("liveStartChannelInput");
+    await waitForCondition(() => !input.disabled);
+    let answer;
+    dom.window.fetch = () =>
+        new Promise((resolve) => {
+            answer = () =>
+                resolve({
+                    ok: true,
+                    json: async () => ({ code: 200, content: { channelId: CHANNEL, channelName: "채널" } }),
+                });
+        });
+    input.value = `https://chzzk.naver.com/live/${CHANNEL}`;
+    doc.getElementById("liveStartChannelAdd").click();
+    await waitForCondition(() => typeof answer === "function");
+    // While the lookup runs the user starts typing in the settings search outside this section.
+    const elsewhere = doc.createElement("input");
+    doc.body.prepend(elsewhere);
+    elsewhere.focus();
+    answer();
+    await waitForCondition(() => doc.querySelector('[data-action="autoOpen"]') && !input.disabled);
+    assert.equal(doc.activeElement, elsewhere);
+    // Focus that stayed in the section (or fell to the page) still returns to the input.
+    input.value = "https://evil.example/channel";
+    input.focus();
+    doc.getElementById("liveStartChannelAdd").click();
+    assert.equal(doc.activeElement, input);
+});
+
 test("channel editor validates, adds, toggles, deletes and reports failed saves without corrupting UI", async (t) => {
     const m = monitor({ local: {}, sync: { liveStartNotificationsEnabled: false, liveStartAutoOpenEnabled: false } });
     await flush();
@@ -1012,14 +1093,13 @@ test("channel editor validates, adds, toggles, deletes and reports failed saves 
     dispatch(dom, toggle, "change");
     await waitForCondition(() => m.local[CHANNELS][0].autoOpen && !input.disabled);
     const sendMessage = m.chrome.runtime.sendMessage;
-    m.chrome.runtime.sendMessage = (_message, callback) =>
-        callback({ ok: false, error: "채널 설정을 저장하지 못했어요." });
+    m.chrome.runtime.sendMessage = (_message, callback) => callback({ ok: false, error: "채널 설정 저장 실패." });
     const savedToggle = doc.querySelector('[data-action="autoOpen"]');
     savedToggle.checked = false;
     dispatch(dom, savedToggle, "change");
     await waitForCondition(() => !input.disabled);
     assert.equal(doc.querySelector('[data-action="autoOpen"]').checked, true);
-    assert.match(doc.getElementById("liveStartChannelMessage").textContent, /저장하지 못했어요/);
+    assert.match(doc.getElementById("liveStartChannelMessage").textContent, /채널 설정 저장 실패/);
     m.chrome.runtime.sendMessage = sendMessage;
     const search = doc.getElementById("settingsSearch");
     search.value = "데스크톱";

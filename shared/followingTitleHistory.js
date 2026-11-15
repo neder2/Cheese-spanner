@@ -129,7 +129,7 @@
     }
 
     // 같은 방송에서 제목이 A→B→A로 돌아오면 마지막 A를 새 줄로 남겨 바뀐 순서를 보존해요.
-    // legacyTitle은 1.4.3 저장값을 읽을 때만 쓰는 제목 정리 함수예요(워커가 CheeseSpanner.utils.cleanEntryTitle을 넘겨요).
+    // legacyTitle은 1.4.3 저장값을 읽을 때만 쓰는 제목 정리 함수예요(워커가 1.4.3과 같은 접미사 제거로 CheeseSpanner.utils.cleanEntryTitle을 감싸 넘겨요).
     function applyPoll(rawStore, items, now, { legacyTitle } = {}) {
         const at = toTime(now);
         const store = normalizeStore(rawStore);

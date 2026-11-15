@@ -763,8 +763,10 @@ async function resolveReplayVideoNo(entry) {
                 continue;
             }
 
-            const videos = extractReplayVideos(json).filter(replayOnly);
-            if (!videos.length && page === 0) break;
+            // Uploads share the channel list; only the whole page decides whether more pages exist.
+            const pageVideos = extractReplayVideos(json);
+            const videos = pageVideos.filter(replayOnly);
+            if (!pageVideos.length && page === 0) break;
 
             const pageCandidates = new Map();
             for (const video of videos) {
@@ -807,7 +809,7 @@ async function resolveReplayVideoNo(entry) {
             }
 
             if (shouldStopReplayLookup(entry, videos, page)) break;
-            if (videos.length < VIDEO_PAGE_SIZE) break;
+            if (pageVideos.length < VIDEO_PAGE_SIZE) break;
         }
 
         const detailCandidates = Array.from(detailCandidatesByVideoNo.values()).sort(compareReplayCandidates);
@@ -1375,6 +1377,8 @@ async function handleTitleClick(event, entry) {
     if (!entry?.channelId) return;
 
     event.preventDefault();
+    // Enter on the focused link while this record is still being looked up must not open a second waiting tab.
+    if (resolvingReplayEntryIds.has(entry.id)) return;
 
     let pendingWindow = null;
     pendingWindow = openPendingReplayWindow();
@@ -1417,6 +1421,19 @@ async function handleTitleClick(event, entry) {
 
 function getEntryDateLabel(entry) {
     if (selectedDateKey) return formatDateLabel(selectedDateKey);
+
+    // '전체 기간' lists every month, so each record shows its own dates rather than the calendar's month.
+    if (historyScopeEl?.value === "all") {
+        const keys = Object.keys(entry.dailySeconds || {}).sort();
+        const fallback = [entry.firstWatchedAt, entry.lastWatchedAt]
+            .map((at) => Number(at) || 0)
+            .filter((at) => at > 0)
+            .map((at) => getKstDateKey(at));
+        const dates = keys.length ? keys : fallback.sort();
+        if (!dates.length) return "날짜 정보 없음";
+        if (dates[0] === dates[dates.length - 1]) return formatDateLabel(dates[0]);
+        return `${formatDateLabel(dates[0])} - ${formatDateLabel(dates[dates.length - 1])}`;
+    }
 
     const keys = getMonthDateKeys(selectedYear, selectedMonth)(entry).sort();
     if (!keys.length) return `${selectedYear}.${String(selectedMonth).padStart(2, "0")}`;
@@ -1749,7 +1766,12 @@ function renderList() {
         const body = document.createElement("span");
         body.className = "history-item-main";
         const replayUrl = getReplayUrl(entry);
-        const fallbackUrl = replayUrl || (entry.channelId ? "#" : entry.liveUrl);
+        // A middle click or "open in new tab" skips the lookup; it lands on the channel's video list, not history.html#.
+        // Only a real 32-hex channel ID builds that address; other stored IDs keep the inert "#".
+        const channelVideosUrl = /^[a-f0-9]{32}$/i.test(entry.channelId || "")
+            ? `https://chzzk.naver.com/${entry.channelId.toLowerCase()}/videos`
+            : "";
+        const fallbackUrl = replayUrl || (entry.channelId ? channelVideosUrl || "#" : entry.liveUrl);
         const title = document.createElement(fallbackUrl ? "a" : "strong");
         if (fallbackUrl) {
             title.className = "history-item-title-link";
