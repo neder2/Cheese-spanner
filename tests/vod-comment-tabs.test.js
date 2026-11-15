@@ -11,17 +11,11 @@ function evalRepoScript(dom, ...parts) {
     dom.window.eval(fs.readFileSync(path.join(ROOT, ...parts), "utf8"));
 }
 
-// The three comment-body placeholders copy CHZZK's own wording; every other notice uses 해요체 (docs/business-rules.md, 화면 디자인).
-const NATIVE_COMMENT_BODY_COPY = [
-    "삭제된 댓글입니다.",
-    "내용을 표시할 수 없는 댓글입니다.",
-    "클린봇이 부적절한 표현을 감지한 댓글입니다.",
-];
-
-function formalCopyLiterals(source) {
+function politeCopyLiterals(source) {
     const literals = [];
     for (const match of source.matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g)) {
-        if (/[가-힣]/.test(match[2]) && /(?:습|합|됩|입)니다/.test(match[2])) literals.push(match[2]);
+        if (/(?:[가-힣](?<![필주개중수소강요])요|(?:습|합|됩|입)니다|십시오)(?=[.?!…\s]|$)/.test(match[2]))
+            literals.push(match[2]);
     }
     return literals;
 }
@@ -364,6 +358,193 @@ function clickCommentTab(document) {
     document.getElementById("cheese-spanner-vod-comment-comment-tab").click();
 }
 
+test("VOD split shows chat and comments together, swaps their order and retains cache and scroll across layout changes", async (t) => {
+    const fixture = createFixture({
+        initialOptions: { vodCommentLayout: "split", vodCommentSplitTop: "chat" },
+        fetchComments: async () => apiContent({ rows: [apiComment(1, "분할 댓글")] }),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.window.close();
+    });
+    const { document, window } = fixture;
+    const chat = document.querySelector('[role="log"]');
+    const parent = chat.parentElement;
+    const panel = document.getElementById("cheese-spanner-vod-comment-panel");
+    const splitter = document.getElementById("cheese-spanner-vod-comment-splitter");
+    await waitForCondition(() => panel.querySelector("[data-bcvc-comment-key='id:1']"));
+    assert.equal(fixture.requests.length, 1, "split loads visible comments without a tab click");
+    assert.equal(fixture.runIdleCallbacks(), 0);
+    assert.equal(panel.hidden, false);
+    assert.equal(splitter.hidden, false);
+    assert.equal(chat.getAttribute("aria-hidden"), null);
+    assert.equal(chat.parentElement, parent, "native React nodes are never reparented");
+    assert.equal(parent.style.getPropertyValue("--bcvc-chat-top"), "44px");
+    assert.equal(parent.style.getPropertyValue("--bcvc-chat-height"), "244px");
+    assert.equal(parent.style.getPropertyValue("--bcvc-comment-top"), "296px");
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-tabs").getAttribute("role"), "group");
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-chat-tab").hidden, true);
+    const row = panel.querySelector("[data-bcvc-comment-key='id:1']");
+    panel.scrollTop = 132;
+    panel.dispatchEvent(new window.Event("scroll"));
+    chat.scrollTop = 64;
+    fixture.emitOptions({ vodCommentSplitTop: "comments" });
+    assert.equal(parent.style.getPropertyValue("--bcvc-comment-top"), "44px");
+    assert.equal(parent.style.getPropertyValue("--bcvc-chat-top"), "296px");
+    assert.equal(panel.scrollTop, 132);
+    assert.equal(chat.scrollTop, 64);
+    assert.equal(panel.querySelector("[data-bcvc-comment-key='id:1']"), row);
+    fixture.emitOptions({ vodCommentLayout: "tabs" });
+    assert.equal(panel.hidden, true);
+    assert.equal(splitter.hidden, true);
+    assert.equal(chat.hasAttribute("data-bcvc-split-chat"), false);
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-chat-tab").hidden, false);
+    clickCommentTab(document);
+    assert.equal(panel.hidden, false);
+    assert.equal(chat.getAttribute("aria-hidden"), "true");
+    assert.equal(panel.scrollTop, 132);
+    fixture.emitOptions({ vodCommentLayout: "split" });
+    assert.equal(chat.getAttribute("aria-hidden"), null);
+    assert.equal(fixture.requests.length, 1, "changing display mode reuses the loaded comments");
+    fixture.emitOptions({ vodCommentTabsEnabled: false });
+    assert.equal(chat.parentElement, parent);
+    assert.equal(chat.hasAttribute("data-bcvc-split-chat"), false);
+    assert.equal(chat.hasAttribute("aria-hidden"), false);
+    assert.equal(parent.style.getPropertyValue("--bcvc-chat-height"), "");
+    assert.equal(splitter.isConnected, false);
+});
+
+test("VOD split divider resizes, clamps, cancels and retains its ratio without leaking drag listeners", (t) => {
+    const fixture = createFixture({ initialOptions: { vodCommentLayout: "split" } });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.window.close();
+    });
+    const { document, window } = fixture;
+    const splitter = document.getElementById("cheese-spanner-vod-comment-splitter");
+    const container = document.querySelector(".native-chat-container");
+    const pointer = (target, type, y, pointerId = 1) =>
+        target.dispatchEvent(
+            new window.PointerEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                isPrimary: true,
+                pointerId,
+                pointerType: "mouse",
+                button: 0,
+                buttons: type === "pointerup" ? 0 : 1,
+                clientY: y,
+            })
+        );
+    pointer(splitter, "pointerdown", 288);
+    pointer(window, "pointermove", 386, 9);
+    assert.equal(splitter.getAttribute("aria-valuenow"), "50");
+    pointer(window, "pointerup", 386);
+    assert.equal(splitter.getAttribute("aria-valuenow"), "70");
+    pointer(splitter, "pointerdown", 386);
+    pointer(window, "pointermove", 900);
+    assert.equal(splitter.getAttribute("aria-valuenow"), "80");
+    window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+    assert.equal(splitter.getAttribute("aria-valuenow"), "70");
+    pointer(window, "pointermove", 50);
+    assert.equal(splitter.getAttribute("aria-valuenow"), "70");
+    splitter.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    assert.equal(splitter.getAttribute("aria-valuenow"), "75");
+    fixture.emitOptions({ vodCommentLayout: "tabs" });
+    fixture.emitOptions({ vodCommentLayout: "split", vodCommentSplitTop: "comments" });
+    assert.equal(splitter.getAttribute("aria-valuenow"), "75");
+    assert.equal(container.style.getPropertyValue("--bcvc-comment-height"), "366px");
+    splitter.dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
+    assert.equal(splitter.getAttribute("aria-valuenow"), "50");
+    pointer(splitter, "pointerdown", 288);
+    pointer(window, "pointermove", 0);
+    assert.equal(splitter.getAttribute("aria-valuenow"), "20");
+    fixture.emitOptions({ vodCommentTabsEnabled: false });
+    pointer(window, "pointerup", 900);
+    assert.equal(container.style.getPropertyValue("--bcvc-chat-height"), "");
+    fixture.emitOptions({ vodCommentTabsEnabled: true });
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-splitter").getAttribute("aria-valuenow"), "50");
+});
+
+test("VOD split supports nested native chat, remounts and fullscreen without moving native nodes or refetching comments", async (t) => {
+    const fixture = createFixture({
+        includeLog: false,
+        initialOptions: { vodCommentLayout: "split", vodCommentSplitTop: "comments" },
+        fetchComments: async () => apiContent({ rows: [apiComment(1, "유지할 댓글")] }),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.window.close();
+    });
+    const { document, window } = fixture;
+    const native = document.querySelector(".native-chat-container");
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = '<div style="height:100%"><div role="log" style="overflow-y:auto">채팅</div></div>';
+    native.append(wrapper);
+    const chat = wrapper.querySelector('[role="log"]');
+    const parent = chat.parentElement;
+    const originalStyle = chat.getAttribute("style");
+    await waitForCondition(() => document.querySelector("[data-bcvc-comment-key='id:1']"));
+    assert.equal(wrapper.getAttribute("data-bcvc-split-chat"), "1");
+    assert.equal(chat.getAttribute("data-bcvc-split-chat-inner"), "1");
+    assert.equal(chat.parentElement, parent);
+    const panel = document.getElementById("cheese-spanner-vod-comment-panel");
+    panel.scrollTop = 91;
+    panel.dispatchEvent(new window.Event("scroll"));
+    const nativeAside = native.closest("aside");
+    nativeAside.remove();
+    const fullscreen = document.createElement("div");
+    fullscreen.innerHTML = chatAsideHtml();
+    document.body.append(fullscreen);
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, value: fullscreen });
+    document.dispatchEvent(new window.Event("fullscreenchange"));
+    await waitForCondition(() => fullscreen.contains(panel));
+    assert.equal(panel.hidden, false);
+    assert.equal(panel.scrollTop, 91);
+    assert.equal(wrapper.hasAttribute("data-bcvc-split-chat"), false);
+    assert.equal(chat.getAttribute("style"), originalStyle);
+    assert.equal(chat.parentElement, parent);
+    assert.equal(fixture.requests.length, 1);
+    fullscreen.remove();
+    document.getElementById("player-layout").append(nativeAside);
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
+    document.dispatchEvent(new window.Event("fullscreenchange"));
+    await waitForCondition(() => native.contains(panel));
+    assert.equal(wrapper.getAttribute("data-bcvc-split-chat"), "1");
+    assert.equal(fixture.requests.length, 1);
+    fixture.emitRoute("/lives");
+    assert.equal(panel.isConnected, false);
+    assert.equal(chat.hasAttribute("data-bcvc-split-chat-inner"), false);
+    assert.equal(chat.getAttribute("style"), originalStyle);
+});
+
+test("VOD split keeps pagination active and falls back to a full comment pane when chat is unavailable", async (t) => {
+    const fixture = createFixture({
+        initialOptions: { vodCommentLayout: "split" },
+        withIntersectionObserver: true,
+        fetchComments: async (_request, index) =>
+            index === 0
+                ? apiContent({ rows: [apiComment(1, "첫 댓글")], totalCount: 2, next: 2 })
+                : apiContent({ rows: [apiComment(2, "다음 댓글")], totalCount: 2 }),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.window.close();
+    });
+    await waitForCondition(() => fixture.intersectionObservers.some((observer) => !observer.disconnected));
+    fixture.intersectionObservers.find((observer) => !observer.disconnected).trigger();
+    await waitForCondition(() => fixture.document.querySelector("[data-bcvc-comment-key='id:2']"));
+    assert.equal(fixture.requests.length, 2);
+    const noChat = createFixture({ includeAside: false, initialOptions: { vodCommentLayout: "split" } });
+    t.after(() => {
+        noChat.emitOptions({ vodCommentTabsEnabled: false });
+        noChat.window.close();
+    });
+    assert.equal(noChat.document.getElementById("cheese-spanner-vod-comment-splitter").hidden, true);
+    assert.equal(noChat.document.getElementById("cheese-spanner-vod-comment-panel").hidden, false);
+    assert.equal(noChat.document.querySelector('[data-bcvc-layout="split"]'), null);
+});
+
 test("VOD comment tabs preserve the native chat heading treatment and defer prefetch until after mount", async (t) => {
     const fixture = createFixture();
     t.after(() => {
@@ -379,7 +560,8 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     const container = document.querySelector(".native-chat-container");
 
     assert.ok(tablist);
-    assert.equal(document.getElementById("cheese-spanner-vod-comment-chat-tab").textContent, "라이브 채팅 다시보기");
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-chat-tab").textContent, "채팅");
+    assert.equal(heading.textContent, "라이브 채팅 다시보기", "the native title must remain intact for option cleanup");
     assert.equal(document.getElementById("cheese-spanner-vod-comment-comment-tab").textContent, "댓글");
     assert.equal(
         heading.parentElement.querySelector("h2"),
@@ -428,15 +610,13 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     assert.match(css, /@container\s*\(max-width:300px\)/);
     assert.match(
         css,
-        /#cheese-spanner-vod-comment-chat-tab,\s*#cheese-spanner-vod-comment-comment-tab\{[^}]*flex:1 1 50%/s
+        /#cheese-spanner-vod-comment-chat-tab,\s*#cheese-spanner-vod-comment-comment-tab\{[^}]*flex:0 0 auto[^}]*padding:0 2px/s
     );
-    assert.match(css, /container-name:bcvc-tabs/);
-    assert.match(css, /@container bcvc-tabs\s*\(max-width:240px\)/);
     assert.match(
         css,
-        /#cheese-spanner-vod-comment-chat-tab\{[^}]*flex:1 1 auto[^}]*justify-content:flex-start[^}]*padding-right:2px[^}]*padding-left:2px/s
+        /#cheese-spanner-vod-comment-tabs\{[^}]*flex:1 1 auto[^}]*justify-content:flex-start[^}]*gap:16px/s
     );
-    assert.match(css, /#cheese-spanner-vod-comment-comment-tab\{[^}]*flex:0 0 52px/s);
+    assert.doesNotMatch(css, /@container bcvc-tabs/);
     assert.match(css, /height:var\(--bcvc-panel-height/);
     assert.doesNotMatch(css, /\[data-bcvc-container="1"\]\{[^}]*position:relative!important/s);
     assert.doesNotMatch(css, /\[data-bcvc-container="1"\]\{[^}]*height:100%!important/s);
@@ -677,6 +857,7 @@ test("VOD comment tabs mount after a delayed chat log and reuse cached comments 
         "same-VOD timeline shell replacement must preserve existing comment rows"
     );
     assert.equal(fixture.requests.length, 1, "same-VOD remount must reuse the loaded order state");
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-chat-tab").textContent, "채팅");
     assert.equal(document.getElementById("cheese-spanner-vod-comment-panel").scrollTop, 137);
     assert.equal(document.querySelector("#vod-aside [role='log']").getAttribute("data-bcvc-tab-hidden"), "1");
     assert.equal(oldAside.hasAttribute("data-bcvc-mounted"), false);
@@ -791,7 +972,7 @@ test("VOD comments load from the API without a lower comment DOM and render safe
     assert.match(document.querySelector("[data-bcvc-comment-key='id:2']").textContent, /클린봇/);
     assert.equal(
         document.querySelector("[data-bcvc-comment-key='id:2'] .bcvc-message").textContent,
-        "클린봇이 부적절한 표현을 감지한 댓글입니다."
+        "클린봇 감지: 부적절한 표현"
     );
     assert.equal(
         document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-avatar").title,
@@ -1134,12 +1315,9 @@ test("VOD comment rows render observed replies and tolerate nullable or deleted 
     assert.match(document.querySelector("[data-bcvc-comment-key*='fallback:']").textContent, /표시할 수 없는 댓글/);
     assert.equal(
         document.querySelector("[data-bcvc-comment-key*='fallback:'] .bcvc-message").textContent,
-        "내용을 표시할 수 없는 댓글입니다."
+        "표시할 수 없는 댓글"
     );
-    assert.equal(
-        document.querySelector("[data-bcvc-comment-key='id:5'] .bcvc-message").textContent,
-        "삭제된 댓글입니다."
-    );
+    assert.equal(document.querySelector("[data-bcvc-comment-key='id:5'] .bcvc-message").textContent, "삭제된 댓글");
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:5'] .bcvc-avatar"), null);
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:5'] .bcvc-buff"), null);
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:6'] .bcvc-date").textContent, "20260231010101");
@@ -1311,7 +1489,7 @@ test("VOD comment initial errors expose retry and distinguish empty or disabled 
     assert.equal(call, 3);
 });
 
-test("VOD comment notices use 해요체 and only the three native comment-body placeholders keep CHZZK wording", () => {
+test("VOD comment notices and replacement text use short phrases without polite endings", () => {
     const found = [];
     for (const parts of [
         ["features", "vodComments", "view.js"],
@@ -1321,13 +1499,9 @@ test("VOD comment notices use 해요체 and only the three native comment-body p
         ["shared", "data.js"],
     ]) {
         const source = fs.readFileSync(path.join(ROOT, ...parts), "utf8");
-        for (const literal of formalCopyLiterals(source)) found.push(`${parts.join("/")}: ${literal}`);
+        for (const literal of politeCopyLiterals(source)) found.push(`${parts.join("/")}: ${literal}`);
     }
-    assert.deepEqual(
-        found,
-        NATIVE_COMMENT_BODY_COPY.map((text) => `features/vodComments/view.js: ${text}`),
-        "only the native-mimic comment-body copy may keep 합니다체"
-    );
+    assert.deepEqual(found, []);
 });
 
 test("VOD comment pagination coalesces observer requests and appends without replacing existing rows", async (t) => {
@@ -1475,6 +1649,8 @@ test("VOD comment tabs abort stale VOD work and clean up on route exit or disabl
     assert.equal(document.getElementById("cheese-spanner-vod-comment-tabs"), null);
     assert.equal(document.getElementById("cheese-spanner-vod-comment-panel"), null);
     assert.equal(document.querySelector("[role='log']").getAttribute("aria-hidden"), null);
+    assert.equal(document.querySelector(".native-chat-header h2").textContent, "라이브 채팅 다시보기");
+    assert.equal(document.querySelector(".native-chat-header h2").hasAttribute("data-bcvc-heading"), false);
 });
 
 test("VOD comment tab keyboard navigation keeps roving tabindex", (t) => {

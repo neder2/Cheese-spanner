@@ -10,8 +10,9 @@
  *   찾아 data-bcoc-source-user에 기록한다(2026-10-21 실측: 다시보기 행의 user가 profile.userIdHash와 같음).
  *   채팅 도구가 요청하면 가장 가까운 chatMessage의 key·user·time·profile을 검증해 제한된 식별값을
  *   data-bcct-source-message에, 지원되는 블라인드 상태의 originalContent를 data-bcct-source-original에 기록한다.
- *   불완전한 메시지는 null로 답하고 NORMAL의 원문은 보내지 않는다. 치지직은 사후 블라인드
- *   ({...message, status})와 클린봇 감지 메시지에서도 서버 원문 originalContent를 유지한다(2026-10-30 웹 번들).
+ *   라이브 안내가 표시된 행은 같은 방송의 네이티브 채팅 목록에서 같은 메시지의 최신 상태와 원문을 확인한다.
+ *   불완전한 메시지는 null로 답하고 NORMAL의 원문은 보내지 않는다. 블라인드 옵션이 켜졌을 때만
+ *   화면과 일치하는 일반 채팅 원문을 MAIN 메모리에 보관해, 이후 같은 메시지의 원문이 비면 사용한다.
  * 통신: cheese-spanner:chat-timestamp-source-request·cheese-spanner:chat-user-source-request·
  *   cheese-spanner:chat-blind-source-request 이벤트의 target,
  *   data-bcmt-source-time·data-bcoc-source-user·data-bcct-source-message·data-bcct-source-original DOM 속성,
@@ -26,10 +27,24 @@
     const SOURCE_USER_ATTR = "data-bcoc-source-user";
     const USER_HASH_RE = /^[A-Za-z0-9_-]{1,128}$/;
     const BLIND_REQUEST_EVENT = "cheese-spanner:chat-blind-source-request";
+    const BLIND_ORIGINALS_CLEAR_EVENT = "cheese-spanner:chat-blind-originals-clear";
     const SOURCE_ORIGINAL_ATTR = "data-bcct-source-original";
     const SOURCE_MESSAGE_ATTR = "data-bcct-source-message";
     const NORMAL_MESSAGE_STATUS = "NORMAL";
+    const BLIND_REQUEST_STATUSES = new Set([
+        NORMAL_MESSAGE_STATUS,
+        "BLIND",
+        "CBOTBLIND",
+        "HIDDEN",
+        "RECLAIM",
+        "FILTERED",
+    ]);
+    const NATIVE_BLIND_NOTICES = new Set([
+        "메시지가 블라인드 처리되었습니다.",
+        "클린봇이 부적절한 표현을 감지했습니다.",
+    ]);
     const MAX_ORIGINAL_LENGTH = 2000;
+    const MAX_CACHED_ORIGINALS = 500;
     const PAGE_READY_EVENT = "cheese-spanner:chat-timestamp-page-ready";
     const SOURCE_TIME_ATTR = "data-bcmt-source-time";
     const READY_ATTR = "data-cheese-spanner-chat-timestamp-page-ready";
@@ -37,7 +52,10 @@
     const VOD_CHAT_LOG_SELECTOR = "aside#vod-aside [role='log']";
     const MESSAGE_CONTAINER_SELECTOR = "[class*='chatting_message'], [class*='chat-message']";
     const REACT_PROPS_PREFIX = "__reactProps$";
+    const REACT_FIBER_PREFIX = "__reactFiber$";
     const MAX_ANCESTOR_DEPTH = 8;
+    const MAX_CHAT_FIBER_DEPTH = 16;
+    const MAX_LIVE_MESSAGE_LIST_SIZE = 200;
     const EARLIEST_MESSAGE_TIME_MS = Date.UTC(2020, 0, 1);
     // 기기 시계가 서버보다 늦어도(동기화 꺼짐, 시간대만큼 어긋난 시계 등) 방금 온 채팅의 서버 시각을 버리지 않아요.
     // 기기 시각보다 12시간 넘게 앞선 값만 잘못된 값으로 봐요. isolated 쪽(features/chatTimestamp.js)과 같은 상한이에요.
@@ -49,6 +67,9 @@
     if (documentRoot?.hasAttribute(READY_ATTR)) return;
     documentRoot?.setAttribute(READY_ATTR, "1");
 
+    const cachedOriginals = new Map();
+    let cachedOriginalsPath = "";
+
     function normalizeMessageTime(value) {
         if (typeof value !== "number" || !Number.isSafeInteger(value)) return null;
         if (value < EARLIEST_MESSAGE_TIME_MS || value > Date.now() + MAX_FUTURE_SKEW_MS) return null;
@@ -59,12 +80,10 @@
         return typeof value === "string" && USER_HASH_RE.test(value) ? value : null;
     }
 
-    function normalizeBlindOriginal(message) {
-        const status = message?.status;
-        if (typeof status !== "string" || !status || status === NORMAL_MESSAGE_STATUS) return null;
-        if (typeof message.originalContent !== "string") return null;
-        const text = message.originalContent.trim();
-        return text ? text.slice(0, MAX_ORIGINAL_LENGTH) : null;
+    function normalizeOriginal(value) {
+        if (typeof value !== "string") return null;
+        const text = value.trim();
+        return text && !NATIVE_BLIND_NOTICES.has(text) ? text.slice(0, MAX_ORIGINAL_LENGTH) : null;
     }
 
     function ownValue(object, key) {
@@ -84,7 +103,7 @@
             key.length > 256 ||
             !user ||
             time === null ||
-            !["NORMAL", "BLIND", "CBOTBLIND", "HIDDEN"].includes(status) ||
+            !BLIND_REQUEST_STATUSES.has(status) ||
             ownValue(profile, "userIdHash") !== user ||
             typeof nickname !== "string" ||
             !nickname.trim() ||
@@ -97,8 +116,51 @@
             time,
             status,
             nickname,
-            original: normalizeBlindOriginal({ status, originalContent: ownValue(message, "originalContent") }),
+            original: normalizeOriginal(ownValue(message, "originalContent")),
         };
+    }
+
+    function clearBlindOriginals() {
+        cachedOriginals.clear();
+        cachedOriginalsPath = "";
+    }
+
+    function readVisibleChat(detail) {
+        // A string crosses worlds without sharing a mutable JavaScript object.
+        if (typeof detail !== "string" || detail.length > 4500) return null;
+        try {
+            const value = JSON.parse(detail);
+            return Array.isArray(value) && value.length === 2 && value.every((part) => typeof part === "string")
+                ? value
+                : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function matchesVisibleAuthor(snapshot, visible) {
+        return visible && snapshot.nickname.trim().replace(/\s+/g, " ") === visible[0];
+    }
+
+    function originalForReply(snapshot, path, visible) {
+        if (!snapshot) return null;
+        const blinded = snapshot.status !== NORMAL_MESSAGE_STATUS;
+        const original = blinded ? snapshot.original : null;
+        if (!matchesVisibleAuthor(snapshot, visible)) return original;
+
+        if (cachedOriginalsPath !== path) {
+            clearBlindOriginals();
+            cachedOriginalsPath = path;
+        }
+        const identity = JSON.stringify([snapshot.key, snapshot.user, snapshot.time]);
+        // When props lead the DOM during row reuse, the visible body may still belong to the previous message.
+        if (snapshot.original && (blinded || snapshot.original.replace(/\s+/g, " ") === visible[1])) {
+            cachedOriginals.delete(identity);
+            cachedOriginals.set(identity, snapshot.original);
+            if (cachedOriginals.size > MAX_CACHED_ORIGINALS)
+                cachedOriginals.delete(cachedOriginals.keys().next().value);
+        }
+        return blinded ? original || cachedOriginals.get(identity) || null : null;
     }
 
     function getReactMessageValue(element, read) {
@@ -134,11 +196,49 @@
         return null;
     }
 
-    // 원문은 가장 가까운 chatMessage 한 개에서만 읽는다. 그 메시지가 NORMAL이면 더 위의 다른 메시지로 넘어가지 않는다.
+    // 행 정체성은 가장 가까운 chatMessage로 고정한다.
     function findNearestMessage(messageContainer, chatLog) {
         return findMessageValue(messageContainer, chatLog, (message) =>
             message && typeof message === "object" ? message : null
         );
+    }
+
+    function getLiveMessageList(chatLog, channelId) {
+        if (!channelId) return null;
+        const fiberKey = Object.getOwnPropertyNames(chatLog).find((name) => name.startsWith(REACT_FIBER_PREFIX));
+        if (!fiberKey) return null;
+        let fiber = ownValue(chatLog, fiberKey);
+        for (let depth = 0; fiber && depth < MAX_CHAT_FIBER_DEPTH; depth++, fiber = ownValue(fiber, "return")) {
+            const client = ownValue(ownValue(fiber, "memoizedProps"), "gameChatClient");
+            const alternate = ownValue(ownValue(ownValue(fiber, "alternate"), "memoizedProps"), "gameChatClient");
+            if (!client && !alternate) continue;
+            if (client && alternate && client !== alternate) return null;
+            const owner = client || alternate;
+            if (ownValue(ownValue(owner, "config"), "streamingChannelId") !== channelId) return null;
+            const list = ownValue(owner, "messageList");
+            return Array.isArray(list) ? list : null;
+        }
+        return null;
+    }
+
+    function matchesMessageIdentity(message, row) {
+        return (
+            ownValue(message, "key") === row.key &&
+            ownValue(message, "user") === row.user &&
+            ownValue(message, "time") === row.time
+        );
+    }
+
+    function findLatestLiveMessage(chatLog, channelId, row) {
+        const list = getLiveMessageList(chatLog, channelId);
+        if (!list) return null;
+        // The live client keeps the recent 200 messages in arrival order.
+        const end = list.length;
+        for (let index = end - 1; index >= Math.max(0, end - MAX_LIVE_MESSAGE_LIST_SIZE); index--) {
+            const message = ownValue(list, index);
+            if (matchesMessageIdentity(message, row)) return { list, index, message };
+        }
+        return null;
     }
 
     function getRequestChatLog(messageContainer) {
@@ -180,17 +280,33 @@
         const chatLog = getRequestChatLog(messageContainer);
         if (!chatLog) return;
         const path = location.pathname;
+        const visible = LIVE_ROUTE_RE.test(path) ? readVisibleChat(event.detail) : null;
+        const channelId = visible ? path.split("/")[2] : "";
         const message = findNearestMessage(messageContainer, chatLog);
-        let snapshot = readBlindMessage(message);
+        const row = readBlindMessage(message);
+        let latest = null;
+        let snapshot = row;
+        if (row && matchesVisibleAuthor(row, visible) && NATIVE_BLIND_NOTICES.has(visible[1])) {
+            // On a post-display blind, React can update the notice while the host props still say NORMAL.
+            latest = findLatestLiveMessage(chatLog, channelId, row);
+            if (latest) snapshot = readBlindMessage(latest.message);
+        }
         if (
             !messageContainer.isConnected ||
             getRequestChatLog(messageContainer) !== chatLog ||
             location.pathname !== path ||
             findNearestMessage(messageContainer, chatLog) !== message ||
-            JSON.stringify(readBlindMessage(message)) !== JSON.stringify(snapshot)
+            JSON.stringify(readBlindMessage(message)) !== JSON.stringify(row) ||
+            (latest &&
+                (!snapshot ||
+                    !matchesMessageIdentity(snapshot, row) ||
+                    !matchesVisibleAuthor(snapshot, visible) ||
+                    getLiveMessageList(chatLog, channelId) !== latest.list ||
+                    ownValue(latest.list, latest.index) !== latest.message ||
+                    JSON.stringify(readBlindMessage(latest.message)) !== JSON.stringify(snapshot)))
         )
             snapshot = null;
-        writeSource(messageContainer, SOURCE_ORIGINAL_ATTR, snapshot?.original ?? null);
+        writeSource(messageContainer, SOURCE_ORIGINAL_ATTR, originalForReply(snapshot, path, visible));
         const identity = snapshot && {
             key: snapshot.key,
             user: snapshot.user,
@@ -217,5 +333,7 @@
     document.addEventListener(SOURCE_REQUEST_EVENT, handleSourceRequest, true);
     document.addEventListener(USER_REQUEST_EVENT, handleUserRequest, true);
     document.addEventListener(BLIND_REQUEST_EVENT, handleBlindRequest, true);
+    window.addEventListener(BLIND_ORIGINALS_CLEAR_EVENT, clearBlindOriginals);
+    window.addEventListener("pagehide", clearBlindOriginals);
     window.dispatchEvent(new Event(PAGE_READY_EVENT));
 })();

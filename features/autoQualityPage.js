@@ -118,6 +118,7 @@
     const NATIVE_AD_MEDIA_SELECTOR =
         '[data-role="imaAdContainerEl"], [data-role="gvAdContainerEl"], #preAdPlayerWrapper, #midAdPlayerWrapper';
     const ROUTE_MEDIA_LOAD_EVENTS = ["emptied", "loadstart", "loadedmetadata"];
+    const VOD_AUXILIARY_EVENT = "cheese-spanner:vod-multiview:auxiliary";
 
     let cachedPlayer = null;
     let liveQualityBinding = null;
@@ -135,6 +136,7 @@
     let autoQualityEnabled = true;
     let liveQualityIntentKey = "";
     const nativeSelectionLocks = new WeakMap();
+    const auxiliaryQualityBindings = new Map();
     const streamInfoSources = new WeakMap();
     let streamInfoSourceSequence = 0;
     let commentTimelineSeekSeq = 0;
@@ -532,7 +534,13 @@
         return target instanceof Element && Boolean(target.closest(PLAYER_INTERACTION_SELECTOR));
     }
 
+    function isVodMultiviewInput(event) {
+        const target = event.composedPath?.()[0] || event.target;
+        return target instanceof Element && Boolean(target.closest("[data-bcvm]"));
+    }
+
     function cancelCommentTimelineSeekOnUserIntent(event) {
+        if (isVodMultiviewInput(event)) return;
         const shouldCancelUrlStartSeek =
             Boolean(activeUrlStartSeek) && (event.type === "keydown" || isPlayerInteractionTarget(event.target));
         if (!activeCommentTimelineSeek && !shouldCancelUrlStartSeek) return;
@@ -557,7 +565,7 @@
 
     function rememberUserMediaIntent(event) {
         // VOD startup readiness reads this only on VOD; playback restore also uses it on live.
-        if (!isPlaybackRoute()) return;
+        if (!isPlaybackRoute() || isVodMultiviewInput(event)) return;
 
         if (event.type === "keydown") {
             if (isEditableTarget(event.target)) return;
@@ -609,6 +617,7 @@
     function syncAutoQualityState() {
         syncQualityTargetRouteState();
         readAutoQualityState();
+        syncAuxiliaryQuality();
         liveQualityIntentKey = [location.pathname, autoQualityEnabled, preferredQuality].join("|");
         if (!autoQualityEnabled) {
             // Re-enabling is a settings change: the next entry applies again on both live and VOD.
@@ -645,6 +654,59 @@
         if (awaitingRouteApplyRequest) return;
         if (isVodRoute() && hasStableVodApply()) return;
         startPageAutoApply();
+    }
+
+    function syncAuxiliaryQuality() {
+        const pathname = location.pathname;
+        const slots =
+            autoQualityEnabled && isVodRoute() && document.documentElement.hasAttribute(STATE_ATTR)
+                ? window.CheeseSpannerVodNative?.getAuxiliaries?.() || []
+                : [];
+        for (const [slot, binding] of auxiliaryQualityBindings) {
+            if (
+                slots.includes(slot) &&
+                binding.videoNo === slot.root.dataset.bcvmVideoNo &&
+                binding.quality === preferredQuality
+            )
+                continue;
+            binding.listeners.abort();
+            auxiliaryQualityBindings.delete(slot);
+        }
+
+        for (const slot of slots) {
+            if (auxiliaryQualityBindings.has(slot)) continue;
+            const { root, media, player } = slot;
+            const binding = {
+                videoNo: root.dataset.bcvmVideoNo,
+                quality: preferredQuality,
+                listeners: new AbortController(),
+            };
+            auxiliaryQualityBindings.set(slot, binding);
+            const { signal } = binding.listeners;
+            const apply = () => {
+                if (
+                    location.pathname !== pathname ||
+                    media.readyState < 2 ||
+                    media.seeking ||
+                    !root.isConnected ||
+                    !root.contains(media) ||
+                    root.dataset.bcvmVideoNo !== binding.videoNo
+                )
+                    return;
+                const trackList = getTrackListFromTarget(player);
+                const tracks = toTrackArray(trackList);
+                const selected = getSelectedTrack(tracks, trackList);
+                const target = pickTargetTrack(tracks, selected, getPreferredHeight(binding.quality));
+                if (!target) return;
+                // Stop listening once this entry has a track choice. Later manual selections belong to the viewer.
+                binding.listeners.abort();
+                if (!selected || !trackMatchesQuality(selected, getTrackHeight(target)))
+                    selectTrack(trackList, tracks, target);
+            };
+            for (const event of ["loadedmetadata", "canplay", "seeked"])
+                media.addEventListener(event, apply, { signal });
+            apply();
+        }
     }
 
     function installPageEventListeners() {
@@ -686,6 +748,7 @@
 
     function rememberQualityTarget(target) {
         if (!target || (typeof target !== "object" && typeof target !== "function")) return;
+        if (isAuxiliaryQualityTarget(target)) return;
         if (trackedQualityTargets.includes(target)) return;
 
         trackedQualityTargets.push(target);
@@ -751,6 +814,7 @@
         for (const target of collectQualityTargets(player, includeTracked)) {
             if (target === player) continue;
             if (isElement(target) && !target.isConnected) continue;
+            if (isAuxiliaryQualityTarget(target)) continue;
             const trackList = getTrackListFromTarget(target);
             if (!trackList) continue;
             rememberQualityTarget(target);
@@ -990,6 +1054,7 @@
     window.addEventListener(ROUTE_CHANGE_EVENT, syncAutoQualityState);
     window.addEventListener("pageshow", syncAutoQualityState, true);
     document.addEventListener(STREAM_INFO_READ_EVENT, onStreamInfoRead, true);
+    document.addEventListener(VOD_AUXILIARY_EVENT, syncAuxiliaryQuality);
 
     function isElement(value) {
         return value instanceof HTMLElement;
@@ -1054,8 +1119,19 @@
     }
 
     function hasQualityControlTarget(el) {
-        if (isElement(el) && !el.isConnected) return false;
+        if ((isElement(el) && !el.isConnected) || isAuxiliaryQualityTarget(el)) return false;
         return hasVideoTrackList(el);
+    }
+
+    function isAuxiliaryQualityTarget(target) {
+        const root = isElement(target) ? target : readLooseProp(target, "shadowRoot");
+        return isElement(root) && Boolean(root.closest(EXTENSION_PREVIEW_VIDEO_SELECTOR));
+    }
+
+    function getNativeVodHost(video) {
+        return (
+            video?.matches("video.webplayer-internal-video") && video.closest("#player_layout.chzzk_player.type_vod")
+        );
     }
 
     function findPlayerBySelectorOnly() {
@@ -1177,6 +1253,11 @@
         if (!isPlaybackRoute()) return null;
 
         const video = getMainVideoForContext(context);
+        if (isVodRoute()) {
+            const host = getNativeVodHost(video);
+            if (host) return window.CheeseSpannerVodNative?.find(host, video) || null;
+            if (document.querySelector("#player_layout.chzzk_player.type_vod")) return null;
+        }
         if (
             !isVodRoute() &&
             video?.matches("video.webplayer-internal-video") &&
@@ -1744,7 +1825,7 @@
         }, delayMs);
     }
 
-    function restorePlaybackAfterQualityChange(video, currentTime, shouldResume) {
+    function restorePlaybackAfterQualityChange(video, currentTime, shouldResume, ownsVideo) {
         cancelPlaybackRestore();
         let attemptCount = 0;
         let timeRestoreCancelled = false;
@@ -1757,7 +1838,8 @@
                 seq !== playbackRestoreSeq ||
                 location.href !== restoreHref ||
                 !autoQualityEnabled ||
-                !isPlaybackRoute()
+                !isPlaybackRoute() ||
+                (ownsVideo && !ownsVideo())
             ) {
                 return;
             }
@@ -2193,8 +2275,16 @@
             routeMediaGate.withheldSelection = true;
             return { status: "pending", reason: "route-media-pending" };
         }
+        const host = isVodRoute() && getNativeVodHost(video);
+        const ownsVideo = host
+            ? () => getMainVideo() === video && window.CheeseSpannerVodNative?.find(host, video) === player
+            : null;
+        if (ownsVideo && (!ownsVideo() || getTrackListFromTarget(trackTarget.target) !== trackList))
+            return { status: "pending", reason: "player-changed" };
         const selected = selectTrack(trackList, tracks, targetTrack);
-        if (selected) restorePlaybackAfterQualityChange(video, isVodRoute() ? currentTime : NaN, shouldResume);
+        if (ownsVideo && !ownsVideo()) return { status: "pending", reason: "player-changed" };
+        if (selected)
+            restorePlaybackAfterQualityChange(video, isVodRoute() ? currentTime : NaN, shouldResume, ownsVideo);
 
         return {
             status: selected ? "selected" : "pending",
@@ -2249,7 +2339,7 @@
                 return { status: "pending", reason: "native-quality-pending", waitForEvent: true };
             }
         }
-        const trackTarget = findVideoTrackListTarget(player);
+        const trackTarget = findVideoTrackListTarget(player, !(isVodRoute() && getNativeVodHost(video)));
         bindTrackList(trackTarget?.trackList || null);
         const result = applyQualityToPlayer(player, quality, context, trackTarget);
         // A matching track completes this entry and a selection makes it provisional until its own window
@@ -2484,6 +2574,7 @@
         if (mutation.type !== "childList") return false;
         for (const node of mutation.addedNodes || []) {
             if (!(node instanceof Element)) continue;
+            if (node.closest(EXTENSION_PREVIEW_VIDEO_SELECTOR)) continue;
             if (isVodRoute()) {
                 if (node.matches("video")) return true;
                 if (node.querySelector?.("video")) return true;

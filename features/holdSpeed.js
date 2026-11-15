@@ -45,6 +45,7 @@
         isLiveRoute,
         isNativeAdBreakActive,
         isPlaybackRoute,
+        isVodMultiviewInput,
         startPageChangeDetection,
     } = CheeseSpanner.utils;
 
@@ -576,6 +577,7 @@
     }
 
     function onKeyDown(event) {
+        if (isVodMultiviewInput(event)) return;
         if (isSpaceKey(event)) {
             onSpaceKeyDown(event);
             return;
@@ -587,6 +589,11 @@
 
     function onKeyUp(event) {
         if (!isSpaceKey(event)) return;
+        if (isVodMultiviewInput(event)) {
+            suppressedSpacePress = false;
+            if (activePress?.input === "keyboard") cancelActivePress({ keepCancelled: false });
+            return;
+        }
         if (suppressedSpacePress) {
             suppressedSpacePress = false;
             stopKeyboardEvent(event);

@@ -179,17 +179,33 @@
 .bcmv-separator[data-axis="columns"]{width:6px;transform:translateX(-3px);cursor:col-resize}
 .bcmv-separator[data-axis="rows"]{height:6px;transform:translateY(-3px);cursor:row-resize}
 .bcmv-panel{position:fixed;box-sizing:border-box;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--bcmv-border) transparent;padding:14px;background:var(--bcmv-surface);color:var(--bcmv-content);border:1px solid var(--bcmv-line);border-radius:var(--bct-radius-lg);box-shadow:var(--bct-shadow);pointer-events:auto;z-index:100;font:13px/1.5 var(--bcmv-font)}
-.bcmv-panel[hidden]{display:none}
+.bcmv-panel[hidden],.bcmv-panel [hidden]{display:none!important}
 .bcmv-panel{--bcmv-accent:var(--bct-brand-text);--bcmv-danger:var(--bct-danger);--bcmv-tool-surface:var(--bct-surface-weak);--bcmv-brand-fill:var(--bct-brand);--bcmv-line:var(--bct-border)}
 #${PANEL_ID} button{margin:0}
 .bcmv-panel-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
 .bcmv-panel-tools{display:flex;gap:2px}
 .bcmv-panel h3{margin:0;font-size:13px;font-weight:600}
+.bcmv-panel-header h3{font-size:15px;font-weight:700}
+.bcmv-section-title{margin:16px 0 8px;font-size:12px;font-weight:700;line-height:1.4}
 #${PANEL_ID} .bcmv-panel-header button{display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;padding:0;width:28px;height:28px;border-radius:var(--bct-radius-md)}
 .bcmv-panel-icon{display:block;flex:none;width:16px;height:16px;pointer-events:none}
 #${PANEL_ID} button:not(:disabled):hover{background:var(--bct-hover)}
 #${PANEL_ID} .bcmv-panel-header [data-action="add"],#${PANEL_ID} [data-action="submit-add"]{border:0;background:var(--bcmv-brand-fill);color:var(--bct-on-brand);font-weight:600}
 #${PANEL_ID} .bcmv-panel-header [data-action="add"]:hover,#${PANEL_ID} [data-action="submit-add"]:hover{background:var(--bcmv-brand-hover)}
+#${PANEL_ID} .bcmv-panel-header [data-action="add"]{width:auto;min-height:30px;gap:4px;padding:4px 8px;border-radius:var(--bct-radius-sm)}
+.bcmv-add-section{display:grid;gap:8px;padding:0 0 16px;margin-block-end:16px;border-bottom:1px solid var(--bcmv-line)}
+.bcmv-add-tabs{display:flex;gap:4px;padding:3px;border-radius:var(--bct-radius-md);background:var(--bcmv-tool-surface)}
+#${PANEL_ID} .bcmv-add-tabs button{flex:1;min-width:0;min-height:30px;padding:4px 8px;border:1px solid transparent;border-radius:var(--bct-radius-sm);background:transparent;color:var(--bct-text-muted);font:inherit}
+#${PANEL_ID} .bcmv-add-tabs button[aria-selected="true"]{background:var(--bcmv-surface);color:var(--bcmv-accent);border-color:var(--bcmv-line);font-weight:700}
+.bcmv-add-pane{display:grid;gap:8px;min-width:0}
+.bcmv-add-pane form,.bcmv-following-filter{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;min-width:0}
+#${PANEL_ID} .bcmv-add-pane input{box-sizing:border-box;width:100%;min-width:0;height:36px;padding:6px 8px;border:1px solid var(--bcmv-border);border-radius:var(--bct-radius-sm);background:var(--bcmv-tool-surface);color:inherit;font:inherit;font-size:12px}
+#${PANEL_ID} .bcmv-add-pane button{font:inherit}
+#${PANEL_ID} .bcmv-add-pane [data-action="submit-add"],#${PANEL_ID} [data-action="refresh-following"]{min-height:30px;padding:4px 8px;border-radius:var(--bct-radius-sm)}
+#${PANEL_ID} [data-action="refresh-following"]{border:1px solid var(--bcmv-border);background:var(--bcmv-surface);color:inherit;font-size:12px}
+.bcmv-following-status{margin:0;color:var(--bct-text-muted);font-size:12px;line-height:1.6}
+.bcmv-add-pane .bcmv-search-results{max-height:220px;overflow:auto;overscroll-behavior:contain;margin:0;padding:3px}
+#${PANEL_ID} .bcmv-panel-header button:focus-visible,#${PANEL_ID} .bcmv-add-pane :is(button,input):focus-visible,#${PANEL_ID} .bcmv-add-tabs button:focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:-2px}
 .bcmv-panel label{display:flex;flex-direction:column;align-items:stretch;gap:6px;margin:8px 0;font-size:12px}
 .bcmv-panel input[name="liveUrl"]{box-sizing:border-box;width:100%;min-width:0;height:36px;background:var(--bcmv-surface);color:inherit;border:1px solid var(--bcmv-border);border-radius:var(--bct-radius-md);padding:6px 8px;font-size:12px}
 .bcmv-search-results{list-style:none;margin:12px 0 0;padding:0}
@@ -483,7 +499,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
             settingsPanel.addSearchResult(channel);
         } else if (action === "add") {
             notice("");
-            settingsPanel.show("add", true);
+            settingsPanel.show(settingsPanel.id === "add" ? "settings" : "add", true);
         } else if (action === "close-panel") {
             settingsPanel.close();
         } else if (action === "controls" && control === chatButton && state.active) {
@@ -569,7 +585,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
     function addProblem(id) {
         if (!id) return "올바른 치지직 라이브 URL 입력 필요.";
         if (state.channels.some((entry) => entry.id === id)) return "이미 추가된 방송.";
-        if (state.channels.length >= 6) return "최대 6개 방송까지 추가 가능.";
+        if (state.channels.length >= model.MAX_VIEWS) return `최대 ${model.MAX_VIEWS}개 방송까지 추가 가능.`;
         return "";
     }
     function addStreamFromUrl(value, freeRect = null) {
@@ -589,10 +605,12 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
             ? model.addTree(state.dockTree, id, routeId)
             : model.defaultTree(state.channels);
         if (freeRect && layout.viewportActive) state.freeWindows.push({ id, rect: [...freeRect] });
-        settingsPanel.show(null);
+        const panelOpen = Boolean(settingsPanel.id);
+        if (panelOpen) settingsPanel.show("settings");
         persistSession();
         players.reconcile(routeId, native);
         render();
+        if (panelOpen) settingsPanel.focusAction("add");
         return true;
     }
     function isLinkTransfer(transfer) {
@@ -660,7 +678,9 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         event.preventDefault();
         event.stopPropagation();
         // The URL itself is protected until drop for drags from another tab/app.
-        const problem = incomingDragProblem() || (state.channels.length >= 6 ? "최대 6개 방송까지 추가 가능." : "");
+        const problem =
+            incomingDragProblem() ||
+            (state.channels.length >= model.MAX_VIEWS ? `최대 ${model.MAX_VIEWS}개 방송까지 추가 가능.` : "");
         event.dataTransfer.dropEffect = problem
             ? "none"
             : ["link", "linkMove"].includes(event.dataTransfer.effectAllowed)
@@ -825,7 +845,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
                 state.freeWindows = state.freeWindows
                     .filter((cell) => cell.id !== routeId)
                     .map((cell) => (cell.id === previous.id ? { ...cell, id: routeId } : cell));
-            state.channels = state.channels.slice(0, 6);
+            state.channels = state.channels.slice(0, model.MAX_VIEWS);
             state.dockTree = model.defaultTree(state.channels);
             state.customLayout = false;
         }
@@ -894,7 +914,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
                 if (!state.active) teardown(false);
                 else releaseHost();
                 mount();
-                if (state.active && state.channels.length === 1) settingsPanel.show("add", true);
+                if (state.active && state.channels.length === 1) settingsPanel.show("settings", true);
                 else launcher?.focus({ preventScroll: true });
             });
             reference.before(launcher);

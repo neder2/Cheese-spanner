@@ -472,7 +472,7 @@
                 }
             } catch {
                 if (current(player)) {
-                    player.error = "재생 버튼 클릭 필요.";
+                    player.error = "재생 실패. ‘재생 재시도’ 선택.";
                     updatePlayerUi(player);
                 }
             }
@@ -537,7 +537,7 @@
                     });
                     hls.on(events.ERROR, (_event, data) => {
                         if (!data?.fatal || !current(player)) return;
-                        player.error = "방송 재생 실패. 재생 재시도 클릭 필요.";
+                        player.error = "재생 실패. ‘재생 재시도’ 선택.";
                         player.status = "unsupported";
                         player.pending = null;
                         player.applied = true;

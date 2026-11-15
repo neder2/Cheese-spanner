@@ -6,7 +6,7 @@
  *   auto-play-info의 실제 HLS를 썸네일 안에서 재생한다. 네이티브 목록 미리보기는 치지직 플레이어를
  *   그대로 사용한다. 옵션이 켜진 상태에서 우클릭하면 팔로잉은 소리를 토글하고 목록 미리보기는
  *   소리를 켜면서 CSS로 확대한다. 팔로잉 영상에는 소리 상태 아이콘과 전환 피드백을 표시하고,
- *   목록 영상에는 우클릭 동작 안내 툴팁만 표시한다. 페이지 이동·포인터 이탈·DOM 제거 시 정리한다.
+ *   목록 영상에는 우클릭 동작 안내를 호버마다 1초만 표시한다. 페이지 이동·포인터 이탈·DOM 제거 시 정리한다.
  * 의존: 전역 CheeseSpannerSettings.normalizeOptions, CheeseSpanner.utils(bindFeatureOptions,
  *   cleanEntryTitle, compactSpaces, ensureUiTheme(선택), fetchJson, injectStyleOnce, normalizeChzzkImageUrl,
  *   normalizeChzzkMediaUrl, normSpace, onReady, parseChzzkDate, startPageChangeDetection,
@@ -90,6 +90,8 @@
     const FAST_HOVER_CONFIG_ATTR = "data-cheese-spanner-live-preview-fast-hover-options";
     const FOLLOWING_PREVIEW_FETCH_DELAY_MS = 100;
     const PREVIEW_PLAYBACK_DELAY_MS = 300;
+    const PREVIEW_LIVE_SYNC_SECONDS = 3;
+    const PREVIEW_MAX_LIVE_LATENCY_SECONDS = 15;
     const PREVIEW_MAX_HEIGHT = 480;
     const PREVIEW_FOCUS_MAX_HEIGHT = 1080;
     const PREVIEW_SOUND_VOLUME_DEFAULT = 15;
@@ -114,7 +116,7 @@
     const ELAPSED_REFRESH_MS = 1000;
     const UNKNOWN_TITLE = "\uC81C\uBAA9 \uC5C6\uB294 \uB77C\uC774\uBE0C";
     const LOADING_TITLE = "\uBBF8\uB9AC\uBCF4\uAE30 \uBD88\uB7EC\uC624\uB294 \uC911";
-    const ERROR_TITLE = "\uBBF8\uB9AC\uBCF4\uAE30\uB97C \uBD88\uB7EC\uC62C \uC218 \uC5C6\uC5B4\uC694";
+    const ERROR_TITLE = "미리보기 불러오기 실패";
     // Colors, radii, the popover shadow and the bundled Pretendard face come from shared/uiTheme.js (--bct-*).
     // Marks drawn over the video or thumbnail keep fixed colors because they sit on the picture, not the theme.
     const STYLE_TEXT = `
@@ -320,7 +322,11 @@
   opacity:1;
   visibility:visible;
   transform:translateY(0);
-  transition-delay:180ms;
+  animation:bcfp-list-hint-dismiss 1s step-end forwards;
+}
+@keyframes bcfp-list-hint-dismiss{
+  from{opacity:1;visibility:visible;}
+  to{opacity:0;visibility:hidden;}
 }
 .bcfp-sound-feedback .bcfp-sound-feedback-icon{
   display:block;
@@ -982,7 +988,9 @@
         try {
             const playback = await fetchAutoPlayInfo(meta.liveId, { signal });
             const normalizedPlayback = normalizeAutoPlayInfo(playback, meta);
-            return getPlaybackSource(normalizedPlayback) ? normalizedPlayback : meta;
+            const previewSource = getPlaybackSource(normalizedPlayback);
+            if (!previewSource || (!previewSource.lowLatency && getPlaybackSource(meta)?.lowLatency)) return meta;
+            return normalizedPlayback;
         } catch (error) {
             // fetchJson's own timeout also rejects with AbortError; only the caller's cancellation is a stop.
             if (signal?.aborted) throw error;
@@ -1204,8 +1212,7 @@
 
         if (!hlsMedia.length) return null;
 
-        // 일반 HLS는 플레이리스트 끝이 실시간보다 ~30초 뒤라 미리보기가 뒤처져 보인다.
-        // 저지연(LLHLS)이 있으면 본방 플레이어처럼 실시간에 붙도록 먼저 고른다.
+        // 저지연(LLHLS)을 먼저 고르고, 일반 HLS의 TARGETDURATION × 3 시작 지연은 재생 설정에서 제한해요.
         const preferred =
             hlsMedia.find(
                 ({ media }) =>
@@ -1391,6 +1398,9 @@
                 capLevelToPlayerSize: false,
                 enableWorker: false,
                 lowLatencyMode: source.lowLatency,
+                // maxBufferLength is forward buffering, not a latency limit. Keep only this preview near live.
+                liveSyncDuration: PREVIEW_LIVE_SYNC_SECONDS,
+                liveMaxLatencyDuration: PREVIEW_MAX_LIVE_LATENCY_SECONDS,
                 maxBufferLength: 12,
             });
             const events = HlsCtor.Events || {};
@@ -2395,13 +2405,16 @@
         if (event.target instanceof HTMLVideoElement) syncPreviewOverlayForVideo(event.target);
     }
 
-    function handleViewportChange() {
+    function handleViewportChange(event) {
         restoreListExpansion();
         if (activeInjectedInfo && (!activeInjectedInfo.card.isConnected || !activeInjectedInfo.host.isConnected)) {
             hideInjectedPreview();
         }
-        if (activeInfo?.item?.isConnected) positionTooltip(activeInfo.item);
-        else if (activeInfo) hidePreview();
+        if (activeInfo?.item?.isConnected) {
+            const unrelatedScroll =
+                event?.type === "scroll" && event.target instanceof Element && !event.target.contains(activeInfo.item);
+            if (!unrelatedScroll) positionTooltip(activeInfo.item);
+        } else if (activeInfo) hidePreview();
     }
 
     function installListeners() {

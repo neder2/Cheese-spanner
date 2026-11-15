@@ -11,6 +11,53 @@ const {
     waitForCondition,
 } = require("./helpers/extension-page-fixture.js");
 
+test("nickname display saves independently and describes the verified streamer exception", async (t) => {
+    const chrome = createFakeChrome({ sync: { chatDonationMessagesHidden: true } });
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document } = dom.window;
+    const option = queryOption(document, "chatNicknameHidden");
+    assert.equal(option.checked, false);
+    assert.match(document.getElementById(option.getAttribute("aria-describedby")).textContent, /파트너·챌린저/);
+    option.checked = true;
+    dispatch(dom, option, "change");
+    document.getElementById("save").click();
+    await waitForCondition(() => document.getElementById("message").textContent === "옵션 저장 완료.");
+    assert.equal(chrome.testState.sync.chatNicknameHidden, true);
+    assert.equal(chrome.testState.sync.chatDonationMessagesHidden, true);
+});
+
+test("VOD comment display controls save split mode and the upper pane without changing the master option", async (t) => {
+    const chrome = createFakeChrome({ sync: { vodCommentTabsEnabled: true } });
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document } = dom.window;
+    const layout = queryOption(document, "vodCommentLayout");
+    const top = queryOption(document, "vodCommentSplitTop");
+    assert.equal(layout.value, "tabs");
+    assert.equal(top.value, "chat");
+    layout.value = "split";
+    top.value = "comments";
+    dispatch(dom, layout, "change");
+    dispatch(dom, top, "change");
+    document.getElementById("save").click();
+    await waitForCondition(() => document.getElementById("message").textContent === "옵션 저장 완료.");
+    assert.equal(chrome.testState.sync.vodCommentLayout, "split");
+    assert.equal(chrome.testState.sync.vodCommentSplitTop, "comments");
+    assert.equal(queryOption(document, "vodCommentTabsEnabled").checked, true);
+    const master = queryOption(document, "vodCommentTabsEnabled");
+    master.checked = false;
+    dispatch(dom, master, "change");
+    assert.equal(layout.closest("[data-depends-on]").getAttribute("aria-disabled"), "true");
+    assert.equal(top.closest("[data-depends-on]").getAttribute("aria-disabled"), "true");
+});
+
 test("last category restores every legacy index by meaning without rewriting the legacy value", async (t) => {
     const legacyTabs = ["player", "history", "chat", "appearance", "broadcast-time", "vod", "explore", "live-start"];
     for (const [index, id] of legacyTabs.entries()) {
@@ -168,21 +215,13 @@ test("panel resize settings explain their boundaries and remain independently us
     t.after(() => dom.window.close());
     evalRepoScript(dom, "shared", "settings.js");
     evalRepoScript(dom, "options.js");
-    await waitForAsyncCallbacks();
+    await waitForCondition(() => dom.window.document.getElementById("notice").dataset.state === "saved");
     const { document } = dom.window;
     const chat = queryOption(document, "chatResizeEnabled");
     const sidebar = queryOption(document, "sidebarResizeEnabled");
     for (const [input, group, expectedHelp] of [
-        [
-            chat,
-            "chat-display",
-            "영상 쪽 경계로 너비, 아래 경계로 높이를 끌어 조절해요. 더블클릭하면 기본 크기로 돌아가요.",
-        ],
-        [
-            sidebar,
-            "appearance-page",
-            "펼친 사이드바의 본문 쪽 경계를 끌어 조절해요. 더블클릭하면 기본 너비로 돌아가요.",
-        ],
+        [chat, "chat-display", "영상 쪽 경계로 너비, 아래 경계로 높이 조절. 더블클릭하면 기본 크기로 복원."],
+        [sidebar, "appearance-page", "펼친 사이드바의 본문 쪽 경계를 끌어 너비 조절. 더블클릭하면 기본 너비로 복원."],
     ]) {
         assert.ok(input);
         assert.equal(input.checked, true);
@@ -198,7 +237,7 @@ test("panel resize settings explain their boundaries and remain independently us
     chat.checked = false;
     dispatch(dom, chat, "change");
     document.getElementById("save").click();
-    await waitForAsyncCallbacks();
+    await waitForCondition(() => document.getElementById("notice").dataset.state === "saved" && !sidebar.disabled);
     assert.equal(chrome.testState.sync.chatResizeEnabled, false);
     assert.equal(chrome.testState.sync.sidebarResizeEnabled, true);
     assert.equal(sidebar.disabled, false);
@@ -207,12 +246,14 @@ test("panel resize settings explain their boundaries and remain independently us
     sidebar.checked = false;
     dispatch(dom, sidebar, "change");
     document.getElementById("save").click();
-    await waitForAsyncCallbacks();
+    await waitForCondition(() => document.getElementById("notice").dataset.state === "saved" && !sidebar.disabled);
     assert.equal(chrome.testState.sync.chatResizeEnabled, false);
     assert.equal(chrome.testState.sync.sidebarResizeEnabled, false);
     dom.window.confirm = () => true;
     document.getElementById("reset").click();
-    await waitForAsyncCallbacks();
+    await waitForCondition(
+        () => document.getElementById("notice").dataset.state === "saved" && chat.checked && !chat.disabled
+    );
     assert.equal(chat.checked, true);
     assert.equal(sidebar.checked, true);
     assert.equal(chrome.testState.sync.chatResizeEnabled, true);
@@ -327,7 +368,7 @@ test("options captures readable playback speed keys and blocks duplicate or rese
     press(doubleKey, "KeyM", { key: "m" });
     press(doubleKey, "KeyC", { key: "c" });
     assert.equal(doubleKey.value, "]", "the native subtitle key must stay reserved");
-    assert.match(message.textContent, /겹쳐 지정할 수 없어요/);
+    assert.match(message.textContent, /기존 재생 단축키와 겹치는 키/);
 
     press(doubleKey, "KeyW", { key: "w" });
     assert.equal(doubleKey.value, "W");
@@ -1196,14 +1237,14 @@ test("ad options save independently and wait for registration before reporting r
     assert.equal(document.getElementById("notice").dataset.state, "saving");
     reply({ ok: true, enabled: true });
     assert.equal(document.getElementById("notice").dataset.state, "saved");
-    assert.match(document.getElementById("adVideoStatus").textContent, /준비가 끝났어요/);
+    assert.match(document.getElementById("adVideoStatus").textContent, /적용 준비 완료/);
     input.checked = false;
     dispatch(dom, input, "change");
     document.getElementById("save").click();
     await waitForAsyncCallbacks();
     reply({ ok: false });
     assert.equal(chrome.testState.sync.adVideoEnabled, false);
-    assert.match(document.getElementById("adVideoStatus").textContent, /저장됐지만 적용 준비에 실패/);
+    assert.match(document.getElementById("adVideoStatus").textContent, /설정 저장 완료, 적용 준비 실패/);
 });
 
 test("an option changed elsewhere while the ad registration syncs survives the save", async (t) => {
@@ -1317,7 +1358,7 @@ test("options page shows initial storage read failures without overwriting exist
 
     assert.equal(document.getElementById("notice").dataset.state, "error");
     assert.equal(autoQuality.disabled, true);
-    assert.equal(message.textContent, "설정을 불러오지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.");
+    assert.equal(message.textContent, "설정 불러오기 실패. 페이지를 새로고침한 뒤 다시 시도.");
 
     autoQuality.checked = false;
     dispatch(dom, autoQuality, "change");
@@ -1325,7 +1366,7 @@ test("options page shows initial storage read failures without overwriting exist
 
     assert.equal(chrome.testState.sync.autoQualityEnabled, true);
     assert.equal(document.getElementById("notice").dataset.state, "error");
-    assert.equal(message.textContent, "설정을 불러오지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요.");
+    assert.equal(message.textContent, "설정 불러오기 실패. 페이지를 새로고침한 뒤 다시 시도.");
 });
 
 test("options page shows storage write failures without updating saved options", async (t) => {
@@ -1360,10 +1401,7 @@ test("options page shows storage write failures without updating saved options",
 
     assert.equal(chrome.testState.sync.autoQualityEnabled, true);
     assert.equal(document.getElementById("notice").dataset.state, "error");
-    assert.equal(
-        document.getElementById("message").textContent,
-        "설정을 저장하지 못했어요. 잠시 후 다시 시도해 주세요."
-    );
+    assert.equal(document.getElementById("message").textContent, "설정 저장 실패. 잠시 후 다시 시도.");
 });
 
 test("options reset asks for confirmation before restoring defaults", async (t) => {
@@ -1396,7 +1434,7 @@ test("options reset asks for confirmation before restoring defaults", async (t) 
 
     dom.window.confirm = () => true;
     resetButton.click();
-    await waitForAsyncCallbacks();
+    await waitForCondition(() => document.getElementById("message").textContent === "기본값 복원 완료");
 
     assert.equal(skipSeconds.value, "5");
     assert.equal(chrome.testState.sync.skipSeconds, 5);
@@ -1405,16 +1443,20 @@ test("options reset asks for confirmation before restoring defaults", async (t) 
     assert.deepEqual(chrome.testState.sync.betterchzzkPinnedFollowingChannelIds, ["channel-a"]);
 });
 
-test("options copy uses the polite 해요체 tone", () => {
-    // Copy rule (docs/business-rules.md, 화면 디자인): visible option sentences, status messages and confirmations use 해요체; noun labels stay.
+test("options descriptions, status messages and confirmations omit polite endings", () => {
     for (const file of [
         "options.html",
         "options.js",
         "optionsLiveStart.js",
+        "optionsRecordingDirectory.js",
         "optionsSettingsBackup.js",
         "optionsUpdateGuide.js",
     ]) {
-        assert.doesNotMatch(readRepoFile(file), /(습니다|입니다|합니다|됩니다)/, file);
+        assert.doesNotMatch(
+            readRepoFile(file),
+            /[가-힣](?<![필주개중수소강요])요(?=[.!?…"'\x60<])|(?:습|합|됩|입)니다|십시오/,
+            file
+        );
     }
 });
 
@@ -1474,9 +1516,9 @@ test("the recording folder may be cleared, asks for downloads only when a new fo
     assert.deepEqual([...chrome.testState.permissionRequests.at(-1).permissions], ["downloads"]);
     assert.equal(chrome.testState.sync.videoRecorderFolder, "");
     assert.equal(folder.value, "치지직 녹화");
-    assert.match(document.getElementById("message").textContent, /다운로드 권한이 거부되어 저장하지 않았어요/);
+    assert.match(document.getElementById("message").textContent, /다운로드 권한 거부로 저장 중단/);
     await waitForCondition(() => !permissionButton.hidden);
-    assert.equal(status.textContent, "다운로드 권한이 없어 지금은 녹화 파일을 다운로드 폴더에 바로 저장해요.");
+    assert.equal(status.textContent, "다운로드 권한이 없어 기본 다운로드 폴더에 저장");
 
     // The permission button grants it without saving anything else.
     chrome.permissions.request = (spec, callback) => {
@@ -1487,7 +1529,7 @@ test("the recording folder may be cleared, asks for downloads only when a new fo
     permissionButton.click();
     await waitForCondition(() => permissionButton.hidden);
     assert.deepEqual([...chrome.testState.permissionRequests.at(-1).permissions], ["downloads"]);
-    assert.equal(status.textContent, "다운로드 폴더 안의 ‘치지직 녹화’ 폴더에 저장해요.");
+    assert.equal(status.textContent, "다운로드 폴더 안의 ‘치지직 녹화’ 폴더에 저장");
 
     const requests = chrome.testState.permissionRequests.length;
     save.click();

@@ -196,7 +196,7 @@
                 label.append(text, select);
                 s.rules.append(label);
             }
-            if (!rules.length) s.rules.textContent = "숨길 문구를 입력하면 문구별 조건이 나타나요.";
+            if (!rules.length) s.rules.textContent = "숨길 문구 입력 후 문구별 조건 표시";
         }
         for (const select of s.rules.querySelectorAll("select")) {
             const rule = rules.find((item) => item.phrase === select.dataset.keywordPhrase);
@@ -208,7 +208,7 @@
         s.loading = true;
         s.readChanges = new Map();
         controls(s);
-        status(s, "설정을 불러오는 중이에요.");
+        status(s, "설정 불러오는 중");
         try {
             const raw = await storageGet(chrome.storage.sync, KEYS);
             if (!valid(s)) return;
@@ -227,7 +227,7 @@
             s.readFailed = true;
             s.conflict = true;
             controls(s);
-            status(s, "설정을 불러오지 못했어요. 다시 불러와 주세요.", true);
+            status(s, "설정 불러오기 실패. 다시 불러오기", true);
         }
     }
     function storageChanged(s, changes, area) {
@@ -243,15 +243,11 @@
         if (s.pending && KEYS.every((key) => s.raw[key] === s.pendingValues[key])) return;
         if (!s.pending && !isDirty(s)) {
             display(s, s.raw);
-            status(s, "다른 곳에서 바뀐 설정을 불러왔어요.");
+            status(s, "다른 화면에서 저장한 설정 반영");
         } else if (!same(s.raw, s.baseRaw)) {
             s.conflict = true;
             controls(s);
-            status(
-                s,
-                "다른 곳에서 설정이 바뀌었어요. 입력은 유지했어요. 최신 설정을 불러온 뒤 다시 편집해 주세요.",
-                true
-            );
+            status(s, "다른 화면에서 설정 변경. 입력 유지. 최신 설정을 불러온 뒤 편집", true);
         }
     }
     async function save(s, event) {
@@ -260,7 +256,7 @@
         if (!event.isTrusted || !valid(s) || s.loading || s.pending || s.conflict) return;
         const words = settings.normalizeChatKeywordFilterWords(s.words.value);
         if (words === null) {
-            status(s, "한 줄에 100자 이하, 최대 50개·전체 2,000자까지 입력해 주세요.", true);
+            status(s, "한 줄 100자, 최대 50개, 전체 2,000자까지 입력 가능", true);
             s.words.focus({ preventScroll: true });
             return;
         }
@@ -268,18 +264,18 @@
         s.pending = true;
         s.pendingValues = values;
         controls(s);
-        status(s, "저장 중이에요.");
+        status(s, "저장 중");
         try {
             await settingsStoreSet("sync", values, expected(s.baseRaw));
             if (!valid(s)) return;
             s.pending = false;
             if (s.conflict) {
                 controls(s);
-                status(s, "저장 중 다른 곳에서 설정이 바뀌었어요. 입력은 유지했어요. 최신 설정을 확인해 주세요.", true);
+                status(s, "저장 중 다른 화면에서 설정 변경. 입력 유지. 최신 설정 확인", true);
                 return;
             }
             display(s, values);
-            status(s, "저장했어요.");
+            status(s, "저장 완료");
         } catch (error) {
             if (!valid(s)) return;
             s.pending = false;
@@ -288,8 +284,8 @@
             status(
                 s,
                 error?.code === "conflict"
-                    ? "다른 곳에서 설정이 바뀌어 저장하지 않았어요. 입력은 유지했어요. 최신 설정을 불러와 주세요."
-                    : "저장하지 못했어요. 입력은 유지했어요. 다시 시도해 주세요.",
+                    ? "다른 화면에서 설정이 바뀌어 저장 중단. 입력 유지. 최신 설정 불러오기"
+                    : "저장 실패. 입력 유지. 다시 시도",
                 true
             );
         }
@@ -323,12 +319,12 @@
         panel.innerHTML = `<h2>문구 숨김</h2>
 <label class="bcct-keyword-toggle"><input type="checkbox" data-field="enabled">지정한 문구와 일치하는 채팅 숨기기</label>
 <label class="bcct-keyword-choice">조건 적용 방식<select data-field="applyMode" aria-describedby="cheese-spanner-chat-keywords-mode-help"><option value="all">전체 적용</option><option value="individual">부분 적용</option></select></label>
-<p id="cheese-spanner-chat-keywords-mode-help">전체 적용은 모든 문구에 같은 조건을, 부분 적용은 문구마다 다른 조건을 설정해요.</p>
+<p id="cheese-spanner-chat-keywords-mode-help">전체 적용은 모든 문구에 같은 조건, 부분 적용은 문구마다 다른 조건</p>
 <label class="bcct-keyword-choice">모든 문구의 일치 조건<select data-field="matchMode" aria-describedby="cheese-spanner-chat-keywords-match-help"><option value="contains">포함</option><option value="exact">완전 일치</option></select></label>
-<p id="cheese-spanner-chat-keywords-match-help">완전 일치는 본문 전체가 문구와 같을 때, 포함은 본문 안에 문구가 들어 있을 때 숨겨요.</p>
+<p id="cheese-spanner-chat-keywords-match-help">완전 일치: 본문 전체가 같으면 숨김. 포함: 본문에 문구가 있으면 숨김</p>
 <label for="cheese-spanner-chat-keywords">숨길 문구</label><textarea id="cheese-spanner-chat-keywords" data-field="words" rows="5" maxlength="2000" aria-describedby="cheese-spanner-chat-keywords-help" placeholder="한 줄에 문구 하나씩 입력" spellcheck="false"></textarea>
-<p id="cheese-spanner-chat-keywords-help">영문 대소문자는 구분하지 않아요. 최대 50개·한 문구 100자·전체 2,000자예요.</p>
-<div data-field="individual" hidden><p>문구별 일치 조건을 선택해요. 새 문구의 기본 조건은 포함이에요.</p><div data-field="rules" role="group" aria-label="문구별 일치 조건"></div></div>
+<p id="cheese-spanner-chat-keywords-help">영문 대소문자 구분 없음. 최대 50개, 한 문구 100자, 전체 2,000자</p>
+<div data-field="individual" hidden><p>문구마다 일치 조건 선택. 새 문구는 기본 ‘포함’</p><div data-field="rules" role="group" aria-label="문구별 일치 조건"></div></div>
 <p role="status" aria-live="polite"></p><div class="bcct-keyword-actions"><button type="button" data-action="reload" hidden>최신 설정 불러오기</button><button type="button" data-action="close">닫기</button><button type="button" data-action="save">저장</button></div>`;
         const s = {
             ...e,
@@ -373,7 +369,7 @@
                     .join("\n");
                 controls(s);
             }
-            if (!s.conflict && !s.pending && !s.loading) status(s, "저장 전 변경사항이 있어요.");
+            if (!s.conflict && !s.pending && !s.loading) status(s, "저장하지 않은 변경 사항");
         });
         panel.addEventListener("change", (change) => {
             if (s.pending || s.loading) return;
@@ -384,7 +380,7 @@
                     .join("\n");
             }
             controls(s);
-            if (!s.conflict) status(s, "저장 전 변경사항이 있어요.");
+            if (!s.conflict) status(s, "저장하지 않은 변경 사항");
         });
         for (const type of ["click", "pointerdown", "mousedown"])
             panel.addEventListener(type, (click) => click.stopPropagation());

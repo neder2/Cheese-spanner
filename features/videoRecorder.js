@@ -83,6 +83,7 @@
         status = null,
         statusTimer = 0;
     let menu = null,
+        menuPlayer = null,
         menuRow = null,
         menuButton = null,
         menuValue = null,
@@ -102,6 +103,8 @@
     let choosingDirectory = false;
     let directoryRevision = 0;
     const finishing = new Set();
+    const auxiliaryButtons = new Map();
+    const AUXILIARY = "cheese-spanner:vod-multiview:auxiliary";
     let discovery = null,
         routeCleanup = null,
         routeKey = "";
@@ -159,6 +162,12 @@
     }
 
     async function recordingFileName(session) {
+        if (session.auxiliary) {
+            const { media, title, channelName } = session.auxiliary;
+            const safeTitle = filePart(title, 90, 150, `다시보기 ${media.videoNo}`);
+            const safeChannel = filePart(channelName, 40, 60, "스트리머 정보 없음");
+            return `${getKstDateKey(session.startedAt)} ${safeTitle} - ${safeChannel}.${session.format.extension}`;
+        }
         const live = isLiveRoute(session.path);
         const id = live ? getLiveChannelIdFromPath(session.path) : getVodVideoNoFromPath(session.path);
         let title = `${live ? "라이브" : "다시보기"} ${id}`;
@@ -187,34 +196,41 @@
         return `${getKstDateKey(session.startedAt)} ${title} - ${channelName}.${session.format.extension}`;
     }
 
-    async function startRecording() {
-        if (recording || finishing.size || !active || !video?.isConnected || !player?.contains(video)) return;
+    async function startRecording(auxiliary) {
+        const targetVideo = auxiliary?.video || video;
+        const targetPlayer = auxiliary?.player || player;
+        if (recording || finishing.size || !active || !targetVideo?.isConnected || !targetPlayer?.contains(targetVideo))
+            return;
         const format = pickMimeType();
-        if (!format || typeof video.captureStream !== "function") {
-            showStatus("이 브라우저에서는 영상을 녹화할 수 없어요.");
+        if (!format || typeof targetVideo.captureStream !== "function") {
+            showStatus("이 브라우저에서 녹화 불가", targetPlayer);
             return;
         }
-        if (video.readyState < HAVE_CURRENT_DATA) {
-            showStatus("영상이 재생되기 시작하면 다시 눌러 주세요.");
+        if (targetVideo.readyState < HAVE_CURRENT_DATA) {
+            showStatus("영상 재생 후 녹화 버튼 다시 누르기", targetPlayer);
             return;
         }
         let stream = null;
         let recorder = null;
         try {
-            stream = video.captureStream();
+            stream = targetVideo.captureStream();
             if (!stream.getVideoTracks().length) throw new Error("no video track");
             recorder = new MediaRecorder(stream, {
                 mimeType: format.mimeType,
-                videoBitsPerSecond: videoBitsPerSecond(video.videoHeight),
+                videoBitsPerSecond: videoBitsPerSecond(targetVideo.videoHeight),
                 audioBitsPerSecond: 160_000,
             });
         } catch (_) {
             for (const track of stream?.getTracks?.() || []) track.stop();
-            showStatus("이 영상은 녹화할 수 없어요.");
+            showStatus("녹화할 수 없는 영상", targetPlayer);
             return;
         }
         const session = {
-            video,
+            video: targetVideo,
+            player: targetPlayer,
+            auxiliary: auxiliary
+                ? { media: auxiliary.media, title: auxiliary.title, channelName: auxiliary.channelName }
+                : null,
             stream,
             recorder,
             format,
@@ -279,7 +295,7 @@
         });
         recorder.addEventListener("stop", () => finishRecording(session), { once: true });
         for (const track of stream.getTracks()) track.addEventListener("ended", () => stopRecording(session));
-        for (const name of SOURCE_EVENTS) video.addEventListener(name, onSourceChange);
+        for (const name of SOURCE_EVENTS) targetVideo.addEventListener(name, onSourceChange);
         recording = session;
         renderRecording();
         try {
@@ -359,8 +375,8 @@
             stopRecording(session);
             showStatus(
                 error.message.startsWith("directory-")
-                    ? "저장 폴더에 접근하지 못했어요. ‘녹화 저장 폴더’를 눌러 다시 지정해 주세요."
-                    : "녹화를 시작하지 못했어요."
+                    ? "저장 폴더 접근 실패. ‘녹화 저장 폴더’에서 다시 지정"
+                    : "녹화 시작 실패"
             );
         } finally {
             if (session.preparing) {
@@ -416,7 +432,7 @@
                   });
             if (!result) {
                 void recordingCommand(session, { op: "abort", id: session.route.id });
-                showStatus("저장이 중단되어 녹화 파일을 완성하지 못했어요.");
+                showStatus("저장이 중단되어 녹화 파일 완성 실패");
                 return;
             }
             const where =
@@ -427,10 +443,10 @@
                       : "다운로드 폴더";
             showStatus(
                 session.route.destination === "directory"
-                    ? `${session.failed ? "녹화가 중단되어 그때까지의 파일을" : "녹화 파일을"} ${where}에 저장했어요.`
+                    ? `${session.failed ? "중단 시점까지의 녹화 파일" : "녹화 파일"} ${where}에 저장 완료`
                     : session.failed
-                      ? `녹화가 중단되어 그때까지의 파일 다운로드를 ${where}에서 마무리해요.`
-                      : `녹화 파일 다운로드를 ${where}에서 마무리해요.`
+                      ? `중단 시점까지의 녹화 파일 다운로드 마무리 중 (${where})`
+                      : `녹화 파일 다운로드 마무리 중 (${where})`
             );
         } finally {
             finishing.delete(session);
@@ -514,9 +530,17 @@
     function onButtonClick(event) {
         event.stopPropagation();
         // Only a real press may start capturing; a page script could otherwise start a recording.
-        if (!event.isTrusted || event.currentTarget !== button) return;
-        if (recording) stopRecording();
-        else void startRecording();
+        if (!event.isTrusted) return;
+        const auxiliary =
+            event.currentTarget === button
+                ? null
+                : (CheeseSpanner.vodMultiview?.getAuxiliaries() || []).find(
+                      (target) => auxiliaryButtons.get(target.video) === event.currentTarget
+                  );
+        if (event.currentTarget !== button && !auxiliary) return;
+        if (recording) {
+            if (recording.video === (auxiliary?.video || video)) stopRecording();
+        } else void startRecording(auxiliary);
     }
 
     // ── Player UI ──
@@ -526,10 +550,10 @@
         injectStyleOnce(
             STYLE_ID,
             `
-#${BUTTON_ID} { position:relative; display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; padding:6px; border:0; background:transparent; color:inherit; cursor:pointer; flex-shrink:0; }
-#${BUTTON_ID}[aria-pressed="true"] { color:#ff4d4d; }
-#${BUTTON_ID}:focus-visible { outline:2px solid var(--bct-focus-ring); outline-offset:2px; }
-.pzp-pc:not(.pzp-pc--controls) #${BUTTON_ID}:not(:focus-visible) { opacity:0; pointer-events:none; }
+:is(#${BUTTON_ID}, [data-bcvm-recorder]) { position:relative; display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; padding:6px; border:0; background:transparent; color:inherit; cursor:pointer; flex-shrink:0; }
+:is(#${BUTTON_ID}, [data-bcvm-recorder])[aria-pressed="true"] { color:#ff4d4d; }
+:is(#${BUTTON_ID}, [data-bcvm-recorder]):focus-visible { outline:2px solid var(--bct-focus-ring); outline-offset:2px; }
+.pzp-pc:not(.pzp-pc--controls) :is(#${BUTTON_ID}, [data-bcvm-recorder]):not(:focus-visible) { opacity:0; pointer-events:none; }
 #${BADGE_ID} { position:absolute; top:12px; left:12px; z-index:40; display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:12px; background:rgba(0,0,0,.6); color:#fff; font-family:var(--bct-font); font-size:12px; font-weight:600; line-height:1.5; font-variant-numeric:tabular-nums; pointer-events:none; }
 #${BADGE_ID}::before { content:""; width:8px; height:8px; border-radius:50%; background:#ff4d4d; }
 #${BADGE_ID}[hidden], #${STATUS_ID}[hidden] { display:none; }
@@ -548,10 +572,10 @@
         );
     }
 
-    function showStatus(text) {
+    function showStatus(text, target = player) {
         if (statusTimer) window.clearTimeout(statusTimer);
         statusTimer = 0;
-        const host = player?.isConnected ? player : null;
+        const host = target?.isConnected ? target : null;
         if (!host) return;
         if (!status || status.parentElement !== host) {
             status?.remove();
@@ -574,17 +598,24 @@
     function renderRecording() {
         const on = Boolean(recording);
         const elapsed = on ? formatElapsed(Date.now() - recording.startedAt) : "";
-        if (button) {
-            button.disabled = !on && finishing.size > 0;
-            const label = on ? (recording.preparing ? "녹화 시작 취소" : `녹화 중지 (${elapsed})`) : "녹화 시작";
-            if (button.getAttribute("aria-pressed") !== String(on)) {
-                button.setAttribute("aria-pressed", String(on));
-                button.innerHTML = on ? STOP_ICON : RECORD_ICON;
+        const buttons = [...auxiliaryButtons];
+        if (button) buttons.unshift([video, button]);
+        for (const [target, control] of buttons) {
+            const ownRecording = on && recording.video === target;
+            control.disabled = !ownRecording && (on || finishing.size > 0);
+            const label = ownRecording
+                ? recording.preparing
+                    ? "녹화 시작 취소"
+                    : `녹화 중지 (${elapsed})`
+                : "녹화 시작";
+            if (control.getAttribute("aria-pressed") !== String(ownRecording)) {
+                control.setAttribute("aria-pressed", String(ownRecording));
+                control.innerHTML = ownRecording ? STOP_ICON : RECORD_ICON;
             }
-            if (button.getAttribute("aria-label") !== label) button.setAttribute("aria-label", label);
-            syncPlayerButtonTooltip(button, label);
+            if (control.getAttribute("aria-label") !== label) control.setAttribute("aria-label", label);
+            syncPlayerButtonTooltip(control, label);
         }
-        const host = on && player?.contains(recording.video) ? player : null;
+        const host = on && recording.player?.contains(recording.video) ? recording.player : null;
         if (!host) {
             badge?.remove();
             badge = null;
@@ -621,6 +652,29 @@
         button = null;
     }
 
+    function syncAuxiliaryButtons(targets) {
+        for (const [video, control] of auxiliaryButtons) {
+            const target = targets.find((item) => item.video === video);
+            const container = target?.player.querySelector(CONTROLS);
+            if (container && control.parentElement === container) continue;
+            control.removeEventListener("click", onButtonClick);
+            control.remove();
+            auxiliaryButtons.delete(video);
+        }
+        for (const { video, player } of targets) {
+            if (auxiliaryButtons.has(video)) continue;
+            const container = player.querySelector(CONTROLS);
+            if (!container) continue;
+            const control = document.createElement("button");
+            control.type = "button";
+            control.className = "pzp-button";
+            control.dataset.bcvmRecorder = "";
+            control.addEventListener("click", onButtonClick);
+            auxiliaryButtons.set(video, control);
+            container.prepend(control);
+        }
+    }
+
     // ── Gear menu: save folder ──
 
     function folderLabel(folder) {
@@ -639,12 +693,12 @@
         let note;
         if (selectedDirectory?.directory)
             note = selectedDirectory.directoryGranted
-                ? `‘${selectedDirectory.directory}’ 폴더에 저장해요. ‘폴더 선택’에서 바꿀 수 있어요.`
-                : "폴더 접근 권한이 필요해요. ‘폴더 선택’에서 다시 지정해 주세요.";
-        else if (!folder) note = "비워 두면 Chrome 다운로드 폴더에 바로 저장해요.";
+                ? `저장 폴더: ‘${selectedDirectory.directory}’. 변경은 ‘폴더 선택’`
+                : "폴더 접근 권한 필요. ‘폴더 선택’에서 다시 지정";
+        else if (!folder) note = "비워 두면 Chrome 다운로드 폴더에 바로 저장";
         else if (permission === false)
-            note = `하위 폴더에 저장하려면 확장 옵션에서 다운로드 권한을 허용해 주세요. 지금은 다운로드 폴더에 저장해요.`;
-        else note = `다운로드 폴더 안의 ${folder} 폴더에 저장해요.`;
+            note = `현재 다운로드 폴더에 저장. 하위 폴더 사용 시 확장 설정에서 다운로드 권한 허용`;
+        else note = `다운로드 폴더 안의 ${folder} 폴더에 저장`;
         if (editNote.textContent !== note) editNote.textContent = note;
     }
 
@@ -659,7 +713,10 @@
     }
 
     function validMenuRow() {
-        return active && menuRow?.isConnected && player?.isConnected && menuRow.parentElement === menu;
+        const host = menuPlayer || player;
+        return (
+            active && menuRow?.isConnected && host?.isConnected && host.contains(menu) && menuRow.parentElement === menu
+        );
     }
 
     function refreshFolderOnFocus() {
@@ -683,7 +740,7 @@
     async function choosePlayerDirectory() {
         if (choosingDirectory || !validMenuRow()) return;
         if (typeof window.showDirectoryPicker !== "function") {
-            showStatus("이 브라우저는 탐색기 폴더 선택을 지원하지 않아요. 확장 설정에서 저장 위치를 지정해 주세요.");
+            showStatus("이 브라우저에서 탐색기 폴더 선택 불가. 확장 설정에서 저장 위치 지정");
             return;
         }
         const revision = ++directoryRevision;
@@ -702,10 +759,10 @@
             if (revision !== directoryRevision || !active || hidden || disposed) return;
             tabDirectory = handle;
             renderMenu();
-            showStatus(`이 탭의 다음 녹화부터 ‘${handle.name}’ 폴더에 저장해요.`);
+            showStatus(`이 탭의 다음 녹화부터 ‘${handle.name}’ 폴더에 저장`);
         } catch (error) {
             if (revision === directoryRevision && error.name !== "AbortError")
-                showStatus("폴더를 선택하지 못했어요. 폴더 접근을 허용한 뒤 다시 눌러 주세요.");
+                showStatus("폴더 선택 실패. 폴더 접근을 허용한 뒤 다시 시도");
         } finally {
             if (revision === directoryRevision) {
                 choosingDirectory = false;
@@ -741,7 +798,7 @@
                 editSave.disabled = false;
                 editInput.value = currentFolder();
                 renderMenu();
-                editNote.textContent = "저장 폴더를 바꾸지 못했어요. 잠시 후 다시 시도해 주세요.";
+                editNote.textContent = "저장 폴더 변경 실패. 잠시 후 다시 시도";
             }
         );
     }
@@ -895,13 +952,25 @@
     }
 
     function syncMenu() {
-        const container = player?.querySelector(SETTINGS_MENU) || null;
+        const container = (menuPlayer || player)?.querySelector(SETTINGS_MENU) || null;
         if (menuRow && menu === container && menuRow.parentElement === container) {
             if (menuRow.nextElementSibling !== editRow) menuRow.after(editRow);
             return;
         }
         removeMenu();
         if (container) buildMenu(container);
+    }
+
+    function onSettingsClick(event) {
+        if (!(event.target instanceof Element) || !event.target.closest(".pzp-setting-button")) return;
+        const owner = event.target.closest(".pzp-pc");
+        if (owner === player) menuPlayer = null;
+        else {
+            const auxiliary = CheeseSpanner.vodMultiview?.getAuxiliaries() || [];
+            if (!auxiliary.some((item) => item.player === owner)) return;
+            menuPlayer = owner;
+        }
+        schedule();
     }
 
     // ── Lifecycle ──
@@ -919,7 +988,14 @@
             }
         }
         // The element being recorded was removed or replaced: keep what was captured.
-        if (recording && (!recording.video.isConnected || recording.video !== nextVideo)) stopRecording();
+        const auxiliary = CheeseSpanner.vodMultiview?.getAuxiliaries() || [];
+        if (menuPlayer && !auxiliary.some((item) => item.player === menuPlayer)) menuPlayer = null;
+        if (recording) {
+            const expected = recording.auxiliary
+                ? auxiliary.find((item) => item.media.videoNo === recording.auxiliary.media.videoNo)?.video
+                : nextVideo;
+            if (!recording.video.isConnected || recording.video !== expected) stopRecording();
+        }
         if (nextPlayer !== player) {
             removeButton();
             removeMenu();
@@ -929,6 +1005,7 @@
         player = nextPlayer;
         video = nextVideo;
         mountButton();
+        syncAuxiliaryButtons(auxiliary);
         syncMenu();
         renderRecording();
     }
@@ -969,6 +1046,8 @@
         });
         routeCleanup = startPageChangeDetection(onRouteChange);
         window.addEventListener("focus", refreshFolderOnFocus);
+        document.addEventListener(AUXILIARY, sync);
+        document.addEventListener("click", onSettingsClick, true);
         sync();
     }
 
@@ -979,13 +1058,17 @@
         directoryRevision++;
         choosingDirectory = false;
         window.removeEventListener("focus", refreshFolderOnFocus);
+        document.removeEventListener(AUXILIARY, sync);
+        document.removeEventListener("click", onSettingsClick, true);
         schedule.cancel();
         discovery?.disconnectAll();
         discovery = null;
         routeCleanup?.();
         routeCleanup = null;
         removeButton();
+        syncAuxiliaryButtons([]);
         removeMenu();
+        menuPlayer = null;
         hideStatus();
         badge?.remove();
         status?.remove();

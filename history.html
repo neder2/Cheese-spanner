@@ -62,7 +62,7 @@
                             <span id="monthWatchLabel">선택한 달</span><strong id="monthWatchTime">-</strong>
                         </div>
                         <div class="history-date-filter">
-                            <p id="calendarFoot" class="history-calendar-foot">날짜 선택 시 해당일 기록만 표시</p>
+                            <p id="calendarFoot" class="history-calendar-foot">날짜 선택 시 그날 기록만 표시</p>
                             <button
                                 id="clearDateFilter"
                                 class="secondary-button history-month-button"
@@ -207,7 +207,7 @@
                         hidden
                     >
                         <p id="rankingDescription" class="history-result-description">
-                            선택한 기간의 채널별 시청 순위예요. 같은 채널의 겹친 시간만 한 번 계산해요.
+                            선택한 기간의 채널별 시청 순위. 같은 채널의 겹친 시간은 한 번만 집계.
                         </p>
                         <ol id="channelRanking" class="history-ranking" aria-label="많이 본 채널 순위"></ol>
                         <nav class="history-pagination" aria-label="채널 순위 페이지">
@@ -256,8 +256,8 @@
                         </div>
                         <div id="donationImportControls" class="history-donation-import" hidden>
                             <p id="donationImportHint">
-                                치지직에 로그인된 탭을 열어 두세요. 처음엔 전체 기간, 이후엔 갱신이 필요하거나 아직
-                                조회하지 않은 달을 확인해요. 일반 후원은 최대 3,000개까지 보관해요.
+                                치지직에 로그인한 탭 필요. 첫 갱신은 전체 기간, 이후는 갱신이 필요한 달과 미조회 달만
+                                확인. 일반 후원 최대 3,000개 보관.
                             </p>
                             <p id="donationImportUpdated" class="setting-note"></p>
                             <div class="history-import-actions">
@@ -296,13 +296,13 @@
                         <details class="history-activity-guide">
                             <summary>채팅·후원 기록 안내</summary>
                             <p class="setting-note">
-                                <a href="options.html">설정</a>에서 기록 저장을 켠 뒤 확인한 내역에 기간·날짜·검색
-                                조건을 적용해요. 실시간 수집은 익명·미션·외부 후원과 과거 내역을 제외해요. 과거 일반
-                                후원은 ‘후원 내역 갱신’으로 조회해요.
+                                <a href="options.html">설정</a>에서 기록 저장 활성화. 저장된 내역을 기간·날짜·검색으로
+                                필터링. 실시간 수집에서 익명·미션·외부 후원과 과거 내역 제외. 과거 일반 후원은 ‘후원
+                                내역 갱신’으로 조회.
                             </p>
                             <p class="setting-note">
-                                내용은 방송별 최근 500개·전체 최근 3,000개까지 보관해요. 오래된 내용이 정리돼도 채팅
-                                수·후원 합계는 남고, 방송 기록을 삭제하면 함께 지워져요.
+                                방송별 최근 500개, 전체 최근 3,000개 보관. 오래된 내용이 정리돼도 채팅 수·후원 합계는
+                                유지. 방송 기록 삭제 시 함께 삭제.
                             </p>
                         </details>
                     </section>
@@ -314,12 +314,12 @@
                     <section id="historyBackup" class="history-backup" aria-labelledby="historyBackupTitle">
                         <h3 id="historyBackupTitle">시청 기록·내 채팅 백업</h3>
                         <p id="historyBackupScope">
-                            화면 조건과 관계없이 전체 기간의 시청 기록·내 채팅을 JSON 파일로 저장해요. 후원은 제외하며,
-                            기록 수집을 꺼도 이용할 수 있어요.
+                            화면 조건과 무관하게 전체 시청 기록·내 채팅을 JSON으로 저장. 후원 제외. 기록 수집을 꺼도
+                            사용 가능.
                         </p>
                         <p id="historyBackupPrivacy" class="history-backup-note">
-                            시청 이력·채팅·작성자 식별 정보가 암호화 없이 담겨요. 안전하게 보관해 주세요. 파일은
-                            로그인·인터넷 조회 없이 이 기기에서 처리해요.
+                            시청 이력·채팅·작성자 식별 정보가 암호화 없이 저장되므로 안전한 곳에 보관. 파일은 로그인이나
+                            인터넷 조회 없이 이 기기에서 처리.
                         </p>
                         <div class="history-backup-actions">
                             <button
@@ -355,7 +355,7 @@
                             <h4 id="historyBackupPreviewTitle" tabindex="-1">불러오기 미리보기</h4>
                             <p id="historyBackupFilename" class="history-backup-filename"></p>
                             <dl id="historyBackupSummary" class="history-backup-summary"></dl>
-                            <p>현재 기록에 중복 없이 합쳐요. 후원 기록은 유지해요.</p>
+                            <p>현재 기록과 중복 없이 합치기. 후원 기록 유지.</p>
                             <p id="historyBackupRestore" role="note"></p>
                             <details id="historyBackupSkipped" hidden open>
                                 <summary id="historyBackupSkippedTitle">건너뛸 방송</summary>
@@ -383,7 +383,7 @@
                     <section class="history-danger-zone" aria-labelledby="historyDangerTitle">
                         <h3 id="historyDangerTitle">기록 삭제</h3>
                         <div class="history-list-footer">
-                            <span>갱신한 후원 내역·조회 상태만 초기화해요. 실시간 저장 기록은 유지해요.</span>
+                            <span>갱신한 후원 내역·조회 상태만 초기화. 실시간 저장 기록 유지.</span>
                             <button
                                 id="clearDonationImport"
                                 class="secondary-button danger-button"
@@ -394,7 +394,7 @@
                             </button>
                         </div>
                         <div class="history-list-footer">
-                            <span>모든 달의 시청·채팅·후원 기록을 지워요. 되돌릴 수 없어요.</span
+                            <span>모든 달의 시청·채팅·후원 기록 삭제. 복구 불가.</span
                             ><button id="clearHistory" class="secondary-button danger-button" type="button">
                                 전체 삭제
                             </button>
@@ -404,9 +404,8 @@
                         <details class="history-storage-warning">
                             <summary>시청 기록 삭제 주의</summary>
                             <p role="note">
-                                기록은 이 브라우저에만 저장되고 자동 백업되지 않아요. 확장 삭제나 프로필·확장 데이터
-                                삭제 시 사라지며, 백업 없이는 복구할 수 없어요. 삭제 전 ‘백업 파일 저장’으로 시청
-                                기록·내 채팅을 보관할 수 있어요. 후원은 백업에서 제외돼요.
+                                이 브라우저에만 저장. 자동 백업 없음. 확장·프로필·확장 데이터 삭제 시 백업 없이는 복구
+                                불가. 삭제 전 ‘백업 파일 저장’으로 시청 기록·내 채팅 보관 가능. 후원 제외.
                             </p>
                         </details>
                         <details class="history-storage-guide">

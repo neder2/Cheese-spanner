@@ -9,6 +9,7 @@
     const METADATA_RETRY_MAX_MS = 30000;
     const LIVE_COUNT_CACHE_TTL_MS = 5 * 60 * 1000;
     const MAX_SHARED_PAGES = 200;
+    const MAX_STREAMER_GRADE_CHANNELS = 3000;
     const CATEGORY_SEARCH_URL = "https://api.chzzk.naver.com/manage/v1/auto-complete/categories";
     const CATEGORY_SEARCH_RESULT_LIMIT = 50;
     const MAX_CATEGORY_SEARCH_KEYWORD_LENGTH = 100;
@@ -71,6 +72,7 @@
                 title: item.liveTitle || "",
                 channelName: channel.channelName || "",
                 channelImageUrl: channel.channelImageUrl || "",
+                verifiedMarkType: channel.verifiedMarkType,
                 thumb: item.liveImageUrl || item.defaultThumbnailImageUrl || "",
                 duration: null,
                 publishDate: item.openDate || "",
@@ -91,6 +93,7 @@
                 title: item.videoTitle || "",
                 channelName: channel.channelName || "",
                 channelImageUrl: channel.channelImageUrl || "",
+                verifiedMarkType: channel.verifiedMarkType,
                 thumb: item.thumbnailImageUrl || "",
                 duration: typeof item.duration === "number" ? item.duration : null,
                 publishDate: item.publishDate || "",
@@ -105,6 +108,7 @@
             title: item.clipTitle || "",
             channelName: channel.channelName || "",
             channelImageUrl: channel.channelImageUrl || "",
+            verifiedMarkType: channel.verifiedMarkType,
             thumb: item.thumbnailImageUrl || "",
             duration: typeof item.duration === "number" ? item.duration : null,
             publishDate: item.createdDate || "",
@@ -137,6 +141,10 @@
         let metadataRetryTimer = 0;
         const followerCache = new Map();
         const followerInflight = new Map();
+        const streamerGradeCache = new Map();
+        const streamerGradeInflight = new Map();
+        const streamerGradeAttempts = new Set();
+        let streamerGradeGeneration = 0;
         let followerGeneration = 0;
         let followerHydrateTimer = 0;
         let lastFollowerHydrateAt = 0;
@@ -683,6 +691,83 @@
             return request.promise;
         }
 
+        function readStreamerGrade(channelId) {
+            const cached = streamerGradeCache.get(channelId);
+            if (!cached || (cached.expiresAt <= Date.now() && !streamerGradeAttempts.has(channelId))) {
+                streamerGradeCache.delete(channelId);
+                return { hit: false, grade: "" };
+            }
+            return { hit: true, grade: cached.grade };
+        }
+
+        async function getStreamerGrade(channelId) {
+            if (!/^[a-f0-9]{32}$/i.test(channelId)) return "";
+            const cached = readStreamerGrade(channelId);
+            if (cached.hit) return cached.grade;
+            if (streamerGradeInflight.has(channelId)) return streamerGradeInflight.get(channelId).promise;
+            const request = { generation: streamerGradeGeneration, controller: new AbortController(), promise: null };
+            request.promise = (async () => {
+                let grade = "";
+                try {
+                    const json = await fetchJson(`${API_BASE}/v1/channels/${channelId}`, {
+                        signal: request.controller.signal,
+                        timeoutMs: 3000,
+                    });
+                    const channel = json?.content;
+                    if (json?.code === 200 && channel?.channelId === channelId) {
+                        const mark = channel.verifiedMarkType;
+                        if (mark === "PARTNER" || mark === "CHALLENGER") grade = mark;
+                        // 공개 API는 프로·루키 등급을 직접 주지 않는다. UI에 밝힌 구독 지원 기준만 사용한다.
+                        else if (mark === null && channel.verifiedMark === false && channel.officialChannel === false) {
+                            if (channel.subscriptionAvailability === true) grade = "PRO";
+                            else if (channel.subscriptionAvailability === false) grade = "GENERAL";
+                        }
+                    }
+                } catch (_) {
+                    // 실패·미지원 형식은 일반 등급으로 바꾸지 않는다.
+                }
+                if (request.generation !== streamerGradeGeneration || request.controller.signal.aborted) return "";
+                touchMapEntry(
+                    streamerGradeCache,
+                    channelId,
+                    { grade, expiresAt: Date.now() + 300_000 },
+                    MAX_STREAMER_GRADE_CHANNELS
+                );
+                return grade;
+            })().finally(() => {
+                if (streamerGradeInflight.get(channelId) === request) streamerGradeInflight.delete(channelId);
+            });
+            streamerGradeInflight.set(channelId, request);
+            return request.promise;
+        }
+
+        async function hydrateStreamerGrades(ids) {
+            const generation = streamerGradeGeneration;
+            const pending = Array.from(new Set(ids))
+                .slice(0, MAX_STREAMER_GRADE_CHANNELS)
+                .filter(
+                    (id) => /^[a-f0-9]{32}$/i.test(id) && !readStreamerGrade(id).hit && !streamerGradeAttempts.has(id)
+                );
+            const remaining = MAX_STREAMER_GRADE_CHANNELS - streamerGradeAttempts.size;
+            const batch = pending.slice(0, Math.min(20, remaining));
+            for (let i = 0; i < batch.length && generation === streamerGradeGeneration; i += 4) {
+                await Promise.all(
+                    batch.slice(i, i + 4).map((id) => {
+                        streamerGradeAttempts.add(id);
+                        return getStreamerGrade(id);
+                    })
+                );
+            }
+            return generation === streamerGradeGeneration && remaining > batch.length && pending.length > batch.length;
+        }
+
+        function cancelStreamerGrades() {
+            streamerGradeGeneration++;
+            streamerGradeAttempts.clear();
+            for (const request of streamerGradeInflight.values()) request.controller.abort();
+            streamerGradeInflight.clear();
+        }
+
         function clearFollowerHydrationTimer() {
             if (followerHydrateTimer) clearTimeout(followerHydrateTimer);
             followerHydrateTimer = 0;
@@ -777,8 +862,12 @@
             isFollowerHydrationPending,
             clearFollowerHydrationTimer,
             cancelFollowers,
+            readStreamerGrade,
+            getStreamerGrade,
+            hydrateStreamerGrades,
+            cancelStreamerGrades,
         });
     }
 
-    root.categoryToolsRepository = Object.freeze({ routeKey, createRepository });
+    root.categoryToolsRepository = Object.freeze({ routeKey, createRepository, MAX_STREAMER_GRADE_CHANNELS });
 })();

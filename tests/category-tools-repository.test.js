@@ -16,9 +16,101 @@ test("manual list refresh invalidates the cached live count", async () => {
 });
 const nextCursor = { concurrentUserCount: 10, liveId: 42 };
 
+test("grade lookups validate channel identity, share requests, expire and exclude unknowns", async () => {
+    let calls = 0;
+    let profile = {
+        verifiedMarkType: null,
+        verifiedMark: false,
+        officialChannel: false,
+        subscriptionAvailability: true,
+    };
+    const id = "a".repeat(32);
+    const f = fixture(async () => {
+        calls++;
+        return { code: 200, content: { channelId: id, ...profile } };
+    });
+    assert.deepEqual(await Promise.all([f.repository.getStreamerGrade(id), f.repository.getStreamerGrade(id)]), [
+        "PRO",
+        "PRO",
+    ]);
+    assert.equal(calls, 1);
+    profile.subscriptionAvailability = false;
+    f.advance(300001);
+    assert.equal(await f.repository.getStreamerGrade(id), "GENERAL");
+    profile = { verifiedMarkType: "CHALLENGER" };
+    f.advance(300001);
+    assert.equal(await f.repository.getStreamerGrade(id), "CHALLENGER");
+    profile.channelId = "b".repeat(32);
+    f.advance(300001);
+    assert.equal(await f.repository.getStreamerGrade(id), "");
+    assert.equal(await f.repository.getStreamerGrade("../invalid"), "");
+    assert.equal(calls, 4);
+});
+
+test("grade batches cap concurrency and abort without caching late responses", async () => {
+    let active = 0;
+    let peak = 0;
+    let calls = 0;
+    const f = fixture(async (url) => {
+        calls++;
+        active++;
+        peak = Math.max(peak, active);
+        await Promise.resolve();
+        active--;
+        return { code: 200, content: { channelId: url.split("/").pop(), verifiedMarkType: "PARTNER" } };
+    });
+    const ids = Array.from({ length: 25 }, (_, i) => i.toString(16).padStart(32, "0"));
+    assert.equal(await f.repository.hydrateStreamerGrades(ids), true);
+    assert.equal(calls, 20);
+    assert.ok(peak <= 4);
+    assert.equal(await f.repository.hydrateStreamerGrades(ids), false);
+    assert.equal(calls, 25);
+    const pending = deferred();
+    let signal;
+    const g = fixture((url, options) => {
+        signal = options.signal;
+        return pending.promise;
+    });
+    const request = g.repository.getStreamerGrade(ids[0]);
+    g.repository.cancelStreamerGrades();
+    assert.equal(signal.aborted, true);
+    pending.resolve({ code: 200, content: { channelId: ids[0], verifiedMarkType: "PARTNER" } });
+    assert.equal(await request, "");
+    assert.equal(g.repository.readStreamerGrade(ids[0]).hit, false);
+});
+
 function page(rows, next = null) {
     return { content: { data: rows, page: { next } } };
 }
+
+test("grade failures and missing flags stay unknown and retry only in a later expired search", async () => {
+    let calls = 0;
+    let profile = { verifiedMarkType: null, verifiedMark: false, subscriptionAvailability: false };
+    const id = "c".repeat(32);
+    const f = fixture(async () => {
+        calls++;
+        if (!profile) throw new Error("offline");
+        return { code: 200, content: { channelId: id, ...profile } };
+    });
+    await f.repository.hydrateStreamerGrades([id]);
+    assert.equal(f.repository.readStreamerGrade(id).grade, "", "missing official-channel flag is not general");
+    f.advance(300001);
+    await f.repository.hydrateStreamerGrades([id]);
+    assert.equal(calls, 1, "the same search does not retry even after the cache lifetime");
+    f.repository.cancelStreamerGrades();
+    profile = null;
+    await f.repository.hydrateStreamerGrades([id]);
+    assert.equal(calls, 2);
+    assert.deepEqual(plain(f.repository.readStreamerGrade(id)), { hit: true, grade: "" });
+    f.repository.cancelStreamerGrades();
+    profile = { verifiedMarkType: null, verifiedMark: false, officialChannel: false, subscriptionAvailability: false };
+    await f.repository.hydrateStreamerGrades([id]);
+    assert.equal(calls, 2, "a fresh negative cache prevents rapid toggle retries");
+    f.advance(300001);
+    f.repository.cancelStreamerGrades();
+    await f.repository.hydrateStreamerGrades([id]);
+    assert.equal(f.repository.readStreamerGrade(id).grade, "GENERAL");
+});
 
 function live(id, title = id) {
     return { channel: { channelId: id, channelName: id }, liveTitle: title, concurrentUserCount: 10 };

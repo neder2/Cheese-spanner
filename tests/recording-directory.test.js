@@ -116,7 +116,7 @@ test("picker permission and persistence errors leave the saved directory intact"
     h.state.handle = old;
     h.dom.window.showDirectoryPicker = async () => ({ name: "새 폴더", queryPermission: async () => "denied" });
     h.choose.click();
-    await waitForCondition(() => /선택하지 못했어요/.test(h.status.textContent));
+    await waitForCondition(() => /폴더 선택 실패/.test(h.status.textContent));
     assert.equal(h.state.handle, old);
     assert.equal(h.state.writes, 0);
     h.dom.window.CheeseSpannerRecordingDirectory.set = async () => {

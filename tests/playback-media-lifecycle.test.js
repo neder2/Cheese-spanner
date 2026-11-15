@@ -1045,6 +1045,42 @@ test("audio compressor restores its active graph from tab storage after reload",
     dom.window.close();
 });
 
+test("unchanged compressor controls do not rewrite their labels and state attributes", async (t) => {
+    const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true } });
+    const page = await createCompressorPage(t, chrome);
+    await waitForAsyncCallbacks();
+    const records = [];
+    const observer = new page.dom.window.MutationObserver((changes) => records.push(...changes));
+    observer.observe(page.button().parentElement, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: [
+            "label",
+            "aria-label",
+            "tooltip",
+            "class",
+            "disabled",
+            "aria-pressed",
+            "aria-valuetext",
+            "data-cheese-spanner-audio-compressor",
+            "data-cheese-spanner-ready",
+            "data-cheese-spanner-restore-trigger",
+        ],
+    });
+    t.after(() => observer.disconnect());
+    for (let index = 0; index < 3; index++) {
+        dispatchStorageChange(chrome, { audioCompressorEnabled: { newValue: true } }, "sync");
+        await waitForAsyncCallbacks();
+    }
+    assert.equal(records.length, 0, "equal settings must not rewrite the control's current state");
+    page.button().click();
+    await waitForCondition(() => page.button().getAttribute("aria-pressed") === "true");
+    assert.ok(
+        records.some((record) => record.attributeName === "aria-pressed"),
+        "real state changes still reach the UI"
+    );
+});
+
 test("audio compressor state stays independent across tabs and ignores the old shared preference", async (t) => {
     const chrome = createFakeChrome({
         sync: { audioCompressorEnabled: true },
@@ -1475,6 +1511,61 @@ test("audio compressor output survives tab reload, options and remounts without 
     assert.equal(reloaded.button().getAttribute("aria-pressed"), "true");
     assert.equal(reloaded.document.getElementById("cheese-spanner-audio-compressor-volume").value, "30");
     assert.equal(b.button().getAttribute("aria-pressed"), "false");
+});
+
+test("a new auxiliary replay inherits the tab compressor choice and edits stay with that player", async (t) => {
+    const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true, vodMultiviewEnabled: true } });
+    const page = await createCompressorPage(t, chrome, {
+        initialPath: "/video/1",
+        responseState: { active: true, volume: 0.63 },
+    });
+    const { dom, document, contexts } = page;
+    const player = document.createElement("div");
+    player.className = "pzp-pc";
+    player.dataset.bcmvVideo = "1";
+    player.dataset.bcvmVideoNo = "2";
+    player.innerHTML = `
+        <video></video>
+        <div class="pzp-pc__bottom-buttons-left">
+            <div class="pzp-pc__volume-control"><button class="pzp-pc__volume-button" type="button"></button></div>
+        </div>
+    `;
+    document.body.append(player);
+    const video = player.querySelector("video");
+    makeVisibleVideo(video);
+    const volume = player.querySelector(".pzp-pc__volume-control");
+    volume.getBoundingClientRect = document.getElementById("volume").getBoundingClientRect;
+    let auxiliary = { index: 0, player, video, media: { videoNo: "2" } };
+    dom.window.CheeseSpanner.vodMultiview = { getAuxiliaries: () => (auxiliary ? [auxiliary] : []) };
+    const notify = () => document.dispatchEvent(new dom.window.Event("cheese-spanner:vod-multiview:auxiliary"));
+    const button = () => player.querySelector("#cheese-spanner-audio-compressor-aux-0");
+    const slider = () => player.querySelector("#cheese-spanner-audio-compressor-aux-0-volume");
+    notify();
+    await waitForCondition(button);
+    assert.equal(button().getAttribute("aria-pressed"), "true");
+    assert.equal(slider().value, "63");
+    assert.equal(contexts[1].gain.gain.value, 0.63);
+
+    slider().value = "20";
+    slider().dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    button().click();
+    assert.equal(button().getAttribute("aria-pressed"), "false");
+    assert.equal(page.button().getAttribute("aria-pressed"), "true");
+    assert.equal(contexts[0].gain.gain.value, 0.63);
+
+    auxiliary = null;
+    player.remove();
+    notify();
+    assert.equal(button(), null);
+    assert.equal(contexts[1].source.outputs.size, 0);
+    player.dataset.bcvmVideoNo = "3";
+    document.body.append(player);
+    auxiliary = { index: 0, player, video, media: { videoNo: "3" } };
+    notify();
+    await waitForCondition(button);
+    assert.equal(button().getAttribute("aria-pressed"), "true");
+    assert.equal(slider().value, "63");
+    assert.equal(contexts.length, 2);
 });
 
 test("audio compressor validates tab state and works when extension storage is unavailable", async (t) => {

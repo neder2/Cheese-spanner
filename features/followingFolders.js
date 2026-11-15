@@ -18,8 +18,8 @@
  * 저장 경계: chrome.storage.sync `betterchzzk:following-folders:v1`은 직접 읽고 변경을 구독만 한다. 쓰기는
  *   신뢰된 사용자 클릭·키·드롭에서 만든 개별 명령을 마지막으로 확인한 원본값에 적용해
  *   CheeseSpanner.utils.settingsStoreSet("sync", …, 기대값)으로만 요청한다. 워커가 conflict로 거절하면 받은 최신
- *   값에 같은 명령을 제한된 횟수만 다시 적용하고(되돌리기는 다시 적용하지 않는다), 저장 성공이나
- *   storage.onChanged로 확인한 값만 화면에 반영한다.
+ *   값에 같은 명령을 제한된 횟수만 다시 적용한다(되돌리기는 다시 적용하지 않는다).
+ *   확장 연결을 잃은 탭에서는 직접 접고 펼친 선택만 그 탭에 임시 표시하고 새로고침을 안내한다.
  * 의존: CheeseSpannerFollowingFolders, CheeseSpannerSettings.normalizeOptions, CheeseSpanner.utils(bindFeatureOptions,
  *   createMutationObserverSync, ensureUiTheme(선택), injectStyleOnce, normSpace, normalizeChzzkChannelId,
  *   normalizeChzzkImageUrl, settingsStoreSet, startPageChangeDetection, startStorageChangeListener, storageGet),
@@ -59,6 +59,7 @@
     } = CheeseSpanner.utils;
 
     const STYLE_ID = "cheese-spanner-following-folders-style";
+    const RETIRE_EVENT = "cheese-spanner:following-folders:retire";
     const ROWS_STYLE_ID = "cheese-spanner-following-folders-rows-style";
     // 2026-10-11까지 쓰던 새 폴더 버튼의 표식이에요. 재주입 전 문서에 남은 버튼만 지워요.
     const LEGACY_MANAGE_ATTR = "data-bcff-manage-button";
@@ -223,6 +224,7 @@
     };
     const RENAME_ERRORS = new Set(["invalid-name", "duplicate-name"]);
     const SAVE_FAILED_MESSAGE = "폴더 변경 저장 실패(이전 상태 유지).";
+    const TAB_COLLAPSE_MESSAGE = "이 탭에서만 적용했어요. 연결이 계속 끊겨 있으면 치지직을 새로고침해 주세요.";
     const ORDER_RULES = Array.from(
         { length: MAX_ORDER + 1 },
         (_, order) => `#sidebar [${LIST_ATTR}="1"]>[${ORDER_ATTR}="${order}"]{order:${order}!important}`
@@ -369,6 +371,7 @@ ${ORDER_RULES}
 `;
 
     const storageArea = () => globalThis.chrome?.storage?.sync;
+    const hasExtensionContext = () => Boolean(globalThis.chrome?.runtime?.id);
     // 저장 어댑터: 읽기·구독은 sync를 직접 사용하고, 쓰기는 공용 설정 저장 경계(워커 잠금 안 기대값 비교)만
     // 사용한다. 직접 sync.set으로 대체하지 않으며, 쓰기 함수가 없으면 unavailable로 실패한다.
     const folderStore = {
@@ -419,6 +422,8 @@ ${ORDER_RULES}
     let viewCollapsed = new Set();
     // 저장 응답을 기다리는 동안 화면에 먼저 반영한 명령이에요. 실패하면 빼고 다시 그려 되돌려요.
     let optimistic = [];
+    // 확장 연결이 끊긴 뒤의 접힘 선택은 화면에서만 사용해요. 저장 기대값은 마지막 확인값을 사용해요.
+    const tabCollapseChoices = new Map();
     // 끄는 중에만 쓰는 미리보기 명령과 잠깐 펼친 접힌 폴더예요. 저장하지 않아요.
     let preview = null;
     let springFolderId = "";
@@ -677,6 +682,12 @@ ${ORDER_RULES}
     function rebuildStates({ animate = false } = {}) {
         const ready = stateStatus === "ready";
         let base = confirmedState;
+        if (tabCollapseChoices.size) {
+            base = cloneState(base);
+            for (const folder of base.folders) {
+                folder.collapsed = tabCollapseChoices.get(folder.id) ?? folder.collapsed;
+            }
+        }
         if (ready) for (const entry of optimistic) base = applyOn(base, entry.command);
         folderState = cloneState(base);
         folderOfChannel = new Map();
@@ -730,6 +741,7 @@ ${ORDER_RULES}
     }
 
     function loadFolderState() {
+        if (!hasExtensionContext()) return;
         const generation = foldersGeneration;
         const epoch = changeEpoch;
         const seq = confirmSeq;
@@ -774,6 +786,7 @@ ${ORDER_RULES}
     // 이 결과는 그보다 오래됐을 수 있어 쓰지 않고 다시 읽어요. 더 늦게 보낸 확인 읽기가 있으면 그 결과만 써요.
     // 같으면 그대로 둬서 저장 중인 명령을 흔들지 않아요. 읽기에 실패하면 마지막 상태를 유지해요.
     function verifyStoredValue() {
+        if (!hasExtensionContext()) return;
         const generation = foldersGeneration;
         const token = (verifyToken += 1);
         const seq = confirmSeq;
@@ -855,6 +868,7 @@ ${ORDER_RULES}
         let rawValue = lastRawValue;
         for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
             if (!isCurrentGeneration(generation)) return { ok: false, error: "stopped" };
+            if (!hasExtensionContext()) return { ok: false, error: "unavailable" };
             const epoch = appliedChangeEpoch;
             const result = applyCommand(rawValue, command);
             if (!result.ok || !result.changed) return result;
@@ -892,8 +906,12 @@ ${ORDER_RULES}
 
     // success 문구가 있으면 바뀐 경우 안내하고, undoable이면 그 안내에서 직전 원본값으로 되돌릴 수 있다.
     // onFailure가 true를 돌려주면 그 자리에서 이미 알린 실패라 따로 안내하지 않는다.
-    // 정상 상태에서는 저장 응답을 기다리지 않고 화면에 먼저 반영하고, 실패하면 확인한 상태로 되돌린 뒤 알린다.
-    function sendCommand(command, { success = "", undoable = false, onSuccess = null, onFailure = null } = {}) {
+    // 저장 응답을 기다리는 동안 화면에 먼저 반영한다. 실패하면 확인한 상태로 되돌리고, 연결을 잃은 탭의
+    // 직접 접기·펼치기는 임시 선택으로 옮겨 화면에 남긴다.
+    function sendCommand(
+        command,
+        { success = "", undoable = false, onSuccess = null, onFailure = null, keepCollapseOnDisconnect = false } = {}
+    ) {
         const generation = foldersGeneration;
         const entry = stateStatus === "ready" ? { command } : null;
         if (entry) {
@@ -906,7 +924,14 @@ ${ORDER_RULES}
             .then(() => runCommand(command, generation, entry))
             .then((result) => {
                 if (!isCurrentGeneration(generation)) return result;
+                const appliedInTab =
+                    entry && keepCollapseOnDisconnect && result.error === "unavailable" && !hasExtensionContext();
+                if (appliedInTab) tabCollapseChoices.set(command.folderId, command.collapsed);
                 if (removeOptimistic(entry)) rebuildStates({ animate: true });
+                if (appliedInTab) {
+                    notify(TAB_COLLAPSE_MESSAGE, "error");
+                    return result;
+                }
                 if (result.ok) {
                     onSuccess?.(result);
                     if (success && result.changed) {
@@ -1055,8 +1080,8 @@ ${ORDER_RULES}
         input.setAttribute(KEY_ATTR, `folder:${folder.id}:rename-input`);
         const hint = el("span", "bcff-rename-hint");
         hint.setAttribute("aria-live", "polite");
-        input.addEventListener("input", () => {
-            if (!renaming || renaming.folderId !== folder.id) return;
+        input.addEventListener("input", (event) => {
+            if (!event.isTrusted || !renaming || renaming.folderId !== folder.id) return;
             renaming.draft = input.value;
             renaming.error = "";
             syncRenameHint(input, hint);
@@ -1329,7 +1354,7 @@ ${ORDER_RULES}
                     if (statusArmTimer) clearTimeout(statusArmTimer);
                     statusArmTimer = 0;
                     statusArmed = false;
-                    sendCommand({ type: "resetCorrupt" }, { success: "폴더 정보 초기화됨." });
+                    sendCommand({ type: "resetCorrupt" }, { success: "폴더 정보 초기화 완료" });
                 })
             );
             statusRow.replaceChildren(
@@ -1521,7 +1546,10 @@ ${ORDER_RULES}
 
     function toggleFolder(folder) {
         if (folder.collapsed) releaseNativeExpandHold();
-        sendCommand({ type: "setCollapsed", folderId: folder.id, collapsed: !folder.collapsed });
+        sendCommand(
+            { type: "setCollapsed", folderId: folder.id, collapsed: !folder.collapsed },
+            { keepCollapseOnDisconnect: true }
+        );
     }
 
     function handleToggleClick(event) {
@@ -1686,7 +1714,7 @@ ${ORDER_RULES}
         sendCommand(
             { type: "rename", folderId, name },
             {
-                success: `‘${previousName}’ 폴더 이름을 ‘${name}’(으)로 변경함.`,
+                success: `폴더 이름 변경 · ‘${previousName}’ → ‘${name}’`,
                 undoable: true,
                 onSuccess: () => {
                     if (renaming?.folderId === folderId) finishRename(!fromBlur);
@@ -1734,7 +1762,7 @@ ${ORDER_RULES}
             ? { type: "createWith", folderId, name, channelId: channel.channelId }
             : { type: "create", folderId, name };
         sendCommand(command, {
-            success: channel ? `${channel.name} 채널로 ‘${name}’ 폴더 생성됨.` : "",
+            success: channel ? `${channel.name} 채널로 ‘${name}’ 폴더 생성` : "",
             undoable: Boolean(channel),
         });
         // 화면에 먼저 생긴 폴더의 이름을 바로 바꿀 수 있어요. 저장이 실패하면 폴더와 함께 입력칸도 사라져요.
@@ -2212,7 +2240,7 @@ ${ORDER_RULES}
             if (folder)
                 sendCommand(
                     { type: "unassign", folderId: folder.id, channelId: drag.channelId },
-                    { success: `${channelName} 채널을 ‘${folder.name}’ 폴더에서 제외함.`, undoable: true }
+                    { success: `${channelName} 채널을 ‘${folder.name}’ 폴더에서 제외`, undoable: true }
                 );
             else rebuildStates({ animate: true });
             return;
@@ -2229,7 +2257,7 @@ ${ORDER_RULES}
         }
         sendCommand(
             { type: "assign", folderId: folder.id, channelId: drag.channelId },
-            { success: `${channelName} 채널을 ‘${folder.name}’ 폴더에 추가함.`, undoable: true }
+            { success: `${channelName} 채널을 ‘${folder.name}’ 폴더에 추가`, undoable: true }
         );
     }
 
@@ -2252,7 +2280,7 @@ ${ORDER_RULES}
             rebuildStates({ animate: true });
             return;
         }
-        sendCommand(command, { success: `‘${folder.name}’ 폴더 순서 변경됨.`, undoable: true });
+        sendCommand(command, { success: `‘${folder.name}’ 폴더 순서 변경`, undoable: true });
     }
 
     // ── 떠 있는 메뉴·채널 선택·상태 안내 ───────────────────────────────────────────────
@@ -2559,7 +2587,7 @@ ${ORDER_RULES}
                 const neighbor = folderState.folders[at + 1] || folderState.folders[at - 1] || null;
                 sendCommand(
                     { type: "delete", folderId: folder.id },
-                    { success: `‘${folder.name}’ 폴더 삭제됨(팔로우 유지).`, undoable: true }
+                    { success: `‘${folder.name}’ 폴더 삭제(팔로우 유지)`, undoable: true }
                 );
                 // 지운 폴더의 머리 행은 사라지므로 초점은 옆 폴더 이름으로, 마지막 폴더였으면 팔로잉 새로고침으로 옮긴다.
                 const next = neighbor
@@ -2634,7 +2662,7 @@ ${ORDER_RULES}
         sendCommand(
             { type: "move", folderId, offset },
             {
-                success: `‘${folder.name}’ 폴더를 ${offset < 0 ? "위로" : "아래로"} 이동함.`,
+                success: `‘${folder.name}’ 폴더 ${offset < 0 ? "위로" : "아래로"} 이동`,
                 undoable: true,
                 onSuccess: () => {
                     if (!keepMenu || layer?.kind !== "menu" || layer.folderId !== folderId) return;
@@ -2682,7 +2710,7 @@ ${ORDER_RULES}
         const foot = el(
             "p",
             "bcff-picker-foot",
-            "체크 시 이 폴더로 이동(다른 폴더에서는 해제). 현재 목록에 보이는 채널만 표시."
+            "체크로 추가·이동, 해제로 제외. 현재 팔로잉 목록과 이 폴더의 채널 표시."
         );
         node.append(top, search, list, foot);
         layer.title = title;
@@ -2759,12 +2787,12 @@ ${ORDER_RULES}
             if (latest.channelIds.includes(channel.channelId))
                 sendCommand(
                     { type: "unassign", folderId: latest.id, channelId: channel.channelId },
-                    { success: `${channel.name} 채널을 ‘${latest.name}’ 폴더에서 제외함.`, undoable: true }
+                    { success: `${channel.name} 채널을 ‘${latest.name}’ 폴더에서 제외`, undoable: true }
                 );
             else
                 sendCommand(
                     { type: "assign", folderId: latest.id, channelId: channel.channelId },
-                    { success: `${channel.name} 채널을 ‘${latest.name}’ 폴더에 추가함.`, undoable: true }
+                    { success: `${channel.name} 채널을 ‘${latest.name}’ 폴더에 추가`, undoable: true }
                 );
         });
         button.setAttribute("aria-pressed", String(inFolder));
@@ -2788,7 +2816,7 @@ ${ORDER_RULES}
         const detail = el(
             "span",
             "bcff-pick-detail",
-            liveState === "1" ? "방송 중" : liveState === "0" ? "오프라인" : "목록에 없어 방송 여부 모름"
+            liveState === "1" ? "방송 중" : liveState === "0" ? "오프라인" : "방송 여부 미확인"
         );
         detail.dataset.live = liveState;
         if (other) detail.textContent += ` · ‘${other.name}’에 있음`;
@@ -2922,7 +2950,7 @@ ${ORDER_RULES}
         foldersActive = false;
         foldersGeneration += 1;
         lastRawValue = undefined;
-        removeStorageListener?.();
+        if (hasExtensionContext()) removeStorageListener?.();
         removeStorageListener = null;
         window.removeEventListener("dragstart", handleDragStart, true);
         window.removeEventListener("dragend", handleDragEnd, true);
@@ -2940,6 +2968,7 @@ ${ORDER_RULES}
         undo = null;
         stateStatus = "idle";
         optimistic = [];
+        tabCollapseChoices.clear();
         confirmedState = cloneState(EMPTY_STATE);
         folderState = cloneState(EMPTY_STATE);
         viewState = cloneState(EMPTY_STATE);
@@ -3006,6 +3035,14 @@ ${ORDER_RULES}
         featureOptions = options;
         const wantFolders = options.followingFoldersEnabled === true;
         const wantRuntime = wantFolders || options.followingListMaxRows > 0;
+        if (!runtimeInstalled) {
+            const previousStyle = document.getElementById(STYLE_ID);
+            if (previousStyle) {
+                document.dispatchEvent(new Event(RETIRE_EVENT));
+                // 인계 코드가 없는 이전 버전이 계속 사이드바를 그리면 새 쪽은 시작하지 않아요.
+                if (previousStyle.isConnected) return;
+            }
+        }
         if (wantRuntime) installRuntime();
         if (wantFolders) startFolders();
         else stopFolders();
@@ -3016,7 +3053,19 @@ ${ORDER_RULES}
         syncAll();
     }
 
+    function retireDisconnectedRuntime() {
+        // 페이지도 이 이벤트를 만들 수 있으므로 연결된 실행에는 영향을 주지 않아요.
+        if (hasExtensionContext()) return;
+        document.removeEventListener(RETIRE_EVENT, retireDisconnectedRuntime);
+        window.removeEventListener("pagehide", handlePageHide);
+        window.removeEventListener("pageshow", handlePageShow);
+        removeOptionsListener?.();
+        stopFolders();
+        uninstallRuntime();
+    }
+
     window.addEventListener("pagehide", handlePageHide);
     window.addEventListener("pageshow", handlePageShow);
-    bindFeatureOptions(applyOptions);
+    const removeOptionsListener = bindFeatureOptions(applyOptions);
+    document.addEventListener(RETIRE_EVENT, retireDisconnectedRuntime);
 })();

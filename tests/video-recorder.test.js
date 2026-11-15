@@ -289,14 +289,14 @@ test("a selected native directory receives recording bytes without a download an
     h.click();
     await waitForCondition(() => directory.state.closed);
     assert.match(Buffer.concat(directory.writes).toString(), /first/);
-    await waitForCondition(() => /내 녹화.*저장했어요/.test(h.status()?.textContent));
+    await waitForCondition(() => /내 녹화.*저장 완료/.test(h.status()?.textContent));
 });
 
 test("a revoked folder permission prevents recording instead of silently downloading elsewhere", async (t) => {
     const h = fixture(t, { directory: chosenDirectory({ denied: true }) });
     await ready(h);
     h.click();
-    await waitForCondition(() => /폴더.*접근하지 못했어요/.test(h.status()?.textContent));
+    await waitForCondition(() => /저장 폴더 접근 실패/.test(h.status()?.textContent));
     assert.equal(h.downloads.length, 0);
     assert.equal(h.recorders[0].state, "inactive");
     assert.ok(h.captures[0].every((track) => track.stopped));
@@ -564,8 +564,42 @@ test("the record button streams MP4 to the download folder during recording and 
     assert.equal(h.w.CheeseSpanner.videoRecorder.isRecording(), false);
     assert.equal(h.recorderMessages().filter((m) => m.op === "start").length, 1);
     assert.equal(h.recorderMessages().filter((m) => m.op === "prepare").length, 0);
-    assert.equal(h.status().textContent, "녹화 파일 다운로드를 다운로드 폴더에서 마무리해요.");
+    assert.equal(h.status().textContent, "녹화 파일 다운로드 마무리 중 (다운로드 폴더)");
     assert.deepEqual(download.suggestions, []);
+});
+
+test("recording a VOD multiview tile captures and names only its own video", async (t) => {
+    const h = fixture(t, { path: "/video/123" });
+    await ready(h);
+    let mainCaptures = 0;
+    h.doc.querySelector("video").captureStream = () => {
+        mainCaptures++;
+    };
+    const cell = h.doc.createElement("div");
+    cell.dataset.bcmvVideo = "1";
+    cell.innerHTML = PLAYER;
+    h.doc.querySelector("main").append(cell);
+    const player = cell.firstElementChild;
+    const video = cell.querySelector("video");
+    h.prepareVideo(video);
+    const auxiliary = { player, video, media: { videoNo: "456" }, title: "보조 영상", channelName: "보조 채널" };
+    h.w.CheeseSpanner.vodMultiview = { getAuxiliaries: () => (cell.isConnected ? [auxiliary] : []) };
+    const notify = () => h.doc.dispatchEvent(new h.w.Event("cheese-spanner:vod-multiview:auxiliary"));
+    notify();
+    const button = cell.querySelector("[data-bcvm-recorder]");
+    button.click();
+    assert.equal(h.recorders.length, 0);
+    h.click(button);
+    await waitForCondition(() => h.recorders[0]?.state === "recording");
+    assert.equal(mainCaptures, 0);
+    assert.equal(h.button().disabled, true);
+    assert.equal(button.getAttribute("aria-pressed"), "true");
+    assert.match(h.downloads[0].download, /보조 영상 - 보조 채널\.mp4$/);
+    cell.remove();
+    notify();
+    await waitForCondition(() => h.downloads[0].done);
+    assert.ok(h.captures[0].every((track) => track.stopped));
+    assert.equal(h.button().disabled, false);
 });
 
 test("WebM is streamed when Chrome cannot encode MP4, and an unplayable video is not recorded", async (t) => {
@@ -575,7 +609,7 @@ test("WebM is streamed when Chrome cannot encode MP4, and an unplayable video is
     video.testReadyState = 1;
     h.click();
     assert.equal(h.recorders.length, 0);
-    assert.equal(h.status().textContent, "영상이 재생되기 시작하면 다시 눌러 주세요.");
+    assert.equal(h.status().textContent, "영상 재생 후 녹화 버튼 다시 누르기");
     video.testReadyState = 4;
     await h.start();
     assert.equal(h.recorders[0].options.mimeType, WEBM);
@@ -600,7 +634,7 @@ test("the chosen folder applies once to this recording at download start and lea
     h.recorders[0].emit("x");
     h.click();
     await waitForCondition(() => download.done);
-    assert.equal(h.status().textContent, "녹화 파일 다운로드를 다운로드 폴더의 치지직/녹화에서 마무리해요.");
+    assert.equal(h.status().textContent, "녹화 파일 다운로드 마무리 중 (다운로드 폴더의 치지직/녹화)");
 });
 
 test("without downloads permission a chosen folder is remembered but streaming uses the download folder", async (t) => {
@@ -610,7 +644,7 @@ test("without downloads permission a chosen folder is remembered but streaming u
     h.recorders[0].emit("x");
     h.click();
     await waitForCondition(() => h.downloads[0].done);
-    assert.equal(h.status().textContent, "녹화 파일 다운로드를 다운로드 폴더에서 마무리해요.");
+    assert.equal(h.status().textContent, "녹화 파일 다운로드 마무리 중 (다운로드 폴더)");
     assert.equal(h.worker.listeners.length, 0);
     assert.deepEqual(h.downloads[0].suggestions, []);
 });
@@ -698,7 +732,7 @@ test("an encoder that fails to start cancels the opened download and releases ca
         h.recorderMessages().some((message) => message.op === "finish"),
         false
     );
-    assert.equal(h.status().textContent, "녹화를 시작하지 못했어요.");
+    assert.equal(h.status().textContent, "녹화 시작 실패");
 });
 
 test("large media chunks are streamed in ordered bounded messages and download cancellation stops capture", async (t) => {
@@ -720,7 +754,7 @@ test("large media chunks are streamed in ordered bounded messages and download c
     await h.downloads[0].reader.cancel();
     h.recorders[0].emit("after-cancel");
     await waitForCondition(() => h.recorders[0].state === "inactive");
-    await waitForCondition(() => /완성하지 못했어요/.test(h.status()?.textContent || ""));
+    await waitForCondition(() => /녹화 파일 완성 실패/.test(h.status()?.textContent || ""));
     assert.equal(h.text(0), data);
     assert.ok(h.captures[0].every((track) => track.stopped));
 });
@@ -833,11 +867,11 @@ test("one large native Blob does not remove the backlog bound or allow a second 
                         Buffer.concat(h.downloads[0].parts),
                         Buffer.concat([...chunks, Buffer.from("tail")])
                     );
-                    assert.match(h.status().textContent, /녹화가 중단되어/);
+                    assert.match(h.status().textContent, /중단 시점까지/);
                 } else {
                     await h.downloads[0].reader.cancel();
                     release();
-                    await waitForCondition(() => /완성하지 못했어요/.test(h.status()?.textContent || ""));
+                    await waitForCondition(() => /녹화 파일 완성 실패/.test(h.status()?.textContent || ""));
                 }
                 assert.ok(h.captures[0].every((track) => track.stopped));
                 assert.equal(h.button().disabled, false);

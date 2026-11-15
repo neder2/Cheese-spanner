@@ -200,6 +200,7 @@ test("one donation view uses refreshed coverage and later live rows without dupl
     for (const file of ["shared/data.js", "shared/donationHistory.js", "history.js"]) evalRepoScript(dom, file);
     const document = dom.window.document;
     await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
+    document.getElementById("activityViewTab").click();
     document.getElementById("activityType").value = "donation";
     dispatch(dom, document.getElementById("activityType"), "change");
     assert.match(document.getElementById("activitySummary").textContent, /내 후원 2,500치즈 \(3회\)/);
@@ -208,7 +209,9 @@ test("one donation view uses refreshed coverage and later live rows without dupl
     dispatch(dom, document.getElementById("historyScope"), "change");
     assert.match(document.getElementById("activitySummary").textContent, /10,500치즈 \(7회\)/);
     assert.equal(document.querySelectorAll("#activityList li").length, 4);
+    document.getElementById("rankingViewTab").click();
     assert.match(document.getElementById("channelRanking").textContent, /10,500치즈 \(7회\)/);
+    document.getElementById("activityViewTab").click();
     chrome.testState.local[store.STORAGE_KEY] = store.applyMutation(
         history,
         {
@@ -222,7 +225,7 @@ test("one donation view uses refreshed coverage and later live rows without dupl
         NOW + 3000
     ).history;
     document.getElementById("refresh").click();
-    await waitForCondition(() => document.getElementById("message").textContent.includes("새로고침했어요"));
+    await waitForCondition(() => document.getElementById("message").textContent.includes("새로고침 완료"));
     assert.match(document.getElementById("activitySummary").textContent, /10,500치즈 \(7회\)/);
     assert.equal(document.querySelectorAll("#activityList li").length, 4);
     document.getElementById("historySearch").value = "없는 채널";
@@ -549,8 +552,12 @@ test("history refresh starts with one click, ignores display filters, shows one 
     activityType.value = "donation";
     dispatch(dom, activityType, "change");
     assert.match(document.getElementById("activitySummary").textContent, /3,000치즈 \(2회\)/);
+    document.getElementById("rankingViewTab").click();
+    assert.equal(document.getElementById("clearDonationImport").disabled, false);
     document.getElementById("clearDonationImport").click();
     await waitForCondition(() => document.getElementById("clearDonationImport").disabled);
+    document.getElementById("activityViewTab").click();
+    assert.match(document.getElementById("activitySummary").textContent, /0치즈 \(0회\)/);
     assert.equal(chrome.testState.local[store.STORAGE_KEY].donationImport, undefined);
 });
 
@@ -626,7 +633,7 @@ test("a running donation refresh keeps its progress and cancel button after swit
         ["start", "cancel"]
     );
     assert.equal(ui.controls.hidden, false);
-    assert.match(ui.status.textContent, /취소하고 있어요/);
+    assert.match(ui.status.textContent, /취소 중/);
 
     incoming.emit({ type: "error", message: "후원 내역 갱신을 취소했어요." });
     expectFailureInDonationList(/갱신을 취소했어요/, "an error message is not written into hidden tools");
@@ -639,14 +646,14 @@ test("a donation refresh whose port disconnects while chats are shown reports it
         await startRefreshThenShowChats(t);
     assert.equal(ui.controls.hidden, false);
     disconnect.emit();
-    expectFailureInDonationList(/가져오기가 중단됐어요/, "a plain disconnect");
+    expectFailureInDonationList(/후원 가져오기 중단/, "a plain disconnect");
 
     startFromChats();
     assert.equal(ui.status.dataset.error, "false", "a new refresh replaces the earlier error");
     chrome.runtime.lastError = { message: "Could not establish connection." };
     disconnect.emit();
     delete chrome.runtime.lastError;
-    expectFailureInDonationList(/가져오기 연결이 끊겼어요/, "a disconnect with runtime.lastError");
+    expectFailureInDonationList(/후원 가져오기 연결 끊김/, "a disconnect with runtime.lastError");
     showType("chat");
     assert.equal(ui.controls.hidden, true);
 });

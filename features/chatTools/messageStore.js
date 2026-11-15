@@ -41,12 +41,15 @@
         // 보관 개수로 목록에서만 빠진 메시지(오래된 순)예요. 패널·읽음·알림에는 나오지 않고, 원본 행이
         // 새 노드나 새 root로 다시 그려질 때 같은 메시지로 다시 붙이는 데만 써요. 채널 정리 때 함께 비워요.
         let evictedModeratorMessages = [];
+        // Native key/user/time identities stay private and live only as long as retained records.
+        // Panel IDs remain local counters; a later render of the same native message reuses its record.
+        const nativeModeratorMessages = new Map();
         let moderatorRowBindings = new WeakMap();
         let pendingModeratorRemounts = [];
         const moderatorRowTransitions = new Map();
         const moderatorTransitionOwnerships = new Map();
         let rowMutationRevisions = new WeakMap();
-        const rowIds = new WeakMap();
+        let rowIds = new WeakMap();
         let rowOriginalTexts = new WeakMap();
         // Same-root remounts may reuse an explicit message ID. Keep only text and identity,
         // never detached DOM nodes, and discard this bounded cache with the root/session.
@@ -58,6 +61,7 @@
         // 이전 목록 상태가 새 노드로 다시 그려질 수 있어 확인된 명시적 ID도 다음 채널 이동까지만 남긴다.
         let retiredRows = new WeakMap();
         let retiredMessageIds = new Set();
+        let retiredNativeMessageIds = new Set();
 
         function clearOriginalMessages() {
             rowOriginalTexts = new WeakMap();
@@ -88,12 +92,40 @@
 
         function getMessageId(row, parsed) {
             const explicitId = getExplicitMessageId(row);
-            if (explicitId) return explicitId;
-
             const rowReuseSignal = getCacheRowReuseSignal(row);
             const messageFingerprint = getMessageFingerprint(parsed);
             const cached = rowIds.get(row);
             const binding = moderatorRowBindings.get(row);
+            if (parsed.nativeIdentity) {
+                let id = nativeModeratorMessages.get(parsed.nativeIdentity)?.id;
+                if (
+                    !id &&
+                    binding &&
+                    !binding.message.nativeIdentity &&
+                    binding.root === chatRoot &&
+                    binding.rowReuseSignal === rowReuseSignal &&
+                    binding.author === parsed.author &&
+                    binding.role === parsed.role &&
+                    binding.textKey === getTextKey(parsed) &&
+                    (!explicitId || explicitId === binding.messageId)
+                ) {
+                    // A late MAIN bridge may identify an already collected row. Upgrade its private
+                    // identity without replacing the record, selection or read state.
+                    id = binding.messageId;
+                }
+                if (!id && cached?.nativeIdentity === parsed.nativeIdentity) id = cached.id;
+                if (!id) id = `native:${nextRowId++}`;
+                rowIds.set(row, {
+                    id,
+                    nativeIdentity: parsed.nativeIdentity,
+                    rowReuseSignal,
+                    messageFingerprint,
+                    role: parsed.role,
+                    author: parsed.author,
+                });
+                return id;
+            }
+            if (explicitId) return explicitId;
             const keepsCollectedIdentity =
                 cached &&
                 cached.rowReuseSignal === rowReuseSignal &&
@@ -130,12 +162,14 @@
             clearOriginalMessages();
             pageMessageIds.clear();
             retiredPageMessageIds.clear();
+            parser.clearPageOriginalCache();
         }
 
         function retirePageMessages() {
             retiredPageMessageIds = new Set(pageMessageIds);
             pageMessageIds.clear();
             clearOriginalMessages();
+            parser.clearPageOriginalCache();
         }
 
         function cacheOriginalMessageText(row, parsed, source = null) {
@@ -235,6 +269,7 @@
                 .join("\u001f");
             return {
                 messageId: parsed.id,
+                nativeIdentity: parsed.nativeIdentity || "",
                 identityKey,
                 author: parsed.author,
                 role: parsed.role,
@@ -340,6 +375,7 @@
                 sourceRow: row,
                 sourceReuseSignal: snapshot.rowReuseSignal,
                 sourceIdentityKey: snapshot.identityKey,
+                nativeIdentity: snapshot.nativeIdentity,
                 message,
                 messageId: snapshot.messageId,
                 author: snapshot.author,
@@ -382,6 +418,9 @@
                 ownership.role === parsed.role &&
                 ownership.textKey === getTextKey(parsed);
             if (matchesOwnedIdentity) return "keep";
+            // With a verified native identity, a later body update still belongs to this candidate.
+            // Retract its earlier mixed state instead of finalizing it as a separate message.
+            if (ownership.nativeIdentity && ownership.nativeIdentity === parsed.nativeIdentity) return "retract";
 
             // 명시적인 재사용 신호가 같은데 역할·작성자·본문 조합이 달라졌다면
             // 이번 세대의 중간 혼합 상태로 수집된 항목이다. 신호가 없는 행은 별도
@@ -394,6 +433,8 @@
             if (messageIndex < 0) return false;
 
             moderatorMessages.splice(messageIndex, 1);
+            if (nativeModeratorMessages.get(message.nativeIdentity) === message)
+                nativeModeratorMessages.delete(message.nativeIdentity);
 
             const boundRow = message.node;
             if (boundRow instanceof Element && moderatorRowBindings.get(boundRow)?.message === message) {
@@ -423,7 +464,14 @@
             }
             evictedModeratorMessages.push(message);
             if (evictedModeratorMessages.length > MAX_EVICTED_MODERATOR_MESSAGES) {
-                evictedModeratorMessages.splice(0, evictedModeratorMessages.length - MAX_EVICTED_MODERATOR_MESSAGES);
+                const expired = evictedModeratorMessages.splice(
+                    0,
+                    evictedModeratorMessages.length - MAX_EVICTED_MODERATOR_MESSAGES
+                );
+                for (const item of expired) {
+                    if (nativeModeratorMessages.get(item.nativeIdentity) === item)
+                        nativeModeratorMessages.delete(item.nativeIdentity);
+                }
             }
             return true;
         }
@@ -459,6 +507,10 @@
 
         function backfillModeratorMessage(existing, parsed, { deferNotify = false } = {}) {
             existing.node = parsed.node;
+            if (!existing.nativeIdentity && parsed.nativeIdentity) {
+                existing.nativeIdentity = parsed.nativeIdentity;
+                nativeModeratorMessages.set(parsed.nativeIdentity, existing);
+            }
             // text/author/role 은 블라인드 전환이나 단계적 DOM 재사용으로 오염될 수
             // 있으므로 변경하지 않고, 늦게 붙는 뱃지와 닉네임 색만 보충한다.
             let backfilled = false;
@@ -486,6 +538,11 @@
         function isMatchingModeratorRemount(binding, parsed) {
             if (!binding?.message || !String(binding.message.id || "").startsWith("row:")) return false;
             if (!String(parsed.id || "").startsWith("row:") || binding.root !== chatRoot) return false;
+            if (
+                (binding.message.nativeIdentity || parsed.nativeIdentity) &&
+                binding.message.nativeIdentity !== parsed.nativeIdentity
+            )
+                return false;
             if (
                 binding.author !== parsed.author ||
                 binding.role !== parsed.role ||
@@ -584,6 +641,7 @@
             parsed.id = message.id;
             rowIds.set(parsed.node, {
                 id: message.id,
+                nativeIdentity: parsed.nativeIdentity,
                 rowReuseSignal,
                 messageFingerprint: getMessageFingerprint(parsed),
                 role: parsed.role,
@@ -595,7 +653,16 @@
         function commitModeratorMessage(parsed, { deferNotify = false, transition = null } = {}) {
             if (!isModeratorBoxEnabled() || !parsed.role || !parsed.text) return false;
 
-            let message = findKnownModeratorMessage(parsed.id);
+            let message =
+                (parsed.nativeIdentity && nativeModeratorMessages.get(parsed.nativeIdentity)) ||
+                findKnownModeratorMessage(parsed.id);
+            // Immediate reads can cache two new nodes before either is committed. Resolve the native
+            // record again here so both pending parses converge on the first committed local ID.
+            if (message && parsed.nativeIdentity && message.nativeIdentity === parsed.nativeIdentity) {
+                parsed.id = message.id;
+                const cached = rowIds.get(parsed.node);
+                if (cached?.nativeIdentity === parsed.nativeIdentity) cached.id = message.id;
+            }
             if (!message) {
                 const candidate = findAnyModeratorRemount(parsed, transition);
                 if (candidate) message = claimModeratorRemount(candidate, parsed);
@@ -613,11 +680,13 @@
                     badges: Array.isArray(parsed.badges) ? parsed.badges : [],
                     authorColor: parsed.authorColor || "",
                     timestamp: parsed.timestamp || "",
+                    nativeIdentity: parsed.nativeIdentity || "",
                     node: parsed.node,
                     sourceIdentityKey: "",
                     unread: true,
                 };
                 moderatorMessages.push(message);
+                if (message.nativeIdentity) nativeModeratorMessages.set(message.nativeIdentity, message);
             }
 
             bindModeratorRow(parsed.node, message, buildModeratorSnapshot(parsed));
@@ -752,12 +821,25 @@
         function retireRows(rows) {
             retiredRows = new WeakMap();
             retiredMessageIds = new Set();
+            retiredNativeMessageIds = new Set(
+                [...evictedModeratorMessages, ...moderatorMessages]
+                    .map((message) => message.nativeIdentity)
+                    .filter(Boolean)
+                    .slice(-MAX_RETIRED_MESSAGE_IDS)
+            );
             for (const message of moderatorMessages) {
                 if (isExplicitModeratorMessageId(message.id)) retireMessageId(message.id);
             }
             for (const row of rows) {
                 if (!(row instanceof HTMLElement)) continue;
                 const parsed = parser.parseChatRow(row);
+                const nativeIdentity = parsed.role ? pageMessageIdentity(parser.readPageMessage(row, parsed)) : "";
+                if (nativeIdentity) {
+                    retiredNativeMessageIds.delete(nativeIdentity);
+                    retiredNativeMessageIds.add(nativeIdentity);
+                    if (retiredNativeMessageIds.size > MAX_RETIRED_MESSAGE_IDS)
+                        retiredNativeMessageIds.delete(retiredNativeMessageIds.values().next().value);
+                }
                 const explicitId = getExplicitMessageId(row);
                 retiredRows.set(row, {
                     explicitId,
@@ -782,6 +864,7 @@
 
         function collectModeratorMessage(parsed, { deferNotify = false } = {}) {
             const row = parsed.node;
+            if (parsed.nativeIdentity && retiredNativeMessageIds.has(parsed.nativeIdentity)) return false;
             const retired = retiredRows.get(row);
             if (retired && isRetiredRowMessage(retired, parsed)) return false;
             // 이전 채널에서 확인한 명시적 ID는 새 노드로 다시 그려져도 이전 채널 메시지다.
@@ -876,6 +959,8 @@
             }
             moderatorMessages = [];
             evictedModeratorMessages = [];
+            nativeModeratorMessages.clear();
+            rowIds = new WeakMap();
             moderatorRowBindings = new WeakMap();
             pendingModeratorRemounts = [];
             rowMutationRevisions = new WeakMap();
@@ -1027,8 +1112,13 @@
             }
         }
 
-        function parseChatMessage(row) {
+        function parseChatMessage(row, keepOriginal = false) {
             const parsed = parser.parseChatRow(row);
+            // Only collection candidates need a native identity. Reuse this validated response in
+            // the blind-reveal path rather than sending a second request for the same synchronous read.
+            if (isModeratorBoxEnabled() && parsed.role)
+                parsed.pageSource = parser.readPageMessage(row, parsed, keepOriginal);
+            parsed.nativeIdentity = pageMessageIdentity(parsed.pageSource);
             parsed.id = getMessageId(row, parsed);
             return parsed;
         }
@@ -1111,6 +1201,7 @@
             parseChatMessage,
             collect: collectModeratorMessage,
             cacheOriginal: cacheOriginalMessageText,
+            pageMessageIdentity,
             clearOriginals: clearOriginalMessages,
             clearPageMessages,
             retirePageMessages,

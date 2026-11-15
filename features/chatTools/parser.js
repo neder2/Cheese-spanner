@@ -32,8 +32,10 @@
 
     const PLACEHOLDER_TEXT = "[블라인드 메시지: 원문 없음]";
     const PAGE_ORIGINAL_REQUEST_EVENT = "cheese-spanner:chat-blind-source-request";
+    const PAGE_ORIGINAL_CLEAR_EVENT = "cheese-spanner:chat-blind-originals-clear";
     const PAGE_ORIGINAL_ATTR = "data-bcct-source-original";
     const PAGE_MESSAGE_ATTR = "data-bcct-source-message";
+    const PAGE_MESSAGE_STATUSES = new Set(["NORMAL", "BLIND", "CBOTBLIND", "HIDDEN", "RECLAIM", "FILTERED"]);
     const MESSAGE_CONTAINER_SELECTOR = "[class*='chatting_message'], [class*='chat-message']";
 
     const ROLE_SCORE_THRESHOLD = 80;
@@ -403,6 +405,9 @@
 
     function getVisibleText(el, context = null) {
         if (!(el instanceof Element)) return "";
+        // Standalone discovery reads also revisit ancestors for each descendant. Share visibility only
+        // within this synchronous read; the next call must see current native styles and row reuse.
+        context ||= { hiddenCache: new WeakMap() };
         if (context?.visibleTextCache?.has(el)) return context.visibleTextCache.get(el);
         const chunks = [];
         collectText(el, chunks, { boundary: el, context });
@@ -746,7 +751,11 @@
         return best;
     }
 
-    function readPageMessage(row, parsed) {
+    function clearPageOriginalCache() {
+        window.dispatchEvent(new Event(PAGE_ORIGINAL_CLEAR_EVENT));
+    }
+
+    function readPageMessage(row, parsed, keepOriginal = false) {
         const textEl = parsed?.textEl;
         if (!(row instanceof Element) || !(textEl instanceof Element) || !row.contains(textEl)) return null;
         const container = textEl.closest(MESSAGE_CONTAINER_SELECTOR);
@@ -760,7 +769,8 @@
         container.removeAttribute(PAGE_ORIGINAL_ATTR);
         container.removeAttribute(PAGE_MESSAGE_ATTR);
         try {
-            container.dispatchEvent(new Event(PAGE_ORIGINAL_REQUEST_EVENT, { bubbles: true }));
+            const detail = keepOriginal && parsed.author ? JSON.stringify([parsed.author, visibleText]) : null;
+            container.dispatchEvent(new CustomEvent(PAGE_ORIGINAL_REQUEST_EVENT, { bubbles: true, detail }));
             const raw = container.getAttribute(PAGE_MESSAGE_ATTR);
             if (raw === null)
                 return document.documentElement.hasAttribute("data-cheese-spanner-chat-timestamp-page-ready")
@@ -778,7 +788,7 @@
                 !Number.isSafeInteger(message.time) ||
                 message.time < Date.UTC(2020, 0, 1) ||
                 message.time > Date.now() + 12 * 60 * 60 * 1000 ||
-                !["NORMAL", "BLIND", "CBOTBLIND", "HIDDEN"].includes(message.status) ||
+                !PAGE_MESSAGE_STATUSES.has(message.status) ||
                 typeof message.nickname !== "string" ||
                 message.nickname.length > 200 ||
                 !parsed.author ||
@@ -872,6 +882,19 @@
 
         if (broadcasterScore >= ROLE_SCORE_THRESHOLD && broadcasterScore >= managerScore) return "broadcaster";
         if (managerScore >= ROLE_SCORE_THRESHOLD) return "manager";
+        // 치지직 공통 닉네임 렌더러의 인증 마크. 본문·프로필 팝업의 같은 마크는 수집 근거가 아니다.
+        const authorEl = pickAuthorTarget(row, context).el;
+        const popupSelector = '[role="dialog"], [role="alertdialog"], [role="menu"], [popover], [class*="popover"]';
+        if (authorEl && !authorEl.closest(popupSelector)) {
+            for (const mark of authorEl.getElementsByTagName("i")) {
+                const grade = root.utils.verifiedMarks.read(getClassText(mark))?.grade;
+                if (grade !== "PARTNER" && grade !== "CHALLENGER") continue;
+                if (isHiddenWithin(mark, row, context) || isInsideMessageTextElement(mark, row)) continue;
+                if (mark.closest(popupSelector)) continue;
+                if (grade === "PARTNER") return "partner";
+                if (grade === "CHALLENGER") return "challenger";
+            }
+        }
         return "";
     }
 
@@ -898,6 +921,8 @@
     }
 
     function roleLabel(role) {
+        if (role === "partner") return "파트너 스트리머";
+        if (role === "challenger") return "챌린저 스트리머";
         return role === "broadcaster" ? "방송자" : "채팅 운영자";
     }
 
@@ -981,6 +1006,7 @@
         isBlindNoticeText,
         readPageOriginalText,
         readPageMessage,
+        clearPageOriginalCache,
         getCacheMessageIdentity,
         getCacheRowReuseSignal,
         roleLabel,
