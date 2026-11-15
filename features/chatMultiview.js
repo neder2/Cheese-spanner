@@ -143,7 +143,7 @@
         },
         left: {
             target: "입력 불가",
-            overlay: "채팅 화면을 벗어나 오입력 방지를 위해 가림.",
+            overlay: "채팅 칸에 다른 화면이 열려 입력 차단.",
             action: "채팅으로 돌아가기",
         },
         failed: {
@@ -170,6 +170,7 @@
         ready = false,
         unsaved = false;
     let donationMessagesHidden = false;
+    let nicknameHidden = false;
     let lifecycle = 0,
         loadVersion = 0,
         storageRevision = 0,
@@ -528,7 +529,7 @@
         const name = model.normalizeChannelName(channel.channelName) || channel.channelId;
         target.pendingAdds.add(channel.channelId);
         const done = commit((base) => model.addChannel(base, channel), {
-            success: name + " 채팅 추가됨.",
+            success: name + " 채팅 추가 완료",
             after(outcome) {
                 if (panel !== target || (outcome !== "saved" && outcome !== "failed")) return;
                 target.input.value = "";
@@ -745,8 +746,9 @@
         const rules = [...FRAME_HIDDEN, ...(Array.isArray(ranking) ? ranking : [])];
         if (!config.input) rules.push(FRAME_INPUT_AREA);
         const donations = donationMessagesHidden ? root.chatDonationMessages?.STYLE_TEXT || "" : "";
+        const nicknames = nicknameHidden ? root.chatNicknameDisplay?.STYLE_TEXT || "" : "";
         const base = FRAME_FIT + "\n" + rules.join(",\n") + "{display:none!important}";
-        return donations ? base + "\n" + donations : base;
+        return [base, donations, nicknames].filter(Boolean).join("\n");
     }
     function syncFrameStyle(cell) {
         if (!cell.verified || !isChatLocation(frameLocation(cell.frame), cell)) return;
@@ -976,7 +978,7 @@
     function moveCell(target, cell, offset) {
         const source = offset < 0 ? cell.back : cell.forward;
         commit((base) => model.moveChannel(base, cell.channelId, offset), {
-            success: cell.name + " 채팅을 " + (offset < 0 ? "앞으로" : "뒤로") + " 이동함.",
+            success: cell.name + " 채팅 " + (offset < 0 ? "앞으로" : "뒤로") + " 이동",
             after() {
                 if (!isCurrent(target, cell) || !source.disabled) return;
                 const focused = document.activeElement;
@@ -988,7 +990,7 @@
     function removeChannel(target, cell) {
         const index = config.channels.findIndex((item) => item.channelId === cell.channelId);
         commit((base) => model.removeChannel(base, cell.channelId), {
-            success: cell.name + " 채팅 제거됨.",
+            success: cell.name + " 채팅 제거 완료",
             after() {
                 if (panel !== target || cell.node.isConnected) return;
                 const focused = document.activeElement;
@@ -1371,7 +1373,7 @@
             } else if (drag.type === "resize" && target.displaySize) {
                 const size = target.displaySize;
                 commit((base) => model.withChatSize(base, size.width, size.height), {
-                    success: "채팅 칸 크기 저장됨.",
+                    success: "채팅 칸 크기 저장 완료",
                     after() {
                         if (target.displaySize === size) target.displaySize = null;
                         if (panel === target) applyGeometry(target);
@@ -1587,7 +1589,7 @@
                 const size = model.SIZE_PRESETS[name];
                 target.displaySize = null;
                 commit((base) => model.withChatSize(base, size.chatWidth, size.chatHeight), {
-                    success: "채팅 칸 크기를 " + text + "(으)로 변경함.",
+                    success: "채팅 칸 크기 변경 · " + text,
                 });
             });
             sizeGroup.append(option);
@@ -1601,7 +1603,7 @@
                 if (!event.isTrusted) return;
                 target.displayPosition = null;
                 commit((base) => model.withPosition(base, corner, model.DEFAULT_OFFSET, model.DEFAULT_OFFSET), {
-                    success: "패널 위치를 " + text + "(으)로 변경함.",
+                    success: "패널 위치 변경 · " + text,
                 });
             });
             cornerGroup.append(option);
@@ -1743,7 +1745,7 @@
             add.setAttribute(
                 "aria-label",
                 added
-                    ? channel.channelName + " 채팅, 이미 추가함"
+                    ? channel.channelName + " 채팅, 추가됨"
                     : blocked
                       ? channel.channelName + " 채팅, " + errorText("limit")
                       : channel.channelName + " 채팅 추가"
@@ -1811,6 +1813,7 @@
         removeOptions = bindFeatureOptions((next) => {
             if (!running) return;
             donationMessagesHidden = next?.chatDonationMessagesHidden === true;
+            nicknameHidden = next?.chatNicknameHidden === true;
             if (next?.chatMultiviewEnabled === true) activate();
             else deactivate();
             for (const cell of panel?.cells.values() || []) syncFrameStyle(cell);

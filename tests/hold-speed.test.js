@@ -168,6 +168,7 @@ function createFixture({
             },
             isLiveRoute: () => /^\/live(?:\/|$)/.test(window.location.pathname),
             isNativeAdBreakActive: () => false,
+            isVodMultiviewInput: (event) => !!event.target?.closest?.("[data-bcvm]"),
             isPlaybackRoute: () => /^\/(?:live|video)(?:\/|$)/.test(window.location.pathname),
             isVodRoute: () => /^\/video(?:\/|$)/.test(window.location.pathname),
             startPageChangeDetection(callback) {

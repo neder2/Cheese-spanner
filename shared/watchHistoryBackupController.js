@@ -13,7 +13,7 @@
         UNSUPPORTED_VERSION: "미지원 백업 파일 버전.",
         LIMIT_EXCEEDED: "병합 결과가 크기·보관 한도 초과(기존 기록 미변경).",
         STORAGE_READ_FAILED: "기존 시청 기록 읽기 실패. 잠시 후 다시 시도 필요.",
-        STORAGE_WRITE_FAILED: "시청 기록을 저장하지 못했어요. 기존 기록은 유지돼요. 저장 공간을 확인해 주세요.",
+        STORAGE_WRITE_FAILED: "시청 기록 저장 실패. 기존 기록 유지. 저장 공간 확인.",
     };
 
     function fail(code) {

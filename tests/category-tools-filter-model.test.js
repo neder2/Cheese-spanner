@@ -16,6 +16,29 @@ function plain(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
+test("grade-only tab records validate known values, canonical order and all-grade reset", () => {
+    const model = loadFilterModel();
+    const raw = {
+        version: 1,
+        routes: {
+            "global-lives/lives": {
+                query: "",
+                filters: {},
+                streamerGrades: ["PRO", "PARTNER", "PRO", "OFFICIAL", "<script>"],
+                savedAt: 1,
+            },
+        },
+    };
+    assert.deepEqual(plain(model.readListFilterSession(raw)).routes["global-lives/lives"].streamerGrades, [
+        "PARTNER",
+        "PRO",
+    ]);
+    raw.routes["global-lives/lives"].streamerGrades = ["PARTNER", "CHALLENGER", "PRO", "GENERAL"];
+    assert.deepEqual(plain(model.readListFilterSession(raw)).routes, {});
+    raw.routes["global-lives/lives"].streamerGrades = "PARTNER";
+    assert.deepEqual(plain(model.readListFilterSession(raw)).routes, {});
+});
+
 test("category models, repository and search controller load before their runtime in the isolated world", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../manifest.json"), "utf8"));
     const isolated = manifest.content_scripts.find(

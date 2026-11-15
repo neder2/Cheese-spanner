@@ -234,7 +234,7 @@
                     error: failed
                         ? "일부 채널 방송 확인·알림·탭 열기 실패. 네트워크·알림 권한 확인 필요."
                         : config.permissionMissing
-                          ? "알림 권한 없음으로 데스크톱 알림 중지. 알림 권한 허용 클릭 필요."
+                          ? "알림 권한이 없어 데스크톱 알림 중지. ‘알림 권한 허용’ 선택."
                           : "",
                     activeChannels: config.channels.length,
                 },
@@ -268,7 +268,7 @@
                     error: config.apiAccessMissing
                         ? API_ACCESS_STATUS
                         : config.permissionMissing
-                          ? "알림 권한 없음으로 데스크톱 알림 중지. 알림 권한 허용 클릭 필요."
+                          ? "알림 권한이 없어 데스크톱 알림 중지. ‘알림 권한 허용’ 선택."
                           : "",
                 },
             });

@@ -21,7 +21,7 @@ MAIN world와 isolated world는 JavaScript 전역을 공유하지 않아요. 공
 
 블라인드 원문은 기존 `chatTimestampPage.js`가 현재 행에서 가장 가까운 메시지의 식별값·작성자·시각·상태와 원문만 동기 응답해요. `chatTools/parser.js`는 현재 DOM과 응답을 다시 검증하고 즉시 응답 속성을 지워요. `messageStore.js`는 방송 이동 전 메시지의 재표시를 막는 제한된 식별값 집합을 관리하며, 네이티브 원문이 없거나 검증에 실패하면 DOM 캐시로 대신하지 않아요. 이 경로는 확장 저장소·background·외부 요청으로 연결되지 않아요.
 
-현재 정적 MAIN 파일은 `routeBridgePage`, `livePreviewFastHoverPage`, `chatTimestampPage`, `watchActivityPage`, `autoQualityPage`, `volumeControlsPage`, `volumeWheelPage`, `adblockPopupPage`예요. `adblockPopupPage`는 isolated `adblockPopup`의 동기 요청을 받았을 때만 확인형 안내의 확인 동작을 확인·실행하고 옵션·관찰은 소유하지 않아요. `adVideoPage.js`는 여기에 포함되지 않고 저장된 광고 옵션에 맞춰 별도로 동적 등록돼요. 실제 파일 목록과 순서는 manifest·등록 코드를 다시 확인해요.
+현재 정적 MAIN 파일에는 `routeBridgePage`, `livePreviewFastHoverPage`, `chatTimestampPage`, `watchActivityPage`, `autoQualityPage`, `volumeControlsPage`, `livePlaybackRatePage`, `volumeWheelPage`, `adblockPopupPage`가 있어요. `adblockPopupPage`는 isolated `adblockPopup`의 동기 요청을 받았을 때만 확인형 안내의 확인 동작을 확인·실행하고 옵션·관찰은 소유하지 않아요. `adVideoPage.js`는 여기에 포함되지 않고 저장된 광고 옵션에 맞춰 별도로 동적 등록돼요. 실제 파일 목록과 순서는 manifest·등록 코드를 다시 확인해요.
 
 ## 의존 방향
 
@@ -63,6 +63,8 @@ isolated 영역은 `shared/settings.js` → `shared/data.js` → `shared/categor
 카테고리 제외는 전체 방송 필터 메뉴의 이름 검색 → 실제 결과 선택 → 검증한 확장 메시지 → 독립 워커 큐의 최신 local 읽기·개별 변경·저장 → 성공 상태와 저장소 변경 구독 순서예요. 열린 전체 방송 문서는 같은 프로필 선택을 반영하고 유형·ID와 태그 전체 일치로 카드 표시를 판정해요. 태그는 패널 입력의 Enter에서 같은 개별 추가 명령으로 저장해요. 검색어·결과 캐시는 문서 메모리에만 두며 선택 목록의 지속 보관과 분리해요. MAIN 브리지·시청 기록 writer·전체 방송 집계에는 선택 변경을 연결하지 않아요.
 
 페이지 이동은 MAIN의 route bridge → 공용 라우트 감지 → 기능별 이전 작업 취소·UI 정리 → 새 경로에 필요한 작업 시작으로 이어져요. React가 루트나 행을 교체하는 경우는 URL 이동과 별도로 처리해요.
+
+팔로잉 폴더가 켜진 치지직 탭으로 돌아오면 워커가 활성 탭의 최상위 문서에서 확장 연결을 확인해요. 연결을 잃은 문서에는 Chrome이 확인한 문서 ID를 대상으로 폴더 코드와 패키지에 포함된 의존 파일을 isolated world에 다시 로드해요. 이전 연결은 폴더 화면과 이벤트를 정리하고 새 연결은 저장된 상태를 읽어요. 다시 연결된 폴더의 신뢰된 사용자 조작이 기존 설정 저장 큐를 통해 저장돼요.
 
 설정 저장은 백업 대상 키를 쓰는 모든 writer가 같은 설정 저장 잠금을 공유하는 흐름이에요. 옵션 페이지·워커는 Web Lock을 직접 잡고, 치지직 콘텐츠는 `settingsStoreSet` → 워커 발신자·키·값·기대값 검증 → 도착 순서 큐 → 잠금 안의 최신 읽기·쓰기 → 결과 응답 순서로 진행해요. 설정 파일 적용은 옵션 페이지의 미리보기·확인·권한 요청 → 워커가 잠금을 한 번 잡고 최신 값·지문 비교 → 효과 끄기·sync·local·방송 대상·효과 켜기 순서의 쓰기 → 실패 시 되돌리기로 이어져요.
 

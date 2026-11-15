@@ -7,6 +7,7 @@
  *   컴프레서 기본 선택은 계속 보관하고, 탭별 스냅샷은 탭 종료·브라우저 시작 시 정리한다.
  *   방송 시작 알림·자동 열기는 shared/liveStartMonitor.js의 독립 큐와 alarm으로 처리한다.
  *   팔로우한 라이브 채널의 방송 제목 이력은 shared/followingTitleCollector.js의 독립 큐와 alarm으로 수집·저장한다.
+ *   연결이 끊긴 팔로잉 폴더는 shared/followingFoldersRecovery.js가 활성 치지직 탭에서 다시 연결한다.
  *   전체 방송의 카테고리 제외 선택은 독립 처리 경로에서 개별 변경을 순차 저장한다.
  *   과거 후원 가져오기는 history 페이지의 요청으로 조회하고, 같은 시청 기록 writer 큐에 월별 스냅샷을 저장한다.
  *   백업 대상 설정의 콘텐츠 쓰기와 설정 파일 내보내기·미리보기·적용은 shared/settingsStore.js의 설정 저장 큐가
@@ -33,6 +34,7 @@ importScripts(
 importScripts("shared/liveStart.js", "shared/liveStartMonitor.js");
 importScripts("shared/followingTitleHistory.js", "shared/followingTitleCollector.js");
 importScripts("shared/followingFolders.js", "shared/chatMultiview.js");
+importScripts("shared/followingFoldersRecovery.js");
 importScripts("shared/settingsBackup.js", "shared/settingsStore.js");
 importScripts("shared/donationHistoryImport.js");
 importScripts("shared/recordingDirectory.js", "shared/recordingDownloads.js");
@@ -64,6 +66,7 @@ const updateGuide = globalThis.CheeseSpannerUpdateGuideController.createControll
 });
 const categoryExclusions = globalThis.CheeseSpanner.categoryExclusions.createController({ chrome });
 const settingsStore = globalThis.CheeseSpannerSettingsStore.createController({ chrome });
+globalThis.CheeseSpannerFollowingFoldersRecovery.install(chrome);
 const recordingDownloads = globalThis.CheeseSpannerRecordingDownloads.createController({ chrome });
 // onDeterminingFilename must be registered in the first turn so the event can wake this worker.
 recordingDownloads.install();

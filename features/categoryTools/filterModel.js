@@ -27,6 +27,13 @@
     ]);
     const SECONDS_PER_HOUR = 60 * 60;
     const FILTER_KINDS = Object.freeze(["followers", "views", "duration"]);
+    const STREAMER_GRADES = Object.freeze(["PARTNER", "CHALLENGER", "PRO", "GENERAL"]);
+    const STREAMER_GRADE_LABELS = Object.freeze({
+        PARTNER: "파트너",
+        CHALLENGER: "챌린저",
+        PRO: "프로",
+        GENERAL: "일반",
+    });
     const FILTER_MODES = Object.freeze(["none", "min", "max", "range"]);
     // 탭 기록에 받아들이는 상한. 인원·횟수는 옵션 프리셋 상한, 진행 시간은 옵션 상한(168시간)과 같다.
     const COUNT_VALUE_LIMIT = 10_000_000;
@@ -270,6 +277,12 @@
         return { mode: value.mode, min: range.min, max: range.max };
     }
 
+    function normalizeStreamerGrades(value) {
+        if (!Array.isArray(value)) return [];
+        const grades = STREAMER_GRADES.filter((grade) => value.includes(grade));
+        return grades.length === STREAMER_GRADES.length ? [] : grades;
+    }
+
     function normalizeListFilterRecord(record, routeKey) {
         if (!record || typeof record !== "object" || !LIST_FILTER_ROUTE_KEY.test(String(routeKey))) return null;
         const query =
@@ -281,9 +294,10 @@
             const normalized = normalizeFilterRecord(kind, record.filters?.[kind]);
             if (normalized) filters[kind] = normalized;
         }
-        if (!query && !Object.keys(filters).length) return null;
+        const streamerGrades = normalizeStreamerGrades(record.streamerGrades);
+        if (!query && !Object.keys(filters).length && !streamerGrades.length) return null;
         const savedAt = Number.isSafeInteger(record.savedAt) && record.savedAt > 0 ? record.savedAt : 0;
-        return { savedAt, query, filters };
+        return { savedAt, query, filters, ...(streamerGrades.length ? { streamerGrades } : {}) };
     }
 
     function pruneListFilterRoutes(routes) {
@@ -329,6 +343,9 @@
     root.categoryToolsFilterModel = Object.freeze({
         FILTER_KINDS,
         FILTER_MODES,
+        STREAMER_GRADES,
+        STREAMER_GRADE_LABELS,
+        normalizeStreamerGrades,
         passesCountRange,
         passesCategoryExclusions,
         passesTagExclusions,

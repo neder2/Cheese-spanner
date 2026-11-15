@@ -40,6 +40,7 @@
 (() => {
     const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     const SKIP_PILL_ID = "cheese-spanner-skip-pill";
+    const SKIP_PILL_TOOLTIP = "휠 조절, 클릭 초기화";
     const LIVE_FAST_FORWARD_BUTTON_ID = "cheese-spanner-live-fast-forward";
     const SKIP_STYLE_ID = "cheese-spanner-skip-style";
     const VOD_TIME_SELECTOR = "div.pzp-vod-time, div.pzp-pc__vod-time, div.pzp-pc-vod-time";
@@ -117,6 +118,7 @@
         isNativeAdBreakActive,
         isPlaybackRoute,
         isVisible,
+        isVodMultiviewInput,
         mutationMatchesSelector,
         normalizeCompact: compact,
         onReady,
@@ -199,12 +201,6 @@
         if (!(el instanceof Element)) return;
         const next = String(value);
         if (el.getAttribute(name) !== next) el.setAttribute(name, next);
-    }
-
-    function setElementTitleIfChanged(el, value) {
-        if (!(el instanceof HTMLElement)) return;
-        const next = String(value);
-        if (el.title !== next) el.title = next;
     }
 
     function setClassNameIfChanged(el, value) {
@@ -1054,6 +1050,7 @@
 
     function onKeyDownSeek(event) {
         if (!isKeyboardEnabled()) return;
+        if (isVodMultiviewInput(event)) return;
         if (event.ctrlKey || event.altKey || event.metaKey) return;
         if (isEditableTarget(event.target) || isStreamInfoPanelTarget(event)) return;
         // 라이브·VOD 광고 구간에는 화면의 영상이 광고라서 확장 시크·프레임 이동을 하지 않는다. 소비도 하지 않고
@@ -1128,6 +1125,10 @@
   order:9999;
   width:auto;
 }
+/* The native time-machine notice in the same live control row uses z-index:10. */
+#${SKIP_PILL_ID}[data-bc-placement="live-inline"]:is(:hover,:focus-visible){
+  z-index:11;
+}
 #${SKIP_PILL_ID}:hover{
   background-color:rgba(255,255,255,0.14) !important;
   border-color:rgba(255,255,255,0.22);
@@ -1188,18 +1189,22 @@
     }
 
     function findTimeElement() {
-        return pickLargestVisible(document.querySelectorAll(TIME_SELECTOR));
+        return pickLargestVisible(
+            [...document.querySelectorAll(TIME_SELECTOR)].filter((el) => !el.closest("[data-bcvm]"))
+        );
     }
 
     function findVodTimeElement() {
-        return pickLargestVisible(document.querySelectorAll(VOD_TIME_SELECTOR));
+        return pickLargestVisible(
+            [...document.querySelectorAll(VOD_TIME_SELECTOR)].filter((el) => !el.closest("[data-bcvm]"))
+        );
     }
 
     function findLeftButtonsContainer() {
         const video = getMainVideoElement();
         const candidates = [];
         for (const el of document.querySelectorAll(LIVE_LEFT_BUTTONS_SELECTOR)) {
-            if (!(el instanceof HTMLElement) || getVisibleArea(el) <= 0) continue;
+            if (!(el instanceof HTMLElement) || el.closest("[data-bcvm]") || getVisibleArea(el) <= 0) continue;
             if (video instanceof HTMLVideoElement && !isInLikelyVideoControlArea(el, video)) continue;
 
             const rect = el.getBoundingClientRect();
@@ -1499,10 +1504,9 @@
             if (skipValueEl.textContent !== nextText) skipValueEl.textContent = nextText;
         }
 
-        setElementTitleIfChanged(
-            pill,
-            `Wheel: +/- ${featureOptions.skipWheelStep}s (Shift: ${featureOptions.skipWheelShiftStep}s, Alt: ${featureOptions.skipWheelAltStep}s)\nClick: reset to default`
-        );
+        setAttributeIfChanged(pill, "aria-label", `스킵 시간 조절 (${skipSeconds}초)`);
+        setAttributeIfChanged(pill, "aria-description", SKIP_PILL_TOOLTIP);
+        CheeseSpanner.utils.syncPlayerButtonTooltip(pill, SKIP_PILL_TOOLTIP);
     }
 
     function setSkipSeconds(next, { persist = true } = {}) {
@@ -1521,7 +1525,6 @@
         const pill = document.createElement("button");
         pill.id = SKIP_PILL_ID;
         pill.type = "button";
-        pill.setAttribute("aria-label", "Skip seconds control");
 
         pill.innerHTML = `
 <span class="bc-value">${skipSeconds}</span><span class="bc-unit">s</span>

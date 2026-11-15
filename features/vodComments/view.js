@@ -19,6 +19,8 @@
     const COMMENT_TAB_ID = "cheese-spanner-vod-comment-comment-tab";
     const CHAT_PANEL_ID = "cheese-spanner-vod-comment-chat-panel";
     const COMMENT_PANEL_ID = "cheese-spanner-vod-comment-panel";
+    const SPLITTER_ID = "cheese-spanner-vod-comment-splitter";
+    const SPLITTER_HEIGHT = 8;
     const NATIVE_ACTION_HINT_ID = "cheese-spanner-vod-comment-native-action-hint";
     const { MAX_COMMENTS_PER_ORDER, MAX_REPLIES_PER_COMMENT, MAX_REPLIES_PER_ORDER, SORT_OPTIONS, TIMECODE_SCAN_RE } =
         model;
@@ -51,6 +53,14 @@
         let chatTab = null;
         let commentTab = null;
         let commentPanel = null;
+        let splitter = null;
+        let splitTitle = null;
+        let layoutMode = "tabs";
+        let splitTop = "chat";
+        let splitRatio = 50;
+        let splitDrag = null;
+        let splitBounds = null;
+        let splitChatNodes = [];
         let selectedTab = "chat";
         let activeOrder = model.DEFAULT_ORDER;
         let nativeMeasurements = {};
@@ -132,11 +142,11 @@
   --bcvc-hover:var(--bct-hover);
   display:flex;
   flex:1 1 auto;
+  justify-content:flex-start;
+  gap:16px;
   align-self:stretch;
   min-width:0;
   height:var(--bcvc-header-height,44px);
-  container-name:bcvc-tabs;
-  container-type:inline-size;
 }
 #${TABLIST_ID} button{
   position:relative;
@@ -158,17 +168,13 @@
 }
 #${CHAT_TAB_ID},
 #${COMMENT_TAB_ID}{
-  flex:1 1 50%;
+  flex:0 0 auto;
   justify-content:center;
   overflow:hidden;
-  padding:0 10px;
+  padding:0 2px;
   text-align:center;
   text-overflow:ellipsis;
   white-space:nowrap;
-}
-@container bcvc-tabs (max-width:240px){
-  #${CHAT_TAB_ID}{flex:1 1 auto;justify-content:flex-start;padding-right:2px;padding-left:2px;text-align:left}
-  #${COMMENT_TAB_ID}{flex:0 0 52px;padding-right:3px;padding-left:3px}
 }
 #${TABLIST_ID} button:hover{
   background:var(--bcvc-hover);
@@ -180,9 +186,9 @@
 #${TABLIST_ID} button[aria-selected="true"]::after{
   content:"";
   position:absolute;
-  right:12px;
+  right:2px;
   bottom:0;
-  left:12px;
+  left:2px;
   height:2px;
   border-radius:2px 2px 0 0;
   background:var(--bct-brand-text);
@@ -215,6 +221,67 @@
 [data-bcvc-native-log="1"]{
   min-height:0!important;
 }
+[data-bcvc-container="1"][data-bcvc-layout="split"]{
+  position:relative!important;
+  height:100%!important;
+}
+#${TABLIST_ID} [hidden]{display:none!important}
+#${TABLIST_ID} .bcvc-split-title{
+  align-self:center;
+  min-width:0;
+  overflow:hidden;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+  color:var(--bcvc-text);
+  font-family:var(--bcvc-heading-font-family,inherit);
+  font-size:var(--bcvc-heading-font-size,14px);
+  font-weight:var(--bcvc-heading-font-weight,700);
+  line-height:var(--bcvc-heading-line-height,20px);
+  letter-spacing:var(--bcvc-heading-letter-spacing,normal);
+}
+[data-bcvc-split-chat="1"]{
+  position:absolute!important;
+  inset:auto 0!important;
+  top:var(--bcvc-chat-top)!important;
+  width:100%!important;
+  height:var(--bcvc-chat-height)!important;
+  max-height:var(--bcvc-chat-height)!important;
+  min-height:0!important;
+  box-sizing:border-box!important;
+}
+[data-bcvc-split-chat-inner="1"]{
+  min-height:0!important;
+  height:100%!important;
+  max-height:100%!important;
+}
+[data-bcvc-layout="split"] > #${COMMENT_PANEL_ID}{
+  top:var(--bcvc-comment-top);
+  height:var(--bcvc-comment-height);
+}
+#${SPLITTER_ID}{
+  position:absolute;
+  z-index:2;
+  top:var(--bcvc-divider-top);
+  left:0;
+  right:0;
+  height:${SPLITTER_HEIGHT}px;
+  cursor:row-resize;
+  touch-action:none;
+  user-select:none;
+  background:var(--bct-bg);
+}
+#${SPLITTER_ID}[hidden]{display:none!important}
+#${SPLITTER_ID}::after{
+  content:"";
+  position:absolute;
+  top:3px;
+  left:0;
+  right:0;
+  height:2px;
+  background:var(--bct-border-strong);
+}
+#${SPLITTER_ID}:is(:hover, :focus-visible, [data-dragging])::after{background:var(--bct-brand)}
+#${SPLITTER_ID}:focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:-2px}
 #${COMMENT_PANEL_ID}{
   --bcvc-font-family:inherit;
   --bcvc-toolbar-font-family:var(--bcvc-font-family,inherit);
@@ -490,6 +557,160 @@ body[theme="dark"] .bcvc-avatar-fallback,
             const panelHeight = Math.max(0, Math.round(visibleBottom - (containerRect.top + panelTop)));
             mountedContainer.style.setProperty("--bcvc-panel-top", `${panelTop}px`);
             mountedContainer.style.setProperty("--bcvc-panel-height", `${panelHeight}px`);
+            syncSplitLayout(panelTop, panelHeight);
+        }
+
+        function isSplit() {
+            return layoutMode === "split" && Boolean(mountedChatLog && !mountedHeader?.contains(mountedChatLog));
+        }
+
+        function isCommentsVisible() {
+            return Boolean(commentPanel && (isSplit() || !mountedChatLog || selectedTab === "comments"));
+        }
+
+        function clearSplitChatMarkers() {
+            for (const node of splitChatNodes) {
+                node.removeAttribute("data-bcvc-split-chat");
+                node.removeAttribute("data-bcvc-split-chat-inner");
+            }
+            splitChatNodes = [];
+        }
+
+        function applySplitSizes() {
+            if (!splitBounds || !isSplit()) return;
+            const { top, height } = splitBounds;
+            const upper = Math.round((height * splitRatio) / 100);
+            const lower = height - upper;
+            const lowerTop = top + upper + SPLITTER_HEIGHT;
+            const chatFirst = splitTop === "chat";
+            for (const [name, value] of Object.entries({
+                "chat-top": chatFirst ? top : lowerTop,
+                "chat-height": chatFirst ? upper : lower,
+                "comment-top": chatFirst ? lowerTop : top,
+                "comment-height": chatFirst ? lower : upper,
+                "divider-top": top + upper,
+            }))
+                mountedContainer.style.setProperty(`--bcvc-${name}`, `${value}px`);
+            splitter?.setAttribute("aria-valuenow", String(splitRatio));
+            splitter?.setAttribute("aria-valuetext", `상단 ${splitRatio}%, 하단 ${100 - splitRatio}%`);
+        }
+
+        function syncSplitLayout(top, height) {
+            if (!splitter || !mountedContainer) return;
+            const active = isSplit();
+            splitter.hidden = !active;
+            if (!active) {
+                mountedContainer.removeAttribute("data-bcvc-layout");
+                clearSplitChatMarkers();
+                splitBounds = null;
+                return;
+            }
+            mountedContainer.setAttribute("data-bcvc-layout", "split");
+            const nodes = [];
+            for (let node = mountedChatLog; node && node !== mountedContainer; node = node.parentElement)
+                nodes.push(node);
+            if (nodes.some((node, i) => splitChatNodes[i] !== node) || nodes.length !== splitChatNodes.length) {
+                clearSplitChatMarkers();
+                splitChatNodes = nodes;
+                nodes.forEach((node, i) =>
+                    node.setAttribute(
+                        i === nodes.length - 1 ? "data-bcvc-split-chat" : "data-bcvc-split-chat-inner",
+                        "1"
+                    )
+                );
+            }
+            splitBounds = { top, height: Math.max(0, height - SPLITTER_HEIGHT) };
+            splitter.setAttribute("aria-controls", `${mountedChatLog.id} ${COMMENT_PANEL_ID}`);
+            applySplitSizes();
+        }
+
+        function setSplitRatio(value) {
+            splitRatio = Math.round(Math.max(20, Math.min(80, value)));
+            applySplitSizes();
+        }
+
+        function stopSplitDrag(commit = false) {
+            const drag = splitDrag;
+            if (!drag) return;
+            splitDrag = null;
+            drag.listeners.abort();
+            splitter?.removeAttribute("data-dragging");
+            if (!commit) setSplitRatio(drag.ratio);
+        }
+
+        function onSplitterPointerDown(event) {
+            if (event.button !== 0 || event.isPrimary === false || !isSplit() || !splitBounds?.height) return;
+            stopSplitDrag();
+            event.preventDefault();
+            event.stopPropagation();
+            splitter.focus({ preventScroll: true });
+            splitter.setAttribute("data-dragging", "");
+            const drag = (splitDrag = {
+                pointer: event.pointerId,
+                y: event.clientY,
+                ratio: splitRatio,
+                height: splitBounds.height,
+                listeners: new AbortController(),
+            });
+            const options = { signal: drag.listeners.signal, capture: true };
+            const move = (next) => {
+                if (next.pointerId !== drag.pointer) return;
+                if (next.type === "pointermove" && next.pointerType === "mouse" && next.buttons === 0) {
+                    stopSplitDrag();
+                    return;
+                }
+                next.preventDefault();
+                next.stopPropagation();
+                setSplitRatio(drag.ratio + ((next.clientY - drag.y) / drag.height) * 100);
+            };
+            window.addEventListener("pointermove", move, options);
+            window.addEventListener(
+                "pointerup",
+                (next) => {
+                    if (next.pointerId !== drag.pointer) return;
+                    move(next);
+                    stopSplitDrag(true);
+                },
+                options
+            );
+            window.addEventListener(
+                "pointercancel",
+                (next) => {
+                    if (next.pointerId === drag.pointer) stopSplitDrag();
+                },
+                options
+            );
+            window.addEventListener(
+                "keydown",
+                (next) => {
+                    if (next.key !== "Escape") return;
+                    next.preventDefault();
+                    next.stopPropagation();
+                    stopSplitDrag();
+                },
+                options
+            );
+            window.addEventListener("blur", () => stopSplitDrag(), options);
+            window.addEventListener("pagehide", () => stopSplitDrag(), options);
+        }
+
+        function onSplitterKeyDown(event) {
+            if (!isSplit() || splitDrag || event.ctrlKey || event.metaKey || event.altKey) return;
+            const ratio = { ArrowUp: splitRatio - 5, ArrowDown: splitRatio + 5, Home: 20, End: 80 }[event.key];
+            if (ratio === undefined) return;
+            event.preventDefault();
+            event.stopPropagation();
+            setSplitRatio(ratio);
+        }
+
+        function setLayout({ mode = "tabs", top = "chat" } = {}) {
+            const nextMode = mode === "split" ? "split" : "tabs";
+            const nextTop = top === "comments" ? "comments" : "chat";
+            if (layoutMode === nextMode && splitTop === nextTop) return;
+            stopSplitDrag();
+            layoutMode = nextMode;
+            splitTop = nextTop;
+            updateTabState();
         }
 
         function scheduleNativeHeaderSync() {
@@ -744,11 +965,11 @@ body[theme="dark"] .bcvc-avatar-fallback,
                 message.appendChild(best);
             }
             let messageText = deleted
-                ? "삭제된 댓글입니다."
+                ? "삭제된 댓글"
                 : !hasComment
-                  ? "내용을 표시할 수 없는 댓글입니다."
+                  ? "표시할 수 없는 댓글"
                   : cleanBotHidden
-                    ? "클린봇이 부적절한 표현을 감지한 댓글입니다."
+                    ? "클린봇 감지: 부적절한 표현"
                     : String(comment.content || "");
             if (reply && !deleted && !cleanBotHidden) {
                 const replyToName = model.compactText(item.replyToName);
@@ -1022,7 +1243,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
 
         function connectLoadMoreObserver() {
             disconnectLoadMoreObserver();
-            if (selectedTab !== "comments" || typeof IntersectionObserver !== "function" || !commentPanel) return;
+            if (!isCommentsVisible() || typeof IntersectionObserver !== "function" || !commentPanel) return;
             const sentinel = commentPanel.querySelector("[data-bcvc-sentinel='1']");
             if (!(sentinel instanceof HTMLElement)) return;
             loadMoreObserver = new IntersectionObserver(
@@ -1035,7 +1256,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
         }
 
         function renderState(state, { restoreScroll = true } = {}) {
-            if (!commentPanel || selectedTab !== "comments") return;
+            if (!isCommentsVisible()) return;
             disconnectLoadMoreObserver();
             commentPanel.setAttribute("aria-busy", String(state.loading));
             commentPanel.replaceChildren(createCommentStateView(state));
@@ -1045,7 +1266,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
         }
 
         function updateState(state) {
-            if (!commentPanel || selectedTab !== "comments") return;
+            if (!isCommentsVisible()) return;
             disconnectLoadMoreObserver();
             const footer = commentPanel.querySelector("[data-bcvc-footer='1']");
             if (footer) footer.replaceWith(createFooter(state));
@@ -1057,7 +1278,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
         }
 
         function appendRows(state, added) {
-            if (!commentPanel || selectedTab !== "comments") return;
+            if (!isCommentsVisible()) return;
             const list = commentPanel.querySelector("[data-bcvc-list='1']");
             if (!(list instanceof HTMLElement) || !state.commentActive) {
                 renderState(state);
@@ -1103,7 +1324,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
         }
 
         function restoreCommentControlFocus(request) {
-            if (!request || selectedTab !== "comments" || !commentPanel?.isConnected) return;
+            if (!request || !isCommentsVisible() || !commentPanel?.isConnected) return;
             const active = document.activeElement;
             if (
                 active instanceof Element &&
@@ -1173,20 +1394,29 @@ body[theme="dark"] .bcvc-avatar-fallback,
         function onCommentPanelScroll(event) {
             // Chrome은 문서에서 빠지거나 숨겨진 패널에도 지연된 scroll을 보내고 그때 scrollTop은 0이에요. 저장된 위치를 덮어쓰지 않아요.
             if (!(commentPanel instanceof HTMLElement) || event?.currentTarget !== commentPanel) return;
-            if (!commentPanel.isConnected || commentPanel.hidden || selectedTab !== "comments") return;
+            if (!commentPanel.isConnected || commentPanel.hidden || !isCommentsVisible()) return;
             onScroll(commentPanel.scrollTop || 0);
         }
 
         function updateTabState({ focus = false } = {}) {
             const commentOnly = Boolean(commentTab) && !chatTab;
             const commentsSelected = commentOnly || selectedTab === "comments";
+            const split = isSplit();
+            const commentsVisible = split || commentsSelected;
             if (commentOnly) selectedTab = "comments";
+            tablist?.setAttribute("role", split ? "group" : "tablist");
+            if (chatTab) chatTab.hidden = split;
+            if (commentTab) commentTab.hidden = split;
+            if (splitTitle) {
+                splitTitle.hidden = !split;
+                splitTitle.textContent = split ? (splitTop === "chat" ? "채팅 · 댓글" : "댓글 · 채팅") : "";
+            }
             chatTab?.setAttribute("aria-selected", String(!commentsSelected));
             commentTab?.setAttribute("aria-selected", String(commentsSelected));
             if (chatTab) chatTab.tabIndex = commentsSelected ? -1 : 0;
             if (commentTab) commentTab.tabIndex = commentsSelected ? 0 : -1;
             if (mountedChatLog) {
-                if (commentsSelected) {
+                if (commentsSelected && !split) {
                     mountedChatLog.setAttribute("data-bcvc-tab-hidden", "1");
                     mountedChatLog.setAttribute("aria-hidden", "true");
                 } else {
@@ -1195,8 +1425,19 @@ body[theme="dark"] .bcvc-avatar-fallback,
                     else mountedChatLog.setAttribute("aria-hidden", originalChatAriaHidden);
                 }
             }
-            if (commentPanel) commentPanel.hidden = !commentsSelected;
-            if (!commentsSelected) disconnectLoadMoreObserver();
+            if (commentPanel) {
+                commentPanel.hidden = !commentsVisible;
+                commentPanel.setAttribute("role", split ? "region" : "tabpanel");
+                if (split) {
+                    commentPanel.removeAttribute("aria-labelledby");
+                    commentPanel.setAttribute("aria-label", "댓글");
+                } else {
+                    commentPanel.setAttribute("aria-labelledby", COMMENT_TAB_ID);
+                    commentPanel.removeAttribute("aria-label");
+                }
+            }
+            if (!commentsVisible) disconnectLoadMoreObserver();
+            syncNativeHeaderAppearance();
             if (focus) (commentsSelected ? commentTab : chatTab)?.focus();
         }
 
@@ -1212,6 +1453,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
         }
 
         function onTabKeyDown(event) {
+            if (isSplit()) return;
             if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
             event.preventDefault();
             if (!chatTab) {
@@ -1233,6 +1475,8 @@ body[theme="dark"] .bcvc-avatar-fallback,
         }
 
         function detachMountedChatLog() {
+            stopSplitDrag();
+            clearSplitChatMarkers();
             const chatLog = mountedChatLog;
             chatLog?.removeAttribute("data-bcvc-tab-hidden");
             chatLog?.removeAttribute("data-bcvc-native-log");
@@ -1263,6 +1507,10 @@ body[theme="dark"] .bcvc-avatar-fallback,
             mountedHeading?.removeAttribute("data-bcvc-heading");
             mountedHeader?.removeAttribute("data-bcvc-header");
             mountedContainer?.removeAttribute("data-bcvc-container");
+            mountedContainer?.removeAttribute("data-bcvc-layout");
+            for (const name of ["chat-top", "chat-height", "comment-top", "comment-height", "divider-top"])
+                mountedContainer?.style.removeProperty(`--bcvc-${name}`);
+            splitBounds = null;
             mountedContainer?.style.removeProperty("--bcvc-panel-top");
             mountedContainer?.style.removeProperty("--bcvc-panel-height");
             mountedAside?.removeAttribute("data-bcvc-mounted");
@@ -1312,16 +1560,14 @@ body[theme="dark"] .bcvc-avatar-fallback,
             tablist.id = TABLIST_ID;
             tablist.setAttribute("role", "tablist");
             tablist.setAttribute("aria-label", "다시보기 보조 패널");
-            chatTab = hasChat
-                ? createTabButton(
-                      CHAT_TAB_ID,
-                      model.compactText(mountedHeading.textContent) || "라이브 채팅 다시보기",
-                      mountedChatLog.id
-                  )
-                : null;
+            chatTab = hasChat ? createTabButton(CHAT_TAB_ID, "채팅", mountedChatLog.id) : null;
             commentTab = createTabButton(COMMENT_TAB_ID, "댓글", COMMENT_PANEL_ID);
             if (chatTab) tablist.appendChild(chatTab);
             tablist.appendChild(commentTab);
+            splitTitle = document.createElement("span");
+            splitTitle.className = "bcvc-split-title";
+            splitTitle.hidden = true;
+            tablist.appendChild(splitTitle);
             tablist.addEventListener("click", onTabClick);
             tablist.addEventListener("keydown", onTabKeyDown);
             mountedHeader.insertBefore(tablist, mountedHeading);
@@ -1334,6 +1580,22 @@ body[theme="dark"] .bcvc-avatar-fallback,
             commentPanel.addEventListener("click", onCommentPanelClick);
             commentPanel.addEventListener("scroll", onCommentPanelScroll, { passive: true });
             mountedContainer.appendChild(commentPanel);
+            splitter = document.createElement("div");
+            splitter.id = SPLITTER_ID;
+            splitter.hidden = true;
+            splitter.tabIndex = 0;
+            splitter.setAttribute("role", "separator");
+            splitter.setAttribute("aria-orientation", "horizontal");
+            splitter.setAttribute("aria-label", "채팅과 댓글 크기 조절");
+            splitter.setAttribute("aria-valuemin", "20");
+            splitter.setAttribute("aria-valuemax", "80");
+            splitter.addEventListener("pointerdown", onSplitterPointerDown);
+            splitter.addEventListener("keydown", onSplitterKeyDown);
+            splitter.addEventListener("dblclick", () => {
+                stopSplitDrag();
+                setSplitRatio(50);
+            });
+            mountedContainer.appendChild(splitter);
 
             observeMountedLayout();
             syncNativeHeaderAppearance();
@@ -1363,9 +1625,10 @@ body[theme="dark"] .bcvc-avatar-fallback,
             mountedContainer.setAttribute("data-bcvc-container", "1");
             mountedHeader.setAttribute("data-bcvc-header", "1");
             mountedHeading.setAttribute("data-bcvc-heading", "1");
-            chatTab.textContent = model.compactText(mountedHeading.textContent) || "라이브 채팅 다시보기";
+            chatTab.textContent = "채팅";
             mountedHeader.insertBefore(tablist, mountedHeading);
             mountedContainer.appendChild(commentPanel);
+            mountedContainer.appendChild(splitter);
 
             observeMountedLayout();
             syncNativeHeaderAppearance();
@@ -1384,6 +1647,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
         }
 
         function destroy() {
+            stopSplitDrag();
             disconnectLoadMoreObserver();
             resizeObserver?.disconnect();
             resizeObserver = null;
@@ -1396,6 +1660,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
             commentPanel?.removeEventListener("scroll", onCommentPanelScroll);
             tablist?.remove();
             commentPanel?.remove();
+            splitter?.remove();
 
             detachMountedChatLog();
             clearMountedNativeMarkers();
@@ -1409,6 +1674,8 @@ body[theme="dark"] .bcvc-avatar-fallback,
             chatTab = null;
             commentTab = null;
             commentPanel = null;
+            splitter = null;
+            splitTitle = null;
         }
 
         function canReattach() {
@@ -1434,7 +1701,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
         }
 
         function ownedNodesConnected() {
-            return Boolean(tablist?.isConnected && commentPanel?.isConnected);
+            return Boolean(tablist?.isConnected && commentPanel?.isConnected && splitter?.isConnected);
         }
 
         function isDisconnected() {
@@ -1443,7 +1710,8 @@ body[theme="dark"] .bcvc-avatar-fallback,
                 (!mountedAside?.isConnected ||
                     (Boolean(chatTab) && !mountedChatLog?.isConnected) ||
                     !tablist?.isConnected ||
-                    !commentPanel?.isConnected)
+                    !commentPanel?.isConnected ||
+                    !splitter?.isConnected)
             );
         }
 
@@ -1487,6 +1755,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
             getScrollTop,
             hasMount,
             isDisconnected,
+            isCommentsVisible,
             matchesShell,
             mount: mountTabs,
             ownedNodesConnected,
@@ -1497,6 +1766,7 @@ body[theme="dark"] .bcvc-avatar-fallback,
             scheduleLayoutSync: scheduleNativeHeaderSync,
             setActiveOrder,
             setHeaderAppearanceSource,
+            setLayout,
             setSelectedTab,
             showState,
             updateState,

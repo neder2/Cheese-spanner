@@ -6,8 +6,29 @@ const { JSDOM } = require("jsdom");
 
 const source = fs.readFileSync(path.join(__dirname, "../features/chatDonationMessages.js"), "utf8");
 const STYLE = "cheese-spanner-chat-donation-messages-style";
-// Component families emitted by CHZZK's 2026-11-08 public live and replay renderers.
 const donation = (id, classes) => `<div class="_item_native_7" id="${id}"><div class="${classes}">후원</div></div>`;
+const renderers = [
+    {
+        date: "2026-11-08",
+        liveList: "_wrapper_8lqsk_25",
+        replayList: "_list_61avy_67",
+        chat: "_container_17em1_1",
+        anonymousLevel: "_level4_17em1_23",
+        mission: "_container_2dqjk_2 _is_message_2dqjk_9",
+        fixedMission: "_container_2dqjk_2 _is_fixed_2dqjk_141",
+        party: "_container_18byk_2",
+    },
+    {
+        date: "2026-11-15",
+        liveList: "_wrapper_1li40_25",
+        replayList: "_list_tdctj_127",
+        chat: "_container_120bf_1",
+        anonymousLevel: "_level4_120bf_24",
+        mission: "_container_1oei1_2 _is_message_1oei1_10",
+        fixedMission: "_container_1oei1_2 _is_fixed_1oei1_150",
+        party: "_container_baf00_2",
+    },
+];
 
 test("donation hiding is packaged in the isolated world before its chat multiview consumer", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../manifest.json"), "utf8"));
@@ -19,27 +40,28 @@ test("donation hiding is packaged in the isolated world before its chat multivie
     assert.equal(main.js.includes(file), false);
 });
 
-for (const [route, aside, list] of [
-    ["/live/channel", "aside-chatting", "_wrapper_8lqsk_25"],
-    ["/live/channel/chat", "aside-chatting", "_wrapper_8lqsk_25"],
-    ["/video/123", "vod-aside", "_list_61avy_67"],
-]) {
-    test(`donation rows hide and restore without deleting chat or changing other messages on ${route}`, (t) => {
+const cases = renderers.flatMap((renderer) => [
+    ["/live/channel", "aside-chatting", renderer.liveList, renderer],
+    ["/live/channel/chat", "aside-chatting", renderer.liveList, renderer],
+    ["/video/123", "vod-aside", renderer.replayList, renderer],
+]);
+for (const [route, aside, list, renderer] of cases) {
+    test(`donation rows hide and restore on ${route} (${renderer.date})`, (t) => {
         const rows = [
-            donation("chat-donation", "_container_17em1_1 _level0_17em1_11"),
-            donation("anonymous", "_container_17em1_1 _level4_17em1_23"),
-            donation("mission", "_container_2dqjk_2 _is_message_2dqjk_9"),
-            donation("participation", "_container_18byk_2"),
-            donation("party", "_container_18byk_2"),
+            donation("chat-donation", renderer.chat),
+            donation("anonymous", `${renderer.chat} ${renderer.anonymousLevel}`),
+            donation("mission", renderer.mission),
+            donation("participation", renderer.party),
+            donation("party", renderer.party),
             '<div id="chat" class="_item_native_7"><div class="chatting_message">후원 감사합니다, 1,000치즈</div></div>',
             donation("subscription", "_container_18rj8_7"),
             donation("purchase", "_container_other_1"),
             donation("system", "_container_1sdv7_2"),
-            donation("fixed-mission", "_container_2dqjk_2 _is_fixed_2dqjk_141"),
-            '<div id="nested" class="_item_native_7"><div class="chatting_message"><div class="_container_17em1_1">본문 안 요소</div></div></div>',
+            donation("fixed-mission", renderer.fixedMission),
+            `<div id="nested" class="_item_native_7"><div class="chatting_message"><div class="${renderer.chat}">본문 안 요소</div></div></div>`,
         ].join("");
         const dom = new JSDOM(
-            `<body><aside id="${aside}"><h2>채팅</h2><div id="board" class="_container_2dqjk_2 _is_message_2dqjk_9">고정 미션</div><div role="log"><div class="${list}">${rows}</div></div></aside><div id="outside" class="_container_17em1_1">외부</div></body>`,
+            `<body><aside id="${aside}"><h2>채팅</h2><div id="board" class="${renderer.mission}">고정 미션</div><div role="log"><div class="${list}">${rows}</div></div></aside><div role="log"><div class="${list}">${donation("outside", renderer.chat)}</div></div></body>`,
             { url: "https://chzzk.naver.com" + route, runScripts: "outside-only" }
         );
         t.after(() => dom.window.close());
@@ -77,11 +99,11 @@ for (const [route, aside, list] of [
         assert.equal(document.getElementById("chat-donation"), first);
 
         const listNode = log.firstElementChild;
-        listNode.insertAdjacentHTML("beforeend", donation("late", "_container_17em1_999 _level1_17em1_14"));
+        listNode.insertAdjacentHTML("beforeend", donation("late", renderer.chat.replace(/_\d+$/, "_999")));
         assert.equal(hidden("late"), true, "new donations need no rescan or extra observer");
         first.innerHTML = '<div class="chatting_message">일반 채팅으로 재사용</div>';
         assert.equal(hidden("chat-donation"), false, "a reused ordinary row is immediately visible");
-        first.innerHTML = '<div class="_container_18byk_2">새 파티 후원</div>';
+        first.innerHTML = `<div class="${renderer.party}">새 파티 후원</div>`;
         assert.equal(hidden("chat-donation"), true);
         apply({ chatDonationMessagesHidden: false });
         assert.equal(document.getElementById(STYLE), null);

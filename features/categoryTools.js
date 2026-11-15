@@ -83,10 +83,11 @@
         "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2080%2080'%3E%3Crect%20width='80'%20height='80'%20rx='40'%20fill='%23E7EAEE'/%3E%3Ccircle%20cx='40'%20cy='31'%20r='14'%20fill='%239DA5B6'/%3E%3Cpath%20d='M18%2068c3-15%2015-24%2022-24s19%209%2022%2024'%20fill='%239DA5B6'/%3E%3C/svg%3E";
     const APPLIED_CONDITIONS_ID = "cheese-spanner-category-filter-chips";
     const SEARCH_HINT_ID = "cheese-spanner-category-search-hint";
-    // 검색어·숫자 조건은 이 탭의 사이트 sessionStorage에 목록 주소별로 둔다(탭을 닫으면 사라진다).
+    // 검색어·숫자·등급 조건은 이 탭의 사이트 sessionStorage에 목록 주소별로 둔다(탭을 닫으면 사라진다).
     const LIST_FILTER_SESSION_KEY = "betterChzzkListFilterSession";
     let currentQuery = "";
     let filterStates = null;
+    let streamerGrades = [];
     // 방송을 보고 돌아와 이전 조건을 되살린 뒤 사용자가 아직 조건을 바꾸지 않은 상태.
     let restoredConditionsPending = false;
     // 도구를 떼거나 목록 주소가 바뀌어 메모리 조건을 비운 뒤, 다음 장착에서 탭 기록을 다시 읽어야 하는 상태.
@@ -196,6 +197,9 @@
     } = CheeseSpanner.utils;
     const {
         FILTER_KINDS,
+        STREAMER_GRADES,
+        STREAMER_GRADE_LABELS,
+        normalizeStreamerGrades,
         passesCountRange,
         parseFilterInputForKind,
         formatFilterInputForKind,
@@ -839,7 +843,7 @@
             idle: "",
             typing: "검색어 입력 중…",
             loading: "카테고리 검색 중…",
-            empty: "검색 결과 없음. Enter로 입력 단어를 태그 제외.",
+            empty: "검색 결과 없음. Enter를 누르면 입력한 단어를 태그로 제외.",
             error: "카테고리 검색 실패. 다시 시도 필요.",
             long: "검색어는 100자 이하로 입력 필요.",
             success: view.results.length >= 50 ? "검색 결과 최대 50개 표시. 검색어 구체화 필요." : "",
@@ -2535,6 +2539,7 @@
         applyGeneration++;
         metadataSearchController.reset();
         dataRepository.cancelMetadataSearch();
+        dataRepository.cancelStreamerGrades();
     }
 
     function resetMetadata(key = "", options) {
@@ -2781,7 +2786,48 @@
     }
 
     function hasActiveFilters() {
-        return hasNumericFilters() || hasCategoryExclusions();
+        return hasMenuFilters() || hasCategoryExclusions();
+    }
+
+    function hasMenuFilters() {
+        return hasNumericFilters() || streamerGrades.length > 0;
+    }
+
+    function metaStreamerGrade(meta) {
+        if (meta?.verifiedMarkType === "PARTNER" || meta?.verifiedMarkType === "CHALLENGER")
+            return meta.verifiedMarkType;
+        if (meta?.verifiedMarkType != null) return "";
+        return dataRepository.readStreamerGrade(meta?.channelId).grade;
+    }
+
+    function rowStreamerGrade(row) {
+        const id = row.meta?.channelId;
+        if (/^[a-f0-9]{32}$/i.test(id) && row.entry?.card?.getAttribute(INJECTED_ATTR) !== "1") {
+            // 인증 마크는 현재 채널 링크 안에서만 읽는다. 썸네일·방제·다른 채널의 마크는 제외한다.
+            const marks =
+                row.entry?.card?.querySelectorAll(
+                    `a[href="/${id}"] :is(${CheeseSpanner.utils.verifiedMarks.selector})`
+                ) || [];
+            for (const mark of marks) {
+                const grade = CheeseSpanner.utils.verifiedMarks.read(mark.className)?.grade;
+                if (grade === "PARTNER" || grade === "CHALLENGER") return grade;
+            }
+            if (marks.length) return "";
+        }
+        return metaStreamerGrade(row.meta);
+    }
+
+    function passesStreamerGrade(meta, row = null) {
+        return !streamerGrades.length || streamerGrades.includes(row ? rowStreamerGrade(row) : metaStreamerGrade(meta));
+    }
+
+    function needsStreamerGradeLookup(meta) {
+        if (!streamerGrades.length || metaStreamerGrade(meta) || dataRepository.readStreamerGrade(meta?.channelId).hit)
+            return false;
+        if (typeof meta?.verifiedMarkType === "string") return false;
+        return (
+            meta?.verifiedMarkType === undefined || streamerGrades.includes("PRO") || streamerGrades.includes("GENERAL")
+        );
     }
 
     function hasNumericFilters() {
@@ -2789,7 +2835,7 @@
     }
 
     function activeFilterCount() {
-        return FILTER_KINDS.filter((kind) => isActiveRange(filterRange(kind))).length;
+        return FILTER_KINDS.filter((kind) => isActiveRange(filterRange(kind))).length + (streamerGrades.length ? 1 : 0);
     }
 
     function passesViewFilter(meta) {
@@ -2852,10 +2898,12 @@
     }
 
     function filterRangesKey() {
-        return FILTER_KINDS.map((kind) => {
-            const { min, max } = filterRange(kind);
-            return `${min}-${max}`;
-        }).join("|");
+        return (
+            FILTER_KINDS.map((kind) => {
+                const { min, max } = filterRange(kind);
+                return `${min}-${max}`;
+            }).join("|") + `|${streamerGrades.join(",")}`
+        );
     }
 
     function getViewFilterSnapshotKey(route, searchKey = currentSearchTerms().key) {
@@ -2896,6 +2944,7 @@
 
     function passesStickyFilters(row) {
         if (!passesRowCategoryExclusions(row)) return false;
+        if (!passesStreamerGrade(row.meta, row)) return false;
         if (!passesStickyViewFilter(row)) return false;
         if (!passesDurationFilter(row.meta)) return false;
         return passesFollowerFilter(row.meta);
@@ -2931,6 +2980,7 @@
 
     function passesMetaFilters(meta, terms = currentSearchTerms()) {
         if (!passesMetaCategoryExclusions(meta)) return false;
+        if (!passesStreamerGrade(meta)) return false;
         if (!matchesSearchTerms(buildMetaSearchFields(meta), terms)) return false;
         if (!passesViewFilter(meta) && !isViewFilterSnapshotId(meta?.id)) return false;
         if (!passesDurationFilter(meta)) return false;
@@ -2949,6 +2999,7 @@
 
     function resetFilterState() {
         filterStates = createFilterStates();
+        streamerGrades = [];
         clearDurationFilterRefreshTimer();
         resetViewFilterSnapshot();
     }
@@ -3526,6 +3577,22 @@
         );
     }
 
+    function syncInjectedVerifiedMark(card, meta) {
+        for (const mark of card.querySelectorAll(CheeseSpanner.utils.verifiedMarks.selector)) {
+            const grade = meta?.verifiedMarkType;
+            const family = CheeseSpanner.utils.verifiedMarks.read(mark.className)?.family;
+            if (!family || !["PARTNER", "CHALLENGER", "OFFICIAL"].includes(grade)) {
+                mark.remove();
+                continue;
+            }
+            for (const name of Array.from(mark.classList)) {
+                if (/^_is_(?:partner|challenger|official)_(?:8bw0p|1pcsq)_/.test(name)) mark.classList.remove(name);
+            }
+            // 현재 공통 렌더러에서 관측한 등급별 클래스. 원본 템플릿의 등급을 이어받지 않는다.
+            mark.classList.add(family[grade]);
+        }
+    }
+
     function syncInjectedChannelIdentity(card, channelAnchors, meta) {
         const channelName = normSpace(meta?.channelName);
         if (!channelName) return;
@@ -3627,6 +3694,7 @@
 
     function buildInjectedLiveCard(route, template, meta) {
         const card = template instanceof HTMLElement ? template.cloneNode(true) : document.createElement("article");
+        syncInjectedVerifiedMark(card, meta);
         replaceTemplateIdentity(card, readTemplateIdentity(card, "a[class*='title'], [class*='title']"), meta);
         removeFollowerBadge(card);
         removeLiveElapsedBadge(card);
@@ -3742,6 +3810,7 @@
         if (route.tab === "lives") return buildInjectedLiveCard(route, template, meta);
 
         const card = template.cloneNode(true);
+        syncInjectedVerifiedMark(card, meta);
         replaceTemplateIdentity(card, readTemplateIdentity(card, "a[class*='title']"), meta);
         applyCardAttrs(card, meta);
 
@@ -4012,6 +4081,14 @@
         menu.setAttribute("data-open", "0");
         menu.innerHTML = `
 <div class="bcgt-filter-groups">${FILTER_KINDS.map(filterGroupHtml).join("")}
+  <section class="bcgt-filter-group" aria-labelledby="bcgt-streamer-grade-title">
+    <div class="bcgt-filter-title" id="bcgt-streamer-grade-title">스트리머 등급</div>
+    <div class="bcgt-quick-list" role="group" aria-labelledby="bcgt-streamer-grade-title">
+      <button type="button" class="bcgt-quick" data-streamer-grade="" aria-pressed="true">전체</button>
+      ${STREAMER_GRADES.map((grade) => `<button type="button" class="bcgt-quick" data-streamer-grade="${grade}" aria-pressed="false">${STREAMER_GRADE_LABELS[grade]}</button>`).join("")}
+    </div>
+    <p class="bcgt-filter-note">여러 등급 선택 가능 · 프로/일반은 공개 구독 지원 여부 기준</p>
+  </section>
 </div>
 <div class="bcgt-reset-row">
   <span class="bcgt-filter-note">방송 시청 후 복귀해도 현재 탭에서 유지</span>
@@ -4023,6 +4100,18 @@
             if (!target || !menu.contains(target)) return;
             event.stopPropagation();
             if (!(target instanceof HTMLButtonElement)) return;
+            if (target.hasAttribute("data-streamer-grade")) {
+                const grade = target.getAttribute("data-streamer-grade");
+                streamerGrades = normalizeStreamerGrades(
+                    !grade
+                        ? []
+                        : streamerGrades.includes(grade)
+                          ? streamerGrades.filter((item) => item !== grade)
+                          : [...streamerGrades, grade]
+                );
+                commitFilterChange();
+                return;
+            }
             const kind = target.getAttribute("data-filter-kind");
             if (target.classList.contains("bcgt-mode")) {
                 setFilterState(kind, setFilterMode(filterStates[kind], target.getAttribute("data-filter-mode")));
@@ -4270,7 +4359,15 @@
             }
         }
         const resetButton = menu.querySelector("[data-filter-reset]");
-        if (resetButton) resetButton.disabled = !hasNumericFilters();
+        if (resetButton) resetButton.disabled = !hasMenuFilters();
+        for (const button of menu.querySelectorAll("[data-streamer-grade]")) {
+            const grade = button.getAttribute("data-streamer-grade");
+            setAttributeIfChanged(
+                button,
+                "aria-pressed",
+                String(grade ? streamerGrades.includes(grade) : !streamerGrades.length)
+            );
+        }
     }
 
     function updateUiState() {
@@ -4280,7 +4377,7 @@
         const draft = input?.value || "";
         bar.setAttribute("data-has-query", draft || currentQuery ? "1" : "0");
         bar.setAttribute("data-search-draft", draft !== currentQuery ? "1" : "0");
-        bar.setAttribute("data-has-filter", hasNumericFilters() ? "1" : "0");
+        bar.setAttribute("data-has-filter", hasMenuFilters() ? "1" : "0");
         const label = bar.querySelector(".bcgt-filter-label");
         if (label) {
             const count = activeFilterCount();
@@ -4303,6 +4400,8 @@
     }
 
     function commitFilterChange() {
+        dataRepository.cancelStreamerGrades();
+        setLoading(false, "grades");
         restoredConditionsPending = false;
         updateUiState();
         scheduleApply();
@@ -4571,7 +4670,7 @@
     let appliedStatusText = "";
 
     function hasAppliedConditions() {
-        return hasSearchTerms(currentSearchTerms()) || hasNumericFilters();
+        return hasSearchTerms(currentSearchTerms()) || hasMenuFilters();
     }
 
     function appliedConditionItems() {
@@ -4585,6 +4684,11 @@
             removeTerm: index,
             negative: token.negative,
         }));
+        if (streamerGrades.length)
+            conditions.push({
+                label: `등급 ${streamerGrades.map((grade) => STREAMER_GRADE_LABELS[grade]).join("·")}`,
+                removeKind: "streamerGrades",
+            });
         return [...conditions, ...words];
     }
 
@@ -4700,7 +4804,8 @@
         const removeKind = button.getAttribute("data-remove-kind");
         if (removeKind) {
             clearFilterInputDrafts(removeKind);
-            setFilterState(removeKind, createFilterState());
+            if (removeKind === "streamerGrades") streamerGrades = [];
+            else setFilterState(removeKind, createFilterState());
             commitFilterChange();
             focusAfterAppliedChange();
             return;
@@ -4742,7 +4847,12 @@
         const stored = readStoredListFilters();
         if (!stored) return;
         try {
-            const next = writeListFilterRoute(stored, key, { query: currentQuery, filters: filterStates }, Date.now());
+            const next = writeListFilterRoute(
+                stored,
+                key,
+                { query: currentQuery, filters: filterStates, streamerGrades },
+                Date.now()
+            );
             window.sessionStorage.setItem(LIST_FILTER_SESSION_KEY, JSON.stringify(next));
         } catch (_) {
             // 용량·차단 오류는 화면 조건을 바꾸지 않는다.
@@ -4753,6 +4863,7 @@
         const record = readStoredListFilters()?.routes?.[key];
         if (!record) return false;
         currentQuery = record.query;
+        streamerGrades = normalizeStreamerGrades(record.streamerGrades);
         filterStates = createFilterStates();
         for (const kind of FILTER_KINDS) {
             if (record.filters[kind]) filterStates[kind] = { ...record.filters[kind] };
@@ -4940,6 +5051,37 @@
 
         const metadata = canUseMetadata ? await ensureMetadata(route) : new Map();
         if (!isCurrent()) return;
+        let gradesPending = false;
+        if (streamerGrades.length) {
+            const terms = currentSearchTerms();
+            const candidates = [
+                ...entries.map((entry) => ({
+                    ...metadata.get(entry.id),
+                    channelId: inferChannelIdFromCard(route, entry),
+                })),
+                ...Array.from(metadata.values()).filter(
+                    (meta) =>
+                        passesMetaCategoryExclusions(meta) &&
+                        matchesSearchTerms(buildMetaSearchFields(meta), terms) &&
+                        passesViewFilter(meta) &&
+                        passesDurationFilter(meta)
+                ),
+            ];
+            const bounded = new Map();
+            for (const meta of candidates) {
+                if (bounded.size >= CheeseSpanner.categoryToolsRepository.MAX_STREAMER_GRADE_CHANNELS) break;
+                if (meta.channelId && !bounded.has(meta.channelId)) bounded.set(meta.channelId, meta);
+            }
+            const ids = Array.from(bounded.values())
+                .filter(needsStreamerGradeLookup)
+                .map((meta) => meta.channelId);
+            if (ids.length) {
+                setLoading(true, "grades");
+                gradesPending = await dataRepository.hydrateStreamerGrades(ids);
+                if (!isCurrent()) return;
+            }
+            setLoading(gradesPending, "grades");
+        }
         scheduleDurationFilterRefresh(metadata.values());
         const terms = currentSearchTerms();
         syncViewFilterSnapshot(route, terms.key);
@@ -4958,6 +5100,7 @@
         const metadataCandidates = Array.from(metadata.values()).filter((meta) => {
             if (!meta?.id) return false;
             if (!passesCurrentMetadataCategory(meta)) return false;
+            if (!passesStreamerGrade(meta)) return false;
             if (!matchesSearchTerms(buildMetaSearchFields(meta), terms)) return false;
             if (!passesDurationFilter(meta)) return false;
             return passesViewFilter(meta) || isViewFilterSnapshotId(meta.id);
@@ -4988,8 +5131,10 @@
         for (const row of rows) {
             const matched =
                 passesStickyViewFilter(row) && passesDurationFilter(row.meta)
-                    ? currentCardRows(route, row).filter((cardRow) =>
-                          matchesSearchTerms(rowSearchFields(cardRow), terms)
+                    ? currentCardRows(route, row).filter(
+                          (cardRow) =>
+                              matchesSearchTerms(rowSearchFields(cardRow), terms) &&
+                              passesStreamerGrade(cardRow.meta, cardRow)
                       )
                     : [];
             if (matched.length) {
@@ -5038,7 +5183,10 @@
         rememberFollowerRefreshRows(route, visible);
 
         syncCardBadges(route, rows);
-        const isCardShown = (row, card) => shownCards.has(card) && passesRowCategoryExclusions(cardRowFor(row, card));
+        const isCardShown = (row, card) =>
+            shownCards.has(card) &&
+            passesRowCategoryExclusions(cardRowFor(row, card)) &&
+            passesStreamerGrade(row.meta, cardRowFor(row, card));
         rows.forEach((row, rowIndex) => {
             // 양보 동안 대표 카드가 다른 방송으로 재사용됐으면 옛 방송의 판정을 그 카드에 남기지 않는다.
             // 정체성이 바뀐 카드의 숨김을 푸는 prepareCardIdentity와 같게 두고, 다음 적용이 새 정체성으로 판정한다.
@@ -5069,14 +5217,17 @@
         else
             ensureEmptyMessage(
                 grid,
-                followerHydrationPending || metadataPending
+                followerHydrationPending || metadataPending || gradesPending
                     ? "조건에 맞는 방송 확인 중…"
-                    : followerLookupFailed
-                      ? "팔로워 정보 확인 실패."
-                      : "조건에 맞는 결과 없음."
+                    : streamerGrades.length && rows.some((row) => !rowStreamerGrade(row))
+                      ? "조건에 맞는 결과 없음. 등급을 확인하지 못한 채널은 제외했어요."
+                      : followerLookupFailed
+                        ? "팔로워 정보 확인 실패."
+                        : "조건에 맞는 결과 없음."
             );
         restoreScrollAnchor(scrollAnchor);
         updateStatus(visible.length, Math.max(rows.length, metadata.size));
+        if (gradesPending) scheduleApply();
         if (!hasFollowerFilter()) void refreshFollowerHydrationRows();
         if (pendingInjectedRender && !hasPendingScrollRoom()) {
             injectedRenderLimit += INJECTED_RENDER_BATCH_SIZE;
@@ -5280,6 +5431,20 @@
         return true;
     }
 
+    function isUnrelatedSidebarMutation(mutation, sidebar) {
+        // Keep broad discovery until a separate, connected broadcast grid has been found.
+        if (
+            !cachedGrid?.isConnected ||
+            !sidebar?.isConnected ||
+            sidebar.contains(cachedGrid) ||
+            cachedGrid.contains(sidebar)
+        )
+            return false;
+        if (!sidebar.contains(mutation.target)) return false;
+        // Tool/card removal still needs the existing repair path, even in a mixed mutation batch.
+        return !Array.from(mutation.removedNodes || []).some(isOurNode);
+    }
+
     function startObserver() {
         if (observer) return;
         observer = createMutationObserverSync({
@@ -5319,7 +5484,12 @@
                     else removeToolsIfMounted();
                 }
             },
-            shouldIgnoreMutations: (mutations) => mutations.every(isOurMutation),
+            shouldIgnoreMutations: (mutations) => {
+                const sidebar = document.getElementById("sidebar");
+                return mutations.every(
+                    (mutation) => isOurMutation(mutation) || isUnrelatedSidebarMutation(mutation, sidebar)
+                );
+            },
             shouldSchedule: shouldApplyTools,
             schedule: scheduleApply,
         });

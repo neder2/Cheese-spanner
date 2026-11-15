@@ -1111,7 +1111,7 @@ test("channel editor validates, adds, toggles, deletes and reports failed saves 
     );
     doc.querySelector('[data-action="remove"]').click();
     await waitForCondition(() => !m.local[CHANNELS].length && !input.disabled);
-    assert.match(doc.getElementById("liveStartChannelList").textContent, /등록한 채널이 없어요/);
+    assert.match(doc.getElementById("liveStartChannelList").textContent, /등록한 채널 없음/);
 });
 
 test("channel editor asks for withheld API site access in a click before looking channels up", async (t) => {
@@ -1161,7 +1161,7 @@ test("channel editor asks for withheld API site access in a click before looking
     access.click();
     assert.deepEqual(requested, [{ origins: [API_ORIGIN] }]);
     await waitForCondition(() => access.hidden);
-    assert.match(message.textContent, /허용했어요/);
+    assert.match(message.textContent, /허용 완료/);
     doc.getElementById("liveStartChannelAdd").click();
     await waitForCondition(() => m.local[CHANNELS]?.length === 1 && !input.disabled);
     assert.equal(lookups, 1);

@@ -8,6 +8,7 @@ const { JSDOM } = require("jsdom");
 // 서버 원문 originalContent를 가지며, 사후 블라인드는 {...message, status}로 원문을 유지한다.
 const repoRoot = path.join(__dirname, "..");
 const REACT_PROPS_KEY = "__reactProps$cheeseSpannerTest";
+const REACT_FIBER_KEY = "__reactFiber$cheeseSpannerTest";
 const BLIND_NOTICE = "메시지가 블라인드 처리되었습니다.";
 const CLEANBOT_NOTICE = "클린봇이 부적절한 표현을 감지했습니다.";
 
@@ -101,6 +102,31 @@ function attachMessage(dom, id, chatMessage, { selector = "._container_1vemp_1" 
     const element = rowOf(dom, id).querySelector(selector) || rowOf(dom, id);
     element[REACT_PROPS_KEY] = { children: { props: { chatMessage } } };
     return element[REACT_PROPS_KEY].children.props;
+}
+
+function attachLiveChatClient(dom, messageList) {
+    const gameChatClient = { config: { streamingChannelId: "test-channel" }, messageList };
+    dom.window.document.querySelector("[role='log']")[REACT_FIBER_KEY] = {
+        return: { memoizedProps: { gameChatClient } },
+    };
+    return gameChatClient;
+}
+
+function requestBlindSource(dom, id) {
+    const container = rowOf(dom, id).querySelector("._chatting_message_1vemp_21");
+    container.dispatchEvent(
+        new dom.window.CustomEvent("cheese-spanner:chat-blind-source-request", {
+            bubbles: true,
+            detail: JSON.stringify(["viewer", container.querySelector("._text_1vemp_1").textContent]),
+        })
+    );
+    const response = {
+        message: JSON.parse(container.getAttribute("data-bcct-source-message")),
+        original: container.getAttribute("data-bcct-source-original"),
+    };
+    container.removeAttribute("data-bcct-source-message");
+    container.removeAttribute("data-bcct-source-original");
+    return response;
 }
 
 function rowOf(dom, id) {
@@ -336,6 +362,276 @@ test("a later blind uses the updated page message of the current row", async (t)
     assert.equal(revealOf(dom, "first"), null);
 });
 
+test("a live restriction restores both originals when the host props stay normal", async (t) => {
+    const originals = ["먼저 올라온 채팅", "나중에 올라온 채팅"];
+    const { dom, chrome } = createPageDom(originals.map((text, i) => chatRow({ id: i, text })).join(""));
+    t.after(() => closeDom(dom, chrome));
+    const messages = originals.map((originalContent, i) =>
+        message({ key: `message-${i}`, time: 1790000000000 + i, originalContent, content: originalContent })
+    );
+    const props = messages.map((value, i) => attachMessage(dom, i, value));
+    const client = attachLiveChatClient(dom, messages);
+
+    const normalReads = new Set();
+    dom.window.document.addEventListener("cheese-spanner:chat-blind-source-request", (event) => {
+        const response = JSON.parse(event.target.getAttribute("data-bcct-source-message"));
+        if (response?.status === "NORMAL") normalReads.add(response.key);
+    });
+    loadPageBridge(dom);
+    loadChatTools(dom);
+    await waitForCondition(() => normalReads.size === messages.length);
+    assert.ok(originals.every((_, i) => revealOf(dom, i) === null));
+
+    // The native client replaces each entry. React can update the body without refreshing the host's props.
+    client.messageList = messages.map((entry) => ({ ...entry, status: "HIDDEN" }));
+    for (let i = 0; i < messages.length; i++) rowOf(dom, i).querySelector("._text_1vemp_1").textContent = BLIND_NOTICE;
+    await waitForCondition(() => originals.every((_, i) => revealOf(dom, i)));
+
+    for (let i = 0; i < messages.length; i++) {
+        assert.equal(props[i].chatMessage.status, "NORMAL");
+        assert.equal(revealOf(dom, i).textContent, originals[i]);
+        assert.equal(rowOf(dom, i).querySelector("._text_1vemp_1").getAttribute("data-bcct-blind-masked"), "1");
+    }
+    assert.equal(dom.window.document.querySelector("[data-bcct-source-original], [data-bcct-source-message]"), null);
+});
+
+test("a notice uses the live list only for the same key, author account, time, and channel", (t) => {
+    const { dom, chrome } = createPageDom(chatRow({ id: "blind", text: BLIND_NOTICE }));
+    t.after(() => closeDom(dom, chrome));
+    const anchor = message();
+    attachMessage(dom, "blind", anchor);
+    const hidden = { ...anchor, status: "HIDDEN", originalContent: "목록에 있는 원문" };
+    const client = attachLiveChatClient(dom, [
+        { ...hidden, key: "another-message" },
+        { ...hidden, user: "user-2", profile: { userIdHash: "user-2", nickname: "viewer" } },
+        { ...hidden, time: anchor.time + 1 },
+    ]);
+    loadPageBridge(dom);
+    assert.equal(requestBlindSource(dom, "blind").original, null);
+
+    client.messageList.push(hidden);
+    client.config.streamingChannelId = "another-channel";
+    assert.equal(requestBlindSource(dom, "blind").original, null);
+
+    client.config.streamingChannelId = "test-channel";
+    const reply = requestBlindSource(dom, "blind");
+    assert.equal(reply.message.status, "HIDDEN");
+    assert.equal(reply.original, hidden.originalContent);
+
+    rowOf(dom, "blind").querySelector("._text_1vemp_1").textContent = anchor.originalContent;
+    const normal = requestBlindSource(dom, "blind");
+    assert.equal(normal.message.status, "NORMAL");
+    assert.equal(normal.original, null);
+});
+
+test("a current normal or invalid list entry cannot disclose a stale blind original", (t) => {
+    const { dom, chrome } = createPageDom(chatRow({ id: "blind", text: BLIND_NOTICE }));
+    t.after(() => closeDom(dom, chrome));
+    const anchor = message({ status: "HIDDEN" });
+    attachMessage(dom, "blind", anchor);
+    const client = attachLiveChatClient(dom, [{ ...anchor, status: "NORMAL" }]);
+    loadPageBridge(dom);
+    const normal = requestBlindSource(dom, "blind");
+    assert.equal(normal.message.status, "NORMAL");
+    assert.equal(normal.original, null);
+
+    client.messageList[0] = { ...anchor, profile: { userIdHash: anchor.user, nickname: "someone else" } };
+    assert.deepEqual(requestBlindSource(dom, "blind"), { message: null, original: null });
+});
+
+test("the existing notice recheck reads a later list update with unchanged normal host props", async (t) => {
+    const { dom, chrome } = createPageDom(chatRow({ id: "delayed", text: BLIND_NOTICE }));
+    t.after(() => closeDom(dom, chrome));
+    const anchor = message({ originalContent: "" });
+    const props = attachMessage(dom, "delayed", anchor);
+    const client = attachLiveChatClient(dom, [anchor]);
+    let requests = 0;
+    dom.window.document.addEventListener("cheese-spanner:chat-blind-source-request", () => {
+        requests++;
+    });
+    loadPageBridge(dom);
+    loadChatTools(dom);
+    await waitForCondition(() => requests > 0);
+    assert.equal(revealOf(dom, "delayed"), null);
+
+    client.messageList[0] = { ...anchor, status: "HIDDEN", originalContent: "늦게 목록에 들어온 원문" };
+    await waitForCondition(() => revealOf(dom, "delayed"));
+    assert.equal(revealOf(dom, "delayed").textContent, "늦게 목록에 들어온 원문");
+    assert.equal(props.chatMessage, anchor);
+});
+
+test("RECLAIM and FILTERED use verified native originals", async (t) => {
+    const statuses = ["RECLAIM", "FILTERED"];
+    const { dom, chrome } = createPageDom(statuses.map((id) => chatRow({ id, text: BLIND_NOTICE })).join(""));
+    t.after(() => closeDom(dom, chrome));
+    for (const status of statuses) {
+        attachMessage(dom, status, message({ key: status, status, originalContent: `원문 ${status}` }));
+    }
+
+    loadPageBridge(dom);
+    loadChatTools(dom);
+    await waitForCondition(() => statuses.every((status) => revealOf(dom, status)));
+    for (const status of statuses) assert.equal(revealOf(dom, status).textContent, `원문 ${status}`);
+});
+
+test("a later blind can recover an original verified against the same visible native message", async (t) => {
+    const original = "처음부터 보였던 원문";
+    const { dom, chrome } = createPageDom(chatRow({ id: "cached", text: original }));
+    t.after(() => closeDom(dom, chrome));
+    const props = attachMessage(dom, "cached", message({ originalContent: original, content: original }));
+    const normalOriginals = [];
+    dom.window.document.addEventListener("cheese-spanner:chat-blind-source-request", (event) => {
+        const identity = JSON.parse(event.target.getAttribute("data-bcct-source-message"));
+        if (identity?.status !== "NORMAL") return;
+        normalOriginals.push(event.target.getAttribute("data-bcct-source-original"));
+    });
+
+    loadPageBridge(dom);
+    loadChatTools(dom);
+    await waitForCondition(() => normalOriginals.length > 0);
+    assert.ok(normalOriginals.every((value) => value === null));
+    props.chatMessage = { ...props.chatMessage, status: "HIDDEN", originalContent: BLIND_NOTICE };
+    rowOf(dom, "cached").querySelector("._text_1vemp_1").textContent = BLIND_NOTICE;
+    await waitForCondition(() => revealOf(dom, "cached"));
+    assert.equal(revealOf(dom, "cached").textContent, original);
+    assert.equal(dom.window.document.querySelector("[data-bcct-source-original], [data-bcct-source-message]"), null);
+});
+
+for (const ending of ["option disable", "chat root replacement"]) {
+    test(`a verified native original is cleared on ${ending}`, async (t) => {
+        const original = "처음에 확인한 본문";
+        const { dom, chrome } = createPageDom(chatRow({ id: "lifetime", text: original }), {
+            sync: { chatKeywordFilterWords: "다른 문구" },
+        });
+        t.after(() => closeDom(dom, chrome));
+        const props = attachMessage(dom, "lifetime", message({ originalContent: original, content: original }));
+        const observedStatuses = new Set();
+        dom.window.document.addEventListener("cheese-spanner:chat-blind-source-request", (event) => {
+            observedStatuses.add(JSON.parse(event.target.getAttribute("data-bcct-source-message"))?.status);
+        });
+        loadPageBridge(dom);
+        loadChatTools(dom);
+        await waitForCondition(() => observedStatuses.has("NORMAL"));
+
+        const hidden = { ...props.chatMessage, status: "HIDDEN", originalContent: "" };
+        if (ending === "option disable") {
+            setOption(chrome, "chatToolsShowBlindEnabled", true, false);
+            props.chatMessage = hidden;
+            rowOf(dom, "lifetime").querySelector("._text_1vemp_1").textContent = BLIND_NOTICE;
+            setOption(chrome, "chatToolsShowBlindEnabled", false, true);
+        } else {
+            const root = rowOf(dom, "lifetime").parentElement;
+            const replacement = root.cloneNode(false);
+            replacement.innerHTML = chatRow({ id: "lifetime", text: BLIND_NOTICE });
+            root.replaceWith(replacement);
+            attachMessage(dom, "lifetime", hidden);
+        }
+
+        await waitForCondition(() => observedStatuses.has("HIDDEN"), { timeoutMs: 2500 });
+        assert.equal(revealOf(dom, "lifetime"), null);
+        assert.equal(rowOf(dom, "lifetime").querySelector("[data-bcct-blind-masked]"), null);
+    });
+}
+
+test("late page data restores only the matching blind rows without a DOM update", async (t) => {
+    const { dom, chrome } = createPageDom(
+        chatRow({ id: "status", text: BLIND_NOTICE }) +
+            chatRow({ id: "original", text: BLIND_NOTICE }) +
+            chatRow({ id: "reuse", text: BLIND_NOTICE }),
+        { sync: { chatKeywordFilterWords: "숨길 원문" } }
+    );
+    t.after(() => closeDom(dom, chrome));
+    const status = attachMessage(dom, "status", message({ key: "status", originalContent: "상태가 늦게 바뀐 원문" }));
+    const original = attachMessage(
+        dom,
+        "original",
+        message({ key: "original", status: "HIDDEN", originalContent: "" })
+    );
+    const reuse = attachMessage(dom, "reuse", message({ key: "reuse", status: "HIDDEN", originalContent: "" }));
+    const requested = new Set();
+    dom.window.document.addEventListener(
+        "cheese-spanner:chat-blind-source-request",
+        (event) => requested.add(event.target.closest("[data-test-row]")),
+        true
+    );
+
+    loadPageBridge(dom);
+    loadChatTools(dom);
+    await waitForCondition(() => requested.size === 3);
+    for (const id of ["status", "original", "reuse"]) assert.equal(revealOf(dom, id), null);
+
+    status.chatMessage = { ...status.chatMessage, status: "HIDDEN" };
+    original.chatMessage = { ...original.chatMessage, originalContent: "숨길 원문" };
+    reuse.chatMessage = { ...reuse.chatMessage, key: "reused-message", originalContent: "다른 메시지의 원문" };
+
+    await waitForCondition(() => revealOf(dom, "status") && revealOf(dom, "original"), { timeoutMs: 3000 });
+    assert.equal(revealOf(dom, "status").textContent, "상태가 늦게 바뀐 원문");
+    assert.equal(revealOf(dom, "original").textContent, "숨길 원문");
+    assert.equal(rowOf(dom, "original").getAttribute("data-bcct-keyword-filtered"), "1");
+    assert.equal(revealOf(dom, "reuse"), null);
+    assert.match(rowOf(dom, "reuse").textContent, /블라인드 처리되었습니다/);
+});
+
+test("a continued blind notice stops retrying after four attempts even when rescanned", async (t) => {
+    const { dom, chrome } = createPageDom(chatRow({ id: "unavailable", text: BLIND_NOTICE }));
+    t.after(() => closeDom(dom, chrome));
+    attachMessage(dom, "unavailable", message({ status: "HIDDEN", originalContent: "" }));
+    const timers = new Map();
+    let timerId = -1;
+    const setTimeout = dom.window.setTimeout.bind(dom.window);
+    const clearTimeout = dom.window.clearTimeout.bind(dom.window);
+    t.mock.method(dom.window, "setTimeout", (callback, delay, ...args) => {
+        if (callback.name !== "recheckBlindSources") return setTimeout(callback, delay, ...args);
+        timers.set(timerId, callback);
+        return timerId--;
+    });
+    t.mock.method(dom.window, "clearTimeout", (id) => {
+        if (id < 0) timers.delete(id);
+        else clearTimeout(id);
+    });
+    let requests = 0;
+    dom.window.document.addEventListener("cheese-spanner:chat-blind-source-request", () => requests++, true);
+
+    loadPageBridge(dom);
+    loadChatTools(dom);
+    await waitForCondition(() => timers.size === 1);
+    const initialRequests = requests;
+    for (let i = 0; i < 4; i++) {
+        assert.equal(timers.size, 1);
+        const [[id, retry]] = timers;
+        timers.delete(id);
+        retry();
+    }
+    assert.equal(requests, initialRequests + 4);
+    assert.equal(timers.size, 0);
+
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:chat-timestamp-page-ready"));
+    await waitForCondition(() => requests > initialRequests + 4);
+    assert.equal(timers.size, 0);
+    assert.equal(revealOf(dom, "unavailable"), null);
+});
+
+test("rescanning an unchanged notice does not attach a different message's original", async (t) => {
+    const { dom, chrome } = createPageDom(chatRow({ id: "reuse", text: BLIND_NOTICE }));
+    t.after(() => closeDom(dom, chrome));
+    const props = attachMessage(dom, "reuse", message({ status: "HIDDEN", originalContent: "" }));
+    let requests = 0;
+    dom.window.document.addEventListener("cheese-spanner:chat-blind-source-request", () => requests++, true);
+
+    loadPageBridge(dom);
+    loadChatTools(dom);
+    await waitForCondition(() => requests > 0);
+    const previousRequests = requests;
+    props.chatMessage = { ...props.chatMessage, key: "new-message", originalContent: "새 메시지 원문" };
+    dom.window.dispatchEvent(new dom.window.Event("cheese-spanner:chat-timestamp-page-ready"));
+    await waitForCondition(() => requests > previousRequests);
+    assert.equal(revealOf(dom, "reuse"), null);
+
+    rowOf(dom, "reuse").setAttribute("data-chat-id", "new-message");
+    await waitForCondition(() => revealOf(dom, "reuse"));
+    assert.equal(revealOf(dom, "reuse").textContent, "새 메시지 원문");
+});
+
 test("a normal message that only looks like a notice is never replaced", async (t) => {
     const { dom, chrome } = createPageDom(chatRow({ id: "typed", text: BLIND_NOTICE }));
     t.after(() => closeDom(dom, chrome));
@@ -502,4 +798,31 @@ test("turning the blind option off removes page originals from the row", async (
 
     assert.equal(rowOf(dom, "off").querySelector("[data-bcct-blind-masked]"), null);
     assert.doesNotMatch(rowOf(dom, "off").textContent, /끄면 사라질 원문/);
+});
+
+test("turning the blind option off cancels a pending source recheck with keyword filtering still enabled", async (t) => {
+    const { dom, chrome } = createPageDom(chatRow({ id: "off", text: BLIND_NOTICE }), {
+        sync: { chatKeywordFilterWords: "숨길 원문" },
+    });
+    t.after(() => closeDom(dom, chrome));
+    const props = attachMessage(dom, "off", message({ status: "HIDDEN", originalContent: "" }));
+    let requests = 0;
+    dom.window.document.addEventListener("cheese-spanner:chat-blind-source-request", () => requests++, true);
+
+    loadPageBridge(dom);
+    loadChatTools(dom);
+    await waitForCondition(() => requests > 0);
+    await settle();
+    const initialRequests = requests;
+    await waitForCondition(() => requests > initialRequests, { timeoutMs: 3000 });
+
+    setOption(chrome, "chatToolsShowBlindEnabled", true, false);
+    props.chatMessage = { ...props.chatMessage, originalContent: "숨길 원문" };
+    const requestsAtDisable = requests;
+    await settle(1200);
+
+    assert.ok(dom.window.document.getElementById("cheese-spanner-chat-keyword-filter-style"));
+    assert.equal(requests, requestsAtDisable);
+    assert.equal(revealOf(dom, "off"), null);
+    assert.equal(rowOf(dom, "off").getAttribute("data-bcct-keyword-filtered"), null);
 });

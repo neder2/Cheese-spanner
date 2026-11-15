@@ -112,3 +112,44 @@ test("a shown fallback label does not wake its own observer into a continuous re
     assert.equal(label.textContent, "-0:20");
     assert.equal(h.button.textContent, "실시간");
 });
+
+test("fallback lag reuses its button candidate while checking style changes, resize and enabled controls", async (t) => {
+    const h = fixture(t, { buttonAttrs: 'aria-disabled="true"' });
+    await waitForCondition(() => h.document.getElementById(LABEL_ID));
+    const extras = h.document.createElement("main");
+    extras.innerHTML = Array.from({ length: 300 }, (_, index) => `<button>기타 ${index}</button>`).join("");
+    h.document.body.append(extras);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    let buttonScans = 0;
+    const query = h.document.querySelectorAll.bind(h.document);
+    h.document.querySelectorAll = (selector) => {
+        if (selector.includes("button") && selector.includes("LiveButton")) buttonScans++;
+        return query(selector);
+    };
+    for (let index = 0; index < 5; index++) {
+        h.main.dispatchEvent(new h.window.Event("timeupdate"));
+        await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+    assert.equal(buttonScans, 0, "unchanged fallback must not scan hundreds of unrelated buttons");
+    h.document.querySelector(".time").style.fontSize = "22px";
+    h.main.dispatchEvent(new h.window.Event("timeupdate"));
+    await waitForCondition(() => h.document.getElementById(LABEL_ID).style.fontSize === "22px");
+    h.window.dispatchEvent(new h.window.Event("resize"));
+    await waitForCondition(() => buttonScans > 0);
+    h.button.removeAttribute("aria-disabled");
+    await waitForCondition(() => h.button.hasAttribute(PATCHED_ATTR));
+    assert.equal(h.document.getElementById(LABEL_ID), null);
+    const replacement = h.button.cloneNode(false);
+    replacement.removeAttribute(PATCHED_ATTR);
+    replacement.textContent = "실시간";
+    h.button.replaceWith(replacement);
+    await waitForCondition(() => replacement.hasAttribute(PATCHED_ATTR));
+    assert.match(replacement.textContent, /^-0:\d{2}$/);
+    const nextVideo = h.main.cloneNode(false);
+    Object.defineProperty(nextVideo, "seekable", { value: h.main.seekable });
+    Object.defineProperty(nextVideo, "currentTime", { value: 70, writable: true });
+    h.main.replaceWith(nextVideo);
+    await waitForCondition(() => replacement.textContent === "-0:30");
+    h.setEnabled(false);
+    assert.equal(replacement.textContent, "실시간");
+});

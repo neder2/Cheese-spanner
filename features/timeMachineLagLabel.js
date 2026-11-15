@@ -107,6 +107,8 @@
     let displayedLabelUpdatedAt = 0;
     let fallbackIntervalId = 0;
     let fallbackLabelEl = null;
+    let fallbackButtonCandidate = null;
+    let fallbackCandidateVideo = null;
     let pageChangeTimer = 0;
     let lastUrl = location.href;
     let domObserver = null;
@@ -270,10 +272,21 @@
         );
     }
 
+    function clearFallbackButtonCandidate() {
+        fallbackButtonCandidate = null;
+        fallbackCandidateVideo = null;
+    }
+
     function getTargetButton(video) {
         if (isActiveButtonUsable(video)) return activeButtonEl;
         if (activeButtonEl || activeTextNode) restoreLiveText();
-        return findLiveEdgeButton(video);
+        // A disabled native button can remain the best candidate. Revalidate its current text/geometry,
+        // without searching every unrelated page button on each media event. Misses are not cached.
+        if (fallbackCandidateVideo === video && scoreButton(fallbackButtonCandidate, video))
+            return fallbackButtonCandidate;
+        fallbackCandidateVideo = video;
+        fallbackButtonCandidate = findLiveEdgeButton(video);
+        return fallbackButtonCandidate;
     }
 
     function getSeekableRange(video) {
@@ -520,6 +533,7 @@
     }
 
     function restoreLiveText({ resetEstimate = true } = {}) {
+        clearFallbackButtonCandidate();
         if (activeTextNode && originalTextByNode.has(activeTextNode) && activeTextNode.isConnected) {
             const originalText = originalTextByNode.get(activeTextNode);
             if (activeTextNode.nodeValue !== originalText) activeTextNode.nodeValue = originalText;
@@ -619,6 +633,7 @@
     function handlePageChange() {
         if (location.href === lastUrl) return;
         lastUrl = location.href;
+        clearFallbackButtonCandidate();
 
         const liveRoute = isLiveRoute();
         if (!liveRoute) {
@@ -649,8 +664,9 @@
     }
 
     function mutationCouldAffectText(mutation) {
-        // The fallback label's own attributes are written by this feature and never change the lag text.
-        if (mutation.type === "attributes" && mutation.target?.id === FALLBACK_LABEL_ID) return false;
+        // Changes inside our label cannot change native candidates; removing it still targets its parent.
+        const target = mutation.target instanceof Element ? mutation.target : mutation.target?.parentElement;
+        if (target?.closest?.(`#${FALLBACK_LABEL_ID}`)) return false;
         if (mutation.type === "characterData") {
             return Boolean(mutation.target?.parentElement?.closest?.(LIVE_EDGE_TARGET_SELECTOR));
         }
@@ -669,6 +685,7 @@
                 handlePageChange();
                 if (!isFeatureEnabled() || !isLiveRoute()) return;
                 if (!mutations.some(mutationCouldAffectText)) return;
+                clearFallbackButtonCandidate();
                 scheduleSync();
             },
             onBodyReady() {
@@ -729,12 +746,19 @@
         if (lifecycleListenersInstalled) return;
         lifecycleListenersInstalled = true;
         document.addEventListener("visibilitychange", handleVisibilityChange, true);
+        window.addEventListener("resize", handleViewportChange);
     }
 
     function uninstallLifecycleListeners() {
         if (!lifecycleListenersInstalled) return;
         lifecycleListenersInstalled = false;
         document.removeEventListener("visibilitychange", handleVisibilityChange, true);
+        window.removeEventListener("resize", handleViewportChange);
+    }
+
+    function handleViewportChange() {
+        clearFallbackButtonCandidate();
+        scheduleSync();
     }
 
     function installRuntime() {

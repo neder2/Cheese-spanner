@@ -471,7 +471,7 @@ test("monthly calendar levels grow in intensity and keep 4.5:1 day numbers in bo
     }
 });
 
-test("discovery panels use polite 해요체 copy in every user-visible string", () => {
+test("discovery panels omit formal sentence endings", () => {
     for (const file of [
         "features/categoryTools.js",
         "features/categoryTools/filterModel.js",

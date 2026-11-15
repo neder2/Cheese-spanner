@@ -51,6 +51,7 @@ function createFixture(
         url = "https://chzzk.naver.com/lives",
         session = null,
         blockSessionStorage = false,
+        channelProfiles = {},
     } = {}
 ) {
     const nav = tabLine
@@ -145,9 +146,13 @@ function createFixture(
     load("shared/settings.js");
     load("shared/data.js");
     load("shared/categoryExclusions.js");
+    let observerConfig;
     Object.assign(window.CheeseSpanner.utils, {
         bindFeatureOptions() {},
-        createMutationObserverSync: () => ({ disconnect() {} }),
+        createMutationObserverSync: (config) => {
+            observerConfig = config;
+            return { disconnect() {} };
+        },
         createThrottledDomSync: () => {
             const schedule = () => {};
             schedule.cancel = () => {};
@@ -158,12 +163,19 @@ function createFixture(
             if (href.includes("/v1/lives") || /\/categories\/[^/]+\/[^/]+\/lives/.test(href)) {
                 return {
                     content: {
-                        data: Array.from({ length: cards }, (_, index) => apiItem(index, now)),
+                        data: Array.from({ length: cards }, (_, index) => {
+                            const item = apiItem(index, now);
+                            const profile = channelProfiles[item.channel.channelId];
+                            if (profile) item.channel = { ...item.channel, verifiedMarkType: profile.verifiedMarkType };
+                            return item;
+                        }),
                         page: { next: null },
                     },
                 };
             }
             if (href.includes("/followers/count")) return { content: { followerCount: 12345 } };
+            const channel = href.match(/\/v1\/channels\/([a-f0-9]{32})$/)?.[1];
+            if (channel) return { code: 200, content: channelProfiles[channel] || {} };
             return { content: {} };
         },
         normSpace: window.CheeseSpanner.utils.compactSpaces,
@@ -216,6 +228,7 @@ function createFixture(
         counts,
         trace,
         hooks,
+        observer: () => observerConfig,
         layout,
         advance: (ms) => {
             now += ms;

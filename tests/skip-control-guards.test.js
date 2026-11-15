@@ -154,6 +154,18 @@ function wheelOn(dom, target, init) {
     return dispatchTrusted(target, new dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, ...init }));
 }
 
+test("live and VOD skip pills use the shared Korean player tooltip", async (t) => {
+    for (const path of ["/live/test-channel", "/video/1"]) {
+        const { document } = await openSkipPage(t, { path, sync: { skipSeconds: 10 } });
+        const pill = await waitForSkipPill(document);
+        const tooltip = pill.querySelector(":scope > .pzp-button__tooltip--top.cheese-spanner-player-tooltip");
+        assert.equal(tooltip?.textContent, "휠 조절, 클릭 초기화", path);
+        assert.equal(pill.hasAttribute("title"), false, path);
+        assert.equal(pill.getAttribute("aria-label"), "스킵 시간 조절 (10초)", path);
+        assert.equal(pill.getAttribute("aria-description"), tooltip.textContent, path);
+    }
+});
+
 test("live timeshift guard yields to a native forward jump that keeps repeating", async (t) => {
     const page = await openSkipPage(t, {
         path: "/live/test-channel",

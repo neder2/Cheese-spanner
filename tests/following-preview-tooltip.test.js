@@ -301,6 +301,39 @@ test("open following preview follows its resized anchor without a synthetic wind
     assert.equal(tip.hasAttribute("data-show"), false);
 });
 
+test("unrelated scrolls do not reposition a following preview but ancestors, resize and removal still work", async () => {
+    const { dom, document, item, link } = createFollowingPreviewDom(
+        createFakeChrome({ sync: { followingPreviewTooltipEnabled: true } })
+    );
+    dom.window.fetch = () => new Promise(() => {});
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    const tip = document.getElementById("cheese-spanner-following-preview");
+    assert.equal(tip.hasAttribute("data-show"), true);
+    let reads = 0;
+    for (const node of [item, tip]) {
+        const original = node.getBoundingClientRect.bind(node);
+        node.getBoundingClientRect = () => {
+            reads++;
+            return original();
+        };
+    }
+    const before = [tip.style.left, tip.style.top];
+    for (let i = 0; i < 100; i++) document.querySelector("main").dispatchEvent(new dom.window.Event("scroll"));
+    assert.equal(reads, 0);
+    assert.deepEqual([tip.style.left, tip.style.top], before);
+    document.getElementById("following").dispatchEvent(new dom.window.Event("scroll"));
+    assert.ok(reads > 0);
+    reads = 0;
+    dom.window.dispatchEvent(new dom.window.Event("resize"));
+    assert.ok(reads > 0);
+    item.remove();
+    document.querySelector("main").dispatchEvent(new dom.window.Event("scroll"));
+    assert.equal(tip.hasAttribute("data-show"), false);
+});
+
 test("preview fonts use the shared bundled CHZZK-only face and follow the feature lifetime", async () => {
     const chrome = createFakeChrome({ sync: { followingPreviewTooltipEnabled: false } });
     const readOptions = chrome.storage.sync.get.bind(chrome.storage.sync);
@@ -433,7 +466,7 @@ test("the preview card and row highlight follow the shared theme while video ove
     }
 });
 
-test("a preview that cannot load shows a polite error title in the muted theme color", async () => {
+test("a preview that cannot load shows a short error title in the muted theme color", async () => {
     const { document, dom, link } = createFollowingPreviewDom();
     document.querySelector("#liveLink .live_title").remove();
     dom.window.fetch = async () => {
@@ -448,7 +481,7 @@ test("a preview that cannot load shows a polite error title in the muted theme c
         () => document.getElementById("cheese-spanner-following-preview")?.dataset.state === "error"
     );
     const title = document.querySelector("#cheese-spanner-following-preview .bcfp-title");
-    assert.equal(title.textContent, "\uBBF8\uB9AC\uBCF4\uAE30\uB97C \uBD88\uB7EC\uC62C \uC218 \uC5C6\uC5B4\uC694");
+    assert.equal(title.textContent, "미리보기 불러오기 실패");
     assert.equal(computedThemeValue(dom.window, title, "color"), "#9da5b6");
 });
 
@@ -990,6 +1023,98 @@ test("following preview keeps live-detail navercdn HLS when auto-play payload is
             assert.match(requests[1], /\/auto-play-info$/);
             assert.equal(hlsState.instances.length, 1);
             assert.deepEqual(hlsState.loadSources, [playbackUrl]);
+        });
+    }
+});
+
+test("following preview preserves live-detail LLHLS when auto-play-info only offers regular HLS", async () => {
+    const { document, dom, link } = createFollowingPreviewDom();
+    const hlsState = installFakeHls(dom);
+    const detailUrl = "https://ex-nlive-streaming.navercdn.com/chzzk/live/detail-ll.m3u8";
+    const autoUrl = "https://nvelop-livecloud.pstatic.net/chzzk/live/auto-hls.m3u8";
+    dom.window.fetch = async (url) => ({
+        ok: true,
+        json: async () => ({
+            content: {
+                liveId: "live-latency",
+                livePlaybackJson: JSON.stringify({
+                    media: String(url).includes("/live-detail")
+                        ? [{ mediaId: "LLHLS", path: detailUrl }]
+                        : [{ mediaId: "HLS", path: autoUrl }],
+                }),
+            },
+        }),
+    });
+    evalFollowingPreviewTooltipScripts(dom);
+    document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+    await waitForAsyncCallbacks();
+    link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForCondition(() => hlsState.loadSources.length === 1, { timeoutMs: 1500 });
+    assert.deepEqual(hlsState.loadSources, [detailUrl]);
+    assert.equal(hlsState.instances[0].config.lowLatencyMode, true);
+});
+
+test("packaged preview HLS starts near live and recovers a thirty-second delay without moving the main video", async (t) => {
+    for (const mediaId of ["HLS", "LLHLS"]) {
+        await t.test(mediaId, async () => {
+            const { document, dom, link } = createFollowingPreviewDom();
+            const hlsState = installFakeHls(dom);
+            const mainVideo = attachMainPlayerVideo(dom, 0.5);
+            mainVideo.currentTime = 75;
+            dom.window.fetch = async () => ({
+                ok: true,
+                json: async () => ({
+                    content: {
+                        liveId: "live-latency",
+                        livePlaybackJson: JSON.stringify({
+                            media: [{ mediaId, path: "https://nvelop-livecloud.pstatic.net/chzzk/live/master.m3u8" }],
+                        }),
+                    },
+                }),
+            });
+            evalFollowingPreviewTooltipScripts(dom);
+            document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
+            await waitForAsyncCallbacks();
+            link.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+            await waitForCondition(() => hlsState.instances.length === 1, { timeoutMs: 1500 });
+
+            // Real bundled controller, with the playlist shape measured on 2026-11-14:
+            // eight 4.166667s segments but TARGETDURATION=10; LLHLS has ~3s PART-HOLD-BACK.
+            evalRepoScript(dom, "vendor", "hls.light.min.js");
+            const hls = new dom.window.Hls(hlsState.instances[0].config);
+            const details = {
+                live: true,
+                edge: 120,
+                fragmentStart: 86.666664,
+                totalduration: 33.333336,
+                age: 0,
+                targetduration: 10,
+                holdBack: 0,
+                partHoldBack: mediaId === "LLHLS" ? 3.051 : 0,
+                partTarget: mediaId === "LLHLS" ? 1 : 0,
+            };
+            const previewVideo = document.querySelector("video.bcfp-player");
+            Object.defineProperty(previewVideo, "duration", { value: 120, configurable: true });
+            Object.defineProperty(previewVideo, "readyState", { value: 4, configurable: true });
+            const stream = hls.streamController;
+            stream.levels = [{ details }];
+            stream.levelLastLoaded = stream.levels[0];
+            stream.media = previewVideo;
+            stream._hasEnoughToStart = true;
+            try {
+                assert.ok(120 - hls.liveSyncPosition <= 10, "startup must not use the 30s default hold-back");
+                previewVideo.currentTime = 90;
+                stream.synchronizeToLiveEdge(details);
+                assert.ok(previewVideo.currentTime >= 110, "a preview 30s behind must return near live");
+                previewVideo.currentTime = 118;
+                stream.synchronizeToLiveEdge(details);
+                assert.equal(previewVideo.currentTime, 118, "a healthy preview must not be moved backward");
+                assert.equal(previewVideo.playbackRate, 1);
+                assert.equal(mainVideo.currentTime, 75);
+            } finally {
+                stream.media = null;
+                hls.destroy();
+            }
         });
     }
 });

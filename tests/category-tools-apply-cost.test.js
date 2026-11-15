@@ -15,6 +15,41 @@ function recordMutations(fixture, run) {
     });
 }
 
+test("sidebar row churn does not schedule a known broadcast grid, while discovery and repair still do", async (t) => {
+    const f = createFixture(t);
+    await f.apply();
+    const sidebar = f.document.createElement("aside");
+    sidebar.id = "sidebar";
+    sidebar.innerHTML = "<ul><li><span>팔로잉</span></li></ul>";
+    f.document.body.prepend(sidebar);
+    const row = sidebar.querySelector("li");
+    const node = f.document.createElement("span");
+    row.append(node);
+    const change = { type: "childList", target: row, addedNodes: [node], removedNodes: [] };
+    const ignored = (changes) => {
+        f.observer().onMutations?.(changes);
+        return f.observer().shouldIgnoreMutations(changes);
+    };
+    assert.equal(ignored([change]), true, "known unrelated sidebar changes cannot reapply every card");
+    const toolbar = f.document.getElementById("cheese-spanner-category-tools");
+    const host = toolbar.parentElement;
+    toolbar.remove();
+    const removed = { type: "childList", target: host, addedNodes: [], removedNodes: [toolbar] };
+    assert.equal(ignored([change, removed]), false, "mixed batches must retain tool recovery");
+    await f.apply();
+    assert.ok(f.document.getElementById("cheese-spanner-category-tools"));
+    const grid = f.document.getElementById("grid");
+    grid.remove();
+    assert.equal(ignored([change]), false, "a detached grid needs discovery again");
+    f.document.body.append(grid);
+    await f.apply();
+    const card = grid.firstElementChild;
+    assert.equal(
+        ignored([{ type: "childList", target: card, addedNodes: [node.cloneNode()], removedNodes: [] }]),
+        false
+    );
+});
+
 test("steady global list applies reuse the found sort row and tab line instead of walking every page link", async (t) => {
     const fixture = createFixture(t);
     await fixture.apply();

@@ -577,13 +577,16 @@ function untrustedClick(dom, element) {
     element.click();
 }
 
-function trustedKey(dom, element, key) {
-    return dispatchTrusted(element, new dom.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+function trustedKey(dom, element, key, options = {}) {
+    return dispatchTrusted(
+        element,
+        new dom.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...options })
+    );
 }
 
 function typeText(dom, input, text) {
     input.value = text;
-    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    dispatchTrusted(input, new dom.window.InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
 }
 
 function createDataTransfer() {
@@ -929,7 +932,7 @@ test("the folder menu renames, reorders, and deletes folders with trusted input 
     await waitForCondition(() => storedState(chrome).folders[1].name === "잡담");
     await waitForCondition(() => !renameInput(document) && nameButton(document, "잡담"));
     assert.equal(document.activeElement, nameButton(document, "잡담"));
-    assert.match(toastText(document), /‘토크’ 폴더 이름을 ‘잡담’/);
+    assert.match(toastText(document), /폴더 이름 변경 · ‘토크’ → ‘잡담’/);
 
     let upMenu = await openMenu(dom, document, "잡담");
     untrustedClick(dom, byLabel(upMenu, "‘잡담’ 폴더를 위로 이동"));
@@ -1003,6 +1006,69 @@ test("the channel picker is the keyboard path to put channels in, move them betw
     await waitForCondition(() => !layer(document));
     assert.equal(document.activeElement, moreButton(document, "토크"));
 });
+
+for (const scenario of [
+    { label: "synthetic then blur", input: "합성 이름", submit: "blur", expected: "게임" },
+    { label: "synthetic then trusted Enter", input: "합성 이름", submit: "Enter", expected: "게임" },
+    {
+        label: "trusted draft then synthetic input",
+        trusted: "내 이름",
+        input: "합성 이름",
+        submit: "blur",
+        expected: "내 이름",
+    },
+    {
+        label: "trusted draft then DOM value only",
+        trusted: "내 이름",
+        input: "DOM 이름",
+        valueOnly: true,
+        submit: "Enter",
+        expected: "내 이름",
+    },
+    {
+        label: "trusted composition then Enter",
+        trusted: "한글 이름",
+        composing: true,
+        submit: "Enter",
+        expected: "한글 이름",
+    },
+    { label: "trusted draft then Escape", trusted: "취소할 이름", submit: "Escape", expected: "게임" },
+]) {
+    test(`folder rename protects its draft: ${scenario.label}`, async (t) => {
+        const { chrome, dom, document, store } = await setup(t, {
+            followingFoldersEnabled: true,
+            [KEY]: stateOf(folder("games", "게임", [C])),
+        });
+        await waitForCondition(() => nameButton(document, "게임"));
+        trustedKey(dom, nameButton(document, "게임"), "F2");
+        await waitForCondition(() => renameInput(document) && document.activeElement === renameInput(document));
+        const input = renameInput(document);
+        if (scenario.composing) {
+            input.value = scenario.trusted;
+            dispatchTrusted(
+                input,
+                new dom.window.InputEvent("input", {
+                    bubbles: true,
+                    isComposing: true,
+                    inputType: "insertCompositionText",
+                })
+            );
+            trustedKey(dom, input, "Enter", { isComposing: true, keyCode: 229 });
+            assert.equal(store.calls.length, 0);
+            assert.equal(renameInput(document), input);
+        } else if (scenario.trusted) typeText(dom, input, scenario.trusted);
+        if (scenario.input) {
+            input.value = scenario.input;
+            if (!scenario.valueOnly)
+                input.dispatchEvent(new dom.window.InputEvent("input", { bubbles: true, inputType: "insertText" }));
+        }
+        if (scenario.submit === "blur") input.blur();
+        else trustedKey(dom, input, scenario.submit);
+        await waitForCondition(() => !renameInput(document));
+        assert.equal(storedState(chrome).folders[0].name, scenario.expected);
+        assert.equal(store.calls.length, scenario.expected === "게임" ? 0 : 1);
+    });
+}
 
 test("arrow clicks and keyboard collapse at once, name clicks wait for a possible double click, and F2 renames", async (t) => {
     const saved = stateOf(folder("games", "게임", [C]), folder("talk", "토크", [A]));
@@ -1148,7 +1214,8 @@ test("a collapsed folder marks its live count partial while the native list has 
     assert.equal(pick(A).dataset.live, "1");
     assert.equal(pick(A).querySelector(".bcff-pick-detail").textContent, "방송 중");
     assert.equal(pick(E).dataset.live, "unknown");
-    assert.equal(pick(E).querySelector(".bcff-pick-detail").textContent, "목록에 없어 방송 여부 모름");
+    assert.equal(pick(E).querySelector(".bcff-pick-detail").textContent, "방송 여부 미확인");
+    assert.match(picker.querySelector(".bcff-picker-foot").textContent, /현재 팔로잉 목록과 이 폴더의 채널 표시/);
     trustedKey(dom, picker.querySelector('[data-bcff-key="picker-filter"]'), "Escape");
     await waitForCondition(() => !layer(document));
 
@@ -1288,6 +1355,79 @@ test("save failures keep the previous folders and tell the user what happened", 
     );
     assert.deepEqual(storedState(chrome), saved);
     assert.deepEqual(chrome.testState.directSets, [], "no direct sync.set fallback");
+});
+
+test("folder toggles stay visible in the current tab after the extension context is invalidated", async (t) => {
+    const saved = stateOf(folder("games", "게임", [C]));
+    const { chrome, dom, document, store } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    const toggle = () => headerButton(document, "게임");
+    const toast = () => document.querySelector(TOAST_SELECTOR);
+    const row = document.getElementById("rowC");
+    await waitForCondition(toggle);
+
+    const release = holdStore(store);
+    t.after(release);
+    store.failNext = "unavailable";
+    trustedClick(dom, toggle());
+    await waitForCondition(() => store.calls.length === 1);
+    assert.equal(toggle().getAttribute("aria-expanded"), "false");
+
+    delete chrome.runtime.id;
+    release();
+    await waitForCondition(toast);
+    assert.equal(toggle().getAttribute("aria-expanded"), "false");
+    assert.equal(dom.window.getComputedStyle(row).display, "none");
+    assert.match(toast().textContent, /이 탭에서만.*새로고침/);
+
+    const previousToast = toast();
+    trustedClick(dom, toggle());
+    await waitForCondition(() => toast() && toast() !== previousToast);
+    assert.equal(toggle().getAttribute("aria-expanded"), "true");
+    assert.notEqual(dom.window.getComputedStyle(row).display, "none");
+    assert.deepEqual(storedState(chrome), saved);
+    assert.equal(store.calls.length, 1, "subsequent toggles stay local to the disconnected tab");
+    assert.deepEqual(chrome.testState.directSets, []);
+});
+
+test("the retirement event cleans up only a disconnected folder runtime", async (t) => {
+    const saved = stateOf(folder("games", "게임", [C], true));
+    const { chrome, dom, document, store } = await setup(t, { followingFoldersEnabled: true, [KEY]: saved });
+    await waitForCondition(() => headerButton(document, "게임"));
+    const oldButton = headerButton(document, "게임");
+    const section = document.getElementById("followingSection");
+    const row = document.getElementById("rowC");
+    const retire = () => document.dispatchEvent(new dom.window.Event("cheese-spanner:following-folders:retire"));
+
+    retire();
+    assert.equal(oldButton.isConnected, true);
+    assert.equal(dom.window.getComputedStyle(row).display, "none");
+    delete chrome.runtime.id;
+    retire();
+    assert.equal(oldButton.isConnected, false);
+    assert.equal(document.getElementById("cheese-spanner-following-folders-style"), null);
+    assert.notEqual(dom.window.getComputedStyle(row).display, "none");
+    assert.equal(row.hasAttribute("data-bcff-hidden"), false);
+
+    section.replaceWith(section.cloneNode(true));
+    await settle();
+    assert.equal(headerButton(document, "게임"), null);
+    assert.deepEqual(storedState(chrome), saved);
+    assert.equal(store.calls.length, 0);
+});
+
+test("a legacy folder style that remains after retirement blocks a competing runtime", async (t) => {
+    const chrome = createFakeChrome({ followingFoldersEnabled: true, [KEY]: stateOf(folder("games", "게임", [C])) });
+    const dom = createDom(chrome);
+    t.after(() => dom.window.close());
+    const { document } = dom.window;
+    const previousStyle = document.createElement("style");
+    previousStyle.id = "cheese-spanner-following-folders-style";
+    document.head.append(previousStyle);
+    const store = loadFeature(dom, chrome);
+    await settle();
+    assert.equal(document.getElementById(previousStyle.id), previousStyle);
+    assert.equal(headerButton(document, "게임"), null);
+    assert.equal(store.calls.length, 0);
 });
 
 test("stale writes re-apply the same command to the latest value and stop after bounded conflicts", async (t) => {
@@ -1684,7 +1824,7 @@ test("dropping on a folder's rows or the new-folder spot moves channels; outside
     await waitForCondition(() => storedState(chrome).folders[0].channelIds.includes(A));
     assert.equal(list.querySelector("[data-bcff-new-zone]"), null);
     assert.equal(document.querySelector("[data-bcff-drop-target]"), null);
-    assert.match(toastText(document), /알파 채널을 ‘게임’ 폴더에 추가함/);
+    assert.match(toastText(document), /알파 채널을 ‘게임’ 폴더에 추가/);
 
     dragEvent(dom, "dragstart", document.querySelector("#rowE a"));
     // The spot can appear right under the pointer when the last row is dragged; it waits until the pointer moves on.
@@ -2644,7 +2784,7 @@ test("a check read that answers after my next save keeps that save and its undo"
     const conflicts = store.conflicts;
     dropRowOnHeader(dom, document, "rowC", "라");
     await waitForCondition(() => store.calls.length === 4 && !list.hasAttribute("aria-busy"));
-    await waitForCondition(() => /‘라’ 폴더에 추가함/.test(toastText(document)));
+    await waitForCondition(() => /‘라’ 폴더에 추가/.test(toastText(document)));
     const next = clone(moved);
     next.folders[1].channelIds = [];
     next.folders[2].channelIds = [C];

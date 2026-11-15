@@ -28,7 +28,7 @@
 
     const MODERATOR_PANEL_HOST_ATTR = "data-bcct-moderator-panel-host";
 
-    const MODERATOR_TITLE = "방송자/채팅 운영자 채팅";
+    const MODERATOR_TITLE = "채팅 모아보기";
     // Matches chatToolsModeratorBoxHeight's default and the box's original maximum height.
     const DEFAULT_MODERATOR_BOX_HEIGHT = 420;
 
@@ -700,7 +700,7 @@
             if (!moderatorMessages.length && !empty) {
                 empty = document.createElement("div");
                 empty.className = "bcct-moderator-box__empty";
-                empty.textContent = "아직 수집된 메시지가 없어요.";
+                empty.textContent = "수집된 메시지 없음";
                 moderatorList.appendChild(empty);
             } else if (moderatorMessages.length) empty?.remove();
             renderModeratorActivity(actors);

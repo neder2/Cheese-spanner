@@ -116,7 +116,7 @@
                         ? "현재 저장된 채널 설정 반영됨."
                         : removing
                           ? "채널 등록 해제됨."
-                          : action.label + (enabled ? " 대상 등록됨." : " 선택 해제됨.")
+                          : action.label + (enabled ? " 등록 완료" : " 등록 해제")
                 );
             }
             render();
