@@ -1,10 +1,104 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { createFixture } = require("./helpers/category-tools-page");
+const { createFixture, channelId } = require("./helpers/category-tools-page");
 
 // 방송 목록 필터 1단계: 적용 조건 줄, 검색 단어, 이상·이하·범위 메뉴, 탭 동안의 조건 유지.
 const QUIET = { categoryToolsFollowerBadgesEnabled: false, categoryToolsLiveElapsedEnabled: false };
 const GLOBAL_KEY = "global-lives/lives";
+
+function gradeProfiles() {
+    return Object.fromEntries(
+        ["PARTNER", "CHALLENGER", "PRO", "GENERAL"].map((grade, index) => [
+            channelId(index),
+            {
+                channelId: channelId(index),
+                verifiedMarkType: index < 2 ? grade : null,
+                verifiedMark: index < 2,
+                officialChannel: false,
+                subscriptionAvailability: grade !== "GENERAL",
+            },
+        ])
+    );
+}
+
+test("streamer grades combine as OR with other filters, persist and reset without deleting exclusions", async (t) => {
+    const f = createFixture(t, { cards: 5, options: QUIET, channelProfiles: gradeProfiles() });
+    await f.apply();
+    const pick = (grade) => menu(f).querySelector(`[data-streamer-grade="${grade}"]`).click();
+    pick("PARTNER");
+    pick("CHALLENGER");
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds(), ["card-0", "card-1"]);
+    assert.deepEqual(chips(f), ["등급 파트너·챌린저"]);
+    assert.deepEqual(f.storedSession().routes[GLOBAL_KEY].streamerGrades, ["PARTNER", "CHALLENGER"]);
+    viewersAtLeast(f, 5000);
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds(), ["card-0"]);
+    await f.navigate("https://chzzk.naver.com/live/00000000000000000000000000000001");
+    await f.navigate("https://chzzk.naver.com/lives");
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds(), ["card-0"]);
+    assert.equal(menu(f).querySelector('[data-streamer-grade="CHALLENGER"]').getAttribute("aria-pressed"), "true");
+    menu(f).querySelector("[data-filter-reset]").click();
+    pick("PRO");
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds(), ["card-2"]);
+    pick("PRO");
+    pick("GENERAL");
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds(), ["card-3"], "missing/malformed grade is not a general streamer");
+    appliedRow(f).querySelector('[data-remove-kind="streamerGrades"]').click();
+    await f.apply();
+    assert.equal(f.visibleCardIds().length, 5);
+    assert.equal(f.storedSession().routes[GLOBAL_KEY], undefined);
+});
+
+test("latest list grades use the current channel badge and recheck reused cards", async (t) => {
+    const f = createFixture(t, { cards: 4, options: QUIET, channelProfiles: gradeProfiles() });
+    await f.apply();
+    f.document.querySelector("#sort-row [aria-selected]").removeAttribute("aria-selected");
+    f.document.querySelectorAll("#sort-row button")[1].setAttribute("aria-selected", "true");
+    const mark = f.document.createElement("i");
+    mark.className = "_mark_8bw0p_75 _is_partner_8bw0p_75";
+    f.document.querySelector("#card-3 .channel").append(mark);
+    menu(f).querySelector('[data-streamer-grade="PARTNER"]').click();
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds().sort(), ["card-0", "card-3"]);
+    mark.remove();
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds(), ["card-0"]);
+    menu(f).querySelector('[data-streamer-grade="PARTNER"]').click();
+    menu(f).querySelector('[data-streamer-grade="GENERAL"]').click();
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds(), ["card-3"]);
+    mark.className = "_mark_8bw0p_75 _is_official_8bw0p_81";
+    f.document.querySelector("#card-3 .channel").append(mark);
+    await f.apply();
+    assert.deepEqual(
+        f.visibleCardIds(),
+        [],
+        "a current official mark overrides a cached subscription-based classification"
+    );
+});
+
+test("current nickname renderer marks override subscription-based grades on reused list cards", async (t) => {
+    const f = createFixture(t, { cards: 4, options: QUIET, channelProfiles: gradeProfiles() });
+    await f.apply();
+    f.document.querySelector("#sort-row [aria-selected]").removeAttribute("aria-selected");
+    f.document.querySelectorAll("#sort-row button")[1].setAttribute("aria-selected", "true");
+    const mark = f.document.createElement("i");
+    mark.className = "_mark_1pcsq_81 _is_partner_1pcsq_81";
+    f.document.querySelector("#card-3 .channel").append(mark);
+    menu(f).querySelector('[data-streamer-grade="PARTNER"]').click();
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds().sort(), ["card-0", "card-3"]);
+    mark.className = "_mark_1pcsq_81 _is_challenger_1pcsq_84";
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds(), ["card-0"]);
+    menu(f).querySelector('[data-streamer-grade="CHALLENGER"]').click();
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds().sort(), ["card-0", "card-1", "card-3"]);
+});
 
 function appliedRow(fixture) {
     return fixture.document.getElementById("cheese-spanner-category-filter-chips");

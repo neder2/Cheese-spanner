@@ -80,13 +80,16 @@
         const own = { ...changes };
         writeQueue = writeQueue
             .then(() =>
-                withStorageLock(() =>
-                    storageGet(storage, STORAGE_KEY).then((data) =>
-                        storageSet(storage, { [STORAGE_KEY]: { ...normalizeState(data?.[STORAGE_KEY]), ...own } })
-                    )
-                )
+                withStorageLock(async () => {
+                    if (stopWhenDisconnected()) return;
+                    const data = await storageGet(storage, STORAGE_KEY);
+                    if (stopWhenDisconnected()) return;
+                    await storageSet(storage, { [STORAGE_KEY]: { ...normalizeState(data?.[STORAGE_KEY]), ...own } });
+                })
             )
-            .catch((error) => console.warn("[Cheese Spanner] 팔로잉 목록 상태 저장 실패", error));
+            .catch((error) => {
+                if (!stopWhenDisconnected()) console.warn("[Cheese Spanner] 팔로잉 목록 상태 저장 실패", error);
+            });
     }
 
     function countRows(button) {
@@ -159,7 +162,7 @@
     }
 
     function syncState() {
-        if (!enabled) return;
+        if (!enabled || stopWhenDisconnected()) return;
         const section = getSection();
         if (section !== currentSection) {
             currentSection = section;
@@ -188,7 +191,7 @@
     }
 
     function handleClick(event) {
-        if (!enabled || restoring || event.defaultPrevented) return;
+        if (!event.isTrusted || !enabled || restoring || event.defaultPrevented) return;
         const section = getSection();
         const button = event.target instanceof Element ? event.target.closest("button[aria-expanded]") : null;
         if (!button || !section?.contains(button) || button.disabled || button.getAttribute("aria-disabled") === "true")
@@ -238,14 +241,14 @@
         });
         storageGet(storage, STORAGE_KEY)
             .then((data) => {
-                if (!enabled || token !== generation) return;
+                if (!enabled || token !== generation || stopWhenDisconnected()) return;
                 preference = { ...normalizeState(data[STORAGE_KEY]), ...userChoices };
                 loaded = true;
                 if (Object.keys(userChoices).length) savePreference(userChoices);
                 scheduleSync();
             })
             .catch((error) => {
-                if (!enabled || token !== generation) return;
+                if (!enabled || token !== generation || stopWhenDisconnected()) return;
                 loaded = true;
                 console.warn("[Cheese Spanner] 팔로잉 목록 상태 읽기 실패", error);
                 if (Object.keys(userChoices).length) savePreference(userChoices);
@@ -269,7 +272,18 @@
         attempts = {};
     }
 
+    // 확장 재로드 뒤 이전 문서의 DOM 이벤트는 남을 수 있어요. 이때 원본 버튼을 대신 누르는 일도 멈춰요.
+    function stopWhenDisconnected() {
+        if (globalThis.chrome?.runtime?.id) return false;
+        if (enabled) {
+            enabled = false;
+            stop();
+        }
+        return true;
+    }
+
     bindFeatureOptions((options) => {
+        if (stopWhenDisconnected()) return;
         const next = options.followingListStateEnabled === true;
         if (enabled === next) return;
         enabled = next;

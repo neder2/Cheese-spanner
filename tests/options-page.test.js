@@ -11,6 +11,53 @@ const {
     waitForCondition,
 } = require("./helpers/extension-page-fixture.js");
 
+test("nickname display saves independently and describes the verified streamer exception", async (t) => {
+    const chrome = createFakeChrome({ sync: { chatDonationMessagesHidden: true } });
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document } = dom.window;
+    const option = queryOption(document, "chatNicknameHidden");
+    assert.equal(option.checked, false);
+    assert.match(document.getElementById(option.getAttribute("aria-describedby")).textContent, /파트너·챌린저/);
+    option.checked = true;
+    dispatch(dom, option, "change");
+    document.getElementById("save").click();
+    await waitForCondition(() => document.getElementById("message").textContent === "옵션 저장 완료.");
+    assert.equal(chrome.testState.sync.chatNicknameHidden, true);
+    assert.equal(chrome.testState.sync.chatDonationMessagesHidden, true);
+});
+
+test("VOD comment display controls save split mode and the upper pane without changing the master option", async (t) => {
+    const chrome = createFakeChrome({ sync: { vodCommentTabsEnabled: true } });
+    const dom = createDom("options.html", "options.html", chrome);
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document } = dom.window;
+    const layout = queryOption(document, "vodCommentLayout");
+    const top = queryOption(document, "vodCommentSplitTop");
+    assert.equal(layout.value, "tabs");
+    assert.equal(top.value, "chat");
+    layout.value = "split";
+    top.value = "comments";
+    dispatch(dom, layout, "change");
+    dispatch(dom, top, "change");
+    document.getElementById("save").click();
+    await waitForCondition(() => document.getElementById("message").textContent === "옵션 저장 완료.");
+    assert.equal(chrome.testState.sync.vodCommentLayout, "split");
+    assert.equal(chrome.testState.sync.vodCommentSplitTop, "comments");
+    assert.equal(queryOption(document, "vodCommentTabsEnabled").checked, true);
+    const master = queryOption(document, "vodCommentTabsEnabled");
+    master.checked = false;
+    dispatch(dom, master, "change");
+    assert.equal(layout.closest("[data-depends-on]").getAttribute("aria-disabled"), "true");
+    assert.equal(top.closest("[data-depends-on]").getAttribute("aria-disabled"), "true");
+});
+
 test("last category restores every legacy index by meaning without rewriting the legacy value", async (t) => {
     const legacyTabs = ["player", "history", "chat", "appearance", "broadcast-time", "vod", "explore", "live-start"];
     for (const [index, id] of legacyTabs.entries()) {
@@ -168,7 +215,7 @@ test("panel resize settings explain their boundaries and remain independently us
     t.after(() => dom.window.close());
     evalRepoScript(dom, "shared", "settings.js");
     evalRepoScript(dom, "options.js");
-    await waitForAsyncCallbacks();
+    await waitForCondition(() => dom.window.document.getElementById("notice").dataset.state === "saved");
     const { document } = dom.window;
     const chat = queryOption(document, "chatResizeEnabled");
     const sidebar = queryOption(document, "sidebarResizeEnabled");
@@ -190,7 +237,7 @@ test("panel resize settings explain their boundaries and remain independently us
     chat.checked = false;
     dispatch(dom, chat, "change");
     document.getElementById("save").click();
-    await waitForAsyncCallbacks();
+    await waitForCondition(() => document.getElementById("notice").dataset.state === "saved" && !sidebar.disabled);
     assert.equal(chrome.testState.sync.chatResizeEnabled, false);
     assert.equal(chrome.testState.sync.sidebarResizeEnabled, true);
     assert.equal(sidebar.disabled, false);
@@ -199,12 +246,14 @@ test("panel resize settings explain their boundaries and remain independently us
     sidebar.checked = false;
     dispatch(dom, sidebar, "change");
     document.getElementById("save").click();
-    await waitForAsyncCallbacks();
+    await waitForCondition(() => document.getElementById("notice").dataset.state === "saved" && !sidebar.disabled);
     assert.equal(chrome.testState.sync.chatResizeEnabled, false);
     assert.equal(chrome.testState.sync.sidebarResizeEnabled, false);
     dom.window.confirm = () => true;
     document.getElementById("reset").click();
-    await waitForAsyncCallbacks();
+    await waitForCondition(
+        () => document.getElementById("notice").dataset.state === "saved" && chat.checked && !chat.disabled
+    );
     assert.equal(chat.checked, true);
     assert.equal(sidebar.checked, true);
     assert.equal(chrome.testState.sync.chatResizeEnabled, true);
@@ -1385,7 +1434,7 @@ test("options reset asks for confirmation before restoring defaults", async (t) 
 
     dom.window.confirm = () => true;
     resetButton.click();
-    await waitForAsyncCallbacks();
+    await waitForCondition(() => document.getElementById("message").textContent === "기본값 복원 완료");
 
     assert.equal(skipSeconds.value, "5");
     assert.equal(chrome.testState.sync.skipSeconds, 5);

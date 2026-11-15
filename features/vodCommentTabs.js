@@ -4,7 +4,7 @@
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트.
  * 의존: CheeseSpannerSettings, CheeseSpanner.utils, CheeseSpanner.vodComments의 model/repository/
  *   nativeAdapter/view 모듈.
- * 옵션 키: vodCommentTabsEnabled.
+ * 옵션 키: vodCommentTabsEnabled, vodCommentLayout, vodCommentSplitTop.
  */
 (() => {
     "use strict";
@@ -246,7 +246,7 @@
 
     function saveActiveScroll() {
         // 문서에서 빠진 패널의 scrollTop은 0이라, 저장하면 onScroll이 기록한 실제 위치를 덮어써요.
-        if (selectedTab !== "comments" || !commentView.getPanel()?.isConnected) return;
+        if (!commentView.isCommentsVisible() || !commentView.getPanel()?.isConnected) return;
         commentRepository.setScrollTop(commentView.getScrollTop(), {
             order: activeOrder,
             videoNo: currentVideoNo,
@@ -256,7 +256,7 @@
     function presentRequest(promise, { focusRequest = null, renderInitial = false } = {}) {
         const state = getActiveState();
         const presentation = ++requestPresentationGeneration;
-        if (selectedTab === "comments") {
+        if (commentView.isCommentsVisible()) {
             if (renderInitial) commentView.renderState(state, { restoreScroll: false });
             else commentView.updateState(state);
         }
@@ -265,7 +265,7 @@
             if (presentation !== requestPresentationGeneration) return;
             if (result.status === "stale" || result.status === "aborted") return;
             if (result.state !== getActiveState() || result.state.videoNo !== currentVideoNo) return;
-            if (selectedTab !== "comments" || !commentView.getPanel()) return;
+            if (!commentView.isCommentsVisible()) return;
 
             if (result.status === "loaded" && !result.initial) {
                 if (focusRequest && result.added[0]) focusRequest.resultKey = result.added[0].key;
@@ -289,7 +289,7 @@
               : commentRepository.loadInitial({ ...options, foreground: true });
         return presentRequest(promise, {
             focusRequest,
-            renderInitial: !prefetch && selectedTab === "comments",
+            renderInitial: !prefetch && commentView.isCommentsVisible(),
         });
     }
 
@@ -322,11 +322,11 @@
     }
 
     function selectTab(tab, options = {}) {
-        if (selectedTab === "comments") saveActiveScroll();
+        saveActiveScroll();
         if (tab === "comments") cancelScheduledCommentPrefetch();
         selectedTab = tab === "comments" ? "comments" : "chat";
         commentView.setSelectedTab(selectedTab, options);
-        if (selectedTab === "comments") showActiveComments();
+        if (commentView.isCommentsVisible()) showActiveComments();
     }
 
     function seekToCommentTime(seconds) {
@@ -362,7 +362,7 @@
             !runtimeInstalled ||
             !isFeatureEnabled() ||
             !isVodRoute() ||
-            selectedTab !== "chat" ||
+            commentView.isCommentsVisible() ||
             document.visibilityState !== "visible" ||
             window.navigator?.connection?.saveData === true ||
             !commentView.getPanel()?.isConnected ||
@@ -394,7 +394,7 @@
         commentView.setSelectedTab(selectedTab);
         commentView.mount(anchors);
         nativeAdapter.attach({ panel: commentView.getPanel() });
-        if (selectedTab === "comments") showActiveComments();
+        if (commentView.isCommentsVisible()) showActiveComments();
         else scheduleCommentPrefetch();
     }
 
@@ -402,7 +402,7 @@
         saveActiveScroll();
         if (!commentView.reattach(anchors)) return false;
         nativeAdapter.attach({ panel: commentView.getPanel() });
-        if (selectedTab === "comments") commentView.showState(getActiveState());
+        if (commentView.isCommentsVisible()) commentView.showState(getActiveState());
         else scheduleCommentPrefetch();
         return true;
     }
@@ -625,9 +625,21 @@
     }
 
     function applyOptions(options) {
+        const layoutChanged =
+            featureOptions.vodCommentLayout !== options.vodCommentLayout ||
+            featureOptions.vodCommentSplitTop !== options.vodCommentSplitTop;
+        if (layoutChanged) saveActiveScroll();
         featureOptions = options;
+        commentView.setLayout({ mode: options.vodCommentLayout, top: options.vodCommentSplitTop });
         const enabled = isFeatureEnabled();
-        if (enabled === appliedEnabledState) return;
+        if (enabled === appliedEnabledState) {
+            if (enabled && layoutChanged && runtimeInstalled && commentView.hasMount()) {
+                cancelScheduledCommentPrefetch();
+                if (commentView.isCommentsVisible()) showActiveComments();
+                else scheduleCommentPrefetch();
+            }
+            return;
+        }
 
         const wasEnabled = appliedEnabledState;
         appliedEnabledState = enabled;

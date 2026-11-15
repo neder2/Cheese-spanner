@@ -29,16 +29,19 @@
         if (busy || location.pathname !== "/lives" || !anchor?.isConnected) return;
         const current = button;
         const token = generation;
+        let settled = false;
+        const release = () => {
+            if (token !== generation || !settled || cooldown) return;
+            busy = false;
+            current.disabled = false;
+            current.removeAttribute("data-refreshing");
+        };
         busy = true;
         current.disabled = true;
         current.setAttribute("data-refreshing", "1");
         cooldown = window.setTimeout(() => {
             cooldown = 0;
-            if (token === generation) {
-                busy = false;
-                current.disabled = false;
-                current.removeAttribute("data-refreshing");
-            }
+            release();
         }, 1000);
         try {
             const client = getClient(anchor);
@@ -63,6 +66,9 @@
             if (token === generation && current.isConnected) {
                 current.title = "방송 목록 새로고침 실패. 다시 시도";
             }
+        } finally {
+            settled = true;
+            release();
         }
     }
 

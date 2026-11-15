@@ -170,6 +170,7 @@
         ready = false,
         unsaved = false;
     let donationMessagesHidden = false;
+    let nicknameHidden = false;
     let lifecycle = 0,
         loadVersion = 0,
         storageRevision = 0,
@@ -745,8 +746,9 @@
         const rules = [...FRAME_HIDDEN, ...(Array.isArray(ranking) ? ranking : [])];
         if (!config.input) rules.push(FRAME_INPUT_AREA);
         const donations = donationMessagesHidden ? root.chatDonationMessages?.STYLE_TEXT || "" : "";
+        const nicknames = nicknameHidden ? root.chatNicknameDisplay?.STYLE_TEXT || "" : "";
         const base = FRAME_FIT + "\n" + rules.join(",\n") + "{display:none!important}";
-        return donations ? base + "\n" + donations : base;
+        return [base, donations, nicknames].filter(Boolean).join("\n");
     }
     function syncFrameStyle(cell) {
         if (!cell.verified || !isChatLocation(frameLocation(cell.frame), cell)) return;
@@ -1811,6 +1813,7 @@
         removeOptions = bindFeatureOptions((next) => {
             if (!running) return;
             donationMessagesHidden = next?.chatDonationMessagesHidden === true;
+            nicknameHidden = next?.chatNicknameHidden === true;
             if (next?.chatMultiviewEnabled === true) activate();
             else deactivate();
             for (const cell of panel?.cells.values() || []) syncFrameStyle(cell);

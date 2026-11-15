@@ -24,6 +24,7 @@ const SCRIPTS = [
     "shared/chatMultiview.js",
     "features/chatWeeklyRanking.js",
     "features/chatDonationMessages.js",
+    "features/chatNicknameDisplay.js",
     "features/chatMultiview.js",
 ];
 // The runtime waits this long for the native chat log after a verified load, and for any load at all.
@@ -642,6 +643,24 @@ test("opens only from a trusted header click and shows saved channels as native 
     assert.equal(f.w.document.getElementById("layout-body").outerHTML, mainHtml);
     assert.equal(f.storeMessages.length, 0);
     assert.equal(f.held.size, 0, "closing clears frame timers");
+});
+
+test("nickname hiding updates verified native chat frames without replacing their documents", async (t) => {
+    const f = fixture(t, { stored: layout([A]) });
+    await f.open();
+    const native = f.attachFrame(A);
+    native.load();
+    await waitForCondition(() => f.cell(A).dataset.state === "ready");
+    const frame = f.frame(A);
+    const style = () => native.doc.getElementById("cheese-spanner-chat-multiview-frame-style");
+    const css = f.w.CheeseSpanner.chatNicknameDisplay.STYLE_TEXT;
+    assert.equal(style().textContent.includes(css), false);
+    f.changeSync({ chatNicknameHidden: true });
+    assert.equal(style().textContent.includes(css), true);
+    f.changeSync({ chatNicknameHidden: false });
+    assert.equal(style().textContent.includes(css), false);
+    assert.equal(f.frame(A), frame);
+    assert.equal(f.storeMessages.length, 0);
 });
 
 test("donation hiding follows the global option in verified chat frames without reloading them", async (t) => {
@@ -2061,8 +2080,19 @@ test("content scripts and the dynamic ad script stay in the top frame, so chat f
             /allFrames\s*:\s*true|all_frames|matchOriginAsFallback\s*:\s*true|match_about_blank/,
             file
         );
-        for (const call of source.matchAll(/executeScript\s*\(\s*\{[\s\S]{0,200}?target\s*:\s*\{([^}]*)\}/g))
+        for (const call of source.matchAll(/executeScript\s*\(\s*\{[\s\S]{0,200}?target\s*:\s*\{([^}]*)\}/g)) {
+            if (/\bdocumentIds\s*:/.test(call[1])) {
+                assert.equal(file, path.join("shared", "followingFoldersRecovery.js"));
+                assert.match(call[1], /^\s*tabId\s*:\s*id\s*,\s*documentIds\s*:\s*\[\s*probe\.documentId\s*\]\s*$/);
+                assert.match(
+                    source,
+                    /const \[probe\] = await scripting\.executeScript\(\{\s*target:\s*\{\s*tabId:\s*id,\s*frameIds:\s*\[0\]/
+                );
+                assert.match(source, /probe\.frameId\s*!==\s*0/);
+                continue;
+            }
             assert.match(call[1], /frameIds\s*:\s*\[\s*0\s*\]/, file + " scripts only the top frame");
+        }
     }
 });
 

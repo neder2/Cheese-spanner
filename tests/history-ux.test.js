@@ -53,6 +53,50 @@ async function openHistory(t, amendHistory = () => {}, expectedVisibleCount = 2)
     return { dom, chrome, document, row, history };
 }
 
+test("each history sort calculates a row's watched-at key once while preserving all four orders", async (t) => {
+    const { dom, document } = await openHistory(
+        t,
+        (history) => {
+            history.entries = Object.fromEntries(
+                Array.from({ length: 200 }, (_, index) => {
+                    const id = `live:sort-${index}`;
+                    const value = entry(
+                        id,
+                        `기록 ${index}`,
+                        `2026-09-${String(1 + (index % 12)).padStart(2, "0")}`,
+                        100 + (index % 17)
+                    );
+                    return [id, value];
+                })
+            );
+        },
+        10
+    );
+    const w = dom.window;
+    const actualTime = w.getRowActualWatchedAt;
+    let calls = 0;
+    w.getRowActualWatchedAt = (row) => {
+        calls++;
+        return actualTime(row);
+    };
+    for (const mode of ["recent", "oldest", "longest", "shortest"]) {
+        document.getElementById("historySort").value = mode;
+        const expected = Array.from(w.getVisibleRows())
+            .sort(w.compareVisibleRows)
+            .map((row) => row.entry.id);
+        calls = 0;
+        const actual = Array.from(w.getVisibleRows());
+        assert.deepEqual(
+            actual.map((row) => row.entry.id),
+            expected,
+            mode
+        );
+        assert.ok(calls <= actual.length, `${mode}: ${calls} key calculations for ${actual.length} rows`);
+    }
+    document.getElementById("prevMonth").click();
+    assert.equal(w.getVisibleRows().length, 0, "a later month scope cannot reuse the previous sort keys");
+});
+
 function addChats(record, date, count, text = "내 채팅") {
     record.activities ||= [];
     record.activityDaily ||= {};
@@ -63,6 +107,33 @@ function addChats(record, date, count, text = "내 채팅") {
     }
     record.activityDaily[date] = { chatCount: count, donationCount: 0, donationCheese: 0 };
 }
+
+test("hidden history views render on selection and common delete controls track storage while hidden", async (t) => {
+    const { dom, document, chrome } = await openHistory(t, (history) => {
+        addChats(history.entries["live:alpha"], "2026-09-10", 1, "새 활동");
+    });
+    assert.equal(document.getElementById("channelRanking").children.length, 0);
+    assert.equal(document.getElementById("activityList").children.length, 0);
+    document.getElementById("rankingViewTab").click();
+    assert.equal(document.querySelectorAll("#channelRanking li[data-channel-id]").length, 2);
+    const listBefore = document.getElementById("historyList").innerHTML;
+    document.getElementById("historySearch").value = "일치하지 않는 검색";
+    dispatch(dom.window, document.getElementById("historySearch"), "input");
+    assert.equal(document.querySelectorAll("#channelRanking li[data-channel-id]").length, 0);
+    assert.equal(document.getElementById("historyList").innerHTML, listBefore, "hidden list stays untouched");
+    document.getElementById("historyViewTab").click();
+    assert.equal(document.querySelectorAll(".history-item").length, 0, "selected view uses the latest search");
+    document.getElementById("historySearch").value = "";
+    dispatch(dom.window, document.getElementById("historySearch"), "input");
+    document.getElementById("activityViewTab").click();
+    assert.match(document.getElementById("activityList").textContent, /새 활동/);
+    assert.equal(document.getElementById("clearHistory").disabled, false);
+    chrome.testState.local[STORAGE_KEY] = { entries: {} };
+    for (const listener of chrome.testState.storageChangeListeners) listener({ [STORAGE_KEY]: {} }, "local");
+    await waitForCondition(() => document.getElementById("clearHistory").disabled);
+    document.getElementById("historyViewTab").click();
+    assert.equal(document.querySelectorAll(".history-item").length, 0);
+});
 
 test("history keeps the calendar available across views and reveals selection and row actions on demand", async (t) => {
     const { dom, document, row, chrome } = await openHistory(t);
@@ -134,7 +205,9 @@ test("paging selects only current rows, keeps other selections visible in status
     dispatch(dom, search, "input");
     assert.deepEqual(ids(), ["live:page-21"]);
     assert.equal(document.getElementById("historyNextPage").closest("nav").hidden, true);
+    document.getElementById("rankingViewTab").click();
     assert.equal(document.querySelector("#channelRanking li").dataset.channelId, "page-21");
+    document.getElementById("historyViewTab").click();
     assert.equal(document.getElementById("selectionStatus").textContent, "선택 10개 · 현재 목록 밖 9개");
     search.value = "";
     dispatch(dom, search, "input");

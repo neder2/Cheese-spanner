@@ -67,6 +67,94 @@ function moderatorRow({ id = "", index = "", author = "운영자", text = "안�
     return `<div class="chat-row" ${id ? `data-chat-id="${id}"` : ""} ${index ? `data-virtual-index="${index}"` : ""}><span class="badge" aria-label="매니저"></span><span class="nickname">${author}</span><span class="message">${text}</span></div>`;
 }
 
+function verifiedMark(grade) {
+    return `<i class="_icon_8bw0p_17 _mark_8bw0p_75 _is_${grade}_8bw0p_75"><span class="blind">인증 마크</span></i>`;
+}
+
+test("current nickname renderer collects partner and challenger authors without collecting official or popup marks", (t) => {
+    const h = createModules(
+        t,
+        ["partner", "challenger", "official"]
+            .map(
+                (grade, index) =>
+                    `<div class="chat-row" data-chat-id="current-${index}"><span class="nickname">방문자${index}<i class="_mark_1pcsq_81 _is_${grade}_1pcsq_${81 + index * 3}"><span class="blind">인증 마크</span></i></span><span class="message">인사</span></div>`
+            )
+            .join("")
+    );
+    for (const row of h.root.children) h.collect(row);
+    assert.deepEqual(
+        Array.from(h.snapshot(), (message) => message.role),
+        ["partner", "challenger"]
+    );
+    const row = h.root.lastElementChild;
+    row.querySelector("i").remove();
+    row.querySelector(".nickname").insertAdjacentHTML(
+        "beforeend",
+        '<div role="alertdialog"><i class="_mark_1pcsq_81 _is_partner_1pcsq_81"></i></div>'
+    );
+    assert.equal(h.namespace.parser.parseChatRow(row).role, "");
+});
+
+test("partner and challenger nickname marks collect while body, popup and official marks do not", (t) => {
+    const h = createModules(
+        t,
+        ["partner", "challenger", "official"]
+            .map(
+                (grade, i) =>
+                    `<div class="chat-row" data-chat-id="grade-${i}"><span class="nickname">방문자${i}${verifiedMark(grade)}</span><span class="message">안녕하세요</span></div>`
+            )
+            .join("")
+    );
+    for (const row of h.root.children) h.collect(row);
+    assert.deepEqual(
+        Array.from(h.snapshot(), (m) => m.role),
+        ["partner", "challenger"]
+    );
+    const row = h.root.lastElementChild;
+    row.querySelector(".nickname i").remove();
+    row.querySelector(".message").innerHTML = `파트너 챌린저 ${verifiedMark("partner")}`;
+    row.insertAdjacentHTML(
+        "beforeend",
+        `<div role="dialog"><span class="nickname">파트너${verifiedMark("partner")}</span></div>`
+    );
+    assert.equal(h.namespace.parser.parseChatRow(row).role, "");
+    const author = row.querySelector(".nickname");
+    author.insertAdjacentHTML("beforeend", `<div role="alertdialog">${verifiedMark("partner")}</div>`);
+    assert.equal(
+        h.namespace.parser.parseChatRow(row).role,
+        "",
+        "a nested profile alertdialog cannot classify its enclosing author"
+    );
+    author.querySelector('[role="alertdialog"]').remove();
+    row.querySelector(".nickname").insertAdjacentHTML("beforeend", verifiedMark("partner"));
+    row.insertAdjacentHTML("afterbegin", '<span class="badge" aria-label="매니저"></span>');
+    assert.equal(
+        h.namespace.parser.parseChatRow(row).role,
+        "manager",
+        "channel role takes priority without duplicate collection"
+    );
+});
+
+test("verified streamer marks retain refreshed identity and stop collecting after a row becomes a viewer", (t) => {
+    const h = createModules(
+        t,
+        `<div class="chat-row" data-chat-id="partner-old"><span class="nickname">방문자${verifiedMark("partner")}</span><span class="message">인사</span></div>`
+    );
+    const row = h.root.firstElementChild;
+    h.collect(row);
+    assert.equal(h.snapshot().length, 1);
+    const recordId = h.snapshot()[0].recordId;
+    h.collect(row);
+    assert.equal(h.snapshot()[0].recordId, recordId);
+    row.setAttribute("data-chat-id", "viewer-new");
+    row.querySelector(".nickname").textContent = "일반 시청자";
+    row.querySelector(".message").textContent = "다른 인사";
+    h.collect(row);
+    h.nextPass();
+    assert.equal(h.snapshot().length, 1);
+    assert.equal(h.snapshot()[0].author, "방문자");
+});
+
 test("the stateless parser reads current DOM without collecting, adding markers, or assigning an identity", (t) => {
     const h = createModules(t, moderatorRow({ author: "첫 작성자", text: "첫 본문" }));
     const row = h.root.firstElementChild;
@@ -491,6 +579,207 @@ function measuredChatRow({ badge = "", nickname, body, index = "" }) {
         "</div></div></div>",
     ].join("");
 }
+
+// The current native rows expose no message ID attribute; the existing MAIN bridge can read
+// their key/user/time tuple (Chrome 151, public live chat, 2026-11-15; 16/16 sampled rows).
+function attachNativeMessage(row, { key = "native-first", user = "native-author", time = 1794700800000 } = {}) {
+    const message = {
+        key,
+        user,
+        time,
+        status: "NORMAL",
+        profile: { userIdHash: user, nickname: "진행담당" },
+    };
+    row.querySelector('[class*="chatting_message"]').__reactProps$nativeCollection = {
+        children: { props: { chatMessage: message } },
+    };
+    return message;
+}
+
+function enableNativeMessageBridge(h) {
+    h.root.closest("aside").id = "aside-chatting";
+    h.dom.window.history.replaceState({}, "", "/live/" + "f".repeat(32));
+    h.dom.window.eval(fs.readFileSync(path.join(repoRoot, "features/chatTimestampPage.js"), "utf8"));
+}
+
+test("native identity preserves a message that leaves the rendered window and reappears later", (t) => {
+    const html = measuredChatRow({ badge: ROLE_BADGE, nickname: "진행담당", body: "다시 표시되는 공지" });
+    const h = createModules(t, html + '<div class="chat-row"><span class="message">일반 채팅</span></div>');
+    enableNativeMessageBridge(h);
+    const original = h.root.firstElementChild;
+    attachNativeMessage(original);
+    assert.equal(
+        h.namespace.parser.readPageMessage(original, h.namespace.parser.parseChatRow(original)).message.key,
+        "native-first"
+    );
+    h.collect(original);
+    const first = h.snapshot()[0];
+    h.store.markRead([first.id]);
+    original.remove();
+    h.store.removeSubtrees([original], [], { isListCleared: () => false });
+    h.store.finishScan(false);
+    h.root.insertAdjacentHTML("beforeend", html);
+    const replacement = h.root.lastElementChild;
+    attachNativeMessage(replacement);
+    h.collect(replacement);
+    h.store.finishScan(true);
+    assert.equal(h.snapshot().length, 1, "the same native message must not be collected twice");
+    assert.equal(h.snapshot()[0].recordId, first.recordId);
+    assert.equal(h.snapshot()[0].unread, false);
+    let scrolls = 0;
+    replacement.scrollIntoView = () => scrolls++;
+    h.store.navigate(first.id, first.recordId);
+    assert.equal(scrolls, 1, "navigation follows the current native row");
+});
+
+test("different native messages keep identical text even inside one row replacement batch", (t) => {
+    const html = measuredChatRow({ badge: ROLE_BADGE, nickname: "진행담당", body: "반복 공지" });
+    for (const identity of [{ key: "native-second" }, { user: "another-author" }, { time: 1794700800001 }]) {
+        const h = createModules(t, html);
+        enableNativeMessageBridge(h);
+        const original = h.root.firstElementChild;
+        attachNativeMessage(original);
+        h.collect(original);
+        const replacement = original.cloneNode(true);
+        attachNativeMessage(replacement, identity);
+        original.replaceWith(replacement);
+        h.store.removeSubtrees([original], [replacement]);
+        h.collect(replacement);
+        h.store.finishScan(true);
+        assert.equal(h.snapshot().length, 2, JSON.stringify(identity));
+        assert.notEqual(h.snapshot()[0].id, h.snapshot()[1].id);
+    }
+});
+
+test("late native identity attaches to an existing record without resetting its read state", (t) => {
+    const html = measuredChatRow({ badge: ROLE_BADGE, nickname: "진행담당", body: "브리지 준비 전 공지" });
+    const h = createModules(t, html);
+    const original = h.root.firstElementChild;
+    attachNativeMessage(original);
+    h.collect(original);
+    const first = h.snapshot()[0];
+    h.store.markRead([first.id]);
+    enableNativeMessageBridge(h);
+    h.collect(original);
+    h.store.finishScan(true);
+    assert.equal(h.snapshot().length, 1);
+    assert.equal(h.snapshot()[0].id, first.id);
+    assert.equal(h.snapshot()[0].recordId, first.recordId);
+    original.remove();
+    h.store.removeSubtrees([original], []);
+    h.store.finishScan(false);
+    h.root.innerHTML = html;
+    attachNativeMessage(h.root.firstElementChild);
+    h.collect(h.root.firstElementChild);
+    assert.equal(h.snapshot().length, 1);
+    assert.equal(h.snapshot()[0].unread, false);
+});
+
+test("two pending native parses converge on one record without exposing the native identity", (t) => {
+    const html = measuredChatRow({ badge: ROLE_BADGE, nickname: "진행담당", body: "동일 메시지 재등장" });
+    const h = createModules(t, html + html);
+    enableNativeMessageBridge(h);
+    const rows = [...h.root.children];
+    for (const row of rows) attachNativeMessage(row);
+    const pending = rows.map((row) => h.store.parseChatMessage(row));
+    for (const parsed of pending) h.store.collect(parsed, { deferNotify: true });
+    h.store.finishScan(true);
+    assert.equal(h.snapshot().length, 1);
+    assert.equal(pending[0].id, pending[1].id);
+    assert.equal(Object.hasOwn(h.snapshot()[0], "nativeIdentity"), false);
+    assert.doesNotMatch(JSON.stringify(h.snapshot()), /native-first|native-author|1794700800000/);
+    h.collect(rows[0]);
+    h.collect(rows[1]);
+    assert.equal(h.snapshot().length, 1);
+});
+
+test("native identity survives capacity eviction but is discarded when collection is cleared", (t) => {
+    const html = measuredChatRow({ badge: ROLE_BADGE, nickname: "진행담당", body: "보관 제한 공지" });
+    const h = createModules(t, html + html);
+    enableNativeMessageBridge(h);
+    h.store.configure({ enabled: true, maximum: 1 });
+    const [first, second] = h.root.children;
+    attachNativeMessage(first);
+    attachNativeMessage(second, { key: "native-second" });
+    h.collect(first);
+    h.collect(second);
+    const current = h.snapshot()[0];
+    first.remove();
+    h.store.removeSubtrees([first], []);
+    h.store.finishScan(false);
+    h.root.insertAdjacentHTML("beforeend", html);
+    const returned = h.root.lastElementChild;
+    attachNativeMessage(returned);
+    h.collect(returned);
+    assert.equal(h.snapshot().length, 1);
+    assert.equal(h.snapshot()[0].recordId, current.recordId, "an evicted backlog message stays evicted");
+    h.store.clear();
+    h.collect(returned);
+    assert.equal(h.snapshot().length, 1, "clearing discards the private native identity index too");
+    assert.notEqual(h.snapshot()[0].recordId, current.recordId);
+});
+
+test("native identity keeps late role badges on one message and preserves real row reuse", (t) => {
+    const html = measuredChatRow({ badge: ROLE_BADGE, nickname: "진행담당", body: "같은 내용" });
+    const h = createModules(t, html);
+    enableNativeMessageBridge(h);
+    const row = h.root.firstElementChild;
+    const source = attachNativeMessage(row);
+    h.collect(row);
+    const first = h.snapshot()[0];
+    row.querySelector('img[alt="채팅 운영자"]').alt = "스트리머";
+    h.collect(row);
+    h.nextPass();
+    h.nextPass();
+    assert.equal(h.snapshot().length, 1);
+    assert.equal(h.snapshot()[0].recordId, first.recordId);
+    source.key = "native-second";
+    h.collect(row);
+    h.nextPass();
+    h.nextPass();
+    assert.equal(h.snapshot().length, 2, "a new native key preserves an actual repeated message");
+});
+
+test("a late body update retracts only the mixed candidate for the same native message", (t) => {
+    const html = measuredChatRow({ badge: ROLE_BADGE, nickname: "진행담당", body: "이전 공지" });
+    const h = createModules(t, html);
+    enableNativeMessageBridge(h);
+    const row = h.root.firstElementChild;
+    const source = attachNativeMessage(row);
+    h.collect(row);
+    source.key = "native-second";
+    h.collect(row);
+    h.nextPass();
+    h.nextPass();
+    assert.equal(h.snapshot().length, 2);
+    row.querySelector("._text_w9pvh_1").textContent = "최종 공지";
+    h.collect(row);
+    h.nextPass();
+    h.nextPass();
+    assert.deepEqual(
+        Array.from(h.snapshot(), (message) => message.text),
+        ["이전 공지", "최종 공지"]
+    );
+});
+
+test("retired native messages cannot be collected from new nodes after a channel change", (t) => {
+    const html = measuredChatRow({ badge: ROLE_BADGE, nickname: "진행담당", body: "이전 방송 공지" });
+    const h = createModules(t, html);
+    enableNativeMessageBridge(h);
+    const original = h.root.firstElementChild;
+    attachNativeMessage(original);
+    h.collect(original);
+    h.store.retireRows([original]);
+    h.store.clear();
+    const replacement = original.cloneNode(true);
+    attachNativeMessage(replacement);
+    original.replaceWith(replacement);
+    h.collect(replacement);
+    assert.equal(h.snapshot().length, 0);
+    attachNativeMessage(replacement, { key: "new-channel-message" });
+    h.collect(replacement);
+    assert.equal(h.snapshot().length, 1);
+});
 
 test("message bodies keep emoticon images as ordered tokens without mixing nickname badges", (t) => {
     const h = createModules(t);

@@ -314,7 +314,7 @@
  * MIT License — and was modified for Cheese Spanner.
  * Full license text: THIRD_PARTY_NOTICES.md
  */
-(function installCompressor(auxiliaryIndex) {
+(function installCompressor(auxiliaryIndex, readMainSelection) {
     const auxiliary = Number.isInteger(auxiliaryIndex);
     const prefix = auxiliary
         ? `cheese-spanner-audio-compressor-aux-${auxiliaryIndex}`
@@ -361,6 +361,7 @@
     let optionsReady = false;
     let stateReady = auxiliary;
     let stateRestorePending = false;
+    let auxiliaryReplay = null;
     let compressorActive = false;
     let compressorVolume = 1;
     let activeVideo = null;
@@ -372,6 +373,7 @@
     let controlEl = null;
     let runtimeInstalled = false;
     let removePageChangeDetection = null;
+    const auxiliaryViews = new Map();
     const scheduleSync = createThrottledDomSync(syncState, 240);
     const auxiliaryTarget = () =>
         CheeseSpanner.vodMultiview?.getAuxiliaries().find(({ index }) => index === auxiliaryIndex);
@@ -416,6 +418,7 @@
             stateRestorePending = false;
             stateReady = true;
             syncState();
+            for (const sync of auxiliaryViews.values()) sync();
         }
     }
 
@@ -704,13 +707,13 @@
     }
 
     function findVolumeControl() {
+        if (auxiliary)
+            return auxiliaryTarget()?.player.querySelector(".pzp-pc__bottom-buttons-left > .pzp-pc__volume-control");
         const video = targetVideo();
-        const scope = auxiliary ? auxiliaryTarget()?.player : document;
-        if (!scope) return null;
         const candidates = [];
-        for (const el of scope.querySelectorAll(VOLUME_CONTROL_SELECTOR)) {
+        for (const el of document.querySelectorAll(VOLUME_CONTROL_SELECTOR)) {
             if (el.id === CONTROL_ID || controlEl?.contains(el)) continue;
-            if (!auxiliary && el.closest("[data-bcvm-video-no]")) continue;
+            if (el.closest("[data-bcvm-video-no]")) continue;
             if (!(el instanceof HTMLElement) || visibleArea(el) <= 0) continue;
             if (video instanceof HTMLVideoElement && !isControlNearVideo(el, video)) continue;
             const rect = el.getBoundingClientRect();
@@ -721,6 +724,7 @@
     }
 
     function findVolumeButton(container) {
+        if (auxiliary) return container?.querySelector(".pzp-pc__volume-button");
         const buttons = Array.from(container?.querySelectorAll?.(VOLUME_BUTTON_SELECTOR) || []).filter((el) => {
             return el instanceof HTMLElement && el.id !== BUTTON_ID && visibleArea(el) > 0;
         });
@@ -742,21 +746,26 @@
         return null;
     }
 
+    function setControlAttribute(element, name, value) {
+        if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+    }
+
     function syncButtonLabels(button, failed = false) {
         const label = failed ? `${BUTTON_LABEL}(사용할 수 없음)` : BUTTON_LABEL;
-        button.setAttribute("label", label);
-        button.setAttribute("aria-label", label);
-        button.setAttribute("tooltip", label);
+        setControlAttribute(button, "label", label);
+        setControlAttribute(button, "aria-label", label);
+        setControlAttribute(button, "tooltip", label);
         CheeseSpanner.utils.syncPlayerButtonTooltip(button, label);
         button.removeAttribute("title");
     }
 
     function syncButtonClass(button, container) {
         const reference = findVolumeButton(container);
-        button.className = reference?.className || "";
+        const className = reference?.className || "";
+        if (button.className !== className) button.className = className;
         button.style.order = "";
         button.style.marginLeft = "";
-        if (!reference) return;
+        if (!reference || auxiliary) return;
         const style = getComputedStyle(reference);
         button.style.opacity = reference.style.opacity || "";
         button.style.visibility = style.visibility === "hidden" ? "hidden" : "";
@@ -769,11 +778,12 @@
         const video = targetVideo();
         const active = compressorEnabled();
         const failed = active && video instanceof HTMLVideoElement && graphs.get(video)?.failed === true;
-        button.disabled = !isPlaybackRoute() || !usableVideo(video);
-        button.setAttribute("aria-pressed", active ? "true" : "false");
-        button.dataset.cheeseSpannerAudioCompressor = active ? "1" : "0";
-        button.dataset.cheeseSpannerReady = failed ? "0" : "1";
-        button.dataset.cheeseSpannerRestoreTrigger = "playback-entry";
+        const disabled = !isPlaybackRoute() || !usableVideo(video);
+        if (button.disabled !== disabled) button.disabled = disabled;
+        setControlAttribute(button, "aria-pressed", active ? "true" : "false");
+        setControlAttribute(button, "data-cheese-spanner-audio-compressor", active ? "1" : "0");
+        setControlAttribute(button, "data-cheese-spanner-ready", failed ? "0" : "1");
+        setControlAttribute(button, "data-cheese-spanner-restore-trigger", "playback-entry");
         syncButtonLabels(button, failed);
         syncVolumeControl();
     }
@@ -786,8 +796,9 @@
         if (slider.style.getPropertyValue("--bcac-volume") !== `${percent}%`) {
             slider.style.setProperty("--bcac-volume", `${percent}%`);
         }
-        slider.setAttribute("aria-valuetext", `${percent}%`);
-        slider.disabled = Boolean(buttonEl?.disabled) || buttonEl?.dataset.cheeseSpannerReady === "0";
+        setControlAttribute(slider, "aria-valuetext", `${percent}%`);
+        const disabled = Boolean(buttonEl?.disabled) || buttonEl?.dataset.cheeseSpannerReady === "0";
+        if (slider.disabled !== disabled) slider.disabled = disabled;
         const tooltip = controlEl.querySelector(".bcac-volume .cheese-spanner-player-tooltip");
         const text = `컴프레서 볼륨 ${percent}%`;
         if (tooltip && tooltip.textContent !== text) tooltip.textContent = text;
@@ -935,11 +946,11 @@
 
     function syncState() {
         if (!optionsReady || audioRecoveryStopped) return;
-        const video = targetVideo();
+        const target = auxiliary ? auxiliaryTarget() : null;
+        const video = auxiliary ? target?.video : targetVideo();
         if (activeVideo && activeVideo !== video) releaseActiveGraph();
         if (auxiliary && !video) {
-            compressorActive = false;
-            compressorVolume = 1;
+            auxiliaryReplay = null;
             removeButton();
             return;
         }
@@ -951,6 +962,14 @@
         if (!featureEnabled()) {
             syncDisabledState();
             return;
+        }
+        if (auxiliary && auxiliaryReplay !== target.media.videoNo) {
+            // Seed each new replay from the tab's remembered choice, then let its controls work independently.
+            const remembered = readMainSelection();
+            if (!remembered) return;
+            auxiliaryReplay = target.media.videoNo;
+            compressorActive = remembered.active;
+            compressorVolume = remembered.volume;
         }
         if (findExternalCompressor()) {
             removeButton();
@@ -989,8 +1008,7 @@
     }
 
     function isOwnButtonMutation(mutation) {
-        // syncState가 매번 버튼의 class/style을 다시 쓰므로, 자기 자신이 만든
-        // attribute mutation으로 sync가 다시 깨어나는 자기 루프를 끊는다.
+        // 실제 상태·스타일 변경으로 생긴 자기 mutation이 sync를 다시 깨우지 않게 한다.
         if (!controlEl || !(mutation.target instanceof Node)) return false;
         return mutation.target === controlEl || controlEl.contains(mutation.target);
     }
@@ -1051,15 +1069,14 @@
         installRuntime();
         syncState();
     });
-    if (auxiliary) document.addEventListener(AUXILIARY, syncState);
-    else {
-        const installed = new Set();
-        document.addEventListener(AUXILIARY, () => {
-            for (const { index } of CheeseSpanner.vodMultiview?.getAuxiliaries() || []) {
-                if (installed.has(index)) continue;
-                installed.add(index);
-                installCompressor(index);
-            }
-        });
+    if (auxiliary) {
+        document.addEventListener(AUXILIARY, syncState);
+        return syncState;
     }
+    const readSelection = () => (stateReady ? { active: compressorActive, volume: compressorVolume } : null);
+    document.addEventListener(AUXILIARY, () => {
+        for (const { index } of CheeseSpanner.vodMultiview?.getAuxiliaries() || []) {
+            if (!auxiliaryViews.has(index)) auxiliaryViews.set(index, installCompressor(index, readSelection));
+        }
+    });
 })();

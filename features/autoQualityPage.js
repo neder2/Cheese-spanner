@@ -118,6 +118,7 @@
     const NATIVE_AD_MEDIA_SELECTOR =
         '[data-role="imaAdContainerEl"], [data-role="gvAdContainerEl"], #preAdPlayerWrapper, #midAdPlayerWrapper';
     const ROUTE_MEDIA_LOAD_EVENTS = ["emptied", "loadstart", "loadedmetadata"];
+    const VOD_AUXILIARY_EVENT = "cheese-spanner:vod-multiview:auxiliary";
 
     let cachedPlayer = null;
     let liveQualityBinding = null;
@@ -135,6 +136,7 @@
     let autoQualityEnabled = true;
     let liveQualityIntentKey = "";
     const nativeSelectionLocks = new WeakMap();
+    const auxiliaryQualityBindings = new Map();
     const streamInfoSources = new WeakMap();
     let streamInfoSourceSequence = 0;
     let commentTimelineSeekSeq = 0;
@@ -615,6 +617,7 @@
     function syncAutoQualityState() {
         syncQualityTargetRouteState();
         readAutoQualityState();
+        syncAuxiliaryQuality();
         liveQualityIntentKey = [location.pathname, autoQualityEnabled, preferredQuality].join("|");
         if (!autoQualityEnabled) {
             // Re-enabling is a settings change: the next entry applies again on both live and VOD.
@@ -651,6 +654,59 @@
         if (awaitingRouteApplyRequest) return;
         if (isVodRoute() && hasStableVodApply()) return;
         startPageAutoApply();
+    }
+
+    function syncAuxiliaryQuality() {
+        const pathname = location.pathname;
+        const slots =
+            autoQualityEnabled && isVodRoute() && document.documentElement.hasAttribute(STATE_ATTR)
+                ? window.CheeseSpannerVodNative?.getAuxiliaries?.() || []
+                : [];
+        for (const [slot, binding] of auxiliaryQualityBindings) {
+            if (
+                slots.includes(slot) &&
+                binding.videoNo === slot.root.dataset.bcvmVideoNo &&
+                binding.quality === preferredQuality
+            )
+                continue;
+            binding.listeners.abort();
+            auxiliaryQualityBindings.delete(slot);
+        }
+
+        for (const slot of slots) {
+            if (auxiliaryQualityBindings.has(slot)) continue;
+            const { root, media, player } = slot;
+            const binding = {
+                videoNo: root.dataset.bcvmVideoNo,
+                quality: preferredQuality,
+                listeners: new AbortController(),
+            };
+            auxiliaryQualityBindings.set(slot, binding);
+            const { signal } = binding.listeners;
+            const apply = () => {
+                if (
+                    location.pathname !== pathname ||
+                    media.readyState < 2 ||
+                    media.seeking ||
+                    !root.isConnected ||
+                    !root.contains(media) ||
+                    root.dataset.bcvmVideoNo !== binding.videoNo
+                )
+                    return;
+                const trackList = getTrackListFromTarget(player);
+                const tracks = toTrackArray(trackList);
+                const selected = getSelectedTrack(tracks, trackList);
+                const target = pickTargetTrack(tracks, selected, getPreferredHeight(binding.quality));
+                if (!target) return;
+                // Stop listening once this entry has a track choice. Later manual selections belong to the viewer.
+                binding.listeners.abort();
+                if (!selected || !trackMatchesQuality(selected, getTrackHeight(target)))
+                    selectTrack(trackList, tracks, target);
+            };
+            for (const event of ["loadedmetadata", "canplay", "seeked"])
+                media.addEventListener(event, apply, { signal });
+            apply();
+        }
     }
 
     function installPageEventListeners() {
@@ -998,6 +1054,7 @@
     window.addEventListener(ROUTE_CHANGE_EVENT, syncAutoQualityState);
     window.addEventListener("pageshow", syncAutoQualityState, true);
     document.addEventListener(STREAM_INFO_READ_EVENT, onStreamInfoRead, true);
+    document.addEventListener(VOD_AUXILIARY_EVENT, syncAuxiliaryQuality);
 
     function isElement(value) {
         return value instanceof HTMLElement;

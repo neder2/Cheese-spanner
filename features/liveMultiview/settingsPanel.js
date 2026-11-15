@@ -36,6 +36,8 @@
             generation = 0,
             message = "";
         let searchController = null;
+        let addTab = "search",
+            followingChannels = null;
         const searchResults = new Map();
         function cancelSearch() {
             searchController?.abort();
@@ -48,6 +50,10 @@
             positionPanel();
         }
         function onSearchInput(event) {
+            if (event.target.name === "followingFilter") {
+                filterFollowing();
+                return;
+            }
             if (event.target.name !== "liveUrl") return;
             cancelSearch();
             panel?.querySelector(".bcmv-search-results")?.replaceChildren();
@@ -60,7 +66,7 @@
         }
         async function onSubmit(event) {
             event.preventDefault();
-            if (panelId !== "add" || !panel?.contains(event.target)) return;
+            if (panelId !== "add" || addTab !== "search" || !panel?.contains(event.target)) return;
             const input = panel.querySelector('input[name="liveUrl"]');
             const keyword = input.value.trim();
             if (searchController) return;
@@ -117,41 +123,7 @@
                                 : -1;
                         return count(b) - count(a);
                     });
-                for (const channel of channels) {
-                    const id = channel.channelId;
-                    const row = button("", "add-search-result", id);
-                    row.className = "bcmv-search-result";
-                    const detail = el("span", "bcmv-search-detail");
-                    const avatar = el("span", "bcmv-search-avatar");
-                    const imageUrl = root.utils.normalizeChzzkImageUrl(channel.channelImageUrl);
-                    if (imageUrl) {
-                        const image = el("img");
-                        image.alt = "";
-                        image.width = image.height = 32;
-                        image.loading = "lazy";
-                        image.decoding = "async";
-                        image.referrerPolicy = "no-referrer";
-                        image.addEventListener("error", () => image.remove(), { once: true });
-                        image.src = imageUrl;
-                        avatar.append(image);
-                    }
-                    const info = el("span", "bcmv-search-info");
-                    info.append(el("span", "bcmv-search-name", channel.channelName), detail);
-                    row.append(avatar, info);
-                    const result = {
-                        id,
-                        row,
-                        detail,
-                        live: channel.openLive,
-                        viewers: null,
-                        loading: channel.openLive === true,
-                    };
-                    searchResults.set(id, result);
-                    updateSearchResult(result);
-                    const item = el("li");
-                    item.append(row);
-                    list.append(item);
-                }
+                for (const channel of channels) appendSearchResult(list, channel);
                 searchNotice(
                     channels.length
                         ? response.content.page?.next
@@ -201,6 +173,226 @@
                     submit.disabled = false;
                     positionPanel();
                 }
+            }
+        }
+        function appendSearchResult(list, channel, viewers = null, loading = channel.openLive === true) {
+            const id = channel.channelId;
+            const row = button("", "add-search-result", id);
+            row.className = "bcmv-search-result";
+            const detail = el("span", "bcmv-search-detail");
+            const avatar = el("span", "bcmv-search-avatar");
+            const imageUrl = root.utils.normalizeChzzkImageUrl(channel.channelImageUrl);
+            if (imageUrl) {
+                const image = el("img");
+                image.alt = "";
+                image.width = image.height = 32;
+                image.loading = "lazy";
+                image.decoding = "async";
+                image.referrerPolicy = "no-referrer";
+                image.addEventListener("error", () => image.remove(), { once: true });
+                image.src = imageUrl;
+                avatar.append(image);
+            }
+            const info = el("span", "bcmv-search-info");
+            info.append(el("span", "bcmv-search-name", channel.channelName), detail);
+            row.append(avatar, info);
+            const result = { id, row, detail, live: channel.openLive, viewers, loading };
+            searchResults.set(id, result);
+            updateSearchResult(result);
+            const item = el("li");
+            item.append(row);
+            list.append(item);
+        }
+        function filterFollowing() {
+            if (panelId !== "add" || addTab !== "following" || !followingChannels) return;
+            const input = panel.querySelector('[name="followingFilter"]');
+            const list = panel.querySelector(".bcmv-following-results");
+            const keyword = input.value.trim().toLocaleLowerCase("ko-KR");
+            const rows = followingChannels.filter(({ channel }) =>
+                channel.channelName.toLocaleLowerCase("ko-KR").includes(keyword)
+            );
+            list.replaceChildren();
+            searchResults.clear();
+            for (const { channel, viewers } of rows) appendSearchResult(list, channel, viewers, false);
+            text(
+                panel.querySelector(".bcmv-following-status"),
+                !followingChannels.length
+                    ? "방송 중인 팔로잉 채널이 없습니다."
+                    : !rows.length
+                      ? "일치하는 팔로잉 채널이 없습니다."
+                      : `${rows.length}개 채널 · 방송 중인 팔로잉 채널을 추가할 수 있어요.`
+            );
+            positionPanel();
+        }
+        async function loadFollowing() {
+            if (panelId !== "add" || addTab !== "following" || !panel?.isConnected) return;
+            cancelSearch();
+            followingChannels = null;
+            const controller = (searchController = new AbortController());
+            const currentRoute = routeId;
+            const current = () =>
+                searchController === controller &&
+                !controller.signal.aborted &&
+                panel?.isConnected &&
+                panelId === "add" &&
+                addTab === "following" &&
+                routeId === currentRoute &&
+                model.channelFromUrl(location.href) === currentRoute;
+            const pane = panel.querySelector('[data-bcmv-add-pane="following"]');
+            const status = pane.querySelector(".bcmv-following-status");
+            const refresh = pane.querySelector('[data-action="refresh-following"]');
+            pane.querySelector("ul").replaceChildren();
+            pane.setAttribute("aria-busy", "true");
+            refresh.disabled = true;
+            text(status, "팔로잉 목록을 불러오고 있습니다.");
+            try {
+                const response = await root.utils.fetchJson(
+                    "https://api.chzzk.naver.com/service/v1/channels/following-lives?sortType=RECOMMEND",
+                    { signal: controller.signal }
+                );
+                if (!current()) return;
+                if (response?.code === 401 || response?.code === 403) {
+                    text(status, "치지직에 로그인한 뒤 새로고침해 주세요.");
+                    return;
+                }
+                if (response?.code !== 200 || !Array.isArray(response.content?.followingList))
+                    throw new Error("Invalid following lives response");
+                const seen = new Set();
+                followingChannels = [];
+                for (const { channel, liveInfo } of response.content.followingList.slice(0, 505).filter(Boolean)) {
+                    const id = root.utils.normalizeChzzkChannelId(channel?.channelId);
+                    const name =
+                        typeof channel?.channelName === "string" ? channel.channelName.trim().slice(0, 100) : "";
+                    if (
+                        !/^[a-f0-9]{32}$/.test(id) ||
+                        !name ||
+                        !/^[1-9]\d*$/.test(String(liveInfo?.liveId)) ||
+                        seen.has(id)
+                    )
+                        continue;
+                    seen.add(id);
+                    followingChannels.push({
+                        channel: {
+                            channelId: id,
+                            channelName: name,
+                            channelImageUrl: channel.channelImageUrl,
+                            openLive: true,
+                        },
+                        viewers:
+                            Number.isInteger(liveInfo.concurrentUserCount) && liveInfo.concurrentUserCount >= 0
+                                ? liveInfo.concurrentUserCount
+                                : null,
+                    });
+                }
+                filterFollowing();
+            } catch (error) {
+                if (current())
+                    text(
+                        status,
+                        /^HTTP (401|403)$/.test(error?.message)
+                            ? "치지직에 로그인한 뒤 새로고침해 주세요."
+                            : "팔로잉 목록을 불러오지 못했습니다. 새로고침해 주세요."
+                    );
+            } finally {
+                if (current()) {
+                    searchController = null;
+                    pane.removeAttribute("aria-busy");
+                    refresh.disabled = false;
+                    positionPanel();
+                }
+            }
+        }
+        function setAddTab(name) {
+            if (panelId !== "add" || addTab === name) return;
+            cancelSearch();
+            followingChannels = null;
+            addTab = name;
+            for (const tab of panel.querySelectorAll("[data-bcmv-add-tab]")) {
+                const selected = tab.dataset.bcmvAddTab === name;
+                tab.setAttribute("aria-selected", String(selected));
+                tab.tabIndex = selected ? 0 : -1;
+            }
+            for (const pane of panel.querySelectorAll("[data-bcmv-add-pane]")) {
+                pane.hidden = pane.dataset.bcmvAddPane !== name;
+                pane.removeAttribute("aria-busy");
+                pane.querySelector("ul").replaceChildren();
+            }
+            panel.querySelector('[data-action="submit-add"]').disabled = false;
+            panel.querySelector('[data-action="refresh-following"]').disabled = false;
+            searchNotice("");
+            if (name === "following") void loadFollowing();
+        }
+        function renderAddArea(section) {
+            const tabs = el("div", "bcmv-add-tabs");
+            tabs.setAttribute("role", "tablist");
+            tabs.setAttribute("aria-label", "방송 추가 방법");
+            for (const [name, label] of [
+                ["search", "검색·주소"],
+                ["following", "팔로잉"],
+            ]) {
+                const tab = button(label, "add-tab");
+                tab.id = `${PANEL_ID}-add-${name}-tab`;
+                tab.dataset.bcmvAddTab = name;
+                tab.setAttribute("role", "tab");
+                tab.setAttribute("aria-selected", String(addTab === name));
+                tab.setAttribute("aria-controls", `${PANEL_ID}-add-${name}-pane`);
+                tab.tabIndex = addTab === name ? 0 : -1;
+                tab.addEventListener("click", () => setAddTab(name));
+                tabs.append(tab);
+            }
+            tabs.addEventListener("keydown", (event) => {
+                const items = [...tabs.children];
+                const index = items.indexOf(event.target);
+                if (index < 0 || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const next = event.key === "Home" ? 0 : event.key === "End" ? 1 : 1 - index;
+                setAddTab(items[next].dataset.bcmvAddTab);
+                items[next].focus();
+            });
+            section.append(tabs);
+            for (const name of ["search", "following"]) {
+                const pane = el("div", "bcmv-add-pane");
+                pane.id = `${PANEL_ID}-add-${name}-pane`;
+                pane.dataset.bcmvAddPane = name;
+                pane.setAttribute("role", "tabpanel");
+                pane.setAttribute("aria-labelledby", `${PANEL_ID}-add-${name}-tab`);
+                pane.hidden = addTab !== name;
+                if (name === "search") {
+                    const form = el("form"),
+                        input = el("input");
+                    input.type = "search";
+                    input.required = true;
+                    input.maxLength = 2048;
+                    input.name = "liveUrl";
+                    input.placeholder = "채널 이름 또는 라이브 주소";
+                    input.setAttribute("aria-label", input.placeholder);
+                    input.autocomplete = "off";
+                    const submit = button("검색", "submit-add");
+                    submit.type = "submit";
+                    form.append(input, submit);
+                    const results = el("ul", "bcmv-search-results");
+                    results.setAttribute("aria-label", "방송인 검색 결과");
+                    pane.append(form, results);
+                } else {
+                    const filter = el("div", "bcmv-following-filter"),
+                        input = el("input");
+                    input.type = "search";
+                    input.name = "followingFilter";
+                    input.maxLength = 100;
+                    input.placeholder = "팔로잉 채널 찾기";
+                    input.setAttribute("aria-label", input.placeholder);
+                    const refresh = button("새로고침", "refresh-following");
+                    refresh.setAttribute("aria-label", "팔로잉 목록 새로고침");
+                    refresh.addEventListener("click", () => void loadFollowing());
+                    filter.append(input, refresh);
+                    const status = el("p", "bcmv-following-status");
+                    status.setAttribute("role", "status");
+                    const list = el("ul", "bcmv-search-results bcmv-following-results");
+                    list.setAttribute("aria-label", "방송 중인 팔로잉 채널");
+                    pane.append(filter, status, list);
+                }
+                section.append(pane);
             }
         }
         function updateSearchResult(result) {
@@ -522,7 +714,7 @@
                 chatBounds.top < window.innerHeight;
             const anchor = visibleChat ? chat : host;
             const bounds = anchor.getBoundingClientRect();
-            const width = Math.min(280, bounds.width > 16 ? bounds.width - 16 : 280, window.innerWidth - 16);
+            const width = Math.min(360, bounds.width > 16 ? bounds.width - 16 : 360, window.innerWidth - 16);
             const left = Math.max(8, Math.min(bounds.right - width - 8 || 8, window.innerWidth - width - 8));
             const headerBottom = visibleChat && chatHeader?.getBoundingClientRect().bottom;
             const anchorTop = headerBottom > bounds.top && headerBottom < bounds.bottom ? headerBottom : bounds.top;
@@ -535,7 +727,7 @@
                 Math.max(
                     0,
                     Math.min(
-                        360,
+                        520,
                         window.innerHeight * 0.6,
                         (bounds.bottom || window.innerHeight) - top - 8,
                         window.innerHeight - top - 8
@@ -578,6 +770,7 @@
         }
         function renderPanel(id, focus = false) {
             cancelSearch();
+            if (id !== "add") followingChannels = null;
             if (panelId === "add" || id === "add") message = "";
             panelId = id;
             chatButton?.setAttribute("aria-expanded", String(Boolean(id)));
@@ -592,143 +785,134 @@
                 return;
             }
             const header = el("div", "bcmv-panel-header");
-            const heading = el("h3", "", id === "add" ? "방송 추가" : "멀티뷰 설정");
+            const heading = el("h3", "", "라이브 멀티뷰");
             heading.id = PANEL_ID + "-title";
             const close = button("", "close-panel");
             close.append(panelIcon("close"));
             close.setAttribute("aria-label", "닫기");
             const tools = el("div", "bcmv-panel-tools");
-            if (id !== "add") {
-                const add = button("", "add");
-                add.append(panelIcon("add"));
-                add.setAttribute("aria-label", "방송 추가");
-                add.title = "방송 추가";
-                tools.append(add);
-            }
+            const add = button("추가", "add");
+            add.prepend(panelIcon("add"));
+            add.setAttribute("aria-label", "방송 추가");
+            add.setAttribute("aria-expanded", String(id === "add"));
+            add.setAttribute("aria-controls", PANEL_ID + "-add");
+            add.title = "방송 추가";
+            tools.append(add);
             tools.append(close);
             header.append(heading, tools);
             panel.append(header);
-            if (id === "add") {
-                const form = el("form"),
-                    label = el("label", "", "방송인 닉네임 또는 라이브 URL"),
-                    input = el("input");
-                input.type = "text";
-                input.required = true;
-                input.name = "liveUrl";
-                input.placeholder = "닉네임 또는 https://chzzk.naver.com/live/…";
-                input.autocomplete = "off";
-                label.append(input);
-                const submit = button("검색", "submit-add");
-                submit.type = "submit";
-                form.append(label, submit);
-                panel.append(form);
-                const results = el("ul", "bcmv-search-results");
-                results.setAttribute("aria-label", "방송인 검색 결과");
-                panel.append(results);
-            } else {
-                const option = el("div", "bcmv-layout-option");
-                const description = el("div");
-                const help = el("p", "", "창 위치·크기 자유 조절(해제 시 분할 배치 복귀).");
-                help.id = PANEL_ID + "-free-help";
-                description.append(el("strong", "", "자유 배치"), help);
-                const toggle = button(state.freeLayoutEnabled ? "켜짐" : "꺼짐", "free-layout");
-                toggle.className = "bcmv-layout-toggle";
-                toggle.setAttribute("role", "switch");
-                toggle.setAttribute("aria-label", "자유 배치");
-                toggle.setAttribute("aria-checked", String(state.freeLayoutEnabled));
-                toggle.setAttribute("aria-describedby", help.id);
-                option.append(description, toggle);
-                panel.append(option);
-                const actions = el("div", "bcmv-actions");
-                const equalize = button("보조 방송 정렬", "equalize-layout");
-                equalize.prepend(panelIcon("align"));
-                equalize.disabled = !equalLayout();
-                equalize.title = state.freeLayoutEnabled
-                    ? "자유 배치 해제 시 분할 영역별 정렬 가능"
-                    : equalize.disabled
-                      ? "같은 영역에 보조 방송 2개 이상일 때 사용 가능"
-                      : "메인 영역 유지, 보조 영역 방송들을 동일 크기로 정렬";
-                const reset = button("기본 배치", "reset-layout");
-                reset.prepend(panelIcon("layout"));
-                actions.append(reset, equalize);
-                panel.append(actions);
-                const list = el("ul", "bcmv-streams");
-                list.setAttribute("aria-label", "방송 배치 목록");
-                for (const entry of state.channels) {
-                    const row = el("li", "bcmv-stream");
-                    row.dataset.channel = entry.id;
-                    if (entry.id === routeId) row.dataset.main = "1";
-                    const move = button("", "move-stream", entry.id);
-                    move.className = "bcmv-stream-move";
-                    move.title = "드래그로 위치 변경 · Space로 선택, ↑↓로 대상 이동, Enter로 적용";
-                    move.setAttribute("aria-pressed", "false");
-                    move.disabled = state.channels.length < 2;
-                    const grip = el("span", "bcmv-stream-grip");
-                    grip.setAttribute("aria-hidden", "true");
-                    move.append(
-                        grip,
-                        el("span", "bcmv-stream-role"),
-                        el("span", "bcmv-stream-name", players.get(entry.id)?.name || entry.id.slice(0, 8))
-                    );
-                    row.append(move);
-                    list.append(row);
-                    if (entry.id === routeId) {
-                        row.append(el("p", "bcmv-quality-main", "화질은 메인 플레이어에서 조절."));
-                        continue;
-                    }
-                    const qualityLabel = el("label", "bcmv-quality"),
-                        quality = el("select");
-                    quality.setAttribute("aria-label", `${players.get(entry.id)?.name || entry.id} 화질`);
-                    quality.addEventListener("change", (event) => {
-                        if (!event.isTrusted || !panel?.contains(quality)) return;
-                        const player = players.get(entry.id);
-                        if (player) players.setQuality(player, Number(quality.value));
-                    });
-                    const qualityControl = el("span", "bcmv-quality-control");
-                    qualityControl.append(quality);
-                    qualityLabel.append(el("span", "bcmv-quality-caption", "화질"), qualityControl);
-                    const qualityStatus = el("span", "bcmv-quality-status");
-                    qualityStatus.setAttribute("role", "status");
-                    qualityLabel.append(qualityStatus);
-                    row.append(qualityLabel);
-                    const timing = el("span", "bcmv-stream-timing"),
-                        latency = el("span");
-                    latency.setAttribute("data-bcmv-latency", "");
-                    latency.title = "플레이어 라이브 기준 현재 추정 지연";
-                    const delay = el("span");
-                    delay.setAttribute("data-bcmv-delay", "");
-                    timing.append(latency, delay);
-                    const status = el("p");
-                    status.setAttribute("data-bcmv-status", "");
-                    const remove = button("", "remove", entry.id);
-                    remove.append(panelIcon("remove"));
-                    remove.title = "방송 제거";
-                    const sync = el("div", "bcmv-stream-sync"),
-                        detail = el("div", "bcmv-stream-detail");
-                    sync.setAttribute("role", "group");
-                    sync.append(delayButton(-0.1, entry.id), delayButton(0.1, entry.id));
-                    detail.append(sync, status);
-                    row.append(timing, remove, detail);
+            const addSection = el("section", "bcmv-add-section");
+            addSection.id = PANEL_ID + "-add";
+            addSection.setAttribute("aria-label", "방송 추가");
+            addSection.hidden = id !== "add";
+            panel.append(addSection);
+            if (id === "add") renderAddArea(addSection);
+            const option = el("div", "bcmv-layout-option");
+            const description = el("div");
+            const help = el("p", "", "창 위치·크기 자유 조절(해제 시 분할 배치 복귀).");
+            help.id = PANEL_ID + "-free-help";
+            description.append(el("strong", "", "자유 배치"), help);
+            const toggle = button(state.freeLayoutEnabled ? "켜짐" : "꺼짐", "free-layout");
+            toggle.className = "bcmv-layout-toggle";
+            toggle.setAttribute("role", "switch");
+            toggle.setAttribute("aria-label", "자유 배치");
+            toggle.setAttribute("aria-checked", String(state.freeLayoutEnabled));
+            toggle.setAttribute("aria-describedby", help.id);
+            option.append(description, toggle);
+            const actions = el("div", "bcmv-actions");
+            const equalize = button("보조 방송 정렬", "equalize-layout");
+            equalize.prepend(panelIcon("align"));
+            equalize.disabled = !equalLayout();
+            equalize.title = state.freeLayoutEnabled
+                ? "자유 배치 해제 시 분할 영역별 정렬 가능"
+                : equalize.disabled
+                  ? "같은 영역에 보조 방송 2개 이상일 때 사용 가능"
+                  : "메인 영역 유지, 보조 영역 방송들을 동일 크기로 정렬";
+            const reset = button("기본 배치", "reset-layout");
+            reset.prepend(panelIcon("layout"));
+            actions.append(reset, equalize);
+            const list = el("ul", "bcmv-streams");
+            list.setAttribute("aria-label", "방송 배치 목록");
+            for (const entry of state.channels) {
+                const row = el("li", "bcmv-stream");
+                row.dataset.channel = entry.id;
+                if (entry.id === routeId) row.dataset.main = "1";
+                const move = button("", "move-stream", entry.id);
+                move.className = "bcmv-stream-move";
+                move.title = "드래그로 위치 변경 · Space로 선택, ↑↓로 대상 이동, Enter로 적용";
+                move.setAttribute("aria-pressed", "false");
+                move.disabled = state.channels.length < 2;
+                const grip = el("span", "bcmv-stream-grip");
+                grip.setAttribute("aria-hidden", "true");
+                move.append(
+                    grip,
+                    el("span", "bcmv-stream-role"),
+                    el("span", "bcmv-stream-name", players.get(entry.id)?.name || entry.id.slice(0, 8))
+                );
+                row.append(move);
+                list.append(row);
+                if (entry.id === routeId) {
+                    row.append(el("p", "bcmv-quality-main", "화질은 메인 플레이어에서 조절."));
+                    continue;
                 }
-                panel.append(list);
-                syncPanelOrder();
-                if (state.channels.length === 1) panel.append(el("p", "bcmv-notice", "추가한 서브 방송 없음."));
-                const moveStatus = el("p", "bcmv-move-status");
-                moveStatus.setAttribute("data-bcmv-move-status", "");
-                moveStatus.setAttribute("role", "status");
-                panel.append(moveStatus);
-                for (const player of players.values()) updatePlayer(player);
+                const qualityLabel = el("label", "bcmv-quality"),
+                    quality = el("select");
+                quality.setAttribute("aria-label", `${players.get(entry.id)?.name || entry.id} 화질`);
+                quality.addEventListener("change", (event) => {
+                    if (!event.isTrusted || !panel?.contains(quality)) return;
+                    const player = players.get(entry.id);
+                    if (player) players.setQuality(player, Number(quality.value));
+                });
+                const qualityControl = el("span", "bcmv-quality-control");
+                qualityControl.append(quality);
+                qualityLabel.append(el("span", "bcmv-quality-caption", "화질"), qualityControl);
+                const qualityStatus = el("span", "bcmv-quality-status");
+                qualityStatus.setAttribute("role", "status");
+                qualityLabel.append(qualityStatus);
+                row.append(qualityLabel);
+                const timing = el("span", "bcmv-stream-timing"),
+                    latency = el("span");
+                latency.setAttribute("data-bcmv-latency", "");
+                latency.title = "플레이어 라이브 기준 현재 추정 지연";
+                const delay = el("span");
+                delay.setAttribute("data-bcmv-delay", "");
+                timing.append(latency, delay);
+                const status = el("p");
+                status.setAttribute("data-bcmv-status", "");
+                const remove = button("", "remove", entry.id);
+                remove.append(panelIcon("remove"));
+                remove.title = "방송 제거";
+                const sync = el("div", "bcmv-stream-sync"),
+                    detail = el("div", "bcmv-stream-detail");
+                sync.setAttribute("role", "group");
+                sync.append(delayButton(-0.1, entry.id), delayButton(0.1, entry.id));
+                detail.append(sync, status);
+                row.append(timing, remove, detail);
             }
+            panel.append(el("h4", "bcmv-section-title", "방송 목록"), list);
+            syncPanelOrder();
+            if (state.channels.length === 1) panel.append(el("p", "bcmv-notice", "추가한 서브 방송 없음."));
+            const moveStatus = el("p", "bcmv-move-status");
+            moveStatus.setAttribute("data-bcmv-move-status", "");
+            moveStatus.setAttribute("role", "status");
+            panel.append(moveStatus);
+            panel.append(el("h4", "bcmv-section-title", "화면 배치"), option, actions);
+            for (const player of players.values()) updatePlayer(player);
             const status = el("p", "bcmv-notice", message);
             status.setAttribute("data-bcmv-notice", "");
             status.setAttribute("role", "status");
-            panel.append(status);
+            (id === "add" ? addSection : panel).append(status);
+            if (id === "add" && addTab === "following") {
+                if (followingChannels) filterFollowing();
+                else void loadFollowing();
+            }
             positionPanel();
             syncLayer();
             window.addEventListener("resize", positionPanel);
             window.addEventListener("scroll", onPanelScroll, true);
             window.addEventListener("pointerdown", onPanelOutside, true);
-            if (focus) (panel.querySelector('input[name="liveUrl"]') || close).focus({ preventScroll: true });
+            if (focus)
+                (panel.querySelector(`[data-bcmv-add-pane="${addTab}"] input`) || add).focus({ preventScroll: true });
             if (panelFocusId) {
                 focusPanelStream(panelFocusId);
                 panelFocusId = null;
@@ -809,7 +993,10 @@
             if (event.key === "Escape" && panelId) {
                 event.preventDefault();
                 event.stopPropagation();
-                if (!cancelLayout()) closePanel();
+                if (!cancelLayout()) {
+                    if (panelId === "add") renderPanel("settings", true);
+                    else closePanel();
+                }
                 return;
             }
         }
@@ -842,12 +1029,14 @@
             if (routeId !== context.routeId) {
                 endPanelDrag();
                 cancelSearch();
+                followingChannels = null;
             }
             ({ host, routeId, chatButton, chatHeader, launcher } = context);
             positionPanel();
         }
         function release() {
             cancelSearch();
+            followingChannels = null;
             stopPanelTracking();
             panel?.removeEventListener("click", onClick, true);
             panel?.removeEventListener("submit", onSubmit);

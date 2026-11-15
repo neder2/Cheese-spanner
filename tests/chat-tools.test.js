@@ -198,6 +198,33 @@ function activityChat(id, nickname = "안내 담당", text = id) {
     });
 }
 
+test("late native streamer marks collect once through the observer and render their role", async (t) => {
+    const { dom } = createPageDom(
+        realChzzkChatRow({ chatId: "visitor", nickname: "방문 스트리머", text: "안녕하세요" })
+    );
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+    assert.equal(moderatorRows(document).length, 0);
+    const author = document.querySelector("button._nickname_1vemp_37");
+    author.insertAdjacentHTML(
+        "beforeend",
+        '<i class="_icon_8bw0p_17 _mark_8bw0p_75 _is_challenger_8bw0p_78"><span class="blind">인증 마크</span></i>'
+    );
+    await waitForCondition(() => moderatorRows(document).length === 1);
+    assert.match(moderatorRows(document)[0].textContent, /챌린저 스트리머/);
+    assert.equal(unreadCount(document), 1);
+    assert.equal(authorButton(document, "방문 스트리머").firstElementChild.textContent, "방문 스트리머");
+    const original = document.querySelector('[data-chat-id="visitor"]');
+    const replacement = original.cloneNode(true);
+    replacement.removeAttribute("data-bcct-moderator-highlight");
+    original.replaceWith(replacement);
+    await waitForCondition(() => replacement.hasAttribute("data-bcct-moderator-highlight"));
+    assert.equal(moderatorRows(document).length, 1, "remounting the same message does not add an unread duplicate");
+    assert.equal(unreadCount(document), 1);
+});
+
 // jsdom에는 레이아웃이 없으므로 40px 행 하나가 보이는 스크롤 목록을 모델링한다.
 function installModeratorViewport(dom) {
     const document = dom.window.document;

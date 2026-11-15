@@ -200,6 +200,7 @@ test("one donation view uses refreshed coverage and later live rows without dupl
     for (const file of ["shared/data.js", "shared/donationHistory.js", "history.js"]) evalRepoScript(dom, file);
     const document = dom.window.document;
     await waitForCondition(() => document.getElementById("notice").dataset.state === "saved");
+    document.getElementById("activityViewTab").click();
     document.getElementById("activityType").value = "donation";
     dispatch(dom, document.getElementById("activityType"), "change");
     assert.match(document.getElementById("activitySummary").textContent, /내 후원 2,500치즈 \(3회\)/);
@@ -208,7 +209,9 @@ test("one donation view uses refreshed coverage and later live rows without dupl
     dispatch(dom, document.getElementById("historyScope"), "change");
     assert.match(document.getElementById("activitySummary").textContent, /10,500치즈 \(7회\)/);
     assert.equal(document.querySelectorAll("#activityList li").length, 4);
+    document.getElementById("rankingViewTab").click();
     assert.match(document.getElementById("channelRanking").textContent, /10,500치즈 \(7회\)/);
+    document.getElementById("activityViewTab").click();
     chrome.testState.local[store.STORAGE_KEY] = store.applyMutation(
         history,
         {
@@ -549,8 +552,12 @@ test("history refresh starts with one click, ignores display filters, shows one 
     activityType.value = "donation";
     dispatch(dom, activityType, "change");
     assert.match(document.getElementById("activitySummary").textContent, /3,000치즈 \(2회\)/);
+    document.getElementById("rankingViewTab").click();
+    assert.equal(document.getElementById("clearDonationImport").disabled, false);
     document.getElementById("clearDonationImport").click();
     await waitForCondition(() => document.getElementById("clearDonationImport").disabled);
+    document.getElementById("activityViewTab").click();
+    assert.match(document.getElementById("activitySummary").textContent, /0치즈 \(0회\)/);
     assert.equal(chrome.testState.local[store.STORAGE_KEY].donationImport, undefined);
 });
 

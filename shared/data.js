@@ -41,6 +41,44 @@
     let commentDeviceId = "";
     let commentDeviceIdPromise = null;
 
+    // Public nickname renderers observed on 2026-11-11 and 2026-11-14.
+    // Keep class parsing DOM-free so chat, list cards and nickname display share the same evidence.
+    const verifiedMarkFamilies = Object.freeze([
+        Object.freeze({
+            id: "8bw0p",
+            PARTNER: "_is_partner_8bw0p_75",
+            CHALLENGER: "_is_challenger_8bw0p_78",
+            OFFICIAL: "_is_official_8bw0p_81",
+        }),
+        Object.freeze({
+            id: "1pcsq",
+            PARTNER: "_is_partner_1pcsq_81",
+            CHALLENGER: "_is_challenger_1pcsq_84",
+            OFFICIAL: "_is_official_1pcsq_87",
+        }),
+    ]);
+    const verifiedMarkRules = verifiedMarkFamilies.map((family) => ({
+        family,
+        mark: new RegExp(`^_mark_${family.id}_\\d+$`),
+        grades: ["PARTNER", "CHALLENGER", "OFFICIAL"].map((grade) => ({
+            grade,
+            pattern: new RegExp(`^_is_${grade.toLowerCase()}_${family.id}_\\d+$`),
+        })),
+    }));
+    const verifiedMarks = Object.freeze({
+        families: verifiedMarkFamilies,
+        selector: verifiedMarkFamilies.map(({ id }) => `i[class*="_mark_${id}_"]`).join(","),
+        read(className) {
+            if (typeof className !== "string") return null;
+            const classes = className.split(/\s+/);
+            const rules = verifiedMarkRules.filter(({ mark }) => classes.some((name) => mark.test(name)));
+            if (rules.length !== 1) return null;
+            const rule = rules[0];
+            const grades = rule.grades.filter(({ pattern }) => classes.some((name) => pattern.test(name)));
+            return { family: rule.family, grade: grades.length === 1 ? grades[0].grade : "" };
+        },
+    });
+
     function pickArray(obj, keys = ARRAY_RESPONSE_KEYS) {
         if (!obj || typeof obj !== "object") return null;
         if (Array.isArray(obj)) return obj;
@@ -922,6 +960,7 @@
 
     root.utils = {
         ...(root.utils || {}),
+        verifiedMarks,
         addTitleHistory,
         addWatchRangeToRangesByDate,
         buildChzzkLiveUrl,

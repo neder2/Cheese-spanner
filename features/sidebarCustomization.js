@@ -902,8 +902,8 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
     function syncRow(meta) {
         const { channelId, isLive, link, row } = meta;
         if (row.getAttribute(CHANNEL_ATTR) !== channelId) cleanupRow(row);
-        row.setAttribute(ROW_ATTR, "1");
-        row.setAttribute(CHANNEL_ATTR, channelId);
+        if (row.getAttribute(ROW_ATTR) !== "1") row.setAttribute(ROW_ATTR, "1");
+        if (row.getAttribute(CHANNEL_ATTR) !== channelId) row.setAttribute(CHANNEL_ATTR, channelId);
 
         const isPinned = pinnedChannelIds.has(channelId);
         row.querySelectorAll(`[${PIN_TARGET_ATTR}]`).forEach((target) => {
@@ -911,10 +911,11 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
         });
         if (pinModeEnabled) applyPinTarget(link, channelId, isPinned);
         else restorePinTarget(link);
-        if (isPinned) row.setAttribute(PINNED_ATTR, "1");
-        else row.removeAttribute(PINNED_ATTR);
+        if (isPinned) {
+            if (row.getAttribute(PINNED_ATTR) !== "1") row.setAttribute(PINNED_ATTR, "1");
+        } else row.removeAttribute(PINNED_ATTR);
         const orderGroup = getOrderGroup(channelId, isLive);
-        row.setAttribute(ORDER_GROUP_ATTR, orderGroup);
+        if (row.getAttribute(ORDER_GROUP_ATTR) !== orderGroup) row.setAttribute(ORDER_GROUP_ATTR, orderGroup);
         syncPinIndicator(meta, isPinned);
     }
 
@@ -947,9 +948,10 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
             cleanupModeButtons();
             return;
         }
-        following.list.setAttribute(LIST_ATTR, "1");
-        if (pinModeEnabled) following.list.setAttribute(PIN_MODE_ATTR, "1");
-        else following.list.removeAttribute(PIN_MODE_ATTR);
+        if (following.list.getAttribute(LIST_ATTR) !== "1") following.list.setAttribute(LIST_ATTR, "1");
+        if (pinModeEnabled) {
+            if (following.list.getAttribute(PIN_MODE_ATTR) !== "1") following.list.setAttribute(PIN_MODE_ATTR, "1");
+        } else following.list.removeAttribute(PIN_MODE_ATTR);
         for (const meta of rows) syncRow(meta);
         syncModeButton(findFollowingRefreshButton(following.section));
     }
@@ -1032,6 +1034,25 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
                 if (row.hasAttribute(OFFLINE_HIDDEN_ATTR)) row.removeAttribute(OFFLINE_HIDDEN_ATTR);
             }
         }
+    }
+
+    function shouldRescanFollowing(mutations) {
+        const list = pinList;
+        if (!featureOptions.followingPinEnabled || !list?.isConnected) return true;
+        const rows = Array.from(list.children);
+        // Collapsed lists need source supplementation; only expanded native rows can settle locally.
+        if (
+            rows.some((row) => row.hasAttribute(SOURCE_ROW_ATTR)) ||
+            rows.filter((row) => row.hasAttribute(ROW_ATTR)).length <= COLLAPSED_ROW_COUNT
+        )
+            return true;
+        return mutations.some((mutation) => {
+            if (mutation.type === "attributes" && ["href", "aria-expanded"].includes(mutation.attributeName))
+                return true;
+            let row = mutation.target instanceof Element ? mutation.target : mutation.target?.parentElement;
+            while (row && row !== list && row.parentElement !== list) row = row.parentElement;
+            return row?.parentElement !== list || !row.hasAttribute(ROW_ATTR);
+        });
     }
 
     function observeSidebar() {
@@ -1360,6 +1381,7 @@ html[${CHEESE_HIDDEN_ATTR}="1"] #sidebar a[href="/cheezefarm"]{
             },
             schedule: scheduleSync,
             onMutations: syncMutatedFollowingRows,
+            shouldSchedule: shouldRescanFollowing,
             onObserved: observeSidebar,
             onBodyReady: observeSidebar,
         });

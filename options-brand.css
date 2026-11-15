@@ -114,6 +114,69 @@
     line-height: 1.5;
 }
 
+.options-body .vod-comment-select {
+    inline-size: 104px;
+}
+
+.options-body .vod-comment-select:enabled {
+    cursor: pointer;
+}
+
+.options-body .vod-comment-select:enabled:hover {
+    background-color: var(--surface-3);
+}
+
+@supports (appearance: base-select) and selector(::picker(select)) {
+    .options-body .vod-comment-select,
+    .options-body .vod-comment-select::picker(select) {
+        appearance: base-select;
+    }
+
+    .options-body .vod-comment-select::picker(select) {
+        margin-block: 4px;
+        padding: 4px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background-color: var(--surface);
+        color: var(--text);
+        box-shadow: var(--shadow-2);
+    }
+
+    .options-body .vod-comment-select::picker-icon {
+        color: var(--text-muted);
+    }
+
+    .options-body .vod-comment-select:open::picker-icon {
+        rotate: 180deg;
+    }
+
+    .options-body .vod-comment-select option {
+        min-block-size: 32px;
+        padding: 5px 8px;
+        border-radius: 8px;
+        cursor: pointer;
+    }
+
+    .options-body .vod-comment-select option:is(:hover, :focus-visible) {
+        background-color: var(--surface-2);
+    }
+
+    .options-body .vod-comment-select option:checked {
+        background-color: var(--accent-weak);
+    }
+
+    .options-body .vod-comment-select option:focus-visible {
+        outline: 2px solid var(--focus-ring);
+        outline-offset: -2px;
+    }
+
+    .options-body .vod-comment-select option::checkmark {
+        order: 1;
+        margin-inline-start: auto;
+        color: var(--accent-text);
+    }
+}
+
 @media (max-width: 640px) {
     .options-body {
         --options-text-title: 20px;
