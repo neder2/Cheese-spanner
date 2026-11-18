@@ -57,6 +57,7 @@
         "invalid-rate": "배속 확인 불가",
     };
     let enabled = false;
+    let prefers480p = false;
     let suspended = false;
     let observer = null;
     let removeRoute = null;
@@ -485,7 +486,21 @@
         }
         const width = video.videoWidth;
         const height = video.videoHeight;
-        setValue("quality", width && height ? `${width} × ${height}` : "영상 준비 중");
+        const fallback =
+            !livePanel &&
+            !auxiliary &&
+            prefers480p &&
+            height > 0 &&
+            height < 480 &&
+            readCurrentNative(video)?.qualityFallback === height;
+        setValue(
+            "quality",
+            fallback
+                ? `목표 480p · 현재 ${height}p · 480p 미제공`
+                : width && height
+                  ? `${width} × ${height}`
+                  : "영상 준비 중"
+        );
         const matches = tracks.filter(
             (track) => Number(track.videoWidth) === width && Number(track.videoHeight) === height
         );
@@ -913,6 +928,7 @@
 
     bindFeatureOptions((options) => {
         enabled = options.streamInfoEnabled !== false && (!auxiliary || options.vodMultiviewEnabled === true);
+        prefers480p = options.autoQualityEnabled === true && options.autoQualityPreferred === "480p";
         window.removeEventListener("pagehide", pageHide);
         window.removeEventListener("pageshow", pageShow);
         if (enabled) {

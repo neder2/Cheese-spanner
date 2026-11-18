@@ -518,6 +518,70 @@ test("VOD split supports nested native chat, remounts and fullscreen without mov
     assert.equal(chat.getAttribute("style"), originalStyle);
 });
 
+test("hiding a mounted chat log or its wrapper collapses the split and preserves its ratio on return", async (t) => {
+    const fixture = createFixture({
+        includeLog: false,
+        initialOptions: { vodCommentLayout: "split", vodCommentSplitTop: "comments" },
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.window.close();
+    });
+    const { document, window } = fixture;
+    const native = document.querySelector(".native-chat-container");
+    native.insertAdjacentHTML("beforeend", '<div id="native-chat-wrapper"><div role="log">채팅</div></div>');
+    const wrapper = document.getElementById("native-chat-wrapper");
+    const chat = wrapper.querySelector('[role="log"]');
+    const splitter = () => document.getElementById("cheese-spanner-vod-comment-splitter");
+    const panel = () => document.getElementById("cheese-spanner-vod-comment-panel");
+    await waitForCondition(() => splitter() && !splitter().hidden);
+    splitter().dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    const ratio = splitter().getAttribute("aria-valuenow");
+    for (const node of [chat, wrapper]) {
+        node.style.display = "none";
+        await waitForCondition(() => splitter().hidden);
+        assert.equal(panel().hidden, false);
+        assert.equal(native.hasAttribute("data-bcvc-layout"), false);
+        node.style.removeProperty("display");
+        await waitForCondition(() => !splitter().hidden);
+        assert.equal(splitter().getAttribute("aria-valuenow"), ratio);
+        assert.equal(chat.parentElement, wrapper);
+        assert.equal(document.querySelector(".bcvc-split-title").textContent, "댓글 · 채팅");
+    }
+});
+
+test("split follows the current ancestors when the site moves the same chat log", async (t) => {
+    const f = createFixture({ initialOptions: { vodCommentLayout: "split" }, trackLifecycle: true });
+    t.after(() => {
+        f.emitOptions({ vodCommentTabsEnabled: false });
+        f.window.close();
+    });
+    const { document } = f;
+    const chat = document.querySelector('[role="log"]');
+    const splitter = document.getElementById("cheese-spanner-vod-comment-splitter");
+    await waitForCondition(() => splitter && !splitter.hidden);
+    splitter.dispatchEvent(new f.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    const ratio = splitter.getAttribute("aria-valuenow");
+    const parent = document.createElement("div");
+    chat.before(parent);
+    parent.append(chat);
+    await waitForCondition(() => parent.hasAttribute("data-bcvc-split-chat"));
+    parent.hidden = true;
+    await waitForCondition(() => splitter.hidden);
+    const refreshes = f.lifecycle.adapterRefresh;
+    const outer = document.createElement("div");
+    outer.style.display = "none";
+    parent.before(outer);
+    outer.append(parent);
+    parent.hidden = false;
+    await waitForCondition(() => f.lifecycle.adapterRefresh > refreshes);
+    assert.equal(splitter.hidden, true);
+    outer.style.removeProperty("display");
+    await waitForCondition(() => !splitter.hidden && outer.hasAttribute("data-bcvc-split-chat"));
+    assert.equal(splitter.getAttribute("aria-valuenow"), ratio);
+    assert.equal(chat.parentNode, parent);
+});
+
 test("VOD split keeps pagination active and falls back to a full comment pane when chat is unavailable", async (t) => {
     const fixture = createFixture({
         initialOptions: { vodCommentLayout: "split" },

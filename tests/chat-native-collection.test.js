@@ -542,6 +542,203 @@ test("the mutation controller never publishes staged native author/body mixtures
     }
 });
 
+for (const roleSource of ["native", "badge"]) {
+    test(`a coherent ${roleSource} notice survives reuse before the collection batch, even with repeated text`, async (t) => {
+        const f = createController(t, "");
+        f.start();
+        const { document } = f.dom.window;
+        await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+        const html = nativeRow({ badge: roleSource === "badge" ? ROLE_BADGE : "" });
+        const row = document.createRange().createContextualFragment(html).firstElementChild;
+        const original = bodyOf(row).textContent;
+        const first = message({ key: "fast-a", text: original });
+        const second = message({ key: "fast-b", text: original, time: MESSAGE_TIME + 1 });
+        if (roleSource === "badge") {
+            delete first.profile.userRoleCode;
+            delete second.profile.userRoleCode;
+        }
+        attachMessage(row, first);
+        row.addEventListener(
+            "cheese-spanner:chat-blind-source-request",
+            () =>
+                queueMicrotask(() => {
+                    attachMessage(row, second);
+                    bodyOf(row).firstChild.data = original;
+                }),
+            { once: true }
+        );
+        f.root.append(row);
+        await waitForCondition(() => f.snapshot().length === 2);
+        assert.deepEqual(
+            Array.from(f.snapshot(), (item) => item.text),
+            [original, original]
+        );
+        assert.equal(new Set(f.snapshot().map((item) => item.recordId)).size, 2);
+    });
+}
+
+test("an observed operator correction retracts only the provisional notice before the next row reuse", (t) => {
+    const h = createModules(t);
+    const row = h.root.firstElementChild;
+    const source = message();
+    delete source.profile.userRoleCode;
+    attachMessage(row, source);
+    h.collect(row);
+    h.settle();
+    assert.equal(h.snapshot().length, 1);
+    const provisional = h.snapshot()[0].recordId;
+    source.profile.userRoleCode = "manager";
+    h.store.observe(h.store.parseChatMessage(row));
+    attachMessage(row, message({ key: "next", time: MESSAGE_TIME + 1 }));
+    h.store.observe(h.store.parseChatMessage(row));
+    h.collect(row);
+    h.store.finishScan(true);
+    assert.equal(h.snapshot().length, 1);
+    assert.notEqual(h.snapshot()[0].recordId, provisional);
+});
+
+test("first capture does not give a confirmed partner the previous manager badge", async (t) => {
+    const f = createController(t, nativeRow());
+    const row = f.root.firstElementChild;
+    const source = message({ role: "common_user" });
+    source.profile.verifiedMarkType = "PARTNER";
+    attachMessage(row, source);
+    row.addEventListener(
+        "cheese-spanner:chat-blind-source-request",
+        () => queueMicrotask(() => row.querySelector("img").remove()),
+        { once: true }
+    );
+    f.start();
+    await waitForCondition(() => f.snapshot().length === 1);
+    const [record] = f.snapshot();
+    assert.equal(record.role, "partner");
+    assert.equal(record.badges.length, 0);
+    const { document } = f.dom.window;
+    document.querySelector(".bcct-moderator-trigger").click();
+    const meta = document.querySelector(".bcct-moderator-row__meta");
+    assert.equal(meta.querySelector("img"), null);
+    assert.match(meta.textContent, /파트너/);
+});
+
+test("a hidden previous role badge cannot return when backfilling a partner's visible subscription badge", (t) => {
+    const subscription = '<img alt="3개월 구독" src="https://ssl.pstatic.net/badge/sub.png">';
+    const h = createModules(t, nativeRow({ badge: `<span>${ROLE_BADGE}</span>${subscription}` }));
+    const row = h.root.firstElementChild;
+    const source = message({ role: "common_user" });
+    source.profile.verifiedMarkType = "PARTNER";
+    attachMessage(row, source);
+    h.collect(row);
+    const first = h.snapshot()[0];
+    assert.equal(first.role, "partner");
+    assert.equal(first.badges.length, 0);
+    h.store.markRead([first.id]);
+    row.querySelector('img[alt="채팅 운영자"]').parentElement.hidden = true;
+    h.collect(row);
+    h.store.finishScan(true);
+    const [updated] = h.snapshot();
+    assert.equal(updated.recordId, first.recordId);
+    assert.equal(updated.unread, false);
+    assert.deepEqual(
+        Array.from(updated.badges, (badge) => badge.alt),
+        ["3개월 구독"]
+    );
+});
+
+test("a late role is rechecked without a DOM mutation and inserts the older notice before the existing panel row", async (t) => {
+    const f = createController(
+        t,
+        nativeRow({ body: "앞 공지", badge: "" }) + nativeRow({ body: "뒤 공지", badge: "" })
+    );
+    const [first, second] = f.root.children;
+    const source = message({ key: "late-a", text: "앞 공지" });
+    delete source.profile.userRoleCode;
+    attachMessage(first, source);
+    attachMessage(second, message({ key: "ready-b", text: "뒤 공지", time: MESSAGE_TIME + 1 }));
+    f.start();
+    const { document } = f.dom.window;
+    await waitForCondition(
+        () => Boolean(document.querySelector(".bcct-moderator-trigger")) && f.snapshot().length === 1
+    );
+    document.querySelector(".bcct-moderator-trigger").click();
+    const existing = document.querySelector(".bcct-moderator-row");
+    assert.equal(existing?.querySelector(".bcct-moderator-row__text").textContent, "뒤 공지");
+    source.profile.userRoleCode = "streaming_chat_manager";
+    await waitForCondition(() => f.snapshot().length === 2);
+    assert.deepEqual(
+        Array.from(f.snapshot(), (item) => item.text),
+        ["앞 공지", "뒤 공지"]
+    );
+    assert.equal(document.querySelectorAll(".bcct-moderator-row")[1], existing);
+});
+
+test("native collection accepts the measured sibling structure after renaming the message container", async (t) => {
+    const f = createController(t, nativeRow({ badge: "" }));
+    const row = f.root.firstElementChild;
+    attachMessage(row, message());
+    row.querySelector('[class*="chatting_message"]').className = "new-message-container";
+    f.start();
+    await waitForCondition(() => f.snapshot().length === 1);
+    assert.equal(f.snapshot()[0].role, "manager");
+});
+
+test("an earlier DOM notice keeps its observed position when it gets a native identity before the batch", (t) => {
+    const h = createModules(t, nativeRow({ body: "앞 공지" }) + nativeRow({ body: "뒤 공지" }), {
+        nativeBridge: false,
+    });
+    const [first, second] = h.root.children;
+    h.store.observe(h.store.parseChatMessage(first));
+    load(h.dom, ["features/chatTimestampPage.js"]);
+    attachMessage(second, message({ key: "second-native", text: "뒤 공지", time: MESSAGE_TIME + 1 }));
+    h.store.observe(h.store.parseChatMessage(second));
+    h.store.finishScan(true);
+    assert.deepEqual(
+        Array.from(h.snapshot(), ({ text }) => text),
+        ["뒤 공지"]
+    );
+    attachMessage(first, message({ key: "first-native", text: "앞 공지" }));
+    h.store.observe(h.store.parseChatMessage(first));
+    h.store.finishScan(true);
+    assert.deepEqual(
+        Array.from(h.snapshot(), ({ text }) => text),
+        ["앞 공지", "뒤 공지"]
+    );
+});
+
+test("a redrawn native row can retract a provisional manager, including with an explicit DOM ID", async (t) => {
+    for (const explicit of [false, true]) {
+        await t.test(`explicit ID ${explicit}`, (t) => {
+            const h = createModules(t);
+            const row = h.root.firstElementChild;
+            if (explicit) row.setAttribute("data-message-id", "dom-id");
+            const source = message();
+            delete source.profile.userRoleCode;
+            attachMessage(row, source);
+            h.collect(row);
+            h.settle();
+            assert.equal(h.snapshot().length, 1);
+            const next = row.cloneNode(true);
+            row.replaceWith(next);
+            h.store.removeSubtrees([row], [next]);
+            source.profile.userRoleCode = "manager";
+            attachMessage(next, source);
+            h.collect(next);
+            h.settle();
+            assert.equal(h.snapshot().length, 0);
+        });
+    }
+});
+
+test("hidden and platform operator badges do not supply a missing native room role", (t) => {
+    const h = createModules(t, nativeRow({ badge: `<span hidden>${ROLE_BADGE}</span><img alt="플랫폼 운영자">` }));
+    const row = h.root.firstElementChild;
+    const source = message();
+    delete source.profile.userRoleCode;
+    attachMessage(row, source);
+    h.collect(row);
+    h.settle();
+    assert.equal(h.snapshot().length, 0);
+});
+
 test("enabling native collection does not reveal blind originals or activate the collection panel on VOD", async (t) => {
     await t.test("blind-original display remains disabled", async (t) => {
         const f = createController(t, nativeRow({ body: BLIND_NOTICE }));

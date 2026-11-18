@@ -64,6 +64,7 @@
         const auxiliary = Boolean(channel || vodNo);
         const controlId = auxiliary ? `${ID}-aux-${++nextAuxId}` : ID;
         let dragging = null;
+        let panelDrag = null;
         let suppressClick = false;
         let state = {
             video,
@@ -77,10 +78,11 @@
             width: 0,
             height: 0,
             saved: null,
+            panelPosition: null,
         };
         if (restored) {
-            const { scale, x, y, width, height, manual } = restored;
-            Object.assign(state, { scale, x, y, width, height, manual: manual && mode === "manual" });
+            const { scale, x, y, width, height, manual, panelPosition } = restored;
+            Object.assign(state, { scale, x, y, width, height, panelPosition, manual: manual && mode === "manual" });
         }
         const active = () => state && (mode !== "manual" || state.manual);
         const current = () =>
@@ -343,22 +345,86 @@
             event.stopPropagation();
         }
 
+        function positionPanel() {
+            if (!state?.panelPosition || !state.panel) return;
+            const x = state.panelPosition.x * 100;
+            const y = state.panelPosition.y * 100;
+            // Both percentages resize with their own boxes, keeping the whole panel inside its player.
+            Object.assign(state.panel.style, {
+                left: `${x}%`,
+                top: `${y}%`,
+                right: "auto",
+                bottom: "auto",
+                transform: `translate(${-x}%, ${-y}%)`,
+            });
+        }
+
+        function onPanelPointerMove(event) {
+            if (!panelDrag || event.pointerId !== state?.panelPointer) return;
+            if (!current() || !panelIsMounted() || !(event.buttons & 1)) return endPanelPointer();
+            if (!panelDrag.moved && Math.hypot(event.clientX - panelDrag.x, event.clientY - panelDrag.y) < 4) return;
+            const box = state.player.getBoundingClientRect();
+            const panelBox = state.panel.getBoundingClientRect();
+            if (!(box.width > 0 && box.height > 0 && panelBox.width > 0 && panelBox.height > 0))
+                return endPanelPointer();
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            panelDrag.moved = true;
+            state.panel.setAttribute("data-bcz-panel-dragging", "");
+            const width = box.width - panelBox.width;
+            const height = box.height - panelBox.height;
+            state.panelPosition = {
+                x: width > 0 ? clamp((event.clientX - box.left - panelDrag.offsetX) / width, 0, 1) : 0,
+                y: height > 0 ? clamp((event.clientY - box.top - panelDrag.offsetY) / height, 0, 1) : 0,
+            };
+            positionPanel();
+        }
+
         function endPanelPointer(event) {
             if (event && event.pointerId !== state?.panelPointer) return;
+            const previous = panelDrag;
+            panelDrag = null;
+            window.removeEventListener("pointermove", onPanelPointerMove, true);
             window.removeEventListener("pointerup", endPanelPointer, true);
             window.removeEventListener("pointercancel", endPanelPointer, true);
             if (!state) return;
+            const pointerId = state.panelPointer;
             state.panelPointer = null;
+            state.panel?.removeEventListener("lostpointercapture", endPanelPointer);
+            state.panel?.removeAttribute("data-bcz-panel-dragging");
+            if (previous?.moved) {
+                suppressClick = true;
+                if (event?.type === "pointerup") {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                }
+            }
+            if (previous && state.panel?.hasPointerCapture?.(pointerId)) state.panel.releasePointerCapture(pointerId);
             updateControls();
         }
 
         function onPanelPointerDown(event) {
             event.stopPropagation();
-            if (!current() || event.button !== 0 || event.isPrimary === false) return;
+            if (!current() || !active() || event.button !== 0 || event.isPrimary === false) return;
+            if (state.panelPointer != null) endPanelPointer();
             state.panelPointer = event.pointerId;
             // Keep the panel visible at 100% until the native range drag is released.
             window.addEventListener("pointerup", endPanelPointer, true);
             window.addEventListener("pointercancel", endPanelPointer, true);
+            if (event.target.closest("input, button")) return;
+            const box = state.panel.getBoundingClientRect();
+            if (!(box.width > 0 && box.height > 0)) return;
+            event.preventDefault();
+            panelDrag = {
+                x: event.clientX,
+                y: event.clientY,
+                offsetX: event.clientX - box.left,
+                offsetY: event.clientY - box.top,
+                moved: false,
+            };
+            window.addEventListener("pointermove", onPanelPointerMove, true);
+            state.panel.addEventListener("lostpointercapture", endPanelPointer);
+            state.panel.setPointerCapture?.(event.pointerId);
         }
 
         function onPanelFocusOut() {
@@ -428,6 +494,7 @@
                 value.id = `${controlId}-value`;
                 if (auxiliary) value.className = `${ID}-value`;
                 value.setAttribute("aria-hidden", "true");
+                value.title = "잡아서 위치 이동";
                 const button = document.createElement("button");
                 button.id = `${controlId}-reset`;
                 if (auxiliary) button.className = `${ID}-reset`;
@@ -455,16 +522,18 @@
                 state.value = value;
                 state.reset = button;
                 state.player.append(panel);
+                positionPanel();
             }
             updateControls();
         }
 
         function onResize() {
-            endDrag();
+            endInteractions();
             if (current() && state.scale > 1 && bounds()) render();
         }
 
         function onSourceChange() {
+            endPanelPointer();
             resetZoom();
         }
 
@@ -485,6 +554,7 @@
         }
 
         function resetMode() {
+            endPanelPointer();
             resetZoom();
             state.manual = false;
             updateControls();
@@ -492,8 +562,8 @@
 
         function snapshot() {
             if (!state || state.scale === 1 || !video.isConnected) return null;
-            const { key, scale, x, y, width, height, manual } = state;
-            return { video, key, scale, x, y, width, height, manual };
+            const { key, scale, x, y, width, height, manual, panelPosition } = state;
+            return { video, key, scale, x, y, width, height, manual, panelPosition };
         }
 
         function unmount() {
@@ -633,7 +703,8 @@
 :is(#${ID}-toggle, .${ID}-toggle) { position:relative; display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; padding:6px; border:0; background:transparent; color:inherit; cursor:pointer; flex-shrink:0; }
 :is(#${ID}-toggle, .${ID}-toggle)[aria-pressed="true"] { color:var(--Content-brand-strong,#00ffa3); }
 .pzp-pc:not(.pzp-pc--controls) #${ID}-toggle:not(:focus-visible) { opacity:0; pointer-events:none; }
-#${ID}-panel, .${ID}-panel { --bcz-fill:var(--bct-text-body); --bcz-track:var(--bct-border-strong); position:absolute; right:16px; bottom:64px; z-index:50; display:flex; align-items:center; gap:6px; box-sizing:border-box; width:180px; max-width:calc(100% - 32px); padding:4px 6px; border:1px solid var(--bct-border); border-radius:var(--bct-radius-md); background:var(--bct-surface); color:var(--bct-text); box-shadow:var(--bct-shadow); font-family:var(--bct-font); font-size:12px; font-weight:500; line-height:1.5; cursor:default; user-select:none; transform:none; transition:none; }
+#${ID}-panel, .${ID}-panel { --bcz-fill:var(--bct-text-body); --bcz-track:var(--bct-border-strong); position:absolute; right:16px; bottom:64px; z-index:50; display:flex; align-items:center; gap:6px; box-sizing:border-box; width:180px; max-width:calc(100% - 32px); padding:4px 6px; border:1px solid var(--bct-border); border-radius:var(--bct-radius-md); background:var(--bct-surface); color:var(--bct-text); box-shadow:var(--bct-shadow); font-family:var(--bct-font); font-size:12px; font-weight:500; line-height:1.5; cursor:grab; user-select:none; touch-action:none; transform:none; transition:none; }
+:is(#${ID}-panel, .${ID}-panel)[data-bcz-panel-dragging] { cursor:grabbing; }
 :is(#${ID}-value, .${ID}-value) { flex:0 0 4.5ch; text-align:right; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
 :is(#${ID}-reset, .${ID}-reset) { display:flex; align-items:center; justify-content:center; flex:0 0 24px; box-sizing:border-box; width:24px; height:24px; padding:4px; border:0; border-radius:var(--bct-radius-sm); background:transparent; color:inherit; font:inherit; cursor:pointer; transition:scale 120ms ease-out; }
 :is(#${ID}-reset, .${ID}-reset) svg { display:block; flex:none; }
@@ -646,8 +717,8 @@
 :is(#${ID}-toggle, .${ID}-toggle):focus-visible, :is(#${ID}-reset, .${ID}-reset):focus-visible, :is(#${ID}-range, .${ID}-range):focus-visible { outline:2px solid var(--bct-focus-ring); outline-offset:2px; }
 :is(#${ID}-toggle, .${ID}-toggle)[hidden], :is(#${ID}-panel, .${ID}-panel)[hidden] { display:none; }
 .chzzk_player:is(.hidden_ui, .miniplayer, .pip_mode) #${ID}-panel { display:none; }
-.pzp-pc:not(.pzp-pc--controls) > #${ID}-panel:not(:has(:focus-visible), :active), .pzp-pc.pzp-pc--setting > #${ID}-panel { display:none; }
-.pzp-pc[data-bcvm-video-no]:not(.pzp-pc--controls) > .${ID}-panel:not(:has(:focus-visible), :active), .pzp-pc[data-bcvm-video-no].pzp-pc--setting > .${ID}-panel { display:none; }
+.pzp-pc:not(.pzp-pc--controls) > #${ID}-panel:not(:has(:focus-visible), :active, [data-bcz-panel-dragging]), .pzp-pc.pzp-pc--setting > #${ID}-panel { display:none; }
+.pzp-pc[data-bcvm-video-no]:not(.pzp-pc--controls) > .${ID}-panel:not(:has(:focus-visible), :active, [data-bcz-panel-dragging]), .pzp-pc[data-bcvm-video-no].pzp-pc--setting > .${ID}-panel { display:none; }
 @media(prefers-reduced-motion:reduce) { :is(#${ID}-reset, .${ID}-reset) { transition:none; } :is(#${ID}-reset, .${ID}-reset):active:not(:disabled) { scale:1; } }
 [data-bcz-pannable], [data-bcz-pannable] .pzp-pc__video, video[data-bcz-zoomed] { cursor:grab; }
 [data-bcz-dragging], [data-bcz-dragging] .pzp-pc__video, [data-bcz-dragging] video { cursor:grabbing; user-select:none; }
@@ -656,7 +727,7 @@
 #cheese-spanner-multiview .${ID}-toggle[hidden] { display:none; }
 #cheese-spanner-multiview .${ID}-toggle::after { left:auto; right:0; }
 #cheese-spanner-multiview .bcmv-cell > .${ID}-panel { right:8px; bottom:min(52px, calc(100% - 40px)); max-width:calc(100% - 16px); z-index:3; }
-.bcmv-cell:not(:hover, :focus-within) > .${ID}-panel { opacity:0; pointer-events:none; }
+.bcmv-cell:not(:hover, :focus-within) > .${ID}-panel:not([data-bcz-panel-dragging]) { opacity:0; pointer-events:none; }
 @container(max-width:220px) {
     #cheese-spanner-multiview .bcmv-controls:has(.${ID}-toggle:not([hidden])) input[type="range"] { display:none; }
 }

@@ -23,6 +23,7 @@
     const DEFAULT_MAX_MODERATOR_MESSAGES = 100;
     const MAX_ORIGINAL_MESSAGES = 500;
     const MAX_RETIRED_MESSAGE_IDS = 500;
+    const MAX_NATIVE_OBSERVATIONS = 500;
     // 보관 개수로 목록에서 밀려난 메시지의 정체성 상한이에요. DOM에 남은 백로그가 다시 그려질 때 새 기록으로
     // 되살아나지 않게 해요. 재마운트 후보도 보관 개수 + 이 상한까지 둬요.
     const MAX_EVICTED_MODERATOR_MESSAGES = 500;
@@ -44,6 +45,9 @@
         // Native key/user/time identities stay private and live only as long as retained records.
         // Panel IDs remain local counters; a later render of the same native message reuses its record.
         const nativeModeratorMessages = new Map();
+        const nativeObservationOrders = new Map();
+        let rowObservationOrders = new WeakMap();
+        let nextObservationOrder = 1;
         let moderatorRowBindings = new WeakMap();
         let pendingModeratorRemounts = [];
         const moderatorRowTransitions = new Map();
@@ -99,6 +103,57 @@
                     (message?.verifiedState === "known" &&
                         (parsed.verifiedMarkType === "PARTNER" || parsed.verifiedMarkType === "CHALLENGER")))
             );
+        }
+
+        function isCoherentNormalMessage(parsed) {
+            return (
+                parsed.nativeCoherent === true &&
+                parsed.nativeIdentity &&
+                parsed.pageSource?.message?.status === "NORMAL" &&
+                parsed.text &&
+                !parsed.isBlind &&
+                !parsed.hasPendingBodyImage
+            );
+        }
+
+        function observationOrder(parsed) {
+            const previous = rowObservationOrders.get(parsed.node);
+            const nativeId = parsed.nativeCoherent === true ? parsed.nativeIdentity : "";
+            if (nativeId && nativeObservationOrders.has(nativeId)) return nativeObservationOrders.get(nativeId);
+            const reuseSignal = getCacheRowReuseSignal(parsed.node);
+            const sameRowMessage =
+                previous &&
+                previous.reuseSignal === reuseSignal &&
+                (previous.id === parsed.id || (!previous.nativeId && nativeId)) &&
+                previous.author === parsed.author &&
+                previous.textKey === getTextKey(parsed);
+            const order = sameRowMessage ? previous.order : nextObservationOrder++;
+            rowObservationOrders.set(parsed.node, {
+                id: parsed.id,
+                nativeId,
+                reuseSignal,
+                author: parsed.author,
+                textKey: getTextKey(parsed),
+                order,
+            });
+            if (nativeId) {
+                nativeObservationOrders.set(nativeId, order);
+                if (nativeObservationOrders.size > MAX_NATIVE_OBSERVATIONS)
+                    nativeObservationOrders.delete(nativeObservationOrders.keys().next().value);
+            }
+            return order;
+        }
+
+        function observeModeratorMessage(parsed) {
+            const coherent = isCoherentNormalMessage(parsed);
+            const metadata = parsed.pageSource?.message;
+            if (
+                (coherent && (metadata.roleState === "missing" || metadata.verifiedState === "missing")) ||
+                (parsed.role && parsed.text && parsed.nativeCoherent !== false)
+            )
+                parsed.observationOrder = observationOrder(parsed);
+            // Apply both provisional badges and later role corrections while this row still owns the message.
+            if (coherent) collectModeratorMessage(parsed, { deferNotify: true });
         }
 
         function canRefineDomModeratorBinding(binding, parsed) {
@@ -541,6 +596,11 @@
             return binding.textKey === getTextKey(parsed) || parsed.isBlind === true;
         }
 
+        function moderatorBadges(parsed) {
+            if (parsed.domRole && parsed.domRole !== parsed.role) return [];
+            return Array.isArray(parsed.badges) ? parsed.badges : [];
+        }
+
         function backfillModeratorMessage(existing, parsed, { deferNotify = false } = {}) {
             existing.node = parsed.node;
             if (!existing.nativeIdentity && parsed.nativeIdentity) {
@@ -554,6 +614,7 @@
             // A coherent native snapshot may refine the role of the same server message without
             // replacing its record ID or making a read message unread again.
             let backfilled = false;
+            const parsedBadges = moderatorBadges(parsed);
             if (
                 parsed.nativeCoherent === true &&
                 parsed.roleSource === "native" &&
@@ -562,9 +623,9 @@
                 existing.role !== parsed.role
             ) {
                 existing.role = parsed.role;
+                existing.badges = parsedBadges;
                 backfilled = true;
             }
-            const parsedBadges = Array.isArray(parsed.badges) ? parsed.badges : [];
             const existingBadges = Array.isArray(existing.badges) ? existing.badges : [];
             if (!existingBadges.length && parsedBadges.length) {
                 existing.badges = parsedBadges;
@@ -727,7 +788,8 @@
                     author: parsed.author,
                     role: parsed.role,
                     text: parsed.text,
-                    badges: Array.isArray(parsed.badges) ? parsed.badges : [],
+                    observationOrder: parsed.observationOrder ?? observationOrder(parsed),
+                    badges: moderatorBadges(parsed),
                     authorColor: parsed.authorColor || "",
                     timestamp: parsed.timestamp || "",
                     nativeIdentity: parsed.nativeIdentity || "",
@@ -736,7 +798,14 @@
                     sourceIdentityKey: "",
                     unread: true,
                 };
-                moderatorMessages.push(message);
+                if ((moderatorMessages.at(-1)?.observationOrder ?? 0) <= message.observationOrder)
+                    moderatorMessages.push(message);
+                else {
+                    const following = moderatorMessages.findIndex(
+                        (item) => item.observationOrder > message.observationOrder
+                    );
+                    moderatorMessages.splice(following, 0, message);
+                }
                 if (message.nativeIdentity) nativeModeratorMessages.set(message.nativeIdentity, message);
             }
 
@@ -935,6 +1004,22 @@
                 return stageReusedModeratorCandidate(parsed);
             }
             let binding = moderatorRowBindings.get(row);
+            const pageMessage = parsed.pageSource?.message;
+            if (
+                parsed.nativeIdentity &&
+                parsed.nativeCoherent === true &&
+                !parsed.role &&
+                pageMessage?.roleState === "known" &&
+                pageMessage.verifiedState === "known"
+            ) {
+                const provisional =
+                    nativeModeratorMessages.get(parsed.nativeIdentity) ||
+                    (canRefineDomModeratorBinding(binding, parsed) ? binding.message : null);
+                if (provisional && !provisional.nativeRoleConfirmed) {
+                    removeModeratorMessage(provisional, { deferNotify });
+                    binding = moderatorRowBindings.get(row);
+                }
+            }
             if (binding?.messageId === parsed.id && canRefineDomModeratorBinding(binding, parsed)) {
                 cancelModeratorTransition(row);
                 if (!parsed.role) {
@@ -976,6 +1061,12 @@
                     if (!parsed.role || !parsed.text) return false;
                     return stageReusedModeratorCandidate(parsed);
                 }
+            }
+
+            if (parsed.role && isCoherentNormalMessage(parsed)) {
+                if (binding && binding.message.nativeIdentity !== parsed.nativeIdentity) detachModeratorRowBinding(row);
+                cancelModeratorTransition(row);
+                return commitModeratorMessage(parsed, { deferNotify });
             }
 
             if (binding) {
@@ -1036,6 +1127,8 @@
             moderatorMessages = [];
             evictedModeratorMessages = [];
             nativeModeratorMessages.clear();
+            nativeObservationOrders.clear();
+            rowObservationOrders = new WeakMap();
             rowIds = new WeakMap();
             moderatorRowBindings = new WeakMap();
             pendingModeratorRemounts = [];
@@ -1248,6 +1341,8 @@
             maxModeratorMessages = Number.isFinite(maximum) && maximum > 0 ? maximum : DEFAULT_MAX_MODERATOR_MESSAGES;
             trimModeratorMessages();
             if (!moderatorEnabled) {
+                nativeObservationOrders.clear();
+                rowObservationOrders = new WeakMap();
                 clearModeratorTransitions();
                 retractModeratorTransitionOwnerships({ deferNotify: true });
                 clearModeratorHighlights();
@@ -1277,6 +1372,7 @@
 
         return {
             parseChatMessage,
+            observe: observeModeratorMessage,
             collect: collectModeratorMessage,
             cacheOriginal: cacheOriginalMessageText,
             pageMessageIdentity,

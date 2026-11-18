@@ -138,18 +138,25 @@
     }
 
     function findMain(session) {
-        if (boundMain(session)) return main;
+        if (boundMain(session)) {
+            session.mainDeadline = 0;
+            return main;
+        }
         main?.listeners.abort();
         main = null;
 
         const root = session.host.querySelector(":scope > .pzp-pc");
         const video = root?.querySelector(MEDIA);
         const player = native.find(session.host, video);
-        if (!player || !native.ownsMedia(player, video, session.mainInfo.id)) return null;
+        if (!player || !native.ownsMedia(player, video, session.mainInfo.id)) {
+            session.mainDeadline ||= performance.now() + PREPARATION_TIMEOUT;
+            return null;
+        }
         if (!native.canAllocate(player)) {
             fail(session, "unsupported");
             return null;
         }
+        session.mainDeadline = 0;
         const listeners = new AbortController();
         const binding = {
             player,
@@ -199,11 +206,24 @@
         binding.ad = root.classList.contains("pzp-pc--adbreak");
         adObserver.observe(root, { attributes: true, attributeFilter: ["class"] });
         listeners.signal.addEventListener("abort", () => adObserver.disconnect(), { once: true });
+        let mini = isMiniMode(session.host);
+        const modeObserver = new MutationObserver(() => {
+            const next = isMiniMode(session.host);
+            if (next === mini) return;
+            mini = next;
+            tickAll();
+        });
+        modeObserver.observe(session.host, { attributes: true, attributeFilter: ["class"] });
+        listeners.signal.addEventListener("abort", () => modeObserver.disconnect(), { once: true });
         return binding;
     }
 
     function durationMatches(info, video) {
         return Number.isFinite(video.duration) && Math.abs(video.duration - info.duration) <= 2;
+    }
+
+    function isMiniMode(host) {
+        return host.matches(".pip_mode, .miniplayer");
     }
 
     function reference(session) {
@@ -212,7 +232,7 @@
         const { video, root } = main;
         if (
             root.classList.contains("pzp-pc--adbreak") ||
-            session.host.classList.contains("pip_mode") ||
+            isMiniMode(session.host) ||
             main.waiting ||
             video.seeking ||
             video.readyState < 2 ||
@@ -279,8 +299,7 @@
         if (!current(session) || session.failed) return;
         if (!session.syncEnabled) {
             tick(session);
-            if (session.failed || !session.slot || !boundMain(session) || session.host.classList.contains("pip_mode"))
-                return;
+            if (session.failed || !session.slot || !boundMain(session) || isMiniMode(session.host)) return;
             if (session.play || !session.slot.media.paused) pause(session);
             else startPlay(session);
             tick(session);
@@ -523,10 +542,20 @@
                     return fail(session, "unknown-time");
                 const binding = findMain(session);
                 if (session.failed) return;
-                if (!binding || session.host.classList.contains("pip_mode")) {
+                const suspended = !binding || isMiniMode(session.host);
+                if (suspended) {
+                    if (!session.independentSuspended) {
+                        session.independentSuspended = true;
+                        session.resumeIndependent = !slot.media.paused && !slot.media.ended;
+                    }
                     pause(session);
                     if (!binding && performance.now() >= session.mainDeadline) return fail(session, "unsupported");
                     return show(session, "waiting-main");
+                }
+                if (session.independentSuspended && !session.play) {
+                    session.independentSuspended = false;
+                    if (session.resumeIndependent && slot.media.paused && !slot.media.ended) startPlay(session);
+                    session.resumeIndependent = false;
                 }
                 return show(session, "independent");
             }
@@ -574,6 +603,8 @@
                     )
                         return;
                     session.syncEnabled = command.enabled;
+                    session.independentSuspended = false;
+                    session.resumeIndependent = false;
                 } else if (!session.syncEnabled) return;
                 session.manualPause = false;
                 resetAlignment(session);
@@ -592,7 +623,7 @@
                 !video ||
                 video.seeking ||
                 video.readyState < 1 ||
-                host.classList.contains("pip_mode") ||
+                isMiniMode(host) ||
                 root.classList.contains("pzp-pc--adbreak") ||
                 !durationMatches(mainInfo, video)
             )

@@ -32,6 +32,7 @@
         getClassText,
         getElementAttrText,
         getVisibleText,
+        hasNativeMessageStructure,
         getCacheMessageIdentity,
         getCacheRowReuseSignal,
         isBlindNoticeText,
@@ -60,6 +61,8 @@
     const CHAT_SYNC_THROTTLE_MS = 120;
     const BLIND_SOURCE_RECHECK_MS = 300;
     const MAX_BLIND_SOURCE_RECHECKS = 4;
+    const ROLE_RECHECK_MS = 100;
+    const MAX_ROLE_RECHECKS = 2;
 
     const CHAT_ROOT_FIND_THROTTLE_MS = 600;
 
@@ -123,6 +126,7 @@
         "[class*='chat'][class*='message']",
         "[class*='message']",
         "[class*='comment']",
+        'button[class*="_nickname_"][aria-haspopup="true"]',
     ].join(",");
 
     // 큰 가상 목록 subtree는 전체 스캔 경로로 넘겨 wrapper를 메시지로 수집하지 않는다.
@@ -152,6 +156,9 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     const dirtyImmediateChatRows = new Set();
     let pendingChatParses = new WeakMap();
     const pendingModeratorRows = new Map();
+    const pendingRoleRows = new Map();
+    let roleChecks = new WeakMap();
+    let roleRecheckTimer = 0;
     const pendingBlindRows = new Set();
     let blindNoticeStates = new WeakMap();
     let blindSourceRecheckTimer = 0;
@@ -273,10 +280,10 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         } else row.removeAttribute(KEYWORD_FILTERED_ATTR);
     }
 
-    function readChatRow(row) {
+    function readChatRow(row, parsed = parseChatMessage(row, isLiveRoute() && isBlindRevealEnabled())) {
         const live = isLiveRoute();
         const keepOriginal = live && isBlindRevealEnabled();
-        const parsed = parseChatMessage(row, keepOriginal);
+        if (live && isModeratorBoxEnabled() && getLiveChannelIdFromPath() === routeChannelId) store.observe(parsed);
         root.chatNicknameDisplay?.syncRole(parsed);
         if (live) {
             const source = keepOriginal
@@ -288,6 +295,83 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             syncBlindReveal(row, parsed, source);
         }
         return parsed;
+    }
+
+    function needsRoleRecheck(parsed) {
+        const message = parsed.pageSource?.message;
+        return (
+            parsed.nativeCoherent === true &&
+            message?.status === "NORMAL" &&
+            (message.roleState === "missing" || message.verifiedState === "missing")
+        );
+    }
+
+    function queueRoleRecheck(row, parsed) {
+        if (!needsRoleRecheck(parsed)) {
+            pendingRoleRows.delete(row);
+            return;
+        }
+        let check = roleChecks.get(row);
+        if (check?.id !== parsed.nativeIdentity) {
+            check = { id: parsed.nativeIdentity, attempts: 0 };
+            roleChecks.set(row, check);
+        }
+        if (check.attempts >= MAX_ROLE_RECHECKS) return;
+        pendingRoleRows.set(row, check);
+        if (pendingRoleRows.size > MAX_PENDING_MODERATOR_ROWS)
+            pendingRoleRows.delete(pendingRoleRows.keys().next().value);
+        if (!roleRecheckTimer) roleRecheckTimer = setTimeout(recheckRoles, ROLE_RECHECK_MS);
+    }
+
+    function clearRoleRechecks() {
+        if (roleRecheckTimer) clearTimeout(roleRecheckTimer);
+        roleRecheckTimer = 0;
+        pendingRoleRows.clear();
+        roleChecks = new WeakMap();
+    }
+
+    function recheckRoles() {
+        roleRecheckTimer = 0;
+        const candidates = [...pendingRoleRows];
+        pendingRoleRows.clear();
+        if (pageHidden || !needsImmediateChatRead() || !chatRoot?.isConnected) return;
+        if (isLiveRoute() && getLiveChannelIdFromPath() !== routeChannelId) return;
+        for (const [row, check] of candidates) {
+            if (!chatRoot.contains(row) || row.querySelector(OPEN_PROFILE_SELECTOR)) continue;
+            check.attempts += 1;
+            const parsed = parseChatMessage(row, isLiveRoute() && isBlindRevealEnabled());
+            if (parsed.nativeIdentity !== check.id || parsed.nativeCoherent !== true) continue;
+            readChatRow(row, parsed);
+            queueRoleRecheck(row, parsed);
+            pendingChatParses.set(row, parsed);
+            rememberPendingModeratorRow(row, parsed, chatRoot);
+            dirtyChatRows.add(row);
+            syncKeywordFilter(row, parsed);
+        }
+        if (dirtyChatRows.size) scheduleSync();
+    }
+
+    function rememberPendingModeratorRow(row, parsed, rootEl) {
+        if (
+            !isLiveRoute() ||
+            !isModeratorBoxEnabled() ||
+            !parsed.role ||
+            !parsed.text ||
+            parsed.nativeCoherent === false ||
+            parsed.hasPendingBodyImage ||
+            store.hasBinding(row)
+        ) {
+            pendingModeratorRows.delete(row);
+            return;
+        }
+        pendingModeratorRows.set(row, {
+            parsed,
+            root: rootEl,
+            reuseSignal: getCacheRowReuseSignal(row),
+            cacheIdentity: getCacheMessageIdentity(row, parsed.textEl),
+        });
+        if (pendingModeratorRows.size > MAX_PENDING_MODERATOR_ROWS)
+            pendingModeratorRows.delete(pendingModeratorRows.keys().next().value);
     }
 
     function syncImmediateChatRows(rootEl = chatRoot) {
@@ -308,24 +392,8 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             }
             const parsed = readChatRow(row);
             pendingChatParses.set(row, parsed);
-            if (
-                isLiveRoute() &&
-                isModeratorBoxEnabled() &&
-                parsed.role &&
-                parsed.text &&
-                parsed.nativeCoherent !== false &&
-                !parsed.hasPendingBodyImage &&
-                !store.hasBinding(row)
-            ) {
-                pendingModeratorRows.set(row, {
-                    parsed,
-                    root: rootEl,
-                    reuseSignal: getCacheRowReuseSignal(row),
-                    cacheIdentity: getCacheMessageIdentity(row, parsed.textEl),
-                });
-                if (pendingModeratorRows.size > MAX_PENDING_MODERATOR_ROWS)
-                    pendingModeratorRows.delete(pendingModeratorRows.keys().next().value);
-            } else pendingModeratorRows.delete(row);
+            queueRoleRecheck(row, parsed);
+            rememberPendingModeratorRow(row, parsed, rootEl);
             syncKeywordFilter(row, parsed);
         }
     }
@@ -585,6 +653,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             if (/(^|[\s_-])(message|chat|comment)(?=$|[\s_-])/i.test(classText) && getVisibleText(current)) {
                 weakRow = current;
             }
+            if (hasNativeMessageStructure(current)) weakRow = current;
         }
         return structuralRow || identityRow || weakRow;
     }
@@ -628,6 +697,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
 
     function resetChatProcessingState({ reparse = true } = {}) {
         clearBlindSourceRechecks();
+        clearRoleRechecks();
         // A lookup belongs to its route. An immediate SPA return must not inherit the exit's null result.
         lastChatRootFindAt = 0;
         lastChatRootFindResult = null;
@@ -1115,11 +1185,11 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             injectStyleOnce(KEYWORD_FILTER_STYLE_ID, `[${KEYWORD_FILTERED_ATTR}="1"]{display:none!important;}`);
         // 제거된 「방송 중 모아보기 유지」 옵션이 storage.local 에 남긴 캐시를 한 번 지운다.
         purgeLegacyModeratorCache();
-        if (!observer) startObserver();
         if (!removePageChangeDetection) {
             routeChannelId = getLiveChannelIdFromPath();
             removePageChangeDetection = startPageChangeDetection(handlePageChange);
         }
+        if (!observer) startObserver();
         scheduleSync();
     }
 
@@ -1172,6 +1242,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         if (!isModeratorBoxEnabled()) {
             removeModeratorBox();
         }
+        if (!needsImmediateChatRead()) clearRoleRechecks();
         if (!isBlindRevealEnabled()) {
             clearBlindSourceRechecks();
             removeAllBlindReveals();
@@ -1189,6 +1260,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     function adoptObservedChatRoot(node) {
         if (chatRoot !== node) {
             clearBlindSourceRechecks();
+            clearRoleRechecks();
             if (chatRoot) clearPageOriginalCache();
             if (chatRoot) collectDetachedModeratorCandidates(new Set([chatRoot]));
             if (chatRoot) clearKeywordFilters(chatRoot);

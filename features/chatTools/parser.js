@@ -47,6 +47,9 @@
     const PAGE_VERIFIED_MARK_TYPES = new Set(["PARTNER", "CHALLENGER", "OFFICIAL"]);
     const PAGE_MESSAGE_MAX_LENGTH = 32768;
     const MESSAGE_CONTAINER_SELECTOR = "[class*='chatting_message'], [class*='chat-message']";
+    const NATIVE_NICKNAME_BUTTON = 'button[class*="_nickname_"][aria-haspopup="true"]';
+    const NATIVE_MESSAGE_BODY = 'span[class*="_text_"]';
+    const ROLE_POPUP_SELECTOR = '[role="dialog"], [role="alertdialog"], [role="menu"], [popover], [class*="popover"]';
 
     const ROLE_SCORE_THRESHOLD = 80;
 
@@ -89,7 +92,7 @@
     const ROLE_ATTR_RE = /방장|방송자|스트리머|streamer|owner|broadcaster|매니저|운영자|manager|moderator|\bmod\b/i;
 
     const ROLE_LABEL_EXACT_RE =
-        /^(?:방장|방송자|스트리머|매니저|운영자|채팅 운영자|streamer|owner|broadcaster|manager|moderator|mod)$/i;
+        /^(?:방장|방송자|스트리머|매니저|운영자|채팅 운영자|채팅 매니저|방송 매니저|streamer|owner|broadcaster|manager|moderator|mod)$/i;
 
     const BROADCASTER_RE = /방장|방송자|스트리머|streamer|owner|broadcaster/i;
 
@@ -485,13 +488,15 @@
         return { el: null, text: "" };
     }
 
-    function getAuthorBadges(authorEl) {
+    function getAuthorBadges(authorEl, row, context = null) {
         if (!(authorEl instanceof Element)) return [];
         const badges = [];
-        for (const img of Array.from(authorEl.querySelectorAll("img")).slice(0, 8)) {
+        for (const img of authorEl.querySelectorAll("img")) {
             const src = getAttr(img, "src");
-            if (!/^https:\/\//.test(src)) continue;
+            if (!/^https:\/\//.test(src) || img.closest(ROLE_POPUP_SELECTOR) || isHiddenWithin(img, row, context))
+                continue;
             badges.push({ src: src.slice(0, 500), alt: normSpace(getAttr(img, "alt")).slice(0, 80) });
+            if (badges.length === 8) break;
         }
         return badges;
     }
@@ -615,8 +620,7 @@
     }
 
     function isRoleOnlyText(text) {
-        const normalized = normSpace(text);
-        return Boolean(normalized && ROLE_ATTR_RE.test(normalized) && normalized.length <= 12);
+        return ROLE_LABEL_EXACT_RE.test(normSpace(text));
     }
 
     function isAuthorCandidateElement(el) {
@@ -634,12 +638,14 @@
             getAttr(el, "data-author-type"),
             getAttr(el, "data-user-role"),
             getAttr(el, "alt"),
-        ].join(" ");
+        ]
+            .filter(isRoleOnlyText)
+            .join(" ");
     }
 
     function getRoleLabelText(el) {
         if (!(el instanceof Element)) return "";
-        return [getAttr(el, "aria-label"), getAttr(el, "title")].join(" ");
+        return [getAttr(el, "aria-label"), getAttr(el, "title")].filter(isRoleOnlyText).join(" ");
     }
 
     function getRoleSignalAttrText(el) {
@@ -714,6 +720,7 @@
 
     function isRoleSignalElement(el, row, authorElements, firstMessageEl, context = null) {
         if (!(el instanceof Element) || isOwnUi(el)) return false;
+        if (el.closest(ROLE_POPUP_SELECTOR) || isHiddenWithin(el, row, context)) return false;
         if (isInsideMessageTextElement(el, row)) return false;
         if (el !== row && !isAuthorRoleAreaElement(el, authorElements, firstMessageEl)) return false;
 
@@ -817,10 +824,21 @@
         );
     }
 
+    function hasNativeMessageStructure(container) {
+        const nickname = container?.querySelector(`:scope > ${NATIVE_NICKNAME_BUTTON}`);
+        const body = container?.querySelector(`:scope > ${NATIVE_MESSAGE_BODY}`);
+        return Boolean(nickname && body && isBeforeElement(nickname, body));
+    }
+
     function readPageMessage(row, parsed, keepOriginal = false) {
         const textEl = parsed?.textEl;
         if (!(row instanceof Element) || !(textEl instanceof Element) || !row.contains(textEl)) return null;
-        const container = textEl.closest(MESSAGE_CONTAINER_SELECTOR);
+        const byClass = textEl.closest(MESSAGE_CONTAINER_SELECTOR);
+        const container =
+            byClass ||
+            (textEl.matches(NATIVE_MESSAGE_BODY) && hasNativeMessageStructure(textEl.parentElement)
+                ? textEl.parentElement
+                : null);
         if (!container || !row.contains(container)) return null;
         const chatLog = container.closest("[role='log']");
         const path = location.pathname;
@@ -919,7 +937,7 @@
 
     function getRoleBadgeSrc(row, context = null) {
         for (const el of getRoleSignalElements(row, context)) {
-            if (el.tagName !== "IMG" || !ROLE_ATTR_RE.test(getAttr(el, "alt"))) continue;
+            if (el.tagName !== "IMG" || !isRoleOnlyText(getAttr(el, "alt"))) continue;
             const src = getAttr(el, "src");
             if (/^https:\/\//.test(src)) return src.slice(0, 500);
         }
@@ -958,13 +976,12 @@
 
     function detectDomVerifiedMarkType(row, authorEl, context = null) {
         // 치지직 공통 닉네임 렌더러의 인증 마크. 본문·프로필 팝업의 같은 마크는 수집 근거가 아니다.
-        const popupSelector = '[role="dialog"], [role="alertdialog"], [role="menu"], [popover], [class*="popover"]';
-        if (authorEl && !authorEl.closest(popupSelector)) {
+        if (authorEl && !authorEl.closest(ROLE_POPUP_SELECTOR)) {
             for (const mark of authorEl.getElementsByTagName("i")) {
                 const grade = root.utils.verifiedMarks.read(getClassText(mark))?.grade;
                 if (!PAGE_VERIFIED_MARK_TYPES.has(grade)) continue;
                 if (isHiddenWithin(mark, row, context) || isInsideMessageTextElement(mark, row)) continue;
-                if (mark.closest(popupSelector)) continue;
+                if (mark.closest(ROLE_POPUP_SELECTOR)) continue;
                 return grade;
             }
         }
@@ -1116,7 +1133,7 @@
             result.authorColor = "";
         } else if (!parsed.role) {
             const authorEl = parsed.authorEl || pickAuthorTarget(parsed.node).el;
-            result.badges = getAuthorBadges(authorEl);
+            result.badges = getAuthorBadges(authorEl, parsed.node);
             result.authorColor = getAuthorColor(authorEl);
         }
         return result;
@@ -1186,7 +1203,7 @@
         const roomRole = detectDomRoomRole(row, context);
         const verifiedMarkType = detectDomVerifiedMarkType(row, authorTarget.el, context);
         const role = collectionRole(roomRole, verifiedMarkType);
-        let badges = role ? getAuthorBadges(authorTarget.el) : [];
+        let badges = role ? getAuthorBadges(authorTarget.el, row, context) : [];
         if (role && !badges.length) {
             // 역할 뱃지가 닉네임 영역 밖에 있는 마크업 폴백.
             const roleBadgeSrc = getRoleBadgeSrc(row, context);
@@ -1232,6 +1249,7 @@
         getClassText,
         getElementAttrText,
         getVisibleText,
+        hasNativeMessageStructure,
         isBlindNoticeText,
         readPageOriginalText,
         readPageMessage,

@@ -1316,7 +1316,9 @@
 
         if (!reference) return;
         syncLiveInlineControlVisibility(pill, reference);
-        pill.style.transition = reference.style.transition || "";
+        // VOD time text uses a different easing from playback buttons; follow the text beside this pill.
+        const time = !isLiveRoute() && container.querySelector(VOD_TIME_SELECTOR);
+        pill.style.transition = time ? getComputedStyle(time).transition : reference.style.transition || "";
     }
 
     function mountLivePillInLeftButtons(pill, container) {

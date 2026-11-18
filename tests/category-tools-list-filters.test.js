@@ -53,6 +53,43 @@ test("streamer grades combine as OR with other filters, persist and reset withou
     assert.equal(f.storedSession().routes[GLOBAL_KEY], undefined);
 });
 
+test("latest list looks up the grade only for the one card that matches the other filters", async (t) => {
+    const channelProfiles = { [channelId(19)]: { ...gradeProfiles()[channelId(2)], channelId: channelId(19) } };
+    const f = createFixture(t, { cards: 20, options: QUIET, channelProfiles });
+    await f.apply();
+    const [popular, latest] = f.document.querySelectorAll("#sort-row button");
+    popular.removeAttribute("aria-selected");
+    latest.setAttribute("aria-selected", "true");
+    search(f, "19");
+    menu(f).querySelector('[data-streamer-grade="PRO"]').click();
+    await f.apply();
+    assert.deepEqual(f.gradeRequests, [channelId(19)]);
+    assert.deepEqual(f.visibleCardIds(), ["card-19"]);
+});
+
+test("refreshing the same live list retries an expired grade failure and preserves its filters", async (t) => {
+    const id = channelId(0);
+    const profiles = {};
+    const f = createFixture(t, { cards: 3, options: QUIET, channelProfiles: profiles });
+    await f.apply();
+    search(f, "tag0");
+    menu(f).querySelector('[data-streamer-grade="PRO"]').click();
+    await f.apply();
+    assert.deepEqual(f.gradeRequests, [id]);
+    assert.deepEqual(f.visibleCardIds(), []);
+
+    profiles[id] = { ...gradeProfiles()[channelId(2)], channelId: id };
+    f.advance(300_001);
+    await f.apply();
+    assert.deepEqual(f.gradeRequests, [id]);
+    f.window.dispatchEvent(new f.window.Event("cheese-spanner:live-list-refreshed"));
+    await f.apply();
+    assert.deepEqual(f.gradeRequests, [id, id]);
+    assert.deepEqual(f.visibleCardIds(), ["card-0"]);
+    assert.equal(searchInput(f).value, "tag0");
+    assert.deepEqual(f.storedSession().routes[GLOBAL_KEY].streamerGrades, ["PRO"]);
+});
+
 test("latest list grades use the current channel badge and recheck reused cards", async (t) => {
     const f = createFixture(t, { cards: 4, options: QUIET, channelProfiles: gradeProfiles() });
     await f.apply();

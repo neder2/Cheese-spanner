@@ -1155,6 +1155,7 @@
         const session = activeVideoSession;
         activeVideoSession = null;
         activeVideoRequestId = "";
+        session?.listeners.abort();
 
         try {
             session?.hls?.destroy?.();
@@ -1206,29 +1207,24 @@
                 if (!path || !(/HLS/i.test(marker) || /\.m3u8(?:[?#]|$)/i.test(path))) return null;
 
                 const url = normalizeChzzkMediaUrl(path, location.origin);
-                return url ? { media, url } : null;
+                const lowLatency =
+                    String(media?.mediaId || "").toUpperCase() === "LLHLS" ||
+                    /lowLatency/i.test(String(media?.latency || ""));
+                return url ? { media, url, lowLatency } : null;
             })
             .filter(Boolean);
 
         if (!hlsMedia.length) return null;
 
         // 저지연(LLHLS)을 먼저 고르고, 일반 HLS의 TARGETDURATION × 3 시작 지연은 재생 설정에서 제한해요.
-        const preferred =
-            hlsMedia.find(
-                ({ media }) =>
-                    String(media?.mediaId || "").toUpperCase() === "LLHLS" ||
-                    /lowLatency/i.test(String(media?.latency || ""))
-            ) ||
-            hlsMedia.find(({ media }) => String(media?.mediaId || "").toUpperCase() === "HLS") ||
-            hlsMedia.find(({ media }) => getMediaHeight(media) && getMediaHeight(media) <= PREVIEW_MAX_HEIGHT) ||
-            hlsMedia[0];
-
-        return {
-            lowLatency:
-                String(preferred.media?.mediaId || "").toUpperCase() === "LLHLS" ||
-                /lowLatency/i.test(String(preferred.media?.latency || "")),
-            url: preferred.url,
-        };
+        const lowLatency = hlsMedia.find((source) => source.lowLatency);
+        const regularSources = hlsMedia.filter((source) => !source.lowLatency && source.url !== lowLatency?.url);
+        const regular =
+            regularSources.find(({ media }) => String(media?.mediaId || "").toUpperCase() === "HLS") ||
+            regularSources.find(({ media }) => getMediaHeight(media) && getMediaHeight(media) <= PREVIEW_MAX_HEIGHT) ||
+            regularSources[0];
+        if (!lowLatency) return regular;
+        return { ...lowLatency, fallback: regular };
     }
 
     function getPlaybackSource(meta) {
@@ -1322,13 +1318,15 @@
     }
 
     function revealVideoWhenReady(video, requestId) {
+        const session = activeVideoSession;
         const reveal = () => {
-            if (activeVideoRequestId !== requestId || activeVideoSession?.video !== video || !video.isConnected) return;
+            if (activeVideoRequestId !== requestId || activeVideoSession !== session || !video.isConnected) return;
             markPlayerState(video, "ready");
         };
 
-        video.addEventListener("playing", reveal, { once: true });
-        video.addEventListener("loadeddata", reveal, { once: true });
+        const options = { once: true, signal: session.listeners.signal };
+        video.addEventListener("playing", reveal, options);
+        video.addEventListener("loadeddata", reveal, options);
 
         if (video.readyState >= 2) reveal();
     }
@@ -1348,6 +1346,8 @@
     }
 
     function runPreviewPlay(video, requestId, attemptedSound) {
+        const session = activeVideoSession;
+        if (!session || session.listeners.signal.aborted) return;
         let result = null;
         try {
             result = video.play?.();
@@ -1359,10 +1359,13 @@
         if (result?.catch) {
             result
                 .then(() => {
-                    if (activeVideoRequestId === requestId && activeVideoSession?.video === video && attemptedSound)
+                    if (activeVideoRequestId === requestId && activeVideoSession === session && attemptedSound)
                         removeSoundUnlockBadge(video);
                 })
-                .catch((error) => handlePreviewPlayError(video, requestId, error, attemptedSound));
+                .catch((error) => {
+                    if (activeVideoSession === session && !session.listeners.signal.aborted)
+                        handlePreviewPlayError(video, requestId, error, attemptedSound);
+                });
         } else if (attemptedSound) {
             removeSoundUnlockBadge(video);
         }
@@ -1376,23 +1379,55 @@
         runPreviewPlay(video, requestId, true);
     }
 
-    function playVideo(video, requestId) {
-        if (activeVideoRequestId !== requestId || activeVideoSession?.video !== video || !video.isConnected) return;
-
-        revealVideoWhenReady(video, requestId);
-
-        const soundEnabled = shouldStartPreviewWithSound(video);
-        applyPreviewAudioState(video, soundEnabled);
-        syncPreviewOverlayForVideo(video);
-        if (!soundEnabled) removeSoundUnlockBadge(video);
-        runPreviewPlay(video, requestId, soundEnabled);
-    }
-
-    function startHlsPlayback(video, source, requestId) {
+    function startHlsPlayback(video, source, requestId, preserveAudio = false) {
         const HlsCtor = window.Hls;
+        const useHls = HlsCtor?.isSupported?.();
+        if (!useHls && !canPlayNativeHls(video)) return false;
+        const session = { hls: null, video, listeners: new AbortController() };
+        const { signal } = session.listeners;
+        activeVideoSession = session;
+        const isCurrent = () =>
+            activeVideoRequestId === requestId && activeVideoSession === session && video.isConnected;
+        const playVideo = () => {
+            if (!isCurrent() || signal.aborted) return;
+            if (session.hls) {
+                const expanded = activeListExpansion?.video === video;
+                setPreviewQualityCap(session.hls, expanded ? PREVIEW_FOCUS_MAX_HEIGHT : PREVIEW_MAX_HEIGHT, {
+                    setStartLevel: true,
+                });
+                if (expanded) activeListExpansion.quality = getListExpansionQualityState(video);
+            }
+            revealVideoWhenReady(video, requestId);
+            if (!preserveAudio) {
+                const soundEnabled = shouldStartPreviewWithSound(video);
+                applyPreviewAudioState(video, soundEnabled);
+                syncPreviewOverlayForVideo(video);
+                if (!soundEnabled) removeSoundUnlockBadge(video);
+            }
+            runPreviewPlay(video, requestId, !video.muted && video.volume > 0);
+        };
+        const onFatal = () => {
+            if (!isCurrent() || signal.aborted) return;
+            session.listeners.abort();
+            if (!source.fallback) {
+                markPlayerState(video, "error");
+                return;
+            }
+            queuePreviewTask(() => {
+                if (!isCurrent()) return;
+                activeVideoSession = null;
+                try {
+                    session.hls?.destroy();
+                } catch (_) {
+                    // Still try the regular stream from the same response.
+                }
+                markPlayerState(video, "loading");
+                if (!startHlsPlayback(video, source.fallback, requestId, true)) markPlayerState(video, "error");
+            });
+        };
 
-        if (HlsCtor?.isSupported?.()) {
-            const hls = new HlsCtor({
+        if (useHls) {
+            const hls = (session.hls = new HlsCtor({
                 backBufferLength: 0,
                 // hls.js re-caps to the player size every second when this is on, which overrides the 480p limit.
                 capLevelToPlayerSize: false,
@@ -1402,39 +1437,31 @@
                 liveSyncDuration: PREVIEW_LIVE_SYNC_SECONDS,
                 liveMaxLatencyDuration: PREVIEW_MAX_LIVE_LATENCY_SECONDS,
                 maxBufferLength: 12,
-            });
+            }));
             const events = HlsCtor.Events || {};
-            const manifestParsedEvent = events.MANIFEST_PARSED || "hlsManifestParsed";
-            const errorEvent = events.ERROR || "hlsError";
-
-            activeVideoSession = { hls, video };
-            hls.on?.(manifestParsedEvent, () => {
-                setPreviewQualityCap(hls, PREVIEW_MAX_HEIGHT, { setStartLevel: true });
-                playVideo(video, requestId);
-            });
-            hls.on?.(errorEvent, (_event, data) => {
-                if (!data?.fatal) return;
-                if (activeVideoRequestId === requestId && activeVideoSession?.video === video)
-                    markPlayerState(video, "error");
+            hls.on?.(events.MANIFEST_PARSED || "hlsManifestParsed", playVideo);
+            hls.on?.(events.ERROR || "hlsError", (_event, data) => {
+                if (data?.fatal) onFatal();
             });
             hls.attachMedia?.(video);
             hls.loadSource?.(source.url);
-            return true;
-        }
-
-        if (canPlayNativeHls(video)) {
-            activeVideoSession = { hls: null, video };
+        } else {
+            video.addEventListener("loadedmetadata", playVideo, { once: true, signal });
+            video.addEventListener(
+                "error",
+                () => {
+                    if (video.error && video.src === source.url) onFatal();
+                },
+                { signal }
+            );
             video.src = source.url;
-            video.addEventListener("loadedmetadata", () => playVideo(video, requestId), { once: true });
             try {
                 video.load?.();
             } catch (_) {
                 // Native HLS setup should still try play on metadata.
             }
-            return true;
         }
-
-        return false;
+        return true;
     }
 
     function requestPreviewVideo(video, meta, { playbackDelayMs = PREVIEW_PLAYBACK_DELAY_MS } = {}) {

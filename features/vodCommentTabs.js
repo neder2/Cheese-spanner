@@ -433,8 +433,7 @@
         clearMountGapTimer();
 
         if (commentView.matchesShell(anchors) && commentView.ownedNodesConnected()) {
-            if (commentView.getChatLog() !== anchors.chatLog) commentView.replaceChatLog(anchors.chatLog);
-            else commentView.setHeaderAppearanceSource(anchors.appearanceHeading);
+            commentView.syncMountedAnchors(anchors);
             nativeAdapter.refresh();
             return;
         }

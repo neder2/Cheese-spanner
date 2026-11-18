@@ -949,6 +949,8 @@
         const target = auxiliary ? auxiliaryTarget() : null;
         const video = auxiliary ? target?.video : targetVideo();
         if (activeVideo && activeVideo !== video) releaseActiveGraph();
+        // Reused media still owns its source node. Adopt it before OFF/conflict paths restore bypass output.
+        if (!activeVideo && usableVideo(video) && graphs.has(video)) activeVideo = video;
         if (auxiliary && !video) {
             auxiliaryReplay = null;
             removeButton();

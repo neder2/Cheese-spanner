@@ -49,6 +49,8 @@
         let mountedChatLog = null;
         let assignedChatLogId = false;
         let originalChatAriaHidden = null;
+        let chatVisibilityObserver = null;
+        let nativeChatHidden = false;
         let tablist = null;
         let chatTab = null;
         let commentTab = null;
@@ -560,12 +562,46 @@ body[theme="dark"] .bcvc-avatar-fallback,
             syncSplitLayout(panelTop, panelHeight);
         }
 
-        function isSplit() {
+        function hasSplitLayout() {
             return layoutMode === "split" && Boolean(mountedChatLog && !mountedHeader?.contains(mountedChatLog));
         }
 
+        function isSplit() {
+            return hasSplitLayout() && !nativeChatHidden;
+        }
+
         function isCommentsVisible() {
-            return Boolean(commentPanel && (isSplit() || !mountedChatLog || selectedTab === "comments"));
+            return Boolean(commentPanel && (hasSplitLayout() || !mountedChatLog || selectedTab === "comments"));
+        }
+
+        function isNativeChatHidden() {
+            for (let node = mountedChatLog; node && node !== mountedContainer; node = node.parentElement) {
+                if (node.hidden || node.getAttribute("aria-hidden") === "true") return true;
+                const style = getComputedStyle(node);
+                if (["hidden", "collapse"].includes(style.visibility) || style.display === "none") return true;
+            }
+            return false;
+        }
+
+        function syncChatVisibility() {
+            if (hasSplitLayout() && isNativeChatHidden() !== nativeChatHidden) updateTabState();
+        }
+
+        function observeChatAncestors() {
+            chatVisibilityObserver.disconnect();
+            for (let node = mountedChatLog; node && node !== mountedContainer; node = node.parentElement) {
+                chatVisibilityObserver.observe(node, {
+                    attributes: true,
+                    attributeFilter: ["class", "style", "hidden", "aria-hidden"],
+                });
+            }
+        }
+
+        function restoreChatTabHiddenState() {
+            if (!mountedChatLog?.hasAttribute("data-bcvc-tab-hidden")) return;
+            mountedChatLog.removeAttribute("data-bcvc-tab-hidden");
+            if (originalChatAriaHidden === null) mountedChatLog.removeAttribute("aria-hidden");
+            else mountedChatLog.setAttribute("aria-hidden", originalChatAriaHidden);
         }
 
         function clearSplitChatMarkers() {
@@ -1401,34 +1437,40 @@ body[theme="dark"] .bcvc-avatar-fallback,
         function updateTabState({ focus = false } = {}) {
             const commentOnly = Boolean(commentTab) && !chatTab;
             const commentsSelected = commentOnly || selectedTab === "comments";
-            const split = isSplit();
-            const commentsVisible = split || commentsSelected;
+            const splitLayout = hasSplitLayout();
+            if (splitLayout) restoreChatTabHiddenState();
+            nativeChatHidden = splitLayout && isNativeChatHidden();
+            if (nativeChatHidden) stopSplitDrag();
+            const commentsVisible = splitLayout || commentsSelected;
             if (commentOnly) selectedTab = "comments";
-            tablist?.setAttribute("role", split ? "group" : "tablist");
-            if (chatTab) chatTab.hidden = split;
-            if (commentTab) commentTab.hidden = split;
+            tablist?.setAttribute("role", splitLayout ? "group" : "tablist");
+            if (chatTab) chatTab.hidden = splitLayout;
+            if (commentTab) commentTab.hidden = splitLayout;
             if (splitTitle) {
-                splitTitle.hidden = !split;
-                splitTitle.textContent = split ? (splitTop === "chat" ? "채팅 · 댓글" : "댓글 · 채팅") : "";
+                splitTitle.hidden = !splitLayout;
+                splitTitle.textContent = !splitLayout
+                    ? ""
+                    : nativeChatHidden
+                      ? "댓글"
+                      : splitTop === "chat"
+                        ? "채팅 · 댓글"
+                        : "댓글 · 채팅";
             }
             chatTab?.setAttribute("aria-selected", String(!commentsSelected));
             commentTab?.setAttribute("aria-selected", String(commentsSelected));
             if (chatTab) chatTab.tabIndex = commentsSelected ? -1 : 0;
             if (commentTab) commentTab.tabIndex = commentsSelected ? 0 : -1;
             if (mountedChatLog) {
-                if (commentsSelected && !split) {
+                if (commentsSelected && !splitLayout && !mountedChatLog.hasAttribute("data-bcvc-tab-hidden")) {
+                    originalChatAriaHidden = mountedChatLog.getAttribute("aria-hidden");
                     mountedChatLog.setAttribute("data-bcvc-tab-hidden", "1");
                     mountedChatLog.setAttribute("aria-hidden", "true");
-                } else {
-                    mountedChatLog.removeAttribute("data-bcvc-tab-hidden");
-                    if (originalChatAriaHidden === null) mountedChatLog.removeAttribute("aria-hidden");
-                    else mountedChatLog.setAttribute("aria-hidden", originalChatAriaHidden);
-                }
+                } else if (!commentsSelected || splitLayout) restoreChatTabHiddenState();
             }
             if (commentPanel) {
                 commentPanel.hidden = !commentsVisible;
-                commentPanel.setAttribute("role", split ? "region" : "tabpanel");
-                if (split) {
+                commentPanel.setAttribute("role", splitLayout ? "region" : "tabpanel");
+                if (splitLayout) {
                     commentPanel.removeAttribute("aria-labelledby");
                     commentPanel.setAttribute("aria-label", "댓글");
                 } else {
@@ -1477,13 +1519,12 @@ body[theme="dark"] .bcvc-avatar-fallback,
         function detachMountedChatLog() {
             stopSplitDrag();
             clearSplitChatMarkers();
+            chatVisibilityObserver?.disconnect();
+            chatVisibilityObserver = null;
+            nativeChatHidden = false;
             const chatLog = mountedChatLog;
-            chatLog?.removeAttribute("data-bcvc-tab-hidden");
+            restoreChatTabHiddenState();
             chatLog?.removeAttribute("data-bcvc-native-log");
-            if (chatLog) {
-                if (originalChatAriaHidden === null) chatLog.removeAttribute("aria-hidden");
-                else chatLog.setAttribute("aria-hidden", originalChatAriaHidden);
-            }
             if (assignedChatLogId && chatLog?.id === CHAT_PANEL_ID) chatLog.removeAttribute("id");
             mountedChatLog = null;
             assignedChatLogId = false;
@@ -1500,6 +1541,8 @@ body[theme="dark"] .bcvc-avatar-fallback,
                 assignedChatLogId = true;
             }
             chatTab?.setAttribute("aria-controls", mountedChatLog.id);
+            chatVisibilityObserver = new MutationObserver(syncChatVisibility);
+            observeChatAncestors();
             return true;
         }
 
@@ -1529,7 +1572,14 @@ body[theme="dark"] .bcvc-avatar-fallback,
             }
         }
 
-        function setHeaderAppearanceSource(heading) {
+        function syncMountedAnchors(anchors) {
+            if (mountedChatLog !== anchors.chatLog) replaceChatLog(anchors.chatLog);
+            else if (chatVisibilityObserver) {
+                // The site can keep the log and header while replacing any wrapper between them.
+                observeChatAncestors();
+                syncChatVisibility();
+            }
+            const heading = anchors.appearanceHeading;
             const nextHeading = heading instanceof HTMLElement ? heading : mountedHeading;
             if (mountedAppearanceHeading === nextHeading) {
                 scheduleNativeHeaderSync();
@@ -1761,11 +1811,10 @@ body[theme="dark"] .bcvc-avatar-fallback,
             ownedNodesConnected,
             reattach,
             renderState,
-            replaceChatLog,
             restoreFocus: restoreCommentControlFocus,
             scheduleLayoutSync: scheduleNativeHeaderSync,
             setActiveOrder,
-            setHeaderAppearanceSource,
+            syncMountedAnchors,
             setLayout,
             setSelectedTab,
             showState,

@@ -225,6 +225,87 @@ test("late native streamer marks collect once through the observer and render th
     assert.equal(unreadCount(document), 1);
 });
 
+for (const family of ["8bw0p", "1pcsq"]) {
+    const suffixes =
+        family === "8bw0p"
+            ? { mark: 75, partner: 75, challenger: 78, official: 81 }
+            : { mark: 81, partner: 81, challenger: 84, official: 87 };
+    for (const grade of ["partner", "challenger"]) {
+        for (const initialGrade of ["", "official"]) {
+            test(`class-only ${family} ${initialGrade || "empty"} to ${grade} mark collects through the observer`, async (t) => {
+                const markClass = `_mark_${family}_${suffixes.mark}`;
+                const initialClass = `${markClass} ${initialGrade ? `_is_${initialGrade}_${family}_${suffixes[initialGrade]}` : ""}`;
+                const { dom } = createPageDom(
+                    realChzzkChatRow({
+                        chatId: "late-mark",
+                        nickname: "방문자",
+                        text: "안녕하세요",
+                        badgeImg: `<i class="${initialClass}"><span class="blind">인증 마크</span></i>`,
+                    }),
+                    { chatKeywordFilterEnabled: Boolean(initialGrade), chatKeywordFilterWords: [] }
+                );
+                t.after(() => closeChatToolsDom(dom));
+                const document = dom.window.document;
+                loadChatTools(dom);
+                await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+                assert.equal(moderatorRows(document).length, 0);
+                const row = document.querySelector('[data-chat-id="late-mark"]');
+                const mark = row.querySelector("i");
+                mark.className = `${markClass} _is_${grade}_${family}_${suffixes[grade]}`;
+                assert.equal(dom.window.CheeseSpanner.chatTools.parser.parseChatRow(row).role, grade);
+                await waitForCondition(() => moderatorRows(document).length === 1);
+                assert.match(moderatorRows(document)[0].textContent, grade === "partner" ? /파트너/ : /챌린저/);
+                assert.equal(unreadCount(document), 1);
+                mark.classList.add("decoration");
+                // More than two chat sync windows: a decoration change must not add a duplicate.
+                await new Promise((resolve) => setTimeout(resolve, 300));
+                assert.equal(moderatorRows(document).length, 1);
+                assert.equal(unreadCount(document), 1);
+            });
+        }
+    }
+}
+
+test("class-only verified marks still exclude body, popup, official and unsupported marks", async (t) => {
+    const placeholder = '<i class="_mark_1pcsq_81"><span class="blind">인증 마크</span></i>';
+    const { dom } = createPageDom(
+        realChzzkChatRow({ chatId: "body-mark", nickname: "방문자", text: `안녕하세요${placeholder}` }) +
+            realChzzkChatRow({
+                chatId: "popup-mark",
+                nickname: "방문자",
+                text: "안녕하세요",
+                badgeImg: `<div role="dialog">${placeholder}</div>`,
+            }) +
+            realChzzkChatRow({
+                chatId: "official-mark",
+                nickname: "방문자",
+                text: "안녕하세요",
+                badgeImg: placeholder,
+            }) +
+            realChzzkChatRow({ chatId: "unknown-mark", nickname: "방문자", text: "안녕하세요", badgeImg: placeholder }),
+        { chatKeywordFilterEnabled: false }
+    );
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+    const cases = [
+        ["body-mark", "_mark_1pcsq_81 _is_partner_1pcsq_81"],
+        ["popup-mark", "_mark_1pcsq_81 _is_challenger_1pcsq_84"],
+        ["official-mark", "_mark_1pcsq_81 _is_official_1pcsq_87"],
+        ["unknown-mark", "_mark_unknown_81 _is_partner_unknown_81"],
+    ];
+    for (const [id, className] of cases) {
+        const row = document.querySelector(`[data-chat-id="${id}"]`);
+        row.querySelector("i").className = className;
+        assert.equal(dom.window.CheeseSpanner.chatTools.parser.parseChatRow(row).role, "", id);
+    }
+    // Wait beyond the observer's throttled scan; none of these marks belongs to a collectible author.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(moderatorRows(document).length, 0);
+    assert.equal(unreadCount(document), 0);
+});
+
 // jsdom에는 레이아웃이 없으므로 40px 행 하나가 보이는 스크롤 목록을 모델링한다.
 function installModeratorViewport(dom) {
     const document = dom.window.document;

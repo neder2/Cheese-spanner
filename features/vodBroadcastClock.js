@@ -621,6 +621,12 @@
   box-sizing:border-box;
   text-shadow:0 1px 2px rgba(0,0,0,0.45);
 }
+.pzp-pc #${CLOCK_ID}{
+  opacity:0;
+}
+.pzp-pc.pzp-pc--controls #${CLOCK_ID}{
+  opacity:1;
+}
 #${CLOCK_ID}[data-bcbc-placement="right-controls"]{
   margin-left:0;
   margin-right:8px;
@@ -833,11 +839,15 @@
     function syncClockTypography(clock, anchorEl) {
         if (!(clock instanceof HTMLElement) || !(anchorEl instanceof HTMLElement)) return;
         const style = getComputedStyle(anchorEl);
+        const player = anchorEl.closest(".pzp-pc");
+        const time = player?.querySelector(VOD_TIME_SELECTOR);
         clock.style.fontFamily = style.fontFamily;
         clock.style.fontSize = style.fontSize;
-        clock.style.opacity = style.opacity;
-        clock.style.visibility = style.visibility;
-        clock.style.transition = style.transition;
+        // PZP's controls class owns visibility; sampling a fading button delays and restarts the clock's fade.
+        // Match the adjacent VOD time's easing as well as its duration, without copying its layout classes.
+        clock.style.opacity = player ? "" : style.opacity;
+        clock.style.visibility = player ? "" : style.visibility;
+        clock.style.transition = time ? getComputedStyle(time).transition : style.transition;
     }
 
     function findClockInsertAfter(timeEl) {

@@ -56,7 +56,7 @@ HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 �
 
 이미지·미디어의 URL은 HTTPS와 용도별 허용 호스트로 검증해요. 현재 공용 허용 목록에는 pstatic 하위 호스트, 이미지용 `livecloud-thumb.akamaized.net`, 미디어용 `ex-nlive-streaming.navercdn.com`이 있어요. URL 검증 통과가 선택 권한·CORS·브라우저 재생 성공까지 보장하지는 않아요.
 
-멀티뷰는 OPEN 상세의 `livePlaybackJson.media`에서 확인된 LLHLS, 다음으로 HLS 소스를 선택해요. 재생 JSON 오류·지원 소스 없음·종료 방송은 실패 상태예요. 미리보기는 live-detail·auto-play-info의 실제 소스를 검증하며 네이티브 목록 미리보기와 확장 소유 미리보기의 제어 경로를 구분해요. 원격 JS·WASM을 재생 응답으로 받아 실행하지 않아요.
+멀티뷰는 OPEN 상세의 `livePlaybackJson.media`에서 확인된 LLHLS, 다음으로 HLS 소스를 선택해요. 재생 JSON 오류·지원 소스 없음·종료 방송은 실패 상태예요. 미리보기는 live-detail·auto-play-info의 실제 소스를 검증하며 네이티브 목록 미리보기와 확장 소유 미리보기의 제어 경로를 구분해요. 확장 미리보기는 hls.js와 브라우저 기본 HLS 양쪽에서 LLHLS 재생이 실패하면 같은 응답의 일반 HLS URL을 한 번 시도해요. 재시도는 음량·음소거와 hls.js의 화질 상한을 유지해요. 미리보기를 닫거나 소스를 교체하면 이전 소스의 이벤트 처리를 끝내요. 원격 JS·WASM을 재생 응답으로 받아 실행하지 않아요.
 
 ## DOM·페이지 객체 입력
 
@@ -95,6 +95,8 @@ HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 �
 
 파트너·챌린저는 확인된 인증 종류로 판정해요. 프로·일반은 실제 등급의 확정값이 아니라 비공식 채널이며 인증 종류가 명시적으로 null인 채널의 공개 구독 지원 여부(true/false)로 구분하고 UI에 기준을 밝혀요. 공식 채널·미지원 종류·필드 누락·실패·채널 ID 불일치는 일반으로 대체하지 않아요. 등급 필터가 켜진 경우에만 필요한 채널 상세를 회차당 최대 20개·동시 4개·요청당 3초로 조회해요. 캐시·한 탐색의 채널 수는 각각 최대 3,000개이고 실패도 캐시해요. 같은 탐색에서 재시도하지 않으며 조건·정렬·경로 변경과 OFF에서 진행 요청을 취소해요. 다음 탐색에서 5분 만료를 확인하고, 현재 탐색의 확인값은 그 탐색 동안 보존해요. 선택은 기존 sessionStorage version 1의 주소별 레코드에 선택적인 `streamerGrades` 배열로 보관하고 허용된 네 값만 복원해요.
 
+등급 상세를 조회하기 전에 확실히 제외되는 검색어·카테고리 후보를 걸러요. 겹친 원본 카드 중 하나라도 조건에 맞으면 해당 채널을 조회 대상으로 두고, 검색 조건을 통과한 미확인 등급도 요청 후보로 남겨요. 전체 방송의 새로고침은 현재 검색·필터를 유지한 채 새 탐색을 시작하므로 만료된 실패를 다시 조회할 수 있어요.
+
 현재 닉네임 렌더러의 인증 마크는 `i._mark_8bw0p_*`에 `_is_partner_8bw0p_*` 또는 `_is_challenger_8bw0p_*`가 붙고 숨은 설명은 공통 `인증 마크`예요. 실제 목록 DOM과 페이지가 로드한 `index-BcgE118t.js`와 같은 이름의 보관 소스에서 공통 렌더러·채팅 닉네임 연결을 대조했어요. 채팅 파서는 현재 작성자 요소 안의 보이는 마크만 사용하고 본문·팝업·공식 마크는 제외해요. 방송자·운영자 역할을 우선하며 파트너·챌린저도 기존 store의 정체성·재사용·중복 방지·읽음 수명을 따라요. 추가 목록 카드는 템플릿의 인증 종류를 그대로 복사하지 않아요. 수정본 확장을 재로드한 실화면 검증과 공개 데이터·기존 화면 관측은 구분해요.
 
 2026-11-14 Chrome의 라이브 채팅 팝업과 [공개 번들](https://ssl.pstatic.net/static/nng/glive/resource/p/static/js/index-cg6y1ITV.js)에서는 같은 렌더러가 `1pcsq` 계열로 바뀌었어요. 인증 마크는 `_mark_1pcsq_81`, 등급은 `_is_partner_1pcsq_81`·`_is_challenger_1pcsq_84`·`_is_official_1pcsq_87`이에요. `shared/data.js`의 DOM 독립 `verifiedMarks`는 이 계열과 앞서 확인한 `8bw0p`만 판별하며, 계열·등급 충돌과 미확인 계열은 확정하지 않아요. 채팅 수집·목록 필터·복제 카드 갱신·닉네임 표시가 같은 정의를 사용해요. 새 카드에 원본 채널의 인증 배지가 남지 않도록 현재 메타데이터의 등급으로 바꾸거나 제거해요.
@@ -108,6 +110,8 @@ HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 �
 NORMAL 메시지는 같은 스냅샷의 `originalContent`와 현재 본문이 대응할 때만 확정해요. 본문은 최대 2,000자이며 초과하면 절단본을 쓰지 않아요. 이모티콘은 원문의 `{:token:}`과 같은 메시지 `extras.emojis`의 확인된 URL을 현재 DOM 이미지의 URL·순서·개수와 대조해요. `nng-phinf.pstatic.net`의 네이티브 `?type=f60_60` 변환을 반영하고, 표시용 토큰과 `textKey`는 기존 DOM 규칙을 유지해요. 매핑이 없다고 확인한 빈 맵은 문자 토큰으로 비교하지만 판독 불가·getter·상속·비허용 URL·상한 초과의 `null` 맵은 문자로 추정하지 않아요. 참조 토큰은 최대 64개, URL은 2,048자, 응답 JSON은 32,768자예요. 응답 상한을 넘으면 본문 메타데이터만 미확인으로 두고 식별값은 유지해요.
 
 같은 네이티브 메시지라도 본문이 아직 이전 행의 내용이면 수집·표시 예외 판정을 보류해요. 블라인드 상태도 네이티브 안내가 화면에 도착하기 전의 일반 본문을 새 메시지로 확정하지 않아요. 이미 일치 검증을 마친 수집 기록은 DOM 재사용만으로 철회하지 않으며, 새 `key·user·time`은 새 메시지예요. 같은 식별값의 재마운트·검증된 역할 보강은 기존 recordId·읽음을 유지해요. 수집 주기 전에 제거된 행은 마지막으로 검증한 스냅샷의 작성자·DOM 역할·본문·명시 ID·재사용 신호가 그대로일 때만 그 스냅샷을 보존해요.
+
+작성자·본문·네이티브 식별값이 일치하는 NORMAL 메시지는 읽는 즉시 수집 역할을 반영해요. 화면 배지로 판별한 공지는 임시 기록으로 남기고, 같은 식별값의 역할·인증이 수집 대상에서 제외되는 것으로 확인되면 그 기록을 즉시 철회해요. 네이티브 역할과 화면 역할이 충돌할 때는 화면 배지를 기록에서 제외해요. 패널 표시는 기존 묶음으로 처리해요. 역할이나 인증 정보가 누락된 NORMAL 행은 같은 식별값을 공유 타이머에서 최대 두 번 다시 읽어요. 뒤늦게 확정된 공지는 최초 관측 순서에 삽입하며 기존 패널 행과 읽음을 보존해요. 최근 관측 순서와 대기 행에는 각각 500개 한도가 있고, 채널 이동·기능 종료에서 정리해요. 누락된 역할의 DOM 보완은 현재 작성자 영역의 보이는 배지와 확인된 명칭을 사용해요. 컨테이너 클래스만 달라졌다면 현재 채팅 목록에서 닉네임 버튼과 본문이 직접 형제인 구조를 확인한 뒤 기존 메시지 속성을 읽어요.
 
 MAIN이 늦게 준비되면 같은 루트·작성자·본문·재사용 신호·충돌 없는 명시 ID를 가진 DOM 수집 기록에 네이티브 식별값을 연결해요. 이때 확인된 수집 역할로 정정해도 recordId·읽음을 보존해요. 메시지 식별값과 네이티브 수집 대상 증거는 별개이며, 누락된 역할·등급의 DOM 보완에만 의존한 기록은 두 축이 모두 알려진 비대상으로 확정될 때만 철회해요. 잘못된 메타데이터나 판독 실패만으로 기존 기록을 지우지 않으며, 이미 네이티브 수집 대상으로 확인했거나 다른 네이티브 식별값이 연결된 기록은 이 정정 대상이 아니에요.
 
@@ -158,6 +162,8 @@ MAIN이 늦게 준비되면 같은 루트·작성자·본문·재사용 신호·
 Isolated에서 GET `/service/v3/videos/{videoNo}`의 응답 번호·채널·공개 `REPLAY`를 확인해요. `ABR_HLS`의 보조 재생에는 재생 키가 필요해요. 치지직이 `liveRewindPlaybackJson`을 제공하는 공개 다시보기는 영상 ID·길이·공개 재생 상태가 일치하는 HLS 응답을 사용해요. 방송 시작은 `liveOpenDate`, 구간 끝은 시작에 영상 길이를 더한 값이며 시작 포함·끝 제외예요. 분할 가능성이 있거나 종료 시각이 길이와 충돌하는 응답은 시각 확인 불가예요. 실제 플레이어 길이와 응답 길이의 차이가 2초를 넘는 경우에도 동기화하지 않아요.
 
 채널 검색은 `/service/v1/search/channels`의 채널 ID를 검증해요. `/service/v1/channels/{channelId}/videos`의 `LATEST`·`REPLAY` 목록에서는 메인 방송 시작보다 이전에 게시된 항목을 건너뛰어요. 상세 응답에서 선택한 채널과 두 영상의 방송 구간이 실제로 겹치는지 확인해요. 경계 시각만 같은 경우 겹치는 구간은 0초예요.
+
+공개 다시보기의 구간 검증과 재생 지원 판정은 별도로 해요. 검색과 재생은 같은 함수로 리와인드의 HLS 주소와 화질 트랙을 검증해요. 겹치는 후보의 형식을 지원하지 않으면 다음 후보를 확인하고, 미지원 형식만 있으면 해당 사유를 표시해요. 조회 실패와 방송 시각 미상도 각각 안내해요. 주소가 달라도 이미 추가한 미디어 ID와 같으면 중복 항목의 임시 칸을 즉시 정리해요.
 
 MAIN에서는 `#player_layout.chzzk_player.type_vod`에 속한 원본 플레이어와 현재 미디어 ID를 확인해요. 탭 문서에서 검증한 SDK의 보조 슬롯을 최대 다섯 개까지 재사용하고, 동기화 기준은 원본 하나에 연결해요. 보조의 `vod3:` 소스는 자신의 미디어 ID·재생 키·암호화 형식으로 만들어요. `liveRewindPlaybackJson`을 쓸 때는 확인된 치지직 CDN의 HLS 주소와 화질 정보만 뽑아 보조 `live:` 재생기에 넣고 로딩을 시작해요. 재생 주소와 키는 메모리에서만 사용해요. 삭제 때 네이티브 소스를 비우고 진행 중이던 로딩·재생이 끝나며 버퍼가 비어야 슬롯을 재사용해요. `currentSrc` 문자열 자체는 해제의 판정 기준이 아니에요.
 
@@ -274,11 +280,13 @@ local `betterchzzkFollowingLiveTitleHistory`(키 이름은 호환 식별자)는 
 
 ### 현재 스트림 정보 읽기
 
-isolated는 현재 메인 video의 `data-bcsi-request`에 `{version:1, requestId}`를 쓰고 같은 video에서 `cheese-spanner:stream-info:read` 이벤트를 발생시켜요. requestId는 길이 1–128의 문자열이며 다른 요청 필드를 받지 않아요. MAIN은 document capture 리스너에서 현재 메인·소유권·라이브 경로를 확인하고 같은 video의 `data-bcsi-result`에 동기로 응답해요. 잘못된 요청이나 다른 video에는 응답하지 않아요.
+isolated는 현재 메인 video의 `data-bcsi-request`에 `{version:1, requestId}`를 쓰고 같은 video에서 `cheese-spanner:stream-info:read` 이벤트를 발생시켜요. requestId는 길이 1–128의 문자열이며 다른 요청 필드를 받지 않아요. MAIN은 document capture 리스너에서 현재 메인·경로·소유권을 확인하고 같은 video의 `data-bcsi-result`에 동기로 응답해요. 잘못된 요청이나 다른 video에는 응답하지 않아요.
 
 결과 필드는 `{version, requestId, route, status, reason, mode, trackId, sourceToken, trackWidth, trackHeight, onLive}`예요. version은 1, route는 pathname, status는 `ready | unavailable`이에요. ready의 reason은 `ok`이고, unavailable의 reason은 `unsupported-route | player-missing | ambiguous-player | track-missing | player-changed`예요. mode는 `low-latency | standard | unknown`이며 저지연은 확인된 `low-latency`·`low-latency-p2p`, 일반은 `main`·`p2p` 종류에만 대응해요.
 
 trackId는 확인된 문자열 또는 null, 크기는 유효한 양수 숫자 또는 null, onLive는 확인한 boolean 또는 null이에요. sourceToken은 메인·provider·소스를 구분하는 페이지 내 임시 문자열이며 원격 미디어 URL이나 React 객체를 넘기지 않아요. unavailable에서는 mode가 unknown이고 나머지 트랙·소스·크기·onLive는 모두 null이에요. 읽는 동안 소유권이 바뀌면 player-changed로 처리하고, 같은 pane을 공유해도 서로 다른 소유 플레이어가 있으면 모호한 결과예요.
+
+메인 다시보기에는 선택적 `qualityFallback`을 반환해요. 자동 화질 목표가 480p일 때 트랙 목록의 모든 항목과 수동 트랙의 높이를 확인해요. 선택 가능한 480p가 없고 그 아래 최선의 트랙을 재생 중일 때 그 높이를 반환해요. 스트림 정보는 실제 재생 높이와 일치할 때 480p 미제공 사유를 표시해요. 이 읽기 자체는 화질을 바꾸지 않아요.
 
 isolated는 version·requestId·route·값 형식을 확인한 뒤 두 임시 속성을 지워요. 응답이 없거나 잘못되면 현재 방식은 확인 불가예요. 과거 `data-cheese-spanner-low-latency-result`를 현재 선택의 근거로 사용하지 않아요. 이 조회는 제어 래퍼 설치·선택·재생·seek·배속 변경을 실행하지 않고, 자동 화질 설정이 꺼져도 작동해요. DOM 이벤트에는 확장 저장소·탭·네트워크 같은 특권 명령을 연결하지 않아요.
 
@@ -393,4 +401,4 @@ open-settings의 target은 panels, history, stream, categories뿐이고 확장 o
 
 ## 전체 방송 목록 새로고침
 
-`features/liveListRefreshPage.js`는 MAIN에서 `/lives`의 `button#RECOMMEND[role=tab]` 바로 뒤에 버튼을 붙여요. 2026-11-08 공개 `index-BcgE118t.js`에서 확인한 QueryClientProvider의 `client`와 `["all-lives", routeKey, filters]` 중 활성 쿼리 하나만 exact refetch하며 정렬·페이지 주소를 바꾸지 않아요. 직접 네트워크·확장 권한은 사용하지 않아요. 클릭 후 1초 동안 비활성화·아이콘 회전을 적용해요. 성공 시 `cheese-spanner:live-list-refreshed`로 목록 도구의 오래된 메타데이터·집계·추가 카드를 무효화하고 검색·필터 조건은 보존해요. 이동·버튼 교체 후 늦은 완료는 무시해요. 공개 코드 확인과 실제 Chrome 화면 검증은 별개예요.
+`features/liveListRefreshPage.js`는 MAIN에서 `/lives`의 `button#RECOMMEND[role=tab]` 바로 뒤에 버튼을 붙여요. 2026-11-08 공개 `index-BcgE118t.js`에서 확인한 QueryClientProvider의 `client`와 `["all-lives", routeKey, filters]` 중 활성 쿼리 하나만 exact refetch하며 정렬·페이지 주소를 바꾸지 않아요. 직접 네트워크·확장 권한은 사용하지 않아요. 클릭 후 1초 동안 비활성화·아이콘 회전을 적용해요. 성공 시 `cheese-spanner:live-list-refreshed`로 목록 도구의 오래된 메타데이터·집계·추가 카드를 무효화하고 검색·필터 조건은 보존해요. 완료를 알리기 전에 같은 버튼·경로·정렬·활성 목록 쿼리인지 확인해요. 새 요청을 시작하거나 정렬·필터가 바뀌면 버튼 설명을 기본 문구로 돌려요. 요청 중 원래 목록으로 돌아와도 이전 요청의 완료는 무시해요. 공개 코드 확인과 실제 Chrome 화면 검증은 별개예요.

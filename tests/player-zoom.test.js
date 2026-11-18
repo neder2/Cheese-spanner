@@ -958,6 +958,162 @@ test("panel stays fixed when hovering reveals native controls and while adjustin
     );
 });
 
+function mockPanelBounds(player, panel, box = { left: 100, top: 60, width: 800, height: 450 }) {
+    const rect = (left, top, width, height) => ({
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+        bottom: top + height,
+    });
+    player.getBoundingClientRect = () => rect(box.left, box.top, box.width, box.height);
+    panel.getBoundingClientRect = () => {
+        const width = Math.min(180, box.width - 32);
+        const height = 34;
+        const left = panel.style.left
+            ? (parseFloat(panel.style.left) / 100) * (box.width - width)
+            : box.width - width - 16;
+        const top = panel.style.top
+            ? (parseFloat(panel.style.top) / 100) * (box.height - height)
+            : box.height - height - 64;
+        return rect(box.left + left, box.top + top, width, height);
+    };
+    const captures = new Set();
+    panel.setPointerCapture = (id) => captures.add(id);
+    panel.hasPointerCapture = (id) => captures.has(id);
+    panel.releasePointerCapture = (id) => captures.delete(id);
+    return { box, captures };
+}
+
+test("dragging the percent or panel space moves only the panel, stays in bounds and leaves controls usable", (t) => {
+    const f = fixture(t, { playerZoomEnabled: true, playerZoomMode: "manual" });
+    f.toggle().click();
+    f.setPercent(200);
+    const panel = f.panel();
+    const { captures } = mockPanelBounds(f.player(), panel);
+    const before = panel.getBoundingClientRect();
+    const videoBefore = transform(f.video());
+    const start = { clientX: before.left + 20, clientY: before.top + 15 };
+    let nativeClicks = 0;
+    f.player().addEventListener("click", () => nativeClicks++);
+    f.pointer("pointerdown", { ...start, button: 2 }, f.value());
+    f.pointer("pointermove", { clientX: start.clientX - 100, clientY: start.clientY - 80 }, f.doc.body);
+    assert.deepEqual(panel.getBoundingClientRect(), before, "right clicks never move the panel");
+    assert.equal(f.pointer("pointerdown", start, f.value()).defaultPrevented, true);
+    f.pointer("pointermove", { clientX: start.clientX + 1, clientY: start.clientY + 1 }, f.doc.body);
+    assert.deepEqual(panel.getBoundingClientRect(), before, "a click does not shift the panel");
+    const end = { clientX: start.clientX - 100, clientY: start.clientY - 80 };
+    f.pointer("pointermove", end, f.doc.body);
+    closeTo(panel.getBoundingClientRect().left, before.left - 100);
+    closeTo(panel.getBoundingClientRect().top, before.top - 80);
+    assert.deepEqual(transform(f.video()), videoBefore, "moving the popup must not pan or zoom the video");
+    f.player().classList.remove("pzp-pc--controls");
+    assert.equal(f.w.getComputedStyle(panel).display, "flex", "native auto-hide does not interrupt dragging");
+    f.pointer("pointerup", { ...end, buttons: 0 }, f.doc.body);
+    assert.equal(captures.size, 0);
+    f.player().dispatchEvent(new f.w.MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+    assert.equal(nativeClicks, 0, "the release click must not toggle playback");
+    f.player().classList.add("pzp-pc--controls");
+    const moved = panel.getBoundingClientRect();
+    for (const control of [f.range(), f.reset()]) {
+        assert.equal(f.pointer("pointerdown", end, control).defaultPrevented, false);
+        f.pointer("pointermove", { clientX: 5000, clientY: 5000 }, f.doc.body);
+        f.pointer("pointerup", { buttons: 0 }, f.doc.body);
+        assert.deepEqual(panel.getBoundingClientRect(), moved, "sliders and buttons do not start a panel drag");
+    }
+    f.setPercent(175);
+    closeTo(transform(f.video()).scale, 1.75);
+    f.reset().click();
+    assert.equal(transform(f.video()).scale, 1);
+    assert.deepEqual(panel.getBoundingClientRect(), moved, "zoom reset keeps the popup position");
+    f.pointer("pointerdown", { clientX: moved.left + 4, clientY: moved.top + 4 }, panel);
+    f.pointer("pointermove", { clientX: -5000, clientY: -5000 }, f.doc.body);
+    closeTo(panel.getBoundingClientRect().left, 100);
+    closeTo(panel.getBoundingClientRect().top, 60);
+    f.pointer("pointermove", { clientX: 5000, clientY: 5000 }, f.doc.body);
+    closeTo(panel.getBoundingClientRect().right, 900);
+    closeTo(panel.getBoundingClientRect().bottom, 510);
+    f.pointer("pointerup", { buttons: 0 }, f.doc.body);
+    f.pointer("pointerdown");
+    f.pointer("pointerup", { buttons: 0 });
+    f.video().dispatchEvent(new f.w.MouseEvent("click", { bubbles: true, detail: 1 }));
+    assert.equal(nativeClicks, 1, "the next ordinary video click still works");
+});
+
+test("panel dragging releases capture and listeners on cancellation, source changes and teardown", async (t) => {
+    const endings = {
+        cancel: (f) => f.pointer("pointercancel", {}, f.doc.body),
+        capture: (f) => f.pointer("lostpointercapture", {}, f.panel()),
+        blur: (f) => f.w.dispatchEvent(new f.w.Event("blur")),
+        resize: (f) => f.w.dispatchEvent(new f.w.Event("resize")),
+        source: (f) => f.video().dispatchEvent(new f.w.Event("loadstart")),
+        mode: (f) => f.apply({ playerZoomEnabled: true, playerZoomMode: "manual" }),
+        disable: (f) => f.apply({ playerZoomEnabled: false }),
+        route: (f) => f.route("/lives"),
+        remount: async (f) => {
+            const oldPanel = f.panel();
+            oldPanel.remove();
+            await waitForCondition(() => f.panel() && f.panel() !== oldPanel);
+        },
+    };
+    for (const [name, finish] of Object.entries(endings)) {
+        await t.test(name, async (t) => {
+            const f = fixture(t);
+            f.wheel();
+            const panel = f.panel();
+            const { captures } = mockPanelBounds(f.player(), panel);
+            const box = panel.getBoundingClientRect();
+            f.pointer("pointerdown", { clientX: box.left + 20, clientY: box.top + 15 }, f.value());
+            f.pointer("pointermove", { clientX: box.left - 80, clientY: box.top - 65 }, f.doc.body);
+            assert.equal(captures.size, 1);
+            assert.equal(f.counts().pointerUps, 1);
+            await finish(f);
+            const stopped = panel.style.cssText;
+            assert.equal(captures.size, 0);
+            assert.equal(f.counts().pointerUps, 0);
+            assert.equal(panel.hasAttribute("data-bcz-panel-dragging"), false);
+            f.pointer("pointermove", { clientX: 5000, clientY: 5000 }, f.doc.body);
+            assert.equal(panel.style.cssText, stopped, "late pointer moves cannot restart a finished drag");
+        });
+    }
+});
+
+test("moved panel positions stay independent across multiviews and survive same-video remounts", async (t) => {
+    const f = fixture(t);
+    const aux = await addAuxiliary(f, "panel-channel");
+    f.wheel();
+    aux.wheel();
+    mockPanelBounds(f.player(), f.panel());
+    mockPanelBounds(aux.cell, aux.panel(), aux.box);
+    const mainPosition = f.panel().style.cssText;
+    const panel = aux.panel();
+    const box = panel.getBoundingClientRect();
+    aux.pointer("pointerdown", { clientX: box.left + 20, clientY: box.top + 15 }, panel);
+    aux.pointer("pointermove", { clientX: box.left - 60, clientY: box.top - 40 }, f.doc.body);
+    aux.pointer("pointerup", { buttons: 0 }, f.doc.body);
+    const position = panel.style.cssText;
+    assert.notEqual(position, "");
+    assert.equal(f.panel().style.cssText, mainPosition);
+    const zoom = transform(aux.video);
+    const rebuilt = aux.cell.cloneNode(false);
+    while (aux.cell.firstChild) rebuilt.append(aux.cell.firstChild);
+    aux.cell.replaceWith(rebuilt);
+    await waitForCondition(() => rebuilt.querySelector(`.${ID}-panel`) !== panel);
+    assert.equal(rebuilt.querySelector(`.${ID}-panel`).style.cssText, position);
+    assert.deepEqual(transform(aux.video), zoom);
+    const mainBox = f.panel().getBoundingClientRect();
+    f.pointer("pointerdown", { clientX: mainBox.left + 20, clientY: mainBox.top + 15 }, f.value());
+    f.pointer("pointermove", { clientX: mainBox.left - 100, clientY: mainBox.top - 80 }, f.doc.body);
+    f.pointer("pointerup", { buttons: 0 }, f.doc.body);
+    const movedMain = f.panel().style.cssText;
+    f.route("/");
+    f.route("/live/test");
+    assert.equal(f.panel().style.cssText, movedMain, "the same-video PiP round trip retains the popup position");
+    f.route("/live/another");
+    assert.equal(f.panel().style.cssText, "", "another broadcast starts at the default position");
+});
+
 test("range drags and detached panel events are cleaned up on disable and remount", async (t) => {
     const f = fixture(t);
     f.wheel();

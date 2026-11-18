@@ -646,12 +646,14 @@
             const author = row.querySelector(".bcct-moderator-row__author");
             if (author && message.authorColor) author.style.color = message.authorColor;
             const meta = row.querySelector(".bcct-moderator-row__meta");
-            if (meta && !meta.querySelector("img") && fresh.querySelector(".bcct-moderator-row__badge")) {
-                for (const node of Array.from(meta.childNodes)) {
-                    if (node.nodeType === Node.TEXT_NODE) node.remove();
-                }
-                for (const badge of fresh.querySelectorAll(".bcct-moderator-row__badge")) {
-                    meta.insertBefore(badge, author?.parentNode === meta ? author : null);
+            const freshMeta = fresh.querySelector(".bcct-moderator-row__meta");
+            if (meta && freshMeta && meta.innerHTML !== freshMeta.innerHTML) {
+                if (!author) meta.replaceChildren(...freshMeta.childNodes);
+                else {
+                    for (const node of Array.from(meta.childNodes)) if (node !== author) node.remove();
+                    for (const node of Array.from(freshMeta.childNodes)) {
+                        if (!node.matches?.(".bcct-moderator-row__author")) meta.insertBefore(node, author);
+                    }
                 }
             }
             const nextTime = fresh.querySelector(".bcct-moderator-row__time");
@@ -675,19 +677,24 @@
                 moderatorRenderedRows.delete(id);
             }
             let changed = false;
+            let previousRow = null;
             for (const message of moderatorMessages) {
                 const key = getModeratorRenderKey(message);
                 let entry = moderatorRenderedRows.get(message.id);
                 if (!entry) {
                     entry = { row: buildModeratorRow(message), message, key };
                     moderatorRenderedRows.set(message.id, entry);
-                    moderatorList.appendChild(entry.row);
-                    changed = true;
                 } else if (entry.key !== key) {
                     updateModeratorRowAppearance(entry.row, message);
                     entry.key = key;
                 }
                 entry.message = message;
+                const followingRow = previousRow ? previousRow.nextElementSibling : moderatorList.firstElementChild;
+                if (followingRow !== entry.row) {
+                    moderatorList.insertBefore(entry.row, followingRow);
+                    changed = true;
+                }
+                previousRow = entry.row;
                 const hidden = Boolean(
                     moderatorAuthorFilter && getModeratorAuthorKey(message) !== moderatorAuthorFilter
                 );

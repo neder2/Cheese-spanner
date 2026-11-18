@@ -5,9 +5,9 @@ const test = require("node:test");
 const { JSDOM } = require("jsdom");
 const source = fs.readFileSync(path.join(__dirname, "../features/autoQualityPage.js"), "utf8");
 
-function fixture(t) {
+function fixture(t, url = "https://chzzk.naver.com/live/measured-a") {
     const dom = new JSDOM("<!doctype html><body></body>", {
-        url: "https://chzzk.naver.com/live/measured-a",
+        url,
         runScripts: "outside-only",
         pretendToBeVisual: true,
     });
@@ -23,10 +23,10 @@ function fixture(t) {
     w.setInterval = () => calls.push("interval");
     w.fetch = () => calls.push("fetch");
     w.Storage.prototype.setItem = () => calls.push("storage");
-    const state = (enabled = false) => {
+    const state = (enabled = false, quality = "1080p") => {
         w.document.documentElement.setAttribute(
             "data-cheese-spanner-auto-quality-state",
-            JSON.stringify({ enabled, quality: "1080p" })
+            JSON.stringify({ enabled, quality })
         );
         w.dispatchEvent(new w.Event("cheese-spanner:auto-quality:state"));
     };
@@ -184,6 +184,41 @@ test("read-only mode classifies only measured kinds and preserves automatic trac
         track.kind = kind;
         assert.equal(f.read()?.mode, mode);
     }
+    assert.deepEqual(f.calls, []);
+});
+
+test("VOD fallback guidance only reports a verified lower selectable track when 480p is missing", (t) => {
+    const f = fixture(t, "https://chzzk.naver.com/video/123");
+    const { host, video, player, tracks } = f.p;
+    host.className = "chzzk_player type_vod";
+    host.id = "player_layout";
+    f.w.CheeseSpannerVodNative = { find: (owner, target) => (owner === host && target === video ? player : null) };
+    tracks.splice(
+        0,
+        tracks.length,
+        ...[1080, 720, 144].map((height) => ({
+            id: `main-${height}`,
+            kind: "main",
+            height,
+            selected: height === 144,
+        }))
+    );
+    f.state(true, "480p");
+    assert.equal(f.read().qualityFallback, 144);
+    tracks.push({ id: "auto", selected: false });
+    assert.equal(f.read().qualityFallback, 144);
+    tracks.length++;
+    assert.equal(f.read().qualityFallback, undefined, "the native list still has an empty slot");
+    const pending = { id: "next-level", kind: "main", selected: false };
+    tracks[tracks.length - 1] = pending;
+    assert.equal(f.read().qualityFallback, undefined, "the missing height could still be 480p");
+    pending.height = 720;
+    assert.equal(f.read().qualityFallback, 144);
+    pending.height = 480;
+    assert.equal(f.read().qualityFallback, undefined);
+    tracks.pop();
+    tracks.push({ id: "main-480", kind: "main", height: 480, selected: false });
+    assert.equal(f.read().qualityFallback, undefined);
     assert.deepEqual(f.calls, []);
 });
 

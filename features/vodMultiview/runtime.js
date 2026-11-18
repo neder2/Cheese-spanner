@@ -68,13 +68,14 @@
     let clockEnabled = false;
     const clocks = new Map();
     const rememberedReplays = new Map();
+    let remountState = null;
 
     function installStyles() {
         ensureUiTheme?.();
         injectStyleOnce(
             "cheese-spanner-vod-multiview-style",
             `
-#player_layout[data-bcvm-split]:not(.pip_mode) > .pzp-pc:not(:fullscreen) {
+#player_layout[data-bcvm-split]:not(.pip_mode, .miniplayer) > .pzp-pc:not(:fullscreen) {
     position:absolute; inset:var(--bcvm-top) auto auto var(--bcvm-left);
     width:var(--bcvm-width) !important; max-width:var(--bcvm-width); height:var(--bcvm-height) !important;
     container:bcvm-main / size;
@@ -349,7 +350,7 @@
 #${PANEL_ID} .bcvm-screen:not([data-bcvm-sync="false"]) :is(.pzp-pc__progress-slider, .pzp-setting-intro-playbackrate, .pzp-pc__setting-playbackrate-pane) {
     display: none !important;
 }
-#player_layout.pip_mode :is(#${PANEL_ID}, #${LAUNCHER_ID}) { display:none !important; }
+#player_layout:is(.pip_mode, .miniplayer) :is(#${PANEL_ID}, #${LAUNCHER_ID}) { display:none !important; }
 `
         );
     }
@@ -400,10 +401,12 @@
         if (retry) entry.sync.removeAttribute("aria-checked");
         else entry.sync.setAttribute("aria-checked", String(entry.syncEnabled));
         const name = entry.channel.textContent || `다시보기 ${entry.no}`;
-        entry.sync.setAttribute("aria-label", `${name} ${retry ? "다시 시도" : "동기화"}`);
-        entry.sync.title = retry
-            ? `${text}\n눌러서 다시 시도`
-            : `동기화 ${entry.syncEnabled ? "켜짐" : "꺼짐"}\n${text}`;
+        const action = retry ? "다시 시도" : "동기화";
+        entry.sync.setAttribute("aria-label", `${name} ${action}`);
+        entry.sync.title = retry ? `${text}\n${action}` : `동기화 ${entry.syncEnabled ? "켜짐" : "꺼짐"}\n${text}`;
+        if (status !== "resync" && document.activeElement === entry.resync) entry.sync.focus({ preventScroll: true });
+        entry.resync.hidden = status !== "resync";
+        if (!entry.resync.hidden) entry.resync.setAttribute("aria-label", `${name} 다시 맞추기`);
         entry.screen.dataset.bcvmSync = String(entry.syncEnabled);
         entry.screen.dataset.unavailable = ["out-of-range", "unknown-time", "main-ended"].includes(status) ? "1" : "0";
     }
@@ -530,10 +533,16 @@
         });
         entry.sync.className = "bcvm-sync";
         entry.sync.setAttribute("aria-describedby", status.id);
+        entry.resync = button("다시 맞추기", () => {
+            if (view === current && current.entries.get(subNo) === entry && entry.state === "resync" && entry.request)
+                send(current.panel, { action: "resync", request: entry.request });
+        });
+        entry.resync.className = "bcvm-resync";
+        entry.resync.setAttribute("aria-describedby", status.id);
         const copy = element("div", "bcvm-entry-copy");
         copy.append(title, channel);
         const actions = element("div", "bcvm-entry-actions");
-        actions.append(entry.sync, remove);
+        actions.append(entry.resync, entry.sync, remove);
         heading.append(copy, actions);
         row.append(heading, status);
         current.entries.set(subNo, entry);
@@ -561,9 +570,13 @@
         }
         if (
             main.media.id === sub.media.id ||
-            [...current.entries.values()].some((item) => item.info?.media.id === sub.media.id)
+            [...current.entries.values()].some((item) => item !== entry && item.info?.media.id === sub.media.id)
         ) {
-            updateStatus(entry, "", "이미 화면에 있는 다시보기입니다.");
+            const remembered = rememberedReplays.get(current.mainId);
+            remembered?.delete(entry.no);
+            if (remembered?.size === 0) rememberedReplays.delete(current.mainId);
+            removeSub(current, entry);
+            current.notice.textContent = "이미 화면에 있는 다시보기입니다.";
             return;
         }
         entry.info = {
@@ -647,12 +660,13 @@
         }
     }
 
-    async function restoreReplays(current) {
-        const saved = rememberedReplays.get(current.mainId);
-        if (!saved?.size || current.entries.size) return;
+    async function restoreReplays(current, saved = rememberedReplays.get(current.mainId)) {
+        if (!saved || current.entries.size) return;
+        const numbers = [...saved].slice(0, maxAuxiliary);
+        if (!numbers.length) return;
         const restore = (current.restore = new AbortController());
         const main = current.mainInfo || loadVideo(current.mainId, { signal: restore.signal });
-        const entries = [...saved].map((no) => selectSub(current, no));
+        const entries = numbers.map((no) => selectSub(current, no));
         await Promise.all(entries.map((entry) => loadSub(current, entry, main)));
         if (current.restore === restore) current.restore = null;
     }
@@ -965,8 +979,8 @@
             if (!canAdd(current) || current.entries.has(sub.media.videoNo)) return;
             current.notice.textContent = "";
             const entry = selectSub(current, sub.media.videoNo);
-            startSub(current, entry, main, sub);
             setAddOpen(current, false);
+            startSub(current, entry, main, sub);
         } catch {
             if (isCurrent(current, pending, mainNo)) current.notice.textContent = MESSAGES["lookup-error"];
         } finally {
@@ -1236,7 +1250,7 @@
         current.chatButton.disabled = layoutSuspended(current);
     }
 
-    function setOpen(current, open, trigger) {
+    function setOpen(current, open, trigger, { focus = true } = {}) {
         if (open && layoutSuspended(current)) return;
         if (trigger) current.toolbarTrigger = trigger;
         current.open = open;
@@ -1253,10 +1267,12 @@
             clearFollowing(current);
             current.notice.textContent = "";
         }
-        const returnFocus = current.toolbarTrigger?.isConnected ? current.toolbarTrigger : current.launcher;
-        (open ? current.addToggle : returnFocus).focus({
-            preventScroll: !open || current.toolbar.dataset.placement === "sidebar",
-        });
+        if (focus) {
+            const returnFocus = current.toolbarTrigger?.isConnected ? current.toolbarTrigger : current.launcher;
+            (open ? current.addToggle : returnFocus).focus({
+                preventScroll: !open || current.toolbar.dataset.placement === "sidebar",
+            });
+        }
     }
 
     function toggleMultiview(current) {
@@ -1327,7 +1343,7 @@
     }
 
     function layoutSuspended(current) {
-        return Boolean(document.fullscreenElement || current.host.classList.contains("pip_mode"));
+        return Boolean(document.fullscreenElement || current.host.matches(".pip_mode, .miniplayer"));
     }
 
     function closeViewport(current) {
@@ -1886,6 +1902,8 @@
         const launcher = (current.launcher = button("", (event) => {
             event.stopPropagation();
             toggleMultiview(current);
+            // A later seek key must not reveal a focus ring left by a pointer click.
+            if (event.detail > 0) launcher.blur();
         }));
         launcher.id = LAUNCHER_ID;
         launcher.className = "pzp-button";
@@ -2023,9 +2041,9 @@
         current.list = element("ul", "bcvm-list");
         current.list.setAttribute("aria-label", "추가한 다시보기");
         searchPane.append(form, current.results);
-        searchSection.append(addTabs, current.notice, searchPane, followingPane);
+        searchSection.append(addTabs, searchPane, followingPane);
         listSection.append(current.list, element("p", "bcvm-empty", "아직 추가한 영상이 없어요."));
-        toolbar.append(heading, searchSection, createTimeline(current), listSection, layoutSection);
+        toolbar.append(heading, current.notice, searchSection, createTimeline(current), listSection, layoutSection);
         panel.addEventListener(STATUS, (event) => {
             if (view !== current || !Object.hasOwn(MESSAGES, event.detail?.status)) return;
             const entry = [...current.entries.values()].find(
@@ -2094,11 +2112,11 @@
             drawLayout(current);
         };
         document.addEventListener("fullscreenchange", displayModeChanged, { signal });
-        let pip = host.classList.contains("pip_mode");
+        let floating = host.matches(".pip_mode, .miniplayer");
         current.mode = new MutationObserver(() => {
-            const next = host.classList.contains("pip_mode");
-            if (next === pip) return;
-            pip = next;
+            const next = host.matches(".pip_mode, .miniplayer");
+            if (next === floating) return;
+            floating = next;
             displayModeChanged();
         });
         current.mode.observe(host, { attributes: true, attributeFilter: ["class"] });
@@ -2156,6 +2174,7 @@
     function reconcile() {
         const nextRoute = enabled && !hidden ? videoNoFromUrl(location.href) : "";
         if (route !== nextRoute) {
+            remountState = null;
             unmount();
             observer?.disconnect();
             observer = null;
@@ -2165,7 +2184,10 @@
         const host = document.querySelector(HOST);
         const root = host?.querySelector(":scope > .pzp-pc");
         const reference = launcherReference(root);
-        if (view?.host === host && view.root === root && view.panel.parentElement === host && reference) {
+        if (view?.host === host && view.panel.parentElement === host) {
+            // The native root can disappear for a frame while the host and owned slots stay mounted.
+            if (!root || !reference) return;
+            view.root = root;
             if (view.reference !== reference || view.launcher.parentElement !== reference.parentElement) {
                 view.reference = reference;
                 reference.before(view.launcher);
@@ -2175,8 +2197,19 @@
             syncTimeline(view);
             return;
         }
+        if (view?.running) remountState = { open: view.open, numbers: [...view.entries.keys()] };
         unmount();
-        if (root && reference) mount(host, root, reference);
+        if (root && reference) {
+            mount(host, root, reference);
+            if (remountState) {
+                const state = remountState;
+                remountState = null;
+                view.running = true;
+                drawLayout(view);
+                if (state.open) setOpen(view, true, null, { focus: false });
+                void restoreReplays(view, state.numbers);
+            }
+        }
         if (!observer) {
             observer = createMutationObserverSync({
                 shouldSchedule: (mutations) =>

@@ -996,17 +996,27 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     ]);
     assert.ok(mainScript.js.includes("features/routeBridgePage.js"));
     const vodAdapter = "features/vodMultiview/nativePlayer.js";
+    const vodRewind = "features/vodMultiview/rewindSource.js";
+    const vodRewindPage = "features/vodMultiview/rewindSourcePage.js";
     const vodSync = "features/vodMultiview/syncPage.js";
     const vodMetadata = "features/vodMultiview/metadata.js";
     const vodRuntime = "features/vodMultiview/runtime.js";
     assert.ok(mainScript.js.includes(vodAdapter));
+    assert.equal(readRepoFile(vodRewind), readRepoFile(vodRewindPage));
+    for (const [scripts, provider, consumer] of [
+        [mainScript.js, vodRewindPage, vodAdapter],
+        [isolatedScript.js, vodRewind, vodMetadata],
+    ]) {
+        assert.equal(scripts.filter((file) => file === provider).length, 1);
+        assert.ok(scripts.indexOf(provider) < scripts.indexOf(consumer));
+    }
     assert.ok(mainScript.js.indexOf(vodSync) > mainScript.js.indexOf(vodAdapter));
     assert.ok(mainScript.js.indexOf("features/autoQualityPage.js") > mainScript.js.indexOf(vodAdapter));
     assert.ok(isolatedScript.js.indexOf(vodMetadata) > isolatedScript.js.indexOf("content.js"));
     assert.ok(isolatedScript.js.indexOf(vodRuntime) > isolatedScript.js.indexOf(vodMetadata));
     for (const [scripts, foreignFiles] of [
-        [mainScript.js, [vodMetadata, vodRuntime]],
-        [isolatedScript.js, [vodAdapter, vodSync]],
+        [mainScript.js, [vodRewind, vodMetadata, vodRuntime]],
+        [isolatedScript.js, [vodRewindPage, vodAdapter, vodSync]],
     ]) {
         assert.ok(foreignFiles.every((file) => !scripts.includes(file)));
     }
@@ -6006,6 +6016,40 @@ for (const route of ["live", "video"]) {
         assert.equal(document.querySelectorAll("#cheese-spanner-skip-pill").length, 1);
     });
 }
+
+test("VOD skip control follows the adjacent native time fade through control updates", async (t) => {
+    const chrome = createFakeChrome({ sync: { skipLivePauseResumeEnabled: false } });
+    const { dom, document, play, controls } = createLiveTimeShiftGuardDom(chrome);
+    t.after(() => closeSkipControlPage(dom, chrome));
+    dom.reconfigure({ url: "https://chzzk.naver.com/video/12345" });
+    controls.className = "pzp-pc__bottom-buttons-left";
+    play.classList.add("pzp-button");
+    const time = document.createElement("div");
+    time.className = "pzp-vod-time pzp-pc__vod-time";
+    time.getBoundingClientRect = play.getBoundingClientRect;
+    controls.append(time);
+    const nativeStyle = document.createElement("style");
+    nativeStyle.textContent = `
+        .pzp-button { transition:opacity .2s ease-in; }
+        .pzp-pc__vod-time { transition:opacity .2s ease; }
+        .pzp-pc__playback-switch, .pzp-pc__vod-time { opacity:0; }
+        .pzp-pc.pzp-pc--controls :is(.pzp-pc__playback-switch, .pzp-pc__vod-time) { opacity:1; }
+    `;
+    document.head.append(nativeStyle);
+    await loadSkipControlPage(dom);
+    const pill = document.getElementById("cheese-spanner-skip-pill");
+    assert.ok(pill);
+    assert.equal(dom.window.getComputedStyle(pill).transition, dom.window.getComputedStyle(time).transition);
+    assert.equal(dom.window.getComputedStyle(pill).opacity, "0");
+    const player = document.getElementById("playerRoot");
+    player.classList.add("pzp-pc--controls");
+    assert.equal(dom.window.getComputedStyle(pill).opacity, "1");
+    time.style.transition = "opacity .4s linear";
+    play.setAttribute("aria-label", "일시 정지");
+    await waitForCondition(() => dom.window.getComputedStyle(pill).transition === time.style.transition);
+    player.classList.remove("pzp-pc--controls");
+    assert.equal(dom.window.getComputedStyle(pill).opacity, "0");
+});
 
 test("live fast-forward button seeks to the buffered live edge", async () => {
     const chrome = createFakeChrome({

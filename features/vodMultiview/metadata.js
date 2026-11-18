@@ -2,6 +2,7 @@
     "use strict";
 
     const { fetchJson, parseChzzkDate, normalizeChzzkImageUrl } = CheeseSpanner.utils;
+    const { readRewindSource } = window.CheeseSpannerVodRewind;
     const api = "https://api.chzzk.naver.com/service";
     const detailUrl = `${api}/v3/videos/`;
     // 분할 가능성이 있는 응답은 방송 시작일만으로 구간의 첫 프레임을 확정할 수 없다.
@@ -50,30 +51,6 @@
         return { startMs, endMs, duration };
     }
 
-    function readRewind(detail, duration) {
-        const value = detail.liveRewindPlaybackJson;
-        if (typeof value !== "string" || value.length > 65536) return null;
-        try {
-            const { meta, media } = JSON.parse(value);
-            if (
-                meta?.liveRewind !== true ||
-                meta.videoId !== detail.videoId ||
-                meta.paidLive !== false ||
-                meta.playbackAuthType !== "NONE" ||
-                !Number.isFinite(meta.duration) ||
-                meta.duration <= 0 ||
-                Math.abs(meta.duration - duration) > 2 ||
-                !Array.isArray(media) ||
-                media.length !== 1 ||
-                media[0]?.protocol !== "HLS"
-            )
-                return null;
-            return JSON.stringify({ meta, media });
-        } catch {
-            return null;
-        }
-    }
-
     function readVideo(response, videoNo, needsKey) {
         const detail = response?.content;
         if (response?.code === 401 || response?.code === 403) return { status: "restricted" };
@@ -87,28 +64,33 @@
         )
             return { status: "restricted" };
         const isRewind = detail.liveRewindPlaybackJson != null;
+        const channelId = detail.channel?.channelId;
+        const replay = detail.videoType === "REPLAY" && channelIdPattern.test(channelId || "");
+        const timeline = replay ? getTimeline(detail) : null;
+        const unsupported = { status: "unsupported", channelId: replay ? channelId : undefined, timeline };
         if (
-            detail.videoType !== "REPLAY" ||
+            !replay ||
             (!isRewind && detail.vodStatus !== "ABR_HLS") ||
             typeof detail.videoId !== "string" ||
             !mediaIdPattern.test(detail.videoId) ||
-            !channelIdPattern.test(detail.channel?.channelId || "") ||
             (detail.encryptionType != null &&
                 detail.encryptionType !== "NONE" &&
                 (isRewind || detail.encryptionType !== "AES"))
         )
-            return { status: "unsupported" };
+            return unsupported;
         if (needsKey && !isRewind && (typeof detail.inKey !== "string" || !mediaKeyPattern.test(detail.inKey)))
             return { status: "restricted" };
 
-        const timeline = getTimeline(detail);
-        if (!timeline) return { status: "unknown-time" };
-        const rewind = isRewind && readRewind(detail, timeline.duration);
-        if (isRewind && !rewind) return { status: "unsupported" };
+        if (!timeline) return { status: "unknown-time", channelId };
+        const rewind = isRewind && readRewindSource(detail.liveRewindPlaybackJson, detail.videoId, timeline.duration);
+        if (isRewind && !rewind) return unsupported;
         return {
             status: "ok",
             media: { videoNo, id: detail.videoId, ...timeline, ...(isRewind && { rewind: true }) },
-            ...(needsKey && (rewind ? { rewind } : { key: detail.inKey, aes: detail.encryptionType === "AES" })),
+            ...(needsKey &&
+                (rewind
+                    ? { rewind: JSON.stringify(rewind) }
+                    : { key: detail.inKey, aes: detail.encryptionType === "AES" })),
             channelId: detail.channel.channelId,
             channelName: typeof detail.channel.channelName === "string" ? detail.channel.channelName.slice(0, 100) : "",
             channelImageUrl: normalizeChzzkImageUrl(detail.channel.channelImageUrl),
@@ -224,6 +206,8 @@
         const seen = new Set([main.videoNo, ...excluded]);
         let inspected = 0;
         let incomplete = false;
+        let unknownTime = false;
+        let overlappingUnsupported = false;
         let overlappingReplay;
         for (; page >= 0; page--) {
             const { data } = await readPage(page);
@@ -241,6 +225,16 @@
                 inspected++;
                 const replay = await loadVideo(no, { signal, needsKey: true });
                 if (replay.status === "lookup-error") incomplete = true;
+                if (replay.channelId === channelId) {
+                    if (replay.status === "unknown-time" || (replay.status === "unsupported" && !replay.timeline))
+                        unknownTime = true;
+                    if (
+                        replay.status === "unsupported" &&
+                        replay.timeline?.startMs < endMs &&
+                        replay.timeline?.endMs > startMs
+                    )
+                        overlappingUnsupported = true;
+                }
                 if (
                     replay.status === "ok" &&
                     replay.channelId === channelId &&
@@ -253,7 +247,10 @@
                 }
             }
         }
-        return overlappingReplay || { status: incomplete ? "lookup-error" : "no-replay" };
+        if (overlappingReplay) return overlappingReplay;
+        if (incomplete) return { status: "lookup-error" };
+        if (overlappingUnsupported) return { status: "unsupported" };
+        return { status: unknownTime ? "unknown-time" : "no-replay" };
     }
 
     CheeseSpanner.vodMultiviewMetadata = Object.freeze({

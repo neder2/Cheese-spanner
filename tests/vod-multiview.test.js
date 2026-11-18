@@ -280,8 +280,10 @@ function fixture(t) {
     files([
         "features/liveMultiview/model.js",
         "features/liveMultiview/view.js",
+        "features/vodMultiview/rewindSourcePage.js",
         "features/vodMultiview/nativePlayer.js",
         "features/vodMultiview/syncPage.js",
+        "features/vodMultiview/rewindSource.js",
         "features/vodMultiview/metadata.js",
         "features/vodMultiview/runtime.js",
     ]);
@@ -2510,6 +2512,166 @@ test("restores the same main replay's auxiliary list after toggling off and disa
     assert.equal(main.srcObject, mainProvider);
     assert.equal(main.video.currentTime, 40);
     assert.deepEqual(main.seeks, []);
+});
+
+test("keeps the active replay selection through a same-route player gap without seeking the main", async (t) => {
+    const f = fixture(t);
+    f.apply(true);
+    f.open();
+    f.add(2);
+    await flush();
+    const root = f.main.shadowRoot;
+    const host = root.parentElement;
+    const sub = f.players[1];
+    const provider = sub.srcObject;
+    sub.loaded(60);
+    sub.seeked();
+    await flush();
+    f.document.querySelector(`${TOOLBAR} .bcvm-sync`).click();
+    sub.video.volume = 0.37;
+    sub.video.muted = false;
+    sub.currentTime = 7;
+    sub.seeked();
+    root.remove();
+    await flush();
+    assert.equal(f.document.querySelector(`${PANEL} .bcvm-screen`).dataset.bcvmTile, "2");
+    host.prepend(root);
+    await flush();
+    assert.equal(f.document.querySelector(`${PANEL}-launcher`).getAttribute("aria-pressed"), "true");
+    assert.match(f.document.querySelector(`${TOOLBAR} .bcvm-entry .bcvm-title`).href, /\/video\/2$/);
+    assert.equal(f.document.querySelector(`${PANEL} .bcvm-screen`).dataset.bcvmTile, "2");
+    assert.equal(f.document.querySelector(`${TOOLBAR} .bcvm-sync`).getAttribute("aria-checked"), "false");
+    assert.equal(sub.srcObject, provider);
+    assert.equal(sub.video.currentTime, 7);
+    assert.equal(sub.video.volume, 0.37);
+    assert.equal(sub.video.muted, false);
+    assert.deepEqual(f.main.seeks, []);
+    f.w.history.pushState({}, "", "/video/9");
+    await flush();
+    assert.equal(f.document.querySelector(`${PANEL}-launcher`).getAttribute("aria-pressed"), "false");
+    assert.equal(f.document.querySelector(`${PANEL} .bcvm-screen`), null);
+});
+
+test("duplicate media removes its temporary slot for sequential and simultaneous adds", async (t) => {
+    const f = fixture(t);
+    f.responses.set(3, detail(3, { videoId: "media_2" }));
+    f.responses.set(4, detail(4, { videoId: "media_2" }));
+    f.apply(true);
+    f.open();
+    f.add(2);
+    f.add(3);
+    await flush();
+    assert.equal(f.document.querySelectorAll(`${PANEL} .bcvm-screen`).length, 1);
+    assert.equal(f.document.querySelectorAll(`${TOOLBAR} .bcvm-entry`).length, 1);
+    assert.match(f.document.querySelector(`${TOOLBAR} .bcvm-notice`).textContent, /이미 화면/);
+    f.add(4);
+    await flush();
+    assert.equal(f.document.querySelectorAll(`${PANEL} .bcvm-screen`).length, 1);
+    f.add(5);
+    await flush();
+    assert.equal(f.document.querySelectorAll(`${PANEL} .bcvm-screen`).length, 2);
+    assert.deepEqual(f.main.seeks, []);
+});
+
+test("leaving the mini player resumes only independently playing auxiliaries that it paused", async (t) => {
+    const f = fixture(t);
+    f.apply(true);
+    f.open();
+    for (const no of [2, 3]) {
+        f.add(no);
+        await flush();
+        f.players[no - 1].loaded(60);
+        f.players[no - 1].seeked();
+        await flush();
+    }
+    for (const control of f.document.querySelectorAll(`${TOOLBAR} .bcvm-sync`)) control.click();
+    const [main, playing, paused] = f.players;
+    paused.pause();
+    const playingTime = playing.video.currentTime;
+    const stoppedPlays = paused.playCalls;
+    const host = main.shadowRoot.parentElement;
+    for (const mode of ["pip_mode", "miniplayer"]) {
+        host.classList.add(mode);
+        await flush();
+        assert.equal(playing.paused, true);
+        host.classList.remove(mode);
+        await flush();
+        assert.equal(playing.paused, false);
+    }
+    assert.equal(playing.video.currentTime, playingTime);
+    assert.equal(paused.paused, true);
+    assert.equal(paused.playCalls, stoppedPlays);
+    assert.deepEqual(main.seeks, []);
+});
+
+test("resync retries only the auxiliary after three failed seeks", async (t) => {
+    const f = fixture(t);
+    f.apply(true);
+    f.open();
+    f.add(2);
+    await flush();
+    const sub = f.players[1];
+    sub.loaded(60);
+    for (let i = 0; i < 3; i++) sub.seeked(0);
+    const control = f.document.querySelector(`${TOOLBAR} .bcvm-resync`);
+    const toggle = f.document.querySelector(`${TOOLBAR} .bcvm-sync`);
+    assert.equal(control.hidden, false);
+    assert.match(control.getAttribute("aria-label"), /다시 맞추기/);
+    assert.equal(toggle.getAttribute("role"), "switch");
+    assert.equal(toggle.getAttribute("aria-disabled"), "false");
+    const seeks = sub.seeks.length;
+    control.focus();
+    control.click();
+    assert.equal(sub.seeks.length, seeks + 1);
+    sub.seeked();
+    await flush();
+    assert.equal(control.hidden, true);
+    assert.equal(f.document.activeElement, toggle);
+    assert.equal(sub.video.currentTime, 10);
+    f.move(45);
+    for (let i = 0; i < 3; i++) sub.seeked(0);
+    assert.equal(control.hidden, false);
+    const failedSeeks = sub.seeks.length;
+    toggle.click();
+    assert.equal(toggle.getAttribute("aria-checked"), "false");
+    assert.equal(control.hidden, true);
+    assert.equal(sub.seeks.length, failedSeeks);
+    assert.deepEqual(f.main.seeks, []);
+});
+
+test("channel lookup reports an overlapping unsupported replay and prefers a playable one", async (t) => {
+    const f = fixture(t);
+    const channelId = "b".repeat(32);
+    const main = (await f.w.CheeseSpanner.vodMultiviewMetadata.loadVideo("1", {})).media;
+    const published = main.startMs + 120_000;
+    const row = (videoNo) => ({ videoNo, videoType: "REPLAY", publishDateAt: published });
+    f.pages.set(0, [row(2)]);
+    f.responses.set(2, detail(2, { channel: { channelId }, vodStatus: "OTHER" }));
+    const find = () => f.w.CheeseSpanner.vodMultiviewMetadata.findReplay(channelId, main, {});
+    assert.equal((await find()).status, "unsupported");
+    f.pages.set(0, [row(3), row(2)]);
+    f.responses.set(3, detail(3, { channel: { channelId } }));
+    assert.equal((await find()).media.videoNo, "3");
+});
+
+test("channel lookup skips a rewind with no playable tracks and continues to a supported overlap", async (t) => {
+    const f = fixture(t);
+    const model = f.w.CheeseSpanner.vodMultiviewMetadata;
+    const main = (await model.loadVideo("1", {})).media;
+    const channelId = "b".repeat(32);
+    const row = (videoNo) => ({ videoNo, videoType: "REPLAY", publishDateAt: main.endMs });
+    const rewind = rewindDetail(2);
+    rewind.content.channel = { channelId };
+    const playback = JSON.parse(rewind.content.liveRewindPlaybackJson);
+    playback.media[0].encodingTrack = [];
+    rewind.content.liveRewindPlaybackJson = JSON.stringify(playback);
+    f.responses.set(2, rewind);
+    f.pages.set(0, [row(2)]);
+    const find = () => model.findReplay(channelId, main, { at: main.startMs + 40_000 });
+    assert.equal((await find()).status, "unsupported");
+    f.responses.set(3, detail(3, { channel: { channelId } }));
+    f.pages.set(0, [row(3), row(2)]);
+    assert.equal((await find()).media.videoNo, "3");
 });
 
 test("reuses one native slot across 100 additions, removals, option changes and SPA round trips", async (t) => {

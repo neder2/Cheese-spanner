@@ -1508,6 +1508,35 @@
         return token;
     }
 
+    function readVodQualityFallback(video) {
+        if (!autoQualityEnabled || preferredQuality !== "480p" || routeMediaGate?.video === video) return null;
+        const native = window.CheeseSpannerVodNative;
+        const host = getNativeVodHost(video);
+        const player = host && native?.find(host, video);
+        if (!player) return null;
+        const context = createApplyContext();
+        const trackList = getTrackListFromTarget(player);
+        const tracks = toTrackArray(trackList);
+        if (
+            tracks.length !== Number(trackList?.length) ||
+            tracks.some((track) => !isAutomaticTrack(track, context) && !(getTrackHeight(track, context) > 0))
+        )
+            return null;
+        const selected = getSelectedTrack(tracks, trackList);
+        const target = pickTargetTrack(tracks, selected, 480, context);
+        const height = target ? getTrackHeight(target, context) : null;
+        return Number.isInteger(height) &&
+            height > 0 &&
+            height < 480 &&
+            selected &&
+            trackMatchesQuality(selected, height, context) &&
+            getMainVideo() === video &&
+            native.find(host, video) === player &&
+            getTrackListFromTarget(player) === trackList
+            ? height
+            : null;
+    }
+
     function onStreamInfoRead(event) {
         const video = event.target;
         if (!(video instanceof HTMLVideoElement) || video !== getMainVideo()) return;
@@ -1600,6 +1629,18 @@
                         ? "track-missing"
                         : "player-changed"
                     : "player-missing";
+            }
+        }
+        if (isVodRoute()) {
+            try {
+                const height = readVodQualityFallback(video);
+                if (height !== null && result.route === location.pathname) {
+                    result.status = "ready";
+                    result.reason = "ok";
+                    result.qualityFallback = height;
+                }
+            } catch (_) {
+                // Unknown or changing track lists have no confirmed explanation.
             }
         }
         if (result.status === "unavailable") streamInfoSources.delete(video);

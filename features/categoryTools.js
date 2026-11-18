@@ -5051,30 +5051,38 @@
 
         const metadata = canUseMetadata ? await ensureMetadata(route) : new Map();
         if (!isCurrent()) return;
+        const terms = currentSearchTerms();
+        syncViewFilterSnapshot(route, terms.key);
         let gradesPending = false;
         if (streamerGrades.length) {
-            const terms = currentSearchTerms();
+            const renderedIds = new Set(entries.map((entry) => entry.id));
             const candidates = [
-                ...entries.map((entry) => ({
-                    ...metadata.get(entry.id),
-                    channelId: inferChannelIdFromCard(route, entry),
-                })),
+                ...entries.flatMap((entry) => {
+                    const item = metadata.get(entry.id);
+                    const meta = { ...item, channelId: item?.channelId || inferChannelIdFromCard(route, entry) };
+                    const matches = currentCardRows(route, { entry, meta }).some(
+                        (row) =>
+                            passesRowCategoryExclusions(row) &&
+                            (!terms.key || matchesSearchTerms(rowSearchFields(row), terms))
+                    );
+                    return matches ? [meta] : [];
+                }),
                 ...Array.from(metadata.values()).filter(
                     (meta) =>
+                        !renderedIds.has(meta.id) &&
                         passesMetaCategoryExclusions(meta) &&
-                        matchesSearchTerms(buildMetaSearchFields(meta), terms) &&
-                        passesViewFilter(meta) &&
+                        (!terms.key || matchesSearchTerms(buildMetaSearchFields(meta), terms)) &&
+                        (passesViewFilter(meta) || isViewFilterSnapshotId(meta.id)) &&
                         passesDurationFilter(meta)
                 ),
             ];
-            const bounded = new Map();
+            const bounded = new Set();
             for (const meta of candidates) {
                 if (bounded.size >= CheeseSpanner.categoryToolsRepository.MAX_STREAMER_GRADE_CHANNELS) break;
-                if (meta.channelId && !bounded.has(meta.channelId)) bounded.set(meta.channelId, meta);
+                if (meta.channelId && !bounded.has(meta.channelId) && needsStreamerGradeLookup(meta))
+                    bounded.add(meta.channelId);
             }
-            const ids = Array.from(bounded.values())
-                .filter(needsStreamerGradeLookup)
-                .map((meta) => meta.channelId);
+            const ids = [...bounded];
             if (ids.length) {
                 setLoading(true, "grades");
                 gradesPending = await dataRepository.hydrateStreamerGrades(ids);
@@ -5083,8 +5091,6 @@
             setLoading(gradesPending, "grades");
         }
         scheduleDurationFilterRefresh(metadata.values());
-        const terms = currentSearchTerms();
-        syncViewFilterSnapshot(route, terms.key);
         const renderKey = getActiveFilterKey();
         if (renderKey !== injectedRenderKey) {
             injectedRenderKey = renderKey;

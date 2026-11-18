@@ -1568,6 +1568,84 @@ test("a new auxiliary replay inherits the tab compressor choice and edits stay w
     assert.equal(contexts.length, 2);
 });
 
+test("an auxiliary replay reconnects its existing bypass graph when reused with the compressor feature disabled", async (t) => {
+    const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true, vodMultiviewEnabled: true } });
+    const page = await createCompressorPage(t, chrome, {
+        initialPath: "/video/1",
+        responseState: { active: true, volume: 0.63 },
+    });
+    const { dom, document, contexts } = page;
+    const player = document.createElement("div");
+    player.className = "pzp-pc";
+    player.dataset.bcmvVideo = "1";
+    player.dataset.bcvmVideoNo = "2";
+    player.innerHTML = `
+        <video></video>
+        <div class="pzp-pc__bottom-buttons-left">
+            <div class="pzp-pc__volume-control"><button class="pzp-pc__volume-button" type="button"></button></div>
+        </div>
+    `;
+    document.body.append(player);
+    const video = player.querySelector("video");
+    makeVisibleVideo(video);
+    video.volume = 0.37;
+    video.muted = true;
+    player.querySelector(".pzp-pc__volume-control").getBoundingClientRect =
+        document.getElementById("volume").getBoundingClientRect;
+    let auxiliary = { index: 0, player, video, media: { videoNo: "2" } };
+    dom.window.CheeseSpanner.vodMultiview = { getAuxiliaries: () => (auxiliary ? [auxiliary] : []) };
+    const notify = () => document.dispatchEvent(new dom.window.Event("cheese-spanner:vod-multiview:auxiliary"));
+    const button = () => player.querySelector("#cheese-spanner-audio-compressor-aux-0");
+    notify();
+    await waitForCondition(button);
+    const context = contexts[1];
+    const source = context.source;
+    assert.deepEqual([...source.outputs], ["compressor"]);
+    disableOptions(chrome, { audioCompressorEnabled: { newValue: false } });
+    assert.equal(button(), null);
+    assert.deepEqual([...source.outputs], ["gain"]);
+    assert.deepEqual([...context.gain.outputs], ["destination"]);
+
+    for (const videoNo of ["3", "4"]) {
+        auxiliary = null;
+        player.remove();
+        notify();
+        assert.equal(source.outputs.size, 0);
+        assert.equal(context.gain.outputs.size, 0);
+        player.dataset.bcvmVideoNo = videoNo;
+        document.body.append(player);
+        auxiliary = { index: 0, player, video, media: { videoNo } };
+        notify();
+        assert.deepEqual([...source.outputs], ["gain"], "the reused element needs its existing output reconnected");
+        assert.deepEqual([...context.gain.outputs], ["destination"]);
+        assert.equal(context.compressor.outputs.size, 0);
+        assert.equal(context.gain.gain.value, 1);
+        assert.equal(context.source, source, "the same video must not create a second media source");
+        assert.equal(contexts.length, 2);
+        assert.equal(button(), null, "feature OFF does not restore compressor controls");
+        assert.equal(video.volume, 0.37);
+        assert.equal(video.muted, true);
+    }
+
+    disableOptions(chrome, { audioCompressorEnabled: { newValue: true } });
+    assert.equal(button().getAttribute("aria-pressed"), "true");
+    assert.deepEqual([...source.outputs], ["compressor"]);
+    assert.equal(context.gain.gain.value, 0.63);
+    assert.equal(contexts.length, 2);
+
+    disableOptions(chrome, { audioCompressorEnabled: { newValue: false } });
+    auxiliary = null;
+    notify();
+    const freshVideo = document.createElement("video");
+    video.replaceWith(freshVideo);
+    makeVisibleVideo(freshVideo);
+    auxiliary = { index: 0, player, video: freshVideo, media: { videoNo: "5" } };
+    notify();
+    assert.equal(contexts.length, 2, "feature OFF must not create a graph for a fresh video");
+    assert.equal(context.source, source);
+    assert.equal(source.outputs.size, 0);
+});
+
 test("audio compressor validates tab state and works when extension storage is unavailable", async (t) => {
     const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true } });
     for (const [responseState, expectedVolume] of [

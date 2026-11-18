@@ -740,6 +740,50 @@ test("native identity keeps late role badges on one message and preserves real r
     assert.equal(h.snapshot().length, 2, "a new native key preserves an actual repeated message");
 });
 
+for (const index of ["", "7"]) {
+    for (const repeatedText of [false, true]) {
+        test(`four native messages survive repeated row reuse (index=${index || "none"}, repeated=${repeatedText})`, (t) => {
+            const h = createModules(
+                t,
+                measuredChatRow({ badge: ROLE_BADGE, nickname: "진행담당", body: "공지", index })
+            );
+            enableNativeMessageBridge(h);
+            const row = h.root.firstElementChild;
+            const source = attachNativeMessage(row);
+            const expected = [];
+            const records = [];
+            for (let number = 1; number <= 4; number++) {
+                source.key = `native-${number}`;
+                const text = repeatedText ? "반복 공지" : `공지 ${number}`;
+                row.querySelector("._text_w9pvh_1").textContent = text;
+                expected.push(text);
+                h.collect(row);
+                h.nextPass();
+                h.nextPass();
+                assert.deepEqual(
+                    Array.from(h.snapshot(), (message) => message.text),
+                    expected
+                );
+                records.push(h.snapshot()[number - 1]);
+                assert.deepEqual(
+                    Array.from(h.snapshot(), (message) => message.recordId),
+                    records.map((message) => message.recordId),
+                    "earlier records retain their identities"
+                );
+                if (number === 2) h.store.markRead([records[1].id]);
+            }
+            assert.equal(new Set(records.map((message) => message.recordId)).size, 4);
+            assert.equal(h.snapshot()[1].unread, false, "a later message does not reset an earlier read state");
+            let scrolls = 0;
+            row.scrollIntoView = () => scrolls++;
+            h.store.navigate(records[1].id, records[1].recordId);
+            assert.equal(scrolls, 0, "an old message cannot navigate to a reused row");
+            h.store.navigate(records[3].id, records[3].recordId);
+            assert.equal(scrolls, 1);
+        });
+    }
+}
+
 test("a late body update retracts only the mixed candidate for the same native message", (t) => {
     const html = measuredChatRow({ badge: ROLE_BADGE, nickname: "진행담당", body: "이전 공지" });
     const h = createModules(t, html);

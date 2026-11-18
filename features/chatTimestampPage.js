@@ -353,16 +353,23 @@
         return null;
     }
 
-    function getRequestChatLog(messageContainer) {
+    function getRequestChatLog(messageContainer, allowStructure = false) {
         if (!(messageContainer instanceof Element)) return null;
         const chatLogSelector = LIVE_ROUTE_RE.test(location.pathname)
             ? LIVE_CHAT_LOG_SELECTOR
             : VOD_ROUTE_RE.test(location.pathname)
               ? VOD_CHAT_LOG_SELECTOR
               : "";
-        if (!chatLogSelector || !messageContainer.matches(MESSAGE_CONTAINER_SELECTOR)) return null;
+        if (!chatLogSelector) return null;
         const chatLog = messageContainer.closest(chatLogSelector);
-        return chatLog instanceof Element ? chatLog : null;
+        if (!chatLog || messageContainer === chatLog) return null;
+        if (messageContainer.matches(MESSAGE_CONTAINER_SELECTOR)) return chatLog;
+        if (!allowStructure) return null;
+        const nickname = messageContainer.querySelector(':scope > button[class*="_nickname_"][aria-haspopup="true"]');
+        const body = messageContainer.querySelector(':scope > span[class*="_text_"]');
+        return nickname && body && nickname.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING
+            ? chatLog
+            : null;
     }
 
     function writeSource(messageContainer, attribute, value) {
@@ -389,7 +396,7 @@
 
     function handleBlindRequest(event) {
         const messageContainer = event.target;
-        const chatLog = getRequestChatLog(messageContainer);
+        const chatLog = getRequestChatLog(messageContainer, true);
         if (!chatLog) return;
         const path = location.pathname;
         const isLive = LIVE_ROUTE_RE.test(path);
@@ -417,7 +424,7 @@
                     ownValue(latest.list, latest.index) !== latest.message ||
                     JSON.stringify(readBlindMessage(latest.message)) !== JSON.stringify(snapshot))) ||
             !messageContainer.isConnected ||
-            getRequestChatLog(messageContainer) !== chatLog ||
+            getRequestChatLog(messageContainer, true) !== chatLog ||
             location.pathname !== path
         )
             snapshot = null;
