@@ -30,6 +30,8 @@
     const STYLE_ID = "cheese-spanner-chat-keyword-settings-style";
     const STYLE = `
 [${PANEL}]{position:fixed;z-index:10020;box-sizing:border-box;width:340px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;padding:16px;border:1px solid var(--bct-border);border-radius:var(--bct-radius-lg);background:var(--bct-surface);color:var(--bct-text);box-shadow:var(--bct-shadow);font:13px/1.5 var(--bct-font);text-align:left;overflow-wrap:anywhere;overscroll-behavior:contain}
+/* The entry and editor share the native menu's 1001 stacking context. Keep the collection open beneath them. */
+#aside-chatting:has([${ENTRY}]) [data-bcct-moderator-box]{z-index:1000}
 [${PANEL}] *{box-sizing:border-box}
 [${PANEL}] h2{margin:0 0 12px;font:700 15px/1.4 var(--bct-font);color:var(--bct-text)}
 [${PANEL}] label{display:block;margin:10px 0 6px;color:var(--bct-text)}
@@ -311,7 +313,6 @@
             return;
         close(false);
         ensureUiTheme?.();
-        injectStyleOnce(STYLE_ID, STYLE);
         const panel = document.createElement("section");
         panel.setAttribute(PANEL, "1");
         panel.setAttribute("role", "dialog");
@@ -400,6 +401,7 @@
         if (!next) return;
         if (session && !valid(session)) close(false);
         if (entry?.wrapper.isConnected) return;
+        injectStyleOnce(STYLE_ID, STYLE);
         const wrapper = document.createElement("div");
         wrapper.setAttribute(ENTRY, "1");
         wrapper.className = next.sample.parentElement.className;

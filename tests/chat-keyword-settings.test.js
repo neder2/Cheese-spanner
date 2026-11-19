@@ -128,6 +128,36 @@ function fixture(t, { raw = {}, url = "/live/test-channel", deferWrites = false,
         },
     };
 }
+
+test("the native menu entry and keyword editor stay above the open collection until the menu closes", async (t) => {
+    const f = fixture(t, { url: "/live/test-channel/chat" });
+    const style = f.document.createElement("style");
+    style.textContent = "[data-bcct-moderator-box] { position: absolute; z-index: 2147483646; }";
+    f.document.head.append(style);
+    const collection = f.document.createElement("section");
+    collection.setAttribute("data-bcct-moderator-box", "1");
+    collection.dataset.open = "1";
+    f.document.getElementById("aside-chatting").append(collection);
+    const layer = () => f.dom.window.getComputedStyle(collection).zIndex;
+
+    assert.equal(layer(), "2147483646");
+    const menu = f.openMenu();
+    await waitForCondition(() => f.document.querySelector(ENTRY));
+    assert.equal(layer(), "1000", "the menu entry is already above the collection before opening the editor");
+    await f.openPanel();
+    const panel = await f.loaded();
+    assert.equal(layer(), "1000");
+    assert.equal(collection.dataset.open, "1");
+
+    trusted(f.dom, panel.querySelector('[data-action="close"]'));
+    assert.equal(layer(), "1000");
+    assert.equal(f.document.activeElement, f.document.querySelector(`${ENTRY} button`));
+    menu.remove();
+    f.trigger.setAttribute("aria-expanded", "false");
+    assert.equal(layer(), "2147483646");
+    assert.equal(collection.isConnected, true);
+    assert.equal(collection.dataset.open, "1");
+});
 const typeWords = (f, value) => {
     const input = f.document.querySelector(`${PANEL} textarea`);
     input.value = value;

@@ -156,6 +156,68 @@ for (const placement of ["right-controls", "left-controls", "time-inline"]) {
     });
 }
 
+test("VOD clock clears overflowing time controls and returns inline when the paused player widens", async () => {
+    const { chrome, dom, document } = await createFixture({ detail: B_DETAIL });
+    const clock = document.getElementById(CLOCK_ID);
+    const originalTime = document.getElementById("time");
+    const time = originalTime.cloneNode(true);
+    const row = document.createElement("div");
+    row.className = "pzp-pc__bottom-buttons";
+    const left = document.createElement("div");
+    left.className = "pzp-pc__bottom-buttons-left";
+    left.getBoundingClientRect = rect(150, 36, 16, 320);
+    time.getBoundingClientRect = rect(100, 20, 110, 328);
+    const skip = document.createElement("button");
+    skip.id = "cheese-spanner-skip-pill";
+    skip.getBoundingClientRect = rect(36, 24, 218, 326);
+    left.append(time, skip);
+    const right = document.createElement("div");
+    right.className = "pzp-pc__bottom-buttons-right";
+    right.getBoundingClientRect = rect(170, 36, 176, 320);
+    const settings = document.createElement("button");
+    settings.getBoundingClientRect = rect(36, 36, 350, 320);
+    right.append(settings);
+    row.append(left, right);
+    clock.getBoundingClientRect = rect(100, 24, 176, 326);
+    Object.defineProperty(clock, "offsetParent", { get: () => row });
+
+    let resize;
+    const observations = [];
+    let disconnects = 0;
+    dom.window.ResizeObserver = class {
+        constructor(callback) {
+            resize = callback;
+        }
+        observe(element) {
+            observations.push(element);
+        }
+        disconnect() {
+            disconnects += 1;
+        }
+    };
+    originalTime.replaceWith(row);
+    await waitForCondition(() => clock.hasAttribute("data-bcbc-above-controls"));
+    assert.equal(clock.parentElement, right);
+    assert.deepEqual(observations, [row]);
+
+    settings.getBoundingClientRect = rect(36, 36, 440, 320);
+    resize();
+    await waitForCondition(() => !clock.hasAttribute("data-bcbc-above-controls"));
+    settings.getBoundingClientRect = rect(36, 36, 350, 320);
+    resize();
+    await waitForCondition(() => clock.hasAttribute("data-bcbc-above-controls"));
+    assert.deepEqual(observations, [row], "resizing does not register the same row again");
+
+    skip.remove();
+    await waitForCondition(() => !clock.hasAttribute("data-bcbc-above-controls"));
+
+    for (const listener of chrome.testState.storageChangeListeners) {
+        listener({ vodBroadcastClockEnabled: { oldValue: true, newValue: false } }, "sync");
+    }
+    await waitForCondition(() => !clock.isConnected);
+    assert.equal(disconnects, 1);
+});
+
 function previousBroadcastRecord(overrides = {}) {
     return {
         id: "live:a",
