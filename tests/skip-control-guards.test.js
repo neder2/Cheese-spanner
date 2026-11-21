@@ -205,6 +205,36 @@ test("live timeshift guard yields to a native forward jump that keeps repeating"
     assert.ok(Math.abs(state.currentTime - (armedAt + 2)) < 0.01, `restored to ${state.currentTime}`);
 });
 
+test("live arrow skips select the requested seekable interval and cross gaps in the requested direction", async (t) => {
+    const page = await openSkipPage(t, {
+        path: "/live/test-channel",
+        sync: { skipSeconds: 5, skipKeyboardEnabled: true, skipLivePauseResumeEnabled: false },
+        video: { end: 200 },
+    });
+    Object.defineProperty(page.document.getElementById("video"), "seekable", {
+        configurable: true,
+        get: () =>
+            createTimeRanges([
+                [10, 100],
+                [120, 200],
+            ]),
+    });
+    for (const [from, key, target] of [
+        [60, "ArrowLeft", 55],
+        [60, "ArrowRight", 65],
+        [98, "ArrowRight", 120],
+        [122, "ArrowLeft", 100],
+        [150, "ArrowLeft", 145],
+        [11, "ArrowLeft", 10],
+        [198, "ArrowRight", 200],
+    ]) {
+        page.state.currentTime = from;
+        page.state.writes.length = 0;
+        assert.equal(page.keydown(page.document.body, key).defaultPrevented, true);
+        assert.deepEqual(page.state.writes, [target]);
+    }
+});
+
 test("arrow seek yields to a focused volume slider and settings menu items but keeps the seek bar", async (t) => {
     const page = await openSkipPage(t, {
         path: "/video/123",

@@ -437,6 +437,7 @@
         return "";
     }
     function cancelRequest(target) {
+        target.searchRevision++;
         target.controller?.abort();
         target.controller = null;
         target.busy = false;
@@ -527,11 +528,17 @@
         // 비어 있어 펼쳐 둔 추가 시트는 첫 채널을 추가한 뒤에도 이어서 추가할 수 있게 열어 둬요.
         if (sheetOf(target) === "add") target.sheetName = "add";
         const name = model.normalizeChannelName(channel.channelName) || channel.channelId;
+        const revision = target.searchRevision;
         target.pendingAdds.add(channel.channelId);
         const done = commit((base) => model.addChannel(base, channel), {
             success: name + " 채팅 추가 완료",
             after(outcome) {
-                if (panel !== target || (outcome !== "saved" && outcome !== "failed")) return;
+                if (
+                    panel !== target ||
+                    target.searchRevision !== revision ||
+                    (outcome !== "saved" && outcome !== "failed")
+                )
+                    return;
                 target.input.value = "";
                 clearResults(target);
                 syncSubmitLabel(target);
@@ -1574,6 +1581,7 @@
             cells: new Map(),
             resultRows: new Map(),
             pendingAdds: new Set(),
+            searchRevision: 0,
             controller: null,
             busy: false,
             drag: null,

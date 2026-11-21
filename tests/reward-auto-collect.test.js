@@ -368,6 +368,41 @@ test("reward auto collect discards an in-flight API result after the option is d
     );
 });
 
+test("a repeatedly rejected claim does not block later rewards or retry a successful one", async () => {
+    const attempts = [];
+    const dom = createRewardDom(
+        {},
+        {
+            fetchImpl: async (url, options = {}) => {
+                if (options.method !== "PUT") {
+                    return createJsonResponse({
+                        content: {
+                            claims: [
+                                { claimId: "first", claimType: "FOLLOW" },
+                                { claimId: "second", claimType: "WATCH_5_MIN" },
+                            ],
+                        },
+                    });
+                }
+                const claim = String(url).split("/").at(-1);
+                attempts.push(claim);
+                if (claim === "first") throw new TypeError("Network failure");
+                return createJsonResponse({});
+            },
+        }
+    );
+    const setInterval = dom.window.setInterval.bind(dom.window);
+    let poll;
+    dom.window.setInterval = (callback, delay, ...args) => {
+        if (delay === 30000) poll = callback;
+        return setInterval(callback, delay, ...args);
+    };
+    await waitForCondition(() => attempts.length >= 2);
+    poll();
+    await waitForCondition(() => attempts.length >= 3);
+    assert.deepEqual(attempts, ["first", "second", "first"]);
+});
+
 test("reward auto collect observes a reward added after the initial empty aside scan", async () => {
     const dom = createRewardDom();
     const scope = createRewardScope(dom);

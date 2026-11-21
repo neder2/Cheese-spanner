@@ -2273,3 +2273,30 @@ test("chat multiview colors, radii, shadow and states come from the shared theme
     assert.match(rule(P), /gap:4px/);
     assert.match(rule(P + " .bccmv-bar"), /opacity:0;pointer-events:none/);
 });
+
+test("a pending channel addition preserves the new search input and its results", async (t) => {
+    const f = fixture(t, { stored: layout([A]) });
+    await f.open();
+    f.openAdd();
+    f.setFetch(async ({ url }) => searchResponse(url.searchParams.get("keyword") === "첫 검색" ? [B] : [C]));
+    f.typeText("첫 검색");
+    f.enter();
+    await waitForCondition(() => f.result(B));
+
+    const send = f.chrome.runtime.sendMessage.bind(f.chrome.runtime);
+    let release;
+    f.chrome.runtime.sendMessage = (message, callback) => {
+        if (message?.type === STORE_TYPE) release = () => send(message, callback);
+        else send(message, callback);
+    };
+    f.trusted(f.result(B));
+    await waitForCondition(() => release);
+    f.typeText("새 검색");
+    f.enter();
+    await waitForCondition(() => f.result(C));
+    release();
+    await waitForCondition(() => f.cell(B) && f.message() === nameOf(B) + " 채팅 추가 완료");
+    assert.equal(f.input().value, "새 검색");
+    assert.equal(f.result(C).closest(".bccmv-results").hidden, false);
+    assert.equal(f.sheetShown("add"), true);
+});

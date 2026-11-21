@@ -365,6 +365,20 @@ test("multiview launcher inherits native fade timing as player controls toggle",
     assert.equal(w.getComputedStyle(launcher).transition, "opacity .3s linear");
 });
 
+test("launcher keyboard visibility follows the replacement native control root", async (t) => {
+    const { w } = setup(t);
+    const original = w.document.querySelector(".pzp-pc");
+    const replacement = original.cloneNode(true);
+    replacement.classList.remove("pzp-pc--controls");
+    original.replaceWith(replacement);
+    const launcher = () => replacement.querySelector("#cheese-spanner-multiview-launcher");
+    await waitForCondition(() => launcher()?.getAttribute("aria-hidden") === "true");
+    assert.equal(launcher().tabIndex, -1);
+    replacement.classList.add("pzp-pc--controls");
+    await waitForCondition(() => launcher()?.getAttribute("aria-hidden") === "false");
+    assert.equal(launcher().tabIndex, 0);
+});
+
 async function waitForChatUi(predicate) {
     for (let attempt = 0; attempt < 30; attempt++) {
         if (predicate()) return;
@@ -5137,6 +5151,34 @@ test("a muted main slot stays muted across promotion and a newly opened channel"
         [0.3, true],
         "a former main added to a new side slot starts muted"
     );
+});
+
+test("pausing a pending play does not show a retry, while an active playback rejection still does", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B);
+    const sub = h.w.document.querySelector(`[data-bcmv-channel="${B}"] video`);
+    const overlay = sub.closest(".bcmv-cell").querySelector(".bcmv-error");
+    const state = h.media(sub);
+    state.paused = true;
+    let rejectPlay;
+    sub.play = () => {
+        state.paused = false;
+        return new Promise((_, reject) => (rejectPlay = reject));
+    };
+    sub.pause = () => {
+        state.paused = true;
+    };
+    h.click("toggle-play", B);
+    h.click("toggle-play", B);
+    rejectPlay(new h.w.DOMException("The user paused playback", "AbortError"));
+    await tick();
+    assert.equal(state.paused, true);
+    assert.equal(overlay.hidden, true);
+    h.click("toggle-play", B);
+    rejectPlay(new h.w.DOMException("Playback was blocked", "NotAllowedError"));
+    await tick();
+    assert.equal(overlay.hidden, false);
 });
 
 test("external channel updates stay isolated and a fatal playback failure stops loading", async (t) => {

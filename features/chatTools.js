@@ -170,6 +170,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     let lastChatRootFindAt = 0;
     let lastChatRootFindResult = null;
     let routeChannelId = "";
+    let routeWithoutHash = "";
     let pageHidden = false;
     let keywordPhrases = [];
     let moderatorSnapshot = [];
@@ -301,7 +302,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         const message = parsed.pageSource?.message;
         return (
             parsed.nativeCoherent === true &&
-            message?.status === "NORMAL" &&
+            parsed.nativeTextMatches === true &&
             (message.roleState === "missing" || message.verifiedState === "missing")
         );
     }
@@ -902,6 +903,14 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         };
         for (const mutation of mutationList) {
             if (mutation.type === "attributes") {
+                if (mutation.target === rootEl && mutation.attributeName === "aria-hidden" && isVodRoute()) {
+                    // The comments tab hides the whole log. Rows received there have no readable body until it reopens.
+                    if (rootEl.getAttribute("aria-hidden") !== "true") {
+                        requestFullChatScan({ reparse: true });
+                        chatMutationBatchShouldSchedule = true;
+                    }
+                    continue;
+                }
                 markDirtyChatMutationTarget(mutation, rootEl, shouldTrackChatAttributeMutation);
                 continue;
             }
@@ -1165,6 +1174,10 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
 
     function handlePageChange() {
         const channelId = getLiveChannelIdFromPath();
+        // A fragment alone keeps the broadcast, its collection and its read state.
+        const nextRoute = location.pathname + location.search;
+        if (channelId && channelId === routeChannelId && nextRoute === routeWithoutHash) return;
+        routeWithoutHash = nextRoute;
         // 치지직은 URL을 먼저 바꾸고 이전 채널 목록은 채팅 연결을 정리할 때 비운다.
         // 채널이 바뀐 시점의 행은 이전 채널 것이므로 재파싱에서 다시 수집하지 않게 넘긴다.
         // 채널 이동마다 이전 세대를 바꾸므로 나중에 돌아온 채널의 메시지는 다시 수집된다.
@@ -1187,6 +1200,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         purgeLegacyModeratorCache();
         if (!removePageChangeDetection) {
             routeChannelId = getLiveChannelIdFromPath();
+            routeWithoutHash = location.pathname + location.search;
             removePageChangeDetection = startPageChangeDetection(handlePageChange);
         }
         if (!observer) startObserver();

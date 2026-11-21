@@ -1005,3 +1005,48 @@ test("a validated blind original also honors the current collection-role exempti
     assert.equal(hidden(node), true, "the same validated original is filtered after the role is removed");
     assert.equal(node.querySelector(".bcct-blind-reveal")?.textContent, "금지 원문");
 });
+
+test("Cleanbot OFF filters a coherent visible CBOTBLIND body, but preserves roles and rejects a stale body", async (t) => {
+    const f = fixture(t, row("ordinary", "금지 공개") + row("manager", "금지 안내") + row("stale", "금지 이전"));
+    for (const [id, userRoleCode, originalContent] of [
+        ["ordinary", "common_user", "금지 공개"],
+        ["manager", "streaming_chat_manager", "금지 안내"],
+        ["stale", "common_user", "다른 메시지"],
+    ]) {
+        const node = f.document.querySelector(`[data-chat-id="${id}"]`);
+        node.querySelector("._container_w9pvh_1").__reactProps$test = {
+            children: {
+                props: {
+                    chatMessage: {
+                        key: id,
+                        time: 1730000000000,
+                        user: id,
+                        status: "CBOTBLIND",
+                        originalContent,
+                        profile: { userIdHash: id, nickname: "시청자", userRoleCode },
+                    },
+                },
+            },
+        };
+    }
+    f.dom.window.eval(read("features/chatTimestampPage.js"));
+    await waitForCondition(() => hidden(f.document.querySelector('[data-chat-id="ordinary"]')));
+    assert.equal(hidden(f.document.querySelector('[data-chat-id="manager"]')), false);
+    assert.equal(hidden(f.document.querySelector('[data-chat-id="stale"]')), false);
+    assert.equal(f.document.querySelector(".bcct-blind-reveal"), null);
+});
+
+test("restoring a VOD chat tab reparses matching messages received while comments hid the log", async (t) => {
+    const f = fixture(t, row("before", "금지"), { url: "/video/123" });
+    const log = f.document.querySelector('[role="log"]');
+    await waitForCondition(() => hidden(log.firstElementChild));
+    log.style.visibility = "hidden";
+    log.setAttribute("aria-hidden", "true");
+    log.insertAdjacentHTML("beforeend", row("during", "금지 문구") + row("allowed", "허용"));
+    await new Promise((resolve) => setTimeout(resolve, 160));
+    log.style.removeProperty("visibility");
+    log.removeAttribute("aria-hidden");
+    await waitForCondition(() => hidden(log.querySelector('[data-chat-id="during"]')));
+    assert.equal(hidden(log.firstElementChild), true);
+    assert.equal(hidden(log.lastElementChild), false);
+});

@@ -11,6 +11,7 @@
         isNativeAdBreakActive,
         isPlaybackRoute,
         isEditableTarget,
+        isSpaceConsumerTarget,
         isVodMultiviewInput,
     } = CheeseSpanner.utils;
     let enabled = false;
@@ -35,7 +36,7 @@
         // 다시보기 광고는 플레이어 안에서 재생돼 F/T가 광고를 포함한 화면에 그대로 적용된다.
         if (event.code === "Space" || event.code === "KeyM" ? isNativeAdBreakActive() : isLiveAdBreakActive()) return;
         const target = event.composedPath()[0] || event.target;
-        if (isEditableTarget(target)) return;
+        if (isEditableTarget(target) || (event.code === "Space" && isSpaceConsumerTarget(target))) return;
         if (
             target instanceof Element &&
             target.closest(

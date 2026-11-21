@@ -34,6 +34,7 @@
         addDropHint = null;
     let observer = null,
         modeObserver = null,
+        observedPlayerRoot = null,
         sizeObserver = null,
         stopRoute = null,
         frame = 0,
@@ -564,8 +565,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         } else if (action === "mute" && player?.video) {
             toggleMute(player);
         } else if (action === "toggle-play" && player?.video) {
-            if (player.video.paused) void players.play(player);
-            else player.video.pause();
+            players.togglePlay(player);
             updatePlayerUi(player);
         } else if (action === "retry" && player) {
             players.dispose(player);
@@ -792,6 +792,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         window.removeEventListener("contextmenu", onContextMenu, true);
         modeObserver?.disconnect();
         modeObserver = null;
+        observedPlayerRoot = null;
         sizeObserver?.disconnect();
         sizeObserver = null;
         layout.release();
@@ -893,6 +894,15 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
     }
     function syncLauncher() {
         const reference = native?.querySelector(".pzp-pc__viewmode-button");
+        const playerRoot = reference?.closest(".pzp-pc") || null;
+        if (playerRoot !== observedPlayerRoot) {
+            modeObserver?.disconnect();
+            observedPlayerRoot = playerRoot;
+            if (playerRoot) {
+                modeObserver ||= new MutationObserver(scheduleMount);
+                modeObserver.observe(playerRoot, { attributes: true, attributeFilter: ["class"] });
+            }
+        }
         if (!reference?.parentElement) {
             launcher?.remove();
             launcher = null;
@@ -923,7 +933,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
         launcher.setAttribute("aria-label", label);
         root.utils.syncPlayerButtonTooltip(launcher, label);
         launcher.setAttribute("aria-pressed", String(state.active));
-        const controlsVisible = Boolean(reference.closest(".pzp-pc")?.classList.contains("pzp-pc--controls"));
+        const controlsVisible = Boolean(playerRoot?.classList.contains("pzp-pc--controls"));
         launcher.tabIndex = controlsVisible ? 0 : -1;
         launcher.setAttribute("aria-hidden", String(!controlsVisible));
     }
@@ -947,11 +957,6 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
                     layout.position();
                 });
                 sizeObserver.observe(host);
-            }
-            const playerRoot = native.querySelector(".pzp-pc");
-            if (playerRoot) {
-                modeObserver = new MutationObserver(scheduleMount);
-                modeObserver.observe(playerRoot, { attributes: true, attributeFilter: ["class"] });
             }
             host.setAttribute("data-bcmv-host", state.active ? "active" : "idle");
             native.setAttribute("data-bcmv-native", "1");

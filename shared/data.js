@@ -21,7 +21,8 @@
 (() => {
     const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     const ARRAY_RESPONSE_KEYS = Object.freeze(["data", "videos", "list", "items", "content"]);
-    const DEFAULT_WATCH_RANGE_MERGE_GAP_MS = 2000;
+    // Only the display may group nearby intervals. Stored ranges and duration totals retain every pause.
+    const DEFAULT_WATCH_RANGE_MERGE_GAP_MS = 0;
     const COMMENT_API_BASE = "https://apis.naver.com/nng_main/nng_comment_api/v1";
     const COMMENT_DEVICE_ID_STORAGE_KEY = "betterchzzkCommentDeviceId";
     const CHZZK_WEB_ORIGIN = "https://chzzk.naver.com";
@@ -814,6 +815,62 @@
         return commentDeviceIdPromise;
     }
 
+    // 원본 VOD 댓글은 `comments` 키 없이 `commentActive`만 담은 성공 응답을 빈 목록으로 다뤄요.
+    // 키가 아예 없을 때만 빈 목록으로 보고, 키가 있는데 형식이 다르면 오류로 남겨요.
+    function isCommentListOmitted(content) {
+        return !Object.hasOwn(content, "comments") && typeof content.commentActive === "boolean";
+    }
+
+    function validateChzzkCommentResponse(content) {
+        if (!content || typeof content !== "object") throw new Error("댓글 응답 형식 확인 불가.");
+        if (isCommentListOmitted(content)) {
+            if (content.bestComments != null && !Array.isArray(content.bestComments)) {
+                throw new Error("인기 댓글 응답 형식 확인 불가.");
+            }
+            return content;
+        }
+        if (!content.comments || typeof content.comments !== "object" || !Array.isArray(content.comments.data)) {
+            throw new Error("댓글 목록 응답 형식 확인 불가.");
+        }
+        if (content.bestComments != null && !Array.isArray(content.bestComments)) {
+            throw new Error("인기 댓글 응답 형식 확인 불가.");
+        }
+        return content;
+    }
+
+    function parseChzzkCommentPage(content, { offset = 0, pageSize = 10 } = {}) {
+        validateChzzkCommentResponse(content);
+        const comments = isCommentListOmitted(content) ? { data: [] } : content.comments;
+        const rows = [...comments.data];
+        const normalizedOffset = Number.isFinite(Number(offset)) ? Math.max(0, Math.trunc(offset)) : 0;
+        const bestRows = normalizedOffset === 0 && Array.isArray(content.bestComments) ? [...content.bestComments] : [];
+        const normalizedPageSize = Number.isFinite(Number(pageSize)) ? Math.max(1, Math.trunc(pageSize)) : 10;
+        const totalCountValue = Number(comments.totalCount ?? comments.commentCount);
+        const totalCount = Number.isFinite(totalCountValue) && totalCountValue >= 0 ? totalCountValue : null;
+        const page = comments.page;
+        const next = Number(page?.next);
+        let hasMore;
+        let nextOffset;
+
+        if (page && Object.hasOwn(page, "next")) {
+            hasMore = Number.isFinite(next) && next > normalizedOffset;
+            nextOffset = hasMore ? next : normalizedOffset + rows.length;
+        } else {
+            nextOffset = normalizedOffset + rows.length;
+            hasMore = rows.length >= normalizedPageSize;
+        }
+        if (!rows.length) hasMore = false;
+
+        return {
+            bestRows,
+            commentActive: content.commentActive !== false,
+            hasMore,
+            nextOffset,
+            rows,
+            totalCount,
+        };
+    }
+
     async function fetchChzzkCommentPage({
         objectId,
         objectType = "STREAMING_VIDEO",
@@ -969,6 +1026,8 @@
         collectWatchSessionRanges,
         compactSpaces,
         fetchChzzkCommentPage,
+        parseChzzkCommentPage,
+        validateChzzkCommentResponse,
         fetchJson,
         formatKstDateKey,
         formatKstDateTime,

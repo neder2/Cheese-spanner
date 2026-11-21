@@ -87,6 +87,7 @@
     const LIST_FILTER_SESSION_KEY = "betterChzzkListFilterSession";
     let currentQuery = "";
     let filterStates = null;
+    let durationFilterAvailable = true;
     let streamerGrades = [];
     // 방송을 보고 돌아와 이전 조건을 되살린 뒤 사용자가 아직 조건을 바꾸지 않은 상태.
     let restoredConditionsPending = false;
@@ -146,6 +147,8 @@
     let categoryStateEpoch = 0;
     let categoryStoreGeneration = 0;
     let categoryReadGeneration = 0;
+    const CATEGORY_ENTRY_RETRY_DELAYS = [200, 800, 1800];
+    let categoryReadRetryTimer = 0;
     let categoryStoreLoading = false;
     let categoryStoreError = "";
     let categorySubscription = null;
@@ -223,12 +226,12 @@
         passesTagExclusions,
     } = CheeseSpanner.categoryToolsFilterModel;
     filterStates = createFilterStates();
-    const { routeKey } = CheeseSpanner.categoryToolsRepository;
+    const { routeKey, listAddressKey } = CheeseSpanner.categoryToolsRepository;
     const dataRepository = CheeseSpanner.categoryToolsRepository.createRepository({
         fetchJson,
         touchMapEntry,
         onRetryReady(key) {
-            if (isFeatureEnabled() && routeKey(getRoute()) === key) scheduleApply();
+            if (isFeatureEnabled() && routeKey(getMetadataRoute()) === key) scheduleApply();
         },
         onHydrationNeeded() {
             if (!isFeatureEnabled() || !getRoute()) return;
@@ -300,7 +303,8 @@
         repository: dataRepository,
         onApply: scheduleApply,
         onLoading: (on) => setLoading(on, "metadata"),
-        isRouteCurrent: (route) => isFeatureEnabled() && isAutoLoadActive() && routeKey(getRoute()) === routeKey(route),
+        isRouteCurrent: (route) =>
+            isFeatureEnabled() && isAutoLoadActive() && routeKey(getMetadataRoute()) === routeKey(route),
         hasScrollRoom: hasPendingScrollRoom,
     });
     const scheduleThrottledApply = createThrottledDomSync(runScheduledApply, 160);
@@ -344,12 +348,14 @@
     function sendCategoryOperation(operation) {
         return new Promise((resolve, reject) => {
             try {
-                if (typeof globalThis.chrome?.runtime?.sendMessage !== "function")
-                    throw new Error("storage-unavailable");
+                if (typeof globalThis.chrome?.runtime?.sendMessage !== "function") {
+                    reject(new Error("storage-unavailable"));
+                    return;
+                }
                 chrome.runtime.sendMessage({ type: CATEGORY_MESSAGE_TYPE, version: 1, operation }, (response) => {
                     const error = chrome.runtime.lastError;
-                    if (error) {
-                        reject(new Error("storage-unavailable"));
+                    if (error || response == null) {
+                        reject(new Error("message-unavailable"));
                         return;
                     }
                     const state = response?.ok === true ? normalizeCategoryState(response.state) : null;
@@ -366,7 +372,7 @@
                     resolve(state);
                 });
             } catch (_) {
-                reject(new Error("storage-unavailable"));
+                reject(new Error("message-unavailable"));
             }
         });
     }
@@ -390,7 +396,13 @@
         if (changed) scheduleApply();
     }
 
-    function readCategoryState() {
+    function cancelCategoryReadRetry() {
+        if (categoryReadRetryTimer) window.clearTimeout(categoryReadRetryTimer);
+        categoryReadRetryTimer = 0;
+    }
+
+    function readCategoryState(entryAttempt = -1) {
+        cancelCategoryReadRetry();
         if (!isCategoryExclusionRoute()) return;
         const generation = ++categoryReadGeneration;
         const storeGeneration = categoryStoreGeneration;
@@ -419,8 +431,22 @@
                     !isCategoryExclusionRoute()
                 )
                     return;
+                const transient = error.message === "untrusted-sender" || error.message === "message-unavailable";
+                if (
+                    transient &&
+                    entryAttempt >= 0 &&
+                    !categoryStateRestored &&
+                    entryAttempt < CATEGORY_ENTRY_RETRY_DELAYS.length
+                ) {
+                    categoryReadRetryTimer = window.setTimeout(() => {
+                        if (generation === categoryReadGeneration && subscription === categorySubscription)
+                            readCategoryState(entryAttempt + 1);
+                    }, CATEGORY_ENTRY_RETRY_DELAYS[entryAttempt]);
+                    return;
+                }
                 categoryStoreLoading = false;
-                categoryStoreError = categoryErrorText(error.message);
+                if (!(transient && entryAttempt >= 0 && categoryStateRestored))
+                    categoryStoreError = categoryErrorText(error.message);
                 syncCategoryAdd();
             }
         );
@@ -428,6 +454,11 @@
 
     function handleCategoryStorageChange(changes, areaName) {
         if (!categorySubscription || areaName !== "local" || !Object.hasOwn(changes, CATEGORY_STORAGE_KEY)) return;
+        if (categoryReadRetryTimer) {
+            cancelCategoryReadRetry();
+            categoryReadGeneration++;
+            categoryStoreLoading = false;
+        }
         const value = changes[CATEGORY_STORAGE_KEY]?.newValue;
         if (value === undefined) {
             categoryStoreGeneration++;
@@ -463,10 +494,11 @@
         categorySubscription = subscription;
         categoryStateRestored = false;
         globalThis.chrome?.storage?.onChanged?.addListener?.(subscription);
-        readCategoryState();
+        readCategoryState(0);
     }
 
     function stopCategoryExclusionRuntime() {
+        cancelCategoryReadRetry();
         if (categorySubscription) globalThis.chrome?.storage?.onChanged?.removeListener?.(categorySubscription);
         categorySubscription = null;
         categoryStateRestored = false;
@@ -1131,6 +1163,37 @@
             categoryId: decodeRouteSegment(match[2]),
             tab: match[3],
         };
+    }
+
+    function getMetadataRoute() {
+        const route = getRoute();
+        if (route?.scope !== "category" || route.tab === "videos") return route;
+        // 치지직의 탭 ID가 실제 조회 조건이다. 클립 기간·정렬을 읽기 전에는 원본 카드만 검색한다.
+        const selected = new Set(
+            Array.from(
+                document.querySelectorAll('[role="tablist"] [role="tab"][aria-selected="true"][id]'),
+                (tab) => tab.id
+            )
+        );
+        if (route.tab === "clips") {
+            route.filterType = ["WITHIN_THIRTY_DAYS", "WITHIN_SEVEN_DAYS", "WITHIN_ONE_DAY", "ALL"].find((id) =>
+                selected.has(id)
+            );
+            route.orderType = ["POPULAR", "RECENT"].find((id) => selected.has(id));
+            route.renderedOnly = !route.filterType || !route.orderType;
+        } else {
+            route.sortType = ["POPULAR", "UNPOPULAR", "LATEST"].find((id) => selected.has(id));
+            const drops = /^#drops(?:_(\d+))?$/.exec(location.hash);
+            if (drops) {
+                route.drops = true;
+                route.campaignNo = drops[1] || "";
+                route.renderedOnly = !selected.has("DROPS") || !route.sortType;
+            } else if (selected.has("DROPS")) {
+                // SPA 주소와 선택 표시가 따로 바뀌는 동안 일반 방송을 끼워 넣지 않는다.
+                route.renderedOnly = true;
+            }
+        }
+        return route;
     }
 
     function hasMountedTools() {
@@ -1940,7 +2003,7 @@
 
     function canUseMetadataForCurrentList(route, context = null) {
         if (!route) return false;
-        if (route.scope !== "global-lives") return true;
+        if (route.scope !== "global-lives") return !route.renderedOnly;
         return getGlobalSortKey(context) === "인기";
     }
 
@@ -2398,6 +2461,11 @@
         return card.__bcgtDomFields;
     }
 
+    function invalidateCardText(card) {
+        delete card.__bcgtDomText;
+        delete card.__bcgtDomFields;
+    }
+
     function createCardEntry(card, id, meta = null) {
         const domText = meta?.id
             ? normSpace([getCardDomText(card), buildMetaSearchText(meta)].join(" "))
@@ -2415,8 +2483,7 @@
         if (!(card instanceof HTMLElement) || !id) return;
         const previousId = card.getAttribute(CARD_ID_ATTR);
         if (previousId && previousId !== id) {
-            delete card.__bcgtDomText;
-            delete card.__bcgtDomFields;
+            invalidateCardText(card);
             card.removeAttribute(HIDE_ATTR);
             card.removeAttribute(ORDER_ATTR);
             removeFollowerBadge(card);
@@ -2555,7 +2622,7 @@
             entries.map((entry) => entry?.id),
             {
                 maxPages: getMaxMetadataPages(),
-                isCurrent: () => isFeatureEnabled() && routeKey(getRoute()) === routeKey(route),
+                isCurrent: () => isFeatureEnabled() && routeKey(getMetadataRoute()) === routeKey(route),
             }
         );
     }
@@ -2665,7 +2732,7 @@
     }
 
     async function refreshFollowerHydrationRows() {
-        const route = getRoute();
+        const route = getMetadataRoute();
         const rememberedRows = getRememberedFollowerRefreshRows(route);
         if (!route || !rememberedRows.length || (!hasFollowerFilter() && !areFollowerBadgesEnabled())) {
             settleFollowerLoading();
@@ -2691,7 +2758,7 @@
             generation !== applyGeneration ||
             filterKey !== getActiveFilterKey() ||
             !isFeatureEnabled() ||
-            routeKey(getRoute()) !== routeKey(route)
+            routeKey(getMetadataRoute()) !== routeKey(route)
         )
             return;
         const currentRows = rows.filter(
@@ -2714,7 +2781,7 @@
             if (
                 refreshed &&
                 isCurrent() &&
-                routeKey(getRoute()) === routeKey(route) &&
+                routeKey(getMetadataRoute()) === routeKey(route) &&
                 ids.some((id) => readFollowerCache(id).hit)
             )
                 scheduleApply();
@@ -2748,6 +2815,7 @@
     }
 
     function filterRange(kind) {
+        if (kind === "duration" && !durationFilterAvailable) return { min: 0, max: 0 };
         return effectiveRange(filterStates[kind]);
     }
 
@@ -2990,11 +3058,6 @@
     function setFilterState(kind, state) {
         if (!FILTER_KINDS.includes(kind)) return;
         filterStates = { ...filterStates, [kind]: state };
-    }
-
-    function resetDurationFilterState() {
-        setFilterState("duration", createFilterState());
-        clearDurationFilterRefreshTimer();
     }
 
     function resetFilterState() {
@@ -4320,7 +4383,7 @@
                 const titleEl = group.querySelector(".bcgt-filter-title");
                 if (titleEl && titleEl.textContent !== viewTitle) titleEl.textContent = viewTitle;
             }
-            if (kind === "duration") group.hidden = !liveList || !canUseMetadataForCurrentList(route);
+            if (kind === "duration") group.hidden = !durationFilterAvailable;
             const state = filterStates[kind];
             const unit = filterUnit(kind, liveList);
             const single = state.mode === "max" ? state.max : state.min;
@@ -4615,7 +4678,7 @@
             syncFontWithHostUi(bar, tabLine);
         }
 
-        const key = routeKey(route);
+        const key = listAddressKey(route);
         if (key !== lastRouteKey) {
             confirmedGlobalSort = { routeKey: "", key: "", staleKey: "" };
             currentQuery = "";
@@ -4957,7 +5020,7 @@
             metadataState.pagesLoaded >= getMaxMetadataPages()
         )
             return;
-        const route = getRoute();
+        const route = getMetadataRoute();
         if (route) queueMetadataSearch(route);
     }
 
@@ -4968,7 +5031,7 @@
             return;
         }
 
-        const route = getRoute();
+        const route = getMetadataRoute();
         if (!route) {
             removeTools();
             return;
@@ -4982,8 +5045,9 @@
         }
 
         const canUseMetadata = canUseMetadataForCurrentList(route, scanContext);
-        if (hasDurationFilter() && (route.tab !== "lives" || !canUseMetadata)) {
-            resetDurationFilterState();
+        const durationAvailable = route.tab === "lives" && canUseMetadata;
+        if (durationFilterAvailable !== durationAvailable) {
+            durationFilterAvailable = durationAvailable;
             resetViewFilterSnapshot();
             updateUiState();
         }
@@ -5020,7 +5084,7 @@
             filterKey === getActiveFilterKey() &&
             grid.isConnected &&
             isFeatureEnabled() &&
-            routeKey(getRoute()) === routeKey(route);
+            routeKey(getMetadataRoute()) === routeKey(route);
 
         if (!isAutoLoadActive()) {
             injectedRenderKey = "";
@@ -5284,6 +5348,7 @@
         document.querySelectorAll(`[${TABS_ATTR}="1"]`).forEach((el) => el.removeAttribute(TABS_ATTR));
         document.querySelectorAll(`[${GLOBAL_SORT_ATTR}="1"]`).forEach((el) => el.removeAttribute(GLOBAL_SORT_ATTR));
         document.querySelectorAll(`[${CARD_ATTR}="1"]`).forEach((el) => {
+            invalidateCardText(el);
             el.removeAttribute(CARD_ATTR);
             el.removeAttribute(INJECTED_ATTR);
             el.removeAttribute(ORDER_ATTR);
@@ -5399,11 +5464,23 @@
                 return false;
         }
         if (isOurNode(mutation.target)) return true;
+        if (mutation.type === "attributes" && mutation.attributeName === "aria-selected") {
+            return !mutation.target.matches?.('[role="tablist"] [role="tab"]');
+        }
+        if (mutation.type === "characterData") {
+            const parent = mutation.target.parentElement;
+            return !parent?.closest(`[${CARD_ATTR}="1"]`) || isOurNode(parent);
+        }
         if (mutation.type === "attributes" && mutation.attributeName === "href") {
             return !mutation.target.closest?.(`[${CARD_ATTR}="1"]`);
         }
         const added = mutation.addedNodes;
         const removed = mutation.removedNodes;
+        if (
+            mutation.target.closest?.(`[${CARD_ATTR}="1"]`) &&
+            [...(added || []), ...(removed || [])].some((node) => node.nodeType === Node.TEXT_NODE)
+        )
+            return false;
         if ((!added || added.length === 0) && (!removed || removed.length === 0)) {
             return (
                 mutation.type === "attributes" &&
@@ -5458,9 +5535,11 @@
             options: {
                 childList: true,
                 subtree: true,
+                characterData: true,
                 attributes: true,
                 attributeFilter: [
                     "href",
+                    "aria-selected",
                     TABS_ATTR,
                     CARD_ATTR,
                     CARD_ID_ATTR,
@@ -5492,9 +5571,17 @@
             },
             shouldIgnoreMutations: (mutations) => {
                 const sidebar = document.getElementById("sidebar");
-                return mutations.every(
-                    (mutation) => isOurMutation(mutation) || isUnrelatedSidebarMutation(mutation, sidebar)
-                );
+                let shouldIgnore = true;
+                for (const mutation of mutations) {
+                    if (isOurMutation(mutation) || isUnrelatedSidebarMutation(mutation, sidebar)) continue;
+                    shouldIgnore = false;
+                    if (mutation.type === "attributes") continue;
+                    const target =
+                        mutation.target.nodeType === Node.TEXT_NODE ? mutation.target.parentElement : mutation.target;
+                    const card = target?.closest?.(`[${CARD_ATTR}="1"]`);
+                    if (card && !isInjectedCard(card)) invalidateCardText(card);
+                }
+                return shouldIgnore;
             },
             shouldSchedule: shouldApplyTools,
             schedule: scheduleApply,
@@ -5528,6 +5615,7 @@
         if (getRoute()?.scope !== "global-lives") return;
         resetMetadata("", { invalidateLiveCount: true });
         clearInjectedCards();
+        document.querySelectorAll(`[${CARD_ATTR}="1"]`).forEach(invalidateCardText);
         resetViewFilterSnapshot();
         scheduleApply();
     }

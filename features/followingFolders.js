@@ -1441,6 +1441,11 @@ ${ORDER_RULES}
             return;
         }
         if (!missing.length || nativeExpandPending) return;
+        if (
+            featureOptions.followingListStateEnabled &&
+            CheeseSpanner.followingListState?.canExpandForFolder(scheduleSync) === false
+        )
+            return;
         const now = Date.now();
         nativeExpandClicks = nativeExpandClicks.filter((time) => now - time < NATIVE_EXPAND_WINDOW_MS);
         if (nativeExpandClicks.length >= NATIVE_EXPAND_LIMIT) return;
@@ -1456,11 +1461,14 @@ ${ORDER_RULES}
         if (button?.contains(event.target) && button.getAttribute("aria-expanded") === "true") nativeExpandHeld = true;
     }
 
-    function releaseNativeExpandHold() {
+    function releaseNativeExpandHold(userOpenedFolder = false) {
         nativeExpandHeld = false;
         nativeExpandPending = null;
         nativeExpandClicks = [];
         unreachableChannelIds = new Set();
+        if (featureOptions.followingListStateEnabled) {
+            CheeseSpanner.followingListState?.setFolderOpenOverride(userOpenedFolder);
+        }
     }
 
     function scheduleSync() {
@@ -1545,7 +1553,7 @@ ${ORDER_RULES}
     }
 
     function toggleFolder(folder) {
-        if (folder.collapsed) releaseNativeExpandHold();
+        if (folder.collapsed) releaseNativeExpandHold(true);
         sendCommand(
             { type: "setCollapsed", folderId: folder.id, collapsed: !folder.collapsed },
             { keepCollapseOnDisconnect: true }
@@ -2252,7 +2260,7 @@ ${ORDER_RULES}
         }
         // 잠깐 펼쳐 보여 준 접힌 폴더에 놓았으면 펼친 상태로 남긴다.
         if (spring === folder.id && folder.collapsed) {
-            releaseNativeExpandHold();
+            releaseNativeExpandHold(true);
             sendCommand({ type: "setCollapsed", folderId: folder.id, collapsed: false });
         }
         sendCommand(

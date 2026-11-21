@@ -1,9 +1,11 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const vm = require("node:vm");
 const {
     createDom,
     createFakeChrome,
     evalRepoScript,
+    readRepoFile,
     waitForCondition,
     waitForAsyncCallbacks,
 } = require("./helpers/extension-page-fixture.js");
@@ -24,6 +26,9 @@ test("directory files use a fresh name and never open an existing recording for 
                 throw Object.assign(new Error("missing"), { name: "NotFoundError" });
             }
             return {
+                async getFile() {
+                    return { size: 0 };
+                },
                 async createWritable() {
                     return writer;
                 },
@@ -43,6 +48,95 @@ test("directory files use a fresh name and never open an existing recording for 
         /directory-permission/
     );
     assert.equal(calls.length, 3);
+});
+
+function directoryModule(locks) {
+    const realm = vm.createContext({ navigator: { locks } });
+    vm.runInContext(readRepoFile("shared", "recordingDirectory.js"), realm);
+    return realm.CheeseSpannerRecordingDirectory;
+}
+
+function recordingFolder() {
+    const files = new Map();
+    return {
+        files,
+        queryPermission: async () => "granted",
+        async getFileHandle(name, options) {
+            if (!files.has(name)) {
+                if (!options?.create) throw new DOMException("Missing", "NotFoundError");
+                files.set(name, { content: "", writing: false });
+            }
+            const entry = files.get(name);
+            return {
+                getFile: async () => ({ size: entry.content.length }),
+                async createWritable({ mode }) {
+                    assert.equal(mode, "exclusive");
+                    if (entry.writing) throw new DOMException("Locked", "NoModificationAllowedError");
+                    entry.writing = true;
+                    let pending = "";
+                    return {
+                        write: async (text) => (pending += text),
+                        close: async () => {
+                            entry.content = pending;
+                            entry.writing = false;
+                        },
+                        abort: async () => (entry.writing = false),
+                    };
+                },
+            };
+        },
+    };
+}
+
+test("two tabs that select the same local folder reserve distinct file names, even for empty recordings", async () => {
+    let queue = Promise.resolve();
+    const locks = {
+        request(_name, acquire) {
+            const next = queue.then(acquire);
+            queue = next.catch(() => {});
+            return next;
+        },
+    };
+    const folder = recordingFolder();
+    const files = await Promise.all(
+        [directoryModule(locks), directoryModule(locks)].map((tab) => tab.openFile(folder, "방송.mp4"))
+    );
+    assert.deepEqual(files.map((file) => file.fileName).sort(), ["방송 (1).mp4", "방송.mp4"]);
+    await Promise.all(files.map((file) => file.writer.close()));
+    assert.equal(folder.files.size, 2);
+});
+
+test("competing origins cannot overwrite a recording while its writer is open or after it commits", async () => {
+    for (const closeBeforeCompetingWriter of [false, true]) {
+        const folder = recordingFolder();
+        const witness = Promise.withResolvers();
+        const resume = Promise.withResolvers();
+        const lateReader = {
+            ...folder,
+            async getFileHandle(name, options) {
+                if (name === "방송.mp4" && !options?.create) {
+                    // The second origin has observed the file missing, then stalls before creating it.
+                    witness.resolve();
+                    await resume.promise;
+                    throw new DOMException("Missing at lookup", "NotFoundError");
+                }
+                return folder.getFileHandle(name, options);
+            },
+        };
+        const secondOpening = directoryModule().openFile(lateReader, "방송.mp4");
+        await witness.promise;
+        const first = await directoryModule().openFile(folder, "방송.mp4");
+        await first.writer.write("first");
+        if (closeBeforeCompetingWriter) await first.writer.close();
+        resume.resolve();
+        const second = await secondOpening;
+        await second.writer.write("second");
+        await second.writer.close();
+        if (!closeBeforeCompetingWriter) await first.writer.close();
+        assert.equal(second.fileName, "방송 (1).mp4");
+        assert.equal(folder.files.get("방송.mp4").content, "first");
+        assert.equal(folder.files.get("방송 (1).mp4").content, "second");
+    }
 });
 
 function ui(t, hash = "") {

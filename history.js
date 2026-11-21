@@ -1433,9 +1433,13 @@ async function handleTitleClick(event, entry) {
             return;
         }
 
-        await persistReplayVideoNo(entry, videoNo);
         openUrlInNewTab(`https://chzzk.naver.com/video/${encodeURIComponent(videoNo)}`, pendingWindow);
-        showMessage("다시보기 링크 확인");
+        try {
+            await persistReplayVideoNo(entry, videoNo);
+            showMessage("다시보기 링크 확인");
+        } catch (_) {
+            showMessage("다시보기 링크 확인 · 기록에 링크 저장 실패", "error");
+        }
     } catch (_) {
         if (pendingWindow && !pendingWindow.closed) pendingWindow.close();
         showMessage("다시보기를 찾지 못함", "error");

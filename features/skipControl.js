@@ -321,12 +321,23 @@
         control.style.pointerEvents = state.pointerEvents;
     }
 
-    function getSeekableRange(video) {
-        if (!(video instanceof HTMLVideoElement) || !video.seekable?.length) return null;
+    function getSeekableRange(video, time = Infinity, direction = 0) {
+        if (!(video instanceof HTMLVideoElement)) return null;
         try {
-            const lastIndex = video.seekable.length - 1;
-            const start = video.seekable.start(lastIndex);
-            const end = video.seekable.end(lastIndex);
+            const ranges = video.seekable;
+            if (!ranges?.length) return null;
+            let index = ranges.length - 1;
+            while (index > 0 && time < ranges.start(index)) {
+                const previousEnd = ranges.end(index - 1);
+                if (time > previousEnd) {
+                    // Cross a gap in the direction of the user's skip. For an absolute restore use the nearer edge.
+                    if (direction < 0 || (direction === 0 && time - previousEnd < ranges.start(index) - time)) index--;
+                    break;
+                }
+                index--;
+            }
+            const start = ranges.start(index);
+            const end = ranges.end(index);
             if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
             return { start, end };
         } catch {
@@ -360,8 +371,8 @@
         return NaN;
     }
 
-    function getSeekBounds(video) {
-        const seekableRange = getSeekableRange(video);
+    function getSeekBounds(video, time, direction) {
+        const seekableRange = getSeekableRange(video, time, direction);
         if (seekableRange && (isLiveRoute() || !Number.isFinite(video.duration))) {
             return { min: seekableRange.start, max: seekableRange.end };
         }
@@ -370,11 +381,11 @@
         return { min: 0, max: duration };
     }
 
-    function clampSeekTime(video, time) {
+    function clampSeekTime(video, time, direction) {
         const value = Number(time);
         if (!Number.isFinite(value)) return NaN;
 
-        const bounds = getSeekBounds(video);
+        const bounds = getSeekBounds(video, value, direction);
         return Math.min(Math.max(value, bounds.min), bounds.max);
     }
 
@@ -599,7 +610,7 @@
     }
 
     function restoreLiveTimeShiftPosition(video, state, expectedTime, edge) {
-        const bounds = getSeekBounds(video);
+        const bounds = getSeekBounds(video, expectedTime);
         if (!Number.isFinite(expectedTime) || expectedTime < bounds.min) {
             clearLiveTimeShiftState(video);
             return false;
@@ -1020,9 +1031,7 @@
 
     function seekVideoBy(video, deltaSeconds) {
         const current = Number.isFinite(video.currentTime) ? video.currentTime : 0;
-        const bounds = getSeekBounds(video);
-        const next = Math.min(Math.max(current + deltaSeconds, bounds.min), bounds.max);
-        video.currentTime = next;
+        video.currentTime = clampSeekTime(video, current + deltaSeconds, deltaSeconds);
         // The user's own skip ends the pause-resume restore; the time-shift guard re-arms at the new position.
         if (resumeRestoreState?.video === video) cancelResumeRestore({ clearSnapshot: true });
         syncLiveTimeShiftGuard(video, { allowCurrent: true });

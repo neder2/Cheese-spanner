@@ -25,6 +25,7 @@ async function createCategoryUI(
         metadata,
         categoryCounts = {},
         bootstrapOptions = false,
+        initialTabUrl,
     } = {}
 ) {
     await worker.ready();
@@ -65,7 +66,7 @@ async function createCategoryUI(
     const listeners = new Set();
     const sender = {
         id: worker.storage.chrome.runtime.id,
-        tab: { id: 101, url: window.location.href },
+        tab: { id: 101, url: initialTabUrl ?? window.location.href },
         frameId: 0,
         url: window.location.href,
     };
@@ -255,6 +256,9 @@ async function createCategoryUI(
         timers,
         frames,
         messages,
+        commitTabUrl() {
+            sender.tab.url = window.location.href;
+        },
         listeners,
         optionsReads,
         categorySubscriptions: () => listeners.size - optionsListenerCount,

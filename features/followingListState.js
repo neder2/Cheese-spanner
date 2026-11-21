@@ -35,6 +35,24 @@
     let observer = null;
     let removeRouteListener = null;
     let writeQueue = Promise.resolve();
+    let folderOpenedByUser = false;
+    let retryFolderExpansion = null;
+
+    // The folder module uses the same native button. A remembered collapse wins on entry;
+    // explicitly opening a folder can reveal its rows for this view without saving a new native choice.
+    CheeseSpanner.followingListState = Object.freeze({
+        canExpandForFolder(retry) {
+            if (!loaded) {
+                retryFolderExpansion = retry;
+                return false;
+            }
+            return preference.list !== false || folderOpenedByUser;
+        },
+        setFolderOpenOverride(value) {
+            folderOpenedByUser = value;
+            scheduleSync();
+        },
+    });
 
     function normalizeState(value) {
         const state = {};
@@ -127,6 +145,7 @@
 
     function restoreControl(kind, button) {
         const desired = preference[kind];
+        if (kind === "list" && desired === false && folderOpenedByUser) return;
         const actual = expanded(button);
         if (!button?.isConnected || actual === null || typeof desired !== "boolean" || pendingClicks[kind]) return;
         if (actual === desired) {
@@ -200,6 +219,7 @@
         const kind = Object.keys(controls).find((name) => controls[name] === button);
         const before = expanded(button);
         if (!kind || before === null) return;
+        if (kind === "list") folderOpenedByUser = false;
         if (section !== currentSection) {
             currentSection = section;
             pendingClicks = {};
@@ -212,6 +232,7 @@
     }
 
     function resetPage() {
+        folderOpenedByUser = false;
         currentSection = null;
         pendingClicks = {};
         attempts = {};
@@ -243,22 +264,28 @@
             .then((data) => {
                 if (!enabled || token !== generation || stopWhenDisconnected()) return;
                 preference = { ...normalizeState(data[STORAGE_KEY]), ...userChoices };
-                loaded = true;
-                if (Object.keys(userChoices).length) savePreference(userChoices);
-                scheduleSync();
             })
             .catch((error) => {
                 if (!enabled || token !== generation || stopWhenDisconnected()) return;
-                loaded = true;
                 console.warn("[Cheese Spanner] 팔로잉 목록 상태 읽기 실패", error);
+            })
+            .then(() => {
+                if (!enabled || token !== generation || stopWhenDisconnected()) return;
+                loaded = true;
                 if (Object.keys(userChoices).length) savePreference(userChoices);
                 scheduleSync();
+                const retry = retryFolderExpansion;
+                retryFolderExpansion = null;
+                retry?.();
             });
         scheduleSync();
     }
 
     function stop() {
         generation += 1;
+        folderOpenedByUser = false;
+        retryFolderExpansion = null;
+        loaded = false;
         if (frame) cancelAnimationFrame(frame);
         frame = 0;
         clearRestoreTimer();

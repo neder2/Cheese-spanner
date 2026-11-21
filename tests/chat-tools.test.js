@@ -2550,3 +2550,28 @@ test("an id-less list emptied row by row keeps one record per message when refil
     assert.deepEqual(collectedTexts(document), ["공지 가", "공지 나", "공지 가"]);
     assert.equal(unreadCount(document), 3);
 });
+
+test("same-broadcast fragment navigation keeps a detached notice and does not mark read messages unread", async (t) => {
+    const { dom } = createPageDom(activityChat("detached") + activityChat("visible"));
+    t.after(() => closeChatToolsDom(dom));
+    const { document } = dom.window;
+    loadChatTools(dom);
+    evalRepoScript(dom, "features", "routeBridgePage.js");
+    await waitForCondition(() => collectedTexts(document).length === 2);
+    const viewport = installModeratorViewport(dom);
+    openModeratorPanel(document);
+    await waitForCondition(() => unreadCount(document) === 1);
+    viewport.scrollTop = viewport.scrollTop ? 0 : 40;
+    viewport.dispatchEvent(new dom.window.Event("scroll"));
+    await waitForCondition(() => unreadCount(document) === 0);
+    openModeratorPanel(document);
+    document.querySelector('.chat-list [data-chat-id="detached"]').remove();
+    const detected = new Promise((resolve) =>
+        dom.window.addEventListener("cheese-spanner:routechange:detected", resolve, { once: true })
+    );
+    dom.window.location.hash = "#same-live";
+    await detected;
+    await new Promise((resolve) => setTimeout(resolve, 160));
+    assert.deepEqual(collectedTexts(document).sort(), ["detached", "visible"]);
+    assert.equal(unreadCount(document), 0);
+});

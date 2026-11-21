@@ -376,7 +376,8 @@
         try {
             const claim = await send("claim");
             if (!claim?.ok || typeof claim.token !== "string" || !claim.token) {
-                finished = true;
+                // An unconsumed reservation can still be released by the other tab.
+                if (claim?.ok !== true || claim.reserved !== true) finished = true;
                 removeToast();
                 return;
             }

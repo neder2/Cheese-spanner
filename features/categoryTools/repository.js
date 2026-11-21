@@ -16,10 +16,18 @@
     const MAX_CATEGORY_SEARCH_CACHE_ENTRIES = 20;
     const CATEGORY_SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 
-    function routeKey(route) {
+    function listAddressKey(route) {
         if (!route) return "";
         if (route.scope === "global-lives") return "global-lives/lives";
         return `${route.categoryType}/${route.categoryId}/${route.tab}`;
+    }
+
+    function routeKey(route) {
+        const key = listAddressKey(route);
+        if (route?.renderedOnly) return `${key}|rendered`;
+        if (route?.filterType) return `${key}|${route.filterType}|${route.orderType}`;
+        if (route?.drops) return `${key}|drops:${route.campaignNo || "all"}|${route.sortType || "POPULAR"}`;
+        return route?.sortType ? `${key}|${route.sortType}` : key;
     }
 
     function apiUrl(route, cursor = null) {
@@ -39,8 +47,8 @@
         const params = new URLSearchParams({ size: String(API_PAGE_SIZE) });
         if (route.tab === "clips") {
             params.set("clipUID", cursor?.clipUID ? String(cursor.clipUID) : "");
-            params.set("filterType", "WITHIN_THIRTY_DAYS");
-            params.set("orderType", "POPULAR");
+            params.set("filterType", route.filterType || "WITHIN_THIRTY_DAYS");
+            params.set("orderType", route.orderType || "POPULAR");
             params.set(
                 "readCount",
                 cursor?.readCount !== undefined && cursor?.readCount !== null ? String(cursor.readCount) : ""
@@ -58,6 +66,11 @@
                 params.set("concurrentUserCount", String(cursor.concurrentUserCount));
             }
             if (cursor.liveId !== undefined && cursor.liveId !== null) params.set("liveId", String(cursor.liveId));
+        }
+        if (route.sortType) params.set("sortType", route.sortType);
+        if (route.drops) {
+            if (route.campaignNo) params.set("campaignNo", route.campaignNo);
+            return `${API_BASE}/v1/categories/${type}/${id}/drops-lives?${params.toString()}`;
         }
         return `${API_BASE}/v2/categories/${type}/${id}/${route.tab}?${params.toString()}`;
     }
@@ -479,6 +492,12 @@
             clearMetadataRetryState();
             const data = json?.content?.data || [];
             for (const item of data) {
+                if (
+                    route.drops &&
+                    (item?.dropsCampaignNo == null ||
+                        (route.campaignNo && String(item.dropsCampaignNo) !== route.campaignNo))
+                )
+                    continue;
                 const mapped = mapApiItem(route, item);
                 if (!mapped.id) continue;
                 delete mapped._bcgtSearchText;
@@ -869,5 +888,10 @@
         });
     }
 
-    root.categoryToolsRepository = Object.freeze({ routeKey, createRepository, MAX_STREAMER_GRADE_CHANNELS });
+    root.categoryToolsRepository = Object.freeze({
+        routeKey,
+        listAddressKey,
+        createRepository,
+        MAX_STREAMER_GRADE_CHANNELS,
+    });
 })();

@@ -505,7 +505,7 @@ function installNativeList(document, { ignoreMore, longList }) {
     more.refreshList = () => render(refreshLength ?? COLLAPSED_ROWS);
 }
 
-function loadFeature(dom, chrome, { pin = false } = {}) {
+function loadFeature(dom, chrome, { pin = false, listState = false } = {}) {
     for (const parts of [
         ["features", "routeBridgePage.js"],
         ["shared", "settings.js"],
@@ -518,6 +518,7 @@ function loadFeature(dom, chrome, { pin = false } = {}) {
         dom.window.eval(readRepoFile(...parts));
     }
     if (pin) dom.window.eval(readRepoFile("features", "sidebarCustomization.js"));
+    if (listState) dom.window.eval(readRepoFile("features", "followingListState.js"));
     const store = installSettingsStore(dom, chrome);
     dom.window.eval(readRepoFile("features", "followingFolders.js"));
     return store;
@@ -1280,6 +1281,53 @@ test("a folder already open after a reload gets its unbuilt channels without any
     assert.equal(document.getElementById("rowE"), null);
     assert.equal(document.getElementById("rowD").getAttribute("data-bcff-channel-id"), D);
 });
+
+for (const rememberedList of [false, undefined]) {
+    test(`open following folders wait for the saved native list choice (${rememberedList})`, async (t) => {
+        const chrome = createFakeChrome({
+            followingFoldersEnabled: true,
+            followingListStateEnabled: true,
+            [KEY]: stateOf(folder("games", "게임", [E])),
+        });
+        const dom = createDom(chrome, { collapsedList: true });
+        t.after(() => dom.window.close());
+        const { document } = dom.window;
+        const more = document.getElementById("moreButton");
+        const section = document.createElement("button");
+        section.setAttribute("aria-label", "펼쳐짐, 접기");
+        section.setAttribute("aria-expanded", "true");
+        document.querySelector("#followingSection header").append(section);
+        let finishRead;
+        const writes = [];
+        chrome.storage.local = {
+            get(key, callback) {
+                finishRead = () => callback({ [key]: { section: true, list: rememberedList } });
+            },
+            set(value, callback) {
+                writes.push(value);
+                callback();
+            },
+        };
+        loadFeature(dom, chrome, { listState: true });
+        await waitForCondition(() => finishRead && headerButton(document, "게임"));
+        await settle();
+        assert.equal(more.nativeClicks, 0, "no premature folder or restoration click before the read");
+        finishRead();
+        if (rememberedList === false) {
+            await settle();
+            assert.equal(more.nativeClicks, 0);
+            assert.equal(more.getAttribute("aria-expanded"), "false");
+            trustedClick(dom, headerButton(document, "게임"));
+            await waitForCondition(() => storedState(chrome).folders[0].collapsed);
+            trustedClick(dom, headerButton(document, "게임"));
+        }
+        await waitForCondition(() => document.getElementById("rowE"));
+        await settle();
+        assert.equal(more.nativeClicks, 2, "the folder opens the missing rows without folding them back");
+        assert.equal(more.getAttribute("aria-expanded"), "true");
+        assert.deepEqual(writes, [], "folder actions never persist a synthetic native-list choice");
+    });
+}
 
 test("a site refresh that cuts the list back is built again before the next frame", async (t) => {
     const saved = stateOf(folder("games", "게임", [E]));

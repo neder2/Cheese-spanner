@@ -248,6 +248,44 @@ test("out-of-order category searches and detached menus cannot publish an old re
     assert.equal(ui.window.document.querySelectorAll("[data-category-add]").length, 0);
 });
 
+test("a direct navigation retries the read once Chrome commits the trusted tab URL", async (t) => {
+    const ui = await createCategoryUI(t, { worker: withState(2, [category()]), initialTabUrl: "about:blank" });
+    assert.equal(hidden(ui, "a"), false);
+    assert.equal(ui.messages.length, 1);
+    const [id, retry] = [...ui.timers].find(([, timer]) => timer.delay === 200);
+    ui.commitTabUrl();
+    ui.timers.delete(id);
+    retry.callback();
+    await settle();
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "a"), true);
+    assert.deepEqual(
+        ui.messages.map((message) => message.operation.kind),
+        ["get", "get"]
+    );
+});
+
+test("initial exclusion retries are bounded and stale timers cannot read after leaving the list", async (t) => {
+    const ui = await createCategoryUI(t, { worker: withState(2, [category()]), initialTabUrl: "about:blank" });
+    let retry;
+    for (const delay of [200, 800, 1800]) {
+        const found = [...ui.timers].find(([, timer]) => timer.delay === delay);
+        assert.ok(found);
+        ui.timers.delete(found[0]);
+        retry = found[1].callback;
+        retry();
+        await settle();
+    }
+    assert.equal(ui.messages.length, 4);
+    assert.equal(hidden(ui, "a"), false);
+    assert.equal(ui.window.document.querySelector("[data-category-store-retry]").hidden, false);
+    ui.dom.reconfigure({ url: "https://chzzk.naver.com/" });
+    ui.hooks.pageChange();
+    retry();
+    await settle();
+    assert.equal(ui.messages.length, 4);
+});
+
 test("the initial read completes before exclusion, and newer revisions beat late read and mutation responses", async (t) => {
     const worker = withState(2, [category()]);
     const gate = worker.storage.pauseNext("get");

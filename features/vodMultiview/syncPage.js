@@ -615,8 +615,10 @@
         const host = panel.parentElement;
         if (!panel.isConnected || !host?.matches(HOST) || !host.contains(panel)) return;
         const mainInfo = readTimeline(command?.main);
-        if (!mainInfo || mainInfo.videoNo !== videoNo()) return;
-        if (command.action === "reference" || command.action === "seek") {
+        const reading = command?.action === "reference";
+        const routeNo = videoNo();
+        if (!routeNo || (reading ? command.videoNo : mainInfo?.videoNo) !== routeNo) return;
+        if (reading || command.action === "seek") {
             const root = host.querySelector(":scope > .pzp-pc");
             const video = root?.querySelector(MEDIA);
             if (
@@ -624,34 +626,41 @@
                 video.seeking ||
                 video.readyState < 1 ||
                 isMiniMode(host) ||
-                root.classList.contains("pzp-pc--adbreak") ||
-                !durationMatches(mainInfo, video)
+                root.classList.contains("pzp-pc--adbreak")
             )
                 return;
             const player = native.find(host, video);
-            if (!player || !native.ownsMedia(player, video, mainInfo.id)) return;
-            if (command.action === "seek") {
-                const at = command.at;
+            if (!player) return;
+            const id = native.mediaId(player, video);
+            if (!id) return;
+            if (reading) {
+                const { currentTime, duration } = video;
                 if (
-                    !Number.isFinite(at) ||
-                    at < mainInfo.startMs ||
-                    at >= mainInfo.endMs ||
-                    !native.canAllocate(player)
+                    Number.isFinite(currentTime) &&
+                    currentTime >= 0 &&
+                    Number.isFinite(duration) &&
+                    currentTime <= duration
                 )
-                    return;
-                const time = (at - mainInfo.startMs) / 1000;
-                if (time >= video.duration) return;
-                try {
-                    player.currentTime = time;
-                } catch {
-                    // A replaced native source must not receive a retry or a playback toggle.
-                }
+                    panel.dispatchEvent(new CustomEvent(REFERENCE, { detail: { id, currentTime, duration } }));
                 return;
             }
-            const time = video.currentTime;
-            const at = mainInfo.startMs + time * 1000;
-            if (Number.isFinite(time) && time >= 0 && at < mainInfo.endMs)
-                panel.dispatchEvent(new CustomEvent(REFERENCE, { detail: at }));
+            const at = command.at;
+            if (
+                id !== mainInfo.id ||
+                !durationMatches(mainInfo, video) ||
+                !Number.isFinite(at) ||
+                at < mainInfo.startMs ||
+                at >= mainInfo.endMs ||
+                !native.canAllocate(player)
+            )
+                return;
+            const time = (at - mainInfo.startMs) / 1000;
+            if (time >= video.duration) return;
+            try {
+                player.currentTime = time;
+            } catch {
+                // A replaced native source must not receive a retry or a playback toggle.
+            }
             return;
         }
         if (command.action !== "start") return;

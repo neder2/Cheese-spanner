@@ -11,7 +11,7 @@
  *   채팅 도구가 요청하면 가장 가까운 chatMessage의 key·user·time·profile을 검증해 제한된 식별값을
  *   data-bcct-source-message에, 지원되는 블라인드 상태의 originalContent를 data-bcct-source-original에 기록한다.
  *   라이브 안내가 표시된 행은 같은 방송의 네이티브 채팅 목록에서 같은 메시지의 최신 상태와 원문을 확인한다.
- *   같은 스냅샷의 역할·인증 메타데이터와 NORMAL 본문·참조 이모티콘만 제한해 전달한다.
+ *   같은 스냅샷의 역할·인증과 화면에 본문을 표시하는 NORMAL·CBOTBLIND의 대조 자료를 전달한다.
  *   불완전한 메시지는 null로 답하고 블라인드 원문 속성은 라이브의 지원 상태에서만 기록한다.
  *   블라인드 옵션이 켜졌을 때만 화면과 일치하는 일반 채팅 원문을 MAIN 메모리에 보관한다.
  * 통신: cheese-spanner:chat-timestamp-source-request·cheese-spanner:chat-user-source-request·
@@ -212,7 +212,9 @@
             return null;
         const original = ownValue(message, "originalContent");
         const normalText =
-            status === NORMAL_MESSAGE_STATUS && typeof original === "string" && original.length <= MAX_ORIGINAL_LENGTH
+            (status === NORMAL_MESSAGE_STATUS || status === "CBOTBLIND") &&
+            typeof original === "string" &&
+            original.length <= MAX_ORIGINAL_LENGTH
                 ? original
                 : null;
         return {
@@ -429,6 +431,8 @@
         )
             snapshot = null;
         writeSource(messageContainer, SOURCE_ORIGINAL_ATTR, isLive ? originalForReply(snapshot, path, visible) : null);
+        // 클린봇을 끈 행은 본문을 표시한다. 안내 화면에서는 기존 원문 복구 경계만 사용한다.
+        const compareBody = snapshot?.status !== "CBOTBLIND" || (visible && !NATIVE_BLIND_NOTICES.has(visible[1]));
         const identity = snapshot && {
             key: snapshot.key,
             user: snapshot.user,
@@ -440,8 +444,8 @@
             verifiedMarkType: snapshot.verifiedMarkType,
             verifiedMark: snapshot.verifiedMark,
             verifiedState: snapshot.verifiedState,
-            normalText: snapshot.normalText,
-            normalEmojis: snapshot.normalEmojis,
+            normalText: compareBody ? snapshot.normalText : null,
+            normalEmojis: compareBody ? snapshot.normalEmojis : null,
         };
         if (identity && JSON.stringify(identity).length > MAX_SOURCE_LENGTH) {
             identity.normalText = null;

@@ -31,7 +31,9 @@
     const MOUNT_SYNC_DELAY_MS = 80;
     const MOUNT_GAP_GRACE_MS = 600;
     const COMMENT_ONLY_ASIDE_ID = "cheese-spanner-vod-comment-aside";
+    const FOLDED_CHAT_CONTROL = '[class*="_folded_button_"]';
     const ANCHOR_SELECTOR = [
+        FOLDED_CHAT_CONTROL,
         "#player_layout",
         "#vod-aside",
         "#vod-aside [role='log']",
@@ -60,6 +62,7 @@
     let commentOnlyHost = null;
     let commentOnlyVideoMoreColumn = null;
     let nativeChatShellSeen = false;
+    let previousVideoChatLog = null;
     let fullscreenListenerInstalled = false;
 
     const commentRepository = repositoryModule.createCommentRepository({
@@ -220,7 +223,9 @@
         const scope = document.fullscreenElement || document;
         const aside = scope.querySelector("aside#vod-aside");
         if (!(aside instanceof HTMLElement)) {
-            if (document.fullscreenElement || nativeChatShellSeen) {
+            if (!previousVideoChatLog?.isConnected) previousVideoChatLog = null;
+            const chatReopenButton = document.querySelector(`#player_layout .header_info ${FOLDED_CHAT_CONTROL}`);
+            if (document.fullscreenElement || nativeChatShellSeen || chatReopenButton) {
                 removeCommentOnlyShell();
                 return null;
             }
@@ -236,7 +241,12 @@
         if (!(header instanceof HTMLElement) || !(container instanceof HTMLElement) || !container.contains(chatLog)) {
             return null;
         }
-        nativeChatShellSeen = true;
+        // A route can change before React removes the previous video's log. Its presence does
+        // not establish that the new video has replay chat.
+        if (chatLog !== previousVideoChatLog) {
+            nativeChatShellSeen = true;
+            previousVideoChatLog = null;
+        }
         return { appearanceHeading: heading, aside, chatLog, container, header, heading };
     }
 
@@ -588,6 +598,7 @@
         activeOrder = model.DEFAULT_ORDER;
         selectedTab = "chat";
         nativeChatShellSeen = false;
+        previousVideoChatLog = null;
         commentView.setActiveOrder(activeOrder);
         commentView.setSelectedTab(selectedTab);
     }
@@ -604,6 +615,7 @@
             return;
         }
 
+        previousVideoChatLog = videoNo ? commentView.getChatLog() || previousVideoChatLog : null;
         teardownMount();
         currentVideoNo = videoNo;
         nativeChatShellSeen = false;

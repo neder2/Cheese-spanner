@@ -531,6 +531,35 @@ test("an unrelated registration after a live ID is saved still runs that broadca
     assert.equal(m.opened.length, 1);
 });
 
+test("edits during the live ID commit cancel only the actions explicitly turned off", async () => {
+    for (const [kind, edit, notify, autoOpen] of [
+        ["update", { notify: false }, false, true],
+        ["set-auto-open", { autoOpen: false }, true, false],
+        ["set-notify", { notify: true }, true, true],
+    ]) {
+        const m = monitor();
+        await flush();
+        m.setResponse(snapshot(11, true));
+        const save = m.chrome.storage.local.set;
+        let request;
+        m.chrome.storage.local.set = (values, callback) => {
+            if (!request && values[STATE]?.channels?.[CHANNEL]?.notify?.includes("11")) {
+                request = m.send(kind, { channelId: CHANNEL, ...edit });
+            }
+            return save(values, callback);
+        };
+        await m.tick();
+        assert.ok(request);
+        assert.equal((await request).ok, true);
+        await m.tick();
+        assert.equal(m.notifications.length, Number(notify), kind);
+        assert.equal(m.opened.length, Number(autoOpen), kind);
+        const saved = m.local[STATE].channels[CHANNEL];
+        if (notify) assert.ok(saved.notify.includes("11"));
+        if (autoOpen) assert.ok(saved.autoOpen.includes("11"));
+    }
+});
+
 test("another channel's rule change during a commit keeps committed effects and only rebaselines that channel", async () => {
     const m = monitor();
     let liveId = 10;

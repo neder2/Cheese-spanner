@@ -25,6 +25,11 @@
     const FEATURE_ROUTE_CHANGE_EVENT = "cheese-spanner:routechange:detected";
     const EXTENSION_PREVIEW_VIDEO_SELECTOR =
         "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip], [data-bcmv-video]";
+    const SPACE_CONSUMER_SELECTOR =
+        "button, input, textarea, select, summary, a[href], [contenteditable]:not([contenteditable='false']), " +
+        "[role='button'], [role='link'], [role='checkbox'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [role='option'], " +
+        "[role='radio'], [role='slider'], [role='switch'], [role='tab'], [role='textbox'], " +
+        "[role='combobox'], [role='searchbox'], [role='spinbutton'], [role='treeitem']";
     const ROUTE_CHECK_DELAYS_MS = [0, 80, 250, 800];
     const RECONNECT_CHECK_THROTTLE_MS = 160;
     const videoViewportTransforms = new WeakMap();
@@ -192,6 +197,10 @@
         if (isLiveAdBreakActive()) return true;
         const root = getMainVideoElement()?.closest(".pzp-pc");
         return Boolean(root && (root.matches(".pzp-pc--adbreak") || root.querySelector(".pzp-pc--adbreak")));
+    }
+
+    function isSpaceConsumerTarget(target) {
+        return target instanceof Element && Boolean(target.closest(SPACE_CONSUMER_SELECTOR));
     }
 
     function isEditableTarget(target) {
@@ -570,6 +579,7 @@
         isExtensionPreviewVideo,
         isVodMultiviewInput,
         isEditableTarget,
+        isSpaceConsumerTarget,
         getPlayerRoot,
         elementMatchesOrContains,
         mutationMatchesSelector,

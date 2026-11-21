@@ -2,7 +2,7 @@
  * features/vodComments/model.js — VOD 댓글의 순수 데이터 정규화와 계산을 제공한다.
  *
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트.
- * 의존: 없음. DOM, 네트워크, storage를 다루지 않는다.
+ * 의존: shared/data.js의 공용 댓글 응답 판독기. DOM, 네트워크, storage를 다루지 않는다.
  */
 (() => {
     "use strict";
@@ -11,6 +11,8 @@
     const namespace = (root.vodComments = root.vodComments || {});
     if (namespace.model) return;
 
+    const { parseChzzkCommentPage: parseCommentPage, validateChzzkCommentResponse: validateCommentResponse } =
+        root.utils;
     const COMMENT_PAGE_SIZE = 10;
     const MAX_COMMENTS_PER_ORDER = 300;
     const MAX_REPLIES_PER_COMMENT = 50;
@@ -91,62 +93,6 @@
 
     function getReplyKey(parentKey, row, fallbackIndex = 0) {
         return `reply:${parentKey}:${getCommentKey(row, fallbackIndex)}`;
-    }
-
-    // 원본 VOD 댓글은 `comments` 키 없이 `commentActive`만 담은 성공 응답을 빈 목록으로 다뤄요.
-    // 키가 아예 없을 때만 빈 목록으로 보고, 키가 있는데 형식이 다르면 오류로 남겨요.
-    function isCommentListOmitted(content) {
-        return !Object.hasOwn(content, "comments") && typeof content.commentActive === "boolean";
-    }
-
-    function validateCommentResponse(content) {
-        if (!content || typeof content !== "object") throw new Error("댓글 응답 형식 확인 불가.");
-        if (isCommentListOmitted(content)) {
-            if (content.bestComments != null && !Array.isArray(content.bestComments)) {
-                throw new Error("인기 댓글 응답 형식 확인 불가.");
-            }
-            return content;
-        }
-        if (!content.comments || typeof content.comments !== "object" || !Array.isArray(content.comments.data)) {
-            throw new Error("댓글 목록 응답 형식 확인 불가.");
-        }
-        if (content.bestComments != null && !Array.isArray(content.bestComments)) {
-            throw new Error("인기 댓글 응답 형식 확인 불가.");
-        }
-        return content;
-    }
-
-    function parseCommentPage(content, { offset = 0, pageSize = COMMENT_PAGE_SIZE } = {}) {
-        validateCommentResponse(content);
-        const comments = isCommentListOmitted(content) ? { data: [] } : content.comments;
-        const rows = [...comments.data];
-        const normalizedOffset = normalizeLimit(offset, 0);
-        const bestRows = normalizedOffset === 0 && Array.isArray(content.bestComments) ? [...content.bestComments] : [];
-        const normalizedPageSize = Math.max(1, normalizeLimit(pageSize, COMMENT_PAGE_SIZE));
-        const totalCountValue = Number(comments.totalCount ?? comments.commentCount);
-        const totalCount = Number.isFinite(totalCountValue) && totalCountValue >= 0 ? totalCountValue : null;
-        const page = comments.page;
-        const next = Number(page?.next);
-        let hasMore;
-        let nextOffset;
-
-        if (page && Object.hasOwn(page, "next")) {
-            hasMore = Number.isFinite(next) && next > normalizedOffset;
-            nextOffset = hasMore ? next : normalizedOffset + rows.length;
-        } else {
-            nextOffset = normalizedOffset + rows.length;
-            hasMore = rows.length >= normalizedPageSize;
-        }
-        if (!rows.length) hasMore = false;
-
-        return {
-            bestRows,
-            commentActive: content.commentActive !== false,
-            hasMore,
-            nextOffset,
-            rows,
-            totalCount,
-        };
     }
 
     function normalizeReplyRow(reply) {

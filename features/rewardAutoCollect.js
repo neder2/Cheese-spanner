@@ -234,7 +234,7 @@
                     method: "PUT",
                     credentials: "include",
                     signal: controller?.signal,
-                });
+                }).catch(() => null); // Leave a failed claim for the next poll and continue with the others.
                 if (!isCurrentApiRequest(generation, channelId)) return;
                 if (claimResponse?.ok) rememberCompletedApiClaim(claimKey);
             }

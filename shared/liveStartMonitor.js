@@ -25,14 +25,13 @@
     let resetAll = false;
     const resetActions = new Set();
     const resetRules = new Set();
-    // Channel IDs of registration requests that are queued but not yet applied.
-    const editing = new Map();
+    // User-requested disables that arrived while this check was saving its live IDs.
+    const pendingDisables = new Set();
 
     // Once a live ID is saved, only a change to that channel's own rule cancels its effects.
     function ruleChanged(channelId, action) {
-        return (
-            resetAll || resetActions.has(action) || resetRules.has(`${channelId}:${action}`) || editing.has(channelId)
-        );
+        const rule = `${channelId}:${action}`;
+        return resetAll || resetActions.has(action) || resetRules.has(rule) || pendingDisables.has(rule);
     }
 
     function enqueue(task) {
@@ -241,6 +240,7 @@
             });
         } finally {
             controller = null;
+            pendingDisables.clear();
         }
     }
 
@@ -373,22 +373,31 @@
             sendResponse({ ok: false, error: "알림 설정 요청 출처 확인 불가." });
             return false;
         }
-        // Stop outstanding reads as soon as the user edits a channel rule. Effects of live IDs that are
-        // already saved still run unless they belong to the edited channel (see ruleChanged).
-        const target = message.channel?.channelId;
-        editing.set(target, (editing.get(target) || 0) + 1);
+        const id = message.channel?.channelId;
+        const key = registrationKey(message.kind);
+        if (
+            typeof id !== "string" ||
+            !/^[a-f0-9]{32}$/.test(id) ||
+            (!key && !["add", "update", "remove"].includes(message.kind)) ||
+            (key && typeof message.channel[key] !== "boolean")
+        ) {
+            sendResponse({ ok: false, error: "유효하지 않은 채널 설정." });
+            return false;
+        }
+        // Both registration writes and polls use the same queue. Respect a pending disable before
+        // the write can run, while allowing the other already-committed action to finish.
+        if (controller) {
+            for (const action of ["notify", "autoOpen"]) {
+                if (
+                    message.kind === "remove" ||
+                    ((key === action || message.kind === "update") && message.channel[action] === false)
+                )
+                    pendingDisables.add(`${id}:${action}`);
+            }
+        }
         generation++;
         controller?.abort();
         void enqueue(async () => {
-            const id = message.channel?.channelId;
-            const key = registrationKey(message.kind);
-            if (
-                typeof id !== "string" ||
-                !/^[a-f0-9]{32}$/.test(id) ||
-                (!key && !["add", "update", "remove"].includes(message.kind)) ||
-                (key && typeof message.channel[key] !== "boolean")
-            )
-                throw userError("유효하지 않은 채널 설정.");
             const max = globalThis.CheeseSpannerLiveStart.MAX_CHANNELS;
             let profile = null;
             if (key && message.channel[key]) {
@@ -453,20 +462,14 @@
                 await storageSet(chrome.storage.local, { [CHANNELS_KEY]: channels });
                 return channels;
             });
-        })
-            .finally(() => {
-                const pending = editing.get(target) - 1;
-                if (pending > 0) editing.set(target, pending);
-                else editing.delete(target);
-            })
-            .then(
-                (channels) => sendResponse({ ok: true, channels }),
-                (error) =>
-                    sendResponse({
-                        ok: false,
-                        error: error?.userFacing ? error.message : "채널 설정 저장 실패.",
-                    })
-            );
+        }).then(
+            (channels) => sendResponse({ ok: true, channels }),
+            (error) =>
+                sendResponse({
+                    ok: false,
+                    error: error?.userFacing ? error.message : "채널 설정 저장 실패.",
+                })
+        );
         return true;
     });
     function bindNotificationClicks() {

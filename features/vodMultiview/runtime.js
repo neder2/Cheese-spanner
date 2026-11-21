@@ -671,18 +671,32 @@
         if (current.restore === restore) current.restore = null;
     }
 
-    function reference(current, main) {
-        let at;
+    function readPosition(current) {
+        let position;
         const receive = (event) => {
-            if (Number.isFinite(event.detail)) at = event.detail;
+            const { id, currentTime, duration } = event.detail || {};
+            if (
+                typeof id === "string" &&
+                Number.isFinite(duration) &&
+                duration > 0 &&
+                Number.isFinite(currentTime) &&
+                currentTime >= 0 &&
+                currentTime <= duration
+            )
+                position = { id, currentTime, duration };
         };
         current.panel.addEventListener(REFERENCE, receive);
         try {
-            send(current.panel, { action: "reference", main });
+            send(current.panel, { action: "reference", videoNo: current.mainId });
         } finally {
             current.panel.removeEventListener(REFERENCE, receive);
         }
-        return at;
+        return position;
+    }
+
+    function broadcastTime(main, position) {
+        if (!position || position.id !== main.id || Math.abs(main.duration - position.duration) > 2) return;
+        return main.startMs + Math.min(position.currentTime, main.duration) * 1000;
     }
 
     function timelineTime(at, label) {
@@ -850,8 +864,9 @@
     function updateTimelineCursor(current) {
         if (view !== current || !current.open || !current.timeline.open || document.hidden) return;
         const range = current.timelineRange;
-        const at = current.mainInfo?.media && range ? reference(current, current.mainInfo.media) : undefined;
-        const known = Number.isFinite(at) && at >= range.start && at < range.end;
+        const at =
+            current.mainInfo?.media && range ? broadcastTime(current.mainInfo.media, readPosition(current)) : undefined;
+        const known = Number.isFinite(at) && at >= range.start && at <= range.end;
         const disabled =
             !known ||
             !range.common ||
@@ -962,6 +977,7 @@
         const mainNo = route;
         current.notice.textContent = `${channel.name}의 다시보기를 확인하고 있습니다.`;
         try {
+            const selectedPosition = readPosition(current);
             const main = current.mainInfo || (await loadVideo(mainNo, { signal }));
             if (!isCurrent(current, pending, mainNo)) return;
             if (main.status !== "ok") {
@@ -969,7 +985,7 @@
                 return;
             }
             current.mainInfo = main;
-            const at = reference(current, main.media);
+            const at = broadcastTime(main.media, selectedPosition);
             const sub = await findReplay(channel.id, main.media, { signal, at, excluded: current.entries.keys() });
             if (!isCurrent(current, pending, mainNo)) return;
             if (sub.status !== "ok") {

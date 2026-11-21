@@ -140,6 +140,7 @@ function createFixture({
     window.CheeseSpannerSettings = {
         normalizeOptions: () => ({ ...options }),
     };
+    evalRepoScript(dom, "content.js");
     window.CheeseSpanner = {
         skipControl: {
             markPlaybackToggleIntent() {
@@ -147,6 +148,7 @@ function createFixture({
             },
         },
         utils: {
+            isSpaceConsumerTarget: window.CheeseSpanner.utils.isSpaceConsumerTarget,
             bindFeatureOptions(callback) {
                 optionListeners.push(callback);
                 callback({ ...options });

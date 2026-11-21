@@ -12,6 +12,7 @@
         getMainVideoElement,
         getPlayerRoot,
         isPlaybackRoute,
+        isLiveAdBreakActive,
         startPageChangeDetection,
         mutationMatchesSelector,
         injectStyleOnce,
@@ -404,11 +405,9 @@
     }
 
     function isAdvertisement() {
-        // 2026-11-05 public bundle: the live pre-roll mounts #preAdPlayerWrapper before the main player exists, and the
-        // shared main-video selection skips its placeholder, so the wrapper itself marks the gap.
         return Boolean(
             video?.closest(AD_VIDEO) ||
-            document.getElementById("preAdPlayerWrapper") ||
+            (!auxiliary && isLiveAdBreakActive()) ||
             player?.matches(".pzp-pc--adbreak") ||
             Array.from(player?.querySelectorAll(".pzp-pc--adbreak") || []).some(
                 (node) => !node.closest(PREVIEW_VIDEO) && node.closest(".pzp-pc") === player

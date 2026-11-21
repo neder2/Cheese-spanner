@@ -212,7 +212,7 @@
                 pruneReservation();
                 if (action === "claim") {
                     // At most one tab can hold the preparation token. The token itself cannot authorize display.
-                    if (reservation) return idle();
+                    if (reservation) return { ...idle(), reserved: true };
                     const token = globalThis.crypto.randomUUID();
                     reservation = { token, owner, version, expiresAt: Date.now() + TOKEN_TTL_MS };
                     return { ...idle(), token };

@@ -1463,6 +1463,26 @@ test("common interval jump seeks the owned main once and preserves pause, rate a
     assert.equal(f.main.playCalls, 0);
 });
 
+test("the last frame of the main replay still permits a jump to the shared interval", async (t) => {
+    const f = fixture(t);
+    f.apply(true);
+    f.open();
+    f.add(2);
+    await flush();
+    const timeline = f.document.querySelector(TIMELINE);
+    await toggleTimeline(timeline);
+    Object.defineProperty(f.main.video, "ended", { configurable: true, value: true });
+    f.main.state.paused = true;
+    f.move(120);
+    f.main.emit("ended");
+    const jump = timeline.querySelector(".bcvm-timeline-jump");
+    assert.equal(jump.disabled, false);
+    assert.match(timeline.querySelector(".bcvm-timeline-now").textContent, /20:02:00/);
+    jump.click();
+    assert.deepEqual(f.main.seeks, [30]);
+    assert.equal(f.main.playCalls, 0);
+});
+
 test("six coincident broadcasts keep one portrait row with less than half overlap when the panel narrows", async (t) => {
     const f = fixture(t);
     f.apply(true);
@@ -2044,6 +2064,30 @@ test("selects a channel replay that ended and was published before the current m
     sub.seeked();
     await flush();
     assert.equal(sub.paused, false);
+    assert.deepEqual(f.main.seeks, []);
+});
+
+test("selecting a channel captures the current replay and time before the first main lookup resolves", async (t) => {
+    const f = fixture(t);
+    const channel = { channelId: "b".repeat(32) };
+    f.pages.set(0, [
+        { videoNo: 2, videoType: "REPLAY", publishDate: "2026-11-09 20:03:00" },
+        { videoNo: 3, videoType: "REPLAY", publishDate: "2026-11-09 20:02:00" },
+    ]);
+    f.responses.set(2, detail(2, { channel, liveOpenDate: START, duration: 60 }));
+    f.responses.set(3, detail(3, { channel, liveOpenDate: "2026-11-09 20:01:00", duration: 60 }));
+    let finishMain;
+    f.responses.set(1, new Promise((resolve) => (finishMain = resolve)));
+    f.apply(true);
+    f.open();
+    await f.chooseChannel();
+    assert.ok(f.requests.some(({ no }) => no === 1));
+    f.move(80);
+    finishMain(detail(1));
+    await flush();
+    assert.ok(f.document.querySelector(`${PANEL} [data-bcvm-tile="2"]`));
+    assert.equal(f.document.querySelector(`${PANEL} [data-bcvm-tile="3"]`), null);
+    assert.equal(f.main.video.currentTime, 80);
     assert.deepEqual(f.main.seeks, []);
 });
 

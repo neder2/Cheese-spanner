@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { createFixture, channelId } = require("./helpers/category-tools-page");
+const { createFixture, channelId, apiItem } = require("./helpers/category-tools-page");
 
 // 방송 목록 필터 1단계: 적용 조건 줄, 검색 단어, 이상·이하·범위 메뉴, 탭 동안의 조건 유지.
 const QUIET = { categoryToolsFollowerBadgesEnabled: false, categoryToolsLiveElapsedEnabled: false };
@@ -65,6 +65,156 @@ test("latest list looks up the grade only for the one card that matches the othe
     await f.apply();
     assert.deepEqual(f.gradeRequests, [channelId(19)]);
     assert.deepEqual(f.visibleCardIds(), ["card-19"]);
+});
+
+test("latest sort suspends duration filtering and other changes preserve it when returning or reloading", async (t) => {
+    const f = createFixture(t, { cards: 8, options: QUIET });
+    await f.apply();
+    const panel = menu(f);
+    panel.querySelector('[data-filter-kind="duration"][data-filter-mode="min"]').click();
+    panel.querySelector('[data-filter-kind="duration"][data-filter-value="3600"]').click();
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds(), ["card-5", "card-6", "card-7"]);
+    const [popular, latest] = f.document.querySelectorAll("#sort-row button");
+    popular.removeAttribute("aria-selected");
+    latest.setAttribute("aria-selected", "true");
+    await f.apply();
+    assert.equal(f.visibleCardIds().length, 8);
+    assert.deepEqual(chips(f), []);
+    search(f, "Title");
+    await f.apply();
+    assert.equal(f.storedSession().routes[GLOBAL_KEY].filters.duration.min, 3600);
+    latest.removeAttribute("aria-selected");
+    popular.setAttribute("aria-selected", "true");
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds(), ["card-5", "card-6", "card-7"]);
+    const reloaded = createFixture(t, { cards: 8, options: QUIET, session: JSON.stringify(f.storedSession()) });
+    await reloaded.apply();
+    assert.deepEqual(reloaded.visibleCardIds(), f.visibleCardIds());
+});
+
+test("native title and viewer changes refresh the same channel's cached card text", async (t) => {
+    const f = createFixture(t, { cards: 4, options: QUIET });
+    await f.apply();
+    const [popular, latest] = f.document.querySelectorAll("#sort-row button");
+    popular.removeAttribute("aria-selected");
+    latest.setAttribute("aria-selected", "true");
+    search(f, "새방제");
+    const panel = menu(f);
+    panel.querySelector('[data-filter-kind="views"][data-filter-mode="min"]').click();
+    const input = panel.querySelector('[data-filter-value-input="views"]');
+    input.value = "150";
+    input.dispatchEvent(new f.window.Event("input", { bubbles: true }));
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds(), []);
+    const card = f.document.querySelector("#card-0");
+    card.querySelector(".title strong").textContent = "새방제";
+    card.querySelector(":scope > span").firstChild.data = "200명";
+    f.window.dispatchEvent(new f.window.Event("cheese-spanner:live-list-refreshed"));
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds(), ["card-0"]);
+    const title = card.querySelector(".title strong");
+    title.firstChild.data = "다른 방송";
+    assert.equal(f.observer().shouldIgnoreMutations([{ type: "characterData", target: title.firstChild }]), false);
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds(), []);
+    const previous = title.firstChild;
+    title.textContent = "새방제";
+    assert.equal(
+        f
+            .observer()
+            .shouldIgnoreMutations([
+                { type: "childList", target: title, removedNodes: [previous], addedNodes: [title.firstChild] },
+            ]),
+        false
+    );
+    await f.apply();
+    assert.deepEqual(f.visibleCardIds(), ["card-0"]);
+});
+
+function selectCategoryScope(f, ids) {
+    const controls = f.document.getElementById("sort-row");
+    controls.setAttribute("role", "tablist");
+    const buttons = controls.querySelectorAll("button");
+    ids.forEach((id, index) => {
+        buttons[index].id = id;
+        buttons[index].setAttribute("role", "tab");
+        buttons[index].setAttribute("aria-selected", "true");
+    });
+}
+
+test("clip search changes its result set when the native period or order changes at the same address", async (t) => {
+    const requests = [];
+    const f = createFixture(t, {
+        cards: 4,
+        options: QUIET,
+        url: "https://chzzk.naver.com/category/GAME/A/clips",
+        categoryPage(url) {
+            const period = url.searchParams.get("filterType");
+            const order = url.searchParams.get("orderType");
+            requests.push([period, order]);
+            const data =
+                period === "WITHIN_THIRTY_DAYS"
+                    ? [{ clipUID: "older", clipTitle: "일치", ownerChannelId: channelId(9) }]
+                    : [];
+            return { content: { data, page: { next: null } } };
+        },
+    });
+    for (const [index, card] of [...f.document.querySelectorAll("#grid .card")].entries()) {
+        for (const link of card.querySelectorAll('a[href^="/live/"]'))
+            link.setAttribute("href", "/clips/native-" + index);
+    }
+    selectCategoryScope(f, ["WITHIN_THIRTY_DAYS", "POPULAR"]);
+    await f.apply();
+    search(f, "일치");
+    await new Promise((resolve) => f.window.setTimeout(resolve, 150));
+    await f.apply();
+    assert.ok(f.document.querySelector('#grid [data-bcgt-injected] a[href="/clips/older"]'));
+    selectCategoryScope(f, ["WITHIN_ONE_DAY", "RECENT"]);
+    await f.apply();
+    assert.deepEqual(requests, [
+        ["WITHIN_THIRTY_DAYS", "POPULAR"],
+        ["WITHIN_ONE_DAY", "RECENT"],
+    ]);
+    assert.equal(f.document.querySelector('#grid a[href="/clips/older"]'), null);
+    assert.equal(searchInput(f).value, "일치");
+    selectCategoryScope(f, ["UNKNOWN", "RECENT"]);
+    await f.apply();
+    assert.equal(requests.length, 2, "unrecognized scope searches only the native cards");
+});
+
+test("drops campaign search uses the selected drops endpoint and excludes other campaigns and non-drops", async (t) => {
+    const requests = [];
+    const f = createFixture(t, {
+        cards: 4,
+        options: QUIET,
+        url: "https://chzzk.naver.com/category/GAME/A/lives#drops_17",
+        categoryPage(url) {
+            requests.push(url);
+            const data = [null, 16, 17].map((dropsCampaignNo, i) => ({
+                ...apiItem(10 + i, Date.now()),
+                liveTitle: "일치",
+                dropsCampaignNo,
+            }));
+            return { content: { data, page: { next: null } } };
+        },
+    });
+    selectCategoryScope(f, ["DROPS", "LATEST"]);
+    await f.apply();
+    search(f, "일치");
+    await new Promise((resolve) => f.window.setTimeout(resolve, 150));
+    await f.apply();
+    assert.ok(requests.length > 0);
+    for (const url of requests) {
+        assert.equal(url.pathname, "/service/v1/categories/GAME/A/drops-lives");
+        assert.equal(url.searchParams.get("campaignNo"), "17");
+        assert.equal(url.searchParams.get("sortType"), "LATEST");
+    }
+    const injected = [...f.document.querySelectorAll('#grid [data-bcgt-injected="1"]')];
+    assert.deepEqual(
+        injected.map((card) => card.getAttribute("data-bcgt-card-id")),
+        [channelId(12)]
+    );
 });
 
 test("refreshing the same live list retries an expired grade failure and preserves its filters", async (t) => {

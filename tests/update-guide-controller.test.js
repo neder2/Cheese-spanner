@@ -247,11 +247,13 @@ test("simultaneous tabs receive one reservation and one consumed write", async (
     const winner = claims.findIndex((value) => value.token);
     assert.notEqual(winner, -1);
     assert.equal(claims.filter((value) => value.token).length, 1);
+    assert.ok(claims.every((value) => value.token || (value.reserved === true && value.show === false)));
     const commits = await Promise.all(
         Array.from({ length: 8 }, () => h.message("commit", { token: claims[winner].token }, senders[winner]))
     );
     assert.equal(commits.filter((value) => value.show).length, 1);
     assert.equal(h.writes.length, 1);
+    assert.deepEqual(await h.message("claim", {}, senders[(winner + 1) % senders.length]), { ok: true, show: false });
 });
 
 test("release frees only its own unconsumed token and expiry never resets seen", async () => {

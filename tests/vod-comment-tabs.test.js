@@ -244,8 +244,10 @@ function createFixture({
     window.CheeseSpannerSettings = {
         normalizeOptions: () => ({ ...options }),
     };
+    evalRepoScript(dom, "shared", "data.js");
     window.CheeseSpanner = {
         utils: {
+            ...window.CheeseSpanner.utils,
             bindFeatureOptions(callback) {
                 optionListeners.push(callback);
                 callback({ ...options });
@@ -2160,4 +2162,48 @@ test("VOD comment scroll events delivered to a hidden panel do not overwrite the
     chatTab().click();
     commentTab().click();
     assert.equal(panel.scrollTop, 0, "a visible scroll to the top must still be saved");
+});
+
+test("a previous video's late chat shell does not suppress the next video's comment-only panel", async (t) => {
+    for (const folded of [false, true]) {
+        await t.test(folded ? "new video has a replay-chat reopen control" : "new video is chatless", async (t) => {
+            const f = createFixture({
+                fetchComments: async () => apiContent({ rows: [apiComment(1, "새 영상 댓글")] }),
+            });
+            t.after(() => {
+                f.emitOptions({ vodCommentTabsEnabled: false });
+                f.window.close();
+            });
+            const { document } = f;
+            const old = document.getElementById("vod-aside");
+            const section = document.getElementById("player-layout");
+            const wrapper = document.createElement("div");
+            wrapper.innerHTML = '<div><div id="player_layout"><div class="header_info"></div></div></div>';
+            section.prepend(wrapper);
+            const header = wrapper.querySelector(".header_info");
+            assert.ok(old.querySelector("#cheese-spanner-vod-comment-tabs"));
+            f.emitRoute("/video/23456");
+            await waitForCondition(() => old.querySelector("#cheese-spanner-vod-comment-tabs"));
+            old.querySelector('[role="log"]').insertAdjacentHTML(
+                "beforeend",
+                '<div class="_item_old_1">이전 영상의 마지막 채팅</div>'
+            );
+            await Promise.resolve();
+            if (folded) header.innerHTML = '<button class="_folded_button_new_18">라이브 채팅 다시보기</button>';
+            old.remove();
+            if (folded) {
+                await delay(750);
+                assert.equal(document.getElementById("cheese-spanner-vod-comment-aside"), null);
+                assert.equal(f.requests.length, 0);
+                header.replaceChildren();
+            }
+            await waitForCondition(() =>
+                document.getElementById("cheese-spanner-vod-comment-aside")?.textContent.includes("새 영상 댓글")
+            );
+            assert.deepEqual(
+                f.requests.map((request) => request.objectId),
+                ["23456"]
+            );
+        });
+    }
 });

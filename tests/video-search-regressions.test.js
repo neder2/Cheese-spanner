@@ -713,3 +713,62 @@ test("R2-124: a page limit changed on another channel tab still invalidates the 
     await waitForCondition(() => getStatus(dom).textContent.startsWith("60 / 60"));
     assert.deepEqual(pages, ["0", "0", "1"]);
 });
+
+test("rebuilding a partial channel index replaces changed titles and removes unavailable videos", async () => {
+    const root = loadModules();
+    let retry = false;
+    const repository = createRepo(root, {
+        fetchJson: async (url) => {
+            if (retry) return { content: { data: makeVideos(1, 0, "갱신"), last: true } };
+            if (pageOf(url) === "1") throw new Error("page two failed");
+            return { content: { data: makeVideos(30, 0, "이전"), last: false } };
+        },
+    });
+    repository.setContext(CHANNEL, "검색", repoOptions);
+    const partial = await repository.buildIndex(CHANNEL);
+    assert.equal(partial.videos.length, 30);
+    assert.equal(partial.complete, false);
+    retry = true;
+    const recovered = await repository.buildIndex(CHANNEL);
+    assert.equal(recovered.complete, true);
+    assert.deepEqual(
+        Array.from(recovered.videos, (video) => [video.videoNo, video.title]),
+        [["1000", "갱신 0"]]
+    );
+});
+
+test("video comment search retries malformed pages and follows a short page's explicit next offset", async () => {
+    const fake = createFakeTimers();
+    const root = loadModules(fake.globals);
+    let malformed = true;
+    let settle;
+    const offsets = [];
+    const repository = createRepo(root, {
+        fetchJson: async () => ({ content: { data: makeVideos(1), last: true } }),
+        fetchChzzkCommentPage: async ({ offset }) => {
+            offsets.push(offset);
+            if (malformed) return { comments: { data: "invalid" } };
+            const content = offset === 0 ? "처음" : "바늘";
+            return { comments: { data: [{ comment: { content } }], page: { next: offset === 0 ? 17 : null } } };
+        },
+        onCommentProgress: (progress) => progress?.force && settle(),
+    });
+    repository.setContext(CHANNEL, "바늘", { ...repoOptions, videoSearchCommentMaxPagesPerVideo: 3 });
+    await repository.buildIndex(CHANNEL);
+    const video = repository.getIndex(CHANNEL).videos[0];
+    async function search() {
+        const finished = new Promise((resolve) => {
+            settle = resolve;
+        });
+        repository.scheduleCommentSearch();
+        fake.fireLatest();
+        await finished;
+    }
+    await search();
+    assert.match(video.commentError, /목록 응답/);
+    malformed = false;
+    await search();
+    assert.deepEqual(offsets, [0, 0, 17]);
+    assert.equal(video.commentError, null);
+    assert.equal(root.videoSearchModel.getCommentMatchText(video, "바늘"), "바늘");
+});

@@ -50,6 +50,8 @@
 
 HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 오류예요. 비어 있는 results는 정상 빈 결과이고, 비어 있지 않은 results에 유효한 항목이 하나도 없으면 오류로 처리해요. 입력 변경·추가 패널 닫기·페이지 이동·OFF 뒤 응답은 현재 검색에 반영하지 않아요. 내부 타임아웃은 검색 실패로 표시하고 결과 없음으로 바꾸지 않아요. 요청에는 검색어·size만 넣고 선택한 제외 목록 전체는 보내지 않아요.
 
+카테고리 클립은 현재 선택된 기간과 정렬을 `filterType`·`orderType`으로 조회해요. 드롭스 목록은 `drops-lives`에서 같은 정렬과 선택된 캠페인을 조회해요. 화면에서 선택을 확인할 수 없는 클립·드롭스 목록은 현재 표시된 카드에서만 검색해요.
+
 전체 라이브 목록의 카테고리 정체성은 `/service/v1/lives` 항목의 `categoryType`·`liveCategory`이며 표시 이름은 `liveCategoryValue`예요. 원본 카드의 카테고리 링크는 같은 출처의 `/category/{type}/{id}/lives` 또는 끝 슬래시가 있는 형태를 해석하고 경로 조각을 디코딩해요. 현재 원본 링크가 없거나 여러 링크의 정체성이 충돌하면 이름·태그·제목이나 오래된 API 값으로 대신 판정하지 않아요. 메타데이터 후보와 확장이 추가한 카드는 비어 있지 않은 id·channelId 일치와 양의 안전 정수 liveId를 요구하고 현재 결합을 다시 확인해요. liveId 결측·0·음수·소수·안전 범위 초과는 카테고리 제외에서 통과시키며 원본의 현재 링크 판정과 독립이에요. 추가 카드 템플릿의 옛 카테고리 링크는 현재 유형·ID로 바꿔요.
 
 2026-09-30 인증정보 없는 HTTP 요청에서 검색어 `마리모`는 `GAME`·`Marimo_League`·`마리모 리그`를 반환했고, GET `/service/v1/categories/GAME/Marimo_League/info`의 `openLiveCount`는 0이었어요. 공식 공개 코드도 링크에 categoryType·liveCategory를 그대로 사용했어요. 이 근거는 방송이 없는 검색 결과와 대문자 유형의 입력 계약을 뒷받침하며 실제 Chrome의 요청·원본 카드 DOM 성공을 증명하지 않아요.
@@ -107,11 +109,11 @@ HTTP·JSON 실패, code 불일치, results 누락·잘못된 형식은 검색 �
 
 인증 종류는 `PARTNER`·`CHALLENGER`·`OFFICIAL`의 정확한 값을 별도 축으로 유지해요. 수집 대상은 방송자·채널/채팅 매니저·파트너·챌린저이며, 플랫폼 운영자라는 이유만으로 매니저로 수집하지 않아요. `verifiedMark:true`만으로 파트너를 추정하지 않아요. 방 역할과 인증 정보를 각각 `known`·`missing`·`invalid`로 구분하고 누락된 축만 기존 작성자 DOM 배지로 보완해요. 명시적인 일반 사용자·인증 없음·지원하지 않는 값·충돌은 낡은 DOM 배지로 승격하지 않아요. 브리지 미준비/비대상인 `null`과 현재 네이티브 메시지 판독 실패인 `{message:null}`도 구별해요.
 
-NORMAL 메시지는 같은 스냅샷의 `originalContent`와 현재 본문이 대응할 때만 확정해요. 본문은 최대 2,000자이며 초과하면 절단본을 쓰지 않아요. 이모티콘은 원문의 `{:token:}`과 같은 메시지 `extras.emojis`의 확인된 URL을 현재 DOM 이미지의 URL·순서·개수와 대조해요. `nng-phinf.pstatic.net`의 네이티브 `?type=f60_60` 변환을 반영하고, 표시용 토큰과 `textKey`는 기존 DOM 규칙을 유지해요. 매핑이 없다고 확인한 빈 맵은 문자 토큰으로 비교하지만 판독 불가·getter·상속·비허용 URL·상한 초과의 `null` 맵은 문자로 추정하지 않아요. 참조 토큰은 최대 64개, URL은 2,048자, 응답 JSON은 32,768자예요. 응답 상한을 넘으면 본문 메타데이터만 미확인으로 두고 식별값은 유지해요.
+NORMAL 메시지와 클린봇을 꺼 본문이 보이는 `CBOTBLIND` 메시지는 같은 스냅샷의 `originalContent`와 현재 본문이 대응할 때만 확정해요. 본문은 최대 2,000자이며 초과하면 절단본을 쓰지 않아요. 이모티콘은 원문의 `{:token:}`과 같은 메시지 `extras.emojis`의 확인된 URL을 현재 DOM 이미지의 URL·순서·개수와 대조해요. `nng-phinf.pstatic.net`의 네이티브 `?type=f60_60` 변환을 반영하고, 표시용 토큰과 `textKey`는 기존 DOM 규칙을 유지해요. 매핑이 없다고 확인한 빈 맵은 문자 토큰으로 비교하지만 판독 불가·getter·상속·비허용 URL·상한 초과의 `null` 맵은 문자로 추정하지 않아요. 참조 토큰은 최대 64개, URL은 2,048자, 응답 JSON은 32,768자예요. 응답 상한을 넘으면 본문 메타데이터만 미확인으로 두고 식별값은 유지해요.
 
 같은 네이티브 메시지라도 본문이 아직 이전 행의 내용이면 수집·표시 예외 판정을 보류해요. 블라인드 상태도 네이티브 안내가 화면에 도착하기 전의 일반 본문을 새 메시지로 확정하지 않아요. 이미 일치 검증을 마친 수집 기록은 DOM 재사용만으로 철회하지 않으며, 새 `key·user·time`은 새 메시지예요. 같은 식별값의 재마운트·검증된 역할 보강은 기존 recordId·읽음을 유지해요. 수집 주기 전에 제거된 행은 마지막으로 검증한 스냅샷의 작성자·DOM 역할·본문·명시 ID·재사용 신호가 그대로일 때만 그 스냅샷을 보존해요.
 
-작성자·본문·네이티브 식별값이 일치하는 NORMAL 메시지는 읽는 즉시 수집 역할을 반영해요. 화면 배지로 판별한 공지는 임시 기록으로 남기고, 같은 식별값의 역할·인증이 수집 대상에서 제외되는 것으로 확인되면 그 기록을 즉시 철회해요. 네이티브 역할과 화면 역할이 충돌할 때는 화면 배지를 기록에서 제외해요. 패널 표시는 기존 묶음으로 처리해요. 역할이나 인증 정보가 누락된 NORMAL 행은 같은 식별값을 공유 타이머에서 최대 두 번 다시 읽어요. 뒤늦게 확정된 공지는 최초 관측 순서에 삽입하며 기존 패널 행과 읽음을 보존해요. 최근 관측 순서와 대기 행에는 각각 500개 한도가 있고, 채널 이동·기능 종료에서 정리해요. 누락된 역할의 DOM 보완은 현재 작성자 영역의 보이는 배지와 확인된 명칭을 사용해요. 컨테이너 클래스만 달라졌다면 현재 채팅 목록에서 닉네임 버튼과 본문이 직접 형제인 구조를 확인한 뒤 기존 메시지 속성을 읽어요.
+작성자·본문·네이티브 식별값이 일치하는 NORMAL 메시지는 읽는 즉시 수집 역할을 반영해요. 화면 배지로 판별한 공지는 임시 기록으로 남기고, 같은 식별값의 역할·인증이 수집 대상에서 제외되는 것으로 확인되면 그 기록을 즉시 철회해요. 네이티브 역할과 화면 역할이 충돌할 때는 화면 배지를 기록에서 제외해요. 패널 표시는 기존 묶음으로 처리해요. 본문 일치가 확인됐고 역할이나 인증 정보가 누락된 행은 같은 식별값을 공유 타이머에서 최대 두 번 다시 읽어요. 뒤늦게 확정된 공지는 최초 관측 순서에 삽입하며 기존 패널 행과 읽음을 보존해요. 최근 관측 순서와 대기 행에는 각각 500개 한도가 있고, 채널 이동·기능 종료에서 정리해요. 누락된 역할의 DOM 보완은 현재 작성자 영역의 보이는 배지와 확인된 명칭을 사용해요. 컨테이너 클래스만 달라졌다면 현재 채팅 목록에서 닉네임 버튼과 본문이 직접 형제인 구조를 확인한 뒤 기존 메시지 속성을 읽어요.
 
 MAIN이 늦게 준비되면 같은 루트·작성자·본문·재사용 신호·충돌 없는 명시 ID를 가진 DOM 수집 기록에 네이티브 식별값을 연결해요. 이때 확인된 수집 역할로 정정해도 recordId·읽음을 보존해요. 메시지 식별값과 네이티브 수집 대상 증거는 별개이며, 누락된 역할·등급의 DOM 보완에만 의존한 기록은 두 축이 모두 알려진 비대상으로 확정될 때만 철회해요. 잘못된 메타데이터나 판독 실패만으로 기존 기록을 지우지 않으며, 이미 네이티브 수집 대상으로 확인했거나 다른 네이티브 식별값이 연결된 기록은 이 정정 대상이 아니에요.
 
@@ -160,6 +162,8 @@ MAIN이 늦게 준비되면 같은 루트·작성자·본문·재사용 신호·
 ## 다시보기 멀티뷰의 재생과 시간축
 
 Isolated에서 GET `/service/v3/videos/{videoNo}`의 응답 번호·채널·공개 `REPLAY`를 확인해요. `ABR_HLS`의 보조 재생에는 재생 키가 필요해요. 치지직이 `liveRewindPlaybackJson`을 제공하는 공개 다시보기는 영상 ID·길이·공개 재생 상태가 일치하는 HLS 응답을 사용해요. 방송 시작은 `liveOpenDate`, 구간 끝은 시작에 영상 길이를 더한 값이며 시작 포함·끝 제외예요. 분할 가능성이 있거나 종료 시각이 길이와 충돌하는 응답은 시각 확인 불가예요. 실제 플레이어 길이와 응답 길이의 차이가 2초를 넘는 경우에도 동기화하지 않아요.
+
+채널을 선택한 순간의 메인 미디어 ID·재생 위치·길이를 읽고 상세 응답과 대조해 후보의 기준 방송 시각을 정해요. 메인 종료점에서도 타임라인을 읽고 공통 구간으로 돌아갈 수 있어요. 이동할 목적지는 해당 구간 끝보다 앞서야 해요.
 
 채널 검색은 `/service/v1/search/channels`의 채널 ID를 검증해요. `/service/v1/channels/{channelId}/videos`의 `LATEST`·`REPLAY` 목록에서는 메인 방송 시작보다 이전에 게시된 항목을 건너뛰어요. 상세 응답에서 선택한 채널과 두 영상의 방송 구간이 실제로 겹치는지 확인해요. 경계 시각만 같은 경우 겹치는 구간은 0초예요.
 
@@ -300,6 +304,8 @@ Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 �
 
 플레이어의 **녹화 저장 폴더** 행은 신뢰된 클릭·키보드 동작에서 즉시 `showDirectoryPicker`를 호출해요. 이 선택은 현재 문서의 isolated 메모리에만 남고 워커의 기본 폴더보다 우선해요. 녹화 시작 시 선택을 고정하며 같은 조각 크기·순서·10초 쓰기 제한을 적용해 직접 파일을 쓰고 닫아요. 워커 메시지는 이 직접 저장 경로에 사용하지 않아요. 새로고침 뒤에는 아래 확장 기본 저장 경로를 사용해요.
 
+같은 출처의 탭은 Web Lock을 공유해 파일명을 차례로 배정해요. 플레이어와 확장 기본 폴더가 같은 실제 디렉터리를 가리킬 수도 있어요. 이때는 각 파일의 배타적 쓰기 잠금과 잠금을 얻은 뒤의 파일 크기를 확인해요. 이미 다른 녹화가 쓰는 중이거나 새 파일을 찾는 사이에 내용이 저장됐으면 다음 번호를 시도해요.
+
 - 요청: `{type:"cheese-spanner:video-recorder",version:1,op,...}`. 같은 확장 ID, `sender.tab`이 있는 최상위 프레임(frameId 0), 정확한 `https://chzzk.naver.com` 출처만 받아요. 그 밖은 `untrusted-sender`, 다른 version은 `unsupported-version`, 다른 op는 `unknown-operation`이에요.
 - `status` 응답: `{ok:true,folder,downloads}`. folder는 sync `videoRecorderFolder`를 `normalizeDownloadFolder`로 다시 정규화한 값, downloads는 선택 권한 보유 여부예요.
 - 탐색기로 선택한 폴더가 있으면 `start` 응답은 `{ok:true,id,destination:"directory",folder,fileName}`이에요. `folder`는 표시용 이름이며 절대 경로·핸들은 콘텐츠에 보내지 않아요. 파일 이름은 한국 시간의 녹화 시작일과 현재 방송 상세에서 확인한 제목·스트리머 이름이며, 같은 이름이 있으면 `(1)`부터 번호를 붙여요. 생성은 워커 안에서 직렬화해요. 이 경로는 attachment 탐색 없이 `ready`·`write`·`finish`로 직접 파일을 쓰고 닫아요. 선택을 읽거나 접근하지 못하면 `directory-unavailable`·`directory-permission`, 쓰기·닫기 실패는 실패 응답으로 끝내요. 아래 URL 응답은 다운로드 방식일 때만 사용해요.
@@ -325,7 +331,7 @@ Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 �
 
 같은 확장 ID, 음이 아닌 안전한 정수 tab.id, frameId 0과 치지직 발신 출처를 요구해요. SPA 이동 전 문서 URL인 sender.url과 Chrome이 제공하는 현재 sender.tab.url을 구분하고, 현재 탭 URL이 정확한 `https://chzzk.naver.com/lives`인지 검사해요. 현재 탭 URL이 없거나 잘못되면 거절해요. 끝 슬래시·query·hash는 허용하고 다른 경로·하위 프레임·다른 출처·자격 증명·명시한 포트는 거부해요. 본문이 주장하는 출처·탭 ID는 허용 근거가 아니에요.
 
-성공은 `{ok:true,state:{version:1,revision,categories}}`, 실패는 `{ok:false,error:"<코드>"}`예요. local 키 `betterchzzkCategoryExclusionsV1`에 같은 state를 보관하며 state에는 version·revision·categories만 허용해요. revision은 음이 아닌 안전한 정수이고 categories는 중복 없는 최대 100개의 카테고리 배열이에요. 키가 실제로 없을 때만 revision 0·빈 배열을 읽기 기본값으로 사용하며 읽기 자체는 저장하지 않아요.
+성공은 `{ok:true,state:{version:1,revision,categories}}`, 실패는 `{ok:false,error:"<코드>"}`예요. local 키 `betterchzzkCategoryExclusionsV1`에 같은 state를 보관하며 state에는 version·revision·categories만 허용해요. revision은 음이 아닌 안전한 정수이고 categories는 중복 없는 최대 100개의 카테고리 배열이에요. 키가 실제로 없을 때만 revision 0·빈 배열을 읽기 기본값으로 사용하며 읽기 자체는 저장하지 않아요. 직접 진입 직후의 첫 `get`은 발신 탭이 아직 확인되지 않거나 워커 응답이 도착하지 않았을 때 최대 세 번 다시 요청해요. 저장소 오류는 화면에 표시하고, 경로를 떠나거나 기능이 꺼지면 대기 중인 재조회를 취소해요.
 
 | 오류 코드              | 거부·실패 조건                                                           |
 | ---------------------- | ------------------------------------------------------------------------ |
@@ -389,7 +395,7 @@ Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 �
 
 패키지 자료는 설치 버전과 문자열로 정확히 일치해야 해요. 첫 자료는 1.4.1이며 버전별 title·summary·cards를 포함해요. cards는 id·title·summary·instructions·target·settingsTarget을 가지며 목적지는 panels, history, stream으로 한정해요. cards가 비어 있으면 요약만 표시해요.
 
-요청은 type=cheese-spanner:update-guide, protocol=1, action, guideVersion을 사용해요. claim/commit/release에는 문서마다 생성한 clientId를 넣어요. claim은 ok:true, show:false와 예약 성공 시 token을 반환하고 commit/release는 같은 token을 받아요. 실제 표시 권한은 commit의 ok:true, show:true뿐이에요. 오류는 ok:false, show:false이며 자유 URL·선택자나 다른 탭 ID를 받지 않아요.
+요청은 type=cheese-spanner:update-guide, protocol=1, action, guideVersion을 사용해요. claim/commit/release에는 문서마다 생성한 clientId를 넣어요. claim은 ok:true, show:false와 예약 성공 시 token을 반환하고 commit/release는 같은 token을 받아요. 다른 탭이 아직 소비하지 않은 예약을 보유하면 `reserved:true`를 반환해요. 대기 탭은 화면에 초점이 있고 안내를 표시할 수 있을 때만 다시 요청해요. 실제 표시 권한은 commit의 ok:true, show:true뿐이에요. 오류는 ok:false, show:false이며 자유 URL·선택자나 다른 탭 ID를 받지 않아요.
 
 예약은 탭·documentId에 결합하고 documentId가 없으면 검증한 탭·frame·URL·clientId에 결합해요. 30초 만료, 옵션 변경, 문서 변경, 워커 재시작으로 낡은 예약을 승인하지 않아요. local 키 betterchzzk:update-guide-state에는 schemaVersion:1, version, status 한 건을 저장하며 status는 pending, seen, suppressed예요. 읽기 오류·손상 상태는 자동 표시를 중단해요.
 

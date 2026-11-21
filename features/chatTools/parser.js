@@ -1051,7 +1051,8 @@
     }
 
     function nativeTextMatches(parsed, message) {
-        if (message.status !== "NORMAL" || typeof message.normalText !== "string") return null;
+        if ((message.status !== "NORMAL" && message.status !== "CBOTBLIND") || typeof message.normalText !== "string")
+            return null;
         if (!(parsed.textEl instanceof Element)) return false;
         const expected = [];
         let start = 0;

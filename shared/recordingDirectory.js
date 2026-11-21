@@ -42,6 +42,11 @@
     let creationQueue = Promise.resolve();
 
     function openFile(directory, fileName) {
+        const locks = globalThis.navigator?.locks;
+        if (locks?.request) {
+            // Player-selected handles stay in their tabs. Serialize name selection across tabs on this origin.
+            return locks.request("cheese-spanner:recording-file-allocation", () => createFile(directory, fileName));
+        }
         const operation = creationQueue.then(() => createFile(directory, fileName));
         creationQueue = operation.catch(() => {});
         return operation;
@@ -50,7 +55,6 @@
     async function createFile(directory, fileName) {
         if ((await directory.queryPermission({ mode: "readwrite" })) !== "granted")
             throw new Error("directory-permission");
-        // The worker serializes allocation so simultaneous starts cannot reuse the same file name.
         const dot = fileName.lastIndexOf(".");
         for (let attempt = 0; attempt < 1000; attempt++) {
             const name = attempt === 0 ? fileName : `${fileName.slice(0, dot)} (${attempt})${fileName.slice(dot)}`;
@@ -61,7 +65,22 @@
                 if (error.name !== "NotFoundError") throw error;
             }
             const file = await directory.getFileHandle(name, { create: true });
-            return { writer: await file.createWritable({ mode: "exclusive" }), fileName: name };
+            let writer;
+            try {
+                writer = await file.createWritable({ mode: "exclusive" });
+            } catch (error) {
+                if (error.name === "NoModificationAllowedError") continue;
+                throw error;
+            }
+            // The worker and player can select the same physical folder from different origins.
+            // An intervening writer may already have committed between our missing-file check and this lock.
+            try {
+                if ((await file.getFile()).size === 0) return { writer, fileName: name };
+            } catch (error) {
+                await writer.abort();
+                throw error;
+            }
+            await writer.abort();
         }
         throw new Error("directory-file-exists");
     }

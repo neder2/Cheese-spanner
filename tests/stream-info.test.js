@@ -100,8 +100,10 @@ function fixture(t, fetcher = async () => response()) {
         return { native, pane, selected };
     };
     const native = mountNative();
+    w.eval(fs.readFileSync(path.join(__dirname, "../content.js"), "utf8"));
     w.CheeseSpanner = {
         utils: {
+            isLiveAdBreakActive: w.CheeseSpanner.utils.isLiveAdBreakActive,
             bindFeatureOptions(fn) {
                 apply = fn;
                 fn({ streamInfoEnabled: true });
@@ -999,6 +1001,31 @@ test("an advertisement taking over the main node is a gap and never becomes the 
     assert.equal(f.requests.length, 2);
     assert.equal(f.timers.size, 1);
     assert.deepEqual(f.controlCalls, []);
+});
+
+test("a visible live mid-roll next to the native player excludes its interval from main stream measurements", async (t) => {
+    const f = fixture(t);
+    const wrapper = f.doc.createElement("div");
+    wrapper.id = "midAdPlayerWrapper";
+    wrapper.append(f.doc.createElement("video"));
+    wrapper.style.display = "none";
+    f.video.closest(".pzp-pc").after(wrapper);
+    f.open();
+    await new Promise(setImmediate);
+    f.tick();
+    f.tick();
+    const before = f.samples.at(-1);
+    assert.equal(before.current.state, "measuring");
+    wrapper.style.display = "block";
+    f.tick();
+    f.tick();
+    assert.equal(f.samples.at(-1).current.state, "ad");
+    assert.equal(f.samples.at(-1).observedSeconds, before.observedSeconds);
+    wrapper.style.display = "none";
+    f.tick();
+    f.tick();
+    assert.equal(f.samples.at(-1).current.state, "measuring");
+    assert.ok(f.samples.at(-1).observedSeconds > before.observedSeconds);
 });
 
 test("a live pre-roll wrapper around the main node is a gap and never becomes the measured video", async (t) => {

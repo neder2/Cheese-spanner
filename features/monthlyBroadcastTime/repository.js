@@ -82,11 +82,15 @@
                 size: String(PAGE_SIZE),
             });
             const url = `${API_BASE}/${encodeURIComponent(channelId)}/videos?${params.toString()}`;
-            return fetchJson(url, {
+            const json = await fetchJson(url, {
                 headers: { Accept: "application/json" },
                 signal,
                 timeoutMs: FETCH_TIMEOUT_MS,
             });
+            if ((json?.code !== undefined && json.code !== 200) || !pickArray(json?.content ?? json)) {
+                throw new Error("방송 목록을 읽지 못했어요.");
+            }
+            return json;
         }
 
         // Offset pages shift when a replay is added, so every walk starts at page 0 and later pages are
@@ -176,7 +180,12 @@
                         headers: { Accept: "application/json" },
                         signal: requestSignal,
                         timeoutMs: FETCH_TIMEOUT_MS,
-                    }).then((json) => json?.content || null),
+                    }).then((json) => {
+                        if ((json?.code !== undefined && json.code !== 200) || !json?.content) {
+                            throw new Error("다시보기 상세를 읽지 못했어요.");
+                        }
+                        return json.content;
+                    }),
                 { signal, maxEntries: MAX_VIDEO_DETAIL_CACHE_ENTRIES }
             );
         }

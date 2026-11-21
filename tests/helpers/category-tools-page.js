@@ -52,6 +52,7 @@ function createFixture(
         session = null,
         blockSessionStorage = false,
         channelProfiles = {},
+        categoryPage,
     } = {}
 ) {
     const nav = tabLine
@@ -161,6 +162,7 @@ function createFixture(
         },
         async fetchJson(url) {
             const href = String(url);
+            if (categoryPage && href.includes("/categories/")) return categoryPage(new URL(href));
             if (href.includes("/v1/lives") || /\/categories\/[^/]+\/[^/]+\/lives/.test(href)) {
                 return {
                     content: {

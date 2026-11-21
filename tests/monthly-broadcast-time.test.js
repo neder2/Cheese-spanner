@@ -95,6 +95,61 @@ function flush() {
     return new Promise((resolve) => setImmediate(resolve));
 }
 
+test("an unsuccessful broadcast list cannot cache an empty calendar or statistics", async (t) => {
+    let response = { code: 503, content: { data: [], last: true } };
+    const f = fixture({ fetchJson: async () => response });
+    t.after(() => f.dom.window.close());
+    const widget = mount(f);
+    await f.hooks.loadStats(CHANNEL);
+    assert.equal(widget.dataset.state, "error");
+    assert.equal(f.hooks.channelStatsCache.has(CHANNEL), false);
+
+    response = { code: 200, content: {} };
+    await assert.rejects(calendar(f));
+    response = { code: 200, content: { data: [], last: true } };
+    await f.hooks.loadStats(CHANNEL);
+    assert.equal(f.hooks.channelStatsCache.get(CHANNEL).month.broadcastDayCount, 0);
+    assert.equal((await calendar(f)).partial, false);
+    assert.equal(f.calls.length, 3, "only the valid empty result is shared");
+});
+
+test("a calendar start estimated in another broadcast's start minute keeps its own replay", async (t) => {
+    const estimated = {
+        videoNo: 101,
+        videoType: "REPLAY",
+        videoTitle: "첫 방송",
+        duration: 3600,
+        publishDate: "2026-07-10 21:00:00",
+    };
+    const exact = {
+        videoNo: 102,
+        videoType: "REPLAY",
+        videoTitle: "두 번째 방송",
+        duration: 3600,
+        liveOpenDate: "2026-07-10 20:00:30",
+    };
+    const f = fixture({
+        fetchJson: async (url) =>
+            url.includes("/v2/videos/")
+                ? { code: 503, content: null }
+                : { code: 200, content: { data: [exact, estimated], last: true } },
+    });
+    t.after(() => f.dom.window.close());
+    const month = await calendar(f);
+    const rows = month.startsByDate["2026-07-10"];
+    assert.deepEqual(
+        Array.from(rows, (row) => [row.title, row.exact, Array.from(row.videoNos)]),
+        [
+            ["두 번째 방송", true, ["102"]],
+            ["첫 방송", false, ["101"]],
+        ]
+    );
+    const widget = mount(f);
+    f.hooks.renderCalendar(widget, month);
+    const links = widget.querySelectorAll('[data-date-key="2026-07-10"] .bcmb-day-tip-item');
+    assert.deepEqual(Array.from(links, (link) => new URL(link.href).pathname).sort(), ["/video/101", "/video/102"]);
+});
+
 for (const calculate of [stats, calendar]) {
     test(`monthly ${calculate.name} colors the days covered by Arisa's split replays while keeping totals on the start date`, async (t) => {
         // Public API fields measured on 2026-09-15; publication time is not the broadcast end.

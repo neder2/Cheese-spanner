@@ -546,6 +546,30 @@ test("denied and uncertain responses do not retry in a busy loop", async (t) => 
     assert.equal(f.messages.length, 1);
 });
 
+test("a waiting tab can display the guide after another tab releases its reservation", async (t) => {
+    const f = fixture(t, { deferred: true });
+    await f.advance(2000);
+    f.pending.shift().callback({ ok: true, show: false, reserved: true });
+    await f.flush();
+    assert.equal(f.toast(), null);
+    f.focus(false);
+    await f.advance(30000);
+    assert.equal(f.messages.length, 1);
+    f.focus(true);
+    await f.advance(2000);
+    const claim = f.pending.shift();
+    assert.equal(claim.message.action, "claim");
+    claim.callback(claim.response);
+    await f.flush();
+    const commit = f.pending.shift();
+    assert.equal(commit.message.action, "commit");
+    commit.callback(commit.response);
+    await f.flush();
+    assert.equal(f.toast().hasAttribute("inert"), false);
+    await f.advance(30000);
+    assert.equal(f.messages.length, 3);
+});
+
 test("OFF cancels automatic UI but trusted manual replay remains available and validates sender/version", async (t) => {
     const f = fixture(t);
     await f.advance(2000);

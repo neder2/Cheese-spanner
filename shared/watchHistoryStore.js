@@ -96,7 +96,7 @@
         const merged = [];
         for (const row of rows) {
             const last = merged[merged.length - 1];
-            if (!last || row.startAt > last.endAt + 2000) merged.push(row);
+            if (!last || row.startAt > last.endAt) merged.push(row);
             else last.endAt = Math.max(last.endAt, row.endAt);
         }
         return merged;

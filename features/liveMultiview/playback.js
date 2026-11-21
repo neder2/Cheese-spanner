@@ -464,17 +464,25 @@
             applyDelay(player);
         }
         async function play(player) {
+            const video = player.video;
+            if (!video) return;
+            const request = (player.playRequest = {});
+            let error = "";
             try {
-                await player.video?.play();
-                if (current(player)) {
-                    player.error = "";
-                    updatePlayerUi(player);
-                }
+                await video.play();
             } catch {
-                if (current(player)) {
-                    player.error = "재생 실패. ‘재생 재시도’ 선택.";
-                    updatePlayerUi(player);
-                }
+                error = "재생 실패. ‘재생 재시도’ 선택.";
+            }
+            if (!current(player) || player.video !== video || player.playRequest !== request) return;
+            player.playRequest = null;
+            player.error = error;
+            updatePlayerUi(player);
+        }
+        function togglePlay(player) {
+            if (player.video.paused) void play(player);
+            else {
+                player.playRequest = null;
+                player.video.pause();
             }
         }
         async function loadPlayer(player) {
@@ -537,6 +545,7 @@
                     });
                     hls.on(events.ERROR, (_event, data) => {
                         if (!data?.fatal || !current(player)) return;
+                        player.playRequest = null;
                         player.error = "재생 실패. ‘재생 재시도’ 선택.";
                         player.status = "unsupported";
                         player.pending = null;
@@ -660,7 +669,7 @@
             prepareRoute,
             clear,
             dispose,
-            play,
+            togglePlay,
             measureTiming,
             setDelay,
             setQuality,

@@ -49,14 +49,18 @@
         return host[key] === fiber && matches.size === 1 ? matches.values().next().value : null;
     }
 
-    function ownsMedia(player, video, mediaId) {
-        if (!video.isConnected || player.shadowRoot?.querySelector(MEDIA) !== video) return false;
+    function mediaId(player, video) {
+        if (!video.isConnected || player.shadowRoot?.querySelector(MEDIA) !== video) return null;
         const provider = player.srcObject;
         if (provider?.protocol === "live:") {
             const meta = provider.data?.meta;
-            return provider.player === player._corePlayer && meta?.liveRewind === true && meta.videoId === mediaId;
+            return provider.player === player._corePlayer && meta?.liveRewind === true ? meta.videoId : null;
         }
-        return provider?.protocol === "vod3:" && SOURCE.exec(player.src)?.[1] === mediaId;
+        return provider?.protocol === "vod3:" ? SOURCE.exec(player.src)?.[1] : null;
+    }
+
+    function ownsMedia(player, video, id) {
+        return typeof id === "string" && mediaId(player, video) === id;
     }
 
     function canAllocate(player) {
@@ -268,6 +272,7 @@
 
     window.CheeseSpannerVodNative = Object.freeze({
         find,
+        mediaId,
         ownsMedia,
         canAllocate,
         acquire,
