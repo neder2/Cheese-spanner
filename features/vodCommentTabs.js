@@ -32,6 +32,7 @@
     const MOUNT_GAP_GRACE_MS = 600;
     const COMMENT_ONLY_ASIDE_ID = "cheese-spanner-vod-comment-aside";
     const FOLDED_CHAT_CONTROL = '[class*="_folded_button_"]';
+    const NATIVE_HEADER_STYLE_ID = "cheese-spanner-vod-replay-chat-header-style";
     const ANCHOR_SELECTOR = [
         FOLDED_CHAT_CONTROL,
         "#player_layout",
@@ -531,6 +532,18 @@
         if (!document.documentElement || !isVodRoute()) return;
         nativeAdapter.refresh();
         if (bodyObserver) return;
+        // The SDK can leave header_info transparent or paint a player overlay above it after
+        // the aside closes. Keep CHZZK's own button reachable even on entry with chat folded.
+        const player = "#player_layout.type_vod:not(.pip_mode, .miniplayer) > .pzp-pc";
+        const foldedHeader = `.player_header:has(.header_info button${FOLDED_CHAT_CONTROL})`;
+        injectStyleOnce(
+            NATIVE_HEADER_STYLE_ID,
+            `
+${player} ${foldedHeader} { z-index:1; }
+${player}:is(.pzp-pc--controls, :not(.pzp-pc--playing):hover) ${foldedHeader} .header_info,
+${player} ${foldedHeader} .header_info:is(:hover, :focus-within) { opacity:1; }
+`
+        );
         bodyObserver = new MutationObserver((mutations) => {
             if (!isFeatureEnabled() || !isVodRoute()) {
                 if (!isVodRoute()) disconnectBodyObserver();
@@ -551,6 +564,7 @@
     function disconnectBodyObserver() {
         bodyObserver?.disconnect();
         bodyObserver = null;
+        document.getElementById(NATIVE_HEADER_STYLE_ID)?.remove();
     }
 
     function handleFullscreenChange() {

@@ -306,67 +306,150 @@ test("class-only verified marks still exclude body, popup, official and unsuppor
     assert.equal(unreadCount(document), 0);
 });
 
-// jsdom에는 레이아웃이 없으므로 40px 행 하나가 보이는 스크롤 목록을 모델링한다.
+// jsdom에는 레이아웃이 없으므로 메시지 한 행이 보이는 목록과 그 안의 구분선을 모델링한다.
 function installModeratorViewport(dom) {
     const document = dom.window.document;
     const list = document.querySelector(".bcct-moderator-box__list");
-    const visibleRows = () => moderatorRows(document).filter((row) => !row.hidden);
+    const heightOf = (item) => (item.matches('[role="separator"]') ? 16 : 40);
+    function topOf(item) {
+        let top = 0;
+        for (const child of list.children) {
+            if (child === item) break;
+            if (!child.hidden) top += heightOf(child);
+        }
+        return top;
+    }
     let scrollTop = 0;
     Object.defineProperties(list, {
-        scrollHeight: { configurable: true, get: () => visibleRows().length * 40 },
+        scrollHeight: { configurable: true, get: () => topOf(null) },
         clientHeight: { configurable: true, get: () => 40 },
         scrollTop: {
             configurable: true,
             get: () => scrollTop,
             set: (value) => {
-                scrollTop = Math.max(0, Math.min(value, list.scrollHeight - 40));
+                scrollTop = Math.max(0, Math.min(value, list.scrollHeight - list.clientHeight));
             },
         },
     });
     const originalRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
     dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
         if (this === list) return { top: 100, bottom: 140, left: 10, right: 330, width: 320, height: 40 };
-        if (this.matches(".bcct-moderator-row")) {
-            const top = 100 + visibleRows().indexOf(this) * 40 - scrollTop;
-            return { top, bottom: top + 40, left: 10, right: 330, width: 320, height: 40 };
+        if (this.parentElement === list) {
+            const height = this.hidden ? 0 : heightOf(this);
+            const top = 100 + topOf(this) - scrollTop;
+            return { top, bottom: top + height, left: 10, right: 330, width: 320, height };
         }
         return originalRect.call(this);
     };
     return list;
 }
 
+test("reopening starts at the oldest unread message and keeps that divider in place while reading", async (t) => {
+    const { dom } = createPageDom(activityChat("already-read"));
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => moderatorRows(document).length === 1);
+    const list = installModeratorViewport(dom);
+    const trigger = openModeratorPanel(document);
+    await waitForCondition(() => unreadCount(document) === 0);
+    trigger.click();
+    const source = document.querySelector(".chat-list");
+    source.insertAdjacentHTML("beforeend", activityChat("first-new") + activityChat("second-new"));
+    await waitForCondition(() => unreadCount(document) === 2);
+    trigger.click();
+    const divider = list.querySelector('[role="separator"]');
+    assert.ok(divider);
+    assert.equal(divider.getAttribute("aria-label"), "여기부터 새 메시지");
+    assert.equal(divider.nextElementSibling, moderatorRows(document)[1]);
+    assert.equal(divider.getBoundingClientRect().top, list.getBoundingClientRect().top);
+    await waitForCondition(() => unreadCount(document) === 1);
+    assert.equal(divider.nextElementSibling.dataset.unread, "0", "reading the first new row keeps the divider");
+
+    // A new arrival while near (but not at) the bottom must not skip the next unread row.
+    list.scrollTop += 20;
+    list.dispatchEvent(new dom.window.Event("scroll"));
+    const readingPosition = list.scrollTop;
+    source.insertAdjacentHTML("beforeend", activityChat("third-new"));
+    await waitForCondition(() => moderatorRows(document).length === 4);
+    await new Promise((resolve) => dom.window.requestAnimationFrame(resolve));
+    assert.equal(list.scrollTop, readingPosition);
+    assert.equal(unreadCount(document), 2);
+    assert.equal(list.querySelectorAll('[role="separator"]').length, 1);
+    assert.equal(divider.nextElementSibling, moderatorRows(document)[1]);
+
+    trigger.click();
+    trigger.click();
+    await waitForCondition(() => unreadCount(document) === 1);
+    assert.equal(list.querySelector('[role="separator"]').nextElementSibling, moderatorRows(document)[2]);
+    assert.equal(list.scrollTop, 80);
+    document.querySelector(".bcct-moderator-bottom").click();
+    await waitForCondition(() => unreadCount(document) === 0);
+    trigger.click();
+    trigger.click();
+    assert.equal(list.querySelector('[role="separator"]'), null);
+    assert.equal(list.scrollTop, list.scrollHeight - list.clientHeight);
+});
+
+test("a panel opened before the first collection starts with the oldest message in that batch", async (t) => {
+    const { dom } = createPageDom("");
+    t.after(() => closeChatToolsDom(dom));
+    const document = dom.window.document;
+    loadChatTools(dom);
+    await waitForCondition(() => document.querySelector(".bcct-moderator-trigger"));
+    const list = installModeratorViewport(dom);
+    openModeratorPanel(document);
+    assert.equal(list.querySelector('[role="separator"]'), null);
+    document.querySelector(".chat-list").insertAdjacentHTML("beforeend", activityChat("first") + activityChat("last"));
+    await waitForCondition(() => unreadCount(document) === 1 && moderatorRows(document).length === 2);
+    const [first, last] = moderatorRows(document);
+    assert.equal(list.querySelector('[role="separator"]').nextElementSibling, first);
+    assert.equal(first.dataset.unread, "0");
+    assert.equal(last.dataset.unread, "1");
+    assert.equal(list.scrollTop, 0);
+});
+
 test("identified authors show unread counts and only visible filtered messages are acknowledged", async (t) => {
     const { dom } = createPageDom(
-        activityChat("a1", "첫 운영자") + activityChat("a2", "첫 운영자") + activityChat("b1", "둘째 운영자")
+        activityChat("a1", "첫 운영자") +
+            activityChat("b1", "둘째 운영자") +
+            activityChat("a2", "첫 운영자") +
+            activityChat("a3", "첫 운영자")
     );
     t.after(() => closeChatToolsDom(dom));
     const document = dom.window.document;
     loadChatTools(dom);
-    await waitForCondition(() => moderatorRows(document).length === 3);
+    await waitForCondition(() => moderatorRows(document).length === 4);
     assert.deepEqual(
         authorButtons(document).map((button) => button.firstElementChild.textContent),
         ["전체", "첫 운영자", "둘째 운영자"]
     );
-    assert.equal(unreadCount(document), 3);
+    assert.equal(unreadCount(document), 4);
     assert.equal(document.querySelector(".bcct-moderator-trigger").dataset.unread, "1");
     const list = installModeratorViewport(dom);
     openModeratorPanel(document);
-    await waitForCondition(() => unreadCount(document) === 2);
+    await waitForCondition(() => unreadCount(document) === 3);
     assert.match(authorButton(document, "첫 운영자").getAttribute("aria-label"), /미확인 2개/);
-    assert.match(authorButton(document, "둘째 운영자").getAttribute("aria-label"), /미확인 0개/);
+    assert.match(authorButton(document, "둘째 운영자").getAttribute("aria-label"), /미확인 1개/);
 
     authorButton(document, "첫 운영자").click();
-    await waitForCondition(() => unreadCount(document) === 1);
-    assert.equal(moderatorRows(document).filter((row) => !row.hidden).length, 2);
-    list.scrollTop = 0;
+    await waitForCondition(() => unreadCount(document) === 2);
+    assert.equal(moderatorRows(document).filter((row) => !row.hidden).length, 3);
+    assert.equal(list.querySelector('[role="separator"]').nextElementSibling, moderatorRows(document)[2]);
+    assert.equal(list.scrollTop, 40, "the first unread row of this author starts the filtered view");
+    list.scrollTop = list.scrollHeight;
     list.dispatchEvent(new dom.window.Event("scroll"));
+    await waitForCondition(() => unreadCount(document) === 1);
+    assert.match(authorButton(document, "둘째 운영자").getAttribute("aria-label"), /미확인 1개/);
+    authorButton(document, "둘째 운영자").click();
     await waitForCondition(() => unreadCount(document) === 0);
     assert.equal(document.querySelector(".bcct-moderator-trigger__count").dataset.empty, "1");
     assert.equal(document.querySelector(".bcct-moderator-trigger").dataset.unread, "0");
-    assert.equal(document.querySelector(".bcct-moderator-box__count").textContent, "3");
+    assert.equal(document.querySelector(".bcct-moderator-box__count").textContent, "4");
 
+    authorButton(document, "첫 운영자").click();
     document.querySelector(".chat-list").insertAdjacentHTML("beforeend", activityChat("b2", "둘째 운영자"));
-    await waitForCondition(() => moderatorRows(document).length === 4);
+    await waitForCondition(() => moderatorRows(document).length === 5);
     await new Promise((resolve) => dom.window.requestAnimationFrame(resolve));
     assert.equal(unreadCount(document), 1, "a hidden author's new message stays unread while the panel is open");
     assert.match(authorButton(document, "둘째 운영자").getAttribute("aria-label"), /미확인 1개/);
@@ -388,16 +471,17 @@ test("bottom chevron appears only above the bottom and does not acknowledge unse
     assert.ok(button.querySelector("svg path"));
     openModeratorPanel(document);
     await waitForCondition(() => unreadCount(document) === 2);
-    assert.equal(list.scrollTop, 80);
-    assert.equal(button.hidden, true);
-    list.scrollTop = 0;
-    list.dispatchEvent(new dom.window.Event("scroll"));
-    await waitForCondition(() => !button.hidden && unreadCount(document) === 1);
+    assert.equal(list.scrollTop, 0);
+    assert.equal(button.hidden, false);
     button.click();
-    assert.equal(list.scrollTop, 80);
+    assert.equal(list.scrollTop, list.scrollHeight - list.clientHeight);
     assert.equal(button.hidden, true);
-    await new Promise((resolve) => dom.window.requestAnimationFrame(resolve));
-    assert.equal(unreadCount(document), 1, "jumping past the middle message must not mark it read");
+    await waitForCondition(() => unreadCount(document) === 1);
+    assert.equal(
+        moderatorRows(document)[1].dataset.unread,
+        "1",
+        "jumping past the middle message must not mark it read"
+    );
     list.scrollTop = 40;
     list.dispatchEvent(new dom.window.Event("scroll"));
     await waitForCondition(() => unreadCount(document) === 0);
@@ -483,6 +567,9 @@ test("capacity trimming removes expired authors and alerts, retaining selection 
     const document = dom.window.document;
     loadChatTools(dom);
     await waitForCondition(() => moderatorRows(document).length === 20);
+    openModeratorPanel(document);
+    const divider = document.querySelector('.bcct-moderator-box__list [role="separator"]');
+    assert.equal(divider.nextElementSibling, moderatorRows(document)[0]);
     const kept = moderatorRows(document)[10];
     const range = document.createRange();
     range.selectNodeContents(kept.querySelector(".bcct-moderator-row__text"));
@@ -492,6 +579,11 @@ test("capacity trimming removes expired authors and alerts, retaining selection 
     assert.equal(authorButton(document, "오래된 운영자"), undefined);
     assert.equal(unreadCount(document), 20);
     assert.equal(moderatorRows(document)[9], kept);
+    assert.equal(
+        divider.nextElementSibling,
+        moderatorRows(document)[0],
+        "the oldest surviving unread owns the divider"
+    );
     assert.equal(dom.window.getSelection().toString(), "kept-9");
     authorButton(document, "새 운영자").click();
     document
@@ -503,6 +595,7 @@ test("capacity trimming removes expired authors and alerts, retaining selection 
     await waitForCondition(() => !authorButton(document, "새 운영자"));
     assert.equal(authorButton(document, "전체").getAttribute("aria-pressed"), "true");
     assert.equal(moderatorRows(document).filter((row) => !row.hidden).length, 20);
+    assert.equal(divider.nextElementSibling, moderatorRows(document)[0]);
 });
 
 test("copy selection survives appearance updates and never navigates to a recycled original", async (t) => {

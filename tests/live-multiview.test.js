@@ -3516,6 +3516,137 @@ test("invalid or old session positions default to centered without invalidating 
     );
 });
 
+test("dragging the empty lower divider to the bottom collapses it, can be cancelled and restores from the tab session", async (t) => {
+    const h = setup(t);
+    await h.start();
+    await h.add(B, { keepPanelOpen: true });
+    const d = h.w.document;
+    const host = d.querySelector("[data-bcmv-host]");
+    const grid = d.querySelector(".bcmv-grid");
+    const bounds = () => ({ left: 0, top: 0, width: 960, height: 540 });
+    grid.getBoundingClientRect = host.getBoundingClientRect = bounds;
+    const rootDivider = () => grid.querySelector('[data-path="r"]');
+    const saved = () => JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession"));
+    const initial = saved().dockTree;
+    const video = d.querySelector(`[data-bcmv-channel="${B}"] video`);
+    const pointer = (target, type, y) =>
+        target.dispatchEvent(
+            new h.w.MouseEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                button: 0,
+                clientX: 320,
+                clientY: y,
+            })
+        );
+    assert.equal(rootDivider().getAttribute("aria-valuemax"), "100");
+    pointer(rootDivider(), "pointerdown", 360);
+    pointer(h.w, "pointermove", 539);
+    assert.equal(rootDivider().dataset.axis, "columns");
+    pointer(h.w, "pointermove", 490);
+    assert.equal(rootDivider().dataset.axis, "rows", "pulling back before release restores the original split");
+    pointer(h.w, "pointercancel", 490);
+    assert.deepEqual(saved().dockTree, initial);
+    assert.equal(rootDivider().getAttribute("aria-valuenow"), "67");
+    pointer(rootDivider(), "pointerdown", 360);
+    pointer(h.w, "pointermove", 510);
+    pointer(h.w, "pointerup", 540);
+    const folded = saved();
+    assert.equal(folded.dockTree.axis, "columns");
+    assert.equal(folded.dockTree.a, A);
+    assert.equal(folded.dockTree.b, B);
+    assert.equal(grid.querySelectorAll(".bcmv-separator").length, 1);
+    assert.equal(host.dataset.bcmvPacked, "host");
+    assert.equal(d.querySelector(`[data-bcmv-channel="${B}"] video`), video);
+    const restored = setup(t, { savedSession: folded });
+    await tick();
+    assert.equal(restored.w.document.querySelectorAll(".bcmv-separator").length, 1);
+    h.click("controls");
+    h.click("reset-layout");
+    assert.deepEqual(saved().dockTree, initial);
+    assert.equal(host.hasAttribute("data-bcmv-packed"), false);
+    rootDivider().dispatchEvent(new h.w.KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    assert.deepEqual(saved().dockTree, folded.dockTree);
+});
+
+test("dragging a live video against its own folded bottom edge reopens the row and commits only the chosen slot", async (t) => {
+    const packed = { axis: "columns", ratio: 2 / 3, a: A, b: B };
+    const h = setup(t, {
+        savedSession: {
+            version: 1,
+            layoutVersion: 3,
+            active: true,
+            customLayout: true,
+            channels: [{ id: A }, { id: B }],
+            dockTree: packed,
+        },
+    });
+    await tick();
+    const d = h.w.document;
+    const host = d.querySelector("[data-bcmv-host]");
+    const grid = d.querySelector(".bcmv-grid");
+    grid.getBoundingClientRect = host.getBoundingClientRect = () =>
+        new h.w.DOMRect(0, 0, 960, host.dataset.bcmvPacked ? 360 : 540);
+    const video = grid.querySelector(`[data-bcmv-channel="${B}"] video`);
+    const divider = () => grid.querySelector('[data-path="r"]');
+    const guide = () => grid.querySelector(".bcmv-drop-preview");
+    const savedTree = () => JSON.parse(h.w.sessionStorage.getItem("betterChzzkMultiviewSession")).dockTree;
+    const pointer = (target, type, x, y) =>
+        target.dispatchEvent(
+            new h.w.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y })
+        );
+    const start = () => pointer(video, "pointerdown", 800, 180);
+    const move = (x, y) => pointer(h.w, "pointermove", x, y);
+    start();
+    move(800, 364);
+    assert.equal(guide().textContent, "하단에 배치");
+    assert.equal(host.getBoundingClientRect().height, 540);
+    move(160, 495);
+    assert.equal(parseFloat(guide().style.left), 0);
+    assert.deepEqual(savedTree(), packed);
+    move(800, 180);
+    assert.equal(guide().hidden, true);
+    assert.equal(host.getBoundingClientRect().height, 360);
+    move(480, 358);
+    h.w.dispatchEvent(new h.w.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(guide(), null);
+    assert.deepEqual(savedTree(), packed);
+    assert.equal(divider().dataset.axis, "columns");
+
+    const requests = h.requests.length;
+    start();
+    move(800, 359);
+    pointer(h.w, "pointerup", 480, 510);
+    const result = savedTree();
+    assert.equal(result.axis, "rows");
+    assert.equal(result.a.ratio, packed.ratio);
+    assert.equal(result.a.a, A);
+    assert.equal(result.b.a.b, B);
+    assert.equal(divider().dataset.axis, "rows");
+    assert.equal(grid.querySelector(`[data-bcmv-channel="${B}"] video`), video);
+    assert.equal(h.requests.length, requests);
+    assert.equal(h.w.location.pathname, `/live/${A}`);
+    assert.equal(h.w.CheeseSpanner.multiviewModel.validTree(result, [{ id: A }, { id: B }]), true);
+});
+
+test("a bottom-edge fold keeps occupied lower regions and only edits the selected branch", (t) => {
+    const m = setup(t).w.CheeseSpanner.multiviewModel;
+    const channels = [A, B, C, "d".repeat(32)].map((id) => ({ id }));
+    const tree = m.defaultTree(channels);
+    const handle = m.treeLayout(tree).handles[0];
+    assert.equal(handle.collapseBelow, false);
+    const shrunk = m.resizeSplit(tree, handle, 1);
+    assert.equal(shrunk.ratio, handle.upper);
+    assert.equal(m.validTree(shrunk, channels), true);
+    const two = m.defaultTree(channels.slice(0, 2));
+    const right = m.treeLayout(two).handles.find((item) => item.key === "rab");
+    const changed = m.resizeSplit(two, right, 1);
+    assert.equal(changed.a.b, B);
+    assert.equal(changed.a.a, A);
+    assert.equal(changed.b, two.b);
+    assert.equal(changed.ratio, two.ratio);
+});
+
 test("main keeps its four-cell size and user resizing survives stream additions and removals", async (t) => {
     const h = setup(t),
         m = h.w.CheeseSpanner.multiviewModel;

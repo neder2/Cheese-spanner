@@ -108,6 +108,60 @@
         node.replaceChildren(svg);
     }
 
+    const packedFrame =
+        "[data-bcmv-packed]:not(:fullscreen,.miniplayer,.pip_mode):not(:has(:fullscreen,.chzzk_player:is(.miniplayer,.pip_mode)))";
+    const packedFrameCss = `
+${packedFrame}[data-bcmv-packed="native"]::before { padding-top:calc(100% / var(--bcmv-packed-aspect)) !important; }
+${packedFrame}[data-bcmv-packed="host"] { height:auto !important; aspect-ratio:var(--bcmv-packed-aspect) !important; }
+`;
+    function createFrameFitter(player, host, videoFor) {
+        // CHZZK reserves 16:9 with ::before on the container around its absolute player wrapper.
+        const parent = player.parentElement;
+        const wrapper = player.closest('[class^="_wrapper_"], [class*=" _wrapper_"]');
+        const frame =
+            wrapper &&
+            (wrapper === parent || wrapper === parent?.parentElement) &&
+            wrapper.parentElement?.matches('[class^="_container_"], [class*=" _container_"]')
+                ? wrapper.parentElement
+                : host;
+        return function fitFrame(cells) {
+            let height = 0;
+            if (cells?.length > 1 && cells.every(({ id }) => id)) {
+                for (const {
+                    id,
+                    rect: [, , w, h],
+                } of cells) {
+                    const video = videoFor(id);
+                    const aspect =
+                        video?.videoWidth > 0 && video.videoHeight > 0 ? video.videoWidth / video.videoHeight : 16 / 9;
+                    height = Math.max(height, w / (h * aspect));
+                }
+            }
+            if (height > 0 && height < 9 / 16 - 1e-6) {
+                const ratio = String(1 / height);
+                if (frame.style.getPropertyValue("--bcmv-packed-aspect") !== ratio)
+                    frame.style.setProperty("--bcmv-packed-aspect", ratio);
+                const mode = frame === host ? "host" : "native";
+                if (frame.dataset.bcmvPacked !== mode) frame.dataset.bcmvPacked = mode;
+            } else if (frame.hasAttribute("data-bcmv-packed")) {
+                frame.removeAttribute("data-bcmv-packed");
+                frame.style.removeProperty("--bcmv-packed-aspect");
+            }
+        };
+    }
+    function previewBottomRow(drag, drop, fitFrame, host) {
+        const open = drop?.side === "bottom-row";
+        if (Boolean(drag.openRowBounds) === open) return;
+        fitFrame(open ? null : drag.cells);
+        drag.previewBounds = host.getBoundingClientRect();
+        drag.openRowBounds = open ? drag.previewBounds : null;
+    }
+    function isPreviewResize(drag, host) {
+        if (!drag?.previewBounds) return false;
+        const { width, height } = host.getBoundingClientRect();
+        return width === drag.previewBounds.width && height === drag.previewBounds.height;
+    }
+
     root.multiviewView = {
         text,
         el,
@@ -116,6 +170,10 @@
         panelIcon,
         multiviewIcon,
         setControlIcon,
+        createFrameFitter,
+        previewBottomRow,
+        isPreviewResize,
+        packedFrameCss,
         action: (node) => controlActions.get(node),
     };
 })();

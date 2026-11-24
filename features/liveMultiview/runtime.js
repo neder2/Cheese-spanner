@@ -79,7 +79,7 @@
     // 2026-11-04 bundle: the scroll/ad mini player (.miniplayer, .pre_ad_mini/.mid_ad_mini, z-index 1000-1002) is
     // position:fixed inside the host. Isolating an idle host traps it under the later-painted chat aside, so only the
     // active split layout (which contains its own z-indexed cells) isolates; the variables stay on every host.
-    const css = `
+    const css = `${root.multiviewView.packedFrameCss}
 [data-bcmv-host="active"],#${PANEL_ID}{isolation:isolate}
 [data-bcmv-host],#${PANEL_ID}{--bcmv-font:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic","맑은 고딕",sans-serif;--bcmv-surface:var(--bct-surface);--bcmv-content:var(--bct-text);--bcmv-border:var(--bct-border-strong);--bcmv-brand-hover:color-mix(in srgb,var(--bct-brand) 90%,var(--bct-on-brand))}
 [data-bcmv-host="active"] > [data-bcmv-native]{position:absolute!important;left:var(--bcmv-main-left,0)!important;top:var(--bcmv-main-top,0)!important;width:var(--bcmv-main-width)!important;height:calc(100% * var(--bcmv-main-height))!important;min-width:0!important;min-height:0!important}
@@ -470,17 +470,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
     function equalLayout() {
         if (state.freeLayoutEnabled) return null;
         const bounds = host?.getBoundingClientRect();
-        let tree = state.dockTree;
-        const ids = [];
-        // The shared settings action covers every disjoint secondary region once.
-        for (const entry of state.channels) {
-            if (entry.id === routeId || ids.includes(entry.id)) continue;
-            const arranged = model.equalizeTree(tree, entry.id, routeId, bounds?.width / bounds?.height);
-            if (!arranged) continue;
-            tree = arranged.tree;
-            ids.push(...arranged.ids);
-        }
-        return ids.length ? { tree, ids } : null;
+        return model.equalizeAuxiliaries(state.dockTree, routeId, bounds?.width / bounds?.height);
     }
     function onClick(event) {
         const control = event.target.closest("[data-action]");
@@ -950,12 +940,7 @@ ${CHAT_ACTIONS} > ${MODERATOR_ACTIONS}{height:auto!important;margin-left:0!impor
             host = nextHost;
             native = nextNative;
             if (typeof ResizeObserver === "function") {
-                sizeObserver = new ResizeObserver(() => {
-                    if (!state.active || layout.viewportActive) return;
-                    layout.cancelResize();
-                    layout.cancelDrag();
-                    layout.position();
-                });
+                sizeObserver = new ResizeObserver(layout.onHostResize);
                 sizeObserver.observe(host);
             }
             host.setAttribute("data-bcmv-host", state.active ? "active" : "idle");

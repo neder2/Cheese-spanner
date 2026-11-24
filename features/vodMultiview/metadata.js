@@ -70,14 +70,17 @@
         const unsupported = { status: "unsupported", channelId: replay ? channelId : undefined, timeline };
         if (
             !replay ||
-            (!isRewind && detail.vodStatus !== "ABR_HLS") ||
-            typeof detail.videoId !== "string" ||
-            !mediaIdPattern.test(detail.videoId) ||
             (detail.encryptionType != null &&
                 detail.encryptionType !== "NONE" &&
                 (isRewind || detail.encryptionType !== "AES"))
         )
             return unsupported;
+        if ((!isRewind || detail.liveRewindPlaybackJson === "") && detail.vodStatus !== "ABR_HLS") {
+            if (detail.vodStatus === "UPLOAD" || detail.vodStatus === "NONE")
+                return { status: "preparing", channelId, timeline };
+            return unsupported;
+        }
+        if (typeof detail.videoId !== "string" || !mediaIdPattern.test(detail.videoId)) return unsupported;
         if (needsKey && !isRewind && (typeof detail.inKey !== "string" || !mediaKeyPattern.test(detail.inKey)))
             return { status: "restricted" };
 
@@ -207,7 +210,7 @@
         let inspected = 0;
         let incomplete = false;
         let unknownTime = false;
-        let overlappingUnsupported = false;
+        let overlappingIssue;
         let overlappingReplay;
         for (; page >= 0; page--) {
             const { data } = await readPage(page);
@@ -225,23 +228,18 @@
                 inspected++;
                 const replay = await loadVideo(no, { signal, needsKey: true });
                 if (replay.status === "lookup-error") incomplete = true;
-                if (replay.channelId === channelId) {
-                    if (replay.status === "unknown-time" || (replay.status === "unsupported" && !replay.timeline))
-                        unknownTime = true;
-                    if (
-                        replay.status === "unsupported" &&
-                        replay.timeline?.startMs < endMs &&
-                        replay.timeline?.endMs > startMs
+                if (replay.channelId !== channelId) continue;
+                if (replay.status !== "ok") {
+                    if (!replay.timeline) unknownTime = true;
+                    else if (
+                        replay.timeline.startMs < endMs &&
+                        replay.timeline.endMs > startMs &&
+                        overlappingIssue !== "preparing"
                     )
-                        overlappingUnsupported = true;
+                        overlappingIssue = replay.status;
+                    continue;
                 }
-                if (
-                    replay.status === "ok" &&
-                    replay.channelId === channelId &&
-                    replay.media.id !== main.id &&
-                    replay.media.startMs < endMs &&
-                    replay.media.endMs > startMs
-                ) {
+                if (replay.media.id !== main.id && replay.media.startMs < endMs && replay.media.endMs > startMs) {
                     if (!preferCurrent || (replay.media.startMs <= at && at < replay.media.endMs)) return replay;
                     overlappingReplay ??= replay;
                 }
@@ -249,7 +247,7 @@
         }
         if (overlappingReplay) return overlappingReplay;
         if (incomplete) return { status: "lookup-error" };
-        if (overlappingUnsupported) return { status: "unsupported" };
+        if (overlappingIssue) return { status: overlappingIssue };
         return { status: unknownTime ? "unknown-time" : "no-replay" };
     }
 

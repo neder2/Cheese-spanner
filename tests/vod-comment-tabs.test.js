@@ -870,6 +870,50 @@ test("VOD comments do not replace temporarily hidden native chat with the commen
     assert.equal(fixture.requests.length, 0, "restoring native chat must not fetch comments before the tab is opened");
 });
 
+test("the folded native replay chat button stays above player overlays and visible on focus before the aside mounts", async (t) => {
+    const fixture = createFixture({ includeAside: false, initialOptions: { vodCommentTabsEnabled: false } });
+    const { document, window } = fixture;
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        window.close();
+    });
+    const player = document.getElementById("player_layout");
+    player.className = "chzzk_player type_vod";
+    player.insertAdjacentHTML(
+        "beforeend",
+        '<div class="pzp-pc"><div class="player_header"><div class="header_info">' +
+            '<button type="button" class="_folded_button_fixture_18"><svg></svg></button></div></div></div>'
+    );
+    const nativeStyle = document.createElement("style");
+    nativeStyle.textContent = ".player_header{position:absolute;z-index:auto}.header_info{opacity:0}";
+    document.head.appendChild(nativeStyle);
+    const header = player.querySelector(".player_header");
+    const info = header.querySelector(".header_info");
+    const nativeButton = info.querySelector("button");
+    nativeButton.addEventListener("click", () => {
+        nativeButton.remove();
+        player.parentElement.insertAdjacentHTML("beforeend", chatAsideHtml());
+    });
+
+    nativeButton.focus();
+    assert.equal(window.getComputedStyle(info).opacity, "0");
+    fixture.emitOptions({ vodCommentTabsEnabled: true });
+    assert.ok(Number(window.getComputedStyle(header).zIndex) > 0);
+    assert.equal(window.getComputedStyle(info).opacity, "1");
+    assert.equal(document.getElementById("cheese-spanner-vod-comment-aside"), null);
+
+    fixture.emitOptions({ vodCommentTabsEnabled: false });
+    assert.equal(window.getComputedStyle(header).zIndex, "auto");
+    assert.equal(window.getComputedStyle(info).opacity, "0");
+    fixture.emitOptions({ vodCommentTabsEnabled: true, vodCommentLayout: "split" });
+    assert.equal(window.getComputedStyle(info).opacity, "1");
+    assert.deepEqual([...player.querySelectorAll("button")], [nativeButton]);
+
+    nativeButton.click();
+    await waitForCondition(() => document.querySelector("#vod-aside [data-bcvc-layout='split']"));
+    assert.equal(window.getComputedStyle(header).zIndex, "auto");
+});
+
 test("VOD comment tabs mount after a delayed chat log and reuse cached comments after an aside remount", async (t) => {
     const fixture = createFixture({
         fetchComments: async () => apiContent({ rows: [apiComment(1, "유지할 댓글")], totalCount: 1 }),

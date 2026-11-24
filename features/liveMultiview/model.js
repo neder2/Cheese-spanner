@@ -154,18 +154,16 @@
             height = h * size;
         return [east ? x : Math.max(0, x + w - width), south ? y : Math.max(0, y + h - height), width, height];
     }
+    function bottomRow([x1, x2], left = null, middle = null, right = null) {
+        return branch("columns", x2, branch("columns", x1 / x2, left, middle), right);
+    }
     function defaultTree(channels, columns = DEFAULT_SPLITS, rows = DEFAULT_SPLITS) {
         const ids = channels.map((entry) => entry.id);
         if (ids.length < 2) return ids[0] || null;
-        const [x1, x2] = columns,
+        const [, x2] = columns,
             [y1, y2] = rows;
         const right = branch("rows", y1 / y2, ids[1], ids[2] || null);
-        const bottom = branch(
-            "columns",
-            x2,
-            branch("columns", x1 / x2, ids[3] || null, ids[4] || null),
-            ids[5] || null
-        );
+        const bottom = bottomRow(columns, ids[3], ids[4], ids[5]);
         return branch("rows", y2, branch("columns", x2, ids[0], right), bottom);
     }
     function validTree(tree, channels) {
@@ -216,6 +214,7 @@
             handles.push({
                 key: path,
                 axis: node.axis,
+                collapseBelow: !vertical && hasVideo(node.a) && !hasVideo(node.b),
                 value: r,
                 region: rect,
                 position: vertical ? x + w * r : y + h * r,
@@ -229,6 +228,17 @@
         }
         visit(tree, [0, 0, 1, 1], "r");
         return { cells, handles };
+    }
+    function orderedCells(cells, mainId) {
+        // Round shared row boundaries before comparing horizontal positions.
+        return cells
+            .filter((cell) => cell.id)
+            .sort(
+                (a, b) =>
+                    Number(b.id === mainId) - Number(a.id === mainId) ||
+                    Math.round(a.rect[1] * 1e6) - Math.round(b.rect[1] * 1e6) ||
+                    a.rect[0] - b.rect[0]
+            );
     }
     function mapTree(tree, fn) {
         return tree && typeof tree === "object"
@@ -249,6 +259,36 @@
         return tree && typeof tree === "object" && (side === "a" || side === "b")
             ? { ...tree, [side]: resizeTree(tree[side], "r" + path.slice(2), ratio) }
             : tree;
+    }
+    function hasVideo(tree) {
+        return typeof tree === "string" || Boolean(tree && (hasVideo(tree.a) || hasVideo(tree.b)));
+    }
+    function resizeSplit(tree, handle, value) {
+        if (handle.collapseBelow && value >= 1) {
+            let group = tree;
+            for (const side of handle.key.slice(1)) group = group[side];
+            // Promote the occupied layout. No hidden videos or zero-height cells enter the saved tree.
+            return replaceTree(tree, handle.key, removeTree(group.a, null));
+        }
+        return resizeTree(tree, handle.key, Math.min(handle.upper, Math.max(handle.lower, value)));
+    }
+    function bottomRowDrop(tree, cells, source, bounds, openBounds, x, y) {
+        if (tree?.axis !== "columns" || !bounds.width || !bounds.height || cells.some((cell) => !cell.id)) return null;
+        const px = (x - bounds.left) / bounds.width;
+        const bottom = bounds.top + bounds.height;
+        const margin = Math.min(24, bounds.height * 0.08);
+        const rowTop = DEFAULT_SPLITS[1];
+        // Keep the original edge reachable as the player grows under the pointer.
+        const top = openBounds
+            ? Math.min(bottom - margin, openBounds.top + openBounds.height * rowTop)
+            : bottom - margin;
+        const end = openBounds ? Math.max(bottom, openBounds.top + openBounds.height) : bottom;
+        if (px < 0 || px > 1 || y < top || y > end + margin) return null;
+        const [left, middle] = DEFAULT_SPLITS;
+        const path = px < left ? "rbaa" : px < middle ? "rbab" : "rbb";
+        const upper = mapTree(tree, (id) => (id === source ? null : id));
+        const expanded = branch("rows", rowTop, upper, bottomRow(DEFAULT_SPLITS));
+        return { id: null, side: "bottom-row", path, tree: replaceTree(expanded, path, source) };
     }
     function replaceTree(tree, path, replacement) {
         if (path === "r") return replacement;
@@ -335,10 +375,23 @@
             items.length === 1 ? items[0] : branch(axis, 1 / items.length, items[0], divide(items.slice(1)));
         return { tree: replaceTree(tree, path, divide(ids)), ids, axis };
     }
+    function equalizeAuxiliaries(tree, mainId, viewportRatio) {
+        const ids = [];
+        for (const cell of treeLayout(tree).cells) {
+            if (!cell.id || cell.id === mainId || ids.includes(cell.id)) continue;
+            const arranged = equalizeTree(tree, cell.id, mainId, viewportRatio);
+            if (!arranged) continue;
+            tree = arranged.tree;
+            ids.push(...arranged.ids);
+        }
+        return ids.length ? { tree, ids } : null;
+    }
     function snapRatio(handle, raw, pixels, locked, origin) {
         const value = Math.min(handle.upper, Math.max(handle.lower, raw));
         if (!(pixels > 0) || !Number.isFinite(value)) return { value: handle.value, locked: null };
-        if (locked !== null && Math.abs(value - locked) * pixels <= 14) return { value: locked, locked };
+        if (handle.collapseBelow && raw >= 1 - Math.min(0.02, 8 / pixels)) return { value: 1, locked: 1 };
+        if (locked !== null && locked !== 1 && Math.abs(value - locked) * pixels <= 14)
+            return { value: locked, locked };
         const points = [handle.lower, handle.upper, origin, 1 / 3, 0.5, 2 / 3].filter(
             (n) => n >= handle.lower && n <= handle.upper
         );
@@ -455,6 +508,7 @@
         defaultTree,
         validTree,
         treeLayout,
+        orderedCells,
         layout,
         freeLayout,
         normalizeWindows,
@@ -465,10 +519,13 @@
         mapTree,
         removeTree,
         resizeTree,
+        resizeSplit,
+        bottomRowDrop,
         dockTree,
         moveMainTree,
         addTree,
         equalizeTree,
+        equalizeAuxiliaries,
         snapRatio,
         replaceTree,
         session,

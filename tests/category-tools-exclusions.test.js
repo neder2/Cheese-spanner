@@ -21,6 +21,16 @@ function withState(revision, categories) {
     );
 }
 
+async function runEntryRetry(ui, delay) {
+    const found = [...ui.timers].find(([, timer]) => timer.delay === delay);
+    assert.ok(found, `expected an exclusion read retry after ${delay} ms`);
+    const [id, timer] = found;
+    ui.timers.delete(id);
+    timer.callback();
+    await settle();
+    return timer.callback;
+}
+
 test("viewer-ranked search hides zero candidates while preserving saved exclusions and stores identity only", async (t) => {
     const worker = withState(1, [category()]);
     const ui = await createCategoryUI(t, { worker, categoryCounts: { A: 0, low: 5, high: 200 } });
@@ -252,11 +262,8 @@ test("a direct navigation retries the read once Chrome commits the trusted tab U
     const ui = await createCategoryUI(t, { worker: withState(2, [category()]), initialTabUrl: "about:blank" });
     assert.equal(hidden(ui, "a"), false);
     assert.equal(ui.messages.length, 1);
-    const [id, retry] = [...ui.timers].find(([, timer]) => timer.delay === 200);
     ui.commitTabUrl();
-    ui.timers.delete(id);
-    retry.callback();
-    await settle();
+    await runEntryRetry(ui, 200);
     await ui.hooks.apply();
     assert.equal(hidden(ui, "a"), true);
     assert.deepEqual(
@@ -265,25 +272,88 @@ test("a direct navigation retries the read once Chrome commits the trusted tab U
     );
 });
 
+test("a temporary first read failure restores a never-used or saved empty list without writing", async (t) => {
+    for (const stored of [undefined, state(7)]) {
+        await t.test(stored ? "saved empty list" : "no storage key", async (subtest) => {
+            const worker = stored ? withState(stored.revision, []) : createCategoryExclusionsWorker();
+            worker.storage.failNext("get");
+            const ui = await createCategoryUI(subtest, { worker });
+            const status = ui.window.document.querySelector("[data-category-store-status]");
+            const retry = ui.window.document.querySelector("[data-category-store-retry]");
+            assert.match(status.textContent, /불러오는 중/);
+            assert.equal(retry.hidden, true);
+            await runEntryRetry(ui, 200);
+            assert.equal(status.textContent, "");
+            assert.equal(retry.hidden, true);
+            assert.equal(ui.window.document.querySelector("[data-category-selected]").childElementCount, 0);
+            const menu = ui.open();
+            await search(ui, "게임", [category()]);
+            assert.equal(menu.querySelector("[data-category-add]").disabled, false);
+            assert.deepEqual(
+                ui.messages.map((message) => message.operation.kind),
+                ["get", "get"]
+            );
+            assert.deepEqual(worker.storage.local[CATEGORY_KEY], stored);
+            assert.equal(worker.storage.categoryWrites.length, 0);
+        });
+    }
+});
+
+test("a confirmed empty list clears loading and supersedes an earlier failed read", async (t) => {
+    const worker = createCategoryExclusionsWorker();
+    worker.storage.failNext("get");
+    const gate = worker.storage.pauseNext("get");
+    const ui = await createCategoryUI(t, { worker });
+    await gate.started;
+    const status = ui.window.document.querySelector("[data-category-store-status]");
+    try {
+        await writeCategoryState(worker, state(2));
+        assert.equal(status.textContent, "");
+    } finally {
+        gate.release();
+    }
+    await settle();
+    assert.equal(status.textContent, "");
+    assert.equal(ui.window.document.querySelector("[data-category-store-retry]").hidden, true);
+    assert.equal(ui.messages.length, 1);
+    assert.deepEqual(worker.storage.local[CATEGORY_KEY], state(2));
+});
+
 test("initial exclusion retries are bounded and stale timers cannot read after leaving the list", async (t) => {
     const ui = await createCategoryUI(t, { worker: withState(2, [category()]), initialTabUrl: "about:blank" });
     let retry;
-    for (const delay of [200, 800, 1800]) {
-        const found = [...ui.timers].find(([, timer]) => timer.delay === delay);
-        assert.ok(found);
-        ui.timers.delete(found[0]);
-        retry = found[1].callback;
-        retry();
-        await settle();
-    }
+    for (const delay of [200, 800, 1800]) retry = await runEntryRetry(ui, delay);
     assert.equal(ui.messages.length, 4);
     assert.equal(hidden(ui, "a"), false);
     assert.equal(ui.window.document.querySelector("[data-category-store-retry]").hidden, false);
+    ui.window.document.dispatchEvent(new ui.window.Event("visibilitychange"));
+    await settle();
+    assert.equal(ui.messages.length, 5);
+    ui.window.document.dispatchEvent(new ui.window.Event("visibilitychange"));
+    await settle();
+    assert.equal(ui.messages.length, 5, "repeated visibility events do not restart a failed retry loop");
     ui.dom.reconfigure({ url: "https://chzzk.naver.com/" });
     ui.hooks.pageChange();
     retry();
+    ui.window.dispatchEvent(new ui.window.Event("pageshow"));
     await settle();
-    assert.equal(ui.messages.length, 4);
+    assert.equal(ui.messages.length, 5);
+});
+
+test("showing the list after a slow tab commit recovers a never-used list without a manual retry", async (t) => {
+    const ui = await createCategoryUI(t, { initialTabUrl: "about:blank" });
+    for (const delay of [200, 800, 1800]) await runEntryRetry(ui, delay);
+    const status = ui.window.document.querySelector("[data-category-store-status]");
+    assert.equal(status.textContent, "제외 목록 불러오기 실패.");
+    ui.commitTabUrl();
+    ui.window.dispatchEvent(new ui.window.Event("pageshow"));
+    ui.window.document.dispatchEvent(new ui.window.Event("visibilitychange"));
+    await settle();
+    assert.equal(status.textContent, "");
+    assert.equal(ui.window.document.querySelector("[data-category-store-retry]").hidden, true);
+    assert.equal(ui.messages.length, 5);
+    assert.equal(Object.hasOwn(ui.worker.storage.local, CATEGORY_KEY), false);
+    assert.equal(ui.worker.storage.categoryWrites.length, 0);
 });
 
 test("the initial read completes before exclusion, and newer revisions beat late read and mutation responses", async (t) => {
@@ -342,9 +412,13 @@ test("read, write and corrupt-state failures preserve known selections and revea
     worker.storage.failNext("get");
     const ui = await createCategoryUI(t, { worker });
     const menu = ui.open();
-    assert.match(
+    for (const delay of [200, 800, 1800]) {
+        worker.storage.failNext("get");
+        await runEntryRetry(ui, delay);
+    }
+    assert.equal(
         ui.window.document.querySelector("[data-category-store-status]").textContent,
-        /제외 목록 저장·불러오기 실패/
+        "제외 목록 불러오기 실패."
     );
     assert.equal(worker.storage.categoryWrites.length, 0);
     ui.window.document.querySelector("[data-category-store-retry]").click();
@@ -357,7 +431,7 @@ test("read, write and corrupt-state failures preserve known selections and revea
     await settle();
     assert.equal(worker.storage.local[CATEGORY_KEY].categories.length, 1);
     assert.equal(remove.disabled, false);
-    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /실패/);
+    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /변경사항 저장 실패/);
     assert.equal(menu.textContent.includes("private response body"), false);
     worker.storage.local[CATEGORY_KEY] = { version: 99, revision: 5, categories: [] };
     ui.emit(worker.storage.local[CATEGORY_KEY]);
@@ -951,6 +1025,10 @@ test("a fresh restore read failure preserves the last good state and a retry can
     worker.storage.failNext("get");
     ui.options({ categoryToolsEnabled: true });
     await settle();
+    for (const delay of [200, 800, 1800]) {
+        worker.storage.failNext("get");
+        await runEntryRetry(ui, delay);
+    }
     await ui.hooks.apply();
     ui.open();
     assert.equal(hidden(ui, "a"), true, "a real read failure preserves the last known good category");

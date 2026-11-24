@@ -14,6 +14,7 @@
             pointerDrag = null,
             suppressDragClick = false,
             resize = null;
+        let fitFrame = null;
         let viewportLayer = false,
             ownsPopover = false,
             dockBounds = null;
@@ -85,11 +86,15 @@
                   state.channels.find((entry) => entry.id === id)?.position || [0.5, 0.5];
             return [x + (w - width) * position[0], y + (h - height) * position[1], width, height];
         }
-        function positionCells(tree = state.dockTree) {
+        function positionCells(tree = dragState?.previewTree || state.dockTree) {
             if (!overlay || !host || !tree) return;
             const migrated = syncViewportLayer();
             const free = freeActive();
             const layout = free ? model.freeLayout(state) : model.treeLayout(tree);
+            if (!resize && !pointerDrag && !dragState)
+                fitFrame(
+                    !state.freeLayoutEnabled && state.customLayout && tree.axis === "columns" ? layout.cells : null
+                );
             const bounds = layoutBounds();
             host.toggleAttribute("data-bcmv-free", free);
             for (const cell of overlay.querySelectorAll(".bcmv-cell")) {
@@ -176,7 +181,8 @@
                 }
                 handle.setAttribute("aria-valuenow", String(Math.round(item.value * 100)));
                 handle.setAttribute("aria-valuemin", String(Math.round(item.lower * 100)));
-                handle.setAttribute("aria-valuemax", String(Math.round(item.upper * 100)));
+                handle.setAttribute("aria-valuemax", String(item.collapseBelow ? 100 : Math.round(item.upper * 100)));
+                handle.title = item.collapseBelow ? "아래 끝까지 끌거나 End 키를 누르면 빈 하단 영역 접기" : "";
                 Object.assign(
                     handle.style,
                     item.axis === "columns"
@@ -313,14 +319,8 @@
                 })
                 .filter(Boolean);
         }
-        function adjustSplit(path, value) {
-            const handle = model.treeLayout(state.dockTree).handles.find((item) => item.key === path);
-            if (!handle) return;
-            state.dockTree = model.resizeTree(
-                state.dockTree,
-                path,
-                Math.min(handle.upper, Math.max(handle.lower, value))
-            );
+        function adjustSplit(handle, value, tree = state.dockTree) {
+            state.dockTree = model.resizeSplit(tree, handle, value);
             state.customLayout = true;
             positionCells();
         }
@@ -470,6 +470,16 @@
         function dragTarget(event) {
             if (!dragState) return null;
             const { rect, cells } = dragState;
+            const row = model.bottomRowDrop(
+                dragState.tree,
+                cells,
+                dragId,
+                rect,
+                dragState.openRowBounds,
+                event.clientX,
+                event.clientY
+            );
+            if (row) return { ...row, key: row.path + ":" + row.side };
             let leaf,
                 rx = 0.5,
                 ry = 0.5;
@@ -504,18 +514,18 @@
         function previewDrop(target) {
             if (!dragState || dragState.target?.key === target?.key) return;
             dragState.target = target;
+            root.multiviewView.previewBottomRow(dragState, target, fitFrame, host);
             const { guide, source, tree } = dragState;
             if (!target) {
                 guide.hidden = true;
+                dragState.previewTree = null;
                 positionCells(tree);
                 return;
             }
             const main = target.id === routeId && target.side === "center";
-            const next = target.mainMove
-                ? target.tree
-                : main
-                  ? tree
-                  : model.dockTree(tree, source, target.id, target.side, routeId, target.path);
+            const next =
+                target.tree ||
+                (main ? tree : model.dockTree(tree, source, target.id, target.side, routeId, target.path));
             if (!model.validTree(next, state.channels)) {
                 guide.hidden = true;
                 return;
@@ -535,6 +545,7 @@
                 right: "오른쪽에 배치",
                 top: "위에 배치",
                 bottom: "아래에 배치",
+                "bottom-row": "하단에 배치",
                 fill: "빈 공간에 배치",
                 center: "이 위치로 이동",
             };
@@ -622,9 +633,8 @@
             const source = dragId;
             const next =
                 started && target
-                    ? target.mainMove
-                        ? target.tree
-                        : model.dockTree(state.dockTree, source, target.id, target.side, routeId, target.path)
+                    ? target.tree ||
+                      model.dockTree(state.dockTree, source, target.id, target.side, routeId, target.path)
                     : null;
             endDrag();
             if (started && target) {
@@ -651,6 +661,8 @@
             resize = {
                 handle: model.treeLayout(state.dockTree).handles.find((item) => item.key === handle.dataset.path),
                 rect: overlay.querySelector(".bcmv-grid").getBoundingClientRect(),
+                startX: event.clientX,
+                startY: event.clientY,
                 tree: state.dockTree,
                 custom: state.customLayout,
                 pointerId: event.pointerId,
@@ -746,7 +758,7 @@
                     null,
                     old.value
                 );
-                next = model.resizeTree(next, old.key, result.value);
+                next = model.resizeSplit(next, current, result.value);
                 if (result.locked !== null) {
                     resize.guide.dataset.axis = old.axis;
                     resize.guide.style.cssText = "";
@@ -796,7 +808,7 @@
             resize.guide.style[horizontal ? "left" : "top"] =
                 ((horizontal ? region[0] : region[1]) + (horizontal ? region[2] : region[3]) * result.value) * 100 +
                 "%";
-            adjustSplit(handle.key, result.value);
+            adjustSplit(handle, result.value, resize.tree);
         }
         function cancelResize(event) {
             if (
@@ -817,7 +829,16 @@
         }
         function endResize(commit = true) {
             if (resize && typeof commit === "object" && commit.pointerId !== resize.pointerId) return;
-            if (resize?.free && typeof commit === "object" && resize.preview) onResizeMove(commit);
+            if (
+                resize &&
+                typeof commit === "object" &&
+                (resize.free
+                    ? resize.preview
+                    : resize.tree !== state.dockTree ||
+                      resize.startX !== commit.clientX ||
+                      resize.startY !== commit.clientY)
+            )
+                onResizeMove(commit);
             if (resize?.free && commit !== false && resize.preview && current(resize.player))
                 setWindowRect(resize.player.id, resize.preview);
             const changed = resize && commit !== false;
@@ -882,22 +903,20 @@
                 event.preventDefault();
                 event.stopPropagation();
                 if (handle) {
-                    adjustSplit(
-                        handle.key,
-                        handle.value + (["ArrowLeft", "ArrowUp"].includes(event.key) ? -0.01 : 0.01)
-                    );
+                    adjustSplit(handle, handle.value + (["ArrowLeft", "ArrowUp"].includes(event.key) ? -0.01 : 0.01));
                     persistSession();
                 }
                 return;
             }
             const handle = event.target.closest(".bcmv-separator");
             if (!handle) return;
+            const item = model.treeLayout(state.dockTree).handles.find((entry) => entry.key === handle.dataset.path);
             const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[event.key];
-            if (!step) return;
+            const fold = event.key === "End" && item?.collapseBelow;
+            if (!item || (!step && !fold)) return;
             event.preventDefault();
             event.stopPropagation();
-            const item = model.treeLayout(state.dockTree).handles.find((entry) => entry.key === handle.dataset.path);
-            if (item) adjustSplit(item.key, item.value + step * 0.01);
+            adjustSplit(item, fold ? 1 : item.value + step * 0.01);
             persistSession();
         }
 
@@ -914,6 +933,8 @@
             document.removeEventListener("visibilitychange", onVisibility);
             host?.removeAttribute("data-bcmv-free");
             host?.style.removeProperty("--bcmv-main-layer");
+            fitFrame?.();
+            fitFrame = null;
             overlay?.removeEventListener("keydown", onKey);
             host = native = overlay = null;
             dockBounds = null;
@@ -924,6 +945,7 @@
             native = nextNative;
             overlay = nextOverlay;
             routeId = mainId;
+            fitFrame = root.multiviewView.createFrameFitter(native, host, (id) => players.get(id)?.video);
             host.addEventListener("pointerdown", onPointerDown, true);
             host.addEventListener("click", onHostClick, true);
             host.addEventListener("dragstart", onNativeDragStart, true);
@@ -944,10 +966,17 @@
             cancelResize();
             return true;
         }
+        function onHostResize() {
+            if (!state.active || viewportLayer || root.multiviewView.isPreviewResize(dragState, host)) return;
+            cancelResize();
+            endDrag();
+            positionCells();
+        }
         return {
             mount,
             release,
             position: positionCells,
+            onHostResize,
             cancelDrag: endDrag,
             cancelResize,
             cancelPointer,

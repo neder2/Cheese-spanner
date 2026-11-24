@@ -150,7 +150,7 @@
     const CATEGORY_ENTRY_RETRY_DELAYS = [200, 800, 1800];
     let categoryReadRetryTimer = 0;
     let categoryStoreLoading = false;
-    let categoryStoreError = "";
+    let categoryStoreError = null;
     let categorySubscription = null;
     let categoryStateRestored = false;
     const CATEGORY_ADD_ID = "cheese-spanner-category-add-panel";
@@ -339,10 +339,11 @@
     }
 
     function categoryErrorText(error) {
-        if (error === "limit-reached") return "카테고리는 최대 100개까지 제외 가능. 기존 항목 해제 후 재선택.";
-        if (error === "invalid-stored-state" || error === "unsupported-version")
+        if (!error) return "";
+        if (error.code === "limit-reached") return "카테고리는 최대 100개까지 제외 가능. 기존 항목 해제 후 재선택.";
+        if (error.code === "invalid-stored-state" || error.code === "unsupported-version")
             return "제외 목록 확인 실패(기존 목록 보존됨, 다시 불러오기 가능).";
-        return "제외 목록 저장·불러오기 실패. 다시 불러오거나 재선택 필요.";
+        return error.kind === "get" ? "제외 목록 불러오기 실패." : "제외 목록 변경사항 저장 실패. 다시 시도해 주세요.";
     }
 
     function sendCategoryOperation(operation) {
@@ -389,7 +390,8 @@
             state.categories.filter(isTagExclusion).map((category) => tagMatchKey(category.categoryId))
         );
         categoryTagKeys.delete("");
-        categoryStoreError = "";
+        categoryStoreError = null;
+        categoryStoreLoading = false;
         if (changed) categoryStateEpoch++;
         if (!isCategoryExclusionRoute()) return;
         updateUiState();
@@ -407,8 +409,10 @@
         const generation = ++categoryReadGeneration;
         const storeGeneration = categoryStoreGeneration;
         const subscription = categorySubscription;
+        // 읽는 동안 다른 탭에서 정상 목록을 받았다면 늦게 도착한 실패로 경고를 띄우지 않는다.
+        const stateAtRequest = categoryState;
         categoryStoreLoading = true;
-        categoryStoreError = "";
+        categoryStoreError = null;
         syncCategoryAdd();
         void sendCategoryOperation({ kind: "get" }).then(
             (state) => {
@@ -428,10 +432,13 @@
                     generation !== categoryReadGeneration ||
                     storeGeneration !== categoryStoreGeneration ||
                     subscription !== categorySubscription ||
+                    categoryState !== stateAtRequest ||
                     !isCategoryExclusionRoute()
                 )
                     return;
-                const transient = error.message === "untrusted-sender" || error.message === "message-unavailable";
+                const transient = ["untrusted-sender", "message-unavailable", "storage-read-failed"].includes(
+                    error.message
+                );
                 if (
                     transient &&
                     entryAttempt >= 0 &&
@@ -445,8 +452,7 @@
                     return;
                 }
                 categoryStoreLoading = false;
-                if (!(transient && entryAttempt >= 0 && categoryStateRestored))
-                    categoryStoreError = categoryErrorText(error.message);
+                categoryStoreError = { kind: "get", code: error.message, retryOnShow: transient && entryAttempt >= 0 };
                 syncCategoryAdd();
             }
         );
@@ -475,7 +481,7 @@
             categoryReadGeneration++;
             categoryStoreLoading = false;
             categoryPending.clear();
-            categoryStoreError = categoryErrorText("invalid-stored-state");
+            categoryStoreError = { kind: "get", code: "invalid-stored-state" };
             syncCategoryAdd();
             return;
         }
@@ -540,7 +546,7 @@
         const subscription = categorySubscription;
         const token = {};
         categoryPending.set(key, token);
-        categoryStoreError = "";
+        categoryStoreError = null;
         syncCategoryAdd();
         void sendCategoryOperation(operation)
             .then(
@@ -561,7 +567,7 @@
                         subscription !== categorySubscription
                     )
                         return;
-                    categoryStoreError = categoryErrorText(error.message);
+                    categoryStoreError = { kind: operation.kind, code: error.message };
                 }
             )
             .finally(() => {
@@ -860,7 +866,7 @@
         }
         setCategoryStatusText(
             view.root.querySelector(".bcgt-category-summary-status"),
-            categoryStoreError || (categoryStoreLoading ? "제외 목록 불러오는 중…" : "")
+            categoryErrorText(categoryStoreError) || (categoryStoreLoading ? "제외 목록 불러오는 중…" : "")
         );
         const retry = view.root.querySelector("[data-category-store-retry]");
         retry.hidden = !categoryStoreError;
@@ -3521,6 +3527,7 @@
             return;
         }
 
+        if (categoryStoreError?.retryOnShow) readCategoryState();
         if (document.querySelector(`[${LIVE_ELAPSED_BADGE_ATTR}="1"]`)) {
             updateLiveElapsedBadgesNow();
             ensureLiveElapsedTimer();
@@ -5645,9 +5652,9 @@
         syncCategoryExclusionRuntime();
     }
 
-    // 뒤로-앞으로 캐시로 돌아오면 문서가 그대로 되살아나 기록을 다시 읽지 않는다. 그래도 사용자에게는
-    // 방송을 보고 돌아온 것과 같으므로 남아 있는 조건을 '이어서 적용 중'으로 알린다.
     function handlePageShow(event) {
+        if (!document.hidden && categoryStoreError?.retryOnShow) readCategoryState();
+        // 뒤로-앞으로 캐시에서 복귀하면 문서에 남아 있는 검색 조건을 '이어서 적용 중'으로 알린다.
         if (!event?.persisted || !isFeatureEnabled() || !hasAppliedConditions()) return;
         restoredConditionsPending = true;
         updateUiState();

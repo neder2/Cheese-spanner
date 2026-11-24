@@ -2,7 +2,10 @@
 (() => {
     "use strict";
 
-    const CDN_ORIGIN = "https://ex-nlive-slitvod-streaming.navercdn.com";
+    const CDN_ORIGINS = new Set([
+        "https://ex-nlive-slitvod-streaming.navercdn.com",
+        "https://light-slit.akamaized.net",
+    ]);
     const trackTextFields = [
         "encodingTrackId",
         "videoProfile",
@@ -33,6 +36,14 @@
         return track.encodingTrackId && track.videoWidth > 0 && track.videoHeight > 0 ? track : null;
     }
 
+    function matchesCatalogDuration(seconds, catalogSeconds) {
+        if (!Number.isFinite(seconds) || seconds <= 0 || !Number.isFinite(catalogSeconds) || catalogSeconds <= 0)
+            return false;
+        // The catalogue can report whole seconds while the rewind provider reports milliseconds.
+        const comparableSeconds = Number.isInteger(catalogSeconds) ? Math.round(seconds) : seconds;
+        return Math.abs(comparableSeconds - catalogSeconds) <= 2;
+    }
+
     function readRewindSource(value, videoId, duration) {
         if (typeof value !== "string" || value.length > 65536) return null;
         try {
@@ -46,9 +57,7 @@
                 !/^\d{1,20}$/.test(meta.liveId) ||
                 !Number.isSafeInteger(meta.streamSeq) ||
                 meta.streamSeq < 0 ||
-                !Number.isFinite(meta.duration) ||
-                meta.duration <= 0 ||
-                Math.abs(meta.duration - duration) > 2 ||
+                !matchesCatalogDuration(meta.duration, duration) ||
                 typeof meta.cdnInfo?.cdnType !== "string" ||
                 !/^[A-Z0-9_-]{1,24}$/.test(meta.cdnInfo.cdnType) ||
                 !Array.isArray(media) ||
@@ -68,7 +77,7 @@
                 return null;
             const url = new URL(hls.path);
             if (
-                url.origin !== CDN_ORIGIN ||
+                !CDN_ORIGINS.has(url.origin) ||
                 url.username ||
                 url.password ||
                 url.hash ||
