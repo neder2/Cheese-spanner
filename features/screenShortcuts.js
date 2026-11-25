@@ -4,6 +4,7 @@
     if (CheeseSpanner.screenShortcuts) return;
     CheeseSpanner.screenShortcuts = {};
     const {
+        PLAYER_SHORTCUT_PANEL_SELECTOR,
         bindFeatureOptions,
         getMainVideoElement,
         getPlayerRoot,
@@ -44,8 +45,8 @@
             )
         )
             return;
-        // Keys inside the stream info panel (streamInfo.js) belong to the panel: Space/Enter close it there.
-        if (target instanceof Element && target.closest("#cheese-spanner-stream-info")) return;
+        // Window capture runs before viewer controls and the stream info panel handle their own keys.
+        if (target instanceof Element && target.closest(PLAYER_SHORTCUT_PANEL_SELECTOR)) return;
         const video = getMainVideoElement();
         if (!(video instanceof HTMLVideoElement) || !video.isConnected) return;
         const player = getPlayerRoot(video);

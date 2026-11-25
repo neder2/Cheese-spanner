@@ -6,10 +6,8 @@
  * - It stops and saves when the page route changes, the main video element or its source is replaced, the
  *   recorder fails, the option is turned off, or the page is hidden for good. Leaving the page while
  *   recording asks the browser's leave-page confirmation first.
- * - The gear menu gets a "녹화 저장 폴더" row that edits the synced videoRecorderFolder option through the
- *   worker's settings store, like the ambient slider does for ambientIntensity. The worker
- *   (shared/recordingDownloads.js) puts the file into that folder under Chrome's download folder only while
- *   the optional downloads permission is held; otherwise the file lands in the download folder itself.
+ * - A trusted press on the gear menu's folder row opens the extension's recording folder settings.
+ *   The worker writes to that extension-owned directory or delivers the recording to Chrome Downloads.
  * - Encoded chunks pass to the extension worker and the user's own download, never to a remote server.
  */
 (() => {
@@ -31,7 +29,6 @@
         isLiveRoute,
         isPlaybackRoute,
         onReady,
-        settingsStoreSet,
         startPageChangeDetection,
         syncPlayerButtonTooltip,
     } = root.utils;
@@ -43,7 +40,6 @@
     const STATUS_ID = `${ID}-status`;
     const STYLE_ID = `${ID}-style`;
     const ROW_ID = `${ID}-folder-row`;
-    const EDIT_ID = `${ID}-folder-edit`;
     const MESSAGE_TYPE = "cheese-spanner:video-recorder";
     const CONTROLS = ".pzp-pc__bottom-buttons-right";
     // Same native home menu that ambient glow and stream info extend.
@@ -87,21 +83,9 @@
         menuRow = null,
         menuButton = null,
         menuValue = null,
-        editRow = null,
-        editInput = null,
-        editSave = null,
-        editNote = null,
-        expanded = false,
-        permission = null,
         selectedDirectory = null,
-        permissionRevision = 0,
-        folderOverride = null,
-        saveRevision = 0;
+        permissionRevision = 0;
     let recording = null;
-    // A player-selected handle stays in this isolated world; never store it in the site's IndexedDB or DOM.
-    let tabDirectory = null;
-    let choosingDirectory = false;
-    let directoryRevision = 0;
     const finishing = new Set();
     const auxiliaryButtons = new Map();
     const AUXILIARY = "cheese-spanner:vod-multiview:auxiliary";
@@ -111,7 +95,7 @@
     const schedule = createThrottledDomSync(sync, 160);
 
     const enabled = () => options.videoRecorderEnabled === true;
-    const currentFolder = () => folderOverride ?? settings.normalizeDownloadFolder(options.videoRecorderFolder, "");
+    const currentFolder = () => settings.normalizeDownloadFolder(options.videoRecorderFolder, "");
     const pathKey = () => location.pathname.replace(/\/+$/, "");
 
     // ── Recording ──
@@ -146,7 +130,7 @@
     function filePart(value, maxLength, maxBytes, fallback) {
         const clean = String(value || "")
             // eslint-disable-next-line no-control-regex -- strip characters disallowed in local file names.
-            .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, "_")
+            .replace(/[\\/:*?"<>|\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "_")
             .replace(/\s+/g, " ")
             .trim();
         let result = "";
@@ -247,10 +231,6 @@
             stopping: false,
             timer: 0,
             metadataAbort: new AbortController(),
-            directoryHandle: tabDirectory,
-            fileWriter: null,
-            fileFailed: false,
-            fileClosed: false,
         };
         recorder.addEventListener("dataavailable", (event) => {
             if (!event.data?.size || session.writeFailed) return;
@@ -266,7 +246,7 @@
                         const bytes = new Uint8Array(
                             await event.data.slice(offset, offset + CHUNK_BYTES).arrayBuffer()
                         );
-                        const result = await recordingCommand(session, {
+                        const result = await sendRecorderMessage({
                             op: "write",
                             id: session.route.id,
                             sequence: session.sequence,
@@ -310,44 +290,20 @@
                 stopRecording(session);
                 return;
             }
-            if (session.directoryHandle) {
-                const opening = globalThis.CheeseSpannerRecordingDirectory.openFile(
-                    session.directoryHandle,
-                    fileName
-                ).then(async (file) => {
-                    if (session.stopping || session.fileFailed) {
-                        await file.writer.abort().catch(() => {});
-                        throw new Error("directory-cancelled");
-                    }
-                    session.fileWriter = file.writer;
-                    return file;
-                });
-                const file = await fileOperation(session, opening);
-                session.route = {
-                    ok: true,
-                    destination: "directory",
-                    folder: session.directoryHandle.name,
-                    fileName: file.fileName,
-                };
-            } else {
-                session.route = await sendRecorderMessage({ op: "start", fileName }, true);
-            }
+            session.route = await sendRecorderMessage({ op: "start", fileName }, true);
             if (!session.route?.ok) throw new Error(session.route?.error || "download-unavailable");
             if (!session.stopping && recording === session) {
                 if (session.route.destination !== "directory") {
                     const link = document.createElement("a");
                     link.href = session.route.url;
                     // An attachment navigation streams through our worker; a download attribute bypasses it.
-                    link.hidden = true;
-                    (document.body || document.documentElement).append(link);
                     link.click();
-                    link.remove();
                 }
-                const opened = await recordingCommand(session, { op: "ready", id: session.route.id });
+                const opened = await sendRecorderMessage({ op: "ready", id: session.route.id });
                 if (!opened) throw new Error("download-unavailable");
             }
             if (session.stopping || recording !== session || !active || !session.video.isConnected) {
-                await recordingCommand(session, { op: "abort", id: session.route.id });
+                await sendRecorderMessage({ op: "abort", id: session.route.id });
                 return;
             }
             recorder.start(TIMESLICE_MS);
@@ -359,7 +315,7 @@
                 renderRecording();
                 if (Date.now() - session.lastPulse < 10_000) return;
                 session.lastPulse = Date.now();
-                void recordingCommand(session, { op: "pulse", id: session.route.id }).then((result) => {
+                void sendRecorderMessage({ op: "pulse", id: session.route.id }).then((result) => {
                     if (!result && recording === session) {
                         session.writeFailed = true;
                         stopRecording(session);
@@ -370,8 +326,7 @@
             renderRecording();
         } catch (error) {
             session.writeFailed = true;
-            if (session.route || session.fileWriter)
-                void recordingCommand(session, { op: "abort", id: session.route?.id });
+            if (session.route) void sendRecorderMessage({ op: "abort", id: session.route?.id });
             stopRecording(session);
             showStatus(
                 error.message.startsWith("directory-")
@@ -425,13 +380,13 @@
             await session.pending;
             const result = session.writeFailed
                 ? null
-                : await recordingCommand(session, {
+                : await sendRecorderMessage({
                       op: "finish",
                       id: session.route.id,
                       sequence: session.sequence,
                   });
             if (!result) {
-                void recordingCommand(session, { op: "abort", id: session.route.id });
+                void sendRecorderMessage({ op: "abort", id: session.route.id });
                 showStatus("저장이 중단되어 녹화 파일 완성 실패");
                 return;
             }
@@ -452,46 +407,6 @@
             finishing.delete(session);
             if (!recording && !finishing.size) window.removeEventListener("beforeunload", onBeforeUnload);
             renderRecording();
-        }
-    }
-
-    async function fileOperation(session, operation) {
-        let timer;
-        try {
-            return await Promise.race([
-                operation,
-                new Promise((_, reject) => {
-                    timer = window.setTimeout(() => reject(new Error("directory-timeout")), 10_000);
-                }),
-            ]);
-        } catch (error) {
-            session.fileFailed = true;
-            if (session.fileWriter && !session.fileClosed) void session.fileWriter.abort().catch(() => {});
-            throw error;
-        } finally {
-            window.clearTimeout(timer);
-        }
-    }
-
-    async function recordingCommand(session, message) {
-        if (!session.directoryHandle) return sendRecorderMessage(message);
-        if (message.op === "abort") {
-            session.fileFailed = true;
-            if (session.fileWriter && !session.fileClosed) void session.fileWriter.abort().catch(() => {});
-            return { ok: true };
-        }
-        if (!session.fileWriter || session.fileFailed || session.fileClosed) return null;
-        try {
-            if (message.op === "write") {
-                const bytes = Uint8Array.from(atob(message.data), (char) => char.charCodeAt(0));
-                await fileOperation(session, session.fileWriter.write(bytes));
-            } else if (message.op === "finish") {
-                await fileOperation(session, session.fileWriter.close());
-                session.fileClosed = true;
-            }
-            return { ok: true };
-        } catch (_) {
-            return null;
         }
     }
 
@@ -551,23 +466,15 @@
             STYLE_ID,
             `
 :is(#${BUTTON_ID}, [data-bcvm-recorder]) { position:relative; display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; padding:6px; border:0; background:transparent; color:inherit; cursor:pointer; flex-shrink:0; }
-:is(#${BUTTON_ID}, [data-bcvm-recorder])[aria-pressed="true"] { color:#ff4d4d; }
+:is(#${BUTTON_ID}, [data-bcvm-recorder])[aria-pressed="true"] { color:var(--bct-status-live); }
 :is(#${BUTTON_ID}, [data-bcvm-recorder]):focus-visible { outline:2px solid var(--bct-focus-ring); outline-offset:2px; }
 .pzp-pc:not(.pzp-pc--controls) :is(#${BUTTON_ID}, [data-bcvm-recorder]):not(:focus-visible) { opacity:0; pointer-events:none; }
-#${BADGE_ID} { position:absolute; top:12px; left:12px; z-index:40; display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:12px; background:rgba(0,0,0,.6); color:#fff; font-family:var(--bct-font); font-size:12px; font-weight:600; line-height:1.5; font-variant-numeric:tabular-nums; pointer-events:none; }
-#${BADGE_ID}::before { content:""; width:8px; height:8px; border-radius:50%; background:#ff4d4d; }
+#${BADGE_ID} { position:absolute; top:12px; left:12px; z-index:40; display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:var(--bct-radius-lg); background:rgba(0,0,0,.6); color:#fff; font-family:var(--bct-font); font-size:12px; font-weight:600; line-height:1.5; font-variant-numeric:tabular-nums; pointer-events:none; }
+#${BADGE_ID}::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--bct-status-live); }
 #${BADGE_ID}[hidden], #${STATUS_ID}[hidden] { display:none; }
 #${STATUS_ID} { position:absolute; right:16px; bottom:64px; z-index:51; max-width:calc(100% - 32px); box-sizing:border-box; padding:6px 10px; border-radius:var(--bct-radius-md); background:rgba(0,0,0,.75); color:#fff; font-family:var(--bct-font); font-size:12px; line-height:1.5; pointer-events:none; }
 .chzzk_player:is(.miniplayer, .pip_mode) #${STATUS_ID} { display:none; }
-#${EDIT_ID} { display:block; }
-#${EDIT_ID}[hidden] { display:none; }
 #${ROW_ID} { cursor:pointer; }
-#${EDIT_ID} .${ID}-field { display:flex; gap:6px; align-items:center; }
-#${EDIT_ID} input { flex:1 1 auto; min-width:0; box-sizing:border-box; height:28px; padding:0 8px; border:1px solid rgba(255,255,255,.25); border-radius:4px; background:rgba(255,255,255,.08); color:inherit; font:inherit; font-size:12px; }
-#${EDIT_ID} input:focus-visible, #${EDIT_ID} button:focus-visible { outline:2px solid var(--bct-focus-ring); outline-offset:1px; }
-#${EDIT_ID} button { flex:none; height:28px; padding:0 10px; border:0; border-radius:4px; background:rgba(255,255,255,.16); color:inherit; font:inherit; font-size:12px; cursor:pointer; }
-#${EDIT_ID} button:disabled { opacity:.5; cursor:default; }
-#${EDIT_ID} .${ID}-note { margin:6px 0 0; font-size:11px; line-height:1.5; opacity:.8; white-space:normal; word-break:keep-all; overflow-wrap:anywhere; }
 `
         );
     }
@@ -684,29 +591,13 @@
     function renderMenu() {
         if (!menuRow) return;
         const folder = currentFolder();
-        menuValue.textContent = choosingDirectory
-            ? "폴더 선택 중…"
-            : tabDirectory?.name || selectedDirectory?.directory || folderLabel(folder);
-        editInput.hidden = editSave.hidden = Boolean(selectedDirectory?.directory);
-        editRow.hidden = !expanded;
-        if (!expanded) return;
-        let note;
-        if (selectedDirectory?.directory)
-            note = selectedDirectory.directoryGranted
-                ? `저장 폴더: ‘${selectedDirectory.directory}’. 변경은 ‘폴더 선택’`
-                : "폴더 접근 권한 필요. ‘폴더 선택’에서 다시 지정";
-        else if (!folder) note = "비워 두면 Chrome 다운로드 폴더에 바로 저장";
-        else if (permission === false)
-            note = `현재 다운로드 폴더에 저장. 하위 폴더 사용 시 확장 설정에서 다운로드 권한 허용`;
-        else note = `다운로드 폴더 안의 ${folder} 폴더에 저장`;
-        if (editNote.textContent !== note) editNote.textContent = note;
+        menuValue.textContent = selectedDirectory?.directory || folderLabel(folder);
     }
 
     function refreshPermission() {
         const revision = ++permissionRevision;
         void sendRecorderMessage({ op: "status" }).then((response) => {
             if (revision !== permissionRevision) return;
-            permission = response ? response.downloads === true : null;
             selectedDirectory = response;
             renderMenu();
         });
@@ -726,7 +617,7 @@
     function onMenuRowClick(event) {
         event.stopPropagation();
         if (!event.isTrusted || !validMenuRow()) return;
-        void choosePlayerDirectory();
+        void openFolderSettings();
     }
 
     function onMenuButtonKeyDown(event) {
@@ -734,87 +625,19 @@
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
         event.stopPropagation();
-        if (event.isTrusted && !event.repeat && validMenuRow()) void choosePlayerDirectory();
+        if (event.isTrusted && !event.repeat && validMenuRow()) void openFolderSettings();
     }
 
-    async function choosePlayerDirectory() {
-        if (choosingDirectory || !validMenuRow()) return;
-        if (typeof window.showDirectoryPicker !== "function") {
-            showStatus("이 브라우저에서 탐색기 폴더 선택 불가. 확장 설정에서 저장 위치 지정");
-            return;
-        }
-        const revision = ++directoryRevision;
-        choosingDirectory = true;
-        renderMenu();
+    let openingFolderSettings = false;
+    async function openFolderSettings() {
+        if (openingFolderSettings) return;
+        openingFolderSettings = true;
+        const row = menuRow;
         try {
-            // Keep the picker in this actual click, before any asynchronous work consumes user activation.
-            const handle = await window.showDirectoryPicker({
-                id: "cheese-spanner-recording",
-                mode: "readwrite",
-                startIn: tabDirectory || "downloads",
-            });
-            if (revision !== directoryRevision || !active || hidden || disposed) return;
-            if ((await handle.queryPermission({ mode: "readwrite" })) !== "granted")
-                throw new Error("directory-permission");
-            if (revision !== directoryRevision || !active || hidden || disposed) return;
-            tabDirectory = handle;
-            renderMenu();
-            showStatus(`이 탭의 다음 녹화부터 ‘${handle.name}’ 폴더에 저장`);
-        } catch (error) {
-            if (revision === directoryRevision && error.name !== "AbortError")
-                showStatus("폴더 선택 실패. 폴더 접근을 허용한 뒤 다시 시도");
+            const opened = await sendRecorderMessage({ op: "folder-settings" });
+            if (!opened && menuRow === row && validMenuRow()) showStatus("녹화 저장 폴더 설정 열기 실패");
         } finally {
-            if (revision === directoryRevision) {
-                choosingDirectory = false;
-                renderMenu();
-            }
-        }
-    }
-
-    function saveFolder(event) {
-        // The synced option is only written from a real press or key in this row.
-        if (!event.isTrusted || !validMenuRow() || editRow.hidden) return;
-        const next = settings.normalizeDownloadFolder(editInput.value, "");
-        editInput.value = next;
-        if (next === currentFolder()) {
-            renderMenu();
-            return;
-        }
-        const revision = ++saveRevision;
-        folderOverride = next;
-        editSave.disabled = true;
-        renderMenu();
-        settingsStoreSet("sync", { videoRecorderFolder: next }).then(
-            () => {
-                if (revision !== saveRevision) return;
-                options = { ...options, videoRecorderFolder: next };
-                folderOverride = null;
-                editSave.disabled = false;
-                refreshPermission();
-            },
-            () => {
-                if (revision !== saveRevision) return;
-                folderOverride = null;
-                editSave.disabled = false;
-                editInput.value = currentFolder();
-                renderMenu();
-                editNote.textContent = "저장 폴더 변경 실패. 잠시 후 다시 시도";
-            }
-        );
-    }
-
-    function onSaveClick(event) {
-        event.stopPropagation();
-        saveFolder(event);
-    }
-
-    function onInputKeyDown(event) {
-        // Typing belongs to the field; the native menu and player shortcuts must not react to it.
-        if (event.key === "Escape") return;
-        event.stopPropagation();
-        if (event.key === "Enter" && !event.isComposing) {
-            event.preventDefault();
-            saveFolder(event);
+            openingFolderSettings = false;
         }
     }
 
@@ -826,7 +649,7 @@
         // Another feature's bridge may already have moved focus for this key.
         if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
         if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key) || !menuRow?.isConnected) return;
-        if (!(event.target instanceof Element) || event.target.closest(`#${EDIT_ID}`)) return;
+        if (!(event.target instanceof Element)) return;
         const entry = event.target.closest(`[${MENU_ENTRY_ATTR}]`);
         const current = entry?.parentElement === menu ? entry : event.target;
         if (current.parentElement !== menu) return;
@@ -877,7 +700,7 @@
         menuButton.type = "button";
         menuButton.id = `${ROW_ID}-button`;
         menuButton.setAttribute("role", "menuitem");
-        menuButton.setAttribute("aria-haspopup", "dialog");
+        menuButton.title = "확장 설정에서 녹화 저장 폴더 선택";
         const label = document.createElement("span");
         label.className = "pzp-ui-setting-home-item__label";
         label.textContent = "녹화 저장 폴더";
@@ -887,76 +710,27 @@
         menuValue.className = "pzp-ui-setting-home-item__value";
         parts.right.append(menuValue);
 
-        editRow = document.createElement("div");
-        editRow.id = EDIT_ID;
-        editRow.className = "pzp-ui-setting-home-item";
-        editRow.setAttribute("role", "group");
-        editRow.setAttribute("aria-label", "녹화 저장 폴더");
-        const field = document.createElement("div");
-        field.className = `${ID}-field`;
-        editInput = document.createElement("input");
-        editInput.type = "text";
-        editInput.id = `${EDIT_ID}-input`;
-        editInput.maxLength = settings.DOWNLOAD_FOLDER_MAX_LENGTH;
-        editInput.placeholder = "예: 치지직 녹화";
-        editInput.autocomplete = "off";
-        editInput.spellcheck = false;
-        editInput.setAttribute("aria-label", "다운로드 폴더 안의 녹화 저장 폴더 이름");
-        editSave = document.createElement("button");
-        editSave.type = "button";
-        editSave.textContent = "저장";
-        field.append(editInput, editSave);
-        const chooseDirectory = document.createElement("button");
-        chooseDirectory.type = "button";
-        chooseDirectory.textContent = "폴더 선택…";
-        chooseDirectory.title = "탐색기에서 이 탭의 저장 폴더 선택";
-        chooseDirectory.addEventListener("click", (event) => {
-            event.stopPropagation();
-            if (!event.isTrusted || !validMenuRow() || editRow.hidden) return;
-            void choosePlayerDirectory();
-        });
-        field.append(chooseDirectory);
-        editNote = document.createElement("p");
-        editNote.className = `${ID}-note`;
-        editNote.id = `${EDIT_ID}-note`;
-        editInput.setAttribute("aria-describedby", editNote.id);
-        editRow.append(field, editNote);
-
         menuRow.addEventListener("click", onMenuRowClick);
         menuButton.addEventListener("keydown", onMenuButtonKeyDown);
-        editSave.addEventListener("click", onSaveClick);
-        editInput.addEventListener("keydown", onInputKeyDown);
-        for (const type of ["keyup", "keypress"]) editInput.addEventListener(type, stopInside);
         for (const type of ["click", "pointerdown", "mousedown", "dblclick", "wheel"]) {
             menuRow.addEventListener(type, stopInside);
-            editRow.addEventListener(type, stopInside);
         }
         menu.addEventListener("keydown", onMenuNavigation, true);
-        container.append(menuRow, editRow);
+        container.append(menuRow);
         renderMenu();
         refreshPermission();
     }
 
     function removeMenu() {
-        directoryRevision++;
-        choosingDirectory = false;
         menu?.removeEventListener("keydown", onMenuNavigation, true);
         menuRow?.remove();
-        editRow?.remove();
-        menu = menuRow = menuButton = menuValue = editRow = editInput = editSave = editNote = null;
-        expanded = false;
+        menu = menuRow = menuButton = menuValue = null;
         permissionRevision++;
-        // The storage write can finish, but its response no longer owns this menu.
-        saveRevision++;
-        folderOverride = null;
     }
 
     function syncMenu() {
         const container = (menuPlayer || player)?.querySelector(SETTINGS_MENU) || null;
-        if (menuRow && menu === container && menuRow.parentElement === container) {
-            if (menuRow.nextElementSibling !== editRow) menuRow.after(editRow);
-            return;
-        }
+        if (menuRow && menu === container && menuRow.parentElement === container) return;
         removeMenu();
         if (container) buildMenu(container);
     }
@@ -1020,7 +794,7 @@
     }
 
     function relevantMutations(rows) {
-        const owned = [button, badge, status, menuRow, editRow];
+        const owned = [button, badge, status, menuRow];
         return rows.some((row) => {
             if (!(row.target instanceof Node)) return false;
             if (owned.some((node) => node && (node === row.target || node.contains(row.target)))) return false;
@@ -1055,8 +829,6 @@
         if (!active) return;
         if (recording) stopRecording();
         active = false;
-        directoryRevision++;
-        choosingDirectory = false;
         window.removeEventListener("focus", refreshFolderOnFocus);
         document.removeEventListener(AUXILIARY, sync);
         document.removeEventListener("click", onSettingsClick, true);
@@ -1074,8 +846,6 @@
         status?.remove();
         badge = status = null;
         player = video = null;
-        folderOverride = null;
-        saveRevision++;
         document.getElementById(STYLE_ID)?.remove();
     }
 

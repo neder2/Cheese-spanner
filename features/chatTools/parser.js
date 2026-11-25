@@ -110,8 +110,10 @@
     const SERVICE_BLIND_NOTICE_RE =
         /^(?:클린봇이\s*부적절한\s*표현을\s*감지했습니다|(?:관리자|운영자)에\s*의해\s*(?:블라인드|숨김|삭제|차단|가림)(?:\s*처리)?된\s*(?:메시지|채팅)입니다)[\s.!?…]*$/i;
 
-    const GENERIC_BLIND_TEXT_RE =
-        /^(?:\[?\s*)?(?:(?:메시지가|채팅이)\s*)?(블라인드|숨김|삭제|차단|가림|blind|hidden|deleted|blocked|moderated)(?:\s*(메시지|채팅|message|chat|처리|처리된|됨|된|되었습니다|됩니다|입니다|글|내용|원문 없음|no text|unavailable))*[\]\s.:：-]*$/i;
+    const BLIND_NOTICE_PREFIX_RE =
+        /^\[?\s*(?:(?:메시지가|채팅이)\s*)?(?:블라인드|숨김|삭제|차단|가림|blind|hidden|deleted|blocked|moderated)/i;
+    const BLIND_NOTICE_WORD_RE =
+        /\s*(?:처리된|처리|되었습니다|됩니다|입니다|됨|된|메시지|채팅|message|chat|글|내용|원문 없음|no text|unavailable)/iy;
 
     const CLIENT_TEXT_ATTR_RE = /message|content|text|body|comment|original/i;
 
@@ -492,10 +494,10 @@
         if (!(authorEl instanceof Element)) return [];
         const badges = [];
         for (const img of authorEl.querySelectorAll("img")) {
-            const src = getAttr(img, "src");
-            if (!/^https:\/\//.test(src) || img.closest(ROLE_POPUP_SELECTOR) || isHiddenWithin(img, row, context))
+            const src = root.utils.normalizeChzzkImageUrl(getAttr(img, "src"));
+            if (!src || src.length > 500 || img.closest(ROLE_POPUP_SELECTOR) || isHiddenWithin(img, row, context))
                 continue;
-            badges.push({ src: src.slice(0, 500), alt: normSpace(getAttr(img, "alt")).slice(0, 80) });
+            badges.push({ src, alt: normSpace(getAttr(img, "alt")).slice(0, 80) });
             if (badges.length === 8) break;
         }
         return badges;
@@ -612,11 +614,13 @@
     function isBlindNoticeText(text) {
         const normalized = normSpace(text);
         if (!normalized) return false;
-        return (
-            SERVICE_BLIND_NOTICE_RE.test(normalized) ||
-            GENERIC_BLIND_TEXT_RE.test(normalized) ||
-            normalized === PLACEHOLDER_TEXT
-        );
+        if (SERVICE_BLIND_NOTICE_RE.test(normalized) || normalized === PLACEHOLDER_TEXT) return true;
+        const prefix = BLIND_NOTICE_PREFIX_RE.exec(normalized);
+        if (!prefix) return false;
+        let end = prefix[0].length;
+        BLIND_NOTICE_WORD_RE.lastIndex = end;
+        while (BLIND_NOTICE_WORD_RE.test(normalized)) end = BLIND_NOTICE_WORD_RE.lastIndex;
+        return /^[\]\s.:：-]*$/.test(normalized.slice(end));
     }
 
     function isRoleOnlyText(text) {
@@ -938,8 +942,8 @@
     function getRoleBadgeSrc(row, context = null) {
         for (const el of getRoleSignalElements(row, context)) {
             if (el.tagName !== "IMG" || !isRoleOnlyText(getAttr(el, "alt"))) continue;
-            const src = getAttr(el, "src");
-            if (/^https:\/\//.test(src)) return src.slice(0, 500);
+            const src = root.utils.normalizeChzzkImageUrl(getAttr(el, "src"));
+            if (src && src.length <= 500) return src;
         }
         return "";
     }

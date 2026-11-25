@@ -19,6 +19,7 @@
         view: viewModule,
     } = root.vodComments;
     const {
+        COMMENT_PHOTO_VIEWER_SELECTOR,
         bindFeatureOptions,
         fetchChzzkCommentPage,
         getMainVideoElement,
@@ -29,6 +30,9 @@
     } = root.utils;
 
     const MOUNT_SYNC_DELAY_MS = 80;
+    // CHZZK's window keydown handler maps these unmodified English and Korean keys to VOD playback,
+    // mute, fullscreen, wide mode and captions even when the photo viewer owns focus.
+    const PHOTO_VIEWER_PLAYER_KEYS = new Set([" ", "k", "ㅏ", "m", "ㅡ", "f", "ㄹ", "t", "ㅅ", "c", "ㅊ"]);
     const MOUNT_GAP_GRACE_MS = 600;
     const COMMENT_ONLY_ASIDE_ID = "cheese-spanner-vod-comment-aside";
     const FOLDED_CHAT_CONTROL = '[class*="_folded_button_"]';
@@ -64,7 +68,7 @@
     let commentOnlyVideoMoreColumn = null;
     let nativeChatShellSeen = false;
     let previousVideoChatLog = null;
-    let fullscreenListenerInstalled = false;
+    let documentListenersInstalled = false;
 
     const commentRepository = repositoryModule.createCommentRepository({
         fetchPage: fetchChzzkCommentPage,
@@ -75,16 +79,20 @@
     });
     commentRepository.setVideo(currentVideoNo);
 
+    const apiAvatarUrls = new WeakMap();
     const nativeAdapter = nativeAdapterModule.createNativeAdapter({
+        apiAvatarUrls,
         onMeasurements(measurements) {
             commentView?.applyNativeMeasurements(measurements);
         },
     });
 
     commentView = viewModule.createCommentView({
+        apiAvatarUrls,
         injectStyleOnce,
         onLoadMore: (focusRequest) => loadMoreComments(focusRequest),
         onNativeAction: (control, action) => nativeAdapter.forwardAction(control, action),
+        onOpenNativePhoto: (trigger, photos, index) => nativeAdapter.forwardPhoto(trigger, photos, index),
         onOrderChange: (order, focusRequest) => changeOrder(order, focusRequest),
         onRefresh: (focusRequest) => refreshComments(focusRequest),
         onRendered: () => nativeAdapter.syncAll(),
@@ -573,16 +581,28 @@ ${player} ${foldedHeader} .header_info:is(:hover, :focus-within) { opacity:1; }
         scheduleEnsureMounted({ immediate: true });
     }
 
-    function installFullscreenListener() {
-        if (fullscreenListenerInstalled) return;
-        document.addEventListener("fullscreenchange", handleFullscreenChange, true);
-        fullscreenListenerInstalled = true;
+    function stopPhotoViewerPlayerKey(event) {
+        if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        if (!PHOTO_VIEWER_PLAYER_KEYS.has(event.key?.toLowerCase())) return;
+        const target = event.composedPath()[0] || event.target;
+        if (target instanceof Element && target.closest(COMMENT_PHOTO_VIEWER_SELECTOR)) event.stopPropagation();
     }
 
-    function disconnectFullscreenListener() {
-        if (!fullscreenListenerInstalled) return;
+    function installDocumentListeners() {
+        if (documentListenersInstalled) return;
+        document.addEventListener("fullscreenchange", handleFullscreenChange, true);
+        // Bubble after the viewer has handled its keys. Keeping their defaults lets Space activate a focused button.
+        document.addEventListener("keydown", stopPhotoViewerPlayerKey);
+        document.addEventListener("keyup", stopPhotoViewerPlayerKey);
+        documentListenersInstalled = true;
+    }
+
+    function disconnectDocumentListeners() {
+        if (!documentListenersInstalled) return;
         document.removeEventListener("fullscreenchange", handleFullscreenChange, true);
-        fullscreenListenerInstalled = false;
+        document.removeEventListener("keydown", stopPhotoViewerPlayerKey);
+        document.removeEventListener("keyup", stopPhotoViewerPlayerKey);
+        documentListenersInstalled = false;
     }
 
     function installRuntime() {
@@ -596,7 +616,7 @@ ${player} ${foldedHeader} .header_info:is(:hover, :focus-within) { opacity:1; }
         currentVideoNo = getVodVideoNoFromPath();
         commentRepository.setVideo(currentVideoNo);
         activeOrder = commentRepository.getOrder();
-        installFullscreenListener();
+        installDocumentListeners();
         installBodyObserver();
         scheduleEnsureMounted({ immediate: true });
     }
@@ -604,7 +624,7 @@ ${player} ${foldedHeader} .header_info:is(:hover, :focus-within) { opacity:1; }
     function uninstallRuntime() {
         if (!runtimeInstalled) return;
         runtimeInstalled = false;
-        disconnectFullscreenListener();
+        disconnectDocumentListeners();
         disconnectBodyObserver();
         teardownMount();
         commentRepository.reset({ order: model.DEFAULT_ORDER, videoNo: "" });
@@ -621,10 +641,10 @@ ${player} ${foldedHeader} .header_info:is(:hover, :focus-within) { opacity:1; }
         const videoNo = getVodVideoNoFromPath();
         if (videoNo === currentVideoNo) {
             if (isFeatureEnabled() && videoNo) {
-                installFullscreenListener();
+                installDocumentListeners();
                 installBodyObserver();
             } else {
-                disconnectFullscreenListener();
+                disconnectDocumentListeners();
             }
             return;
         }
@@ -640,11 +660,11 @@ ${player} ${foldedHeader} .header_info:is(:hover, :focus-within) { opacity:1; }
         commentView.setActiveOrder(activeOrder);
         commentView.setSelectedTab(selectedTab);
         if (isFeatureEnabled() && videoNo) {
-            installFullscreenListener();
+            installDocumentListeners();
             installBodyObserver();
             scheduleEnsureMounted();
         } else {
-            disconnectFullscreenListener();
+            disconnectDocumentListeners();
             disconnectBodyObserver();
         }
     }

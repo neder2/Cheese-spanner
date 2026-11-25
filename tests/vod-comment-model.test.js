@@ -190,11 +190,11 @@ test("long comment collapsing never splits a UTF-16 surrogate pair", (t) => {
     t.after(() => fixture.dom.window.close());
     const { getCollapsedCommentText } = fixture.model;
 
-    const collapsed = getCollapsedCommentText(`${"a".repeat(419)}${"😀".repeat(5)}`);
-    assert.equal(collapsed, `${"a".repeat(419)}…`);
+    const collapsed = getCollapsedCommentText(`${"a".repeat(249)}${"😀".repeat(5)}`);
+    assert.equal(collapsed, `${"a".repeat(249)}...`);
     assert.equal(collapsed.isWellFormed(), true);
-    const aligned = getCollapsedCommentText(`${"a".repeat(418)}${"😀".repeat(5)}`);
-    assert.equal(aligned, `${"a".repeat(418)}😀…`);
+    const aligned = getCollapsedCommentText(`${"a".repeat(248)}${"😀".repeat(5)}`);
+    assert.equal(aligned, `${"a".repeat(248)}😀...`);
     assert.equal(aligned.isWellFormed(), true);
 });
 
@@ -223,25 +223,25 @@ test("reply sources normalize, deduplicate by commentId, and report the cap", (t
     assert.deepEqual(row, before);
 });
 
-test("long comment collapsing keeps exact boundaries and line limits", (t) => {
+test("long comment previews preserve the first 250 UTF-16 units including whitespace and line breaks", (t) => {
     const fixture = createModelFixture();
     t.after(() => fixture.dom.window.close());
     const { getCollapsedCommentText } = fixture.model;
 
-    assert.equal(getCollapsedCommentText("가".repeat(420)), "");
-    assert.equal(getCollapsedCommentText("가".repeat(421)), `${"가".repeat(420)}…`);
+    assert.equal(getCollapsedCommentText("가".repeat(250)), "");
+    assert.equal(getCollapsedCommentText("가".repeat(251)), `${"가".repeat(250)}...`);
+    const prefix = "가".repeat(240) + "\n".repeat(9) + " ";
+    assert.equal(getCollapsedCommentText(prefix + "끝"), prefix + "...");
     const lines = Array.from({ length: 13 }, (_, index) => `줄 ${index + 1}`).join("\n");
-    const collapsed = getCollapsedCommentText(lines);
-    assert.match(collapsed, /줄 12…$/);
-    assert.doesNotMatch(collapsed, /줄 13/);
+    assert.equal(getCollapsedCommentText(lines), "");
 });
 
-test("image and attachment normalization accepts web URLs and drops unsafe data", (t) => {
+test("image and attachment normalization accepts trusted image URLs and drops unsafe data", (t) => {
     const fixture = createModelFixture();
     t.after(() => fixture.dom.window.close());
     const comment = {
         attaches: [
-            { attachType: "PHOTO", attachValue: "https://example.com/photo.jpg" },
+            { attachType: "PHOTO", attachValue: "https://nng-phinf.pstatic.net/photo.jpg" },
             { attachType: "STICKER", attachValue: "/sticker.png" },
             { attachType: "EMOTICON", attachValue: "http://example.com/emote.png" },
             { attachType: "PHOTO", attachValue: "javascript:alert(1)" },
@@ -251,6 +251,14 @@ test("image and attachment normalization accepts web URLs and drops unsafe data"
     };
     const before = JSON.parse(JSON.stringify(comment));
 
+    for (const address of [
+        "https://example.com/a.png",
+        "http://pstatic.net/a.png",
+        "https://user@pstatic.net/a.png",
+        "https://pstatic.net:8080/a.png",
+    ]) {
+        assert.equal(fixture.model.normalizeImageUrl(address), "");
+    }
     assert.equal(fixture.model.normalizeImageUrl("javascript:alert(1)"), "");
     assert.equal(fixture.model.normalizeImageUrl("data:image/png;base64,abc"), "");
     assert.equal(
@@ -260,10 +268,32 @@ test("image and attachment normalization accepts web URLs and drops unsafe data"
     assert.deepEqual(
         Array.from(fixture.model.normalizeAttachments(comment), ({ src, type }) => ({ src, type })),
         [
-            { src: "https://example.com/photo.jpg", type: "PHOTO" },
+            { src: "https://nng-phinf.pstatic.net/photo.jpg", type: "PHOTO" },
             { src: "https://chzzk.naver.com/sticker.png", type: "STICKER" },
-            { src: "http://example.com/emote.png", type: "EMOTICON" },
         ]
     );
     assert.deepEqual(comment, before);
+});
+
+test("photo previews keep trusted originals separate and accept only usable dimensions", (t) => {
+    const fixture = createModelFixture();
+    t.after(() => fixture.dom.window.close());
+    const { getPhotoThumbnailUrl, normalizeAttachments } = fixture.model;
+    const src = "https://nng-phinf.pstatic.net/photo.jpg?type=original";
+    const photo = (extraJson) => ({ attachType: "PHOTO", attachValue: src, extraJson });
+    const items = normalizeAttachments({
+        attaches: [photo('{"width":800,"height":594},'), photo("{"), photo({ width: -1, height: 25 })],
+    });
+    assert.deepEqual(
+        Array.from(items, ({ src: original, width, height }) => [original, width, height]),
+        [
+            [src, 800, 594],
+            [src, undefined, undefined],
+            [src, undefined, undefined],
+        ]
+    );
+    assert.equal(getPhotoThumbnailUrl(src), "https://nng-phinf.pstatic.net/photo.jpg?type=w375");
+    const other = "https://other.pstatic.net/photo.jpg?type=original";
+    assert.equal(getPhotoThumbnailUrl(other), other);
+    assert.equal(getPhotoThumbnailUrl("https://nng-phinf.pstatic.net.invalid/photo.jpg"), "");
 });

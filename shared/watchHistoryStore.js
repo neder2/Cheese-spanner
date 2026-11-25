@@ -165,9 +165,9 @@
         };
     }
 
-    function normalizeTitleHistory(value, channelName = "") {
+    function normalizeTitleHistory(value, channelName = "", now = Date.now()) {
         if (typeof utils.normalizeTitleHistory === "function") {
-            return utils.normalizeTitleHistory(value, channelName, TITLE_HISTORY_MAX);
+            return utils.normalizeTitleHistory(value, channelName, TITLE_HISTORY_MAX, now);
         }
         return (Array.isArray(value) ? value : [])
             .slice(-200)
@@ -200,7 +200,7 @@
             .slice(-TITLE_HISTORY_MAX);
     }
 
-    function normalizeEntryPatch(value = {}) {
+    function normalizeEntryPatch(value = {}, now) {
         const source = value && typeof value === "object" ? value : {};
         const channelId = normalizeChannelId(source.channelId);
         return {
@@ -208,12 +208,21 @@
             liveId: compactString(source.liveId, 240),
             title: compactString(source.title, 500),
             channelName: compactString(source.channelName, 240),
-            thumbnailUrl: compactString(source.thumbnailUrl),
+            thumbnailUrl: utils.normalizeHistoryThumbnailUrl(source.thumbnailUrl),
             liveOpenDate: compactString(source.liveOpenDate, 240),
             liveUrl: normalizeEntryLiveUrl(source, channelId),
-            firstWatchedAt: Math.max(0, Math.round(finiteNumber(source.firstWatchedAt))),
-            lastWatchedAt: Math.max(0, Math.round(finiteNumber(source.lastWatchedAt))),
-            titleHistory: normalizeTitleHistory(source.titleHistory, source.channelName),
+            firstWatchedAt: utils.normalizeWatchMetadataTime(source.firstWatchedAt, now),
+            lastWatchedAt: utils.normalizeWatchMetadataTime(source.lastWatchedAt, now),
+            titleHistory: normalizeTitleHistory(
+                source.titleHistory,
+                source.channelName,
+                Number.isFinite(now) ? now : Date.now()
+            ).map((row) => {
+                const firstSeenAt = utils.normalizeWatchMetadataTime(row.firstSeenAt, now);
+                const lastSeenAt = utils.normalizeWatchMetadataTime(row.lastSeenAt, now);
+                const seenAt = firstSeenAt || lastSeenAt || (Number.isFinite(now) ? now : Date.now());
+                return { ...row, firstSeenAt: seenAt, lastSeenAt: Math.max(seenAt, lastSeenAt) };
+            }),
         };
     }
 
@@ -352,7 +361,7 @@
             return {
                 kind,
                 recordId: normalizeRecordId(value.recordId),
-                entry: normalizeEntryPatch(value.entry),
+                entry: normalizeEntryPatch(value.entry, now),
                 session: normalizeSessionSnapshot(value.session, now),
                 activities,
             };
@@ -367,8 +376,8 @@
             return { kind, sourceRecordId, targetRecordId };
         }
         if (kind === "setReplayVideoNo") {
-            const videoNo = compactString(value.videoNo, 120);
-            if (!videoNo) throw new Error("replay video number is required");
+            const videoNo = String(value.videoNo ?? "").trim();
+            if (!/^[1-9]\d{0,14}$/.test(videoNo)) throw new Error("replay video number is required");
             return { kind, recordId: normalizeRecordId(value.recordId), videoNo };
         }
         if (kind === "deleteEntries") {
@@ -1002,6 +1011,13 @@
         const requestedRecordId = operation.recordId;
         const resolvedRecordId = resolveRecordId(history, operation.recordId);
         if (resolvedRecordId !== operation.recordId) operation = { ...operation, recordId: resolvedRecordId };
+        if (
+            requestedRecordId !== resolvedRecordId &&
+            /^[A-Za-z0-9_-]+$/.test(operation.entry.liveId) &&
+            `live:${operation.entry.liveId}` !== resolvedRecordId
+        ) {
+            return { changed: false, result: { status: "ignored", reason: "conflicting-alias" } };
+        }
         const barrier = Math.max(
             history.clearedAt,
             finiteNumber(history.compactedSessionBarrierAt),
@@ -1014,6 +1030,14 @@
         }
 
         const previousEntry = history.entries[operation.recordId] || null;
+        const suppliedChannel = operation.entry.channelId;
+        if (
+            suppliedChannel &&
+            ((previousEntry?.channelId && previousEntry.channelId !== suppliedChannel) ||
+                (requestedRecordId.startsWith("channel:") && requestedRecordId.split(":")[1] !== suppliedChannel))
+        ) {
+            return { changed: false, result: { status: "ignored", reason: "channel-mismatch" } };
+        }
         const before = JSON.stringify(previousEntry);
         const entry = previousEntry
             ? {
@@ -1233,12 +1257,27 @@
             const invalidCanonicalTarget = !targetRecordId.startsWith("live:");
             const conflictsWithExistingAlias =
                 resolvedSourceRecordId !== sourceRecordId && resolvedSourceRecordId !== targetRecordId;
-            if (invalidCanonicalTarget || conflictsWithExistingAlias) {
+            const sourceChannel = sourceRecordId.split(":")[1];
+            const channelMismatch = [history.entries[sourceRecordId], history.entries[targetRecordId]].some(
+                (entry) => entry?.channelId && entry.channelId !== sourceChannel
+            );
+            // A deleted provisional entry still needs its existing tombstone linked to late snapshots.
+            const missingSource =
+                resolvedSourceRecordId === sourceRecordId &&
+                !history.entries[sourceRecordId] &&
+                !history.tombstones[sourceRecordId];
+            if (invalidCanonicalTarget || conflictsWithExistingAlias || channelMismatch || missingSource) {
                 outcome = {
                     changed: false,
                     result: {
                         status: "ignored",
-                        reason: invalidCanonicalTarget ? "invalid-target-alias" : "conflicting-alias",
+                        reason: invalidCanonicalTarget
+                            ? "invalid-target-alias"
+                            : conflictsWithExistingAlias
+                              ? "conflicting-alias"
+                              : channelMismatch
+                                ? "channel-mismatch"
+                                : "missing-source",
                         sourceRecordId,
                         recordId: resolvedSourceRecordId,
                     },

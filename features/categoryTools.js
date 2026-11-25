@@ -95,6 +95,7 @@
     let listFiltersNeedRestore = true;
     let searchTermsCache = { query: null, terms: null };
     let observer = null;
+    let themeObserver = null;
     let applying = false;
     let applyQueued = false;
     let applyGeneration = 0;
@@ -584,7 +585,7 @@
     }
 
     function handleCategoryAddKeydown(view, event) {
-        if (event.key !== "Enter") return;
+        if (event.key !== "Enter" || !event.isTrusted) return;
         if (event.isComposing || event.keyCode === 229 || view.composing) {
             // 한글 조합을 확정하는 Enter는 태그 추가로 쓰지 않는다. 확정 뒤 한 번 더 누르면 추가된다.
             view.compositionEnter = true;
@@ -593,7 +594,6 @@
         event.preventDefault();
         event.stopPropagation();
         if (
-            !event.isTrusted ||
             event.currentTarget !== view.input ||
             event.repeat ||
             view.compositionEnter ||
@@ -601,7 +601,7 @@
             !categoryState
         )
             return;
-        const typed = view.input.value;
+        const typed = view.typed;
         const category = createTagExclusion(typed);
         if (!category) {
             view.searchStatus = typed.trim() ? "tag-invalid" : "idle";
@@ -623,8 +623,9 @@
             { kind: "add", category },
             {
                 onSuccess() {
-                    if (!isCurrentCategoryAdd(view) || view.input.value !== typed) return;
+                    if (!isCurrentCategoryAdd(view) || view.typed !== typed) return;
                     view.input.value = "";
+                    view.typed = "";
                     view.addedTag = category.categoryValue;
                     view.searchStatus = "tag-added";
                 },
@@ -663,7 +664,7 @@
     function scheduleCategoryAddSearch(view) {
         cancelCategoryAddSearch();
         view.results = [];
-        const keyword = view.input.value.trim();
+        const keyword = view.typed.trim();
         view.searchStatus = keyword ? "typing" : "idle";
         if (keyword.length > 100) view.searchStatus = "long";
         syncCategoryAdd();
@@ -679,7 +680,7 @@
         if (
             !isCurrentCategoryAdd(view) ||
             view.composing ||
-            view.input.value.trim() !== keyword ||
+            view.typed.trim() !== keyword ||
             generation !== categorySearchGeneration
         )
             return;
@@ -692,7 +693,7 @@
             !controller.signal.aborted &&
             isCurrentCategoryAdd(view) &&
             !view.composing &&
-            view.input.value.trim() === keyword;
+            view.typed.trim() === keyword;
         try {
             const results = await dataRepository.searchCategories(keyword, { signal: controller.signal });
             if (!isCurrent()) return;
@@ -924,17 +925,25 @@
             composing: false,
             compositionEnter: false,
             addedTag: "",
+            typed: "",
             timer: 0,
             controller: null,
             searchStatus: "idle",
         };
         categoryAddView = view;
-        view.input.addEventListener("input", () => scheduleCategoryAddSearch(view));
-        view.input.addEventListener("compositionstart", () => {
+        view.input.addEventListener("input", (event) => {
+            if (!event.isTrusted) return;
+            view.typed = view.input.value;
+            scheduleCategoryAddSearch(view);
+        });
+        view.input.addEventListener("compositionstart", (event) => {
+            if (!event.isTrusted) return;
             view.composing = true;
             scheduleCategoryAddSearch(view);
         });
-        view.input.addEventListener("compositionend", () => {
+        view.input.addEventListener("compositionend", (event) => {
+            if (!event.isTrusted) return;
+            view.typed = view.input.value;
             view.composing = false;
             scheduleCategoryAddSearch(view);
         });
@@ -962,6 +971,7 @@
         if (!view) return;
         view.menu.setAttribute("data-open", "0");
         view.results = [];
+        view.typed = "";
         view.input.value = "";
         view.searchStatus = "idle";
         view.composing = false;
@@ -1488,7 +1498,7 @@
   background:var(--bcgt-menu-bg);
   color:var(--bcgt-menu-text);
   box-shadow:var(--bct-shadow);
-  font-family:inherit;
+  font-family:var(--bct-font);
   font-size:13px;
   line-height:16px;
   overflow-y:auto;
@@ -1498,7 +1508,7 @@
 }
 #${MENU_ID}[data-open="1"], #${CATEGORY_ADD_ID}[data-open="1"]{display:block;}
 /* 카테고리 제외의 추가 메뉴와 선택 목록은 패키지에 포함한 공통 글꼴을 쓴다. */
-#${CATEGORY_ADD_ID}{width:400px;box-sizing:border-box;font-family:var(--bct-font);}
+#${CATEGORY_ADD_ID}{width:400px;box-sizing:border-box;}
 #${MENU_ID} .bcgt-filter-groups{
   display:flex;
   flex-direction:column;
@@ -2303,7 +2313,6 @@
 
         const menu = document.getElementById(MENU_ID);
         if (menu) {
-            setStyleIfChanged(menu.style, "font-family", fontStyle.fontFamily);
             setStyleIfChanged(menu.style, "font-size", "13px");
             setStyleIfChanged(menu.style, "line-height", "16px");
         }
@@ -3088,9 +3097,12 @@
     }
 
     function contentHref(route, meta) {
-        if (route.tab === "lives") return `/live/${meta.channelId || meta.id}`;
-        if (route.tab === "clips") return `/clips/${meta.id}`;
-        return `/video/${meta.id}`;
+        if (route.tab === "lives") {
+            const id = meta.channelId || meta.id;
+            return /^[\w-]{1,100}$/.test(id) ? `/live/${id}` : "";
+        }
+        if (route.tab === "clips") return /^[\w-]{1,100}$/.test(meta.id) ? `/clips/${meta.id}` : "";
+        return /^[1-9]\d{0,14}$/.test(meta.id) ? `/video/${meta.id}` : "";
     }
 
     function normalizeImageUrl(url) {
@@ -4055,7 +4067,7 @@
         let builtCount = 0;
 
         for (const meta of metadata.values()) {
-            if (!meta.id || renderedIds.has(meta.id)) continue;
+            if (!meta.id || renderedIds.has(meta.id) || !contentHref(route, meta)) continue;
             if (!passesMetaFilters(meta, terms)) continue;
             if (existingCount + builtCount >= injectedRenderLimit) {
                 pendingInjectedRender = true;
@@ -5537,6 +5549,11 @@
 
     function startObserver() {
         if (observer) return;
+        themeObserver = new MutationObserver(() => {
+            const bar = document.getElementById(BAR_ID);
+            if (bar?.parentElement) syncFontWithHostUi(bar, bar.parentElement);
+        });
+        themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
         observer = createMutationObserverSync({
             target: () => document.body || document.documentElement,
             options: {
@@ -5597,6 +5614,8 @@
 
     function stopObserver() {
         if (!observer) return;
+        themeObserver?.disconnect();
+        themeObserver = null;
         observer.disconnectAll?.();
         observer.disconnect();
         observer = null;

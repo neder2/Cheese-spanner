@@ -620,6 +620,11 @@ function hold(dom, clock, target, options = {}) {
     return dragEvent(dom, "dragover", target, options);
 }
 
+function userBlur(dom, input) {
+    trustedKey(dom, input, "Tab");
+    input.blur();
+}
+
 function storedState(chrome) {
     return clone(chrome.testState.data[KEY]);
 }
@@ -749,7 +754,8 @@ test("folder menus and the drag card use the shared theme and Pretendard while s
     await waitForCondition(() => header(document, "폴더 밖 채널"));
     const style = document.getElementById("cheese-spanner-following-folders-style");
     assertUsesSharedTheme(assert, window, style, "following folders");
-    assert.deepEqual([...new Set(colorLiterals(style.textContent))], ["#ff4545"], "only the fixed live dot remains");
+    assert.deepEqual(colorLiterals(style.textContent), [], "all palette values including live dots use shared tokens");
+    assert.match(style.textContent, /var\(--bct-status-live\)/);
     // Small text avoids the low-contrast dim and base brand colors; dim stays on icons and disabled items.
     assert.doesNotMatch(style.textContent, /--bct-brand-text-base/);
     for (const { selector, declarations } of cssBlocks(style.textContent)) {
@@ -1058,12 +1064,18 @@ for (const scenario of [
             assert.equal(store.calls.length, 0);
             assert.equal(renameInput(document), input);
         } else if (scenario.trusted) typeText(dom, input, scenario.trusted);
+        if (scenario.trusted && !scenario.composing) {
+            input.blur();
+            await settle();
+            assert.equal(store.calls.length, 0, "a programmatic blur alone cannot save an unfinished name");
+            input.focus();
+        }
         if (scenario.input) {
             input.value = scenario.input;
             if (!scenario.valueOnly)
                 input.dispatchEvent(new dom.window.InputEvent("input", { bubbles: true, inputType: "insertText" }));
         }
-        if (scenario.submit === "blur") input.blur();
+        if (scenario.submit === "blur") userBlur(dom, input);
         else trustedKey(dom, input, scenario.submit);
         await waitForCondition(() => !renameInput(document));
         assert.equal(storedState(chrome).folders[0].name, scenario.expected);
@@ -1104,13 +1116,13 @@ test("arrow clicks and keyboard collapse at once, name clicks wait for a possibl
     trustedKey(dom, nameButton(document, "토크"), "F2");
     await waitForCondition(() => renameInput(document));
     typeText(dom, renameInput(document), "잡담");
-    renameInput(document).blur();
+    userBlur(dom, renameInput(document));
     await waitForCondition(() => storedState(chrome).folders[1].name === "잡담");
 
     trustedKey(dom, nameButton(document, "잡담"), "F2");
     await waitForCondition(() => renameInput(document));
     typeText(dom, renameInput(document), "   ");
-    renameInput(document).blur();
+    userBlur(dom, renameInput(document));
     await waitForCondition(() => !renameInput(document));
     assert.equal(storedState(chrome).folders[1].name, "잡담", "an empty name on blur keeps the old name");
 });
@@ -2909,7 +2921,7 @@ test("an open name field the user did not edit leaves a name another tab changed
     chrome.testState.writeOtherTab({ [KEY]: stateOf(folder("games", "게임2", [C])) });
     await settle();
     assert.ok(renameInput(document), "the field stays open");
-    renameInput(document).blur();
+    userBlur(dom, renameInput(document));
     await waitForCondition(() => !renameInput(document));
     await settle();
     assert.equal(storedState(chrome).folders[0].name, "게임2", "blur keeps the other tab's name");

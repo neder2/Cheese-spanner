@@ -692,7 +692,7 @@
   width:2px;
   height:2px;
   border-radius:50%;
-  background-color:var(--sem-color-content-neutral-cool-weaker, var(--bct-text-dim));
+  background-color:var(--bct-text-dim);
 }
 #${TITLE_HISTORY_WRAP_ID}{
   position:relative;
@@ -749,7 +749,7 @@
 #${TITLE_HISTORY_BUTTON_ID}[aria-expanded="true"]{
   color:var(--bct-brand-text);
   background-color:var(--bct-brand-weak);
-  border-color:color-mix(in srgb,var(--bct-brand-text) 40%,transparent);
+  border-color:var(--bct-brand-border);
 }
 #${TITLE_HISTORY_BUTTON_ID}[aria-expanded="true"] .bcbc-title-history-chevron{
   margin-top:3px;

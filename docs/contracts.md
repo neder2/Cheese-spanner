@@ -210,14 +210,16 @@ MAIN에서는 `#player_layout.chzzk_player.type_vod`에 속한 원본 플레이�
 
 - 요청: `{type:"cheese-spanner:settings-store",version:1,area:"sync"|"local",values,expected?}`. 최상위 필드는 이 다섯 개만 허용해요. `values`는 1~8개 키예요.
 - 발신자: 같은 확장 ID, 음이 아닌 정수 `tab.id`, `frameId` 0, `sender.url`의 출처가 정확한 `https://chzzk.naver.com`(자격 증명 없음).
-- 허용 키: sync는 `betterchzzkPinnedFollowingChannelIds`(최대 64개, 중복 없는 채널 ID), `betterchzzk:following-folders:v1`(폴더 모델 `parseState` 통과), `skipSeconds`·`ambientIntensity`·`followingPreviewSoundEnabled`·`videoRecorderFolder`·`chatKeywordFilterEnabled`·`chatKeywordFilterWords`·`chatKeywordFilterApplyMode`·`chatKeywordFilterMatchMode`·`chatKeywordFilterExactWords`(옵션 정규화와 같은 값). local은 세 패널 크기 키, `betterchzzk:chat-multiview:v1`(채팅 멀티뷰 모델 `parseConfig` 통과), `betterChzzkMultiviewDelay:{32자리}`(`{version:1,delaySeconds}` 또는 `{version:2,basis:"live-edge-clock",delaySeconds}`), `betterChzzkMultiviewQuality:{32자리}`(0~8640 정수). 그 밖의 키는 `key-not-allowed`예요.
+- 허용 키: sync는 `betterchzzkPinnedFollowingChannelIds`(최대 64개, 중복 없는 채널 ID), `betterchzzk:following-folders:v1`(폴더 모델 `parseState` 통과), `skipSeconds`·`ambientIntensity`·`followingPreviewSoundEnabled`·`chatKeywordFilterEnabled`·`chatKeywordFilterWords`·`chatKeywordFilterApplyMode`·`chatKeywordFilterMatchMode`·`chatKeywordFilterExactWords`(옵션 정규화와 같은 값). local은 팔로잉 목록 펼침 선택 `betterchzzk:following-list-state`, 세 패널 크기 키, `betterchzzk:chat-multiview:v1`(채팅 멀티뷰 모델 `parseConfig` 통과), `betterChzzkMultiviewDelay:{32자리}`(`{version:1,delaySeconds}` 또는 `{version:2,basis:"live-edge-clock",delaySeconds}`), `betterChzzkMultiviewQuality:{32자리}`(0~8640 정수). 그 밖의 키는 `key-not-allowed`예요.
 - 채팅 문구 조건: `chatKeywordFilterApplyMode`는 `all`(기본)·`individual`, `chatKeywordFilterMatchMode`는 `contains`(기본)·`exact`예요. `chatKeywordFilterExactWords`는 개별 조건에서 완전 일치로 비교할 문구 목록이며 기본 빈 문자열이에요. 나머지는 포함이고 전체 적용 중에도 개별 목록을 보존해요. 문구 두 목록 모두 기존 최대 50개·100자·2,000자 검증을 따르며 기존 설정 백업에 포함돼요. 메뉴는 다섯 키의 raw 기대값을 함께 보내고, 옵션 화면의 문구·개별 조건 편집은 두 키를 함께 소유해요.
 - `expected`: `{키: {value}|{absent:true}}`. 잠금 안에서 최신 값을 읽어 다르면 쓰지 않고 `{ok:false,error:"conflict",current}`로 응답해요.
-- 응답: `{ok:true}` 또는 `{ok:false,error}`. 오류는 `untrusted-sender`, `invalid-request`, `key-not-allowed`, `invalid-value`, `conflict`, `storage-read-failed`, `storage-write-failed`, `unexpected-error`이고 클라이언트는 응답이 없으면 `unavailable`로 reject해요.
+- 응답: `{ok:true}` 또는 `{ok:false,error}`. 오류는 `untrusted-sender`, `invalid-request`, `key-not-allowed`, `invalid-value`, `conflict`, `multiview-limit`, `storage-read-failed`, `storage-write-failed`, `unexpected-error`이고 클라이언트는 응답이 없으면 `unavailable`로 reject해요.
 - 순서: 워커 안에서 도착 순서대로 처리한 뒤 잠금을 얻어요. 시청 기록·카테고리 제외·새 기능 안내 큐와 분리돼요.
 - 고정 채널 목록: 사이드바는 마지막으로 읽은 원본 값을 `expected`로 보내고, `conflict`면 `current`에 이번 고정·해제 한 건만 다시 얹어 최대 3회 다시 보내요. 실패하면 그 조작만 화면에서 빼고 `chrome.storage`에 직접 쓰지 않아요.
 - 옵션 페이지 저장: 클릭 시점에 이 화면이 소유한 키(직접 조작한 컨트롤과 기준값과 다른 키, 배속 단축키 3개는 묶음)를 정하고, 잠금 안에서 최신 값을 다시 읽은 뒤 그 키만 써요. 저장 기록에 없던 키는 현재 실효값으로 함께 써요. 건드리지 않은 키는 다른 곳의 최신 값을 유지하고 `storage.onChanged`로 폼과 기준값을 갱신해요. 같은 키가 다른 곳에서도 바뀌었으면 이 화면에서 고른 값을 저장하고 저장 메시지로 알려요. 저장이 실패하면 기준값을 바꾸지 않아요.
 - 방송 알림 대상(`betterchzzk:live-start-channels`)은 방송 큐의 순서를 유지하면서 읽기-수정-쓰기 구간만 같은 잠금 안에서 해요. 채널 정보 조회는 잠금 밖에서 먼저 해요.
+
+팔로잉 목록 펼침은 워커가 잠금 안에서 바뀐 항목만 기존 값에 합쳐요. 멀티뷰의 채널별 화질과 딜레이는 각각 최대 4,000개까지 저장해요. 한도에서 기존 채널 값은 갱신할 수 있고 새 키를 더하는 설정 요청과 파일 가져오기는 쓰기 전에 거부해요.
 
 ## 설정 파일
 
@@ -290,7 +292,7 @@ isolated는 현재 메인 video의 `data-bcsi-request`에 `{version:1, requestId
 
 trackId는 확인된 문자열 또는 null, 크기는 유효한 양수 숫자 또는 null, onLive는 확인한 boolean 또는 null이에요. sourceToken은 메인·provider·소스를 구분하는 페이지 내 임시 문자열이며 원격 미디어 URL이나 React 객체를 넘기지 않아요. unavailable에서는 mode가 unknown이고 나머지 트랙·소스·크기·onLive는 모두 null이에요. 읽는 동안 소유권이 바뀌면 player-changed로 처리하고, 같은 pane을 공유해도 서로 다른 소유 플레이어가 있으면 모호한 결과예요.
 
-메인 다시보기에는 선택적 `qualityFallback`을 반환해요. 자동 화질 목표가 480p일 때 트랙 목록의 모든 항목과 수동 트랙의 높이를 확인해요. 선택 가능한 480p가 없고 그 아래 최선의 트랙을 재생 중일 때 그 높이를 반환해요. 스트림 정보는 실제 재생 높이와 일치할 때 480p 미제공 사유를 표시해요. 이 읽기 자체는 화질을 바꾸지 않아요.
+메인 다시보기에서 현재 영상과 플레이어의 소유 관계가 확인되면 `candidateHeights`로 검증된 트랙 높이 목록을 반환해요. 숫자 높이만 중복 없이 내림차순으로 전달해요. 선택적 `qualityFallback`은 다음 조건에서 반환해요. 자동 화질 목표가 480p일 때 트랙 목록의 모든 항목과 수동 트랙의 높이를 확인해요. 선택 가능한 480p가 없고 그 아래 최선의 트랙을 재생 중일 때 그 높이를 반환해요. 스트림 정보는 실제 재생 높이와 일치할 때 480p 미제공 사유를 표시해요. 이 읽기 자체는 화질을 바꾸지 않아요.
 
 isolated는 version·requestId·route·값 형식을 확인한 뒤 두 임시 속성을 지워요. 응답이 없거나 잘못되면 현재 방식은 확인 불가예요. 과거 `data-cheese-spanner-low-latency-result`를 현재 선택의 근거로 사용하지 않아요. 이 조회는 제어 래퍼 설치·선택·재생·seek·배속 변경을 실행하지 않고, 자동 화질 설정이 꺼져도 작동해요. DOM 이벤트에는 확장 저장소·탭·네트워크 같은 특권 명령을 연결하지 않아요.
 
@@ -302,11 +304,9 @@ Chrome runtime이 제공하는 sender 정보를 사용하고 요청 본문의 �
 
 ### 녹화 다운로드와 저장 폴더
 
-플레이어의 **녹화 저장 폴더** 행은 신뢰된 클릭·키보드 동작에서 즉시 `showDirectoryPicker`를 호출해요. 이 선택은 현재 문서의 isolated 메모리에만 남고 워커의 기본 폴더보다 우선해요. 녹화 시작 시 선택을 고정하며 같은 조각 크기·순서·10초 쓰기 제한을 적용해 직접 파일을 쓰고 닫아요. 워커 메시지는 이 직접 저장 경로에 사용하지 않아요. 새로고침 뒤에는 아래 확장 기본 저장 경로를 사용해요.
+플레이어의 **녹화 저장 폴더**는 신뢰된 클릭·키 입력에서 확장 설정의 녹화 항목을 열어요. 사용자가 확장 설정에서 선택한 폴더의 권한을 워커가 확인하고 녹화 파일을 열어요. 파일명은 방향 제어 문자와 Windows 예약 장치명을 거부해요. 동일 이름은 쓰기 잠금 아래 번호를 붙여 구분해요.
 
-같은 출처의 탭은 Web Lock을 공유해 파일명을 차례로 배정해요. 플레이어와 확장 기본 폴더가 같은 실제 디렉터리를 가리킬 수도 있어요. 이때는 각 파일의 배타적 쓰기 잠금과 잠금을 얻은 뒤의 파일 크기를 확인해요. 이미 다른 녹화가 쓰는 중이거나 새 파일을 찾는 사이에 내용이 저장됐으면 다음 번호를 시도해요.
-
-- 요청: `{type:"cheese-spanner:video-recorder",version:1,op,...}`. 같은 확장 ID, `sender.tab`이 있는 최상위 프레임(frameId 0), 정확한 `https://chzzk.naver.com` 출처만 받아요. 그 밖은 `untrusted-sender`, 다른 version은 `unsupported-version`, 다른 op는 `unknown-operation`이에요.
+- 녹화 메시지는 `{type:"cheese-spanner:video-recorder",version:1,op,...}` 형식이에요. 일반 치지직 최상위 문서의 확장 ID·탭 ID·문서 ID·HTTPS 출처를 확인해요. 발신자 거부는 `untrusted-sender`, 버전 불일치는 `unsupported-version`, 미지원 명령은 `unknown-operation`이에요.
 - `status` 응답: `{ok:true,folder,downloads}`. folder는 sync `videoRecorderFolder`를 `normalizeDownloadFolder`로 다시 정규화한 값, downloads는 선택 권한 보유 여부예요.
 - 탐색기로 선택한 폴더가 있으면 `start` 응답은 `{ok:true,id,destination:"directory",folder,fileName}`이에요. `folder`는 표시용 이름이며 절대 경로·핸들은 콘텐츠에 보내지 않아요. 파일 이름은 한국 시간의 녹화 시작일과 현재 방송 상세에서 확인한 제목·스트리머 이름이며, 같은 이름이 있으면 `(1)`부터 번호를 붙여요. 생성은 워커 안에서 직렬화해요. 이 경로는 attachment 탐색 없이 `ready`·`write`·`finish`로 직접 파일을 쓰고 닫아요. 선택을 읽거나 접근하지 못하면 `directory-unavailable`·`directory-permission`, 쓰기·닫기 실패는 실패 응답으로 끝내요. 아래 URL 응답은 다운로드 방식일 때만 사용해요.
 - `folder-settings`는 검증한 치지직 최상위 콘텐츠에서 확장 `options.html#recording-folder` 탭을 열어요. 폴더 선택 자체는 그 옵션 페이지의 사용자 클릭에서 수행해요. `status`는 직접 선택이 있으면 표시용 `directory`와 `directoryGranted`를 추가해요.

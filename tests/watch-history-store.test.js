@@ -1274,6 +1274,12 @@ function createHistoryResolver(fetchImpl) {
     return { dom, resolveReplayVideoNo: dom.window.__historyResolver.resolveReplayVideoNo };
 }
 
+test("history reopens a valid legacy replay number when the newer field is empty or invalid", async (t) => {
+    const fixture = createHistoryResolver(() => assert.fail("cached replay needs no lookup"));
+    t.after(() => fixture.dom.window.close());
+    assert.equal(await fixture.resolveReplayVideoNo({ replayVideoNo: "unknown", videoId: " 42 " }), "42");
+});
+
 function jsonResponse(content) {
     return Promise.resolve({ ok: true, json: async () => ({ content }) });
 }
@@ -1324,7 +1330,7 @@ test("history replay lookup bounds detail requests across 80 full candidate page
             pageRequests += 1;
             return jsonResponse({
                 data: Array.from({ length: 30 }, (_, index) => ({
-                    videoNo: `${page}-${index}`,
+                    videoNo: String(page * 30 + index + 1),
                     videoType: "REPLAY",
                     videoTitle: "같은 제목",
                 })),
@@ -1362,7 +1368,7 @@ test("history replay lookup stops scheduling requests after its total time budge
             now += 11000;
             return jsonResponse({
                 data: Array.from({ length: 30 }, (_, index) => ({
-                    videoNo: `${pageRequests}-${index}`,
+                    videoNo: String(pageRequests * 30 + index + 1),
                     videoType: "REPLAY",
                     videoTitle: "같은 제목",
                 })),
@@ -1387,4 +1393,39 @@ test("history replay lookup stops scheduling requests after its total time budge
 
     assert.equal(pageRequests, 2);
     assert.equal(detailRequests, 5);
+});
+
+test("writer bounds optional metadata and scopes record migration to an observed channel", () => {
+    const { store } = loadStore();
+    const now = Date.now();
+    const snapshot = createSnapshot(now);
+    snapshot.entry.thumbnailUrl = "https://pstatic.net/a.png?token=private";
+    const { history } = store.applyMutation({}, snapshot, now);
+    assert.ok(!history.entries["live:100"].thumbnailUrl);
+    for (const field of ["firstWatchedAt", "lastWatchedAt"]) {
+        const entry = { ...snapshot.entry, [field]: Number.MAX_SAFE_INTEGER };
+        const updated = store.applyMutation(history, { ...snapshot, entry }, now);
+        assert.equal(updated.result.status, "applied");
+        assert.equal(updated.history.entries["live:100"][field], history.entries["live:100"][field]);
+    }
+    const entry = { ...snapshot.entry, titleHistory: [{ title: "방송", firstSeenAt: Number.MAX_SAFE_INTEGER }] };
+    const updated = store.applyMutation(history, { ...snapshot, entry }, now);
+    assert.ok(
+        updated.history.entries["live:100"].titleHistory.every((row) => row.firstSeenAt <= now && row.lastSeenAt <= now)
+    );
+    assert.throws(() =>
+        store.applyMutation(history, { kind: "setReplayVideoNo", recordId: "live:100", videoNo: "invalid" }, now)
+    );
+    const sourceRecordId = "channel:channel-b:provisional:b";
+    const migrate = { kind: "migrateRecordId", sourceRecordId, targetRecordId: "live:100" };
+    const missing = store.applyMutation({}, migrate, now);
+    assert.equal(missing.changed, false);
+    assert.ok(!missing.history.recordAliases[sourceRecordId]);
+    const source = createSnapshot(now, { recordId: sourceRecordId, sessionId: "b" });
+    source.entry.channelId = "channel-b";
+    const combined = store.applyMutation(history, source, now).history;
+    const mismatched = store.applyMutation(combined, migrate, now);
+    assert.equal(mismatched.result.reason, "channel-mismatch");
+    assert.ok(mismatched.history.entries[sourceRecordId]);
+    assert.equal(mismatched.history.entries["live:100"].channelId, "channel-a");
 });

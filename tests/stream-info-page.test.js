@@ -203,11 +203,15 @@ test("VOD fallback guidance only reports a verified lower selectable track when 
             selected: height === 144,
         }))
     );
+    f.state(false, "480p");
+    assert.deepEqual(f.read().candidateHeights, [1080, 720, 144]);
+    assert.equal(f.read().qualityFallback, undefined);
     f.state(true, "480p");
     assert.equal(f.read().qualityFallback, 144);
     tracks.push({ id: "auto", selected: false });
     assert.equal(f.read().qualityFallback, 144);
     tracks.length++;
+    assert.equal(f.read().candidateHeights, undefined);
     assert.equal(f.read().qualityFallback, undefined, "the native list still has an empty slot");
     const pending = { id: "next-level", kind: "main", selected: false };
     tracks[tracks.length - 1] = pending;

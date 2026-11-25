@@ -150,7 +150,7 @@ test("video model preserves multiline comment matching and only observed playbac
     assert.equal(model.getWatchProgressRatio(null, 100), null);
     video.commentTexts = comments;
     video.commentNorm = "첫줄둘째줄";
-    assert.equal(model.getCommentMatchText(video, "둘째"), "첫 줄\n둘째 줄");
+    assert.deepEqual(Array.from(model.getCommentMatchTexts(video, "둘째")), ["첫 줄\n둘째 줄"]);
     assert.equal(model.filterVideosByNormalizedQuery([video], "둘째").length, 1);
     assert.equal(model.filterVideosByNormalizedQuery([video], "없음").length, 0);
 });

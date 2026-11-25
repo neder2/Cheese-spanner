@@ -121,12 +121,7 @@
 
     function isTrustedSender(sender, runtime) {
         if (
-            typeof runtime?.id !== "string" ||
-            !runtime.id ||
-            sender?.id !== runtime.id ||
-            !Number.isSafeInteger(sender.tab?.id) ||
-            sender.tab.id < 0 ||
-            sender.frameId !== 0 ||
+            !globalThis.CheeseSpannerSettings.isChzzkTopFrameSender(sender, runtime?.id) ||
             typeof sender.url !== "string" ||
             hasControlCharacter(sender.url) ||
             !/^https:\/\/chzzk\.naver\.com\//.test(sender.url) ||

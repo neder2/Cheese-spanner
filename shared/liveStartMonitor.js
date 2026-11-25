@@ -357,19 +357,16 @@
     function isChannelRegistration(message, sender) {
         const key = registrationKey(message.kind);
         if (message.kind !== "remove" && (!key || typeof message.channel?.[key] !== "boolean")) return false;
-        if (!Number.isInteger(sender?.tab?.id) || sender.tab.id < 0 || sender.frameId !== 0) return false;
-        try {
-            // Search registration can target any channel. The context URL can also
-            // predate SPA navigation, so authorize the origin rather than its route.
-            return new URL(sender.url).origin === "https://chzzk.naver.com";
-        } catch {
-            return false;
-        }
+        return CheeseSpannerSettings.isChzzkTopFrameSender(sender, chrome.runtime.id);
     }
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (message?.type !== "cheese-spanner:live-start:channels") return undefined;
         const fromOptions = CheeseSpannerSettings.isOptionsPageSender(sender);
-        if (sender?.id !== chrome.runtime.id || (!fromOptions && !isChannelRegistration(message, sender))) {
+        if (
+            sender?.tab?.incognito ||
+            sender?.id !== chrome.runtime.id ||
+            (!fromOptions && !isChannelRegistration(message, sender))
+        ) {
             sendResponse({ ok: false, error: "알림 설정 요청 출처 확인 불가." });
             return false;
         }

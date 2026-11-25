@@ -431,8 +431,8 @@
   cursor:pointer;
 }
 #${TOOLTIP_ID} .bcfp-category:hover{
-  border-color:color-mix(in srgb,var(--bct-brand) 90%,var(--bct-on-brand));
-  background-color:color-mix(in srgb,var(--bct-brand) 90%,var(--bct-on-brand));
+  border-color:var(--bct-brand-hover);
+  background-color:var(--bct-brand-hover);
 }
 #${TOOLTIP_ID} .bcfp-category:focus-visible{outline:2px solid currentColor;outline-offset:-2px;}
 #${TOOLTIP_ID} .bcfp-meta > span:not([data-bcfp-elapsed]){
@@ -456,7 +456,7 @@
 [${ACTIVE_ATTR}="1"]{
   background-color:var(--bct-brand-weak) !important;
   border-radius:var(--bct-radius-sm);
-  box-shadow:0 0 0 1px color-mix(in srgb,var(--bct-brand-text) 30%,transparent);
+  box-shadow:0 0 0 1px var(--bct-brand-border);
 }
 @media (max-width: 520px){
   #${TOOLTIP_ID}{
@@ -1478,10 +1478,14 @@
         video.setAttribute(PLAYER_MOUNT_ATTR, requestId);
         markPlayerState(video, "loading");
 
-        const startPlayer = () => {
+        const startPlayer = async () => {
             playerStartTimer = 0;
             if (activeVideoRequestId !== requestId || !video.isConnected) return;
 
+            if (!window.Hls) {
+                await CheeseSpanner.utils.loadPackagedHls();
+                if (activeVideoRequestId !== requestId || !video.isConnected) return;
+            }
             stopPreviewPlayer();
             activeVideoRequestId = requestId;
             applyPreviewAudioState(video, shouldStartPreviewWithSound(video));

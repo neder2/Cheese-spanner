@@ -58,7 +58,7 @@
         "invalid-rate": "배속 확인 불가",
     };
     let enabled = false;
-    let prefers480p = false;
+    let preferredQuality = null;
     let suspended = false;
     let observer = null;
     let removeRoute = null;
@@ -89,9 +89,11 @@
     let lastNativeIdentity = null;
     let lastInput = null;
     const values = new Map();
+    const diagnosticMetrics = { buffer: WAITING, fps: WAITING };
     const isLiveRoute = () => /^\/live\/[^/]+\/?$/.test(location.pathname);
 
     function setValue(key, value) {
+        if (Object.hasOwn(diagnosticMetrics, key)) diagnosticMetrics[key] = value;
         const element = values.get(key);
         if (element && element.textContent !== value) element.textContent = value;
     }
@@ -137,6 +139,7 @@
         metadataState = "";
         metadataNeeded = true;
         values.clear();
+        diagnosticMetrics.buffer = diagnosticMetrics.fps = WAITING;
         updateSettingsItem();
         if (focus) focusPlayer();
     }
@@ -263,6 +266,7 @@
             return;
         }
         const close = event.target instanceof Element ? event.target.closest("button") : null;
+        if (close?.dataset.bcsiCopy !== undefined) return;
         if (!close || !panel?.contains(close) || (event.key !== "Enter" && event.key !== " ")) return;
         if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
         event.preventDefault();
@@ -488,7 +492,7 @@
         const fallback =
             !livePanel &&
             !auxiliary &&
-            prefers480p &&
+            preferredQuality === "480p" &&
             height > 0 &&
             height < 480 &&
             readCurrentNative(video)?.qualityFallback === height;
@@ -548,6 +552,8 @@
         const valid = Number.isFinite(total) && Number.isFinite(dropped) && total >= dropped && dropped >= 0;
         const now = performance.now();
         const source = video.currentSrc;
+        if (previous && (previous.source !== source || !valid || total < previous.total || dropped < previous.dropped))
+            previous = null;
         const elapsed = previous ? (now - previous.time) / 1000 : 0;
         if (
             valid &&
@@ -667,7 +673,7 @@
         graph.replaceChildren(...nodes);
         setValue(
             "graph-description",
-            `가로축: 최근 60초. 세로축: 0~${top}초. 실선: 추정 라이브 지연 ${values.get("delay").textContent}. 점선: 재생 버퍼 ${values.get("buffer").textContent}. 관측 ${view.observedSeconds.toFixed(1)}초. 미측정 구간은 비워 둠.`
+            `가로축: 최근 60초. 세로축: 0~${top}초. 실선: 추정 라이브 지연 ${values.get("delay").textContent}. 점선: 재생 버퍼 ${diagnosticMetrics.buffer}. 관측 ${view.observedSeconds.toFixed(1)}초. 미측정 구간은 비워 둠.`
         );
     }
 
@@ -676,6 +682,78 @@
         collect();
         void loadMetadata();
         timer = setInterval(collect, 1000);
+    }
+
+    function diagnosticText() {
+        const region = panel;
+        sync();
+        if (!region || panel !== region || panelRoute !== location.pathname) return null;
+        collect();
+        if (panel !== region || panelRoute !== location.pathname) return null;
+        const measured = video?.isConnected && video.readyState > 0 && !isAdvertisement() && !transitioning;
+        const native = measured && !livePanel && !auxiliary ? readCurrentNative(video) : null;
+        const heights = livePanel ? tracks.map((track) => Number(track.videoHeight)) : native?.candidateHeights;
+        const candidates =
+            measured &&
+            Array.isArray(heights) &&
+            heights.length > 0 &&
+            heights.length <= 256 &&
+            heights.every((height) => Number.isSafeInteger(height) && height > 0 && height <= 16384)
+                ? [...new Set(heights)]
+                      .sort((a, b) => b - a)
+                      .map((height) => `${height}p`)
+                      .join(", ")
+                : "미측정";
+        const unavailable480 =
+            measured &&
+            preferredQuality === "480p" &&
+            video.videoHeight > 0 &&
+            video.videoHeight < 480 &&
+            native?.qualityFallback === video.videoHeight;
+        return [
+            `확장 버전: ${globalThis.chrome?.runtime?.getManifest?.().version || "확인 불가"}`,
+            `영상: ${livePanel ? "라이브" : "다시보기"}`,
+            `목표 화질: ${auxiliary ? "적용 대상 외" : preferredQuality || "자동 화질 꺼짐"}`,
+            `재생 해상도: ${measured && video.videoWidth && video.videoHeight ? `${video.videoWidth} × ${video.videoHeight}` : "미측정"}`,
+            `화질 후보: ${candidates}${unavailable480 ? " (480p 미제공)" : ""}`,
+            `재생 버퍼: ${measured ? diagnosticMetrics.buffer : "미측정"}`,
+            `FPS: ${measured ? diagnosticMetrics.fps : "미측정"}`,
+        ].join("\n");
+    }
+
+    async function copyDiagnostics(event) {
+        if (!event.isTrusted) return;
+        const button = event.currentTarget;
+        const region = panel;
+        const text = diagnosticText();
+        const target = video;
+        const source = target?.currentSrc;
+        const broadcast = liveId;
+        const ad = isAdvertisement();
+        if (!text) return;
+        region.querySelector("textarea")?.remove();
+        try {
+            await navigator.clipboard.writeText(text);
+            if (panel === region) button.textContent = "복사됨";
+        } catch {
+            if (
+                panel !== region ||
+                panelRoute !== location.pathname ||
+                video !== target ||
+                video?.currentSrc !== source ||
+                liveId !== broadcast ||
+                isAdvertisement() !== ad
+            )
+                return;
+            const field = document.createElement("textarea");
+            field.readOnly = true;
+            field.rows = 7;
+            field.setAttribute("aria-label", "직접 복사할 스트림 진단");
+            field.value = text;
+            region.querySelector("header").after(field);
+            field.focus();
+            field.select();
+        }
     }
 
     function togglePanel(event) {
@@ -701,10 +779,16 @@
         title.textContent = "스트림 정보";
         const close = document.createElement("button");
         close.type = "button";
-        close.textContent = "닫기";
+        close.className = "bcsi-close";
+        close.innerHTML = CheeseSpanner.utils.panelCloseIcon;
         close.setAttribute("aria-label", "스트림 정보 닫기");
         close.addEventListener("click", () => closePanel(true));
-        header.append(title, close);
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.dataset.bcsiCopy = "";
+        copy.textContent = "진단 복사";
+        copy.addEventListener("click", copyDiagnostics);
+        header.append(title, copy, close);
         panel.append(header);
         const appendList = (items, className = "") => {
             const list = document.createElement("dl");
@@ -880,9 +964,11 @@
             `${ID}-style`,
             `
 .pzp-ui-setting-home-item:where(#${ID}-settings-item){display:block;width:100%;border:0;background:transparent;text-align:start}
-#${ID}{position:absolute;z-index:100;inset-block-start:8px;inset-inline-end:8px;box-sizing:border-box;inline-size:400px;max-inline-size:calc(100% - 16px);max-block-size:calc(100% - 64px);overflow:auto;overscroll-behavior:contain;padding:0 16px 16px;border:1px solid var(--bct-border);border-radius:var(--bct-radius-lg);background:var(--bct-surface);color:var(--bct-text);font:13px/1.5 var(--bct-font);box-shadow:var(--bct-shadow);cursor:auto;user-select:text;--bcsi-delay:var(--bct-brand-text);--bcsi-buffer:var(--bct-text-muted)}
-#${ID} header{position:sticky;inset-block-start:0;z-index:1;background:inherit;display:flex;align-items:center;justify-content:space-between;gap:12px;padding-block:12px}#${ID} strong{font-size:16px}
+#${ID}{position:absolute;z-index:var(--bct-z-player-panel);inset-block-start:8px;inset-inline-end:8px;box-sizing:border-box;inline-size:400px;max-inline-size:calc(100% - 16px);max-block-size:calc(100% - 64px);overflow:auto;overscroll-behavior:contain;padding:0 16px 16px;border:1px solid var(--bct-border);border-radius:var(--bct-radius-lg);background:var(--bct-surface);color:var(--bct-text);font:13px/1.5 var(--bct-font);box-shadow:var(--bct-shadow);cursor:auto;user-select:text;--bcsi-delay:var(--bct-brand-text);--bcsi-buffer:var(--bct-text-muted)}
+#${ID} header{position:sticky;inset-block-start:0;z-index:1;background:inherit;display:flex;align-items:center;justify-content:space-between;gap:12px;padding-block:12px}#${ID} strong{font-size:15px;font-weight:700}
+#${ID} header strong{margin-inline-end:auto}#${ID} textarea{box-sizing:border-box;width:100%;font:inherit;color:inherit;background:var(--bct-surface);border:1px solid var(--bct-border)}
 #${ID} button{background:transparent;color:inherit;border:1px solid var(--bct-border-strong);border-radius:var(--bct-radius-md);min-height:32px;padding:4px 10px;font:inherit;cursor:pointer}
+#${ID} .bcsi-close{display:inline-grid;place-items:center;flex:none;min-height:28px;height:28px;width:28px;padding:0;border:0;border-radius:var(--bct-radius-sm)}
 #${ID} button:hover{background:var(--bct-hover)}
 #${ID} button:focus-visible,#${ID}-settings-item:focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:-2px}
 #${ID} dl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px 12px;margin:16px 0 0}#${ID} dt,#${ID} dd{margin:0;overflow-wrap:anywhere}#${ID} dd{text-align:end;font-variant-numeric:tabular-nums}
@@ -927,7 +1013,7 @@
 
     bindFeatureOptions((options) => {
         enabled = options.streamInfoEnabled !== false && (!auxiliary || options.vodMultiviewEnabled === true);
-        prefers480p = options.autoQualityEnabled === true && options.autoQualityPreferred === "480p";
+        preferredQuality = options.autoQualityEnabled === true ? options.autoQualityPreferred : null;
         window.removeEventListener("pagehide", pageHide);
         window.removeEventListener("pageshow", pageShow);
         if (enabled) {

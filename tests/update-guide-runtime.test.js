@@ -112,7 +112,9 @@ function fixture(
             },
         },
     };
+    evalRepoScript(dom, "shared/settings.js");
     win.CheeseSpannerSettings = {
+        ...win.CheeseSpannerSettings,
         getOptions: (fn) => fn(options),
         addOptionsChangeListener: (fn) => {
             optionsListener = fn;

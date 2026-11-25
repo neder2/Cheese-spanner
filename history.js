@@ -79,11 +79,13 @@ const {
     mergeDailySeconds: mergeSessionDailySeconds,
     mergeWatchRanges,
     normalizeChzzkChannelId,
+    normalizeChzzkVideoNo,
     normalizeChzzkImageUrl,
     normalizeChzzkLiveUrl,
     normalizeDailySeconds,
     normalizeForMatch,
     normalizeTitleHistory,
+    normalizeWatchMetadataTime,
     normalizeSessionWatchRanges,
     parseChzzkDate,
     pickArray = () => null,
@@ -260,7 +262,11 @@ function getEntryTitleNorms(entry) {
 }
 
 function getReplayVideoNo(entry) {
-    return pickString(entry?.replayVideoNo, entry?.videoNo);
+    return (
+        normalizeChzzkVideoNo(entry?.replayVideoNo) ||
+        normalizeChzzkVideoNo(entry?.videoNo) ||
+        normalizeChzzkVideoNo(entry?.videoId)
+    );
 }
 
 function getReplayUrl(entry) {
@@ -431,14 +437,14 @@ function normalizeHistory(raw) {
                 id,
                 channelId,
                 liveId: pickString(row.liveId),
-                replayVideoNo: pickString(row.replayVideoNo, row.videoNo, row.videoId),
+                replayVideoNo: getReplayVideoNo(row),
                 title: cleanEntryTitle(pickString(row.title), channelName) || "제목 없는 라이브",
                 titleHistory: normalizeTitleHistory(row.titleHistory, channelName),
                 channelName,
                 liveOpenDate: pickString(row.liveOpenDate),
                 liveUrl: buildChzzkLiveUrl(channelId) || normalizeChzzkLiveUrl(row.liveUrl),
-                firstWatchedAt: Number(row.firstWatchedAt) || 0,
-                lastWatchedAt: Number(row.lastWatchedAt) || 0,
+                firstWatchedAt: normalizeWatchMetadataTime(row.firstWatchedAt),
+                lastWatchedAt: normalizeWatchMetadataTime(row.lastWatchedAt),
                 watchedSeconds: Math.max(0, Number(row.watchedSeconds) || 0),
                 sessions: Math.max(1, Math.round(Number(row.sessions) || 1)),
                 dailySeconds: normalizeDailySeconds(row.dailySeconds),
@@ -548,6 +554,7 @@ async function fetchVideoPage(channelId, page, { signal, timeoutMs = FETCH_TIMEO
 }
 
 async function fetchVideoDetail(videoNo, { signal, timeoutMs = FETCH_TIMEOUT_MS } = {}) {
+    if (!normalizeChzzkVideoNo(videoNo)) return null;
     const url = `${VIDEO_DETAIL_API_BASE}/${encodeURIComponent(videoNo)}`;
     const json = await fetchJson(url, {
         headers: { Accept: "application/json" },

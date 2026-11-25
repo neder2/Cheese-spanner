@@ -1230,6 +1230,29 @@ test("live mid-roll arrows mark a user seek only inside the main player", async 
     assert.ok(Math.abs(state.currentTime - (armedAt + 2.1)) < 0.01, `restored to ${state.currentTime}`);
 });
 
+test("both VOD photo viewers retain navigation keys without moving the paused video", async (t) => {
+    const page = await openSkipPage(t, {
+        path: "/video/123",
+        sync: { skipSeconds: 5 },
+        video: { paused: true, currentTime: 100, duration: 3600, end: 3600 },
+    });
+    const { document, state } = page;
+    document.body.insertAdjacentHTML(
+        "beforeend",
+        '<div class="yarl__portal" role="dialog" aria-label="Lightbox"><button>다음</button></div>' +
+            '<dialog open class="bcvc-photo-viewer"><button>다음 사진</button></dialog>'
+    );
+    for (const button of document.querySelectorAll("[role='dialog'] button, dialog button")) {
+        let handled = 0;
+        button.addEventListener("keydown", () => handled++);
+        for (const key of ["ArrowLeft", "ArrowRight", ",", "."]) page.keydown(button, key);
+        assert.equal(handled, 4);
+        assert.deepEqual(state.writes, []);
+    }
+    page.keydown(document.body, "ArrowRight");
+    assert.deepEqual(state.writes, [105]);
+});
+
 test("a live pre-roll placeholder is never a seek target", async (t) => {
     const page = await openSkipPage(t, { path: "/live/test-channel", video: { currentTime: 100, end: 200 } });
     const { document } = page;

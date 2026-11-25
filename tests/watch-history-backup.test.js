@@ -552,3 +552,19 @@ test("session daily totals reject large contradictions while respecting the coll
         rejects(api, valid);
     }
 });
+
+test("old optional metadata cannot block export of valid watch sessions", () => {
+    const { api, history } = backupFixture();
+    const row = history.entries["live:100"];
+    row.thumbnailUrl = "https://example.test/thumbnail.jpg";
+    row.replayVideoNo = "unknown";
+    row.videoId = 42;
+    row.lastWatchedAt = Number.MAX_SAFE_INTEGER;
+    row.titleHistory[0].lastSeenAt = Number.MAX_SAFE_INTEGER;
+    const exported = api.createBackup(history, { extensionVersion: "1.4.0", now: NOW }).records[0];
+    assert.equal(exported.thumbnailUrl, "");
+    assert.equal(exported.replayVideoNo, "42");
+    assert.equal(exported.lastWatchedAt, 0);
+    assert.equal(exported.titleHistory[0].title, row.titleHistory[0].title);
+    assert.equal(exported.watch.sessionDetails[0].id, row.sessionDetails[0].id);
+});

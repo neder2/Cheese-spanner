@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
+const { dispatchTrusted } = require("./extension-page-fixture.js");
 const { createCategoryExclusionsWorker } = require("./category-exclusions-worker.js");
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -289,7 +290,7 @@ async function createCategoryUI(
             const input = window.document.querySelector("[data-category-search]");
             assert.ok(input);
             input.value = value;
-            input.dispatchEvent(new window.Event(type, { bubbles: true }));
+            dispatchTrusted(input, new window.Event(type, { bubbles: true }));
             return input;
         },
         runDelay() {

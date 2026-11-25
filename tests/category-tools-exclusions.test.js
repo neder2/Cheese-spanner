@@ -178,6 +178,10 @@ test("two open menus share sequential additions and individual removal through t
 test("search composition, empty input and close cancel only search work without erasing selections", async (t) => {
     const ui = await createCategoryUI(t, { worker: withState(1, [category()]) });
     const menu = ui.open();
+    const input = menu.querySelector("[data-category-search]");
+    input.value = "페이지가 입력한 검색어";
+    input.dispatchEvent(new ui.window.Event("input", { bubbles: true }));
+    assert.equal(ui.timers.size, 0);
     ui.input("가", "compositionstart");
     ui.input("게임");
     assert.equal(ui.timers.size, 0);

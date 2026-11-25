@@ -92,7 +92,7 @@ function createJsonResponse(data, { ok = true, status = 200 } = {}) {
 
 function createRewardDom(syncOptions = {}, { fetchImpl, clickDelayMs = 0 } = {}) {
     const dom = new JSDOM("<!doctype html><html><body></body></html>", {
-        url: "https://chzzk.naver.com/live/test-channel",
+        url: "https://chzzk.naver.com/live/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         runScripts: "outside-only",
         pretendToBeVisual: true,
     });
@@ -313,11 +313,14 @@ test("reward auto collect claims non-watch API rewards and leaves WATCH_1_HOUR t
     const getRequests = requests.filter((request) => request.method === "GET");
     const putRequests = requests.filter((request) => request.method === "PUT");
     assert.equal(getRequests.length, 1);
-    assert.equal(getRequests[0].url, "https://api.chzzk.naver.com/service/v1/channels/test-channel/log-power");
+    assert.equal(
+        getRequests[0].url,
+        "https://api.chzzk.naver.com/service/v1/channels/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/log-power"
+    );
     assert.equal(putRequests.length, 1);
     assert.equal(
         putRequests[0].url,
-        "https://api.chzzk.naver.com/service/v1/channels/test-channel/log-power/claims/follow-claim"
+        "https://api.chzzk.naver.com/service/v1/channels/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/log-power/claims/follow-claim"
     );
     assert.equal(putRequests[0].credentials, "include");
     assert.equal(
@@ -474,7 +477,7 @@ test("reward auto collect reschedules a pending reward when the live route chang
     scope.appendChild(tracked.button);
     await waitForCondition(() => initialFullScans >= 1);
 
-    dom.window.history.pushState({}, "", "/live/other-channel");
+    dom.window.history.pushState({}, "", "/live/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     dom.window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
 
     await waitForCondition(() => tracked.clicks === 1, { timeoutMs: 1800 });

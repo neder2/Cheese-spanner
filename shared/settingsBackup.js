@@ -32,6 +32,7 @@
     // channel without a cap, so the bound comes from the file: both sections full with the longest valid values,
     // as written by the options page (2-space indent), take about 0.8 MiB and leave room within MAX_FILE_BYTES.
     // Export and import share it; export leaves out a larger section and reports it in `omitted`.
+    const FOLLOWING_LIST_KEY = "betterchzzk:following-list-state";
     const MAX_MULTIVIEW_CHANNELS = 4000;
     const MULTIVIEW_CHANNEL = /^[a-f0-9]{32}$/;
     const LIVE_START_CHANNEL = /^[a-f0-9]{32}$/;
@@ -42,7 +43,6 @@
         "skipSeconds",
         "ambientIntensity",
         "followingPreviewSoundEnabled",
-        "videoRecorderFolder",
         "chatKeywordFilterEnabled",
         "chatKeywordFilterWords",
         "chatKeywordFilterApplyMode",
@@ -212,6 +212,16 @@
             if (key === FOLDERS_KEY) return validateFolders(value);
             if (CONTENT_SYNC_OPTION_KEYS.includes(key)) return validateOptionValue(key, value);
         } else if (area === "local") {
+            if (key === FOLLOWING_LIST_KEY) {
+                if (
+                    !isPlainObject(value) ||
+                    !Object.keys(value).length ||
+                    !hasOnly(value, ["list", "section"]) ||
+                    Object.values(value).some((choice) => typeof choice !== "boolean")
+                )
+                    return fail("invalid-choice");
+                return ok(value);
+            }
             if (Object.values(PANEL_KEYS).includes(key)) return validatePanelSize(value);
             if (key === CHAT_MULTIVIEW_KEY) return validateChatMultiview(value);
             if (multiviewChannel(key, MULTIVIEW_DELAY_PREFIX)) return validateMultiviewDelay(value);
@@ -240,6 +250,7 @@
         if (area === "sync") return key === PINS_KEY || key === FOLDERS_KEY || CONTENT_SYNC_OPTION_KEYS.includes(key);
         if (area === "local")
             return (
+                key === FOLLOWING_LIST_KEY ||
                 Object.values(PANEL_KEYS).includes(key) ||
                 key === CHAT_MULTIVIEW_KEY ||
                 Boolean(
@@ -383,7 +394,14 @@
                     ignoredOptionKeys.push(key.slice(0, 80));
                     continue;
                 }
-                const result = validateOptionValue(key, option);
+                // Files written with the previous folder rules can contain newly restricted direction marks
+                // or device names. Accept only a previously canonical value, then apply today's folder rules.
+                const result =
+                    key === "videoRecorderFolder" &&
+                    typeof option === "string" &&
+                    schema.normalizeDownloadFolder(option, "", true) === option
+                        ? ok(schema.normalizeDownloadFolder(option))
+                        : validateOptionValue(key, option);
                 if (!result.ok) return fail("invalid-options");
                 backup.sync.options[key] = result.value;
             }
@@ -635,6 +653,8 @@
         MULTIVIEW_DELAY_PREFIX,
         MULTIVIEW_QUALITY_PREFIX,
         MAX_MULTIVIEW_CHANNELS,
+        multiviewChannel,
+        FOLLOWING_LIST_KEY,
         CONTENT_SYNC_OPTION_KEYS,
         EFFECT_OPTION_KEYS,
         PERMISSION_OPTION_KEYS,

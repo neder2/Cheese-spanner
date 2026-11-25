@@ -197,6 +197,8 @@ test("content writes require a top-level chzzk sender, allowlisted keys and vali
     const h = harness();
     for (const sender of [
         { ...contentSender, id: "other" },
+        { ...contentSender, tab: { ...contentSender.tab, incognito: true } },
+        { ...contentSender, origin: "null" },
         { ...contentSender, frameId: 1 },
         { ...contentSender, tab: undefined },
         { ...contentSender, url: "https://chzzk.naver.com.evil.example/" },
@@ -215,6 +217,7 @@ test("content writes require a top-level chzzk sender, allowlisted keys and vali
         [storeMessage("sync", {}), "invalid-request"],
         [storeMessage("sync", Object.fromEntries([...Array(9)].map((_, i) => [`x${i}`, 1]))), "invalid-request"],
         [storeMessage("sync", { adVideoEnabled: false }), "key-not-allowed"],
+        [storeMessage("sync", { videoRecorderFolder: "녹화" }), "key-not-allowed"],
         [storeMessage("local", { betterChzzkLiveWatchHistory: {} }), "key-not-allowed"],
         [
             storeMessage("local", { "betterChzzkMultiviewDelay:short": { version: 1, delaySeconds: 1 } }),
@@ -305,7 +308,6 @@ test("chat menu writes permit only the two chat options and retain strict value 
         "skipSeconds",
         "ambientIntensity",
         "followingPreviewSoundEnabled",
-        "videoRecorderFolder",
         "chatKeywordFilterEnabled",
         "chatKeywordFilterWords",
         "chatKeywordFilterApplyMode",
@@ -1057,4 +1059,21 @@ test("chat phrase options round trip through settings backup and reject invalid 
         false
     );
     assert.equal(h.sync.chatKeywordFilterWords, "스포\nSPOILER\n[공지].*");
+});
+
+test("channel settings keep existing values editable at the backup limit and reject new entries atomically", async () => {
+    const prefix = catalog.MULTIVIEW_QUALITY_PREFIX;
+    const keys = Array.from(
+        { length: catalog.MAX_MULTIVIEW_CHANNELS },
+        (_, index) => prefix + index.toString(16).padStart(32, "0")
+    );
+    const h = harness({ local: Object.fromEntries(keys.map((key) => [key, 480])) });
+    assert.equal((await h.send(storeMessage("local", { [keys[0]]: 720 }), contentSender)).ok, true);
+    const another = prefix + "f".repeat(32);
+    assert.deepEqual(await h.send(storeMessage("local", { [keys[0]]: 360, [another]: 720 }), contentSender), {
+        ok: false,
+        error: "multiview-limit",
+    });
+    assert.equal(h.local[keys[0]], 720);
+    assert.equal(Object.hasOwn(h.local, another), false);
 });

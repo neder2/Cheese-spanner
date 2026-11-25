@@ -559,7 +559,9 @@ test("the header entry and panel use the shared theme and the shared bundled Pre
         themes[0].textContent.includes('url("chrome-extension://cheese-spanner/vendor/fonts/PretendardVariable.woff2")')
     );
     const entry = document.getElementById(ID);
-    for (const node of [entry, f.trigger(), f.panel(), f.input(), f.action()]) {
+    entry.parentElement.style.fontFamily = "NativeHeader";
+    for (const node of [entry, f.trigger()]) assert.equal(f.w.getComputedStyle(node).fontFamily, "NativeHeader");
+    for (const node of [f.panel(), f.input(), f.action()]) {
         const family = computedThemeValue(f.w, node, "font-family");
         assert.match(family, /^"CheeseSpanner Pretendard", -apple-system/, node.id || node.tagName);
     }
@@ -571,18 +573,14 @@ test("the header entry and panel use the shared theme and the shared bundled Pre
     const idle = f.action(CHANNEL, "autoOpen");
     assert.equal(pressed.getAttribute("aria-pressed"), "true");
     for (const [label, mark, expected] of [
-        [
-            "default dark",
-            () => {},
-            ["#1c1d1f", "#ffffff", "#c9cedc", "#00ffa3", "rgba(0, 0, 0, 0)", "#ffffff", "#202224"],
-        ],
+        ["default dark", () => {}, ["#1c1d1f", "#ffffff", "#c9cedc", "#ffffff", "#00ffa326", "#ffffff", "#202224"]],
         [
             "light",
             () => {
                 root.className = "light";
                 root.setAttribute("data-theme", "light");
             },
-            ["#ffffff", "#0e0f10", "#2e3033", "#23815a", "rgba(0, 0, 0, 0)", "#0e0f10", "#f0f1f2"],
+            ["#ffffff", "#0e0f10", "#2e3033", "#0e0f10", "#1bb37326", "#0e0f10", "#f0f1f2"],
         ],
     ]) {
         mark();
@@ -610,7 +608,7 @@ test("the open panel stacks above the native in-page PiP instead of under it", a
     const NATIVE_PIP_Z = 20000;
     const style = f.w.getComputedStyle(f.panel());
     assert.equal(style.getPropertyValue("position"), "fixed");
-    const z = Number(style.getPropertyValue("z-index"));
+    const z = Number(computedThemeValue(f.w, f.panel(), "z-index"));
     assert.ok(Number.isInteger(z) && z > NATIVE_PIP_Z, "panel z-index " + z + " is above the PiP");
     // A stacking-context ancestor would cap the value, so the panel stays a direct child of <body>.
     assert.equal(f.panel().parentElement, document.body);

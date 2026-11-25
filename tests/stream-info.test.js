@@ -1139,7 +1139,7 @@ test("layout exposes current values first, readable chart legends and a sticky c
     assert.deepEqual(formalCopy, [], "stream info notices omit formal endings");
     assert.match(css, /stroke-dasharray:5 4/);
     assert.match(css, /font-variant-numeric:tabular-nums/);
-    assert.equal(panel.querySelector("header button").getAttribute("aria-label"), "스트림 정보 닫기");
+    assert.equal(panel.querySelector("header button.bcsi-close").getAttribute("aria-label"), "스트림 정보 닫기");
 });
 
 test("VOD keeps its existing metrics and closes on replacement without querying live metadata", (t) => {

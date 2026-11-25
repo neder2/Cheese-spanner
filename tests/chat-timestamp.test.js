@@ -259,7 +259,7 @@ test("existing server-loaded chats use their original time and timestamp CSS has
     const style = dom.window.document.getElementById("cheese-spanner-chat-timestamp-style");
     assert.match(style.textContent, /content:\s*attr\(data-bcmt-time\)/);
     assert.doesNotMatch(style.textContent, /content:[^;]*\[/);
-    assert.match(style.textContent, /--Content-Neutral-Cool-Base, #9da5b6/);
+    assert.match(style.textContent, /color:\s*var\(--bct-text-muted\)/);
     assert.match(style.textContent, /font-size:\s*inherit/);
     assert.doesNotMatch(style.textContent, /font-size:\s*11px/);
     closePageDom(dom);

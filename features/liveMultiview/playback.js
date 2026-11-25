@@ -517,8 +517,10 @@
                     syncNative();
                 } else {
                     const source = model.source(content, normalizeChzzkMediaUrl);
-                    if (!window.Hls?.isSupported?.()) throw new Error("이 환경에서는 보조 방송 재생 미지원.");
-                    const hls = new window.Hls({
+                    const Hls = window.Hls || (await CheeseSpanner.utils.loadPackagedHls());
+                    if (!current(player)) return;
+                    if (!Hls?.isSupported?.()) throw new Error("이 환경에서는 보조 방송 재생 미지원.");
+                    const hls = new Hls({
                         enableWorker: false,
                         lowLatencyMode: source.lowLatency,
                         capLevelToPlayerSize: true,
@@ -529,7 +531,7 @@
                         liveSyncOnStallIncrease: 0,
                     });
                     player.hls = hls;
-                    const events = window.Hls.Events;
+                    const events = Hls.Events;
                     hls.on(events.MANIFEST_PARSED, () => {
                         if (current(player)) {
                             applyQuality(player);

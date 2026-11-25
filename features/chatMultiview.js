@@ -1315,6 +1315,7 @@
         beginDrag(target, event, "resize", target.handle);
     }
     function dragTo(target, event) {
+        if (!event.isTrusted) return;
         const drag = target.drag;
         if (!drag || event.pointerId !== drag.pointerId) return;
         const dx = event.clientX - drag.x,
@@ -1779,6 +1780,7 @@
         if (active) return;
         active = true;
         root.utils.ensureUiTheme?.();
+        injectStyleOnce(STYLE_ID, css());
         lifecycle++;
         ready = false;
         unsaved = false;
@@ -1817,7 +1819,6 @@
     function start() {
         if (running || !globalThis.chrome?.storage?.local) return;
         running = true;
-        injectStyleOnce(STYLE_ID, css());
         removeOptions = bindFeatureOptions((next) => {
             if (!running) return;
             donationMessagesHidden = next?.chatDonationMessagesHidden === true;
@@ -1838,13 +1839,13 @@
     // Only theme-independent marks keep fixed colors: the live dot, the warning mark and the white toggle knob.
     function css() {
         return `
-#${ID},#${PANEL_ID}{--bccmv-surface:var(--bct-surface);--bccmv-weak:var(--bct-surface-weak);--bccmv-base:var(--bct-surface-base);--bccmv-bg:var(--bct-bg);--bccmv-text:var(--bct-text);--bccmv-strong:var(--bct-text-body);--bccmv-muted:var(--bct-text-muted);--bccmv-faint:var(--bct-text-dim);--bccmv-brand:var(--bct-brand-text);--bccmv-brand-fill:var(--bct-brand);--bccmv-brand-soft:var(--bct-brand-weak);--bccmv-on-brand:var(--bct-on-brand);--bccmv-brand-hover:color-mix(in srgb,var(--bct-brand) 90%,var(--bct-on-brand));--bccmv-line:var(--bct-border-alpha-weaker);--bccmv-line-strong:var(--bct-border-alpha);--bccmv-hover:var(--bct-hover);--bccmv-shadow:var(--bct-shadow);--bccmv-live:#ff4545;--bccmv-border:var(--bct-border-strong)}
-#${ID}{display:inline-flex;align-self:center;flex:none;margin-right:8px;font:14px/1.4 var(--bct-font)}
+#${ID},#${PANEL_ID}{--bccmv-surface:var(--bct-surface);--bccmv-weak:var(--bct-surface-weak);--bccmv-base:var(--bct-surface-base);--bccmv-bg:var(--bct-bg);--bccmv-text:var(--bct-text);--bccmv-strong:var(--bct-text-body);--bccmv-muted:var(--bct-text-muted);--bccmv-faint:var(--bct-text-dim);--bccmv-brand:var(--bct-brand-text);--bccmv-brand-fill:var(--bct-brand);--bccmv-brand-soft:var(--bct-brand-weak);--bccmv-on-brand:var(--bct-on-brand);--bccmv-brand-hover:var(--bct-brand-hover);--bccmv-line:var(--bct-border-alpha-weaker);--bccmv-line-strong:var(--bct-border-alpha);--bccmv-hover:var(--bct-hover);--bccmv-shadow:var(--bct-shadow);--bccmv-live:var(--bct-status-live);--bccmv-border:var(--bct-border-strong)}
+#${ID}{display:inline-flex;align-self:center;flex:none;margin-right:8px;font-family:inherit;font-size:14px;line-height:1.4}
 #${ID}>button{box-sizing:border-box;min-height:34px;margin:0;padding:6px 12px;border:1px solid var(--bccmv-border);border-radius:var(--bct-radius-full);background:var(--bccmv-weak);color:var(--bccmv-text);font:inherit;font-size:14px;font-weight:650;line-height:1.4;white-space:nowrap;cursor:pointer}
 #${ID}>button:hover{border-color:currentColor}
 #${ID}>button:focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:2px}
-#${ID}>button[aria-expanded="true"]{background:var(--bccmv-brand-soft);border-color:var(--bct-brand-text-base)}
-#${PANEL_ID}{position:fixed;left:${PANEL_MARGIN}px;top:${PANEL_MARGIN + BAR_SPACE}px;z-index:10010;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;max-width:calc(100vw - ${PANEL_MARGIN * 2}px);max-height:calc(100vh - ${PANEL_MARGIN * 2 + BAR_SPACE}px);padding:4px;border:0;border-radius:var(--bct-radius-lg);box-shadow:var(--bccmv-shadow),0 0 0 1px var(--bccmv-line);background:var(--bccmv-surface);color:var(--bccmv-text);font:13px/1.5 var(--bct-font);text-align:left;--bccmv-warn:#f08c00}
+#${ID}>button[aria-expanded="true"]{background:var(--bccmv-brand-soft);border-color:var(--bct-brand-border);color:var(--bct-text)}
+#${PANEL_ID}{position:fixed;left:${PANEL_MARGIN}px;top:${PANEL_MARGIN + BAR_SPACE}px;z-index:var(--bct-z-popover);box-sizing:border-box;display:flex;flex-direction:column;gap:4px;max-width:calc(100vw - ${PANEL_MARGIN * 2}px);max-height:calc(100vh - ${PANEL_MARGIN * 2 + BAR_SPACE}px);padding:4px;border:0;border-radius:var(--bct-radius-lg);box-shadow:var(--bccmv-shadow),0 0 0 1px var(--bccmv-line);background:var(--bccmv-surface);color:var(--bccmv-text);font:13px/1.5 var(--bct-font);text-align:left;--bccmv-warn:var(--bct-warning)}
 #${PANEL_ID} *{box-sizing:border-box}
 #${PANEL_ID} :is(h2,p,ol,ul){margin:0}
 #${PANEL_ID} [hidden]{display:none!important}
@@ -1885,7 +1886,7 @@
 #${PANEL_ID} .bccmv-field .bccmv-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--bccmv-faint)}
 #${PANEL_ID} input{width:100%;min-width:0;height:34px;margin:0;padding:0 10px 0 34px;border:1px solid transparent;border-radius:var(--bct-radius-md);background:var(--bccmv-weak);color:inherit;font:inherit;font-size:13px;outline:none}
 #${PANEL_ID} input:focus{border-color:var(--bccmv-brand)}
-#${PANEL_ID} input::placeholder{color:var(--bccmv-faint)}
+#${PANEL_ID} input::placeholder{color:var(--bct-text-muted);opacity:1}
 #${PANEL_ID} .bccmv-primary{min-height:34px;padding:0 14px;background:var(--bccmv-brand-fill);color:var(--bccmv-on-brand);font-size:13px;font-weight:700}
 #${PANEL_ID} .bccmv-primary:hover:not(:disabled){background:var(--bccmv-brand-hover)}
 #${PANEL_ID} .bccmv-results{grid-column:1/-1;margin:0;padding:0;list-style:none;max-height:260px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
@@ -1929,7 +1930,7 @@
 #${PANEL_ID}[data-bccmv-moving],#${PANEL_ID}[data-bccmv-moving] *{cursor:grabbing!important;user-select:none}
 #${PANEL_ID} .bccmv-cell-name{flex:0 1 auto;min-width:0;font-size:12px;font-weight:700}
 #${PANEL_ID} .bccmv-cell-note{flex:none;display:inline-grid;place-items:center;width:14px;height:14px;overflow:hidden;border-radius:50%;background:var(--bccmv-warn);font-size:0;line-height:0}
-#${PANEL_ID} .bccmv-cell-note::before{content:"!";color:#fff;font-size:10px;font-weight:800;line-height:1}
+#${PANEL_ID} .bccmv-cell-note::before{content:"!";color:var(--bct-bg);font-size:10px;font-weight:800;line-height:1}
 #${PANEL_ID} .bccmv-cell-actions{display:flex;flex:none;margin-left:auto;opacity:0;transition:opacity .12s ease}
 #${PANEL_ID} .bccmv-cell:hover .bccmv-cell-actions,#${PANEL_ID} .bccmv-cell-actions:focus-within{opacity:1}
 #${PANEL_ID} .bccmv-cell-actions .bccmv-icon-button{width:22px;min-height:22px;border-radius:var(--bct-radius-sm)}

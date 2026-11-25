@@ -193,7 +193,7 @@ function activityChat(id, nickname = "안내 담당", text = id) {
         chatId: id,
         nickname,
         text,
-        badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+        badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
         nicknameColor: "",
     });
 }
@@ -692,7 +692,7 @@ function managerChat(nickname, text, chatId = "") {
         chatId,
         nickname,
         text,
-        badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+        badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
     });
 }
 
@@ -905,14 +905,14 @@ test("native moderator highlights follow nickname colors without changing text o
             chatId: "highlight-manager",
             nickname: "운영 담당",
             text: "일반 채팅에서도 읽을 수 있는 안내",
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
             nicknameColor: "rgb(30, 140, 95)",
         }) +
             realChzzkChatRow({
                 chatId: "highlight-streamer",
                 nickname: "방송하는 봄",
                 text: "방송자 메시지",
-                badgeImg: '<img src="https://example.test/streamer.png" alt="방송자">',
+                badgeImg: '<img src="https://nng-phinf.pstatic.net/streamer.png" alt="방송자">',
                 nicknameColor: "rgb(180, 120, 40)",
             }) +
             realChzzkChatRow({ chatId: "highlight-viewer", nickname: "시청하는 별", text: "일반 시청자 메시지" })
@@ -1362,7 +1362,7 @@ test("reusing a chat row for a new message id invalidates the previous original 
 
 test("id-less moderator rows with identical content keep distinct message identities", async (t) => {
     const repeated = realChzzkChatRow({
-        badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+        badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
         nickname: "같은 운영자",
         text: "반복 안내",
     });
@@ -1381,7 +1381,7 @@ test("id-less moderator rows with identical content keep distinct message identi
 test("reusing an id-less moderator row with a new virtual index collects the next message", async (t) => {
     const { dom } = createPageDom(
         realChzzkChatRow({
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
             nickname: "첫 운영자",
             text: "첫 안내",
         })
@@ -1409,7 +1409,7 @@ test("a long-lived mixed reuse state is retracted when the same generation becom
     const originalText = "이미 정상 수집된 운영자 안내";
     const { dom } = createPageDom(
         realChzzkChatRow({
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
             nickname: "기존 운영자",
             text: originalText,
         })
@@ -1695,7 +1695,8 @@ test("real chzzk pinned root dynamically collects a manager row without data-cha
     wrapper.insertAdjacentHTML(
         "beforeend",
         realChzzkChatRow({
-            badgeImg: '<img src="https://example.test/chzzk-role-pinned.png" alt="채팅 운영자" width="18" height="18">',
+            badgeImg:
+                '<img src="https://nng-phinf.pstatic.net/chzzk-role-pinned.png" alt="채팅 운영자" width="18" height="18">',
             nickname: "고정 공지 매니저",
             text: "고정 공지 아래에서 추가된 안내",
         })
@@ -1719,13 +1720,14 @@ test("real chzzk markup: badge img alt collects broadcaster and manager, not vie
         [
             realChzzkChatRow({ nickname: "일반 시청자", text: "그냥 일반 채팅" }),
             realChzzkChatRow({
-                badgeImg: '<img src="https://example.test/chzzk-role-a.png" alt="스트리머" width="18" height="18">',
+                badgeImg:
+                    '<img src="https://nng-phinf.pstatic.net/chzzk-role-a.png" alt="스트리머" width="18" height="18">',
                 nickname: "부지런한 휴먼 989",
                 text: "asd",
             }),
             realChzzkChatRow({
                 badgeImg: [
-                    '<img src="https://example.test/chzzk-role-b.png" alt="방송 매니저" width="18" height="18">',
+                    '<img src="https://nng-phinf.pstatic.net/chzzk-role-b.png" alt="방송 매니저" width="18" height="18">',
                     '<img src="https://nng-phinf.pstatic.net/subscription/badge3.png" alt="3개월 구독" width="18" height="18">',
                 ].join(""),
                 nickname: "성실한 부계정",
@@ -1753,11 +1755,11 @@ test("real chzzk markup: badge img alt collects broadcaster and manager, not vie
     // 본 채팅창과 같은 실제 뱃지 아이콘이 순서대로 함께 표시된다.
     const broadcasterBadges = rows[0].querySelectorAll(".bcct-moderator-row__badge");
     assert.equal(broadcasterBadges.length, 1);
-    assert.equal(broadcasterBadges[0].getAttribute("src"), "https://example.test/chzzk-role-a.png");
+    assert.equal(broadcasterBadges[0].getAttribute("src"), "https://nng-phinf.pstatic.net/chzzk-role-a.png");
     assert.equal(broadcasterBadges[0].getAttribute("alt"), "스트리머");
     const managerBadges = rows[1].querySelectorAll(".bcct-moderator-row__badge");
     assert.equal(managerBadges.length, 2);
-    assert.equal(managerBadges[0].getAttribute("src"), "https://example.test/chzzk-role-b.png");
+    assert.equal(managerBadges[0].getAttribute("src"), "https://nng-phinf.pstatic.net/chzzk-role-b.png");
     assert.match(managerBadges[1].getAttribute("src"), /subscription\/badge3\.png$/);
     assert.equal(managerBadges[1].getAttribute("alt"), "3개월 구독");
     // 닉네임 색상도 본 채팅창과 동일하게 복원된다.
@@ -1773,7 +1775,8 @@ test("real chzzk markup: the renamed 채팅 운영자 badge is collected as mana
         [
             realChzzkChatRow({ nickname: "일반 시청자", text: "그냥 일반 채팅" }),
             realChzzkChatRow({
-                badgeImg: '<img src="https://example.test/chzzk-role-c.png" alt="채팅 운영자" width="18" height="18">',
+                badgeImg:
+                    '<img src="https://nng-phinf.pstatic.net/chzzk-role-c.png" alt="채팅 운영자" width="18" height="18">',
                 nickname: "부지런한 봇지기",
                 text: "운영자 공지입니다",
                 chatId: "chat-operator-rename-1",
@@ -1793,7 +1796,7 @@ test("real chzzk markup: the renamed 채팅 운영자 badge is collected as mana
     assert.equal(row.querySelector(".bcct-moderator-row__author").textContent, "부지런한 봇지기");
     const badge = row.querySelector(".bcct-moderator-row__badge");
     assert.equal(badge.getAttribute("alt"), "채팅 운영자");
-    assert.equal(badge.getAttribute("src"), "https://example.test/chzzk-role-c.png");
+    assert.equal(badge.getAttribute("src"), "https://nng-phinf.pstatic.net/chzzk-role-c.png");
 });
 
 test("sr-only badge descriptions are not mixed into the collected nickname or text", async (t) => {
@@ -1809,7 +1812,7 @@ test("sr-only badge descriptions are not mixed into the collected nickname or te
             '<button type="button" class="_nickname_1vemp_37" aria-haspopup="true" aria-expanded="false">',
             '<strong class="_name_1hyev_92">',
             '<span class="_truncate_dtc6c_2" style="overflow-wrap: break-word;">',
-            '<img src="https://example.test/chzzk-role-d.png" alt="스트리머" width="18" height="18">',
+            '<img src="https://nng-phinf.pstatic.net/chzzk-role-d.png" alt="스트리머" width="18" height="18">',
             '<i class="_icon_dtc6c_17" style="width: 16px; height: 16px; margin-top: 1px;">',
             '<span class="blind">명예훈장</span>',
             "</i>",
@@ -2062,7 +2065,7 @@ test("panel toggles do not create a mutation feedback loop on the broad chat roo
 test("a capped batch of moderator messages renders the final list once", async (t) => {
     const initialRows = Array.from({ length: 20 }, (_, index) =>
         realChzzkChatRow({
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
             nickname: `manager-${index}`,
             text: `기존 운영자 안내 ${index}`,
             chatId: `manager-existing-${index}`,
@@ -2087,7 +2090,7 @@ test("a capped batch of moderator messages renders the final list once", async (
 
     const addedRows = Array.from({ length: 10 }, (_, index) =>
         realChzzkChatRow({
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
             nickname: `new-manager-${index}`,
             text: `새 운영자 안내 ${index}`,
             chatId: `manager-added-batch-${index}`,
@@ -2282,7 +2285,7 @@ test("moderator collection reconnects after a pinned chat root is wholly replace
         "beforeend",
         realChzzkChatRow({
             badgeImg:
-                '<img src="https://example.test/chzzk-role-reconnect.png" alt="채팅 운영자" width="18" height="18">',
+                '<img src="https://nng-phinf.pstatic.net/chzzk-role-reconnect.png" alt="채팅 운영자" width="18" height="18">',
             nickname: "교체 후 매니저",
             text: "교체 후 실제 수집",
         })
@@ -2452,7 +2455,7 @@ test("a moderator emoticon whose src arrives late reaches the panel once with it
         realChzzkChatRow({
             nickname: "안내 담당",
             text: '<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24"></button>',
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
             nicknameColor: "",
         })
     );
@@ -2489,7 +2492,7 @@ test("a src-only body emoticon change is reparsed through the chat observer, unl
             nickname: "안내 담당",
             text: `<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24" src="${icon}/icon/c_57.png"></button>`,
             badgeImg: [
-                '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+                '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
                 `<img src="${icon}/badge/cheatkey_24m.png" alt="">`,
             ].join(""),
             nicknameColor: "",
@@ -2527,13 +2530,13 @@ test("a redrawn id-less moderator row with a loading body image keeps its read r
         realChzzkChatRow({
             nickname: "안내 담당",
             text: '<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24"></button>',
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
         });
     const { dom } = createPageDom(
         realChzzkChatRow({
             nickname: "안내 담당",
             text: `<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24" src="${icon}/icon/c_57.png"></button>`,
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
         })
     );
     t.after(() => closeChatToolsDom(dom));
@@ -2568,7 +2571,7 @@ test("redrawn identical id-less moderator rows keep their own originals when the
         realChzzkChatRow({
             nickname: "안내 담당",
             text: `<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24"${src ? ` src="${src}"` : ""}></button>`,
-            badgeImg: '<img src="https://example.test/manager.png" alt="채팅 운영자">',
+            badgeImg: '<img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자">',
         });
     const { dom } = createPageDom(imageRow(`${icon}/icon/c_57.png`) + imageRow(`${icon}/icon/c_57.png`));
     t.after(() => closeChatToolsDom(dom));

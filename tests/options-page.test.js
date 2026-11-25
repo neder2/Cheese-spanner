@@ -1655,3 +1655,28 @@ test("chat phrase settings save multiline text, reject oversized phrases, clear,
     assert.equal(words.disabled, true);
     assert.equal(chrome.testState.permissionRequests.length, 0);
 });
+
+test("settings search combines words within the same setting in either order", async (t) => {
+    const dom = createDom("options.html", "options.html");
+    t.after(() => dom.window.close());
+    evalRepoScript(dom, "shared", "settings.js");
+    evalRepoScript(dom, "options.js");
+    await waitForAsyncCallbacks();
+    const { document } = dom.window;
+    const input = document.getElementById("settingsSearch");
+    const search = (query) => {
+        input.value = query;
+        dispatch(dom, input, "input");
+        return document.getElementById("searchStatus").textContent;
+    };
+    for (const [first, second, key] of [
+        ["녹화", "폴더", "videoRecorderFolder"],
+        ["화질", "480p", "autoQualityPreferred"],
+    ]) {
+        const forward = search(`${first} ${second}`);
+        assert.equal(queryOption(document, key).closest(".search-miss"), null);
+        assert.equal(search(`${second} ${first}`), forward);
+        assert.equal(queryOption(document, key).closest(".search-miss"), null);
+    }
+    assert.equal(search("videoRecorderFolder autoQualityPreferred"), "0개 항목");
+});

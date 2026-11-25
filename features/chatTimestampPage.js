@@ -151,7 +151,11 @@
     function readEmojiField(object, key) {
         if (!object || typeof object !== "object") return { invalid: true };
         const descriptor = Object.getOwnPropertyDescriptor(object, key);
-        if (!descriptor) return { missing: true, invalid: key in object };
+        if (!descriptor) {
+            const prototype = Object.getPrototypeOf(object);
+            // Native message maps are plain records. A custom inherited mapping cannot confirm the DOM body.
+            return { missing: true, invalid: prototype !== Object.prototype && key in object };
+        }
         if (!Object.prototype.hasOwnProperty.call(descriptor, "value")) return { invalid: true };
         return { value: descriptor.value };
     }

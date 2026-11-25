@@ -653,7 +653,7 @@ test("monthly broadcast calendar colors KST days after async metadata load", asy
     const fixture = await createMonthlyBroadcastFixture({
         deferList: true,
         details: {
-            detailStart: {
+            1002: {
                 duration: 30 * 60,
                 liveCloseDate: new Date(secondStartMs + 30 * 60 * 1000).toISOString(),
                 liveOpenDate: "2026-06-28T00:30:00+09:00",
@@ -665,13 +665,13 @@ test("monthly broadcast calendar colors KST days after async metadata load", asy
                 duration: 20 * 60,
                 liveCloseDate: new Date(firstStartMs + 20 * 60 * 1000).toISOString(),
                 liveOpenDate: "2026-06-28T23:30:00+09:00",
-                videoNo: "lateStart",
+                videoNo: "1001",
                 videoTitle: "Late start fixture",
                 videoType: "REPLAY",
             },
             {
                 duration: 30 * 60,
-                videoNo: "detailStart",
+                videoNo: "1002",
                 videoTitle: "Detail start fixture",
                 videoType: "REPLAY",
             },
@@ -700,7 +700,7 @@ test("monthly broadcast calendar colors KST days after async metadata load", asy
             fixture.document.querySelector(`#${MONTHLY_BROADCAST_WIDGET_ID} .bcmb-calendar-count`).textContent,
             "총 방송 50분"
         );
-        assert.ok(fixture.fetchCalls.some((href) => href.includes("/service/v2/videos/detailStart")));
+        assert.ok(fixture.fetchCalls.some((href) => href.includes("/service/v2/videos/1002")));
         assert.equal(getMonthlyCalendarDay(fixture.document, "2026-06-27")?.getAttribute("data-has-broadcast"), null);
         assert.equal(day.querySelectorAll(".bcmb-day-tip-item").length, 2);
         assert.match(tipText, /00:30/);
@@ -720,7 +720,7 @@ test("monthly broadcast aborts pending page fetches when disabled", async () => 
                 duration: 20 * 60,
                 liveCloseDate: "2026-06-28T09:20:00+09:00",
                 liveOpenDate: "2026-06-28T09:00:00+09:00",
-                videoNo: "abort-pending",
+                videoNo: "1003",
                 videoTitle: "Abort pending fixture",
                 videoType: "REPLAY",
             },
@@ -1062,7 +1062,10 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     assert.ok(isolatedScript.js.indexOf("shared/uiTheme.js") < isolatedScript.js.indexOf("shared/updateGuideView.js"));
     assert.equal(mainScript.js.includes("shared/uiTheme.js"), false);
     assert.ok(isolatedScript.js.includes("features/updateGuide.js"));
-    assert.ok(isolatedScript.js.includes("vendor/hls.light.min.js"));
+    assert.equal(
+        manifest.content_scripts.some((script) => script.js.includes("vendor/hls.light.min.js")),
+        false
+    );
     assert.ok(isolatedScript.js.includes("features/followingPreviewTooltip.js"));
     assert.ok(isolatedScript.js.includes("shared/selectors.js"));
     assert.ok(isolatedScript.js.indexOf("shared/selectors.js") > isolatedScript.js.indexOf("shared/data.js"));
@@ -1078,8 +1081,7 @@ test("manifest loads shared and playback scripts in the expected worlds", () => 
     );
     assert.ok(isolatedScript.js.indexOf("features/volumeWheel.js") > isolatedScript.js.indexOf("content.js"));
     assert.ok(
-        isolatedScript.js.indexOf("vendor/hls.light.min.js") <
-            isolatedScript.js.indexOf("features/followingPreviewTooltip.js")
+        isolatedScript.js.indexOf("content.js") < isolatedScript.js.indexOf("features/followingPreviewTooltip.js")
     );
     assert.ok(isolatedScript.js.includes("features/chatTools.js"));
     assert.equal(isolatedScript.js.filter((name) => name === "features/chatTools/keywordSettings.js").length, 1);
@@ -3226,7 +3228,7 @@ test("audio compressor button tooltip reports graph setup failures", async () =>
     await waitForCondition(() => document.getElementById("cheese-spanner-audio-compressor"));
 
     const button = document.getElementById("cheese-spanner-audio-compressor");
-    button.click();
+    dispatchTrusted(button, new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
 
     assert.equal(button.dataset.cheeseSpannerReady, "0");
     assert.equal(button.getAttribute("tooltip"), "오디오 컴프레서(사용할 수 없음)");
@@ -4085,7 +4087,9 @@ test("live watch history ignores a late live A response after moving to live B",
                             channelName: channelId === "channel-b" ? "채널 B" : "채널 A",
                             liveId: channelId === "channel-b" ? "live-b" : "live-a",
                             liveImageUrl:
-                                channelId === "channel-b" ? "https://example.com/b.jpg" : "https://example.com/a.jpg",
+                                channelId === "channel-b"
+                                    ? "https://nng-phinf.pstatic.net/b.jpg"
+                                    : "https://nng-phinf.pstatic.net/a.jpg",
                             liveTitle: channelId === "channel-b" ? "방송 B" : "방송 A",
                             ...overrides,
                         },
@@ -4133,7 +4137,7 @@ test("live watch history ignores a late live A response after moving to live B",
     assert.equal(entryB.channelId, "channel-b");
     assert.equal(entryB.liveId, "live-b");
     assert.equal(entryB.title, "방송 B");
-    assert.equal(entryB.thumbnailUrl, "https://example.com/b.jpg");
+    assert.equal(entryB.thumbnailUrl, "https://nng-phinf.pstatic.net/b.jpg");
     assert.deepEqual(
         entryB.titleHistory.map((row) => row.title),
         ["방송 B"]

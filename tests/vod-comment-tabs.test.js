@@ -34,8 +34,7 @@ function assertSharedThemePalette(css) {
         "no theme-specific palette blocks"
     );
     assert.doesNotMatch(css, /color-scheme:\s*light/, "the panel inherits CHZZK's root color-scheme");
-    // Allowed fixed values: default profile images and the native-mimic BEST badge.
-    const withoutAllowed = css.replace(/url\("[^"]*"\)/g, "").replace(/background:#41bd53;color:#fff;/, "");
+    const withoutAllowed = css.replace(/url\("[^"]*"\)/g, "");
     assert.doesNotMatch(withoutAllowed, /#[0-9a-f]{3,8}\b|rgba?\(/i, "no static color fallback");
 }
 
@@ -245,6 +244,7 @@ function createFixture({
         normalizeOptions: () => ({ ...options }),
     };
     evalRepoScript(dom, "shared", "data.js");
+    evalRepoScript(dom, "content.js");
     window.CheeseSpanner = {
         utils: {
             ...window.CheeseSpanner.utils,
@@ -642,7 +642,7 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     assert.equal(tablist.style.getPropertyValue("--bcvc-heading-font-size"), "17px");
     assert.equal(tablist.style.getPropertyValue("--bcvc-heading-font-weight"), "700");
     assert.equal(commentPanel.style.getPropertyValue("--bcvc-font-family"), "system-ui, sans-serif");
-    assert.equal(commentPanel.style.getPropertyValue("--bcvc-toolbar-font-family"), "system-ui, sans-serif");
+    assert.equal(commentPanel.style.getPropertyValue("--bcvc-toolbar-font-family"), "");
     assert.equal(container.style.getPropertyValue("--bcvc-panel-height"), "496px");
     const commentStyle = document.getElementById("cheese-spanner-vod-comment-tabs-style");
     const css = commentStyle.textContent;
@@ -668,7 +668,7 @@ test("VOD comment tabs preserve the native chat heading treatment and defer pref
     );
     assert.match(
         css,
-        /\.bcvc-sort-button\{font-family:var\(--bcvc-toolbar-font-family,var\(--bcvc-font-family,inherit\)\)\}/
+        /\.bcvc-sort-button\{[^}]*font-family:var\(--bcvc-toolbar-font-family,"Sandoll Nemony2",sans-serif\)/s
     );
     assert.doesNotMatch(css, /"Malgun Gothic"|"맑은 고딕"/);
     assert.match(css, /button\[aria-selected="true"\]\{\s*color:var\(--bcvc-text/);
@@ -1005,13 +1005,13 @@ test("VOD comments load from the API without a lower comment DOM and render safe
     const pending = deferred();
     const best = apiComment(1, "첫 골 19:10", {
         attaches: [
-            { attachType: "PHOTO", attachValue: "https://example.com/photo.jpg" },
+            { attachType: "PHOTO", attachValue: "https://nng-phinf.pstatic.net/photo.jpg?type=original#photo" },
             { attachType: "PHOTO", attachValue: "javascript:alert(1)" },
         ],
         buffCount: 2,
         createdDate: "20260101003000",
         nickname: "방송자",
-        profileImageUrl: "https://example.com/avatar.jpg",
+        profileImageUrl: "https://nng-phinf.pstatic.net/avatar.jpg",
         writer: true,
     });
     const fixture = createFixture({ fetchComments: () => pending.promise });
@@ -1048,18 +1048,31 @@ test("VOD comments load from the API without a lower comment DOM and render safe
 
     assert.match(document.querySelector("[data-bcvc-count='1']").textContent, /댓글 2/);
     assert.equal(document.querySelectorAll(".bcvc-best").length, 1, "BEST and page duplicates must be merged");
-    assert.ok(
-        document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-message > .bcvc-best:first-child"),
-        "BEST badge must lead the message like the native Chzzk comment row"
+    const badge = document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-message > svg.bcvc-best:first-child");
+    assert.ok(badge, "BEST badge must lead the message even without the native comment DOM");
+    assert.equal(badge.getAttribute("viewBox"), "0 0 39 18");
+    assert.equal(badge.getAttribute("aria-hidden"), "true");
+    const badgeStyle = fixture.dom.window.getComputedStyle(badge);
+    assert.deepEqual(
+        [badgeStyle.width, badgeStyle.height, badgeStyle.margin, badgeStyle.verticalAlign],
+        ["39px", "18px", "1px 6px 0px 0px", "top"]
     );
+    assert.equal(badge.querySelector("rect").getAttribute("fill"), "#41BD53");
+    assert.equal(badge.querySelector("path").getAttribute("fill"), "white");
+    assert.equal(badge.nextElementSibling.className, "bcvc-sr-only");
+    assert.equal(badge.nextElementSibling.textContent, "BEST");
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-meta .bcvc-best"), null);
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-date").textContent, "01.01");
     assert.match(document.querySelector("[data-bcvc-comment-key='id:1']").textContent, /방송자/);
     assert.ok(document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-writer"));
     assert.equal(document.querySelectorAll(".bcvc-attachment").length, 1, "unsafe attachment URLs must be dropped");
+    const photo = document.querySelector(".bcvc-attachment");
+    assert.equal(photo.src, "https://nng-phinf.pstatic.net/photo.jpg?type=w375");
+    const photoStyle = fixture.window.getComputedStyle(photo);
+    assert.deepEqual([photoStyle.width, photoStyle.maxWidth, photoStyle.maxHeight], ["215px", "100%", "440px"]);
     assert.equal(
         document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-avatar > .bcvc-avatar-image")?.src,
-        "https://example.com/avatar.jpg",
+        "https://nng-phinf.pstatic.net/avatar.jpg",
         "profile images must use the same framed image structure as native Chzzk comments"
     );
     assert.equal(document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-avatar").disabled, true);
@@ -1122,14 +1135,14 @@ test("VOD comments load from the API without a lower comment DOM and render safe
 });
 
 test("VOD comment rows reuse native Chzzk profile and buff visuals without cloning native controls", async (t) => {
-    const nativeProfileUrl = "https://example.com/native-avatar.jpg";
+    const nativeProfileUrl = "https://nng-phinf.pstatic.net/native-avatar.jpg";
     const fixture = createFixture({
         fetchComments: async () =>
             apiContent({
                 rows: [
                     apiComment(1, "원본 자산", {
                         buffCount: 3,
-                        profileImageUrl: "https://example.com/api-avatar.jpg",
+                        profileImageUrl: "https://nng-phinf.pstatic.net/api-avatar.jpg",
                     }),
                 ],
                 totalCount: 1,
@@ -1182,15 +1195,14 @@ test("VOD comment rows reuse native Chzzk profile and buff visuals without cloni
     const nativeAvatar = document.querySelector("#native-avatar-1 > span");
     const mirroredAvatar = document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-avatar");
     const mirroredAuthor = document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-author");
-    const reusedAvatar = document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-avatar-native-visual");
+    const reusedAvatar = document.querySelector("[data-bcvc-comment-key='id:1'] .bcvc-avatar-image");
     assert.equal(mirroredAvatar.tagName, "BUTTON");
     assert.equal(mirroredAvatar.disabled, false);
     assert.equal(mirroredAuthor.tagName, "BUTTON");
     assert.equal(mirroredAuthor.disabled, false);
-    assert.equal(
-        window.getComputedStyle(reusedAvatar).backgroundImage,
-        window.getComputedStyle(nativeAvatar).backgroundImage
-    );
+    assert.equal(reusedAvatar.src, nativeProfileUrl);
+    assert.equal(reusedAvatar.referrerPolicy, "no-referrer");
+    assert.equal(mirroredAvatar.hasAttribute("data-bcvc-api-avatar-url"), false);
     assert.notEqual(reusedAvatar, nativeAvatar);
     assert.equal(nativeAvatar.closest("#commentBox-1")?.id, "commentBox-1");
 
@@ -1209,10 +1221,10 @@ test("VOD comment rows reuse native Chzzk profile and buff visuals without cloni
     nativeAvatarButton.removeAttribute("aria-disabled");
     await waitForCondition(() => !mirroredAvatar.disabled);
     nativeAvatar.style.backgroundImage = "none";
-    await waitForCondition(() => mirroredAvatar.querySelector(".bcvc-avatar-image"));
+    await waitForCondition(() => mirroredAvatar.querySelector(".bcvc-avatar-image")?.src.endsWith("/api-avatar.jpg"));
     assert.equal(
         mirroredAvatar.querySelector(".bcvc-avatar-image").src,
-        "https://example.com/api-avatar.jpg",
+        "https://nng-phinf.pstatic.net/api-avatar.jpg",
         "a removed native background must fall back to the API profile image instead of staying stale"
     );
 
@@ -1262,7 +1274,7 @@ test("VOD comment rows reuse native Chzzk profile and buff visuals without cloni
     replacementArea.id = "commentArea";
     replacementArea.innerHTML = [
         '<div id="commentBox-1">',
-        '<button id="replacement-avatar-1" class="_thumbnail_fixture_76" type="button"><span style="background-image:url(\'https://example.com/replacement-avatar.jpg\')"></span></button>',
+        '<button id="replacement-avatar-1" class="_thumbnail_fixture_76" type="button"><span style="background-image:url(\'https://nng-phinf.pstatic.net/replacement-avatar.jpg\')"></span></button>',
         '<button id="replacement-author-1" class="_information_fixture_101" type="button"><strong>작성자 1</strong></button>',
         '<button id="replacement-buff-1" type="button" aria-pressed="false" aria-label="버프 5"><i class="_buff_icon_fixture_5"></i></button>',
         "</div>",
@@ -1281,10 +1293,7 @@ test("VOD comment rows reuse native Chzzk profile and buff visuals without cloni
     mirroredBuff.click();
     assert.equal(replacementClicks, 3, "replacement native controls must receive the next delegated actions");
     await waitForCondition(() => mirroredBuff.getAttribute("aria-label") === "버프 5");
-    assert.match(
-        window.getComputedStyle(mirroredAvatar.querySelector(".bcvc-avatar-native-visual")).backgroundImage,
-        /replacement-avatar/
-    );
+    assert.match(mirroredAvatar.querySelector(".bcvc-avatar-image").src, /replacement-avatar/);
     assert.equal(fixture.requests.length, 1, "native control remounts must not reload API comments");
 });
 
@@ -1438,11 +1447,9 @@ test("VOD comment rows render observed replies and tolerate nullable or deleted 
     assert.equal(replyList.hidden, true);
 });
 
-test("VOD long comments start collapsed and can be expanded and collapsed in place", async (t) => {
-    const longText = Array.from(
-        { length: 30 },
-        (_, index) => `${String(index + 1).padStart(2, "0")}:00 긴 댓글 줄`
-    ).join("\n");
+test("VOD long comments expand inline once, preserving focus and linking only complete timecodes", async (t) => {
+    const prefix = "01:00 첫 장면\n".padEnd(244, "가") + " ";
+    const longText = prefix + "01:02:03 다음 장면\n30:00 마지막 장면";
     const fixture = createFixture({
         fetchComments: async () => apiContent({ rows: [apiComment(1, longText)], totalCount: 1 }),
     });
@@ -1459,18 +1466,20 @@ test("VOD long comments start collapsed and can be expanded and collapsed in pla
 
     assert.equal(toggle.textContent, "더보기");
     assert.equal(toggle.getAttribute("aria-expanded"), "false");
-    assert.ok(content.textContent.length < longText.length);
-    assert.doesNotMatch(content.textContent, /30:00/);
+    assert.equal(content.nextElementSibling, toggle);
+    assert.equal(content.parentElement.className, "bcvc-message");
+    assert.equal(content.textContent, prefix + "01:02...");
+    const times = () => Array.from(content.querySelectorAll(".bcvc-timecode"), (button) => button.textContent);
+    assert.deepEqual(times(), ["01:00"]);
 
+    toggle.focus();
     toggle.click();
-    assert.equal(toggle.textContent, "접기");
-    assert.equal(toggle.getAttribute("aria-expanded"), "true");
-    assert.match(content.textContent, /30:00/);
-
-    toggle.click();
-    assert.equal(toggle.textContent, "더보기");
-    assert.equal(toggle.getAttribute("aria-expanded"), "false");
-    assert.doesNotMatch(content.textContent, /30:00/);
+    assert.equal(document.activeElement, content);
+    assert.equal(content.tabIndex, -1);
+    assert.equal(toggle.isConnected, false);
+    assert.equal(content.parentElement.querySelector(".bcvc-message-toggle"), null);
+    assert.equal(content.textContent, longText);
+    assert.deepEqual(times(), ["01:00", "01:02:03", "30:00"]);
 });
 
 test("VOD comment rendering caps total nested replies without hiding the limit", async (t) => {
@@ -1667,6 +1676,240 @@ test("VOD comment pagination coalesces observer requests and appends without rep
     assert.equal(mirroredRowScans, 1, "appending a page must sync native assets once for the new rows");
 });
 
+test("VOD comment stickers use the native width and retain their source aspect ratio and URL", async (t) => {
+    const sticker = {
+        attachType: "STICKER",
+        attachValue: "https://storep-phinf.pstatic.net/pack/sticker.png?type=p100_100",
+        extraJson: JSON.stringify({ width: 96, height: 96 }),
+    };
+    const photo = { attachType: "PHOTO", attachValue: "https://other.pstatic.net/photo.png?type=original" };
+    const fixture = createFixture({
+        fetchComments: () =>
+            apiContent({
+                rows: [
+                    apiComment(1, "", { attaches: [sticker] }),
+                    apiComment(2, "", { attaches: [sticker, photo] }),
+                    apiComment(3, "", { attaches: [photo] }),
+                ],
+                totalCount: 3,
+            }),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.window.close();
+    });
+    clickCommentTab(fixture.document);
+    await waitForCondition(() => fixture.document.querySelectorAll(".bcvc-attachment").length === 4);
+    const stickers = fixture.document.querySelectorAll('.bcvc-attachment[data-type="STICKER"]');
+    assert.equal(stickers.length, 2);
+    for (const image of stickers) {
+        const style = fixture.window.getComputedStyle(image);
+        assert.equal(image.src, sticker.attachValue);
+        assert.equal(image.alt, "댓글 스티커");
+        assert.deepEqual(
+            [style.width, style.height, style.maxWidth, style.borderRadius],
+            ["103px", "auto", "100%", "0px"]
+        );
+        assert.equal(style.backgroundColor, "rgba(0, 0, 0, 0)");
+        assert.equal(fixture.window.getComputedStyle(image.parentElement).marginTop, "5px");
+    }
+    for (const image of fixture.document.querySelectorAll('.bcvc-attachment[data-type="PHOTO"]')) {
+        assert.equal(image.src, photo.attachValue, "other image hosts keep their query parameters");
+    }
+});
+
+test("VOD photo rows keep native thumbnail sizes, count badges and the source photo order", async (t) => {
+    const photo = (id, width, height) => ({
+        attachType: "PHOTO",
+        attachValue: `https://nng-phinf.pstatic.net/${id}.jpg?type=original`,
+        extraJson: JSON.stringify({ width, height }),
+    });
+    const sticker = { attachType: "STICKER", attachValue: "https://storep-phinf.pstatic.net/sticker.png" };
+    const landscape = Array.from({ length: 5 }, (_, i) => photo(i + 1, 800, 450));
+    const mixed = [photo(1, 400, 700), ...landscape.slice(1)];
+    const fixture = createFixture({
+        fetchComments: () =>
+            apiContent({
+                rows: [
+                    apiComment(1, "", { attaches: landscape }),
+                    apiComment(2, "", { attaches: mixed }),
+                    apiComment(3, "", { attaches: [sticker, ...landscape] }),
+                    apiComment(4, "", { attaches: [sticker, ...mixed] }),
+                    apiComment(5, "", { attaches: [photo(1, 240, 1200)] }),
+                ],
+            }),
+    });
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        fixture.window.close();
+    });
+    clickCommentTab(fixture.document);
+    await waitForCondition(() => fixture.document.querySelector('[data-bcvc-comment-id="5"] .bcvc-photo'));
+    const attachments = (id) => fixture.document.querySelector(`[data-bcvc-comment-id="${id}"] .bcvc-attachments`);
+    const combinations = [
+        [1, "wide", 2, "+3"],
+        [2, "square", 5, null],
+        [3, "wide", 1, "+4"],
+        [4, "square", 4, null],
+        [5, "single", 1, null],
+    ];
+    for (const [id, layout, count, more] of combinations) {
+        const wrapper = attachments(id);
+        const buttons = Array.from(wrapper.querySelectorAll("button.bcvc-photo"));
+        assert.equal(buttons.length, count);
+        assert.ok(buttons.every((button) => button.dataset.layout === layout));
+        assert.equal(buttons.at(-1).querySelector(".bcvc-photo-more")?.textContent ?? null, more);
+        assert.equal(fixture.window.getComputedStyle(wrapper).overflowX, "auto");
+        for (const [i, button] of buttons.entries()) {
+            assert.equal(button.getAttribute("aria-haspopup"), "dialog");
+            assert.equal(button.querySelector("img").src, `https://nng-phinf.pstatic.net/${i + 1}.jpg?type=w375`);
+        }
+    }
+    assert.ok(attachments(3).firstElementChild.matches('img[data-type="STICKER"]'));
+    assert.equal(attachments(3).querySelector("button").getAttribute("aria-label"), "첨부 사진 1/5 크게 보기");
+    assert.equal(attachments(5).querySelector("img").style.aspectRatio, "240 / 1200");
+
+    const strip = attachments(2);
+    Object.defineProperties(strip, { clientWidth: { value: 293 }, scrollWidth: { value: 547 } });
+    strip.getBoundingClientRect = () => ({ left: 0, right: 293 });
+    strip.scrollLeft = 238;
+    const last = strip.lastElementChild;
+    last.getBoundingClientRect = () => ({ left: 206, right: 309 });
+    last.focus();
+    assert.equal(strip.scrollLeft, 254, "the last tile and its focus outline are fully visible");
+    const first = strip.firstElementChild;
+    first.getBoundingClientRect = () => ({ left: -254, right: -151 });
+    first.focus();
+    assert.equal(strip.scrollLeft, 0);
+});
+
+test("VOD photo viewers keep playback keys away from page shortcuts and preserve button defaults", (t) => {
+    const fixture = createFixture();
+    const { document, window } = fixture;
+    t.after(() => window.close());
+    const windowKeys = [];
+    const recordKey = (event) => windowKeys.push(event.type);
+    window.addEventListener("keydown", recordKey);
+    window.addEventListener("keyup", recordKey);
+    function press(target, key, modifiers = {}) {
+        windowKeys.length = 0;
+        const targetKeys = [];
+        for (const type of ["keydown", "keyup"]) {
+            target.addEventListener(type, () => targetKeys.push(type), { once: true });
+            const event = new window.KeyboardEvent(type, { key, ...modifiers, bubbles: true, cancelable: true });
+            assert.equal(target.dispatchEvent(event), true, `${key} keeps its browser default`);
+        }
+        assert.deepEqual(targetKeys, ["keydown", "keyup"], "the focused viewer control gets both phases");
+        return [...windowKeys];
+    }
+    const pageKeys = ["keydown", "keyup"];
+    for (const viewer of [
+        '<div class="yarl__portal" role="dialog" aria-label="Lightbox"><button>다음</button></div>',
+        '<dialog class="bcvc-photo-viewer" open><button>다음</button></dialog>',
+    ]) {
+        document.body.insertAdjacentHTML("beforeend", viewer);
+        const dialog = document.body.lastElementChild;
+        for (const key of [" ", "f", "k", "m", "t", "c", "ㄹ", "ㅏ", "ㅡ", "ㅅ", "ㅊ"]) {
+            assert.deepEqual(press(dialog, key), []);
+        }
+        const button = dialog.querySelector("button");
+        assert.deepEqual(press(button, " "), []);
+        for (const key of ["Enter", "Tab", "Escape", "ArrowRight", "+"]) {
+            assert.deepEqual(press(button, key), pageKeys);
+        }
+        assert.deepEqual(press(button, "f", { ctrlKey: true }), pageKeys);
+        dialog.remove();
+    }
+    document.body.insertAdjacentHTML("beforeend", '<div role="dialog" aria-label="다른 패널"></div>');
+    assert.deepEqual(press(document.body.lastElementChild, "f"), pageKeys);
+    const portal = document.createElement("div");
+    portal.className = "yarl__portal";
+    portal.setAttribute("role", "dialog");
+    portal.setAttribute("aria-label", "Lightbox");
+    document.body.append(portal);
+    fixture.emitRoute("/");
+    assert.deepEqual(press(portal, "f"), pageKeys);
+    fixture.emitRoute("/video/456");
+    assert.deepEqual(press(portal, "f"), []);
+    fixture.emitOptions({ vodCommentTabsEnabled: false });
+    assert.deepEqual(press(portal, "f"), pageKeys);
+});
+
+test("VOD photo buttons delegate only the matching native gallery and open missing photos in a modal", async (t) => {
+    const src = (name) => `https://nng-phinf.pstatic.net/${name}.jpg`;
+    const fixture = createFixture({
+        fetchComments: () =>
+            apiContent({
+                rows: [
+                    apiComment(42, "사진", {
+                        attaches: ["first", "second"].map((name) => ({ attachType: "PHOTO", attachValue: src(name) })),
+                    }),
+                ],
+            }),
+        nativeCommentsHtml: `<div id="commentArea"><div id="commentBox-42"><div class="_attachment_test_1">
+            <button class="_image_button_test"><img src="${src("first")}?type=w375"></button>
+            <button class="_image_button_test"><span style='background-image:url("${src("second")}?type=w375")'></span></button>
+            </div><div id="commentBox-43"><div class="_attachment_reply_1"><button class="_image_button_reply">
+            <img src="${src("other")}?type=w375"></button></div></div></div></div>`,
+    });
+    const { document, window } = fixture;
+    // JSDOM does not implement the HTML dialog methods. Chrome's top layer is checked separately.
+    window.HTMLDialogElement.prototype.showModal = function () {
+        this.open = true;
+    };
+    window.HTMLDialogElement.prototype.close = function () {
+        this.open = false;
+        this.dispatchEvent(new window.Event("close"));
+    };
+    t.after(() => {
+        fixture.emitOptions({ vodCommentTabsEnabled: false });
+        window.close();
+    });
+    clickCommentTab(document);
+    await waitForCondition(() => document.querySelectorAll(".bcvc-photo").length === 2);
+    const [first, second] = document.querySelectorAll(".bcvc-photo");
+    const nativeButtons = document.querySelectorAll("#commentBox-42 button");
+    const clicks = [];
+    nativeButtons.forEach((button, index) => button.addEventListener("click", () => clicks.push(index)));
+    second.click();
+    assert.deepEqual(clicks, [1]);
+    assert.equal(document.querySelector(".bcvc-photo-viewer"), null);
+
+    // A reused row still has this ID and second thumbnail, but its first photo now belongs to another album.
+    nativeButtons[0].querySelector("img").src = src("replacement") + "?type=w375";
+    second.click();
+    const dialog = document.querySelector("dialog.bcvc-photo-viewer[open]");
+    assert.ok(dialog);
+    assert.deepEqual(clicks, [1]);
+    const previousImage = dialog.querySelector("img");
+    assert.equal(previousImage.src, src("second"));
+    assert.equal(dialog.querySelector(".bcvc-photo-counter").textContent, "2 / 2");
+    assert.equal(dialog.querySelector("[data-direction='next']").disabled, true);
+    const prev = dialog.querySelector("[data-direction='prev']");
+    prev.focus();
+    prev.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    assert.equal(dialog.querySelector("img").src, src("first"));
+    previousImage.dispatchEvent(new window.Event("error"));
+    assert.equal(dialog.querySelector(".bcvc-photo-status").textContent, "사진 불러오는 중");
+    dialog.querySelector("img").dispatchEvent(new window.Event("load"));
+    assert.equal(dialog.querySelector(".bcvc-photo-status").hidden, true);
+    assert.equal(prev.disabled, true);
+    assert.equal(document.activeElement, dialog.querySelector(".bcvc-photo-stage"));
+    document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    assert.equal(dialog.querySelector("img").src, src("second"));
+    dialog.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(document.querySelector(".bcvc-photo-viewer"), null);
+    assert.equal(document.activeElement, second);
+
+    document.getElementById("commentArea").remove();
+    first.click();
+    assert.equal(document.querySelector("dialog[open] img").src, src("first"));
+    fixture.emitOptions({ vodCommentTabsEnabled: false });
+    assert.equal(document.querySelector(".bcvc-photo-viewer"), null);
+    first.click();
+    assert.equal(document.querySelector(".bcvc-photo-viewer"), null, "detached thumbnails cannot reopen a viewer");
+});
+
 test("VOD comment sorts cache loaded rows while refresh reloads only the active order", async (t) => {
     const fixture = createFixture({
         fetchComments: ({ orderType }, index) =>
@@ -1681,6 +1924,14 @@ test("VOD comment sorts cache loaded rows while refresh reloads only the active 
     clickCommentTab(document);
     await waitForCondition(() =>
         /POPULAR 댓글/.test(document.getElementById("cheese-spanner-vod-comment-panel").textContent)
+    );
+    const sort = document.querySelector(".bcvc-sort");
+    assert.equal(sort.previousElementSibling.getAttribute("data-bcvc-action"), "refresh");
+    assert.equal(fixture.window.getComputedStyle(sort).gap, "4px");
+    const style = fixture.window.getComputedStyle(sort.firstElementChild);
+    assert.deepEqual(
+        [style.fontSize, style.lineHeight, style.fontWeight, style.padding],
+        ["13px", "14px", "400", "4px 5px"]
     );
     assert.deepEqual(
         Array.from(document.querySelectorAll("[data-bcvc-action='sort']")).map((button) => ({
@@ -1843,8 +2094,9 @@ test("VOD comment body keeps body typography before native comments arrive and a
     const panel = () => document.getElementById("cheese-spanner-vod-comment-panel");
     assert.equal(panel().style.getPropertyValue("--bcvc-font-family"), "system-ui, sans-serif");
     document.getElementById("below-player").innerHTML =
-        '<div id="commentArea" style="font-family:Verdana,sans-serif"><div id="commentBox-1">원본 댓글</div></div>';
+        '<div id="commentArea" style="font-family:Verdana,sans-serif"><button style="font-family:Tahoma,serif">인기순</button><div id="commentBox-1">원본 댓글</div></div>';
     await waitForCondition(() => panel().style.getPropertyValue("--bcvc-font-family") === "Verdana, sans-serif");
+    assert.equal(panel().style.getPropertyValue("--bcvc-toolbar-font-family"), "Tahoma, serif");
     document.getElementById("commentArea").remove();
     Object.defineProperty(document, "fullscreenElement", {
         configurable: true,
@@ -1855,6 +2107,7 @@ test("VOD comment body keeps body typography before native comments arrive and a
     document.getElementById("player-layout").insertAdjacentHTML("beforeend", chatAsideHtml());
     await waitForCondition(() => panel());
     assert.equal(panel().style.getPropertyValue("--bcvc-font-family"), "system-ui, sans-serif");
+    assert.equal(panel().style.getPropertyValue("--bcvc-toolbar-font-family"), "");
     assert.equal(
         document.getElementById("cheese-spanner-vod-comment-tabs").style.getPropertyValue("--bcvc-heading-font-family"),
         "Arial, sans-serif"
@@ -1927,7 +2180,7 @@ test("VOD comment rows capped by the per-order reply budget still show the reply
 });
 
 test("VOD comment load-more pages without new rows keep expanded replies and bodies in place", async (t) => {
-    const longText = Array.from({ length: 30 }, (_, index) => `긴 본문 ${index + 1}줄`).join("\n");
+    const longText = Array.from({ length: 30 }, (_, index) => `긴 본문 ${index + 1}줄 내용`).join("\n");
     const first = apiComment(1, longText);
     first.replyComments = [
         {
@@ -1962,7 +2215,8 @@ test("VOD comment load-more pages without new rows keep expanded replies and bod
     replyToggle.click();
     messageToggle.click();
     assert.equal(replyToggle.getAttribute("aria-expanded"), "true");
-    assert.equal(messageToggle.getAttribute("aria-expanded"), "true");
+    assert.equal(messageToggle.isConnected, false);
+    assert.equal(firstRow.querySelector(".bcvc-message-content").textContent, longText);
 
     document.querySelector("[data-bcvc-action='load-more']").click();
     await waitForCondition(() => fixture.requests.some((request) => request.offset === 10));
@@ -1973,8 +2227,8 @@ test("VOD comment load-more pages without new rows keep expanded replies and bod
     assert.equal(replyToggle.isConnected, true);
     assert.equal(replyToggle.getAttribute("aria-expanded"), "true");
     assert.equal(firstRow.querySelector(".bcvc-replies").hidden, false);
-    assert.equal(messageToggle.getAttribute("aria-expanded"), "true");
-    assert.match(firstRow.textContent, /긴 본문 30줄/);
+    assert.equal(firstRow.querySelector(".bcvc-message-toggle"), null);
+    assert.equal(firstRow.querySelector(".bcvc-message-content").textContent, longText);
     assert.ok(document.querySelector("[data-bcvc-action='load-more']"), "the footer still offers the next offset");
 });
 

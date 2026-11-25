@@ -257,19 +257,8 @@ function normalizeCompressorTabs(value) {
 }
 
 function handleCompressorState(message, sender) {
-    if (
-        sender?.id !== chrome.runtime.id ||
-        !Number.isInteger(sender.tab?.id) ||
-        sender.tab.id < 0 ||
-        sender.frameId !== 0
-    ) {
+    if (!CheeseSpannerSettings.isChzzkTopFrameSender(sender, chrome.runtime.id))
         return Promise.reject(new Error("Untrusted compressor sender"));
-    }
-    try {
-        if (new URL(sender.url).origin !== "https://chzzk.naver.com") throw new Error();
-    } catch (_) {
-        return Promise.reject(new Error("Untrusted compressor sender"));
-    }
     if (message.kind !== "get" && (message.kind !== "set" || !isCompressorState(message.state))) {
         return Promise.reject(new Error("Invalid compressor state"));
     }
@@ -329,12 +318,7 @@ function isTrustedWatchHistorySender(operation, sender) {
         operation.kind === "appendActivities" ||
         operation.kind === "migrateRecordId"
     ) {
-        return (
-            Boolean(sender.tab) &&
-            sender.frameId === 0 &&
-            senderUrl.origin === "https://chzzk.naver.com" &&
-            (sender.origin === undefined || sender.origin === "https://chzzk.naver.com")
-        );
+        return CheeseSpannerSettings.isChzzkTopFrameSender(sender, chrome.runtime.id, { allowIncognito: true });
     }
 
     const historyUrl = new URL(chrome.runtime.getURL("history.html"));
@@ -394,6 +378,28 @@ globalThis.CheeseSpannerDonationHistoryImport.install({
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type === "cheese-spanner:load-hls") {
+        if (
+            Object.keys(message).length !== 1 ||
+            !CheeseSpannerSettings.isChzzkTopFrameSender(sender, chrome.runtime.id, { allowIncognito: true }) ||
+            typeof sender.documentId !== "string" ||
+            !sender.documentId
+        ) {
+            sendResponse({ ok: false });
+            return false;
+        }
+        chrome.scripting
+            .executeScript({
+                target: { tabId: sender.tab.id, documentIds: [sender.documentId] },
+                world: "ISOLATED",
+                files: ["vendor/hls.light.min.js"],
+            })
+            .then(
+                () => sendResponse({ ok: true }),
+                () => sendResponse({ ok: false })
+            );
+        return true;
+    }
     if (message?.type === globalThis.CheeseSpanner.categoryExclusions.MESSAGE_TYPE) {
         categoryExclusions.handleMessage(message, sender).then(sendResponse);
         return true;

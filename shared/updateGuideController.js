@@ -30,8 +30,7 @@
     }
 
     function senderIdentity(sender, runtime, clientId) {
-        if (sender?.id !== runtime.id || !Number.isInteger(sender.tab?.id) || sender.tab.id < 0 || sender.frameId !== 0)
-            return null;
+        if (!globalThis.CheeseSpannerSettings.isChzzkTopFrameSender(sender, runtime.id)) return null;
         try {
             const url = new URL(sender.url);
             if (url.origin !== "https://chzzk.naver.com" || url.username || url.password) return null;
@@ -171,6 +170,16 @@
                 const owner = senderIdentity(sender, chrome.runtime, message.clientId);
                 if (!owner) return failed();
                 const action = message.action;
+                pruneReservation();
+                if (action === "release") {
+                    if (reservation?.token === message.token && reservation.owner === owner) reservation = null;
+                    return idle();
+                }
+                if (
+                    sender.tab.active !== true ||
+                    (sender.documentLifecycle !== undefined && sender.documentLifecycle !== "active")
+                )
+                    return idle();
                 if (action === "open-settings") {
                     await callApi((done) =>
                         chrome.tabs.create(
@@ -182,16 +191,6 @@
                     );
                     return idle();
                 }
-                pruneReservation();
-                if (action === "release") {
-                    if (reservation?.token === message.token && reservation.owner === owner) reservation = null;
-                    return idle();
-                }
-                if (
-                    sender.tab.active !== true ||
-                    (sender.documentLifecycle !== undefined && sender.documentLifecycle !== "active")
-                )
-                    return idle();
                 const epoch = optionEpoch;
                 const pending = reservation;
                 if (

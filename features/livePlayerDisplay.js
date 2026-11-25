@@ -162,12 +162,12 @@
         if (hideBadge) document.documentElement.setAttribute(HIDE_ATTR, "1");
         else document.documentElement.removeAttribute(HIDE_ATTR);
         if (id && (options.hideLiveBadgeEnabled || options.liveStartTimeEnabled)) {
+            CheeseSpanner.utils.ensureUiTheme?.();
             injectStyleOnce(
                 STYLE_ID,
                 `
 html[${HIDE_ATTR}="1"] .player_header .header_info em[class*='_live_'][class*='_large_']{display:none!important}
-#${CLOCK_ID}{margin-left:8px;white-space:nowrap;font-size:13px;font-weight:600;line-height:16px;color:var(--sem-color-content-neutral-cool-strong,var(--Content-neutral,#545a69))}
-html.theme_dark #${CLOCK_ID}{color:var(--sem-color-content-neutral-cool-strong,var(--Content-neutral,#c9cedc))}
+#${CLOCK_ID}{margin-left:8px;white-space:nowrap;font-size:13px;font-weight:600;line-height:16px;color:var(--bct-text-body)}
 `
             );
         } else document.getElementById(STYLE_ID)?.remove();

@@ -1508,33 +1508,38 @@
         return token;
     }
 
-    function readVodQualityFallback(video) {
-        if (!autoQualityEnabled || preferredQuality !== "480p" || routeMediaGate?.video === video) return null;
+    function readVodStreamQualities(video) {
+        if (routeMediaGate?.video === video) return null;
         const native = window.CheeseSpannerVodNative;
         const host = getNativeVodHost(video);
         const player = host && native?.find(host, video);
         if (!player) return null;
         const context = createApplyContext();
         const trackList = getTrackListFromTarget(player);
+        const count = trackList?.length;
+        if (!Number.isInteger(count) || count < 1 || count > 256) return null;
         const tracks = toTrackArray(trackList);
+        if (tracks.length !== count) return null;
+        const heights = tracks
+            .filter((track) => !isAutomaticTrack(track, context))
+            .map((track) => getTrackHeight(track, context));
+        if (!heights.length || heights.some((value) => !Number.isSafeInteger(value) || value < 1 || value > 16384))
+            return null;
+        const info = { candidateHeights: [...new Set(heights)].sort((a, b) => b - a) };
+        if (autoQualityEnabled && preferredQuality === "480p") {
+            const selected = getSelectedTrack(tracks, trackList);
+            const target = pickTargetTrack(tracks, selected, 480, context);
+            const height = target && getTrackHeight(target, context);
+            if (height > 0 && height < 480 && selected && trackMatchesQuality(selected, height, context))
+                info.qualityFallback = height;
+        }
         if (
-            tracks.length !== Number(trackList?.length) ||
-            tracks.some((track) => !isAutomaticTrack(track, context) && !(getTrackHeight(track, context) > 0))
+            getMainVideo() !== video ||
+            native.find(host, video) !== player ||
+            getTrackListFromTarget(player) !== trackList
         )
             return null;
-        const selected = getSelectedTrack(tracks, trackList);
-        const target = pickTargetTrack(tracks, selected, 480, context);
-        const height = target ? getTrackHeight(target, context) : null;
-        return Number.isInteger(height) &&
-            height > 0 &&
-            height < 480 &&
-            selected &&
-            trackMatchesQuality(selected, height, context) &&
-            getMainVideo() === video &&
-            native.find(host, video) === player &&
-            getTrackListFromTarget(player) === trackList
-            ? height
-            : null;
+        return info;
     }
 
     function onStreamInfoRead(event) {
@@ -1633,11 +1638,11 @@
         }
         if (isVodRoute()) {
             try {
-                const height = readVodQualityFallback(video);
-                if (height !== null && result.route === location.pathname) {
+                const qualities = readVodStreamQualities(video);
+                if (qualities && result.route === location.pathname) {
                     result.status = "ready";
                     result.reason = "ok";
-                    result.qualityFallback = height;
+                    Object.assign(result, qualities);
                 }
             } catch (_) {
                 // Unknown or changing track lists have no confirmed explanation.

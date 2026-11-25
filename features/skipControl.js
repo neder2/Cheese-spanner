@@ -95,14 +95,12 @@
     // elements yield, so arrows on other extension or native controls keep seeking.
     const OWNED_ARROW_KEY_WIDGET_SELECTOR =
         "#cheese-spanner-vod-comment-tabs > [role='tab'], .bcmv-cell[tabindex], .bcmv-corner";
-    // The stream info panel (streamInfo.js) owns every key pressed inside it; Space/Enter close it. This window
-    // capture listener runs before the panel can stop the event, so skip and frame-step shortcuts yield here.
-    const STREAM_INFO_PANEL_SELECTOR = "#cheese-spanner-stream-info";
     // 치지직 플레이어는 프레임레이트를 노출하지 않으므로 주류인 1080p60 기준(60fps)으로 이동한다.
     const FRAME_STEP_SECONDS = 1 / 60;
     const OWNED_LIVE_CONTROL_IDS = new Set([SKIP_PILL_ID, LIVE_FAST_FORWARD_BUTTON_ID]);
     const { DEFAULT_SKIP_SECONDS, normalizeSkipSeconds, normalizeOptions } = CheeseSpannerSettings;
     const {
+        PLAYER_SHORTCUT_PANEL_SELECTOR,
         bindFeatureOptions,
         createMutationObserverSync,
         createThrottledDomSync,
@@ -1052,16 +1050,16 @@
         return !(widget.getAttribute("role") === "slider" && looksLikeSeekGestureElement(widget));
     }
 
-    function isStreamInfoPanelTarget(event) {
+    function isKeyboardPanelTarget(event) {
         const target = event.composedPath?.()[0] || event.target;
-        return target instanceof Element && Boolean(target.closest(STREAM_INFO_PANEL_SELECTOR));
+        return target instanceof Element && Boolean(target.closest(PLAYER_SHORTCUT_PANEL_SELECTOR));
     }
 
     function onKeyDownSeek(event) {
         if (!isKeyboardEnabled()) return;
         if (isVodMultiviewInput(event)) return;
         if (event.ctrlKey || event.altKey || event.metaKey) return;
-        if (isEditableTarget(event.target) || isStreamInfoPanelTarget(event)) return;
+        if (isEditableTarget(event.target) || isKeyboardPanelTarget(event)) return;
         // 라이브·VOD 광고 구간에는 화면의 영상이 광고라서 확장 시크·프레임 이동을 하지 않는다. 소비도 하지 않고
         // 네이티브로 넘겨 확장이 꺼져 있을 때와 같은 동작을 둔다(2026-11-05 공개 번들 기준, VOD는 pzp-pc--adbreak).
         if (isNativeAdBreakActive()) return;
@@ -1147,8 +1145,9 @@
   background-color:rgba(255,255,255,0.18) !important;
 }
 #${SKIP_PILL_ID}:focus-visible{
-  outline:none;
-  box-shadow: 0 0 0 2px rgba(255,255,255,0.22);
+  outline:2px solid white;
+  outline-offset:-2px;
+  opacity:1;
 }
 #${SKIP_PILL_ID} .bc-value,
 #${SKIP_PILL_ID} .bc-unit{
@@ -1171,7 +1170,8 @@
   overflow:visible;
 }
 #${LIVE_FAST_FORWARD_BUTTON_ID}:focus-visible{
-  outline:none;
+  outline:2px solid white;
+  outline-offset:-2px;
 }
 #${LIVE_FAST_FORWARD_BUTTON_ID}:disabled{
   opacity:0.35;
@@ -1960,8 +1960,7 @@
     function handleLiveMediaKeyIntent(event) {
         if (!isLiveRoute() || !canUseLiveResumeGuard(attachedVideo)) return;
         if (event.ctrlKey || event.altKey || event.metaKey || isEditableTarget(event.target)) return;
-        // Keys inside the stream info panel neither seek nor toggle playback, so they are not user intent.
-        if (isStreamInfoPanelTarget(event)) return;
+        if (isKeyboardPanelTarget(event)) return;
 
         const key = String(event.key || "").toLowerCase();
         // 라이브 광고 구간(2026-11-05 공개 번들 기준): Space/K는 네이티브가 광고로 보내므로 메인 일시정지 의도가

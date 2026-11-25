@@ -428,3 +428,12 @@ test("visible-author mismatches and malformed requests cannot return native role
         assert.equal(reply.original, null);
     }
 });
+
+test("literal emoji names shared with ordinary Object keys remain readable", (t) => {
+    const f = fixture(t);
+    f.native.originalContent = "{:toString:} {:constructor:}";
+    f.native.extras = { emojis: new f.dom.window.Object() };
+    const reply = f.request().message;
+    assert.equal(reply.normalText, f.native.originalContent);
+    assert.deepEqual(reply.normalEmojis, {});
+});

@@ -816,7 +816,10 @@
         slider.max = "100";
         slider.step = "1";
         slider.setAttribute("aria-label", "컴프레서 볼륨");
-        slider.addEventListener("input", () => setCompressorVolume(Number(slider.value) / 100));
+        slider.addEventListener("input", (event) => {
+            if (!event.isTrusted) return;
+            setCompressorVolume(Number(slider.value) / 100);
+        });
         volume.append(slider, CheeseSpanner.utils.createPlayerTooltip());
         control.append(button, volume);
         for (const eventName of ["pointerdown", "pointerup", "click", "keydown", "keyup"]) {
@@ -827,6 +830,7 @@
             (event) => {
                 // Ctrl+wheel and trackpad pinch stay with the browser zoom, as on the native volume.
                 if (
+                    !event.isTrusted ||
                     event.ctrlKey ||
                     !featureOptions.volumeWheelEnabled ||
                     slider.disabled ||
@@ -898,6 +902,7 @@
                 event.preventDefault();
                 event.stopPropagation();
                 event.stopImmediatePropagation();
+                if (!event.isTrusted) return;
                 setCompressorActive(!compressorActive && featureEnabled());
             },
             true

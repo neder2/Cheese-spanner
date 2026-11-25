@@ -162,7 +162,7 @@
     }
 
     function getLiveChannelId() {
-        const match = String(location.pathname || "").match(/^\/live\/([\w-]+)/);
+        const match = String(location.pathname || "").match(/^\/live\/([a-f0-9]{32})(?:\/|$)/i);
         return match ? match[1] : null;
     }
 
@@ -216,15 +216,17 @@
             const data = await response.json();
             if (!isCurrentApiRequest(generation, channelId)) return;
             const claims = Array.isArray(data?.content?.claims) ? data.content.claims : [];
+            if (claims.length > MAX_COMPLETED_API_CLAIMS) return;
             const attemptedClaimIds = new Set();
 
             for (const claim of claims) {
                 if (!isCurrentApiRequest(generation, channelId)) return;
                 if (String(claim?.claimType || "").toUpperCase() === WATCH_CLAIM_TYPE) continue;
-                if (claim?.claimId === null || claim?.claimId === undefined) continue;
+                if (typeof claim?.claimType !== "string" || !claim.claimType.trim()) continue;
+                if (typeof claim.claimId !== "string" && !Number.isSafeInteger(claim.claimId)) continue;
 
                 const claimId = String(claim.claimId);
-                if (!claimId || attemptedClaimIds.has(claimId)) continue;
+                if (!/^[A-Za-z0-9_-]{1,128}$/.test(claimId) || attemptedClaimIds.has(claimId)) continue;
                 attemptedClaimIds.add(claimId);
 
                 const claimKey = `${channelId}:${claimId}`;

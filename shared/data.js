@@ -182,6 +182,17 @@
         return normalized;
     }
 
+    function normalizeHistoryThumbnailUrl(value) {
+        if (typeof value !== "string" || value.length > 2000 || !/^https:\/\//i.test(value.trim())) return "";
+        const url = normalizeChzzkImageUrl(value);
+        if (!url || url.length > 2000) return "";
+        for (const key of new URL(url).searchParams.keys()) {
+            if (/^(?:token|access_token|authorization|cookie|password|secret|credential|api_key)$/i.test(key))
+                return "";
+        }
+        return url;
+    }
+
     function buildChzzkLiveUrl(value) {
         const channelId = normalizeChzzkChannelId(value);
         return channelId ? `${CHZZK_WEB_ORIGIN}/live/${encodeURIComponent(channelId)}` : "";
@@ -220,8 +231,18 @@
         return buildChzzkLiveUrl(channelId);
     }
 
+    function normalizeChzzkVideoNo(value) {
+        if (typeof value !== "string" && !Number.isSafeInteger(value)) return "";
+        const text = String(value).trim();
+        return /^[1-9]\d{0,14}$/.test(text) ? text : "";
+    }
+
     function pickChzzkVideoNo(value) {
-        return pickString(value?.videoNo, value?.videoId, value?.id);
+        return (
+            normalizeChzzkVideoNo(value?.videoNo) ||
+            normalizeChzzkVideoNo(value?.videoId) ||
+            normalizeChzzkVideoNo(value?.id)
+        );
     }
 
     function pickVideoStartDateText(value) {
@@ -692,7 +713,17 @@
         return value;
     }
 
-    function normalizeTitleHistory(value, channelName = "", maxSize = 20) {
+    function normalizeWatchMetadataTime(value, now = Date.now()) {
+        const at = Math.round(Number(value));
+        return Number.isSafeInteger(at) &&
+            at > 0 &&
+            at <= now + MAX_FUTURE_WATCH_SKEW_MS &&
+            at < Date.UTC(10000, 0, 1) - KST_OFFSET_MS
+            ? at
+            : 0;
+    }
+
+    function normalizeTitleHistory(value, channelName = "", maxSize = 20, now = Date.now()) {
         const rows = Array.isArray(value) ? value.slice(-MAX_TITLE_HISTORY_INPUT) : [];
         const byTitle = new Map();
 
@@ -717,7 +748,7 @@
             }
 
             if (!title || title === "\uC81C\uBAA9 \uC5C6\uB294 \uB77C\uC774\uBE0C") continue;
-            if (!firstSeenAt) firstSeenAt = lastSeenAt || Date.now();
+            if (!firstSeenAt) firstSeenAt = lastSeenAt || now;
             if (!lastSeenAt) lastSeenAt = firstSeenAt;
 
             const existing = byTitle.get(title);
@@ -910,6 +941,36 @@
         return json?.content || null;
     }
 
+    const TIMECODE_RE = /^(?:\d{1,2}:)?\d{1,2}:\d{2}$/;
+    const TIMECODE_SCAN_RE = /(?:^|[\s([{])((?:\d{1,2}:)?\d{1,2}:\d{2})(?=$|[\s)\]},.!?])/g;
+
+    function parseTimecodeSeconds(value) {
+        const text = String(value ?? "").trim();
+        if (!TIMECODE_RE.test(text)) return NaN;
+
+        const parts = text.split(":").map(Number);
+        if (parts.some((part) => !Number.isFinite(part))) return NaN;
+        if (parts.length === 2) {
+            const [minutes, seconds] = parts;
+            return seconds < 60 ? minutes * 60 + seconds : NaN;
+        }
+        if (parts.length === 3) {
+            const [hours, minutes, seconds] = parts;
+            return minutes < 60 && seconds < 60 ? hours * 3600 + minutes * 60 + seconds : NaN;
+        }
+        return NaN;
+    }
+
+    function* commentTimecodes(text, duration = null) {
+        for (const match of text.matchAll(TIMECODE_SCAN_RE)) {
+            const label = match[1];
+            const seconds = parseTimecodeSeconds(label);
+            if (Number.isFinite(seconds) && !(Number.isFinite(duration) && seconds > duration)) {
+                yield { label, seconds, index: match.index + match[0].lastIndexOf(label) };
+            }
+        }
+    }
+
     function getStorageError() {
         return globalThis.chrome?.runtime?.lastError || null;
     }
@@ -1027,6 +1088,8 @@
         compactSpaces,
         fetchChzzkCommentPage,
         parseChzzkCommentPage,
+        parseTimecodeSeconds,
+        commentTimecodes,
         validateChzzkCommentResponse,
         fetchJson,
         formatKstDateKey,
@@ -1050,15 +1113,18 @@
         normalizeDailySeconds,
         normalizeChzzkChannelId,
         normalizeChzzkImageUrl,
+        normalizeHistoryThumbnailUrl,
         normalizeChzzkLiveUrl,
         normalizeChzzkMediaUrl,
         normalizeCompact,
         normalizeForMatch,
         normalizeTitleHistory,
+        normalizeWatchMetadataTime,
         normalizeSessionWatchRanges,
         pad2,
         parseChzzkDate,
         pickArray,
+        normalizeChzzkVideoNo,
         pickChzzkVideoNo,
         pickString,
         pickVideoEndDateText,

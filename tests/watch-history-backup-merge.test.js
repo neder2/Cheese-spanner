@@ -210,6 +210,8 @@ test("only file-scoped restored sessions and chats survive old alias deletion; u
         snapshot({ sessionId: "new", enteredAt: NOW - 20000, seconds: 10 }),
         NOW
     ).history;
+    // Establish the provisional session before linking it. A later deletion of its alias applies to the live record.
+    current = store.applyMutation(current, snapshot({ id: sourceId, sessionId: "deleted", seconds: 1 }), NOW).history;
     current = store.applyMutation(
         current,
         { kind: "migrateRecordId", sourceRecordId: sourceId, targetRecordId: "live:100" },

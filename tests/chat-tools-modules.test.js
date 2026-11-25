@@ -561,7 +561,7 @@ const MEASURED_CHEATKEY_BADGE =
     '<span class="_wrapper_1mc5x_30"><span class="_icon_1mc5x_15" style="width: 18px; height: 18px;"><span class="_container_1nwpy_2"><img src="https://ssl.pstatic.net/static/nng/glive/badge/cheatkey_24m.png" alt="" width="18" height="18"></span></span></span>';
 // 역할 신호가 img alt라는 기존 실측(2026-07) 구조를 같은 배지 자리에 넣어요.
 const ROLE_BADGE =
-    '<span class="_wrapper_1mc5x_30"><span class="_icon_1mc5x_15" style="width: 18px; height: 18px;"><span class="_container_1nwpy_2"><img src="https://example.test/manager.png" alt="채팅 운영자" width="18" height="18"></span></span></span>';
+    '<span class="_wrapper_1mc5x_30"><span class="_icon_1mc5x_15" style="width: 18px; height: 18px;"><span class="_container_1nwpy_2"><img src="https://nng-phinf.pstatic.net/manager.png" alt="채팅 운영자" width="18" height="18"></span></span></span>';
 
 function measuredEmoticon(file) {
     return `<button type="button" class="_button_w9pvh_18"><img alt="" width="24" height="24" src="https://ssl.pstatic.net/static/nng/glive/icon/${file}.png"></button>`;
@@ -1600,3 +1600,18 @@ test("a list cleared row by row still re-binds every record redrawn in the same 
         });
     }
 }
+
+test("blind notice grammar recognizes Korean and English service labels and leaves normal sentences readable", (t) => {
+    const { namespace } = createModules(t);
+    for (const text of [
+        "[블라인드 처리된 메시지]",
+        "메시지가 삭제되었습니다.",
+        "hidden message",
+        "클린봇이 부적절한 표현을 감지했습니다.",
+    ]) {
+        assert.equal(namespace.parser.isBlindNoticeText(text), true, text);
+    }
+    for (const text of ["메시지가 삭제된 이유를 알려 주세요", "hidden message in the song", "처리된 주문"]) {
+        assert.equal(namespace.parser.isBlindNoticeText(text), false, text);
+    }
+});

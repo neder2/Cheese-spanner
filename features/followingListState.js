@@ -5,8 +5,6 @@
  */
 (() => {
     const STORAGE_KEY = "betterchzzk:following-list-state";
-    // 같은 origin의 탭이 함께 쓰는 잠금이에요. 저장 직전 읽기와 쓰기 사이에 다른 탭의 저장이 끼지 않아요.
-    const STORAGE_LOCK = "cheese-spanner:following-list-state";
     const SECTION_SELECTOR = '#sidebar nav[aria-label="팔로우"]';
     const CONTROL_LABELS = {
         section: new Set(["펼쳐짐, 접기", "접힘, 펼치기"]),
@@ -17,7 +15,7 @@
     const SUPPLEMENT_ROW_SELECTOR = "[data-bcsf-source-row]";
     const RESTORE_CLICK_LIMIT = 12;
     const RESTORE_CLICK_WINDOW_MS = 5000;
-    const { bindFeatureOptions, createMutationObserverSync, startPageChangeDetection, storageGet, storageSet } =
+    const { bindFeatureOptions, createMutationObserverSync, startPageChangeDetection, storageGet, settingsStoreSet } =
         CheeseSpanner.utils;
     const storage = globalThis.chrome?.storage?.local;
     let enabled = false;
@@ -83,28 +81,13 @@
         return value === "true" ? true : value === "false" ? false : null;
     }
 
-    function withStorageLock(work) {
-        const locks = globalThis.navigator?.locks;
-        if (typeof locks?.request === "function") return locks.request(STORAGE_LOCK, work);
-        // Web Locks가 없으면 이 탭 안의 쓰기 큐만으로 순서를 지켜요.
-        return Promise.resolve().then(work);
-    }
-
-    // 이번에 사용자가 바꾼 항목만 저장 직전의 최신 값에 합쳐 써요. 다른 탭이 그사이 저장한 다른 항목을
-    // 이 탭이 시작할 때 읽은 값으로 되돌리지 않아요. 이 탭의 화면 복원 기준(preference)은 바꾸지 않아요.
-    // 최신 값을 읽지 못하면 다른 항목을 알 수 없으므로 쓰지 않아요.
     function savePreference(changes) {
         if (!loaded) return;
-        const own = { ...changes };
+        const values = { [STORAGE_KEY]: { ...changes } };
         writeQueue = writeQueue
-            .then(() =>
-                withStorageLock(async () => {
-                    if (stopWhenDisconnected()) return;
-                    const data = await storageGet(storage, STORAGE_KEY);
-                    if (stopWhenDisconnected()) return;
-                    await storageSet(storage, { [STORAGE_KEY]: { ...normalizeState(data?.[STORAGE_KEY]), ...own } });
-                })
-            )
+            .then(() => {
+                if (!stopWhenDisconnected()) return settingsStoreSet("local", values);
+            })
             .catch((error) => {
                 if (!stopWhenDisconnected()) console.warn("[Cheese Spanner] 팔로잉 목록 상태 저장 실패", error);
             });

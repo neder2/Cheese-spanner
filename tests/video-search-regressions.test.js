@@ -140,7 +140,7 @@ test("R2-121: a query spanning the end of one comment and the start of another i
         ["방송도기대", 1],
     ]) {
         assert.equal(model.filterVideosByNormalizedQuery([video], query).length, expected, query);
-        assert.equal(Boolean(model.getCommentMatchText(video, query)), Boolean(expected), query);
+        assert.equal(Boolean(model.getCommentMatchTexts(video, query).length), Boolean(expected), query);
     }
     assert.equal(model.buildCommentNorm(["감사합니다", "음악 좋네요"]).includes("다음"), false);
 });
@@ -636,7 +636,7 @@ test("R2-123: a result card without its own thumbnail, duration or date keeps no
                         videoTitle: "needle known",
                         duration: 65,
                         publishDate: "2025-01-02 10:00:00",
-                        thumbnailImageUrl: "https://example.com/300.jpg",
+                        thumbnailImageUrl: "https://nng-phinf.pstatic.net/300.jpg",
                     },
                 ],
                 last: true,
@@ -658,7 +658,7 @@ test("R2-123: a result card without its own thumbnail, duration or date keeps no
 
     // Contrast: observed values still replace the template's.
     const known = document.querySelector('[data-bcvs-injected="1"] a[href="/video/300"]').closest("article");
-    assert.equal(known.querySelector("img").getAttribute("src"), "https://example.com/300.jpg");
+    assert.equal(known.querySelector("img").getAttribute("src"), "https://nng-phinf.pstatic.net/300.jpg");
     assert.equal(known.querySelector(".dur").textContent, "1:05");
     assert.equal(known.querySelector(".dur").style.visibility, "");
     assert.equal(known.querySelector(".date").textContent, "25.01.02");
@@ -770,5 +770,48 @@ test("video comment search retries malformed pages and follows a short page's ex
     await search();
     assert.deepEqual(offsets, [0, 0, 17]);
     assert.equal(video.commentError, null);
-    assert.equal(root.videoSearchModel.getCommentMatchText(video, "바늘"), "바늘");
+    assert.deepEqual(Array.from(root.videoSearchModel.getCommentMatchTexts(video, "바늘")), ["바늘"]);
+});
+
+test("comment matches open all cached bodies with ordinary links to in-range timestamps", async () => {
+    const chrome = createFakeChrome({ sync: { videoSearchCommentDelayMs: 0, videoSearchMaxPages: 1 } });
+    const dom = createVideoSearchPage(chrome);
+    const { document, KeyboardEvent } = dom.window;
+    let requests = 0;
+    dom.window.fetch = async (url) => {
+        requests++;
+        if (String(url).includes("/videos?"))
+            return jsonResponse({
+                content: { data: [{ videoNo: 100, videoTitle: "Existing 100", duration: 600 }], last: true },
+            });
+        const bodies = [
+            "01:24 보스전 시작",
+            "08:32 보스전 재도전",
+            "다음 보스전 13:00 01:99",
+            "검색 제외",
+            "01:24 보스전 시작",
+        ];
+        return jsonResponse({ content: { comments: { data: bodies.map((content) => ({ comment: { content } })) } } });
+    };
+    await loadPage(dom);
+    typeQuery(dom, "보스전");
+    await waitForCondition(() => document.querySelector("[data-bcvs-comment-icon]"));
+    const icon = document.querySelector("[data-bcvs-comment-icon]");
+    const before = requests;
+    icon.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    const tip = document.querySelector("[data-bcvs-comment-tooltip]");
+    assert.equal(tip.querySelectorAll("li").length, 3);
+    assert.deepEqual(
+        Array.from(tip.querySelectorAll("a"), (a) => a.getAttribute("href")),
+        ["/video/100?currentTime=84", "/video/100?currentTime=512"]
+    );
+    assert.match(tip.textContent, /13:00 01:99/);
+    assert.equal(requests, before);
+    assert.equal(document.activeElement, tip.querySelector("a"));
+    document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(document.activeElement, icon);
+    assert.equal(tip.hasAttribute("data-show"), false);
+    icon.click();
+    typeQuery(dom, "없음");
+    assert.equal(tip.hasAttribute("data-show"), false);
 });

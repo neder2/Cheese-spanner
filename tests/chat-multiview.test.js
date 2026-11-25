@@ -2082,6 +2082,18 @@ test("content scripts and the dynamic ad script stay in the top frame, so chat f
         );
         for (const call of source.matchAll(/executeScript\s*\(\s*\{[\s\S]{0,200}?target\s*:\s*\{([^}]*)\}/g)) {
             if (/\bdocumentIds\s*:/.test(call[1])) {
+                if (file === "background.js") {
+                    assert.match(call[1], /^\s*tabId:\s*sender\.tab\.id,\s*documentIds:\s*\[sender\.documentId\]\s*$/);
+                    const handler = source.slice(
+                        source.indexOf('message?.type === "cheese-spanner:load-hls"'),
+                        call.index
+                    );
+                    assert.match(handler, /!CheeseSpannerSettings\.isChzzkTopFrameSender\(sender, chrome.runtime.id,/);
+                    assert.match(handler, /return false/);
+                    const injection = source.slice(call.index, call.index + 450);
+                    assert.match(injection, /world:\s*"ISOLATED",\s*files:\s*\["vendor\/hls\.light\.min\.js"\]/);
+                    continue;
+                }
                 assert.equal(file, path.join("shared", "followingFoldersRecovery.js"));
                 assert.match(call[1], /^\s*tabId\s*:\s*id\s*,\s*documentIds\s*:\s*\[\s*probe\.documentId\s*\]\s*$/);
                 assert.match(
@@ -2154,12 +2166,17 @@ test("chat multiview uses the shared theme font instead of declaring its own @fo
     const source = read("features/chatMultiview.js");
     assert.doesNotMatch(source, /@font-face|PretendardVariable\.woff2|runtime\??\.getURL/);
     const f = fixture(t, { enabled: false, stored: layout([A]), withTheme: true });
-    await waitForCondition(() => f.w.document.getElementById(ENTRY_ID + "-style"));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(f.w.document.getElementById(ENTRY_ID + "-style"), null, "the disabled feature has no CSS");
     assert.equal(f.w.document.getElementById("cheese-spanner-ui-theme"), null, "no theme while the option is off");
     f.changeSync({ chatMultiviewEnabled: true });
     await f.open();
     const d = f.w.document;
     assert.equal(d.querySelectorAll("#cheese-spanner-ui-theme").length, 1);
+    assert.ok(
+        d.getElementById("cheese-spanner-ui-theme").compareDocumentPosition(d.getElementById(ENTRY_ID + "-style")) &
+            f.w.Node.DOCUMENT_POSITION_FOLLOWING
+    );
     const fontFaces = [...d.querySelectorAll("style")].flatMap((style) =>
         [...style.textContent.matchAll(/@font-face\{[^}]*\}/g)].map(([rule]) => rule)
     );
@@ -2170,7 +2187,7 @@ test("chat multiview uses the shared theme font instead of declaring its own @fo
     );
     assert.match(d.getElementById("cheese-spanner-ui-theme").textContent, /@font-face/);
     const css = d.getElementById(ENTRY_ID + "-style").textContent;
-    assert.match(css, new RegExp("\\n#" + ENTRY_ID + "\\{[^}]*font:14px/1\\.4 var\\(--bct-font\\)"));
+    assert.match(css, new RegExp("\\n#" + ENTRY_ID + "\\{[^}]*font-family:inherit"));
     assert.match(css, new RegExp("\\n#" + PANEL_ID + "\\{[^}]*font:13px/1\\.5 var\\(--bct-font\\)"));
     assert.doesNotMatch(css, /CheeseSpanner Pretendard|system-ui|Segoe UI/, "the font stack lives in the theme only");
 
@@ -2254,7 +2271,7 @@ test("chat multiview colors, radii, shadow and states come from the shared theme
         assert.match(rule(selector), /background:var\(--bccmv-brand-soft\);color:var\(--bccmv-text\)/, selector);
     assert.match(
         rule("#" + ENTRY_ID + '>button[aria-expanded="true"]'),
-        /background:var\(--bccmv-brand-soft\);border-color:var\(--bct-brand-text-base\)/
+        /background:var\(--bccmv-brand-soft\);border-color:var\(--bct-brand-border\)/
     );
     for (const [, value] of css.matchAll(/border-radius:([^;}]*)/g))
         assert.match(

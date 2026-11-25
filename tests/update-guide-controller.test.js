@@ -80,7 +80,7 @@ function harness(initial = {}, initialVersion = "1.4.1", additionalGuideVersions
         },
     };
     const context = vm.createContext({ chrome, URL, Date: ClockDate, crypto: webcrypto });
-    for (const file of ["shared/updateGuide.js", "shared/updateGuideController.js"])
+    for (const file of ["shared/settings.js", "shared/updateGuide.js", "shared/updateGuideController.js"])
         vm.runInContext(fs.readFileSync(path.join(ROOT, file), "utf8"), context, { filename: file });
     const catalog = {
         ...context.CheeseSpannerUpdateGuide,
@@ -514,6 +514,8 @@ test("settings navigation opens only allowlisted extension hashes after explicit
     for (const target of ["", "https://example.com", "../history.html", "__proto__"])
         assert.equal((await h.message("open-settings", { target })).ok, false);
     assert.equal((await h.message("open-settings", { target: "panels", url: "https://example.com" })).ok, false);
+    await h.message("open-settings", { target: "history" }, { ...h.sender, tab: { ...h.sender.tab, active: false } });
+    await h.message("open-settings", { target: "history" }, { ...h.sender, tab: { ...h.sender.tab, incognito: true } });
     assert.equal(h.opened.length, 4);
     h.fail("tabs");
     assert.equal((await h.message("open-settings", { target: "history" })).ok, false);

@@ -18,6 +18,7 @@ function fixture(t) {
     w.eval(fs.readFileSync(path.join(__dirname, "../content.js"), "utf8"));
     w.CheeseSpanner = {
         utils: {
+            PLAYER_SHORTCUT_PANEL_SELECTOR: w.CheeseSpanner.utils.PLAYER_SHORTCUT_PANEL_SELECTOR,
             isSpaceConsumerTarget: w.CheeseSpanner.utils.isSpaceConsumerTarget,
             bindFeatureOptions(fn) {
                 apply = fn;

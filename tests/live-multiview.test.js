@@ -5749,15 +5749,10 @@ test("multiview requests the shared theme only after it is enabled and keeps the
         h.w.Node.DOCUMENT_POSITION_FOLLOWING,
         "the theme is requested before the multiview style"
     );
-    // README: multiview guides, controls and settings keep the font family CHZZK uses, not the bundled font.
     const css = style.textContent;
-    assert.match(
-        cssRule(css, "[data-bcmv-host],#cheese-spanner-multiview-panel"),
-        /--bcmv-font:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic","맑은 고딕",sans-serif/
-    );
-    assert.match(cssRule(css, "#cheese-spanner-multiview"), /font:12px\/1\.4 var\(--bcmv-font\)/);
-    assert.match(css, /\.bcmv-panel\{[^}]*font:13px\/1\.5 var\(--bcmv-font\)/);
-    assert.doesNotMatch(css, /@font-face|CheeseSpanner Pretendard|--bct-font/);
+    assert.match(cssRule(css, "#cheese-spanner-multiview"), /font-family:inherit/);
+    assert.match(css, /\.bcmv-panel\{[^}]*font:13px\/1\.5 var\(--bct-font\)/);
+    assert.doesNotMatch(css, /@font-face|Pretendard/);
     h.configure(false);
     await tick();
     assert.equal(d.getElementById("cheese-spanner-multiview-style"), null);
@@ -5839,7 +5834,7 @@ test("multiview styles take theme colors, radii, shadow and states from the shar
     assert.match(cssRule(css, `${P} .bcmv-layout-toggle`), /border-radius:var\(--bct-radius-full\)/);
     assert.match(
         cssRule(css, '#cheese-spanner-multiview-chat-settings[aria-expanded="true"]'),
-        /color:var\(--bct-brand-text-base\);background:var\(--bct-brand-weak\)/
+        /color:var\(--bct-text\);background:var\(--bct-brand-weak\)/
     );
     assert.match(cssRule(css, "#cheese-spanner-multiview-chat-settings:hover"), /background:var\(--bct-hover\)/);
     for (const [, value] of css.matchAll(/border-radius:([^;}]*)/g))

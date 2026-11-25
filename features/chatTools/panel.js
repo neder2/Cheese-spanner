@@ -133,7 +133,7 @@
 .bcct-moderator-trigger[data-unread="1"]{
   background:var(--bct-brand-weak);
   color:var(--bct-brand-text);
-  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--bct-brand-text) 40%, transparent);
+  box-shadow:inset 0 0 0 1px var(--bct-brand-border);
 }
 .bcct-moderator-actions{
   display:inline-flex!important;
@@ -161,7 +161,7 @@
   position:absolute;
   top:42px;
   right:8px;
-  z-index:2147483646;
+  z-index:var(--bct-z-dialog);
   width:min(344px, calc(100vw - 24px));
   max-height:min(var(--bcct-box-height,420px), calc(100vh - 120px));
   border:1px solid var(--bct-border);
@@ -186,7 +186,7 @@
   border-bottom:1px solid var(--bct-border);
   background:var(--bct-surface);
   font:inherit;
-  font-size:14px;
+  font-size:15px;
   font-weight:700;
 }
 .bcct-moderator-box__heading{
@@ -224,7 +224,7 @@
   height:28px;
   flex:0 0 auto;
   border:0;
-  border-radius:var(--bct-radius-md);
+  border-radius:var(--bct-radius-sm);
   background:transparent;
   color:var(--bct-text-muted);
   cursor:pointer;
@@ -480,13 +480,14 @@
             // 치지직 본 채팅창처럼 그 행에 있던 뱃지 아이콘(역할/구독/후원 등)을
             // 순서대로 붙이고, 뱃지가 하나도 없을 때만 역할 라벨 텍스트로 표시한다.
             const badges = (Array.isArray(message.badges) ? message.badges : []).filter((badge) =>
-                /^https:\/\//.test(normSpace(badge?.src))
+                Boolean(root.utils.normalizeChzzkImageUrl(badge?.src))
             );
             if (badges.length) {
                 for (const badge of badges.slice(0, 8)) {
                     const icon = document.createElement("img");
                     icon.className = "bcct-moderator-row__badge";
-                    icon.src = normSpace(badge.src);
+                    icon.referrerPolicy = "no-referrer";
+                    icon.src = root.utils.normalizeChzzkImageUrl(badge.src);
                     icon.alt = normSpace(badge.alt) || roleLabel(message.role);
                     icon.width = 18;
                     icon.height = 18;
@@ -1219,7 +1220,7 @@
             close.type = "button";
             close.className = "bcct-moderator-box__close";
             close.setAttribute("aria-label", `${MODERATOR_TITLE} 닫기`);
-            close.textContent = "×";
+            close.innerHTML = CheeseSpanner.utils.panelCloseIcon;
             close.addEventListener("click", () => setModeratorPanelOpen(false));
 
             headerRow.append(titleWrap, close);

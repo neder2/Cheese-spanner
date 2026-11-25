@@ -6,6 +6,15 @@ const { JSDOM, VirtualConsole } = require("jsdom");
 const { waitForCondition: waitForSharedCondition } = require("./helpers/wait-for-condition.js");
 const { createAudioCompressorWorker } = require("./helpers/audio-compressor-worker.js");
 
+const { dispatchTrusted } = require("./helpers/extension-page-fixture.js");
+
+function clickCompressor(button) {
+    dispatchTrusted(
+        button,
+        new button.ownerDocument.defaultView.MouseEvent("click", { bubbles: true, cancelable: true })
+    );
+}
+
 const repoRoot = path.join(__dirname, "..");
 const AUDIO_COMPRESSOR_ACTIVE_STORAGE_KEY = "betterchzzk:audio-compressor-active";
 const AUDIO_COMPRESSOR_TABS_STORAGE_KEY = "betterchzzk:audio-compressor-tabs";
@@ -728,7 +737,7 @@ test("audio compressor preserves its graph across SPA mini-player reparenting, r
     document.dispatchEvent(new dom.window.Event("DOMContentLoaded", { bubbles: true }));
     await waitForCondition(() => document.getElementById("cheese-spanner-audio-compressor"));
 
-    document.getElementById("cheese-spanner-audio-compressor").click();
+    clickCompressor(document.getElementById("cheese-spanner-audio-compressor"));
     assert.equal(contexts.length, 1);
     await waitForAsyncCallbacks();
     assert.equal(
@@ -867,7 +876,7 @@ test("audio compressor preserves its graph across SPA mini-player reparenting, r
     assert.equal(worker.messages.filter(({ message }) => message.kind === "set").length, passiveMessageCount);
     assert.deepEqual(chrome.storage.local.data[AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY], explicitPreference);
 
-    returnedButton.click();
+    clickCompressor(returnedButton);
     await waitForAsyncCallbacks();
     assert.equal(returnedButton.dataset.cheeseSpannerAudioCompressor, "0");
     assert.equal(
@@ -1073,7 +1082,7 @@ test("unchanged compressor controls do not rewrite their labels and state attrib
         await waitForAsyncCallbacks();
     }
     assert.equal(records.length, 0, "equal settings must not rewrite the control's current state");
-    page.button().click();
+    clickCompressor(page.button());
     await waitForCondition(() => page.button().getAttribute("aria-pressed") === "true");
     assert.ok(
         records.some((record) => record.attributeName === "aria-pressed"),
@@ -1092,7 +1101,7 @@ test("audio compressor state stays independent across tabs and ignores the old s
     assert.equal(b.button().getAttribute("aria-pressed"), "false");
     a.video.volume = 0.2;
     b.video.volume = 0.8;
-    a.button().click();
+    clickCompressor(a.button());
     await waitForAsyncCallbacks();
     assert.equal(a.button().getAttribute("aria-pressed"), "true");
     assert.equal(b.button().getAttribute("aria-pressed"), "false");
@@ -1107,7 +1116,7 @@ test("audio compressor state stays independent across tabs and ignores the old s
     assert.equal(reloadedA.button().getAttribute("aria-pressed"), "true");
     assert.equal(a.video.volume, 0.2);
     assert.equal(b.video.volume, 0.8);
-    a.button().click();
+    clickCompressor(a.button());
     await waitForAsyncCallbacks();
     assert.equal(
         chrome.storage.local.data[AUDIO_COMPRESSOR_ACTIVE_STORAGE_KEY],
@@ -1125,10 +1134,10 @@ test("browse-first compressor tabs inherit the choice at their first playback en
     await worker.idle();
     assert.equal(browse.button(), null);
     const playing = await createCompressorPage(t, chrome, { channel: "already-playing" });
-    playing.button().click();
+    clickCompressor(playing.button());
     const slider = playing.document.getElementById("cheese-spanner-audio-compressor-volume");
     slider.value = "57";
-    slider.dispatchEvent(new playing.dom.window.Event("input", { bubbles: true }));
+    dispatchTrusted(slider, new playing.dom.window.Event("input", { bubbles: true }));
     await worker.idle();
 
     browse.dom.window.history.pushState({}, "", "/live/from-list");
@@ -1138,7 +1147,7 @@ test("browse-first compressor tabs inherit the choice at their first playback en
     assert.equal(browse.document.getElementById("cheese-spanner-audio-compressor-volume").value, "57");
     assert.equal(browse.contexts[0].gain.gain.value, 0.57);
 
-    playing.button().click();
+    clickCompressor(playing.button());
     await worker.idle();
     browse.dom.window.history.pushState({}, "", "/lives");
     browse.dom.window.dispatchEvent(new browse.dom.window.Event("cheese-spanner:routechange"));
@@ -1200,10 +1209,10 @@ test("new compressor pages inherit the last explicit choice while registered tab
     const a = await createCompressorPage(t, chrome, { channel: "channel-a", nativeVolume: 0.2, nativeMuted: true });
     const b = await createCompressorPage(t, chrome, { channel: "channel-b", nativeVolume: 0.8 });
     const worker = chrome.testState.compressorWorker;
-    a.button().click();
+    clickCompressor(a.button());
     const slider = a.document.getElementById("cheese-spanner-audio-compressor-volume");
     slider.value = "30";
-    slider.dispatchEvent(new a.dom.window.Event("input", { bubbles: true }));
+    dispatchTrusted(slider, new a.dom.window.Event("input", { bubbles: true }));
     await worker.idle();
 
     const c = await createCompressorPage(t, chrome, { channel: "channel-c", nativeVolume: 0.4, nativeMuted: true });
@@ -1218,9 +1227,9 @@ test("new compressor pages inherit the last explicit choice while registered tab
         { tabId: c.tabId, active: true, volume: 0.3 }
     );
 
-    a.button().click();
+    clickCompressor(a.button());
     slider.value = "80";
-    slider.dispatchEvent(new a.dom.window.Event("input", { bubbles: true }));
+    dispatchTrusted(slider, new a.dom.window.Event("input", { bubbles: true }));
     await worker.idle();
     c.close();
     const reloadedC = await createCompressorPage(t, chrome, { tabId: c.tabId });
@@ -1259,9 +1268,9 @@ test("compressor page choices inherit OFF, zero and full output through tab clos
         [false, 100],
         [true, 100],
     ]) {
-        if ((writer.button().getAttribute("aria-pressed") === "true") !== active) writer.button().click();
+        if ((writer.button().getAttribute("aria-pressed") === "true") !== active) clickCompressor(writer.button());
         slider.value = String(percent);
-        slider.dispatchEvent(new writer.dom.window.Event("input", { bubbles: true }));
+        dispatchTrusted(slider, new writer.dom.window.Event("input", { bubbles: true }));
         await chrome.testState.compressorWorker.idle();
         const page = await createCompressorPage(t, chrome, { nativeVolume: 0.35, nativeMuted: true });
         inherited.push(page);
@@ -1273,7 +1282,7 @@ test("compressor page choices inherit OFF, zero and full output through tab clos
         assert.equal(page.video.muted, true);
     }
     slider.value = "30";
-    slider.dispatchEvent(new writer.dom.window.Event("input", { bubbles: true }));
+    dispatchTrusted(slider, new writer.dom.window.Event("input", { bubbles: true }));
     await chrome.testState.compressorWorker.idle();
     writer.close();
     chrome.testState.compressorWorker.closeTab(writer.tabId);
@@ -1310,10 +1319,10 @@ test("compressor page choices inherit OFF, zero and full output through tab clos
 test("external compressors and page control remounts preserve the last explicit preference", async (t) => {
     const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true } });
     const page = await createCompressorPage(t, chrome, { nativeVolume: 0.45, nativeMuted: true });
-    page.button().click();
+    clickCompressor(page.button());
     const slider = page.document.getElementById("cheese-spanner-audio-compressor-volume");
     slider.value = "30";
-    slider.dispatchEvent(new page.dom.window.Event("input", { bubbles: true }));
+    dispatchTrusted(slider, new page.dom.window.Event("input", { bubbles: true }));
     const worker = chrome.testState.compressorWorker;
     await worker.idle();
     const saved = structuredClone(chrome.storage.local.data);
@@ -1362,7 +1371,7 @@ test("compressor controls await the initial worker response and inherit its tab 
     assert.equal(page.document.getElementById("cheese-spanner-audio-compressor-volume").value, "30");
     assert.equal(page.video.volume, 0.5);
     assert.equal(page.video.muted, true);
-    page.button().click();
+    clickCompressor(page.button());
     await worker.idle();
     assert.deepEqual(chrome.storage.local.data[AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY], {
         active: false,
@@ -1383,14 +1392,14 @@ test("failed compressor reads and writes leave direct page actions available wit
     assert.equal(page.button().getAttribute("aria-pressed"), "false");
     assert.equal(worker.writes.length, 0, "a failed read cannot register a fabricated default snapshot");
     worker.failNextSet();
-    page.button().click();
+    clickCompressor(page.button());
     await worker.idle();
     assert.equal(page.button().getAttribute("aria-pressed"), "true");
     assert.deepEqual(chrome.storage.local.data[AUDIO_COMPRESSOR_PREFERENCE_STORAGE_KEY], preference);
     assert.equal(worker.writes.length, 0);
     const slider = page.document.getElementById("cheese-spanner-audio-compressor-volume");
     slider.value = "25";
-    slider.dispatchEvent(new page.dom.window.Event("input", { bubbles: true }));
+    dispatchTrusted(slider, new page.dom.window.Event("input", { bubbles: true }));
     await worker.idle();
     disableOptions(chrome, { audioCompressorEnabled: { newValue: false } });
     disableOptions(chrome, { audioCompressorEnabled: { newValue: true } });
@@ -1451,15 +1460,15 @@ test("audio compressor has a separate output slider and wheel without changing p
     assert.equal(slider.getAttribute("aria-label"), "컴프레서 볼륨");
     assert.equal(slider.value, "100");
     video.volume = 0.2;
-    page.button().click();
+    clickCompressor(page.button());
     slider.value = "40";
-    slider.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    dispatchTrusted(slider, new dom.window.Event("input", { bubbles: true }));
     assert.equal(video.volume, 0.2);
     assert.equal(contexts[0].gain.gain.value, 0.8);
     assert.equal(slider.getAttribute("aria-valuetext"), "40%");
     for (const target of [page.button(), slider]) {
         const wheel = new dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -100 });
-        target.dispatchEvent(wheel);
+        dispatchTrusted(target, wheel);
         assert.equal(wheel.defaultPrevented, true);
     }
     await waitForAsyncCallbacks();
@@ -1473,13 +1482,13 @@ test("audio compressor has a separate output slider and wheel without changing p
     assert.equal(video.volume, 0.25);
     assert.equal(slider.value, "50");
     assert.equal(contexts[0].gain.gain.value, 1);
-    page.button().click();
+    clickCompressor(page.button());
     assert.equal(contexts[0].gain.gain.value, 1, "bypass uses unscaled playback audio");
     slider.value = "0";
-    slider.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    dispatchTrusted(slider, new dom.window.Event("input", { bubbles: true }));
     assert.equal(contexts[0].gain.gain.value, 1, "editing an inactive compressor does not attenuate normal audio");
     assert.equal(video.volume, 0.25);
-    page.button().click();
+    clickCompressor(page.button());
     assert.equal(contexts[0].gain.gain.value, 0);
     assert.equal(video.muted, false, "compressor output zero does not change the native mute control");
 });
@@ -1488,10 +1497,10 @@ test("audio compressor output survives tab reload, options and remounts without 
     const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true } });
     const a = await createCompressorPage(t, chrome, { channel: "channel-a" });
     const b = await createCompressorPage(t, chrome, { channel: "channel-b" });
-    a.button().click();
+    clickCompressor(a.button());
     const slider = a.document.getElementById("cheese-spanner-audio-compressor-volume");
     slider.value = "30";
-    slider.dispatchEvent(new a.dom.window.Event("input", { bubbles: true }));
+    dispatchTrusted(slider, new a.dom.window.Event("input", { bubbles: true }));
     assert.equal(b.document.getElementById("cheese-spanner-audio-compressor-volume").value, "100");
     disableOptions(chrome, { audioCompressorEnabled: { newValue: false } });
     assert.equal(a.document.getElementById("cheese-spanner-audio-compressor-control"), null);
@@ -1547,8 +1556,8 @@ test("a new auxiliary replay inherits the tab compressor choice and edits stay w
     assert.equal(contexts[1].gain.gain.value, 0.63);
 
     slider().value = "20";
-    slider().dispatchEvent(new dom.window.Event("input", { bubbles: true }));
-    button().click();
+    dispatchTrusted(slider(), new dom.window.Event("input", { bubbles: true }));
+    clickCompressor(button());
     assert.equal(button().getAttribute("aria-pressed"), "false");
     assert.equal(page.button().getAttribute("aria-pressed"), "true");
     assert.equal(contexts[0].gain.gain.value, 0.63);
@@ -1660,10 +1669,10 @@ test("audio compressor validates tab state and works when extension storage is u
         assert.equal(page.document.getElementById("cheese-spanner-audio-compressor-volume").value, expectedVolume);
     }
     const page = await createCompressorPage(t, chrome, { storageUnavailable: true });
-    page.button().click();
+    clickCompressor(page.button());
     const slider = page.document.getElementById("cheese-spanner-audio-compressor-volume");
     slider.value = "25";
-    slider.dispatchEvent(new page.dom.window.Event("input", { bubbles: true }));
+    dispatchTrusted(slider, new page.dom.window.Event("input", { bubbles: true }));
     assert.equal(page.button().getAttribute("aria-pressed"), "true");
     assert.equal(page.contexts[0].gain.gain.value, 0.25);
 });
@@ -1674,7 +1683,7 @@ test("audio compressor wheel follows the wheel option and clamps without togglin
     const slider = page.document.getElementById("cheese-spanner-audio-compressor-volume");
     const wheel = (deltaY) => {
         const event = new page.dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY });
-        slider.dispatchEvent(event);
+        dispatchTrusted(slider, event);
         return event;
     };
     page.video.volume = 0.4;
@@ -1712,7 +1721,7 @@ test("audio compressor wheel leaves Ctrl+wheel and trackpad pinch to the browser
                 deltaY,
                 ctrlKey: true,
             });
-            target.dispatchEvent(event);
+            dispatchTrusted(target, event);
             assert.equal(event.defaultPrevented, false, "the browser keeps its zoom gesture");
         }
     }
@@ -1724,7 +1733,28 @@ test("audio compressor wheel leaves Ctrl+wheel and trackpad pinch to the browser
 
     // A plain wheel over the same control still adjusts the output.
     const plain = new page.dom.window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 100 });
-    slider.dispatchEvent(plain);
+    dispatchTrusted(slider, plain);
     assert.equal(plain.defaultPrevented, true);
     assert.equal(slider.value, String(Number(before) - 5));
+});
+
+test("script-dispatched compressor events leave the tab preference and audio graph untouched", async (t) => {
+    const chrome = createFakeChrome({ sync: { audioCompressorEnabled: true, volumeWheelEnabled: true } });
+    const page = await createCompressorPage(t, chrome);
+    const { dom, document } = page;
+    const slider = document.getElementById("cheese-spanner-audio-compressor-volume");
+    await waitForAsyncCallbacks();
+    await chrome.testState.compressorWorker?.idle();
+    const before = JSON.stringify(chrome.storage.local.data);
+    const messageCount = chrome.testState.compressorWorker?.messages.length;
+    page.button().click();
+    slider.value = "37";
+    slider.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    slider.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: 100 }));
+    await waitForAsyncCallbacks();
+    await chrome.testState.compressorWorker?.idle();
+    assert.equal(chrome.testState.compressorWorker?.messages.length, messageCount);
+    assert.equal(JSON.stringify(chrome.storage.local.data), before);
+    assert.equal(page.button().getAttribute("aria-pressed"), "false");
+    assert.equal(page.contexts.length, 0);
 });

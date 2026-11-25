@@ -64,17 +64,6 @@
             return (await call(area, "get", keys)) || {};
         }
 
-        function isContentSender(sender) {
-            if (sender?.id !== chrome.runtime?.id || sender.frameId !== 0) return false;
-            if (!Number.isInteger(sender?.tab?.id) || sender.tab.id < 0) return false;
-            try {
-                const url = new URL(sender.url);
-                return url.origin === "https://chzzk.naver.com" && !url.username && !url.password;
-            } catch {
-                return false;
-            }
-        }
-
         function readExpectation(entry) {
             if (!catalog.isPlainObject(entry)) return null;
             const keys = Object.keys(entry);
@@ -112,6 +101,28 @@
             return { area: message.area, values, expected };
         }
 
+        async function checkMultiviewCapacity(keys) {
+            const prefixes = [catalog.MULTIVIEW_DELAY_PREFIX, catalog.MULTIVIEW_QUALITY_PREFIX];
+            const requested = prefixes.filter((prefix) => keys.some((key) => catalog.multiviewChannel(key, prefix)));
+            if (!requested.length) return;
+            const existing = new Set(
+                typeof chrome.storage.local.getKeys === "function"
+                    ? await call("local", "getKeys")
+                    : Object.keys(await call("local", "get", null))
+            );
+            for (const prefix of requested) {
+                const additions = keys.filter(
+                    (key) => !existing.has(key) && catalog.multiviewChannel(key, prefix)
+                ).length;
+                if (
+                    additions &&
+                    [...existing].filter((key) => catalog.multiviewChannel(key, prefix)).length + additions >
+                        catalog.MAX_MULTIVIEW_CHANNELS
+                )
+                    throw failure("multiview-limit");
+            }
+        }
+
         function store(request) {
             return enqueue(async () => {
                 if (request.expected) {
@@ -127,6 +138,19 @@
                             conflict = true;
                     }
                     if (conflict) throw failure("conflict", current);
+                }
+                if (request.area === "local") {
+                    await checkMultiviewCapacity(Object.keys(request.values));
+                    // Merge each sidebar choice under the worker lock so concurrent tabs keep both choices.
+                    const key = catalog.FOLLOWING_LIST_KEY;
+                    if (Object.hasOwn(request.values, key)) {
+                        const data = await read("local", [key]);
+                        const choices = {};
+                        for (const kind of ["list", "section"]) {
+                            if (typeof data[key]?.[kind] === "boolean") choices[kind] = data[key][kind];
+                        }
+                        request.values[key] = { ...choices, ...request.values[key] };
+                    }
                 }
                 await call(request.area, "set", request.values);
             });
@@ -262,6 +286,9 @@
                         changes: countChanges(plan),
                     };
                 if (!plan.stages.length) return { status: "unchanged", summary: plan.summary };
+                await checkMultiviewCapacity(
+                    plan.stages.filter((stage) => stage.area === "local").flatMap((stage) => Object.keys(stage.values))
+                );
                 const written = new Map();
                 const foreign = new Set();
                 const targets = catalog.targetKeys(parsed.backup);
@@ -335,7 +362,7 @@
 
         function handleMessage(message, sender, sendResponse) {
             if (message?.type === catalog.STORE_MESSAGE_TYPE) {
-                if (!isContentSender(sender)) {
+                if (!globalThis.CheeseSpannerSettings.isChzzkTopFrameSender(sender, chrome.runtime?.id)) {
                     sendResponse({ ok: false, error: "untrusted-sender" });
                     return false;
                 }
@@ -349,7 +376,7 @@
                 return respond(store(request), sendResponse, () => ({}));
             }
             if (message?.type !== catalog.BACKUP_MESSAGE_TYPE) return undefined;
-            if (sender?.id !== chrome.runtime?.id || !isOptionsPageSender(sender)) {
+            if (sender?.tab?.incognito || sender?.id !== chrome.runtime?.id || !isOptionsPageSender(sender)) {
                 sendResponse({ ok: false, error: "untrusted-sender" });
                 return false;
             }

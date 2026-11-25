@@ -110,7 +110,6 @@
                 "features/followingRefresh.js",
                 "features/followingTitleHistory.js",
                 "features/followingFolders.js",
-                "vendor/hls.light.min.js",
                 "features/liveMultiview/model.js",
                 "features/liveMultiview/view.js",
                 "features/liveMultiview/playback.js",
@@ -126,7 +125,6 @@
                 "features/screenShortcuts.js",
                 "features/playerZoom.js",
                 "features/ambientGlow.js",
-                "shared/recordingDirectory.js",
                 "features/videoRecorder.js",
                 "features/chatMultiview.js",
                 "features/updateGuide.js"

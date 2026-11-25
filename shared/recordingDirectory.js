@@ -39,12 +39,28 @@
     const set = (handle) =>
         access("readwrite", (store) => (handle ? store.put(handle, "selected") : store.delete("selected")));
 
+    // The page builds the name; the worker only accepts a plain file name with the two recorder containers.
+    const FILE_NAME =
+        // eslint-disable-next-line no-control-regex -- control characters are exactly what a file name must not hold.
+        /^[^\\/:*?"<>|\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]{1,150}\.(?:mp4|webm)$/;
+
+    function isRecordingFileName(value) {
+        return (
+            typeof value === "string" &&
+            FILE_NAME.test(value) &&
+            !/^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³]) *(?:\.|$)/i.test(value) &&
+            !value.startsWith(".") &&
+            !value.startsWith(" ") &&
+            value.trim() === value
+        );
+    }
+
     let creationQueue = Promise.resolve();
 
     function openFile(directory, fileName) {
         const locks = globalThis.navigator?.locks;
         if (locks?.request) {
-            // Player-selected handles stay in their tabs. Serialize name selection across tabs on this origin.
+            // Serialize file allocation across extension contexts on the same origin.
             return locks.request("cheese-spanner:recording-file-allocation", () => createFile(directory, fileName));
         }
         const operation = creationQueue.then(() => createFile(directory, fileName));
@@ -53,6 +69,7 @@
     }
 
     async function createFile(directory, fileName) {
+        if (!isRecordingFileName(fileName)) throw new Error("invalid-file-name");
         if ((await directory.queryPermission({ mode: "readwrite" })) !== "granted")
             throw new Error("directory-permission");
         const dot = fileName.lastIndexOf(".");
@@ -72,7 +89,7 @@
                 if (error.name === "NoModificationAllowedError") continue;
                 throw error;
             }
-            // The worker and player can select the same physical folder from different origins.
+            // Other applications can also write to the selected folder.
             // An intervening writer may already have committed between our missing-file check and this lock.
             try {
                 if ((await file.getFile()).size === 0) return { writer, fileName: name };
@@ -85,5 +102,5 @@
         throw new Error("directory-file-exists");
     }
 
-    globalThis.CheeseSpannerRecordingDirectory = Object.freeze({ get, set, openFile });
+    globalThis.CheeseSpannerRecordingDirectory = Object.freeze({ get, set, openFile, isRecordingFileName });
 })();

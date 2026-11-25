@@ -53,10 +53,10 @@ const EXPECTED = {
         "--text-muted": "#9da5b6",
         "--text-dim": "#9da5b6",
         "--accent": "#00ffa3",
-        "--accent-text": "#00e693",
+        "--accent-text": "#00ffa3",
         "--accent-weak": "#00ffa326",
         "--accent-contrast": "#0e0f10",
-        "--focus-ring": "#00e693",
+        "--focus-ring": "#00ffa3",
         "--warning": "#ffd166",
         "--warning-bg": "rgba(255,209,102,0.12)",
         "--danger": "#ff5454",
@@ -251,12 +251,12 @@ test("extension page token pairs keep small text at 4.5:1", () => {
 });
 
 test("bundled Pretendard stays the local extension page font", () => {
-    const brand = readRepoFile("options-brand.css");
-    assert.match(brand, /@font-face\s*\{[^}]*font-family:\s*"Pretendard Variable"/);
+    const brand = readRepoFile("styles.css");
+    assert.match(brand, /@font-face\s*\{[^}]*font-family:\s*"CheeseSpanner Pretendard"/);
     assert.match(brand, /src:\s*url\("vendor\/fonts\/PretendardVariable\.woff2"\)/);
     assert.equal(/https?:\/\//.test(brand), false, "no remote font server");
     assert.ok(fs.existsSync(path.join(repoRoot, "vendor/fonts/PretendardVariable.woff2")));
-    assert.match(brand, /--options-font:\s*"Pretendard Variable",/);
+    assert.match(brand, /--options-font:\s*"CheeseSpanner Pretendard",/);
 });
 
 test("replay pending page uses the shared tokens, Pretendard, and polite copy without new behavior", () => {
@@ -269,13 +269,16 @@ test("replay pending page uses the shared tokens, Pretendard, and polite copy wi
         assert.equal(
             document.documentElement.hasAttribute("data-theme"),
             false,
-            "the page follows the system theme instead of optionsTheme"
+            "the initial stylesheet follows the system until the saved preference arrives"
         );
         assert.deepEqual(
             [...document.querySelectorAll('link[rel="stylesheet"]')].map((link) => link.getAttribute("href")),
-            ["styles.css", "options-brand.css"]
+            ["styles.css"]
         );
-        assert.equal(document.querySelectorAll("script").length, 0, "navigation stays owned by history.js");
+        assert.deepEqual(
+            [...document.scripts].map((script) => script.getAttribute("src")),
+            ["shared/extensionPageTheme.js"]
+        );
         assert.equal(/https?:\/\//.test(source), false, "no remote resources");
 
         const inline = [...document.querySelectorAll("style")].map((style) => style.textContent).join("\n");
@@ -283,7 +286,7 @@ test("replay pending page uses the shared tokens, Pretendard, and polite copy wi
         for (const name of ["--bg", "--surface", "--border", "--text", "--text-muted"]) {
             assert.match(inline, new RegExp(`var\\(${name}\\)`), name);
         }
-        assert.match(inline, /font-family:\s*"Pretendard Variable",/);
+        assert.doesNotMatch(inline, /Pretendard|@font-face/);
         assert.equal(/#[0-9a-f]{3,8}\b/i.test(inline), false, "colors come from the shared tokens only");
 
         const main = document.querySelector("body > main");
@@ -305,5 +308,42 @@ test("replay pending page uses the shared tokens, Pretendard, and polite copy wi
         );
     } finally {
         dom.window.close();
+    }
+});
+
+test("saved extension page themes follow sync changes, deletion and a late initial read", (t) => {
+    for (const name of ["history.html", "replay-pending.html"]) {
+        const dom = new JSDOM(readRepoFile(name), { runScripts: "outside-only" });
+        t.after(() => dom.window.close());
+        const { document } = dom.window;
+        assert.equal(document.head.querySelector("script").getAttribute("src"), "shared/extensionPageTheme.js");
+        let initial, changed;
+        dom.window.chrome = {
+            runtime: {},
+            storage: {
+                onChanged: {
+                    addListener(listener) {
+                        changed = listener;
+                    },
+                },
+                sync: {
+                    get(key, callback) {
+                        assert.equal(key, "optionsTheme");
+                        initial = callback;
+                    },
+                },
+            },
+        };
+        dom.window.eval(readRepoFile("shared/extensionPageTheme.js"));
+        const root = document.documentElement;
+        changed({ optionsTheme: { newValue: "dark" } }, "local");
+        assert.equal(root.dataset.theme, undefined);
+        changed({ optionsTheme: { newValue: "light" } }, "sync");
+        initial({ optionsTheme: "dark" });
+        assert.equal(root.dataset.theme, "light");
+        changed({ optionsTheme: { newValue: "dark" } }, "sync");
+        assert.equal(root.dataset.theme, "dark");
+        changed({ optionsTheme: { oldValue: "dark" } }, "sync");
+        assert.equal(root.dataset.theme, undefined);
     }
 });
