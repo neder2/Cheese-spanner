@@ -108,6 +108,35 @@
         node.replaceChildren(svg);
     }
 
+    function bottomGripCss(selector) {
+        return `
+${selector} { left:0; bottom:0; width:100%; height:8px; transform:none; z-index:4; background:transparent; cursor:row-resize; }
+${selector}::before { content:""; position:absolute; inset:auto 0 0; height:2px; background:var(--bct-brand); opacity:0; pointer-events:none; }
+${selector}:hover::before { opacity:1; }
+`;
+    }
+    function drawDivider(divider, handle) {
+        const { key, axis, value, position, start, length, lower, upper, collapseBelow } = handle;
+        const vertical = axis === "columns";
+        divider.setAttribute("aria-orientation", vertical ? "vertical" : "horizontal");
+        if (key === "bottom") {
+            divider.setAttribute("aria-label", "접힌 하단 줄 펼치기");
+            divider.title = "위로 끌어 하단 줄 펼치기";
+            return;
+        }
+        divider.setAttribute("aria-valuenow", String(Math.round(value * 100)));
+        divider.setAttribute("aria-valuemin", String(Math.round(lower * 100)));
+        divider.setAttribute("aria-valuemax", String(Math.round(upper * 100)));
+        divider.setAttribute("aria-label", vertical ? "세로 경계 크기 조절" : "가로 경계 크기 조절");
+        divider.title = collapseBelow ? "아래 끝까지 끌어 빈 하단 영역 접기" : "";
+        Object.assign(divider.style, {
+            left: (vertical ? position : start) * 100 + "%",
+            top: (vertical ? start : position) * 100 + "%",
+            width: vertical ? "" : length * 100 + "%",
+            height: vertical ? length * 100 + "%" : "",
+        });
+    }
+
     root.multiviewView = {
         text,
         el,
@@ -116,6 +145,8 @@
         panelIcon,
         multiviewIcon,
         setControlIcon,
+        bottomGripCss,
+        drawDivider,
         action: (node) => controlActions.get(node),
     };
 })();

@@ -505,7 +505,7 @@ function installNativeList(document, { ignoreMore, longList }) {
     more.refreshList = () => render(refreshLength ?? COLLAPSED_ROWS);
 }
 
-function loadFeature(dom, chrome, { pin = false } = {}) {
+function loadFeature(dom, chrome, { pin = false, listState = false } = {}) {
     for (const parts of [
         ["features", "routeBridgePage.js"],
         ["shared", "settings.js"],
@@ -518,6 +518,7 @@ function loadFeature(dom, chrome, { pin = false } = {}) {
         dom.window.eval(readRepoFile(...parts));
     }
     if (pin) dom.window.eval(readRepoFile("features", "sidebarCustomization.js"));
+    if (listState) dom.window.eval(readRepoFile("features", "followingListState.js"));
     const store = installSettingsStore(dom, chrome);
     dom.window.eval(readRepoFile("features", "followingFolders.js"));
     return store;
@@ -617,6 +618,11 @@ function hold(dom, clock, target, options = {}) {
     dragEvent(dom, "dragover", target, options);
     clock.advance(200);
     return dragEvent(dom, "dragover", target, options);
+}
+
+function userBlur(dom, input) {
+    trustedKey(dom, input, "Tab");
+    input.blur();
 }
 
 function storedState(chrome) {
@@ -748,7 +754,8 @@ test("folder menus and the drag card use the shared theme and Pretendard while s
     await waitForCondition(() => header(document, "폴더 밖 채널"));
     const style = document.getElementById("cheese-spanner-following-folders-style");
     assertUsesSharedTheme(assert, window, style, "following folders");
-    assert.deepEqual([...new Set(colorLiterals(style.textContent))], ["#ff4545"], "only the fixed live dot remains");
+    assert.deepEqual(colorLiterals(style.textContent), [], "all palette values including live dots use shared tokens");
+    assert.match(style.textContent, /var\(--bct-status-live\)/);
     // Small text avoids the low-contrast dim and base brand colors; dim stays on icons and disabled items.
     assert.doesNotMatch(style.textContent, /--bct-brand-text-base/);
     for (const { selector, declarations } of cssBlocks(style.textContent)) {
@@ -1057,12 +1064,18 @@ for (const scenario of [
             assert.equal(store.calls.length, 0);
             assert.equal(renameInput(document), input);
         } else if (scenario.trusted) typeText(dom, input, scenario.trusted);
+        if (scenario.trusted && !scenario.composing) {
+            input.blur();
+            await settle();
+            assert.equal(store.calls.length, 0, "a programmatic blur alone cannot save an unfinished name");
+            input.focus();
+        }
         if (scenario.input) {
             input.value = scenario.input;
             if (!scenario.valueOnly)
                 input.dispatchEvent(new dom.window.InputEvent("input", { bubbles: true, inputType: "insertText" }));
         }
-        if (scenario.submit === "blur") input.blur();
+        if (scenario.submit === "blur") userBlur(dom, input);
         else trustedKey(dom, input, scenario.submit);
         await waitForCondition(() => !renameInput(document));
         assert.equal(storedState(chrome).folders[0].name, scenario.expected);
@@ -1103,13 +1116,13 @@ test("arrow clicks and keyboard collapse at once, name clicks wait for a possibl
     trustedKey(dom, nameButton(document, "토크"), "F2");
     await waitForCondition(() => renameInput(document));
     typeText(dom, renameInput(document), "잡담");
-    renameInput(document).blur();
+    userBlur(dom, renameInput(document));
     await waitForCondition(() => storedState(chrome).folders[1].name === "잡담");
 
     trustedKey(dom, nameButton(document, "잡담"), "F2");
     await waitForCondition(() => renameInput(document));
     typeText(dom, renameInput(document), "   ");
-    renameInput(document).blur();
+    userBlur(dom, renameInput(document));
     await waitForCondition(() => !renameInput(document));
     assert.equal(storedState(chrome).folders[1].name, "잡담", "an empty name on blur keeps the old name");
 });
@@ -1280,6 +1293,53 @@ test("a folder already open after a reload gets its unbuilt channels without any
     assert.equal(document.getElementById("rowE"), null);
     assert.equal(document.getElementById("rowD").getAttribute("data-bcff-channel-id"), D);
 });
+
+for (const rememberedList of [false, undefined]) {
+    test(`open following folders wait for the saved native list choice (${rememberedList})`, async (t) => {
+        const chrome = createFakeChrome({
+            followingFoldersEnabled: true,
+            followingListStateEnabled: true,
+            [KEY]: stateOf(folder("games", "게임", [E])),
+        });
+        const dom = createDom(chrome, { collapsedList: true });
+        t.after(() => dom.window.close());
+        const { document } = dom.window;
+        const more = document.getElementById("moreButton");
+        const section = document.createElement("button");
+        section.setAttribute("aria-label", "펼쳐짐, 접기");
+        section.setAttribute("aria-expanded", "true");
+        document.querySelector("#followingSection header").append(section);
+        let finishRead;
+        const writes = [];
+        chrome.storage.local = {
+            get(key, callback) {
+                finishRead = () => callback({ [key]: { section: true, list: rememberedList } });
+            },
+            set(value, callback) {
+                writes.push(value);
+                callback();
+            },
+        };
+        loadFeature(dom, chrome, { listState: true });
+        await waitForCondition(() => finishRead && headerButton(document, "게임"));
+        await settle();
+        assert.equal(more.nativeClicks, 0, "no premature folder or restoration click before the read");
+        finishRead();
+        if (rememberedList === false) {
+            await settle();
+            assert.equal(more.nativeClicks, 0);
+            assert.equal(more.getAttribute("aria-expanded"), "false");
+            trustedClick(dom, headerButton(document, "게임"));
+            await waitForCondition(() => storedState(chrome).folders[0].collapsed);
+            trustedClick(dom, headerButton(document, "게임"));
+        }
+        await waitForCondition(() => document.getElementById("rowE"));
+        await settle();
+        assert.equal(more.nativeClicks, 2, "the folder opens the missing rows without folding them back");
+        assert.equal(more.getAttribute("aria-expanded"), "true");
+        assert.deepEqual(writes, [], "folder actions never persist a synthetic native-list choice");
+    });
+}
 
 test("a site refresh that cuts the list back is built again before the next frame", async (t) => {
     const saved = stateOf(folder("games", "게임", [E]));
@@ -2861,7 +2921,7 @@ test("an open name field the user did not edit leaves a name another tab changed
     chrome.testState.writeOtherTab({ [KEY]: stateOf(folder("games", "게임2", [C])) });
     await settle();
     assert.ok(renameInput(document), "the field stays open");
-    renameInput(document).blur();
+    userBlur(dom, renameInput(document));
     await waitForCondition(() => !renameInput(document));
     await settle();
     assert.equal(storedState(chrome).folders[0].name, "게임2", "blur keeps the other tab's name");

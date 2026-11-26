@@ -2,7 +2,8 @@
 (() => {
     const root = (window.CheeseSpanner = window.CheeseSpanner || {});
     const model = root.multiviewModel;
-    const { el, text } = root.multiviewView;
+    const view = root.multiviewView;
+    const { el, text } = view;
     function create({ state, players, persistSession, onOrder: syncPanelOrder, onSwap: swap, onLayerChange, onError }) {
         const { current, moveSlotAudio } = players;
         let host = null,
@@ -85,11 +86,11 @@
                   state.channels.find((entry) => entry.id === id)?.position || [0.5, 0.5];
             return [x + (w - width) * position[0], y + (h - height) * position[1], width, height];
         }
-        function positionCells(tree = state.dockTree) {
+        function positionCells(tree = dragState?.previewTree || state.dockTree) {
             if (!overlay || !host || !tree) return;
             const migrated = syncViewportLayer();
             const free = freeActive();
-            const layout = free ? model.freeLayout(state) : model.treeLayout(tree);
+            const layout = free ? model.freeLayout(state) : model.splitLayout(tree);
             const bounds = layoutBounds();
             host.toggleAttribute("data-bcmv-free", free);
             for (const cell of overlay.querySelectorAll(".bcmv-cell")) {
@@ -155,42 +156,12 @@
                 if (!handle) {
                     handle = el("div", "bcmv-separator");
                     handle.dataset.path = item.key;
-                    handle.dataset.axis = item.axis;
-                    handle.tabIndex = 0;
+                    if (item.key !== "bottom") handle.tabIndex = 0;
                     handle.setAttribute("role", "separator");
-                    handle.setAttribute(
-                        "aria-label",
-                        item.axis === "columns" ? "세로 경계 크기 조절" : "가로 경계 크기 조절"
-                    );
-                    handle.setAttribute("aria-orientation", item.axis === "columns" ? "vertical" : "horizontal");
                     grid.append(handle);
                 }
-                if (handle.dataset.axis !== item.axis) {
-                    handle.style.cssText = "";
-                    handle.dataset.axis = item.axis;
-                    handle.setAttribute(
-                        "aria-label",
-                        item.axis === "columns" ? "세로 경계 크기 조절" : "가로 경계 크기 조절"
-                    );
-                    handle.setAttribute("aria-orientation", item.axis === "columns" ? "vertical" : "horizontal");
-                }
-                handle.setAttribute("aria-valuenow", String(Math.round(item.value * 100)));
-                handle.setAttribute("aria-valuemin", String(Math.round(item.lower * 100)));
-                handle.setAttribute("aria-valuemax", String(Math.round(item.upper * 100)));
-                Object.assign(
-                    handle.style,
-                    item.axis === "columns"
-                        ? {
-                              left: item.position * 100 + "%",
-                              top: item.start * 100 + "%",
-                              height: item.length * 100 + "%",
-                          }
-                        : {
-                              top: item.position * 100 + "%",
-                              left: item.start * 100 + "%",
-                              width: item.length * 100 + "%",
-                          }
-                );
+                if (handle.dataset.axis !== item.axis) handle.dataset.axis = item.axis;
+                view.drawDivider(handle, item);
             }
             if (!pointerDrag && !resize && tree === state.dockTree) syncPanelOrder(layout.cells);
             if (migrated) persistSession();
@@ -313,14 +284,8 @@
                 })
                 .filter(Boolean);
         }
-        function adjustSplit(path, value) {
-            const handle = model.treeLayout(state.dockTree).handles.find((item) => item.key === path);
-            if (!handle) return;
-            state.dockTree = model.resizeTree(
-                state.dockTree,
-                path,
-                Math.min(handle.upper, Math.max(handle.lower, value))
-            );
+        function adjustSplit(handle, value, tree = state.dockTree) {
+            state.dockTree = model.resizeSplit(tree, handle, value);
             state.customLayout = true;
             positionCells();
         }
@@ -470,6 +435,16 @@
         function dragTarget(event) {
             if (!dragState) return null;
             const { rect, cells } = dragState;
+            const row = model.bottomRowDrop(
+                dragState.tree,
+                cells,
+                dragId,
+                rect,
+                dragState.target?.side === "bottom-row",
+                event.clientX,
+                event.clientY
+            );
+            if (row) return { ...row, key: row.path + ":" + row.side };
             let leaf,
                 rx = 0.5,
                 ry = 0.5;
@@ -507,15 +482,14 @@
             const { guide, source, tree } = dragState;
             if (!target) {
                 guide.hidden = true;
+                dragState.previewTree = null;
                 positionCells(tree);
                 return;
             }
             const main = target.id === routeId && target.side === "center";
-            const next = target.mainMove
-                ? target.tree
-                : main
-                  ? tree
-                  : model.dockTree(tree, source, target.id, target.side, routeId, target.path);
+            const next =
+                target.tree ||
+                (main ? tree : model.dockTree(tree, source, target.id, target.side, routeId, target.path));
             if (!model.validTree(next, state.channels)) {
                 guide.hidden = true;
                 return;
@@ -535,6 +509,7 @@
                 right: "오른쪽에 배치",
                 top: "위에 배치",
                 bottom: "아래에 배치",
+                "bottom-row": "하단에 배치",
                 fill: "빈 공간에 배치",
                 center: "이 위치로 이동",
             };
@@ -622,9 +597,8 @@
             const source = dragId;
             const next =
                 started && target
-                    ? target.mainMove
-                        ? target.tree
-                        : model.dockTree(state.dockTree, source, target.id, target.side, routeId, target.path)
+                    ? target.tree ||
+                      model.dockTree(state.dockTree, source, target.id, target.side, routeId, target.path)
                     : null;
             endDrag();
             if (started && target) {
@@ -640,17 +614,26 @@
         }
         function onResizeStart(event) {
             const handle = event.target.closest(".bcmv-separator");
-            if (!handle || event.button !== 0 || dragId) return;
+            if (!handle || event.button !== 0 || event.isPrimary === false || dragId) return;
             event.preventDefault();
             cancelResize();
-            handle.focus({ preventScroll: true });
+            const layout = model.splitLayout(state.dockTree);
+            const item = layout.handles.find((entry) => entry.key === handle.dataset.path);
+            if (!item) return;
+            if (item.key === "bottom") {
+                // The grip disappears mid-drag. Keep the existing gesture cancellation on the stable overlay.
+                overlay.tabIndex = -1;
+                overlay.focus({ preventScroll: true });
+            } else handle.focus({ preventScroll: true });
             const guide = el("div", "bcmv-snap-guide");
             guide.dataset.axis = handle.dataset.axis;
             guide.hidden = true;
             overlay.querySelector(".bcmv-grid").append(guide);
             resize = {
-                handle: model.treeLayout(state.dockTree).handles.find((item) => item.key === handle.dataset.path),
-                rect: overlay.querySelector(".bcmv-grid").getBoundingClientRect(),
+                handle: item,
+                bounds: overlay.querySelector(".bcmv-grid").getBoundingClientRect(),
+                startX: event.clientX,
+                startY: event.clientY,
                 tree: state.dockTree,
                 custom: state.customLayout,
                 pointerId: event.pointerId,
@@ -746,7 +729,7 @@
                     null,
                     old.value
                 );
-                next = model.resizeTree(next, old.key, result.value);
+                next = model.resizeSplit(next, current, result.value);
                 if (result.locked !== null) {
                     resize.guide.dataset.axis = old.axis;
                     resize.guide.style.cssText = "";
@@ -782,21 +765,24 @@
                 onCornerMove(event);
                 return;
             }
-            const { handle, rect } = resize,
+            const { handle, bounds: rect } = resize,
                 axis = handle.axis;
             const horizontal = axis === "columns",
                 region = handle.region;
             const pixels = (horizontal ? rect.width : rect.height) * (horizontal ? region[2] : region[3]);
             const start =
                 (horizontal ? rect.left : rect.top) + (horizontal ? rect.width * region[0] : rect.height * region[1]);
-            const raw = ((horizontal ? event.clientX : event.clientY) - start) / pixels;
+            const raw =
+                handle.key === "bottom"
+                    ? 1 + (event.clientY - resize.startY) / pixels
+                    : ((horizontal ? event.clientX : event.clientY) - start) / pixels;
             const result = model.snapRatio(handle, raw, pixels, resize.locked, handle.value);
             resize.locked = result.locked;
             resize.guide.hidden = result.locked === null;
             resize.guide.style[horizontal ? "left" : "top"] =
                 ((horizontal ? region[0] : region[1]) + (horizontal ? region[2] : region[3]) * result.value) * 100 +
                 "%";
-            adjustSplit(handle.key, result.value);
+            adjustSplit(handle, result.value, resize.tree);
         }
         function cancelResize(event) {
             if (
@@ -817,7 +803,16 @@
         }
         function endResize(commit = true) {
             if (resize && typeof commit === "object" && commit.pointerId !== resize.pointerId) return;
-            if (resize?.free && typeof commit === "object" && resize.preview) onResizeMove(commit);
+            if (
+                resize &&
+                typeof commit === "object" &&
+                (resize.free
+                    ? resize.preview
+                    : resize.tree !== state.dockTree ||
+                      resize.startX !== commit.clientX ||
+                      resize.startY !== commit.clientY)
+            )
+                onResizeMove(commit);
             if (resize?.free && commit !== false && resize.preview && current(resize.player))
                 setWindowRect(resize.player.id, resize.preview);
             const changed = resize && commit !== false;
@@ -882,22 +877,20 @@
                 event.preventDefault();
                 event.stopPropagation();
                 if (handle) {
-                    adjustSplit(
-                        handle.key,
-                        handle.value + (["ArrowLeft", "ArrowUp"].includes(event.key) ? -0.01 : 0.01)
-                    );
+                    adjustSplit(handle, handle.value + (["ArrowLeft", "ArrowUp"].includes(event.key) ? -0.01 : 0.01));
                     persistSession();
                 }
                 return;
             }
             const handle = event.target.closest(".bcmv-separator");
             if (!handle) return;
+            const item = model.treeLayout(state.dockTree).handles.find((entry) => entry.key === handle.dataset.path);
+            if (!item) return;
             const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[event.key];
             if (!step) return;
             event.preventDefault();
             event.stopPropagation();
-            const item = model.treeLayout(state.dockTree).handles.find((entry) => entry.key === handle.dataset.path);
-            if (item) adjustSplit(item.key, item.value + step * 0.01);
+            adjustSplit(item, Math.min(item.value + step * 0.01, item.upper));
             persistSession();
         }
 
@@ -944,10 +937,17 @@
             cancelResize();
             return true;
         }
+        function onHostResize() {
+            if (!state.active || viewportLayer) return;
+            cancelResize();
+            endDrag();
+            positionCells();
+        }
         return {
             mount,
             release,
             position: positionCells,
+            onHostResize,
             cancelDrag: endDrag,
             cancelResize,
             cancelPointer,

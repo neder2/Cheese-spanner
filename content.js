@@ -25,6 +25,15 @@
     const FEATURE_ROUTE_CHANGE_EVENT = "cheese-spanner:routechange:detected";
     const EXTENSION_PREVIEW_VIDEO_SELECTOR =
         "[data-bcfp-player-mount], .bcfp-player, [data-bcfp-tooltip], [data-bcmv-video]";
+    const COMMENT_PHOTO_VIEWER_SELECTOR =
+        "dialog.bcvc-photo-viewer[open], .yarl__portal[role='dialog'][aria-label='Lightbox']";
+    const PLAYER_SHORTCUT_PANEL_SELECTOR = "#cheese-spanner-stream-info, " + COMMENT_PHOTO_VIEWER_SELECTOR;
+    const SPACE_CONSUMER_SELECTOR =
+        "button, input, textarea, select, summary, a[href], [contenteditable]:not([contenteditable='false']), " +
+        "[role='button'], [role='link'], [role='checkbox'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [role='option'], " +
+        "[role='radio'], [role='slider'], [role='switch'], [role='tab'], [role='textbox'], " +
+        "[role='combobox'], [role='searchbox'], [role='spinbutton'], [role='treeitem'], " +
+        COMMENT_PHOTO_VIEWER_SELECTOR;
     const ROUTE_CHECK_DELAYS_MS = [0, 80, 250, 800];
     const RECONNECT_CHECK_THROTTLE_MS = 160;
     const videoViewportTransforms = new WeakMap();
@@ -53,6 +62,21 @@
             String(value || "")
                 .toLowerCase()
                 .replace(/\s+/g, ""));
+
+    let hlsLoading = null;
+    function loadPackagedHls() {
+        if (window.Hls) return Promise.resolve(window.Hls);
+        if (!hlsLoading) {
+            hlsLoading = root.utils
+                .runtimeSendMessage({ type: "cheese-spanner:load-hls" })
+                .then((result) => (result?.ok ? window.Hls : null))
+                .catch(() => null)
+                .finally(() => {
+                    hlsLoading = null;
+                });
+        }
+        return hlsLoading;
+    }
 
     function sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
@@ -192,6 +216,10 @@
         if (isLiveAdBreakActive()) return true;
         const root = getMainVideoElement()?.closest(".pzp-pc");
         return Boolean(root && (root.matches(".pzp-pc--adbreak") || root.querySelector(".pzp-pc--adbreak")));
+    }
+
+    function isSpaceConsumerTarget(target) {
+        return target instanceof Element && Boolean(target.closest(SPACE_CONSUMER_SELECTOR));
     }
 
     function isEditableTarget(target) {
@@ -375,7 +403,8 @@
         const match = pathname.match(/^\/live\/([^/?#]+)/);
         if (!match) return "";
         try {
-            return decodeURIComponent(match[1]);
+            const channelId = decodeURIComponent(match[1]);
+            return /^[\p{L}\p{N}_-]{1,100}$/u.test(channelId) ? channelId : "";
         } catch (_) {
             return "";
         }
@@ -386,7 +415,7 @@
     }
 
     function getVodVideoNoFromPath(pathname = location.pathname) {
-        const match = pathname.match(/^\/video\/([^/?#]+)/);
+        const match = pathname.match(/^\/video\/([1-9]\d{0,14})(?:[/?#]|$)/);
         return match ? match[1] : "";
     }
 
@@ -555,6 +584,7 @@
         ...(root.utils || {}),
         onReady,
         hasNativeHideMutation,
+        loadPackagedHls,
         normSpace,
         normalizeCompact,
         sleep,
@@ -570,6 +600,9 @@
         isExtensionPreviewVideo,
         isVodMultiviewInput,
         isEditableTarget,
+        isSpaceConsumerTarget,
+        COMMENT_PHOTO_VIEWER_SELECTOR,
+        PLAYER_SHORTCUT_PANEL_SELECTOR,
         getPlayerRoot,
         elementMatchesOrContains,
         mutationMatchesSelector,

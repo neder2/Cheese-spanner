@@ -48,9 +48,13 @@ function evaluateFeature(fileName, { url, options = {}, utils = {}, namespaces =
             ...options,
         }),
     };
+    window.eval(fs.readFileSync(path.join(repoRoot, "shared/data.js"), "utf8"));
+    window.eval(fs.readFileSync(path.join(repoRoot, "shared/data.js"), "utf8"));
     window.CheeseSpanner = {
         ...namespaces,
         utils: {
+            ...window.CheeseSpanner.utils,
+            ...window.CheeseSpanner.utils,
             addWatchRangeToRangesByDate() {},
             bindFeatureOptions() {},
             collectWatchSessionRanges: () => [],

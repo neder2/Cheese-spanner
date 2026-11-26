@@ -24,7 +24,7 @@
                     videoNo,
                     title: String(title),
                     titleNorm: normalize(title),
-                    thumb: v.thumbnailImageUrl || v.thumbnailUrl || v.thumbnail || "",
+                    thumb: root.utils.normalizeChzzkImageUrl(v.thumbnailImageUrl || v.thumbnailUrl || v.thumbnail),
                     duration: typeof v.duration === "number" ? v.duration : null,
                     publishDate: pickPublishDate(v),
                     readCount: Number.isFinite(readCountNumber) ? readCountNumber : null,
@@ -113,12 +113,11 @@
         return Boolean(normalizedQuery && video?.commentNorm && video.commentNorm.includes(normalizedQuery));
     }
 
-    function getCommentMatchText(video, query) {
+    function getCommentMatchTexts(video, query) {
         const q = normalize(query);
-        if (!q || !Array.isArray(video?.commentTexts)) return "";
-        const text = video.commentTexts.find((item) => normalize(item).includes(q));
-        if (text) return cleanCommentText(text);
-        return "";
+        return q && Array.isArray(video?.commentTexts)
+            ? video.commentTexts.filter((item) => normalize(item).includes(q))
+            : [];
     }
 
     function shouldFetchCommentsForQuery(video, query) {
@@ -226,7 +225,7 @@
         filterVideosByNormalizedQuery,
         buildCommentNorm,
         hasCommentMatchNorm,
-        getCommentMatchText,
+        getCommentMatchTexts,
         shouldFetchCommentsForQuery,
         getNumber,
         getObjectNumberByKeys,

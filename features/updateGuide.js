@@ -217,6 +217,7 @@
             toast.style.removeProperty("visibility");
             toast.removeAttribute("aria-hidden");
             toast.removeAttribute("inert");
+            toast.toggleAttribute("data-bcug-shown", true);
         }
     }
     function parkToast() {
@@ -376,7 +377,8 @@
         try {
             const claim = await send("claim");
             if (!claim?.ok || typeof claim.token !== "string" || !claim.token) {
-                finished = true;
+                // An unconsumed reservation can still be released by the other tab.
+                if (claim?.ok !== true || claim.reserved !== true) finished = true;
                 removeToast();
                 return;
             }
@@ -412,6 +414,8 @@
             removeTutorial();
         } else if (!visible()) {
             blurred();
+        } else if (parked) {
+            layoutChanged();
         } else {
             waitForLayout = false;
             resumeTimer();
@@ -446,7 +450,7 @@
             waitForLayout = true;
             cancelPending();
             removeToast();
-        } else if (parked) {
+        } else if (parked && visible()) {
             parked = false;
             setToastHidden(false);
             hovered = toast.matches(":hover");

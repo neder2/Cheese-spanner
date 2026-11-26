@@ -137,6 +137,24 @@ test("initial OPEN, errors, unknown status and another channel cannot cause relo
     assert.equal(h.reloads, 1);
 });
 
+test("the no-recommendations offline heading starts polling only inside the player", async (t) => {
+    const heading = "<strong>다음 라이브를 기대해 주세요!</strong>";
+    const h = setup(t, { markup: `${heading}<div class="_player_test"><a href="/">${heading}</a></div>` });
+    assert.equal(h.requests.length, 0);
+    const player = h.dom.window.document.querySelector("._player_test");
+    player.innerHTML = heading;
+    await flush();
+    assert.equal(h.requests.length, 1);
+    await h.reply("OPEN");
+    assert.equal(h.reloads, 0);
+    h.tick();
+    await h.reply("CLOSE");
+    h.tick();
+    await h.reply("OPEN");
+    assert.equal(h.reloads, 1);
+    assert.equal(h.timers.size, 0);
+});
+
 test("routes, disabled options and non-player copies never start polling", async (t) => {
     for (const route of ["/lives", `/video/123`, `/live/${A}/chat`]) {
         const h = setup(t, { route });

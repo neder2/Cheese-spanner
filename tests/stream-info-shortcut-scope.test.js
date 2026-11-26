@@ -204,3 +204,49 @@ test("Space on the panel close button with hold-speed on still closes only the p
     assert.equal(page.playClicks(), 0);
     assert.equal(page.state.paused, true);
 });
+
+for (const holdSpeedEnabled of [false, true]) {
+    test(`VOD photo viewers keep stage and button keys with hold speed ${holdSpeedEnabled ? "on" : "off"}`, async (t) => {
+        const page = await openVodPage(t, { screenShortcutsEnabled: true, holdSpeedEnabled });
+        const { doc } = page;
+        let fullscreenClicks = 0;
+        const fullscreen = doc.createElement("button");
+        fullscreen.className = "pzp-pc__fullscreen-button";
+        fullscreen.addEventListener("click", () => fullscreenClicks++);
+        doc.getElementById("playerRoot").append(fullscreen);
+        const spaceKey = { key: " ", code: "Space" };
+        const fullscreenKey = { key: "f", code: "KeyF" };
+        for (const viewer of [
+            '<div class="yarl__portal" role="dialog" aria-label="Lightbox"></div>',
+            '<dialog class="bcvc-photo-viewer" open></dialog>',
+        ]) {
+            doc.body.insertAdjacentHTML("beforeend", viewer);
+            const dialog = doc.body.lastElementChild;
+            const stage = doc.createElement("div");
+            stage.tabIndex = 0;
+            const button = doc.createElement("button");
+            dialog.append(stage, button);
+            stage.focus();
+            for (const init of [spaceKey, fullscreenKey, ...ARROWS]) {
+                assert.equal(page.key(stage, init).defaultPrevented, false, `${init.code} stays with the viewer`);
+            }
+            button.focus();
+            const delivered = [];
+            button.addEventListener("keydown", (event) => delivered.push(event.code));
+            for (const init of [spaceKey, { key: "Enter", code: "Enter" }]) {
+                assert.equal(page.key(button, init).defaultPrevented, false, "button activation keeps its default");
+            }
+            assert.deepEqual(delivered, ["Space", "Enter"]);
+            assert.equal(page.playClicks(), 0);
+            assert.equal(fullscreenClicks, 0);
+            assert.equal(page.state.paused, true);
+            assert.deepEqual(page.state.writes, []);
+            dialog.remove();
+        }
+        doc.body.insertAdjacentHTML("beforeend", '<div role="dialog" aria-label="다른 패널" tabindex="0"></div>');
+        const other = doc.body.lastElementChild;
+        other.focus();
+        assert.equal(page.key(other, fullscreenKey).defaultPrevented, true);
+        assert.equal(fullscreenClicks, 1);
+    });
+}

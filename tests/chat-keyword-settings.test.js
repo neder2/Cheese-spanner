@@ -128,10 +128,40 @@ function fixture(t, { raw = {}, url = "/live/test-channel", deferWrites = false,
         },
     };
 }
+
+test("the native menu entry and keyword editor stay above the open collection until the menu closes", async (t) => {
+    const f = fixture(t, { url: "/live/test-channel/chat" });
+    const style = f.document.createElement("style");
+    style.textContent = "[data-bcct-moderator-box] { position: absolute; z-index: 2147483646; }";
+    f.document.head.append(style);
+    const collection = f.document.createElement("section");
+    collection.setAttribute("data-bcct-moderator-box", "1");
+    collection.dataset.open = "1";
+    f.document.getElementById("aside-chatting").append(collection);
+    const layer = () => f.dom.window.getComputedStyle(collection).zIndex;
+
+    assert.equal(layer(), "2147483646");
+    const menu = f.openMenu();
+    await waitForCondition(() => f.document.querySelector(ENTRY));
+    assert.equal(layer(), "1000", "the menu entry is already above the collection before opening the editor");
+    await f.openPanel();
+    const panel = await f.loaded();
+    assert.equal(layer(), "1000");
+    assert.equal(collection.dataset.open, "1");
+
+    trusted(f.dom, panel.querySelector('[data-action="close"]'));
+    assert.equal(layer(), "1000");
+    assert.equal(f.document.activeElement, f.document.querySelector(`${ENTRY} button`));
+    menu.remove();
+    f.trigger.setAttribute("aria-expanded", "false");
+    assert.equal(layer(), "2147483646");
+    assert.equal(collection.isConnected, true);
+    assert.equal(collection.dataset.open, "1");
+});
 const typeWords = (f, value) => {
     const input = f.document.querySelector(`${PANEL} textarea`);
     input.value = value;
-    input.dispatchEvent(new f.dom.window.Event("input", { bubbles: true }));
+    trusted(f.dom, input, "input");
     return input;
 };
 const clickAction = (f, action) => trusted(f.dom, f.document.querySelector(`${PANEL} [data-action="${action}"]`));
@@ -220,6 +250,8 @@ test("a real save normalizes phrases and uses raw absent expectations, while a s
     const panel = await f.loaded();
     assert.equal(panel.querySelector("input").checked, true);
     typeWords(f, " 금지 \nABC\nabc\n");
+    panel.querySelector("textarea").value = "프로그램으로 바꾼 값";
+    panel.querySelector("textarea").dispatchEvent(new f.dom.window.Event("input", { bubbles: true }));
     panel.querySelector('[data-action="save"]').click();
     assert.equal(f.writes.length, 0);
     clickAction(f, "save");
@@ -242,7 +274,7 @@ test("chat menu saves global and individual conditions, retains choices across m
     const choose = (selector, value) => {
         const select = panel.querySelector(selector);
         select.value = value;
-        select.dispatchEvent(new f.dom.window.Event("change", { bubbles: true }));
+        trusted(f.dom, select, "change");
         return select;
     };
     choose('[data-field="matchMode"]', "exact");
@@ -396,8 +428,9 @@ test("editor keyboard events stay out of player shortcuts, Escape restores focus
     button.focus();
     const tab = trusted(f.dom, button, "keydown", { key: "Tab", code: "Tab" });
     assert.equal(tab.defaultPrevented, true);
-    assert.equal(f.document.activeElement, panel.querySelector("input"));
-    trusted(f.dom, panel.querySelector("input"), "keydown", { key: "Escape", code: "Escape" });
+    const firstControl = panel.querySelector('[data-action="close"]');
+    assert.equal(f.document.activeElement, firstControl);
+    trusted(f.dom, firstControl, "keydown", { key: "Escape", code: "Escape" });
     assert.equal(f.document.querySelector(PANEL), null);
     assert.equal(f.document.activeElement, f.document.querySelector(`${ENTRY} button`));
     await f.openPanel();

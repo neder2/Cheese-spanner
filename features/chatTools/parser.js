@@ -36,7 +36,20 @@
     const PAGE_ORIGINAL_ATTR = "data-bcct-source-original";
     const PAGE_MESSAGE_ATTR = "data-bcct-source-message";
     const PAGE_MESSAGE_STATUSES = new Set(["NORMAL", "BLIND", "CBOTBLIND", "HIDDEN", "RECLAIM", "FILTERED"]);
+    const PAGE_METADATA_STATES = new Set(["known", "missing", "invalid"]);
+    const PAGE_ROOM_ROLES = Object.freeze({
+        streamer: "broadcaster",
+        streaming_channel_manager: "manager",
+        streaming_chat_manager: "manager",
+        manager: "operator",
+        common_user: "viewer",
+    });
+    const PAGE_VERIFIED_MARK_TYPES = new Set(["PARTNER", "CHALLENGER", "OFFICIAL"]);
+    const PAGE_MESSAGE_MAX_LENGTH = 32768;
     const MESSAGE_CONTAINER_SELECTOR = "[class*='chatting_message'], [class*='chat-message']";
+    const NATIVE_NICKNAME_BUTTON = 'button[class*="_nickname_"][aria-haspopup="true"]';
+    const NATIVE_MESSAGE_BODY = 'span[class*="_text_"]';
+    const ROLE_POPUP_SELECTOR = '[role="dialog"], [role="alertdialog"], [role="menu"], [popover], [class*="popover"]';
 
     const ROLE_SCORE_THRESHOLD = 80;
 
@@ -79,7 +92,7 @@
     const ROLE_ATTR_RE = /방장|방송자|스트리머|streamer|owner|broadcaster|매니저|운영자|manager|moderator|\bmod\b/i;
 
     const ROLE_LABEL_EXACT_RE =
-        /^(?:방장|방송자|스트리머|매니저|운영자|채팅 운영자|streamer|owner|broadcaster|manager|moderator|mod)$/i;
+        /^(?:방장|방송자|스트리머|매니저|운영자|채팅 운영자|채팅 매니저|방송 매니저|streamer|owner|broadcaster|manager|moderator|mod)$/i;
 
     const BROADCASTER_RE = /방장|방송자|스트리머|streamer|owner|broadcaster/i;
 
@@ -97,8 +110,10 @@
     const SERVICE_BLIND_NOTICE_RE =
         /^(?:클린봇이\s*부적절한\s*표현을\s*감지했습니다|(?:관리자|운영자)에\s*의해\s*(?:블라인드|숨김|삭제|차단|가림)(?:\s*처리)?된\s*(?:메시지|채팅)입니다)[\s.!?…]*$/i;
 
-    const GENERIC_BLIND_TEXT_RE =
-        /^(?:\[?\s*)?(?:(?:메시지가|채팅이)\s*)?(블라인드|숨김|삭제|차단|가림|blind|hidden|deleted|blocked|moderated)(?:\s*(메시지|채팅|message|chat|처리|처리된|됨|된|되었습니다|됩니다|입니다|글|내용|원문 없음|no text|unavailable))*[\]\s.:：-]*$/i;
+    const BLIND_NOTICE_PREFIX_RE =
+        /^\[?\s*(?:(?:메시지가|채팅이)\s*)?(?:블라인드|숨김|삭제|차단|가림|blind|hidden|deleted|blocked|moderated)/i;
+    const BLIND_NOTICE_WORD_RE =
+        /\s*(?:처리된|처리|되었습니다|됩니다|입니다|됨|된|메시지|채팅|message|chat|글|내용|원문 없음|no text|unavailable)/iy;
 
     const CLIENT_TEXT_ATTR_RE = /message|content|text|body|comment|original/i;
 
@@ -475,13 +490,15 @@
         return { el: null, text: "" };
     }
 
-    function getAuthorBadges(authorEl) {
+    function getAuthorBadges(authorEl, row, context = null) {
         if (!(authorEl instanceof Element)) return [];
         const badges = [];
-        for (const img of Array.from(authorEl.querySelectorAll("img")).slice(0, 8)) {
-            const src = getAttr(img, "src");
-            if (!/^https:\/\//.test(src)) continue;
-            badges.push({ src: src.slice(0, 500), alt: normSpace(getAttr(img, "alt")).slice(0, 80) });
+        for (const img of authorEl.querySelectorAll("img")) {
+            const src = root.utils.normalizeChzzkImageUrl(getAttr(img, "src"));
+            if (!src || src.length > 500 || img.closest(ROLE_POPUP_SELECTOR) || isHiddenWithin(img, row, context))
+                continue;
+            badges.push({ src, alt: normSpace(getAttr(img, "alt")).slice(0, 80) });
+            if (badges.length === 8) break;
         }
         return badges;
     }
@@ -597,16 +614,17 @@
     function isBlindNoticeText(text) {
         const normalized = normSpace(text);
         if (!normalized) return false;
-        return (
-            SERVICE_BLIND_NOTICE_RE.test(normalized) ||
-            GENERIC_BLIND_TEXT_RE.test(normalized) ||
-            normalized === PLACEHOLDER_TEXT
-        );
+        if (SERVICE_BLIND_NOTICE_RE.test(normalized) || normalized === PLACEHOLDER_TEXT) return true;
+        const prefix = BLIND_NOTICE_PREFIX_RE.exec(normalized);
+        if (!prefix) return false;
+        let end = prefix[0].length;
+        BLIND_NOTICE_WORD_RE.lastIndex = end;
+        while (BLIND_NOTICE_WORD_RE.test(normalized)) end = BLIND_NOTICE_WORD_RE.lastIndex;
+        return /^[\]\s.:：-]*$/.test(normalized.slice(end));
     }
 
     function isRoleOnlyText(text) {
-        const normalized = normSpace(text);
-        return Boolean(normalized && ROLE_ATTR_RE.test(normalized) && normalized.length <= 12);
+        return ROLE_LABEL_EXACT_RE.test(normSpace(text));
     }
 
     function isAuthorCandidateElement(el) {
@@ -624,12 +642,14 @@
             getAttr(el, "data-author-type"),
             getAttr(el, "data-user-role"),
             getAttr(el, "alt"),
-        ].join(" ");
+        ]
+            .filter(isRoleOnlyText)
+            .join(" ");
     }
 
     function getRoleLabelText(el) {
         if (!(el instanceof Element)) return "";
-        return [getAttr(el, "aria-label"), getAttr(el, "title")].join(" ");
+        return [getAttr(el, "aria-label"), getAttr(el, "title")].filter(isRoleOnlyText).join(" ");
     }
 
     function getRoleSignalAttrText(el) {
@@ -704,6 +724,7 @@
 
     function isRoleSignalElement(el, row, authorElements, firstMessageEl, context = null) {
         if (!(el instanceof Element) || isOwnUi(el)) return false;
+        if (el.closest(ROLE_POPUP_SELECTOR) || isHiddenWithin(el, row, context)) return false;
         if (isInsideMessageTextElement(el, row)) return false;
         if (el !== row && !isAuthorRoleAreaElement(el, authorElements, firstMessageEl)) return false;
 
@@ -755,28 +776,95 @@
         window.dispatchEvent(new Event(PAGE_ORIGINAL_CLEAR_EVENT));
     }
 
+    function getNativeEmojiUrl(value, rendered = false) {
+        if (typeof value !== "string" || value.length > 2048) return "";
+        let url;
+        try {
+            url = new URL(value);
+        } catch (_) {
+            return "";
+        }
+        if (url.protocol !== "https:" || url.username || url.password || url.port) return "";
+        if (
+            (url.hostname !== "ssl.pstatic.net" || !url.pathname.startsWith("/static/nng/glive/")) &&
+            url.hostname !== "nng-phinf.pstatic.net" &&
+            url.hostname !== "beta-nng.ssl.phinf.net"
+        )
+            return "";
+        // 현재 네이티브 렌더러의 yc(url, 'f60_60')은 이 호스트의 query/hash만 교체한다.
+        return rendered && url.hostname === "nng-phinf.pstatic.net"
+            ? `${url.origin}${url.pathname}?type=f60_60`
+            : url.href;
+    }
+
+    function isValidPageMetadata(message) {
+        for (const field of ["roleState", "verifiedState"]) {
+            if (message[field] !== undefined && !PAGE_METADATA_STATES.has(message[field])) return false;
+        }
+        for (const field of ["roleCode", "verifiedMarkType"]) {
+            const value = message[field];
+            if (value !== undefined && value !== null && (typeof value !== "string" || value.length > 128))
+                return false;
+        }
+        if (
+            message.verifiedMark !== undefined &&
+            message.verifiedMark !== null &&
+            typeof message.verifiedMark !== "boolean"
+        )
+            return false;
+        if (
+            message.normalText !== undefined &&
+            message.normalText !== null &&
+            (typeof message.normalText !== "string" || message.normalText.length > 2000)
+        )
+            return false;
+        const emojis = message.normalEmojis;
+        if (emojis === undefined || emojis === null) return true;
+        if (typeof emojis !== "object" || Array.isArray(emojis)) return false;
+        const entries = Object.entries(emojis);
+        return (
+            entries.length <= 64 &&
+            entries.every(([token, src]) => /^\{:\w+:\}$/.test(token) && Boolean(getNativeEmojiUrl(src)))
+        );
+    }
+
+    function hasNativeMessageStructure(container) {
+        const nickname = container?.querySelector(`:scope > ${NATIVE_NICKNAME_BUTTON}`);
+        const body = container?.querySelector(`:scope > ${NATIVE_MESSAGE_BODY}`);
+        return Boolean(nickname && body && isBeforeElement(nickname, body));
+    }
+
     function readPageMessage(row, parsed, keepOriginal = false) {
         const textEl = parsed?.textEl;
         if (!(row instanceof Element) || !(textEl instanceof Element) || !row.contains(textEl)) return null;
-        const container = textEl.closest(MESSAGE_CONTAINER_SELECTOR);
+        const byClass = textEl.closest(MESSAGE_CONTAINER_SELECTOR);
+        const container =
+            byClass ||
+            (textEl.matches(NATIVE_MESSAGE_BODY) && hasNativeMessageStructure(textEl.parentElement)
+                ? textEl.parentElement
+                : null);
         if (!container || !row.contains(container)) return null;
         const chatLog = container.closest("[role='log']");
         const path = location.pathname;
         const identity = getCacheMessageIdentity(row, textEl);
         const reuseSignal = getCacheRowReuseSignal(row);
         const visibleText = getVisibleText(textEl);
+        const roomRole = Object.hasOwn(parsed, "domRoomRole") ? parsed.domRoomRole : parsed.roomRole;
+        const verifiedMarkType = Object.hasOwn(parsed, "domVerifiedMarkType")
+            ? parsed.domVerifiedMarkType
+            : parsed.verifiedMarkType;
         // 재사용된 노드에 남은 이전 응답을 쓰지 않도록 요청 전후로 지운다.
         container.removeAttribute(PAGE_ORIGINAL_ATTR);
         container.removeAttribute(PAGE_MESSAGE_ATTR);
         try {
-            const detail = keepOriginal && parsed.author ? JSON.stringify([parsed.author, visibleText]) : null;
+            const detail = parsed.author ? JSON.stringify([parsed.author, visibleText, keepOriginal === true]) : null;
             container.dispatchEvent(new CustomEvent(PAGE_ORIGINAL_REQUEST_EVENT, { bubbles: true, detail }));
             const raw = container.getAttribute(PAGE_MESSAGE_ATTR);
             if (raw === null)
                 return document.documentElement.hasAttribute("data-cheese-spanner-chat-timestamp-page-ready")
                     ? { message: null }
                     : null;
-            if (raw.length > 2048) return { message: null };
+            if (raw.length > PAGE_MESSAGE_MAX_LENGTH) return { message: null };
             const message = JSON.parse(raw);
             if (
                 !message ||
@@ -792,7 +880,8 @@
                 typeof message.nickname !== "string" ||
                 message.nickname.length > 200 ||
                 !parsed.author ||
-                normSpace(message.nickname) !== parsed.author
+                normSpace(message.nickname) !== parsed.author ||
+                !isValidPageMetadata(message)
             )
                 return { message: null };
             const current = parseChatRow(row);
@@ -804,6 +893,10 @@
                 location.pathname !== path ||
                 current.textEl !== textEl ||
                 current.author !== parsed.author ||
+                current.authorEl !== parsed.authorEl ||
+                current.roomRole !== roomRole ||
+                current.verifiedMarkType !== verifiedMarkType ||
+                current.textKey !== parsed.textKey ||
                 getCacheMessageIdentity(row, textEl) !== identity ||
                 getCacheRowReuseSignal(row) !== reuseSignal ||
                 getVisibleText(textEl) !== visibleText
@@ -822,7 +915,7 @@
     function readPageOriginalText(row, textEl) {
         const parsed = parseChatRow(row);
         if (parsed.textEl !== textEl) return "";
-        return readPageMessage(row, parsed)?.original || "";
+        return readPageMessage(row, parsed, true)?.original || "";
     }
 
     function hasBlindSignal(row, messageText, hiddenText, context = null) {
@@ -848,14 +941,14 @@
 
     function getRoleBadgeSrc(row, context = null) {
         for (const el of getRoleSignalElements(row, context)) {
-            if (el.tagName !== "IMG" || !ROLE_ATTR_RE.test(getAttr(el, "alt"))) continue;
-            const src = getAttr(el, "src");
-            if (/^https:\/\//.test(src)) return src.slice(0, 500);
+            if (el.tagName !== "IMG" || !isRoleOnlyText(getAttr(el, "alt"))) continue;
+            const src = root.utils.normalizeChzzkImageUrl(getAttr(el, "src"));
+            if (src && src.length <= 500) return src;
         }
         return "";
     }
 
-    function detectRole(row, context = null) {
+    function detectDomRoomRole(row, context = null) {
         let managerScore = 0;
         let broadcasterScore = 0;
 
@@ -882,20 +975,173 @@
 
         if (broadcasterScore >= ROLE_SCORE_THRESHOLD && broadcasterScore >= managerScore) return "broadcaster";
         if (managerScore >= ROLE_SCORE_THRESHOLD) return "manager";
+        return "unknown";
+    }
+
+    function detectDomVerifiedMarkType(row, authorEl, context = null) {
         // 치지직 공통 닉네임 렌더러의 인증 마크. 본문·프로필 팝업의 같은 마크는 수집 근거가 아니다.
-        const authorEl = pickAuthorTarget(row, context).el;
-        const popupSelector = '[role="dialog"], [role="alertdialog"], [role="menu"], [popover], [class*="popover"]';
-        if (authorEl && !authorEl.closest(popupSelector)) {
+        if (authorEl && !authorEl.closest(ROLE_POPUP_SELECTOR)) {
             for (const mark of authorEl.getElementsByTagName("i")) {
                 const grade = root.utils.verifiedMarks.read(getClassText(mark))?.grade;
-                if (grade !== "PARTNER" && grade !== "CHALLENGER") continue;
+                if (!PAGE_VERIFIED_MARK_TYPES.has(grade)) continue;
                 if (isHiddenWithin(mark, row, context) || isInsideMessageTextElement(mark, row)) continue;
-                if (mark.closest(popupSelector)) continue;
-                if (grade === "PARTNER") return "partner";
-                if (grade === "CHALLENGER") return "challenger";
+                if (mark.closest(ROLE_POPUP_SELECTOR)) continue;
+                return grade;
             }
         }
+        return null;
+    }
+
+    function collectionRole(roomRole, verifiedMarkType) {
+        if (roomRole === "broadcaster" || roomRole === "manager") return roomRole;
+        if (verifiedMarkType === "PARTNER") return "partner";
+        if (verifiedMarkType === "CHALLENGER") return "challenger";
         return "";
+    }
+
+    function readNativeRoomRole(message) {
+        const state = message.roleState;
+        const code = message.roleCode;
+        if ((state === undefined || state === "missing") && (code === undefined || code === null || code === ""))
+            return { state: "missing", role: "unknown" };
+        if (state === "known" && Object.hasOwn(PAGE_ROOM_ROLES, code))
+            return { state: "known", role: PAGE_ROOM_ROLES[code] };
+        return { state: "invalid", role: "unknown" };
+    }
+
+    function readNativeVerifiedMark(message) {
+        const state = message.verifiedState;
+        const type = message.verifiedMarkType;
+        const mark = message.verifiedMark;
+        if (
+            (state === undefined || state === "missing") &&
+            (type === undefined || type === null) &&
+            (mark === undefined || mark === null)
+        )
+            return { state: "missing", type: null };
+        if (
+            state === "known" &&
+            (type === undefined || type === null || PAGE_VERIFIED_MARK_TYPES.has(type)) &&
+            (mark === undefined || mark === null || typeof mark === "boolean") &&
+            !(mark === false && type != null)
+        )
+            return { state: "known", type: type || null };
+        return { state: "invalid", type: null };
+    }
+
+    function appendNativeBodyPart(parts, type, value) {
+        if (type === "text" && parts[parts.length - 1]?.type === "text") parts[parts.length - 1].value += value;
+        else parts.push({ type, value });
+    }
+
+    function normalizedNativeBodyParts(parts) {
+        return parts
+            .map((part) => (part.type === "text" ? { type: part.type, value: normSpace(part.value) } : part))
+            .filter((part) => part.type !== "text" || part.value);
+    }
+
+    function getNativeBodyParts(node, boundary, parts, context) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            appendNativeBodyPart(parts, "text", node.nodeValue || "");
+            return;
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+        if (isOwnUi(node) || node.matches(EXCLUDED_TEXT_SELECTOR) || isHiddenWithin(node, boundary, context)) return;
+        if (node.tagName === "IMG") {
+            if (getBodyImageToken(node)) appendNativeBodyPart(parts, "image", getNativeEmojiUrl(getAttr(node, "src")));
+            return;
+        }
+        for (const child of node.childNodes) getNativeBodyParts(child, boundary, parts, context);
+    }
+
+    function nativeTextMatches(parsed, message) {
+        if ((message.status !== "NORMAL" && message.status !== "CBOTBLIND") || typeof message.normalText !== "string")
+            return null;
+        if (!(parsed.textEl instanceof Element)) return false;
+        const expected = [];
+        let start = 0;
+        // 원문 코드와 파일 이름은 서로 다를 수 있다. MAIN이 검증한 현재 메시지의 URL만 대응시킨다.
+        for (const match of message.normalText.matchAll(/\{:\w+:\}/g)) {
+            // null/누락은 맵 검증 실패다. 명시적인 맵에서 키가 없을 때만 문자 토큰으로 비교한다.
+            if (message.normalEmojis == null) return false;
+            appendNativeBodyPart(expected, "text", message.normalText.slice(start, match.index));
+            const src = message.normalEmojis?.[match[0]];
+            const rendered = getNativeEmojiUrl(src, true);
+            appendNativeBodyPart(expected, rendered ? "image" : "text", rendered || match[0]);
+            start = match.index + match[0].length;
+        }
+        appendNativeBodyPart(expected, "text", message.normalText.slice(start));
+        const visible = [];
+        getNativeBodyParts(parsed.textEl, parsed.textEl, visible, { hiddenCache: new WeakMap() });
+        const expectedParts = normalizedNativeBodyParts(expected);
+        const visibleParts = normalizedNativeBodyParts(visible);
+        return (
+            expectedParts.length === visibleParts.length &&
+            expectedParts.every(
+                (part, index) => part.type === visibleParts[index].type && part.value === visibleParts[index].value
+            )
+        );
+    }
+
+    // source=null은 브리지 대상이 아닌 기존 DOM 행, {message:null}은 현재 네이티브 행 판독 실패다.
+    // 방 역할과 인증 종류는 각각 missing일 때만 DOM을 보완한다. 알려진 일반 사용자·미지원 값은
+    // 이전 행에 남은 배지로 승격하지 않으며, NORMAL 본문 불일치·블라인드 안내 미도착은 함께 보류한다.
+    function enrichChatRole(parsed, source) {
+        const domRoomRole = Object.hasOwn(parsed, "domRoomRole")
+            ? parsed.domRoomRole
+            : parsed.roomRole || (parsed.role === "broadcaster" || parsed.role === "manager" ? parsed.role : "unknown");
+        const domVerifiedMarkType = Object.hasOwn(parsed, "domVerifiedMarkType")
+            ? parsed.domVerifiedMarkType
+            : parsed.verifiedMarkType ||
+              (parsed.role === "partner" ? "PARTNER" : parsed.role === "challenger" ? "CHALLENGER" : null);
+        const result = {
+            ...parsed,
+            domRoomRole,
+            domVerifiedMarkType,
+            roomRole: domRoomRole,
+            verifiedMarkType: domVerifiedMarkType,
+            role: collectionRole(domRoomRole, domVerifiedMarkType),
+            roleSource: "dom",
+            nativeTextMatches: null,
+            nativeCoherent: null,
+        };
+        if (source != null) {
+            const message = source.message;
+            const nativeRole = message ? readNativeRoomRole(message) : null;
+            const nativeMark = message ? readNativeVerifiedMark(message) : null;
+            const matches = message ? nativeTextMatches(parsed, message) : null;
+            const metadataMissing = nativeRole?.state === "missing" && nativeMark?.state === "missing";
+            result.nativeTextMatches = matches;
+            result.nativeCoherent = !message
+                ? false
+                : matches !== null
+                  ? matches
+                  : message.status !== "NORMAL"
+                    ? isBlindNoticeText(parsed.text)
+                    : metadataMissing
+                      ? null
+                      : false;
+            if (result.nativeCoherent === false) {
+                result.roomRole = "unknown";
+                result.verifiedMarkType = null;
+                result.role = "";
+                result.roleSource = "unavailable";
+            } else {
+                if (nativeRole.state !== "missing") result.roomRole = nativeRole.role;
+                if (nativeMark.state !== "missing") result.verifiedMarkType = nativeMark.type;
+                result.role = collectionRole(result.roomRole, result.verifiedMarkType);
+                result.roleSource = metadataMissing ? "dom" : "native";
+            }
+        }
+        if (!result.role) {
+            result.badges = [];
+            result.authorColor = "";
+        } else if (!parsed.role) {
+            const authorEl = parsed.authorEl || pickAuthorTarget(parsed.node).el;
+            result.badges = getAuthorBadges(authorEl, parsed.node);
+            result.authorColor = getAuthorColor(authorEl);
+        }
+        return result;
     }
 
     function getCacheMessageIdentity(row, textEl) {
@@ -959,8 +1205,10 @@
         const textKey = textTarget.text ? textTarget.textKey : text;
         const hiddenText = pickHiddenOriginalText(row, text, author, context);
         const isBlind = hasBlindSignal(row, text, hiddenText, context);
-        const role = detectRole(row, context);
-        let badges = role ? getAuthorBadges(authorTarget.el) : [];
+        const roomRole = detectDomRoomRole(row, context);
+        const verifiedMarkType = detectDomVerifiedMarkType(row, authorTarget.el, context);
+        const role = collectionRole(roomRole, verifiedMarkType);
+        let badges = role ? getAuthorBadges(authorTarget.el, row, context) : [];
         if (role && !badges.length) {
             // 역할 뱃지가 닉네임 영역 밖에 있는 마크업 폴백.
             const roleBadgeSrc = getRoleBadgeSrc(row, context);
@@ -969,7 +1217,10 @@
         const authorColor = role ? getAuthorColor(authorTarget.el) : "";
         const parsed = {
             author,
+            authorEl: authorTarget.el,
             role,
+            roomRole,
+            verifiedMarkType,
             text,
             textKey,
             hasPendingBodyImage: Boolean(textTarget.text && textTarget.pendingImage),
@@ -1003,9 +1254,11 @@
         getClassText,
         getElementAttrText,
         getVisibleText,
+        hasNativeMessageStructure,
         isBlindNoticeText,
         readPageOriginalText,
         readPageMessage,
+        enrichChatRole,
         clearPageOriginalCache,
         getCacheMessageIdentity,
         getCacheRowReuseSignal,

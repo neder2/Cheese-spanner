@@ -19,7 +19,6 @@
 
     const MESSAGE_TYPE = "cheese-spanner:video-recorder";
     const MESSAGE_VERSION = 1;
-    const CHZZK_ORIGIN = "https://chzzk.naver.com";
     const FOLDER_KEY = "videoRecorderFolder";
     const DOWNLOADS_PERMISSION = Object.freeze({ permissions: Object.freeze(["downloads"]) });
     const PENDING_TTL_MS = 60 * 1000;
@@ -28,33 +27,18 @@
     const STREAM_TIMEOUT_MS = 10_000;
     const MAX_CHUNK_BYTES = 64 * 1024;
     const BLOB_URL = /^blob:https:\/\/chzzk\.naver\.com\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-    // The page builds the name; the worker only accepts a plain file name with the two recorder containers.
-    // eslint-disable-next-line no-control-regex -- control characters are exactly what a file name must not hold.
-    const FILE_NAME = /^[^\\/:*?"<>|\u0000-\u001f\u007f]{1,150}\.(?:mp4|webm)$/;
-
     function isRecordingBlobUrl(value) {
         return typeof value === "string" && BLOB_URL.test(value);
     }
 
-    function isRecordingFileName(value) {
-        return (
-            typeof value === "string" &&
-            FILE_NAME.test(value) &&
-            !value.startsWith(".") &&
-            !value.startsWith(" ") &&
-            value.trim() === value
-        );
-    }
+    const { isRecordingFileName } = globalThis.CheeseSpannerRecordingDirectory;
 
     function isRecorderSender(sender, runtimeId) {
-        if (!sender || sender.id !== runtimeId || !sender.tab || sender.frameId !== 0 || !sender.url) return false;
-        if (sender.origin !== undefined && sender.origin !== CHZZK_ORIGIN) return false;
-        try {
-            const url = new URL(sender.url);
-            return url.origin === CHZZK_ORIGIN && !url.username && !url.password;
-        } catch (_) {
-            return false;
-        }
+        return (
+            globalThis.CheeseSpannerSettings.isChzzkTopFrameSender(sender, runtimeId) &&
+            typeof sender.documentId === "string" &&
+            sender.documentId.length > 0
+        );
     }
 
     function createController({

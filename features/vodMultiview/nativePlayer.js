@@ -4,108 +4,12 @@
     const MEDIA = "video.webplayer-internal-video";
     const HOST = "#player_layout.chzzk_player.type_vod";
     const SOURCE = /^vod3:\/\/2099:[\w-]+@([\w-]+)\?env=real(?:&[^#]*)?(?:#.*)?$/;
-    const VERIFIED_VERSIONS = new Set(["1.16.3", "1.17.0"]);
+    const VERIFIED_VERSIONS = new Set(["1.16.3", "1.17.0", "1.17.4"]);
     // Same five auxiliary positions as live multiview. Each core keeps its SDK heartbeat.
     const maxAuxiliary = 5;
     const slots = Array(maxAuxiliary).fill(undefined);
 
-    const CDN_ORIGIN = "https://ex-nlive-slitvod-streaming.navercdn.com";
-    const trackTextFields = [
-        "encodingTrackId",
-        "videoProfile",
-        "audioProfile",
-        "videoCodec",
-        "videoFrameRate",
-        "videoDynamicRange",
-    ];
-    const trackNumberFields = [
-        "videoBitRate",
-        "audioBitRate",
-        "videoWidth",
-        "videoHeight",
-        "audioSamplingRate",
-        "audioChannel",
-    ];
-
-    function readTrack(input) {
-        const track = {};
-        for (const field of trackTextFields) {
-            const value = input?.[field];
-            if (typeof value === "string" && value.length <= 80) track[field] = value;
-        }
-        for (const field of trackNumberFields) {
-            const value = input?.[field];
-            if (Number.isSafeInteger(value) && value >= 0) track[field] = value;
-        }
-        return track.encodingTrackId && track.videoWidth > 0 && track.videoHeight > 0 ? track : null;
-    }
-
-    function readRewindSource(value, videoId, duration) {
-        if (typeof value !== "string" || value.length > 65536) return null;
-        try {
-            const { meta, media } = JSON.parse(value);
-            if (
-                meta?.liveRewind !== true ||
-                meta.videoId !== videoId ||
-                meta.paidLive !== false ||
-                meta.playbackAuthType !== "NONE" ||
-                typeof meta.liveId !== "string" ||
-                !/^\d{1,20}$/.test(meta.liveId) ||
-                !Number.isSafeInteger(meta.streamSeq) ||
-                meta.streamSeq < 0 ||
-                !Number.isFinite(meta.duration) ||
-                meta.duration <= 0 ||
-                Math.abs(meta.duration - duration) > 2 ||
-                typeof meta.cdnInfo?.cdnType !== "string" ||
-                !/^[A-Z0-9_-]{1,24}$/.test(meta.cdnInfo.cdnType) ||
-                !Array.isArray(media) ||
-                media.length !== 1
-            )
-                return null;
-
-            const [hls] = media;
-            if (
-                hls?.protocol !== "HLS" ||
-                hls.mediaId !== "HLS" ||
-                typeof hls.path !== "string" ||
-                !Array.isArray(hls.encodingTrack) ||
-                !hls.encodingTrack.length ||
-                hls.encodingTrack.length > 16
-            )
-                return null;
-            const url = new URL(hls.path);
-            if (
-                url.origin !== CDN_ORIGIN ||
-                url.username ||
-                url.password ||
-                url.hash ||
-                !url.pathname.startsWith("/chzzk/") ||
-                !url.pathname.endsWith(".m3u8")
-            )
-                return null;
-            const encodingTrack = hls.encodingTrack.map(readTrack);
-            if (encodingTrack.includes(null)) return null;
-
-            // Forward only the VOD playlist and track descriptions to the native provider.
-            const { liveId, streamSeq } = meta;
-            return {
-                meta: {
-                    videoId,
-                    liveId,
-                    streamSeq,
-                    liveRewind: true,
-                    paidLive: false,
-                    playbackAuthType: "NONE",
-                    duration: meta.duration,
-                    cdnInfo: { cdnType: meta.cdnInfo.cdnType },
-                },
-                api: [],
-                media: [{ protocol: "HLS", mediaId: "HLS", path: url.href, encodingTrack }],
-            };
-        } catch {
-            return null;
-        }
-    }
+    const { readRewindSource } = window.CheeseSpannerVodRewind;
 
     function find(host, video) {
         if (!host?.isConnected || !host.matches(HOST) || !video?.matches(MEDIA) || !host.contains(video)) return null;
@@ -145,14 +49,18 @@
         return host[key] === fiber && matches.size === 1 ? matches.values().next().value : null;
     }
 
-    function ownsMedia(player, video, mediaId) {
-        if (!video.isConnected || player.shadowRoot?.querySelector(MEDIA) !== video) return false;
+    function mediaId(player, video) {
+        if (!video.isConnected || player.shadowRoot?.querySelector(MEDIA) !== video) return null;
         const provider = player.srcObject;
         if (provider?.protocol === "live:") {
             const meta = provider.data?.meta;
-            return provider.player === player._corePlayer && meta?.liveRewind === true && meta.videoId === mediaId;
+            return provider.player === player._corePlayer && meta?.liveRewind === true ? meta.videoId : null;
         }
-        return provider?.protocol === "vod3:" && SOURCE.exec(player.src)?.[1] === mediaId;
+        return provider?.protocol === "vod3:" ? SOURCE.exec(player.src)?.[1] : null;
+    }
+
+    function ownsMedia(player, video, id) {
+        return typeof id === "string" && mediaId(player, video) === id;
     }
 
     function canAllocate(player) {
@@ -364,6 +272,7 @@
 
     window.CheeseSpannerVodNative = Object.freeze({
         find,
+        mediaId,
         ownsMedia,
         canAllocate,
         acquire,

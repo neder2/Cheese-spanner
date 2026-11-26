@@ -1405,7 +1405,7 @@ test("sidebar customization scopes cheese hiding and exposes pin mode beside nat
     dispatchClick(dom, modeButton);
     await waitForCondition(() => list.getAttribute("data-bcsf-pin-mode") === "1");
     assert.equal(modeButton.getAttribute("aria-pressed"), "true");
-    const pinRing = "inset 0 0 0 1px color-mix(in srgb, #00ffa3 30%, transparent)";
+    const pinRing = "inset 0 0 0 1px color-mix(in srgb, #00ffa3 40%, transparent)";
     assert.equal(computedThemeValue(dom.window, modeButton, "color"), "#00ffa3");
     assert.equal(computedThemeValue(dom.window, modeButton, "box-shadow"), pinRing);
     assert.equal(computedThemeValue(dom.window, liveA, "box-shadow"), pinRing);

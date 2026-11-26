@@ -36,7 +36,8 @@
     const DOWNLOAD_FOLDER_MAX_SEGMENTS = 5;
     const DOWNLOAD_FOLDER_SEGMENT_MAX_LENGTH = 60;
     // Windows reserves these device names in every folder; chrome.downloads rejects a path that uses one.
-    const RESERVED_DOWNLOAD_FOLDER_NAME = /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?$/i;
+    const LEGACY_RESERVED_DOWNLOAD_FOLDER_NAME = /^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?$/i;
+    const RESERVED_DOWNLOAD_FOLDER_NAME = /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]) *(?:\.|$)/i;
     const DEFAULT_PLAYBACK_SPEED_HALF_KEY_CODE = "BracketLeft";
     const DEFAULT_PLAYBACK_SPEED_DOUBLE_KEY_CODE = "BracketRight";
     const DEFAULT_PLAYBACK_SPEED_RESET_KEY_CODE = "Backslash";
@@ -125,6 +126,7 @@
             max: LIVE_WATCH_HISTORY_MIN_MINUTES_MAX,
         },
         vodCommentTabsEnabled: { kind: "bool", default: true, feature: true },
+        vodCommentAutoChaptersEnabled: { kind: "bool", default: true, feature: true },
         vodCommentLayout: { kind: "choice", values: ["tabs", "split"], default: "tabs" },
         vodCommentSplitTop: { kind: "choice", values: ["chat", "comments"], default: "chat" },
         chatResizeEnabled: { kind: "bool", default: true, feature: true },
@@ -345,11 +347,12 @@
      * A relative folder under Chrome's download directory: "/" separates at most 5 folders, and characters that
      * Windows, macOS or Chrome refuse in a path are dropped. "", ".", ".." and absolute paths never survive.
      */
-    function normalizeDownloadFolder(value, fallback = "") {
+    function normalizeDownloadFolder(value, fallback = "", legacy = false) {
         if (typeof value !== "string") return fallback;
         const segments = [];
         for (const raw of value.replace(/\\/g, "/").split("/")) {
-            const segment = raw
+            const directionSafe = legacy ? raw : raw.replace(/[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "");
+            const segment = directionSafe
                 // eslint-disable-next-line no-control-regex -- path segments must not carry control characters.
                 .replace(/[\u0000-\u001f\u007f<>:"|?*]/g, "")
                 .replace(/\s+/g, " ")
@@ -358,7 +361,9 @@
                 .replace(/[. ]+$/, "")
                 .replace(/^[. ]+/, "");
             if (!segment) continue;
-            segments.push(RESERVED_DOWNLOAD_FOLDER_NAME.test(segment) ? `_${segment}` : segment);
+            const reserved = legacy ? LEGACY_RESERVED_DOWNLOAD_FOLDER_NAME : RESERVED_DOWNLOAD_FOLDER_NAME;
+            const name = reserved.test(segment) ? `_${segment}` : segment;
+            segments.push(legacy ? name : name.slice(0, DOWNLOAD_FOLDER_SEGMENT_MAX_LENGTH).replace(/[. ]+$/, ""));
             if (segments.length === DOWNLOAD_FOLDER_MAX_SEGMENTS) break;
         }
         let folder = segments.join("/");
@@ -616,6 +621,30 @@
         return () => optionListeners.delete(callback);
     }
 
+    function isChzzkTopFrameSender(sender, runtimeId, { allowIncognito = false } = {}) {
+        if (
+            !runtimeId ||
+            sender?.id !== runtimeId ||
+            sender.frameId !== 0 ||
+            !Number.isSafeInteger(sender.tab?.id) ||
+            sender.tab.id < 0 ||
+            (!allowIncognito && sender.tab.incognito)
+        )
+            return false;
+        try {
+            const url = new URL(sender.url);
+            return (
+                url.protocol === "https:" &&
+                url.origin === "https://chzzk.naver.com" &&
+                !url.username &&
+                !url.password &&
+                (sender.origin === undefined || sender.origin === url.origin)
+            );
+        } catch {
+            return false;
+        }
+    }
+
     function isOptionsPageSender(sender) {
         const runtime = globalThis.chrome?.runtime;
         if (!runtime || sender?.id !== runtime.id || (sender.frameId !== undefined && sender.frameId !== 0))
@@ -682,5 +711,6 @@
         getOptions,
         addOptionsChangeListener,
         isOptionsPageSender,
+        isChzzkTopFrameSender,
     };
 })();

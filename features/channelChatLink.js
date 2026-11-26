@@ -111,13 +111,14 @@
         if (enabled === next) return;
         enabled = next;
         if (enabled) {
+            CheeseSpanner.utils.ensureUiTheme?.();
             injectStyleOnce(
                 STYLE_ID,
                 `
 #${LINK_ID}{display:block;box-sizing:border-box;flex-shrink:0;text-decoration:none;cursor:pointer;
-font-size:16px;line-height:22px;padding:8px 15px 13px;color:var(--color-content-05,#697183)}
-#${LINK_ID}:hover,#${LINK_ID}:focus-visible{color:var(--color-content-04,#424a58)}
-#${LINK_ID}:focus-visible{outline:2px solid currentColor;outline-offset:-2px}
+font-size:16px;line-height:22px;padding:8px 15px 13px;color:var(--bct-text-muted)}
+#${LINK_ID}:hover,#${LINK_ID}:focus-visible{color:var(--bct-text-body)}
+#${LINK_ID}:focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:-2px}
 `
             );
             removeRouteListener = startPageChangeDetection(handleRoute);

@@ -10,7 +10,7 @@
         onIndexSettled,
         onCommentProgress,
     }) {
-        const { isLastPage, sleep, normalizeCompact: normalize } = root.utils;
+        const { isLastPage, sleep, normalizeCompact: normalize, parseChzzkCommentPage } = root.utils;
         const {
             extractVideos,
             extractCommentTexts,
@@ -119,21 +119,24 @@
             let shouldMarkFetched = true;
             try {
                 const texts = [];
+                let offset = 0;
                 for (let page = 0; page < getCommentMaxPagesPerVideo(); page++) {
                     if (token !== commentSearchToken || signal?.aborted) {
                         shouldMarkFetched = false;
                         return;
                     }
-                    const content = await fetchCommentPage(video.videoNo, page * COMMENT_PAGE_SIZE, signal);
+                    const content = await fetchCommentPage(video.videoNo, offset, signal);
                     if (token !== commentSearchToken || signal?.aborted) {
                         shouldMarkFetched = false;
                         return;
                     }
-                    const pageTexts = extractCommentTexts(content);
-                    texts.push(...pageTexts);
-
-                    const rows = content?.comments?.data;
-                    if (!Array.isArray(rows) || rows.length < COMMENT_PAGE_SIZE) break;
+                    const { hasMore, nextOffset } = parseChzzkCommentPage(content, {
+                        offset,
+                        pageSize: COMMENT_PAGE_SIZE,
+                    });
+                    texts.push(...extractCommentTexts(content));
+                    if (!hasMore) break;
+                    offset = nextOffset;
                 }
                 video.commentTexts = uniqueCommentTexts(texts);
                 video.commentNorm = buildCommentNorm(video.commentTexts);
@@ -167,28 +170,20 @@
             activeIndexAbortController = new AbortController();
             const signal = activeIndexAbortController.signal;
             const token = ++activeFetchToken;
-            const entry =
-                existing && !existing.complete
-                    ? existing
-                    : {
-                          videos: [],
-                          seen: new Set(),
-                          complete: false,
-                          completedAt: 0,
-                          error: null,
-                          limitReached: false,
-                          loading: false,
-                          loadingToken: 0,
-                      };
+            // Each build restarts at page zero, including retries after a partial fetch.
+            const entry = {
+                videos: [],
+                seen: new Set(),
+                complete: false,
+                completedAt: 0,
+                error: null,
+                failedAt: 0,
+                limitReached: false,
+                loading: true,
+                loadingToken: token,
+            };
             let reachedBoundary = false;
             let failed = false;
-            entry.complete = false;
-            entry.completedAt = 0;
-            entry.error = null;
-            entry.limitReached = false;
-            entry.failedAt = 0;
-            entry.loading = true;
-            entry.loadingToken = token;
             touchChannelIndex(channelId, entry);
 
             setLoading(true);

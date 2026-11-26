@@ -23,6 +23,7 @@
         previewHosts: { origins: ["https://*.pstatic.net/*"] },
     };
     const ERROR_TEXT = {
+        "multiview-limit": "멀티뷰 채널별 설정은 화질과 딜레이 각각 최대 4,000개까지 저장 가능",
         "invalid-file": "치즈 스패너 설정 파일이 아니거나 내용에 오류가 있음",
         "invalid-json": "JSON 형식의 설정 파일 필요",
         "too-large": "설정 파일은 1MB 이하만 불러올 수 있음",

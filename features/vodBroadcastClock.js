@@ -43,6 +43,7 @@
     const WATCH_HISTORY_STORAGE_KEY = "betterChzzkLiveWatchHistory";
     const VIDEO_DETAIL_API_BASE = "https://api.chzzk.naver.com/service/v2/videos";
     const VOD_TIME_SELECTOR = "div.pzp-vod-time, div.pzp-pc__vod-time, div.pzp-pc-vod-time";
+    const BUTTON_ROW_SELECTOR = ".pzp-pc__bottom-buttons";
     const LEFT_BUTTONS_SELECTOR = [
         "div.pzp-pc__bottom-buttons--left",
         "div.pzp-pc-bottom-buttons--left",
@@ -83,6 +84,8 @@
     const CONTROL_AREA_BEFORE_VIDEO_BOTTOM = 150;
     const CONTROL_AREA_AFTER_VIDEO_BOTTOM = 110;
     const CONTROL_AREA_MAX_HEIGHT = 96;
+    // PZP leaves 4px between groups, then 8px for each adjacent inline margin.
+    const CLOCK_INLINE_SPACING = 20;
     const HISTORY_START_TOLERANCE_MS = 3 * 60 * 60 * 1000;
     const HISTORY_SAME_OPEN_TOLERANCE_MS = 20 * 60 * 1000;
     // Same rule shared/vodTimeline.js uses to confirm split segments of one broadcast: the record's own
@@ -128,6 +131,8 @@
     let clockEl = null;
     let clockTextEl = null;
     let clockAnchorEl = null;
+    let clockButtonRow = null;
+    let clockResizeObserver = null;
     let broadcastRangeTitleEl = null;
     let hiddenNativeDateEl = null;
     let currentVideoNo = "";
@@ -621,6 +626,12 @@
   box-sizing:border-box;
   text-shadow:0 1px 2px rgba(0,0,0,0.45);
 }
+.pzp-pc #${CLOCK_ID}{
+  opacity:0;
+}
+.pzp-pc.pzp-pc--controls #${CLOCK_ID}{
+  opacity:1;
+}
 #${CLOCK_ID}[data-bcbc-placement="right-controls"]{
   margin-left:0;
   margin-right:8px;
@@ -633,6 +644,12 @@
 #${CLOCK_ID}[data-bcbc-placement="time-inline"]{
   margin-left:8px;
   margin-right:0;
+}
+#${CLOCK_ID}[data-bcbc-above-controls]{
+  position:absolute;
+  right:0;
+  bottom:calc(100% + 24px);
+  margin:0;
 }
 #${CLOCK_ID} .bcbc-label{
   opacity:0.7;
@@ -675,7 +692,7 @@
   width:2px;
   height:2px;
   border-radius:50%;
-  background-color:var(--sem-color-content-neutral-cool-weaker, var(--bct-text-dim));
+  background-color:var(--bct-text-dim);
 }
 #${TITLE_HISTORY_WRAP_ID}{
   position:relative;
@@ -732,7 +749,7 @@
 #${TITLE_HISTORY_BUTTON_ID}[aria-expanded="true"]{
   color:var(--bct-brand-text);
   background-color:var(--bct-brand-weak);
-  border-color:color-mix(in srgb,var(--bct-brand-text) 40%,transparent);
+  border-color:var(--bct-brand-border);
 }
 #${TITLE_HISTORY_BUTTON_ID}[aria-expanded="true"] .bcbc-title-history-chevron{
   margin-top:3px;
@@ -833,11 +850,15 @@
     function syncClockTypography(clock, anchorEl) {
         if (!(clock instanceof HTMLElement) || !(anchorEl instanceof HTMLElement)) return;
         const style = getComputedStyle(anchorEl);
+        const player = anchorEl.closest(".pzp-pc");
+        const time = player?.querySelector(VOD_TIME_SELECTOR);
         clock.style.fontFamily = style.fontFamily;
         clock.style.fontSize = style.fontSize;
-        clock.style.opacity = style.opacity;
-        clock.style.visibility = style.visibility;
-        clock.style.transition = style.transition;
+        // PZP's controls class owns visibility; sampling a fading button delays and restarts the clock's fade.
+        // Match the adjacent VOD time's easing as well as its duration, without copying its layout classes.
+        clock.style.opacity = player ? "" : style.opacity;
+        clock.style.visibility = player ? "" : style.visibility;
+        clock.style.transition = time ? getComputedStyle(time).transition : style.transition;
     }
 
     function findClockInsertAfter(timeEl) {
@@ -903,6 +924,41 @@
         clockEl = null;
         clockTextEl = null;
         clockAnchorEl = null;
+        observeClockButtonRow(null);
+    }
+
+    function observeClockButtonRow(row) {
+        if (row === clockButtonRow) return;
+        clockResizeObserver?.disconnect();
+        clockButtonRow = row;
+        if (row && typeof ResizeObserver === "function") {
+            clockResizeObserver ??= new ResizeObserver(scheduleSync);
+            clockResizeObserver.observe(row);
+        }
+    }
+
+    function controlRects(group, clock) {
+        return Array.from(group.children)
+            .filter((child) => child !== clock)
+            .map((child) => child.getBoundingClientRect())
+            .filter((rect) => rect.width > 0 && rect.height > 0);
+    }
+
+    function syncClockClearance(clock, anchorEl) {
+        const row = anchorEl.matches(RIGHT_BUTTONS_SELECTOR) ? anchorEl.closest(BUTTON_ROW_SELECTOR) : null;
+        const left = row && Array.from(row.children).find((child) => child.matches(LEFT_BUTTONS_SELECTOR));
+        if (!left || clock.offsetParent !== row) {
+            observeClockButtonRow(null);
+            clock.removeAttribute("data-bcbc-above-controls");
+            return;
+        }
+        observeClockButtonRow(row);
+        // The left flex group can shrink while its time text and skip button overflow it.
+        // Measure the controls themselves and exclude the clock so both placements use the same gap.
+        const leftEnd = Math.max(...controlRects(left, clock).map((rect) => rect.right));
+        const rightStart = Math.min(...controlRects(anchorEl, clock).map((rect) => rect.left));
+        const required = clock.getBoundingClientRect().width + CLOCK_INLINE_SPACING;
+        clock.toggleAttribute("data-bcbc-above-controls", rightStart - leftEnd < required);
     }
 
     function pickStartDateText(detail) {
@@ -1658,7 +1714,8 @@
             return;
         }
 
-        if (!updateClockText(clock, video)) removeClock();
+        if (updateClockText(clock, video)) syncClockClearance(clock, anchorEl);
+        else removeClock();
     }
 
     function handlePageChange() {
@@ -1776,6 +1833,10 @@
         if (titleHistoryExpanded) scheduleSync();
     }
 
+    function handleViewportResize() {
+        if (clockAnchorEl || titleHistoryExpanded) scheduleSync();
+    }
+
     function handleWatchHistoryStorageChange(changes, areaName) {
         if (areaName !== "local" || !changes[WATCH_HISTORY_STORAGE_KEY]) return;
         invalidateWatchHistorySnapshot();
@@ -1785,7 +1846,7 @@
         if (pageListenersInstalled) return;
         pageListenersInstalled = true;
         document.addEventListener("visibilitychange", handleVisibilityChange, true);
-        window.addEventListener("resize", handleTitleHistoryViewportChange, true);
+        window.addEventListener("resize", handleViewportResize, true);
         window.addEventListener("scroll", handleTitleHistoryViewportChange, true);
     }
 
@@ -1793,7 +1854,7 @@
         if (!pageListenersInstalled) return;
         pageListenersInstalled = false;
         document.removeEventListener("visibilitychange", handleVisibilityChange, true);
-        window.removeEventListener("resize", handleTitleHistoryViewportChange, true);
+        window.removeEventListener("resize", handleViewportResize, true);
         window.removeEventListener("scroll", handleTitleHistoryViewportChange, true);
     }
 

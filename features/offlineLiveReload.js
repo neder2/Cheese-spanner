@@ -1,13 +1,14 @@
 /** Offline live-page start detection (isolated world).
  * Measured 2026-09-06 at /live/6c837d7222ccc4431ca7835a4340be8e:
  * #layout-body [class*='_player_'] contains p "다음 라이브를 기대해주세요!".
+ * The 2026-11-21 native bundle also renders strong "다음 라이브를 기대해 주세요!" without recommendations.
  * /service/v3/channels/{channelId}/live-detail returned code 200, status CLOSE,
  * liveId 20936615 and channel.channelId matching the route. OPEN is the live status.
  */
 (() => {
     const { bindFeatureOptions, createMutationObserverSync, fetchJson, startPageChangeDetection } = CheeseSpanner.utils;
     const PLAYER_SELECTOR = "[class*='_player_']";
-    const END_SELECTOR = `#layout-body ${PLAYER_SELECTOR} p`;
+    const END_SELECTOR = `#layout-body ${PLAYER_SELECTOR} :is(p, strong)`;
     const POLL_MS = 30000;
     let enabled = false;
     let suspended = false;
@@ -21,7 +22,9 @@
 
     function hasEndedScreen() {
         return Array.from(document.querySelectorAll(END_SELECTOR)).some(
-            (node) => node.textContent.trim() === "다음 라이브를 기대해주세요!"
+            (node) =>
+                !node.closest("a, button, [role='button']") &&
+                /^다음 라이브를 기대해 ?주세요!$/.test(node.textContent.trim())
         );
     }
 

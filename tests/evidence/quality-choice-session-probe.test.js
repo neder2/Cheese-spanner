@@ -4,10 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 const { JSDOM } = require("jsdom");
 
-const source = fs.readFileSync(
-    path.join(__dirname, "../fixtures/quality-choice-session-probe.js"),
-    "utf8"
-);
+const source = fs.readFileSync(path.join(__dirname, "../fixtures/quality-choice-session-probe.js"), "utf8");
 
 function fixture(t) {
     const dom = new JSDOM(

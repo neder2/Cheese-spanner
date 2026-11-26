@@ -18,10 +18,8 @@ const CATEGORY_STYLE_ID = "cheese-spanner-category-tools-style";
 const VIDEO_STYLE_ID = "cheese-spanner-video-search-style";
 const MONTHLY_STYLE_ID = "cheese-spanner-monthly-broadcast-time-style";
 const MONTHLY_CHANNEL_ID = "0123456789abcdef0123456789abcdef";
-const MONTHLY_FONT_FAMILY =
-    '"Sandoll Nemony2", "Sandoll Nemony", "Apple SD Gothic Neo", "Apple SD Gothic NEO", "Malgun Gothic", "맑은 고딕", sans-serif';
-// Badges drawn on top of card media keep theme-independent colors (features/AGENTS.md).
-const CATEGORY_FIXED_COLOR_SELECTORS = ['[data-bcgt-follower-badge="1"]', '[data-bcgt-live-elapsed-badge="1"]'];
+const FOLLOWER_BADGE_SELECTOR = '[data-bcgt-follower-badge="1"]';
+const CATEGORY_FIXED_COLOR_SELECTORS = [FOLLOWER_BADGE_SELECTOR, '[data-bcgt-live-elapsed-badge="1"]'];
 const COLOR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?)\(|\b(?:white|black)\b/i;
 const THEME_SELECTOR = /\[class\*=|\[dark\]|\[theme=|theme_dark|data-theme|(?:^|[\s,(])\.light\b/;
 
@@ -301,7 +299,7 @@ function contrast(left, right) {
     return (high + 0.05) / (low + 0.05);
 }
 
-test("category tools request the shared theme and keep only the media badge colors of their own", async (t) => {
+test("category tools request the shared theme and keep fixed colors for follower and elapsed time badges", async (t) => {
     const page = await loadCategoryPage(t);
     await waitFor(() => page.document.getElementById("cheese-spanner-category-tools"));
     const { css, rules } = assertSharedThemeContract(page.document, CATEGORY_STYLE_ID, CATEGORY_FIXED_COLOR_SELECTORS);
@@ -332,14 +330,14 @@ test("category tools request the shared theme and keep only the media badge colo
     assert.match(css, /--bcgt-chip-bg:var\(--bct-brand\);--bcgt-chip-text:var\(--bct-on-brand\)/);
 
     // Only the category exclusion selection and add panel use the bundled font (features/AGENTS.md).
-    const bundledFontSelectors = [".bcgt-category-summary", "#cheese-spanner-category-add-panel"];
+    const bundledFontSelectors = [".bcgt-category-summary", menuSelector];
     assert.deepEqual(
         rules
             .filter((rule) => rule.declarations.some(({ value }) => /--bct-font\b/.test(value)))
             .map((rule) => rule.selector)
             .sort(),
         [...bundledFontSelectors].sort(),
-        "the bundled font stays within the category exclusion UI"
+        "only the excluded-category selection and floating menus use the bundled font"
     );
     for (const selector of bundledFontSelectors)
         assert.equal(declaration(rules, selector, "font-family"), "var(--bct-font)", selector);
@@ -352,11 +350,16 @@ test("category tools request the shared theme and keep only the media badge colo
 
     // The search bar and numeric filter still follow the host font; the follower badge keeps its stack.
     assert.equal(declaration(rules, "#cheese-spanner-category-tools", "font-family"), "var(--bcgt-font-family)");
-    assert.equal(declaration(rules, menuSelector, "font-family"), "inherit");
-    assert.match(declaration(rules, '[data-bcgt-follower-badge="1"]', "font-family"), /^"Sandoll Nemony2",/);
+    assert.equal(declaration(rules, menuSelector, "font-family"), "var(--bct-font)");
+    assert.equal(declaration(rules, FOLLOWER_BADGE_SELECTOR, "background"), "#111827");
+    assert.equal(declaration(rules, FOLLOWER_BADGE_SELECTOR, "color"), "#DDE7F5");
+    assert.equal(
+        declaration(rules, FOLLOWER_BADGE_SELECTOR, "font-family"),
+        '"Sandoll Nemony2", "Apple SD Gothic NEO", "Helvetica Neue", Helvetica, "Malgun Gothic", "맑은 고딕", sans-serif'
+    );
 });
 
-test("category tools still copy the computed host font into the bar and the filter menu", async (t) => {
+test("category tools copy the host font into the inline bar and keep the floating filter independent", async (t) => {
     const page = await loadCategoryPage(t, (document) => {
         document.querySelectorAll("#tabs button").forEach((button) => {
             button.style.fontFamily = '"Native Tab", sans-serif';
@@ -370,7 +373,7 @@ test("category tools still copy the computed host font into the bar and the filt
     assert.match(native, /Native Tab/);
     assert.equal(bar.style.getPropertyValue("--bcgt-font-family"), native);
     assert.equal(bar.style.getPropertyValue("--bcgt-font-weight"), "600");
-    assert.equal(menu.style.fontFamily, native);
+    assert.equal(menu.style.fontFamily, "", "the floating filter keeps the bundled panel font");
 });
 
 test("category tools show the polite empty result message", async (t) => {
@@ -387,7 +390,7 @@ test("category tools show the polite empty result message", async (t) => {
     assert.ok(empty);
 });
 
-test("video search requests the shared theme, uses the bundled font and still mirrors native pill colors", async (t) => {
+test("video search mirrors the native pill font and colors while the comment panel uses the bundled font", async (t) => {
     const page = await loadVideoSearchPage(t);
     const bar = await waitFor(() => page.document.getElementById("cheese-spanner-video-search-bar"));
     const { rules } = assertSharedThemeContract(page.document, VIDEO_STYLE_ID);
@@ -396,15 +399,18 @@ test("video search requests the shared theme, uses the bundled font and still mi
     assert.equal(bar.getAttribute("data-mode"), "inline");
     assert.equal(bar.style.getPropertyValue("--bcvs-bg"), "rgb(46, 48, 51)", "native unselected pill color");
     assert.equal(bar.style.getPropertyValue("--bcvs-text"), "rgb(157, 165, 182)");
-    assert.equal(bar.style.getPropertyValue("--bcvs-font-family"), "", "the native pill font is not copied");
+    assert.equal(
+        bar.style.getPropertyValue("--bcvs-font-family"),
+        page.window.getComputedStyle(page.document.querySelector("#filters button")).fontFamily
+    );
     assert.equal(bar.style.fontFamily, "");
 
-    for (const selector of [
-        "#cheese-spanner-video-search-bar",
-        "[data-bcvs-load-more] button",
-        ".bcvs-comment-tooltip",
-    ])
-        assert.equal(declaration(rules, selector, "font-family"), "var(--bct-font)", selector);
+    assert.equal(
+        declaration(rules, "#cheese-spanner-video-search-bar", "font-family"),
+        "var(--bcvs-font-family,inherit)"
+    );
+    assert.equal(declaration(rules, "[data-bcvs-load-more] button", "font"), "inherit");
+    assert.equal(declaration(rules, ".bcvs-comment-tooltip", "font-family"), "var(--bct-font)");
     for (const [name, value] of [
         ["--bcvs-accent", "var(--bct-brand-text)"],
         ["--bcvs-bg", "var(--bct-surface-base)"],
@@ -417,14 +423,17 @@ test("video search requests the shared theme, uses the bundled font and still mi
     assert.equal(declaration(rules, ".bcvs-comment-tooltip", "background"), "var(--bct-surface)");
 });
 
-test("monthly calendar requests the shared theme and keeps its specified font stack", async (t) => {
+test("monthly calendar uses the CHZZK Sandoll font while the profile widget inherits its host font", async (t) => {
     const page = await loadMonthlyPage(t);
     const widget = await waitFor(() => page.document.getElementById("cheese-spanner-monthly-broadcast-time"));
-    const { css, rules } = assertSharedThemeContract(page.document, MONTHLY_STYLE_ID);
+    const { rules } = assertSharedThemeContract(page.document, MONTHLY_STYLE_ID);
     assertSmallTextTokens(rules);
 
-    assert.equal(declaration(rules, "#cheese-spanner-monthly-broadcast-time", "font-family"), MONTHLY_FONT_FAMILY);
-    assert.doesNotMatch(css, /--bct-font/);
+    assert.equal(declaration(rules, "#cheese-spanner-monthly-broadcast-time", "font-family"), "inherit");
+    assert.equal(
+        declaration(rules, "#cheese-spanner-monthly-broadcast-time .bcmb-calendar", "font-family"),
+        '"Sandoll Nemony2", "Sandoll Nemony", "Apple SD Gothic Neo", "Apple SD Gothic NEO", "Malgun Gothic", "맑은 고딕", sans-serif'
+    );
     assert.equal(
         declaration(rules, "#cheese-spanner-monthly-broadcast-time .bcmb-calendar", "background"),
         "var(--bct-surface)"

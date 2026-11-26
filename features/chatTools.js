@@ -25,7 +25,6 @@
         KEYWORD_FILTERED_ATTR,
         MODERATOR_COLLECTED_ATTR,
         MESSAGE_ID_ATTRS,
-        ROLE_ATTR_RE,
         BLIND_SIGNAL_RE,
         CHAT_TIMESTAMP_ATTR,
         isOwnUi,
@@ -33,10 +32,12 @@
         getClassText,
         getElementAttrText,
         getVisibleText,
+        hasNativeMessageStructure,
         getCacheMessageIdentity,
         getCacheRowReuseSignal,
         isBlindNoticeText,
         parseChatRow,
+        enrichChatRole,
         readPageMessage,
         clearPageOriginalCache,
         resolveMutationElement,
@@ -60,6 +61,8 @@
     const CHAT_SYNC_THROTTLE_MS = 120;
     const BLIND_SOURCE_RECHECK_MS = 300;
     const MAX_BLIND_SOURCE_RECHECKS = 4;
+    const ROLE_RECHECK_MS = 100;
+    const MAX_ROLE_RECHECKS = 2;
 
     const CHAT_ROOT_FIND_THROTTLE_MS = 600;
 
@@ -123,6 +126,7 @@
         "[class*='chat'][class*='message']",
         "[class*='message']",
         "[class*='comment']",
+        'button[class*="_nickname_"][aria-haspopup="true"]',
     ].join(",");
 
     // 큰 가상 목록 subtree는 전체 스캔 경로로 넘겨 wrapper를 메시지로 수집하지 않는다.
@@ -152,6 +156,9 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     const dirtyImmediateChatRows = new Set();
     let pendingChatParses = new WeakMap();
     const pendingModeratorRows = new Map();
+    const pendingRoleRows = new Map();
+    let roleChecks = new WeakMap();
+    let roleRecheckTimer = 0;
     const pendingBlindRows = new Set();
     let blindNoticeStates = new WeakMap();
     let blindSourceRecheckTimer = 0;
@@ -163,6 +170,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     let lastChatRootFindAt = 0;
     let lastChatRootFindResult = null;
     let routeChannelId = "";
+    let routeWithoutHash = "";
     let pageHidden = false;
     let keywordPhrases = [];
     let moderatorSnapshot = [];
@@ -192,7 +200,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     const { remove: removeModeratorBox } = panel;
 
     function isFeatureEnabled() {
-        return isBlindRevealEnabled() || isModeratorBoxEnabled() || isKeywordFilterEnabled();
+        return isBlindRevealEnabled() || isModeratorBoxEnabled() || isKeywordFilterEnabled() || isNicknameHidden();
     }
 
     function syncWelcomeMessageRemoval() {
@@ -215,8 +223,12 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         return Boolean(featureOptions.chatKeywordFilterEnabled && keywordPhrases.length);
     }
 
+    function isNicknameHidden() {
+        return Boolean(featureOptions.chatNicknameHidden);
+    }
+
     function needsImmediateChatRead() {
-        return isKeywordFilterEnabled() || (isLiveRoute() && isModeratorBoxEnabled());
+        return isKeywordFilterEnabled() || isNicknameHidden() || (isLiveRoute() && isModeratorBoxEnabled());
     }
 
     function matchesKeyword(text) {
@@ -262,16 +274,18 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         const body = parsed.textEl instanceof Element && parsed.textEl !== row ? parsed.textEl : null;
         const revealed = isBlindRevealEnabled() ? row.querySelector(".bcct-blind-reveal")?.textContent : "";
         // Use the current collection role, not a stale collected marker or whether the panel is enabled.
-        const hidden = !parsed.role && !!body && matchesKeyword(revealed || parsed.text);
+        const hidden =
+            parsed.nativeCoherent !== false && !parsed.role && !!body && matchesKeyword(revealed || parsed.text);
         if (hidden) {
             if (row.getAttribute(KEYWORD_FILTERED_ATTR) !== "1") row.setAttribute(KEYWORD_FILTERED_ATTR, "1");
         } else row.removeAttribute(KEYWORD_FILTERED_ATTR);
     }
 
-    function readChatRow(row) {
+    function readChatRow(row, parsed = parseChatMessage(row, isLiveRoute() && isBlindRevealEnabled())) {
         const live = isLiveRoute();
         const keepOriginal = live && isBlindRevealEnabled();
-        const parsed = parseChatMessage(row, keepOriginal);
+        if (live && isModeratorBoxEnabled() && getLiveChannelIdFromPath() === routeChannelId) store.observe(parsed);
+        root.chatNicknameDisplay?.syncRole(parsed);
         if (live) {
             const source = keepOriginal
                 ? Object.hasOwn(parsed, "pageSource")
@@ -282,6 +296,83 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             syncBlindReveal(row, parsed, source);
         }
         return parsed;
+    }
+
+    function needsRoleRecheck(parsed) {
+        const message = parsed.pageSource?.message;
+        return (
+            parsed.nativeCoherent === true &&
+            parsed.nativeTextMatches === true &&
+            (message.roleState === "missing" || message.verifiedState === "missing")
+        );
+    }
+
+    function queueRoleRecheck(row, parsed) {
+        if (!needsRoleRecheck(parsed)) {
+            pendingRoleRows.delete(row);
+            return;
+        }
+        let check = roleChecks.get(row);
+        if (check?.id !== parsed.nativeIdentity) {
+            check = { id: parsed.nativeIdentity, attempts: 0 };
+            roleChecks.set(row, check);
+        }
+        if (check.attempts >= MAX_ROLE_RECHECKS) return;
+        pendingRoleRows.set(row, check);
+        if (pendingRoleRows.size > MAX_PENDING_MODERATOR_ROWS)
+            pendingRoleRows.delete(pendingRoleRows.keys().next().value);
+        if (!roleRecheckTimer) roleRecheckTimer = setTimeout(recheckRoles, ROLE_RECHECK_MS);
+    }
+
+    function clearRoleRechecks() {
+        if (roleRecheckTimer) clearTimeout(roleRecheckTimer);
+        roleRecheckTimer = 0;
+        pendingRoleRows.clear();
+        roleChecks = new WeakMap();
+    }
+
+    function recheckRoles() {
+        roleRecheckTimer = 0;
+        const candidates = [...pendingRoleRows];
+        pendingRoleRows.clear();
+        if (pageHidden || !needsImmediateChatRead() || !chatRoot?.isConnected) return;
+        if (isLiveRoute() && getLiveChannelIdFromPath() !== routeChannelId) return;
+        for (const [row, check] of candidates) {
+            if (!chatRoot.contains(row) || row.querySelector(OPEN_PROFILE_SELECTOR)) continue;
+            check.attempts += 1;
+            const parsed = parseChatMessage(row, isLiveRoute() && isBlindRevealEnabled());
+            if (parsed.nativeIdentity !== check.id || parsed.nativeCoherent !== true) continue;
+            readChatRow(row, parsed);
+            queueRoleRecheck(row, parsed);
+            pendingChatParses.set(row, parsed);
+            rememberPendingModeratorRow(row, parsed, chatRoot);
+            dirtyChatRows.add(row);
+            syncKeywordFilter(row, parsed);
+        }
+        if (dirtyChatRows.size) scheduleSync();
+    }
+
+    function rememberPendingModeratorRow(row, parsed, rootEl) {
+        if (
+            !isLiveRoute() ||
+            !isModeratorBoxEnabled() ||
+            !parsed.role ||
+            !parsed.text ||
+            parsed.nativeCoherent === false ||
+            parsed.hasPendingBodyImage ||
+            store.hasBinding(row)
+        ) {
+            pendingModeratorRows.delete(row);
+            return;
+        }
+        pendingModeratorRows.set(row, {
+            parsed,
+            root: rootEl,
+            reuseSignal: getCacheRowReuseSignal(row),
+            cacheIdentity: getCacheMessageIdentity(row, parsed.textEl),
+        });
+        if (pendingModeratorRows.size > MAX_PENDING_MODERATOR_ROWS)
+            pendingModeratorRows.delete(pendingModeratorRows.keys().next().value);
     }
 
     function syncImmediateChatRows(rootEl = chatRoot) {
@@ -302,18 +393,8 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             }
             const parsed = readChatRow(row);
             pendingChatParses.set(row, parsed);
-            if (
-                isLiveRoute() &&
-                isModeratorBoxEnabled() &&
-                parsed.role &&
-                parsed.text &&
-                !parsed.hasPendingBodyImage &&
-                !store.hasBinding(row)
-            ) {
-                pendingModeratorRows.set(row, { parsed, root: rootEl, reuseSignal: getCacheRowReuseSignal(row) });
-                if (pendingModeratorRows.size > MAX_PENDING_MODERATOR_ROWS)
-                    pendingModeratorRows.delete(pendingModeratorRows.keys().next().value);
-            } else pendingModeratorRows.delete(row);
+            queueRoleRecheck(row, parsed);
+            rememberPendingModeratorRow(row, parsed, rootEl);
             syncKeywordFilter(row, parsed);
         }
     }
@@ -343,12 +424,17 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             if (candidate.reuseSignal !== getCacheRowReuseSignal(row)) continue;
             // A removal batch can also recycle or clear the detached row. Only the last observed identity
             // and unchanged body/author/role are eligible; the store retains its reuse and remount guards.
-            const current = parseChatMessage(row);
             const parsed = candidate.parsed;
+            // A detached container cannot send the synchronous MAIN request to document. A previously
+            // coherent native snapshot is already a complete message; only revalidate its DOM here.
+            const nativeSnapshot = parsed.nativeCoherent === true && !!parsed.nativeIdentity;
+            const current = nativeSnapshot ? parseChatRow(row) : parseChatMessage(row);
             if (
-                current.id !== parsed.id ||
+                (nativeSnapshot
+                    ? getCacheMessageIdentity(row, current.textEl) !== candidate.cacheIdentity
+                    : current.id !== parsed.id) ||
                 current.author !== parsed.author ||
-                current.role !== parsed.role ||
+                current.role !== (nativeSnapshot ? parsed.domRole : parsed.role) ||
                 current.textEl !== parsed.textEl ||
                 current.isBlind !== parsed.isBlind ||
                 current.hasPendingBodyImage ||
@@ -486,20 +572,22 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             }
             pending.attempts += 1;
             if (pending.attempts >= MAX_BLIND_SOURCE_RECHECKS) pendingBlindRows.delete(row);
-            const parsed = parseChatRow(row);
-            if (!parsed.isBlind) {
+            const domParsed = parseChatRow(row);
+            if (!domParsed.isBlind) {
                 forgetBlindNotice(row);
                 continue;
             }
-            const source = readPageMessage(row, parsed, true);
+            const source = readPageMessage(row, domParsed, true);
             if (blindNoticeStates.get(row) !== pending) continue;
             if (!source) {
                 pendingBlindRows.delete(row);
                 continue;
             }
 
+            const parsed = enrichChatRole(domParsed, source);
             if (source.original && syncBlindReveal(row, parsed, source)) {
                 cacheOriginalMessageText(row, parsed, source);
+                root.chatNicknameDisplay?.syncRole(parsed);
                 const wasFiltered = row.hasAttribute(KEYWORD_FILTERED_ATTR);
                 syncKeywordFilter(row, parsed);
                 if (row.hasAttribute(KEYWORD_FILTERED_ATTR) !== wasFiltered) layoutChanged = true;
@@ -546,28 +634,37 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         );
     }
 
-    function normalizeCandidateRow(el, rootEl) {
-        if (el.closest(NATIVE_FIXED_CHAT_SELECTOR)) return null;
-        let identityRow = null;
-        let structuralRow = null;
-        let weakRow = el;
-        let current = el;
-        for (let depth = 0; current && current !== rootEl && depth < 8; depth += 1, current = current.parentElement) {
-            if (!(current instanceof Element)) break;
-            if (hasExplicitChatRowIdentity(current)) {
-                identityRow = current;
-            }
+    function createRowDiscoveryContext() {
+        // Only the current synchronous search shares text and visibility. A recycled row is read again.
+        return { visibleTextCache: new WeakMap(), hiddenCache: new WeakMap() };
+    }
 
-            const classText = getClassText(current);
-            if (/(^|[\s_-])(row|item)(?=$|[\s_-])/i.test(classText) && getVisibleText(current)) {
-                structuralRow = current;
-                continue;
-            }
-            if (/(^|[\s_-])(message|chat|comment)(?=$|[\s_-])/i.test(classText) && getVisibleText(current)) {
-                weakRow = current;
-            }
+    function normalizeCandidateRow(el, rootEl, context) {
+        if (el.closest(NATIVE_FIXED_CHAT_SELECTOR)) return null;
+        const ancestors = [];
+        for (
+            let node = el;
+            node instanceof Element && node !== rootEl && ancestors.length < 8;
+            node = node.parentElement
+        ) {
+            ancestors.push(node);
         }
-        return structuralRow || identityRow || weakRow;
+        // Prefer the outermost visible row, then the outermost explicit identity. Only an
+        // unrecognized chain needs the message text or native nickname/body fallback.
+        ancestors.reverse();
+        return (
+            ancestors.find(
+                (node) => /(^|[\s_-])(row|item)(?=$|[\s_-])/i.test(getClassText(node)) && getVisibleText(node, context)
+            ) ||
+            ancestors.find(hasExplicitChatRowIdentity) ||
+            ancestors.find(
+                (node) =>
+                    (/(^|[\s_-])(message|chat|comment)(?=$|[\s_-])/i.test(getClassText(node)) &&
+                        getVisibleText(node, context)) ||
+                    hasNativeMessageStructure(node)
+            ) ||
+            el
+        );
     }
 
     function hasCandidateAncestor(row, candidateRows, rootEl) {
@@ -609,6 +706,10 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
 
     function resetChatProcessingState({ reparse = true } = {}) {
         clearBlindSourceRechecks();
+        clearRoleRechecks();
+        // A lookup belongs to its route. An immediate SPA return must not inherit the exit's null result.
+        lastChatRootFindAt = 0;
+        lastChatRootFindResult = null;
         dirtyChatRows.clear();
         dirtyImmediateChatRows.clear();
         pendingChatParses = new WeakMap();
@@ -649,6 +750,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
 
         const rows = new Set();
         const pending = [el];
+        const context = createRowDiscoveryContext();
         let visited = 0;
         while (pending.length > 0) {
             const current = pending.pop();
@@ -658,7 +760,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             if (visited > MAX_MUTATION_SUBTREE_ELEMENTS) return { rows: [], overflow: true };
 
             if (current.matches(CHAT_ROW_SELECTORS)) {
-                const row = normalizeCandidateRow(current, rootEl);
+                const row = normalizeCandidateRow(current, rootEl, context);
                 if (row instanceof HTMLElement && row !== rootEl && !isOwnUi(row)) rows.add(row);
             }
 
@@ -717,36 +819,32 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         if (attrName === "aria-expanded" && getAttr(mutation.target, "aria-haspopup") === "true") return true;
         if (MESSAGE_ID_ATTRS.includes(attrName)) return true;
         if (ROW_REUSE_SIGNAL_ATTRIBUTES.includes(attrName)) return true;
-        if (isKeywordFilterEnabled() || row?.hasAttribute(BLIND_PROCESSED_ATTR)) return true;
-
-        // 이미 수집된 행도 계속 추적한다. 치지직이 메시지 삽입 직후 닉네임 색
-        // 인라인 style 을 한 박자 늦게 적용하는 경우가 있어, 그 mutation 이
-        // 재파싱을 일으켜야 뱃지/색상 백필이 발동한다. role 신호(img alt)는
-        // 하위 요소에만 있어 signalText 로는 못 잡지만, 수집 표시 자체가 이미
-        // 방송자/채팅 운영자 판정이다. 재파싱은 idempotent 라 (백필은 값이 실제로
-        // 바뀔 때만 다시 그림) 루프를 만들지 않는다.
-        if (isModeratorBoxEnabled() && (getCollectedModeratorRow(row) || pendingModeratorRows.has(row))) return true;
-        // 본문 이모티콘 토큰과 정체성은 img src에 의존한다. 직전 파싱이 역할 행이었으면 src만 바뀌어도
-        // 그 행을 다시 처리한다(아직 binding이 없는 안정화 대기 행 포함).
-        if (attrName === "src" && isModeratorBoxEnabled() && parsedChatRows.get(row)) return true;
+        // Native role metadata may settle with any observed author/body attribute. Re-read only the
+        // changed row, without requiring an old CSS role name or an existing collection binding.
+        if (
+            isKeywordFilterEnabled() ||
+            isNicknameHidden() ||
+            isModeratorBoxEnabled() ||
+            row?.hasAttribute(BLIND_PROCESSED_ATTR)
+        )
+            return true;
 
         const signalText = getMutationSignalText(row, mutation.target);
         if (isBlindRevealEnabled() && BLIND_SIGNAL_RE.test(signalText)) return true;
-        if (isModeratorBoxEnabled() && ROLE_ATTR_RE.test(signalText)) return true;
         return false;
     }
 
     function shouldTrackChatTextMutation(mutation, row) {
-        if (isKeywordFilterEnabled() || row?.hasAttribute(BLIND_PROCESSED_ATTR)) return true;
-        // 수집된 행을 계속 추적하는 이유는 shouldTrackChatAttributeMutation 참고.
-        if (isModeratorBoxEnabled() && (getCollectedModeratorRow(row) || pendingModeratorRows.has(row))) return true;
-        // 배지가 먼저 붙고 빈 본문 텍스트 노드가 나중에 채워지면 아직 수집 binding이 없다.
-        // img alt는 textContent에 없으므로 직전 파싱의 역할도 변경 추적에 사용한다.
-        if (isModeratorBoxEnabled() && parsedChatRows.get(row)) return true;
+        if (
+            isKeywordFilterEnabled() ||
+            isNicknameHidden() ||
+            isModeratorBoxEnabled() ||
+            row?.hasAttribute(BLIND_PROCESSED_ATTR)
+        )
+            return true;
 
         const signalText = getMutationSignalText(row, mutation.target);
         if (isBlindRevealEnabled() && BLIND_SIGNAL_RE.test(signalText)) return true;
-        if (isModeratorBoxEnabled() && ROLE_ATTR_RE.test(signalText)) return true;
         return false;
     }
 
@@ -814,6 +912,14 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         };
         for (const mutation of mutationList) {
             if (mutation.type === "attributes") {
+                if (mutation.target === rootEl && mutation.attributeName === "aria-hidden" && isVodRoute()) {
+                    // The comments tab hides the whole log. Rows received there have no readable body until it reopens.
+                    if (rootEl.getAttribute("aria-hidden") !== "true") {
+                        requestFullChatScan({ reparse: true });
+                        chatMutationBatchShouldSchedule = true;
+                    }
+                    continue;
+                }
                 markDirtyChatMutationTarget(mutation, rootEl, shouldTrackChatAttributeMutation);
                 continue;
             }
@@ -835,7 +941,10 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             for (const node of mutation.removedNodes || []) {
                 if (isOwnUi(node)) continue;
                 removedNodes.push(node);
-                if (node instanceof Element) clearKeywordFilters(node);
+                if (node instanceof Element) {
+                    clearKeywordFilters(node);
+                    root.chatNicknameDisplay?.clearNativeRoles(node);
+                }
             }
             if (removedNodes.length) {
                 store.removeSubtrees(removedNodes, getTopLevelMutationElements(mutationAddedNodes), { isListCleared });
@@ -853,23 +962,24 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         if (!(rootEl instanceof Element)) return [];
 
         const rows = new Set();
+        const context = createRowDiscoveryContext();
         for (const child of Array.from(rootEl.children)) {
             if (isOwnUi(child)) continue;
             if (child.closest(NATIVE_FIXED_CHAT_SELECTOR)) continue;
             if (child.querySelector(CHAT_ROW_SELECTORS)) continue;
             // A list wrapper is not a message; avoid walking all hidden descendants just to discard it.
-            if (!getVisibleText(child)) continue;
+            if (!getVisibleText(child, context)) continue;
             rows.add(child);
         }
 
         for (const el of Array.from(rootEl.querySelectorAll(CHAT_ROW_SELECTORS))) {
             if (el === rootEl || isOwnUi(el)) continue;
-            rows.add(normalizeCandidateRow(el, rootEl));
+            rows.add(normalizeCandidateRow(el, rootEl, context));
         }
 
         // Recognized rows are parsed below. Only weak candidates need a preliminary visible-text check.
         return filterNestedCandidateRows(rows, rootEl).filter(
-            (row) => hasChatRowSignal(row) || Boolean(getVisibleText(row))
+            (row) => hasChatRowSignal(row) || Boolean(getVisibleText(row, context))
         );
     }
 
@@ -891,7 +1001,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         if (!isLiveRoute()) {
             lastChatRootFindResult = null;
             // Reuse the measured VOD-chat boundary; comments elsewhere on the page are not chat.
-            return isKeywordFilterEnabled() && isVodRoute()
+            return (isKeywordFilterEnabled() || isNicknameHidden()) && isVodRoute()
                 ? document.querySelector("aside#vod-aside [role='log']")
                 : null;
         }
@@ -1012,6 +1122,9 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
                 const parsed = pendingChatParses.get(row) || readChatRow(row);
                 pendingChatParses.delete(row);
                 pendingModeratorRows.delete(row);
+                // The nickname option callback follows this controller in the manifest. A cached
+                // immediate read must also apply its role after that callback has enabled the style.
+                root.chatNicknameDisplay?.syncRole(parsed);
                 if (isLiveRoute()) collectModeratorMessage(parsed, { deferNotify: true });
                 syncKeywordFilter(row, parsed);
                 parsedChatRows.set(row, parsed.role);
@@ -1053,6 +1166,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     function restartRuntime({ clearMessages = false, retiredRows = null } = {}) {
         if (chatRoot) clearKeywordFilters(chatRoot);
         clearKeywordFilters();
+        root.chatNicknameDisplay?.clearNativeRoles();
         if (!isFeatureEnabled()) {
             uninstallRuntime();
             return;
@@ -1070,6 +1184,10 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
 
     function handlePageChange() {
         const channelId = getLiveChannelIdFromPath();
+        // A fragment alone keeps the broadcast, its collection and its read state.
+        const nextRoute = location.pathname + location.search;
+        if (channelId && channelId === routeChannelId && nextRoute === routeWithoutHash) return;
+        routeWithoutHash = nextRoute;
         // 치지직은 URL을 먼저 바꾸고 이전 채널 목록은 채팅 연결을 정리할 때 비운다.
         // 채널이 바뀐 시점의 행은 이전 채널 것이므로 재파싱에서 다시 수집하지 않게 넘긴다.
         // 채널 이동마다 이전 세대를 바꾸므로 나중에 돌아온 채널의 메시지는 다시 수집된다.
@@ -1090,11 +1208,12 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             injectStyleOnce(KEYWORD_FILTER_STYLE_ID, `[${KEYWORD_FILTERED_ATTR}="1"]{display:none!important;}`);
         // 제거된 「방송 중 모아보기 유지」 옵션이 storage.local 에 남긴 캐시를 한 번 지운다.
         purgeLegacyModeratorCache();
-        if (!observer) startObserver();
         if (!removePageChangeDetection) {
             routeChannelId = getLiveChannelIdFromPath();
+            routeWithoutHash = location.pathname + location.search;
             removePageChangeDetection = startPageChangeDetection(handlePageChange);
         }
+        if (!observer) startObserver();
         scheduleSync();
     }
 
@@ -1109,6 +1228,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
             removePageChangeDetection = null;
         }
         if (chatRoot) clearKeywordFilters(chatRoot);
+        root.chatNicknameDisplay?.clearNativeRoles();
         chatRoot = null;
         store.resetRoot();
         store.clearPageMessages();
@@ -1146,6 +1266,7 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
         if (!isModeratorBoxEnabled()) {
             removeModeratorBox();
         }
+        if (!needsImmediateChatRead()) clearRoleRechecks();
         if (!isBlindRevealEnabled()) {
             clearBlindSourceRechecks();
             removeAllBlindReveals();
@@ -1163,9 +1284,11 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     function adoptObservedChatRoot(node) {
         if (chatRoot !== node) {
             clearBlindSourceRechecks();
+            clearRoleRechecks();
             if (chatRoot) clearPageOriginalCache();
             if (chatRoot) collectDetachedModeratorCandidates(new Set([chatRoot]));
             if (chatRoot) clearKeywordFilters(chatRoot);
+            if (chatRoot) root.chatNicknameDisplay?.clearNativeRoles(chatRoot);
             dirtyImmediateChatRows.clear();
             pendingChatParses = new WeakMap();
             pendingModeratorRows.clear();
@@ -1181,9 +1304,9 @@ aside[class*="live_chatting"] [class*="_item_"] > [class*="_container_"][class*=
     }
 
     bindFeatureOptions(applyOptions);
-    // A late MAIN bridge also upgrades collected rows to their native message identity.
+    // A late MAIN bridge upgrades collection, keyword exceptions and nickname display together.
     window.addEventListener(PAGE_READY_EVENT, () => {
-        if (!observer || (!isBlindRevealEnabled() && !isModeratorBoxEnabled())) return;
+        if (!observer || pageHidden || !isFeatureEnabled()) return;
         requestFullChatScan({ reparse: true });
         syncImmediateChatRows();
         scheduleSync();

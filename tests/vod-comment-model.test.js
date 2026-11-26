@@ -12,6 +12,7 @@ function createModelFixture() {
         runScripts: "outside-only",
         url: "https://chzzk.naver.com/video/123",
     });
+    dom.window.eval(fs.readFileSync(path.join(ROOT, "shared/data.js"), "utf8"));
     dom.window.eval(MODEL_SOURCE);
     return {
         dom,
@@ -64,6 +65,55 @@ test("parseTimecodeSeconds accepts MM:SS and HH:MM:SS while rejecting invalid fi
     assert.equal(Number.isNaN(parseTimecodeSeconds("1:02:60")), true);
     assert.equal(Number.isNaN(parseTimecodeSeconds("1:2")), true);
     assert.equal(Number.isNaN(parseTimecodeSeconds("100:00:00")), true);
+});
+
+test("comment chapters pair timestamps with nearby titles, sort them and prefer titled duplicates", (t) => {
+    const { dom, model } = createModelFixture();
+    t.after(() => dom.window.close());
+    const text = [
+        "1:05:01 — 보스전",
+        "2:03",
+        "[0:00] 시작",
+        "2:03: 첫 경기 | 35:10-두 번째 경기",
+        "엔딩 (1:49:29)",
+        "날짜 12:64, https://example.test/3:00, 1:02:03:04",
+    ].join("\n");
+    assert.deepEqual(
+        Array.from(model.parseCommentChapters(text), ({ seconds, title }) => [seconds, title]),
+        [
+            [0, "시작"],
+            [123, "첫 경기"],
+            [2110, "두 번째 경기"],
+            [3901, "보스전"],
+            [6569, "엔딩"],
+        ]
+    );
+});
+
+test("automatic chapters choose the most recommended visible comment with three distinct in-range timestamps", (t) => {
+    const { dom, model } = createModelFixture();
+    t.after(() => dom.window.close());
+    const three = "0:00 시작\n0:20 첫 장면\n0:40 두 번째 장면";
+    const entry = (id, content, buffCount, comment = {}) => ({
+        row: apiComment(id, content, { comment, row: { buffNerf: { buffCount } } }),
+    });
+    const items = [
+        { best: true, ...entry(1, three, 20) },
+        entry(2, "0:00 시작 0:00 중복 0:20 첫 장면 1:00 끝", 90),
+        entry(3, three, 80, { deleted: true }),
+        entry(4, three, 80, { secret: true }),
+        entry(5, three, 80, { hideByCleanBot: true }),
+        entry(6, three, 80, { commentType: "REPLY" }),
+        entry(7, `${three}\n0:55 끝`, 40),
+        entry(8, three, 40),
+    ];
+    const selected = model.selectAutomaticChapterComment(items, 60);
+    assert.equal(selected.commentId, "7");
+    assert.deepEqual(
+        Array.from(selected.chapters, (chapter) => chapter.seconds),
+        [0, 20, 40, 55]
+    );
+    assert.equal(model.selectAutomaticChapterComment(items, 40), null);
 });
 
 test("comment and reply keys are stable without mutating API rows", (t) => {
@@ -189,11 +239,11 @@ test("long comment collapsing never splits a UTF-16 surrogate pair", (t) => {
     t.after(() => fixture.dom.window.close());
     const { getCollapsedCommentText } = fixture.model;
 
-    const collapsed = getCollapsedCommentText(`${"a".repeat(419)}${"😀".repeat(5)}`);
-    assert.equal(collapsed, `${"a".repeat(419)}…`);
+    const collapsed = getCollapsedCommentText(`${"a".repeat(249)}${"😀".repeat(5)}`);
+    assert.equal(collapsed, `${"a".repeat(249)}...`);
     assert.equal(collapsed.isWellFormed(), true);
-    const aligned = getCollapsedCommentText(`${"a".repeat(418)}${"😀".repeat(5)}`);
-    assert.equal(aligned, `${"a".repeat(418)}😀…`);
+    const aligned = getCollapsedCommentText(`${"a".repeat(248)}${"😀".repeat(5)}`);
+    assert.equal(aligned, `${"a".repeat(248)}😀...`);
     assert.equal(aligned.isWellFormed(), true);
 });
 
@@ -222,25 +272,25 @@ test("reply sources normalize, deduplicate by commentId, and report the cap", (t
     assert.deepEqual(row, before);
 });
 
-test("long comment collapsing keeps exact boundaries and line limits", (t) => {
+test("long comment previews preserve the first 250 UTF-16 units including whitespace and line breaks", (t) => {
     const fixture = createModelFixture();
     t.after(() => fixture.dom.window.close());
     const { getCollapsedCommentText } = fixture.model;
 
-    assert.equal(getCollapsedCommentText("가".repeat(420)), "");
-    assert.equal(getCollapsedCommentText("가".repeat(421)), `${"가".repeat(420)}…`);
+    assert.equal(getCollapsedCommentText("가".repeat(250)), "");
+    assert.equal(getCollapsedCommentText("가".repeat(251)), `${"가".repeat(250)}...`);
+    const prefix = "가".repeat(240) + "\n".repeat(9) + " ";
+    assert.equal(getCollapsedCommentText(prefix + "끝"), prefix + "...");
     const lines = Array.from({ length: 13 }, (_, index) => `줄 ${index + 1}`).join("\n");
-    const collapsed = getCollapsedCommentText(lines);
-    assert.match(collapsed, /줄 12…$/);
-    assert.doesNotMatch(collapsed, /줄 13/);
+    assert.equal(getCollapsedCommentText(lines), "");
 });
 
-test("image and attachment normalization accepts web URLs and drops unsafe data", (t) => {
+test("image and attachment normalization accepts trusted image URLs and drops unsafe data", (t) => {
     const fixture = createModelFixture();
     t.after(() => fixture.dom.window.close());
     const comment = {
         attaches: [
-            { attachType: "PHOTO", attachValue: "https://example.com/photo.jpg" },
+            { attachType: "PHOTO", attachValue: "https://nng-phinf.pstatic.net/photo.jpg" },
             { attachType: "STICKER", attachValue: "/sticker.png" },
             { attachType: "EMOTICON", attachValue: "http://example.com/emote.png" },
             { attachType: "PHOTO", attachValue: "javascript:alert(1)" },
@@ -250,6 +300,14 @@ test("image and attachment normalization accepts web URLs and drops unsafe data"
     };
     const before = JSON.parse(JSON.stringify(comment));
 
+    for (const address of [
+        "https://example.com/a.png",
+        "http://pstatic.net/a.png",
+        "https://user@pstatic.net/a.png",
+        "https://pstatic.net:8080/a.png",
+    ]) {
+        assert.equal(fixture.model.normalizeImageUrl(address), "");
+    }
     assert.equal(fixture.model.normalizeImageUrl("javascript:alert(1)"), "");
     assert.equal(fixture.model.normalizeImageUrl("data:image/png;base64,abc"), "");
     assert.equal(
@@ -259,10 +317,32 @@ test("image and attachment normalization accepts web URLs and drops unsafe data"
     assert.deepEqual(
         Array.from(fixture.model.normalizeAttachments(comment), ({ src, type }) => ({ src, type })),
         [
-            { src: "https://example.com/photo.jpg", type: "PHOTO" },
+            { src: "https://nng-phinf.pstatic.net/photo.jpg", type: "PHOTO" },
             { src: "https://chzzk.naver.com/sticker.png", type: "STICKER" },
-            { src: "http://example.com/emote.png", type: "EMOTICON" },
         ]
     );
     assert.deepEqual(comment, before);
+});
+
+test("photo previews keep trusted originals separate and accept only usable dimensions", (t) => {
+    const fixture = createModelFixture();
+    t.after(() => fixture.dom.window.close());
+    const { getPhotoThumbnailUrl, normalizeAttachments } = fixture.model;
+    const src = "https://nng-phinf.pstatic.net/photo.jpg?type=original";
+    const photo = (extraJson) => ({ attachType: "PHOTO", attachValue: src, extraJson });
+    const items = normalizeAttachments({
+        attaches: [photo('{"width":800,"height":594},'), photo("{"), photo({ width: -1, height: 25 })],
+    });
+    assert.deepEqual(
+        Array.from(items, ({ src: original, width, height }) => [original, width, height]),
+        [
+            [src, 800, 594],
+            [src, undefined, undefined],
+            [src, undefined, undefined],
+        ]
+    );
+    assert.equal(getPhotoThumbnailUrl(src), "https://nng-phinf.pstatic.net/photo.jpg?type=w375");
+    const other = "https://other.pstatic.net/photo.jpg?type=original";
+    assert.equal(getPhotoThumbnailUrl(other), other);
+    assert.equal(getPhotoThumbnailUrl("https://nng-phinf.pstatic.net.invalid/photo.jpg"), "");
 });

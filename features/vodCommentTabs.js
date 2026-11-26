@@ -3,8 +3,8 @@
  *
  * 실행 컨텍스트: isolated world 콘텐츠 스크립트.
  * 의존: CheeseSpannerSettings, CheeseSpanner.utils, CheeseSpanner.vodComments의 model/repository/
- *   nativeAdapter/view 모듈.
- * 옵션 키: vodCommentTabsEnabled, vodCommentLayout, vodCommentSplitTop.
+ *   nativeAdapter/view/chapters 모듈.
+ * 옵션 키: vodCommentTabsEnabled, vodCommentAutoChaptersEnabled, vodCommentLayout, vodCommentSplitTop.
  */
 (() => {
     "use strict";
@@ -13,12 +13,14 @@
     if (root.vodCommentTabs) return;
 
     const {
+        chapters: chaptersModule,
         model,
         nativeAdapter: nativeAdapterModule,
         repository: repositoryModule,
         view: viewModule,
     } = root.vodComments;
     const {
+        COMMENT_PHOTO_VIEWER_SELECTOR,
         bindFeatureOptions,
         fetchChzzkCommentPage,
         getMainVideoElement,
@@ -29,9 +31,15 @@
     } = root.utils;
 
     const MOUNT_SYNC_DELAY_MS = 80;
+    // CHZZK's window keydown handler maps these unmodified English and Korean keys to VOD playback,
+    // mute, fullscreen, wide mode and captions even when the photo viewer owns focus.
+    const PHOTO_VIEWER_PLAYER_KEYS = new Set([" ", "k", "ㅏ", "m", "ㅡ", "f", "ㄹ", "t", "ㅅ", "c", "ㅊ"]);
     const MOUNT_GAP_GRACE_MS = 600;
     const COMMENT_ONLY_ASIDE_ID = "cheese-spanner-vod-comment-aside";
+    const FOLDED_CHAT_CONTROL = '[class*="_folded_button_"]';
+    const NATIVE_HEADER_STYLE_ID = "cheese-spanner-vod-replay-chat-header-style";
     const ANCHOR_SELECTOR = [
+        FOLDED_CHAT_CONTROL,
         "#player_layout",
         "#vod-aside",
         "#vod-aside [role='log']",
@@ -60,7 +68,15 @@
     let commentOnlyHost = null;
     let commentOnlyVideoMoreColumn = null;
     let nativeChatShellSeen = false;
-    let fullscreenListenerInstalled = false;
+    let previousVideoChatLog = null;
+    let documentListenersInstalled = false;
+
+    const commentChapters = chaptersModule.createCommentChapters({
+        getMainVideoElement,
+        getVideoNo: getVodVideoNoFromPath,
+        injectStyleOnce,
+        seek: seekToCommentTime,
+    });
 
     const commentRepository = repositoryModule.createCommentRepository({
         fetchPage: fetchChzzkCommentPage,
@@ -71,16 +87,20 @@
     });
     commentRepository.setVideo(currentVideoNo);
 
+    const apiAvatarUrls = new WeakMap();
     const nativeAdapter = nativeAdapterModule.createNativeAdapter({
+        apiAvatarUrls,
         onMeasurements(measurements) {
             commentView?.applyNativeMeasurements(measurements);
         },
     });
 
     commentView = viewModule.createCommentView({
+        apiAvatarUrls,
         injectStyleOnce,
         onLoadMore: (focusRequest) => loadMoreComments(focusRequest),
         onNativeAction: (control, action) => nativeAdapter.forwardAction(control, action),
+        onOpenNativePhoto: (trigger, photos, index) => nativeAdapter.forwardPhoto(trigger, photos, index),
         onOrderChange: (order, focusRequest) => changeOrder(order, focusRequest),
         onRefresh: (focusRequest) => refreshComments(focusRequest),
         onRendered: () => nativeAdapter.syncAll(),
@@ -220,7 +240,9 @@
         const scope = document.fullscreenElement || document;
         const aside = scope.querySelector("aside#vod-aside");
         if (!(aside instanceof HTMLElement)) {
-            if (document.fullscreenElement || nativeChatShellSeen) {
+            if (!previousVideoChatLog?.isConnected) previousVideoChatLog = null;
+            const chatReopenButton = document.querySelector(`#player_layout .header_info ${FOLDED_CHAT_CONTROL}`);
+            if (document.fullscreenElement || nativeChatShellSeen || chatReopenButton) {
                 removeCommentOnlyShell();
                 return null;
             }
@@ -236,7 +258,12 @@
         if (!(header instanceof HTMLElement) || !(container instanceof HTMLElement) || !container.contains(chatLog)) {
             return null;
         }
-        nativeChatShellSeen = true;
+        // A route can change before React removes the previous video's log. Its presence does
+        // not establish that the new video has replay chat.
+        if (chatLog !== previousVideoChatLog) {
+            nativeChatShellSeen = true;
+            previousVideoChatLog = null;
+        }
         return { appearanceHeading: heading, aside, chatLog, container, header, heading };
     }
 
@@ -262,6 +289,18 @@
         }
 
         Promise.resolve(promise).then((result) => {
+            if (
+                runtimeInstalled &&
+                isFeatureEnabled() &&
+                result.initial &&
+                result.status === "loaded" &&
+                result.state.commentActive &&
+                result.state.videoNo === currentVideoNo &&
+                result.state.order === model.DEFAULT_ORDER &&
+                result.state === commentRepository.getState(currentVideoNo, model.DEFAULT_ORDER)
+            ) {
+                commentChapters.offerPopularComments(currentVideoNo, result.state.items);
+            }
             if (presentation !== requestPresentationGeneration) return;
             if (result.status === "stale" || result.status === "aborted") return;
             if (result.state !== getActiveState() || result.state.videoNo !== currentVideoNo) return;
@@ -365,7 +404,8 @@
             commentView.isCommentsVisible() ||
             document.visibilityState !== "visible" ||
             window.navigator?.connection?.saveData === true ||
-            !commentView.getPanel()?.isConnected ||
+            (!commentView.getPanel()?.isConnected &&
+                (!featureOptions.vodCommentAutoChaptersEnabled || !document.getElementById("commentArea"))) ||
             videoNo !== getVodVideoNoFromPath()
         ) {
             return false;
@@ -428,13 +468,13 @@
         if (!anchors) {
             if (document.fullscreenElement) teardownMount();
             else if (commentView.hasMount()) scheduleMountGapTeardown();
+            else if (document.getElementById("commentArea")) scheduleCommentPrefetch();
             return;
         }
         clearMountGapTimer();
 
         if (commentView.matchesShell(anchors) && commentView.ownedNodesConnected()) {
-            if (commentView.getChatLog() !== anchors.chatLog) commentView.replaceChatLog(anchors.chatLog);
-            else commentView.setHeaderAppearanceSource(anchors.appearanceHeading);
+            commentView.syncMountedAnchors(anchors);
             nativeAdapter.refresh();
             return;
         }
@@ -494,15 +534,15 @@
         return [...mutation.addedNodes, ...mutation.removedNodes].some(nodeCouldAffectAnchors);
     }
 
-    function nodeCouldAffectNativeCommentArea(node) {
-        return (
-            node instanceof Element && (node.matches("#commentArea") || Boolean(node.querySelector?.("#commentArea")))
+    function mutationCouldAffectNativeCommentArea(mutation) {
+        if (mutation.type !== "childList") return false;
+        return [...mutation.addedNodes, ...mutation.removedNodes].some((node) =>
+            containsSelector(node, "#commentArea")
         );
     }
 
-    function mutationCouldAffectNativeCommentArea(mutation) {
-        if (mutation.type !== "childList") return false;
-        return [...mutation.addedNodes, ...mutation.removedNodes].some(nodeCouldAffectNativeCommentArea);
+    function containsSelector(node, selector) {
+        return node instanceof Element && (node.matches(selector) || Boolean(node.querySelector(selector)));
     }
 
     function nodeCouldAffectVideoMoreColumn(node) {
@@ -521,20 +561,38 @@
     function installBodyObserver() {
         if (!document.documentElement || !isVodRoute()) return;
         nativeAdapter.refresh();
+        commentChapters.refresh(currentVideoNo);
         if (bodyObserver) return;
+        // The SDK can leave header_info transparent or paint a player overlay above it after
+        // the aside closes. Keep CHZZK's own button reachable even on entry with chat folded.
+        const player = "#player_layout.type_vod:not(.pip_mode, .miniplayer) > .pzp-pc";
+        const foldedHeader = `.player_header:has(.header_info button${FOLDED_CHAT_CONTROL})`;
+        injectStyleOnce(
+            NATIVE_HEADER_STYLE_ID,
+            `
+${player} ${foldedHeader} { z-index:1; }
+${player}:is(.pzp-pc--controls, :not(.pzp-pc--playing):hover) ${foldedHeader} .header_info,
+${player} ${foldedHeader} .header_info:is(:hover, :focus-within) { opacity:1; }
+`
+        );
         bodyObserver = new MutationObserver((mutations) => {
             if (!isFeatureEnabled() || !isVodRoute()) {
                 if (!isVodRoute()) disconnectBodyObserver();
                 teardownMount();
                 return;
             }
-            if (mutations.some(mutationCouldAffectNativeCommentArea)) nativeAdapter.refresh();
+            const nativeCommentsChanged = mutations.some(mutationCouldAffectNativeCommentArea);
+            const anchorsChanged = mutations.some(mutationCouldAffectAnchors);
+            if (nativeCommentsChanged) nativeAdapter.refresh();
+            if (nativeCommentsChanged || anchorsChanged) {
+                commentChapters.refresh(currentVideoNo);
+            }
             if (commentOnlyAside?.isConnected && mutations.some(mutationCouldAffectVideoMoreColumn)) {
                 syncCommentOnlyVideoMoreColumn();
                 scheduleEnsureMounted();
             }
             if (commentView.isDisconnected()) scheduleEnsureMounted({ immediate: true });
-            else if (mutations.some(mutationCouldAffectAnchors)) scheduleEnsureMounted();
+            else if (anchorsChanged || (nativeCommentsChanged && !commentView.hasMount())) scheduleEnsureMounted();
         });
         bodyObserver.observe(document.documentElement, { childList: true, subtree: true });
     }
@@ -542,6 +600,8 @@
     function disconnectBodyObserver() {
         bodyObserver?.disconnect();
         bodyObserver = null;
+        commentChapters.refresh("");
+        document.getElementById(NATIVE_HEADER_STYLE_ID)?.remove();
     }
 
     function handleFullscreenChange() {
@@ -550,16 +610,30 @@
         scheduleEnsureMounted({ immediate: true });
     }
 
-    function installFullscreenListener() {
-        if (fullscreenListenerInstalled) return;
-        document.addEventListener("fullscreenchange", handleFullscreenChange, true);
-        fullscreenListenerInstalled = true;
+    function stopPhotoViewerPlayerKey(event) {
+        if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        if (!PHOTO_VIEWER_PLAYER_KEYS.has(event.key?.toLowerCase())) return;
+        const target = event.composedPath()[0] || event.target;
+        if (target instanceof Element && target.closest(COMMENT_PHOTO_VIEWER_SELECTOR)) event.stopPropagation();
     }
 
-    function disconnectFullscreenListener() {
-        if (!fullscreenListenerInstalled) return;
+    function installDocumentListeners() {
+        if (documentListenersInstalled) return;
+        document.addEventListener("fullscreenchange", handleFullscreenChange, true);
+        document.addEventListener("visibilitychange", scheduleCommentPrefetch);
+        // Bubble after the viewer has handled its keys. Keeping their defaults lets Space activate a focused button.
+        document.addEventListener("keydown", stopPhotoViewerPlayerKey);
+        document.addEventListener("keyup", stopPhotoViewerPlayerKey);
+        documentListenersInstalled = true;
+    }
+
+    function disconnectDocumentListeners() {
+        if (!documentListenersInstalled) return;
         document.removeEventListener("fullscreenchange", handleFullscreenChange, true);
-        fullscreenListenerInstalled = false;
+        document.removeEventListener("visibilitychange", scheduleCommentPrefetch);
+        document.removeEventListener("keydown", stopPhotoViewerPlayerKey);
+        document.removeEventListener("keyup", stopPhotoViewerPlayerKey);
+        documentListenersInstalled = false;
     }
 
     function installRuntime() {
@@ -573,7 +647,7 @@
         currentVideoNo = getVodVideoNoFromPath();
         commentRepository.setVideo(currentVideoNo);
         activeOrder = commentRepository.getOrder();
-        installFullscreenListener();
+        installDocumentListeners();
         installBodyObserver();
         scheduleEnsureMounted({ immediate: true });
     }
@@ -581,7 +655,7 @@
     function uninstallRuntime() {
         if (!runtimeInstalled) return;
         runtimeInstalled = false;
-        disconnectFullscreenListener();
+        disconnectDocumentListeners();
         disconnectBodyObserver();
         teardownMount();
         commentRepository.reset({ order: model.DEFAULT_ORDER, videoNo: "" });
@@ -589,6 +663,7 @@
         activeOrder = model.DEFAULT_ORDER;
         selectedTab = "chat";
         nativeChatShellSeen = false;
+        previousVideoChatLog = null;
         commentView.setActiveOrder(activeOrder);
         commentView.setSelectedTab(selectedTab);
     }
@@ -597,14 +672,15 @@
         const videoNo = getVodVideoNoFromPath();
         if (videoNo === currentVideoNo) {
             if (isFeatureEnabled() && videoNo) {
-                installFullscreenListener();
+                installDocumentListeners();
                 installBodyObserver();
             } else {
-                disconnectFullscreenListener();
+                disconnectDocumentListeners();
             }
             return;
         }
 
+        previousVideoChatLog = videoNo ? commentView.getChatLog() || previousVideoChatLog : null;
         teardownMount();
         currentVideoNo = videoNo;
         nativeChatShellSeen = false;
@@ -615,21 +691,23 @@
         commentView.setActiveOrder(activeOrder);
         commentView.setSelectedTab(selectedTab);
         if (isFeatureEnabled() && videoNo) {
-            installFullscreenListener();
+            installDocumentListeners();
             installBodyObserver();
             scheduleEnsureMounted();
         } else {
-            disconnectFullscreenListener();
+            disconnectDocumentListeners();
             disconnectBodyObserver();
         }
     }
 
     function applyOptions(options) {
+        const automaticChanged = featureOptions.vodCommentAutoChaptersEnabled !== options.vodCommentAutoChaptersEnabled;
         const layoutChanged =
             featureOptions.vodCommentLayout !== options.vodCommentLayout ||
             featureOptions.vodCommentSplitTop !== options.vodCommentSplitTop;
         if (layoutChanged) saveActiveScroll();
         featureOptions = options;
+        commentChapters.setAutomaticEnabled(options.vodCommentAutoChaptersEnabled === true);
         commentView.setLayout({ mode: options.vodCommentLayout, top: options.vodCommentSplitTop });
         const enabled = isFeatureEnabled();
         if (enabled === appliedEnabledState) {
@@ -637,6 +715,8 @@
                 cancelScheduledCommentPrefetch();
                 if (commentView.isCommentsVisible()) showActiveComments();
                 else scheduleCommentPrefetch();
+            } else if (enabled && automaticChanged) {
+                scheduleCommentPrefetch();
             }
             return;
         }

@@ -12,11 +12,7 @@ MAIN 파일은 isolated의 `CheeseSpanner`와 `CheeseSpannerSettings`를 읽지 
 
 치지직 안에 그리는 확장 UI는 `shared/uiTheme.js`의 공통 `--bct-*` 변수를 써요. 자기 스타일을 넣기 전에 `CheeseSpanner.utils.ensureUiTheme?.()`를 부르고, `var(--bct-…)`에 대체값을 붙이지 않아요. 색·모서리·그림자의 대체값 표(라이트·다크 묶음)나 `@font-face`를 기능 안에 다시 두지 않아요. 기능별 변수 이름(예: `--bccmv-text`)을 남긴다면 값은 공통 변수를 가리키게 해요. 필요한 치지직 토큰이 공통 변수에 없으면 `shared/uiTheme.js`에 변수를 추가해요. 변수 목록·대비 제한은 `shared/AGENTS.md`의 공통 테마 절을 따라요. 치지직 원본 사이에 끼워 넣거나 원본을 흉내 내는 요소(사이드바 행, 플레이어 메뉴 항목, 채팅 시각, 다시보기 댓글 탭 등)는 지금처럼 원본의 실제 스타일(computed style 복사 포함)을 따르고, 테마·DOM 교체 때 다시 동기화해요. 썸네일·영상 위에 얹는 표시는 테마와 무관한 고정 색을 유지해요.
 
-글꼴은 두 분류예요.
-
-- **치지직 글꼴을 따르는 곳(지금 그대로 유지)**: 코드가 원본 요소의 computed 글꼴을 복사하거나 README·AGENTS가 치지직·원본 글꼴을 따른다고 적은 곳이에요. 월간 달력(`monthlyBroadcastTime.js`, Sandoll Nemony2 지정), 방송 목록 필터 배지·바(`categoryTools.js`, 제외 선택 목록·추가 패널은 사용자 요청에 따라 공용 `--bct-font` 사용), 플레이어 버튼 툴팁(`volumeTooltip.js` 등), 다시보기 댓글(`vodComments/`)과 댓글 탭(`vodCommentTabs.js`), 멀티뷰 안내·컨트롤·설정(`liveMultiview/`), 지연 표시(`timeMachineLagLabel.js`), 그 밖의 원본 끼움 요소가 여기에 들어가요.
-- **그 밖의 확장 소유 패널·툴팁·카드**: `var(--bct-font)`(번들 `"CheeseSpanner Pretendard"`, 대체 스택 `-apple-system, BlinkMacSystemFont, system-ui, "Malgun Gothic", sans-serif`)로 통일해요. 영상/댓글 검색, 채팅 모아보기, 스트림 정보, 팔로잉 폴더 메뉴·대화상자, 이전 방제 패널, 제목 툴팁, 새 버전 안내, 채팅 멀티뷰 패널, 라이브 알림 등록, 팔로잉 미리보기가 여기에 들어가요.
-- 분류가 애매하면 코드가 원본 computed 글꼴을 복사하는지, README·AGENTS가 원본을 따른다고 적는지로 판단해요. 그래도 애매하면 사용자에게 물어요.
+[UI 디자인 기준](../docs/tracking/decisions/0006-ui-theme.md)에 따라 헤더 진입 버튼·채널 동영상 검색 바·프로필 방송 시간은 인접 원본 글꼴을, 방송 목록 필터와 라이브·다시보기 멀티뷰 설정 등 독립 패널은 번들 글꼴을 써요. 월간 방송 달력은 치지직 글꼴을 쓰고 카테고리 제외 선택 줄은 번들 글꼴을 써요. 영상 위 컨트롤은 영상 배경에서 보이는 포커스와 대비를 확보해요.
 
 ## 기능별 소유권
 

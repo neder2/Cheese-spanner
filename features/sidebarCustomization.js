@@ -95,7 +95,7 @@
     ]);
     // Pin marks sit among native rows: they keep the native font and take brand colors from shared/uiTheme.js.
     // CHZZK's border-brand-alpha-base (brand at 30%) has no shared variable, so the local line mixes the brand text.
-    const BRAND_LINE_PROPERTY = "--bcsf-brand-line:color-mix(in srgb,var(--bct-brand-text) 30%,transparent)";
+    const BRAND_LINE_PROPERTY = "--bcsf-brand-line:var(--bct-brand-border)";
     const STYLE_TEXT = `
 #sidebar [${OFFLINE_HIDDEN_ATTR}="1"],
 #sidebar [${SECTION_HIDDEN_ATTR}="1"]{

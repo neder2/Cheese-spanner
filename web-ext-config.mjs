@@ -16,6 +16,7 @@ export default {
         "output/**",
         "backups",
         "backups/**",
+        "**/*.log",
         "*.md",
         "**/*.md",
         "!THIRD_PARTY_NOTICES.md",

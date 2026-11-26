@@ -310,6 +310,26 @@ test("donation import rejects incomplete pages, changing accounts, changed pagin
     assert.equal(requests, 1);
 });
 
+test("an advertised final page cannot disappear and replace the previous month's eleven donations", async () => {
+    const first = Array.from({ length: 10 }, (_, index) => apiRow(index));
+    const initial = await collect({
+        requestPage: async (_month, page) => response(page ? [apiRow(10)] : first, 2),
+    });
+    const previous = data.mergeSnapshot(coveredLedger(), initial, NOW);
+    const before = JSON.stringify(previous);
+    await assert.rejects(
+        collect({
+            previous,
+            now: () => NOW + 1000,
+            requestPage: async (_month, page) => response(page ? [] : first, 2),
+        }).then((result) => data.mergeSnapshot(previous, result, NOW + 1000)),
+        /사용 내역 변경됨/
+    );
+    assert.equal(JSON.stringify(previous), before);
+    assert.equal(previous.months[MONTH].length, 11);
+    assert.equal(previous.monthStartedAt[MONTH], NOW);
+});
+
 test("import ranges and response sizes are bounded and an empty month remains a complete snapshot", async () => {
     assert.deepEqual(data.getMonths("2025-12", "2026-02", NOW), ["2025-12", "2026-01", "2026-02"]);
     assert.equal(data.getMonths("2025-01", MONTH, NOW).length, 21);

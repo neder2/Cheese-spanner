@@ -52,6 +52,7 @@ function createFixture(
         session = null,
         blockSessionStorage = false,
         channelProfiles = {},
+        categoryPage,
     } = {}
 ) {
     const nav = tabLine
@@ -83,6 +84,7 @@ function createFixture(
         rects.set(el, { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height });
     const zero = { x: 0, y: 0, left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 };
     const counts = { rect: 0, url: 0, pageScan: 0, cardLinkQueries: 0 };
+    const gradeRequests = [];
     const trace = [];
     window.Element.prototype.getBoundingClientRect = function () {
         counts.rect++;
@@ -160,6 +162,7 @@ function createFixture(
         },
         async fetchJson(url) {
             const href = String(url);
+            if (categoryPage && href.includes("/categories/")) return categoryPage(new URL(href));
             if (href.includes("/v1/lives") || /\/categories\/[^/]+\/[^/]+\/lives/.test(href)) {
                 return {
                     content: {
@@ -175,7 +178,10 @@ function createFixture(
             }
             if (href.includes("/followers/count")) return { content: { followerCount: 12345 } };
             const channel = href.match(/\/v1\/channels\/([a-f0-9]{32})$/)?.[1];
-            if (channel) return { code: 200, content: channelProfiles[channel] || {} };
+            if (channel) {
+                gradeRequests.push(channel);
+                return { code: 200, content: channelProfiles[channel] || {} };
+            }
             return { content: {} };
         },
         normSpace: window.CheeseSpanner.utils.compactSpaces,
@@ -226,6 +232,7 @@ function createFixture(
         window,
         document,
         counts,
+        gradeRequests,
         trace,
         hooks,
         observer: () => observerConfig,

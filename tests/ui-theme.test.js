@@ -16,20 +16,24 @@ const COLOR_TOKENS = [
     ["--bct-surface-weak", "--sem-color-surface-neutral-weak", "#202224", "#f0f1f2"],
     ["--bct-surface-base", "--sem-color-surface-neutral-base", "#2e3033", "#e1e1e5"],
     ["--bct-hover", "--sem-color-surface-interaction-lighten-hovered", "#ffffff0d", "#0000000d"],
+    ["--bct-overlay-hover", "--color-bg-overlay-03", "#ffffff1a", "#0000000d"],
     ["--bct-border", "--sem-color-border-neutral-weak", "#2e3033", "#d0d1d3"],
     ["--bct-border-weaker", "--sem-color-border-neutral-weaker", "#202224", "#e1e1e5"],
     ["--bct-border-strong", "--sem-color-border-neutral-base", "#4d4d4d", "#c0c1c2"],
     ["--bct-border-alpha", "--sem-color-border-neutral-alpha-weak", "#ffffff26", "#00000026"],
     ["--bct-border-alpha-weaker", "--sem-color-border-neutral-alpha-weaker", "#ffffff1a", "#0000001a"],
     ["--bct-text", "--sem-color-content-neutral-primary", "#ffffff", "#0e0f10"],
+    ["--bct-text-cool-stronger", "--sem-color-content-neutral-cool-stronger", "#dfe2ea", "#202224"],
     ["--bct-text-body", "--sem-color-content-neutral-cool-strong", "#c9cedc", "#2e3033"],
     ["--bct-text-muted", "--sem-color-content-neutral-cool-base", "#9da5b6", "#4d4d4d"],
+    ["--bct-text-secondary", "--color-content-05", "#697183", "#808080"],
     ["--bct-text-dim", "--sem-color-content-neutral-cool-weak", "#697183", "#6d6e70"],
     ["--bct-brand-text", "--sem-color-content-brand-strong", "#00ffa3", "#23815a"],
     ["--bct-brand-text-base", "--sem-color-content-brand-base", "#00e693", "#168f5c"],
     ["--bct-brand", "--sem-color-surface-brand-strongest-static", "#00ffa3", "#00ffa3"],
     ["--bct-on-brand", "--sem-color-content-neutral-inverse-static", "#0e0f10", "#0e0f10"],
     ["--bct-brand-weak", "--sem-color-surface-brand-alpha-weak", "#00ffa326", "#1bb37326"],
+    ["--bct-brand-weaker", "--sem-color-surface-brand-alpha-weaker", "#00ffa31a", "#1bb3731a"],
     ["--bct-danger", "--sem-color-content-accent-red-strong", "#ff5454", "#e02020"],
     ["--bct-shadow-color", "--sem-color-shadow-base", "#0003", "#0000000d"],
     ["--bct-shadow-color-strong", "--sem-color-shadow-strong", "#0000004d", "#0000001a"],
@@ -44,6 +48,15 @@ const STATIC_TOKENS = [
         '"CheeseSpanner Pretendard", -apple-system, BlinkMacSystemFont, system-ui, "Malgun Gothic", sans-serif',
     ],
     ["--bct-shadow", "0 4px 4px 0 var(--bct-shadow-color-strong), 0 4px 12px 4px var(--bct-shadow-color)"],
+    ["--bct-brand-border", "color-mix(in srgb, var(--bct-brand-text) 40%, transparent)"],
+    ["--bct-brand-hover", "color-mix(in srgb, var(--bct-brand) 90%, var(--bct-on-brand))"],
+    ["--bct-status-live", "#ff4545"],
+    ["--bct-viewer-bg", "#000"],
+    ["--bct-viewer-fg", "#fff"],
+    ["--bct-z-player-panel", "100"],
+    ["--bct-z-popover", "10020"],
+    ["--bct-z-dialog", "20001"],
+    ["--bct-z-toast", "2147483647"],
     ["--bct-focus-ring", "var(--bct-brand-text)"],
 ];
 const ROOT_SELECTORS = {
@@ -200,9 +213,28 @@ test("theme variables follow CHZZK semantic tokens with one fallback set chosen 
     const light = ruleFor(style, ROOT_SELECTORS.light);
     const dark = ruleFor(style, ROOT_SELECTORS.dark);
 
-    assert.equal(base.style.length, COLOR_TOKENS.length + STATIC_TOKENS.length);
-    assert.equal(light.style.length, COLOR_TOKENS.length);
-    assert.equal(dark.style.length, COLOR_TOKENS.length);
+    const variants = [
+        ["--bct-warning", "#ffd166", "#845800"],
+        ["--bct-scheme", "dark", "light"],
+        [
+            "--bct-separator-dot",
+            "rgba(var(--color-content-01-rgb, 255, 255, 255), .2)",
+            "rgba(var(--color-content-01-rgb, 20, 21, 23), .2)",
+        ],
+        [
+            "--bct-photo-border",
+            "rgba(var(--color-border-03-rgb, 0, 0, 0), .06)",
+            "rgba(var(--color-border-03-rgb, 255, 255, 255), .06)",
+        ],
+    ];
+    for (const [name, darkValue, lightValue] of variants) {
+        assert.equal(compact(base.style.getPropertyValue(name)), darkValue);
+        assert.equal(compact(dark.style.getPropertyValue(name)), darkValue);
+        assert.equal(compact(light.style.getPropertyValue(name)), lightValue);
+    }
+    assert.equal(base.style.length, COLOR_TOKENS.length + STATIC_TOKENS.length + variants.length);
+    assert.equal(light.style.length, COLOR_TOKENS.length + variants.length);
+    assert.equal(dark.style.length, COLOR_TOKENS.length + variants.length);
     for (const [name, token, darkValue, lightValue] of COLOR_TOKENS) {
         assert.equal(compact(base.style.getPropertyValue(name)), `var(${token}, ${darkValue})`, name);
         assert.equal(compact(light.style.getPropertyValue(name)), `var(${token}, ${lightValue})`, name);

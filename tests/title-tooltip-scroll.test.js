@@ -79,3 +79,23 @@ test("a scroll that moves the pending title still cancels its open", async () =>
     assert.equal(document.querySelector(".bctt-tooltip[data-show='1']"), null);
     assert.equal(title.hasAttribute("data-bctt-active"), false);
 });
+
+test("an open tooltip follows a reused title and closes when its replacement fits", async () => {
+    const { document, dom, title } = await createTitleTooltipDom();
+    title.dispatchEvent(new dom.window.Event("pointerover", { bubbles: true }));
+    await waitForTitleTooltipDelay();
+    const tip = document.querySelector(".bctt-tooltip[data-show='1']");
+    assert.ok(tip);
+
+    title.firstChild.data = "바뀐 방송의 긴 제목";
+    await Promise.resolve();
+    await waitForFrame(dom);
+    assert.equal(tip.textContent, title.textContent);
+
+    Object.defineProperty(title, "scrollWidth", { value: 100, configurable: true });
+    title.textContent = "짧은 제목";
+    await Promise.resolve();
+    await waitForFrame(dom);
+    assert.equal(tip.hasAttribute("data-show"), false);
+    assert.equal(title.hasAttribute("data-bctt-active"), false);
+});

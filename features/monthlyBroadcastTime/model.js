@@ -44,7 +44,7 @@
                 const videoNo = pickChzzkVideoNo(row);
                 const type = row.videoType || row.type || "";
                 const duration = Number(row.duration);
-                const startDateText = pickVideoStartDateText(row);
+                const startedAt = parseChzzkDate(pickVideoStartDateText(row));
                 const endDateText = pickVideoEndDateText(row);
 
                 if (!videoNo || !Number.isFinite(duration) || duration <= 0) return null;
@@ -53,8 +53,8 @@
                     type: String(type || ""),
                     title: normSpace(row.videoTitle || row.title || row.liveTitle || ""),
                     duration,
-                    startedAt: parseChzzkDate(startDateText),
-                    startIsExact: Boolean(startDateText),
+                    startedAt,
+                    startIsExact: Boolean(startedAt),
                     endedAt: parseChzzkDate(endDateText),
                 };
             })
@@ -207,6 +207,12 @@
         }
     }
 
+    // All confirmed segments of one broadcast report its exact open time. A publish estimate is
+    // specific to its replay, even if it happens to fall in another broadcast's start minute.
+    function broadcastStartKey(video, startMs) {
+        return video.startIsExact === true ? `start:${startMs}` : `video:${video.videoNo}`;
+    }
+
     function summarizeWindowOverlap(videos, windowStart, windowEnd) {
         // Split VODs all report the broadcast start. Place each segment at its resolved offset, or end to end
         // after the earlier segments of the same start that were seen; measuring each from the broadcast start
@@ -215,7 +221,7 @@
         (videos || []).forEach((video, order) => {
             const startMs = getVideoStartMs(video);
             if (startMs === null) return;
-            const key = Math.floor(startMs / 60000);
+            const key = broadcastStartKey(video, startMs);
             const group = groups.get(key) || { startMs, segments: [] };
             group.segments.push({ video, order });
             groups.set(key, group);
@@ -303,7 +309,7 @@
         }
 
         const key = getKstDateKey(startMs);
-        const startKey = `${key}-${Math.floor(startMs / 60000)}`;
+        const startKey = broadcastStartKey(video, startMs);
         const duration = Number(video.duration) || 0;
         if (duration <= 0) return;
         const endMs = getVideoEndMs(video) ?? startMs + duration * 1000;

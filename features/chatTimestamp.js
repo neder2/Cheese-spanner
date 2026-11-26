@@ -68,7 +68,7 @@
     content: attr(${TIMESTAMP_ATTR});
     display: inline-block;
     margin-right: 4px;
-    color: var(--sem-color-content-neutral-cool-base,var(--Content-Neutral-Cool-Base, #9da5b6));
+    color: var(--bct-text-muted);
     font-size: inherit;
     font-weight: 400;
     font-variant-numeric: tabular-nums;
@@ -246,6 +246,7 @@
         }
 
         installPending = false;
+        root.utils.ensureUiTheme?.();
         injectStyleOnce(STYLE_ID, STYLE_TEXT);
         startObserver();
         if (!removePageChangeDetection) {

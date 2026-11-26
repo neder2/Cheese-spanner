@@ -7,7 +7,7 @@
 - 출처: [원본 프로젝트](https://github.com/orioncactus/pretendard), npm `pretendard@1.3.9` 배포본
 - 저작권: Copyright (c) 2021, Kil Hyung-jin
 - 라이선스: SIL Open Font License 1.1
-- 사용 범위: 옵션 창·시청 기록 페이지 (`options-brand.css`), 다시보기 대기 화면 (`replay-pending.html`), 치지직 안의 확장 패널·툴팁 (`shared/uiTheme.js`의 공통 `@font-face` 선언, 팔로잉 미리보기·방송 알림 등록·채팅 멀티뷰·새 버전 안내 등)
+- 사용 범위: 옵션 창·시청 기록·다시보기 대기 화면 (`styles.css`), 치지직 안의 확장 패널·툴팁 (`shared/uiTheme.js`의 공통 `@font-face` 선언, 팔로잉 미리보기·방송 알림 등록·채팅 멀티뷰·새 버전 안내 등)
 - 원본 가변 폰트를 수정하지 않고 `vendor/fonts/PretendardVariable.woff2`에 포함했습니다. 외부 폰트 서버에 접속하지 않습니다.
 - 라이선스 전문: [`vendor/fonts/Pretendard.LICENSE.txt`](vendor/fonts/Pretendard.LICENSE.txt)
 
@@ -22,6 +22,11 @@
 - 출처: [치지직](https://chzzk.naver.com/) — 2026-09-06 사이드바의 새 창 표시 SVG 기준
 - 사용 범위: `features/followingPreviewTooltip.js`의 미리보기 채널명 옆 14px 아이콘
 - 확인한 도형을 확장 안에 정적으로 포함하며, 채널명과 같은 색상을 사용합니다.
+
+## 치지직 다시보기 댓글 BEST 배지
+
+- 출처: [치지직 다시보기의 원본 댓글](https://chzzk.naver.com/video/16325385) — 2026-11-24 표시된 인라인 SVG 기준
+- 사용 범위: `features/vodComments/view.js`가 확장 댓글 탭에서 인기 댓글을 표시하는 39×18px 배지의 배경과 BEST 글자 도형을 그립니다.
 
 ## hls.js
 

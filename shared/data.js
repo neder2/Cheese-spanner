@@ -21,7 +21,8 @@
 (() => {
     const root = (globalThis.CheeseSpanner = globalThis.CheeseSpanner || {});
     const ARRAY_RESPONSE_KEYS = Object.freeze(["data", "videos", "list", "items", "content"]);
-    const DEFAULT_WATCH_RANGE_MERGE_GAP_MS = 2000;
+    // Only the display may group nearby intervals. Stored ranges and duration totals retain every pause.
+    const DEFAULT_WATCH_RANGE_MERGE_GAP_MS = 0;
     const COMMENT_API_BASE = "https://apis.naver.com/nng_main/nng_comment_api/v1";
     const COMMENT_DEVICE_ID_STORAGE_KEY = "betterchzzkCommentDeviceId";
     const CHZZK_WEB_ORIGIN = "https://chzzk.naver.com";
@@ -181,6 +182,17 @@
         return normalized;
     }
 
+    function normalizeHistoryThumbnailUrl(value) {
+        if (typeof value !== "string" || value.length > 2000 || !/^https:\/\//i.test(value.trim())) return "";
+        const url = normalizeChzzkImageUrl(value);
+        if (!url || url.length > 2000) return "";
+        for (const key of new URL(url).searchParams.keys()) {
+            if (/^(?:token|access_token|authorization|cookie|password|secret|credential|api_key)$/i.test(key))
+                return "";
+        }
+        return url;
+    }
+
     function buildChzzkLiveUrl(value) {
         const channelId = normalizeChzzkChannelId(value);
         return channelId ? `${CHZZK_WEB_ORIGIN}/live/${encodeURIComponent(channelId)}` : "";
@@ -219,8 +231,18 @@
         return buildChzzkLiveUrl(channelId);
     }
 
+    function normalizeChzzkVideoNo(value) {
+        if (typeof value !== "string" && !Number.isSafeInteger(value)) return "";
+        const text = String(value).trim();
+        return /^[1-9]\d{0,14}$/.test(text) ? text : "";
+    }
+
     function pickChzzkVideoNo(value) {
-        return pickString(value?.videoNo, value?.videoId, value?.id);
+        return (
+            normalizeChzzkVideoNo(value?.videoNo) ||
+            normalizeChzzkVideoNo(value?.videoId) ||
+            normalizeChzzkVideoNo(value?.id)
+        );
     }
 
     function pickVideoStartDateText(value) {
@@ -691,7 +713,17 @@
         return value;
     }
 
-    function normalizeTitleHistory(value, channelName = "", maxSize = 20) {
+    function normalizeWatchMetadataTime(value, now = Date.now()) {
+        const at = Math.round(Number(value));
+        return Number.isSafeInteger(at) &&
+            at > 0 &&
+            at <= now + MAX_FUTURE_WATCH_SKEW_MS &&
+            at < Date.UTC(10000, 0, 1) - KST_OFFSET_MS
+            ? at
+            : 0;
+    }
+
+    function normalizeTitleHistory(value, channelName = "", maxSize = 20, now = Date.now()) {
         const rows = Array.isArray(value) ? value.slice(-MAX_TITLE_HISTORY_INPUT) : [];
         const byTitle = new Map();
 
@@ -716,7 +748,7 @@
             }
 
             if (!title || title === "\uC81C\uBAA9 \uC5C6\uB294 \uB77C\uC774\uBE0C") continue;
-            if (!firstSeenAt) firstSeenAt = lastSeenAt || Date.now();
+            if (!firstSeenAt) firstSeenAt = lastSeenAt || now;
             if (!lastSeenAt) lastSeenAt = firstSeenAt;
 
             const existing = byTitle.get(title);
@@ -814,6 +846,62 @@
         return commentDeviceIdPromise;
     }
 
+    // 원본 VOD 댓글은 `comments` 키 없이 `commentActive`만 담은 성공 응답을 빈 목록으로 다뤄요.
+    // 키가 아예 없을 때만 빈 목록으로 보고, 키가 있는데 형식이 다르면 오류로 남겨요.
+    function isCommentListOmitted(content) {
+        return !Object.hasOwn(content, "comments") && typeof content.commentActive === "boolean";
+    }
+
+    function validateChzzkCommentResponse(content) {
+        if (!content || typeof content !== "object") throw new Error("댓글 응답 형식 확인 불가.");
+        if (isCommentListOmitted(content)) {
+            if (content.bestComments != null && !Array.isArray(content.bestComments)) {
+                throw new Error("인기 댓글 응답 형식 확인 불가.");
+            }
+            return content;
+        }
+        if (!content.comments || typeof content.comments !== "object" || !Array.isArray(content.comments.data)) {
+            throw new Error("댓글 목록 응답 형식 확인 불가.");
+        }
+        if (content.bestComments != null && !Array.isArray(content.bestComments)) {
+            throw new Error("인기 댓글 응답 형식 확인 불가.");
+        }
+        return content;
+    }
+
+    function parseChzzkCommentPage(content, { offset = 0, pageSize = 10 } = {}) {
+        validateChzzkCommentResponse(content);
+        const comments = isCommentListOmitted(content) ? { data: [] } : content.comments;
+        const rows = [...comments.data];
+        const normalizedOffset = Number.isFinite(Number(offset)) ? Math.max(0, Math.trunc(offset)) : 0;
+        const bestRows = normalizedOffset === 0 && Array.isArray(content.bestComments) ? [...content.bestComments] : [];
+        const normalizedPageSize = Number.isFinite(Number(pageSize)) ? Math.max(1, Math.trunc(pageSize)) : 10;
+        const totalCountValue = Number(comments.totalCount ?? comments.commentCount);
+        const totalCount = Number.isFinite(totalCountValue) && totalCountValue >= 0 ? totalCountValue : null;
+        const page = comments.page;
+        const next = Number(page?.next);
+        let hasMore;
+        let nextOffset;
+
+        if (page && Object.hasOwn(page, "next")) {
+            hasMore = Number.isFinite(next) && next > normalizedOffset;
+            nextOffset = hasMore ? next : normalizedOffset + rows.length;
+        } else {
+            nextOffset = normalizedOffset + rows.length;
+            hasMore = rows.length >= normalizedPageSize;
+        }
+        if (!rows.length) hasMore = false;
+
+        return {
+            bestRows,
+            commentActive: content.commentActive !== false,
+            hasMore,
+            nextOffset,
+            rows,
+            totalCount,
+        };
+    }
+
     async function fetchChzzkCommentPage({
         objectId,
         objectType = "STREAMING_VIDEO",
@@ -851,6 +939,36 @@
         });
         if (json?.code && json.code !== 200) throw new Error(json.message || `code ${json.code}`);
         return json?.content || null;
+    }
+
+    const TIMECODE_RE = /^(?:\d{1,2}:)?\d{1,2}:\d{2}$/;
+    const TIMECODE_SCAN_RE = /(?:^|[\s([{])((?:\d{1,2}:)?\d{1,2}:\d{2})(?=$|[\s)\]},.!?])/g;
+
+    function parseTimecodeSeconds(value) {
+        const text = String(value ?? "").trim();
+        if (!TIMECODE_RE.test(text)) return NaN;
+
+        const parts = text.split(":").map(Number);
+        if (parts.some((part) => !Number.isFinite(part))) return NaN;
+        if (parts.length === 2) {
+            const [minutes, seconds] = parts;
+            return seconds < 60 ? minutes * 60 + seconds : NaN;
+        }
+        if (parts.length === 3) {
+            const [hours, minutes, seconds] = parts;
+            return minutes < 60 && seconds < 60 ? hours * 3600 + minutes * 60 + seconds : NaN;
+        }
+        return NaN;
+    }
+
+    function* commentTimecodes(text, duration = null) {
+        for (const match of text.matchAll(TIMECODE_SCAN_RE)) {
+            const label = match[1];
+            const seconds = parseTimecodeSeconds(label);
+            if (Number.isFinite(seconds) && !(Number.isFinite(duration) && seconds > duration)) {
+                yield { label, seconds, index: match.index + match[0].lastIndexOf(label) };
+            }
+        }
     }
 
     function getStorageError() {
@@ -969,6 +1087,10 @@
         collectWatchSessionRanges,
         compactSpaces,
         fetchChzzkCommentPage,
+        parseChzzkCommentPage,
+        parseTimecodeSeconds,
+        commentTimecodes,
+        validateChzzkCommentResponse,
         fetchJson,
         formatKstDateKey,
         formatKstDateTime,
@@ -991,15 +1113,18 @@
         normalizeDailySeconds,
         normalizeChzzkChannelId,
         normalizeChzzkImageUrl,
+        normalizeHistoryThumbnailUrl,
         normalizeChzzkLiveUrl,
         normalizeChzzkMediaUrl,
         normalizeCompact,
         normalizeForMatch,
         normalizeTitleHistory,
+        normalizeWatchMetadataTime,
         normalizeSessionWatchRanges,
         pad2,
         parseChzzkDate,
         pickArray,
+        normalizeChzzkVideoNo,
         pickChzzkVideoNo,
         pickString,
         pickVideoEndDateText,

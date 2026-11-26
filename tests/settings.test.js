@@ -66,6 +66,7 @@ const expectedDefaults = {
     liveWatchHistoryDonationEnabled: false,
     liveWatchHistoryMinMinutes: 1,
     vodCommentTabsEnabled: true,
+    vodCommentAutoChaptersEnabled: true,
     vodCommentLayout: "tabs",
     vodCommentSplitTop: "chat",
     chatResizeEnabled: true,
@@ -169,6 +170,13 @@ test("VOD comment layout keeps legacy tabs by default and validates independent 
     assert.equal(invalid.vodCommentSplitTop, "chat");
 });
 
+test("automatic comment chapters default to enabled and keep an explicit opt-out", () => {
+    assert.equal(settings.normalizeOptions({}).vodCommentAutoChaptersEnabled, true);
+    const disabled = settings.normalizeOptions({ vodCommentAutoChaptersEnabled: false });
+    assert.equal(disabled.vodCommentAutoChaptersEnabled, false);
+    assert.equal(disabled.vodCommentTabsEnabled, true);
+});
+
 test("settings exports the expected option defaults and key order", () => {
     assert.deepEqual(settings.DEFAULT_OPTIONS, expectedDefaults);
     assert.deepEqual(settings.OPTION_KEYS, Object.keys(expectedDefaults));
@@ -230,6 +238,7 @@ test("feature count keys are derived from feature toggles only", () => {
         "liveWatchHistoryChatEnabled",
         "liveWatchHistoryDonationEnabled",
         "vodCommentTabsEnabled",
+        "vodCommentAutoChaptersEnabled",
         "chatResizeEnabled",
         "chatTimestampEnabled",
         "vodChatTimestampEnabled",

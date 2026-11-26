@@ -81,7 +81,15 @@
                 const activity = JSON.parse(source);
                 if (activity?.otherAuthor === true)
                     return { otherAuthor: true, id: typeof activity.id === "string" ? activity.id : "" };
-                return Number.isSafeInteger(activity?.at) && typeof activity.id === "string" ? activity : null;
+                const type = activity?.kind === "chat" ? 1 : activity?.kind === "donation" ? 10 : 0;
+                if (
+                    !type ||
+                    !Number.isSafeInteger(activity.at) ||
+                    activity.at < Date.UTC(2020, 0, 1) ||
+                    activity.at > Date.now() + 5 * 60 * 1000
+                )
+                    return null;
+                return activity.id === `${user}:${activity.at}:${type}` ? activity : null;
             } catch (_) {
                 // Missing/invalid source data is not a recorded activity.
                 return null;

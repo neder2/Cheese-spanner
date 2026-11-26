@@ -377,7 +377,8 @@
         const top = el("div", "bcls-top"),
             title = el("h2", "", "방송 알림");
         title.id = PANEL_ID + "-title";
-        const close = button("닫기", "방송 알림 닫기");
+        const close = button("", "방송 알림 닫기");
+        close.innerHTML = CheeseSpanner.utils.panelCloseIcon;
         close.addEventListener("click", () => closePanel(true));
         top.append(title, close);
         const hint = el("p", "bcls-hint"),
@@ -590,22 +591,23 @@
     // 2026-11-04 bundle: the in-page PiP (._type_pip_*) is fixed at z-index 20000 and covered the panel's lower rows.
     // The panel is a user-opened dialog appended to <body>, so it uses the extension's dialog layer like the other panels.
     const CSS = `
-#${ID}{display:inline-flex;align-self:center;flex:none;margin-right:8px;font-family:var(--bct-font);font-size:14px;font-style:normal;font-weight:400;line-height:1.4}
+#${ID}{display:inline-flex;align-self:center;flex:none;margin-right:8px;font-family:inherit;font-size:14px;font-style:normal;font-weight:400;line-height:1.4}
 #${ID}>button,#${PANEL_ID} button{box-sizing:border-box;min-height:34px;padding:6px 12px;border:1px solid var(--bct-border-strong);border-radius:var(--bct-radius-md);background-color:var(--bct-surface-weak);color:var(--bct-text);font:inherit;font-size:14px;font-weight:600;line-height:1.4;white-space:nowrap;cursor:pointer}
 #${ID}>button{border-radius:var(--bct-radius-full);font-weight:650}
 #${ID}>button:hover,#${PANEL_ID} button:not(.bcls-remove):hover{border-color:currentColor;background-image:linear-gradient(var(--bct-hover),var(--bct-hover))}
 #${ID}>button:focus-visible,#${PANEL_ID} :is(button,input):focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:2px}
-#${ID}>button[aria-expanded="true"],#${PANEL_ID} button[aria-pressed="true"]{color:var(--bct-brand-text);border-color:currentColor;background-color:transparent}
-#${PANEL_ID}{position:fixed;z-index:2147483646;box-sizing:border-box;overflow:auto;overscroll-behavior:contain;padding:16px;border:1px solid var(--bct-border);border-radius:var(--bct-radius-lg);box-shadow:var(--bct-shadow);background-color:var(--bct-surface);color:var(--bct-text);font-family:var(--bct-font);font-size:14px;font-style:normal;font-weight:400;line-height:1.5}
+#${ID}>button[aria-expanded="true"],#${PANEL_ID} button[aria-pressed="true"]{color:var(--bct-text);border-color:var(--bct-brand-border);background-color:var(--bct-brand-weak)}
+#${PANEL_ID}{position:fixed;z-index:var(--bct-z-dialog);box-sizing:border-box;overflow:auto;overscroll-behavior:contain;padding:16px;border:1px solid var(--bct-border);border-radius:var(--bct-radius-lg);box-shadow:var(--bct-shadow);background-color:var(--bct-surface);color:var(--bct-text);font-family:var(--bct-font);font-size:14px;font-style:normal;font-weight:400;line-height:1.5}
 #${PANEL_ID} h2,#${PANEL_ID} h3,#${PANEL_ID} p{margin:0}
-#${PANEL_ID} h2{font-size:17px;font-weight:700}
+#${PANEL_ID} h2{font-size:15px;font-weight:700}
 #${PANEL_ID} h3{font-size:13px;margin:16px 0 8px}
 #${PANEL_ID} .bcls-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+#${PANEL_ID} .bcls-top button{display:inline-grid;place-items:center;width:28px;height:28px;min-height:28px;padding:0;border:0;border-radius:var(--bct-radius-sm);background:transparent}
 #${PANEL_ID} .bcls-hint,#${PANEL_ID} .bcls-message{font-size:12px;overflow-wrap:anywhere;margin-top:10px;color:var(--bct-text-body)}
 #${PANEL_ID} .bcls-message:empty{display:none}
 #${PANEL_ID} .bcls-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:16px}
 #${PANEL_ID} .bcls-search label{grid-column:1/-1;font-size:13px;font-weight:600}
-#${PANEL_ID} input{box-sizing:border-box;min-width:0;width:100%;padding:8px 10px;border:1px solid var(--bct-border-strong);border-radius:var(--bct-radius-md);background:transparent;color:inherit;font:inherit}
+#${PANEL_ID} input{box-sizing:border-box;min-width:0;width:100%;padding:8px 10px;border:1px solid var(--bct-border-strong);border-radius:var(--bct-radius-sm);background:var(--bct-surface-weak);color:inherit;font:inherit}
 #${PANEL_ID} .bcls-list{box-sizing:content-box;list-style:none;margin:-4px;padding:4px;max-height:245px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
 #${PANEL_ID} .bcls-row{display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--bct-border-strong)}
 #${PANEL_ID} .bcls-row:last-child{border-bottom:0}

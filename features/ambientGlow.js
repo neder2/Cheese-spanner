@@ -140,17 +140,20 @@
         // Matching the header's value and being appended last paints the glow above both, while
         // native dimmed layers, modals and the PiP container (20000+) stay above the glow; the
         // scroll mini player (1000) would not, so updateLayout hides the glow while it floats.
+        root.utils.ensureUiTheme?.();
         injectStyleOnce(
             STYLE_ID,
             `
 #${LAYER_ID}{position:fixed;left:0;top:0;width:0;height:0;margin:0;padding:0;border:0;z-index:10000;
-  pointer-events:none;opacity:0;mix-blend-mode:multiply;contain:strict;transition:opacity .6s ease}
+  pointer-events:none;opacity:0;mix-blend-mode:screen;contain:strict;transition:opacity .6s ease}
 #${LAYER_ID}[hidden]{display:none!important}
+#${LAYER_ID}[${READY}="1"]{opacity:var(--bcam-strength,.6)}
+#${LAYER_ID} > canvas{position:absolute;display:block;filter:blur(${BLUR_PX}px) saturate(1.5)}
+@container style(--bct-scheme:light){
+#${LAYER_ID}{mix-blend-mode:multiply}
 #${LAYER_ID}[${READY}="1"]{opacity:calc(var(--bcam-strength,.6) * .55)}
-html.theme_dark #${LAYER_ID}{mix-blend-mode:screen}
-html.theme_dark #${LAYER_ID}[${READY}="1"]{opacity:var(--bcam-strength,.6)}
-#${LAYER_ID} > canvas{position:absolute;display:block;filter:blur(${BLUR_PX}px) saturate(1.4) brightness(1.25)}
-html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
+#${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.4) brightness(1.25)}
+}
 @media (prefers-reduced-motion:reduce){#${LAYER_ID}{transition:none}}
 .pzp-ui-setting-home-item:where(#${ROW_ID},#${STRENGTH_ID}){display:block;width:100%;border:0;background:transparent;text-align:start}
 :is(#${ROW_ID},#${STRENGTH_ID})[hidden]{display:none!important}
@@ -162,11 +165,11 @@ html.theme_dark #${LAYER_ID} > canvas{filter:blur(${BLUR_PX}px) saturate(1.5)}
 @media (prefers-reduced-motion:reduce){#${EXPAND_ID}::after{transition:none}}
 /* Buttons center text by default, which pushed the native track (no left) off its handle. */
 #${TOGGLE_ID} .pzp-ui-toggle__handle:before{left:0}
-#${TOGGLE_ID}[aria-checked="true"] .pzp-ui-toggle__handle:before{background-color:#00f889}
+#${TOGGLE_ID}[aria-checked="true"] .pzp-ui-toggle__handle:before{background-color:var(--bct-brand)}
 #${TOGGLE_ID}[aria-checked="true"] .pzp-ui-toggle__handle:after{left:13px}
-:is(#${EXPAND_ID},#${TOGGLE_ID},#${STRENGTH_ID} input):focus-visible{outline:2px solid #00d694;outline-offset:2px}
+:is(#${EXPAND_ID},#${TOGGLE_ID},#${STRENGTH_ID} input):focus-visible{outline:2px solid var(--bct-focus-ring);outline-offset:2px}
 #${STRENGTH_ID}{cursor:default}
-#${STRENGTH_ID} input{width:96px;margin:0 8px 0 0;accent-color:#00f889;cursor:pointer}
+#${STRENGTH_ID} input{width:96px;margin:0 8px 0 0;accent-color:var(--bct-brand);cursor:pointer}
 #${STRENGTH_ID} .pzp-ui-setting-home-item__value{min-width:4ch;text-align:end;font-variant-numeric:tabular-nums}
 `
         );

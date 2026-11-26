@@ -50,7 +50,7 @@ isolated 영역은 `shared/settings.js` → `shared/data.js` → `shared/categor
 | 채팅 멀티뷰    | `shared/chatMultiview.js`는 구성 검증·프레임 주소, `features/chatMultiview.js`는 헤더 진입점·패널·칸을 소유해요             | 같은 출처 네이티브 채팅 팝업 경로만 표시하고 구성 저장은 설정 저장 큐로 보내요                                                |
 | 설정 저장·파일 | `shared/settingsBackup.js`는 대상 키·검증·파일 형식·적용 계획, `shared/settingsStore.js`는 워커 큐·적용·되돌리기를 소유해요 | 옵션 페이지 `optionsSettingsBackup.js`는 파일 선택·미리보기·권한 요청만 해요                                                  |
 
-멀티뷰의 메인은 치지직이 소유하는 플레이어와 라우터를 계속 사용해요. 보조 영상과 확장 소유 미리보기는 패키지의 hls.js를 사용해요. 일반 재생 조작이 보조 영상을 메인으로 오인하지 않도록 공용 메인 영상 판별을 사용해요.
+멀티뷰의 메인은 치지직이 소유하는 플레이어와 라우터를 계속 사용해요. 라이브 보조 영상과 확장 소유 미리보기가 HLS를 처음 요청하면 워커가 요청 문서의 isolated world에 패키지의 hls.js를 로드해요. 같은 문서의 동시 요청은 하나의 로딩을 기다려요. 일반 재생 조작이 보조 영상을 메인으로 오인하지 않도록 공용 메인 영상 판별을 사용해요.
 
 ## 대표 흐름
 

@@ -87,6 +87,7 @@
     const LIST_FILTER_SESSION_KEY = "betterChzzkListFilterSession";
     let currentQuery = "";
     let filterStates = null;
+    let durationFilterAvailable = true;
     let streamerGrades = [];
     // 방송을 보고 돌아와 이전 조건을 되살린 뒤 사용자가 아직 조건을 바꾸지 않은 상태.
     let restoredConditionsPending = false;
@@ -94,6 +95,7 @@
     let listFiltersNeedRestore = true;
     let searchTermsCache = { query: null, terms: null };
     let observer = null;
+    let themeObserver = null;
     let applying = false;
     let applyQueued = false;
     let applyGeneration = 0;
@@ -146,12 +148,15 @@
     let categoryStateEpoch = 0;
     let categoryStoreGeneration = 0;
     let categoryReadGeneration = 0;
+    const CATEGORY_ENTRY_RETRY_DELAYS = [200, 800, 1800];
+    let categoryReadRetryTimer = 0;
     let categoryStoreLoading = false;
-    let categoryStoreError = "";
+    let categoryStoreError = null;
     let categorySubscription = null;
     let categoryStateRestored = false;
     const CATEGORY_ADD_ID = "cheese-spanner-category-add-panel";
     const CATEGORY_SUMMARY_ID = "cheese-spanner-category-exclusions";
+    const TAG_RESULTS_PER_PAGE = 50;
     let categorySummaryHost = null;
     let categoryAddView = null;
     let categorySummaryView = null;
@@ -223,12 +228,12 @@
         passesTagExclusions,
     } = CheeseSpanner.categoryToolsFilterModel;
     filterStates = createFilterStates();
-    const { routeKey } = CheeseSpanner.categoryToolsRepository;
+    const { routeKey, listAddressKey } = CheeseSpanner.categoryToolsRepository;
     const dataRepository = CheeseSpanner.categoryToolsRepository.createRepository({
         fetchJson,
         touchMapEntry,
         onRetryReady(key) {
-            if (isFeatureEnabled() && routeKey(getRoute()) === key) scheduleApply();
+            if (isFeatureEnabled() && routeKey(getMetadataRoute()) === key) scheduleApply();
         },
         onHydrationNeeded() {
             if (!isFeatureEnabled() || !getRoute()) return;
@@ -300,7 +305,8 @@
         repository: dataRepository,
         onApply: scheduleApply,
         onLoading: (on) => setLoading(on, "metadata"),
-        isRouteCurrent: (route) => isFeatureEnabled() && isAutoLoadActive() && routeKey(getRoute()) === routeKey(route),
+        isRouteCurrent: (route) =>
+            isFeatureEnabled() && isAutoLoadActive() && routeKey(getMetadataRoute()) === routeKey(route),
         hasScrollRoom: hasPendingScrollRoom,
     });
     const scheduleThrottledApply = createThrottledDomSync(runScheduledApply, 160);
@@ -335,21 +341,24 @@
     }
 
     function categoryErrorText(error) {
-        if (error === "limit-reached") return "카테고리는 최대 100개까지 제외 가능. 기존 항목 해제 후 재선택.";
-        if (error === "invalid-stored-state" || error === "unsupported-version")
+        if (!error) return "";
+        if (error.code === "limit-reached") return "카테고리는 최대 100개까지 제외 가능. 기존 항목 해제 후 재선택.";
+        if (error.code === "invalid-stored-state" || error.code === "unsupported-version")
             return "제외 목록 확인 실패(기존 목록 보존됨, 다시 불러오기 가능).";
-        return "제외 목록 저장·불러오기 실패. 다시 불러오거나 재선택 필요.";
+        return error.kind === "get" ? "제외 목록 불러오기 실패." : "제외 목록 변경사항 저장 실패. 다시 시도해 주세요.";
     }
 
     function sendCategoryOperation(operation) {
         return new Promise((resolve, reject) => {
             try {
-                if (typeof globalThis.chrome?.runtime?.sendMessage !== "function")
-                    throw new Error("storage-unavailable");
+                if (typeof globalThis.chrome?.runtime?.sendMessage !== "function") {
+                    reject(new Error("storage-unavailable"));
+                    return;
+                }
                 chrome.runtime.sendMessage({ type: CATEGORY_MESSAGE_TYPE, version: 1, operation }, (response) => {
                     const error = chrome.runtime.lastError;
-                    if (error) {
-                        reject(new Error("storage-unavailable"));
+                    if (error || response == null) {
+                        reject(new Error("message-unavailable"));
                         return;
                     }
                     const state = response?.ok === true ? normalizeCategoryState(response.state) : null;
@@ -366,7 +375,7 @@
                     resolve(state);
                 });
             } catch (_) {
-                reject(new Error("storage-unavailable"));
+                reject(new Error("message-unavailable"));
             }
         });
     }
@@ -383,20 +392,29 @@
             state.categories.filter(isTagExclusion).map((category) => tagMatchKey(category.categoryId))
         );
         categoryTagKeys.delete("");
-        categoryStoreError = "";
+        categoryStoreError = null;
+        categoryStoreLoading = false;
         if (changed) categoryStateEpoch++;
         if (!isCategoryExclusionRoute()) return;
         updateUiState();
         if (changed) scheduleApply();
     }
 
-    function readCategoryState() {
+    function cancelCategoryReadRetry() {
+        if (categoryReadRetryTimer) window.clearTimeout(categoryReadRetryTimer);
+        categoryReadRetryTimer = 0;
+    }
+
+    function readCategoryState(entryAttempt = -1) {
+        cancelCategoryReadRetry();
         if (!isCategoryExclusionRoute()) return;
         const generation = ++categoryReadGeneration;
         const storeGeneration = categoryStoreGeneration;
         const subscription = categorySubscription;
+        // 읽는 동안 다른 탭에서 정상 목록을 받았다면 늦게 도착한 실패로 경고를 띄우지 않는다.
+        const stateAtRequest = categoryState;
         categoryStoreLoading = true;
-        categoryStoreError = "";
+        categoryStoreError = null;
         syncCategoryAdd();
         void sendCategoryOperation({ kind: "get" }).then(
             (state) => {
@@ -416,11 +434,27 @@
                     generation !== categoryReadGeneration ||
                     storeGeneration !== categoryStoreGeneration ||
                     subscription !== categorySubscription ||
+                    categoryState !== stateAtRequest ||
                     !isCategoryExclusionRoute()
                 )
                     return;
+                const transient = ["untrusted-sender", "message-unavailable", "storage-read-failed"].includes(
+                    error.message
+                );
+                if (
+                    transient &&
+                    entryAttempt >= 0 &&
+                    !categoryStateRestored &&
+                    entryAttempt < CATEGORY_ENTRY_RETRY_DELAYS.length
+                ) {
+                    categoryReadRetryTimer = window.setTimeout(() => {
+                        if (generation === categoryReadGeneration && subscription === categorySubscription)
+                            readCategoryState(entryAttempt + 1);
+                    }, CATEGORY_ENTRY_RETRY_DELAYS[entryAttempt]);
+                    return;
+                }
                 categoryStoreLoading = false;
-                categoryStoreError = categoryErrorText(error.message);
+                categoryStoreError = { kind: "get", code: error.message, retryOnShow: transient && entryAttempt >= 0 };
                 syncCategoryAdd();
             }
         );
@@ -428,6 +462,11 @@
 
     function handleCategoryStorageChange(changes, areaName) {
         if (!categorySubscription || areaName !== "local" || !Object.hasOwn(changes, CATEGORY_STORAGE_KEY)) return;
+        if (categoryReadRetryTimer) {
+            cancelCategoryReadRetry();
+            categoryReadGeneration++;
+            categoryStoreLoading = false;
+        }
         const value = changes[CATEGORY_STORAGE_KEY]?.newValue;
         if (value === undefined) {
             categoryStoreGeneration++;
@@ -444,7 +483,7 @@
             categoryReadGeneration++;
             categoryStoreLoading = false;
             categoryPending.clear();
-            categoryStoreError = categoryErrorText("invalid-stored-state");
+            categoryStoreError = { kind: "get", code: "invalid-stored-state" };
             syncCategoryAdd();
             return;
         }
@@ -463,10 +502,11 @@
         categorySubscription = subscription;
         categoryStateRestored = false;
         globalThis.chrome?.storage?.onChanged?.addListener?.(subscription);
-        readCategoryState();
+        readCategoryState(0);
     }
 
     function stopCategoryExclusionRuntime() {
+        cancelCategoryReadRetry();
         if (categorySubscription) globalThis.chrome?.storage?.onChanged?.removeListener?.(categorySubscription);
         categorySubscription = null;
         categoryStateRestored = false;
@@ -508,7 +548,7 @@
         const subscription = categorySubscription;
         const token = {};
         categoryPending.set(key, token);
-        categoryStoreError = "";
+        categoryStoreError = null;
         syncCategoryAdd();
         void sendCategoryOperation(operation)
             .then(
@@ -529,7 +569,7 @@
                         subscription !== categorySubscription
                     )
                         return;
-                    categoryStoreError = categoryErrorText(error.message);
+                    categoryStoreError = { kind: operation.kind, code: error.message };
                 }
             )
             .finally(() => {
@@ -546,7 +586,7 @@
     }
 
     function handleCategoryAddKeydown(view, event) {
-        if (event.key !== "Enter") return;
+        if (event.key !== "Enter" || !event.isTrusted) return;
         if (event.isComposing || event.keyCode === 229 || view.composing) {
             // 한글 조합을 확정하는 Enter는 태그 추가로 쓰지 않는다. 확정 뒤 한 번 더 누르면 추가된다.
             view.compositionEnter = true;
@@ -555,7 +595,6 @@
         event.preventDefault();
         event.stopPropagation();
         if (
-            !event.isTrusted ||
             event.currentTarget !== view.input ||
             event.repeat ||
             view.compositionEnter ||
@@ -563,7 +602,7 @@
             !categoryState
         )
             return;
-        const typed = view.input.value;
+        const typed = view.typed;
         const category = createTagExclusion(typed);
         if (!category) {
             view.searchStatus = typed.trim() ? "tag-invalid" : "idle";
@@ -579,14 +618,16 @@
         }
         cancelCategoryAddSearch();
         view.results = [];
+        view.tagResults = [];
         view.searchStatus = "tag-saving";
         commitCategoryOperation(
             key,
             { kind: "add", category },
             {
                 onSuccess() {
-                    if (!isCurrentCategoryAdd(view) || view.input.value !== typed) return;
+                    if (!isCurrentCategoryAdd(view) || view.typed !== typed) return;
                     view.input.value = "";
+                    view.typed = "";
                     view.addedTag = category.categoryValue;
                     view.searchStatus = "tag-added";
                 },
@@ -625,7 +666,9 @@
     function scheduleCategoryAddSearch(view) {
         cancelCategoryAddSearch();
         view.results = [];
-        const keyword = view.input.value.trim();
+        view.tagResults = [];
+        view.tagLimit = TAG_RESULTS_PER_PAGE;
+        const keyword = view.typed.trim();
         view.searchStatus = keyword ? "typing" : "idle";
         if (keyword.length > 100) view.searchStatus = "long";
         syncCategoryAdd();
@@ -641,7 +684,7 @@
         if (
             !isCurrentCategoryAdd(view) ||
             view.composing ||
-            view.input.value.trim() !== keyword ||
+            view.typed.trim() !== keyword ||
             generation !== categorySearchGeneration
         )
             return;
@@ -654,23 +697,68 @@
             !controller.signal.aborted &&
             isCurrentCategoryAdd(view) &&
             !view.composing &&
-            view.input.value.trim() === keyword;
-        try {
-            const results = await dataRepository.searchCategories(keyword, { signal: controller.signal });
+            view.typed.trim() === keyword;
+        let categories = [];
+        let categoryStatus = "loading";
+        let tagStatus = "tags-loading";
+        const query = tagMatchKey(keyword);
+        const searchText = normalizeSearchText(query);
+        const matches = new Map();
+        const publish = () => {
             if (!isCurrent()) return;
-            view.results = results;
-            view.searchStatus = results.length ? "success" : "empty";
-        } catch (_) {
-            if (!isCurrent()) return;
-            view.searchStatus = "error";
-            view.results = [];
-        } finally {
-            if (isCurrent()) {
-                view.controller = null;
-                syncCategoryAdd();
-                scheduleMenuPosition();
+            const exact = matches.get(query);
+            const tags = [...matches.values()].filter((tag) => tag !== exact);
+            if (exact) tags.unshift(exact);
+            view.tagResults = tags;
+            view.results = categories;
+            if (categoryStatus === "error" || tagStatus === "error") view.searchStatus = "error";
+            else if (categoryStatus === "loading") view.searchStatus = "loading";
+            else if (tagStatus !== "done") view.searchStatus = tagStatus;
+            else view.searchStatus = tags.length || categories.length ? "success" : "empty";
+            syncCategoryAdd();
+            scheduleMenuPosition();
+        };
+        const addTags = (names) => {
+            if (!isCurrent() || !query) return;
+            const previousSize = matches.size;
+            for (const name of names) {
+                const key = tagMatchKey(name);
+                if (!normalizeSearchText(key).includes(searchText) || matches.has(key)) continue;
+                const tag = createTagExclusion(name);
+                if (tag) matches.set(key, tag);
             }
+            if (matches.size !== previousSize) publish();
+        };
+        // 최신·추천 등 현재 정렬의 원본 태그를 먼저 보여 주고, 열린 검색에서만 화면 밖 방송도 찾는다.
+        if (query) {
+            const cards = document.querySelectorAll(`[${CARD_ATTR}="1"]:not([${INJECTED_ATTR}="1"])`);
+            addTags(Array.from(cards).flatMap(nativeCardTags));
         }
+        await Promise.all([
+            dataRepository
+                .searchCategories(keyword, { signal: controller.signal })
+                .then(
+                    (results) => {
+                        categories = results;
+                        categoryStatus = "done";
+                    },
+                    () => {
+                        categoryStatus = "error";
+                    }
+                )
+                .then(publish),
+            (query ? dataRepository.loadLiveTagCatalog(controller.signal, addTags) : Promise.resolve(true))
+                .then(
+                    (complete) => {
+                        tagStatus = complete ? "done" : "more";
+                    },
+                    () => {
+                        tagStatus = "error";
+                    }
+                )
+                .then(publish),
+        ]);
+        if (isCurrent()) view.controller = null;
     }
 
     function syncCategoryRows(view, host, categories, mode) {
@@ -710,10 +798,12 @@
             if (row.type) {
                 setText(
                     row.type,
-                    typeLabel +
-                        (Number.isSafeInteger(category.concurrentUserCount)
-                            ? ` · 시청자 ${category.concurrentUserCount.toLocaleString("ko-KR")}명`
-                            : " · 시청자 수 미확인")
+                    isTagExclusion(category)
+                        ? typeLabel
+                        : typeLabel +
+                              (Number.isSafeInteger(category.concurrentUserCount)
+                                  ? ` · 시청자 ${category.concurrentUserCount.toLocaleString("ko-KR")}명`
+                                  : " · 시청자 수 미확인")
                 );
                 row.type.title = row.type.textContent;
             } else {
@@ -723,7 +813,8 @@
             const pending = categoryPending.has(key);
             const selected = categoryKeys.has(key);
             row.button.disabled = !categoryState || view.composing || pending || (mode === "add" && selected);
-            row.button.setAttribute("aria-label", `${category.categoryValue} ${mode === "add" ? "제외" : "제외 해제"}`);
+            const buttonName = isTagExclusion(category) ? `${category.categoryValue} 태그` : category.categoryValue;
+            row.button.setAttribute("aria-label", `${buttonName} ${mode === "add" ? "제외" : "제외 해제"}`);
             row.button.setAttribute("aria-busy", pending ? "true" : "false");
             setText(
                 row.button,
@@ -828,7 +919,7 @@
         }
         setCategoryStatusText(
             view.root.querySelector(".bcgt-category-summary-status"),
-            categoryStoreError || (categoryStoreLoading ? "제외 목록 불러오는 중…" : "")
+            categoryErrorText(categoryStoreError) || (categoryStoreLoading ? "제외 목록 불러오는 중…" : "")
         );
         const retry = view.root.querySelector("[data-category-store-retry]");
         retry.hidden = !categoryStoreError;
@@ -844,17 +935,23 @@
             typing: "검색어 입력 중…",
             loading: "카테고리 검색 중…",
             empty: "검색 결과 없음. Enter를 누르면 입력한 단어를 태그로 제외.",
-            error: "카테고리 검색 실패. 다시 시도 필요.",
+            "tags-loading": "전체 방송의 태그를 찾는 중…",
+            error: "일부 검색 실패. 다시 시도할 수 있어요.",
+            more: "확인한 방송의 태그를 표시했어요. 다음 방송에서도 이어서 찾을 수 있어요.",
             long: "검색어는 100자 이하로 입력 필요.",
-            success: view.results.length >= 50 ? "검색 결과 최대 50개 표시. 검색어 구체화 필요." : "",
+            success: view.results.length >= 50 ? "카테고리 검색 결과 최대 50개 표시. 검색어 구체화 필요." : "",
             "tag-saving": "태그 제외 저장 중…",
             "tag-added": `‘${view.addedTag}’ 태그 제외됨.`,
             "tag-duplicate": "이미 제외한 태그.",
             "tag-invalid": "태그는 100자 이하로 입력 필요.",
         };
         setCategoryStatusText(view.searchStatusElement, messages[view.searchStatus]);
-        view.searchRetry.hidden = view.searchStatus !== "error";
-        syncCategoryRows(view, view.resultsElement, view.results, "add");
+        view.searchRetry.hidden = view.searchStatus !== "error" && view.searchStatus !== "more";
+        setText(view.searchRetry, view.searchStatus === "more" ? "태그 계속 찾기" : "검색 다시 시도");
+        const tags = view.tagResults.slice(0, view.tagLimit);
+        syncCategoryRows(view, view.resultsElement, [...tags, ...view.results], "add");
+        view.moreTags.hidden = view.tagResults.length <= tags.length;
+        if (!view.moreTags.hidden) setText(view.moreTags, `태그 더 보기 (${tags.length}/${view.tagResults.length})`);
     }
 
     function buildCategoryAddPanel() {
@@ -868,10 +965,11 @@
         root.setAttribute("data-category-exclusions", "");
         root.setAttribute("aria-label", "카테고리 제외");
         root.innerHTML = `<div class="bcgt-filter-title">카테고리 제외</div>
-<label class="bcgt-category-search-label">카테고리 검색 · 태그 추가<input type="search" data-category-search aria-label="제외할 카테고리 검색 또는 태그 입력" placeholder="카테고리 이름 또는 태그 입력 후 Enter" autocomplete="off" spellcheck="false" maxlength="100" /></label>
-<div class="bcgt-category-hint">카테고리는 검색 결과에서 선택, 태그는 단어 입력 후 Enter로 제외.</div>
-<div data-category-search-status role="status" aria-live="polite"></div><button type="button" class="bcgt-category-button" data-category-search-retry hidden>카테고리 검색 다시 시도</button>
-<div class="bcgt-category-list" data-category-results></div>`;
+<label class="bcgt-category-search-label">카테고리·태그 검색<input type="search" data-category-search aria-label="제외할 카테고리 또는 방송 태그 검색" placeholder="카테고리 또는 태그 이름" autocomplete="off" spellcheck="false" maxlength="100" /></label>
+<div class="bcgt-category-hint">검색 결과에서 제외할 항목을 선택하세요. 목록에 없는 태그는 전체 이름을 입력하고 Enter를 누르세요.</div>
+<div data-category-search-status role="status" aria-live="polite"></div><button type="button" class="bcgt-category-button" data-category-search-retry hidden>검색 다시 시도</button>
+<div class="bcgt-category-list" data-category-results></div>
+<button type="button" class="bcgt-category-button" data-category-more-tags hidden>태그 더 보기</button>`;
         menu.append(root);
         document.body.append(menu);
         const view = {
@@ -881,22 +979,33 @@
             resultsElement: root.querySelector("[data-category-results]"),
             searchStatusElement: root.querySelector("[data-category-search-status]"),
             searchRetry: root.querySelector("[data-category-search-retry]"),
+            moreTags: root.querySelector("[data-category-more-tags]"),
             results: [],
+            tagResults: [],
+            tagLimit: TAG_RESULTS_PER_PAGE,
             resultRows: new Map(),
             composing: false,
             compositionEnter: false,
             addedTag: "",
+            typed: "",
             timer: 0,
             controller: null,
             searchStatus: "idle",
         };
         categoryAddView = view;
-        view.input.addEventListener("input", () => scheduleCategoryAddSearch(view));
-        view.input.addEventListener("compositionstart", () => {
+        view.input.addEventListener("input", (event) => {
+            if (!event.isTrusted) return;
+            view.typed = view.input.value;
+            scheduleCategoryAddSearch(view);
+        });
+        view.input.addEventListener("compositionstart", (event) => {
+            if (!event.isTrusted) return;
             view.composing = true;
             scheduleCategoryAddSearch(view);
         });
-        view.input.addEventListener("compositionend", () => {
+        view.input.addEventListener("compositionend", (event) => {
+            if (!event.isTrusted) return;
+            view.typed = view.input.value;
             view.composing = false;
             scheduleCategoryAddSearch(view);
         });
@@ -908,6 +1017,11 @@
             view.compositionEnter = false;
         });
         view.searchRetry.addEventListener("click", () => scheduleCategoryAddSearch(view));
+        view.moreTags.addEventListener("click", () => {
+            view.tagLimit += TAG_RESULTS_PER_PAGE;
+            syncCategoryAdd();
+            scheduleMenuPosition();
+        });
         menu.addEventListener("keydown", (event) => {
             if (event.key !== "Escape") return;
             event.preventDefault();
@@ -924,6 +1038,8 @@
         if (!view) return;
         view.menu.setAttribute("data-open", "0");
         view.results = [];
+        view.tagResults = [];
+        view.typed = "";
         view.input.value = "";
         view.searchStatus = "idle";
         view.composing = false;
@@ -978,19 +1094,24 @@
 
     // 같은 동기 구간에서는 페이지가 카드 링크를 바꿀 수 없어 카드마다 링크 주소를 한 번만 읽는다.
     // 다음 microtask에서 비우므로 await로 화면에 양보한 뒤의 재판정은 언제나 현재 DOM을 새로 읽는다.
-    function readCardHrefs(card) {
+    function readCardLinks(card) {
         if (!cardHrefMemo) {
             cardHrefMemo = new WeakMap();
             queueMicrotask(() => {
                 cardHrefMemo = null;
             });
         }
-        let hrefs = cardHrefMemo.get(card);
-        if (!hrefs) {
-            hrefs = Array.from(card.querySelectorAll("a[href]"), (anchor) => anchor.getAttribute("href") || "");
-            cardHrefMemo.set(card, hrefs);
+        let links = cardHrefMemo.get(card);
+        if (!links) {
+            const anchors = Array.from(card.querySelectorAll("a[href]"));
+            links = { anchors, hrefs: anchors.map((anchor) => anchor.getAttribute("href") || "") };
+            cardHrefMemo.set(card, links);
         }
-        return hrefs;
+        return links;
+    }
+
+    function readCardHrefs(card) {
+        return readCardLinks(card).hrefs;
     }
 
     function currentRowCategory(row) {
@@ -1019,7 +1140,13 @@
     function parseTagHref(href) {
         try {
             const url = new URL(href, location.origin);
-            return url.origin === "https://chzzk.naver.com" ? url.searchParams.get("tags") || "" : "";
+            if (url.origin !== "https://chzzk.naver.com") return "";
+            if (url.pathname === "/watchparty/all") return "같이보기";
+            if (url.pathname === "/watchpartyPLUS/all") return "같이보기+";
+            // 대회 번호에는 이름이 없으므로 해당 카드의 현재 링크 글자를 읽는다.
+            if (/^\/watchparty\/\d+\/?$/.test(url.pathname)) return true;
+            if (url.hash === "#drops" && /^\/category\/[^/]+\/[^/]+\/lives\/?$/.test(url.pathname)) return "드롭스";
+            return url.searchParams.get("tags") || "";
         } catch (_) {
             return "";
         }
@@ -1027,6 +1154,22 @@
 
     function tagFromHref(href) {
         return readCachedHref(tagHrefCache, String(href ?? ""), parseTagHref);
+    }
+
+    function nativeCardTags(card) {
+        const links = readCardLinks(card);
+        if (!links.tags) {
+            links.tags = [];
+            links.hasTagStrip = Boolean(card.querySelector("[class*='information'][class*='link']"));
+            links.hrefs.forEach((href, i) => {
+                const tag = tagFromHref(href);
+                if (tag) links.tags.push(tag === true ? links.anchors[i].textContent.trim() : tag);
+            });
+            // 프라임 등 링크 없는 배지도 네이티브 태그 요소 안의 이름만 사용한다.
+            for (const badge of card.querySelectorAll('[class*="item_tag"]:not(a)'))
+                links.tags.push(badge.textContent.trim());
+        }
+        return links.tags;
     }
 
     function currentRowTags(row) {
@@ -1049,14 +1192,20 @@
                 : [];
         }
         // 원본 카드는 현재 태그 링크를 읽고, 카드에 일부 태그만 보일 수 있어 같은 채널의 메타데이터 태그도 함께 본다.
-        return [...readCardHrefs(card).map(tagFromHref).filter(Boolean), ...metaTags];
+        const nativeTags = nativeCardTags(card);
+        // 원본 태그 줄이 바뀌었으면 이전 응답의 대회·드롭스 배지를 되살리지 않는다.
+        const supplement =
+            readCardLinks(card).hasTagStrip && metaTags.length && Array.isArray(meta.cardTags)
+                ? meta.cardTags.filter((tag) => tag.kind === "tag").map((tag) => tag.name)
+                : metaTags;
+        return [...nativeTags, ...supplement];
     }
 
     function passesRowCategoryExclusions(row) {
         return (
             !hasCategoryExclusions() ||
             (passesCategoryExclusions(currentRowCategory(row), categoryKeys) &&
-                passesTagExclusions(currentRowTags(row), categoryTagKeys))
+                (!categoryTagKeys.size || passesTagExclusions(currentRowTags(row), categoryTagKeys)))
         );
     }
 
@@ -1133,6 +1282,37 @@
         };
     }
 
+    function getMetadataRoute() {
+        const route = getRoute();
+        if (route?.scope !== "category" || route.tab === "videos") return route;
+        // 치지직의 탭 ID가 실제 조회 조건이다. 클립 기간·정렬을 읽기 전에는 원본 카드만 검색한다.
+        const selected = new Set(
+            Array.from(
+                document.querySelectorAll('[role="tablist"] [role="tab"][aria-selected="true"][id]'),
+                (tab) => tab.id
+            )
+        );
+        if (route.tab === "clips") {
+            route.filterType = ["WITHIN_THIRTY_DAYS", "WITHIN_SEVEN_DAYS", "WITHIN_ONE_DAY", "ALL"].find((id) =>
+                selected.has(id)
+            );
+            route.orderType = ["POPULAR", "RECENT"].find((id) => selected.has(id));
+            route.renderedOnly = !route.filterType || !route.orderType;
+        } else {
+            route.sortType = ["POPULAR", "UNPOPULAR", "LATEST"].find((id) => selected.has(id));
+            const drops = /^#drops(?:_(\d+))?$/.exec(location.hash);
+            if (drops) {
+                route.drops = true;
+                route.campaignNo = drops[1] || "";
+                route.renderedOnly = !selected.has("DROPS") || !route.sortType;
+            } else if (selected.has("DROPS")) {
+                // SPA 주소와 선택 표시가 따로 바뀌는 동안 일반 방송을 끼워 넣지 않는다.
+                route.renderedOnly = true;
+            }
+        }
+        return route;
+    }
+
     function hasMountedTools() {
         return Boolean(
             document.getElementById(BAR_ID) ||
@@ -1161,6 +1341,9 @@
   width:100% !important;
   overflow:visible !important;
 }
+[${INJECTED_ATTR}="1"] .bcgt-injected-tag{display:inline-flex;align-items:center;margin-right:4px;}
+[${INJECTED_ATTR}="1"] .bcgt-injected-tag-label{display:inline-block;border-radius:4px;padding:0 5px;font-size:11px;line-height:18px;background:var(--bct-surface-weak);color:var(--bct-text-muted);}
+[${INJECTED_ATTR}="1"] .bcgt-injected-tag-label:is(.bcgt-tag-highlight,.bcgt-tag-prime){color:var(--bct-brand-text);background:var(--bct-brand-weak);}
 [${GLOBAL_SORT_ATTR}="1"], [${CATEGORY_SUMMARY_HOST_ATTR}="1"]{
   display:flex !important;
   align-items:center !important;
@@ -1419,7 +1602,7 @@
   background:var(--bcgt-menu-bg);
   color:var(--bcgt-menu-text);
   box-shadow:var(--bct-shadow);
-  font-family:inherit;
+  font-family:var(--bct-font);
   font-size:13px;
   line-height:16px;
   overflow-y:auto;
@@ -1429,7 +1612,7 @@
 }
 #${MENU_ID}[data-open="1"], #${CATEGORY_ADD_ID}[data-open="1"]{display:block;}
 /* 카테고리 제외의 추가 메뉴와 선택 목록은 패키지에 포함한 공통 글꼴을 쓴다. */
-#${CATEGORY_ADD_ID}{width:400px;box-sizing:border-box;font-family:var(--bct-font);}
+#${CATEGORY_ADD_ID}{width:400px;box-sizing:border-box;}
 #${MENU_ID} .bcgt-filter-groups{
   display:flex;
   flex-direction:column;
@@ -1940,7 +2123,7 @@
 
     function canUseMetadataForCurrentList(route, context = null) {
         if (!route) return false;
-        if (route.scope !== "global-lives") return true;
+        if (route.scope !== "global-lives") return !route.renderedOnly;
         return getGlobalSortKey(context) === "인기";
     }
 
@@ -2234,7 +2417,6 @@
 
         const menu = document.getElementById(MENU_ID);
         if (menu) {
-            setStyleIfChanged(menu.style, "font-family", fontStyle.fontFamily);
             setStyleIfChanged(menu.style, "font-size", "13px");
             setStyleIfChanged(menu.style, "line-height", "16px");
         }
@@ -2398,6 +2580,11 @@
         return card.__bcgtDomFields;
     }
 
+    function invalidateCardText(card) {
+        delete card.__bcgtDomText;
+        delete card.__bcgtDomFields;
+    }
+
     function createCardEntry(card, id, meta = null) {
         const domText = meta?.id
             ? normSpace([getCardDomText(card), buildMetaSearchText(meta)].join(" "))
@@ -2415,8 +2602,7 @@
         if (!(card instanceof HTMLElement) || !id) return;
         const previousId = card.getAttribute(CARD_ID_ATTR);
         if (previousId && previousId !== id) {
-            delete card.__bcgtDomText;
-            delete card.__bcgtDomFields;
+            invalidateCardText(card);
             card.removeAttribute(HIDE_ATTR);
             card.removeAttribute(ORDER_ATTR);
             removeFollowerBadge(card);
@@ -2555,7 +2741,7 @@
             entries.map((entry) => entry?.id),
             {
                 maxPages: getMaxMetadataPages(),
-                isCurrent: () => isFeatureEnabled() && routeKey(getRoute()) === routeKey(route),
+                isCurrent: () => isFeatureEnabled() && routeKey(getMetadataRoute()) === routeKey(route),
             }
         );
     }
@@ -2665,7 +2851,7 @@
     }
 
     async function refreshFollowerHydrationRows() {
-        const route = getRoute();
+        const route = getMetadataRoute();
         const rememberedRows = getRememberedFollowerRefreshRows(route);
         if (!route || !rememberedRows.length || (!hasFollowerFilter() && !areFollowerBadgesEnabled())) {
             settleFollowerLoading();
@@ -2691,7 +2877,7 @@
             generation !== applyGeneration ||
             filterKey !== getActiveFilterKey() ||
             !isFeatureEnabled() ||
-            routeKey(getRoute()) !== routeKey(route)
+            routeKey(getMetadataRoute()) !== routeKey(route)
         )
             return;
         const currentRows = rows.filter(
@@ -2714,7 +2900,7 @@
             if (
                 refreshed &&
                 isCurrent() &&
-                routeKey(getRoute()) === routeKey(route) &&
+                routeKey(getMetadataRoute()) === routeKey(route) &&
                 ids.some((id) => readFollowerCache(id).hit)
             )
                 scheduleApply();
@@ -2748,6 +2934,7 @@
     }
 
     function filterRange(kind) {
+        if (kind === "duration" && !durationFilterAvailable) return { min: 0, max: 0 };
         return effectiveRange(filterStates[kind]);
     }
 
@@ -2992,11 +3179,6 @@
         filterStates = { ...filterStates, [kind]: state };
     }
 
-    function resetDurationFilterState() {
-        setFilterState("duration", createFilterState());
-        clearDurationFilterRefreshTimer();
-    }
-
     function resetFilterState() {
         filterStates = createFilterStates();
         streamerGrades = [];
@@ -3019,9 +3201,12 @@
     }
 
     function contentHref(route, meta) {
-        if (route.tab === "lives") return `/live/${meta.channelId || meta.id}`;
-        if (route.tab === "clips") return `/clips/${meta.id}`;
-        return `/video/${meta.id}`;
+        if (route.tab === "lives") {
+            const id = meta.channelId || meta.id;
+            return /^[\w-]{1,100}$/.test(id) ? `/live/${id}` : "";
+        }
+        if (route.tab === "clips") return /^[\w-]{1,100}$/.test(meta.id) ? `/clips/${meta.id}` : "";
+        return /^[1-9]\d{0,14}$/.test(meta.id) ? `/video/${meta.id}` : "";
     }
 
     function normalizeImageUrl(url) {
@@ -3458,6 +3643,7 @@
             return;
         }
 
+        if (categoryStoreError?.retryOnShow) readCategoryState();
         if (document.querySelector(`[${LIVE_ELAPSED_BADGE_ATTR}="1"]`)) {
             updateLiveElapsedBadgesNow();
             ensureLiveElapsedTimer();
@@ -3692,6 +3878,52 @@
         }
     }
 
+    function syncInjectedLiveTags(card, meta) {
+        const groups = new Map();
+        const info = card.querySelector("[class*='information'][class*='link']");
+        if (info) groups.set(info, []);
+        for (const node of card.querySelectorAll('a[href], [class*="item_tag"]')) {
+            if (!node.matches('[class*="item_tag"]') && !tagFromHref(node.getAttribute("href"))) continue;
+            const host = node.parentElement;
+            if (!groups.has(host)) groups.set(host, []);
+            groups.get(host).push(node);
+        }
+        if (!groups.size && meta.cardTags?.length) {
+            const host = document.createElement("div");
+            const category = card.querySelector('a[href^="/category/"]');
+            (category?.parentElement || card).append(host);
+            groups.set(host, []);
+        }
+        for (const [host, originals] of groups) {
+            const wrapperClass = originals[0]?.className || "bcgt-injected-tag";
+            const labelClasses = new Map();
+            for (const node of originals) {
+                const label = node.querySelector("span");
+                if (label) {
+                    const kind = label.className.includes("prime")
+                        ? "prime"
+                        : label.className.includes("highlight")
+                          ? "highlight"
+                          : "tag";
+                    labelClasses.set(kind, label.className);
+                }
+            }
+            const fragment = document.createDocumentFragment();
+            for (const tag of meta.cardTags || []) {
+                const node = document.createElement(tag.href ? "a" : "span");
+                node.className = wrapperClass;
+                if (tag.href) node.setAttribute("href", tag.href);
+                const label = document.createElement("span");
+                label.className = labelClasses.get(tag.kind) || `bcgt-injected-tag-label bcgt-tag-${tag.kind}`;
+                label.textContent = tag.name;
+                node.append(label);
+                fragment.append(node);
+            }
+            host.insertBefore(fragment, originals[0] || null);
+            for (const original of originals) original.remove();
+        }
+    }
+
     function buildInjectedLiveCard(route, template, meta) {
         const card = template instanceof HTMLElement ? template.cloneNode(true) : document.createElement("article");
         syncInjectedVerifiedMark(card, meta);
@@ -3758,44 +3990,34 @@
         syncInjectedChannelIdentity(card, channelAnchors, meta);
 
         const category = categoryFromMeta(meta);
-        const categoryAnchors = new Set();
+        const categoryHref = category
+            ? `/category/${category.categoryType}/${encodeURIComponent(category.categoryId.toWellFormed())}/lives`
+            : "";
+        const categoryAnchors = Array.from(card.querySelectorAll("a[href]")).filter(
+            (anchor) => categoryFromLink(anchor) && !tagFromHref(anchor.getAttribute("href"))
+        );
         if (route.scope === "global-lives") {
             injectedCategoryBindings.set(card, { id: meta.id, channelId: meta.channelId, liveId: meta.liveId });
-            for (const anchor of Array.from(card.querySelectorAll("a[href]"))) {
-                if (!categoryFromLink(anchor)) continue;
-                categoryAnchors.add(anchor);
+            for (const anchor of categoryAnchors) {
                 if (!category) {
                     anchor.remove();
                     continue;
                 }
-                anchor.setAttribute(
-                    "href",
-                    `/category/${encodeURIComponent(category.categoryType)}/${encodeURIComponent(category.categoryId)}/lives`
-                );
+                anchor.setAttribute("href", categoryHref);
                 setText(anchor.querySelector("span") || anchor, category.categoryValue);
             }
         }
-
-        const tagContainer = card.querySelector("[class*='information'][class*='link']");
-        if (tagContainer) {
-            const tagValues = [
-                categoryAnchors.size ? "" : meta.categoryName,
-                ...(Array.isArray(meta.tags) ? meta.tags : []),
-            ].filter(Boolean);
-            const tagAnchors = Array.from(tagContainer.querySelectorAll("a")).filter(
-                (anchor) => !categoryAnchors.has(anchor)
-            );
-            tagAnchors.forEach((anchor, index) => {
-                const tag = tagValues[index];
-                if (!tag) {
-                    anchor.remove();
-                    return;
-                }
-                anchor.setAttribute("href", `/videos?tags=${encodeURIComponent(tag)}`);
-                const label = anchor.querySelector("span") || anchor;
-                label.textContent = tag;
-            });
+        if (!categoryAnchors.length && meta.categoryName) {
+            const info = card.querySelector("[class*='information'][class*='link']");
+            if (info) {
+                const label = document.createElement(categoryHref ? "a" : "span");
+                if (categoryHref) label.setAttribute("href", categoryHref);
+                label.textContent = meta.categoryName;
+                info.prepend(label);
+            }
         }
+
+        syncInjectedLiveTags(card, meta);
 
         syncLiveElapsedBadge(card, meta);
         return card;
@@ -3985,7 +4207,7 @@
         let builtCount = 0;
 
         for (const meta of metadata.values()) {
-            if (!meta.id || renderedIds.has(meta.id)) continue;
+            if (!meta.id || renderedIds.has(meta.id) || !contentHref(route, meta)) continue;
             if (!passesMetaFilters(meta, terms)) continue;
             if (existingCount + builtCount >= injectedRenderLimit) {
                 pendingInjectedRender = true;
@@ -4320,7 +4542,7 @@
                 const titleEl = group.querySelector(".bcgt-filter-title");
                 if (titleEl && titleEl.textContent !== viewTitle) titleEl.textContent = viewTitle;
             }
-            if (kind === "duration") group.hidden = !liveList || !canUseMetadataForCurrentList(route);
+            if (kind === "duration") group.hidden = !durationFilterAvailable;
             const state = filterStates[kind];
             const unit = filterUnit(kind, liveList);
             const single = state.mode === "max" ? state.max : state.min;
@@ -4615,7 +4837,7 @@
             syncFontWithHostUi(bar, tabLine);
         }
 
-        const key = routeKey(route);
+        const key = listAddressKey(route);
         if (key !== lastRouteKey) {
             confirmedGlobalSort = { routeKey: "", key: "", staleKey: "" };
             currentQuery = "";
@@ -4957,7 +5179,7 @@
             metadataState.pagesLoaded >= getMaxMetadataPages()
         )
             return;
-        const route = getRoute();
+        const route = getMetadataRoute();
         if (route) queueMetadataSearch(route);
     }
 
@@ -4968,7 +5190,7 @@
             return;
         }
 
-        const route = getRoute();
+        const route = getMetadataRoute();
         if (!route) {
             removeTools();
             return;
@@ -4982,8 +5204,9 @@
         }
 
         const canUseMetadata = canUseMetadataForCurrentList(route, scanContext);
-        if (hasDurationFilter() && (route.tab !== "lives" || !canUseMetadata)) {
-            resetDurationFilterState();
+        const durationAvailable = route.tab === "lives" && canUseMetadata;
+        if (durationFilterAvailable !== durationAvailable) {
+            durationFilterAvailable = durationAvailable;
             resetViewFilterSnapshot();
             updateUiState();
         }
@@ -5020,7 +5243,7 @@
             filterKey === getActiveFilterKey() &&
             grid.isConnected &&
             isFeatureEnabled() &&
-            routeKey(getRoute()) === routeKey(route);
+            routeKey(getMetadataRoute()) === routeKey(route);
 
         if (!isAutoLoadActive()) {
             injectedRenderKey = "";
@@ -5051,30 +5274,38 @@
 
         const metadata = canUseMetadata ? await ensureMetadata(route) : new Map();
         if (!isCurrent()) return;
+        const terms = currentSearchTerms();
+        syncViewFilterSnapshot(route, terms.key);
         let gradesPending = false;
         if (streamerGrades.length) {
-            const terms = currentSearchTerms();
+            const renderedIds = new Set(entries.map((entry) => entry.id));
             const candidates = [
-                ...entries.map((entry) => ({
-                    ...metadata.get(entry.id),
-                    channelId: inferChannelIdFromCard(route, entry),
-                })),
+                ...entries.flatMap((entry) => {
+                    const item = metadata.get(entry.id);
+                    const meta = { ...item, channelId: item?.channelId || inferChannelIdFromCard(route, entry) };
+                    const matches = currentCardRows(route, { entry, meta }).some(
+                        (row) =>
+                            passesRowCategoryExclusions(row) &&
+                            (!terms.key || matchesSearchTerms(rowSearchFields(row), terms))
+                    );
+                    return matches ? [meta] : [];
+                }),
                 ...Array.from(metadata.values()).filter(
                     (meta) =>
+                        !renderedIds.has(meta.id) &&
                         passesMetaCategoryExclusions(meta) &&
-                        matchesSearchTerms(buildMetaSearchFields(meta), terms) &&
-                        passesViewFilter(meta) &&
+                        (!terms.key || matchesSearchTerms(buildMetaSearchFields(meta), terms)) &&
+                        (passesViewFilter(meta) || isViewFilterSnapshotId(meta.id)) &&
                         passesDurationFilter(meta)
                 ),
             ];
-            const bounded = new Map();
+            const bounded = new Set();
             for (const meta of candidates) {
                 if (bounded.size >= CheeseSpanner.categoryToolsRepository.MAX_STREAMER_GRADE_CHANNELS) break;
-                if (meta.channelId && !bounded.has(meta.channelId)) bounded.set(meta.channelId, meta);
+                if (meta.channelId && !bounded.has(meta.channelId) && needsStreamerGradeLookup(meta))
+                    bounded.add(meta.channelId);
             }
-            const ids = Array.from(bounded.values())
-                .filter(needsStreamerGradeLookup)
-                .map((meta) => meta.channelId);
+            const ids = [...bounded];
             if (ids.length) {
                 setLoading(true, "grades");
                 gradesPending = await dataRepository.hydrateStreamerGrades(ids);
@@ -5083,8 +5314,6 @@
             setLoading(gradesPending, "grades");
         }
         scheduleDurationFilterRefresh(metadata.values());
-        const terms = currentSearchTerms();
-        syncViewFilterSnapshot(route, terms.key);
         const renderKey = getActiveFilterKey();
         if (renderKey !== injectedRenderKey) {
             injectedRenderKey = renderKey;
@@ -5278,6 +5507,7 @@
         document.querySelectorAll(`[${TABS_ATTR}="1"]`).forEach((el) => el.removeAttribute(TABS_ATTR));
         document.querySelectorAll(`[${GLOBAL_SORT_ATTR}="1"]`).forEach((el) => el.removeAttribute(GLOBAL_SORT_ATTR));
         document.querySelectorAll(`[${CARD_ATTR}="1"]`).forEach((el) => {
+            invalidateCardText(el);
             el.removeAttribute(CARD_ATTR);
             el.removeAttribute(INJECTED_ATTR);
             el.removeAttribute(ORDER_ATTR);
@@ -5393,11 +5623,23 @@
                 return false;
         }
         if (isOurNode(mutation.target)) return true;
+        if (mutation.type === "attributes" && mutation.attributeName === "aria-selected") {
+            return !mutation.target.matches?.('[role="tablist"] [role="tab"]');
+        }
+        if (mutation.type === "characterData") {
+            const parent = mutation.target.parentElement;
+            return !parent?.closest(`[${CARD_ATTR}="1"]`) || isOurNode(parent);
+        }
         if (mutation.type === "attributes" && mutation.attributeName === "href") {
             return !mutation.target.closest?.(`[${CARD_ATTR}="1"]`);
         }
         const added = mutation.addedNodes;
         const removed = mutation.removedNodes;
+        if (
+            mutation.target.closest?.(`[${CARD_ATTR}="1"]`) &&
+            [...(added || []), ...(removed || [])].some((node) => node.nodeType === Node.TEXT_NODE)
+        )
+            return false;
         if ((!added || added.length === 0) && (!removed || removed.length === 0)) {
             return (
                 mutation.type === "attributes" &&
@@ -5447,14 +5689,21 @@
 
     function startObserver() {
         if (observer) return;
+        themeObserver = new MutationObserver(() => {
+            const bar = document.getElementById(BAR_ID);
+            if (bar?.parentElement) syncFontWithHostUi(bar, bar.parentElement);
+        });
+        themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
         observer = createMutationObserverSync({
             target: () => document.body || document.documentElement,
             options: {
                 childList: true,
                 subtree: true,
+                characterData: true,
                 attributes: true,
                 attributeFilter: [
                     "href",
+                    "aria-selected",
                     TABS_ATTR,
                     CARD_ATTR,
                     CARD_ID_ATTR,
@@ -5486,9 +5735,17 @@
             },
             shouldIgnoreMutations: (mutations) => {
                 const sidebar = document.getElementById("sidebar");
-                return mutations.every(
-                    (mutation) => isOurMutation(mutation) || isUnrelatedSidebarMutation(mutation, sidebar)
-                );
+                let shouldIgnore = true;
+                for (const mutation of mutations) {
+                    if (isOurMutation(mutation) || isUnrelatedSidebarMutation(mutation, sidebar)) continue;
+                    shouldIgnore = false;
+                    if (mutation.type === "attributes") continue;
+                    const target =
+                        mutation.target.nodeType === Node.TEXT_NODE ? mutation.target.parentElement : mutation.target;
+                    const card = target?.closest?.(`[${CARD_ATTR}="1"]`);
+                    if (card && !isInjectedCard(card)) invalidateCardText(card);
+                }
+                return shouldIgnore;
             },
             shouldSchedule: shouldApplyTools,
             schedule: scheduleApply,
@@ -5497,6 +5754,8 @@
 
     function stopObserver() {
         if (!observer) return;
+        themeObserver?.disconnect();
+        themeObserver = null;
         observer.disconnectAll?.();
         observer.disconnect();
         observer = null;
@@ -5522,6 +5781,7 @@
         if (getRoute()?.scope !== "global-lives") return;
         resetMetadata("", { invalidateLiveCount: true });
         clearInjectedCards();
+        document.querySelectorAll(`[${CARD_ATTR}="1"]`).forEach(invalidateCardText);
         resetViewFilterSnapshot();
         scheduleApply();
     }
@@ -5551,9 +5811,9 @@
         syncCategoryExclusionRuntime();
     }
 
-    // 뒤로-앞으로 캐시로 돌아오면 문서가 그대로 되살아나 기록을 다시 읽지 않는다. 그래도 사용자에게는
-    // 방송을 보고 돌아온 것과 같으므로 남아 있는 조건을 '이어서 적용 중'으로 알린다.
     function handlePageShow(event) {
+        if (!document.hidden && categoryStoreError?.retryOnShow) readCategoryState();
+        // 뒤로-앞으로 캐시에서 복귀하면 문서에 남아 있는 검색 조건을 '이어서 적용 중'으로 알린다.
         if (!event?.persisted || !isFeatureEnabled() || !hasAppliedConditions()) return;
         restoredConditionsPending = true;
         updateUiState();

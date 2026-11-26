@@ -259,7 +259,7 @@ test("existing server-loaded chats use their original time and timestamp CSS has
     const style = dom.window.document.getElementById("cheese-spanner-chat-timestamp-style");
     assert.match(style.textContent, /content:\s*attr\(data-bcmt-time\)/);
     assert.doesNotMatch(style.textContent, /content:[^;]*\[/);
-    assert.match(style.textContent, /--Content-Neutral-Cool-Base, #9da5b6/);
+    assert.match(style.textContent, /color:\s*var\(--bct-text-muted\)/);
     assert.match(style.textContent, /font-size:\s*inherit/);
     assert.doesNotMatch(style.textContent, /font-size:\s*11px/);
     closePageDom(dom);
@@ -648,6 +648,20 @@ test("moderator collection backfills server timestamps and follows timestamp opt
         closePageDom(dom);
     });
     installMutableClock(dom);
+    // Collection uses the same complete native identity and current body as the MAIN bridge.
+    const sourceRow = dom.window.document.querySelector('[data-chat-id="manager-time"]');
+    Object.assign(sourceRow[REACT_PROPS_KEY].children.props.chatMessage, {
+        key: "manager-time",
+        user: "manager-time-user",
+        status: "NORMAL",
+        originalContent: "서버 시각 안내",
+        profile: {
+            userIdHash: "manager-time-user",
+            nickname: "시간지기",
+            userRoleCode: "streaming_chat_manager",
+            verifiedMarkType: null,
+        },
+    });
 
     evalRepoScript(dom, "features", "chatTimestampPage.js");
     evalRepoScript(dom, "shared", "settings.js");
@@ -706,6 +720,20 @@ test("virtual moderator row reuse keeps each collected message server timestamp"
         closePageDom(dom);
     });
     installMutableClock(dom);
+    // Both generations retain their own complete MAIN message and server time.
+    const sourceRow = dom.window.document.querySelector('[data-chat-id="manager-a"]');
+    Object.assign(sourceRow[REACT_PROPS_KEY].children.props.chatMessage, {
+        key: "manager-a",
+        user: "manager-a-user",
+        status: "NORMAL",
+        originalContent: "첫 안내",
+        profile: {
+            userIdHash: "manager-a-user",
+            nickname: "첫 운영자",
+            userRoleCode: "streaming_chat_manager",
+            verifiedMarkType: null,
+        },
+    });
 
     evalRepoScript(dom, "features", "chatTimestampPage.js");
     evalRepoScript(dom, "shared", "settings.js");
@@ -722,8 +750,19 @@ test("virtual moderator row reuse keeps each collected message server timestamp"
         () => dom.window.document.querySelector(".bcct-moderator-row__time")?.textContent === "18:07"
     );
 
-    const sourceRow = dom.window.document.querySelector('[data-chat-id="manager-a"]');
     replaceReactMessage(sourceRow, serverTime(18, 9));
+    Object.assign(sourceRow[REACT_PROPS_KEY].children.props.chatMessage, {
+        key: "manager-b",
+        user: "manager-b-user",
+        status: "NORMAL",
+        originalContent: "다음 안내",
+        profile: {
+            userIdHash: "manager-b-user",
+            nickname: "다음 운영자",
+            userRoleCode: "streaming_chat_manager",
+            verifiedMarkType: null,
+        },
+    });
     sourceRow.setAttribute("data-chat-id", "manager-b");
     sourceRow.setAttribute("data-virtual-index", "2");
     sourceRow.querySelector("._nickname_o04z9_57").textContent = "다음 운영자";

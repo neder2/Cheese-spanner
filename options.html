@@ -4,6 +4,7 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>치즈 스패너 설정</title>
+        <script src="shared/extensionPageTheme.js" data-options-preview></script>
         <link rel="stylesheet" href="styles.css" />
         <link rel="stylesheet" href="options-brand.css" />
     </head>
@@ -703,7 +704,7 @@
                                     </div>
                                     <p class="setting-note" id="videoRecorderFolderHelp">
                                         Chrome 다운로드 폴더 아래에 저장. 하위 폴더는 /로 구분하며 처음 한 번 ‘다운로드
-                                        관리’ 권한 필요. 플레이어 톱니바퀴 → ‘녹화 저장 폴더’에서도 변경 가능.
+                                        관리’ 권한 필요. 플레이어 톱니바퀴 → ‘녹화 저장 폴더’에서 이 설정 열기.
                                     </p>
                                     <p class="setting-note" id="videoRecorderPermissionStatus" role="status"></p>
                                 </div>
@@ -1618,6 +1619,10 @@
                                 </select>
                             </label>
                             <p class="setting-note">분할에서는 채팅과 댓글 사이 경계선을 끌어 크기 조절.</p>
+                            <label class="toggle-row" data-depends-on="vodCommentTabsEnabled">
+                                <span>댓글 챕터 자동 추가</span>
+                                <input type="checkbox" data-option="vodCommentAutoChaptersEnabled" />
+                            </label>
                         </div>
                     </details>
 

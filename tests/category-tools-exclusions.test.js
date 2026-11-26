@@ -21,6 +21,16 @@ function withState(revision, categories) {
     );
 }
 
+async function runEntryRetry(ui, delay) {
+    const found = [...ui.timers].find(([, timer]) => timer.delay === delay);
+    assert.ok(found, `expected an exclusion read retry after ${delay} ms`);
+    const [id, timer] = found;
+    ui.timers.delete(id);
+    timer.callback();
+    await settle();
+    return timer.callback;
+}
+
 test("viewer-ranked search hides zero candidates while preserving saved exclusions and stores identity only", async (t) => {
     const worker = withState(1, [category()]);
     const ui = await createCategoryUI(t, { worker, categoryCounts: { A: 0, low: 5, high: 200 } });
@@ -168,6 +178,10 @@ test("two open menus share sequential additions and individual removal through t
 test("search composition, empty input and close cancel only search work without erasing selections", async (t) => {
     const ui = await createCategoryUI(t, { worker: withState(1, [category()]) });
     const menu = ui.open();
+    const input = menu.querySelector("[data-category-search]");
+    input.value = "페이지가 입력한 검색어";
+    input.dispatchEvent(new ui.window.Event("input", { bubbles: true }));
+    assert.equal(ui.timers.size, 0);
     ui.input("가", "compositionstart");
     ui.input("게임");
     assert.equal(ui.timers.size, 0);
@@ -248,6 +262,104 @@ test("out-of-order category searches and detached menus cannot publish an old re
     assert.equal(ui.window.document.querySelectorAll("[data-category-add]").length, 0);
 });
 
+test("a direct navigation retries the read once Chrome commits the trusted tab URL", async (t) => {
+    const ui = await createCategoryUI(t, { worker: withState(2, [category()]), initialTabUrl: "about:blank" });
+    assert.equal(hidden(ui, "a"), false);
+    assert.equal(ui.messages.length, 1);
+    ui.commitTabUrl();
+    await runEntryRetry(ui, 200);
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "a"), true);
+    assert.deepEqual(
+        ui.messages.map((message) => message.operation.kind),
+        ["get", "get"]
+    );
+});
+
+test("a temporary first read failure restores a never-used or saved empty list without writing", async (t) => {
+    for (const stored of [undefined, state(7)]) {
+        await t.test(stored ? "saved empty list" : "no storage key", async (subtest) => {
+            const worker = stored ? withState(stored.revision, []) : createCategoryExclusionsWorker();
+            worker.storage.failNext("get");
+            const ui = await createCategoryUI(subtest, { worker });
+            const status = ui.window.document.querySelector("[data-category-store-status]");
+            const retry = ui.window.document.querySelector("[data-category-store-retry]");
+            assert.match(status.textContent, /불러오는 중/);
+            assert.equal(retry.hidden, true);
+            await runEntryRetry(ui, 200);
+            assert.equal(status.textContent, "");
+            assert.equal(retry.hidden, true);
+            assert.equal(ui.window.document.querySelector("[data-category-selected]").childElementCount, 0);
+            const menu = ui.open();
+            await search(ui, "게임", [category()]);
+            assert.equal(menu.querySelector("[data-category-add]").disabled, false);
+            assert.deepEqual(
+                ui.messages.map((message) => message.operation.kind),
+                ["get", "get"]
+            );
+            assert.deepEqual(worker.storage.local[CATEGORY_KEY], stored);
+            assert.equal(worker.storage.categoryWrites.length, 0);
+        });
+    }
+});
+
+test("a confirmed empty list clears loading and supersedes an earlier failed read", async (t) => {
+    const worker = createCategoryExclusionsWorker();
+    worker.storage.failNext("get");
+    const gate = worker.storage.pauseNext("get");
+    const ui = await createCategoryUI(t, { worker });
+    await gate.started;
+    const status = ui.window.document.querySelector("[data-category-store-status]");
+    try {
+        await writeCategoryState(worker, state(2));
+        assert.equal(status.textContent, "");
+    } finally {
+        gate.release();
+    }
+    await settle();
+    assert.equal(status.textContent, "");
+    assert.equal(ui.window.document.querySelector("[data-category-store-retry]").hidden, true);
+    assert.equal(ui.messages.length, 1);
+    assert.deepEqual(worker.storage.local[CATEGORY_KEY], state(2));
+});
+
+test("initial exclusion retries are bounded and stale timers cannot read after leaving the list", async (t) => {
+    const ui = await createCategoryUI(t, { worker: withState(2, [category()]), initialTabUrl: "about:blank" });
+    let retry;
+    for (const delay of [200, 800, 1800]) retry = await runEntryRetry(ui, delay);
+    assert.equal(ui.messages.length, 4);
+    assert.equal(hidden(ui, "a"), false);
+    assert.equal(ui.window.document.querySelector("[data-category-store-retry]").hidden, false);
+    ui.window.document.dispatchEvent(new ui.window.Event("visibilitychange"));
+    await settle();
+    assert.equal(ui.messages.length, 5);
+    ui.window.document.dispatchEvent(new ui.window.Event("visibilitychange"));
+    await settle();
+    assert.equal(ui.messages.length, 5, "repeated visibility events do not restart a failed retry loop");
+    ui.dom.reconfigure({ url: "https://chzzk.naver.com/" });
+    ui.hooks.pageChange();
+    retry();
+    ui.window.dispatchEvent(new ui.window.Event("pageshow"));
+    await settle();
+    assert.equal(ui.messages.length, 5);
+});
+
+test("showing the list after a slow tab commit recovers a never-used list without a manual retry", async (t) => {
+    const ui = await createCategoryUI(t, { initialTabUrl: "about:blank" });
+    for (const delay of [200, 800, 1800]) await runEntryRetry(ui, delay);
+    const status = ui.window.document.querySelector("[data-category-store-status]");
+    assert.equal(status.textContent, "제외 목록 불러오기 실패.");
+    ui.commitTabUrl();
+    ui.window.dispatchEvent(new ui.window.Event("pageshow"));
+    ui.window.document.dispatchEvent(new ui.window.Event("visibilitychange"));
+    await settle();
+    assert.equal(status.textContent, "");
+    assert.equal(ui.window.document.querySelector("[data-category-store-retry]").hidden, true);
+    assert.equal(ui.messages.length, 5);
+    assert.equal(Object.hasOwn(ui.worker.storage.local, CATEGORY_KEY), false);
+    assert.equal(ui.worker.storage.categoryWrites.length, 0);
+});
+
 test("the initial read completes before exclusion, and newer revisions beat late read and mutation responses", async (t) => {
     const worker = withState(2, [category()]);
     const gate = worker.storage.pauseNext("get");
@@ -304,9 +416,13 @@ test("read, write and corrupt-state failures preserve known selections and revea
     worker.storage.failNext("get");
     const ui = await createCategoryUI(t, { worker });
     const menu = ui.open();
-    assert.match(
+    for (const delay of [200, 800, 1800]) {
+        worker.storage.failNext("get");
+        await runEntryRetry(ui, delay);
+    }
+    assert.equal(
         ui.window.document.querySelector("[data-category-store-status]").textContent,
-        /제외 목록 저장·불러오기 실패/
+        "제외 목록 불러오기 실패."
     );
     assert.equal(worker.storage.categoryWrites.length, 0);
     ui.window.document.querySelector("[data-category-store-retry]").click();
@@ -319,7 +435,7 @@ test("read, write and corrupt-state failures preserve known selections and revea
     await settle();
     assert.equal(worker.storage.local[CATEGORY_KEY].categories.length, 1);
     assert.equal(remove.disabled, false);
-    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /실패/);
+    assert.match(ui.window.document.querySelector("[data-category-store-status]").textContent, /변경사항 저장 실패/);
     assert.equal(menu.textContent.includes("private response body"), false);
     worker.storage.local[CATEGORY_KEY] = { version: 99, revision: 5, categories: [] };
     ui.emit(worker.storage.local[CATEGORY_KEY]);
@@ -913,6 +1029,10 @@ test("a fresh restore read failure preserves the last good state and a retry can
     worker.storage.failNext("get");
     ui.options({ categoryToolsEnabled: true });
     await settle();
+    for (const delay of [200, 800, 1800]) {
+        worker.storage.failNext("get");
+        await runEntryRetry(ui, delay);
+    }
     await ui.hooks.apply();
     ui.open();
     assert.equal(hidden(ui, "a"), true, "a real read failure preserves the last known good category");
@@ -1546,8 +1666,139 @@ test("metadata tags exclude candidates and reserved tag types never appear as ca
         [...ui.window.document.querySelectorAll("[data-category-results] .bcgt-category-name")].map(
             (name) => name.textContent
         ),
-        ["롤"]
+        ["#롤토체스", "#롤토체스대회", "롤"]
     );
+});
+
+test("live tag suggestions find gray tags and event badges, with separate exact exclusions for each name", async (t) => {
+    const row = (id, extra) => ({
+        liveId: id.charCodeAt(0),
+        channel: { channelId: "channel-" + id },
+        liveTitle: "중계",
+        concurrentUserCount: 2,
+        liveCategory: "Lol",
+        categoryType: "GAME",
+        liveCategoryValue: "게임",
+        liveImageUrl: "https://example.com/live.jpg",
+        ...extra,
+    });
+    const cup = { watchPartyNo: 569, watchPartyType: "NORMAL", watchPartyTag: "2026치지직컵" };
+    const ui = await createCategoryUI(t, {
+        metadata: [
+            row("a", { ...cup, tags: ["스텔라이브"] }),
+            row("b", { tags: ["스텔라이브팬", "치지직컵"] }),
+            row("d", { ...cup, tags: ["다른태그"] }),
+            row("e", { watchPartyNo: 571, watchPartyType: "NORMAL", watchPartyTag: "다른대회" }),
+        ],
+    });
+    const doc = ui.window.document;
+    const strip = doc.createElement("div");
+    strip.className = "_information_fixture _link_fixture";
+    strip.innerHTML =
+        '<a href="/watchparty/all" class="_item_tag_fixture"><span>같이보기</span></a><a href="/watchparty/569" class="_item_tag_fixture"><span>2026치지직컵</span></a><a href="/lives?tags=스텔라이브" class="_item_tag_fixture"><span>스텔라이브</span></a>';
+    doc.querySelector("#a .category").remove();
+    doc.getElementById("a").append(strip);
+    const panel = ui.open();
+    const find = (label) =>
+        [...panel.querySelectorAll("[data-category-add]")].find(
+            (b) => b.getAttribute("aria-label") === label + " 태그 제외"
+        );
+    const added = (id) => doc.querySelector(`[data-bcgt-injected="1"][data-bcgt-card-id="channel-${id}"]`);
+    const input = ui.input("스텔");
+    input.value = "치지직컵";
+    input.dispatchEvent(new ui.window.Event("input", { bubbles: true }));
+    ui.runDelay();
+    const request = ui.searches.at(-1);
+    assert.equal(new URL(request.url).searchParams.get("keyword"), "스텔");
+    request.resolve(result([category("GAME", "stella", "스텔라이브")]));
+    await settle();
+    assert.deepEqual(
+        [...panel.querySelectorAll(".bcgt-category-name")].map((n) => n.textContent),
+        ["#스텔라이브", "#스텔라이브팬", "스텔라이브"]
+    );
+    ui.trustedClick(find("스텔라이브"));
+    await settle();
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "a"), true);
+    assert.equal(hidden(ui, "b"), false);
+    assert.equal(added("d").querySelector('a[href="/category/GAME/Lol/lives"]').textContent, "게임");
+    assert.ok(added("d").querySelector('a[href="/watchparty/569"]'));
+    assert.ok(added("d").querySelector('a[href="/watchparty/all"]'));
+    assert.equal(added("d").textContent.includes("스텔라이브"), false);
+    ui.trustedClick(doc.querySelector("[data-category-summary-remove]"));
+    await settle();
+    await search(ui, "2026 치지직", []);
+    ui.trustedClick(find("2026치지직컵"));
+    await settle();
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "a"), true);
+    assert.equal(added("d"), null);
+    assert.ok(added("e"), "another event is still eligible");
+    strip.querySelector('[href="/watchparty/569"]').textContent = "새 대회";
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "a"), false, "a native card's current event label supersedes stale metadata");
+    await search(ui, "같이", []);
+    ui.trustedClick(find("같이보기"));
+    await settle();
+    await ui.hooks.apply();
+    assert.equal(hidden(ui, "a"), true);
+    assert.equal(added("d"), null);
+    assert.equal(added("e"), null);
+    assert.equal(hidden(ui, "b"), false);
+});
+
+test("every matching tag remains selectable past fifty and when the category service fails", async (t) => {
+    const tags = Array.from({ length: 65 }, (_, i) => `대회종목${i + 1}`);
+    const metadata = tags.map((name, i) => ({
+        liveId: i + 1,
+        concurrentUserCount: 0,
+        tags: [name],
+        channel: { channelId: `channel-${i}` },
+    }));
+    const ui = await createCategoryUI(t, { metadata });
+    const panel = ui.open();
+    ui.input("대회종목");
+    ui.runDelay();
+    ui.searches.at(-1).reject(new Error("offline"));
+    await settle();
+    assert.match(panel.querySelector("[data-category-search-status]").textContent, /실패/);
+    assert.equal(panel.querySelectorAll("[data-category-add]").length, 50);
+    const more = panel.querySelector("[data-category-more-tags]");
+    assert.equal(more.hidden, false);
+    more.click();
+    assert.equal(more.hidden, true);
+    assert.equal(panel.querySelectorAll("[data-category-add]").length, 65);
+    ui.trustedClick(panel.querySelector('button[aria-label="대회종목65 태그 제외"]'));
+    await settle();
+    assert.equal(ui.worker.storage.local[CATEGORY_KEY].categories[0].categoryId, "대회종목65");
+    await search(ui, "#대회종목6", []);
+    assert.equal(panel.querySelector(".bcgt-category-name").textContent, "#대회종목6");
+});
+
+test("recommended order reads native watch-party, drops and non-link badges without popular-list metadata", async (t) => {
+    const ui = await createCategoryUI(t);
+    const doc = ui.window.document;
+    for (const b of doc.querySelectorAll("#sort button"))
+        b.setAttribute("aria-selected", String(b.textContent === "추천"));
+    const card = doc.getElementById("b");
+    card.insertAdjacentHTML(
+        "beforeend",
+        '<div class="_information_fixture _link_fixture"><a href="/watchpartyPLUS/all">같이보기+</a><a href="/watchparty/57">농구 결승</a><a href="/category/SPORTS/A/lives#drops">드롭스</a><div class="_item_tag_fixture"><span>프라임</span></div></div>'
+    );
+    await ui.hooks.apply();
+    const panel = ui.open();
+    for (const name of ["같이보기+", "농구 결승", "드롭스", "프라임"]) {
+        await search(ui, name, []);
+        ui.trustedClick(panel.querySelector(`[aria-label="${name} 태그 제외"]`));
+        await settle();
+        await ui.hooks.apply();
+        assert.equal(hidden(ui, "b"), true);
+        assert.equal(hidden(ui, "a"), false);
+        ui.trustedClick(doc.querySelector("[data-category-summary-remove]"));
+        await settle();
+        await ui.hooks.apply();
+        assert.equal(hidden(ui, "b"), false);
+    }
 });
 
 test("the exclusion option hides the row and stops filtering without erasing the saved list", async (t) => {

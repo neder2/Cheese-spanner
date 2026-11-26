@@ -501,22 +501,27 @@
         return out;
     }
 
-    function storedTitle(value) {
+    function storedTitle(value, now) {
         if (typeof value === "string") return { title: value, firstSeenAt: 0, lastSeenAt: 0 };
         object(value);
-        const firstSeenAt = storedNumber(value.firstSeenAt ?? value.seenAt ?? value.createdAt);
+        const firstSeenAt = globalThis.CheeseSpanner.utils.normalizeWatchMetadataTime(
+            value.firstSeenAt ?? value.seenAt ?? value.createdAt,
+            now
+        );
         return {
             title: storedString(value.title ?? value.name ?? value.value),
             firstSeenAt,
-            lastSeenAt: storedNumber(value.lastSeenAt ?? value.updatedAt, firstSeenAt),
+            lastSeenAt: Math.max(
+                firstSeenAt,
+                globalThis.CheeseSpanner.utils.normalizeWatchMetadataTime(value.lastSeenAt ?? value.updatedAt, now)
+            ),
         };
     }
 
     function storedReplayVideoNo(value) {
         for (const candidate of [value.replayVideoNo, value.videoNo, value.videoId]) {
             const text = storedString(candidate);
-            string(text, 240);
-            if (text.trim()) return text.trim();
+            if (typeof text === "string" && /^\d{1,240}$/.test(text.trim())) return text.trim();
         }
         return "";
     }
@@ -553,7 +558,7 @@
         return `https://chzzk.naver.com/live/${linkedChannelId}`;
     }
 
-    function projectRecord(value, id = value.id) {
+    function projectRecord(value, id, now) {
         object(value);
         const messages = array(value.activities ?? [], LIMITS.messagesPerRecord)
             .filter((row) => {
@@ -588,13 +593,13 @@
                   : storedString(value.liveId),
             channelName: storedString(value.channelName),
             title: storedString(value.title),
-            titleHistory: array(value.titleHistory ?? [], LIMITS.titleHistory).map(storedTitle),
+            titleHistory: array(value.titleHistory ?? [], LIMITS.titleHistory).map((row) => storedTitle(row, now)),
             liveOpenDate: storedString(value.liveOpenDate),
             liveUrl: storedLiveUrl(value.liveUrl, channelId),
-            thumbnailUrl: storedString(value.thumbnailUrl),
+            thumbnailUrl: globalThis.CheeseSpanner.utils.normalizeHistoryThumbnailUrl(value.thumbnailUrl),
             replayVideoNo: storedReplayVideoNo(value),
-            firstWatchedAt: storedNumber(value.firstWatchedAt),
-            lastWatchedAt: storedNumber(value.lastWatchedAt),
+            firstWatchedAt: globalThis.CheeseSpanner.utils.normalizeWatchMetadataTime(value.firstWatchedAt, now),
+            lastWatchedAt: globalThis.CheeseSpanner.utils.normalizeWatchMetadataTime(value.lastWatchedAt, now),
             watch: {
                 watchedSeconds: storedNumber(value.watchedSeconds),
                 dailySeconds: storedDaily(value.dailySeconds),
@@ -647,7 +652,7 @@
             .map((row) => {
                 object(row);
                 const id = recordId(row.id, ctx);
-                return projectRecord(row, recordId(bySource.get(id)?.targetRecordId ?? id, ctx));
+                return projectRecord(row, recordId(bySource.get(id)?.targetRecordId ?? id, ctx), ctx.now);
             })
             .filter(hasContent);
         const targets = new Set(records.map((row) => row.id));
@@ -672,7 +677,7 @@
                 formatVersion: FORMAT_VERSION,
                 extensionVersion: "0",
                 createdAt: options.now ?? Date.now(),
-                records: [projectRecord(value)],
+                records: [projectRecord(value, value.id, options.now ?? Date.now())],
                 recordAliases: [],
             },
             options
